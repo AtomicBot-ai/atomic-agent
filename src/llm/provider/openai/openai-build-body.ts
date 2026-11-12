@@ -3,15 +3,21 @@ import { hasStrictFunctionTools } from "../adapters/tool-call-adapter.js";
 import { ensureJsonMention } from "./ensure-json-mention.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
 import {
+  defaultReasoningEffort,
   modelParamProfile,
   reasoningEffortField,
   resolveTemperature,
 } from "./model-params.js";
-import { buildNativeMessages } from "./openai-native-messages.js";
+import {
+  buildNativeMessages,
+  type NativeMessageOptions,
+} from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
+import { normalizeToolSchemaBooleans } from "./tool-schema-booleans.js";
 import { nameEscape } from "./openai-tool-call-adapter.js";
 import { applyAnthropicCacheControl } from "./prompt-cache-control.js";
 import { assertContextCapacity } from "../context-capacity.js";
+import { estimateTokens } from "../../../prompt/token-budget.js";
 
 /**
  * Fields the caller owns unconditionally. `extraBody` is merged *under*
@@ -61,6 +67,29 @@ export interface OpenAiBodyOptions {
    * `disableThinking` reach the wire. Absent, it is dropped.
    */
   templateKwargs?: boolean;
+  /**
+   * The service requires the reasoning of earlier tool calls back on the
+   * assistant messages (DeepSeek's thinking mode, ATO-1397). Hands it back
+   * uncapped; see `NativeMessageOptions.reasoningRequired`. Absent, a cloud
+   * body carries no reasoning, as before.
+   */
+  reasoningRequired?: boolean;
+}
+
+/**
+ * The escape for the history's `tool_calls`: the request's own wire
+ * name where the adapter had to rename a tool, the adapter's escape
+ * everywhere else. Without it a past call to `mcp.srv.foo__bar` would be
+ * written as `mcp__srv__foo__bar`, which this request offers for
+ * `mcp.srv.foo.bar`, and a model copying it would run the sibling
+ * (ATO-1365).
+ */
+function historyNameEscape(
+  escape: (qualifiedName: string) => string,
+  toolWireNames: ReadonlyMap<string, string> | undefined,
+): (qualifiedName: string) => string {
+  if (!toolWireNames || toolWireNames.size === 0) return escape;
+  return (name) => toolWireNames.get(name) ?? escape(name);
 }
 
 /** The wire layout `buildOpenAiChatBody` chose for a request. */
@@ -83,6 +112,38 @@ export function buildOpenAiChatBody(
   providerPreferences?: Record<string, unknown>,
   options: OpenAiBodyOptions = {},
 ): Record<string, unknown> {
+  const assemble = (reasoningBudget: number | undefined) =>
+    assembleOpenAiChatBody(request, defaultChatModel, stream, extraBody,
+      maxOutputTokens, strictTools, providerPreferences, options, reasoningBudget);
+  const budget =
+    request.modelMode?.mode === "cloud" ? request.contextBudget : undefined;
+  if (!options.reasoningRequired || !budget || budget.window === null) {
+    return checkedBody(assemble(undefined), request);
+  }
+  // The reasoning DeepSeek requires back is not counted by the cloud
+  // prompt's budget, so it is sized here against the capacity check
+  // itself (ATO-1397): the finished body without any reasoning — after
+  // the extraBody / model params merge, with the tools as they go on the
+  // wire — is measured the way `checkedBody` measures, and what the
+  // window has left, less ten per cent for JSON escaping, is the budget.
+  // Without it a long thinking turn fails the check instead of sending
+  // less of it.
+  const bare = assemble(0);
+  const room = budget.window - capacityUsed(bare, budget.replyReserve);
+  return checkedBody(assemble(Math.max(0, Math.floor(room * 0.9))), request);
+}
+
+function assembleOpenAiChatBody(
+  request: CompletionRequest,
+  defaultChatModel: string,
+  stream: boolean,
+  extraBody: Record<string, unknown> | undefined,
+  maxOutputTokens: number | undefined,
+  strictTools: boolean | undefined,
+  providerPreferences: Record<string, unknown> | undefined,
+  options: OpenAiBodyOptions,
+  reasoningBudget: number | undefined,
+): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
   const profile = modelParamProfile(defaultChatModel);
   // Settled before the body exists because it also decides the prompt:
@@ -98,13 +159,25 @@ export function buildOpenAiChatBody(
   // layout; a sub-call, or a service that refused the layout, sends the
   // flat text — which `messages` was built beside, from the same packed
   // conversation, so both say the same thing.
+  const nativeOptions: NativeMessageOptions = {
+    nameEscape: historyNameEscape(
+      options.nameEscape ?? nameEscape,
+      filtered.toolWireNames,
+    ),
+    // A local server renders the template, which reads the
+    // reasoning back where the model expects it (ATO-887).
+    ...(options.templateKwargs ? { preserveReasoning: true } : {}),
+    // DeepSeek refuses a thinking-mode tool history without it
+    // (ATO-1397).
+    ...(options.reasoningRequired
+      ? { preserveReasoning: true, reasoningRequired: true }
+      : {}),
+  };
   const messages =
     resolveMessageShape(filtered, options) === "native" && filtered.messages
       ? buildNativeMessages(filtered.messages, {
-          nameEscape: options.nameEscape ?? nameEscape,
-          // A local server renders the template, which reads the
-          // reasoning back where the model expects it (ATO-887).
-          ...(options.templateKwargs ? { preserveReasoning: true } : {}),
+          ...nativeOptions,
+          ...(reasoningBudget !== undefined ? { reasoningBudget } : {}),
         })
       : [
           {
@@ -116,8 +189,9 @@ export function buildOpenAiChatBody(
         ];
   // OpenAI's reasoning models reject the field outright (`Unsupported
   // parameter: 'temperature'`), so for them it is not sent at all — not
-  // even a caller's own value. Kimi K3.1 accepts only 1, so it gets 1
-  // whatever the caller asked. See `model-params.ts`.
+  // even a caller's own value; nor is it for the Claude models that
+  // dropped sampling parameters (ATO-1397). Kimi K3.1 accepts only 1, so
+  // it gets 1 whatever the caller asked. See `model-params.ts`.
   const temperature = resolveTemperature(profile, filtered.temperature, 0.2);
   const body: Record<string, unknown> = {
     model: defaultChatModel,
@@ -152,11 +226,24 @@ export function buildOpenAiChatBody(
     filtered.maxTokens ?? filtered.maxOutputTokens ?? maxOutputTokens;
   if (typeof cap === "number") body[profile.capField] = cap;
   // Reasoning effort, in the field this kind reads (`model-params.ts`);
-  // omitted for a kind without a known one rather than guessed.
-  if (filtered.reasoningEffort !== undefined) {
+  // omitted for a kind without a known one rather than guessed. A turn
+  // that asked for none gets the model's own default where the service's
+  // overspends (Fable on OpenRouter, ATO-1368); `extraBody` and model
+  // params are merged later and still win.
+  // A request that asked for no thinking at all (the risk reviewer, context
+  // compaction) never gets the default: it would turn thinking on inside
+  // a small output cap.
+  const effort =
+    filtered.reasoningEffort ??
+    (options.providerKind === "openrouter" && !filtered.disableThinking
+      ? defaultReasoningEffort(defaultChatModel)
+      : undefined);
+  if (effort !== undefined) {
     Object.assign(
       body,
-      reasoningEffortField(options.providerKind, filtered.reasoningEffort),
+      reasoningEffortField(options.providerKind, effort, defaultChatModel, {
+        disableThinking: filtered.disableThinking === true,
+      }),
     );
   }
   // The template's thinking switch, for a request that asked for none
@@ -185,9 +272,14 @@ export function buildOpenAiChatBody(
     // is a reserved key: the loop below restores `body.tools` over the
     // merge, so the transformed array is what survives. Off by default,
     // and off it must leave this line byte-identical to what it was.
-    const emittedTools = strictTools
-      ? toStrictOpenAiTools(filtered.tools)
-      : filtered.tools;
+    //
+    // Boolean subschemas (`"evidence": true`) are spelled as objects
+    // first, for every service: llama.cpp and LM Studio refuse the whole
+    // request over one, and the rewrite keeps or loosens the meaning
+    // (`tool-schema-booleans.ts`). Tools without one come back as the
+    // same array, so the body stays byte-identical for them.
+    const tools = normalizeToolSchemaBooleans(filtered.tools);
+    const emittedTools = strictTools ? toStrictOpenAiTools(tools) : tools;
     body.tools = emittedTools;
     // Structured Outputs and parallel function calls do not compose:
     // OpenAI documents that a parallel call generated under strict mode
@@ -241,7 +333,7 @@ export function buildOpenAiChatBody(
     );
   }
   const modelParams = options.modelParams;
-  if (!extraBody && !modelParams) return checkedBody(body, request);
+  if (!extraBody && !modelParams) return body;
   // Vendor passthrough, then the model's own parameters. Merged last so
   // they can reach fields this builder does not model, then reserved
   // keys are restored on top.
@@ -255,21 +347,47 @@ export function buildOpenAiChatBody(
     else delete merged[key];
   }
   // A temperature the service itself named in a 400 beats the operator's
-  // passthrough: that value is exactly what was just refused. A rule
-  // known up front (Kimi K3.1) stays overridable like any other field.
+  // passthrough: that value is exactly what was just refused. So does a
+  // 400 that refused the field outright: it goes, whoever set it. A rule
+  // known up front (Kimi K3.1, Claude 5.x) stays overridable like any
+  // other field.
   if (profile.temperature.kind === "fixed" && profile.temperature.learned) {
     merged.temperature = profile.temperature.value;
+  } else if (
+    profile.temperature.kind === "forbidden" &&
+    profile.temperature.learned
+  ) {
+    delete merged.temperature;
   }
-  return checkedBody(merged, request);
+  return merged;
 }
 
 function checkedBody(body: Record<string, unknown>, request: CompletionRequest): Record<string, unknown> {
   if (request.modelMode?.mode === "cloud" && request.contextBudget) {
-    const cap = body.max_completion_tokens ?? body.max_tokens;
-    assertContextCapacity({ messages: body.messages, tools: body.tools, response_format: body.response_format }, {
+    assertContextCapacity(capacityInput(body), {
       window: request.contextBudget.window,
-      replyReserve: typeof cap === "number" && Number.isFinite(cap) ? cap : request.contextBudget.replyReserve,
+      replyReserve: capacityReserve(body, request.contextBudget.replyReserve),
     });
   }
   return body;
+}
+
+/** What the capacity check measures of a finished body. */
+function capacityInput(body: Record<string, unknown>): Record<string, unknown> {
+  return { messages: body.messages, tools: body.tools, response_format: body.response_format };
+}
+
+/** The reply reserve the capacity check uses: the body's own cap, else the turn's. */
+function capacityReserve(body: Record<string, unknown>, replyReserve: number): number {
+  const cap = body.max_completion_tokens ?? body.max_tokens;
+  return typeof cap === "number" && Number.isFinite(cap) ? cap : replyReserve;
+}
+
+/**
+ * Tokens the capacity check counts against the window for this body:
+ * the same estimate and margin `assertContextCapacity` applies.
+ */
+function capacityUsed(body: Record<string, unknown>, replyReserve: number): number {
+  return estimateTokens(JSON.stringify(capacityInput(body))) +
+    capacityReserve(body, replyReserve) + 1024;
 }

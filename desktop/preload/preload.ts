@@ -145,6 +145,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:providerKeyPresent", entry),
   // ATO-756: {ok, status: {cli, installed, binPath, signedIn, apiKeyLogin?}} — never a token.
   subscriptionStatus: (cli: "claude" | "codex") => ipcRenderer.invoke("cli:subscriptionStatus", cli),
+  // ATO-845: open the system terminal with `claude` / `codex login` running. {ok, terminal?, reason?}
+  subscriptionLogin: (cli: "claude" | "codex") => ipcRenderer.invoke("cli:subscriptionLogin", cli),
   removeProvider: (id: string) => ipcRenderer.invoke("cli:removeProvider", id),
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
   traceUsage: (stateDir: string, sessionId: string) =>
@@ -443,6 +445,9 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agent:contextPreview", { sessionId, message }),
   /** ATO-259: summarize the chat's older history now (POST /api/sessions/{id}/compact). */
   compactSession: (sessionId: string) => ipcRenderer.invoke("agent:compactSession", { sessionId }),
+  /** ATO-1299: remove the chat's last question and answer (POST /api/sessions/{id}/rollback-last-turn). */
+  rollbackLastTurn: (sessionId: string, expectText?: string, expectPriorQuestions?: number, expectUnanswered?: boolean) =>
+    ipcRenderer.invoke("agent:rollbackLastTurn", { sessionId, expectText, expectPriorQuestions, expectUnanswered }),
 
   /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
   hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),
@@ -452,6 +457,8 @@ contextBridge.exposeInMainWorld("atomic", {
   hfMirrorSet: (value: string) => ipcRenderer.invoke("cli:hfMirrorSet", value),
   hfDef: (repo: unknown, index: number) => ipcRenderer.invoke("cli:hfDef", { repo, index }),
   hfAdd: (repo: unknown, index: number) => ipcRenderer.invoke("cli:hfAdd", { repo, index }),
+  /** ATO-1402: pick a .gguf on disk and register it where it lies (main/local-gguf.ts). */
+  ggufPick: () => ipcRenderer.invoke("cli:ggufPick"),
   hfProjector: (id: string, mmprojUrl: string, mmprojFilename: string, name?: string) =>
     ipcRenderer.invoke("cli:hfProjector", { id, mmprojUrl, mmprojFilename, name }),
 

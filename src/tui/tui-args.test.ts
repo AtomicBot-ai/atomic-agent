@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   nonInteractiveStdinError,
   parseTuiArgs,
+  selfUpdateRelaunchArgs,
   TUI_HELP,
 } from "./tui-args.js";
 
@@ -111,5 +112,43 @@ describe("parseTuiArgs --session / --send", () => {
     expect(parseTuiArgs(["--session", "--no-mouse"])).toHaveProperty("error");
     expect(parseTuiArgs(["--send"])).toHaveProperty("error");
     expect(parseTuiArgs(["--send", "  "])).toHaveProperty("error");
+  });
+});
+
+describe("selfUpdateRelaunchArgs", () => {
+  // `atag handoff` opens the TUI in-process with these args (ATO-1413).
+  const handoffArgv = ["/usr/bin/node", "/opt/atag/cli.js", "handoff", "--from", "claude"];
+  const handoffTuiArgs = ["--cwd", "/work", "--session", "s-abc", "--send", "- continue the task"];
+
+  it("relaunches into the saved chat instead of re-running the handoff", () => {
+    expect(selfUpdateRelaunchArgs(handoffArgv, handoffTuiArgs, false)).toEqual([
+      "/opt/atag/cli.js",
+      "tui",
+      "--cwd",
+      "/work",
+      "--session",
+      "s-abc",
+    ]);
+  });
+
+  it("drops the script slot under SEA", () => {
+    const seaArgv = ["/usr/local/bin/atag", "/usr/local/bin/atag", "handoff", "--from", "claude"];
+    expect(selfUpdateRelaunchArgs(seaArgv, handoffTuiArgs, true)).toEqual([
+      "tui",
+      "--cwd",
+      "/work",
+      "--session",
+      "s-abc",
+    ]);
+  });
+
+  it("keeps a plain tui launch as is, including a dash-led value", () => {
+    expect(
+      selfUpdateRelaunchArgs(
+        ["/usr/bin/node", "/opt/atag/cli.js"],
+        ["--cwd", "--send", "--fake-update", "9.9.9", "--no-mouse"],
+        false,
+      ),
+    ).toEqual(["/opt/atag/cli.js", "tui", "--cwd", "--send", "--fake-update", "9.9.9", "--no-mouse"]);
   });
 });

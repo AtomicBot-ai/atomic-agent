@@ -17,6 +17,8 @@ const FULL = computeOnboardingFit({ columns: 100, rows: 30 });
 const MINIMAL = computeOnboardingFit({ columns: 60, rows: 14 });
 
 const UNCENSORED_ID = "qwen-3.8-27b-uncensored";
+/** What the row prints for it: the catalogue name, not the id (ATO-1410). */
+const UNCENSORED_NAME = "Qwen 3.8 27B Uncensored";
 
 function frameAt(cursor: number, ramGb: number, fit = FULL): string {
   const picks = orderLocalModelPicks(
@@ -58,7 +60,7 @@ describe("the uncensored row on the first-run pick screen", () => {
     );
     const frame = frameAt(picks.length - 1, 16);
     const lines = frame.split("\n").filter((l) => l.trim().length > 0);
-    const uncensoredLine = lines.findIndex((l) => l.includes(UNCENSORED_ID));
+    const uncensoredLine = lines.findIndex((l) => l.includes(UNCENSORED_NAME));
     const hfLine = lines.findIndex((l) =>
       l.includes("Add a model from Hugging Face"),
     );
@@ -75,7 +77,7 @@ describe("the uncensored row on the first-run pick screen", () => {
     const frame = frameAt(picks.length - 1, 16);
     // The row is truncated to the terminal width; the note's opening
     // words come right after the warning tag, so they always show.
-    const row = frame.split("\n").find((l) => l.includes(UNCENSORED_ID)) ?? "";
+    const row = frame.split("\n").find((l) => l.includes(UNCENSORED_NAME)) ?? "";
     expect(row).toContain("Use at your own risk · Fewer safety");
     expect(row).not.toContain("abliterated");
   });

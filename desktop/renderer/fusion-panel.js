@@ -39,7 +39,7 @@ const FZP = {
   draft: '',
   /** key → 'stop' | 'steer' while that request is in flight. */
   busy: {},
-  /** key → true once Stop went through: the button stays disabled. */
+  /** key → true once Stop went through: the button stays disabled for that run. */
   stopped: {},
   /** key → {text, bad, at}: the row's last outcome, shown for a few seconds. */
   note: {},
@@ -262,6 +262,31 @@ function fzpNoteFrame(e) {
   });
 }
 
+/**
+ * ATO-1329: `stopped` is keyed by chat and task id, not by run, so a worker
+ * that starts under a task id stopped earlier must get its controls back.
+ * Call before fzReduceLive, which overwrites the row. A row still running is
+ * the run that was stopped (its `cancelled` has not come yet), so a `started`
+ * for it changes nothing: Stop stays spent on a worker that is really stopped.
+ */
+function fzpNoteStarted(state, e, rows) {
+  if (!e || e.phase !== 'started' || e.role === 'orchestrator' || !e.sessionId) return;
+  const prev = (rows || []).find((w) => w.taskId === e.taskId);
+  if (prev && !prev.done) return;
+  delete state.stopped[fzpKey(e.sessionId, e.taskId)];
+}
+
+/**
+ * ATO-1329: a turn ended, so its rows' stops are over. Only those rows: the
+ * map also holds workers still running in another chat, and clearing it whole
+ * would offer Stop again on one of them that is already stopped.
+ */
+function fzpForgetRows(state, rows) {
+  for (const w of rows || []) {
+    if (w.sessionId) delete state.stopped[fzpKey(w.sessionId, w.taskId)];
+  }
+}
+
 /** `fzp:<verb>:<encoded task id>` from a row's button. */
 function fzpAct(v) {
   const colon = String(v || '').indexOf(':');
@@ -289,7 +314,7 @@ function fzpStop(w, key) {
     .then((res) => {
       delete FZP.busy[key];
       const out = fzpStopOutcome(res);
-      // Disabled for good once it went through, and when the worker is gone anyway.
+      // Disabled for this run once it went through, and when the worker is gone anyway.
       if (out.ok || out.gone) FZP.stopped[key] = true;
       fzpSay(key, out);
       render();
@@ -388,5 +413,6 @@ if (typeof module !== 'undefined') {
   module.exports = {
     FZP, FZP_REPROBE_MS, FZP_NOTE_MS, fzpKey, fzpNeedsProbe, fzpActionsFromList, fzpSpendText, fzpIsStuck,
     fzpRowExtrasHTML, fzpSteerFieldHTML, fzpNoteHTML, fzpSteerOutcome, fzpStopOutcome,
+    fzpNoteStarted, fzpForgetRows,
   };
 }

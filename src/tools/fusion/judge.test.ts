@@ -215,6 +215,22 @@ describe("a node closes only on a green list (ATO-944)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("names the delegating session on every judge call, for its spend readout (ATO-1388)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "judge-sid-"));
+    const sessions: Array<string | undefined> = [];
+    const d = deps(dir, async (call) => {
+      sessions.push(call.sessionId);
+      return { content: JSON.stringify({ items: [{ id: "a2", pass: true, why: "ok" }] }) };
+    });
+    await buildFusionDelegateTool(d).run(
+      { tasks: TASK },
+      { workingDir: dir, sessionId: "s-p", stepIndex: 0, signal: new AbortController().signal },
+    );
+    expect(sessions.length).toBeGreaterThan(0);
+    expect(sessions.every((id) => id === "s-p")).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("closes a task the retry fixed", async () => {
     const dir = mkdtempSync(join(tmpdir(), "judge-g-"));
     let judged = 0;

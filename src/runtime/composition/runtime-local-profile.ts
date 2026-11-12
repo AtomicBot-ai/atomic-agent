@@ -7,6 +7,7 @@ import { LlamaServerClient } from "../../llm/llama-server-client.js";
 import {
   buildGrammar,
   detectModelProfile,
+  detectModelProfileWithMatch,
   extractTotalSlots,
   ModelProfileManager,
   PLAIN_INSTRUCT_PROFILE,
@@ -18,7 +19,12 @@ import { resolveLlmConfig } from "../../llm/provider/index.js";
 import { activeTextProviderIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { DeferredLocalBackendProbes } from "../../llm/local-backend-gate.js";
 import { readLaunchRecord, readRunningPid, readThroughputRecord } from "../../local-llm/index.js";
-import { minUsableContextWindow } from "../../prompt/token-budget.js";
+import {
+  effectiveReplyReserve,
+  MIN_REPLY_AFTER_REASONING_TOKENS,
+  minUsableContextWindow,
+  reasoningBudgetExceedsReplyReserve,
+} from "../../prompt/token-budget.js";
 
 type RuntimeInferenceOptions = Pick<CreateAgentRuntimeOptions, "overrides">;
 
@@ -86,7 +92,8 @@ export async function prepareRuntimeLocalProfile(
     );
   }
 
-  const llama = new LlamaServerClient();
+  // The logger is for the debug-level stream phase trace (ATO-1357).
+  const llama = new LlamaServerClient({ logger });
   const { profile, modelAlias, totalSlots } = await resolveModelProfile(
     options.overrides,
     llama,
@@ -132,11 +139,40 @@ export async function prepareRuntimeLocalProfile(
       config.agent.prompt?.compact ?? "auto",
       candidate.contextWindow,
     ).compact;
+    // The bounded think block a reasoning model spends inside the reply
+    // reserve (ATO-1295) — the same rule `buildPrompt` applies.
+    const reasoningBudgetTokens =
+      candidate.reasoningStyle !== "none" &&
+      config.localModels.thinking !== "off"
+        ? config.localModels.reasoningBudgetTokens
+        : 0;
     const minUsableCtx = minUsableContextWindow(
       config.localModels.completionMaxTokens,
       candidate.contextWindow,
-      { compact: compactPrompt },
+      { compact: compactPrompt, reasoningBudgetTokens },
     );
+    if (
+      candidate.contextWindow &&
+      reasoningBudgetExceedsReplyReserve(
+        config.localModels.completionMaxTokens,
+        candidate.contextWindow,
+        reasoningBudgetTokens,
+      )
+    ) {
+      logger.warn("reasoning budget does not leave room for the reply", {
+        contextWindow: candidate.contextWindow,
+        reasoningBudgetTokens,
+        replyReserve: effectiveReplyReserve(
+          config.localModels.completionMaxTokens,
+          candidate.contextWindow,
+          reasoningBudgetTokens,
+        ),
+        completionMaxTokens: config.localModels.completionMaxTokens,
+        minReplyAfterReasoning: MIN_REPLY_AFTER_REASONING_TOKENS,
+        hint:
+          "lower localModels.reasoningBudgetTokens, raise localModels.completionMaxTokens, or use a larger context window; otherwise thinking can use up the reply and cut the tool call",
+      });
+    }
     if (candidate.contextWindow && candidate.contextWindow < minUsableCtx) {
       logger.warn("context window too small for the agent prompt", {
         contextWindow: candidate.contextWindow,
@@ -388,7 +424,7 @@ function logResolvedProfile(
   props: Record<string, unknown>,
   logger: StructuredLogger,
 ): ResolvedModelProfile {
-  const resolved = detectModelProfile(props);
+  const { profile: resolved, matchedBy } = detectModelProfileWithMatch(props);
   const alias =
     typeof props.model_alias === "string" ? props.model_alias : null;
   const totalSlots = extractTotalSlots(props);
@@ -401,6 +437,9 @@ function logResolvedProfile(
   );
   logger.info("model profile resolved", {
     id: resolved.id,
+    // What decided the profile: the chat template alone, a model-name
+    // hint (alias / GGUF file name), or nothing (plain fallback). ATO-1294.
+    matchedBy,
     alias,
     contextWindow: resolved.contextWindow ?? null,
     totalSlots,

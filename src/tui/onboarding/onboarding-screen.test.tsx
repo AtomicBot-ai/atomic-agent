@@ -417,7 +417,7 @@ describe("OnboardingScreen", () => {
       const { view } = renderFlow("wait_or_jump", { panel: {} });
       const frame = strip(view.lastFrame() ?? "");
       expect(frame).toContain("almost there");
-      expect(frame).toContain("Still downloading gemma-4-e4b");
+      expect(frame).toContain("Still downloading Gemma 4 E4B");
       expect(frame).toContain("61%");
       expect(frame).toContain("2.6 GB / 4.2 GB");
       expect(frame).toContain("\u2588");

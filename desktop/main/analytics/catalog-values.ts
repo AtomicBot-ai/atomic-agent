@@ -18,6 +18,13 @@ export const PROVIDER_PRESETS = [
   "fireworks", "hyperbolic", "lmstudio", "mistral", "moonshot", "nous", "novita", "ollama", "ollama-cloud",
   "perplexity", "dashscope", "sambanova", "sarvam", "together", "xai", "local-llama", "custom",
 ] as const;
+/**
+ * ATO-1195 / ATO-816: presets for an app the user already runs on this
+ * computer (the wizard's `local:true` rows). Like a custom URL they are
+ * `kind: custom` ("Custom" = any app or server you already run); `local`
+ * is only the managed llama.cpp backend. Keep in step with renderer.js.
+ */
+export const LOCAL_APP_PRESETS = ["atomic-chat", "ollama", "lmstudio"] as const;
 /** `model_configured.provider` as the agent runtime spells it: the managed local backend is `llama.cpp`. */
 export const CONFIGURED_PROVIDERS = [...PROVIDER_PRESETS, "llama.cpp"] as const;
 
@@ -59,10 +66,16 @@ export const SLASH_COMMANDS = [
   "sessions", "new", "skills", "skill", "memory", "llm", "mcp", "model", "tasks", "task", "telegram",
   "import", "privacy", "analytics", "compact", "unknown",
 ] as const;
-/** The renderer's approval CATS ids. */
+/** Every approval category the agent can send (src/approval/approval-level.ts
+    APPROVAL_CATEGORY_LABELS), not only the renderer's CATS (the ones the
+    permission settings list). ATO-1396: a category missing here, such as
+    `shell_dangerous`, was counted as `other`. The renderer keeps the same
+    list (analytics.js APPROVAL_CATEGORY_IDS); a test holds the three in step. */
 export const APPROVAL_CATEGORIES = [
-  "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "script", "proc_kill", "publish",
-  "git_remote", "fusion_fanout", "browser_nonweb", "trust_config", "email", "fs_read_outside", "paid_generation", "other",
+  "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "shell_dangerous", "script", "proc_kill", "publish",
+  "git_remote", "fusion_fanout", "browser_nonweb", "browser_commit", "browser_secret", "browser_offsite",
+  "trust_config", "state_secret", "email", "fs_read_outside", "paid_generation", "screen_control", "screen_capture",
+  "local_model_restart", "hook_ask", "other",
 ] as const;
 export const SETTINGS_PANES = [
   "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "skills", "privacy", "import", "diagnostics",

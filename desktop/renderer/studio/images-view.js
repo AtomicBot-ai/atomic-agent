@@ -11,6 +11,9 @@
 const SIMGV_A = (verb) => 'data-act="studio:images:' + esc(verb) + '"';
 const SIMGV_IDEAS = ['A fox reading under a lamp', 'Isometric tiny office', 'Poster for a jazz night'];
 
+/** "Show in Finder" on macOS, Explorer or Folder elsewhere (renderer.js fileManagerName). */
+const simgvReveal = () => (typeof fileManagerName === 'function' ? fileManagerName() : 'Show in Finder');
+
 function simgvTag(t) {
   return '<span class="st-tag' + (t.cls ? ' ' + t.cls : '') + '">' + esc(t.text) + '</span>';
 }
@@ -32,16 +35,20 @@ function simgvTop(IM) {
 function simgvSource(IM, slot, label, sub) {
   const s = slot === 'mask' ? IM.form.mask : IM.form.source;
   const picking = IM.picking === slot;
+  // ATO-807: in Inpaint the mask can be painted on the source itself (studio/mask-painter.js).
+  const paint = slot === 'mask' && IM.form.mode === 'inpaint' && !!IM.form.source;
   if (s) {
     return '<div class="st-drop filled" data-drop="' + slot + '">'
       + '<div class="st-src" data-pic="' + esc(s.key) + '"></div>'
-      + '<div class="st-dropt"><div class="dt">' + esc(s.name || 'Image') + '</div><div class="ds">' + esc(s.note || '') + '</div></div>'
+      + '<div class="st-dropt"><div class="dt">' + esc(s.name || 'Image') + '</div><div class="ds">' + esc(s.note || '') + '</div>'
+        + (paint ? '<div class="st-droplinks"><button class="st-link" ' + SIMGV_A('paintmask') + '>' + (s.painted ? 'Keep painting' : 'Paint instead') + '</button></div>' : '') + '</div>'
       + '<button class="iconbtn st-x" ' + SIMGV_A('clear:' + slot) + ' title="Remove" aria-label="Remove">' + ic('x') + '</button></div>';
   }
   return '<div class="st-drop' + (picking ? ' picking' : '') + '" data-drop="' + slot + '">'
     + '<div class="st-di">' + ic('upload') + '</div>'
     + '<div class="st-dropt"><div class="dt">' + esc(label) + '</div><div class="ds">' + esc(sub) + '</div>'
-      + '<div class="st-droplinks"><button class="st-link" ' + SIMGV_A('pick:' + slot) + '>Choose file</button>'
+      + '<div class="st-droplinks">' + (paint ? '<button class="st-link" ' + SIMGV_A('paintmask') + '>Paint on the picture</button>' : '')
+      + '<button class="st-link" ' + SIMGV_A('pick:' + slot) + '>Choose file</button>'
       + '<button class="st-link" ' + SIMGV_A('fromlib:' + slot) + '>' + (picking ? 'Click a picture below' : 'Pick from gallery') + '</button></div></div></div>';
 }
 
@@ -91,8 +98,40 @@ function simgvCountRow(IM, model) {
   return cells.length ? '<div class="st-row2">' + cells.join('') + '</div>' : '';
 }
 
+/** ATO-1395/ATO-1308: Download for a local model that is not on disk: the button with its size,
+    then a bar while it runs (Stop keeps what came, the next Download resumes), or why it failed.
+    Wrapped in `data-dl` so a progress event repaints only this. */
+function simgvDownload(IM, m) {
+  const q = simgQuantToGet(m);
+  if (!q) return '';
+  const dl = simgDownloadOf(m, IM.dl);
+  let h = '';
+  if (dl && (dl.state === 'downloading' || dl.state === 'verifying')) {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(dl.percent) || 0)));
+    h = '<div class="st-dl-row"><span>' + esc(simgDownloadLine(dl)) + '</span><span class="st-sp"></span>'
+      + (dl.state === 'downloading' ? '<button class="st-link" ' + SIMGV_A('dlstop:' + dl.id) + '>Stop</button>' : '') + '</div>'
+      + '<div class="st-bar"><i style="width:' + pct + '%"></i></div>';
+  } else {
+    if (dl && dl.state === 'failed') h += '<div class="st-est warn" role="status">' + ic('alert') + '<span>' + esc(simgDownloadLine(dl)) + '</span></div>';
+    else if (m.local && m.local.gated) h += '<div class="st-est">' + ic('key') + '<span>Needs a Hugging Face token (HF_TOKEN) and the licence accepted on Hugging Face.</span></div>';
+    h += '<button class="btn st-dl-go" ' + SIMGV_A('download:' + m.id) + '>' + ic('download')
+      + esc(dl && dl.state === 'failed' ? 'Try again' : simgDownloadLabel(q)) + '</button>';
+  }
+  return '<div class="st-dl" data-dl="' + esc(m.id) + '">' + h + '</div>';
+}
+
 function simgvModelField(IM, model) {
   if (IM.catLoading && !model) return '<div><div class="st-lbl">Model</div><div class="st-model">Loading models…</div></div>';
+  /* ATO-1308: the chat runs locally and no image model is on this computer: say so and offer one. */
+  if (!model && IM.place === 'local' && IM.catalog) {
+    const off = simgLocalUnsupported(IM.catalog);
+    const offer = off ? null : simgSuggestDownload(IM.catalog);
+    const meta = off ? 'This computer cannot make pictures locally. Switch the chat to the cloud to use Studio.'
+      : offer ? offer.name + ' runs here, free and private.' : 'Pick one to start';
+    return '<div><div class="st-lbl">Model</div><button class="st-model" ' + SIMGV_A('pop:model') + '>'
+      + '<span class="st-sp"><span class="st-mname">' + esc('No image model on ' + simgMachine() + ' yet') + '</span><span class="st-mmeta">' + esc(meta) + '</span></span>' + ic('chevD') + '</button>'
+      + (offer ? simgvDownload(IM, offer) : '') + '</div>';
+  }
   if (!model) {
     return '<div><div class="st-lbl">Model</div><button class="st-model" ' + SIMGV_A('pop:model') + '>'
       + '<span class="st-sp"><span class="st-mname">No model yet</span><span class="st-mmeta">' + esc((IM.catErr && IM.catErr.message) || 'Pick one to start') + '</span></span>' + ic('chevD') + '</button></div>';
@@ -150,7 +189,7 @@ function simgvForm(IM) {
   const whyTab = tabs.find((t) => t.id === IM.modeWhy && !t.ok);
   const offIds = whyTab ? [whyTab.id] : tabs.filter((t) => !t.ok && t.need !== 'pick').map((t) => t.id);
   const note = whyTab ? simgModeWhy(whyTab, model) : simgModeNote(tabs, model);
-  const pick = note && model && simgOtherCan(IM.catalog, model, offIds)
+  const pick = note && model && simgOtherCan(IM.catalog, model, offIds, IM.place)
     ? ' <button class="st-link" ' + SIMGV_A('pop:model') + '>' + (whyTab ? 'Pick a model that can' : 'Pick one') + '</button>.' : '';
   const parts = [];
   parts.push('<div><label class="st-lbl" for="sti-prompt">Prompt' + (f.mode === 'upscale' ? ' <span class="r">optional</span>' : '') + '</label>'
@@ -171,13 +210,22 @@ function simgvForm(IM) {
   if (f.mode === 'reference') parts.push(simgvRefs(IM, model));
   if (f.mode === 'inpaint' || f.mode === 'extend') {
     parts.push('<div><div class="st-lbl">Mask <span class="r">white = redraw</span></div>'
-      + simgvSource(IM, 'mask', 'Add a mask', 'Same size as the source. White areas get redrawn.') + '</div>');
+      + (f.mode === 'inpaint'
+        ? simgvSource(IM, 'mask', 'Mark what to change', f.source ? 'Paint over it with a brush, or add a mask file (white = redraw).' : 'Add the source picture first, then paint over what to change.')
+        : simgvSource(IM, 'mask', 'Add a mask', 'Same size as the source. White areas get redrawn.')) + '</div>');
   }
   if (f.mode !== 'upscale') parts.push(simgvAspects(IM, model));
   parts.push(simgvCountRow(IM, model));
   parts.push(simgvModelField(IM, model));
   parts.push(simgvAdvanced(IM, model));
   return '<div class="st-form-scroll">' + parts.join('') + '</div><div class="st-foot" data-foot>' + simgvFoot(IM) + '</div>';
+}
+
+/** The footer's addition for a local model: Generate loads a downloaded one by itself (CONTRACT.md). */
+function simgvLocalHint(model) {
+  const local = model && model.local;
+  if (!local || local.loaded) return '';
+  return local.installed ? ' · loads when you press Generate' : ' · not downloaded yet';
 }
 
 function simgvFoot(IM) {
@@ -187,14 +235,16 @@ function simgvFoot(IM) {
   if (model && model.group === 'cloud' && IM.catalog && IM.catalog.cloud && IM.catalog.cloud.keyMissing) {
     lines.push('<div class="st-est warn">' + ic('key') + '<span>Cloud models need an OpenRouter key. <button class="st-link" ' + SIMGV_A('settings') + '>Add a key</button></span></div>');
   } else if (model && model.group === 'local') {
-    lines.push('<div class="st-est">' + ic('cpu') + '<span><b>Free</b> · runs on this Mac' + (model.local && !model.local.loaded ? ' · load the model first' : '') + '</span></div>');
+    lines.push('<div class="st-est">' + ic('cpu') + '<span><b>Free</b> · runs on ' + esc(simgMachine()) + simgvLocalHint(model) + '</span></div>');
+    if (simgNotDownloaded(model)) lines.push(simgvDownload(IM, model));
   } else if (model && model.group === 'cloud') {
-    lines.push('<div class="st-est">' + ic('cloud') + '<span>Charged to your OpenRouter key</span></div>');
+    const rate = simgTokenRateLine(IM.price);
+    lines.push('<div class="st-est">' + ic('cloud') + '<span>' + esc(rate || 'Charged to your OpenRouter key') + '</span></div>');
   }
   if (IM.formMsg) lines.push('<div class="st-est warn" role="status">' + ic('info') + '<span>' + esc(IM.formMsg) + '</span></div>');
   const btn = live
     ? '<button class="st-go stop" ' + SIMGV_A('stop') + '>' + ic('x') + 'Stop</button>'
-    : '<button class="st-go" ' + SIMGV_A('generate') + (IM.starting || !model ? ' disabled' : '') + '>' + ic('wand')
+    : '<button class="st-go" ' + SIMGV_A('generate') + (IM.starting || !model || simgNotDownloaded(model) ? ' disabled' : '') + '>' + ic('wand')
       + esc(IM.starting ? 'Starting…' : simgGenerateLabel(IM.price)) + '<kbd>⌘ ↵</kbd></button>';
   return lines.join('') + btn;
 }
@@ -216,12 +266,18 @@ function simgvPop(IM) {
   };
   const cloud = all.filter((m) => m.group === 'cloud'), local = all.filter((m) => m.group === 'local');
   const err = (sec) => sec && sec.error ? '<div class="st-pop-err">' + esc(sec.error.message) + '</div>' : '';
+  /* ATO-1307: Studio works where the chat does, so only that place's group is listed (the
+     verb still takes any model: the live drive picks one by its id). No place yet: both. */
+  const place = IM.place;
+  const cloudG = '<div class="st-pop-g">' + ic('cloud') + 'Cloud · OpenRouter</div>' + err(IM.catalog && IM.catalog.cloud)
+    + (cloud.length ? cloud.map(row).join('') : '<div class="st-pop-none">No cloud models' + (q ? ' match' : '') + '</div>');
+  const localG = '<div class="st-pop-g">' + ic('cpu') + esc('On ' + simgMachine()) + ' · free, private</div>' + err(IM.catalog && IM.catalog.local)
+    + (local.length ? local.map(row).join('') : '<div class="st-pop-none">No local models' + (q ? ' match' : ' yet') + '</div>');
+  const follow = simgFollowLine(place);
   return '<div class="st-pop" role="dialog" aria-label="Image models">'
     + '<label class="st-pop-s">' + ic('search') + '<input id="sti-mq" placeholder="Search image models" value="' + esc(IM.modelQ || '') + '" autocomplete="off"></label>'
-    + '<div class="st-pop-g">' + ic('cloud') + 'Cloud · OpenRouter</div>' + err(IM.catalog && IM.catalog.cloud)
-    + (cloud.length ? cloud.map(row).join('') : '<div class="st-pop-none">No cloud models' + (q ? ' match' : '') + '</div>')
-    + '<div class="st-pop-g">' + ic('cpu') + 'On this Mac · free, private</div>' + err(IM.catalog && IM.catalog.local)
-    + (local.length ? local.map(row).join('') : '<div class="st-pop-none">No local models' + (q ? ' match' : ' yet') + '</div>')
+    + (place === 'local' ? '' : cloudG) + (place === 'cloud' ? '' : localG)
+    + (follow ? '<div class="st-pop-none st-pop-follow">' + ic('info') + esc(follow) + '</div>' : '')
     + '</div>';
 }
 
@@ -241,7 +297,7 @@ function simgvProgress(IM) {
   const batch = (job.progress && job.progress.batchSize) || IM.jobCount || 1;
   return '<div class="st-prog" data-prog="' + esc(job.id) + '">'
     + '<div class="st-prog-h"><div class="st-spin"></div><div><div class="t" data-p="title">' + esc(p.title) + '</div>'
-      + '<div class="s">' + esc(model.name + ' · ' + (job.cloud ? 'in the cloud' : 'on this Mac')) + '</div></div></div>'
+      + '<div class="s">' + esc(model.name + ' · ' + (job.cloud ? 'in the cloud' : 'on ' + simgMachine())) + '</div></div></div>'
     + '<div class="st-bar"><i data-p="bar" style="width:' + Math.round(p.fraction * 100) + '%"></i></div>'
     + '<div class="st-prog-m"><span data-p="line">' + esc(p.line) + '</span><span class="mono" data-p="eta">' + esc(p.eta) + '</span></div>'
     + '<div class="st-phases" data-p="phases">' + phases + '</div>'
@@ -296,9 +352,14 @@ function simgvError(IM) {
   if (simgRateLimited(e) && (IM.lastReq || {}).provider !== 'local') return simgvRateLimited(IM);
   const key = e.code === 'NO_KEY';
   const core = /^CORE_/.test(e.code || '');
+  /* ATO-1395: the model (or the extra file this mode needs) is not on disk: download it from here. */
+  const missing = e.code === 'MODEL_NOT_DOWNLOADED' && IM.model && IM.model.group === 'local' && simgQuantToGet(IM.model);
+  const off = e.code === 'ENGINE_UNSUPPORTED';
   return '<div class="st-prog st-err" role="alert"><div class="st-prog-h"><div class="st-erri">' + ic('alert') + '</div>'
-    + '<div><div class="t">' + esc(key ? 'Add an OpenRouter key' : 'That did not work') + '</div><div class="s">' + esc(e.message || 'Something went wrong.') + '</div></div></div>'
+    + '<div><div class="t">' + esc(key ? 'Add an OpenRouter key' : missing ? 'Download the model first' : 'That did not work') + '</div><div class="s">'
+      + esc((e.message || 'Something went wrong.') + (off ? ' Switch the chat to the cloud to make pictures there.' : '')) + '</div></div></div>'
     + '<div class="st-prog-f"><span class="st-sp"></span>'
+    + (missing ? '<button class="btn" ' + SIMGV_A('download-err') + '>' + ic('download') + 'Download</button>' : '')
     + (key ? '<button class="btn" ' + SIMGV_A('settings') + '>' + ic('key') + 'Open Settings</button>' : '')
     + (core ? '<button class="btn" ' + SIMGV_A('retry') + '>' + ic('retry') + 'Try again</button>' : '')
     + '<button class="btn" ' + SIMGV_A('dismiss') + '>Close</button></div></div>';
@@ -335,6 +396,8 @@ function simgvRecipe(item) {
   if (r.resolution) kv.push(['Quality', r.resolution]);
   if (r.seed !== undefined) kv.push(['Seed', String(r.seed)]);
   if (r.steps) kv.push(['Steps', String(r.steps)]);
+  const cost = simgCostLabel(item);
+  if (cost) kv.push(['Cost', cost + ' (reported by OpenRouter)']);
   return '<div class="st-recipe"><h5>How this was made</h5><div class="p">' + esc(item.prompt || r.prompt || 'No prompt') + '</div>'
     + '<div class="st-kv">' + kv.map(([k, v]) => '<span>' + esc(k) + '</span><b>' + esc(v) + '</b>').join('') + '</div></div>';
 }
@@ -346,7 +409,7 @@ function simgvFromChat(item) {
     + '<div class="st-shot" data-pic="' + esc(item.path) + '" data-full="1"></div>'
     + '<div class="st-actions">'
       + '<button ' + SIMGV_A('saveas') + '>' + ic('download') + 'Save as…</button>'
-      + '<button ' + SIMGV_A('reveal') + '>' + ic('folder') + 'Show in Finder</button>'
+      + '<button ' + SIMGV_A('reveal') + '>' + ic('folder') + esc(simgvReveal()) + '</button>'
       + '<button ' + SIMGV_A('copy') + '>' + ic('copy') + 'Copy</button>'
       + '<span class="sep"></span>'
       + '<button class="pri" ' + SIMGV_A('tochat') + '>' + ic('chat') + 'Send to chat</button>'
@@ -358,8 +421,11 @@ function simgvResult(IM, item) {
   const group = IM.items.filter((x) => simgJobOf(x.id) === simgJobOf(item.id));
   const n = group.findIndex((x) => x.id === item.id) + 1;
   const pos = group.length > 1 ? n + ' of ' + group.length + ' · ' : '';
+  const cost = simgCostLabel(item);
   const del = IM.delArmed === item.id;
-  return '<div class="st-vbar"><span class="st-glass">' + esc(pos + simgvAgo(item.createdAtMs)) + '</span><span class="st-sp"></span>'
+  return '<div class="st-vbar"><span class="st-glass">' + esc(pos + simgvAgo(item.createdAtMs)) + '</span>'
+    + (cost ? '<span class="st-glass" title="What OpenRouter reported for this picture">Cost ' + esc(cost) + '</span>' : '')
+    + '<span class="st-sp"></span>'
     + '<button class="st-glass' + (IM.recipe ? ' on' : '') + '" ' + SIMGV_A('recipe') + ' aria-pressed="' + !!IM.recipe + '">' + ic('info') + 'Recipe</button>'
     + '<button class="st-glass ic' + (item.pinned ? ' on' : '') + '" ' + SIMGV_A('pin') + ' title="' + (item.pinned ? 'Unpin' : 'Pin') + '" aria-pressed="' + !!item.pinned + '">' + ic('pin') + '</button>'
     + '<button class="st-glass' + (del ? ' danger' : ' ic') + '" ' + SIMGV_A('delete') + ' title="Delete from disk">' + ic('trash') + (del ? 'Delete for good?' : '') + '</button></div>'
@@ -367,7 +433,7 @@ function simgvResult(IM, item) {
     + (IM.recipe ? simgvRecipe(item) : '')
     + '<div class="st-actions">'
       + '<button ' + SIMGV_A('saveas') + '>' + ic('download') + 'Save as…</button>'
-      + '<button ' + SIMGV_A('reveal') + '>' + ic('folder') + 'Show in Finder</button>'
+      + '<button ' + SIMGV_A('reveal') + '>' + ic('folder') + esc(simgvReveal()) + '</button>'
       + '<button ' + SIMGV_A('copy') + '>' + ic('copy') + 'Copy</button>'
       + '<span class="sep"></span>'
       + '<button ' + SIMGV_A('usesource') + '>' + ic('swap') + 'Use as source</button>'
@@ -422,4 +488,4 @@ function simgvPage(IM) {
     + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine};
+if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine, simgvLocalHint, simgvPop, simgvDownload, simgvModelField, simgvFoot};

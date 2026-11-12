@@ -239,3 +239,174 @@ describe("orchestrator spend on turns outside runTurn (ATO-947)", () => {
     expect(budget.check("s", { usd: 2 }, meter.peekCostUsd("s"))).toBeUndefined();
   });
 });
+
+describe("FusionTurnBudget — count caps (ATO-1406)", () => {
+  it("refuses a round past maxRoundsPerTurn and tasks past maxTasksPerTurn", () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s");
+    expect(budget.checkCounts("s", { rounds: 2, tasks: 10 }, 4)).toBeUndefined();
+    budget.noteRound("s", 4);
+    budget.noteRound("s", 4);
+    expect(budget.checkCounts("s", { rounds: 2 }, 1)?.kind).toBe("rounds");
+    expect(budget.checkCounts("s", { tasks: 10 }, 3)?.kind).toBe("tasks");
+    expect(budget.checkCounts("s", { tasks: 10 }, 2)).toBeUndefined();
+    expect(budget.checkCounts("s", {}, 100)).toBeUndefined();
+  });
+
+  it("starts the counts and the trips from zero at each turn", () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s");
+    budget.noteRound("s", 5);
+    budget.noteTrip("s", {
+      signature: "blocker:tool-protocol",
+      blocker: true,
+      label: "x",
+      count: 1,
+      providerId: "codex",
+    });
+    budget.begin("s");
+    expect(budget.counts("s")).toEqual({ rounds: 0, tasks: 0 });
+    expect(budget.trips("s")).toEqual([]);
+  });
+});
+
+describe("failure breaker in fusion.delegate (ATO-1406)", () => {
+  const protocolFail = (d: { turns: number }) => async () => {
+    d.turns += 1;
+    throw new Error("invalid tool-call JSON: Unexpected token < in JSON at position 0");
+  };
+
+  it("stops the fan-out after the first blocker and says why", async () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s-parent");
+    const d = deps({ turnBudget: budget });
+    d.runTurn = protocolFail(d) as never;
+    const result = await buildFusionDelegateTool(d).run({ tasks: THREE }, ctx());
+    // One worker (width 1): the first fails on the protocol, the rest never start.
+    expect(d.turns).toBe(1);
+    const rows = result.details.tasks as Array<{ status: string; error?: string }>;
+    expect(rows.map((r) => r.status)).toEqual(["failed", "cancelled", "cancelled"]);
+    expect(rows[1]!.error).toMatch(/^not started: the fan-out was stopped because/);
+    expect(result.summary).toContain("tool-call protocol");
+    expect(result.summary).toMatch(/Do not re-send these tasks with the same approach/);
+  });
+
+  it("refuses the next round on the same leg in the same turn, and allows it next turn", async () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s-parent");
+    const d = deps({ turnBudget: budget });
+    d.runTurn = protocolFail(d) as never;
+    const tool = buildFusionDelegateTool(d);
+    await tool.run({ tasks: THREE }, ctx());
+    const again = await tool.run({ tasks: THREE }, ctx());
+    expect(d.turns).toBe(1);
+    expect(again.status).toBe("error");
+    expect(again.details.reason).toBe("failure-breaker");
+    expect(again.summary).toMatch(/fusion.delegate did not run: earlier this turn/);
+    budget.begin("s-parent");
+    await tool.run({ tasks: THREE }, ctx());
+    expect(d.turns).toBe(2);
+  });
+
+  it("stops after three identical ordinary failures, not before", async () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s-parent");
+    const d = deps({ turnBudget: budget });
+    d.runTurn = (async () => {
+      d.turns += 1;
+      throw new Error(`worker died after ${d.turns} steps`);
+    }) as never;
+    const four = [...THREE, { id: "t4", title: "T4", instructions: "do 4" }];
+    const result = await buildFusionDelegateTool(d).run({ tasks: four }, ctx());
+    expect(d.turns).toBe(3);
+    const rows = result.details.tasks as Array<{ status: string }>;
+    expect(rows.map((r) => r.status)).toEqual(["failed", "failed", "failed", "cancelled"]);
+    expect(result.summary).toContain("3 workers in a row failed with the same error");
+  });
+
+  it("keeps going when failures differ", async () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s-parent");
+    const d = deps({ turnBudget: budget });
+    const errors = ["disk full", "worker died", "network is down"];
+    d.runTurn = (async () => {
+      d.turns += 1;
+      throw new Error(errors[d.turns - 1] ?? "x");
+    }) as never;
+    await buildFusionDelegateTool(d).run({ tasks: THREE }, ctx());
+    expect(d.turns).toBe(3);
+  });
+});
+
+describe("round and task caps in fusion.delegate (ATO-1406)", () => {
+  it("refuses a round past maxRoundsPerTurn before anything runs", async () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s-parent");
+    const d = deps({
+      turnBudget: budget,
+      resolveRunMode: () => mode({ maxRoundsPerTurn: 2 }),
+    });
+    const tool = buildFusionDelegateTool(d);
+    await tool.run({ tasks: [THREE[0]!] }, ctx());
+    await tool.run({ tasks: [THREE[1]!] }, ctx());
+    const third = await tool.run({ tasks: [THREE[2]!] }, ctx());
+    expect(d.turns).toBe(2);
+    expect(third.status).toBe("error");
+    expect(third.details).toMatchObject({ reason: "turn-count", kind: "rounds" });
+    expect(third.summary).toMatch(/maxRoundsPerTurn allows \(2\)/);
+  });
+
+  it("refuses a round whose tasks would pass maxTasksPerTurn", async () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s-parent");
+    const d = deps({
+      turnBudget: budget,
+      resolveRunMode: () => mode({ maxTasksPerTurn: 4 }),
+    });
+    const tool = buildFusionDelegateTool(d);
+    await tool.run({ tasks: THREE }, ctx());
+    const next = await tool.run({ tasks: THREE }, ctx());
+    expect(d.turns).toBe(3);
+    expect(next.details).toMatchObject({ reason: "turn-count", kind: "tasks" });
+  });
+
+  it("names the round and the task count on the approval line", async () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s-parent");
+    const reasons: string[] = [];
+    const d = deps({
+      turnBudget: budget,
+      approvalRequired: true,
+      resolveRunMode: () => mode({ maxRoundsPerTurn: 6, maxTasksPerTurn: 24 }),
+      approvals: {
+        setSessionPolicy: () => {},
+        clearSessionPolicy: () => {},
+        fanoutScopes: new FanoutScopeRegistry(),
+        request: async (req: { reason?: string }) => {
+          reasons.push(req.reason ?? "");
+          return { approved: true };
+        },
+      } as never,
+    });
+    await buildFusionDelegateTool(d).run({ tasks: THREE }, ctx());
+    expect(reasons[0]).toContain("(round 1 of at most 6 this turn, 3 tasks of at most 24 in all)");
+  });
+});
+
+describe("auto-replan after a breaker trip (ATO-1406)", () => {
+  it("does not hold the planner to a replan once the breaker stopped the fan-out", async () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s-parent");
+    const d = deps({
+      turnBudget: budget,
+      resolveRunMode: () => mode({ autoReplan: 2 }),
+    });
+    d.runTurn = (async () => {
+      d.turns += 1;
+      throw new Error("invalid tool-call JSON: Unexpected token");
+    }) as never;
+    const result = await buildFusionDelegateTool(d).run({ tasks: THREE }, ctx());
+    expect(d.turns).toBe(1);
+    expect(result.details.replan).toBeUndefined();
+  });
+});

@@ -6,7 +6,9 @@ import {
   defaultBudget,
   effectiveReplyReserve,
   estimateTokens,
+  MIN_REPLY_AFTER_REASONING_TOKENS,
   minUsableContextWindow,
+  reasoningBudgetExceedsReplyReserve,
   AGENT_FIXED_PROMPT_TOKENS_COMPACT,
   SESSION_SECTIONS_BUDGET_SHARE,
   SESSION_SECTIONS_CAP_AUTO,
@@ -253,6 +255,61 @@ describe("effectiveReplyReserve", () => {
     expect(effectiveReplyReserve(16_384, 131_072)).toBe(16_384);
     expect(effectiveReplyReserve(96_000, 131_072)).toBe(65_536);
     expect(effectiveReplyReserve(8192, 32_768)).toBe(8192);
+  });
+
+  /**
+   * ATO-1295: a reasoning model thinks inside the reply reserve. On a 16k
+   * window the reserve was 4096, so a reasoning budget above about 3000
+   * left the tool call no room and it was cut.
+   */
+  describe("with a bounded reasoning budget", () => {
+    it("raises a 16k window's reserve to the budget plus room for the tool call", () => {
+      expect(MIN_REPLY_AFTER_REASONING_TOKENS).toBe(1024);
+      expect(effectiveReplyReserve(16_384, 16_384, 4000)).toBe(5024);
+      expect(effectiveReplyReserve(96_000, 16_384, 3500)).toBe(4524);
+    });
+
+    it("keeps the reserve when the budget already fits it", () => {
+      expect(effectiveReplyReserve(16_384, 16_384, 2000)).toBe(4096);
+      expect(effectiveReplyReserve(16_384, 32_768, 4000)).toBe(16_384);
+    });
+
+    it("never goes past half the window or the configured cap", () => {
+      expect(effectiveReplyReserve(16_384, 16_384, 12_000)).toBe(8192);
+      expect(effectiveReplyReserve(4500, 16_384, 4000)).toBe(4500);
+    });
+
+    it("changes nothing for an unbounded budget, an unknown window or the no-cap sentinel", () => {
+      expect(effectiveReplyReserve(16_384, 16_384, 0)).toBe(4096);
+      expect(effectiveReplyReserve(16_384, null, 4000)).toBe(16_384);
+      expect(effectiveReplyReserve(0, 16_384, 4000)).toBe(0);
+    });
+
+    it("flags a budget that still does not fit after the reserve was raised", () => {
+      expect(reasoningBudgetExceedsReplyReserve(16_384, 16_384, 4000)).toBe(false);
+      // Half of 16k is 8192: a 7500 budget plus 1024 cannot be reserved.
+      expect(reasoningBudgetExceedsReplyReserve(16_384, 16_384, 7500)).toBe(true);
+      // A configured cap below budget + room cuts the reply on any window.
+      expect(reasoningBudgetExceedsReplyReserve(4096, 131_072, 4000)).toBe(true);
+      expect(reasoningBudgetExceedsReplyReserve(16_384, 16_384, 0)).toBe(false);
+      expect(reasoningBudgetExceedsReplyReserve(0, 16_384, 4000)).toBe(false);
+      expect(reasoningBudgetExceedsReplyReserve(0, 16_384, 7500)).toBe(true);
+    });
+
+    it("lowers the conversation cap by the raised reserve", () => {
+      const base = {
+        configuredCap: 100_000,
+        autoFill: true,
+        contextWindow: 16_384,
+        stablePrefixTokens: 4000,
+        sessionTokens: 0,
+        worldSnapshotTokens: 0,
+        completionMaxTokens: 16_384,
+      };
+      const plain = computeEffectiveConversationCap(base);
+      const reasoning = computeEffectiveConversationCap({ ...base, reasoningBudgetTokens: 4000 });
+      expect(plain - reasoning).toBe(5024 - 4096);
+    });
   });
 });
 

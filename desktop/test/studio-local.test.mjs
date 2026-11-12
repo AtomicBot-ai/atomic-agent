@@ -316,3 +316,156 @@ test("a server that sends more than the catalog says is cut off", async () => {
     downloadModelFile({ url: "https://h/x", savePath: join(root, "f", "big.gguf"), bytes: 100, sha256: null }, { root, request: fakeServer().request, retries: 0 }),
     (err) => err.code === "SIZE_MISMATCH");
 });
+
+/* ------------------------------------------- engine unsupported (ATO-1395) */
+
+const unsupportedCore = () => ({
+  call: async (path) => {
+    if (path === "/diffusion/status") return { install: { state: "missing" }, model: { loaded: null } };
+    if (path.startsWith("/engine-builds/sd-cpp/catalog")) return { manifest: {}, host_backend_id: null, host_reason: "no supported GPU." };
+    throw new Error(`unexpected ${path}`);
+  },
+});
+
+test("a download is refused before any byte moves on a computer the image engine does not run on", async () => {
+  const { StudioLocalModels } = require("../out/main/studio-local-models.js");
+  const dataDir = join(base, "unsupported");
+  const events = [];
+  const lm = new StudioLocalModels({
+    dataDir: () => dataDir, ready: async () => unsupportedCore(), running: async () => null,
+    emit: (e) => events.push(e), request: async () => { throw new Error("offline"); },
+  });
+  await assert.rejects(lm.download("z-image:q4_k_m"), (e) => e.code === "ENGINE_UNSUPPORTED" && /cannot run local image models \(no supported GPU\)/.test(e.message));
+  assert.equal(events.filter((e) => e.type === "download").length, 0);
+  assert.equal(lm.state().downloads.length, 0);
+});
+
+test("the local catalog section asks for the engine when nothing has yet, so the page can say it is unsupported", async () => {
+  const { StudioMedia } = require("../out/main/studio-media.js");
+  const dataDir = join(base, "section");
+  const make = () => {
+    const studio = new StudioMedia({
+      dataDir: () => dataDir, stateDir: base, coreVersion: "0.0.0", openRouterKey: async () => null,
+      emitJob: () => {}, emitLocal: () => {},
+      request: async () => { throw new Error("offline"); },
+      coreRequest: () => { throw new Error("no Core download in this test"); },
+    });
+    studio.ready = async () => { throw new Error("no Core in this test"); };
+    return studio;
+  };
+  const studio = make();
+  let asked = 0;
+  studio.local.engineStatus = async () => { asked++; return { state: "unsupported", message: "This computer cannot run local image models. Use a cloud model instead.", backend: null, tag: null, progress: null, error: null }; };
+  const local = await studio["localSection"]("image");
+  assert.equal(asked, 1);
+  assert.equal(local.engine.state, "unsupported");
+  // Core unreachable: no engine, the families still listed.
+  const down = make();
+  down.local.engineStatus = async () => { throw new Error("Core is down"); };
+  const section = await down["localSection"]("image");
+  assert.equal(section.engine, null);
+  assert.ok(section.models.length > 0);
+});
+
+/* ------------------------------------- engine status not kept on a failed ask (ATO-1420) */
+
+test("an engine status Core could not answer is not kept: the next ask goes to Core again and Download still refuses", async () => {
+  const { StudioLocalModels } = require("../out/main/studio-local-models.js");
+  const dataDir = join(base, "engine-flaky");
+  let catalogAsks = 0;
+  const core = {
+    call: async (path) => {
+      if (path === "/diffusion/status") return { install: { state: "missing" }, model: { loaded: null } };
+      if (path.startsWith("/engine-builds/sd-cpp/catalog")) {
+        catalogAsks++;
+        if (catalogAsks === 1) throw new Error("Core's engine catalog timed out");
+        return { manifest: {}, host_backend_id: null, host_reason: "no supported GPU." };
+      }
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+  const events = [];
+  const lm = new StudioLocalModels({
+    dataDir: () => dataDir, ready: async () => core, running: async () => null,
+    emit: (e) => events.push(e), request: async () => { throw new Error("offline"); },
+  });
+  const first = await lm.engineStatus();
+  assert.equal(first.state, "missing", "the reply still has a shape the page reads");
+  assert.equal(lm.state().engine, null, "a guess is not kept");
+  assert.equal(events.filter((e) => e.type === "engine").length, 0);
+  // Download asks again and now learns this computer cannot run it.
+  await assert.rejects(lm.download("z-image:q4_k_m"), (e) => e.code === "ENGINE_UNSUPPORTED");
+  assert.equal(catalogAsks, 2);
+  assert.equal(lm.state().engine.state, "unsupported");
+  assert.deepEqual(events.filter((e) => e.type === "engine").map((e) => e.engine.state), ["unsupported"]);
+  assert.equal(events.filter((e) => e.type === "download").length, 0);
+});
+
+test("a definite engine answer is kept and not asked again by Download", async () => {
+  const { StudioLocalModels } = require("../out/main/studio-local-models.js");
+  let catalogAsks = 0;
+  const core = {
+    call: async (path) => {
+      if (path === "/diffusion/status") return { install: { state: "missing" }, model: { loaded: null } };
+      if (path.startsWith("/engine-builds/sd-cpp/catalog")) { catalogAsks++; return { manifest: {}, host_backend_id: null, host_reason: null }; }
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+  const lm = new StudioLocalModels({
+    dataDir: () => join(base, "engine-kept"), ready: async () => core, running: async () => null,
+    emit: () => {}, request: async () => { throw new Error("offline"); },
+  });
+  assert.equal((await lm.engineStatus()).state, "unsupported");
+  await assert.rejects(lm.download("z-image:q4_k_m"), (e) => e.code === "ENGINE_UNSUPPORTED");
+  assert.equal(catalogAsks, 1);
+});
+
+test("a catalog paint waits for a slow engine ask a moment only, shares it, and the late answer is pushed", async () => {
+  const { StudioLocalModels } = require("../out/main/studio-local-models.js");
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  let catalogAsks = 0;
+  const core = {
+    call: async (path) => {
+      if (path === "/diffusion/status") return { install: { state: "missing" }, model: { loaded: null } };
+      if (path.startsWith("/engine-builds/sd-cpp/catalog")) { catalogAsks++; await held; return { manifest: {}, host_backend_id: null, host_reason: null }; }
+      throw new Error(`unexpected ${path}`);
+    },
+  };
+  const events = [];
+  const lm = new StudioLocalModels({
+    dataDir: () => join(base, "engine-slow"), ready: async () => core, running: async () => null,
+    emit: (e) => events.push(e), request: async () => { throw new Error("offline"); },
+  });
+  const t0 = Date.now();
+  assert.equal(await lm.engineStatusSoon(50), null);
+  assert.equal(await lm.engineStatusSoon(50), null);
+  assert.ok(Date.now() - t0 < 2_000, "the paint did not wait for Core");
+  assert.equal(catalogAsks, 1, "overlapping paints share one ask");
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(events.filter((e) => e.type === "engine").map((e) => e.engine.state), ["unsupported"]);
+  assert.equal((await lm.engineStatusSoon(50)).state, "unsupported");
+  assert.equal(catalogAsks, 1);
+});
+
+test("the local catalog section shows without waiting for an engine ask that hangs", async () => {
+  const { StudioMedia, ENGINE_ASK_ON_PAINT_MS } = require("../out/main/studio-media.js");
+  const studio = new StudioMedia({
+    dataDir: () => join(base, "section-slow"), stateDir: base, coreVersion: "0.0.0", openRouterKey: async () => null,
+    emitJob: () => {}, emitLocal: () => {},
+    request: async () => { throw new Error("offline"); },
+    coreRequest: () => { throw new Error("no Core download in this test"); },
+  });
+  studio.ready = async () => { throw new Error("no Core in this test"); };
+  let asked = 0;
+  studio.local.engineStatus = () => { asked++; return new Promise(() => {}); };
+  const t0 = Date.now();
+  const section = await studio["localSection"]("image");
+  const took = Date.now() - t0;
+  assert.equal(asked, 1);
+  assert.equal(section.engine, null);
+  assert.ok(section.models.length > 0, "the families are listed");
+  assert.ok(ENGINE_ASK_ON_PAINT_MS <= 2_000);
+  assert.ok(took < ENGINE_ASK_ON_PAINT_MS + 1_500, `waited ${took} ms, not up to Core's 30 s`);
+});

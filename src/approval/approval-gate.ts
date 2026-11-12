@@ -9,6 +9,7 @@ import {
 } from "./approval-ledger.js";
 import {
   clampApprovalLevel,
+  formatApprovalCategory,
   isAutoApprovedAt,
   isGrantableCategory,
   MIN_APPROVAL_LEVEL,
@@ -26,6 +27,13 @@ import {
 } from "./approval-rules.js";
 import type { ApprovalRulesSource } from "./approval-rules-store.js";
 import { currentApprovalWorkdir } from "./approval-workdir.js";
+import {
+  isSiteScopedCategory,
+  parseSiteGrantKey,
+  siteGrantHost,
+  siteGrantKey,
+  type SiteGrant,
+} from "./site-grants.js";
 import {
   formatRiskNote,
   isRiskReviewEligible,
@@ -58,6 +66,17 @@ export interface ApprovalRequest {
    */
   commandShape?: string;
   /**
+   * The narrower unit a session grant (`s`, scope `category`) covers for
+   * this request, when the whole category would be too broad. Set by
+   * `os.http.request` to the target's origin (`https://api.example.com`,
+   * ATO-1182): "allow for this session" on a POST to one host must not
+   * silence a later POST to any other host. With a key, a category grant
+   * is remembered for (category, key) only, and only a grant with the
+   * same key answers the request; a key-less whole-category grant does
+   * not. Absent means the grant covers the whole category, as before.
+   */
+  grantKey?: string;
+  /**
    * Parsed argv of a simple shell command (`["git", "status", "-s"]`),
    * the unit a saved rule's `commandPrefix` matches. Set only by the shell
    * tool, and only where `commandShape` is: a pipeline or a compound line
@@ -72,6 +91,14 @@ export interface ApprovalRequest {
    * stricter; an allow rule still needs `commandArgv`.
    */
   commandSegments?: string[][];
+  /**
+   * The call runs a script no rule can read: a shell or interpreter with
+   * no script of its own, fed through a pipe, a redirect or a heredoc
+   * (`printf 'rm -rf x' | sh`, `shellRunsUnreadableScript`). Only a deny
+   * or ask command rule reads it, and it then matches whatever its
+   * prefix: what runs could be the very command the rule names.
+   */
+  commandUnreadable?: boolean;
   /**
    * The session's working directory, for rules scoped to a project. The
    * gate fills it from the dispatching tool call when the tool did not.
@@ -179,6 +206,7 @@ export type RuleCheck = Pick<
   | "category"
   | "commandArgv"
   | "commandSegments"
+  | "commandUnreadable"
   | "targetPaths"
   | "affectedResources"
   | "workdir"
@@ -206,6 +234,11 @@ export interface SessionApprovalPolicy {
 export interface SessionGrantsSnapshot {
   categories: readonly ApprovalCategory[];
   shapes: readonly string[];
+  /**
+   * Per-site browser grants (`site-grants.ts`, ATO-1181); present only
+   * when there is at least one.
+   */
+  sites?: readonly SiteGrant[];
 }
 
 export class ApprovalGateError extends Error {
@@ -288,7 +321,13 @@ export class ApprovalGate {
    */
   private readonly grantsBySession = new Map<
     string,
-    { categories: Set<ApprovalCategory>; shapes: Set<string> }
+    {
+      categories: Set<ApprovalCategory>;
+      shapes: Set<string>;
+      sites: Set<string>;
+      /** Category grants narrowed by `grantKey`, see `scopedGrantId`. */
+      scoped: Set<string>;
+    }
   >();
   /** Per-session prompt policies, keyed like the grants. See `SessionApprovalPolicy`. */
   private readonly policiesBySession = new Map<string, SessionApprovalPolicy>();
@@ -438,18 +477,23 @@ export class ApprovalGate {
   sessionGrants(sessionId?: string): SessionGrantsSnapshot {
     if (sessionId !== undefined) {
       const entry = this.grantsBySession.get(sessionId);
-      return {
-        categories: entry ? [...entry.categories] : [],
-        shapes: entry ? [...entry.shapes] : [],
-      };
+      return withSites(
+        {
+          categories: entry ? [...entry.categories] : [],
+          shapes: entry ? [...entry.shapes] : [],
+        },
+        entry?.sites ?? new Set(),
+      );
     }
     const categories = new Set<ApprovalCategory>();
     const shapes = new Set<string>();
+    const sites = new Set<string>();
     for (const entry of this.grantsBySession.values()) {
       for (const category of entry.categories) categories.add(category);
       for (const shape of entry.shapes) shapes.add(shape);
+      for (const site of entry.sites) sites.add(site);
     }
-    return { categories: [...categories], shapes: [...shapes] };
+    return withSites({ categories: [...categories], shapes: [...shapes] }, sites);
   }
 
   request(
@@ -483,7 +527,11 @@ export class ApprovalGate {
       return Promise.resolve({
         approvalId,
         approved: false,
-        reason: `blocked by your rule ${rule.rule.id}: ${describeRule(rule.rule)}`,
+        reason:
+          `blocked by your rule ${rule.rule.id}: ${describeRule(rule.rule)}` +
+          (request.commandUnreadable === true
+            ? " (the command runs a script fed to a shell or interpreter, which a rule cannot read)"
+            : ""),
         automatic: true,
       });
     }
@@ -629,6 +677,22 @@ export class ApprovalGate {
     if (!isGrantableCategory(request.category)) return null;
     const grants = this.grantsBySession.get(request.sessionId);
     if (!grants) return null;
+    // A browser submit / off-site grant covers the one site it was made
+    // on, never the whole category (ATO-1181).
+    if (isSiteScopedCategory(request.category)) {
+      const host = siteGrantHost(request);
+      return host !== null && grants.sites.has(siteGrantKey(request.category, host))
+        ? `auto-approved (session grant: ${host})`
+        : null;
+    }
+    if (request.grantKey !== undefined) {
+      // A keyed request (an HTTP call to one origin) is answered only by
+      // a grant for the same key, never by a whole-category grant.
+      if (grants.scoped.has(scopedGrantId(request.category, request.grantKey))) {
+        return `auto-approved (session grant: ${request.grantKey})`;
+      }
+      return null;
+    }
     if (grants.categories.has(request.category)) {
       return "auto-approved (session grant)";
     }
@@ -814,12 +878,38 @@ export class ApprovalGate {
 
   /**
    * Whether a request of `category` from `sessionId` would be put to a
-   * person now: neither the level nor a grant settles it, and no refuse
-   * policy answers for the session.
+   * person now, in the order `request` decides it: a saved deny or allow
+   * rule settles it without a person; an ask rule puts it to one
+   * whatever the level or a grant says; otherwise neither the level nor
+   * a grant settles it, and no refuse policy answers for the session.
+   * `check` names the call for the rules (tool, resources, command);
+   * without it only rules that name no tool or command can match.
+   * Asks nothing and records nothing (ATO-1270).
    */
-  wouldPrompt(sessionId: string, category: ApprovalCategory): boolean {
-    const probe = { approvalId: "", sessionId, tool: "", category, reason: "" };
-    if (this.autoApproval(probe) !== null) return false;
+  wouldPrompt(
+    sessionId: string,
+    category: ApprovalCategory,
+    check: Partial<Omit<RuleCheck, "sessionId" | "category">> = {},
+  ): boolean {
+    const workdir = check.workdir ?? currentApprovalWorkdir();
+    const rule = this.matchRule({
+      tool: "",
+      ...check,
+      sessionId,
+      category,
+      ...(workdir !== undefined ? { workdir } : {}),
+    });
+    if (rule?.decision === "deny" || rule?.decision === "allow") return false;
+    if (rule?.decision !== "ask") {
+      const probe = {
+        approvalId: "",
+        sessionId,
+        tool: check.tool ?? "",
+        category,
+        reason: "",
+      };
+      if (this.autoApproval(probe) !== null) return false;
+    }
     return this.policiesBySession.get(sessionId)?.onPrompt !== "refuse";
   }
 
@@ -871,8 +961,23 @@ export class ApprovalGate {
       this.saveAlwaysRule(request);
       return;
     }
+    if (scope === "category" && isSiteScopedCategory(request.category)) {
+      // Per site (ATO-1181); a request naming no single host stays a
+      // one-off, and `canGrantCategory` does not offer it.
+      const host = siteGrantHost(request);
+      if (host !== null) {
+        this.grantsForSession(request.sessionId).sites.add(
+          siteGrantKey(request.category, host),
+        );
+      }
+      return;
+    }
     const grants = this.grantsForSession(request.sessionId);
     if (scope === "category") {
+      if (request.grantKey !== undefined) {
+        grants.scoped.add(scopedGrantId(request.category, request.grantKey));
+        return;
+      }
       grants.categories.add(request.category);
       return;
     }
@@ -903,10 +1008,12 @@ export class ApprovalGate {
   private grantsForSession(sessionId: string): {
     categories: Set<ApprovalCategory>;
     shapes: Set<string>;
+    sites: Set<string>;
+    scoped: Set<string>;
   } {
     let entry = this.grantsBySession.get(sessionId);
     if (!entry) {
-      entry = { categories: new Set(), shapes: new Set() };
+      entry = { categories: new Set(), shapes: new Set(), sites: new Set(), scoped: new Set() };
       this.grantsBySession.set(sessionId, entry);
     }
     return entry;
@@ -988,13 +1095,44 @@ export class ApprovalGate {
 }
 
 /**
+ * The id a key-narrowed category grant is stored under. NUL cannot occur
+ * in a category name or an origin, so two pairs never collide.
+ */
+function scopedGrantId(category: ApprovalCategory, key: string): string {
+  return `${category}\u0000${key}`;
+}
+
+/**
  * Whether the approval prompt may offer `[s]` (grant the whole category
  * for the session) for this request. Everything is grantable except
  * `trust_config`. Shared by every surface (TUI modal, TUI keys, CLI
- * prompt) so the offer set never drifts between them.
+ * prompt) so the offer set never drifts between them. A browser submit
+ * or off-site request is granted per site (`site-grants.ts`), so `[s]`
+ * is offered only when it names exactly one host.
  */
 export function canGrantCategory(request: ApprovalRequest): boolean {
-  return isGrantableCategory(request.category);
+  if (!isGrantableCategory(request.category)) return false;
+  if (isSiteScopedCategory(request.category)) return siteGrantHost(request) !== null;
+  return true;
+}
+
+/**
+ * What `[s]` grants, in the words a prompt shows after "allow":
+ * `browser commit on example.com` for a per-site grant, the category's
+ * label otherwise.
+ */
+export function describeCategoryGrant(request: ApprovalRequest): string {
+  const label = formatApprovalCategory(request.category);
+  const host = siteGrantHost(request);
+  return host !== null ? `${label} on ${host}` : label;
+}
+
+function withSites(
+  snapshot: { categories: ApprovalCategory[]; shapes: string[] },
+  sites: ReadonlySet<string>,
+): SessionGrantsSnapshot {
+  if (sites.size === 0) return snapshot;
+  return { ...snapshot, sites: [...sites].map(parseSiteGrantKey) };
 }
 
 /**

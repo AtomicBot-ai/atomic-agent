@@ -79,18 +79,6 @@ function plgParseAct(what) {
   return j === -1 ? {verb, name: rest || null, part: null} : {verb, name: rest.slice(0, j), part: rest.slice(j + 1)};
 }
 
-/* Local and key-reading MCP servers start with the agent and are never re-checked,
-   so "Stop its code" reaches them only at the next agent start (hooks and skill
-   scripts re-read the record and stop at once). True when this plugin has one in use. */
-function plgStopCodeNeedsRestart(p) {
-  return !!p && (p.parts || []).some((pt) => pt.kind === 'mcp' && pt.runsCode && pt.active);
-}
-
-/* What the screen says after "Stop its code" when servers are still up. */
-function plgStopCodeNotice(name) {
-  return name + '\'s hooks and scripts are off. Its MCP servers keep running until you restart the agent.';
-}
-
 /* ---- data ---- */
 
 function pluginsTabEntered() { pluginsRefresh(); }
@@ -124,7 +112,7 @@ function pluginsRefresh() {
 
 function plgFind(name) { return (PLG.rows || []).find((p) => p.name === name) || null; }
 
-/* One `atag plugin …` write, then a re-read. MCP changes need the agent restarted, so that message carries the button; `text` replaces the agent's own line. */
+/* One `atag plugin …` write, then a re-read. Starting MCP servers needs the agent restarted, so that message carries the button; stopping them is live (the agent watches plugins.json). `text` replaces the agent's own line. */
 function plgWrite(name, call, restart, text) {
   if (PLG.busy) return Promise.resolve();
   PLG.busy = name; PLG.msg = null; PLG.err = null;
@@ -143,20 +131,18 @@ function pluginsAct(what) {
   if (verb === 'refresh') { pluginsRefresh(); return; }
   if (verb === 'expand' && p) { PLG.open[p.name] = !PLG.open[p.name]; PLG.cursor = PLG.rows.indexOf(p); render(); return; }
   if (verb === 'toggle' && p) {
-    plgWrite(p.name, () => BR.pluginSet(p.name, p.enabled ? 'disable' : 'enable'), p.counts && p.counts.mcpServers > 0);
+    plgWrite(p.name, () => BR.pluginSet(p.name, p.enabled ? 'disable' : 'enable'), !p.enabled && p.counts && p.counts.mcpServers > 0);
     return;
   }
   if (verb === 'part' && p && part) {
     const pt = (p.parts || []).find((x) => x.id === part);
-    if (pt) plgWrite(p.name, () => BR.pluginSet(p.name, pt.enabled ? 'disable' : 'enable', pt.id), pt.kind === 'mcp');
+    if (pt) plgWrite(p.name, () => BR.pluginSet(p.name, pt.enabled ? 'disable' : 'enable', pt.id), !pt.enabled && pt.kind === 'mcp');
     return;
   }
   if (verb === 'code' && p && p.runsCode) {
     // Stopping code needs no question; allowing it is asked first, listing what would run.
-    if (p.trust === 'code-allowed') {
-      const restart = plgStopCodeNeedsRestart(p);
-      plgWrite(p.name, () => BR.pluginSet(p.name, 'deny-code'), restart, restart ? plgStopCodeNotice(p.name) : undefined);
-    }
+    // The running agent stops the plugin's MCP servers itself (ATO-1407): no restart.
+    if (p.trust === 'code-allowed') plgWrite(p.name, () => BR.pluginSet(p.name, 'deny-code'), false);
     else { PLG.codeConfirm = {name: p.name, parts: p.codeParts || [], error: null, submitting: false}; render(); }
     return;
   }
@@ -304,4 +290,4 @@ function pluginsTab() {
   return '<div class="set-pane set-plugins">' + bar + err + msg + body + overlay + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct, plgStopCodeNeedsRestart, plgStopCodeNotice};
+if (typeof module !== 'undefined') module.exports = {plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct};

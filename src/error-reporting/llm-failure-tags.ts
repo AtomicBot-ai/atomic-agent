@@ -36,6 +36,26 @@ export interface LlmFailureContext {
    * Probed for refusals on the managed engine only.
    */
   engineLiveness?: string;
+  /**
+   * Why `engineLiveness` reads what it reads (`ManagedEngineLivenessReason`:
+   * `lock_held`, `pid_unreadable`, `pid_dead`, ...), and the engine
+   * operation lock as read (`CoreOperationLockState`). ATO-1275: tells a
+   * real start under way from a lock its owner left behind.
+   */
+  engineLivenessReason?: string;
+  engineLock?: string;
+  /**
+   * The managed engine's port answered 401 while our engine's process
+   * was not there (`LocalPortTakenError`, ATO-1277): another program
+   * holds the port. Sent as `port_holder: other_process`.
+   */
+  portHeldByOther?: boolean;
+  /**
+   * The managed engine's fault in its current run, read from its log by
+   * fixed strings (ATO-1279): `out_of_memory` / `server_crashed` /
+   * `decode_failed` / `none` / `unknown`. Sent as `local_fault`.
+   */
+  localFault?: string;
 }
 
 /**
@@ -51,6 +71,38 @@ const KNOWN_PROVIDER_IDS: ReadonlySet<string> = new Set([
 ]);
 const LOCAL_ENGINES: ReadonlySet<string> = new Set(["atomic-core", "llama-server", "external"]);
 const DAEMON_STATES: ReadonlySet<string> = new Set(["alive", "dead", "no_pid", "unknown"]);
+const ENGINE_LIVENESS_REASONS: ReadonlySet<string> = new Set([
+  "pid_alive",
+  "pid_foreign",
+  "pid_dead",
+  "pid_before_boot",
+  "no_pid_file",
+  "pid_empty",
+  "lock_held",
+  "lock_held_self",
+  "lock_writing",
+  "lock_unreadable",
+  "lock_probe_failed",
+  "pid_unreadable",
+]);
+const ENGINE_LOCK_STATES: ReadonlySet<string> = new Set([
+  "free",
+  "held",
+  "held_self",
+  "writing",
+  "unreadable",
+  "stale_dead_owner",
+  "stale_before_boot",
+  "stale_no_owner",
+  "probe_failed",
+]);
+const LOCAL_FAULTS: ReadonlySet<string> = new Set([
+  "out_of_memory",
+  "server_crashed",
+  "decode_failed",
+  "none",
+  "unknown",
+]);
 const ENGINE_ALIVE: ReadonlyMap<string, LocalEngineAlive> = new Map([
   ["alive", "yes"],
   ["dead", "no"],
@@ -162,7 +214,13 @@ function safeCount(value: number): string {
  * the URL, its host and its port number are never tags themselves.
  * A refused connection adds `local_engine_alive` (`yes` / `no` /
  * `unknown`) and `refused_wait_ms` (a fixed bucket), so the ATO-421
- * clusters split into "crashed", "never started" and "external" (ATO-769).
+ * clusters split into "crashed", "never started" and "external" (ATO-769),
+ * and, for the managed engine, `engine_liveness`, `engine_liveness_reason`
+ * and `engine_lock`: why the wait judged the process as it did (ATO-1275).
+ * A 401 on the managed port with our engine not running adds
+ * `port_holder: other_process` (ATO-1277).
+ * A managed engine's failure adds `local_fault`, a fixed word read from
+ * its log (ATO-1279).
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -184,10 +242,14 @@ export function sanitizeLlmFailureTags(
   if (context.daemonState !== undefined && tags.local_engine !== "external") {
     tags.daemon_state = fromVocabulary(context.daemonState, DAEMON_STATES);
   }
+  if (context.localFault !== undefined && tags.local_engine !== "external") {
+    tags.local_fault = fromVocabulary(context.localFault, LOCAL_FAULTS);
+  }
   if (context.requestUrl !== undefined) {
     tags.request_route = classifyRequestRoute(context.requestUrl);
     tags.port_class = classifyPortClass(context.requestUrl, context.managedPorts);
   }
+  if (context.portHeldByOther === true) tags.port_holder = "other_process";
   if (context.connectionRefused === true) {
     tags.local_engine ??= UNKNOWN;
     // An external server is the operator's process: we never look at it.
@@ -196,6 +258,15 @@ export function sanitizeLlmFailureTags(
         ? UNKNOWN
         : (ENGINE_ALIVE.get(context.engineLiveness) ?? UNKNOWN);
     tags.refused_wait_ms = bucketRefusedWait(context.outageWaitedMs ?? 0);
+    if (tags.local_engine !== "external" && context.engineLiveness !== undefined) {
+      tags.engine_liveness = fromVocabulary(context.engineLiveness, DAEMON_STATES);
+      if (context.engineLivenessReason !== undefined) {
+        tags.engine_liveness_reason = fromVocabulary(context.engineLivenessReason, ENGINE_LIVENESS_REASONS);
+      }
+      if (context.engineLock !== undefined) {
+        tags.engine_lock = fromVocabulary(context.engineLock, ENGINE_LOCK_STATES);
+      }
+    }
   }
   return Object.keys(tags).length > 0 ? tags : undefined;
 }

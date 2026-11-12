@@ -11,7 +11,8 @@ import type { RunTurnResult } from "../agent/agent-loop.js";
 import { TaskRunner } from "./task-runner.js";
 import type { TaskRunnerRuntime } from "./task-runner.js";
 import type { TaskReport } from "./task-report.js";
-import { TASK_INTERRUPTED_ERROR, TaskStore } from "./task-store.js";
+import { TASK_INTERRUPTED_ERROR, TASK_OWNER_GONE_ERROR, TaskStore } from "./task-store.js";
+import { planTaskResume } from "./task-resume.js";
 
 interface RuntimeCall {
   sessionId: string;
@@ -104,6 +105,59 @@ describe("TaskRunner", () => {
     expect(calls).toEqual([
       { sessionId: session.id, userMessage: "hello", origin: "scheduler" },
     ]);
+  });
+
+  it("blocks a task started under another approval level instead of running it (ATO-1324)", async () => {
+    const { runtime, calls } = fakeRuntime();
+    const level = 5;
+    const runner = new TaskRunner({
+      store,
+      runtime,
+      sessionLoader: fakeSessionLoader(session),
+      defaultMaxSteps: 5,
+      backoff: { initialMs: 1, maxMs: 10 },
+      enabled: true,
+      runOnCreate: false,
+      sleep: async () => undefined,
+      approvalLevel: () => level,
+    });
+    const t = store.create({
+      sessionId: session.id,
+      userMessage: "overnight work",
+      origin: "cli",
+      maxAttempts: 1,
+      approvalLevel: 2,
+    });
+    expect(store.get(t.id)?.approvalLevel).toBe(2);
+    const blocked = await runner.runOne(t.id);
+    expect(blocked?.status).toBe("blocked");
+    expect(blocked?.lastError).toMatch(/^approval_level_mismatch: started at approval level 2, this agent runs at 5/);
+    expect(calls).toEqual([]);
+  });
+
+  it("runs a task at the approval level it was started under (ATO-1324)", async () => {
+    const { runtime, calls } = fakeRuntime();
+    const runner = new TaskRunner({
+      store,
+      runtime,
+      sessionLoader: fakeSessionLoader(session),
+      defaultMaxSteps: 5,
+      backoff: { initialMs: 1, maxMs: 10 },
+      enabled: true,
+      runOnCreate: false,
+      sleep: async () => undefined,
+      approvalLevel: () => 2,
+    });
+    const t = store.create({
+      sessionId: session.id,
+      userMessage: "overnight work",
+      origin: "cli",
+      maxAttempts: 1,
+      approvalLevel: 2,
+    });
+    const final = await runner.runOne(t.id);
+    expect(final?.status).toBe("completed");
+    expect(calls).toHaveLength(1);
   });
 
   it("create() refuses an interval under tasks.minIntervalMs and accepts one at it (#548)", () => {
@@ -1145,6 +1199,44 @@ describe("TaskRunner", () => {
       expect(await runner.drainPending()).toMatchObject({ drained: 0 });
       expect(turn.entered()).toBe(1);
       expect(store.get(id)?.status).toBe("pending");
+    });
+
+    it("stop({ crashed }) puts an interrupted one-shot task back as a crash, so its resume is counted (ATO-1419)", async () => {
+      const turn = waitingRuntime();
+      const runner = makeRunner(turn.runtime);
+      const id = oneShotTask();
+      const running = runner.runOne(id);
+      await until(() => turn.entered() === 1);
+
+      // The memory guard's exit (code 86): the agent ends itself as unhealthy.
+      await runner.stop(1_000, { crashed: true });
+      const after = await running;
+      expect(after).toMatchObject({
+        status: "pending",
+        scheduledFor: null,
+        lastError: TASK_OWNER_GONE_ERROR,
+      });
+      // That is what makes the next boot spend a resume on it, and give up
+      // once agent.task.maxResumes is used, instead of resuming for ever.
+      const progress = { resumes: 2, stepsDone: 4, options: { taskId: id } };
+      const policy = { enabled: true, maxResumes: 2 };
+      expect(planTaskResume(after!, progress as never, policy).kind).toBe("give_up");
+      const clean = { ...after!, lastError: TASK_INTERRUPTED_ERROR };
+      expect(planTaskResume(clean, progress as never, policy).kind).toBe("resume");
+    });
+
+    it("stop({ crashed }) still rearms a recurring task for its next firing", async () => {
+      const turn = waitingRuntime();
+      const runner = makeRunner(turn.runtime);
+      const id = recurringTask();
+      const running = runner.runOne(id);
+      await until(() => turn.entered() === 1);
+
+      await runner.stop(1_000, { crashed: true });
+      expect(await running).toMatchObject({
+        status: "pending",
+        lastError: TASK_INTERRUPTED_ERROR,
+      });
     });
 
     it("stop() gives up after its grace on a turn that ignores its signal", async () => {

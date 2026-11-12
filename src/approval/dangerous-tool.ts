@@ -22,10 +22,14 @@ export interface ApprovalPrompt {
   affectedResources?: string[];
   /** Command binary (argv[0]) for shell requests; unit of a shape grant. */
   commandShape?: string;
+  /** What a session grant on this request covers; see `ApprovalRequest.grantKey`. */
+  grantKey?: string;
   /** Parsed argv of a simple shell command; see `ApprovalRequest.commandArgv`. */
   commandArgv?: readonly string[];
   /** Every simple command the call would run; see `ApprovalRequest.commandSegments`. */
   commandSegments?: readonly (readonly string[])[];
+  /** A script fed to a shell no rule can read; see `ApprovalRequest.commandUnreadable`. */
+  commandUnreadable?: boolean;
   /** Session working directory; see `ApprovalRequest.workdir`. */
   workdir?: string;
   /**
@@ -151,6 +155,19 @@ export function savedRuleOverridesScope(
 }
 
 /**
+ * True when a saved deny rule covers this call. A command the shell
+ * guard deems safe never asks, so without this a "never run `echo`"
+ * rule would not stop `echo hi` (ATO-1332): such a call goes to the
+ * gate, which refuses it before any level, grant or prompt.
+ */
+export function savedRuleDenies(
+  approvals: ApprovalGate,
+  check: RuleCheck,
+): boolean {
+  return (approvals.ruleDecisionFor?.(check) ?? null) === "deny";
+}
+
+/**
  * Shared helper used by dangerous tools (shell.run, fs.write,
  * skill.run_script, …). Centralising it ensures every tool sends the same
  * approval payload shape and honours the `approvalRequired` override in a
@@ -175,12 +192,14 @@ export async function requireApproval(
       ...(prompt.commandShape !== undefined
         ? { commandShape: prompt.commandShape }
         : {}),
+      ...(prompt.grantKey !== undefined ? { grantKey: prompt.grantKey } : {}),
       ...(prompt.commandArgv !== undefined
         ? { commandArgv: [...prompt.commandArgv] }
         : {}),
       ...(prompt.commandSegments !== undefined
         ? { commandSegments: prompt.commandSegments.map((words) => [...words]) }
         : {}),
+      ...(prompt.commandUnreadable === true ? { commandUnreadable: true } : {}),
       ...(prompt.workdir !== undefined ? { workdir: prompt.workdir } : {}),
       ...(prompt.redirectablePath !== undefined
         ? { redirectablePath: prompt.redirectablePath }

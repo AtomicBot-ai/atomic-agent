@@ -27,10 +27,14 @@ import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
+import type { ToolDisabledEvent } from "./tool-disabled-notice.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
-/** See `AgentLoopDependencies.localEngineState`. */
-export type LocalEngineState = "alive" | "dead" | "unknown";
+/**
+ * See `AgentLoopDependencies.localEngineState`. `atomic_chat_app`: the link
+ * is served by the Atomic Chat desktop app, a process nothing here starts.
+ */
+export type LocalEngineState = "alive" | "dead" | "unknown" | "atomic_chat_app";
 
 /**
  * The answers to "the local model ran out of memory" (ATO-334): restart
@@ -118,6 +122,12 @@ export interface AgentLoopDependencies {
    * for the rest of the turn, and a new turn or a steer is a new answer.
    */
   forgetDeclinedApprovals?: (sessionId: string) => void;
+  /**
+   * Deny every approval `sessionId` is waiting on, as nobody's decision
+   * (`ApprovalGate.denyPendingForSession`). The loop calls it once a
+   * task's time limit passes during a step (ATO-1367).
+   */
+  denyPendingApprovals?: (sessionId: string, reason: string) => void;
   slotManager: SlotManager;
   grammar: string;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;
@@ -176,7 +186,11 @@ export interface AgentLoopDependencies {
    * certainly gone (pid dead or none recorded, no start or load under way),
    * so the turn ends with `LocalEngineDownError` after a short restart
    * grace (`LOCAL_ENGINE_RESTART_GRACE_MS`) instead of waiting out the
-   * whole budget. `alive` and `unknown` keep the wait. `providerId` is the
+   * whole budget. `atomic_chat_app`: that link is the Atomic Chat app's
+   * server (ATO-1278), so a refused connection (`ECONNREFUSED`) that lasts
+   * through a short start grace (`ATOMIC_CHAT_START_GRACE_MS`) ends the
+   * turn with `AtomicChatNotRunningError`; any other failure there keeps
+   * the wait. `alive` and `unknown` keep the wait. `providerId` is the
    * failing link (`readFailingLink`), `undefined` when the error does not
    * say. Absent (embedders, tests) means `unknown` for every link.
    */
@@ -808,6 +822,20 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * A provider time limit ended a long reply to step `stepIndex` and
+       * the step is being retried with a notice asking for a shorter
+       * one. Not an outage: the provider is answering. `attempt` counts
+       * within the step, `budget` is the ceiling after which the turn
+       * fails.
+       */
+      type: "reply_time_limit_retried";
+      stepIndex: number;
+      attempt: number;
+      budget: number;
+      reason: string;
+    }
+  | {
+      /**
        * The completion for step `stepIndex` came back with nothing in
        * any channel, and the turn is spending another step on it rather
        * than ending: the next prompt carries a `### notice` saying the
@@ -925,6 +953,11 @@ export type AgentLoopEvent =
   | ProfileClippedEvent
   /** The packer left older history out of the prompt (ATO-295). */
   | HistoryTrimmedEvent
+  /**
+   * A tool was left out of this turn's requests: the server refused its
+   * JSON schema (ATO-1417). Once per tool per turn.
+   */
+  | ToolDisabledEvent
   | { type: "step_started"; stepIndex: number }
   | {
       type: "step_finished";

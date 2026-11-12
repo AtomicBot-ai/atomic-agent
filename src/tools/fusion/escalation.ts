@@ -40,6 +40,11 @@ export type EscalationComplete = (input: {
   prompt: string;
   maxOutputTokens: number;
   signal: AbortSignal;
+  /**
+   * The session that delegated, so the call counts in its spend readout
+   * (ATO-1388). Set by `fusion.delegate`, never by the callers below it.
+   */
+  sessionId?: string;
 }) => Promise<{ content: string; usage?: CompletionUsage }>;
 
 export function renderAdvisorPrompt(input: {

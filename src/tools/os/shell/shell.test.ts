@@ -263,7 +263,7 @@ describe.skipIf(process.platform === "win32")(
         },
       );
       expect(previews).toEqual([
-        "bash -c 'echo '\\''ux tour'\\'' > tour-note.txt'",
+        "bash -c \"echo 'ux tour' > tour-note.txt\"",
       ]);
       expect(result.status).toBe("ok");
       expect(await readFile(join(dir, "tour-note.txt"), "utf8")).toBe("ux tour\n");

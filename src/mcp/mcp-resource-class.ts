@@ -11,7 +11,9 @@
  *     forbidden inside multi-call batches and routed through the
  *     approval gate by `mcp-tool-adapter.ts` (tools whose
  *     discovery-time `annotations.readOnlyHint` is exactly `true`
- *     skip the gate; anything else fails closed to gated). This is
+ *     skip the gate, on stdio servers and for the remote tools named
+ *     in `trustedReadOnlyTools` only, ATO-1178; anything else fails
+ *     closed to gated). This is
  *     the safe default for arbitrary third-party servers.
  *   - `pure_read` — opt-in for servers the operator trusts never to
  *     mutate anything. These tools fan out parallel-safe alongside

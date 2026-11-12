@@ -1,9 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
+import { getUserConfigPath } from "../config/config-file.js";
+import { setConfigNoticeSink } from "../config/config-primitives.js";
+import { USER_CONFIG_DEFAULTS, USER_CONFIG_VERSION } from "../config/config-schema.js";
 import { resetConfigCache } from "../config/index.js";
 import { modelsEngineCommand } from "./models-engine.js";
 
@@ -48,4 +51,25 @@ it("switches to llama.cpp and back without any opt-in", async () => {
   resetConfigCache();
   expect(await choose("atomic-core")).toBe(0);
   expect(await status()).toMatchObject({ engine: "atomic-core" });
+});
+
+/* ATO-1265: a newer build's engine reads here as atomic-core; `models engine atomic-core` is still a choice. */
+it("writes atomic-core over a newer build's engine when it is picked here", async () => {
+  const path = getUserConfigPath(stateDir);
+  const tree = structuredClone(USER_CONFIG_DEFAULTS) as Record<string, any>;
+  tree.version = USER_CONFIG_VERSION;
+  tree.localModels.managed = { ...tree.localModels.managed, engine: "atomic-core-next", backendVariant: "future-gpu" };
+  writeFileSync(path, JSON.stringify(tree));
+  vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+  setConfigNoticeSink(() => {});
+  try {
+    resetConfigCache();
+    expect(await status()).toMatchObject({ engine: "atomic-core" });
+    expect(await choose("atomic-core")).toBe(0);
+    const managed = (JSON.parse(readFileSync(path, "utf8")) as { localModels: { managed: Record<string, unknown> } }).localModels.managed;
+    expect(managed.engine).toBe("atomic-core");
+    expect(managed.backendVariant).toBe("future-gpu");
+  } finally {
+    setConfigNoticeSink(null);
+  }
 });

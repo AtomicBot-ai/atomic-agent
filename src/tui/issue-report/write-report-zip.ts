@@ -8,12 +8,13 @@
  * still has a home they can drag into the issue by hand.
  */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import JSZip from "jszip";
 
 import { traceFilePath } from "../../tracing/trace/trace-sink.js";
 import { debugBundleTimestamp } from "../debug-bundle/build-snapshot.js";
+import { writePrivateFile } from "../debug-bundle/write-private-file.js";
 import type { IssueReport } from "./build-issue-report.js";
 import { renderSection, type ReportSection } from "./issue-body.js";
 import type { RedactionContext } from "./redact.js";
@@ -129,7 +130,7 @@ export async function writeReportZip(
     options.outDir,
     reportZipFileName(report.level, options.now),
   );
-  await writeFile(path, payload);
+  await writePrivateFile(path, payload);
   return { path, bytes: payload.byteLength, traceSections, traces };
 }
 

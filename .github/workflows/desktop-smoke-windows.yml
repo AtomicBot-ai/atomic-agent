@@ -38,10 +38,18 @@ on:
   pull_request:
     branches:
       - rel/xp-build
+    # Everything that goes into the app the smoke launches. Workflow files are
+    # all listed, not just this one: a PR that only edits desktop.yml or
+    # release.yml (like #841) changes how the app is built and shipped, and
+    # used to get no checks at all (ATO-916).
     paths:
       - "desktop/**"
       - "src/**"
-      - ".github/workflows/desktop-smoke-windows.yml"
+      - "scripts/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig*.json"
+      - ".github/workflows/**"
 
 concurrency:
   group: desktop-smoke-windows-${{ github.event.pull_request.number || github.ref }}-${{ inputs.tasks || 'all' }}

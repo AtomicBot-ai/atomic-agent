@@ -129,3 +129,117 @@ test('ATO-756: Check again is a wizard verb in first run too, and Enter cannot s
   const sub = slice('async function wizSubscriptionStep(k)', 'async function wizNext()');
   assert.match(sub, /if \(!wizSubReady\(k\)\) \{ render\(\); return; \}/);
 });
+
+/* ATO-845: signed out, the main button is "Sign in with Claude / ChatGPT":
+   it opens the terminal (main does), the step polls the login file and moves
+   on through act('wiz:next') once signed in. The command with Copy stays as
+   the small fallback. */
+function loadLogin(statusSeq, loginResult) {
+  const events = [];
+  const acts = [];
+  const copied = [];
+  const intervals = [];
+  const cleared = [];
+  const logins = [];
+  let i = 0;
+  const ctx = createContext({
+    THIS_MACHINE: 'this Mac',
+    WIZ: { row: null, phase: 'configure', stepping: false },
+    OB: { open: false },
+    navigator: { platform: 'MacIntel' },
+    render() {},
+    act: (a) => acts.push(a),
+    copyText: (t) => { copied.push(t); return Promise.resolve(true); },
+    setInterval: (fn) => { intervals.push(fn); return intervals.length; },
+    clearInterval: (h) => { cleared.push(h); },
+    Date,
+    ANX: {
+      subscriptionLoginClicked: (cli, ob) => events.push(['clicked', cli, ob]),
+      subscriptionTerminalOpened: (cli, ob, opened, detail) => events.push(['terminal', cli, opened, detail]),
+      subscriptionLoginSucceeded: (cli, ob, s) => events.push(['succeeded', cli, typeof s]),
+    },
+    BR: {
+      providerKeyPresent: () => Promise.resolve({ ok: true, present: false }),
+      subscriptionStatus: (cli) => Promise.resolve({ ok: true, status: { cli, ...statusSeq[Math.min(i++, statusSeq.length - 1)] } }),
+      subscriptionLogin: () => { logins.push(1); return Promise.resolve(loginResult); },
+    },
+  });
+  runInContext(slice('const KIND_ROWS = [', '];') + '];'
+    + slice('function wizService(row)', '\n') + '\n'
+    + slice('const WIZ_BILLING = new Map();', 'async function wizSubscriptionStep(k)')
+    + ';this.rows = KIND_ROWS; this.lines = wizSubscriptionLines; this.needsLogin = wizSubNeedsLogin; this.loginButton = wizSubLoginButton;'
+    + 'this.login = wizSubLogin; this.copy = wizSubCopy; this.lineHTML = wizSubLineHTML; this.esc = (s) => String(s);', ctx);
+  ctx.esc = (s) => String(s);
+  return { ctx, events, acts, copied, intervals, cleared, logins };
+}
+
+test('ATO-845: signed out, the main button says Sign in with the plan, and Copy is the fallback', async () => {
+  const out = { installed: true, binPath: null, signedIn: false };
+  const { ctx, copied } = loadLogin([out], { ok: true, terminal: 'terminal_app' });
+  const [claude, codex] = [ctx.rows[3], ctx.rows[4]];
+  ctx.WIZ.row = codex;
+  ctx.lines(claude); ctx.lines(codex); await tick();
+  assert.equal(ctx.needsLogin(codex), true);
+  assert.equal(ctx.loginButton(claude), 'Sign in with Claude');
+  assert.equal(ctx.loginButton(codex), 'Sign in with ChatGPT');
+  const lines = plain(ctx.lines(codex));
+  assert.match(lines[1].text, /^Press Sign in with ChatGPT\. A Terminal window opens/);
+  const code = lines.filter((l) => l.code);
+  assert.deepEqual(code.map((l) => [l.text, l.copy]), [['codex login', true]]);
+  assert.ok(lines.find((l) => l.small && /did not open/.test(l.text)), 'the fallback line is small');
+  ctx.copy(codex);
+  assert.deepEqual(copied, ['codex login']);
+});
+
+test('ATO-845: Sign in opens the terminal, polls, and moves on once signed in', async () => {
+  const out = { installed: true, binPath: null, signedIn: false };
+  const inn = { installed: true, binPath: null, signedIn: true };
+  const { ctx, events, acts, intervals } = loadLogin([out, out, inn], { ok: true, terminal: 'terminal_app' });
+  const codex = ctx.rows[4];
+  ctx.WIZ.row = codex;
+  ctx.lines(codex); await tick();
+  await ctx.login(codex);
+  assert.deepEqual(plain(events), [['clicked', 'codex', false], ['terminal', 'codex', true, 'terminal_app']]);
+  assert.equal(intervals.length, 1, 'one poll started');
+  assert.match(plain(ctx.lines(codex))[1].text, /window opened with the sign-in running/);
+  intervals[0](); await tick();
+  assert.deepEqual(acts, [], 'still signed out: stays');
+  intervals[0](); await tick();
+  assert.deepEqual(plain(events.at(-1)), ['succeeded', 'codex', 'number']);
+  assert.deepEqual(acts, ['wiz:next'], 'moved on through the router');
+});
+
+test('ATO-845: a terminal that did not open says so and still polls', async () => {
+  const out = { installed: true, binPath: null, signedIn: false };
+  const { ctx, events, intervals } = loadLogin([out], { ok: false, reason: 'no_terminal' });
+  const codex = ctx.rows[4];
+  ctx.WIZ.row = codex;
+  ctx.lines(codex); await tick();
+  await ctx.login(codex);
+  assert.deepEqual(plain(events.at(-1)), ['terminal', 'codex', false, 'no_terminal']);
+  assert.equal(intervals.length, 1);
+  const lines = plain(ctx.lines(codex));
+  assert.ok(lines.find((l) => l.warn && /Could not open Terminal/.test(l.text)));
+});
+
+test('ATO-845: the step draws Sign in for signed out and the old button otherwise, in both places', () => {
+  assert.equal((renderer.match(/data-act="wiz:subLogin"/g) || []).length, 2);
+  assert.match(renderer, /a === 'wiz:subRecheck' \|\| a === 'wiz:subLogin' \|\| a === 'wiz:subCopy'/);
+  assert.match(renderer, /if \(a === 'wiz:subLogin'\) \{ wizSubLogin\(WIZ\.row\); return; \}/);
+});
+
+test('ATO-845: a double click opens one terminal and leaves one poll running', async () => {
+  const out = { installed: true, binPath: null, signedIn: false };
+  const { ctx, intervals, cleared, logins } = loadLogin([out], { ok: true, terminal: 'terminal_app' });
+  const codex = ctx.rows[4];
+  ctx.WIZ.row = codex;
+  ctx.lines(codex); await tick();
+  await Promise.all([ctx.login(codex), ctx.login(codex)]);
+  assert.equal(logins.length, 1, 'one terminal');
+  assert.equal(intervals.length, 1, 'one poll');
+  // A later click (the first terminal was closed) replaces the poll, never stacks one.
+  await ctx.login(codex);
+  assert.equal(logins.length, 2);
+  assert.equal(intervals.length, 2);
+  assert.ok(cleared.includes(1), 'the first poll was cleared');
+});

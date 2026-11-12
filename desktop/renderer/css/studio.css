@@ -254,3 +254,11 @@ span.st-glass{cursor:default}
   .st-pop{left:10px !important;right:10px;width:auto}
   .st-top .st-sub{display:none}
 }
+/* ATO-1307: the picker's "Studio follows your chat" line under its one group. */
+.st-pop-follow{display:flex;gap:6px;align-items:flex-start;border-top:1px solid var(--bd);margin-top:4px;padding-top:8px}
+.st-pop-follow svg{flex:none;margin-top:1px}
+/* ATO-1395/ATO-1308: Download for a local model that is not on disk yet. */
+.st-dl{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.st-dl-row{display:flex;align-items:center;gap:8px;font-size:var(--fs-cap);color:var(--ink-2)}
+.st-dl .st-bar{margin:0}
+.st-dl-go{align-self:flex-start;display:inline-flex;align-items:center;gap:6px}

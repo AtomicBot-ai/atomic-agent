@@ -1,7 +1,7 @@
 /* ---------------- Studio › Video ----------------
    The Video page of Studio: a form (prompt, start from text or a first frame,
    length, resolution, shape, sound, model), the line under it (price for a
-   cloud model, time and memory for one on this Mac), Generate, progress with
+   cloud model, time and memory for a local one), Generate, progress with
    Stop, the result player and the clip gallery.
 
    Loaded as a plain script after the Studio shell (studio/shell.js) or before
@@ -35,6 +35,12 @@
   const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const icon = (n) => (typeof g.ic === 'function' ? g.ic(n) : '');
   const isLocal = (m) => !!m && m.provider === 'local';
+  /** What the copy calls the machine (renderer.js THIS_MACHINE): "this Mac" on macOS and
+      with no bridge, "this computer" on Windows and Linux (ATO-1400). */
+  const machine = () => (g.atomic && g.atomic.platform && g.atomic.platform !== 'darwin' ? 'this computer' : 'this Mac');
+  /** "Show in Finder" on macOS, Explorer or Folder elsewhere (renderer.js fileManagerName). */
+  const reveal = () => (typeof g.fileManagerName === 'function' ? g.fileManagerName() : 'Show in Finder');
+  const machineCap = () => machine().charAt(0).toUpperCase() + machine().slice(1);
 
   /** Length chips (seconds) a model offers: its own list, or picks inside its range. */
   function durationOptions(model) {
@@ -139,13 +145,21 @@
   function blockReason(form, model) {
     if (!model) return 'Pick a model first.';
     if (form.mode === 'image') {
-      if (isLocal(model)) return 'Starting from an image on this Mac is coming soon. Pick a cloud model.';
+      if (isLocal(model)) return 'Starting from an image on ' + machine() + ' is coming soon. Switch the chat to the cloud to use it.';
       if (!supportsImageStart(model)) return 'This model starts from text only.';
       if (!form.firstFrame) return 'Add a first frame.';
       return '';
     }
+    if (notDownloaded(model)) return 'Download this model first.';
     if (!String(form.prompt || '').trim()) return 'Write a prompt first.';
     return '';
+  }
+
+  /** The footer line for a local model that is not loaded: Generate loads a downloaded one by itself (CONTRACT.md). */
+  function localHint(model) {
+    const local = model && model.local;
+    if (!local || local.loaded) return '';
+    return local.installed ? 'This model loads when you press Generate.' : 'This model is not downloaded yet.';
   }
 
   /** PriceParams for BR.studio.price. */
@@ -301,10 +315,36 @@
     return { cloud, local, all: cloud.concat(local) };
   }
 
-  /** The model to select: the saved one if still listed, else the cloud default, else the first. */
-  function pickModel(catalog, savedId) {
+  /** True when a local model is known not to be on disk yet (ATO-1395). */
+  const notDownloaded = (m) => !!(m && isLocal(m) && m.local && m.local.installed === false);
+  /* The download helpers are the Images page's (images-logic.js, loaded before this file). */
+  const dlHelp = (name, ...args) => (typeof g[name] === 'function' ? g[name](...args) : null);
+
+  /** 'local' | 'cloud': where a model runs; null for no model. */
+  const placeOf = (m) => (m ? (isLocal(m) ? 'local' : 'cloud') : null);
+
+  /** The picker's line under its one group (ATO-1307): Studio follows the chat, and how to reach the other place. */
+  function followLine(place) {
+    if (place === 'cloud') return 'Studio follows your chat. To use a model on ' + machine() + ', switch the chat to local.';
+    if (place === 'local') return 'Studio follows your chat. To use a cloud model, switch the chat to the cloud.';
+    return '';
+  }
+
+  /**
+   * The model to select. `saved`: an id, or ids in order (the one last chosen in this
+   * place, then the form's). With a place (STUDIO.chatPlace, ATO-1306) only that place's
+   * models: a saved one still listed, else in the cloud the default or the first, here a
+   * loaded model or a downloaded one; else none (never the other place). With no place
+   * (settings not read yet): a saved one, else the cloud default, else the first.
+   */
+  function pickModel(catalog, saved, place) {
     const gr = modelGroups(catalog);
-    return gr.all.find((m) => m.id === savedId) || gr.cloud.find((m) => m.default) || gr.cloud[0] || gr.local[0] || null;
+    const ids = (Array.isArray(saved) ? saved : [saved]).filter(Boolean);
+    const pool = place === 'cloud' ? gr.cloud : place === 'local' ? gr.local : gr.all;
+    for (const id of ids) { const m = pool.find((x) => x.id === id); if (m) return m; }
+    if (place === 'cloud') return gr.cloud.find((m) => m.default) || gr.cloud[0] || null;
+    if (place === 'local') return gr.local.find((m) => m.local && m.local.loaded) || gr.local.find((m) => m.local && m.local.installed) || null;
+    return gr.cloud.find((m) => m.default) || gr.cloud[0] || gr.local[0] || null;
   }
 
   /** Form fields valid for this model (keeps what still applies). */
@@ -354,9 +394,9 @@
   const helpers = {
     needsPoster, needsChatPoster, posterTime,
     durationOptions, pickDuration, aspectOptions, pickAspect, resolutionOptions, pickResolution,
-    supportsImageStart, localDims, buildRequest, blockReason, priceParams, priceLabel, generateLabel,
+    supportsImageStart, localDims, buildRequest, blockReason, localHint, priceParams, priceLabel, generateLabel,
     spanText, estimateVerdict, fitChip, gbText, modelLabels, phaseList, etaText, stepText, tookText,
-    clockText, formFromItem, modelGroups, pickModel, fitFormToModel, errorText, escHtml,
+    clockText, formFromItem, machine, modelGroups, placeOf, followLine, pickModel, fitFormToModel, errorText, escHtml,
   };
 
   /* ============================================================
@@ -373,7 +413,7 @@
 
     const S = {
       root: null, shown: false,
-      catalog: null, catalogError: null,
+      catalog: null, catalogError: null, place: null,   // place: where the chat ran when the model was picked (ATO-1306)
       form: loadForm(),
       prices: {}, estimates: {},
       job: null, jobError: null, armed: false,
@@ -384,6 +424,7 @@
       delArmed: null,
       pickerOpen: false, pickerQuery: '', libraryOpen: false, library: [], libThumbs: {},
       outDir: null, busy: false, notice: null,
+      dl: {},   // ATO-1395: local downloads this window knows of, artifact id → LocalDownload (CONTRACT.md)
       focusPath: null,   // "Open in Studio" waiting for the gallery's first page
       recent: typeof g.studioRecentLoad === 'function' ? g.studioRecentLoad(KIND) : [], recentOpen: false,   // ATO-809: prompts sent before (recent-prompts.js)
       improve: typeof g.studioImproveBlank === 'function' ? g.studioImproveBlank() : null,   // ATO-809: Improve prompt (improve-prompt.js)
@@ -424,8 +465,98 @@
       const res = await br.catalog(KIND);
       if (!res || !res.ok) { S.catalogError = errorText(res && res.error); paint(); return; }
       S.catalog = res.data; S.catalogError = null;
-      S.form = fitFormToModel(S.form, pickModel(S.catalog, S.form.modelId));
+      S.place = chatPlace();
+      applyPlace(S.place);
       paint(); refreshQuote();
+    }
+
+    const chatPlace = () => (g.STUDIO && typeof g.STUDIO.chatPlace === 'function' ? g.STUDIO.chatPlace() : null);
+
+    /** The form on `place`'s model: the one last chosen there (`modelByPlace`), else the
+        form's when it is from there, else the place's default. The current model is recorded
+        as its own place's choice first (it is the latest one picked there), so going back finds it. */
+    function applyPlace(place) {
+      const cur = model();
+      const by = Object.assign({}, S.form.modelByPlace);
+      if (cur) by[placeOf(cur)] = cur.id;
+      const next = pickModel(S.catalog, place ? [by[place], S.form.modelId] : S.form.modelId, place);
+      S.form = fitFormToModel(Object.assign({}, S.form, { modelByPlace: by }), next);
+    }
+
+    /* ATO-1306: the chat moved (cloud ↔ local) since the model was picked: read the catalog
+       again and fit the form to that place's model. The prompt stays. Not while a clip is
+       being made or started. */
+    let following = false;
+    async function followChat() {
+      const place = chatPlace();
+      const br = BR();
+      if (!place || place === S.place || !S.catalog || following || running() || S.busy || !br || !br.catalog) return;
+      following = true;
+      const res = await Promise.resolve(br.catalog(KIND)).catch(() => null);
+      following = false;
+      if (running() || S.busy || chatPlace() !== place) return;
+      if (res && res.ok && res.data) S.catalog = res.data;
+      const was = S.form.modelId;
+      S.place = place;
+      applyPlace(place);
+      if (S.form.modelId === was) return;
+      S.pickerOpen = false; S.armed = false; S.notice = null;
+      saveForm(); paint(); refreshQuote();
+    }
+
+    /* ATO-1394: the catalog again, quietly, after something changed a local model's state
+       (Generate loaded it, a download finished, it was removed): the chosen model and the
+       form stay; the picker and the footer stop saying "Not loaded". One read per burst. */
+    let refreshTimer = null, refreshSeq = 0;
+    function refreshCatalog() {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(async () => {
+        const br = BR();
+        if (!br || !br.catalog || !S.catalog) return;
+        const seq = ++refreshSeq;
+        const res = await Promise.resolve(br.catalog(KIND)).catch(() => null);
+        if (seq !== refreshSeq || !res || !res.ok || !res.data) return;
+        S.catalog = res.data;
+        /* ATO-1308: nothing was there and a download just landed: take it (never the other place). */
+        if (!model() && S.place && !running() && !S.busy) { applyPlace(S.place); saveForm(); refreshQuote(); }
+        paint('form'); paint('foot'); if (S.pickerOpen) paint('picker-list');
+      }, 300);
+    }
+
+    /* ---------------- local downloads (ATO-1395, ATO-1308) ---------------- */
+
+    /** Download a local model's quant (CONTRACT.md localDownload). */
+    function download(m) {
+      const br = BR();
+      const q = dlHelp('simgQuantToGet', m);
+      if (!m || !q) return;
+      if (!br || !br.localDownload) { S.notice = 'Studio needs a newer app build to download models.'; paint('foot'); return; }
+      if (!model() && !running()) { S.form = fitFormToModel(Object.assign({}, S.form, { modelByPlace: Object.assign({}, S.form.modelByPlace, { local: m.id }) }), m); saveForm(); }
+      S.dl[q.id] = { id: q.id, state: 'downloading', transferred: 0, total: Number(q.downloadBytes) || 0, percent: 0, file: null, error: null };
+      paint('form'); paint('foot');
+      const failed = (e) => { S.dl[q.id] = Object.assign({}, S.dl[q.id], { state: 'failed', error: e || { code: 'DOWNLOAD_FAILED', message: 'The download did not start.' } }); paint('form'); paint('foot'); };
+      Promise.resolve(br.localDownload(q.id)).then((r) => {
+        if (!r || !r.ok) return failed(r && r.error);
+        if (r.data && r.data.state === 'done') { delete S.dl[q.id]; refreshCatalog(); }
+        else if (r.data && S.dl[q.id] && S.dl[q.id].state === 'downloading' && !(S.dl[q.id].percent > 0)) S.dl[q.id] = r.data;
+        paint('form'); paint('foot');
+      }, () => failed(null));
+    }
+
+    function stopDownload(id) {
+      const br = BR();
+      if (!br || !br.localCancel || !id) return;
+      Promise.resolve(br.localCancel(id)).then((r) => { if (r && r.ok && r.data && r.data.cancelled) { delete S.dl[id]; paint('form'); paint('foot'); } }, () => undefined);
+    }
+
+    /** Downloads still running after a window reload. */
+    async function loadDownloads() {
+      const br = BR();
+      if (!br || !br.localState) return;
+      const r = await Promise.resolve(br.localState()).catch(() => null);
+      const list = r && r.ok && r.data && Array.isArray(r.data.downloads) ? r.data.downloads : [];
+      for (const d of list) if (d && d.id && (d.state === 'downloading' || d.state === 'verifying')) S.dl[d.id] = d;
+      if (list.length) { paint('form'); paint('foot'); }
     }
 
     /* The gallery is read by page; "Load more" (more = true) asks for the next one.
@@ -707,6 +838,7 @@
       if (S.job && S.job.id !== job.id && running()) return;
       const prev = S.job && S.job.id === job.id ? S.job : null;
       S.job = Object.assign({}, prev || { startedAt: job.createdAtMs || Date.now(), label: job.model }, job);
+      if (!job.cloud && (job.state === 'completed' || job.state === 'failed')) refreshCatalog();   // ATO-1394
       if (job.state === 'completed') {
         const item = (job.outputs || [])[0] || null;
         if (item) showResult(item);
@@ -718,6 +850,7 @@
         S.notice = 'Stopped.'; S.job = null;
       }
       paint('stage'); paint('foot');
+      if (!running() && S.shown) followChat();
     }
 
     async function showResult(item) {
@@ -774,10 +907,15 @@
       const patch = formFromItem(item);
       if (!patch) return;
       const all = S.catalog ? modelGroups(S.catalog).all : [];
-      const m = all.find((x) => x.id === patch.modelId) || model();
+      const was = all.find((x) => x.id === patch.modelId);
+      /* ATO-1307: a clip made in the other place restores its words and settings, not its model. */
+      const away = !!(was && S.place && placeOf(was) !== S.place);
+      const m = (!away && was) || model();
       const ff = S.form.firstFrame;
-      S.form = fitFormToModel(Object.assign({}, S.form, patch, { firstFrame: patch.mode === 'image' ? ff : S.form.firstFrame }), m);
-      if (m && !all.find((x) => x.id === patch.modelId)) S.notice = 'That model is not listed any more, so the current one stays.';
+      const by = m ? Object.assign({}, S.form.modelByPlace, { [placeOf(m)]: m.id }) : S.form.modelByPlace;
+      S.form = fitFormToModel(Object.assign({}, S.form, patch, { firstFrame: patch.mode === 'image' ? ff : S.form.firstFrame, modelByPlace: by }), m);
+      if (away) S.notice = (S.place === 'cloud' ? 'That clip was made on ' + machine() : 'That clip was made in the cloud') + '. Studio follows your chat, so the current model stays.';
+      else if (m && !was) S.notice = 'That model is not listed any more, so the current one stays.';
       saveForm(); paint(); refreshQuote();
     }
 
@@ -867,7 +1005,7 @@
       const m = modelGroups(S.catalog).all.find((x) => x.id === id);
       if (!m) return;
       if (S.form.mode === 'image' && isLocal(m)) return;
-      S.form = fitFormToModel(S.form, m);
+      S.form = fitFormToModel(Object.assign({}, S.form, { modelByPlace: Object.assign({}, S.form.modelByPlace, { [placeOf(m)]: m.id }) }), m);
       S.pickerOpen = false; S.armed = false; S.notice = null;
       saveForm(); paint(); refreshQuote();
     }
@@ -924,6 +1062,9 @@
         case 'del': del(v); break;
         case 'out-dir': chooseDir(); break;
         case 'retry-catalog': loadCatalog(); break;
+        case 'download': download(modelGroups(S.catalog).local.find((x) => x.id === v)); break;
+        case 'download-err': S.jobError = null; paint('stage'); download(model()); break;
+        case 'dlstop': stopDownload(v); break;
         case 'settings': if (g.STUDIO && typeof g.STUDIO.openSettings === 'function') g.STUDIO.openSettings('openrouter'); else try { g.dispatchEvent(new g.CustomEvent('studio:open-settings', { detail: { pane: 'openrouter' } })); } catch (_) { /* no window */ } break;
         default: return;
       }
@@ -1049,7 +1190,7 @@
       const ff = S.form.firstFrame;
       let h = '<div class="studio-lbl">First frame</div>';
       if (m && isLocal(m)) {
-        h += '<div class="studio-video-soon">' + icon('info') + '<span>Starting from an image on this Mac is coming soon. Cloud models can do it now.</span></div>';
+        h += '<div class="studio-video-soon">' + icon('info') + '<span>Starting from an image on ' + machine() + ' is coming soon. Cloud models can do it now: switch the chat to the cloud.</span></div>';
       }
       if (ff) {
         h += '<div class="studio-video-drop filled">'
@@ -1073,13 +1214,43 @@
       return h;
     }
 
+    /** ATO-1395/ATO-1308: Download for a local model not on disk: the button with its size, a bar while it runs, or why it failed. */
+    function viewDownload(m) {
+      const q = dlHelp('simgQuantToGet', m);
+      if (!q) return '';
+      const dl = dlHelp('simgDownloadOf', m, S.dl);
+      const line = dlHelp('simgDownloadLine', dl) || '';
+      let h = '';
+      if (dl && (dl.state === 'downloading' || dl.state === 'verifying')) {
+        const pct = Math.max(0, Math.min(100, Math.round(Number(dl.percent) || 0)));
+        h = '<div class="studio-dl-row"><span>' + escHtml(line) + '</span><span class="studio-sp"></span>'
+          + (dl.state === 'downloading' ? '<button class="studio-link" data-vact="dlstop" data-v="' + escHtml(dl.id) + '">Stop</button>' : '') + '</div>'
+          + '<div class="studio-bar"><i style="width:' + pct + '%"></i></div>';
+      } else {
+        if (dl && dl.state === 'failed') h += '<div class="studio-est warn">' + icon('warn') + '<span>' + escHtml(line) + '</span></div>';
+        else if (m.local && m.local.gated) h += '<div class="studio-est">' + icon('key') + '<span>Needs a Hugging Face token (HF_TOKEN) and the licence accepted on Hugging Face.</span></div>';
+        h += '<button class="studio-btn studio-dl-go" data-vact="download" data-v="' + escHtml(m.id) + '">' + icon('download')
+          + escHtml(dl && dl.state === 'failed' ? 'Try again' : (dlHelp('simgDownloadLabel', q) || 'Download')) + '</button>';
+      }
+      return '<div class="studio-dl">' + h + '</div>';
+    }
+
     function viewModelButton(m) {
+      /* ATO-1308: the chat runs locally and no video model is on this computer: say so and offer one. */
+      if (!m && S.place === 'local' && S.catalog) {
+        const off = !!dlHelp('simgLocalUnsupported', S.catalog);
+        const offer = off ? null : dlHelp('simgSuggestDownload', { cloud: { models: [] }, local: S.catalog.local });
+        const meta = off ? 'This computer cannot make clips locally. Switch the chat to the cloud to use Studio.'
+          : offer ? offer.name + ' runs here, free and private.' : 'Pick one to start';
+        return '<button class="studio-model" data-vact="picker"><span class="studio-sp"><span class="studio-mname">' + escHtml('No video model on ' + machine() + ' yet') + '</span>'
+          + '<span class="studio-mmeta">' + escHtml(meta) + '</span></span>' + icon('chevD') + '</button>' + (offer ? viewDownload(offer) : '');
+      }
       if (!m) return '<button class="studio-model" data-vact="picker">Pick a model</button>';
       const local = isLocal(m);
-      const meta = local ? 'On this Mac' + (m.local && m.local.developer ? ' · ' + m.local.developer : '') : 'via OpenRouter';
+      const meta = local ? 'On ' + machine() + (m.local && m.local.developer ? ' · ' + m.local.developer : '') : 'via OpenRouter';
       return '<button class="studio-model' + (S.pickerOpen ? ' open' : '') + '" data-vact="picker" aria-haspopup="listbox" aria-expanded="' + S.pickerOpen + '">'
         + '<span class="studio-sp"><span class="studio-mname">' + escHtml(m.name) + '</span><span class="studio-mmeta">' + escHtml(meta) + '</span></span>'
-        + '<span class="studio-tag ' + (local ? 'local' : 'cloud') + '">' + icon(local ? 'cpu' : 'cloud') + (local ? 'This Mac' : 'Cloud') + '</span>'
+        + '<span class="studio-tag ' + (local ? 'local' : 'cloud') + '">' + icon(local ? 'cpu' : 'cloud') + (local ? escHtml(machineCap()) : 'Cloud') + '</span>'
         + icon('chevD') + '</button>';
     }
 
@@ -1095,7 +1266,8 @@
       const match = (m) => !q || (m.name + ' ' + m.id).toLowerCase().includes(q);
       const f = S.form;
       let h = '';
-      const cloud = gr.cloud.filter(match), local = gr.local.filter(match);
+      /* ATO-1307: only the place the chat runs in (the 'model' verb still takes any id). No place yet: both. */
+      const cloud = S.place === 'local' ? [] : gr.cloud.filter(match), local = S.place === 'cloud' ? [] : gr.local.filter(match);
       if (cloud.length) {
         h += '<div class="studio-pop-g">' + icon('cloud') + 'Cloud · OpenRouter'
           + (S.catalog.cloud.keyMissing ? '<span class="r">needs an OpenRouter key</span>' : '') + '</div>';
@@ -1107,7 +1279,7 @@
         }
       }
       if (local.length) {
-        h += '<div class="studio-pop-g">' + icon('cpu') + 'On this Mac · free, private</div>';
+        h += '<div class="studio-pop-g">' + icon('cpu') + 'On ' + machine() + ' · free, private</div>';
         for (const m of local) {
           const req = buildRequest(Object.assign({}, fitFormToModel(f, m), { mode: 'text' }), m);
           const est = S.estimates[m.id + '|' + reqKey(req)];
@@ -1119,8 +1291,10 @@
           h += optRow(m, right, f.mode === 'image', extra, v.level === 'exceeds');
         }
       }
-      if (S.catalog.cloud && S.catalog.cloud.error) h += '<div class="studio-video-ds studio-video-perr">' + escHtml(S.catalog.cloud.error.message) + '</div>';
-      return h || '<div class="studio-video-ds studio-video-perr">No models match.</div>';
+      if (S.place !== 'local' && S.catalog.cloud && S.catalog.cloud.error) h += '<div class="studio-video-ds studio-video-perr">' + escHtml(S.catalog.cloud.error.message) + '</div>';
+      if (!h) h = '<div class="studio-video-ds studio-video-perr">' + (q ? 'No models match.' : S.place === 'local' ? 'No video models on ' + escHtml(machine()) + ' yet.' : 'No models listed.') + '</div>';
+      const follow = followLine(S.place);
+      return h + (follow ? '<div class="studio-video-ds studio-video-follow">' + icon('info') + escHtml(follow) + '</div>' : '');
     }
 
     function optRow(m, right, disabled, extra, dim) {
@@ -1144,7 +1318,9 @@
         const v = estimateVerdict(est);
         h += '<div class="studio-est ' + v.level + '">' + icon(v.level === 'exceeds' ? 'warn' : 'cpu') + '<span><b>Free</b>' + (v.text ? ' · ' + escHtml(v.text) : '') + '</span></div>';
         if (v.warn) h += '<div class="studio-est warn">' + icon('warn') + '<span>' + escHtml(v.warn) + (S.armed ? '. Click again to start anyway.' : '. Close other apps or pick a smaller model.') + '</span></div>';
-        if (m.local && !m.local.loaded) h += '<div class="studio-est">' + icon('info') + '<span>Load this model in Atomic Core first.</span></div>';
+        const hint = localHint(m);
+        if (hint) h += '<div class="studio-est">' + icon('info') + '<span>' + escHtml(hint) + '</span></div>';
+        if (notDownloaded(m)) h += viewDownload(m);
       } else if (S.catalog && S.catalog.cloud && S.catalog.cloud.keyMissing) {
         h += '<div class="studio-est warn">' + icon('key') + '<span>Cloud clips need an OpenRouter key.</span><button class="studio-link" data-vact="settings">Add a key</button></div>';
       }
@@ -1185,8 +1361,13 @@
     function viewError() {
       const e = S.jobError;
       const key = e.code === 'NO_KEY' ? '<button class="studio-btn" data-vact="settings">' + icon('key') + 'Add a key</button>' : '';
-      return '<div class="studio-viewer studio-empty"><div class="studio-video-err">' + icon('warn') + '<span>' + escHtml(errorText(e)) + '</span></div>'
-        + '<div class="studio-below">' + key + '<button class="studio-btn" data-vact="dismiss">OK</button></div></div>';
+      /* ATO-1395: the model is not on disk: download it from here. */
+      const m = model();
+      const get = e.code === 'MODEL_NOT_DOWNLOADED' && isLocal(m) && dlHelp('simgQuantToGet', m)
+        ? '<button class="studio-btn" data-vact="download-err">' + icon('download') + 'Download</button>' : '';
+      const off = e.code === 'ENGINE_UNSUPPORTED' ? ' Switch the chat to the cloud to make clips there.' : '';
+      return '<div class="studio-viewer studio-empty"><div class="studio-video-err">' + icon('warn') + '<span>' + escHtml(errorText(e) + off) + '</span></div>'
+        + '<div class="studio-below">' + get + key + '<button class="studio-btn" data-vact="dismiss">OK</button></div></div>';
     }
 
     function viewResult() {
@@ -1196,11 +1377,11 @@
       const meta = [it.model && it.model.name, it.durationSecs ? Math.round(it.durationSecs) + ' s' : '', it.height ? it.height + 'p' : '', 'MP4'].filter(Boolean).join(' · ');
       let h = '<div class="studio-viewer studio-video-result">';
       h += S.playError
-        ? '<div class="studio-video-noplay">' + (S.thumbs[it.id] ? '<img alt="" src="' + escHtml(S.thumbs[it.id]) + '">' : '') + '<span>' + NO_PLAY + '</span></div>'
+        ? '<div class="studio-video-noplay">' + (S.thumbs[it.id] ? '<img alt="" src="' + escHtml(S.thumbs[it.id]) + '">' : '') + '<span>' + escHtml(noPlay()) + '</span></div>'
         : '<video class="studio-video-player" controls preload="metadata"' + poster + ' src="' + escHtml(S.videoSrc) + '"></video>';
       h += '<div class="studio-below"><span class="studio-meta">' + escHtml(meta) + '</span>'
         + '<button class="studio-btn" data-vact="save-as">' + icon('download') + 'Save as…</button>'
-        + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + 'Show in Finder</button>'
+        + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + escHtml(reveal()) + '</button>'
         + '<button class="studio-btn" data-vact="copy-path">' + icon('copy') + 'Copy path</button>'
         + '<button class="studio-btn" data-vact="restore">' + icon('undo') + 'Restore these settings</button>'
         + '<button class="studio-btn pri" data-vact="send">' + icon('send') + 'Send to chat</button></div></div>';
@@ -1208,19 +1389,19 @@
     }
 
     /* A clip that will not play: gone since, or a codec Chromium does not have. */
-    const NO_PLAY = 'This clip can\'t play here. It may have been moved, or its format isn\'t supported. Show in Finder opens it in another player.';
+    const noPlay = () => 'This clip can\'t play here. It may have been moved, or its format isn\'t supported. ' + reveal() + ' opens it in another player.';
 
     function viewFromChat(it) {
       const name = String(it.path).split(/[\\/]/).pop() || it.path;
       const th = S.thumbs[it.id];
       let h = '<div class="studio-viewer studio-video-result">';
       h += S.playError
-        ? '<div class="studio-video-noplay">' + (th ? '<img alt="" src="' + escHtml(th) + '">' : '') + '<span>' + NO_PLAY + '</span></div>'
+        ? '<div class="studio-video-noplay">' + (th ? '<img alt="" src="' + escHtml(th) + '">' : '') + '<span>' + escHtml(noPlay()) + '</span></div>'
         : '<video class="studio-video-player" controls preload="metadata"' + (th ? ' poster="' + escHtml(th) + '"' : '') + ' src="' + escHtml(S.videoSrc) + '"></video>';
       if (S.notice) h += '<div class="studio-notebox">' + icon('info') + '<span>' + escHtml(S.notice) + '</span></div>';
       h += '<div class="studio-below"><span class="studio-meta" title="' + escHtml(it.path) + '">From chat · ' + escHtml(name) + '</span>'
         + '<button class="studio-btn" data-vact="save-as">' + icon('download') + 'Save as…</button>'
-        + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + 'Show in Finder</button>'
+        + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + escHtml(reveal()) + '</button>'
         + '<button class="studio-btn" data-vact="copy-path">' + icon('copy') + 'Copy path</button>'
         + '<button class="studio-btn pri" data-vact="send">' + icon('send') + 'Send to chat</button></div></div>';
       return h;
@@ -1316,7 +1497,7 @@
         S.shown = true;
         paint();
         if (!S.catalog) loadCatalog();
-        loadGallery(); loadOutDir(); recoverJob();
+        loadGallery(); loadOutDir(); recoverJob(); loadDownloads();
         checkImprove();
       },
       onEvent(ev) {
@@ -1329,8 +1510,23 @@
         if (S.job && BR()) BR().job(KIND, S.job.id).then((r) => { if (r && r.ok && r.data) onJob(r.data); });
         loadGallery();
         checkImprove();
+        followChat();
       },
       onHide() { S.shown = false; S.pickerOpen = false; S.libraryOpen = false; },
+      /* ATO-1394: a model loaded, downloaded or removed (shell.js forwards BR.studio.onLocal). */
+      onLocal(ev) {
+        if (!ev) return;
+        if (ev.type === 'download' && ev.download && ev.download.id) {
+          const d = ev.download;
+          if (d.state === 'done' || d.state === 'cancelled') delete S.dl[d.id]; else S.dl[d.id] = d;
+          paint('form'); paint('foot');
+        }
+        if (ev.type === 'load' && ev.state !== 'loading') refreshCatalog();
+        // A cancelled download leaves part files: the size on the button changes.
+        else if (ev.type === 'download' && ev.download && (ev.download.state === 'done' || ev.download.state === 'cancelled')) refreshCatalog();
+        else if (ev.type === 'removed') refreshCatalog();
+        else if (ev.type === 'engine' && !(ev.engine && ev.engine.state === 'installing')) refreshCatalog();
+      },
       focusFile,
       _state: S,
     };

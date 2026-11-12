@@ -17,7 +17,6 @@ These operational keys resolve through ENV_DEFAULTS rather than USER_CONFIG_DEFA
 - `agent.loopHistorySize` (default `30`).
 - `agent.loopWanderingThreshold` (default `6`).
 - `agent.loopWanderingEscalation` (default `12`).
-- `localModels.requestTimeoutMs` (default `300000`).
 - `llama.completionRetries` (default `3`).
 - `llama.completionRetryBackoffMs` (default `150`).
 - `tasks.enabled` (default `true`).

@@ -576,11 +576,12 @@ describe("formatLocalServerErrorForChat (ATO-707, ATO-737)", () => {
   });
 
   it("says the request was turned down as invalid", () => {
-    const err = llama400("invalid_request_error", "tools param requires --jinja flag");
+    // Not a tools refusal: that one has its own sentence (ATO-1209).
+    const err = llama400("invalid_request_error", "n_probs must be a positive integer");
     const text = formatLocalServerErrorForChat(classifyLocalServerError(err)!, err.message);
     expect(text.split("\n")[0]).toBe("Turn failed. The local model server turned the request down as invalid.");
     expect(text).toContain("Try another model, or update the server.");
-    expect(text).toContain("Details: llama-server returned http 400: tools param requires --jinja flag");
+    expect(text).toContain("Details: llama-server returned http 400: n_probs must be a positive integer");
   });
 
   it("names /compact and /new when the local context is full (ATO-1208)", () => {
@@ -599,7 +600,7 @@ describe("formatLocalServerErrorForChat (ATO-707, ATO-737)", () => {
   });
 
   it("leaves /compact and /new out of an invalid request (ATO-1208)", () => {
-    const err = llama400("invalid_request_error", "tools param requires --jinja flag");
+    const err = llama400("invalid_request_error", "n_probs must be a positive integer");
     const text = formatLocalServerErrorForChat(classifyLocalServerError(err)!, err.message);
     expect(text).not.toContain("/compact");
     expect(text).not.toContain("/new");

@@ -312,11 +312,16 @@ const LIVE_ELSEWHERE_LINE = 'Still answering your last message. The reply will a
    pending card's Details. */
 const CATEGORY_PLAIN = {
   fs_write_workspace:'edit files in this folder', fs_write_home:'edit files in your home folder',
-  fs_trash:'move files to the Trash', http:'make a web request', shell:'run a terminal command',
+  fs_trash:'move files to the Trash', http:'make a web request', shell:'run a terminal command', shell_dangerous:'run a dangerous command',
   script:'run a skill\u2019s script', proc_kill:'stop a running program', browser_nonweb:'open a non-web link',
   trust_config:'change the agent\u2019s trust settings', fusion_fanout:'split the work across helper models',
   other:'take this step', publish:'publish to GitHub', git_remote:'sync with a git remote', email:'send an email',
   fs_read_outside:'read files outside this folder', paid_generation:'make a paid cloud image',
+  // ATO-1393: the rest of the agent's categories (approval-level.ts APPROVAL_CATEGORY_LABELS).
+  browser_commit:'submit, publish or delete on a website', browser_secret:'enter a password or payment details',
+  browser_offsite:'open a site outside the allowed list', state_secret:'touch the agent\u2019s secret files',
+  screen_control:'click and type on your screen', screen_capture:'take a screenshot of your screen',
+  local_model_restart:'restart the local model', hook_ask:'take a step a hook asked about',
 };
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
 /* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
@@ -460,6 +465,15 @@ let HOST_RAM_GB = 0;
    provider missing here shows its host, as before. */
 const OB_WIZ_TOP = new Set(['openrouter', 'aimlapi']);
 const OB_WIZ_LOCAL = ['atomic-chat', 'ollama', 'lmstudio'];
+/* ATO-816: which of the two lists the provider step is showing. 'keys' is
+   the Cloud card (API keys and subscriptions); 'custom' is the Custom card
+   (the apps on this Mac, a llama.cpp server, any URL). Set each time the
+   step opens; everything that opens it without saying (the download
+   screen's "set up a cloud model meanwhile") gets the keys list. */
+let OB_WIZ_ROUTE = 'keys';
+/* The Custom list's own row for a llama.cpp server: not a provider, so it
+   is not in KIND_ROWS. Picking it opens the URL step (custom_chat_url). */
+const OB_WIZ_LLAMA_ROW = {id:'llamacpp-server', label:'llama.cpp server', kind:'llama-server', llamaServer:true};
 const OB_WIZ_BLURB = {
   openrouter: 'Hundreds of models with one key',
   aimlapi: 'Many models with one key',
@@ -476,6 +490,7 @@ const OB_WIZ_BLURB = {
   perplexity: 'Sonar models',
   nous: 'Hermes models',
   novita: 'Open models in the cloud',
+  'llamacpp-server': 'A llama-server you started yourself',
   'atomic-chat': 'Models you already have in Atomic Chat',
   ollama: 'Models you run with Ollama',
   lmstudio: 'Models you run in LM Studio',
@@ -489,15 +504,19 @@ const OB_ATOMIC_CHAT = { running: null, asking: false };
    the choose screen made three paragraphs the eye had to read before it could
    choose — too much to peer at. A route is picked on what it
    costs you, so that is the line. */
-/* Calm (S6): short declaratives. The second card also covers the model apps
-   on this Mac (Atomic Chat, Ollama, LM Studio), which live in its list. */
+/* Calm (S6): short declaratives. ATO-816 (Nadya, 12.11): three positions
+   that do not mix. Local downloads a model, Cloud is API keys only, and
+   Custom is everything you already run yourself: the model apps on this Mac
+   (Atomic Chat, Ollama, LM Studio), your own llama.cpp server, or any URL.
+   The apps used to sit in the Cloud list, so an Ollama owner looked for
+   Ollama under Local models and did not find it. */
 const OB_CHOICES = [
   {id:'local', label:'Local models', detail:[
     'Private and free on ' + THIS_MACHINE + ', after one download.', '']},
   {id:'cloud', label:'Cloud models', detail:[
-    'An API key, or a model app already on ' + THIS_MACHINE + '.', '']},
-  {id:'custom', label:'Custom endpoint', detail:[
-    'A llama.cpp server you already run. Nothing to download.', '']},
+    'Use an API key from a cloud provider.', '']},
+  {id:'custom', label:'Custom', detail:[
+    'An app or server you already run. Nothing to download.', '']},
 ];
 
 /* The flow has two phases, and the header says which one you are in as a
@@ -787,6 +806,12 @@ const DL = {
 const SPOT = {gate: false, ids: null, asked: false, dismissed: null};
 /* Backlog 18 — the download card's own state (renderDlcard). Declared up
    here for the same reason as DL: the first top-level render() reads it. */
+/* ATO-1373: a vision projector landed for the model that is serving now. The
+   projector is read only when a model starts, so the running one still has no
+   vision. The download card offers a Restart model instead of restarting it
+   unasked: a restart would end a reply in progress (llmRestartModel refuses
+   under a running turn). {id, pid, busy, error} or null. */
+const VISION = {restart: null};
 const DLC = {
   /** Folded to the round badge. A fold lasts one run of downloads: the next
       run, after the card has been empty, starts open (DownloadPanel). */
@@ -2145,10 +2170,17 @@ function providerSwitchedLine(p) {
   if (typeof p.from !== 'string' || typeof p.to !== 'string' || !p.from || !p.to) return '';
   return p.from + ' failed, switched to ' + p.to + (typeof p.to_model === 'string' && p.to_model ? ' (' + p.to_model + ')' : '') + '.';
 }
+/** ATO-1417: the transcript line for a `tool_disabled` frame (the server refused the tool's schema), '' when it names no tool. */
+function toolDisabledLine(p) {
+  if (!p || typeof p !== 'object') return '';
+  if (typeof p.notice === 'string' && p.notice.trim()) return p.notice.trim();
+  if (typeof p.tool !== 'string' || !p.tool.trim()) return '';
+  return 'Tool ' + p.tool.trim() + ' is disabled for this turn: the model server did not accept its schema.';
+}
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
-const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
-  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched',
+const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'reply_polished', 'progress_note', 'reply_attachments', 'fusion_worker',
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched', 'tool_disabled',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
 /* ATO-259: the compaction row of the turn on screen (`rowId`, spinning until
@@ -3051,13 +3083,16 @@ function msgActs(m) {
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">'
     + ic('copy') + '</button>';
   if (m.k !== 'user') {
-    /* ATO-861: under the last reply of a turn that used no tools, "Ask again"
-       sends the question once more through the same data-resend path as the
-       user bubble's retry (resendUser). A turn that ran a tool or asked for an
+    /* ATO-861: under the last reply of a turn that used no tools, a retry
+       asks the question once more. ATO-1300: it is "Regenerate" now, with its
+       own data-regen (regenerateReply): the agent first takes the question
+       and this reply back, so the new answer replaces the old one instead of
+       stacking a copy under it. An agent without that route still gets the
+       old resend (resendUser). A turn that ran a tool or asked for an
        approval did something, and repeating it is not a harmless re-ask, so
        no button there. Never while a turn runs, never under a placeholder.
        ATO-862: in its place a turn that acted shows a muted retry icon that
-       only explains why: no data-resend and no data-act, so a click reaches
+       only explains why: no data-regen, data-resend or data-act, so a click reaches
        no handler and sends nothing; aria-disabled for assistive tech and
        tabindex -1 so Tab does not stop on a control that does nothing.
        ATO-900: its sentence is drawn by CSS from data-tip on hover
@@ -3070,7 +3105,7 @@ function msgActs(m) {
     const last = cls === 'msgacts msgacts-last' && !m.placeholder && !S.busy;
     const ask = last ? replyRetryAsk(m) : null;
     const again = ask
-      ? '<button class="msgact" data-resend="' + esc(ask.id) + '" title="Ask again" aria-label="Ask again">' + ic('retry') + '</button>'
+      ? '<button class="msgact" data-regen="' + esc(ask.id) + '" title="Regenerate" aria-label="Regenerate">' + ic('retry') + '</button>'
       : last && replyTurnActed(m)
         ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + ACTED_RETRY_HINT
           + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
@@ -3115,10 +3150,12 @@ function copyMessage(id) {
   copyText(m.k === 'user' ? attPlainText(String(m.text || '')) : String(m.text || ''), 'Copied message');
 }
 
-/* Retry = send this message's text again as a new turn. It cannot mean
-   "regenerate": the agent's HTTP surface has no edit, truncate or rewind for a
-   session, so the transcript keeps both copies and the context window grows
-   accordingly. The tooltip therefore says "Send this message again".
+/* Retry = send this message's text again as a new turn. The transcript keeps
+   both copies and the context window grows accordingly, so the user bubble's
+   tooltip says "Send this message again". ATO-1300: "Regenerate" under the
+   last reply (and a failed turn's Try again, ATO-1301) first asks the agent to
+   take the last turn back (regenerateReply, below) and only lands here when
+   the agent has no such route or, for Try again, refuses.
 
    While a turn runs the button does NOT send. Not because the agent refuses —
    it does not; the TurnController is strictly FIFO, so a second POST
@@ -3180,6 +3217,196 @@ function resendUser(id) {
   // agent line and the local-model turn gate.
   S.draft = attToEditor(text);
   if (e) { e.value = S.draft; autosize(e); }
+  submit();
+}
+
+/* ATO-1299: whether the agent can take a turn back. Left true until an agent
+   answers with its unknown-route 404; then every Regenerate resends. */
+const ROLLBACK = {supported: true, pending: false, stash: new Map(), cleared: {sid: null, n: 0}};
+/* A question the agent took back while its chat was not on screen (the
+   person switched chats during the call): it lives only here until that
+   chat is opened again, then waits in the composer (openSession). */
+function rollbackStashBack(sid) {
+  const text = ROLLBACK.stash.get(sid);
+  if (!text) return;
+  const e = $('#entry');
+  if (String((e ? e.value : S.draft) || '').trim()) return;   // kept until the composer is free
+  ROLLBACK.stash.delete(sid);
+  S.draft = attToEditor(text);
+  if (e) { e.value = S.draft; autosize(e); }
+  refreshSend();
+  ctxDraftChanged();
+  toast('Your question is back in the box', 'Its old answer was taken back. Send it when you are ready.');
+}
+/* ATO-1420: Clear Transcript empties the window, not the agent's chat, so
+   the questions it took off screen still come before the next ones there.
+   Kept per chat in ROLLBACK.cleared and added by priorQuestions. A question
+   that never reached the agent is counted too: a count too high only makes
+   the agent refuse (and the window resend), never take back another one.
+   openSession draws the whole chat again and starts it from 0. */
+function rollbackNoteCleared(before, after, sid) {
+  const asks = (log) => (log || []).filter((x) => x.k === 'user' && !x.steered).length;
+  const hidden = Math.max(0, asks(before) - asks(after));
+  const was = ROLLBACK.cleared;
+  const key = sid || null;
+  ROLLBACK.cleared = {sid: key, n: (was.sid === key ? was.n : 0) + hidden};
+}
+/* Clear Transcript's own step (act 'clear'): the window empties (a turn
+   running on screen keeps its rows) and the questions it took off screen are
+   noted for priorQuestions, as the agent still has them (ATO-1420). */
+function clearTranscriptNow() {
+  const before = S.log;
+  S.log = liveClearedLog(); S.history = [];
+  rollbackNoteCleared(before, S.log, S.agentSession);
+}
+/* openSession's part of the ATO-1420 count: the whole chat is drawn again, so
+   it starts from 0. A Clear Transcript that landed while the chat loaded
+   (ATO-131) clears it as act 'clear' does (a running turn's own rows stay,
+   `rebuilt`) and notes what it hid. */
+function rollbackOnSessionOpened(sid, clearedWhileLoading, rebuilt) {
+  ROLLBACK.cleared = {sid: null, n: 0};
+  if (!clearedWhileLoading) return;
+  const loaded = S.log;
+  S.log = rebuilt ? liveClearedLog() : [];
+  rollbackNoteCleared(loaded, S.log, sid);
+}
+/** How many questions (steers not counted) come before `m` in the agent's
+    chat: the ones in the log, and the ones Clear Transcript hid (ATO-1420). */
+function priorQuestions(m) {
+  const c = ROLLBACK.cleared;
+  let count = c.sid && c.sid === S.agentSession ? c.n : 0;
+  for (const x of S.log) {
+    if (x === m) return count;
+    if (x.k === 'user' && !x.steered) count++;
+  }
+  return count;
+}
+/** ATO-1300: the words for the agent refusing to take the last turn back (its 409 code). */
+function rollbackRefusalText(r) {
+  const code = r && r.code;
+  if (code === 'turn_in_progress') return 'The agent is still answering. Wait for it to finish, then try again.';
+  if (code === 'turn_has_tools') return 'This answer used tools, so it cannot be replaced. Send the question again instead.';
+  if (code === 'turn_steered') return 'You added to this answer while it ran, so it cannot be replaced. Send the question again instead.';
+  if (code === 'turn_compacted') return 'This part of the chat was summarized, so the answer cannot be replaced.';
+  if (code === 'nothing_to_undo') return 'There is no answer to replace in this chat.';
+  if (code === 'turn_unrecognized') return 'The agent could not match this answer to its question. Nothing was changed.';
+  if (code === 'session_not_found') return 'This chat is not saved yet. Send the question again instead.';
+  return (r && r.error) || 'The agent gave no reason. Nothing was changed.';
+}
+/* ATO-1300 / ATO-1301: "Regenerate" under the last reply and a failed turn's
+   "Try again". The agent removes the chat's last question and its answer
+   (POST /api/sessions/{id}/rollback-last-turn), the window drops the same
+   rows from S.log, and the question goes out again through submit(), as a
+   resend does. So the new answer replaces the old one in the agent's memory
+   too, instead of stacking a second copy of the question on top of it.
+
+   `id` is the question's row. Every gate resendUser has is checked BEFORE
+   the agent is asked, because once the turn is taken back the question only
+   lives in this window: an open microphone or a draft in the way would leave
+   it nowhere. Falls back to resendUser (the old behaviour) when the agent has
+   no such route, the chat is not saved with the agent, a turn is running, or
+   the question is not the chat's last one. `fromFailure` (Try again): any
+   refusal other than "a turn is running" falls back too, since a failed turn
+   that ran a tool still has to be retryable. */
+async function regenerateReply(id, fromFailure) {
+  const m = S.log.find((x) => x.id === id && x.k === 'user');
+  if (!m) return;
+  const text = String(m.text || '').trim();
+  if (!text) return;
+  if (ROLLBACK.pending) return;   // a second click while the first is out
+  const sid = S.agentSession;
+  const at = S.log.indexOf(m);
+  const lastAsk = !S.log.slice(at + 1).some((x) => x.k === 'user' && !x.steered);
+  const running = S.busy || !!S.pending || (!!sid && [...RUNNING.values()].includes(sid));
+  if (!ROLLBACK.supported || !(BR && BR.rollbackLastTurn) || !sid || !lastAsk || running) { resendUser(id); return; }
+  const e = $('#entry');
+  // The same composer gates as resendUser, in the same words.
+  if (VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing') {
+    toast('The microphone is open', 'finish or cancel the dictation, then retry', 'bad');
+    return;
+  }
+  const draft = String((e ? e.value : S.draft) || '').trim();
+  const split = attSplitMessage(text);
+  const caption = split ? split.caption.trim() : text;
+  const own = new Set(split ? split.items.map((i) => i.path) : []);
+  if ((draft && draft !== caption) || ATT.items.some((i) => !(i.saved && own.has(i.saved.path)))) {
+    toast('Your draft is in the way', 'send or clear the composer, then retry', 'bad');
+    if (e) e.focus();
+    return;
+  }
+  const log = S.log;
+  ROLLBACK.pending = true;
+  let r;
+  /* The question by its text AND its position: a failed "continue" the
+     agent never stored must not match an earlier "continue" with a real
+     answer. The count is of the questions before this one, so a question
+     that never reached the agent cannot line up with the one before it. */
+  /* ATO-1420: and, when the window shows no answer to it (its turn
+     failed), a stored question that has one is never it, whatever the
+     count says. */
+  const unanswered = !S.log.slice(at + 1).some((x) => x.k === 'assistant' && !x.placeholder && String(x.text || '').trim());
+  try { r = await BR.rollbackLastTurn(sid, String(m.text || ''), priorQuestions(m), unanswered); }
+  catch (err) { r = {ok: false, supported: true, error: String((err && err.message) || err)}; }
+  finally { ROLLBACK.pending = false; }
+  if (r && r.supported === false) { ROLLBACK.supported = false; resendUser(id); return; }
+  if (!r || !r.ok) {
+    /* turn_mismatch: the agent's last question is not this one (a failed
+       turn it never stored), and it removed nothing: the old resend is right. */
+    if (r && (r.code === 'turn_mismatch' || r.code === 'turn_stopped')) { resendUser(id); return; }
+    if (fromFailure && !(r && r.code === 'turn_in_progress')) { resendUser(id); return; }
+    toast("Couldn't regenerate", rollbackRefusalText(r), 'bad');
+    return;
+  }
+  // The person opened another chat while the agent answered: that chat is
+  // right on the agent side and redraws from it when opened again.
+  if (S.log !== log || S.agentSession !== sid) {
+    ROLLBACK.stash.set(sid, text);
+    toast('The answer was taken back', 'Your question waits in the box when you open that chat again.', 'bad');
+    return;
+  }
+  /* The agent removed ITS last question. When that is not the one on screen
+     (a failed turn it never stored, say), the window no longer matches the
+     agent: it is drawn again from the agent, and the question the agent
+     handed back waits in the composer instead of being sent. */
+  const back = typeof r.text === 'string' ? r.text.trim() : '';
+  if (back !== text) {
+    toast('The chat changed on the agent side', 'It is drawn again from the agent. The question it took back is in the box.', 'bad');
+    await openSession(sid);
+    if (back && S.agentSession === sid) {
+      S.draft = attToEditor(back);
+      const e2 = $('#entry');
+      if (e2) { e2.value = S.draft; autosize(e2); e2.focus(); }
+      refreshSend();
+      ctxDraftChanged();
+    }
+    return;
+  }
+  /* Something got in the way while the agent answered (a turn started, a
+     draft was typed): nothing is sent over it, and the rows stay on screen,
+     so the question can still be sent with its own retry. */
+  const e3 = $('#entry');
+  const draftNow = String((e3 ? e3.value : S.draft) || '').trim();
+  if (S.busy || S.pending || (draftNow && draftNow !== caption)) {
+    /* The agent dropped the old answer, so the screen must too: drawn
+       again from the agent, and the question kept for the composer (it goes
+       in as soon as the box is free, now or on the next open of this chat). */
+    ROLLBACK.stash.set(sid, text);
+    toast('The answer was taken back', 'Your question was not sent because the composer is in use. It waits for you in the box.', 'bad');
+    await openSession(sid);
+    return;
+  }
+  ANX.messageAction('regenerate');
+  /* The question and every row after it go: the reply, its steps and any
+     failure row. Spliced IN PLACE: the transcript window (chat-window.js,
+     ATO-1272) keys on the S.log array itself, and a new array would reset
+     what "Show earlier" opened. A window that started at a removed row
+     finds no such id and is worked out again from the end. */
+  const cut = S.log.indexOf(m);
+  if (cut >= 0) S.log.splice(cut);
+  S.stick = true;
+  // As resendUser: both the editor and S.draft, and through submit() for every gate.
+  S.draft = attToEditor(text);
+  if (e3) { e3.value = S.draft; autosize(e3); }
   submit();
 }
 
@@ -3734,11 +3961,16 @@ function apprHomePaths(t) {
 function apprCode(s) { return '<code>' + esc(clipWords(s, 90)) + '</code>'; }
 const APPR_FALLBACK = {
   fs_write_workspace:'change a file in this folder', fs_write_home:'change a file outside this folder',
-  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command',
+  fs_trash:'move files to the Trash', http:'send a web request', shell:'run a command', shell_dangerous:'run a dangerous command',
   script:'run a skill script', proc_kill:'stop a process', browser_nonweb:'open a non-web address',
   trust_config:'change its own settings', fusion_fanout:'hand work to its workers', publish:'publish to GitHub',
   git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',
   paid_generation:'make a paid image in the cloud',
+  // ATO-1393
+  browser_commit:'submit, publish or delete something on a website', browser_secret:'enter a password or payment details on a website',
+  browser_offsite:'open a site outside the allowed list', state_secret:'touch its own secret files',
+  screen_control:'click and type on your screen', screen_capture:'take a screenshot of your screen',
+  local_model_restart:'restart the local model', hook_ask:'take a step one of your hooks asked about',
 };
 /** ATO-473: whether the card offers "Allow in this chat". The agent grants
     the request's command shape (the binary, `git`) for the rest of the chat;
@@ -3790,6 +4022,11 @@ function apprAsk(m) {
     return q('send a ' + esc(mt[1]) + ' request to ' + apprCode(host));
   }
   if (m.cat === 'email' && (mt = /^e-mail to ([^:]+)/.exec(r))) return q('send an e-mail to ' + esc(mt[1].trim()));
+  // ATO-1355: a fan-out says how many tasks it hands out ("2 tasks to 2 workers on …", fusion-delegate.ts).
+  // Its reason starts with a digit, so the clause rule below skipped it and the count was only under Details.
+  if ((m.cat === 'fusion_fanout' || m.tool === 'fusion.delegate') && (mt = /^(\d+) tasks? to \d+ workers?\b/.exec(r))) {
+    return q('hand ' + plural(Number(mt[1]), 'task') + ' to its workers');
+  }
   // video.generate: "generate a paid 4-second video … with google/veo-3.1-fast (the default), billed …" (src/tools/video/generate.ts).
   if (m.cat === 'paid_generation' && m.tool === 'video.generate') {
     const secs = /paid (\d+)-second video/.exec(r);
@@ -3818,6 +4055,9 @@ function apprWhy(m) {
     return 'Allowing it also lets the agent read anything in ' + apprCode(apprPath(m.readRoot || m.affectsDir + m.affectsBase)) + ' for the rest of this chat.';
   }
   if (m.cat === 'trust_config') return 'This changes what Atomic Agent may do without asking you.';
+  // ATO-1390: the agent's own .env, config or local server keys. The title keeps only what it does
+  // ("read …"), so the reason the agent sends ("the agent's own secret file") is said here.
+  if (m.cat === 'state_secret') return "This is the agent's own secret file (API keys, tokens, approval settings). It asks every time.";
   if (m.cat === 'fs_trash') return 'You can put them back from the Trash.';
   if (m.cat === 'paid_generation') return m.tool === 'video.generate' ? esc(VIDEO_PAID_WHY) : 'OpenRouter charges your account for each image.';
   if (m.cat === 'shell' || m.tool === 'os.shell.run') {
@@ -4720,6 +4960,10 @@ function renderInspector() {
   const prev = el.querySelector('.inspbody');
   const keep = prev && INSP_VIEW.tab === S.inspTab && INSP_VIEW.log === S.log
     ? inspScrollKeep({scrollTop:prev.scrollTop, scrollHeight:prev.scrollHeight, clientHeight:prev.clientHeight}, inspNewestOnTop()) : null;
+  /* ATO-1336: a reader inside the Reasoning list is held by the block at the
+     top edge, not by the distance from the end: a rebuild may paint text a
+     stream frame had not drawn, and it lands below them (insp-order.js). */
+  const anchor = keep && typeof keep.fromEnd === 'number' && S.inspTab === 'reasoning' ? inspReadAnchor(prev) : null;
   el.innerHTML = '<div class="insphead">' + segControl(tabs, S.inspTab, 'insp:') + '</div>'
     // Calm (S1): no session-id footer. The id is one palette row away
     // ("Show session id", ⌃ ⌘ C) for the person who needs to copy it.
@@ -4727,6 +4971,8 @@ function renderInspector() {
   INSP_VIEW.tab = S.inspTab; INSP_VIEW.log = S.log;
   const now = keep === null ? null : el.querySelector('.inspbody');
   if (now) now.scrollTop = inspScrollTo(keep, now);
+  const held = now && anchor ? inspAnchorScroll(now, anchor) : null;
+  if (held !== null) now.scrollTop = held;
 }
 
 /** ATO-1249: the tab on screen lists newest first (World is not a list). */
@@ -6791,7 +7037,11 @@ function act(a) {
      cloud providers, with the provider setup started — what that pane's own
      Add provider button does (llm:add). */
   if (a === 'sel:addProvider') { closeSelector(); act('settings:llm'); act('llm:add'); return; }
+  // ATO-1372: the picker's Get vision files chip.
+  if (a.startsWith('sel:vision:')) { selVisionFetch(a.slice('sel:vision:'.length)); return; }
   if (a === 'wiz:subRecheck') { wizSubRecheck(WIZ.row); return; }
+  if (a === 'wiz:subLogin') { wizSubLogin(WIZ.row); return; }
+  if (a === 'wiz:subCopy') { wizSubCopy(WIZ.row); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -6874,7 +7124,8 @@ function act(a) {
                            agent keeps this chat and opening it again brings it back. An empty
                            new chat has nothing for the agent to remember, so it says only that. */
                         const kept = !!(S.agentSession || S.busy);
-                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Window cleared', kept ? 'The agent still remembers this chat' : ''); return; }
+                        clearTranscriptNow();   // ATO-1420: notes the questions the agent still has
+                        render(); chatToast('Window cleared', kept ? 'The agent still remembers this chat' : ''); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
@@ -7910,6 +8161,8 @@ document.addEventListener('click', (e) => {
   // ATO-1046: the speaker under a reply.
   const sp = t.closest('[data-speak]'); if (sp) { e.preventDefault(); const m = S.log.find((x) => x.id === sp.dataset.speak); if (m) ttsToggle(m.id, m.text); return; }
   const rs = t.closest('[data-resend]'); if (rs) { e.preventDefault(); resendUser(rs.dataset.resend); return; }
+  // ATO-1300 / ATO-1301: Regenerate under the last reply; a failed turn's Try again carries data-regen-fail.
+  const rg = t.closest('[data-regen]'); if (rg) { e.preventDefault(); regenerateReply(rg.dataset.regen, rg.hasAttribute('data-regen-fail')); return; }
   const es = t.closest('[data-engine-start]'); if (es) { e.preventDefault(); deadEngineStart(es.dataset.engineStart); return; }
   const fill = t.closest('[data-fill]');
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
@@ -8038,7 +8291,7 @@ document.addEventListener('input', (e) => {
     return;
   }
   // Item 7 part C: the LLM filter / URL prompt, the Telegram token prompt and the Import form edit state in place.
-  if (e.target.id === 'llm-filter') { LLMP.filter = e.target.value; LLMP.cursor.cloud = llmCloudSectionStart(); llmRepaintList(); return; }
+  if (e.target.id === 'llm-filter') { LLMP.filter = e.target.value; LLMP.cursor[llmProvTabNow()] = llmCloudSectionStart(llmProvTabNow()); llmRepaintList(); return; }
   // Item 7A: editing the reference clears its error (local-models-reducer.ts:101-110).
   // Nothing else repaints on a keystroke — a full render would drop the caret.
   if (e.target.id === 'llm-hf-ref') {
@@ -9293,7 +9546,10 @@ function autoRestartApply(n) {
   if (n.kind === 'restarted') {
     S.log.push({id:nid(), k:'system', text: esc(AGENT_RESTARTED_LINE)});
   } else if (n.kind === 'gave_up') {
-    S.log.push({id:nid(), k:'system', tone:'red', icon:'refresh', act:'restart-agent', text: esc(AGENT_GAVE_UP_LINE)});
+    /* ATO-1285: the cause, when the agent's last lines named one (main's lastErrorSentence),
+       and Collect logs beside Restart agent, so a crash at start-up has a way out other than relaunching. */
+    const cause = typeof n.cause === 'string' && n.cause ? ' ' + esc(n.cause) : '';
+    S.log.push({id:nid(), k:'system', tone:'red', icon:'refresh', act:'restart-agent', text: esc(AGENT_GAVE_UP_LINE) + cause});
   } else return;
   render();
 }
@@ -10602,6 +10858,17 @@ function onChatEvent(ev) {
     render();
     return;
   }
+  /* ATO-1417: the model server refused one tool's JSON schema (LM Studio and
+     llama.cpp do this for some MCP schemas), and the agent resent the request
+     without it, so the model cannot use that tool this turn. The agent words
+     it and sends it once per tool per turn; one line in the transcript,
+     before the reply. An agent without this frame never sends it. */
+  if (ev.kind === 'tool_disabled') {
+    const line = toolDisabledLine(ev.payload || {});
+    if (line && item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, text: esc(line)});
+    render();
+    return;
+  }
   /* Run mode — Fusion. One leg of a fan-out started, ran a tool, ended or was
      cut short (`event: fusion_worker`, agent ≥ desktop/fusion-stream). The
      live list under the composer says what is happening; the transcript
@@ -10624,6 +10891,7 @@ function onChatEvent(ev) {
       tokens: typeof p.tokens === 'number' && p.tokens > 0 ? p.tokens : undefined,
       spentUsd: typeof p.spent_usd === 'number' && Number.isFinite(p.spent_usd) ? p.spent_usd : undefined,
     };
+    if (typeof fzpNoteStarted === 'function') fzpNoteStarted(FZP, e, FZ.live);   // ATO-1329: reads the row as it was
     FZ.live = fzReduceLive(FZ.live, e);
     if (typeof fzpNoteFrame === 'function') fzpNoteFrame(e);
     tpFzEnsureTick();
@@ -10675,6 +10943,8 @@ function onChatEvent(ev) {
       callId: typeof callId === 'string' && callId ? callId : null,
       doneLine: typeof doneLine === 'string' && doneLine ? doneLine.slice(0, 200) : null};
     S.log.splice(S.log.indexOf(item), 0, card);
+    // ATO-1379: the call ends the step; reply text from here on is the next step's.
+    item.stepFrom = item.text.length;
     /* ATO-207: the call ends the step its reasoning was for. The next
        reasoning is a row of its own under this card, as a reopened chat
        draws it (one per stored call); it used to grow the turn's first row
@@ -10713,6 +10983,20 @@ function onChatEvent(ev) {
     if (ev.text) waitOverByOutput(item);   // ATO-428
     return;
   }
+  /* ATO-1379: the agent cleaned the reply that ends the turn ("Hope this
+     helps!" off) after its deltas streamed (`event: reply_polished`, ATO-967).
+     The clean text is that one step's reply, the step's deltas as the agent
+     counts them (`stepStreamed`, reset at each step), and it is what the store
+     keeps. So only the text since this step began is swapped: an earlier
+     step's words (an intro before a tool call) stay. */
+  if (ev.kind === 'reply_polished') {
+    const text = pick(ev.payload, 'text');
+    if (typeof text !== 'string' || !text || !item) return;
+    const from = Math.min(item.stepFrom || 0, item.text.length);
+    item.text = item.text.slice(0, from) + text;
+    streamPaint('chat');
+    return;
+  }
   /* ATO-408: the files the reply that ends the turn delivers (agent with
      ATO-408, `event: reply_attachments`, right after the reply's text). An
      older agent sends nothing, and the chat shows them once reopened. */
@@ -10738,6 +11022,7 @@ function onChatEvent(ev) {
     const text = String(pick(ev.payload, 'text') || '');
     if (!text.trim() || !item) return;
     item.text = stripStreamedNote(item.text, text);
+    item.stepFrom = item.text.length;   // ATO-1379: the note's step is over
     S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'interim', text});
     render();
     return;
@@ -10798,6 +11083,7 @@ function onChatEvent(ev) {
     if (item && S.turnStartedAt && !item.workedMs) item.workedMs = Math.max(0, (ev.at || Date.now()) - S.turnStartedAt);
     S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
+    if (typeof fzpForgetRows === 'function') fzpForgetRows(FZP, FZ.live);   // ATO-1329: this turn's rows, while they are still here
     FZ.live = [];   // the fan-out readout belongs to the turn that is over
     if (typeof FZP !== 'undefined') { FZP.open = null; FZP.draft = ''; }
     /* Item 1 (plan hand-off): finishTurn's rule, restated —
@@ -11504,7 +11790,7 @@ function summariseArgs(args) {
 
 const CATEGORY_LABEL = {
   fs_write_workspace:'file write · workspace', fs_write_home:'file write · home',
-  fs_trash:'move to Trash', http:'HTTP request', shell:'shell command',
+  fs_trash:'move to Trash', http:'HTTP request', shell:'shell command', shell_dangerous:'dangerous shell command',
   script:'skill script', proc_kill:'process kill', browser_nonweb:'browser · non-web URL',
   trust_config:'agent trust config', fusion_fanout:'fusion · fan-out', other:'uncategorised',
   // agent 0.6.0 / 0.6.3 (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
@@ -11512,6 +11798,11 @@ const CATEGORY_LABEL = {
   fs_read_outside:'read outside the working directory',
   // image.generate on a cloud model (agent, ATO-409)
   paid_generation:'paid generation · cloud',
+  // ATO-1393 (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
+  browser_commit:'browser · submit / publish / delete', browser_secret:'browser · password or payment',
+  browser_offsite:'browser · site outside the allow-list', state_secret:'agent secret file',
+  screen_control:'screen · click / type', screen_capture:'screen · screenshot',
+  local_model_restart:'local model · restart', hook_ask:'hook · confirm',
 };
 
 /* Calm (S7): why an answer to an approval did not land, in words. The
@@ -12017,10 +12308,25 @@ function needsOnboarding(cfg, readyIds) {
    file size by 1.6 and called the product a RAM requirement. That guess
    said "fits this Mac" for a 22 GB model on a 36 GB machine the
    catalogue itself rates at 36 GB recommended, and it had no way at all
-   to say that a model does not run here. The 1.6× heuristic survives in
+   to say that a model does not run here. A size estimate survives in
    one place only — a `custom-…` model added from Hugging Face, which no
-   catalogue describes — and it is labelled as an estimate there.
+   catalogue describes — and it is labelled as an estimate there. Since
+   ATO-1410 that estimate is the agent's own size rule
+   (ramEstimateFromSize, a copy of estimateRamGbFromFileSize in
+   model-memory-words.ts), so the terminal and this window give an added
+   model the same figure; the old 1.6× guess is gone.
    ============================================================ */
+
+/**
+ * ATO-1410: the agent's size rule for a model no catalogue describes
+ * (src/local-llm/catalog/model-memory-words.ts estimateRamGbFromFileSize,
+ * also desktop/main/model-memory-words.ts). Kept in step by
+ * desktop/test/model-catalog-drift.test.mjs.
+ */
+function ramEstimateFromSize(gb) {
+  const g = Number.isFinite(gb) && gb > 0 ? gb : 0;
+  return {minRamGb: Math.max(1, Math.ceil(g * 1.2)), recommendedRamGb: Math.max(2, Math.ceil(g * 1.5) + 2)};
+}
 
 /** The catalogue's 4B class, by its own recommendedRamGb. */
 const SMALL_MODEL_RAM_GB = 8;
@@ -12072,16 +12378,17 @@ function fitFor(model, ram) {
   // No catalogue entry (a model added from Hugging Face). Say so, and say
   // that the figure is an estimate rather than dressing it as a fact.
   const gb = sizeStringGb(model && model.size);
-  const needed = Math.ceil(gb * 1.6);
-  if (!needed || !have) {
+  if (!gb || !have) {
     return {v:'comfortable', rank:0, known:false, caution:null,
       label:'not in the catalogue — no RAM guidance', short:'no RAM guidance'};
   }
+  const est = ramEstimateFromSize(gb);
+  const needed = est.recommendedRamGb;
   if (needed <= have) {
     return {v:'comfortable', rank:0, known:false, caution:null,
       label:'about ' + needed + ' GB to run (estimated from its size)', short:'about ' + needed + ' GB (estimated)'};
   }
-  if (needed <= have * 1.4) {
+  if (est.minRamGb <= have) {
     return {v:'tight', rank:1, known:false, caution:TIGHT_FIT_CAUTION,
       label:'tight on ' + have + ' GB (about ' + needed + ' GB estimated)', short:'tight on ' + have + ' GB (estimated)'};
   }
@@ -12168,7 +12475,8 @@ function modelRamWarning(model, models, ram) {
   if (fit.v !== 'over' || !fit.known) return null;
   const alt = bestModelFor((models || []).filter((m) => m && m.id !== model.id), have);
   return {title: 'Not enough memory for this model',
-    text: 'This model needs ' + min + ' GB of memory. ' + THIS_MACHINE_CAP + ' has ' + have + ' GB.'
+    // ATO-1410: the same "needs" figure as every other row and the terminal; min only decides that it will not run.
+    text: 'This model needs ' + (Number(model.recommendedRamGb) || min) + ' GB of memory. ' + THIS_MACHINE_CAP + ' has ' + have + ' GB.'
       + (alt ? ' ' + llmModelName(alt) + ' runs here.' : ''),
     alt};
 }
@@ -12407,7 +12715,8 @@ function obHeadHTML() {
      cloud step's key and model screens title themselves with the provider
      (the wizard's `.ob-h`), so the step title is left off there rather than
      saying "Connect a cloud provider" over a screen that is no longer that. */
-  const title = OB_TITLES[OB.step] || OB_SUBTITLES[OB.step] || '';
+  const title = (OB.step === 'cloud' && OB_WIZ_ROUTE === 'custom' ? 'Choose what you already run'
+    : OB_TITLES[OB.step]) || OB_SUBTITLES[OB.step] || '';
   const wizTitled = OB.step === 'cloud' && WIZ.phase !== 'pick_kind' && !!WIZ.row;
   return '<div class="ob-head">'
     + (title && !wizTitled ? '<h2 class="ob-title">' + esc(title) + '</h2>' : '')
@@ -13162,17 +13471,49 @@ function dlOnPull(ev) {
  * The rate is the slope between two REAL samples, smoothed the way
  * useTransferRate smooths it (SMOOTHING 0.3) — nothing else. `holder` keeps
  * {rate, last, samples}: DL for the setup queue, XPULL for the other pulls.
+ *
+ * ATO-1342: `models pull` writes a line for every progress tick while the
+ * percent is a multiple of 5, with the bytes rounded to 0.01 GB. A slope
+ * between two lines of one such burst is 0 or far above the real speed,
+ * and the estimate swung with it. So `last` stays put until the bytes have
+ * moved and a few seconds have passed, and the slope spans that whole stretch.
+ * The cost: the first estimate comes a few seconds later.
  */
+const DL_RATE_MIN_SECONDS = 3;
+/* Lines still coming, bytes not, for this long: the old rate says nothing now.
+   Review: the CLI prints bytes in 0.01 GB steps, so on a slow link (100 KB/s)
+   the counter sits still for over a minute between steps. A 60 s reset blanked
+   the estimate every step, and moving `last` to the reset made the next slope
+   twice the real speed. So the wait is longer, and `last` keeps the moment the
+   counter first showed those bytes: the next slope spans the whole step. */
+const DL_RATE_STALL_SECONDS = 300;
+/* Review: the first line of a burst can show bytes rounded half a step up, so
+   a slope over one 0.01 GB step a few seconds later can read many times the
+   real speed. A slope spans at least four steps, and the rounding is then a
+   small share of it. */
+const DL_RATE_MIN_BYTES = 4 * 0.01 * 1024 * 1024 * 1024;
 function dlRateStep(holder, bytes) {
   const now = Date.now();
-  if (holder.last && bytes >= holder.last.bytes) {
-    const seconds = (now - holder.last.at) / 1000;
-    if (seconds > 0) {
-      const sample = (bytes - holder.last.bytes) / seconds;
-      holder.rate = holder.rate === null ? sample : holder.rate + 0.3 * (sample - holder.rate);
-      holder.samples = (holder.samples || 0) + 1;   // how many rate samples are behind the estimate
-    }
+  const last = holder.last;
+  const seconds = last ? (now - last.at) / 1000 : 0;
+  // The counter went back (the download restarted): measure afresh.
+  if (last && bytes < last.bytes) {
+    holder.rate = null;
+    holder.samples = 0;
+    holder.last = {bytes, at: now};
+    return;
   }
+  // Sat still too long: the estimate goes, the first sight of those bytes stays.
+  if (last && bytes === last.bytes && seconds >= DL_RATE_STALL_SECONDS) {
+    holder.rate = null;
+    holder.samples = 0;
+    return;
+  }
+  if (!last) { holder.last = {bytes, at: now}; return; }
+  if (bytes === last.bytes || seconds < DL_RATE_MIN_SECONDS || bytes - last.bytes < DL_RATE_MIN_BYTES) return;
+  const sample = (bytes - last.bytes) / seconds;
+  holder.rate = holder.rate === null ? sample : holder.rate + 0.3 * (sample - holder.rate);
+  holder.samples = (holder.samples || 0) + 1;   // how many rate samples are behind the estimate
   holder.last = {bytes, at: now};
 }
 
@@ -13247,6 +13588,11 @@ function dlCardRows() {
   }
   // F8: a vision projector waiting for its turn (dlProjectorPark). Its × takes it off.
   DL.projectorQueue.forEach((p) => rows.push({src:'dl', kind:'projector', id: p.id, state:'queued', cancel:'dlc:drop:projector:' + p.id}));
+  // ATO-1373: the serving model's projector landed; a restart makes it read images.
+  const vr = VISION.restart;
+  if (vr && !rows.some((r) => r.kind === 'weights' && r.id === vr.id)) {
+    rows.push({src:'restart', kind:'weights', id: vr.id, state: vr.busy ? 'restarting' : 'restart', error: vr.error});
+  }
   // Backlog 18: landed while the agent was on another model; it waits for a Switch.
   if (DL.ready && !rows.some((r) => r.kind === 'weights' && r.id === DL.ready.id)) {
     rows.push({src:'ready', kind:'weights', id: DL.ready.id, state:'ready'});
@@ -13311,6 +13657,8 @@ function dlCardPercent(r) {
 function dlCardLine(r) {
   if (r.state === 'failed') return r.error;
   if (r.state === 'ready') return 'Downloaded. The agent stays on its current model until you switch.';
+  if (r.state === 'restart') return r.error || 'Restart the model to read images.';
+  if (r.state === 'restarting') return 'Restarting the model…';
   const lead = r.kind === 'projector' ? 'Vision projector · ' : '';
   if (r.state === 'queued') return lead + 'Queued';
   if (r.state === 'cancelling') return 'Cancelling…';
@@ -13325,6 +13673,17 @@ function dlCardLine(r) {
 
 function dlCardRowHTML(r, i) {
   const name = dlCardName(r);
+  if (r.state === 'restart' || r.state === 'restarting') {
+    // ATO-1373: no bar, the files are on disk. The restart is the person's to press.
+    const busy = r.state === 'restarting';
+    return '<li class="dlc-row is-ready" data-dlc-row="' + i + '">'
+      + '<div class="dlc-top"><span class="dlc-name" title="' + esc(r.id) + '">' + esc('Vision files for ' + name + ' are ready') + '</span>'
+      + '<button class="btn btn-t xs dlc-switch" data-act="dlc:visionRestart"' + (busy ? ' disabled' : '')
+      + ' title="Restart ' + esc(name) + ' so it reads images">' + (busy ? 'Restarting…' : 'Restart model') + '</button>'
+      + (busy ? '' : '<button class="iconbtn sm dlc-x" data-act="dlc:visionLater" aria-label="Dismiss, and restart later"'
+        + ' title="Later: the next start reads images">' + ic('x') + '</button>') + '</div>'
+      + '<p class="dlc-line">' + esc(dlCardLine(r)) + '</p></li>';
+  }
   if (r.state === 'ready') {
     // No bar: there is nothing left to move. Switch is the start it did not get by itself.
     return '<li class="dlc-row is-ready" data-dlc-row="' + i + '">'
@@ -13350,17 +13709,22 @@ function dlCardRowHTML(r, i) {
     + '</li>';
 }
 
+/** A row whose bytes are still coming: not failed, not landed, not a restart offer (ATO-1373). */
+function dlRowMoving(r) {
+  return r.state !== 'failed' && r.state !== 'ready' && r.src !== 'restart';
+}
+
 /** Open: a header with the count and the fold, the rows, the cloud offer. */
 function dlCardHTML(rows) {
-  const moving = rows.some((r) => r.state !== 'failed' && r.state !== 'ready');
+  const moving = rows.some((r) => dlRowMoving(r));
   const failed = rows.some((r) => r.state === 'failed');
-  const ready = rows.some((r) => r.state === 'ready');
+  const ready = rows.some((r) => r.state === 'ready' || r.src === 'restart');
   const n = rows.length;
   /* The setup screen's "set up a cloud model meanwhile" offer moved here with
      the download it was about. Not for an embedding model: nothing waits on it.
      Not beside a ready row alone either: that model landed while the agent was
      already on another one. */
-  const offer = (moving || failed) && rows.some((r) => r.kind !== 'embedding' && r.state !== 'ready');
+  const offer = (moving || failed) && rows.some((r) => r.kind !== 'embedding' && r.state !== 'ready' && r.src !== 'restart');
   const title = moving ? 'Downloading' : failed && ready ? 'Downloads' : failed ? 'Download failed' : 'Download complete';
   const glyph = moving ? ic('download') : failed ? ic('alert') : ic('check');
   return '<section class="dlc" role="region" aria-label="Downloads">'
@@ -13379,7 +13743,7 @@ function dlCardHTML(rows) {
 /** Folded: a round button that is still a live count. Red when one failed. */
 function dlCardBadgeHTML(rows) {
   const failed = rows.some((r) => r.state === 'failed');
-  const moving = rows.some((r) => r.state !== 'failed' && r.state !== 'ready');
+  const moving = rows.some((r) => dlRowMoving(r));
   return '<button class="dlc-badge' + (failed ? ' has-failed' : '') + '" data-act="dlc:unfold" aria-expanded="false"'
     + ' aria-label="Show downloads (' + rows.length + ')" title="'
     + (failed ? 'A download failed' : moving ? 'Downloading' : 'Download complete') + '">'
@@ -13397,6 +13761,13 @@ function renderDlcard() {
      Settings) needs no Switch any more. */
   if (DL.ready && liveBackend() === 'local'
       && (((LIVE_CONFIG && LIVE_CONFIG.localModels) || {}).managed || {}).modelId === DL.ready.id) DL.ready = null;
+  /* ATO-1373: the offer is done with once that model stopped or started
+     again some other way (a new server pid): it reads the projector now. */
+  const vr = VISION.restart;
+  if (vr && !vr.busy) {
+    const st = LLMP.status;
+    if (!modelServingNow(vr.id) || (vr.pid && st && st.daemonRunning && st.daemonPid && st.daemonPid !== vr.pid)) VISION.restart = null;
+  }
   const rows = OB.open ? [] : dlCardRows();
   if (!rows.length) {
     // Nothing downloading or waiting: the card's corner is free for a launch's model.
@@ -13686,6 +14057,9 @@ function dlCardAct(verb) {
     return;
   }
   if (v === 'cancel') { dlCancel(); return; }
+  // ATO-1373: the serving model's projector landed. Restart on a press only; Later leaves it for the next start.
+  if (v === 'visionRestart') { void visionRestart(); return; }
+  if (v === 'visionLater') { VISION.restart = null; render(); return; }
   /* Backlog 18: the ready row. Switch is exactly the start the model did not
      get by itself — obActivateLocal, through the same switch funnel as the
      composer's picker (swxRun), waiting for a running turn to end as it
@@ -13968,13 +14342,18 @@ function obModelLabel() {
  *  model ready" only once the model really started (OB.localStart). A pick
  *  whose start was not seen says it is selected; a start that failed says so
  *  (the reason is in the transcript, bswReport). */
+/* ATO-816: a model set up from the Custom list (Ollama, LM Studio, Atomic
+   Chat, a URL) is not a cloud model, so it does not say so. */
+function obCloudReadyLabel() {
+  return OB_WIZ_ROUTE === 'custom' ? 'Model ready' : OB_COPY.cloudReadyLabel;
+}
 function obConfiguredLabel() {
   if (OB.outcome === 'local') {
     if (OB.localStart === 'started') return 'Local model ready';
     if (OB.localStart === 'failed') return 'Local model selected, but it did not start';
     return 'Local model selected';
   }
-  if (OB.outcome === 'cloud') return OB_COPY.cloudReadyLabel;
+  if (OB.outcome === 'cloud') return obCloudReadyLabel();
   return 'Backend ready';
 }
 
@@ -14049,13 +14428,31 @@ function obChooseHTML() {
       '<span class="tk-ico tk-ico--lg' + l[1] + '">' + ic(l[0]) + '</span>',
       OB.cursor === i ? obTickHTML() : '');
   }).join('');
+  /* ATO-816: the ATO-442 hint ("Already run Ollama or LM Studio? Use it
+     instead") is gone. Those apps are under Custom now, named on its card. */
   return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join(' ')) + '</div>'
-    + '<div class="ob-list ob-routes">' + rows + '</div>'
-    /* ATO-442: an Ollama or LM Studio owner reads "Local models" as theirs and
-       lands on a 20 GB download. Their apps live in the Cloud models list
-       ("Local on this Mac"), so say so here and open that list. */
-    + '<button class="ob-offer ob-offer-inline ob-routehint" data-obact="route:apps">'
-    + esc('Already run Ollama or LM Studio? Use it instead') + '</button>';
+    + '<div class="ob-list ob-routes">' + rows + '</div>';
+}
+
+/* ATO-1402: the way in under the Local models list for someone who already
+   has a model file: a .gguf on disk. A button of its own, not a list row:
+   the list's row numbers are positions (obRowClick), and this is not a
+   model. Tab reaches it after the list. The apps that serve a model
+   (Atomic Chat, Ollama, LM Studio) are not here: they are under Custom
+   (ATO-816, Local / Cloud / Custom). */
+const OB_GGUF_LABEL = 'Use a .gguf file I already have';
+function obWayInHTML(act, label, detail, icon) {
+  return '<button class="ob-wayin" data-obact="' + act + '">'
+    + '<span class="tk-ico">' + ic(icon) + '</span>'
+    + '<span class="ob-wayin-t"><span class="ob-wayin-l">' + esc(label) + '</span>'
+    + '<span class="ob-wayin-d">' + esc(detail) + '</span></span>'
+    + '<span class="ob-chev" aria-hidden="true">' + ic('chevR') + '</span></button>';
+}
+function obLocalWaysInHTML() {
+  if (!(BR && BR.ggufPick)) return '';
+  return '<div class="ob-wayins">'
+    + obWayInHTML('local:gguf', OB_GGUF_LABEL, 'Runs it from where it is. No model download', 'file')
+    + '</div>';
 }
 
 function obLocalPickHTML() {
@@ -14108,7 +14505,8 @@ function obLocalPickHTML() {
        shrinkage and renders 0px tall — rows present in the DOM, readable by
        script, and invisible on screen. `min-height` on `.ob-models` is the
        second belt. */
-    + '<div class="ob-list ob-models ob-scroll">' + body + obOutOfReachHTML() + '</div>' + hf;
+    + '<div class="ob-list ob-models ob-scroll">' + body + obOutOfReachHTML() + '</div>' + hf
+    + obLocalWaysInHTML();
 }
 
 /** The selected row's tick, at its right end (the provider list's `.prow-tick`). */
@@ -14150,16 +14548,61 @@ function obGbWord(gb) { return (Math.round(gb * 10) / 10).toFixed(1).replace(/\.
  * nothing; the line above the list already says what it is ordered for.
  */
 function obModelRowLabel(model, isBest, noteId) {
+  const use = modelPurpose(model);
   return '<span class="ob-nm">' + esc(obModelName(model)) + '</span>'
+    + (use ? '<span class="ob-badge ob-badge-use ob-use-' + use.id + '" data-use="' + use.id + '">' + esc(use.word) + '</span>' : '')
     + (isBest ? '<span class="ob-badge ob-badge-best">Recommended</span>' : '')
     + obModelNoteBadge(model, noteId);
+}
+
+/* ATO-492 (Nadya, 15.10, as in Atomic Chat): what a model is for, in four
+   words a person chooses on, first on the name line. The catalogue's
+   `purpose` (desktop/main/model-catalog.ts); a model without one (anything
+   added from Hugging Face) gets no chip rather than a guess. */
+const MODEL_PURPOSES = {
+  everyday: 'Everyday use',
+  vision: 'Vision & knowledge',
+  coding: 'Coding',
+  reasoning: 'Math & reasoning',
+};
+function modelPurpose(model) {
+  const id = model && model.purpose;
+  return id && MODEL_PURPOSES[id] ? {id, word: MODEL_PURPOSES[id]} : null;
+}
+/* ATO-492: the facts an enthusiast reads, as small grey chips on their own
+   line: how much it can read at once, whether it reads images, and whether
+   only part of it works at a time (a mixture of experts, `-A3B` / `-A4B`,
+   which is why it stays quick for its size). Plain words, the engineering
+   term in the tooltip. */
+/* ATO-492: a mixture-of-experts model. The catalogue says so (`moe`); a
+   model from elsewhere (Hugging Face, a .gguf) is read by its "-A3B" style
+   suffix in the id OR the name, since the id does not always carry it
+   ("qwen-3.5-35b" is "Qwen 3.5 35B-A3B"). */
+function modelIsMoe(model) {
+  if (!model) return false;
+  if (model.moe === true) return true;
+  const suffix = /(?:^|[-_\s])a\d+(?:\.\d+)?b(?:$|[-_\s.])/i;
+  return suffix.test(String(model.id || '')) || suffix.test(String(model.name || ''));
+}
+function modelTechChips(model) {
+  if (!model) return [];
+  const out = [];
+  const ctx = String(model.context || model.contextLabel || '').trim();
+  if (ctx && ctx !== '-') out.push({word: ctx + ' context', title: 'How much text it can read at once: ' + ctx + ' tokens.'});
+  if (model.vision) out.push({word: 'Reads images', title: 'It can look at pictures and screenshots.'});
+  if (modelIsMoe(model)) out.push({word: 'MoE', title: 'Mixture of experts: only part of the model works on each word, so it stays quick for its size.'});
+  return out;
+}
+function modelTechChipsHTML(model, cls) {
+  return modelTechChips(model).map((c) => '<span class="' + cls + '" title="' + esc(c.title) + '">' + esc(c.word) + '</span>').join('');
 }
 
 /** The one caution a row may carry, or null: its badge word, its sentence and its tone. */
 function obModelNote(model) {
   const note = modelPickNote(model, OB.ram);
   if (!note || note.v === 'over') return null;
-  const word = note.v === 'tight' ? 'Tight fit' : note.text === SMALL_MODEL_CAUTION ? 'Small model'
+  // ATO-492: the badge says it in plain words; the sentence stays the tooltip.
+  const word = note.v === 'tight' ? 'Slow on ' + OB.ram + ' GB' : note.text === SMALL_MODEL_CAUTION ? 'Simple tasks'
     : note.text === UNCENSORED_NOTE ? UNCENSORED_WORD : note.text;
   return {word, text: note.text, warn: note.v === 'tight' || !!model.uncensored};
 }
@@ -14184,7 +14627,11 @@ function obModelNoteBadge(model, noteId) {
 function obModelRowDetail(model) {
   const facts = [modelBlurb(model), modelSizeWord(model), model.downloaded ? 'already on ' + THIS_MACHINE : '']
     .filter(Boolean).join(' · ');
-  return '<span>' + esc(facts) + '</span>';
+  /* ATO-492: the grey tech chips, a second line on every card (a <div>, so
+     the facts line stays the one `.d > span`). Every catalogue row has a
+     context, so the cards stay one height. */
+  return '<span>' + esc(facts) + '</span>'
+    + '<div class="ob-tech">' + modelTechChipsHTML(model, 'ob-techchip') + '</div>';
 }
 
 /* Calm (S7, U19): the words the wizard's local list says about a model, in
@@ -14210,6 +14657,53 @@ function modelDiskFit(model) {
   if (!model || model.downloaded) return {ok: true};
   return diskFit(obDownloadGb(model) * DISK_GIB, diskSpaceNow(BR));
 }
+/* ATO-1370 / ATO-1372: a catalogue vision model on disk without its vision
+   projector (projectorMissing, read off the disk by main) can fetch the
+   projector alone. It is the usual pull: the agent skips the weights already
+   there, and main puts the bar on the projector's size (ATO-1369). The model
+   stays a choice for text meanwhile; this is a second action, not its row's. */
+function visionFetchable(model) {
+  return !!model && model.downloaded === true && model.projectorMissing === true;
+}
+function visionFetchLabel(model) {
+  const gb = Number(model && model.mmprojSizeGb) || 0;
+  return 'Get vision files' + (gb ? ' \u00b7 ' + obGbWord(gb) : '');
+}
+/* ATO-1373: whether `id` is the model the local server is running now. The
+   status poll's word when there is one, else the live config's local pick. */
+function modelServingNow(id) {
+  const st = LLMP.status;
+  if (st && typeof st.daemonRunning === 'boolean') return st.daemonRunning === true && st.activeModel === id;
+  return liveBackend() === 'local' && (((LIVE_CONFIG && LIVE_CONFIG.localModels) || {}).managed || {}).modelId === id;
+}
+/* ATO-1373: a pull of the model that is serving can only have brought its
+   projector (the weights were there to serve). Offer the restart that makes
+   it read images, and no Switch: it is already the current model. True when
+   the offer was made. If the model is not running, nothing: its next start
+   picks the projector up by itself. */
+function visionLanded(id) {
+  if (!id || !modelServingNow(id)) return false;
+  const st = LLMP.status;
+  VISION.restart = {id, pid: st && st.daemonRunning ? st.daemonPid || null : null, busy: false, error: null};
+  return true;
+}
+async function visionRestart() {
+  const r = VISION.restart;
+  if (!r || r.busy) return;
+  const held = await llmTurnsRunning();
+  if (held) { r.error = llmStopRefusal(held); render(); return; }
+  r.busy = true; r.error = null; render();
+  const ok = await llmRestartModel();
+  if (VISION.restart !== r) return;
+  if (ok) { VISION.restart = null; toast('Model restarted', dlCardName({kind: 'weights', id: r.id}) + ' reads images now', 'info'); }
+  else { r.busy = false; r.error = LLMP.msg && /^! /.test(LLMP.msg.text) ? LLMP.msg.text.slice(2) : LLMP.statusErr || 'The restart did not finish. Try again.'; }
+  render();
+}
+/* Its own disk check: modelDiskFit waves a downloaded model through, and a
+   projector is up to 2 GB. */
+function projectorDiskFit(model) {
+  return diskFit((Number(model && model.mmprojSizeGb) || 0) * DISK_GIB, diskSpaceNow(BR));
+}
 /* A Hugging Face file's fit: its size in GB as the lookup gave it. */
 function hfDiskFit(choice) {
   const gb = Number(choice && choice.fileSizeGb) || 0;
@@ -14222,7 +14716,8 @@ DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
   if (fit.v === 'over') {
-    const need = fit.known && model.minRamGb ? 'Needs ' + model.minRamGb + ' GB' : fit.short.replace(/^will not run — n/, 'N').replace(/^n/, 'N');
+    // ATO-1410: "Needs N GB" is the one figure the terminal prints too, the catalogue's recommendedRamGb.
+    const need = fit.known && model.recommendedRamGb ? 'Needs ' + model.recommendedRamGb + ' GB' : fit.short.replace(/^will not run — n/, 'N').replace(/^n/, 'N');
     return {v:'over', text: need + (ram ? '. ' + THIS_MACHINE_CAP + ' has ' + ram + ' GB.' : '.')};
   }
   if (fit.v === 'tight') return {v:'tight', text:'Tight fit on ' + ram + ' GB. It will run slowly.'};
@@ -14263,7 +14758,7 @@ function obOutOfReachHTML() {
     + '<div class="ob-out-list" id="ob-out-list"' + (open ? '' : ' hidden') + '>' + out.map((model) =>
       '<div class="ob-out">' + modelMark(model.id, 'xs')
       + '<span class="t">' + esc(obModelName(model)) + '</span>'
-      + '<span class="ob-fit ob-fit-over">' + esc(model.minRamGb ? 'Needs ' + model.minRamGb + ' GB' : fitFor(model, OB.ram).short) + '</span></div>').join('')
+      + '<span class="ob-fit ob-fit-over">' + esc(model.recommendedRamGb ? 'Needs ' + model.recommendedRamGb + ' GB' : fitFor(model, OB.ram).short) + '</span></div>').join('')
     + '</div>';
 }
 
@@ -14438,7 +14933,7 @@ function obWaitOrJumpHTML() {
     '<span class="tk-ico">' + ic('retry') + '</span>',
   ];
   const cursor = OB.cursor % rows.length;
-  return obReadyHTML(OB_COPY.cloudReadyLabel)
+  return obReadyHTML(obCloudReadyLabel())
     + (status === 'running'
         ? '<div class="ob-explain">' + esc('Still downloading ' + label + ' — it keeps running whichever row you pick.') + '</div>' : '')
     + (status === 'ready' ? obReadyHTML(label + ' downloaded — the local model is ready too') : '')
@@ -14632,8 +15127,13 @@ function obWizRows() {
   /* Calm (S6): in the order they are drawn, so the arrows walk the screen
      top to bottom — the two one-key services, the model apps on this Mac,
      then every other cloud provider (the custom URL row last). */
-  const all = KIND_ROWS.map((k, i) => ({k, i}));
-  const group = ({k}) => OB_WIZ_TOP.has(k.id) ? 0 : k.local ? 1 : k.custom ? 3 : 2;
+  /* ATO-816: the Cloud card lists keys only; the Custom card lists the apps
+     on this Mac, then a llama.cpp server, then any URL. */
+  const custom = OB_WIZ_ROUTE === 'custom';
+  const all = KIND_ROWS.map((k, i) => ({k, i}))
+    .filter(({k}) => custom ? (k.local || k.custom) : !(k.local || k.custom));
+  if (custom) all.push({k: OB_WIZ_LLAMA_ROW, i: KIND_ROWS.length});
+  const group = ({k}) => OB_WIZ_TOP.has(k.id) ? 0 : k.local ? 1 : k.llamaServer ? 2 : k.custom ? 3 : 2;
   const ordered = all.slice().sort((a, b) => (group(a) - group(b))
     || (group(a) === 1 ? OB_WIZ_LOCAL.indexOf(a.k.id) - OB_WIZ_LOCAL.indexOf(b.k.id) : a.i - b.i));
   const q = (WIZ.q || '').trim().toLowerCase();
@@ -14779,6 +15279,9 @@ function obWizardHTML() {
     const top = rows.filter(({k}) => OB_WIZ_TOP.has(k.id));
     const local = rows.filter(({k}) => k.local);
     const rest = rows.filter(({k}) => !OB_WIZ_TOP.has(k.id) && !k.local);
+    /* ATO-816: on the Custom list the second group is a server you run
+       yourself (llama.cpp, any URL), not "more providers". */
+    const restTitle = OB_WIZ_ROUTE === 'custom' ? 'A server you run' : 'More providers';
     const at = (r) => rows.indexOf(r);
     const group = (title, list) => !list.length ? ''
       : (title ? '<div class="prow-more">' + esc(title) + '</div>' : '')
@@ -14787,11 +15290,11 @@ function obWizardHTML() {
     return '<div class="ob-wiz">'
       + (WIZ.q === null ? ''
           : '<div class="ob-field ob-search">' + ic('search')
-            + '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '"></div>')
+            + '<input class="ob-inp" id="wiz-q" placeholder="' + (OB_WIZ_ROUTE === 'custom' ? 'Search' : 'Search providers') + '" value="' + esc(WIZ.q) + '"></div>')
       + '<div class="ob-wizlist">'
         + group('', top)
-        + group('Local on ' + THIS_MACHINE, local)
-        + group(top.length || local.length ? 'More providers' : '', rest)
+        + group('Apps on ' + THIS_MACHINE, local)
+        + group(top.length || local.length ? restTitle : '', rest)
       + '</div>'
       // Esc is the TUI's way out of the list; the desktop needs a control
       // for it too, and it routes through the same action. Continue presses
@@ -14818,8 +15321,10 @@ function obWizardHTML() {
       + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
         + ic('chevL') + 'Back</button><span class="grow"></span>'
         + '<button class="btn btn-s" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
-        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
-        + (verifying ? 'Adding…' : esc(wizSubButton(k)) + ic('arrowR')) + '</button></div>'
+        + (wizSubNeedsLogin(k) && !verifying
+          ? '<button class="btn btn-p" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + ic('arrowR') + '</button></div>'
+          : '<button class="btn btn-p" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+            + (verifying ? 'Adding…' : esc(wizSubButton(k)) + ic('arrowR')) + '</button></div>')
       + '</div>';
   }
   /* B.4 — one label, not three: "API key" once as the kicker, the provider
@@ -15123,7 +15628,8 @@ function obChooseKey(input, key) {
 /** pickBackend (onboarding-step-keys.ts:95-115). */
 function obPickBackend(choice) {
   if (choice === 'cloud') { obOpenCloudWizard(); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
-  if (choice === 'custom') { obDispatch({type:'onboarding_step_set', step:'custom_chat_url'}); return; }
+  // ATO-816: Custom opens its own list (apps on this Mac, llama.cpp, any URL).
+  if (choice === 'custom') { obOpenCloudWizard('custom'); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
   // Managed mode is recorded NOW so a quit mid-download does not lose
   // the choice; the model id follows when the pull completes. The promise
   // is kept because `models update` refuses outside managed mode.
@@ -15398,6 +15904,12 @@ function obCloudKey(input, key) {
     if (key.return) {
       const picked = rows[rows.length ? WIZ.cur % rows.length : 0];
       if (!picked) return true;
+      // ATO-816: the llama.cpp row is the old Custom endpoint screen.
+      if (picked.k.llamaServer) {
+        WIZ.phase = null; WIZ.q = null;
+        obDispatch({type:'onboarding_step_set', step:'custom_chat_url'});
+        return true;
+      }
       // Same rule as the popover's row: a new provider starts with an empty field.
       WIZ.row = picked.k; WIZ.phase = 'configure'; WIZ.error = null; ANX.providerStarted(WIZ.row);
       WIZ.apiKey = ''; WIZ.baseUrl = picked.k.custom ? WIZ.baseUrl : '';
@@ -15413,7 +15925,34 @@ function obCloudKey(input, key) {
 
 /* ---------------- effects ---------------- */
 
-function obOpenCloudWizard() {
+/* ATO-1402: "Use a .gguf file I already have". main registers the file where
+   it lies (cli:ggufPick); then it is the same hand-over as a curated pick's
+   Download, whose pull finds the weights present and starts the model.
+   The card is drawn while the catalogue is still loading (OB.busy), and it
+   works then too: the file dialog does not need the list. Only a dialog
+   already open is a reason to do nothing. */
+let OB_GGUF_PICKING = false;
+async function obGgufPick() {
+  if (!BR || !BR.ggufPick || OB_GGUF_PICKING) return;
+  if (dlBusy() || DL.projector || SEL.pulling || LLMP.pulling) {
+    obDispatch({type:'onboarding_error_set', error:'a download is already running'});
+    return;
+  }
+  OB_GGUF_PICKING = true;
+  let res;
+  try { res = await BR.ggufPick(); } finally { OB_GGUF_PICKING = false; }
+  if (!OB.open || OB.step !== 'local_pick') return;
+  if (!res || res.ok !== true) {
+    if (res && res.cancelled) return;
+    obDispatch({type:'onboarding_error_set', error: (res && res.error) || 'could not add the file'});
+    return;
+  }
+  OB.pendingMmproj = null;
+  obDownloadAndHandOver(res.id);
+}
+
+function obOpenCloudWizard(route) {
+  OB_WIZ_ROUTE = route === 'custom' ? 'custom' : 'keys';
   OB_ATOMIC_CHAT.running = null;   // re-asked on this visit to the list
   WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.forId = null;
   WIZ.cur = 0; WIZ.q = null;
@@ -15639,7 +16178,8 @@ function obPullFinished(job, ev) {
      obFetchProjector's failure is. The weights stay; Retry fetches the projector. */
   if (ev.projectorSkipped === true) {
     DL.landed = null;
-    DL.error = 'the vision projector did not download — the model was not started: it would serve text only';
+    // ATO-1371: still a choice for text. Added after the old words, which t18c.ts and model-spotlight.test.mjs read.
+    DL.error = 'the vision projector did not download — the model was not started: it would serve text only. You can still pick this model for text.';
     dlFail({kind: 'projector', id: job.id}, DL.error, () => dlRequeue(job));
     bswSnapshot();
     render();
@@ -16002,7 +16542,7 @@ function obFetchProjector(id, pending) {
       // The daemon would serve a vision model text-only; say so and
       // do not activate behind the operator's back.
       DL.error = ((res && res.error) || 'the vision projector did not download')
-        + ' — the model was not started: it would serve text only';
+        + ' — the model was not started: it would serve text only. You can still pick this model for text.';   // ATO-1371
       dlFail({kind:'projector', id}, DL.error, () => obFetchProjector(id, pending));
       render();
       dlProjectorNext();
@@ -16688,7 +17228,9 @@ function obOwnEscape() {
        had its own busy branch (it cancels the lookup); this one has no
        socket to drop — llamaProbe carries its own AbortSignal timeout. */
     if (OB.busy) return;
-    obDispatch({type:'onboarding_step_set', step: OB.step === 'custom_chat_url' ? 'choose' : 'custom_chat_url'});
+    // ATO-816: back from the URL step is the Custom list it was picked from.
+    if (OB.step === 'custom_chat_url') { obPickBackend('custom'); return; }
+    obDispatch({type:'onboarding_step_set', step:'custom_chat_url'});
     return;
   }
 }
@@ -16907,7 +17449,8 @@ function obRowClick(index, clicks) {
 function obControlClick(spec) {
   if (spec === 'key:c') { obKey('c', {}); return; }
   if (spec === 'key:s') { obKey('s', {}); return; }
-  if (spec === 'route:apps') { obPickBackend('cloud'); return; }
+  if (spec === 'route:apps') { obPickBackend('custom'); return; }
+  if (spec === 'local:gguf') { obGgufPick(); return; }
   /* r6 cloud item 1: the hint strip's `esc` chord, clickable. The split is
      obKeydown's own — a step that owns its keyboard answers Escape through
      obOwnEscape, everything else through the key table — so the button and
@@ -17043,7 +17586,7 @@ if (BR) {
        nothing at all until they were listed. Same shape as the defect the
        operator once reported as "when I click on next, nothing happens". */
     if (OB.open && OB.step === 'cloud'
-        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck')) {
+        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck' || a === 'wiz:subLogin' || a === 'wiz:subCopy')) {
       return prevAct(a);
     }
     if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
@@ -18135,9 +18678,13 @@ function selLocalRows(custom) {
       const note = modelPickNote(m, ram);
       // ATO-507: a download with no room for it on this disk has no Download chip, and says why.
       const disk = modelDiskFit(m);
+      // ATO-1372: the picker says text only too, and offers the projector on its own chip.
+      const vision = visionFetchable(m);
       return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
-        detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '']
+        detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '',
+          vision ? modelVisionFact(m) : '']
           .filter(Boolean).join(' · '),
+        projectorMissing: vision, visionLabel: vision ? visionFetchLabel(m) : null,
         note, noRoom: disk.ok ? null : disk.text};
     });
 }
@@ -18367,17 +18914,31 @@ async function selActivate(row) {
 }
 
 /** How the composer's pull ended. No Switch for a model that lost its projector: it stays a choice in the list. */
-function selPullFinished(id, ev) {
-  if (ev.ok && ev.projectorSkipped === true) { bswSnapshot(); toast('Downloaded without vision', projectorSkippedText(), 'bad'); }
-  else if (ev.ok) { DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it'); }
-  else toast('Download stopped', ev.error || 'The download did not finish', 'bad');
+async function selPullFinished(id, ev) {
+  if (ev.ok && ev.projectorSkipped === true) { bswSnapshot(); toast('Downloaded without vision', projectorSkippedText(), 'bad'); return; }
+  if (!ev.ok) { toast('Download stopped', ev.error || 'The download did not finish', 'bad'); return; }
+  /* ATO-1373 review: LLMP.status is refreshed only by Settings, its poll and
+     Diagnostics. Read it now, as llmAfterPull does, so a switch made in the
+     picker since then does not answer for the model that is serving. */
+  try { await llmRefreshStatus(true); } catch (e) { /* the live config stands in (modelServingNow) */ }
+  if (visionLanded(id)) { bswSnapshot(); render(); return; }   // the serving model got its projector
+  DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it');
+  render();
 }
 
+/* ATO-1372: the picker's chip. The usual pull: main fetches the projector alone. */
+function selVisionFetch(id) {
+  const model = (SEL.local || []).find((m) => m && m.id === id);
+  if (!visionFetchable(model)) return false;
+  return selPull(id);
+}
 function selPull(id) {
   // false: refused. A Retry keeps its row on that (dlRetry); the other callers do not read it.
   if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return false; }
   // ATO-507: no room on the models disk for it: say so instead of a pull that fails an hour in.
-  const disk = modelDiskFit((SEL.local || []).find((m) => m && m.id === id));
+  // ATO-1372: a model on disk fetching its projector alone needs room for the projector.
+  const model = (SEL.local || []).find((m) => m && m.id === id);
+  const disk = visionFetchable(model) ? projectorDiskFit(model) : modelDiskFit(model);
   if (!disk.ok) { toast('Not enough disk space', disk.text, 'info'); return false; }
   SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null;
   closeSelector(); render();
@@ -18496,6 +19057,11 @@ function selectorHTML() {
           + (r.setup ? '<span class="tk-chip tk-chip--sm selsetup">Set up</span>' : '')
           + (r.type === 'backend' && !r.addProvider && !r.setup ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
           + (r.type === 'localModel' && !r.downloaded && !r.noRoom ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
+          /* ATO-1372: its own act, so the chip fetches the projector and a
+             click on the rest of the row still picks the model for text. */
+          + (r.type === 'localModel' && r.projectorMissing && SEL.pulling !== r.id
+            ? '<span role="button" tabindex="-1" class="tk-chip tk-chip--sm tk-chip--blue seldl selvision" data-act="sel:vision:' + esc(r.id) + '"'
+              + ' title="Download the vision projector so this model reads images">' + ic('download') + esc(r.visionLabel) + '</span>' : '')
           /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
@@ -20307,7 +20873,12 @@ function sessionTurnsToLog(turns) {
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
         arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
         argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
-        where:'local', ok:null, open:false});
+        where:'local', ok:null, open:false,
+        /* ATO-1382: the agent's words for the call, as the live card got them
+           from `tool_progress.done_line`; the history route builds the same
+           line from the stored args. An older agent sends none: the table's
+           own wording stays. */
+        doneLine: typeof t.done_line === 'string' && t.done_line ? t.done_line.slice(0, 200) : null});
       return;
     }
     if (t.kind === 'tool_result') {
@@ -20464,7 +21035,9 @@ async function openSession(id) {
     S.streamId = null;
   }
   // ATO-131: cleared while this loaded: as Clear leaves a chat that is open (its running turn's own rows stay).
-  if (OPEN_CLEARED === seq) { OPEN_CLEARED = 0; S.log = rebuilt ? liveClearedLog() : []; }
+  const clearedWhileLoading = OPEN_CLEARED === seq;
+  if (clearedWhileLoading) OPEN_CLEARED = 0;
+  rollbackOnSessionOpened(id, clearedWhileLoading, rebuilt);   // ATO-1420: the whole chat is drawn again
   // item 6: a turn of this session is still running, but its stream is not in
   // this log any more (the user left and came back). The desktop cannot replay
   // a stream, so it shows the stored snapshot and says what is still happening
@@ -20479,6 +21052,7 @@ async function openSession(id) {
   S.agentSession = id;
   S.history = [];
   markSeen(id);   // item 6: opening a chat is reading it
+  rollbackStashBack(id);   // ATO-1300: a question taken back while this chat was not on screen
   /* Item 38: not under a turn running on screen again. It runs on the model
      the window is on, and the notice would land below its reply, saying the
      session ran on the model of the turn before it. */
@@ -20732,7 +21306,10 @@ function modelMatches(id, tags, query) {
    ============================================================ */
 
 function wizardHTML() {
-  if (WIZ.phase === 'pick_kind') {
+  /* ATO-1281: a step that is not the list needs its row. With none (the
+     wizard was left and opened again while a step still awaited the network)
+     the list is drawn, as the setup wizard's own copy does, not a TypeError. */
+  if (WIZ.phase === 'pick_kind' || !WIZ.row) {
     const taken = new Set(selProviders().map((p) => p.id));
     return selShell('Add a provider',
       '<div class="selbody"><div class="sellist">' + KIND_ROWS.map((k, i) =>
@@ -20785,8 +21362,10 @@ function wizardHTML() {
       + '</div>',
       '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
         + '<button class="btn btn-s xs" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
-        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
-        + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : esc(wizSubButton(k))) + '</button>',
+        + (wizSubNeedsLogin(k) && !verifying
+          ? '<button class="btn btn-p xs" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + '</button>'
+          : '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+            + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : esc(wizSubButton(k))) + '</button>'),
       lead);
   }
   /* This is the SECOND place the app asks for an API key — the wizard's own
@@ -20930,14 +21509,23 @@ function wizSubscriptionLines(k) {
   } else if (!st.installed) {
     lines.push({warn: true, text: wizService(k) + ' is not installed on ' + THIS_MACHINE + '. To use your ' + k.plan + ' subscription:'});
     lines.push({text: '1. Open ' + terminal + ' and run:'});
-    lines.push({code: true, text: wizSubInstallCmd(cli)});
+    lines.push({code: true, copy: true, text: wizSubInstallCmd(cli)});
     lines.push({text: '2. Run ' + cli + (cli === 'codex' ? ' login' : '') + ' once and sign in with your ' + k.plan + ' account.'});
     lines.push({text: '3. Come back here and press Check again.'});
   } else if (st.signedIn === false) {
+    /* ATO-845: the main way in is the Sign in button, which opens the
+       terminal with the command already running; the command itself is the
+       small fallback under it, with Copy. */
     lines.push({warn: true, text: 'Found ' + wizService(k) + ', but it is not signed in' + (st.apiKeyLogin ? ' with ChatGPT (it is using an API key, which bills per token)' : '') + '.'});
-    lines.push({text: '1. Open ' + terminal + ' and run:'});
-    lines.push({code: true, text: cli === 'codex' ? 'codex login' : 'claude'});
-    lines.push({text: '2. Sign in with your ' + k.plan + ' account' + (cli === 'claude' ? ' (type /login if it does not ask)' : '') + ', then press Check again.'});
+    if (WIZ_SUB_POLL.cli === cli && WIZ_SUB_POLL.opened) {
+      lines.push({text: 'A ' + terminal + ' window opened with the sign-in running. Finish signing in with your ' + k.plan + ' account in the browser'
+        + (cli === 'claude' ? ' (type /login there if it does not ask)' : '') + '. This screen moves on by itself.'});
+    } else {
+      lines.push({text: 'Press ' + wizSubLoginButton(k) + '. A ' + terminal + ' window opens with the sign-in running, you finish in the browser, and this screen moves on by itself.'});
+    }
+    if (WIZ_SUB_POLL.cli === cli && WIZ_SUB_POLL.failed) lines.push({warn: true, text: 'Could not open ' + terminal + '. Run the command below in it yourself.'});
+    lines.push({small: true, text: (WIZ_SUB_POLL.cli === cli && WIZ_SUB_POLL.failed ? '' : terminal + ' did not open? ') + 'Run this in ' + terminal + ':'});
+    lines.push({code: true, copy: true, text: cli === 'codex' ? 'codex login' : 'claude'});
   } else if (st.signedIn === true) {
     lines.push({text: 'Found ' + wizService(k) + ' and you are signed in. Press the button and the agent answers on your ' + k.plan + ' plan, no API key needed.'});
   } else {
@@ -20961,8 +21549,75 @@ function wizSubscriptionEntry(k) {
 function wizSubButton(k) { return 'Use my ' + (k.plan || wizService(k)) + ' subscription'; }
 /** One line of the step, a command line drawn as code the person copies. */
 function wizSubLineHTML(l, cls, warnCls) {
-  return '<' + (cls === 'p' ? 'p' : 'div') + ' class="ob-help' + (l.warn ? ' ' + warnCls : '') + '">'
-    + (l.code ? '<code class="mono">' + esc(l.text) + '</code>' : esc(l.text)) + '</' + (cls === 'p' ? 'p' : 'div') + '>';
+  return '<' + (cls === 'p' ? 'p' : 'div') + ' class="ob-help' + (l.warn ? ' ' + warnCls : '') + (l.small ? ' wiz-sub-small' : '') + '">'
+    + (l.code ? '<code class="mono">' + esc(l.text) + '</code>' : esc(l.text))
+    + (l.code && l.copy ? ' <button class="btn btn-g xs wiz-sub-copy" data-act="wiz:subCopy">Copy</button>' : '')
+    + '</' + (cls === 'p' ? 'p' : 'div') + '>';
+}
+/* ATO-845: "Sign in with Claude" / "Sign in with ChatGPT". */
+function wizSubLoginButton(k) { return 'Sign in with ' + (k.plan || wizService(k)); }
+/** Signed out, as far as the login file says: the step's main button is Sign in. */
+function wizSubNeedsLogin(k) { const st = wizSubStatus(k); return !!(st && st.installed && st.signedIn === false); }
+/* The sign-in poll. After the click the step asks main every few seconds
+   (files only, nothing is run) and moves on once the CLI is signed in; it
+   stops when the step is left, after ten minutes, or on success. */
+const WIZ_SUB_POLL = {cli: null, timer: null, until: 0, opened: false, failed: false, startedAt: 0, opening: false};
+const WIZ_SUB_POLL_MS = 3000;
+function wizSubPollStop() {
+  if (WIZ_SUB_POLL.timer) clearInterval(WIZ_SUB_POLL.timer);
+  WIZ_SUB_POLL.timer = null;
+}
+function wizSubPollTick() {
+  const k = WIZ.row;
+  const cli = WIZ_SUB_POLL.cli;
+  if (!k || k.subscriptionCli !== cli || WIZ.phase !== 'configure' || Date.now() > WIZ_SUB_POLL.until || !BR || !BR.subscriptionStatus) { wizSubPollStop(); return; }
+  Promise.resolve(BR.subscriptionStatus(cli)).then((r) => {
+    if (!WIZ_SUB_POLL.timer || WIZ_SUB_POLL.cli !== cli) return;
+    const st = r && r.ok && r.status ? r.status : null;
+    if (!st) return;
+    const before = WIZ_SUB.get(cli);
+    WIZ_SUB.set(cli, st);
+    if (st.installed && st.signedIn === true) {
+      wizSubPollStop();
+      ANX.subscriptionLoginSucceeded(cli, OB.open, Math.round((Date.now() - WIZ_SUB_POLL.startedAt) / 1000));
+      /* Through act, so first run's router (obKey) takes it exactly as it takes the button. */
+      if (WIZ.row && WIZ.row.subscriptionCli === cli && WIZ.phase === 'configure' && !WIZ.stepping) { act('wiz:next'); return; }
+      render();
+      return;
+    }
+    const same = before && typeof before === 'object' && before.installed === st.installed && before.signedIn === st.signedIn;
+    if (!same) render();
+  }).catch(() => {});
+}
+/** Copy: the step's one command line (install, or sign in). */
+function wizSubCopy(k) {
+  if (!k || !k.subscriptionCli) return;
+  const line = wizSubscriptionLines(k).find((l) => l.code && l.copy);
+  if (line) copyText(line.text, 'Copied', 'paste it into the terminal and press Return');
+}
+async function wizSubLogin(k) {
+  if (!k || !k.subscriptionCli || !BR || !BR.subscriptionLogin) return;
+  /* A second click while the terminal is still opening would open a second
+     one and start a second poll. */
+  if (WIZ_SUB_POLL.opening) return;
+  WIZ_SUB_POLL.opening = true;
+  render();
+  const cli = k.subscriptionCli;
+  ANX.subscriptionLoginClicked(cli, OB.open);
+  wizSubPollStop();
+  Object.assign(WIZ_SUB_POLL, {cli, opened: false, failed: false, startedAt: Date.now()});
+  WIZ.error = null;
+  let res = null;
+  try { res = await Promise.resolve(BR.subscriptionLogin(cli)).catch(() => null); } finally { WIZ_SUB_POLL.opening = false; }
+  const opened = !!(res && res.ok);
+  WIZ_SUB_POLL.opened = opened; WIZ_SUB_POLL.failed = !opened;
+  ANX.subscriptionTerminalOpened(cli, OB.open, opened, opened ? res.terminal : (res && res.reason));
+  /* Poll even when the terminal did not open: the person may run the
+     fallback command themselves. */
+  WIZ_SUB_POLL.until = Date.now() + 10 * 60 * 1000;
+  wizSubPollStop();
+  WIZ_SUB_POLL.timer = setInterval(wizSubPollTick, WIZ_SUB_POLL_MS);
+  render();
 }
 async function wizSubscriptionStep(k) {
   const id = k.id;
@@ -20972,9 +21627,11 @@ async function wizSubscriptionStep(k) {
   if (!wizSubReady(k)) { render(); return; }
   WIZ.phase = 'verifying'; WIZ.error = null; WIZ.errorDetail = null; WIZ.noFundsNote = null; render();
   const res = await BR.upsertProvider(wizSubscriptionEntry(k));
+  if (wizStepLeft(k)) return;
   if (res && res.ok === false) { ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
   /* Main answers this from the built-in list (subscription-cli-models.ts), never the network. */
   const listed = BR.providerModels ? await BR.providerModels(id, k.kind).catch(() => null) : null;
+  if (wizStepLeft(k)) return;
   const models = listed && listed.ok && Array.isArray(listed.models) ? listed.models : [];
   if (!models.length) return wizActivate(k, id, '', null);
   const model = models.some((m) => m.id === k.defaultModel) ? k.defaultModel : models[0].id;
@@ -20982,6 +21639,18 @@ async function wizSubscriptionStep(k) {
   WIZ.models = models; WIZ.modelPick = model; WIZ.defaultModel = model;
   WIZ.savedId = id; WIZ.savedLabel = wizService(k); WIZ.unverifiedNote = null;
   render();
+}
+
+/* ATO-1281: whether the wizard this step belongs to was left (Cancel, Esc, a
+   click outside) or opened again on another row while the step awaited. A step
+   that outlived its wizard stops: it used to set the next phase on a wizard
+   already closed, or opened afresh with no row, and the redraw threw. The
+   entry it left without a model is dropped, as leaving the wizard does. */
+function wizStepLeft(k) {
+  if (WIZ.row === k && WIZ.phase) return false;
+  WIZ.dropAfterStep = false;
+  if (WIZ.unfinishedId) { const id = WIZ.unfinishedId; WIZ.unfinishedId = null; wizRemoveIfIncomplete(id); }
+  return true;
 }
 
 async function wizNext() {
@@ -21024,6 +21693,11 @@ function wizSetupFailReason(listed) {
   const status = listed && typeof listed.status === 'number' ? listed.status : 0;
   if (status === 401 || status === 403) return 'key_rejected';
   if (status === 429 || status >= 500) return 'provider_error';
+  /* ATO-1195: list_failed split further by what happened on our side
+     (agent-cli.ts ownListFailure): the agent crashed before printing a list,
+     printed something that is not one, or there was no agent to run. */
+  const own = listed && listed.failure;
+  if (own === 'agent_crashed' || own === 'not_json' || own === 'no_binary') return own;
   const said = String((listed && listed.error) || '');
   if ((listed && listed.ok) || (said && wizSaidNoModels(said))) return 'catalog_empty';
   return 'list_failed';
@@ -21108,6 +21782,7 @@ async function wizNextStep() {
       const r = await BR.providerKeyPresent({id, kind: k.kind, apiKeyEnvVar: k.env, baseUrl: entry.baseUrl});
       if (r && r.ok) has = !!r.present;
     } catch (e) { /* unknown: the check below answers it, as before */ }
+    if (wizStepLeft(k)) return;
     if (has === false) { wizAskKey(k); render(); wizFocusKey(); return; }
   }
 
@@ -21115,13 +21790,14 @@ async function wizNextStep() {
   // step, then Next again) is still this wizard's, not a pre-existing one.
   const existedBefore = WIZ.unfinishedId !== id && !!selProviders().find((p) => p.id === id);
   let res = await BR.upsertProvider(entry);
-  if (res && res.ok === false) { ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
+  if (res && res.ok === false) { if (wizStepLeft(k)) return; ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
   // U29: remember an entry this wizard created without a model, so leaving
   // before the model is committed removes it again (see wizDropUnfinished).
   // A different id this pass (Back, then a changed custom URL) leaves the
   // earlier entry orphaned: drop it now.
   if (WIZ.unfinishedId && WIZ.unfinishedId !== id) { const prev = WIZ.unfinishedId; WIZ.unfinishedId = null; wizRemoveIfIncomplete(prev); }
   if (!existedBefore && WIZ_NEEDS_MODEL.has(k.kind)) WIZ.unfinishedId = id;
+  if (wizStepLeft(k)) return;
 
   // The catalogue, to pick a model with. This is a LOOKUP, not a check:
   // openrouter and aimlapi answer it from a list bundled in the binary,
@@ -21139,6 +21815,7 @@ async function wizNextStep() {
     // ATO-306: nor is a refused key, a provider error or a list that failed some other way (wizSetupFailReason).
     ANX.providerFailed(wizSetupFailReason(listed), OB.open, k);
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
+    if (wizStepLeft(k)) return;
     WIZ.phase = 'configure';
     /* r6 UX: the provider's own words are the detail, not the whole
        message. A rejected key used to report `no searchable cloud
@@ -21234,6 +21911,7 @@ async function wizNextStep() {
     : (BR.verifyProviderKey ? await BR.verifyProviderKey(entry, model) : {ok:true, checked:false});
   if (proof && proof.checked && !proof.ok) {
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
+    if (wizStepLeft(k)) return;
     WIZ.phase = 'configure';
     /* Calm (S6, U14): a plain sentence; the provider's own words ("User not
        found") are the Details under it. */
@@ -21256,6 +21934,7 @@ async function wizNextStep() {
     render(); refreshLiveConfig();
     return;
   }
+  if (wizStepLeft(k)) return;
   /* Backlog 40: the provider took the key and turned the request down because
      the account has no funds (AI/ML API's 403 "You've run out of funds", a
      402). The key works: this is neither "didn't accept this key" nor "could
@@ -21293,6 +21972,7 @@ async function wizNextStep() {
   const unverified = proof && !proof.checked ? (proof.error || 'the key could not be checked') : null;
   if (unverified && BR.unverifiedSet) { try { await BR.unverifiedSet(id, true); } catch (e) { /* the badge is not worth failing the save */ } }
   if (!unverified && BR.unverifiedSet) { try { await BR.unverifiedSet(id, false); } catch (e) { /* idem */ } }
+  if (wizStepLeft(k)) return;
   WIZ.acceptUnchecked = false;
   WIZ.uncheckedFor = null;
   /* The model is a CHOICE, not something we take silently.
@@ -21669,14 +22349,16 @@ function sysGlyph(m) {
   return '<span class="sys-ic' + (sev ? ' ' + sev : '') + '">' + ic(name) + '</span>';
 }
 /** ATO-381: "Try again" on a failed turn's row sends the person's message
-    before it once more, through the same data-resend path as the message's
-    own "Send this message again" (resendUser). A steer is folded into the
-    turn, so it is skipped like the palette's retry. '' when there is none. */
+    before it once more. ATO-1301: through regenerateReply, so the agent
+    first takes the failed turn back; when it refuses (the turn ran a tool,
+    say) or has no such route, it falls back to resendUser, the message's own
+    "Send this message again". A steer is folded into the turn, so it is
+    skipped like the palette's retry. '' when there is none. */
 function sysRetryHTML(m) {
   const at = S.log.indexOf(m);
   for (let i = (at < 0 ? S.log.length : at) - 1; i >= 0; i--) {
     const u = S.log[i];
-    if (u.k === 'user' && !u.steered && String(u.text || '').trim()) return ' <button class="btn xs btn-s sysact" data-resend="' + esc(u.id) + '">Try again</button>';
+    if (u.k === 'user' && !u.steered && String(u.text || '').trim()) return ' <button class="btn xs btn-s sysact" data-regen="' + esc(u.id) + '" data-regen-fail="1">Try again</button>';
   }
   return '';
 }
@@ -21691,7 +22373,9 @@ function sysRowHTML(m, times) {
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
     + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts
     // ATO-767: the automatic restarts ran out; a full-size button, the same restart as the menu's.
-    + (m.act === 'restart-agent' ? ' <button class="btn btn-p sysact agent-restart-btn" data-act="agent:restart">Restart agent</button>' : '')
+    + (m.act === 'restart-agent' ? ' <button class="btn btn-p sysact agent-restart-btn" data-act="agent:restart">Restart agent</button>'
+      // ATO-1285: the support report (agent.log tail, settings with keys taken out), the same as Help › Save report for support.
+      + ' <button class="btn btn-s sysact agent-logs-btn" data-act="dump">Collect logs</button>' : '')
     + '</span></div></div>';
   // Fusion's first-switch intro is a block of its own (the tree mark, then paragraphs).
   if (m.fusionIntro) return '<div class="sysrow sys-block"><span></span><span class="sys-tx">' + m.text + rep + '</span></div>';
@@ -24023,19 +24707,47 @@ function skpHintsHTML() {
    name up to its last dot), families and names sorted; the unprefixed ones
    (reply, finish), each its own family there, lead together with no heading.
    null until the capabilities have been read. */
+/* ATO-528, step A (no switches yet: turning a group off needs the agent's
+   core, see the plan in Linear): the families are gathered into groups a
+   person recognises, each with one line of what it lets the agent do. The
+   internal name stays on every row, small and in mono. The unprefixed tools
+   (reply, finish) still lead with no heading; a family no group claims goes
+   under Other. Order is the list's order. */
+const TOOL_GROUPS = [
+  {id:'files', label:'Files', what:'Reads, writes and searches files in your folders.', match:/^os\.fs(\.|$)/},
+  {id:'terminal', label:'Terminal', what:'Runs commands and programs on ' + THIS_MACHINE + '.', match:/^os\.(shell|proc)(\.|$)/},
+  {id:'browser', label:'Browser', what:'Opens web pages and works in them, in its own browser.', match:/^browser(\.|$)/},
+  {id:'web', label:'Web', what:'Searches the internet and fetches pages.', match:/^(os\.(web|http)|web)(\.|$)/},
+  {id:'screen', label:'Screen and images', what:'Sees the screen and clicks and types on it, reads and makes pictures.', match:/^(os\.screen|shot|vision|image)(\.|$)/},
+  {id:'apps', label:'Windows and clipboard', what:'Lists and switches app windows, reads and writes the clipboard.', match:/^os\.(window|clipboard)(\.|$)/},
+  {id:'code', label:'Code and Git', what:'Works with git repositories and GitHub.', match:/^(os\.git|github)(\.|$)/},
+  {id:'tasks', label:'Tasks and schedules', what:'Plans work and runs it later or on a schedule.', match:/^(tasks|plan)(\.|$)/},
+  {id:'memory', label:'Memory', what:'Remembers facts, notes and lessons between chats.', match:/^memory(\.|$)/},
+  {id:'email', label:'Email', what:'Reads and sends email.', match:/^os\.email(\.|$)/},
+  {id:'checks', label:'Checks', what:'Checks its own work before it says it is done.', match:/^verify(\.|$)/},
+  {id:'agent', label:'Skills and connections', what:'Finds and uses skills, tools and connected services.', match:/^(skill|tool|mcp\.(resource|prompt)|fusion|index|manifest)(\.|$)/},
+];
+const TOOL_GROUP_OTHER = {id:'other', label:'Other', what:'Everything else the agent can do.'};
+function toolGroupOf(family) {
+  if (!family) return null;
+  return TOOL_GROUPS.find((g) => g.match.test(family)) || TOOL_GROUP_OTHER;
+}
 function skpBuiltinTools() {
   if (!LIVE_CAPS || !Array.isArray(LIVE_CAPS.tools)) return null;
-  const byFamily = new Map();
+  const byGroup = new Map();
   LIVE_CAPS.tools.forEach((t) => {
     const name = t && typeof t.name === 'string' ? t.name : '';
     if (!name || (name.startsWith('mcp.') && !/^mcp\.(resource|prompt)\./.test(name))) return;
     const dot = name.lastIndexOf('.');
-    const family = dot < 0 ? '' : name.slice(0, dot);
-    if (!byFamily.has(family)) byFamily.set(family, []);
-    byFamily.get(family).push({name, description: typeof t.description === 'string' ? t.description : ''});
+    const group = toolGroupOf(dot < 0 ? '' : name.slice(0, dot));
+    const key = group ? group.id : '';
+    if (!byGroup.has(key)) byGroup.set(key, {group, tools: []});
+    byGroup.get(key).tools.push({name, description: typeof t.description === 'string' ? t.description : ''});
   });
-  return [...byFamily.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([family, list]) => ({family, tools: list.sort((a, b) => a.name.localeCompare(b.name))}));
+  const order = (k) => k === '' ? -1 : k === 'other' ? TOOL_GROUPS.length : TOOL_GROUPS.findIndex((g) => g.id === k);
+  return [...byGroup.entries()].sort((a, b) => order(a[0]) - order(b[0]))
+    .map(([, v]) => ({family: v.group ? v.group.label : '', what: v.group ? v.group.what : '', groupId: v.group ? v.group.id : '',
+      tools: v.tools.sort((a, b) => a.name.localeCompare(b.name))}));
 }
 /* The Skills table's card and rows: the glyph the tool's transcript card wears, name, description. */
 function skpToolsHTML(groups) {
@@ -24050,7 +24762,8 @@ function skpToolsHTML(groups) {
   if (!groups.length) return '<div class="tk-empty set-empty"><span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('wand') + '</span><p>The agent lists no built-in tools.</p></div>';
   return '<div class="tk-list set-sklist set-tllist">'
     + '<div class="set-tlcols"><span></span><span>Name</span><span>Description</span></div>'
-    + groups.map((g) => (g.family ? '<div class="set-tlfam">' + esc(g.family) + '</div>' : '')
+    + groups.map((g) => (g.family ? '<div class="set-tlfam" data-tool-group="' + esc(g.groupId) + '"><span class="set-tlgn">' + esc(g.family) + '</span>'
+        + (g.what ? '<span class="set-tlwhat">' + esc(g.what) + '</span>' : '') + '</div>' : '')
       + g.tools.map((t) => '<div class="tk-li set-tlrow" data-tool-row="' + esc(t.name) + '">'
         + '<span class="set-tlic">' + ic(toolIcon(t.name)) + '</span>'
         + '<span class="t mono" title="' + esc(t.name) + '">' + esc(t.name) + '</span>'
@@ -25567,6 +26280,35 @@ function llmBlock() {
 }
 function llmProviders() { return (llmBlock().providers || []).filter((p) => p && typeof p.id === 'string'); }
 function llmCloudProviders() { return llmProviders().filter((p) => p.kind !== 'llama-server'); }
+/* ATO-1418 (Nadya's ATO-816 decision, 12.11): Settings › Models groups like
+   the first-run wizard, Local / Cloud / Custom. Custom is what you already
+   run yourself: Atomic Chat, Ollama, LM Studio, your own llama.cpp server,
+   and any OpenAI-compatible address you typed in, on this computer or on
+   another machine (the onboarding wizard's "custom base URL" row lands
+   here too). Cloud providers is the rest: keys and subscriptions, and the
+   cloud presets (Groq, DeepSeek, Anthropic...), which are openai-compatible
+   entries too, so they are told apart by their id or their preset's host.
+   The Cloud and Custom tabs share the provider-and-models machinery below;
+   each lists only its own providers, and `tab` says which. */
+function llmIsCloudPreset(p) {
+  const cloud = PRESETS.filter((x) => !x.local);
+  if (cloud.some((x) => x.id === p.id)) return true;
+  let host = '';
+  try { host = new URL(p.baseUrl).hostname.toLowerCase(); } catch (err) { return true; }   // no address to run yourself: left on Cloud, as before
+  return cloud.some((x) => { try { return new URL(x.baseUrl).hostname.toLowerCase() === host; } catch (err) { return false; } });
+}
+function llmIsCustomEntry(p) {
+  if (!p || p.kind === 'llama-server') return false;
+  if (llmKeylessLocal(p)) return true;
+  return p.kind === 'openai-compatible' && !llmIsCloudPreset(p);
+}
+function llmProviderTab(p) { return llmIsCustomEntry(p) ? 'external' : 'cloud'; }
+function llmTabProviders(tab) {
+  const want = tab === 'external' ? 'external' : 'cloud';
+  return llmCloudProviders().filter((p) => llmProviderTab(p) === want);
+}
+/* The tab whose provider list the pane's model block and filter belong to now. */
+function llmProvTabNow() { return LLMP.mode === 'external' ? 'external' : 'cloud'; }
 function llmActiveTextId() { return llmBlock().activeTextProvider || 'local-llama'; }
 function llmActiveEmbId() { return llmBlock().activeEmbeddingProvider || 'local-llama'; }
 function llmProvider(id) { return llmProviders().find((p) => p.id === id) || null; }
@@ -25802,12 +26544,12 @@ async function llmRefreshStatus(quiet) {
   }
 }
 /* The Cloud text-models block lists the active (or first) cloud provider's catalogue. */
-function llmCloudSectionProvider() {
-  const cloud = llmCloudProviders();
+function llmCloudSectionProvider(tab) {
+  const cloud = llmTabProviders(tab || 'cloud');
   return cloud.find((p) => p.id === llmActiveTextId()) || cloud[0] || null;
 }
 async function llmEnsureModels() {
-  const p = llmCloudSectionProvider();
+  const p = llmCloudSectionProvider(llmProvTabNow());
   if (!p || !BR) return;
   if (LLMP.modelsFor === p.id && (LLMP.modelsBusy || LLMP.models.length || LLMP.modelsErr)) return;
   if (LLMP.modelsRetry) { clearTimeout(LLMP.modelsRetry); LLMP.modelsRetry = null; }
@@ -25831,7 +26573,7 @@ async function llmFetchModels(p) {
     LLMP.models = res.models || []; LLMP.modelsErr = null; LLMP.modelsStale = res.stale === true;
     if (LLMP.modelsStale && !LLMP.modelsRetry) {
       LLMP.modelsRetry = setTimeout(() => {
-        const q = llmCloudSectionProvider();
+        const q = llmCloudSectionProvider(llmProvTabNow());
         if (llmVisible() && q && q.id === p.id && LLMP.modelsFor === p.id && LLMP.modelsStale && !LLMP.modelsBusy) llmRetryModels();
       }, 15000);
     }
@@ -25841,7 +26583,7 @@ async function llmFetchModels(p) {
 }
 /* Ask for the live list again (the Retry under a built-in list, or the one timed retry). */
 function llmRetryModels() {
-  const p = llmCloudSectionProvider();
+  const p = llmCloudSectionProvider(llmProvTabNow());
   if (!p || !BR || LLMP.modelsBusy) return;
   LLMP.modelsFor = p.id; LLMP.modelsBusy = true; LLMP.modelsErr = null;
   llmRepaintList();
@@ -25859,7 +26601,7 @@ function llmRepaint() {
 function llmRepaintList() {
   const box = document.getElementById('llm-cloud-models');
   if (!box) { llmRepaint(); return; }
-  box.innerHTML = llmCloudModelListHTML();
+  box.innerHTML = llmCloudModelListHTML(llmProvTabNow());
 }
 
 /* --- rows (llm-panel-row-builders.ts) --- */
@@ -25927,7 +26669,7 @@ function llmProviderRow(p) {
   const auth = p.kind === 'subscription-cli' ? 'cli auth' : badKey ? 'invalid key' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
   return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey, badKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
-    enterEffect: badKey ? 'Enter: paste the API key for ' + p.id + ' again' : !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch cloud route to ' + p.id,
+    enterEffect: badKey ? 'Enter: paste the API key for ' + p.id + ' again' : !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch ' + (llmIsCustomEntry(p) ? 'chats' : 'cloud route') + ' to ' + p.id,
     text: p.id + ' [' + p.kind + '] ' + auth};
 }
 function llmChatRow(p, modelId) {
@@ -25953,9 +26695,10 @@ function llmEmbRow(p, modelId) {
 /* llm-panel-row-builders.ts inlineModelsForProvider: chatModelOptions + the
    current model first, then the catalogue (`atag models search --json`,
    the same list the composer's selector reads). */
-function llmCloudSection() {
-  const p = llmCloudSectionProvider();
-  if (!p) return {provider:null, status:'ready', error:null, models:[], filtered:[], sectionStart:llmCloudProviders().length};
+function llmCloudSection(tab) {
+  const t = tab || 'cloud';
+  const p = llmCloudSectionProvider(t);
+  if (!p) return {provider:null, status:'ready', error:null, models:[], filtered:[], sectionStart:llmTabProviders(t).length};
   const out = [];
   const add = (id) => { if (id && !out.includes(id)) out.push(id); };
   add(p.defaultChatModel || p.model);
@@ -25964,32 +26707,34 @@ function llmCloudSection() {
   const status = LLMP.modelsFor === p.id ? (LLMP.modelsBusy ? 'loading' : LLMP.modelsErr ? 'error' : 'ready') : 'loading';
   const f = LLMP.filter.trim().toLowerCase();
   const filtered = f ? out.filter((id) => modelMatches(id, '', f)) : out;
-  return {provider:p, status, error:LLMP.modelsErr, models:out, filtered, sectionStart:llmCloudProviders().length};
+  return {provider:p, status, error:LLMP.modelsErr, models:out, filtered, sectionStart:llmTabProviders(t).length};
 }
-function llmCloudSectionStart() { return llmCloudProviders().length; }
+function llmCloudSectionStart(tab) { return llmTabProviders(tab || 'cloud').length; }
 function llmEmbModelsFor(p) {
   const out = [];
   if (p.defaultEmbeddingModel) out.push(p.defaultEmbeddingModel);
   (LLMP.modelsFor === p.id ? LLMP.models : []).filter((m) => m && m.kind === 'embedding').forEach((m) => { if (!out.includes(m.id)) out.push(m.id); });
   return out;
 }
-function llmCloudRows() {
-  const rows = llmCloudProviders().map(llmProviderRow);
-  const section = llmCloudSection();
+function llmCloudRows(tab) {
+  const rows = llmTabProviders(tab || 'cloud').map(llmProviderRow);
+  const section = llmCloudSection(tab);
   if (section.provider) {
     section.filtered.forEach((id) => rows.push(llmChatRow(section.provider, id)));
     llmEmbModelsFor(section.provider).forEach((id) => rows.push(llmEmbRow(section.provider, id)));
   }
   return rows;
 }
-/* The External pane is one row: an external llama.cpp IS one base URL. */
+/* The Custom pane (ATO-1418): the apps and addresses you run yourself, with
+   the models of the one in use (or the first), then your own llama.cpp
+   server, which IS one base URL, as the last row. */
 function llmExternalRows() {
   const lm = llmLocalModels();
   const active = lm.mode === 'external' && llmLocalActive();
   const url = lm.url || DEFAULT_LLAMA_URL;
-  return [{kind:'externalUrl', id:'external-url', url, active, available:true, primaryAction: active ? 'current' : 'use',
+  return llmCloudRows('external').concat([{kind:'externalUrl', id:'external-url', url, active, available:true, primaryAction: active ? 'current' : 'use',
     enterEffect: active ? 'Enter: edit the base URL' : 'Enter: point the chat route at an external llama.cpp',
-    text: 'base URL ' + url + ' [' + llmExternalStatus(active) + ']'}];
+    text: 'base URL ' + url + ' [' + llmExternalStatus(active) + ']'}]);
 }
 /* Health only describes the active route (llm-mode-rows.tsx externalStatus); the desktop's probe is /health.llama on the serve process. */
 function llmExternalStatus(active) {
@@ -26001,7 +26746,7 @@ function llmExternalStatus(active) {
 }
 function llmRows(mode) {
   const m = mode || LLMP.mode;
-  if (m === 'cloud') return llmCloudRows();
+  if (m === 'cloud') return llmCloudRows('cloud');
   if (m === 'external') return llmExternalRows();
   if (m === 'fallback') return [];
   return llmLocalRows();
@@ -26129,7 +26874,8 @@ function llmStatusTone(line) {
    are not that choice's words ("Cloud providers", not "Cloud"). Fallback is
    reached from Cloud providers and keeps that tab lit. Drivers read
    `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`. */
-const LLM_BAR_MODES = [['local', 'Local models'], ['cloud', 'Cloud providers'], ['external', 'Custom server']];
+/* ATO-1418: 'Custom' as in the first-run wizard (ATO-816): apps and servers you already run. */
+const LLM_BAR_MODES = [['local', 'Local models'], ['cloud', 'Cloud providers'], ['external', 'Custom']];
 function llmBarHTML(mode) {
   const lit = mode === 'fallback' ? 'cloud' : mode;
   return '<div class="tk-bar llm-bar llm-srcbar">'
@@ -26200,10 +26946,10 @@ function llmRunModeHTML(status, tone) {
   ];
   const fusionShown = mode === 'fusion' || rm.stored === 'fusion';
   return '<section class="llm-section llm-runmode">'
-    + '<div class="tk-sh llm-sh llm-rm-head"><span class="llm-sh-t">Where chats run</span><span class="grow"></span>'
+    + '<div class="tk-sh llm-sh llm-rm-head"><span class="llm-sh-t">Where chats run now</span><span class="grow"></span>'
       + (tone === 'busy' ? '<span class="llm-status is-busy"><span class="tk-spin"></span><span>' + esc(status) + '</span></span>' : '')
       + '<button class="iconbtn sm" data-act="llm:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
-    + '<div class="llm-rm-grid" role="group" aria-label="Where chats run">'
+    + '<div class="llm-rm-grid" role="group" aria-label="Where chats run now">'
     + MODES.map(([id, label, what, icon]) => {
         const on = id === mode;
         /* Д31: a choice that cannot be made yet says what it needs and opens
@@ -26238,7 +26984,7 @@ function llmRunModeHTML(status, tone) {
  * @returns {{local: {line:string, title:string}|null, cloud: {line:string, title:string}|null, fusion: {line:string, title:string}|null}}
  */
 function llmRouteNeeds() {
-  const cloud = llmCloudProviders();
+  const cloud = llmTabProviders('cloud');   // an app or your own server is not a cloud provider (ATO-1418)
   const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
   const out = {local:null, cloud:null, fusion:null};
   if (!cloud.length) out.cloud = {line:'Add a cloud provider first', title:'Cloud needs a cloud provider. Click to add one.'};
@@ -26256,7 +27002,7 @@ function llmRouteNeeds() {
 }
 /** What a blocked choice opens (llm:needs:local | llm:needs:cloud | llm:needs:fusion). */
 function llmRouteNeedsOpen(id) {
-  const cloud = llmCloudProviders();
+  const cloud = llmTabProviders('cloud');
   const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
   if (id === 'local') {
     LLMP.msg = {text:'Local models needs a model on ' + THIS_MACHINE + '. Download one below, then choose Local models again.'};
@@ -26526,12 +27272,14 @@ function llmFitBadge(m, ram) {
       : 'It needs at least ' + min + ' GB of memory, and ' + THIS_MACHINE + ' has ' + have + ' GB.';
   } else {
     // A model added from Hugging Face: fitFor's own estimate from the file size, said to be one.
-    const need = Math.ceil(sizeStringGb(m.size) * 1.6);
-    if (!need) return null;
+    const gb = sizeStringGb(m.size);
+    if (!gb) return null;
+    const need = ramEstimateFromSize(gb).recommendedRamGb;
     why = 'About ' + need + ' GB to run, estimated from its file size; ' + THIS_MACHINE + ' has ' + have + ' GB.' + (fit.v === 'tight' ? ' ' + TIGHT_FIT_CAUTION : '');
   }
   if (isSmallModel(m)) why += ' ' + SMALL_MODEL_CAUTION;
-  const word = fit.v === 'comfortable' ? 'Fits well' : fit.v === 'tight' ? 'Tight fit' : 'Too big';
+  // ATO-492: "Tight fit" said nothing until hovered; the badge says what it means.
+  const word = fit.v === 'comfortable' ? 'Fits well' : fit.v === 'tight' ? 'Slow on ' + have + ' GB' : 'Too big';
   return {v: fit.v, word, tone: fit.v === 'comfortable' ? 'green' : fit.v === 'tight' ? 'amber' : '', title: word + '. ' + why};
 }
 /* ATO-491: the best-fit chip's reason, a line under its row: this machine's
@@ -26552,6 +27300,9 @@ function llmRowBadges(row) {
   if (!m) return [];
   const fit = row.kind === 'localTextModel' ? row.fit : null;
   const out = [];
+  // ATO-492: what it is for comes first, as in the wizard.
+  const use = row.kind === 'localTextModel' ? modelPurpose(m) : null;
+  if (use) out.push({key:'use', tone:'use-' + use.id, word:use.word, title:'Good for: ' + use.word + '.'});
   if (m.downloaded) {
     const size = modelSizeWord(m);
     out.push({key:'installed', tone:'line', word:'Installed', title:'Installed on ' + THIS_MACHINE + (size ? ' (' + size + ')' : '') + '.'
@@ -26616,7 +27367,9 @@ function llmRowHTML(row, index, cursor) {
         + (mem.spin ? '<span class="tk-spin"></span>' : '') + esc(mem.word) + '</span>' : '');
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
-      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
+      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : ''))
+        // ATO-492: the grey tech chips after the blurb, on the same line.
+        + (chat ? modelTechChipsHTML(m, 'llm-techchip') : '') + '</span>' : '')
       // ATO-491: the best fit's reason under its blurb (the size moves here, said once).
       + (row.bestWhy ? '<span class="llm-best-why">' + esc(row.bestWhy) + '</span>' : '')
       + (disk.ok ? '' : '<span class="llm-best-why llm-disk-why">' + esc(disk.text) + '</span>')
@@ -26626,6 +27379,8 @@ function llmRowHTML(row, index, cursor) {
       /* ATO-119: every model on disk has its Remove, the one in use and the
          embedding models included; the confirm says when the server stops
          first (llmRemoveStops). Not while it is coming down. */
+      // ATO-1370: a vision model on disk without its projector fetches it here; its pill still picks it for text.
+      + (chat && visionFetchable(m) && row.primaryAction !== 'downloading' ? rowAct('llm:visionAt:' + index, visionFetchLabel(m)) : '')
       + (m.downloaded && row.primaryAction !== 'downloading' && !(mem && row.memBusy) ? rowAct('llm:removeAt:' + index, 'Remove') : '')
       // ATO-900: the one action that fixes a failed card (Retry, or the engine's Download again), beside the row's pill.
       + (mem && mem.act ? rowAct(mem.act === 'llm:embRetry' ? 'llm:embRetry:' + index : mem.act, mem.label) : '')
@@ -26689,17 +27444,18 @@ function llmLocalHTML() {
      gone once Ollama is added. */
   return llmSectionHTML('Local models', text, 0, cursor, null, false, {
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'
-        + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')})
+        + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')
+        + llmAppButtonsHTML(['lmstudio', 'atomic-chat'])})
     + llmTuneHTML()
     + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false,
       {note: '<p class="llm-note">Used to search the agent\u2019s memory by meaning. Without one, it searches by keyword.</p>'});
 }
 function llmCloudHTML() {
-  const rows = llmCloudRows();
+  const rows = llmCloudRows('cloud');
   const cursor = LLMP.cursor.cloud;
   const providers = rows.filter((r) => r.kind === 'cloudProvider');
   const emb = rows.filter((r) => r.kind === 'cloudEmbeddingModel');
-  const section = llmCloudSection();
+  const section = llmCloudSection('cloud');
   const embOffset = providers.length + section.filtered.length;
   const sp = section.provider;
   /* ATO-504: an empty list offers the popular presets the wizard knows, each
@@ -26714,13 +27470,23 @@ function llmCloudHTML() {
         + '<span class="grow"></span>'
         + '<span class="llm-filter"><label class="tk-inpwrap llm-filterbox">' + ic('search')
           + '<input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="Filter models" aria-label="Filter models" title="Filter (f)"></label></span></div>'
-      + '<div id="llm-cloud-models">' + llmCloudModelListHTML() + '</div></section>'
+      + '<div id="llm-cloud-models">' + llmCloudModelListHTML('cloud') + '</div></section>'
       + (emb.length ? llmSectionHTML('Embedding models', emb, embOffset, cursor) : '') : '');
 }
+/* "Models on <provider>" with its filter, for the Cloud or the Custom tab. */
+function llmProviderModelsHTML(tab, sp) {
+  return '<section class="llm-section">'
+    + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Models on ' + esc(providerWord(sp.id)) + '</span>'
+      + '<span class="grow"></span>'
+      + '<span class="llm-filter"><label class="tk-inpwrap llm-filterbox">' + ic('search')
+        + '<input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="Filter models" aria-label="Filter models" title="Filter (f)"></label></span></div>'
+    + '<div id="llm-cloud-models">' + llmCloudModelListHTML(tab) + '</div></section>';
+}
 /* The 12-row window of the text-model rows around the cursor, and how many there are. */
-function llmCloudModelListHTML() {
-  const section = llmCloudSection();
-  const cursor = LLMP.cursor.cloud;
+function llmCloudModelListHTML(tab) {
+  const t = tab || llmProvTabNow();
+  const section = llmCloudSection(t);
+  const cursor = LLMP.cursor[t];
   const rows = section.filtered.map((id) => llmChatRow(section.provider, id));
   const cursorInSection = Math.max(0, Math.min(cursor - section.sectionStart, rows.length - 1));
   const start = Math.max(0, Math.min(cursorInSection - Math.floor(LLM_MODEL_WINDOW / 2), rows.length - LLM_MODEL_WINDOW));
@@ -26741,7 +27507,24 @@ function llmCloudModelListHTML() {
 function llmExternalHTML() {
   const rows = llmExternalRows();
   const status = llmStatusLine();
-  return llmSectionHTML('Custom llama.cpp server', rows, 0, LLMP.cursor.external, null, false,
+  const cursor = LLMP.cursor.external;
+  /* ATO-1418: the apps first, as in the wizard's Custom list. An app not
+     added yet is one button that opens the provider setup with it filled in. */
+  const apps = rows.filter((r) => r.kind === 'cloudProvider');
+  const emb = rows.filter((r) => r.kind === 'cloudEmbeddingModel');
+  const url = rows.filter((r) => r.kind === 'externalUrl');
+  const section = llmCloudSection('external');
+  const sp = section.provider;
+  const embOffset = apps.length + section.filtered.length;
+  const urlOffset = rows.length - url.length;
+  /* ATO-1401: one click adds the app at its usual address. */
+  const addApps = llmAppButtonsHTML(['atomic-chat', 'ollama', 'lmstudio']);
+  return llmSectionHTML('Apps you already run', apps, 0, cursor, 'No apps added yet.', true,
+      {note: '<p class="llm-ram">Atomic Chat, Ollama, LM Studio or any server you run yourself. Nothing to download.</p>',
+        actions: addApps, emptyActions: addApps ? '<span class="llm-empty-acts">' + addApps + '</span>' : ''})
+    + (sp ? llmProviderModelsHTML('external', sp)
+      + (emb.length ? llmSectionHTML('Embedding models', emb, embOffset, cursor) : '') : '')
+    + llmSectionHTML('Your own llama.cpp server', url, urlOffset, cursor, null, false,
       {note: '<p class="llm-ram">Point chats at a llama.cpp server you run yourself.</p>'})
     + llmStatusNoteHTML(status, llmStatusTone(status))
     + '<p class="llm-back">To go back to a local model, <button class="llm-link" data-act="llm:mode:local">pick one under Local models</button>.</p>'
@@ -26941,28 +27724,64 @@ function llmModalHTML() {
   if (LLMP.steerUrl !== null) {
     const url = LLMP.steerUrl;
     const known = llmSteerPresetId(url);
-    const ollama = known === 'ollama', atomic = known === 'atomic-chat';
-    // ST-24: an amber prompt, because nothing failed — the server is just the other kind.
+    const app = known ? LLM_APP_WORDS[known] : null;
+    /* ST-24: an amber prompt, because nothing failed — the server is just the other kind.
+       ATO-1401: no word "cloud". Ollama, LM Studio and Atomic Chat are apps on
+       this computer: one click adds the app with this address. */
     return '<div class="tk-modal tk-modal--warn llm-modal" role="alertdialog">'
-      + '<div class="llm-modal-h">' + (ollama ? logoHTML('ollama', '') : atomic ? logoHTML('atomicchat', '') : '<span class="tk-ico tk-ico--amber">' + ic('info') + '</span>')
-      + '<h4>' + (ollama ? 'Ollama detected — add it as a cloud provider?' : atomic ? 'Atomic Chat detected — add it as a provider?' : 'OpenAI-compatible server — add it as a cloud provider?') + '</h4></div>'
-      + '<p><span class="mono">' + esc(url) + '</span>' + esc(' answers like ' + (ollama ? 'Ollama' : atomic ? 'Atomic Chat\u2019s Local API Server' : 'an OpenAI-compatible server') + ', which the External llama.cpp route cannot drive.') + '</p>'
+      + '<div class="llm-modal-h">' + (app ? logoHTML(LLM_APP_LOGOS[known], '') : '<span class="tk-ico tk-ico--amber">' + ic('info') + '</span>')
+      + '<h4>' + esc(app ? 'This is ' + app + '. Add it as a local app?' : 'This server answers the OpenAI way. Add it as a provider?') + '</h4></div>'
+      + '<p><span class="mono">' + esc(url) + '</span>' + esc(app
+          ? ' is ' + app + ' (OpenAI-compatible), an app on this computer. This field is for a llama.cpp server, so ' + app + ' is added as an app instead, at this address.'
+          : ' answers like an OpenAI-compatible server. This field is for a llama.cpp server, so it is added as a provider instead, at this address.') + '</p>'
       + '<div class="acts"><button class="btn btn-s sm" data-act="llm:steer:n">Dismiss</button>'
-      + '<button class="btn btn-p sm" data-act="llm:steer:y">Open the provider wizard with this URL</button></div></div>';
+      + '<button class="btn btn-p sm" data-act="llm:steer:y">' + esc(app ? 'Add ' + app : 'Add it as a provider') + '</button></div></div>';
   }
   return '';
 }
 function llmLooksLikeOllama(url) { try { return new URL(url).port === '11434'; } catch (err) { return false; } }
-/* openai-compat-steer.ts wizardForOpenAiCompatUrl's preset pick: Ollama's
-   port (any host), Atomic Chat's :1337 only on this machine (its preset
-   saves 127.0.0.1), anything else → null (the manual compat row). */
+/* openai-compat-steer.ts wizardForOpenAiCompatUrl's preset pick, on this
+   machine only (ATO-1401): Ollama's :11434, Atomic Chat's :1337, LM Studio's
+   :1234; anything else → null (the manual compat row). */
 function llmSteerPresetId(url) {
-  if (llmLooksLikeOllama(url)) return 'ollama';
   try {
     const u = new URL(url);
-    if (u.port === '1337' && ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(u.hostname.toLowerCase())) return 'atomic-chat';
+    const here = ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(u.hostname.toLowerCase());
+    /* ATO-1401: every preset here is "an app on this computer", keyless and
+       labelled local in Fusion, so each is matched on this machine only.
+       Ollama on another host (:11434 on a LAN box) is a plain provider. */
+    if (llmLooksLikeOllama(url) && here) return 'ollama';
+    if (u.port === '1337' && here) return 'atomic-chat';
+    /* ATO-1401: LM Studio's server port (its default, 1234), on this machine only:
+       1234 elsewhere is just a port, and its preset is keyless and "local". */
+    if (u.port === '1234' && here) return 'lmstudio';
   } catch (err) { /* not a URL */ }
   return null;
+}
+/* ATO-1401: the model apps on this computer, by preset id, as people call them. */
+const LLM_APP_WORDS = {ollama:'Ollama', lmstudio:'LM Studio', 'atomic-chat':'Atomic Chat'};
+const LLM_APP_LOGOS = {ollama:'ollama', lmstudio:'lmstudio', 'atomic-chat':'atomicchat'};
+/* One "Add <app>" button per app not added yet (llm:app:<id>). Ollama keeps
+   its own llm:ollama verb where it already had one. */
+function llmAppButtonsHTML(ids) {
+  return ids.filter((id) => !llmProvider(id)).map((id) => {
+    const k = KIND_ROWS.find((r) => r.id === id);
+    const word = LLM_APP_WORDS[id];
+    const title = word + ' runs its own models on this computer: this adds it at ' + (k ? k.baseUrl : '') + '. Nothing downloads.';
+    return '<button class="btn btn-s sm" data-act="llm:app:' + id + '" title="' + esc(title) + '">'
+      + logoHTML(LLM_APP_LOGOS[id], 'xs') + esc('Add ' + word) + '</button>';
+  }).join('');
+}
+/* ATO-1401: the provider wizard for one app, at `url` when given, and its
+   first step taken at once: a local app needs no key, so the person lands on
+   its model list (one click to choose) instead of a key form. */
+function llmAddApp(id, url) {
+  const preset = KIND_ROWS.find((k) => k.id === id);
+  if (!preset) return;
+  llmSetMode('external');   // ATO-1418: an app on this computer lives under Custom
+  llmOpenWizard({id:preset.id, kind:preset.kind, baseUrl:url || preset.baseUrl}, url || preset.baseUrl);
+  ANX.providerStarted(preset);
+  if (preset.local && WIZ.phase === 'configure') wizNext();
 }
 
 /* ============================================================
@@ -27440,23 +28259,26 @@ async function llmDaemon(which) {
    `models status` advises, `models stop` then `models start`, in one press.
    The stop refuses while a turn is running on the server, as Stop does. */
 async function llmRestartModel() {
-  if (!BR || LLMP.daemonPhase) return;
+  // true when the model came back up (ATO-1373 reads it); the other callers ignore it.
+  if (!BR || LLMP.daemonPhase) return false;
   const held = await llmTurnsRunning();
-  if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return; }
+  if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return false; }
   LLMP.daemonPhase = 'stopping'; llmRepaint();
   const stop = await BR.modelsStop();
   if (!stop || stop.ok === false) {
     LLMP.daemonPhase = null;
     LLMP.statusErr = llmFail('models stop failed', stop);
     await llmRefreshStatus();
-    return;
+    return false;
   }
   LLMP.daemonPhase = 'starting'; llmRepaint();
   const res = await BR.modelsStart();
   LLMP.daemonPhase = null;
-  if (!res || res.ok === false) LLMP.statusErr = llmFail('models start failed', res);
+  const ok = !!res && res.ok !== false;
+  if (!ok) LLMP.statusErr = llmFail('models start failed', res);
   else LLMP.msg = {text:'local-llm: model restarted' + (res.stdout && res.stdout.trim() ? ': ' + res.stdout.trim().split('\n').pop() : '')};
   await llmRefreshStatus();
+  return ok;
 }
 async function llmEmbToggle() {
   if (!BR) return null;
@@ -27704,6 +28526,15 @@ function llmNoRoom(m) {
   toast('Not enough disk space', disk.text, 'info');
   return true;
 }
+/* ATO-1370: fetch a downloaded model's missing vision projector alone. Main
+   sees the weights on disk and fetches the projector only, on its own bar. */
+function llmVisionFetch(m) {
+  if (!visionFetchable(m)) return false;
+  const disk = projectorDiskFit(m);
+  if (!disk.ok) { toast('Not enough disk space', disk.text, 'info'); return false; }
+  llmPull('chat', m.id);
+  return true;
+}
 function llmPull(kind, id) {
   if (!BR) return;
   if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
@@ -27906,8 +28737,11 @@ async function llmFallbackPersist(chain, appendLocal) {
  */
 function llmSyncModeToRoute() {
   if (!LLMP.syncModeToRoute) return;
-  const mode = llmRouteMode();
-  if (mode === null) return; // no snapshot yet — stay armed, as the reducer does
+  const route = llmRouteMode();
+  if (route === null) return; // no snapshot yet — stay armed, as the reducer does
+  // ATO-1418: a chat route on an app of this computer (Ollama, LM Studio, Atomic Chat) opens on the Custom tab, where it is listed.
+  const p = activeProvider();
+  const mode = route === 'cloud' && p ? llmProviderTab(p) : route;
   LLMP.syncModeToRoute = false; LLMP.routeSyncSpent = true;
   if (LLMP.mode !== mode) llmSetMode(mode);
 }
@@ -27949,7 +28783,7 @@ function llmSetMode(mode) {
   LLMP.syncModeToRoute = false; LLMP.routeSyncSpent = true;
   LLMP.mode = mode; LLMP.filterFocused = false; LLMP.fallbackPicker = null;
   llmRepaint();
-  if (mode === 'cloud') llmEnsureModels();
+  if (mode === 'cloud' || mode === 'external') llmEnsureModels();
 }
 function llmAct(what) {
   const [verb, ...rest] = what.split(':');
@@ -27964,13 +28798,20 @@ function llmAct(what) {
   if (verb === 'enter') { if (LLMP.mode === 'fallback') { llmFallbackEnter(); return; } llmPrimary(llmRowAt()); return; }
   if (verb === 'refresh') { llmRefresh(); return; }
   if (verb === 'modelsRetry') { llmRetryModels(); return; }
-  if (verb === 'filter') { llmSetMode('cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
+  if (verb === 'filter') { llmSetMode(LLMP.mode === 'external' && llmCloudSectionProvider('external') ? 'external' : 'cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
   if (verb === 'pricing') return; // inert: pricing is not in the CLI's model list
   if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null); return; }
   // ATO-504: an empty list's preset button, Add provider opened on that provider.
   // It skips the wizard's kind list, so it reports the setup start that list's pick would have (provider_setup_started).
-  if (verb === 'preset') { llmSetMode('cloud'); const row = KIND_ROWS.find((k) => k.id === arg && !k.custom) || null; llmOpenWizard(row); if (row) ANX.providerStarted(row); return; }
-  if (verb === 'configure') { llmSetMode('cloud'); const cloud = llmCloudProviders(); const p = cloud.find((x) => x.id === llmActiveTextId()) || cloud[0]; llmOpenWizard(p || null); return; }
+  if (verb === 'preset') { const row = KIND_ROWS.find((k) => k.id === arg && !k.custom) || null; llmSetMode(row && row.local ? 'external' : 'cloud'); llmOpenWizard(row); if (row) ANX.providerStarted(row); return; }
+  if (verb === 'configure') {
+    // ATO-1418: open the active provider on its own tab (an app on Custom), else the first cloud provider on Cloud.
+    const active = llmProvider(llmActiveTextId());
+    const tab = active && active.kind !== 'llama-server' ? llmProviderTab(active) : 'cloud';
+    const list = llmTabProviders(tab);
+    const p = list.find((x) => x.id === llmActiveTextId()) || list[0];
+    llmSetMode(tab); llmOpenWizard(p || null); return;
+  }
   if (verb === 'embedding') { llmActivateProviderEmbedding(); return; }
   if (verb === 'embToggle') { llmEmbToggle(); return; }
   // The server up though the route does not count it (a Custom server since) is stopped too, not started again.
@@ -28038,7 +28879,9 @@ function llmAct(what) {
   }
   // Calm (S5): a row's own Remove / Edit (the keys acted on the cursor row).
   if (verb === 'removeAt') { LLMP.cursor[LLMP.mode] = +arg; llmAct('remove'); return; }
-  if (verb === 'edit') { const p = llmProvider(arg); if (p) { llmSetMode('cloud'); llmOpenWizard(p); } return; }
+  // ATO-1370: the row's Get vision files.
+  if (verb === 'visionAt') { LLMP.cursor[LLMP.mode] = +arg; const row = llmRowAt(); if (row && row.kind === 'localTextModel') llmVisionFetch(row.model); return; }
+  if (verb === 'edit') { const p = llmProvider(arg); if (p) { llmSetMode(llmProviderTab(p)); llmOpenWizard(p); } return; }
   if (verb === 'confirm') {
     const c = LLMP.confirm; if (!c) return;
     if (c.kind === 'removeProvider') llmRemoveProviderConfirm();
@@ -28056,22 +28899,25 @@ function llmAct(what) {
   if (verb === 'needs') { llmRouteNeedsOpen(arg); return; }
   // Д34: Ollama as a provider, its preset and address filled in.
   // ATO-725: like `preset`, it skips the kind list, so it reports the setup start itself.
-  if (verb === 'ollama') { llmSetMode('cloud'); const row = KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}; llmOpenWizard(row); ANX.providerStarted(row); return; }
+  if (verb === 'app') { if (LLM_APP_WORDS[arg]) llmAddApp(arg); return; }
+  if (verb === 'ollama') { llmSetMode('external'); const row = KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}; llmOpenWizard(row); ANX.providerStarted(row); return; }
   // A confirm that is working is not let go of mid-way (Cancel, n and Esc wait for it).
   if (verb === 'cancel') { if (LLMP.confirm && LLMP.confirm.submitting) return; LLMP.confirm = null; llmRepaint(); return; }
   if (verb === 'external') {
     if (arg === 'save') { llmExternalSave(); return; }
     if (arg === 'cancel') { LLMP.externalDraft = null; LLMP.externalInvalid = false; llmRepaint(); return; }
-    if (arg === 'edit') { llmSetMode('external'); llmPrimary(llmExternalRows()[0]); return; }
+    if (arg === 'edit') { llmSetMode('external'); llmPrimary(llmExternalRows().find((r) => r.kind === 'externalUrl')); return; }
     return;
   }
   if (verb === 'steer') {
     const url = LLMP.steerUrl; LLMP.steerUrl = null;
     if (arg === 'y' && url) {
       // openai-compat-steer.ts wizardForOpenAiCompatUrl: Ollama's and Atomic Chat's ports land on their presets, anything else on the manual compat row, the probed URL prefilled.
-      llmSetMode('cloud');
       const presetId = llmSteerPresetId(url);
+      // ATO-1401: a model app on this computer is added in one click, at the probed address.
+      if (presetId && LLM_APP_WORDS[presetId]) { llmAddApp(presetId, url); return; }
       const preset = presetId ? KIND_ROWS.find((k) => k.id === presetId) : null;
+      llmSetMode(preset && !preset.local ? 'cloud' : 'external');   // ATO-1418: a typed-in address is Custom, like the onboarding wizard's
       llmOpenWizard(preset ? {id:preset.id, kind:preset.kind, baseUrl:url} : {id:'', kind:'openai-compatible', baseUrl:url, custom:true}, url);
       if (!preset) WIZ.row = KIND_ROWS.find((k) => k.custom);
       render();
@@ -28110,9 +28956,10 @@ function llmKey(e, k, inText) {
     if (k === 'Enter') { e.preventDefault(); const row = llmRowAt(); if (row && row.kind === 'cloudChatModel') { LLMP.filterFocused = false; llmPrimary(row); } return true; }
     if (k === 'ArrowDown' || k === 'ArrowUp') {
       e.preventDefault();
-      const s = llmCloudSection(); if (!s.filtered.length) return true;
+      const tab = llmProvTabNow();
+      const s = llmCloudSection(tab); if (!s.filtered.length) return true;
       const first = s.sectionStart, last = s.sectionStart + s.filtered.length - 1;
-      LLMP.cursor.cloud = Math.min(last, Math.max(first, LLMP.cursor.cloud + (k === 'ArrowDown' ? 1 : -1)));
+      LLMP.cursor[tab] = Math.min(last, Math.max(first, LLMP.cursor[tab] + (k === 'ArrowDown' ? 1 : -1)));
       llmRepaintList(); return true;
     }
     return false;
@@ -28272,7 +29119,9 @@ async function llmAfterPull(p) {
     return {projector:'failed', activated:false, skipped:true};
   }
   if (p.kind === 'chat') {
-    DL.ready = {id:p.id}; bswSnapshot(); render();
+    // ATO-1373: the serving model got its projector: a Restart model offer, not a Switch.
+    if (!visionLanded(p.id)) DL.ready = {id:p.id};
+    bswSnapshot(); render();
     return {projector: attempted ? 'ok' : 'none', activated:false, skipped:false};
   }
   const row = llmRows('local').find((r) => r.model && r.model.id === p.id);
@@ -29116,8 +29965,10 @@ if (typeof window !== 'undefined') {
     daemonLabel: llmFormatDaemon(), statusLine: llmStatusLine(), msg: LLMP.msg ? LLMP.msg.text : '', restart: !!(LLMP.msg && LLMP.msg.restart),
     cursor: Object.assign({}, LLMP.cursor), keysKnown: llmKeysKnown(), modelsFor: LLMP.modelsFor, models: LLMP.models.length, modelsBusy: LLMP.modelsBusy, modelsErr: LLMP.modelsErr,
     confirm: LLMP.confirm ? Object.assign({}, LLMP.confirm) : null, externalDraft: LLMP.externalDraft, steerUrl: LLMP.steerUrl, picker: LLMP.fallbackPicker ? Object.assign({}, LLMP.fallbackPicker) : null,
-    activeText: llmActiveTextId(), providers: llmCloudProviders().map((p) => ({id: p.id, kind: p.kind, hasKey: llmHasKey(p), active: p.id === llmActiveTextId()})),
-    fallback: llmFallbackView(), section: (() => { const s = llmCloudSection(); return {provider: s.provider ? s.provider.id : null, status: s.status, models: s.models.length, filtered: s.filtered.length}; })(),
+    // ATO-1418: the providers of the tab on screen (Cloud or Custom), and which saved ones the Custom tab holds.
+    activeText: llmActiveTextId(), providers: llmTabProviders(llmProvTabNow()).map((p) => ({id: p.id, kind: p.kind, hasKey: llmHasKey(p), active: p.id === llmActiveTextId()})),
+    customIds: llmTabProviders('external').map((p) => p.id),
+    fallback: llmFallbackView(), section: (() => { const s = llmCloudSection(llmProvTabNow()); return {provider: s.provider ? s.provider.id : null, status: s.status, models: s.models.length, filtered: s.filtered.length}; })(),
     flatRows: llmRows().map((r) => r.id)});
   window.__llmOpen = async (mode) => { window.__settingsOpen('llm'); llmSetMode(mode || 'local'); if (LLMP.inflight) await LLMP.inflight; return window.__llmPane(); };
   window.__llmAct = (what) => { llmAct(what); return window.__llmPane(); };
@@ -31166,7 +32017,7 @@ if (typeof window !== 'undefined') {
             anchorLeft: anchor ? Math.round(anchor.getBoundingClientRect().left) : null,
             dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
             height: Math.round(br.height),
-            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.dataset.speak ? 'speak' : b.classList.contains('msgact-off') ? 'hint' : '?'),
+            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.regen ? 'regen' : b.dataset.resend ? 'resend' : b.dataset.speak ? 'speak' : b.classList.contains('msgact-off') ? 'hint' : '?'),
             // ATO-900: the muted hint names itself in data-tip (a CSS tooltip), the others in title.
             titles: btns.map((b) => b.getAttribute('title') || b.getAttribute('data-tip')),
             dangerColor: danger ? getComputedStyle(danger).color : null,
@@ -31191,8 +32042,9 @@ if (typeof window !== 'undefined') {
          ATO-900: its sentence is data-tip (the CSS tooltip), and one that
          also carried a native title would show it twice, so it reads '?'. */
       // ATO-1046: Read aloud is not part of the retry contract these checks pin.
-      return Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.speak).map((b) => b.dataset.resend
-        ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
+      return Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.speak).map((b) => b.dataset.regen
+        ? 'regen:' + b.dataset.regen + ':' + b.getAttribute('title')
+        : b.dataset.resend ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
         : b.dataset.copy ? 'copy'
           : b.classList.contains('msgact-off') && !b.dataset.act && !b.hasAttribute('title') && b.getAttribute('aria-label') === b.getAttribute('data-tip')
             ? 'hint:' + b.getAttribute('aria-disabled') + ':' + b.getAttribute('data-tip') : '?');
@@ -31219,10 +32071,11 @@ if (typeof window !== 'undefined') {
          handler. Drawn again, clicked for real, and every resend counted. */
       drawn([{id: 'rr-u', k: 'user', text: 'list my files'}, tool, {id: 'rr-a', k: 'assistant', text: 'one file'}]);
       const hint = document.querySelector('.msgacts-last .msgact-off');
-      const realResend = resendUser, logLen = S.log.length;
+      const realResend = resendUser, realRegen = regenerateReply, logLen = S.log.length;
       let resends = 0;
       resendUser = function () { resends++; };
-      try { if (hint) hint.click(); } finally { resendUser = realResend; }
+      regenerateReply = function () { resends++; };   // ATO-1300: Regenerate counts as a resend here
+      try { if (hint) hint.click(); } finally { resendUser = realResend; regenerateReply = realRegen; }
       out.toolClick = {found: !!hint, resends, logSame: S.log.length === logLen, focusable: hint ? hint.tabIndex >= 0 : null};
       /* ATO-900: the hint's tooltip is its ::after, filled from data-tip,
          hidden at rest and shown by the hover rule (read as text, since

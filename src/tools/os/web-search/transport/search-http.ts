@@ -9,6 +9,7 @@ import {
   type HostLookup,
 } from "../../web/web-fetch-ssrf-guard.js";
 import { CurlUnavailableError, isCurlMissingError } from "../../web/ensure-curl.js";
+import { writeCurlHeaderFile } from "../../web/curl-header-file.js";
 import { explainCurlStderr, runCurl } from "../../web/run-curl.js";
 import {
   computeRetryDelayMs,
@@ -133,11 +134,15 @@ async function sendOnce(
     const pinnedIps = await assertHostAllowed(currentUrl, {
       lookup: request.lookup,
     });
+    // Provider headers carry the API key: they go to curl through an
+    // owner-only file, never argv, which any local account can read in
+    // `ps` while the search runs (ATO-1177).
+    const headerFile = await writeCurlHeaderFile(request.headers ?? {});
     const curlArgs = buildCurlArgs({
       url: currentUrl,
       pinnedIps,
       method,
-      headers: request.headers ?? {},
+      headerArgs: headerFile.args,
       hasBody: request.body !== undefined,
       timeoutMs: request.timeoutMs,
     });
@@ -154,6 +159,8 @@ async function sendOnce(
     } catch (err) {
       if (isCurlMissingError(err)) throw new CurlUnavailableError();
       throw err;
+    } finally {
+      await headerFile.cleanup();
     }
     if (result.exitCode !== 0) {
       throw new Error(formatCurlError(result));
@@ -207,7 +214,8 @@ function buildCurlArgs(input: {
   url: URL;
   pinnedIps: readonly string[];
   method: SearchHttpMethod;
-  headers: Record<string, string>;
+  /** `-H @<file>` from `writeCurlHeaderFile`; caller headers never sit in argv. */
+  headerArgs: readonly string[];
   hasBody: boolean;
   timeoutMs: number;
 }): string[] {
@@ -232,9 +240,7 @@ function buildCurlArgs(input: {
     "-H",
     "Accept-Language: en-US,en;q=0.9",
   ];
-  for (const [key, value] of Object.entries(input.headers)) {
-    args.push("-H", `${key}: ${value}`);
-  }
+  args.push(...input.headerArgs);
   if (input.method === "POST" || input.hasBody) {
     args.push("-X", input.method, "--data-binary", "@-");
   }

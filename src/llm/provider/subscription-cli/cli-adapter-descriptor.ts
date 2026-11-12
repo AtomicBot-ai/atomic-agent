@@ -78,6 +78,13 @@ export interface CliAdapterDescriptor {
   completeArgs(input: CliArgsInput): string[];
   streamArgs(input: CliArgsInput): string[];
   healthArgs(): string[];
+  /**
+   * ATO-1200: argv for the CLI's own "am I signed in?" command, which must
+   * exit non-zero when signed out and must not spend the plan. Absent when
+   * the CLI has none (Claude Code): `providers status` then reads the login
+   * file or answers `unknown`, never a test turn.
+   */
+  authStatusArgs?(): string[];
   parseResult(stdout: string, fallbackModel: string): CompletionResult;
   parseStreamEvent(line: string): CliStreamEvent;
 }

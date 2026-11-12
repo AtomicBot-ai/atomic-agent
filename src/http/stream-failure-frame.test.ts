@@ -9,6 +9,7 @@ import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-er
 import { classifyFailure } from "../llm/reliability/index.js";
 import { GrammarError, TransportError } from "../llm/reliability/llm-failures.js";
 import { LocalEngineDownError } from "../llm/reliability/local-engine-down.js";
+import { AtomicChatNotRunningError } from "../llm/reliability/atomic-chat-not-running.js";
 import { LlamaServerError, readLlamaErrorBody } from "../llm/llama-server-client.js";
 import { buildStreamEventHook } from "./openai-chat-completions.js";
 
@@ -101,6 +102,30 @@ describe("loop_failed over SSE", () => {
           category: "transport",
           code: "local_engine_down",
           failure: { cause: "local_engine_down", phrase: "The local model isn't running.", action: "none" },
+        },
+      },
+    ]);
+  });
+
+  it("marks a turn that ended because Atomic Chat is not running with code atomic_chat_not_running (ATO-1278)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const down = new AtomicChatNotRunningError("atomic-chat", new TypeError("fetch failed"));
+
+    hook({ type: "loop_failed", error: down, category: classifyFailure(down) } as never);
+
+    expect(sse.written).toEqual([
+      {
+        name: "error",
+        payload: {
+          error: "Atomic Chat is not running. Open it and try again.",
+          category: "transport",
+          code: "atomic_chat_not_running",
+          failure: {
+            cause: "atomic_chat_not_running",
+            phrase: "Atomic Chat is not running. Open it and try again.",
+            action: "retry",
+          },
         },
       },
     ]);

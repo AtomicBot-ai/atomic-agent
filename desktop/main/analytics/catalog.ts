@@ -75,6 +75,8 @@ const downloadProps: Record<string, PropSpec> = {
   has_projector: bool,
   fit: en(FIT, { nullable: true }),
   trigger: en(DOWNLOAD_TRIGGERS),
+  /** ATO-1369: the weights were on disk, only the vision projector downloaded. */
+  projector_only: bool,
 };
 
 export const EVENTS: Record<string, EventSpec> = {
@@ -142,9 +144,30 @@ export const EVENTS: Record<string, EventSpec> = {
        provider (the same list as provider_setup_started). */
     props: {
       step: en(["onboarding", "settings"]),
-      reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "key_rejected", "provider_error", "list_failed", "other"]),
+      /* ATO-1195: list_failed split by what went wrong on our side:
+         agent_crashed, not_json, no_binary. `kind` is the provider's type,
+         as in model_configured: cloud, or custom for a custom URL and for
+         an app the user runs (Ollama, LM Studio, Atomic Chat). */
+      reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "key_rejected", "provider_error", "agent_crashed", "not_json", "no_binary", "list_failed", "other"]),
       provider_preset: en(PROVIDER_PRESETS, { fallback: "custom" }),
+      kind: en(["local", "cloud", "custom"], { nullable: true }),
     },
+  },
+  /* ATO-845: the subscription sign-in funnel (renderer.js wizSubLogin). */
+  subscription_login_clicked: { owner: "ui", props: { cli: en(["claude", "codex"]), step: en(["onboarding", "settings"]) } },
+  subscription_terminal_opened: {
+    owner: "ui",
+    props: {
+      cli: en(["claude", "codex"]),
+      step: en(["onboarding", "settings"]),
+      opened: bool,
+      terminal: en(["terminal_app", "cmd", "x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "xterm"], { nullable: true }),
+      reason: en(["no_terminal", "launch_failed", "unsupported_platform", "other"], { nullable: true }),
+    },
+  },
+  subscription_login_succeeded: {
+    owner: "ui",
+    props: { cli: en(["claude", "codex"]), step: en(["onboarding", "settings"]), seconds_to_sign_in: int({ min: 0, nullable: true }) },
   },
   custom_endpoint_tested: { owner: "ui", props: { kind: en(["chat", "embedding"]), reachable: bool } },
   model_configured: {
@@ -270,7 +293,7 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   message_action: {
     owner: "ui",
-    props: { action: en(["copy", "resend", "retry", "continue", "steer", "unqueue", "stop", "copy_reply"]) },
+    props: { action: en(["copy", "resend", "retry", "continue", "steer", "unqueue", "stop", "copy_reply", "regenerate"]) },
   },
   approval_answered: {
     owner: "ui",

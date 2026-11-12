@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -10,7 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig } from "./load-config.js";
+import { describeLocalModelsValueSources, loadConfig } from "./load-config.js";
+import type { DotenvLoadResult } from "./load-dotenv.js";
 import { resetConfigCache } from "./config-cache.js";
 import { getUserConfigPath, writeUserConfigFileSync } from "./config-file.js";
 import {
@@ -34,6 +36,7 @@ describe("loadConfig", () => {
     delete process.env.ATOMIC_AGENT_STATE_DIR;
     delete process.env.ATOMIC_AGENT_LLAMA_API_KEY;
     delete process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS;
+    delete process.env.ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS;
     delete process.env.ATOMIC_AGENT_BROWSER_CHANNEL;
     delete process.env.ATOMIC_AGENT_GRAMMARS_DIR;
     delete process.env.ATOMIC_AGENT_SKILLS_CATALOG_BUDGET;
@@ -182,6 +185,82 @@ describe("loadConfig", () => {
     process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "16384";
     resetConfigCache();
     expect(loadConfig().localModels.completionMaxTokens).toBe(16_384);
+  });
+
+  // ATO-922: env still wins over config.json, but no longer silently,
+  // and the request timeout is a config.json setting too.
+  describe("local completion cap and request timeout sources (ATO-922)", () => {
+    function writeLocal(patch: Partial<typeof USER_CONFIG_DEFAULTS.localModels>): void {
+      writeUserConfigFileSync(getUserConfigPath(stateDir), {
+        ...USER_CONFIG_DEFAULTS,
+        localModels: { ...USER_CONFIG_DEFAULTS.localModels, ...patch },
+      });
+      resetConfigCache();
+    }
+
+    it("defaults the request timeout to the old 5 minutes", () => {
+      expect(USER_CONFIG_DEFAULTS.localModels.requestTimeoutMs).toBe(
+        ENV_DEFAULTS.REQUEST_TIMEOUT_MS,
+      );
+      expect(loadConfig().localModels.requestTimeoutMs).toBe(300_000);
+    });
+
+    it("reads localModels.requestTimeoutMs from the file", () => {
+      writeLocal({ requestTimeoutMs: 900_000 });
+      expect(loadConfig().localModels.requestTimeoutMs).toBe(900_000);
+    });
+
+    it("lets ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS override the file value", () => {
+      writeLocal({ requestTimeoutMs: 900_000 });
+      process.env.ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS = "1200000";
+      resetConfigCache();
+      expect(loadConfig().localModels.requestTimeoutMs).toBe(1_200_000);
+    });
+
+    it("names the config file as the source when no env var is set", () => {
+      writeLocal({ completionMaxTokens: 8192, requestTimeoutMs: 900_000 });
+      const local = loadConfig().localModels;
+      expect(local.valueSources).toEqual({
+        completionMaxTokens: "config",
+        requestTimeoutMs: "config",
+      });
+      expect(describeLocalModelsValueSources(local)).toEqual([
+        "local completion cap 8192 from config localModels.completionMaxTokens",
+        "local request timeout 900000 ms from config localModels.requestTimeoutMs",
+      ]);
+    });
+
+    it("names the env var as the source, and says so once when it beats the file", () => {
+      writeLocal({ completionMaxTokens: 8192 });
+      process.env.ATOMIC_AGENT_LLAMA_MAX_TOKENS = "24576";
+      process.env.ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS = "1800000";
+      resetConfigCache();
+      const local = loadConfig().localModels;
+      expect(local.valueSources).toEqual({
+        completionMaxTokens: "env",
+        requestTimeoutMs: "env",
+      });
+      expect(describeLocalModelsValueSources(local)).toEqual([
+        "local completion cap 24576 from env ATOMIC_AGENT_LLAMA_MAX_TOKENS",
+        "local request timeout 1800000 ms from env ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS",
+      ]);
+      const written = vi
+        .mocked(process.stderr.write)
+        .mock.calls.map((call) => String(call[0]));
+      expect(
+        written.some((line) =>
+          line.includes(
+            "ATOMIC_AGENT_LLAMA_MAX_TOKENS=24576 overrides localModels.completionMaxTokens 8192",
+          ),
+        ),
+      ).toBe(true);
+    });
+
+    it("describes nothing for a hand-built config without sources", () => {
+      expect(
+        describeLocalModelsValueSources({ completionMaxTokens: 1, requestTimeoutMs: 1 }),
+      ).toEqual([]);
+    });
   });
 
   describe("localModels.apiKey (#582)", () => {
@@ -473,5 +552,59 @@ describe("loadConfig", () => {
     process.env.ATOMIC_AGENT_GRAMMARS_DIR = override;
     resetConfigCache();
     expect(loadConfig().paths.grammarsDir).toBe(override);
+  });
+});
+
+/* ATO-1213 review round: the read a running serve does for
+   /api/local-models/* answers changes nothing on disk or in the process. */
+describe("loadConfig({readOnly}) is a pure read", () => {
+  let stateDir: string;
+  const bootDotenv = { path: "/boot/.env", exists: false, loaded: [], error: null } as unknown as DotenvLoadResult;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-load-ro-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    resetConfigCache();
+  });
+
+  afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    delete process.env.ATOMIC_LOADCONFIG_TEST_KEY;
+    resetConfigCache();
+    vi.restoreAllMocks();
+  });
+
+  it("writes no default config.json and no key file when there is none", () => {
+    const config = loadConfig({ readOnly: { dotenv: bootDotenv } });
+    expect(config.log.level).toBe(USER_CONFIG_DEFAULTS.log.level);
+    expect(existsSync(getUserConfigPath(stateDir))).toBe(false);
+    expect(readdirSync(stateDir)).toEqual([]);
+  });
+
+  it("does not migrate an older file on disk", () => {
+    const path = getUserConfigPath(stateDir);
+    // Version 5: the oldest file the schema still migrates (older ones are refused).
+    const old = JSON.stringify({ version: 5, log: { level: "warn" } });
+    writeFileSync(path, old, "utf8");
+    const config = loadConfig({ readOnly: { dotenv: bootDotenv } });
+    expect(config.log.level).toBe("warn");
+    expect(readFileSync(path, "utf8")).toBe(old);
+  });
+
+  it("does not merge .env into process.env, and reports the dotenv it was given", () => {
+    delete process.env.ATOMIC_LOADCONFIG_TEST_KEY;
+    writeFileSync(join(stateDir, ".env"), "ATOMIC_LOADCONFIG_TEST_KEY=from-file\n", "utf8");
+    const config = loadConfig({ readOnly: { dotenv: bootDotenv } });
+    expect(process.env.ATOMIC_LOADCONFIG_TEST_KEY).toBeUndefined();
+    expect(config.dotenv).toBe(bootDotenv);
+  });
+
+  it("a plain load still does all three (the read-only path is the only one changed)", () => {
+    writeFileSync(join(stateDir, ".env"), "ATOMIC_LOADCONFIG_TEST_KEY=from-file\n", "utf8");
+    loadConfig();
+    expect(existsSync(getUserConfigPath(stateDir))).toBe(true);
+    expect(process.env.ATOMIC_LOADCONFIG_TEST_KEY).toBe("from-file");
   });
 });

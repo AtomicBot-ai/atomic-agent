@@ -112,7 +112,7 @@ export function inCliStandIn(): boolean {
    `remoteModels` too. `models search` (cloud catalogs) is not a local model.
    --------------------------------------------------------------- */
 export interface RemoteModels {
-  text(view: "list" | "status"): Promise<string | null>;
+  text(view: "list" | "status" | "list-embeddings"): Promise<string | null>;
 }
 let remoteModels: RemoteModels | null = null;
 /** main.ts: the remote agent's models while connected to one, null otherwise. */
@@ -137,6 +137,9 @@ export function atagRun(args: string[], timeout: number): Promise<CliResult> {
   return cli(args, timeout);
 }
 
+/** What `cli` says when there is no agent binary to run (ATO-1195 reads it as `no_binary`). */
+export const NO_BINARY = "no atomic-agent binary found";
+
 async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal, input?: string): Promise<CliResult> {
   /* ATO-416: anything but a read, run inside a config-lock hold, may have
      changed config.json under the hash that hold last read (a leaf
@@ -150,7 +153,7 @@ async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: Abor
   // `models search` reads a cloud provider's catalog, not this computer's models: it stays here.
   if (remoteModels && args[0] === "models" && args[1] !== "search") return remoteModelsCall(remoteModels, args);
   const binary = resolveBinary();
-  if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
+  if (!binary) return { ok: false, stdout: "", stderr: "", error: NO_BINARY };
   try {
     const pending = run(binary, args, {
       timeout,
@@ -503,6 +506,10 @@ export interface CatalogModel {
   projectorMissing?: boolean;
   /** Recommendation order, 1 first (catalogue `recommendRank`). */
   recommendRank?: number;
+  /** ATO-492: what it is for (everyday / vision / coding / reasoning). */
+  purpose?: string;
+  /** ATO-492: mixture of experts (catalogue `moe`). */
+  moe?: boolean;
   tag?: string;
   uncensored?: boolean;
   /** A launch's model: the chat's "New: <name>" card (catalogue `spotlight`). */
@@ -549,6 +556,8 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
             vision: meta.vision,
             ...(meta.vision && downloaded && modelsDir && !projectorOnDisk(join(modelsDir, id)) ? { projectorMissing: true } : {}),
             ...(meta.recommendRank ? { recommendRank: meta.recommendRank } : {}),
+            ...(meta.purpose ? { purpose: meta.purpose } : {}),
+            ...(meta.moe ? { moe: true } : {}),
             ...(meta.tag ? { tag: meta.tag } : {}),
             ...(meta.uncensored ? { uncensored: true } : {}),
             ...(meta.spotlight ? { spotlight: true } : {}),
@@ -1300,6 +1309,26 @@ export interface ModelListFailure {
   certificate?: string;
   /** ATO-202: our own deadline on `models search` ran out. Nothing is known about the provider. */
   timedOut?: boolean;
+  /**
+   * ATO-1195: why the list failed on OUR side, when the provider said nothing
+   * (no status, nothing unreachable, no certificate, no deadline):
+   * `agent_crashed` the agent died (a non-zero exit with Node's "Assertion
+   * failed", a fatal error or a signal) before printing a list;
+   * `not_json` it exited fine but stdout was not a model list;
+   * `no_binary` there was no agent to run.
+   */
+  failure?: ModelListOwnFailure;
+}
+export type ModelListOwnFailure = "agent_crashed" | "not_json" | "no_binary";
+const AGENT_CRASH =
+  /\b(?:Assertion failed|FATAL ERROR|Segmentation fault|SIGSEGV|SIGABRT|SIGBUS|SIGILL|JavaScript heap out of memory|Abort trap)\b/i;
+/** ATO-1195: our own reason for a failed `atag models search`, or null when it is the provider's (see modelListFailure). */
+export function ownListFailure(res: CliResult): ModelListOwnFailure | null {
+  if (res.ok) return null;
+  const said = `${res.error ?? ""}\n${res.stderr ?? ""}`;
+  if (res.error === NO_BINARY || /\bspawn\b[^\n]*\bENOENT\b/.test(said)) return "no_binary";
+  if (AGENT_CRASH.test(said)) return "agent_crashed";
+  return null;
 }
 const LIST_UNREACHABLE =
   /\b(?:fetch failed|ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EHOSTDOWN|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|socket hang up|aborted due to timeout|operation was aborted|connect timeout)\b/i;
@@ -1416,11 +1445,13 @@ export async function providerModels(
       const cert = await certificateAt(entry?.baseUrl);
       if (cert) return { ok: false, error: res.error, certificate: cert };
     }
-    return { ok: false, error: res.error, ...why };
+    // ATO-1195: the provider said nothing we can name, so say what happened here.
+    const own = Object.keys(why).length ? null : ownListFailure(res);
+    return { ok: false, error: res.error, ...why, ...(own ? { failure: own } : {}) };
   }
   const models = parse(res.stdout);
   // A live list that cannot be read falls back to the built-in one (with Try again) rather than to the current model alone.
-  if (!models) return snapModels && snapModels.length ? { ok: true, models: snapModels, stale: true } : { ok: false, error: notJson(res.stdout) };
+  if (!models) return snapModels && snapModels.length ? { ok: true, models: snapModels, stale: true } : { ok: false, error: notJson(res.stdout), failure: "not_json" };
   return { ok: true, models, ...(snapModels && sameIds(models, snapModels) ? { stale: true } : {}) };
 }
 /**
@@ -3264,9 +3295,17 @@ export interface EmbeddingCatalogModel {
 export async function modelsListEmbeddings(): Promise<{
   ok: boolean; models?: EmbeddingCatalogModel[]; daemon?: { running: boolean; pid: number | null; port: number | null; health: string }; error?: string;
 }> {
-  // Remote agent: its embedding models are not listed over the network yet; an empty list, not an error line.
-  if (remoteModels) return { ok: true, models: [] };
-  const res = await cli(["models", "list-embeddings"], 45_000);
+  /* ATO-1213: connected to an agent on another computer, its embedding models
+     (GET /api/local-models/list-embeddings, the same text the CLI prints). An
+     agent too old to say gives an empty list, not an error line, as before. */
+  let res: CliResult;
+  if (remoteModels) {
+    const text = await remoteModels.text("list-embeddings");
+    if (text === null) return { ok: true, models: [] };
+    res = { ok: true, stdout: text, stderr: "" };
+  } else {
+    res = await cli(["models", "list-embeddings"], 45_000);
+  }
   if (!res.ok) return { ok: false, error: res.error };
   const models: EmbeddingCatalogModel[] = [];
   let daemon: { running: boolean; pid: number | null; port: number | null; health: string } | undefined;
@@ -3597,6 +3636,11 @@ export async function stopEmbeddingServer(): Promise<{ ok: boolean; error?: stri
  * false: no server there.
  */
 export async function servedModels(): Promise<{ ok: true; chat: ServerAnswer; embedding: ServerAnswer }> {
+  /* ATO-1213: connected to an agent on another computer, the servers that
+     count are that computer's, and its `models status` already says what they
+     run. 127.0.0.1 here is this Mac: probing it named a server of this Mac in
+     the "now" line beside the remote's status. */
+  if (remoteModels) return { ok: true, chat: { answered: false, ids: [] }, embedding: { answered: false, ids: [] } };
   const facts = managedFactsFromFile();
   const [chat, embedding] = await Promise.all([
     probeServer(`http://127.0.0.1:${facts.chatPort}`, facts.dataDir, 1500),

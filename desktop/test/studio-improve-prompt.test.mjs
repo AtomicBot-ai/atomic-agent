@@ -234,6 +234,20 @@ test('the temperature follows the model: 0.7, Kimi K3.1 only 1, none for OpenAI 
   assert.equal(body('olmo-3').temperature, 0.7);
 });
 
+test('new Claude models get no temperature, older ones keep 0.7 (ATO-1416)', () => {
+  const body = (model) => M.improveRequestBody(model, 'image', 'a fox');
+  for (const model of ['claude-sonnet-5-5', 'claude-haiku-5-5', 'anthropic/claude-opus-5-5', 'claude-opus-4-7',
+    'claude-opus-4.8', 'claude-fable-5-1', 'us.anthropic.claude-sonnet-5-5', 'claude-mythos-1']) {
+    const b = body(model);
+    assert.equal('temperature' in b, false, model);
+    assert.equal(b.max_tokens, 4096, model);
+  }
+  for (const model of ['claude-opus-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5', 'claude-3-5-sonnet-20241022',
+    'claude-sonnet-4-20250514', 'Qwen3-8B-Claude-Sonnet-5-Distill']) {
+    assert.equal(body(model).temperature, 0.7, model);
+  }
+});
+
 test('a reply that only thought says so; a cut-off think block is not taken as the prompt', async () => {
   assert.equal(M.improvedPromptOf({ choices: [{ message: { content: '<think>the fox should be red, and' } }] }), '');
   assert.equal(M.improveReplyOnlyThought({ choices: [{ message: { content: '', reasoning_content: 'hmm' } }] }), true);

@@ -83,7 +83,8 @@ export function PrivacyPanel({ panel }: PrivacyPanelProps): ReactElement {
  */
 function sessionGrantLines(grants: SessionGrantsSnapshot): string[] {
   const { categories, shapes } = grants;
-  if (categories.length === 0 && shapes.length === 0) {
+  const sites = grants.sites ?? [];
+  if (categories.length === 0 && shapes.length === 0 && sites.length === 0) {
     return [
       "none active — grants you make with [s] / [a] at a prompt appear here for this session",
     ];
@@ -96,6 +97,11 @@ function sessionGrantLines(grants: SessionGrantsSnapshot): string[] {
   }
   if (shapes.length > 0) {
     lines.push(`shell commands: ${shapes.join(", ")}`);
+  }
+  if (sites.length > 0) {
+    lines.push(
+      `sites: ${sites.map((g) => `${formatApprovalCategory(g.category)} on ${g.host}`).join(", ")}`,
+    );
   }
   lines.push("cleared when you switch or start a session; never persisted");
   return lines;

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   knownSecretsFromEnv,
   maskSecrets,
+  maskSecretsDeep,
   redactedMarker,
   type KnownSecret,
 } from "./secret-detector.js";
@@ -276,5 +277,56 @@ describe("maskSecrets: properties", () => {
     maskSecrets(hostile);
     // About 0.2 s on a laptop; the bound only catches super-linear blowup.
     expect(Date.now() - started).toBeLessThan(5_000);
+  });
+});
+
+describe("maskSecretsDeep (ATO-1176)", () => {
+  it("masks every string in nested objects and arrays without mutating the input", () => {
+    const value = {
+      exitCode: 0,
+      stdout: `OPENROUTER_API_KEY=${OPENROUTER}`,
+      nested: { lines: ["ok", `key ${ANTHROPIC}`], flag: true },
+    };
+    const out = maskSecretsDeep(value);
+    expect(out).not.toBe(value);
+    expect(JSON.stringify(out)).not.toContain(OPENROUTER);
+    expect(JSON.stringify(out)).not.toContain(ANTHROPIC);
+    expect(out.exitCode).toBe(0);
+    expect(out.nested.flag).toBe(true);
+    expect(out.nested.lines[0]).toBe("ok");
+    expect(value.stdout).toContain(OPENROUTER);
+    expect(value.nested.lines[1]).toContain(ANTHROPIC);
+  });
+
+  it("returns the input itself when nothing is masked", () => {
+    const value = { a: "plain", b: [1, "two"], c: { d: "x" } };
+    expect(maskSecretsDeep(value)).toBe(value);
+  });
+
+  it("masks a shared object at every place it is referenced", () => {
+    // The second reference used to come back as the unmasked original.
+    const shared = { out: `OPENROUTER_API_KEY=${OPENROUTER}` };
+    const value = { a: shared, b: shared, list: [shared] };
+    const out = maskSecretsDeep(value);
+    expect(JSON.stringify(out)).not.toContain(OPENROUTER);
+    expect(out.a).toBe(out.b);
+    expect(out.list[0]).toBe(out.a);
+    expect(shared.out).toContain(OPENROUTER);
+  });
+
+  it("cuts a cycle instead of returning the unmasked ancestor", () => {
+    const value: Record<string, unknown> = { s: `key ${ANTHROPIC}` };
+    value.self = value;
+    const out = maskSecretsDeep(value) as Record<string, unknown>;
+    expect(out.self).toBe("[circular]");
+    expect(String(out.s)).not.toContain(ANTHROPIC);
+    expect(value.self).toBe(value);
+  });
+
+  it("uses the known exact values", () => {
+    const known: KnownSecret[] = [{ label: "MY_TOKEN", value: "plainShapeless9Value" }];
+    expect(maskSecretsDeep({ s: ["x plainShapeless9Value y"] }, known)).toEqual({
+      s: ["x [redacted:MY_TOKEN] y"],
+    });
   });
 });

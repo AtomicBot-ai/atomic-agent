@@ -1,4 +1,9 @@
-import { Agent, EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
+import {
+  Agent,
+  EnvHttpProxyAgent,
+  getGlobalDispatcher,
+  setGlobalDispatcher,
+} from "undici";
 
 import { ENV_DEFAULTS } from "../config/config-schema.js";
 import type { AtomicAgentConfig } from "../config/index.js";
@@ -175,6 +180,57 @@ export function proxyConfigured(env: NodeJS.ProcessEnv): boolean {
       env.https_proxy ??
       env.NODE_USE_ENV_PROXY,
   );
+}
+
+/**
+ * Swap the process's connection pool for a fresh one with the same
+ * deadlines, and let the old one wind down (ATO-1357, issue #490).
+ *
+ * The field case: a Fusion worker on a local llama-server was cut off
+ * at its time limit, and from then on no worker's request reached that
+ * server — nothing in its log, `/health` answering, every slot idle —
+ * until the agent process was restarted, which is what cleared it. Of
+ * what a restart of the agent renews, this pool is the one piece no code
+ * path in the process ever renewed: every `fetch` goes through it,
+ * keep-alive sockets included. Whether it is the culprit is not proven
+ * (no client-side leak was found on main); renewing it is the part of
+ * "restart the agent" that can be done without losing the session.
+ *
+ * So a dispatch after a cut-off local worker calls this first. It does
+ * what a restart did for the transport, and nothing else:
+ *
+ *  - every request from here on opens on fresh sockets;
+ *  - requests already running on the old pool are left alone —
+ *    `close()`, not `destroy()`: the orchestrator's own cloud stream and
+ *    a sibling worker still generating keep their connections and end
+ *    the way they would have; the old pool goes away once they have.
+ *
+ * Cheap on a healthy process (one new pool, a TCP connect to localhost
+ * on the next request), so the caller does not have to prove the pool
+ * is the culprit before asking. Never throws.
+ *
+ * Returns whether a fresh pool was installed.
+ */
+export function renewTransportPool(): boolean {
+  try {
+    const previous = getGlobalDispatcher();
+    const deadlines = installed ?? transportDeadlinesFor();
+    setGlobalDispatcher(
+      proxyConfigured(process.env)
+        ? new EnvHttpProxyAgent(deadlines)
+        : new Agent(deadlines),
+    );
+    installed = deadlines;
+    // Graceful: waits for the requests still on it. A request that is
+    // itself stuck keeps the old pool alive until its own signal ends
+    // it, which is what every live request has.
+    if (typeof previous.close === "function") {
+      void previous.close().catch(() => undefined);
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Test seam: forget what this process installed. */

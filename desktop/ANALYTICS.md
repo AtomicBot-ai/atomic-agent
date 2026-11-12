@@ -55,6 +55,8 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
 | `ATOMIC_AGENT_ANALYTICS` | `off` on a test or dev run, when the terminal opt-out is inherited, or under `DO_NOT_TRACK=1` |
 | `ATOMIC_AGENT_INSTALL_ID_FILE` | `<desktop state dir>/install-id` on a test or dev run; otherwise inherited unchanged |
 
+`ATOMIC_AGENT_TEAM` is not set here, it is inherited: with it (`1` / `true` / `yes` / `on`), or with a file `~/.atomic-agent-team`, the machine is one of ours (ATO-1247). The desktop and the agent still send their events, each tagged `test_run: true` with the person property `atomic_team: true`, so PostHog can leave them out of the metrics.
+
 ## Global properties (every event)
 
 `surface: desktop`, `platform`, `arch`, `arm64_translation`, `desktop_version`,
@@ -76,7 +78,7 @@ send `ui` events.
 | Group | Main process | Renderer |
 |---|---|---|
 | Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / setup_finished / workspace_change / import / telegram / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
-| Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out / key_rejected / provider_error / list_failed; `provider_preset`), `custom_endpoint_tested` |
+| Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out / key_rejected / provider_error / agent_crashed / not_json / no_binary / list_failed; `provider_preset`, `kind` cloud / custom, as in `model_configured`), `custom_endpoint_tested`, `subscription_login_clicked`, `subscription_terminal_opened` (opened; terminal or reason), `subscription_login_succeeded` (seconds_to_sign_in) |
 | Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `local_backend_crashed`, `engine_recovery_shown`, `backend_switched`, `model_switched`, `fusion_configured` | |
 | Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |
 | Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `overnight_started` (has_budget, hours, notify_telegram), `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `composio_setup` (key_saved / key_removed / key_checked / enable / disable; ok / unverified / rejected / error), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
@@ -157,6 +159,10 @@ Notes on specific properties:
   `settings` (Settings' model list), `selector` (the composer's picker),
   `first_run` (the starter model), `spotlight` (the chat's "New: <name>" card,
   Download and switch), or `other`.
+- `model_download_started.projector_only` (also on `model_download_finished`):
+  the weights were already on disk and only the vision projector downloaded
+  (Get vision files, or a Retry after the projector failed). Not a new model
+  download: filter it out when counting those.
 - `llama_runtime_updated.trigger`: `setup` (the first-run runtime phase),
   `settings` (Settings' engine install or update, and Download again), or
   `launch` (the launch installing Atomic Core's backend before it starts the
@@ -206,7 +212,11 @@ no agent is running).
   `kind` / `reason` / `exit_code` enums. `RenderProcessGone` also carries
   `recovered` (`yes`: main reloaded the page; `no`: it crashed more than
   twice in a minute and the person was asked instead, ATO-765). At most 30 reports per session,
-  3 per signature.
+  3 per signature, and across launches at most 10 identical events (same
+  fingerprint and same message, numbers, paths and ids aside) per install
+  per rolling hour (ATO-1286, `main/sentry/rate-limit.ts`; the count is kept
+  as key hashes and timestamps in `sentry-rate-limit-desktop.json` in the
+  state dir).
 - An unexpected agent exit also carries `auto_restart_attempt`: 0 when the
   agent that ended was not started by an automatic restart, else which of
   the three attempts started it (ATO-767, `main/agent-auto-restart.ts`).

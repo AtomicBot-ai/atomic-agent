@@ -23,9 +23,10 @@ const {
 const settle = () => new Promise((r) => setImmediate(r));
 
 /** A restarter on stand-ins: the test answers each start and moves the clock. */
-function standIn({ answer = "connected" } = {}) {
+function standIn({ answer = "connected", cause } = {}) {
   const f = { clock: 1_000_000, timers: [], starts: [], notices: [], answer };
   const r = new AgentAutoRestart({
+    ...(cause ? { cause } : {}),
     start: async (attempt) => {
       f.starts.push(attempt);
       return { state: typeof f.answer === "function" ? f.answer(attempt) : f.answer };
@@ -70,12 +71,61 @@ test("an exit while running is started again after 1 s and said once it is back"
   assert.equal(r.attemptsMade(), 1);
 });
 
-test("an exit while booting, or with the restarter off, is not an attempt", () => {
+test("with the restarter off, or in an unknown phase, an exit is not an attempt", () => {
   const { r, f } = standIn();
-  assert.equal(r.exited("starting"), "ignored");
+  assert.equal(r.exited(undefined), "ignored");
   r.arm(false);
   assert.equal(r.exited("running"), "ignored");
+  assert.equal(r.exited("starting"), "ignored");
   assert.equal(f.timers.length, 0);
+});
+
+// ATO-1285: a crash while the agent boots used to leave "agent stopped" with no
+// button, and people relaunched the app into the same crash again and again.
+test("an agent that dies while it boots is retried too, then the card gives up with its cause", async () => {
+  const { r, f } = standIn({ answer: "error", cause: () => "A file the agent needs is locked by another program." });
+  assert.equal(r.exited("starting"), "scheduled");
+  await f.tick();
+  await f.tick();
+  await f.tick();
+  assert.deepEqual(f.starts, [1, 2, 3]);
+  const last = f.notices.at(-1);
+  assert.equal(last.kind, "gave_up");
+  assert.equal(last.cause, "A file the agent needs is locked by another program.");
+});
+
+test("an exit while one of our own attempts starts is that attempt's failure, not a second count", async () => {
+  const { r, f } = standIn();
+  let finish;
+  f.answer = () => "error";
+  // The start hangs until the test lets it end, the way a boot does.
+  const gate = new Promise((resolve) => { finish = resolve; });
+  r.deps.start = async (attempt) => {
+    f.starts.push(attempt);
+    // The child dies while it boots: AgentClient emits unexpected-exit (phase starting) mid-start.
+    assert.equal(r.exited("starting"), "ignored");
+    await gate;
+    return { state: "error" };
+  };
+  r.exited("running");
+  const t = f.timers.find((x) => x.live);
+  t.live = false;
+  f.clock += t.ms;
+  t.fn();
+  finish();
+  await settle();
+  await settle();
+  assert.equal(r.attemptsMade(), 2, "the failed attempt scheduled the next one exactly once");
+  assert.equal(f.timers.filter((x) => x.live).length, 1);
+});
+
+test("no cause named: the give-up notice carries none", async () => {
+  const { r, f } = standIn({ answer: "error", cause: () => null });
+  r.exited("running");
+  await f.tick(); await f.tick(); await f.tick();
+  const last = f.notices.at(-1);
+  assert.equal(last.kind, "gave_up");
+  assert.equal("cause" in last, false);
 });
 
 test("three failed attempts after 1 s, 5 s and 20 s, then it stops and gives up", async () => {

@@ -1,6 +1,7 @@
 import { constants as fsConstants } from "node:fs";
 import { copyFile } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { compressToolResult, type CompressedToolResult } from "../../compressor/result-compressor.js";
 import { requireApproval, type DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { ImageGeneratedContext } from "../../analytics/analytics-events.js";
@@ -18,6 +19,7 @@ import {
   type CoreMediaModel,
 } from "../../local-llm/core/core-image.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { coreDownloadProgress, type MediaProgressUpdate } from "./core-download-progress.js";
 
 export const IMAGE_GENERATE_TOOL = "image.generate";
 export const IMAGE_COUNT_MAX = 4;
@@ -62,9 +64,17 @@ export interface ImageGenerateToolOptions extends DangerousToolOptions {
   needsCoreInstall?: (dataDir: string) => boolean;
   /** One shape-only analytics record per call (`captureImageGenerated`). */
   report?: (event: ImageGeneratedContext) => void;
-  /** Test seam. */
+  /**
+   * Progress for the running tool card (the Core download on the first
+   * picture, then each request sent); the runtime turns it into a
+   * `tool_progress` event (ATO-425).
+   */
+  onProgress?: (sessionId: string, update: MediaProgressUpdate) => void;
+  /** Test seams. */
   withCore?: typeof withImageCore;
   now?: () => Date;
+  /** How long a request Core turned away as busy waits before it is sent again. */
+  busyRetryMs?: number;
 }
 
 interface ParsedArgs {
@@ -154,7 +164,7 @@ async function saveIntoWorkingDir(outputs: readonly CoreImageOutput[], workingDi
 /**
  * Jobs for `count` pictures on a cloud model: as few as the model's
  * per-request limit (`params.n.max`, default 1) allows. Core runs up to
- * 4 cloud jobs at a time.
+ * 4 cloud jobs at a time in all; one call runs `IMAGE_PARALLEL_JOBS`.
  */
 export function cloudBatches(count: number, model: CoreMediaModel | undefined): number[] {
   const nMax = nMaxOf(model);
@@ -168,6 +178,47 @@ export function cloudAspectRatio(ratio: string, model: CoreMediaModel | undefine
   const values = model?.params?.aspect_ratios?.values;
   if (!values || values.length === 0) return ratio;
   return values.includes(ratio) ? ratio : undefined;
+}
+
+/**
+ * Cloud jobs one call runs at once (ATO-425). Core runs at most 4 cloud
+ * jobs in all; a call of 4 single-picture jobs took every slot, so a
+ * generation running beside it (Studio, another chat) made one of them
+ * fail with JOB_BUSY and the answer came back short.
+ */
+export const IMAGE_PARALLEL_JOBS = 2;
+/** A request Core refused as busy is sent again this many times. Refused at submit: nothing was made or billed. */
+const BUSY_RETRIES = 12;
+const BUSY_RETRY_MS = 10_000;
+
+/** `fn` over `items`, at most `limit` at a time, results in order like `Promise.allSettled`. */
+export async function settleLimited<T, R>(items: readonly T[], limit: number, fn: (item: T) => Promise<R>): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      try { results[i] = { status: "fulfilled", value: await fn(items[i]!) }; }
+      catch (reason) { results[i] = { status: "rejected", reason }; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+  return results;
+}
+
+/**
+ * Run one job; when Core turns it away because its cloud slots are full
+ * (`JOB_BUSY`, refused at submit, so nothing was made or billed), wait and
+ * send it again instead of returning fewer pictures.
+ */
+export async function runWhenFree<T>(run: () => Promise<T>, signal: AbortSignal, waitMs = BUSY_RETRY_MS, retries = BUSY_RETRIES): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await run(); }
+    catch (err) {
+      if (!(err instanceof CoreImageError && err.code === "JOB_BUSY") || attempt >= retries || signal.aborted) throw err;
+      await delay(waitMs, undefined, { signal });
+    }
+  }
 }
 
 function plural(count: number): string { return count === 1 ? "1 image" : `${count} images`; }
@@ -223,6 +274,9 @@ export function buildImageGenerateTool(options: ImageGenerateToolOptions): ToolD
         ...(errorCode !== undefined ? { errorCode } : {}),
       });
 
+      const say = (update: MediaProgressUpdate | string) => options.onProgress?.(ctx.sessionId,
+        typeof update === "string" ? { fraction: 0, elapsedMs: Date.now() - started, label: update } : update);
+
       let outputs: CoreImageOutput[] = [];
       try {
         const result = await withCore(dataDir, async (client) => {
@@ -246,7 +300,9 @@ export function buildImageGenerateTool(options: ImageGenerateToolOptions): ToolD
               seedOffset += batchSize;
               return { ...request, batchSize, ...(seed !== undefined ? { seed } : {}) };
             });
-            const settled = await Promise.allSettled(jobs.map(job => runCoreImageJob(client, job, { signal: ctx.signal })));
+            say(`sent to ${model} on OpenRouter (${plural(args.count)})`);
+            const settled = await settleLimited(jobs, IMAGE_PARALLEL_JOBS,
+              job => runWhenFree(() => runCoreImageJob(client, job, { signal: ctx.signal }), ctx.signal, options.busyRetryMs));
             return {
               info, aspectRatio, total: settled.length,
               done: settled.flatMap(r => r.status === "fulfilled" ? [r.value] : []),
@@ -273,7 +329,7 @@ export function buildImageGenerateTool(options: ImageGenerateToolOptions): ToolD
           if (done.length === 0) throw failed[0];
           if (failed.length > 0) notes.push(`${failed.length} of the ${attempt.total} requests failed: ${(failed[0] as Error).message}`);
           return { jobs: done, notes };
-        }, { signal: ctx.signal });
+        }, { signal: ctx.signal, ...coreDownloadProgress(options.onProgress ? say : undefined) });
 
         outputs = result.jobs.flatMap((job: CoreImageJob) => job.outputs);
         const paths = await saveIntoWorkingDir(outputs, ctx.workingDir, now());

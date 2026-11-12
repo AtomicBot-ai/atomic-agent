@@ -192,3 +192,45 @@ export function nonInteractiveStdinError(
   if (stdin.isTTY) return null;
   return "atomic-agent needs an interactive terminal — use 'atomic-agent run' for scripts.";
 }
+
+/** Flags whose next token is their value (see `parseTuiArgs`). */
+const VALUE_FLAGS = new Set([
+  "--cwd",
+  "--working-dir",
+  "--max-steps",
+  "--fake-update",
+  "--session",
+  "--send",
+]);
+
+/**
+ * Argv for re-exec'ing the TUI after a self-update. Built from the
+ * parsed `tui` args, not the process argv: `atag handoff` opens the TUI
+ * in the same process, so its argv is still `handoff --from ...` and
+ * replaying it would import the transcript again as a second chat
+ * (ATO-1413). `--send` is dropped because that message already went out;
+ * `--session` stays so the restart lands back on the same chat. `sea`
+ * mirrors `userArgsFromArgv` in cli/index.ts: SEA user args start at
+ * index 2 with no script slot, plain node keeps the script at index 1.
+ */
+export function selfUpdateRelaunchArgs(
+  argv: readonly string[],
+  tuiArgs: readonly string[],
+  sea: boolean,
+): string[] {
+  const kept: string[] = [];
+  for (let i = 0; i < tuiArgs.length; i += 1) {
+    const flag = tuiArgs[i]!;
+    if (flag === "--send") {
+      i += 1;
+      continue;
+    }
+    kept.push(flag);
+    if (VALUE_FLAGS.has(flag) && i + 1 < tuiArgs.length) {
+      i += 1;
+      kept.push(tuiArgs[i]!);
+    }
+  }
+  const prefix = sea ? [] : argv.slice(1, 2);
+  return [...prefix, "tui", ...kept];
+}

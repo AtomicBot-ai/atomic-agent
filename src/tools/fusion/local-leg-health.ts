@@ -31,36 +31,49 @@ export const LOCAL_LEG_UNRESPONSIVE_ERROR =
 export const LOCAL_LEG_UNRESPONSIVE_HINT =
   "the local server is not answering /health since a worker on it was cancelled or timed out mid-generation; restart the local server (Manage → Local models, or restart the app) before delegating again, or do this part yourself";
 
+/** The key a mark is filed under when the caller names no server. */
+export const DEFAULT_LOCAL_LEG = "local";
+
+/**
+ * Kept per local server (ATO-1318). With `mixLocalModels` two local
+ * servers can serve one fan-out; one shared mark let a wedge on one
+ * fail a worker sent to the other, or a healthy answer from one clear
+ * the other's mark. Each leg is filed under its provider id, and only
+ * a leg with a probe of its own is ever asked.
+ */
 export class LocalLegHealth {
-  private suspect = false;
-  private suspectSince: string | null = null;
+  private readonly suspects = new Map<string, string>();
 
-  /** A worker on the local leg ended by an abort; check before the next dispatch. */
-  noteCut(reason: string): void {
-    if (!this.suspect) this.suspectSince = reason;
-    this.suspect = true;
+  /** A worker on this local leg ended by an abort; check before the next dispatch there. */
+  noteCut(reason: string, leg: string = DEFAULT_LOCAL_LEG): void {
+    if (!this.suspects.has(leg)) this.suspects.set(leg, reason);
   }
 
-  isSuspect(): boolean {
-    return this.suspect;
+  /** Whether `leg` is marked; with no leg named, whether any is. */
+  isSuspect(leg?: string): boolean {
+    return leg === undefined ? this.suspects.size > 0 : this.suspects.has(leg);
   }
 
-  /** Why the leg was marked, for the row's note. */
-  cause(): string | null {
-    return this.suspectSince;
+  /** Why the leg was marked, for the row's note; with no leg named, the first mark. */
+  cause(leg?: string): string | null {
+    if (leg !== undefined) return this.suspects.get(leg) ?? null;
+    const first = this.suspects.values().next();
+    return first.done === true ? null : first.value;
   }
 
   /**
-   * Ask the server before dispatching. Resolves `true` when the worker may
-   * be sent: nothing was cut, there is no probe to ask with, or the server
-   * answered (which clears the mark). Never throws.
+   * Ask the leg's server before dispatching. Resolves `true` when the
+   * worker may be sent: nothing on this leg was cut, there is no probe
+   * for this leg to ask with, or the server answered (which clears this
+   * leg's mark only). Never throws.
    */
   async readyForDispatch(
     probe: (() => Promise<LocalHealthAnswer>) | undefined,
     sleep: (ms: number) => Promise<void> = defaultSleep,
     signal?: AbortSignal,
+    leg: string = DEFAULT_LOCAL_LEG,
   ): Promise<boolean> {
-    if (!this.suspect || probe === undefined) return true;
+    if (!this.suspects.has(leg) || probe === undefined) return true;
     for (let attempt = 0; attempt < LOCAL_LEG_HEALTH_ATTEMPTS; attempt += 1) {
       if (signal?.aborted) return true;
       if (attempt > 0) await sleep(LOCAL_LEG_HEALTH_RETRY_MS);
@@ -71,8 +84,7 @@ export class LocalLegHealth {
         answer = "unanswered";
       }
       if (answer === "answered") {
-        this.suspect = false;
-        this.suspectSince = null;
+        this.suspects.delete(leg);
         return true;
       }
     }

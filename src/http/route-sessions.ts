@@ -1,5 +1,7 @@
 import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
+import type { SessionState } from "../session/session-state.js";
 import { readSessionTitle } from "../session/session-title.js";
+import { describeToolCall } from "../tools/describe-tool-call.js";
 import { openaiError } from "./openai-errors.js";
 import {
   readJsonBody,
@@ -57,6 +59,12 @@ export function createListSessionsHandler(): HttpHandler {
 /**
  * `GET /api/sessions/{id}` — return the full `SessionState`, including
  * the transcript. 404 if the session is not persisted.
+ *
+ * Each `assistant_tool_call` row also carries `done_line` (ATO-1382):
+ * the call in words as the live stream's `tool_progress.done_line` reads
+ * once done ("Used github: create issue"). Built here from the stored
+ * name and args, never stored, so a reopened chat labels its steps the
+ * way they read while the turn ran.
  */
 export function createGetSessionHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -70,7 +78,22 @@ export function createGetSessionHandler(): HttpHandler {
       sendError(res, 404, openaiError(`session not found: ${id}`));
       return;
     }
-    sendJson(res, 200, state);
+    sendJson(res, 200, withToolCallDoneLines(state));
+  };
+}
+
+/** The state with `done_line` on every tool call row, for the history view. */
+export function withToolCallDoneLines(state: SessionState): SessionState {
+  return {
+    ...state,
+    turns: state.turns.map((turn) =>
+      turn.kind === "assistant_tool_call"
+        ? {
+            ...turn,
+            done_line: describeToolCall({ name: turn.tool, args: turn.args, ok: true }).line,
+          }
+        : turn,
+    ),
   };
 }
 

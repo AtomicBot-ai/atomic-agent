@@ -8,6 +8,8 @@ import { isPartDisabled, pluginDataDir } from "./plugin-store.js";
 export interface PluginMcpServers {
   servers: McpServerConfig[];
   skipped: Array<{ plugin: string; server: string; reason: string }>;
+  /** Server name (`<plugin>-<server>`) → the plugin it came from. */
+  owners: Record<string, string>;
 }
 
 /**
@@ -34,6 +36,7 @@ export function loadPluginMcpServers(
 ): PluginMcpServers {
   const servers: McpServerConfig[] = [];
   const skipped: PluginMcpServers["skipped"] = [];
+  const owners: PluginMcpServers["owners"] = {};
   const used = new Set(takenNames);
   for (const { record, bundle } of loadEnabledPlugins(stateDir).plugins) {
     for (const [serverName, raw] of Object.entries(bundle.mcpServers)) {
@@ -62,12 +65,13 @@ export function loadPluginMcpServers(
       }
       if (JSON.stringify(raw).includes("PLUGIN_DATA")) mkdirSync(dataDir, { recursive: true });
       used.add(name);
+      owners[name] = bundle.name;
       const server: McpServerConfig = { ...mapped.server };
       delete server.trust;
       servers.push({ ...server, description: server.description ?? `From plugin ${bundle.name}` });
     }
   }
-  return { servers, skipped };
+  return { servers, skipped, owners };
 }
 
 /** Make `<plugin>-<server>` a valid, unused MCP server name (kebab-case, max 32). */

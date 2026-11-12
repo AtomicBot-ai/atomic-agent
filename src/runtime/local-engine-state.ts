@@ -7,6 +7,8 @@ import {
 
 /** The built-in managed local link (`LlamaServerProvider`'s default id). */
 const MANAGED_LOCAL_LINK = "local-llama";
+/** The Atomic Chat app's Local API Server preset (`provider-presets.ts`). */
+const ATOMIC_CHAT_LINK = "atomic-chat";
 
 /**
  * The managed engine's process state for the link a turn just failed on,
@@ -24,6 +26,13 @@ const MANAGED_LOCAL_LINK = "local-llama";
  * own, a cloud link is not a process on this machine, and a custom-id
  * `llama-server` entry is almost always a server the operator runs.
  *
+ * The `atomic-chat` preset link, while it is the active text provider,
+ * reads `atomic_chat_app` (ATO-1278): its server is the Atomic Chat
+ * desktop app, which nothing here starts or restarts, so the outage wait
+ * ends a refused connection there after a short start grace instead of
+ * waiting out the budget. As a fallback tail behind another provider it
+ * stays `unknown`, for the same reason as `local-llama` above.
+ *
  * `dead` covers a pid that is recorded and gone and no pid at all: either
  * way no model process exists and nothing is starting one. A start, load
  * or engine install under way reads `unknown` (see
@@ -35,6 +44,9 @@ export function readLocalEngineState(
   activeTextProvider: string,
   liveness: (dataDir: string) => ManagedEngineLiveness = readManagedEngineLiveness,
 ): LocalEngineState {
+  if (providerId === ATOMIC_CHAT_LINK) {
+    return activeTextProvider === ATOMIC_CHAT_LINK ? "atomic_chat_app" : "unknown";
+  }
   if (providerId !== MANAGED_LOCAL_LINK) return "unknown";
   if (activeTextProvider !== MANAGED_LOCAL_LINK) return "unknown";
   if (cfg.localModels.mode !== "managed") return "unknown";

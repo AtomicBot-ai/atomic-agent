@@ -4,7 +4,13 @@
 
    The form is remembered per mode in localStorage (`atag.studio.images`), the
    same per-viewer store the window keeps its theme and last Settings section
-   in; pictures and paths of sources are not (a source is picked again). */
+   in; pictures and paths of sources are not (a source is picked again).
+
+   The model follows where the chat runs (STUDIO.chatPlace, ATO-902/ATO-1305):
+   the page opens on a model of that place, remembers the last model chosen in
+   each place (`byPlace`), and when the chat has moved since it was last shown it
+   switches to that place's model, keeping the prompt and the inputs. Never
+   while a picture is being made, and never to the other place by itself. */
 (function () {
   const KEY = 'atag.studio.images';
   const PAGE = 50;
@@ -13,7 +19,7 @@
 
   const IM = {
     root: null, shown: false,
-    catalog: null, catLoading: false, catErr: null, model: null,
+    catalog: null, catLoading: false, catErr: null, model: null, place: null,   // place: where the chat ran when the model was picked
     form: blankForm(), saved: loadSaved(),
     job: null, jobCount: 1, jobErr: null, lastReq: null, starting: false, formMsg: '',
     items: [], total: 0, hasMore: false, filter: 'all', galLoading: false, galErr: null,
@@ -21,6 +27,7 @@
     sel: null, recipe: false, delArmed: null, picking: null,
     price: null, priceKey: '', pop: null, modelQ: '', adv: false, modeWhy: null,
     dir: '', focusPath: null,
+    dl: {},   // ATO-1395: local downloads this window knows of, artifact id → LocalDownload (CONTRACT.md)
     chatItem: null,   // a picture opened from a chat that Studio did not make ("From chat")
     recent: typeof studioRecentLoad === 'function' ? studioRecentLoad('image') : [], recentOpen: false,   // ATO-809: prompts sent before
     improve: typeof studioImproveBlank === 'function' ? studioImproveBlank() : null,   // ATO-809: Improve prompt (improve-prompt.js)
@@ -53,9 +60,18 @@
       IM.saved.modes = IM.saved.modes || {};
       IM.saved.modes[f.mode] = keep;
       IM.saved.last = {mode: f.mode, modelId: f.modelId, provider: f.provider};
+      remember(IM.model);
       try { localStorage.setItem(KEY, JSON.stringify(IM.saved)); } catch (e) { /* no storage: remembered for this launch */ }
     }, 300);
   }
+
+  /** The last model chosen in its place (cloud or local), for when the chat comes back there. */
+  function remember(m) {
+    const place = simgPlaceOf(m);
+    if (!place) return;
+    IM.saved.byPlace = Object.assign({}, IM.saved.byPlace, {[place]: {modelId: m.id, provider: m.provider}});
+  }
+  const chatPlace = () => (window.STUDIO && typeof STUDIO.chatPlace === 'function' ? STUDIO.chatPlace() : null);
 
   /* ---------- painting ---------- */
 
@@ -182,13 +198,134 @@
       const last = IM.saved.last || {};
       const mode = last.mode || 'create';
       const kept = (IM.saved.modes || {})[mode] || {};
-      const m = simgFindModel(IM.catalog, kept.modelId || last.modelId, kept.provider || last.provider) || simgDefaultModel(IM.catalog);
+      const place = chatPlace();
+      IM.place = place;
+      const m = simgPickModel(IM.catalog, place, [place && (IM.saved.byPlace || {})[place],
+        {modelId: kept.modelId || last.modelId, provider: kept.provider || last.provider}]);
       IM.model = m;
       IM.form = simgNormalize(Object.assign(blankForm(), m ? simgModelDefaults(m) : {}, kept, {mode, source: IM.form.source, mask: IM.form.mask, refs: IM.form.refs,
         prompt: IM.form.prompt || kept.prompt || '', modelId: m && m.id, provider: m && m.provider}), m);
       paintForm();
       refreshPrice();
     }, () => { IM.catLoading = false; IM.catErr = {message: 'Could not read the models.'}; paintForm(); });
+  }
+
+  /* ATO-1305: the chat moved (cloud ↔ local) since the model was picked: read the catalog
+     again and take that place's model, the one last chosen there when it is still listed.
+     The prompt, the mode where the new model has it, and the inputs stay. Not while a
+     picture is being made: the form is the job's, and Retry sends it again. */
+  function followChat() {
+    const place = chatPlace();
+    const s = br();
+    if (!place || place === IM.place || !IM.catalog || IM.catLoading || isLive(IM.job) || IM.starting || !s || !s.catalog) return;
+    const was = IM.place;
+    IM.place = place;
+    Promise.resolve(s.catalog('image')).then((r) => {
+      if (isLive(IM.job) || IM.starting || chatPlace() !== place) { IM.place = was; return; }
+      if (r && r.ok && r.data) { IM.catalog = r.data; IM.catErr = null; }
+      const cur = {modelId: IM.form.modelId, provider: IM.form.provider};
+      remember(IM.model);
+      const m = simgPickModel(IM.catalog, place, [(IM.saved.byPlace || {})[place], cur]);
+      if (m && IM.model && m.id === IM.model.id && m.provider === IM.model.provider) { IM.model = m; if (IM.shown) paintForm(); return; }
+      chooseModel(m);
+      IM.modeWhy = null; IM.pop = null; IM.formMsg = ''; IM.priceKey = '';
+      save();
+      if (IM.shown) { paintForm(); paintPop(); }
+      refreshPrice();
+    }, () => { IM.place = was; });
+  }
+
+  /* ATO-1394: the catalog again, quietly, after something changed a local model's state
+     (Generate loaded it, a download finished, it was removed): only the models' facts move;
+     the chosen model, the form and the words stay. Several events in a row make one read. */
+  let refreshT = 0, refreshSeq = 0;
+  function refreshCatalog() {
+    clearTimeout(refreshT);
+    refreshT = setTimeout(() => {
+      const s = br();
+      if (!s || !s.catalog || !IM.catalog || IM.catLoading) return;
+      const seq = ++refreshSeq;
+      Promise.resolve(s.catalog('image')).then((r) => {
+        if (seq !== refreshSeq || IM.catLoading || !r || !r.ok || !r.data) return;
+        IM.catalog = r.data;
+        const m = simgFindModel(IM.catalog, IM.form.modelId, IM.form.provider);
+        if (m) IM.model = m;
+        /* ATO-1308: nothing was there and a download just landed: take it (never the other place). */
+        else if (!IM.model && IM.place && !isLive(IM.job)) { const d = simgDefaultModel(IM.catalog, IM.place); if (d) { chooseModel(d); save(); refreshPrice(); } }
+        if (IM.shown) { paintForm(); paintPop(); }
+      }, () => undefined);
+    }, 300);
+  }
+  /* `engine`: an install finished or failed, or the engine turned out not to run here
+     (the catalog's `local.engine` decides whether Download and local generation are offered). */
+  const LOCAL_CHANGE = new Set(['load', 'download', 'removed', 'engine']);
+  function onLocal(ev) {
+    if (!ev || !LOCAL_CHANGE.has(ev.type)) return;
+    if (ev.type === 'download' && ev.download && ev.download.id) {
+      const d = ev.download;
+      if (d.state === 'done' || d.state === 'cancelled') delete IM.dl[d.id]; else IM.dl[d.id] = d;
+      paintDl();
+    }
+    if (ev.type === 'load' && ev.state === 'loading') return;
+    if (ev.type === 'engine' && ev.engine && ev.engine.state === 'installing') return;
+    // A cancelled download leaves part files: the size on the button changes.
+    if (ev.type === 'download' && !(ev.download && (ev.download.state === 'done' || ev.download.state === 'cancelled'))) return;
+    refreshCatalog();
+  }
+
+  /* ---------- local downloads (ATO-1395, ATO-1308) ---------- */
+
+  /** Repaint what shows a download: the footer, and the offer under an empty model field. */
+  function paintDl() {
+    if (!IM.shown || !IM.root) return;
+    paintFoot();
+    IM.root.querySelectorAll('[data-part="form"] [data-dl]').forEach((el) => {
+      const m = simgFindModel(IM.catalog, el.dataset.dl, 'local');
+      if (m) el.outerHTML = simgvDownload(IM, m);
+    });
+  }
+
+  /** Download a local model's quant (CONTRACT.md localDownload); `workflow` when a mode needs one more file. */
+  /** The mode a download is for: edit and reference may need a family's vision projector too. */
+  const dlWorkflow = () => (IM.form.mode && IM.form.mode !== 'create' ? IM.form.mode : undefined);
+  function download(m, workflow) {
+    const s = br();
+    const q = simgQuantToGet(m);
+    if (!m || !q) return;
+    if (!s || !s.localDownload) { toast('Could not download it', 'Studio needs a newer app build.', 'bad'); return; }
+    if (!IM.model && !isLive(IM.job)) { chooseModel(m); save(); paintForm(); }
+    IM.dl[q.id] = {id: q.id, state: 'downloading', transferred: 0, total: Number(q.downloadBytes) || 0, percent: 0, file: null, error: null};
+    paintDl();
+    Promise.resolve(s.localDownload(q.id, workflow ? {workflow} : undefined)).then((r) => {
+      if (!r || !r.ok) {
+        IM.dl[q.id] = Object.assign({}, IM.dl[q.id], {state: 'failed', error: (r && r.error) || {code: 'DOWNLOAD_FAILED', message: 'The download did not start.'}});
+      } else if (r.data && r.data.state === 'done') {
+        delete IM.dl[q.id];
+        refreshCatalog();
+      } else if (r.data && IM.dl[q.id] && IM.dl[q.id].state === 'downloading' && !(IM.dl[q.id].percent > 0)) {
+        IM.dl[q.id] = r.data;   // its first state, unless progress already came in on onLocal
+      }
+      paintDl();
+    }, () => { IM.dl[q.id] = Object.assign({}, IM.dl[q.id], {state: 'failed', error: {code: 'DOWNLOAD_FAILED', message: 'The download did not start.'}}); paintDl(); });
+  }
+
+  function stopDownload(id) {
+    const s = br();
+    if (!s || !s.localCancel || !id) return;
+    Promise.resolve(s.localCancel(id)).then((r) => {
+      if (r && r.ok && r.data && r.data.cancelled) { delete IM.dl[id]; paintDl(); }
+    }, () => undefined);
+  }
+
+  /** Downloads still running after a window reload. */
+  function loadDownloads() {
+    const s = br();
+    if (!s || !s.localState) return;
+    Promise.resolve(s.localState()).then((r) => {
+      const list = r && r.ok && r.data && Array.isArray(r.data.downloads) ? r.data.downloads : [];
+      for (const d of list) if (d && d.id && (d.state === 'downloading' || d.state === 'verifying')) IM.dl[d.id] = d;
+      if (list.length) paintDl();
+    }, () => undefined);
   }
 
   let priceT = 0;
@@ -333,8 +470,9 @@
       IM.jobErr = job.error || {code: 'FAILED', message: 'That did not work.'};
       if (!IM.shown && typeof toast === 'function') toast('An image did not finish', IM.jobErr.message, 'bad');
     }
+    if (!job.cloud) refreshCatalog();   // ATO-1394: Generate loaded the model (or a failed load unloaded one)
     if (job.state === 'completed' && !IM.shown && typeof toast === 'function') toast('Images are ready', 'Open Studio › Images to see them');
-    if (IM.shown) { paintStage(); paintFoot(); paintGallery(); }
+    if (IM.shown) { paintStage(); paintFoot(); paintGallery(); followChat(); }
   }
 
   function addOutputs(outs, select) {
@@ -355,6 +493,8 @@
   function baseName(p) { return String(p || '').split(/[\\/]/).pop(); }
 
   function setSlot(slot, src) {
+    // A mask painted on the old source does not fit a new one (ATO-807).
+    if (slot === 'source' && IM.form.mask && IM.form.mask.painted) IM.form.mask = null;
     if (slot === 'ref') {
       const max = Math.max(0, ((IM.model && IM.model.maxInputImages) || 16) - 1);
       if (IM.form.refs.length >= max) { toast('That is the most this model takes', '', 'bad'); return; }
@@ -380,7 +520,7 @@
       if (!url) continue;
       const key = 'local:' + (++localSeq);
       LOCAL.set(key, url);
-      setSlot(slot, {base64: url, key, name: file.name || 'Pasted image', note: 'from your Mac'});
+      setSlot(slot, {base64: url, key, name: file.name || 'Pasted image', note: 'from your ' + (simgMachine() === 'this Mac' ? 'Mac' : 'computer')});
       if (slot !== 'ref') break;
     }
   }
@@ -399,9 +539,36 @@
     const r = await Promise.resolve(s.pickImages(slot === 'ref')).catch(() => null);
     const list = r && r.ok && Array.isArray(r.data) ? r.data : [];
     for (const f of list) {
-      setSlot(slot, {path: f.path, key: f.path, name: f.name, note: 'from your Mac'});
+      setSlot(slot, {path: f.path, key: f.path, name: f.name, note: 'from your ' + (simgMachine() === 'this Mac' ? 'Mac' : 'computer')});
       if (slot !== 'ref') break;
     }
+  }
+
+  /* ATO-807: paint the Inpaint mask on the source picture (mask-painter.js). */
+  async function paintMask() {
+    const src = IM.form.source;
+    if (!src || typeof smaskOpen !== 'function') return;
+    let url = src.base64 || LOCAL.get(src.key) || '';
+    if (!url) {
+      const s = br();
+      const r = s && s.preview ? await Promise.resolve(s.preview(src.path)).catch(() => null) : null;
+      const d = r && r.ok ? r.data : null;
+      url = d && d.ok && typeof d.dataUrl === 'string' ? d.dataUrl : '';
+    }
+    if (!url) { toast('Could not open the picture', 'Add the source again and retry.', 'bad'); return; }
+    if (IM.form.source !== src) return;   // the source changed while it loaded
+    const old = IM.form.mask;
+    smaskOpen({
+      src: url,
+      mask: old && old.painted ? LOCAL.get(old.key) : null,
+      onDone(mask, w, h) {
+        if (IM.form.source !== src) return;
+        const key = 'local:' + (++localSeq);
+        LOCAL.set(key, mask);
+        if (old && old.painted) { LOCAL.delete(old.key); PICS.delete(old.key); }
+        setSlot('mask', {base64: mask, key, name: 'Painted mask', note: w + ' × ' + h + ' · painted here', painted: true});
+      },
+    });
   }
 
   /* ---------- result actions ---------- */
@@ -452,13 +619,17 @@
 
   function restore(item) {
     const r = simgRecipeToForm(item);
-    const m = (r.modelId && simgFindModel(IM.catalog, r.modelId, r.provider)) || IM.model;
+    /* ATO-1307: a picture made in the other place restores its words and settings, not its model. */
+    const away = simgRestoreNote(item, IM.place);
+    const found = r.modelId && !away ? simgFindModel(IM.catalog, r.modelId, r.provider) : null;
+    const m = found || IM.model;
     const next = Object.assign({}, IM.form, r);
     delete next.modelId; delete next.provider;
     IM.model = m;
     next.modelId = m ? m.id : null; next.provider = m ? m.provider : null;
     IM.form = simgNormalize(next, m);
-    if (r.modelId && m && m.id !== r.modelId) toast('Settings restored', 'That model is not listed now, so the current one stays');
+    if (away) toast('Settings restored', away);
+    else if (r.modelId && m && m.id !== r.modelId) toast('Settings restored', 'That model is not listed now, so the current one stays');
     else toast('Settings restored', '');
     save(); paintForm(); refreshPrice();
   }
@@ -468,6 +639,7 @@
     const mode = can.includes('edit') ? 'edit' : can.find((x) => x !== 'create');
     if (mode) switchMode(mode);
     IM.form.source = sourceFromItem(item);
+    if (IM.form.mask && IM.form.mask.painted) IM.form.mask = null;   // painted on the old source (ATO-807)
     if (!mode) toast('Source added', 'Pick a model that can edit pictures to use it');
     paintForm();
   }
@@ -526,6 +698,9 @@
       case 'trymodel': { const bar = a.indexOf('|'); const m = simgFindModel(IM.catalog, a.slice(bar + 1), a.slice(0, bar)); IM.jobErr = null; if (m) { chooseModel(m); save(); paintForm(); refreshPrice(); generate(); } else paintStage(); return; }
       case 'dismiss': IM.jobErr = null; paintStage(); return;
       case 'settings': STUDIO.openSettings('openrouter'); return;
+      case 'download': download(simgFindModel(IM.catalog, a, 'local'), dlWorkflow()); return;
+      case 'download-err': IM.jobErr = null; paintStage(); download(IM.model, dlWorkflow()); return;
+      case 'dlstop': stopDownload(a); return;
       case 'mode': IM.modeWhy = null; switchMode(a); save(); paintForm(); refreshPrice(); return;
       case 'modewhy': IM.modeWhy = a; paintForm(); return;
       case 'aspect': IM.form.aspect = a; save(); paintForm(); return;
@@ -555,7 +730,11 @@
         if (IM.improve && IM.improve.undo !== null) { IM.form.prompt = IM.improve.undo; IM.improve.undo = null; IM.improve.err = ''; save(); paintForm(); }
         return;
       case 'idea': IM.form.prompt = a; paintForm(); { const t = document.getElementById('sti-prompt'); if (t) t.focus(); } save(); return;
-      case 'clear': if (a === 'mask') IM.form.mask = null; else IM.form.source = null; paintForm(); return;
+      case 'clear':
+        if (a === 'mask') IM.form.mask = null;
+        else { IM.form.source = null; if (IM.form.mask && IM.form.mask.painted) IM.form.mask = null; }
+        paintForm(); return;
+      case 'paintmask': paintMask(); return;
       case 'unref': IM.form.refs = IM.form.refs.filter((_, n) => n !== Number(a)); paintForm(); return;
       case 'pick': pickFiles(a); return;
       case 'fromlib': IM.picking = a || null; paintForm(); paintGallery(); return;
@@ -741,6 +920,7 @@
       loadCatalog();
       loadGallery(false);
       loadDir();
+      loadDownloads();
       checkImprove();
     },
     onShow() {
@@ -748,11 +928,13 @@
       if (!IM.catalog && !IM.catLoading) loadCatalog();
       checkImprove();
       paintAll();
+      followChat();
       const t = document.getElementById('sti-prompt');
       if (t && !IM.form.prompt) t.focus();
     },
     onHide() { IM.shown = false; IM.pop = null; IM.picking = null; },
     onEvent,
+    onLocal,
     onKey,
     act: verb,
     focusFile(path) {

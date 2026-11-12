@@ -21,10 +21,11 @@ function screen(outcome, res) {
   const c = vm.createContext({
     OB: { outcome, localStart: null },
     OB_COPY: { cloudReadyLabel: "Cloud model ready" },
+    OB_WIZ_ROUTE: null,
     esc: (s) => String(s),
     ic: (name) => "<i:" + name + ">",
   });
-  for (const name of ["obLocalStartOf", "obConfiguredLabel", "obReadyHTML", "obConfiguredHTML"]) vm.runInContext(fn(name), c);
+  for (const name of ["obLocalStartOf", "obCloudReadyLabel", "obConfiguredLabel", "obReadyHTML", "obConfiguredHTML"]) vm.runInContext(fn(name), c);
   if (res !== undefined) c.OB.localStart = c.obLocalStartOf(res);
   return { label: c.obConfiguredLabel(), html: c.obConfiguredHTML() };
 }

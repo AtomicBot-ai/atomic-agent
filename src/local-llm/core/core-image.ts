@@ -160,6 +160,28 @@ export async function registerOpenRouterMedia(client: CoreControlClient, apiKey:
   } catch (err) { throw toImageError(err, true); }
 }
 
+/**
+ * Take the OpenRouter key back out of Core (ATO-425). `registerOpenRouterMedia`
+ * leaves it in Core's own `credentials.json`, so removing the key from the
+ * agent left Core holding it. Called once no OpenRouter key is left.
+ *
+ * Only on a computer whose Core of this build's pin is installed (nothing
+ * to forget otherwise, and nothing is downloaded for it); Core is started
+ * for the call if it was not running and stopped again when idle, like a
+ * generation. Answers whether Core said it removed one; never throws.
+ */
+export async function forgetOpenRouterMedia(dataDir: string, deps: { withCore?: typeof withImageCore; installed?: (dataDir: string) => boolean } = {}): Promise<boolean> {
+  if (!(deps.installed ?? ((d: string) => isCoreInstalled(d, CORE_VERSION)))(dataDir)) return false;
+  try {
+    return await (deps.withCore ?? withImageCore)(dataDir, async (client) => {
+      await client.call("/cloud/providers/openrouter", undefined, { method: "DELETE", timeoutMs: 10_000 });
+      return true;
+    }, { waitMs: 30_000 });
+  } catch {
+    return false;   // Core busy, not registered, or not reachable: the next key set replaces it anyway.
+  }
+}
+
 /** Core's image models for a provider (catalog merged with the provider's live list). Empty when Core cannot say. */
 export async function listCoreImageModels(client: CoreControlClient, provider: string, signal?: AbortSignal): Promise<CoreMediaModel[]> {
   try {
@@ -183,6 +205,40 @@ export async function configureCoreDiffusion(client: CoreControlClient, dataFold
   } catch (err) { throw toImageError(err, false); }
 }
 
+/**
+ * Submit a generation job without cutting the request off on abort. An
+ * abort returns at once (the caller stops waiting); the submit carries on
+ * and, if Core answers with a job id after all, that job is cancelled
+ * (`<path>/<id>/cancel`), so a job made just as Esc landed cannot run on
+ * and bill unseen (ATO-425). Shared by images and video.
+ */
+export async function submitUnlessAborted(client: CoreControlClient, path: string, request: unknown, signal: AbortSignal | undefined): Promise<{ jobId?: unknown }> {
+  const submit = client.call<{ jobId?: unknown }>(path, request, { timeoutMs: 60_000 });
+  if (!signal) return submit;
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([submit, aborted]);
+  } catch (err) {
+    if (signal.aborted) {
+      void submit.then((answer) => {
+        if (typeof answer?.jobId === "string" && answer.jobId.length > 0) {
+          return client.call(`${path}/${encodeURIComponent(answer.jobId)}/cancel`, {}, { timeoutMs: 5_000 });
+        }
+        return undefined;
+      }).catch(() => {});
+    }
+    throw err;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    aborted.catch(() => {});
+  }
+}
+
 export interface RunCoreImageJobOptions {
   signal?: AbortSignal;
   onProgress?: (progress: CoreImageProgress) => void;
@@ -194,18 +250,29 @@ export interface RunCoreImageJobOptions {
  * Submit one job and wait for it to settle. The submit is never retried:
  * a cloud provider would bill twice. Abort (Esc) and the timeout cancel
  * the job in Core. A completed job with no files is a failure.
+ *
+ * Esc during the submit (ATO-425): the call returns at once, but the
+ * submit request itself is not cut off. Core may already have made the
+ * job, and an aborted request would never learn its id, so nothing could
+ * cancel a job that goes on to bill. When the id arrives late it is
+ * cancelled then (`submitUnlessAborted`).
  */
 export async function runCoreImageJob(client: CoreControlClient, request: CoreImageRequest, opts: RunCoreImageJobOptions = {}): Promise<CoreImageJob> {
   const cloud = request.target !== undefined;
   const timeoutMs = opts.timeoutMs ?? (cloud ? CORE_IMAGE_TIMEOUT_MS.cloud : CORE_IMAGE_TIMEOUT_MS.local);
+  opts.signal?.throwIfAborted();
   let jobId: string;
   try {
-    const answer = await client.call<{ jobId?: unknown }>("/diffusion/jobs", request, { ...(opts.signal ? { signal: opts.signal } : {}), timeoutMs: 60_000 });
+    const answer = await submitUnlessAborted(client, "/diffusion/jobs", request, opts.signal);
     if (typeof answer.jobId !== "string" || answer.jobId.length === 0) throw new CoreImageError("Atomic Core did not return an image job id.", "BAD_ANSWER");
     jobId = answer.jobId;
   } catch (err) { throw toImageError(err, cloud); }
 
   const cancel = () => client.call(`/diffusion/jobs/${encodeURIComponent(jobId)}/cancel`, {}, { timeoutMs: 5_000 }).catch(() => {});
+  if (opts.signal?.aborted) {
+    await cancel();
+    opts.signal.throwIfAborted();
+  }
   const deadline = Date.now() + timeoutMs;
   let misses = 0;
   try {

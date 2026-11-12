@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isSiteScopedCategory } from "./site-grants.js";
 import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 
 import type { ApprovalRequest } from "./approval-gate.js";
@@ -46,7 +47,8 @@ export interface ApprovalRule {
    * basename (case-insensitively), the rest exactly. An allow rule needs
    * the request's `commandArgv`; a deny or ask rule also matches any
    * command in `commandSegments`, so a compound line, a binary named by
-   * path or a dangerous command cannot step round it.
+   * path or a dangerous command cannot step round it, and any request
+   * marked `commandUnreadable` (a script piped into a shell).
    */
   commandPrefix?: string[];
   /** Every path the request names must be inside this directory. */
@@ -258,6 +260,7 @@ type MatchableRequest = Pick<
   | "category"
   | "commandArgv"
   | "commandSegments"
+  | "commandUnreadable"
   | "targetPaths"
   | "affectedResources"
 >;
@@ -330,10 +333,10 @@ function commandMatches(
   request: MatchableRequest,
 ): boolean {
   if (argvHasPrefix(request.commandArgv, prefix)) return true;
-  return (
-    rule.decision !== "allow" &&
-    (request.commandSegments ?? []).some((words) => argvHasPrefix(words, prefix))
-  );
+  if (rule.decision === "allow") return false;
+  // A script piped into `sh` could be the very command the rule names.
+  if (request.commandUnreadable === true) return true;
+  return (request.commandSegments ?? []).some((words) => argvHasPrefix(words, prefix));
 }
 
 function argvHasPrefix(
@@ -440,6 +443,10 @@ export function canGrantAlways(request: ApprovalRequest): boolean {
   // A rule cannot say "this one file in home": it would cover any file
   // there, `.zshrc` included, from then on.
   if (request.category === "fs_write_home") return false;
+  // A rule has no site field, so "always" on a browser submit or an
+  // off-site page would cover every site for good; those are granted
+  // per site for the chat only (`site-grants.ts`, ATO-1181).
+  if (isSiteScopedCategory(request.category)) return false;
   if (request.category === "fs_read_outside") return alwaysReadRoot(request) !== undefined;
   return true;
 }

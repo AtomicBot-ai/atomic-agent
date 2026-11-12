@@ -47,6 +47,10 @@ export function captureError(
   // the global sources are filtered — an EPIPE surfaced by a tool still
   // reports, because there it may well be a bug in ours.
   if (isGlobalSource(opts.source) && isBrokenPipeError(err)) return;
+  // Atomic Chat not being open is not a defect: the operator was told in
+  // plain words to open it (ATO-1278). Matched by name, so this module
+  // takes no import from the LLM layer.
+  if (isExpectedUserActionFailure(err)) return;
   const error =
     err instanceof Error
       ? err
@@ -56,6 +60,19 @@ export function captureError(
   const scrubbed = scrubError(error, opts);
   if (scrubbed.category === "cancelled") return;
   client.capture(scrubbed);
+}
+
+/** Error names that mean "the operator has a step to take", not a bug. */
+const EXPECTED_USER_ACTION_ERRORS: ReadonlySet<string> = new Set(["AtomicChatNotRunningError"]);
+
+/** True when `err` or its `cause` chain (5 deep) is such an error. */
+function isExpectedUserActionFailure(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth += 1) {
+    if (EXPECTED_USER_ACTION_ERRORS.has(current.name)) return true;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /**

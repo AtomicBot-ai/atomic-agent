@@ -18,7 +18,10 @@ import {
   type TraceSink,
 } from "../../tracing/trace/index.js";
 import { captureError, type SentryClient } from "../../error-reporting/index.js";
+import { isExpectedProviderLimit } from "../../llm/index.js";
 import { describeLlmFailure } from "./llm-failure-context.js";
+import { runtimeKnownSecrets } from "./runtime-tool-catalog.js";
+import { isUnreportedLocalServerFailure } from "../../llm/reliability/local-server-error.js";
 
 export function createRuntimeTraces(
   config: AtomicAgentConfig,
@@ -143,6 +146,9 @@ export function createRuntimeTraces(
     const recorder = createTraceRecorder({
       sessionId: session.id,
       emit: (event) => traceBus.emit(event),
+      // The same exact values tool output is masked with (ATO-1077), so
+      // a config-stored key in a tool's details stays off disk (ATO-1176).
+      knownSecrets: () => runtimeKnownSecrets(config),
     });
     const metadata = headerMetadata ?? session.metadata;
     recorder.beginSession({
@@ -233,7 +239,15 @@ export function createRuntimeTraces(
           }
         }
       }
-      if (event.type === "loop_failed") {
+      // A provider plan's own limit (Groq's TPM 413 with its numbers) is explained to
+      // the user in chat and is not a defect to report (ATO-1283).
+      // Atomic Chat's key protection (ATO-1274) is the person's to fix
+      // and already told in plain words: not a defect, so not a report.
+      if (
+        event.type === "loop_failed" &&
+        !isExpectedProviderLimit(event.error) &&
+        !isUnreportedLocalServerFailure(event.error)
+      ) {
         const reporter = getErrorReporter();
         captureError(reporter, event.error, {
           source: "llm_failure",

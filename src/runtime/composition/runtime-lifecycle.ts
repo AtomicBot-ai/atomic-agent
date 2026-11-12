@@ -20,6 +20,7 @@ import type { DiscordChannel } from "../../channels/discord/discord-channel.js";
 import type { SwarmRegistry } from "../../channels/swarm/swarm-registry.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
 import type { SentryClient } from "../../error-reporting/sentry-client.js";
+import type { RuntimeShutdownOptions } from "../runtime-contract.js";
 
 export interface RuntimeLifecycleResources {
   readonly compaction?: { shutdown(): void };
@@ -47,6 +48,8 @@ export interface RuntimeLifecycleResources {
   readonly telegramChannelForShutdown: Pick<TelegramChannel, "stop"> | null;
   readonly discordChannelForShutdown: Pick<DiscordChannel, "stop"> | null;
   readonly swarmForShutdown: Pick<SwarmRegistry, "stopAll"> | null;
+  /** Unwatch of the plugin MCP live stop (ATO-1407); cleared before the manager shuts down. */
+  readonly pluginMcpWatch?: (() => void) | null;
   readonly consolidatorJob: Pick<ConsolidatorJob, "stop"> | null;
   readonly taskStore: Pick<TaskStore, "close">;
   readonly analytics: Pick<AnalyticsClient, "shutdown"> | null;
@@ -78,7 +81,7 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     }
   };
   let shutdownCalled = false;
-  const shutdown = async (): Promise<void> => {
+  const shutdown = async (options: RuntimeShutdownOptions = {}): Promise<void> => {
     if (shutdownCalled) return;
     shutdownCalled = true;
     resources.compaction?.shutdown();
@@ -91,8 +94,11 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     releaseTurnsInterrupted({ keepMarks: true });
     // Stop task ingress and abort every running task while both stores remain
     // open. This covers scheduler, run-on-create and explicit run requests.
+    // ATO-1419: a shutdown forced by the process itself (the memory guard)
+    // puts its tasks back as crashed, so their resume counts towards
+    // `agent.task.maxResumes` instead of looping for ever.
     const taskRunsStopped = resources.taskRunner
-      .stop(SHUTDOWN_TURN_GRACE_MS)
+      .stop(SHUTDOWN_TURN_GRACE_MS, options.crashed ? { crashed: true } : {})
       .catch((err: unknown) => {
         logger.warn("stopping task runs failed", {
           error: err instanceof Error ? err.message : String(err),
@@ -158,6 +164,11 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+    try {
+      resources.pluginMcpWatch?.();
+    } catch {
+      // best-effort: an unwatch never blocks the rest of shutdown
     }
     try {
       // MCP manager closes every connected `McpClient` (transport

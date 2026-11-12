@@ -6,6 +6,7 @@ import type { ModelProfile } from "../../llm/model-profile.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { completionAssumesOpenReasoning, resolveReasoning, normalizeContent, getReasoningTagOptions, memoizeText } from "./step-reasoning.js";
 import { openAiToolCallAdapter } from "../../llm/provider/openai/openai-tool-call-adapter.js";
+import type { ToolCallAdapter } from "../../llm/provider/adapters/tool-call-adapter.js";
 import { parseToolCalls, extractReasoning } from "../../llm/grammar/tool-call-grammar.js";
 import { BatchValidationError } from "./step-errors.js";
 import { getReasoningTurnFraming } from "../../llm/model-profile.js";
@@ -157,6 +158,22 @@ export function parseDepsFor(
 const REPAIR_JSON = { repairJson: true } as const;
 
 /**
+ * The request's own wire-name -> tool-name map (ATO-1365), from the same
+ * adapter and descriptor list the request was built from. `nameUnescape`
+ * alone reads `mcp__srv__foo__bar` as `mcp.srv.foo.bar` even when the
+ * function was offered for `mcp.srv.foo__bar`, and would run the sibling.
+ */
+function requestWireNames(
+  adapter: ToolCallAdapter,
+  deps: ParseDeps,
+  toolDescriptors: readonly ToolDescriptor[],
+): ReadonlyMap<string, string> | undefined {
+  return adapter.wireToCanonical?.(toolDescriptors, {
+    strict: deps.strictTools === true,
+  });
+}
+
+/**
  * Non-throwing parser wrapper. The step executor uses it to distinguish
  * a malformed first attempt (retryable) from any other error shape.
  * Returns a `ToolCallBatch` that may carry a single call (legacy
@@ -195,11 +212,13 @@ export function tryParseToolCalls(
           deps.strictTools === true && adapter.strictWidenedArgs
             ? adapter.strictWidenedArgs(toolDescriptors, { strict: true })
             : undefined;
+        const wireToCanonical = requestWireNames(adapter, deps, toolDescriptors);
         const batch = adapter.toolCallsToBatch(
           completion.toolCalls,
           reasoning,
           {
             ...(strictWidenedArgs ? { strictWidenedArgs } : {}),
+            ...(wireToCanonical ? { wireToCanonical } : {}),
             repairJson: true,
           },
         );
@@ -245,9 +264,12 @@ export function tryParseToolCalls(
             // `registry.has(...)` resolves — `nameUnescape` is a no-op for
             // names that are already dotted, so this is idempotent.
             const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
+            const wireToCanonical = requestWireNames(adapter, deps, toolDescriptors);
             const calls = grammarBatch.calls.map((call) => ({
               ...call,
-              tool: adapter.nameUnescape(call.tool),
+              tool:
+                wireToCanonical?.get(call.tool) ??
+                adapter.nameUnescape(call.tool),
             }));
             return { ok: true, batch: { ...grammarBatch, calls } };
           }
@@ -297,9 +319,12 @@ export function tryParseToolCalls(
           );
           if (grammarBatch.calls.length > 0) {
             const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
+            const wireToCanonical = requestWireNames(adapter, deps, toolDescriptors);
             const calls = grammarBatch.calls.map((call) => ({
               ...call,
-              tool: adapter.nameUnescape(call.tool),
+              tool:
+                wireToCanonical?.get(call.tool) ??
+                adapter.nameUnescape(call.tool),
             }));
             return { ok: true, batch: { ...grammarBatch, calls } };
           }

@@ -1,5 +1,6 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { BROWSER_PAGE_SOURCE } from "../untrusted-tool-output.js";
 import type { BrowserBackend } from "./browser-backend.js";
 import { captureWorldSnapshot } from "./capture-world-snapshot.js";
 import type { AriaSnapshotStore } from "./aria-view.js";
@@ -62,6 +63,8 @@ export function buildBrowserNavigateTool(
     description:
       "Navigate the active tab to a URL. Non-http(s) schemes require approval.",
     readonly: false,
+    // The page title is the site's own text (ATO-1378).
+    untrustedOutput: BROWSER_PAGE_SOURCE,
     async run(rawArgs, ctx) {
       const url = rawArgs.url;
       if (typeof url !== "string" || url.length === 0) {

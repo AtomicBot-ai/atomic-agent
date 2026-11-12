@@ -189,6 +189,35 @@ describe("fusion run checkpoints (ATO-617)", () => {
     expect(saved.sideEffectTools).toEqual(["os.shell.run"]);
   });
 
+  it("counts a split's subtask on its root through the tree, not the id (ATO-1320)", () => {
+    const store = new FusionRunStore({ dir });
+    const run = store.start({
+      sessionId: "s-1",
+      workingDir: "/repo",
+      args: { tasks: [{ id: "a/b", title: "Root", instructions: "x" }] },
+      tasks: [{ id: "a/b", title: "Root" }],
+      waveCount: 1,
+    });
+    const parents = new Map([
+      ["a/b/c1", "a/b"],
+      ["a/b/c1/d", "a/b/c1"],
+    ]);
+    run.useParents((id) => parents.get(id));
+    run.noteTool("a/b/c1/d", "os.shell.run");
+    run.recordTask(
+      row("a/b/c1", {
+        tools: { calls: 1, errors: 0, writes: 0, byTool: { "web.fetch": 1 } },
+      }),
+      0.4,
+    );
+    const saved = store.load(run.runId)!;
+    expect(saved.spentUsd).toBeCloseTo(0.4);
+    expect(saved.tasks[0]!.sideEffects).toBe(true);
+    expect(saved.tasks[0]!.sideEffectTools).toContain("os.shell.run");
+    // The root's own row is written when its split closes, not by a child.
+    expect(saved.tasks[0]!.result).toBeUndefined();
+  });
+
   it("reads side effects off a finished row's tool counts too", () => {
     const store = new FusionRunStore({ dir });
     const run = start(store);

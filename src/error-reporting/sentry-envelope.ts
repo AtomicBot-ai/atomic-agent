@@ -83,12 +83,6 @@ export function buildEnvelope(
   // Context tags never re-group issues: they stay out of the fingerprint.
   if (ev.llmFailureTags) Object.assign(tags, ev.llmFailureTags);
 
-  // `frames[0]` is the innermost frame (V8 lists the throw site first),
-  // i.e. where the failure actually originated. `.at(-1)` would instead
-  // pick the outermost caller (e.g. the TUI's turn entry point), which is
-  // shared by unrelated bugs and defeats the fingerprint's purpose.
-  const topFrame = ev.frames[0]?.filename ?? "";
-
   const event = {
     event_id: eventId,
     timestamp,
@@ -98,47 +92,7 @@ export function buildEnvelope(
     // Anonymous id only; `ip_address: null` opts out of IP collection.
     user: { id: meta.installId, ip_address: null },
     tags,
-    // The extra discriminator (causeType / tool / reason / host) splits a
-    // catch-all bucket like "ToolExecutionError: ToolExecutionError" into
-    // one issue per underlying cause class / failing tool / model-failure
-    // reason / transport target, instead of every occurrence landing in a
-    // single undiagnosable issue. `causeType` is checked first because it
-    // is the more specific of the two wherever BOTH are set, and the only
-    // wrapper that sets both is `toLlmFailure`'s catch-all, whose `tool`
-    // is the useless literal `"unknown"`. The order never costs a real
-    // tool name: the `ToolExecutionError`s that carry a genuine one pass
-    // no cause. The unregistered-tool throw is the exception to `tool`:
-    // its name is the model's guess, one new issue per guess, so it
-    // discriminates on a fixed value instead (`discriminatorOf`).
-    //
-    // Do NOT read that order as "`causeType` is rare". `toLlmFailure`
-    // attaches `{ cause }` on every arm it wraps — `CancelledError`,
-    // `TransportError` and `GrammarError` alike — as do the llama-server
-    // and OpenAI clients, so most reported failures discriminate on
-    // `causeType`, with `tool` *undefined* rather than `"unknown"`.
-    //
-    // `upstreamErrorType` is a separate element rather than one more `??`
-    // fallback because on the provider path the discriminator above has
-    // nothing left to separate: every provider failure shares the single
-    // value `OpenAiHttpError`, so a context window that is too small and
-    // a wrong model id land under one shortId with nothing in the event
-    // to tell them apart.
-    //
-    // Spread, not `?? ""`: an event without the field must keep the
-    // fingerprint it has today, element for element, so nothing that is
-    // already live re-groups. Only events that actually carry an upstream
-    // type get the extra element, and no such event exists yet. The same
-    // argument does NOT hold for `httpStatus`, which is already live on
-    // every transport issue — putting it here re-groups all of them, so
-    // it is deliberately left out. See the follow-up note in the PR.
-    fingerprint: [
-      "{{ default }}",
-      ev.errorType,
-      ev.category ?? "",
-      discriminatorOf(ev),
-      ...(ev.upstreamErrorType !== undefined ? [ev.upstreamErrorType] : []),
-      topFrame,
-    ],
+    fingerprint: buildFingerprint(ev),
     exception: {
       values: [
         {
@@ -161,6 +115,59 @@ export function buildEnvelope(
   const payload = JSON.stringify(event);
   const body = `${envelopeHeader}\n${itemHeader}\n${payload}\n`;
   return { eventId, body };
+}
+
+/**
+ * The event's Sentry `fingerprint`. Exported so the send-side limiter
+ * (`sentry-rate-limit.ts`) counts "identical" by exactly this array.
+ */
+export function buildFingerprint(ev: ScrubbedErrorEvent): string[] {
+  // `frames[0]` is the innermost frame (V8 lists the throw site first),
+  // i.e. where the failure actually originated. `.at(-1)` would instead
+  // pick the outermost caller (e.g. the TUI's turn entry point), which is
+  // shared by unrelated bugs and defeats the fingerprint's purpose.
+  const topFrame = ev.frames[0]?.filename ?? "";
+  // The extra discriminator (causeType / tool / reason / host) splits a
+  // catch-all bucket like "ToolExecutionError: ToolExecutionError" into
+  // one issue per underlying cause class / failing tool / model-failure
+  // reason / transport target, instead of every occurrence landing in a
+  // single undiagnosable issue. `causeType` is checked first because it
+  // is the more specific of the two wherever BOTH are set, and the only
+  // wrapper that sets both is `toLlmFailure`'s catch-all, whose `tool`
+  // is the useless literal `"unknown"`. The order never costs a real
+  // tool name: the `ToolExecutionError`s that carry a genuine one pass
+  // no cause. The unregistered-tool throw is the exception to `tool`:
+  // its name is the model's guess, one new issue per guess, so it
+  // discriminates on a fixed value instead (`discriminatorOf`).
+  //
+  // Do NOT read that order as "`causeType` is rare". `toLlmFailure`
+  // attaches `{ cause }` on every arm it wraps — `CancelledError`,
+  // `TransportError` and `GrammarError` alike — as do the llama-server
+  // and OpenAI clients, so most reported failures discriminate on
+  // `causeType`, with `tool` *undefined* rather than `"unknown"`.
+  //
+  // `upstreamErrorType` is a separate element rather than one more `??`
+  // fallback because on the provider path the discriminator above has
+  // nothing left to separate: every provider failure shares the single
+  // value `OpenAiHttpError`, so a context window that is too small and
+  // a wrong model id land under one shortId with nothing in the event
+  // to tell them apart.
+  //
+  // Spread, not `?? ""`: an event without the field must keep the
+  // fingerprint it has today, element for element, so nothing that is
+  // already live re-groups. Only events that actually carry an upstream
+  // type get the extra element, and no such event exists yet. The same
+  // argument does NOT hold for `httpStatus`, which is already live on
+  // every transport issue — putting it here re-groups all of them, so
+  // it is deliberately left out. See the follow-up note in the PR.
+  return [
+    "{{ default }}",
+    ev.errorType,
+    ev.category ?? "",
+    discriminatorOf(ev),
+    ...(ev.upstreamErrorType !== undefined ? [ev.upstreamErrorType] : []),
+    topFrame,
+  ];
 }
 
 /** Fingerprint element for every unregistered-tool failure. */

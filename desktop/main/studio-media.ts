@@ -26,6 +26,7 @@ import { normalizeLocalFamilies, normalizeProviderModels, type StudioCatalogSect
 import { StudioCoreError, type StudioCoreClient } from "./studio-core-client.js";
 import type { CoreSeedResult } from "./core-seed.js";
 import { acquireStudioLease, connectStudioCore, ensureStudioCore, studioCorePaths, type StudioLease } from "./studio-core-start.js";
+import { retireIdleStudioCore } from "./studio-core-retire.js";
 import type { MachineProfile } from "./studio-local.js";
 import { queuedLine, type GpuShare } from "./studio-gpu-share.js";
 import { StudioLocalModels, type LocalEngineStatus, type LocalEvent } from "./studio-local-models.js";
@@ -36,6 +37,8 @@ import { normalizeItem, normalizeJob, toCoreImageRequest, toCoreVideoRequest, ty
 export const OPENROUTER_MEDIA_BASE_URL = "https://openrouter.ai/api/v1";
 /** A lease is let go this long after the last followed job ends. */
 const LEASE_GRACE_MS = 60_000;
+/** How long a catalog paint waits for the image engine's status before it shows without it. */
+export const ENGINE_ASK_ON_PAINT_MS = 1_500;
 
 export interface StudioMediaDeps {
   /** The managed data dir (`localModels.managed.dataDirOverride`, else `<stateDir>/models`), read per call. */
@@ -266,7 +269,12 @@ export class StudioMedia {
       const m = status.model?.loaded;
       if (m && m.modality === kind && typeof m.modelId === "string") loaded = m.modelId;
     } catch { /* Core down: families are still listed */ }
-    const extra: LocalSectionExtra = { machine: this.local.profile(), modelsDir: this.local.modelsDir(), engine: this.local.state().engine };
+    /* The engine as last seen, else asked now: the page offers Download and local generation
+       by `engine.state`, and a cached null would hide "this computer cannot run them".
+       The ask waits a moment only (ATO-1420): with Core slow or down the catalog still shows
+       at once, and the answer repaints the page when it lands (an `engine` event). */
+    const engine = this.local.state().engine ?? (await this.local.engineStatusSoon(ENGINE_ASK_ON_PAINT_MS));
+    const extra: LocalSectionExtra = { machine: this.local.profile(), modelsDir: this.local.modelsDir(), engine };
     try {
       const { doc, catalog, error } = await this.local.catalog();
       const views = await this.local.views(catalog, loaded);
@@ -580,6 +588,24 @@ export class StudioMedia {
     writeStudioSettings(this.deps.stateDir, s);
     if (this.client) { this.configuredFor = ""; await this.ready(); }
     return this.outputDir(kind);
+  }
+
+  /**
+   * ATO-1351 / ATO-1352: the quit's turn for the Core this Studio started or
+   * joined in this run. Its own lease goes first (Core counts it as a user
+   * and refuses to exit while it is held), then Core is asked to exit if
+   * nothing else needs it (studio-core-retire.ts). A Studio that never
+   * reached Core leaves whatever Core there is alone, and so does one with a
+   * generation, an engine install or a model load still under way: those are
+   * left as quitting left them before. Never throws.
+   */
+  async retireOnQuit(): Promise<boolean> {
+    if (!this.client || this.jobs.size > 0 || this.localBusy > 0 || this.localActive) return false;
+    if (this.leaseTimer) { clearTimeout(this.leaseTimer); this.leaseTimer = null; }
+    const lease = this.lease;
+    this.lease = null;
+    await lease?.release().catch(() => {});
+    return retireIdleStudioCore(this.deps.dataDir(), this.deps.coreVersion);
   }
 
   dispose(): void {

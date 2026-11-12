@@ -1,7 +1,7 @@
 /**
  * The curated catalogue's METADATA, vendored.
  *
- * SOURCE OF TRUTH: `src/local-llm/models-catalog.ts` — `LOCAL_MODELS_CATALOG`.
+ * SOURCE OF TRUTH: `src/local-llm/catalog/models-catalog.ts` — `LOCAL_MODELS_CATALOG`.
  * Every field below is copied from there, verbatim, id for id. Nothing here
  * is estimated, rounded or reworded.
  *
@@ -14,14 +14,23 @@
  * is the honest option: real numbers, one source named, and a smoke check
  * (`main.ts`, "the vendored catalogue metadata still matches `atag models
  * list`") that fails the moment the agent's catalogue and this table disagree
- * on which ids exist.
+ * on which ids exist. Since ATO-1410 that is not the only check: the unit
+ * test `test/model-catalog-drift.test.mjs` compares every field below
+ * against the agent's source (name, both RAM figures, size, blurb, flags),
+ * and the smoke also compares names and RAM figures with `atag models
+ * recommend --json`. What a person reads off a row (its display name, the
+ * one "needs N GB" figure) comes from `model-memory-words.ts`, the agent's
+ * own file copied byte for byte.
  *
- * DRIFT PROCEDURE: when that check goes red, diff this file against
- * `src/local-llm/models-catalog.ts` and copy the entries across. Never invent
+ * DRIFT PROCEDURE: when a check goes red, diff this file against
+ * `src/local-llm/catalog/models-catalog.ts` and copy the entries across. Never invent
  * a row to make the check pass — an id with no entry here simply renders
  * without a blurb, which is the designed behaviour for a model the desktop
  * does not know (every `custom-…` model added from Hugging Face is one).
  */
+
+/** ATO-492: the four "what for" chips, Atomic Chat's words. */
+export type ModelPurpose = "everyday" | "vision" | "coding" | "reasoning";
 
 export interface CuratedModelMeta {
   /** Catalogue id, the join key against `atag models list`. */
@@ -44,6 +53,19 @@ export interface CuratedModelMeta {
   vision: boolean;
   /** `recommendRank` — recommendation order, 1 first; unset = never auto-recommended. */
   recommendRank?: number;
+  /**
+   * ATO-492 (Nadya, 15.10, as in Atomic Chat): what the model is for, the
+   * coloured chip a person chooses on. Desktop only: the agent's catalogue
+   * has no such field yet, so it is not part of the verbatim copy above.
+   */
+  purpose?: ModelPurpose;
+  /**
+   * ATO-492: a mixture-of-experts model (only part of it works on each
+   * word). Desktop only, like `purpose`; set by hand from the model's
+   * name (-A3B / -A4B), because the id does not always carry it
+   * (`qwen-3.5-35b` is Qwen 3.5 35B-A3B).
+   */
+  moe?: boolean;
   /** `tag`, when the catalogue sets one. */
   tag?: string;
   /** `uncensored` — reduced-refusal weights; never auto-recommended. */
@@ -60,6 +82,7 @@ export interface CuratedModelMeta {
 export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "gemma-4-e4b",
+    purpose: "everyday",
     name: "Gemma 4 E4B QAT GGUF",
     description: "Small and light Gemma, for 8 GB machines and up",
     recommendRank: 10,
@@ -72,6 +95,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "gemma-4-12b",
+    purpose: "everyday",
     name: "Gemma 4 12B QAT GGUF",
     description: "Mid-size Gemma, for 12 GB machines and up",
     recommendRank: 9,
@@ -84,6 +108,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "gemma-4-26b-a4b",
+    moe: true,
+    purpose: "vision",
     name: "Gemma 4 26B-A4B QAT GGUF",
     description: "Big Gemma that stays quick for its size, 20 GB and up",
     recommendRank: 2,
@@ -97,6 +123,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "gemma-4-31b",
+    purpose: "vision",
     name: "Gemma 4 31B QAT GGUF",
     description: "Biggest Gemma, for 24 GB machines and up",
     recommendRank: 6,
@@ -110,6 +137,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.8-27b",
+    purpose: "coding",
     name: "Qwen 3.8 27B GGUF",
     description: "Newest big Qwen, for 28 GB machines and up",
     recommendRank: 4,
@@ -123,6 +151,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.6-27b",
+    purpose: "coding",
     name: "Qwen 3.6 27B GGUF",
     description: "Big Qwen, older version, for 28 GB machines and up",
     recommendRank: 5,
@@ -135,6 +164,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.6-35b-a3b",
+    moe: true,
+    purpose: "coding",
     name: "Qwen 3.6 35B-A3B GGUF",
     description: "Big Qwen that stays quick for its size, 36 GB and up",
     recommendRank: 1,
@@ -147,6 +178,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.5-2b",
+    purpose: "everyday",
     name: "Qwen 3.5 2B GGUF",
     description: "Tiny starter model, ready in a minute; any machine",
     minRamGb: 4,
@@ -157,6 +189,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.5-4b",
+    purpose: "everyday",
     name: "Qwen 3.5 4B GGUF",
     description: "Small and quick to download, for 8 GB machines and up",
     recommendRank: 8,
@@ -169,6 +202,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.5-9b",
+    purpose: "everyday",
     name: "Qwen 3.5 9B GGUF",
     description: "Everyday mid-size Qwen, for 16 GB machines and up",
     recommendRank: 7,
@@ -181,6 +215,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.5-35b",
+    moe: true,
+    purpose: "reasoning",
     name: "Qwen 3.5 35B-A3B GGUF",
     description: "Older big Qwen, for 36 GB machines and up",
     recommendRank: 3,
@@ -194,6 +230,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "nemotron-3.5-30b-a3b",
+    moe: true,
+    purpose: "reasoning",
     name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B GGUF",
     description: "Big NVIDIA model, text only, for 32 GB machines and up",
     minRamGb: 24,
@@ -205,6 +243,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "muse-glimmer-30b",
+    purpose: "vision",
     name: "Meta Muse Glimmer 30B GGUF",
     description: "Big Meta model, generic tool calling, 32 GB and up",
     minRamGb: 20,
@@ -217,6 +256,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.8-27b-uncensored",
+    purpose: "everyday",
     name: "Qwen 3.8 27B Uncensored GGUF",
     description: "Reduced-refusal Qwen 3.8 27B (abliterated)",
     minRamGb: 20,

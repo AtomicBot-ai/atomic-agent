@@ -17,7 +17,8 @@ const { CURATED_MODEL_META } = require("../out/main/model-catalog.js");
 const source = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
 const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
 function fn(name) {
-  const at = source.indexOf("\nfunction " + name + "(");
+  const sync = source.indexOf("\nfunction " + name + "(");
+  const at = sync >= 0 ? sync : source.indexOf("\nasync function " + name + "(");
   assert.ok(at >= 0, name + " is a top-level function in renderer.js");
   return source.slice(at + 1, source.indexOf("\n}\n", at) + 2);
 }
@@ -106,22 +107,27 @@ function renderer(names, extra) {
     function llmRepaint() {}
     function dlFail(job, error, retry) { fails.push({ job, error, retry }); }
     function xpullRetry(owner) { return 'retry:' + owner.id; }
+    function render() {}
+    async function llmRefreshStatus() {}
+    function visionLanded() { return false; }
+    function visionFetchable() { return false; }
+    function projectorDiskFit() { return { ok: true }; }
   `, c);
   for (const name of ["projectorSkippedText", ...names]) vm.runInContext(fn(name), c);
   return c;
 }
 
-test("the composer's pull that lost the projector offers no Switch and says text only", () => {
+test("the composer's pull that lost the projector offers no Switch and says text only", async () => {
   const c = renderer(["selPullFinished"]);
-  c.selPullFinished("gemma-4-e4b", { ok: true, projectorSkipped: true });
+  await c.selPullFinished("gemma-4-e4b", { ok: true, projectorSkipped: true });
   assert.equal(c.DL.ready, null);
   assert.equal(c.snapshots, 1, "the weights are on disk: the chip and the picker read the list again");
   assert.equal(c.toasts[0].tone, "bad");
   assert.match(c.toasts[0].text, /text only/);
-  c.selPullFinished("gemma-4-e4b", { ok: true });
+  await c.selPullFinished("gemma-4-e4b", { ok: true });
   assert.equal(c.DL.ready.id, "gemma-4-e4b", "a whole download still offers it");
   c.DL.ready = null;
-  c.selPullFinished("gemma-4-e4b", { ok: false, error: "killed" });
+  await c.selPullFinished("gemma-4-e4b", { ok: false, error: "killed" });
   assert.equal(c.DL.ready, null);
 });
 
@@ -194,4 +200,48 @@ test("analytics keep the skipped projector", () => {
   assert.ok(catalog.includes("projector_skipped: bool"), "the catalogue drops a property it does not list");
   assert.ok(main.includes("A.downloadFinished(id, res, projectorSkipped);"));
   assert.ok(main.indexOf("const progress = whole ? whole(line, parsed) : parsed;") < main.indexOf("A.downloadProgress(id, progress);"));
+});
+
+// ATO-1369: the weights on disk, the agent fetches the projector alone.
+test("a projector-only pull fills the bar from 0 on the projector's size", () => {
+  const meta = CURATED_MODEL_META.find((m) => m.id === "qwen-3.5-4b");
+  const projector = meta.mmprojSizeGb * GIB;
+  const whole = P.wholePullProgress("qwen-3.5-4b", true);
+  // The agent's "downloading <id>" line with no progress, then the projector's.
+  assert.deepEqual(whole("downloading qwen-3.5-4b (x.gguf, 2.7 GB)", {}), {});
+  assert.deepEqual(whole("downloading mmproj mmproj-F16.gguf", {}), {});
+  const start = whole("[=] 0%", { kind: "weights", percent: 0, transferredBytes: 0, totalBytes: projector });
+  assert.equal(start.percent, 0, "not ~85%");
+  assert.equal(start.totalBytes, Math.round(projector), "the projector's GB, not the weights'");
+  const half = whole("[=] 50%", { kind: "weights", percent: 50, transferredBytes: projector / 2, totalBytes: projector });
+  assert.equal(half.percent, 50);
+  assert.equal(half.transferredBytes, projector / 2);
+  const end = whole("[=] 100%", { kind: "weights", percent: 100, transferredBytes: projector, totalBytes: projector });
+  assert.equal(end.percent, 100);
+  // A text model has no projector: its frames still pass through.
+  const frame = weightsLine(50, 2);
+  assert.equal(P.wholePullProgress("qwen-3.5-2b", true)("x", frame), frame);
+});
+
+test("finished weights on disk are a .gguf that is not a projector, and not a .part", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ato-1369-"));
+  try {
+    assert.equal(P.weightsOnDisk(join(dir, "absent")), false);
+    const model = join(dir, "m");
+    mkdirSync(model);
+    writeFileSync(join(model, "mmproj-F16.gguf"), "");
+    writeFileSync(join(model, "weights.gguf.part"), "");
+    assert.equal(P.weightsOnDisk(model), false, "a resumed pull keeps the whole bar");
+    writeFileSync(join(model, "weights.gguf"), "");
+    assert.equal(P.weightsOnDisk(model), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a projector-only pull is marked in analytics, not counted as a new model download", () => {
+  const catalog = readFileSync(new URL("../main/analytics/catalog.ts", import.meta.url), "utf8");
+  assert.ok(catalog.includes("projector_only: bool"), "the catalogue drops a property it does not list");
+  assert.ok(main.includes("A.downloadStarted(id, trigger, projectorOnly);"));
+  assert.ok(main.includes("wholePullProgress(id, projectorOnly)"));
 });

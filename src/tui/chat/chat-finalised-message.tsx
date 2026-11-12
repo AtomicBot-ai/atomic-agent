@@ -70,7 +70,9 @@ export function FinalisedMessage({
             opening message, when it is in the chat, carries its own
             `[try again]`.
           */}
-          {steered ? null : <ChatTryAgainButton text={message.text} />}
+          {steered ? null : (
+            <ChatTryAgainButton text={message.text} messageId={message.id} />
+          )}
           <ChatLinkButtons text={message.text} />
         </Box>
       </Box>

@@ -7,9 +7,12 @@ import {
   type VisionRequest,
   type VisionResult,
 } from "../llm-provider.js";
+import { isGeminiOpenAiCompatUrl } from "../gemini/gemini-openai-compat.js";
+import { toGeminiTools } from "../gemini/gemini-tool-schema.js";
 import type {
   CompletionRequest,
   CompletionResult,
+  DroppedTool,
   StreamChunk,
   StreamFinalResult,
 } from "../completion-types.js";
@@ -30,8 +33,11 @@ import {
   type OpenAiBodyOptions,
 } from "./openai-build-body.js";
 import { isNativeShapeRejection } from "./openai-native-messages.js";
-import { allowedTemperatureFromError } from "./allowed-temperature.js";
-import { rememberAllowedTemperature } from "./model-params.js";
+import { temperatureLessonFromError } from "./allowed-temperature.js";
+import {
+  rememberAllowedTemperature,
+  rememberTemperatureForbidden,
+} from "./model-params.js";
 import { OPENAI_DEFAULT_REQUEST_TIMEOUT_MS } from "../../transport-deadlines.js";
 import {
   buildOpenAiHeaders,
@@ -60,6 +66,8 @@ import {
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
+import { normalizeToolSchemaBooleans } from "./tool-schema-booleans.js";
+import { findToolBehindSchemaError } from "./tool-schema-rejection.js";
 import {
   isImageRejection,
   markModelCannotSee,
@@ -243,6 +251,7 @@ export class OpenAiProvider implements LlmProvider {
       ...(resolveAnthropicCacheControl(options)
         ? { anthropicCacheControl: true }
         : {}),
+      ...(isDeepSeekHost(options.baseUrl) ? { reasoningRequired: true } : {}),
     };
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
@@ -276,6 +285,30 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
+    try {
+      return await this.completeOnce(request);
+    } catch (err) {
+      // One resend without the tool whose schema the server could not
+      // use (ATO-1399); a second refusal goes back as the server wrote it.
+      const reduced = this.withoutRejectedTool(request, err);
+      if (!reduced) throw err;
+      try {
+        return withDroppedTool(
+          await this.completeOnce(reduced.request),
+          reduced.dropped,
+        );
+      } catch (retryErr) {
+        if (request.signal?.aborted) throw retryErr;
+        // The schema refusal is what the user needs to read, not
+        // whatever the reduced request then ran into.
+        throw err;
+      }
+    }
+  }
+
+  private async completeOnce(
+    request: CompletionRequest,
+  ): Promise<CompletionResult> {
     const model = this.defaultChatModel;
     if (!model) {
       throw new Error(
@@ -306,8 +339,8 @@ export class OpenAiProvider implements LlmProvider {
           ),
       );
     // One resend per completion when the service names the only
-    // temperature it takes (`allowed-temperature.ts`); the rebuilt body
-    // carries the lesson.
+    // temperature it takes, or refuses the field altogether
+    // (`allowed-temperature.ts`); the rebuilt body carries the lesson.
     let temperatureRetried = false;
     const sendOnce = async (
       shape: "native" | "flat",
@@ -315,7 +348,7 @@ export class OpenAiProvider implements LlmProvider {
       try {
         return await send(shape);
       } catch (err) {
-        if (temperatureRetried || !this.learnAllowedTemperature(request, err)) {
+        if (temperatureRetried || !this.learnTemperature(request, err, sentBody)) {
           throw err;
         }
         temperatureRetried = true;
@@ -361,7 +394,7 @@ export class OpenAiProvider implements LlmProvider {
     stream: boolean,
     shape: "native" | "flat",
   ): Record<string, unknown> {
-    return buildOpenAiChatBody(
+    const body = buildOpenAiChatBody(
       request,
       this.defaultChatModel!,
       stream,
@@ -371,6 +404,13 @@ export class OpenAiProvider implements LlmProvider {
       this.providerPreferences,
       { ...this.bodyOptions, messageShape: shape },
     );
+    // Google's OpenAI-compatible Gemini endpoint refuses the whole request
+    // over a schema keyword it does not know (ATO-1282). Other services
+    // get the tools exactly as built.
+    if (body.tools !== undefined && isGeminiOpenAiCompatUrl(this.http.baseUrl)) {
+      body.tools = toGeminiTools(body.tools);
+    }
+    return body;
   }
 
   /** The layout this request goes out in, given what the session learned. */
@@ -397,30 +437,93 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   /**
-   * Whether a failed send is a 400 naming the one temperature this model
-   * accepts (Moonshot's "only 1 is allowed"). The value is remembered for
-   * the model for the rest of the process, so the next body built — the
-   * resend, and every later turn — carries it. The caller allows one
-   * such resend per completion.
+   * Whether a failed send is a 400 that teaches this model's temperature:
+   * the one value it accepts (Moonshot's "only 1 is allowed"), or that it
+   * takes none (Anthropic's "temperature is deprecated for this model",
+   * ATO-1397). The lesson is remembered for the model for the rest of the
+   * process, so the next body built — the resend, and every later turn —
+   * carries it. The caller allows one such resend per completion.
+   *
+   * A refusal already on record for a body that carried no temperature
+   * is not this lesson at all (the 400 is about something else that names
+   * temperature), so it gets no resend: the same body would go out again.
    */
-  private learnAllowedTemperature(
+  private learnTemperature(
     request: CompletionRequest,
     err: unknown,
+    sentBody: Record<string, unknown> | undefined,
   ): boolean {
     if (request.signal?.aborted) return false;
-    const value = allowedTemperatureFromError(err);
-    if (value === undefined) return false;
-    if (!rememberAllowedTemperature(this.defaultChatModel!, value)) return true;
+    const lesson = temperatureLessonFromError(err);
+    if (lesson === undefined) return false;
+    const model = this.defaultChatModel!;
+    if (lesson.kind === "forbidden") {
+      if (!rememberTemperatureForbidden(model)) {
+        return sentBody === undefined || "temperature" in sentBody;
+      }
+      this.http.logger?.warn(
+        `llm: "${this.id}" refused temperature for this model; resending once without it and keeping that for this model`,
+        { provider: this.id, model, status: 400, temperature: null },
+      );
+      return true;
+    }
+    if (!rememberAllowedTemperature(model, lesson.value)) return true;
     this.http.logger?.warn(
-      `llm: "${this.id}" accepts only temperature ${value} for this model; resending once and keeping it for this model`,
+      `llm: "${this.id}" accepts only temperature ${lesson.value} for this model; resending once and keeping it for this model`,
       {
         provider: this.id,
-        model: this.defaultChatModel,
+        model,
         status: 400,
-        temperature: value,
+        temperature: lesson.value,
       },
     );
     return true;
+  }
+
+  /**
+   * The request without the one tool a schema error names
+   * (`tool-schema-rejection.ts`), and that tool, or null when the error
+   * is something else or names no single tool. The warning says which
+   * tool went and why: the turn carries on without it rather than
+   * failing outright. The dropped tool rides the completion
+   * (`CompletionResult.droppedTools`) so the chat can say it too
+   * (ATO-1417).
+   */
+  private withoutRejectedTool(
+    request: CompletionRequest,
+    err: unknown,
+  ): { request: CompletionRequest; dropped: DroppedTool } | null {
+    if (request.signal?.aborted) return null;
+    if (!(err instanceof OpenAiHttpError) || err.status === null) return null;
+    const tools = request.tools;
+    if (!tools || tools.length === 0) return null;
+    const text = [err.message, err.body?.message ?? ""].join("\n");
+    const culprit = findToolBehindSchemaError(
+      text,
+      normalizeToolSchemaBooleans(tools),
+      tools,
+    );
+    if (!culprit) return null;
+    const tool = this.toolCallAdapter.nameUnescape(culprit.name);
+    this.http.logger?.warn(
+      `llm: "${this.id}" could not use the JSON schema of tool "${tool}" (at ${culprit.pointer}); resending this request without that tool`,
+      {
+        provider: this.id,
+        model: this.defaultChatModel,
+        sessionId: request.sessionId ?? null,
+        status: err.status,
+        tool,
+        pointer: culprit.pointer,
+        detail: err.message.slice(0, 240),
+      },
+    );
+    return {
+      request: {
+        ...request,
+        tools: tools.filter((_, index) => index !== culprit.index),
+      },
+      dropped: { name: tool, reason: "schema_rejected" },
+    };
   }
 
   private markFlat(request: CompletionRequest, err: unknown): void {
@@ -447,7 +550,10 @@ export class OpenAiProvider implements LlmProvider {
       );
     }
     let shape = this.shapeFor(request);
-    let body = this.buildBody(request, true, shape);
+    // The request the body is built from: the caller's, until a schema
+    // error names a tool to leave out (`withoutRejectedTool`).
+    let activeRequest = request;
+    let body = this.buildBody(activeRequest, true, shape);
     const path = `${this.chatPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";
@@ -464,6 +570,11 @@ export class OpenAiProvider implements LlmProvider {
     let committed = false;
     // Whether the one resend for a named temperature has been spent.
     let temperatureRetried = false;
+    // Whether the one resend without a rejected tool has been spent, and
+    // the schema refusal that spent it: if the resend fails before any
+    // output, that refusal is the error the caller gets.
+    let toolDropped: DroppedTool | undefined;
+    let schemaError: unknown;
     // One completion, one budget. Passed into every open so a reopen
     // draws from the same pot the opens do — the alternative is two
     // nested loops of `OPENAI_MAX_ATTEMPTS` and 9 requests per turn.
@@ -596,17 +707,30 @@ export class OpenAiProvider implements LlmProvider {
         // stopped. `signal.reason` is abort-shaped by construction.
         if (request.signal?.aborted)
           throw cancellationError(request.signal, err);
-        // The service named the one temperature it takes: resend once
-        // with it. Same window as the flat resend below — a 400 comes
+        // The server could not use one tool's JSON schema (ATO-1399): a
+        // 4xx/5xx from the open, before any output, so the same request
+        // goes out once more without that tool.
+        if (!committed && !toolDropped) {
+          const reduced = this.withoutRejectedTool(activeRequest, err);
+          if (reduced) {
+            toolDropped = reduced.dropped;
+            schemaError = err;
+            activeRequest = reduced.request;
+            body = this.buildBody(activeRequest, true, shape);
+            continue;
+          }
+        }
+        // The service named the one temperature it takes, or refused the
+        // field: resend once with the lesson. Same window as the flat resend below — a 400 comes
         // from the open, before any output — and only once per
         // completion, so a second rejection falls through.
         if (
           !committed &&
           !temperatureRetried &&
-          this.learnAllowedTemperature(request, err)
+          this.learnTemperature(request, err, body)
         ) {
           temperatureRetried = true;
-          body = this.buildBody(request, true, shape);
+          body = this.buildBody(activeRequest, true, shape);
           continue;
         }
         // The service refused the message layout, before any byte of
@@ -617,14 +741,17 @@ export class OpenAiProvider implements LlmProvider {
         if (!committed && this.shouldFallBackToFlat(request, shape, err)) {
           this.markFlat(request, err);
           shape = "flat";
-          body = this.buildBody(request, true, shape);
+          body = this.buildBody(activeRequest, true, shape);
           continue;
         }
         // An error event inside the stream (OpenRouter's `504 Upstream
         // idle timeout` after output) becomes the typed HTTP error the
         // loop classifies, carrying the generation id for the trace.
-        if (err instanceof OpenAiSseError) throw this.httpErrorFromSse(err, path);
-        if (!canReopenStream(err, committed, budget)) throw err;
+        const original = !committed ? schemaError : undefined;
+        if (err instanceof OpenAiSseError) {
+          throw original ?? this.httpErrorFromSse(err, path);
+        }
+        if (!canReopenStream(err, committed, budget)) throw original ?? err;
         // Nothing to release here: the dead attempt's transport went
         // through the block above on the way out, and on this path it is
         // a no-op either way. The only way to reach this line with a
@@ -687,7 +814,7 @@ export class OpenAiProvider implements LlmProvider {
       request,
       this.taggedToolOptions(),
     );
-    return this.withRateLimits(withSentMaxTokens(
+    const safe = withSentMaxTokens(
       applyToolCallTerminationSafety(
         adaptedFinal,
         // A stream the consumer ended itself has no provider terminal
@@ -698,7 +825,10 @@ export class OpenAiProvider implements LlmProvider {
           streamFinal?.earlyStop !== undefined,
       ),
       sentBody,
-    ));
+    );
+    return this.withRateLimits(
+      toolDropped ? withDroppedTool(safe, toolDropped) : safe,
+    );
   }
 
   /**
@@ -856,6 +986,23 @@ function resolveAnthropicCacheControl(options: OpenAiProviderOptions): boolean {
   }
 }
 
+/**
+ * Whether the base URL is DeepSeek's own API, whose thinking mode
+ * requires the previous tool calls' `reasoning_content` back on the next
+ * request and answers a history without it with a 400 (ATO-1397). Kept to
+ * the vendor's host: other services may reject the unknown field, and
+ * routers (OpenRouter) carry reasoning their own way.
+ */
+export function isDeepSeekHost(baseUrl: string | undefined): boolean {
+  if (!baseUrl) return false;
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase();
+    return host === "deepseek.com" || host.endsWith(".deepseek.com");
+  } catch {
+    return false;
+  }
+}
+
 /** The key a session's learned layout is remembered under. */
 function sessionKey(request: Pick<CompletionRequest, "sessionId">): string {
   return request.sessionId ?? "*";
@@ -923,6 +1070,19 @@ function withSentMaxTokens(
         ? sentBody.max_completion_tokens
         : null;
   return { ...result, sentMaxTokens: cap };
+}
+
+/**
+ * Record a tool the request went out without (ATO-1417). Appended after
+ * any the completion already names, once per tool name.
+ */
+function withDroppedTool(
+  result: CompletionResult,
+  dropped: DroppedTool,
+): CompletionResult {
+  const already = result.droppedTools ?? [];
+  if (already.some((tool) => tool.name === dropped.name)) return result;
+  return { ...result, droppedTools: [...already, dropped] };
 }
 
 /**

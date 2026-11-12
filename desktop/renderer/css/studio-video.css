@@ -166,3 +166,11 @@
 @media (max-width: 860px) {
   .studio-video .studio-cols { grid-template-columns:1fr; overflow:auto; }
 }
+/* ATO-1307: the picker's "Studio follows your chat" line under its one group. */
+.studio-video .studio-video-follow { display:flex; gap:6px; align-items:flex-start; border-top:1px solid var(--bd); margin-top:4px; padding:8px 10px 4px; }
+.studio-video .studio-video-follow svg { flex:none; margin-top:1px; }
+/* ATO-1395/ATO-1308: Download for a local model that is not on disk yet. */
+.studio-video .studio-dl { display:flex; flex-direction:column; gap:6px; margin-top:6px; }
+.studio-video .studio-dl-row { display:flex; align-items:center; gap:8px; font-size:var(--fs-label); color:var(--ink-2); }
+.studio-video .studio-dl .studio-bar { margin:0; }
+.studio-video .studio-dl-go { align-self:flex-start; display:inline-flex; align-items:center; gap:6px; }

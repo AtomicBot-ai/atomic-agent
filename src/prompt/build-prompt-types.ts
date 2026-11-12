@@ -147,6 +147,13 @@ export interface BuildPromptInput {
   sessionSectionsMaxTokens?: number;
   worldSnapshotMaxTokens?: number;
   completionMaxTokens?: number;
+  /**
+   * Overrides `localModels.reasoningBudgetTokens` for this build. Only
+   * counted when the profile reasons and thinking is not switched off:
+   * the reply reserve then keeps room for the tool call after the think
+   * block (ATO-1295).
+   */
+  reasoningBudgetTokens?: number;
   transientNotice?: string;
   /**
    * The serving route changed since the session's previous turn

@@ -16,7 +16,7 @@ import {
 } from "../error-reporting/secret-detector.js";
 import type { ToolRole } from "./tool-roles.js";
 import type { FileReadVersions } from "./os/fs/fs-read-freshness.js";
-import type { ToolOutputSpill } from "./tool-output-spill.js";
+import { fileStem, type ToolOutputSpill } from "./tool-output-spill.js";
 
 export interface ToolContext {
   workspaceSkills?: import("../skills/workspace-skills.js").WorkspaceSkills;
@@ -106,7 +106,8 @@ export interface ToolRegistryOptions {
    * puts the path in the summary (`tool-output-spill.ts`, ATO-663).
    * Absent ⇒ local results stay as the tool returned them.
    */
-  outputSpill?: Pick<ToolOutputSpill, "spill">;
+  outputSpill?: Pick<ToolOutputSpill, "spill"> &
+    Partial<Pick<ToolOutputSpill, "spilledToolStem">>;
   /**
    * Exact secret values to mask in every tool result, read on each call
    * so a key added mid-session is covered (`tool-output-secrets.ts`,
@@ -119,7 +120,9 @@ export interface ToolRegistryOptions {
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
-  private readonly outputSpill: Pick<ToolOutputSpill, "spill"> | undefined;
+  private readonly outputSpill:
+    | (Pick<ToolOutputSpill, "spill"> & Partial<Pick<ToolOutputSpill, "spilledToolStem">>)
+    | undefined;
   private readonly knownSecrets: () => readonly KnownSecret[];
 
   constructor(options: ToolRegistryOptions = {}) {
@@ -193,15 +196,46 @@ export class ToolRegistry {
     // Secrets are masked first, so the cloud promotion, the spill file
     // and the untrusted framing below all see the marker, never the key.
     if (masks) result = maskResultSecrets(result, this.knownSecrets());
-    const shown =
-      ctx.modelMode === "cloud"
-        ? fullToolResult(result)
-        : this.outputSpill
-          ? await this.outputSpill.spill(name, ctx.sessionId, result)
-          : result;
-    return tool.untrustedOutput === undefined
-      ? shown
-      : markUntrustedResult(shown, tool.untrustedOutput);
+    // Outside text is framed before it is promoted or spilled (ATO-913):
+    // the spill file then holds the framed, marker-neutralised page, not
+    // the raw one, and the cloud promotion reads the framed copy too.
+    const untrusted =
+      tool.untrustedOutput ?? this.spilledUntrustedSource(name, args, ctx);
+    if (untrusted !== undefined) result = markUntrustedResult(result, untrusted);
+    return ctx.modelMode === "cloud"
+      ? fullToolResult(result)
+      : this.outputSpill
+        ? await this.outputSpill.spill(name, ctx.sessionId, result)
+        : result;
+  }
+
+  /**
+   * The source label of an untrusted tool whose spill file `os.fs.read`
+   * is reading (ATO-913), else `undefined`. A saved web page read back
+   * in slices is still a web page: any slice past the file's framing
+   * line would otherwise reach the model as a trusted file.
+   */
+  private spilledUntrustedSource(
+    name: string,
+    args: Record<string, unknown>,
+    ctx: ToolContext,
+  ): string | undefined {
+    if (name !== "os.fs.read") return undefined;
+    const stemOf = this.outputSpill?.spilledToolStem;
+    if (stemOf === undefined || typeof args.path !== "string") return undefined;
+    let stem: string | null;
+    try {
+      stem = stemOf.call(this.outputSpill, resolveUserPath(args.path, ctx.workingDir));
+    } catch {
+      return undefined;
+    }
+    if (stem === null) return undefined;
+    for (const tool of this.tools.values()) {
+      if (tool.untrustedOutput !== undefined && fileStem(tool.name) === stem) {
+        return tool.untrustedOutput;
+      }
+    }
+    return undefined;
   }
 }
 

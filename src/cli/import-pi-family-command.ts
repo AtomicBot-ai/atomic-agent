@@ -2,6 +2,7 @@ import { createInterface } from "node:readline/promises";
 
 import { getConfig } from "../config/index.js";
 import { SessionStore } from "../session/index.js";
+import { processFinaleIo, writeImportFinale } from "./import-finale.js";
 import {
   importAgentDir,
   OhMyPiImporter,
@@ -189,6 +190,7 @@ async function runTwoPhase(input: {
   const final = await input.run(true);
   process.stdout.write("\nResult:\n");
   process.stdout.write(`${formatReport(final)}\n`);
+  await writeImportFinale(final, processFinaleIo([]));
   return final.summary.error > 0 ? 1 : 0;
 }
 

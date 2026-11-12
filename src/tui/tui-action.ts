@@ -250,6 +250,13 @@ export type TuiAction =
   | { type: "input_history_navigated"; delta: 1 | -1 }
   /** Clear the chat transcript (slash `/clear`). */
   | { type: "chat_cleared" }
+  /**
+   * Drop the message `fromMessageId` and everything after it from the
+   * transcript (ATO-1302): the last question and its answer, once the
+   * orchestrator has taken that turn back out of the session. An id not
+   * in the transcript is a no-op.
+   */
+  | { type: "chat_messages_truncated"; fromMessageId: string }
   /** Populate + show the session picker overlay. */
   | { type: "session_picker_opened"; sessions: readonly SessionPickerEntry[] }
   /** Hide the session picker overlay. */

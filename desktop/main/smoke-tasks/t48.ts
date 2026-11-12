@@ -18,7 +18,7 @@ import { downloadJobRunning, modelIdFromPath, modelsRemoveSafe, probeServer, rem
  *         server" over "Chats run on: Local models / Cloud / Fusion". Where
  *         chats run is the pane's first block now, three cards with a line
  *         each; the setup tabs come under it, in words that are not that
- *         choice's words (Local models · Cloud providers · Custom server).
+ *         choice's words (Local models · Cloud providers · Custom).
  *   Д31 — Cloud with no cloud provider ran the switch, and its refusal landed
  *         in the chat behind Settings. A choice that cannot be made yet opens
  *         what it needs here: Add provider, a provider's key, the Local
@@ -96,13 +96,13 @@ async function layout(js: Js, check: Check): Promise<void> {
   const cards = (r["cards"] ?? []) as string[][];
   check(
     "T48 (Д30): where chats run is the pane's first block — three cards, each with a line — and the setup tabs come under it",
-    r["first"] === "llm-section llm-runmode" && r["before"] === true && r["title"] === "Where chats run" && r["refresh"] === true
+    r["first"] === "llm-section llm-runmode" && r["before"] === true && r["title"] === "Where chats run now" && r["refresh"] === true
       && cards.length === 3 && cards.map((c) => c[0]).join("|") === "Local models|Cloud|Fusion" && cards.every((c) => (c[1] ?? "").length > 0),
     show({ first: r["first"], before: r["before"], title: r["title"], cards }),
   );
   check(
-    "T48 (Д30): the setup tabs say what they set up — Local models · Cloud providers · Custom server — and \"Chats run on\" is gone",
-    show(r["tabs"]) === show(["Local models", "Cloud providers", "Custom server"]) && r["barTitle"] === "Set up models" && r["old"] === false,
+    "T48 (Д30, ATO-1418): the setup tabs say what they set up — Local models · Cloud providers · Custom — and \"Chats run on\" is gone",
+    show(r["tabs"]) === show(["Local models", "Cloud providers", "Custom"]) && r["barTitle"] === "Set up models" && r["old"] === false,
     show({ tabs: r["tabs"], barTitle: r["barTitle"], old: r["old"] }),
   );
 }
@@ -289,7 +289,7 @@ async function fitBadges(js: Js, check: Check): Promise<void> {
   const only = (id: string, word: string, re: RegExp) => one(id).length === 1 && one(id)[0]!.word === word && re.test(one(id)[0]!.title);
   check(
     "T48 (Д32): each local model wears one badge — Fits well, Tight fit, Too big or Installed — and its tooltip gives the figures",
-    only("smoke-fits", "Fits well", /wants 16 GB.*has 18 GB/) && only("smoke-tight", "Tight fit", /runs in 14 GB but wants 24 GB.*Expect it to be slow/)
+    only("smoke-fits", "Fits well", /wants 16 GB.*has 18 GB/) && only("smoke-tight", "Slow on 18 GB", /runs in 14 GB but wants 24 GB.*Expect it to be slow/)
       && only("smoke-big", "Too big", /needs at least 24 GB/) && only("smoke-small-installed", "Installed", /Installed on .*\(6\.2 GB\).*Fits well.*small model/)
       && (rows["local-embedding:smoke-emb"]?.badges ?? []).map((b) => b.word).join() === "Installed",
     show(rows),
@@ -350,9 +350,9 @@ async function ollama(js: Js, check: Check): Promise<void> {
   })()`);
   const wiz = r["wizard"] ?? {};
   check(
-    "T48 (Д34): no Ollama signpost under the lists; Add Ollama opens the provider setup on Ollama with its address filled in, and goes once Ollama is added",
+    "T48 (Д34): no Ollama signpost under the lists; Add Ollama opens the provider setup on Ollama with its address filled in, on the Custom tab, and goes once Ollama is added",
     r["signpost"] === false && r["button"] === "Add Ollama" && wiz.open === true && wiz.phase === "configure" && wiz.row === "ollama"
-      && wiz.baseUrl === "http://localhost:11434" && r["mode"] === "cloud" && r["afterAdded"] === false,
+      && wiz.baseUrl === "http://localhost:11434" && r["mode"] === "external" && r["afterAdded"] === false,
     show(r),
   );
 }

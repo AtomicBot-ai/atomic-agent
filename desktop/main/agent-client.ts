@@ -674,8 +674,11 @@ export class AgentClient extends EventEmitter {
     return `http://127.0.0.1:${this.port}`;
   }
 
-  /** ATO-1127: what `models list` / `models status` print on the agent's own machine (GET /api/local-models/*); null when it cannot say. */
-  async localModelsText(view: "list" | "status"): Promise<string | null> {
+  /**
+   * ATO-1127: what `models list` / `models status` print on the agent's own machine (GET /api/local-models/*); null when it cannot say.
+   * ATO-1213: and `models list-embeddings`; an agent older than that answers 404, so null.
+   */
+  async localModelsText(view: "list" | "status" | "list-embeddings"): Promise<string | null> {
     try {
       const res = await fetch(`${this.base()}/api/local-models/${view}`, { headers: this.headers(), signal: AbortSignal.timeout(20_000) });
       if (!res.ok) return null;
@@ -1717,6 +1720,62 @@ export class AgentClient extends EventEmitter {
       if (signal.aborted) {
         return { ok: false, supported: true, error: `the agent did not answer within ${COMPACT_TIMEOUT_MS / 60_000} minutes` };
       }
+      return { ok: false, supported: true, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1299: take back the chat's last question and its answer, through the
+   * agent's `POST /api/sessions/{id}/rollback-last-turn`. On success the
+   * agent has already removed both and hands back the question's text, which
+   * the window sends again as a normal turn ("Regenerate"). A 409 is the
+   * agent refusing (the chat is unchanged) and carries a `code` the window
+   * words. The route's own 404 is an unknown chat (`session_not_found`); an
+   * agent without the route answers its unknown-route 404 with no code and is
+   * reported as unsupported, so the window falls back to resending.
+   */
+  async rollbackLastTurn(sessionId: string, expectText?: string, expectPriorQuestions?: number, expectUnanswered?: boolean): Promise<{
+    ok: boolean; supported: boolean; text?: string; code?: string; error?: string;
+  }> {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/rollback-last-turn`, {
+        method: "POST",
+        headers: this.headers(),
+        // The question on screen: the agent refuses (turn_mismatch) rather
+        // than take back a different one, e.g. when a failed turn's question
+        // never reached its store and its last question is the one before.
+        // expectPriorQuestions: its position (questions before it), since two
+        // questions can share a text ("continue").
+        body: JSON.stringify({
+          ...(typeof expectText === "string" && expectText ? { expectText } : {}),
+          ...(Number.isInteger(expectPriorQuestions) && (expectPriorQuestions as number) >= 0 ? { expectPriorQuestions } : {}),
+          // ATO-1420: the window shows no answer to it, so a stored question
+          // with one is not it (an agent without the field ignores it).
+          ...(expectUnanswered === true ? { expectUnanswered: true } : {}),
+        }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      let body: { id?: unknown; text?: unknown; error?: { message?: unknown; code?: unknown } } | null = null;
+      try {
+        const raw = await res.text();
+        body = raw ? JSON.parse(raw) : null;
+      } catch {
+        /* not JSON */
+      }
+      const message = typeof body?.error?.message === "string" ? body.error.message : "";
+      const code = typeof body?.error?.code === "string" && body.error.code ? body.error.code : undefined;
+      if (res.status === 404) {
+        if (code === "session_not_found" || /session not found/i.test(message)) {
+          return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
+        }
+        return { ok: false, supported: false, error: "This agent cannot take back a reply" };
+      }
+      if (res.ok && typeof body?.text === "string") return { ok: true, supported: true, text: body.text };
+      if (res.status === 409) {
+        return { ok: false, supported: true, ...(code ? { code } : {}), error: message || "The agent refused to take back this reply" };
+      }
+      return { ok: false, supported: true, ...(code ? { code } : {}), error: message || `HTTP ${res.status}` };
+    } catch (err) {
       return { ok: false, supported: true, error: requestErrorText(err) };
     }
   }

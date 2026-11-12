@@ -53,7 +53,9 @@ test('selector downloads dismiss the overlay, allow reopening the picker and off
     BR:{modelsPull:async()=>{started++;return {ok:true};},onPull:fn=>{listener=fn;}},
     xpullOwner:()=>c.SEL.pulling,dlChipBusy:()=>false,closeSelector:()=>{closed++;},render(){},bswSnapshot(){},
     toast:(...a)=>notices.push(a),selRows:()=>[],selShell:(title,body)=>title+body,selBackend:()=>'local',
-    modelDiskFit:()=>({ok:true}),document:{querySelector:()=>null},
+    modelDiskFit:()=>({ok:true}),visionFetchable:()=>false,document:{querySelector:()=>null},
+    // ATO-1373: the finished pull reads the status, then asks whether the serving model got its projector.
+    llmRefreshStatus:async()=>{},visionLanded:()=>false,
   });
   for(const name of ['selPull','selPullFinished','selectorHTML'])vm.runInContext(functions.get(name),c);
   const a=source.indexOf('if (BR) {\n  // The composer');
@@ -63,7 +65,7 @@ test('selector downloads dismiss the overlay, allow reopening the picker and off
   assert.equal(closed,1);assert.equal(started,1);assert.equal(c.SEL.pulling,'new-model');
   assert.match(c.selectorHTML(),/Nothing to show/);
   c.selPull('another-model');assert.equal(started,1);
-  listener({done:true,ok:true});assert.equal(c.SEL.pulling,null);assert.equal(c.DL.ready.id,'new-model');
+  listener({done:true,ok:true});assert.equal(c.SEL.pulling,null);await new Promise(r=>setImmediate(r));assert.equal(c.DL.ready.id,'new-model');
   assert.equal(closed,1);assert.match(notices.at(-1)[1],/Switch/);
 });
 

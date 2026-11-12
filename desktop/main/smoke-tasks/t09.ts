@@ -80,7 +80,7 @@ async function run(js: Js, check: Check): Promise<void> {
   // one tool of an MCP server (it goes).
   const r = await safe<{
     pane: string | null; overlay: string | null; inspectorMoved: boolean; pressed: string[];
-    rows: string[]; families: string[]; desc: string; counts: string; skillRows: number; back: string; backPressed: string[];
+    rows: string[]; families: string[]; whats: string[]; desc: string; counts: string; skillRows: number; back: string; backPressed: string[];
   }>(js, `(async () => {
     const tick = (ms) => new Promise((res) => setTimeout(res, ms));
     const q = (s) => [...document.querySelectorAll(s)];
@@ -95,6 +95,9 @@ async function run(js: Js, check: Check): Promise<void> {
         {name:'mcp.resource.list', description:'List the resources of the MCP servers.'},
         {name:'reply', description:'Answer the user.'},
         {name:'os.fs.read', description:'Read a UTF-8 text file.'},
+        {name:'os.email.send', description:'Send an email.'},
+        {name:'os.clipboard.read', description:'Read the clipboard.'},
+        {name:'os.screen.click', description:'Click at a point on the screen.'},
       ]});
       render(); await tick(60);
       const btn = q('#settings .setbody .set-toolbar button').find((b) => label(b) === 'Built-in tools');
@@ -104,7 +107,8 @@ async function run(js: Js, check: Check): Promise<void> {
         inspectorMoved: S.inspector !== saved.inspector || S.inspTab !== saved.inspTab,
         pressed: q('#settings .setbody .set-seg button.on').map(label),
         rows: q('#settings [data-tool-row]').map((x) => x.dataset.toolRow),
-        families: q('#settings .set-tlfam').map((x) => x.textContent.trim()),
+        families: q('#settings .set-tlfam .set-tlgn').map((x) => x.textContent.trim()),
+        whats: q('#settings .set-tlfam .set-tlwhat').map((x) => x.textContent.trim()),
         desc: ((document.querySelector('#settings [data-tool-row="os.fs.read"] .d') || {}).textContent || ''),
         counts: tabCount('#settings .set-toolbar .set-seg [data-act="skills:tools"]'),
         skillRows: q('#settings [data-skill-row]').length};
@@ -128,10 +132,16 @@ async function run(js: Js, check: Check): Promise<void> {
     r.err ?? JSON.stringify({ pane: r.pane, overlay: r.overlay, inspectorMoved: r.inspectorMoved, pressed: r.pressed, rows: r.rows.length, skillRows: r.skillRows }),
   );
   check(
-    "T09: the list is name and description, grouped by family, without the MCP servers' own tools",
-    !r.err && same(r.rows, ["reply", "browser.navigate", "mcp.resource.list", "os.fs.read", "os.fs.write"])
-      && same(r.families, ["browser", "mcp.resource", "os.fs"]) && r.desc === "Read a UTF-8 text file." && r.counts === "5",
-    r.err ?? JSON.stringify({ rows: r.rows, families: r.families, desc: r.desc, counts: r.counts }),
+    "T09 (ATO-528): the list is name and description, in groups a person recognises, each with a line, without the MCP servers' own tools",
+    !r.err && same(r.rows, ["reply", "os.fs.read", "os.fs.write", "browser.navigate", "os.screen.click", "os.clipboard.read", "os.email.send", "mcp.resource.list"])
+      && same(r.families, ["Files", "Browser", "Screen and images", "Windows and clipboard", "Email", "Skills and connections"])
+      && r.whats.length === 6 && r.whats.every((w) => w.length > 0)
+      /* The line says what the group can do: the email tools send mail, so
+         its line says so; the clipboard is not "looking at the screen"; the
+         os.screen tools click and type, and land in Screen, not Other. */
+      && /clicks/.test(r.whats[2] ?? "") && /clipboard/.test(r.whats[3] ?? "") && /sends/.test(r.whats[4] ?? "")
+      && r.desc === "Read a UTF-8 text file." && r.counts === "8",
+    r.err ?? JSON.stringify({ rows: r.rows, families: r.families, whats: r.whats, desc: r.desc, counts: r.counts }),
   );
   check(
     "T09: a filter segment goes back to the skills",

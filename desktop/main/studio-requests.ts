@@ -227,6 +227,13 @@ export interface StudioItem {
   model: { id: string; name: string; provider: string };
   /** Core's recipe, verbatim (enough to restore the form). */
   recipe: unknown;
+  /**
+   * What the provider reported this one picture or clip cost, in US dollars
+   * (OpenRouter's `usage.cost`, split over the pictures of its request). Null when
+   * nobody reported one: a local model, or a Core that does not pass it on
+   * yet (ATO-814 asks Core to record it as `recipe.engine.costUsd`).
+   */
+  costUsd: number | null;
 }
 
 export interface StudioJob {
@@ -283,7 +290,20 @@ export function normalizeItem(raw: unknown, kind: StudioKind): StudioItem | null
       provider: remote && typeof engine.provider === "string" ? engine.provider : "local",
     },
     recipe: i.recipe ?? null,
+    costUsd: remote ? reportedCost(engine) : null,
   };
+}
+
+/**
+ * The cost of this one item, read only from `recipe.engine.costUsd`: the
+ * field ATO-1440 asks Core to fill per picture (the request's
+ * `usage.cost` split over its pictures). A request-level cost elsewhere in
+ * the recipe is not read: shown on each picture of a batch it would
+ * overstate the total n times. Never a guess.
+ */
+function reportedCost(engine: Obj): number | null {
+  const v = engine.costUsd;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 const STATES = new Set(["queued", "generating", "completed", "failed", "cancelled"]);

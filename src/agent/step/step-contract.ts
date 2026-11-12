@@ -31,7 +31,7 @@ export interface LlmStreamParams {
     contextWindow: number | null;
     maxTokens?: number;
   }) => Pick<LlmStreamParams, "prompt" | "messages" | "chat" | "contextBudget"> &
-    Partial<Pick<LlmStreamParams, "tools" | "toolChoice" | "parallelToolCalls" | "grammar" | "maxTokens" | "slotId">>;
+    Partial<Pick<LlmStreamParams, "tools" | "toolWireNames" | "toolChoice" | "parallelToolCalls" | "grammar" | "maxTokens" | "slotId">>;
   /** Internal policy metadata; never serialized to the provider API. */
   modelModePolicy?: import("../../llm/model-mode.js").ModelModePolicy;
   prompt: string;
@@ -107,6 +107,8 @@ export interface LlmStreamParams {
   temperature?: number;
   /** OpenAI tools payload — set when `toolTransport === "native_tools"`. */
   tools?: ReadonlyArray<Record<string, unknown>>;
+  /** See `CompletionRequest.toolWireNames`. */
+  toolWireNames?: ReadonlyMap<string, string>;
   toolChoice?: unknown;
   parallelToolCalls?: boolean;
   /**

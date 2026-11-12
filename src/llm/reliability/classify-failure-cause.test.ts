@@ -19,6 +19,7 @@ import {
   TransportError,
 } from "./llm-failures.js";
 import { LocalEngineDownError } from "./local-engine-down.js";
+import { LocalPortTakenError } from "./local-port-taken.js";
 import { RequestTooLargeError, toRequestTooLargeError } from "./request-too-large.js";
 
 const URL = "https://api.fake.test/v1/chat/completions";
@@ -137,6 +138,21 @@ const SAMPLES: ReadonlyArray<
     stepFailure(
       new LlamaServerError(
         "llama-server returned http 400: invalid_request_error",
+        400,
+        LLAMA,
+        false,
+        undefined,
+        { body: { type: "invalid_request_error" } },
+      ),
+    ),
+    "request_rejected",
+    "switch-model",
+  ],
+  [
+    "llama-server started without --jinja refusing tools (ATO-1209)",
+    stepFailure(
+      new LlamaServerError(
+        "llama-server returned http 400: tools param requires --jinja flag",
         400,
         LLAMA,
         false,
@@ -274,5 +290,25 @@ describe("classifyFailureCause", () => {
   it("a max_tokens refusal that does not name the context is not 'chat too long'", () => {
     const err = stepFailure(http(400, "max_tokens is too large: 100000. This model supports at most 32768 completion tokens"));
     expect(classifyFailureCause(err).cause).toBe("request_rejected");
+  });
+});
+
+describe("classifyFailureCause: Atomic Chat's key and a taken managed port (ATO-1274, ATO-1277)", () => {
+  const ATOMIC_CHAT = "http://127.0.0.1:1337/v1/chat/completions";
+
+  it("Atomic Chat's key protection asks for the key, like any refused key", () => {
+    const refusal = new OpenAiHttpError("openai provider 401: Unauthorized", 401, ATOMIC_CHAT, false, null, "atomic-chat");
+    const verdict = classifyFailureCause(new TransportError("wrapped", 401, ATOMIC_CHAT, { cause: refusal }), "transport");
+    expect(verdict.cause).toBe("auth_rejected");
+    expect(verdict.action).toBe("fix-key");
+  });
+
+  it("another program on the managed port is local_port_taken, not a refused key", () => {
+    const url = "http://127.0.0.1:9931/completion";
+    const refusal = new LlamaServerError("llama-server returned http 401", 401, url);
+    const err = new LocalPortTakenError("local-llama", url, new TransportError("wrapped", 401, url, { cause: refusal }));
+    const verdict = classifyFailureCause(err, "transport");
+    expect(verdict.cause).toBe("local_port_taken");
+    expect(verdict.action).toBe("none");
   });
 });

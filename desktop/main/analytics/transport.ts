@@ -27,6 +27,8 @@ export interface TransportDeps {
   canSend: () => boolean;
   distinctId: () => string | null;
   fetchImpl?: typeof fetch;
+  /** ATO-1247: our own machine or test run (environment.ts teamRunIn): tag every event. */
+  team?: () => boolean;
   /** Optional stderr echo of what would be sent (ATOMIC_DESKTOP_ANALYTICS_LOG=1). */
   echo?: (e: QueuedEvent) => void;
 }
@@ -104,6 +106,12 @@ export class PostHogTransport {
     const distinctId = this.deps.distinctId();
     if (!distinctId) return Promise.resolve();
     const batch = this.queue.splice(0, MAX_BATCH);
+    let team = false;
+    try {
+      team = this.deps.team?.() === true;
+    } catch {
+      /* untagged, as before */
+    }
     const body = JSON.stringify({
       api_key: POSTHOG_PROJECT_KEY,
       batch: batch.map((e) => ({
@@ -115,6 +123,7 @@ export class PostHogTransport {
           $ip: "0.0.0.0",
           $geoip_disable: true,
           $lib: "atomic-agent-desktop",
+          ...(team ? { test_run: true, $set: { atomic_team: true } } : {}),
         },
       })),
     });

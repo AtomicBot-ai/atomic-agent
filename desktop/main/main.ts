@@ -3,6 +3,8 @@
    the directory was fresh; tsc hoists every require above the file body, so
    only an import placed first is guaranteed to run before the modules below
    take their own side effects. */
+// ATO-1280: before anything prints, so a closed stdout/stderr (Linux AppImage) cannot end the app with EPIPE.
+import "./stdio-guard.js";
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
@@ -10,6 +12,7 @@ import { registerDoctorDataIpc } from "./doctor-data.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
+import { openLoginTerminal } from "./subscription-cli-login.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { engineBusy, retryWhileEngineBusy } from "./engine-busy-retry.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
@@ -162,6 +165,7 @@ import {
   type UpdateHold,
 } from "./daemon-watch.js";
 import { fusionSmokeTest } from "./fusion-smoke.js";
+import { isHubUnreachable } from "./hub-unreachable.js";
 import {
   RELEASE_FIX_TASKS,
   releaseFixesSmokeTest,
@@ -236,8 +240,8 @@ import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
-import { curatedMetaIds, spotlightIds } from "./model-catalog.js";
-import { catalogPullWantsProjector, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
+import { curatedMeta, curatedMetaIds, spotlightIds } from "./model-catalog.js";
+import { catalogPullWantsProjector, weightsOnDisk, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, LEGACY_DESKTOP_STATE_DIR, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
@@ -256,10 +260,11 @@ import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
+import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { AgentMemoryTracker } from "./agent-memory-sample.js";
-import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
+import { lastErrorCategory, lastErrorSentence, reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
@@ -1164,6 +1169,17 @@ const AGENT_SAID_AT: number[] = [];
 const LAST_WORDS_MS = 30_000;
 /** ATO-763: how many AGENT_SAID lines the current agent wrote (reset as one starts), so an exit is judged on its own lines only. */
 let agentSaidSinceStart = 0;
+/** ATO-1285: every line the current agent wrote, INFO included, so a report can tell a silent death from one whose words were filtered. */
+let agentLinesSinceStart = 0;
+/** ATO-1285: the current agent's last error in plain words, for the card shown once the automatic restarts ran out. */
+function agentExitCause(): string | null {
+  const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
+  if (n === 0) return null;
+  const since = Date.now() - LAST_WORDS_MS;
+  const at = AGENT_SAID_AT.slice(-n);
+  const lines = AGENT_SAID.slice(-n).filter((_, i) => (at[i] ?? 0) >= since);
+  return lastErrorSentence(lastErrorCategory(lines));
+}
 /** ATO-1111: the running agent's last `[atomic-agent] memory …` sample, for the exit report. */
 const agentMemory = new AgentMemoryTracker();
 
@@ -1709,9 +1725,13 @@ function wireIpc(client: AgentClient): void {
     if (running) { if (running.id !== id) A.downloadRefusedBusy(id, trigger); return { ok: false, error: DOWNLOAD_BUSY, running }; }
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
-    A.downloadStarted(id, trigger);
     const withProjector = mmproj || catalogPullWantsProjector(id);   // ATO-1331: every catalogue pull, whoever asked
-    const whole = withProjector ? wholePullProgress(id) : null;
+    /* ATO-1369: the weights already on disk, the agent fetches the projector
+       alone. The bar is then the projector's own size, and analytics marks it
+       projector_only so it does not read as a new model download. */
+    const projectorOnly = withProjector && !client.isRemote && weightsOnDisk(join(modelsDirOf(managedDataDirNow()), id));
+    A.downloadStarted(id, trigger, projectorOnly);
+    const whole = withProjector ? wholePullProgress(id, projectorOnly) : null;
     const started = modelsPull(id, (line) => {
       const parsed = parsePullProgress(line, "weights");
       const progress = whole ? whole(line, parsed) : parsed;
@@ -1954,6 +1974,35 @@ function wireIpc(client: AgentClient): void {
     if (!res.ok) return { ok: false, error: res.error ?? "could not write the config" };
     return { ok: true, id: built.def.id, def: built.def };
   });
+  /* ATO-1402: "Use a .gguf file I already have". The open dialog picks the
+     file, and it is registered where it lies (main/local-gguf.ts, the TUI's
+     own entry for a pasted path): nothing is copied or downloaded. The
+     renderer then hands the id to the same `models pull` a curated pick
+     uses, which finds the weights present and starts the model.
+     `--fake-gguf=<path>` (TEST ONLY, like --fake-pick) answers the dialog. */
+  ipcMain.handle("cli:ggufPick", async () => {
+    const fake = process.argv.find((a) => a.startsWith("--fake-gguf="));
+    let path: string | null = fake ? fake.slice("--fake-gguf=".length) : null;
+    if (!path) {
+      if (!win) return { ok: false, cancelled: true, error: "cancelled" };
+      const picked = await dialog.showOpenDialog(win, {
+        properties: ["openFile"],
+        message: "Choose a .gguf model file",
+        filters: [{ name: "GGUF models", extensions: ["gguf"] }],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, cancelled: true, error: "cancelled" };
+      path = picked.filePaths[0];
+    }
+    let def: ReturnType<typeof buildLocalGgufModelDef>;
+    try {
+      def = buildLocalGgufModelDef(resolveLocalGgufFile(path, { managedModelsDir: modelsDirOf(managedDataDirNow()) }));
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    const res = await addCustomModelEntry(def as unknown as Record<string, unknown>);
+    if (!res.ok) return { ok: false, error: res.error ?? "could not write the config" };
+    return { ok: true, id: def.id, def };
+  });
   /**
    * `atag models pull` fetches weights only, so the projector is fetched
    * here — reported on the SAME `cli:pull` stream the weights used, with
@@ -2127,6 +2176,15 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:subscriptionStatus", (_event, cli: unknown) => {
     if (!isSubscriptionCli(cli)) return { ok: false, error: "cli must be claude or codex" };
     return { ok: true, status: detectSubscriptionCli(cli) };
+  });
+  /* ATO-845: "Sign in with Claude / ChatGPT" opens the system terminal with
+     the sign-in running (subscription-cli-login.ts). Only on that click, only
+     `claude` or `codex login`, with the detector's off-PATH binary when it
+     found one. The window polls cli:subscriptionStatus for the result. */
+  ipcMain.handle("cli:subscriptionLogin", async (_event, cli: unknown) => {
+    if (!isSubscriptionCli(cli)) return { ok: false, error: "cli must be claude or codex" };
+    const status = detectSubscriptionCli(cli);
+    return openLoginTerminal(cli, status.binPath);
   });
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
@@ -2418,6 +2476,17 @@ function wireIpc(client: AgentClient): void {
     const { sessionId } = (payload ?? {}) as { sessionId?: unknown };
     if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, error: "No chat to compact yet" };
     return client.compactSession(sessionId);
+  });
+  // ATO-1299: "Regenerate" under the last reply takes the turn back first.
+  ipcMain.handle("agent:rollbackLastTurn", (_event, payload: unknown) => {
+    const { sessionId, expectText, expectPriorQuestions, expectUnanswered } = (payload ?? {}) as { sessionId?: unknown; expectText?: unknown; expectPriorQuestions?: unknown; expectUnanswered?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
+    return client.rollbackLastTurn(
+      sessionId,
+      typeof expectText === "string" ? expectText : undefined,
+      typeof expectPriorQuestions === "number" ? expectPriorQuestions : undefined,
+      expectUnanswered === true,
+    );
   });
 
   // Files the agent produced: open, reveal, copy, save elsewhere.
@@ -2761,6 +2830,7 @@ function wireIpc(client: AgentClient): void {
     },
   });
   app.once("will-quit", () => studio.dispose());
+  studioQuit = () => studio.retireOnQuit();
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
   ipcMain.handle("app:quit", () => { app.quit(); });
   ipcMain.handle("cli:taskCreate", (_event, input: unknown) => {
@@ -3322,6 +3392,7 @@ function wireIpc(client: AgentClient): void {
       appendAgentLog(`${new Date().toISOString()} ${agentLogTag("stderr", level)} ${line}`);
     },
     armed: !SMOKE,
+    cause: agentExitCause,
   });
   client.on("chat", (event) => send("agent:chat", event));
   client.on("chat", (event) => turnNotifier.observe(event));
@@ -3380,7 +3451,7 @@ function wireIpc(client: AgentClient): void {
       const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
       const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
       const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
-      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting, agentMemory: agentMemory.latest() });
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting, agentMemory: agentMemory.latest(), linesSinceStart: agentLinesSinceStart });
     }, 300).unref?.();
   });
   let agentStateWas: string | undefined;
@@ -3388,6 +3459,7 @@ function wireIpc(client: AgentClient): void {
     // A start begins (not every status while it boots): the lines from here on are the new agent's.
     if (status?.state === "starting" && agentStateWas !== "starting") {
       agentSaidSinceStart = 0;
+      agentLinesSinceStart = 0;
       // ATO-1111: the last memory sample is the agent's that wrote it, not the next one's.
       agentMemory.reset();
     }
@@ -3402,6 +3474,7 @@ function wireIpc(client: AgentClient): void {
      write-only until a check fails. */
   client.on("log", (event: { stream?: string; line?: string; level?: AgentLogLevel }) => {
     const line = String(event.line ?? "");
+    agentLinesSinceStart += 1;
     agentMemory.observe(line);
     /* ATO-121: agent.log tagged every stderr line ERR, and serve's routine
        INFO lines filled this ring. A structured line is tagged with its own
@@ -4728,7 +4801,7 @@ function exitAfterAgentStop(code: number): void {
   // ATO-825: 20 s, not 10: the run's model-server stop (stopLocalDaemonOnQuit) needs up to ~12 s of it.
   void Promise.race([shutdown, new Promise((r) => setTimeout(r, 20_000))])
     .catch(() => undefined)
-    .finally(() => app.exit(code));
+    .finally(() => { removeSmokeTuiFixture(); app.exit(code); });
 }
 
 
@@ -6554,10 +6627,11 @@ async function settingsTestPartB(
      party is down is a check that cries wolf; the same rule as the GitHub
      rate-limit branch above. Skip with the reason, and keep asserting the
      fallback the window is responsible for. */
-  const hubDown = /request failed \((?:5\d\d|429)\)|ENOTFOUND|ETIMEDOUT|fetch failed/i.test(found.hubError ?? "");
+  // ATO-915: the no-VPN case reads `aborted due to timeout`; hub-unreachable.ts has the full list.
+  const hubDown = isHubUnreachable(found.hubError);
   if (hubDown) {
     process.stdout.write(
-      `SKIP the two ClawHub search checks — the service answered ${JSON.stringify(found.hubError)}. `
+      `SKIP the two ClawHub search checks — ClawHub could not be reached: ${JSON.stringify(found.hubError)}. `
       + `The window fell back to the GitHub taps, which is what it owes here.\n`,
     );
     check(
@@ -7838,7 +7912,7 @@ async function settingsTestPartC(
     mode: string; rows: number; view: string; localRows: number; embRows: number; refreshed: number | null; localErr: string | null; statusErr: string | null;
     status: { mode: string; dataDir: string | null; activeModel: string | null; daemon: string; health: string | null } | null; daemonLabel: string; statusLine: string; msg: string; restart: boolean;
     keysKnown: boolean; modelsFor: string | null; models: number; modelsBusy: boolean; modelsErr: string | null; externalDraft: string | null; steerUrl: string | null;
-    activeText: string; providers: Array<{ id: string; kind: string; hasKey: boolean; active: boolean }>;
+    activeText: string; providers: Array<{ id: string; kind: string; hasKey: boolean; active: boolean }>; customIds?: string[];
     fallback: { links: Array<{ providerId: string; isActive: boolean; isAppendedLocal: boolean }>; addableProviderIds: string[]; appendLocal: boolean };
     section: { provider: string | null; status: string; models: number; filtered: number }; flatRows: string[];
   };
@@ -7917,6 +7991,34 @@ async function settingsTestPartC(
         ? `no metadata for ${JSON.stringify(noMeta)}; metadata for ids the agent does not list: ${JSON.stringify(stale)}`
         : `${vendored.length} curated ids, all with a description and both RAM figures`,
     );
+    /* ATO-1410: ids alone let a renamed model or a changed RAM figure through,
+       and the terminal and this window then disagreed. `models recommend
+       --json` names three catalogue models with their name and, from an
+       agent that has ATO-1410, both RAM figures: they must be this table's.
+       (desktop/test/model-catalog-drift.test.mjs compares every row against
+       the agent's source; this is the same check against the agent binary.) */
+    const recRaw = await modelsRecommend();
+    let recTiers: Array<{ id: string; name?: string; minRamGb?: number; recommendedRamGb?: number }> = [];
+    try {
+      const tiers = recRaw ? (JSON.parse(recRaw) as { tiers?: Record<string, unknown> }).tiers : null;
+      recTiers = Object.values(tiers ?? {}).filter((t): t is { id: string } => !!t && typeof (t as { id?: unknown }).id === "string");
+    } catch { recTiers = []; }
+    if (recTiers.length) {
+      const drift = recTiers.flatMap((t) => {
+        const m = curatedMeta(t.id);
+        if (!m) return t.id.startsWith("custom-") ? [] : [`${t.id}: no vendored row`];
+        const out: string[] = [];
+        if (typeof t.name === "string" && t.name !== m.name) out.push(`${t.id} name ${JSON.stringify(t.name)} ≠ ${JSON.stringify(m.name)}`);
+        if (typeof t.minRamGb === "number" && t.minRamGb !== m.minRamGb) out.push(`${t.id} minRamGb ${t.minRamGb} ≠ ${m.minRamGb}`);
+        if (typeof t.recommendedRamGb === "number" && t.recommendedRamGb !== m.recommendedRamGb) out.push(`${t.id} recommendedRamGb ${t.recommendedRamGb} ≠ ${m.recommendedRamGb}`);
+        return out;
+      });
+      check(
+        "llm tab: the vendored names and RAM figures match `atag models recommend --json`",
+        drift.length === 0,
+        drift.length ? drift.join("; ") : `${recTiers.map((t) => t.id).join(", ")} agree on name and memory`,
+      );
+    }
   }
   /* What the pane draws (Calm S5): the setup tabs' three words (Local
      models pressed — Д30 renamed them and put where chats run above them),
@@ -7933,9 +8035,9 @@ async function settingsTestPartC(
     + " return {modes: [...box.querySelectorAll('.llm-bar .llmmode')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-bar .llmmode.on')].map((b) => b.textContent.trim()), kv,"
     + " effects: [...box.querySelectorAll('[data-llm-row^=\"local-text:\"]')].map((r) => { const e = r.querySelector('.llm-effect'); return [e ? e.textContent.trim() : '', e ? e.title : '', r.hasAttribute('data-pull-local')]; })}; })()",
   );
-  const localCopy = ["Where chats run", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
+  const localCopy = ["Where chats run now", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
   const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
-  if (!same(localView.modes, ["Local models", "Cloud providers", "Custom server"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
+  if (!same(localView.modes, ["Local models", "Cloud providers", "Custom"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
   if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
   // A remote row's pill says Download with its size, and its tooltip is the TUI's "Enter: download"; a downloaded row never offers a download.
   const badPills = localView.effects.filter(([label, title, remote]) => remote
@@ -7964,7 +8066,9 @@ async function settingsTestPartC(
   // ---- LLM: Cloud pane ----
   const cloud = await js<LlmPane>("window.__llmOpen('cloud')");
   const cloudBody = await js<string>("window.__settingsBody()");
-  const cloudProviders = (cfg0.llm?.providers ?? []).filter((p) => p.kind !== "llama-server");
+  // ATO-1418: apps and addresses you run yourself (Atomic Chat, Ollama, LM Studio, …) are on the Custom tab, not here.
+  const customIds = cloud.customIds ?? [];
+  const cloudProviders = (cfg0.llm?.providers ?? []).filter((p) => p.kind !== "llama-server" && !customIds.includes(p.id));
   const stateDir = (await js<{ data?: { paths?: { stateDir?: string } } }>("window.atomic.capabilities()")).data?.paths?.stateDir ?? "";
   const keyNames = (p: Provider): string[] => p.apiKeyEnvVar ? [p.apiKeyEnvVar] : p.kind === "openrouter" ? ["OPENROUTER_API_KEY"] : p.kind === "aimlapi" ? ["AIMLAPI_API_KEY"] : p.kind === "gemini" ? ["GEMINI_API_KEY"]
     : p.kind === "openai-compatible" || p.kind === "qwen-openai-compatible" ? ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"] : [];
@@ -7973,6 +8077,7 @@ async function settingsTestPartC(
   // A server on this Mac (Atomic Chat, Ollama, LM Studio, a loopback endpoint) has no key at all.
   const keylessLocal = (p: Provider) => p.kind === "openai-compatible" && (["atomic-chat", "lmstudio", "ollama"].includes(p.id) || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(p.baseUrl ?? ""));
   const expectKey = (p: Provider) => realKey(p) || keylessLocal(p);
+  const misfiled = (cfg0.llm?.providers ?? []).filter((p) => keylessLocal(p) && !customIds.includes(p.id)).map((p) => p.id);
   // Each provider row as drawn (Calm S5): the preset's name, the id in mono only when the name differs, the key chip in words,
   // the action pill in words, and the TUI's sentence for what Enter does as that pill's tooltip.
   const cloudRows = await js<Array<{ row: string; name: string; id: string | null; auth: string; effect: string; title: string }>>(
@@ -7996,8 +8101,8 @@ async function settingsTestPartC(
   if (cloudProviders.length && !filterBox) cloudMissing.push("the model filter box");
   check(
     "llm tab: Cloud providers rows carry the key status from the env ∪ .env names",
-    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers yet.")),
-    `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}${providersOk ? "" : " drawn " + JSON.stringify(cloudRows)}`,
+    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && misfiled.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers yet.")),
+    `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${misfiled.length ? " on this computer but under Cloud: " + misfiled.join(",") : ""}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}${providersOk ? "" : " drawn " + JSON.stringify(cloudRows)}`,
   );
   const models = await until(pane, (p) => p.section.status !== "loading", 90_000);
   const modelsBody = await js<string>("window.__settingsBody()");
@@ -8024,9 +8129,10 @@ async function settingsTestPartC(
     + " effect: e ? e.textContent.trim() : '', title: e ? e.title : ''}; })()",
   );
   check(
-    "llm tab: Custom server pane is the one server-address row and the way back to Local",
-    ext.rows === 1 && !!extRow && extRow.label === "Server address" && extRow.url === extUrl && (extActive || extRow.status === "not active")
-      && extBody.includes("Custom llama.cpp server") && extBody.includes("pick one under Local")
+    // ATO-1418: the Custom pane also lists the apps you run (Atomic Chat, Ollama, LM Studio); the server-address row is its last.
+    "llm tab: Custom pane ends with the one server-address row and the way back to Local",
+    ext.rows >= 1 && !!extRow && extRow.label === "Server address" && extRow.url === extUrl && (extActive || extRow.status === "not active")
+      && extBody.includes("Your own llama.cpp server") && extBody.includes("Apps you already run") && extBody.includes("pick one under Local")
       && extRow.effect === (extActive ? "Edit address" : "Use this server") && extRow.title === (extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp"),
     `${ext.rows} row(s), active=${extActive}, drawn ${JSON.stringify(extRow)}`,
   );
@@ -8881,6 +8987,38 @@ function snapshotTuiState(): Record<string, string> {
  */
 let TUI_BASELINE: Record<string, string> | null = null;
 
+/* ATO-826: the import / seam / wizard checks need a terminal setup to import
+   from. They used to lean on the operator's real ~/.atomic-agent; the MBP
+   smoke runs with HOME pointed at an empty throwaway folder, so six of them
+   failed on every full run ("no terminal-agent setup at …/home/.atomic-agent").
+   Seed a tiny keyless one, ONLY when this run owns its state and there is no
+   ~/.atomic-agent at all (an operator's real tree is never written), before the
+   untouched-baseline snapshot so it is not counted as drift; removed on exit. */
+let SMOKE_TUI_FIXTURE = false;
+function seedSmokeTuiFixture(): void {
+  if (!smokeOwnsItsState({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV })) return;
+  if (existsSync(TUI_STATE_DIR)) return;
+  try {
+    mkdirSync(TUI_STATE_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(join(TUI_STATE_DIR, "config.json"), JSON.stringify({
+      llm: {
+        activeTextProvider: "smoke-tui-fixture",
+        providers: [{ id: "smoke-tui-fixture", kind: "openai-compatible", baseUrl: "https://smoke-tui.invalid/v1", defaultChatModel: "smoke-model" }],
+      },
+    }, null, 2), { mode: 0o600 });
+    writeFileSync(join(TUI_STATE_DIR, ".env"), "SMOKE_TUI_FIXTURE_KEY=not-a-real-key\n", { mode: 0o600 });
+    SMOKE_TUI_FIXTURE = true;
+    process.stdout.write(`DIAG smoke seeded a fixture terminal setup at ${TUI_STATE_DIR} (removed on exit)\n`);
+  } catch (e) {
+    process.stdout.write(`DIAG smoke could not seed a fixture terminal setup at ${TUI_STATE_DIR}: ${(e as Error).message}\n`);
+  }
+}
+function removeSmokeTuiFixture(): void {
+  if (!SMOKE_TUI_FIXTURE) return;
+  SMOKE_TUI_FIXTURE = false;
+  try { rmSync(TUI_STATE_DIR, { recursive: true, force: true }); } catch { /* best effort, a throwaway HOME */ }
+}
+
 /**
  * r5 items 9 and 10 — isolation, and the optimistic switch.
  *
@@ -9494,10 +9632,12 @@ async function isolationAndSwitchTest(
   }>("window.__swxBusyFace()");
   check(
     "send button: a turn adopted mid-switch keeps its steer and its stop",
-    busyFace.locked.disabled === true && busyFace.locked.act === "send"
+    /* ATO-826: since #622 (speedy model switcher) Send stays live while a switch
+       lands and says the reply may be slower; it is no longer a disabled lock. */
+    busyFace.locked.disabled === false && busyFace.locked.act === "send" && /model is switching/.test(busyFace.locked.title)
       && busyFace.steer.disabled === false && busyFace.steer.title === "Steer this turn"
       && busyFace.enter.steers === 1 && busyFace.enter.toasts.length === 0
-      && busyFace.stop.act === "stop" && busyFace.stop.title === "Stop (Ctrl+.)",
+      && busyFace.stop.act === "stop" && /^Stop \((?:Ctrl\+\.|⌘ \.)\)$/.test(busyFace.stop.title),
     JSON.stringify(busyFace),
   );
 
@@ -9579,6 +9719,31 @@ async function backendSwitchTest(
   const localEntry = (c: UserConfigShape | undefined) =>
     (c?.llm?.providers ?? []).find((p) => p.id === "local-llama");
 
+  /* ATO-826: the block is a round trip FROM cloud (see "To local" below). A
+     seed already on local (the MBP's seed-local: local-llama only, no cloud
+     provider) made the first switch a no-op and left nothing to switch back
+     to, so seven checks failed on every full run without telling anything.
+     Put the file on a throwaway cloud route first and boot serve on it. The
+     entry points at a dead loopback port and carries an inline dummy key, so
+     the "re-activate the live provider" leg (which needs a key) runs too;
+     nothing here sends a request to it. The ORIGINAL file is restored in
+     finally. */
+  const originalConfig = await cfgNow();
+  const routeKind = (c: UserConfigShape | undefined) =>
+    (c?.llm?.providers ?? []).find((p) => p.id === c?.llm?.activeTextProvider)?.kind;
+  if (originalConfig && routeKind(originalConfig) === "llama-server") {
+    const fx = JSON.parse(JSON.stringify(originalConfig)) as UserConfigShape;
+    fx.llm = fx.llm ?? ({} as NonNullable<UserConfigShape["llm"]>);
+    fx.llm.providers = [
+      ...(fx.llm.providers ?? []).filter((p) => p.id !== "smoke-cloud"),
+      { id: "smoke-cloud", kind: "openai-compatible", baseUrl: "http://127.0.0.1:9/v1", defaultChatModel: "smoke-model", apiKey: "smoke-fixture-not-a-key" } as never,
+    ];
+    fx.llm.activeTextProvider = "smoke-cloud";
+    const wrote = await configSetWhole(fx);
+    process.stdout.write(`DIAG backend block: seed is on local, started from a throwaway cloud route (write ok=${wrote.ok})\n`);
+    if (agent) { await agent.stop(); await agent.start(); }
+    await waitConnected();
+  }
   const beforeConfig = await cfgNow();
   const daemonWasRunning = await localDaemonRunning();
   const portBefore = agent?.status.port ?? null;
@@ -10005,7 +10170,7 @@ async function backendSwitchTest(
       `file moved first: ${preMoved.changed}; switch ok=${behind?.ok} restart=${behind?.restart} error=${behind?.error ?? ""}; state=${stBehind} port ${portCloud} → ${agent?.status.port}`,
     );
   } finally {
-    if (beforeConfig) await configSetWhole(beforeConfig);
+    if (originalConfig) await configSetWhole(originalConfig);
     if (daemonWasRunning !== (await localDaemonRunning())) {
       if (daemonWasRunning) await modelsStart();
       else await modelsStop();
@@ -10419,7 +10584,7 @@ void app.whenReady().then(async () => {
   /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
      exists yet, no `atag` subprocess has been spawned, and nothing has been
      written. Anything the app touches from this line on shows as drift. */
-  if (SMOKE) TUI_BASELINE = snapshotTuiState();
+  if (SMOKE) { seedSmokeTuiFixture(); TUI_BASELINE = snapshotTuiState(); }
   /* ATO-132: before any config read or write of this launch, config.json —
      which holds the providers' API keys — and .env are made readable by this
      user only, and the tmp files a write that died half way left beside
@@ -10630,6 +10795,25 @@ app.on("window-all-closed", () => {
    and only its own app.quit() at the end goes through. */
 let quitShutdown: { done: boolean } | null = null;
 
+/* ATO-1351 / ATO-1352: Studio's part of the quit (StudioMedia.retireOnQuit),
+   set once Studio is wired. The agent's `models stop` retired Atomic Core only
+   for a managed setup with stopOnExit on, and Core refused it while Studio's
+   own lease was held; with the chat model on an external server, stopOnExit
+   off, or the agent's CLI unable to run, a Core that Studio brought up
+   outlived the app. Studio now lets go of its lease and asks Core to exit
+   when nothing else needs it. Once per quit; never in a smoke run, whose own
+   model stop decides what it may stop (stopSmokeModels). */
+let studioQuit: (() => Promise<boolean>) | null = null;
+function retireStudioCoreOnQuit(): Promise<unknown> {
+  const retire = studioQuit;
+  studioQuit = null;
+  if (SMOKE || !retire) return Promise.resolve(false);
+  return settleWithin(retire().then((stopped) => {
+    if (stopped) console.error("[desktop] Atomic Core served nothing at the quit: asked it to exit");
+    return stopped;
+  }), 8_000, false);
+}
+
 /* ATO-135: a quit with messages still queued in a chat asks first — they are
    kept across a closed window, not across a quit. Once per quit. */
 let queuedQuitAsked = false;
@@ -10674,7 +10858,8 @@ app.on("before-quit", (event) => {
     if (!quitShutdown.done) event.preventDefault();
     return;
   }
-  if (!agent) { event.preventDefault(); const s: { done: boolean } = { done: false }; quitShutdown = s; void analyticsClosed.finally(() => { s.done = true; app.quit(); }); return; }   // still the bounded last flush
+  // Still the bounded last flush, and Studio's Core (ATO-1351): no agent left to run `models stop` for it.
+  if (!agent) { event.preventDefault(); const s: { done: boolean } = { done: false }; quitShutdown = s; void Promise.all([analyticsClosed, retireStudioCoreOnQuit()]).finally(() => { s.done = true; app.quit(); }); return; }
   event.preventDefault();
   const client = agent;
   agent = null;
@@ -10691,7 +10876,10 @@ app.on("before-quit", (event) => {
      and the app goes even if something stalls. */
   void runQuitShutdown({
     closeAgent: () => client.close(),
-    stopModelServer: () => stopLocalDaemonOnQuit(quitConfig),
+    /* ATO-1352: Studio's Core after the model server's stop, whatever the
+       config said: the stop leaves Core alone for an external server or
+       stopOnExit off, and Core refuses it while Studio's lease is held. */
+    stopModelServer: () => stopLocalDaemonOnQuit(quitConfig).finally(() => retireStudioCoreOnQuit()),
     flush: () => analyticsClosed,
   }).then((outcome) => {
     if (outcome === "timed-out") console.error("[desktop] the quit's shutdown ran out of time — quitting without waiting further");
@@ -11115,7 +11303,7 @@ async function onboardingTest(
     check(
       "wizard: the choose step offers all three backends, in the TUI's order",
       labels.length === 3 &&
-        labels[0] === "Local models" && labels[1] === "Cloud models" && labels[2] === "Custom endpoint" &&
+        labels[0] === "Local models" && labels[1] === "Cloud models" && labels[2] === "Custom" &&
         copy.footer === "↑/↓ move   enter choose   1–3 jump   esc skip",
       `${JSON.stringify(labels)} footer=${JSON.stringify(copy.footer)}`,
     );
@@ -11752,9 +11940,28 @@ async function onboardingTest(
 
     /* ---- the branches the desktop used to be missing ---- */
     await js<ObState>("window.__obOpen('choose')");
-    const toCustom = await js<ObState>("window.__obKey('3')");
+    /* ATO-816: `3` is Custom now, a list of what you already run: the apps
+       on this Mac, a llama.cpp server, any URL. Cloud lists keys only. The
+       llama.cpp row is the old custom-endpoint screen. */
+    const customList = await js<{ step: string; rows: string[] }>(
+      "(window.__obKey('3'), { step: window.__ob().step, rows: window.__wizList().rows })");
+    await js<ObState>("window.__obKey('esc')");
+    const keysList = await js<{ rows: string[] }>("(window.__obKey('2'), { rows: window.__wizList().rows })");
+    await js<ObState>("window.__obKey('esc')");
+    const appRows = ["Atomic Chat (local)", "Ollama (local)", "LM Studio (local)"];
     check(
-      "wizard: `3` opens the custom-endpoint branch the desktop had dropped",
+      "wizard: Custom lists the apps on this Mac, a llama.cpp server and any URL; Cloud lists none of them",
+      customList.step === "cloud" &&
+        JSON.stringify(customList.rows.slice(0, 4)) === JSON.stringify([...appRows, "llama.cpp server"]) &&
+        customList.rows.length === 5 && /custom base URL/.test(customList.rows[4] ?? "") &&
+        keysList.rows.length > 3 && !keysList.rows.some((r) => appRows.includes(r) || r === "llama.cpp server" || /custom base URL/.test(r)),
+      `custom=${JSON.stringify(customList)} keys=${JSON.stringify(keysList.rows)}`,
+    );
+    const toCustom = await js<ObState>(
+      "(() => { window.__obKey('3'); const n = window.__wizList().rows.indexOf('llama.cpp server');" +
+        " for (let i = 0; i < n; i += 1) window.__obKey('down'); return window.__obKey('enter'); })()");
+    check(
+      "wizard: Custom › llama.cpp server opens the URL step",
       toCustom.step === "custom_chat_url",
       `step=${toCustom.step}`,
     );
@@ -11801,7 +12008,9 @@ async function onboardingTest(
       : null;
     try {
       await js<ObState>("window.__obOpen('choose')");
-      await js<ObState>("window.__obKey('3')");
+      await js<ObState>(
+        "(() => { window.__obKey('3'); const n = window.__wizList().rows.indexOf('llama.cpp server');" +
+          " for (let i = 0; i < n; i += 1) window.__obKey('down'); return window.__obKey('enter'); })()");
       await js<void>(
         `(function(){const i=document.getElementById('ob-url'); i.value=${JSON.stringify(healthUrl)};` +
           " i.dispatchEvent(new Event('input',{bubbles:true}));})()",
@@ -13503,8 +13712,8 @@ async function chromeTest(
        failure, so the expectation follows what the transcript drew. */
     // ATO-1046: Read aloud follows copy where the system has voices.
     const speak = !!asstActs && Array.isArray(asstActs.order) && asstActs.order[asstActs.order.length - 1] === "speak";
-    const asstOrder = (asstActs && !asstActs.acted ? '["resend","copy"' : '["hint","copy"') + (speak ? ',"speak"]' : "]");
-    const asstTitles = (asstActs && !asstActs.acted ? '["Ask again","Copy message"' : '["Repeating this turn could create or delete files a second time","Copy message"') + (speak ? ',"Read aloud"]' : "]");
+    const asstOrder = (asstActs && !asstActs.acted ? '["regen","copy"' : '["hint","copy"') + (speak ? ',"speak"]' : "]");
+    const asstTitles = (asstActs && !asstActs.acted ? '["Regenerate","Copy message"' : '["Repeating this turn could create or delete files a second time","Copy message"') + (speak ? ',"Read aloud"]' : "]");
     check(
       "item 4: every message carries a copy control at its end; a user message and a tool-free last reply carry retry",
       !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === asstOrder
@@ -13615,14 +13824,15 @@ async function chromeTest(
       toolTip: { content: string | null; opacity: string | null; events: string | null; hover: string | null };
     };
     const rr = await js<ReplyRetry>("window.__replyRetry()");
-    const again = '["resend:rr-u:Ask again","copy"]';
+    // ATO-1300: the button is Regenerate now, with its own data-regen on the question.
+    const again = '["regen:rr-u:Regenerate","copy"]';
     check(
-      "item 4: the last reply of a turn without tools offers Ask again (data-resend on its question), left of copy",
+      "item 4: the last reply of a turn without tools offers Regenerate (data-regen on its question), left of copy",
       JSON.stringify(rr.plain) === again && JSON.stringify(rr.earlier) === again && JSON.stringify(rr.steered) === again,
       JSON.stringify({ plain: rr.plain, earlier: rr.earlier, steered: rr.steered }),
     );
     check(
-      "item 4: no Ask again after a tool card or an approval, while a turn runs, under a placeholder, or above a stopped turn",
+      "item 4: no Regenerate after a tool card or an approval, while a turn runs, under a placeholder, or above a stopped turn",
       JSON.stringify(rr.tool) === '["hint:true:Repeating this turn could create or delete files a second time","copy"]' && JSON.stringify(rr.busy) === '["copy"]'
         && JSON.stringify(rr.placeholder) === '["copy"]' && JSON.stringify(rr.stopped) === '["copy"]' && rr.approval === null,
       JSON.stringify({ tool: rr.tool, busy: rr.busy, placeholder: rr.placeholder, stopped: rr.stopped, approval: rr.approval }),

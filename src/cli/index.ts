@@ -24,6 +24,7 @@ import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
 import { dataCommand } from "./data-command.js";
+import { providersCommand } from "./providers-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { getAppVersion } from "../version.js";
@@ -152,6 +153,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "data",
     summary: "Back up, restore, move or reset the data folder (shared with the desktop app)",
     run: dataCommand,
+  },
+  {
+    name: "providers",
+    summary: "Check the Claude Code / Codex subscription CLIs: installed, signed in, version (status)",
+    run: providersCommand,
   },
   {
     name: "update",

@@ -26,7 +26,7 @@ import {
   type TaskRunSummaryCollector,
 } from "./task-run-summary.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
-import { formatRunTime, remainingCostUsd, remainingDurationMs } from "./task-budget.js";
+import { approvalLevelAllows, formatRunTime, remainingCostUsd, remainingDurationMs } from "./task-budget.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
 import { startTaskSnapshots, type TaskSnapshotSink } from "./task-snapshot.js";
 import {
@@ -149,6 +149,12 @@ export interface TaskRunnerOptions {
   snapshotSink?: TaskSnapshotSink;
   snapshotCadence?: { everySteps: number; everyMs: number } | null;
   logger?: StructuredLogger;
+  /**
+   * This process's live approval level (ATO-1324). A task that recorded
+   * another level than this one is blocked with `approval_level_mismatch:`
+   * instead of run. Omitted (tests, hosts without a gate): no check.
+   */
+  approvalLevel?: () => number;
   metrics?: AgentMetrics;
   /**
    * Test seam for the inter-attempt sleep. Production uses the real
@@ -231,6 +237,8 @@ export class TaskRunner {
   private readonly runs = new Map<string, InFlightRun>();
   /** Set by `stop`: nothing is claimed after it. */
   private stopping = false;
+  /** Set by `stop({ crashed: true })`: interrupted runs are put back as crashes (ATO-1419). */
+  private stoppingCrashed = false;
   /** Summary collectors of the runs in progress, for `liveStatus`. */
   private readonly live = new Map<
     string,
@@ -388,6 +396,24 @@ export class TaskRunner {
         message:
           `budget_spent: ${formatUsd(claimed.spentUsd ?? 0)} of ` +
           `${formatUsd(claimed.maxCostUsd ?? 0)} already spent by earlier attempts`,
+      });
+      this.recordTerminal(blocked);
+      this.maybeReport(blocked, null);
+      return blocked;
+    }
+
+    // Started under another approval level (an interrupted overnight
+    // run, ATO-1324): resuming it here would allow what it denied, or
+    // wait for a person who is not there. Blocked with a plain reason
+    // rather than left pending, where it would sit at the head of the
+    // due queue forever and hold up every other task.
+    const processLevel = this.options.approvalLevel?.();
+    if (!approvalLevelAllows(claimed, processLevel)) {
+      const blocked = this.options.store.markBlocked(claimed.id, {
+        category: "tool",
+        message:
+          `approval_level_mismatch: started at approval level ${claimed.approvalLevel}, ` +
+          `this agent runs at ${processLevel}; start it again with \`atomic-agent overnight\``,
       });
       this.recordTerminal(blocked);
       this.maybeReport(blocked, null);
@@ -758,8 +784,20 @@ export class TaskRunner {
    * sweep takes them back once it is gone (`recoverInterrupted`). The
    * timer is not `unref`'d, for the reason `TurnsInFlight` gives.
    */
-  async stop(graceMs: number): Promise<number> {
+  async stop(
+    graceMs: number,
+    options: {
+      /**
+       * ATO-1419: the agent is ending itself as unhealthy (the memory
+       * guard), not stopping cleanly. A one-shot task this interrupts is
+       * put back as `TASK_OWNER_GONE_ERROR`, a crash, so its resume is
+       * counted against `agent.task.maxResumes` rather than run for free.
+       */
+      crashed?: boolean;
+    } = {},
+  ): Promise<number> {
     this.stopping = true;
+    if (options.crashed) this.stoppingCrashed = true;
     const runs = [...this.runs.values()];
     if (runs.length === 0) return 0;
     for (const run of runs) run.controller.abort();
@@ -1015,11 +1053,12 @@ export class TaskRunner {
       return requeued;
     }
     if (interrupted) {
+      const lastError =
+        interruptedError ??
+        (this.stoppingCrashed ? TASK_OWNER_GONE_ERROR : undefined);
       const pending = this.options.store.markInterrupted(task.id, {
         nextScheduledFor: null,
-        ...(interruptedError !== undefined
-          ? { lastError: interruptedError }
-          : {}),
+        ...(lastError !== undefined ? { lastError } : {}),
       });
       if (!pending) return this.options.store.get(task.id);
       this.options.logger?.info("task run interrupted; left pending", {

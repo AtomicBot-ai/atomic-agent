@@ -20,6 +20,11 @@ import type { SessionState, SessionStatus } from "../../session/session-state.js
 import { TaskStore } from "../../tasks/index.js";
 import { splitMemoryNote } from "../split-note.js";
 import { snapshotSqlite } from "./sqlite-snapshot.js";
+import {
+  TURN_ARCHIVE_TABLE,
+  prepareTurnArchiveStatements,
+  restoreArchivedTurns,
+} from "../../session/turn-archive.js";
 
 /**
  * The databases of an Atomic Agent state dir this importer reads. The
@@ -227,6 +232,11 @@ function importSessions(
       batch = [];
     };
     let unreadable = 0;
+    // A source written by a binary that archives compacted turns
+    // (ATO-1271) keeps them beside the payload: read them back in.
+    const archive = hasTable(db, TURN_ARCHIVE_TABLE)
+      ? prepareTurnArchiveStatements(db)
+      : null;
     const rows = db
       .prepare(
         `SELECT id, working_dir, status, payload, created_at, updated_at
@@ -236,7 +246,11 @@ function importSessions(
     for (const row of rows) {
       let state: SessionState;
       try {
-        state = normalizeSessionState(JSON.parse(row.payload));
+        const raw: unknown = JSON.parse(row.payload);
+        if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+          restoreArchivedTurns(archive, row.id, raw as Record<string, unknown>);
+        }
+        state = normalizeSessionState(raw);
       } catch {
         unreadable += 1;
         counts.skipped += 1;

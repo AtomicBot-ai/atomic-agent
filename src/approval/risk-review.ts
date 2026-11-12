@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { newUntrustedNonce, wrapUntrusted } from "../tools/untrusted-text.js";
 import type { ApprovalRequest } from "./approval-gate.js";
 import {
   formatApprovalCategory,
@@ -182,23 +182,17 @@ function startsWord(before: string): boolean {
 
 /** A fresh unguessable marker for the untrusted blocks of one prompt. */
 export function newRiskReviewNonce(): string {
-  return randomBytes(8).toString("hex");
+  return newUntrustedNonce();
 }
 
 /**
  * Wrap `content` in a block the reviewer is told to read as data. The
  * marker carries a per-call nonce, so text inside cannot close the block
  * and continue as instructions; any copy of the nonce in the content is
- * removed anyway.
+ * removed and fake block markers are defused anyway. Shared with tool
+ * results and the browser page (`tools/untrusted-text.ts`, ATO-1378).
  */
-export function wrapUntrusted(label: string, content: string, nonce: string): string {
-  const safe = content.split(nonce).join("");
-  return [
-    `<<<UNTRUSTED ${label} ${nonce}>>>`,
-    safe,
-    `<<<END UNTRUSTED ${label} ${nonce}>>>`,
-  ].join("\n");
-}
+export { wrapUntrusted };
 
 /** System message of the review request. */
 export const RISK_REVIEW_SYSTEM =

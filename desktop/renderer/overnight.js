@@ -8,7 +8,7 @@
    opens a small dialog: the task, the folder (default: the chat's folder),
    a money budget (default `agent.task.maxCostUsd`, empty = no cap; hidden
    for local models, which cost $0), a time limit in hours (default 8) and
-   "Send the morning report to Telegram" (only when Telegram is paired).
+   "Send the report to Telegram when it finishes" (only when Telegram is paired).
    Start sends it to main (`overnight:start`), which creates a durable task
    on the agent in that folder (overnight-ipc.ts → POST /api/tasks).
 
@@ -124,8 +124,8 @@ function ovnDialogHTML(st, h) {
       + '<span class="tk-help">' + ovnBudgetHelp(st.fusion) + '</span></label>';
   const tg = st.tgPaired
     ? '<button class="ovn-row" type="button" data-ovn="notify" role="switch" aria-checked="' + (f.notify ? 'true' : 'false') + '">'
-      + '<span>Send the morning report to Telegram</span><span class="tk-switch' + (f.notify ? ' on' : '') + '" aria-hidden="true"></span></button>'
-    : '<div class="ovn-row is-off"><span>Send the morning report to Telegram</span><span class="tk-switch" aria-hidden="true"></span></div>'
+      + '<span>Send the report to Telegram when it finishes</span><span class="tk-switch' + (f.notify ? ' on' : '') + '" aria-hidden="true"></span></button>'
+    : '<div class="ovn-row is-off"><span>Send the report to Telegram when it finishes</span><span class="tk-switch" aria-hidden="true"></span></div>'
       + '<p class="tk-help">Pair Telegram in Settings to get the report there.</p>';
   return '<div class="sheetwrap ovn-wrap" data-ovn="backdrop"><div class="sheet ovn-sheet" role="dialog" aria-modal="true" aria-label="Run overnight">'
     + '<div class="sheethead"><span class="ttl">Run overnight</span>'

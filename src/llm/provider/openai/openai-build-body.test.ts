@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { buildOpenAiChatBody } from "./openai-build-body.js";
+import { estimateTokens } from "../../../prompt/token-budget.js";
+import {
+  descriptorsToOpenAiTools,
+  openAiSuffixedWireNames,
+} from "./openai-tool-call-adapter.js";
+import type { ToolDescriptor } from "../../../prompt/stable-prefix.js";
 
 describe("buildOpenAiChatBody", () => {
   it("forwards responseFormat as response_format with type=json_schema and strict=true by default", () => {
@@ -567,6 +573,31 @@ describe("buildOpenAiChatBody — per-model parameters", () => {
     });
     expect(plain).not.toHaveProperty("reasoning");
   });
+
+  // ATO-1368: Fable 5.2's API default is the expensive `high`.
+  it("runs Fable 5.2 on OpenRouter at medium when the turn asked for no effort", () => {
+    const fable = "anthropic/claude-fable-5.2";
+    const or = { providerKind: "openrouter" };
+    const build = (request: { prompt: string; reasoningEffort?: "low" | "medium" | "high" }, extraBody?: Record<string, unknown>) =>
+      buildOpenAiChatBody(request, fable, false, extraBody, undefined, undefined, undefined, or);
+    expect(build({ prompt: "hi" }).reasoning).toEqual({ effort: "medium" });
+    // The turn's own choice wins, and so does the operator's passthrough.
+    expect(build({ prompt: "hi", reasoningEffort: "high" }).reasoning).toEqual({ effort: "high" });
+    expect(build({ prompt: "hi" }, { reasoning: { effort: "low" } }).reasoning).toEqual({ effort: "low" });
+    // Other models and other kinds keep the service default.
+    expect(
+      buildOpenAiChatBody({ prompt: "hi" }, "anthropic/claude-opus-5.5", false, undefined, undefined, undefined, undefined, or),
+    ).not.toHaveProperty("reasoning");
+    const direct = buildOpenAiChatBody({ prompt: "hi" }, "claude-fable-5-2", false, undefined, undefined, undefined, undefined, {
+      providerKind: "openai-compatible",
+    });
+    expect(direct).not.toHaveProperty("reasoning_effort");    // A request that turned thinking off (the risk reviewer) gets no default.
+    const reviewer = buildOpenAiChatBody(
+      { prompt: "x", disableThinking: true, maxTokens: 384 },
+      fable, false, undefined, undefined, undefined, undefined, or,
+    );
+    expect(reviewer).not.toHaveProperty("reasoning");
+  });
 });
 
 describe("buildOpenAiChatBody — the native message layout", () => {
@@ -678,6 +709,50 @@ describe("reasoning effort and the turn's output ceiling (F20)", () => {
   });
 });
 
+describe("reasoning effort on Gemini and AI/ML API (ATO-1359)", () => {
+  const bodyFor = (providerKind: string, model: string) =>
+    buildOpenAiChatBody({ prompt: "hi", reasoningEffort: "low", disableThinking: true }, model, false, undefined, undefined, undefined, undefined, { providerKind });
+
+  const thinkingBodyFor = (providerKind: string, model: string) =>
+    buildOpenAiChatBody({ prompt: "hi", reasoningEffort: "low" }, model, false, undefined, undefined, undefined, undefined, { providerKind });
+
+  it("switches thinking off on 2.5 Flash and Flash-Lite when the call wants none", () => {
+    for (const model of ["gemini-2.5-flash", "gemini-2.5-flash-lite", "models/gemini-2.5-flash", "gemini-2.5-flash-lite-preview-06-17"]) {
+      expect(bodyFor("gemini", model).reasoning_effort).toBe("none");
+    }
+  });
+
+  it("sends the asked effort on Flash-Lite when thinking is wanted", () => {
+    expect(thinkingBodyFor("gemini", "gemini-2.5-flash-lite").reasoning_effort).toBe("low");
+    expect(thinkingBodyFor("gemini", "gemini-2.5-flash").reasoning_effort).toBe("low");
+  });
+
+  it("bounds a Gemini thinking model's reasoning with reasoning_effort", () => {
+    for (const model of ["gemini-2.5-pro", "gemini-3-pro-preview", "models/gemini-3-flash-preview"]) {
+      const body = bodyFor("gemini", model);
+      expect(body.reasoning_effort).toBe("low");
+      expect(body).not.toHaveProperty("reasoning");
+      // The local-only template switch is still not sent to a cloud API.
+      expect(body).not.toHaveProperty("chat_template_kwargs");
+    }
+  });
+
+  it("leaves Gemini models that do not think, or are not chat reasoners, untouched", () => {
+    for (const model of ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-2.5-flash-image", "gemini-2.5-flash-preview-tts", "gemma-3-27b-it", "m"]) {
+      expect(bodyFor("gemini", model)).not.toHaveProperty("reasoning_effort");
+    }
+  });
+
+  it("sends reasoning_effort on AI/ML API only for OpenAI reasoning models", () => {
+    for (const model of ["o3-mini", "openai/o4-mini", "gpt-5", "openai/gpt-5-mini"]) {
+      expect(bodyFor("aimlapi", model).reasoning_effort).toBe("low");
+    }
+    for (const model of ["gpt-4o", "deepseek/deepseek-r1", "olmo-2", "m", "gpt-5-chat-latest", "openai/gpt-5-chat"]) {
+      expect(bodyFor("aimlapi", model)).not.toHaveProperty("reasoning_effort");
+    }
+  });
+});
+
 describe("buildOpenAiChatBody: the template's thinking switch", () => {
   const ask = (request: Parameters<typeof buildOpenAiChatBody>[0], options: Parameters<typeof buildOpenAiChatBody>[7], extraBody?: Record<string, unknown>) =>
     buildOpenAiChatBody(request, "m", false, extraBody, undefined, undefined, undefined, options);
@@ -732,5 +807,134 @@ describe("buildOpenAiChatBody: reasoning handed back to a local template (ATO-88
     for (const options of [{ providerKind: "openai-compatible" }, { providerKind: "openrouter" }, {}]) {
       expect(assistant(ask(options))).not.toHaveProperty("reasoning_content");
     }
+  });
+});
+
+describe("buildOpenAiChatBody: reasoning DeepSeek requires back (ATO-1397)", () => {
+  const messages = {
+    system: "sys",
+    droppedSummary: null,
+    tail: "",
+    turns: [
+      { kind: "user" as const, text: "read a.txt" },
+      { kind: "assistant_tool_call" as const, tool: "os.fs.read", args: { path: "a.txt" }, reasoning: "need the file" },
+      { kind: "tool_result" as const, tool: "os.fs.read", status: "ok" as const, body: "hello", truncated: false },
+    ],
+  };
+  const tools = [{ type: "function" as const, function: { name: "os__fs__read", parameters: { type: "object" } } }];
+  const ask = (options: Parameters<typeof buildOpenAiChatBody>[7]) =>
+    buildOpenAiChatBody({ prompt: "flat", messages, tools } as Parameters<typeof buildOpenAiChatBody>[0], "deepseek-v4-flash", false, undefined, undefined, undefined, undefined, options);
+  const assistant = (body: Record<string, unknown>) =>
+    (body.messages as Array<Record<string, unknown>>).find((m) => m.role === "assistant");
+
+  it("sends reasoning_content on a cloud body when the service requires it", () => {
+    expect(
+      assistant(ask({ providerKind: "openai-compatible", reasoningRequired: true }))?.reasoning_content,
+    ).toBe("need the file");
+  });
+
+  it("keeps the field off the same cloud body otherwise", () => {
+    expect(assistant(ask({ providerKind: "openai-compatible" }))).not.toHaveProperty("reasoning_content");
+  });
+
+  const words = (count: number) => Array.from({ length: count }, (_, i) => `step${i}`).join(" ");
+  const cloudRequest = (reasoning: string, window: number, extra: Record<string, unknown> = {}) =>
+    ({
+      prompt: "flat",
+      messages: {
+        ...messages,
+        turns: messages.turns.map((turn) =>
+          turn.kind === "assistant_tool_call" ? { ...turn, reasoning } : turn,
+        ),
+      },
+      tools,
+      modelMode: { mode: "cloud" as const, source: "provider" as const, providerId: "deepseek", modelId: "deepseek-v4-flash" },
+      contextBudget: { window, replyReserve: 1000 },
+      ...extra,
+    }) as Parameters<typeof buildOpenAiChatBody>[0];
+
+  it("sends less reasoning instead of failing the capacity check when the window is tight", () => {
+    const long = words(4000);
+    const body = buildOpenAiChatBody(cloudRequest(long, 4000), "deepseek-v4-flash", false,
+      undefined, undefined, undefined, undefined, { providerKind: "openai-compatible", reasoningRequired: true });
+    const sent = assistant(body)?.reasoning_content as string;
+    // The whole reasoning would not have fitted: the cap did the work.
+    expect(estimateTokens(long)).toBeGreaterThan(4000);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(long.endsWith(sent)).toBe(true);
+    // Roughly the room left: 4000 - 1000 reply - 1024 margin - the rest of the body.
+    expect(estimateTokens(sent)).toBeGreaterThan(1000);
+    expect(estimateTokens(sent)).toBeLessThanOrEqual(4000 - 1000 - 1024);
+  });
+
+  it("sizes the reasoning against a max_tokens from model params, as the capacity check does", () => {
+    const long = words(40000);
+    const build = () =>
+      buildOpenAiChatBody(cloudRequest(long, 128000), "deepseek-v4-flash", false,
+        undefined, undefined, undefined, undefined,
+        { providerKind: "openai-compatible", reasoningRequired: true, modelParams: { max_tokens: 65536 } });
+    expect(build).not.toThrow();
+    const body = build();
+    expect(body.max_tokens).toBe(65536);
+    const sent = assistant(body)?.reasoning_content as string;
+    expect(sent.length).toBeGreaterThan(0);
+    expect(estimateTokens(sent)).toBeLessThanOrEqual(128000 - 65536 - 1024);
+    expect(estimateTokens(sent)).toBeGreaterThan(40000);
+  });
+
+  it("measures the strict tools that go on the wire", () => {
+    const long = words(4000);
+    const strictTools = [{ type: "function" as const, function: { name: "os__fs__read",
+      parameters: { type: "object", properties: Object.fromEntries(
+        Array.from({ length: 40 }, (_, i) => [`field_${i}`, { type: "string", description: `field number ${i}` }]),
+      ) } } }];
+    const build = () =>
+      buildOpenAiChatBody(cloudRequest(long, 6000, { tools: strictTools }), "deepseek-v4-flash", false,
+        undefined, undefined, true, undefined, { providerKind: "openai-compatible", reasoningRequired: true });
+    expect(build).not.toThrow();
+    const sent = assistant(build())?.reasoning_content as string;
+    expect(sent.length).toBeGreaterThan(0);
+    expect(long.endsWith(sent)).toBe(true);
+  });
+});
+
+// ATO-1365: a past call is written under the wire name THIS request
+// offers for that tool. The plain escape of `mcp.srv.foo__bar` is the
+// dotted sibling's wire name, and a model copying it would run the sibling.
+describe("buildOpenAiChatBody — history names of tools that escape alike", () => {
+  const tool = (name: string): ToolDescriptor => ({ name, tier: "frequent", summary: name, argsSchema: "" });
+  const descriptors = [tool("mcp.srv.foo__bar"), tool("mcp.srv.foo.bar")];
+  const tools = descriptorsToOpenAiTools(descriptors);
+  const toolWireNames = openAiSuffixedWireNames(descriptors);
+  const messages = {
+    system: "### system\nprefix",
+    droppedSummary: null,
+    turns: [
+      { kind: "user" as const, text: "go" },
+      { kind: "assistant_tool_call" as const, tool: "mcp.srv.foo__bar", args: {} },
+      { kind: "tool_result" as const, tool: "mcp.srv.foo__bar", status: "ok" as const, body: "1", truncated: false },
+      { kind: "assistant_tool_call" as const, tool: "mcp.srv.foo.bar", args: {} },
+      { kind: "tool_result" as const, tool: "mcp.srv.foo.bar", status: "ok" as const, body: "2", truncated: false },
+    ],
+    tail: "### respond\nRespond now.\n",
+  };
+  const historyNames = (body: Record<string, unknown>): string[] =>
+    (body.messages as Array<{ tool_calls?: Array<{ function: { name: string } }> }>)
+      .flatMap((m) => m.tool_calls ?? [])
+      .map((c) => c.function.name);
+
+  it("names each past call by the wire name the request offers for it", () => {
+    const offered = tools.map((t) => (t.function as { name: string }).name);
+    const body = buildOpenAiChatBody({ prompt: "flat", messages, tools, toolWireNames }, "m", true);
+    const names = historyNames(body);
+    expect(names).toEqual(["mcp__srv__foo__bar_2", "mcp__srv__foo__bar"]);
+    for (const name of names) expect(offered).toContain(name);
+    // The map steers the history only; it never reaches the wire.
+    expect(body).not.toHaveProperty("toolWireNames");
+  });
+
+  it("falls back to the adapter escape for a request that carries no renames", () => {
+    const body = buildOpenAiChatBody({ prompt: "flat", messages, tools }, "m", true);
+    expect(historyNames(body)).toEqual(["mcp__srv__foo__bar", "mcp__srv__foo__bar"]);
   });
 });

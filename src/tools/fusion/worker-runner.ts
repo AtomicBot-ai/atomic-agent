@@ -441,7 +441,7 @@ export interface WorkerRunnerDeps {
     },
   ) => Promise<RunTurnResult>;
   /** `runtime.createEphemeralSession` — in-memory, never persisted. */
-  createEphemeralSession: (meta: FusionWorkerMeta, workingDir?: string) => SessionState;
+  createEphemeralSession: (meta: FusionWorkerMeta, workingDir?: string, inheritWorkspace?: boolean) => SessionState;
   inheritWorkspace?: boolean;
   approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy"> &
     Partial<
@@ -484,6 +484,15 @@ export interface WorkerRunnerDeps {
   /** `LlamaServerClient.probeHealth`, the question the check above asks. */
   probeLocalHealth?: () => Promise<LocalHealthAnswer>;
   /**
+   * The probe for one local leg's own server (ATO-1318), or `undefined`
+   * when nothing can ask that server; then the check is skipped for it.
+   * When set it replaces `probeLocalHealth`, which only ever asks the
+   * main local server.
+   */
+  probeLocalHealthFor?: (
+    providerId: string,
+  ) => (() => Promise<LocalHealthAnswer>) | undefined;
+  /**
    * One completion on the escalation provider (ATO-942). Absent, nothing
    * is ever escalated, manual or automatic.
    */
@@ -492,6 +501,13 @@ export interface WorkerRunnerDeps {
   steerWorker?: (sessionId: string, text: string) => boolean;
   /** Where running workers are registered for the person's stop / escalate. */
   liveWorkers?: FusionLiveWorkers;
+  /**
+   * Replace the process's HTTP connection pool before a local worker is
+   * sent after one was cut off and the server still answered
+   * (`renewTransportPool`, ATO-1357). Returns whether it did. Absent
+   * (tests, embedders), nothing is renewed.
+   */
+  renewLocalTransport?: () => boolean;
 }
 
 /** Escalations one worker may get, automatic and manual together. */
@@ -566,6 +582,12 @@ export interface RunWorkerTasksOptions {
    * ATO-947). Absent, every task starts as before.
    */
   shouldStart?: () => string | undefined;
+  /**
+   * Asked only before a task starts, after `shouldStart`: the failure
+   * breaker (ATO-1406). Unlike `shouldStart` it never refuses an
+   * escalation or cuts a run already going, so running workers finish.
+   */
+  shouldStartTask?: () => string | undefined;
   /** Every worker completion's usage, as it lands (live spend, ATO-947). */
   onWorkerUsage?: (taskId: string, usage: CompletionUsage) => void;
   /**
@@ -663,7 +685,13 @@ export async function runWorkerTasks(
   const width = Math.max(1, Math.min(options.maxWorkers, options.tasks.length));
   const runners = Array.from({ length: width }, async () => {
     for (let i = claim(); i < options.tasks.length; i = claim()) {
-      const stop = options.shouldStart?.();
+      // The cap first (its row must name the cap), then the failure
+      // breaker (ATO-1406), then a stopped turn (ATO-1334, #1139):
+      // `shouldStart` is only wired when a budget cap is set.
+      const stop =
+        options.shouldStart?.() ??
+        options.shouldStartTask?.() ??
+        (options.signal.aborted ? "the turn was stopped" : undefined);
       results[i] =
         stop === undefined
           ? await runOneTask(deps, options, options.tasks[i]!)
@@ -690,12 +718,13 @@ async function runOneTask(
   // the working directory everywhere below. Without it, nothing changes.
   const isolated = options.taskWorkspace?.(task.id);
   const workingDir = isolated?.workingDir ?? deps.workingDir;
-  const sessionDir =
-    isolated !== undefined || deps.inheritWorkspace ? workingDir : undefined;
+  // The worker always runs in this folder (the parent's, in every model
+  // mode, #1121); only an isolated or cloud worker inherits a workspace.
+  const inheritWorkspace = isolated !== undefined || deps.inheritWorkspace === true;
   const session = deps.createEphemeralSession({
     parentSessionId: options.parentSessionId,
     taskId: task.id,
-  }, sessionDir);
+  }, workingDir, inheritWorkspace);
   // A worker that queued on the parent id would wait behind the
   // orchestrator's own turn — which is the turn calling this — and the
   // fan-out would deadlock rather than run. `createEphemeralSession`
@@ -711,6 +740,12 @@ async function runOneTask(
     });
   }
 
+  // Read before the check below, which clears the mark when the server
+  // answers (ATO-1357): an answered check is exactly the case where the
+  // server is fine and the agent's own connections are the suspect.
+  const cutBeforeDispatch =
+    options.localLeg === true && deps.localLegHealth?.isSuspect(options.providerId) === true;
+
   // A local leg that went silent after a worker on it was cut off is not
   // sent another worker to wait out its queue budget on (ATO-917): the
   // server is asked first, and a server that does not answer fails the
@@ -719,12 +754,15 @@ async function runOneTask(
     options.localLeg === true &&
     deps.localLegHealth !== undefined &&
     !(await deps.localLegHealth.readyForDispatch(
-      deps.probeLocalHealth,
+      deps.probeLocalHealthFor !== undefined
+        ? deps.probeLocalHealthFor(options.providerId)
+        : deps.probeLocalHealth,
       undefined,
       options.signal,
+      options.providerId,
     ))
   ) {
-    const cause = deps.localLegHealth.cause();
+    const cause = deps.localLegHealth.cause(options.providerId);
     const refused: WorkerTaskResult = {
       ...collector.finish({
         id: task.id,
@@ -752,6 +790,28 @@ async function runOneTask(
       summary: summarise(refused),
     });
     return refused;
+  }
+
+  // Ties the client's stream trace (keyed by session id) to the task.
+  if (options.localLeg === true) {
+    deps.logger?.info("fusion: local worker dispatched", {
+      taskId: task.id,
+      workerSessionId: session.id,
+      afterCut: cutBeforeDispatch,
+    });
+  }
+  // The server answered after a cut-off worker (ATO-1357, issue #490). In
+  // the field that was the state in which no later worker's request ever
+  // reached the server — nothing in its log, every slot idle — until the
+  // agent was restarted. Do the transport half of that restart here: the
+  // next request opens on fresh sockets, and nothing in flight is cut.
+  if (cutBeforeDispatch && deps.renewLocalTransport !== undefined) {
+    const renewed = deps.renewLocalTransport();
+    deps.logger?.info("fusion: fresh connections for the local leg after a cut-off worker", {
+      taskId: task.id,
+      workerSessionId: session.id,
+      renewed,
+    });
   }
 
   // `started` fires when the turn actually begins stepping, not when it
@@ -1469,6 +1529,30 @@ async function runOneTask(
     disarmWorkerSession(session.id);
   }
 
+  // How the LOCAL turn ended, read before the re-run below resets these
+  // flags (ATO-1317). A turn cut by the person's stop or by the swap to
+  // the escalation model was cut as surely as one cut by its clock, and
+  // may have left the server just as wedged; without these two the next
+  // local worker waited out a whole queue budget before anyone asked.
+  const localCut =
+    replaceRequested ||
+    stopByPerson.signal.aborted ||
+    timedOutOutcome ||
+    queuedOutcome ||
+    stoppedByHandBack ||
+    options.signal.aborted;
+  const localCutCause = timedOutOutcome
+    ? "timed out"
+    : queuedOutcome
+      ? "never served"
+      : stoppedByHandBack
+        ? "handed back"
+        : replaceRequested
+          ? "replaced by the escalation model"
+          : stopByPerson.signal.aborted
+            ? "stopped by the person"
+            : "cancelled";
+
   // The advisor's hint did not help and the operator allowed the
   // replacement path (`escalationReplace`): the task runs again on the
   // escalation model, with what the local worker found, under the
@@ -1483,7 +1567,8 @@ async function runOneTask(
   ) {
     const replaceSession = deps.createEphemeralSession(
       { parentSessionId: options.parentSessionId, taskId: task.id },
-      sessionDir,
+      workingDir,
+      inheritWorkspace,
     );
     armWorkerSession(replaceSession.id);
     const replaceCollector = new WorkerRunCollector();
@@ -1507,6 +1592,12 @@ async function runOneTask(
       `re-running the task on ${targetLabel}: the advisor's hint did not unstick the local worker`,
     );
     const localFindings = collector.findings();
+    // The re-run's cost is counted as escalation spend as it lands
+    // (`onEscalationSpend`). The row keeps the local attempt's usage, so
+    // the status header and the checkpoint, which price a row's usage
+    // at the worker's rate, do not count the re-run a second time
+    // (ATO-1319).
+    const localUsage = result.usage;
     try {
       const turn = await deps.runTurn(
         replaceSession,
@@ -1526,6 +1617,20 @@ async function runOneTask(
           eventHook: (event) => {
             markNoteRead(replaceSession.id, event);
             replaceCollector.observe(event);
+            // The re-run's side effects reach the checkpoint as they
+            // start, like the local worker's do (ATO-1316): a crash in
+            // the middle of the re-run must not offer the task as safe
+            // to repeat.
+            if (
+              event.type === "llm_event" &&
+              event.event.type === "tool_call_parsed"
+            ) {
+              try {
+                options.onWorkerTool?.(task.id, event.event.call.tool);
+              } catch {
+                // An observer never takes the worker down.
+              }
+            }
             if (
               event.type === "llm_event" &&
               event.event.type === "llm_completed" &&
@@ -1580,6 +1685,10 @@ async function runOneTask(
       unregisterReplace?.();
       disarmWorkerSession(replaceSession.id);
     }
+    {
+      const { usage: _replaceUsage, ...row } = result;
+      result = localUsage === undefined ? row : { ...row, usage: localUsage };
+    }
     // The local turn's own endings no longer describe the row.
     timedOutOutcome = false;
     queuedOutcome = false;
@@ -1605,15 +1714,10 @@ async function runOneTask(
   // A local worker that ended by an abort — its clock, its queue wait,
   // its hand-back or the operator — may have left the server wedged
   // (ATO-917); the next local dispatch asks the server first.
-  if (
-    options.localLeg === true &&
-    (timedOutOutcome ||
-      queuedOutcome ||
-      stoppedByHandBack ||
-      options.signal.aborted)
-  ) {
+  if (options.localLeg === true && localCut) {
     deps.localLegHealth?.noteCut(
-      `task ${task.id} was ${timedOutOutcome ? "timed out" : queuedOutcome ? "never served" : stoppedByHandBack ? "handed back" : "cancelled"}`,
+      `task ${task.id} was ${localCutCause}`,
+      options.providerId,
     );
   }
 

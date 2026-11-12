@@ -5,6 +5,12 @@ interface PatternRule {
   id: string;
   regex: RegExp;
   reason: string;
+  /**
+   * Tested against the line as written rather than lowercased, for a
+   * rule where case changes the meaning (`chmod -R` recurses, `chmod
+   * -r` removes read permission).
+   */
+  caseSensitive?: true;
 }
 
 const DANGEROUS_PATTERNS: readonly PatternRule[] = [
@@ -26,11 +32,13 @@ const DANGEROUS_PATTERNS: readonly PatternRule[] = [
   // `-R` anywhere in the same command (GNU takes options after the
   // mode/owner too: `chmod 755 -R dir`), bundled (`-Rv`), or the long
   // `--recursive` and its abbreviations. `[^;&|\n]*` keeps the match
-  // inside one command of a compound line.
+  // inside one command of a compound line. Case-sensitive: a lowercase
+  // `-r` is the mode "remove read" (`chmod -r f`), not recursion.
   {
     id: "dangerous.chmod_recursive",
-    regex: /\bchmod\b[^;&|\n]*\s(?:-[a-z]*r[a-z]*|--rec[a-z]*)(?=\s|$)/,
+    regex: /\bchmod\b[^;&|\n]*\s(?:-[A-Za-z]*R[A-Za-z]*|--rec[a-z]*)(?=\s|$)/,
     reason: "recursive chmod",
+    caseSensitive: true,
   },
   {
     id: "dangerous.chown_recursive",
@@ -51,6 +59,10 @@ const DANGEROUS_PATTERNS: readonly PatternRule[] = [
       /(?:^|[\s;&|(])(?:sh|bash|zsh|dash|ksh|python|python3|source|\.)\s+(?:-\S+\s+)*(?:<\s*)?<\(\s*(?:curl|wget)\b/,
     reason: "run a download through process substitution",
   },
+  // Only the start of the line here, so a quoted mention (`git commit
+  // -m "run sh -c x"`) is not one. A nested shell anywhere else (`cd x
+  // && bash -c …`, `env bash -lc …`, inside `$(…)`) is read from the
+  // parsed words in rules-dangerous-argv.ts (`matchNestedShell`).
   {
     id: "dangerous.shell_dash_c",
     regex: /^(?:bash|sh|zsh|dash|ksh)\s+(?:-c|--command)\b/,
@@ -133,7 +145,8 @@ export const dangerousRule: Rule = {
   layer: "dangerous",
   match(input) {
     for (const pattern of DANGEROUS_PATTERNS) {
-      if (pattern.regex.test(input.joinedLower)) {
+      const line = pattern.caseSensitive ? input.joined : input.joinedLower;
+      if (pattern.regex.test(line)) {
         return {
           action: "approval_required",
           rule: pattern.id,

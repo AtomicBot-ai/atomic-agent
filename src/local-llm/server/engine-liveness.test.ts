@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolvePidFilePath } from "../backend-paths.js";
-import { readManagedEngineLiveness } from "./engine-liveness.js";
+import { readCoreOperationLock as readCoreOperationLockForTest } from "../core/core-operation.js";
+import { explainManagedEngineLiveness, readManagedEngineLiveness } from "./engine-liveness.js";
 
 describe("readManagedEngineLiveness (ATO-772)", () => {
   let dataDir: string;
@@ -63,6 +64,86 @@ describe("readManagedEngineLiveness (ATO-772)", () => {
   });
 
   it("a probe that throws is unknown, never dead", () => {
-    expect(readManagedEngineLiveness(dataDir, { operationInProgress: () => { throw new Error("EACCES"); } })).toBe("unknown");
+    expect(readManagedEngineLiveness(dataDir, { operationLock: () => { throw new Error("EACCES"); } })).toBe("unknown");
+    expect(explainManagedEngineLiveness(dataDir, { operationLock: () => { throw new Error("EACCES"); } })).toEqual({
+      state: "unknown",
+      reason: "lock_probe_failed",
+      lock: "probe_failed",
+    });
+  });
+});
+
+describe("explainManagedEngineLiveness (ATO-1275)", () => {
+  let dataDir: string;
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "engine-liveness-why-"));
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const HOUR = 3_600_000;
+  const deadPid = (): number => spawnSync(process.execPath, ["-e", ""]).pid!;
+  const lockPath = (): string => join(dataDir, "core", "operation.lock");
+  const writeLock = (pid: number | string): void => {
+    mkdirSync(join(dataDir, "core"), { recursive: true });
+    writeFileSync(lockPath(), String(pid));
+  };
+  const age = (path: string, ms: number): void => {
+    const then = new Date(Date.now() - ms);
+    utimesSync(path, then, then);
+  };
+  /** A live process that is not this one: the lock's owner in another frontend. */
+  const otherLive = { pidLiveness: () => "alive" as const };
+
+  it("names the branch for each pid reading", () => {
+    expect(explainManagedEngineLiveness(dataDir)).toEqual({ state: "no_pid", reason: "no_pid_file", lock: "free" });
+    writeFileSync(resolvePidFilePath(dataDir), "");
+    expect(explainManagedEngineLiveness(dataDir)).toMatchObject({ state: "no_pid", reason: "pid_empty" });
+    writeFileSync(resolvePidFilePath(dataDir), String(deadPid()));
+    expect(explainManagedEngineLiveness(dataDir)).toMatchObject({ state: "dead", reason: "pid_dead" });
+    writeFileSync(resolvePidFilePath(dataDir), String(process.pid));
+    expect(explainManagedEngineLiveness(dataDir)).toMatchObject({ state: "alive", reason: "pid_alive" });
+    expect(explainManagedEngineLiveness(dataDir, { pidLiveness: () => "foreign" })).toMatchObject({ state: "alive", reason: "pid_foreign" });
+  });
+
+  it("a lock held by another live process is a start or load under way: still unknown", () => {
+    // The test runner's parent: alive, and not this process.
+    writeLock(process.ppid);
+    expect(explainManagedEngineLiveness(dataDir)).toEqual({ state: "unknown", reason: "lock_held", lock: "held" });
+    expect(readManagedEngineLiveness(dataDir)).toBe("unknown");
+  });
+
+  it("a lock this process holds is still unknown, and says so", () => {
+    writeLock(process.pid);
+    expect(explainManagedEngineLiveness(dataDir)).toEqual({ state: "unknown", reason: "lock_held_self", lock: "held_self" });
+  });
+
+  it("a lock whose owner is dead, with no engine pid, reads no_pid: the turn can end", () => {
+    writeLock(deadPid());
+    expect(explainManagedEngineLiveness(dataDir)).toEqual({ state: "no_pid", reason: "no_pid_file", lock: "stale_dead_owner" });
+  });
+
+  it("a lock written before the last boot is stale even when its pid now names a live process", () => {
+    writeLock(4242);
+    age(lockPath(), 2 * HOUR);
+    const bootTimeMs = () => Date.now() - HOUR;
+    expect(explainManagedEngineLiveness(dataDir, {
+      operationLock: (dir) => readCoreOperationLockForTest(dir, { bootTimeMs, ...otherLive }),
+    })).toEqual({ state: "no_pid", reason: "no_pid_file", lock: "stale_before_boot" });
+  });
+
+  it("a pid file written before the last boot is dead even when the pid is reused", () => {
+    writeFileSync(resolvePidFilePath(dataDir), String(process.pid));
+    age(resolvePidFilePath(dataDir), 2 * HOUR);
+    expect(explainManagedEngineLiveness(dataDir, { bootTimeMs: () => Date.now() - HOUR })).toMatchObject({
+      state: "dead",
+      reason: "pid_before_boot",
+    });
+    // Written after boot: the pid's own answer decides.
+    expect(explainManagedEngineLiveness(dataDir, { bootTimeMs: () => Date.now() - 3 * HOUR })).toMatchObject({
+      state: "alive",
+      reason: "pid_alive",
+    });
   });
 });

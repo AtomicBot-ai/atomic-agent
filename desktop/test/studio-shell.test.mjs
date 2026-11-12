@@ -158,3 +158,41 @@ test('Video page: a clip from a chat opens on its own, playing from its file: UR
   assert.equal(st.videoSrc, STUDIO.mediaUrl('/Users/n/work/my clip.mp4'));
   assert.equal(st.playError, false);
 });
+
+test('onLocal: a model load, download or removal reaches every page; a core event only the strip (ATO-1394)', () => {
+  let cb = null;
+  const { STUDIO } = load({ atomic: { studio: { onLocal: (fn) => { cb = fn; } } } });
+  const got = { images: [], video: [] };
+  STUDIO.register('images', { title: 'Images', onLocal: (e) => got.images.push(e.type) });
+  STUDIO.register('video', { title: 'Video', onLocal: (e) => got.video.push(e.type) });
+  assert.equal(typeof cb, 'function');
+  cb({ type: 'load', id: 'z-image:q4', state: 'loaded', message: '' });
+  cb({ type: 'removed', id: 'z-image:q4' });
+  cb({ type: 'core', core: { state: 'ready', message: '' } });
+  cb(null);
+  assert.deepEqual(got.images, ['load', 'removed']);
+  assert.deepEqual(got.video, ['load', 'removed']);
+});
+
+test('chatPlace: Studio works where the chat runs; custom counts as local, Fusion as its orchestrator (ATO-1304)', () => {
+  const { STUDIO } = load();
+  const placeOf = STUDIO._pure.placeOf;
+  assert.equal(placeOf('cloud'), 'cloud');
+  assert.equal(placeOf('local'), 'local');
+  assert.equal(placeOf('custom'), 'local');
+  assert.equal(placeOf('fusion', 'openrouter'), 'cloud');
+  assert.equal(placeOf('fusion', null), 'cloud');
+  assert.equal(placeOf('fusion', 'llama-server'), 'local');
+  assert.equal(placeOf(undefined), null);
+
+  // No settings read yet: null, though selBackend() would say 'cloud'.
+  assert.equal(load({ LIVE_CONFIG: null, selBackend: () => 'cloud' }).STUDIO.chatPlace(), null);
+  assert.equal(load({ selBackend: () => 'cloud' }).STUDIO.chatPlace(), null);
+  const cfg = { llm: { providers: [{ id: 'local-llama', kind: 'llama-server' }, { id: 'openrouter', kind: 'openrouter' }] } };
+  for (const [backend, orch, want] of [['cloud', null, 'cloud'], ['local', null, 'local'], ['custom', null, 'local'],
+    ['fusion', 'openrouter', 'cloud'], ['fusion', 'local-llama', 'local']]) {
+    const got = load({ LIVE_CONFIG: cfg, selBackend: () => backend, rmNow: () => ({ orchestratorProviderId: orch }) }).STUDIO.chatPlace();
+    assert.equal(got, want, backend + ' ' + orch);
+  }
+  assert.equal(load({ LIVE_CONFIG: cfg, selBackend: () => { throw new Error('x'); } }).STUDIO.chatPlace(), null);
+});

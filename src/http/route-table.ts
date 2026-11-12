@@ -1,4 +1,5 @@
 import { createSessionCompactionHandler } from "./route-compaction.js";
+import { createRollbackLastTurnHandler } from "./route-rollback-last-turn.js";
 import type { RouteDefinition } from "./http-server.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
@@ -182,6 +183,8 @@ export function buildRouteTable(): RouteDefinition[] {
     },
     // ATO-731: one chat's folder, changed without restarting serve.
     { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
+    // ATO-1298: take the last plain question and answer back, for a real retry.
+    { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
     {
       method: "POST",
       path: "/api/sessions/{id}/steer",
@@ -229,6 +232,8 @@ export function buildRouteTable(): RouteDefinition[] {
     // ATO-1127: this machine's local models, for a desktop connected from another computer.
     { method: "GET", path: "/api/local-models/list", handler: createLocalModelsTextHandler("list") },
     { method: "GET", path: "/api/local-models/status", handler: createLocalModelsTextHandler("status") },
+    // ATO-1213: and its embedding models, which the remote desktop listed as none.
+    { method: "GET", path: "/api/local-models/list-embeddings", handler: createLocalModelsTextHandler("list-embeddings") },
     // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
     { method: "POST", path: "/api/memory/embeddings/reconnect", handler: createReconnectMemoryEmbeddingsHandler() },
     // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.

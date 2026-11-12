@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   allowedTemperatureFromError,
   parseAllowedTemperature,
+  parseTemperatureRefused,
+  temperatureLessonFromError,
 } from "./allowed-temperature.js";
 import { OpenAiHttpError } from "./openai-http.js";
 
@@ -38,5 +40,47 @@ describe("allowedTemperatureFromError", () => {
     expect(at(400)).toBe(1);
     expect(at(500)).toBeUndefined();
     expect(allowedTemperatureFromError("only 1 is allowed")).toBeUndefined();
+  });
+});
+
+const ANTHROPIC_DEPRECATED_400 =
+  '{"type":"error","error":{"type":"invalid_request_error","message":"`temperature` is deprecated for this model."}}';
+
+describe("parseTemperatureRefused (ATO-1397)", () => {
+  it("reads a refusal of the field itself", () => {
+    expect(parseTemperatureRefused(ANTHROPIC_DEPRECATED_400)).toBe(true);
+    expect(
+      parseTemperatureRefused(
+        "Unsupported parameter: 'temperature' is not supported with this model.",
+      ),
+    ).toBe(true);
+    expect(parseTemperatureRefused("unknown parameter: temperature")).toBe(true);
+  });
+
+  it("leaves a named value, a range error and other fields alone", () => {
+    expect(parseTemperatureRefused(MOONSHOT_400)).toBe(false);
+    expect(
+      parseTemperatureRefused("temperature: Input should be less than or equal to 1"),
+    ).toBe(false);
+    expect(parseTemperatureRefused("top_k is deprecated for this model")).toBe(false);
+    expect(parseTemperatureRefused("invalid max_tokens")).toBe(false);
+  });
+});
+
+describe("temperatureLessonFromError", () => {
+  const err = (status: number, body: string) =>
+    new OpenAiHttpError(`openai provider ${status}: ${body}`, status, "u");
+
+  it("names the one value, or says the field is refused, only on a 400", () => {
+    expect(temperatureLessonFromError(err(400, MOONSHOT_400))).toEqual({
+      kind: "fixed",
+      value: 1,
+    });
+    expect(temperatureLessonFromError(err(400, ANTHROPIC_DEPRECATED_400))).toEqual({
+      kind: "forbidden",
+    });
+    expect(temperatureLessonFromError(err(500, ANTHROPIC_DEPRECATED_400))).toBeUndefined();
+    expect(temperatureLessonFromError(err(400, "invalid max_tokens"))).toBeUndefined();
+    expect(temperatureLessonFromError("temperature is deprecated")).toBeUndefined();
   });
 });

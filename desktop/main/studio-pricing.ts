@@ -10,7 +10,11 @@
  *     `endpoints[].pricing[]` of `{billable, unit, cost_usd, variant?}`.
  *     Only `billable: "output_image"` with `unit: "image"` is a price per
  *     picture; `variant` is the resolution tier (`1k`, `2k`, `768`, …).
- *     A model billed per token (`unit: "token"`) gets no number.
+ *     A model billed per token (`unit: "token"`, Nano Banana, GPT Image)
+ *     gets no number for the whole picture: how many tokens a picture takes
+ *     is the provider's call. It gets its published rate per million output
+ *     tokens instead (`perToken`), and the real cost is shown after the
+ *     picture is made, from what OpenRouter reported (ATO-814).
  *   - Video: `GET /api/v1/videos/models` → `data[].pricing_skus`, a map of
  *     SKU name → decimal string. Names starting `cents_per_` are cents;
  *     the `duration_seconds…` family is read as US dollars per second (the
@@ -23,12 +27,14 @@
  */
 
 export interface StudioPrice {
-  /** For the whole request (all images, the whole clip), in US dollars. */
-  usd: number;
+  /** For the whole request (all images, the whole clip), in US dollars. Null for a model billed per token. */
+  usd: number | null;
   /** Set when providers or options disagree: the price is between `usd` and `maxUsd`. */
   maxUsd: number | null;
   /** What the number was made of, for a tooltip: `0.048 USD per image × 2`. */
   basis: string;
+  /** A model billed per output token: OpenRouter's published rate, per million tokens. Null otherwise. */
+  perToken?: { usdPerMillion: number; maxUsdPerMillion: number | null } | null;
 }
 
 export interface StudioPriceParams {
@@ -53,6 +59,35 @@ function span(values: number[], basis: string): StudioPrice | null {
   return { usd: lo, maxUsd: hi > lo ? hi : null, basis };
 }
 
+/**
+ * A model OpenRouter bills per output token (`billable: "output_image"`,
+ * `unit: "token"`): its rate per million tokens, a range when providers
+ * disagree. Only the published rate; no guess at tokens per picture.
+ */
+export function imageTokenRateFromEndpoints(answer: unknown): StudioPrice | null {
+  const endpoints = obj(answer)?.endpoints ?? obj(obj(answer)?.data)?.endpoints;
+  if (!Array.isArray(endpoints)) return null;
+  const perMillion: number[] = [];
+  for (const endpoint of endpoints) {
+    const lines = obj(endpoint)?.pricing;
+    if (!Array.isArray(lines)) continue;
+    for (const l of lines.map(obj)) {
+      if (l && l.billable === "output_image" && l.unit === "token" && typeof l.cost_usd === "number" && Number.isFinite(l.cost_usd) && l.cost_usd > 0) {
+        perMillion.push(Math.round(l.cost_usd * 1_000_000 * 100) / 100);
+      }
+    }
+  }
+  if (!perMillion.length) return null;
+  const lo = Math.min(...perMillion);
+  const hi = Math.max(...perMillion);
+  return {
+    usd: null,
+    maxUsd: null,
+    basis: `${lo} USD per 1M output tokens`,
+    perToken: { usdPerMillion: lo, maxUsdPerMillion: hi > lo ? hi : null },
+  };
+}
+
 /** Per-image price from an `/images/models/<id>/endpoints` answer. */
 export function imagePriceFromEndpoints(answer: unknown, params: StudioPriceParams): StudioPrice | null {
   const endpoints = obj(answer)?.endpoints ?? obj(obj(answer)?.data)?.endpoints;
@@ -72,7 +107,7 @@ export function imagePriceFromEndpoints(answer: unknown, params: StudioPricePara
     for (const l of chosen) perImage.push(l.cost_usd as number);
   }
   const price = span(perImage, `${perImage.length ? round(Math.min(...perImage)) : 0} USD per image${count > 1 ? ` × ${count}` : ""}`);
-  return price ? { ...price, usd: round(price.usd * count), maxUsd: price.maxUsd === null ? null : round(price.maxUsd * count) } : null;
+  return price && price.usd !== null ? { ...price, usd: round(price.usd * count), maxUsd: price.maxUsd === null ? null : round(price.maxUsd * count) } : null;
 }
 
 /**
@@ -147,7 +182,7 @@ export class StudioPricing {
     try {
       if (params.kind === "image") {
         const answer = await this.get(`${OPENROUTER}/images/models/${modelId.split("/").map(encodeURIComponent).join("/")}/endpoints`);
-        return imagePriceFromEndpoints(answer, params);
+        return imagePriceFromEndpoints(answer, params) ?? imageTokenRateFromEndpoints(answer);
       }
       const list = obj(await this.get(`${OPENROUTER}/videos/models`))?.data;
       const entry = Array.isArray(list) ? list.map(obj).find((m) => m?.id === modelId) : undefined;

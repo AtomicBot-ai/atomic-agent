@@ -49,7 +49,7 @@ export {
   writeUserConfigFileSync,
 } from "./config-file.js";
 export { loadConfig, resolveStateDir } from "./load-config.js";
-export { getConfig, resetConfigCache } from "./config-cache.js";
+export { getConfig, resetConfigCache, withFreshConfig } from "./config-cache.js";
 export {
   formatDotenvReadWarning,
   loadDotenvFromStateDir,

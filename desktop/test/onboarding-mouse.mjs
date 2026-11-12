@@ -165,8 +165,12 @@ try {
   }
 
   /* --- the custom-endpoint branch: two screens that had NO control --- */
-  await pick('Custom endpoint');
-  check('a click and Continue reach the custom endpoint step', (await step()) === 'custom_chat_url', await step());
+  /* ATO-816: the third card is Custom, a list of what you already run; its
+     llama.cpp row is the old custom endpoint step. */
+  await pick('An app or server you already run');
+  check('a click and Continue on Custom open its list', (await step()) === 'cloud', await step());
+  await pick('llama.cpp server');
+  check('a click and Continue on llama.cpp server reach the custom endpoint step', (await step()) === 'custom_chat_url', await step());
   check('the URL step offers Back and a primary action',
     JSON.stringify(await foot()) === JSON.stringify(['Back', 'Test and continue']), JSON.stringify(await foot()));
   await snapshot('custom-url');
@@ -291,7 +295,8 @@ try {
     await pick('Local models');
     await app.waitFor('#onboarding .ob-foot button', { timeout: 40000 });
     let on = null;
-    for (let i = 0; i < 6 && !(on && /Back/.test(on.label)); i += 1) {
+    // ATO-1402: the .gguf way in under the list comes before the action bar.
+    for (let i = 0; i < 8 && !(on && /Back/.test(on.label)); i += 1) {
       await app.press('Tab', { settle: 150 });
       on = await app.focusInfo();
     }
@@ -361,6 +366,7 @@ try {
   /* --- the keyboard is untouched --- */
   {
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
+    check('Back from the key screen returns to the provider list', (await step()) === 'cloud', await step());
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
     check('back on the choice screen', (await step()) === 'choose', await step());
     say(await app.press('ArrowDown'));
@@ -368,7 +374,7 @@ try {
     const rows = (await app.snap()).rows;
     check('the arrows still move the cursor', (rows[2] || '').startsWith('> '), JSON.stringify(rows));
     say(await app.press('Enter'));
-    check('Enter still activates the row under the cursor', (await step()) === 'custom_chat_url', await step());
+    check('Enter still activates the row under the cursor', (await step()) === 'cloud', await step());
     say(await app.press('Escape'));
     check('Escape still goes back', (await step()) === 'choose', await step());
   }

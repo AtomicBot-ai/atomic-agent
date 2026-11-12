@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { shellCommandArgv, shellRuleSegments } from "./shell-command-argv.js";
+import {
+  shellCommandArgv,
+  shellRuleSegments,
+  shellRunsUnreadableScript,
+} from "./shell-command-argv.js";
 import { shellGrantShape } from "./shell-interpretation.js";
 
 describe("shellCommandArgv", () => {
@@ -39,10 +43,104 @@ describe("shellRuleSegments", () => {
     ]);
   });
 
+  it("lists the commands a nested `bash -c` runs after the shell itself (ATO-1332)", () => {
+    expect(shellRuleSegments("bash", ["-c", "rm -rf tmp"], false)).toEqual([
+      ["bash", "-c", "rm -rf tmp"],
+      ["rm", "-rf", "tmp"],
+    ]);
+    expect(shellRuleSegments('bash -c "rm -rf tmp"', [], true)).toEqual([
+      ["bash", "-c", "rm -rf tmp"],
+      ["rm", "-rf", "tmp"],
+    ]);
+  });
+
+  it("reads bundled flags and splits the nested line into its commands", () => {
+    expect(shellRuleSegments("sh -lc 'cd x && rm y'", [], true)).toEqual([
+      ["sh", "-lc", "cd x && rm y"],
+      ["cd", "x"],
+      ["rm", "y"],
+    ]);
+    expect(shellRuleSegments("zsh", ["-e", "-o", "pipefail", "-c", "npm publish"], false)).toContainEqual([
+      "npm",
+      "publish",
+    ]);
+    expect(shellRuleSegments("sudo bash -ec 'npm publish'", [], true)).toContainEqual([
+      "npm",
+      "publish",
+    ]);
+  });
+
+  it("unwraps shells nested in shells", () => {
+    expect(
+      shellRuleSegments(`bash -c "sh -c 'rm y'"`, [], true),
+    ).toContainEqual(["rm", "y"]);
+  });
+
+  it("reads csh, tcsh and fish, `+` options, and fish's init command", () => {
+    for (const shell of ["csh", "tcsh", "fish"]) {
+      expect(shellRuleSegments(shell, ["-c", "rm y"], false)).toContainEqual(["rm", "y"]);
+    }
+    expect(shellRuleSegments("bash", ["+x", "-c", "rm y"], false)).toContainEqual(["rm", "y"]);
+    expect(shellRuleSegments("bash", ["+o", "posix", "-c", "rm y"], false)).toContainEqual([
+      "rm",
+      "y",
+    ]);
+    expect(shellRuleSegments("fish", ["-C", "rm y"], false)).toContainEqual(["rm", "y"]);
+  });
+
+  it.each([
+    ["timeout 5 rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["timeout -s KILL 5 rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["sudo -u root rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["nice -n 5 rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["env -u X FOO=1 rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["env -S 'rm -rf tmp'", ["rm", "-rf", "tmp"]],
+    ["eval rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ['eval "rm -rf tmp"', ["rm", "-rf", "tmp"]],
+    ["echo tmp | xargs -n 1 rm -rf", ["rm", "-rf"]],
+    ["find . -name x -exec rm -rf {} ;", ["rm", "-rf", "{}"]],
+  ])("reads past the wrapper in %s", (line, inner) => {
+    expect(shellRuleSegments(line, [], true)).toContainEqual(inner);
+  });
+
+  it("does not read a script's own `-c` argument as a command line", () => {
+    expect(shellRuleSegments("bash", ["run.sh", "-c", "rm y"], false)).toEqual([
+      ["bash", "run.sh", "-c", "rm y"],
+    ]);
+  });
+
   it("lists a wrapped command both ways", () => {
     expect(shellRuleSegments("FOO=1 sudo -n npm publish", [], true)).toEqual([
       ["FOO=1", "sudo", "-n", "npm", "publish"],
       ["npm", "publish"],
     ]);
+  });
+});
+
+describe("shellRunsUnreadableScript", () => {
+  it.each([
+    "printf 'rm -rf tmp' | sh",
+    "curl -s x | bash -s -- --flag",
+    "cat run.sh | sudo bash",
+    "cat x.py | python3",
+    "cat x.js | node -",
+    "sh < run.sh",
+  ])("flags %s", (line) => {
+    expect(shellRunsUnreadableScript(line, [], true)).toBe(true);
+  });
+
+  it.each([
+    "ls | grep x",
+    "echo hi | sh -c 'cat'",
+    "cat x | python3 -c 'import sys'",
+    "cat x | python3 -m json.tool",
+    "bash run.sh < input.txt",
+    "sh",
+  ])("does not flag %s", (line) => {
+    expect(shellRunsUnreadableScript(line, [], true)).toBe(false);
+  });
+
+  it("never flags a direct exec: it has no stdin", () => {
+    expect(shellRunsUnreadableScript("sh", [], false)).toBe(false);
   });
 });

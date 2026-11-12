@@ -20,7 +20,11 @@ import {
 import { describePullWaiting } from "./describe-pull-waiting.js";
 import { NotifyPromptBox } from "./notify-prompt-box.js";
 import { CORE_FAILURE_NOTICE_ROWS, CoreFailureNotice } from "./core-failure-notice.js";
-import type { LocalModelDef } from "../../local-llm/index.js";
+import {
+  modelDisplayName,
+  modelMemoryNeedWords,
+  type LocalModelDef,
+} from "../../local-llm/index.js";
 import { renderProgressBar } from "../components/render-progress-bar.js";
 
 /**
@@ -185,14 +189,19 @@ function ramFitColor(fit: RamFit): string {
   }
 }
 
+/**
+ * ATO-1410: the same figure and the same words as the desktop. "needs N GB"
+ * is always `recommendedRamGb` (`modelMemoryNeedWords`); `minRamGb` only
+ * says where a tight fit ends.
+ */
 function ramFitLabel(fit: RamFit, def: LocalModelDef): string {
   switch (fit) {
     case "ok":
-      return `RAM ok (${def.recommendedRamGb}+ GB)`;
+      return `fits (${modelMemoryNeedWords(def)})`;
     case "tight":
-      return `RAM tight (need ${def.recommendedRamGb} GB)`;
+      return `tight fit, runs slowly (${modelMemoryNeedWords(def)})`;
     case "insufficient":
-      return `RAM low (need ${def.minRamGb} GB min)`;
+      return `will not run (${modelMemoryNeedWords(def)}, does not start under ${def.minRamGb} GB)`;
   }
 }
 
@@ -294,7 +303,7 @@ export function LocalModelDetail({
   return (
     <Box flexDirection="column">
       <Text bold color={theme.colors.accentSoft}>
-        {m.name}
+        {modelDisplayName(m)}
         {m.tag ? <Text color={theme.colors.accent}> [{m.tag}]</Text> : null}
       </Text>
       <Text color={theme.colors.muted}>{m.id}</Text>
@@ -322,7 +331,7 @@ export function LocalModelDetail({
         </Text>
       ) : null}
       <Text color={theme.colors.muted}>
-        RAM {m.minRamGb}–{m.recommendedRamGb} GB · ctx {m.contextLabel} ·{" "}
+        {modelMemoryNeedWords(m)} RAM · ctx {m.contextLabel} ·{" "}
         {m.sizeLabel}
       </Text>
       {fit && panel.totalRamGb !== null ? (
@@ -667,7 +676,7 @@ function renderChatRow(
         >
           {isCursor ? "> " : "  "}
           {r.active ? "* " : ""}
-          {r.id} {r.def.sizeLabel}
+          {modelDisplayName(r.def)} {r.def.sizeLabel}
         </Text>
         <Text
           color={r.downloaded ? "green" : theme.colors.muted}

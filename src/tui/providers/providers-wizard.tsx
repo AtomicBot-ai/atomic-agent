@@ -32,6 +32,15 @@ import {
 } from "./providers-model-options.js";
 import { CLAUDE_CLI_DEFAULT_CHAT_MODEL } from "../../llm/provider/subscription-cli/claude-cli-models.js";
 import { subscriptionCliForWizardKind } from "./providers-wizard-state.js";
+import { getConfig } from "../../config/index.js";
+import {
+  checkSubscriptionCli,
+  configuredSubscriptionBinPath,
+  registerBuiltInCliAdapters,
+  resolveCliAdapter,
+  type SubscriptionCliStatusReport,
+} from "../../llm/provider/subscription-cli/index.js";
+import { subscriptionCliStatusLine } from "./subscription-cli-status-line.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 import type { WizardMouseRoute } from "./route-wizard-key.js";
 import { CHECKING_KEY_HINT } from "./providers-wizard-measure.js";
@@ -100,6 +109,8 @@ function renderLineField(props: {
   placeholder: string;
   hint: string;
   error: string | null;
+  /** ATO-1204: one status line (the subscription CLI's), above the hint. */
+  status?: { text: string; tone: "ok" | "warn" | "muted" };
 }): ReactElement {
   const display = props.value.length > 0 ? props.value : props.placeholder;
   const muted = props.value.length === 0;
@@ -126,9 +137,55 @@ function renderLineField(props: {
       {props.error ? (
         <Text color={theme.colors.error}>! {props.error}</Text>
       ) : null}
+      {props.status ? (
+        <Text
+          color={
+            props.status.tone === "ok"
+              ? theme.colors.success
+              : props.status.tone === "warn"
+                ? theme.colors.warn
+                : theme.colors.muted
+          }
+        >
+          {props.status.text}
+        </Text>
+      ) : null}
       <Text color={theme.colors.muted}>{props.hint}</Text>
     </Box>
   );
+}
+
+/**
+ * ATO-1204: is this subscription CLI installed and signed in? Asked once when
+ * the step opens (`--version`, and `codex login status`; never a turn), the
+ * same check as `atomic-agent providers status`.
+ */
+function useSubscriptionCliStatus(
+  cli: "claude" | "codex" | null,
+  providerId: string | null,
+): SubscriptionCliStatusReport | null {
+  const [report, setReport] = useState<SubscriptionCliStatusReport | null>(null);
+  useEffect(() => {
+    if (!cli) return;
+    let alive = true;
+    setReport(null);
+    registerBuiltInCliAdapters();
+    // The configured binPath, as `providers status` uses: a CLI installed
+    // off PATH is not "missing" here while the agent runs it fine.
+    let binPath: string | undefined;
+    try {
+      binPath = configuredSubscriptionBinPath(getConfig().llm?.providers, cli, providerId);
+    } catch {
+      binPath = undefined;
+    }
+    checkSubscriptionCli(resolveCliAdapter(cli), binPath ? { binPath } : {}).then(
+      (r) => { if (alive) setReport(r); },
+      () => { /* no line beats a wrong one */ },
+    );
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cli, providerId]);
+  return report;
 }
 
 function CompatChatModelStep(props: {
@@ -137,6 +194,8 @@ function CompatChatModelStep(props: {
   route?: WizardMouseRoute;
 }): ReactElement {
   const w = props.wizard;
+  // Before any early return: the hook order must not depend on the kind.
+  const cliReport = useSubscriptionCliStatus(w.kind ? subscriptionCliForWizardKind(w.kind) : null, w.providerId);
   const baseUrl = baseUrlForWizard(w);
   const isCompat = w.kind === "openai-compatible";
   const isGemini = w.kind === "gemini";
@@ -188,6 +247,7 @@ function CompatChatModelStep(props: {
   const cli = w.kind ? subscriptionCliForWizardKind(w.kind) : null;
   if (cli) {
     return renderLineField({
+      status: subscriptionCliStatusLine(cliReport, cli),
       title: `Chat model id — ${cli} CLI`,
       value: w.chatModelLine,
       placeholder:

@@ -19,7 +19,7 @@ import type {
 // `FAKE` shared object.
 interface FakeBehaviour {
   connect: () => Promise<void>;
-  close: () => Promise<void>;
+  close: (reason?: string) => Promise<void>;
   catalog: McpServerCatalog;
 }
 
@@ -46,10 +46,10 @@ vi.mock("./mcp-client.js", () => {
       await b.connect();
       this.connected = true;
     }
-    async close(): Promise<void> {
+    async close(reason?: string): Promise<void> {
       const b = FAKE_BY_NAME.get(this.config.name);
       this.connected = false;
-      if (b) await b.close();
+      if (b) await b.close(reason);
     }
     getCatalog(): McpServerCatalog {
       const b = FAKE_BY_NAME.get(this.config.name);
@@ -218,6 +218,73 @@ describe("McpManager", () => {
     const ok = await tools.get("mcp.readers.lookup").run({}, ctx);
     expect(requestedTools).toEqual(["mcp.gated.do_thing"]);
     expect(ok.status).toBe("ok");
+  });
+
+  it("trusts readOnlyHint for stdio servers, not remote ones (ATO-1178)", async () => {
+    const tools = new ToolRegistry();
+    const readOnly = (server: string, rawName: string): McpToolMeta => ({
+      ...metaOf(server, rawName),
+      annotations: { readOnlyHint: true },
+    });
+    for (const server of ["local", "remote", "composio-like"]) {
+      FAKE_BY_NAME.set(server, {
+        connect: async () => {},
+        close: async () => {},
+        catalog: {
+          server,
+          tools: [readOnly(server, "search"), readOnly(server, "other")],
+          resources: [],
+          prompts: [],
+        },
+      });
+    }
+    const requestedTools: string[] = [];
+    const dangerous: DangerousToolOptions = {
+      approvals: {
+        request: async (req: { tool: string }) => {
+          requestedTools.push(req.tool);
+          return { approvalId: "a", approved: true };
+        },
+      } as unknown as ApprovalGate,
+      approvalRequired: true,
+    };
+    const mgr = new McpManager(
+      [
+        stdioConfig("local"),
+        {
+          name: "remote",
+          enabled: true,
+          transport: { kind: "sse", url: "https://mcp.example/sse" },
+        },
+        {
+          name: "composio-like",
+          enabled: true,
+          transport: { kind: "streamable_http", url: "https://mcp.example/mcp" },
+          trustedReadOnlyTools: ["search"],
+        },
+      ],
+      { toolRegistry: tools, dangerous },
+    );
+    await mgr.start();
+    const ctx: ToolContext = {
+      workingDir: "/tmp",
+      sessionId: "s",
+      stepIndex: 0,
+      signal: new AbortController().signal,
+    };
+    for (const name of [
+      "mcp.local.search",
+      "mcp.remote.search",
+      "mcp.composio-like.search",
+      "mcp.composio-like.other",
+    ]) {
+      await tools.get(name).run({}, ctx);
+    }
+    // stdio and the named remote tool run silently; the rest ask.
+    expect(requestedTools).toEqual([
+      "mcp.remote.search",
+      "mcp.composio-like.other",
+    ]);
   });
 
   it("start() isolates per-server failures", async () => {
@@ -500,6 +567,21 @@ describe("McpManager", () => {
       expect(tools.has("mcp.docs.lookup")).toBe(false);
       expect(closeSpy).toHaveBeenCalledTimes(1);
       expect(mgr.listServerNames()).not.toContain("docs");
+    });
+
+    it("removeServerLive hands its reason to the client close (ATO-1407)", async () => {
+      const tools = new ToolRegistry();
+      const closeSpy = vi.fn(async (_reason?: string) => {});
+      FAKE_BY_NAME.set("docs", {
+        connect: async () => {},
+        close: closeSpy,
+        catalog: { server: "docs", tools: [metaOf("docs", "search")], resources: [], prompts: [] },
+      });
+      const mgr = new McpManager([stdioConfig("docs")], { toolRegistry: tools });
+      await mgr.start();
+      await mgr.removeServerLive("docs", "plugin docs no longer allows this server");
+      expect(closeSpy).toHaveBeenCalledWith("plugin docs no longer allows this server");
+      expect(tools.has("mcp.docs.search")).toBe(false);
     });
 
     it("removeServerLive on an absent name short-circuits", async () => {

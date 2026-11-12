@@ -13,7 +13,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 
 - `localModels.url` (default `"http://127.0.0.1:9931"`, llama-server's own default port since llama.cpp v0.7.0; Docker images still listen on 8080).
 - `localModels.mode` (default `"external"`).
-- `localModels.completionMaxTokens` (default `16384`).
+- `localModels.completionMaxTokens` (default `16384`; `ATOMIC_AGENT_LLAMA_MAX_TOKENS`, when set, wins and the start-up log says which one was used).
+- `localModels.requestTimeoutMs` (default `300000`; budget of one local-model request, the idle gap for a stream; `ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS`, when set, wins).
 - `localModels.useServerTemplate` (default `"auto"`).
 - `localModels.thinking` (default `"auto"`).
 - `localModels.reasoningBudgetTokens` (default `0`, no bound; a positive value is enforced in full; until ATO-607 llama.cpp's repeat limit capped it at 499, see #600).
@@ -233,7 +234,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 
 ## analytics
 
-- `analytics.enabled` (default `true`). `ATOMIC_AGENT_ANALYTICS=off` or `DO_NOT_TRACK=1` in the environment turns analytics and crash reports off for that process whatever this says.
+- `analytics.enabled` (default `true`). `ATOMIC_AGENT_ANALYTICS=off` or `DO_NOT_TRACK=1` in the environment turns analytics and crash reports off for that process whatever this says. `ATOMIC_AGENT_TEAM=1`, or a file `~/.atomic-agent-team`, marks the machine as one of ours: events are still sent, tagged `test_run` (for the team's own QA and test runs).
 
 ## telegram
 

@@ -12,6 +12,12 @@ import { summarizeFailedAttempts } from "../../llm/fallback/failed-attempts.js";
 // (`classifyProviderWaitCause`) and the clients it would bring along.
 import { readErrnoCode } from "../../llm/errno-code.js";
 import { readGenerationId } from "../../llm/provider/openai/generation-id.js";
+// A leaf too: the shared credential detector of ATO-1077.
+import {
+  knownSecretsFromEnv,
+  maskSecretsDeep,
+  type KnownSecret,
+} from "../../error-reporting/secret-detector.js";
 
 import type {
   TraceError,
@@ -72,6 +78,13 @@ export interface TraceRecorderOptions {
   emit: TraceSink;
   /** Optional clock override — used by tests for deterministic timestamps. */
   now?: () => number;
+  /**
+   * Exact secret values masked in a tool result's `details` before the
+   * row is written (ATO-1176), read on each tool row. Shape-based
+   * masking applies regardless. Absent ⇒ the secret-looking variables of
+   * `process.env`, which carries the agent's `.env`.
+   */
+  knownSecrets?: () => readonly KnownSecret[];
 }
 
 export interface TraceRecorderBeginInfo {
@@ -201,6 +214,7 @@ export function createTraceRecorder(
   options: TraceRecorderOptions,
 ): TraceRecorder {
   const now = options.now ?? (() => Date.now());
+  const knownSecrets = options.knownSecrets ?? (() => knownSecretsFromEnv());
   const sessionId = options.sessionId;
   let seq = 0;
   let currentTurnIndex = 0;
@@ -317,8 +331,12 @@ export function createTraceRecorder(
           args: call?.args ?? {},
           status: inner.result.status,
           summary: inner.result.summary,
+          // The registry masks the summary and the prompt-bound details
+          // (ATO-1077); the rest of `details` (a command's stdout, a
+          // fetched body) reaches the trace file only through here, so
+          // every string in it is masked too (ATO-1176).
           ...(inner.result.details !== undefined
-            ? { details: inner.result.details }
+            ? { details: maskSecretsDeep(inner.result.details, knownSecrets()) }
             : {}),
           ...(inner.result.truncated ? { toolTruncated: true } : {}),
           ...(inner.batchSize > 1
@@ -609,6 +627,19 @@ export function createTraceRecorder(
         case "parse_failure_recovered":
           push({
             type: "parse_failure_recovered",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            attempt: event.attempt,
+            budget: event.budget,
+            reason: event.reason,
+          });
+          return;
+        case "reply_time_limit_retried":
+          push({
+            type: "reply_time_limit_retried",
             seq: nextSeq(),
             sessionId,
             ts: now(),

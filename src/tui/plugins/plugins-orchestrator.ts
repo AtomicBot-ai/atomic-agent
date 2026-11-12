@@ -53,12 +53,13 @@ export class PluginsOrchestrator {
       name,
       enabled
         ? `${name} on. Its MCP servers start with the next agent start.`
-        : `${name} off. Its MCP servers stop with the next agent start.`,
+        : `${name} off. Its running MCP servers stop now.`,
     );
   }
 
   async setPartEnabled(name: string, partId: string, enabled: boolean): Promise<void> {
-    const restart = partId.startsWith("mcp:") ? " Takes effect with the next agent start." : "";
+    // Turning a server off stops it now (ATO-1407); starting one waits for the next agent start.
+    const restart = !partId.startsWith("mcp:") ? "" : enabled ? " Starts with the next agent start." : " Stops now.";
     await this.run(
       () => setPluginPartEnabled(this.stateDir(), name, partId, enabled),
       name,
@@ -73,7 +74,7 @@ export class PluginsOrchestrator {
       name,
       allow
         ? `${name} may run its local MCP servers, hooks and scripts and receive your keys. Servers start with the next agent start.`
-        : `${name}'s hooks and scripts are off, and its local MCP servers and servers that read your keys won't start again. Any already running stop when the agent restarts.`,
+        : `${name}'s code is off: its hooks, scripts, local MCP servers and servers that read your keys stop now.`,
     );
   }
 

@@ -3,6 +3,7 @@ import { LlmFailure, classifyFailure, CancelledError, LlamaServerError, Transpor
 import { ToolCallParseError } from "../../llm/grammar/tool-call-grammar.js";
 import { isLlamaSizeRefusal, toRequestTooLargeError } from "../../llm/reliability/request-too-large.js";
 import { SubscriptionCliInvocationError } from "../../llm/provider/subscription-cli/subscription-cli-errors.js";
+import { isGroqRequestTooLarge } from "../../llm/provider/openai/groq-plan-limit.js";
 
 
 /**
@@ -91,7 +92,8 @@ export function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
     // A request the provider refused for its size is the one 400 whose
     // body the user needs to read: it names the limit. Everything else
     // keeps the humanized line alone.
-    const message = isRequestSizeRejection(err)
+    // Groq's plan-limit sentence already carries its numbers (ATO-1283).
+    const message = isRequestSizeRejection(err) && !isGroqRequestTooLarge(err)
       ? `${humanizeOpenAiHttpError(err)} ${requestSizeExcerpt(err.message)}`
       : humanizeOpenAiHttpError(err);
     return new TransportError(message, err.status, err.url, {

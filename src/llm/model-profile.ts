@@ -198,9 +198,31 @@ export const GEMMA4_THINK_PROFILE: TaggedReasoningModelProfile = {
   vision: VISION_ABSENT,
 };
 
+/**
+ * What decided the profile: `"template"` when the chat template alone
+ * identified the reasoning framing, `"name"` when an alias / GGUF file
+ * name hint was needed on top of the template, `"fallback"` when nothing
+ * matched and the model runs as `plain-instruct`. Logged on the
+ * "model profile resolved" line so a wrong profile can be traced to its
+ * cause from the boot log.
+ */
+export type ModelProfileMatch = "template" | "name" | "fallback";
+
+export interface DetectedModelProfile {
+  profile: ModelProfile;
+  matchedBy: ModelProfileMatch;
+}
+
 export function detectModelProfile(
   props: Record<string, unknown>,
 ): ModelProfile {
+  return detectModelProfileWithMatch(props).profile;
+}
+
+/** `detectModelProfile` plus which signal decided it (see `ModelProfileMatch`). */
+export function detectModelProfileWithMatch(
+  props: Record<string, unknown>,
+): DetectedModelProfile {
   const modelNames = readModelNameHints(props);
   const chatTemplate = readString(props.chat_template);
   const templateLower = chatTemplate.toLowerCase();
@@ -208,7 +230,7 @@ export function detectModelProfile(
   const supportsPreserveReasoning =
     readBoolean(caps.supports_preserve_reasoning) ?? false;
 
-  const base = selectBaseProfile(
+  const { profile: base, matchedBy } = selectBaseProfile(
     modelNames,
     templateLower,
     supportsPreserveReasoning,
@@ -222,8 +244,8 @@ export function detectModelProfile(
       : {}),
     vision,
   } as ModelProfile;
-  if (contextWindow === null) return enriched;
-  return { ...enriched, contextWindow };
+  if (contextWindow === null) return { profile: enriched, matchedBy };
+  return { profile: { ...enriched, contextWindow }, matchedBy };
 }
 
 /**
@@ -277,7 +299,7 @@ function selectBaseProfile(
   modelAlias: string,
   templateLower: string,
   supportsPreserveReasoning: boolean,
-): ModelProfile {
+): DetectedModelProfile {
   // The template is what the model was trained on; the alias is whatever
   // the operator (or our daemon) typed. A full Gemma 4 native thinking
   // template decides on its own, before any alias-gated branch: Gemma 4
@@ -286,7 +308,7 @@ function selectBaseProfile(
   // nemotron-named alias must not push a `<|turn>`-framed model onto the
   // ChatML `<think>` prefill.
   if (hasGemma4NativeThinkTemplate(templateLower)) {
-    return GEMMA4_THINK_PROFILE;
+    return { profile: GEMMA4_THINK_PROFILE, matchedBy: "template" };
   }
   if (
     looksLikeQwenThinkModel(
@@ -295,7 +317,7 @@ function selectBaseProfile(
       supportsPreserveReasoning,
     )
   ) {
-    return QWEN_THINK_PROFILE;
+    return { profile: QWEN_THINK_PROFILE, matchedBy: "name" };
   }
   // Nemotron needs its own detector but not its own profile. Its ChatML
   // template is qwen-shaped — `<think>`/`</think>` prefilled at the
@@ -305,12 +327,21 @@ function selectBaseProfile(
   // alias, which Nemotron's does not match, so without this branch it would
   // fall through to `plain-instruct` and lose its reasoning channel.
   if (looksLikeNemotronThinkModel(modelAlias, templateLower)) {
-    return QWEN_THINK_PROFILE;
+    return { profile: QWEN_THINK_PROFILE, matchedBy: "name" };
+  }
+  // No name hint, but the template itself is the ChatML + `<think>`
+  // framing QWEN_THINK_PROFILE reproduces (ATO-1294): a Qwen or Nemotron
+  // fine-tune served under a neutral `--alias` / file name keeps its
+  // reasoning channel. The signature is strict on purpose — see
+  // `hasChatMlThinkTemplate` — so GLM-style or Harmony templates that
+  // merely mention `<think>` stay plain.
+  if (hasChatMlThinkTemplate(templateLower, supportsPreserveReasoning)) {
+    return { profile: QWEN_THINK_PROFILE, matchedBy: "template" };
   }
   if (looksLikeGemma4ThinkModel(modelAlias, templateLower)) {
-    return GEMMA4_THINK_PROFILE;
+    return { profile: GEMMA4_THINK_PROFILE, matchedBy: "name" };
   }
-  return PLAIN_INSTRUCT_PROFILE;
+  return { profile: PLAIN_INSTRUCT_PROFILE, matchedBy: "fallback" };
 }
 
 /**
@@ -409,6 +440,46 @@ function hasGemma4NativeThinkTemplate(templateLower: string): boolean {
     templateLower.includes("<|think|>") &&
     templateLower.includes("<|turn>system") &&
     templateLower.includes("<|turn>model")
+  );
+}
+
+/**
+ * The ChatML thinking template, recognised from the template alone
+ * (ATO-1294). Qwen 3 and Nemotron both ship it: ChatML turn markers
+ * (`<|im_start|>` and `<|im_end|>`), a `<think>`/`</think>` pair, a
+ * thinking control (`enable_thinking` / `preserve_thinking`, or the
+ * server's `supports_preserve_reasoning` cap), and — the strict part — a
+ * generation prompt that opens the assistant turn and writes `<think>`
+ * itself. That last check reads only what follows the final
+ * `add_generation_prompt`, so a ChatML template that just strips old
+ * `<think>` blocks from history (a non-thinking fine-tune) does not
+ * qualify. GLM's `<|assistant|>` framing and Harmony's
+ * `<|start|>`/`<|channel|>` framing carry no ChatML markers and never
+ * match.
+ */
+function hasChatMlThinkTemplate(
+  templateLower: string,
+  supportsPreserveReasoning: boolean,
+): boolean {
+  if (
+    !templateLower.includes("<|im_start|>") ||
+    !templateLower.includes("<|im_end|>") ||
+    !templateLower.includes("<think>") ||
+    !templateLower.includes("</think>")
+  ) {
+    return false;
+  }
+  const hasThinkingControl =
+    templateLower.includes("enable_thinking") ||
+    templateLower.includes("preserve_thinking") ||
+    supportsPreserveReasoning;
+  if (!hasThinkingControl) return false;
+  const generationAt = templateLower.lastIndexOf("add_generation_prompt");
+  if (generationAt < 0) return false;
+  const generation = templateLower.slice(generationAt);
+  return (
+    generation.includes("<|im_start|>assistant") &&
+    generation.includes("<think>")
   );
 }
 

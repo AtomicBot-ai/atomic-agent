@@ -17,6 +17,7 @@ import type { SessionUsageLedger } from "../../session/usage-meter.js";
 import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { LearnedContextWindows } from "../learned-context-windows.js";
+import { isOllamaEntry, readOllamaContextWindow } from "../../llm/provider/ollama/ollama-context-window.js";
 import { resolveVisionProvider, visionRouteAvailable } from "../vision-route.js";
 import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { createLocalLinkPreparer } from "../../llm/local-backend-gate.js";
@@ -28,6 +29,13 @@ import {
 } from "../llm-fallback-seam.js";
 
 type RuntimeInferenceOptions = Pick<CreateAgentRuntimeOptions, "overrides">;
+
+/**
+ * How long an Ollama window probe that learned nothing waits before
+ * another try. A model that was not loaded at the first probe is loaded
+ * by the first request, and `/api/ps` then names its window.
+ */
+const OLLAMA_RETRY_MS = 15_000;
 
 export async function connectRuntimeProviders(
   config: AtomicAgentConfig,
@@ -137,6 +145,10 @@ export type RuntimeProviders = Awaited<ReturnType<typeof connectRuntimeProviders
 export function createRuntimeModelContext(
   config: AtomicAgentConfig,
   providers: Pick<RuntimeProviders, "providerRegistry" | "resolveCurrentRunMode" | "resolveActiveModelName">,
+  options: {
+    /** Reads an Ollama model's real window (ATO-1276); swapped in tests. */
+    readOllamaWindow?: (baseUrl: string, model: string) => Promise<number | null>;
+  } = {},
 ) {
   const {
     providerRegistry,
@@ -190,7 +202,61 @@ export function createRuntimeModelContext(
   const raiseContextWindowTo = (tokens: number): void => {
     observedContextWindows.raise(activeModelKey(), tokens);
   };
+  /**
+   * Ollama allocates `num_ctx` tokens (often 4096), far below the model's
+   * nominal window, and refuses a larger prompt with a 400 (ATO-1276).
+   * Read the real window from the server once per provider/model and
+   * feed it to the learned windows, so the budget and compaction trim
+   * the request to fit. We never send a bigger `num_ctx` (a reload, or
+   * out of memory). Only a window the server named is learned, never a
+   * guessed default: the learned window keeps the minimum and would not
+   * rise again. Fire-and-forget: a failed, slow or unknown probe leaves
+   * the window as it was, and the overflow recovery still learns it.
+   */
+  const readOllamaWindow = options.readOllamaWindow ?? ((baseUrl: string, model: string) => readOllamaContextWindow(baseUrl, model));
+  // One probe per provider/model. A probe that learned nothing (server
+  // not up yet, model not loaded, not Ollama) may be retried after
+  // `OLLAMA_RETRY_MS`.
+  const ollamaProbes = new Map<string, { probe: Promise<void>; missedAt?: number }>();
+  const primeLocalContextWindow = (providerId?: string): Promise<void> => {
+    let baseUrl: string | undefined;
+    let model: string;
+    let key: string;
+    try {
+      const resolved = resolveLlmConfig(getConfig());
+      const id = providerId ?? resolved.activeTextProvider;
+      const entry = resolved.providers.find((p) => p.id === id);
+      if (entry === undefined || entry.kind === "llama-server" || !isOllamaEntry(entry)) return Promise.resolve();
+      baseUrl = entry.baseUrl ?? entry.url;
+      model = resolveActiveModelName(id);
+      key = activeModelKey(id);
+    } catch {
+      return Promise.resolve();
+    }
+    if (baseUrl === undefined || model.length === 0) return Promise.resolve();
+    const known = ollamaProbes.get(key);
+    if (known !== undefined && (known.missedAt === undefined || Date.now() - known.missedAt < OLLAMA_RETRY_MS)) {
+      return known.probe;
+    }
+    const record: { probe: Promise<void>; missedAt?: number } = { probe: Promise.resolve() };
+    record.probe = readOllamaWindow(baseUrl, model).then(
+      (window) => {
+        if (window === null) record.missedAt = Date.now();
+        else observedContextWindows.observe(key, window);
+      },
+      () => { record.missedAt = Date.now(); },
+    );
+    ollamaProbes.set(key, record);
+    return record.probe;
+  };
+
   const resolveCatalogContextWindow = (providerId?: string): number | null => {
+    // A model switch onto Ollama starts its probe here, on the first
+    // read. The probe is async, so this very read (and a step sized from
+    // it) can still see the nominal window; a request that is then too
+    // long is caught by the overflow recovery, and the next read has the
+    // real window. The boot route is primed right after startup.
+    void primeLocalContextWindow(providerId);
     const observed = observedContextWindows.get(activeModelKey(providerId));
     const model = resolveModelPricing(resolveActiveModelName(providerId), providerId);
     const catalogued =
@@ -228,6 +294,7 @@ export function createRuntimeModelContext(
     observeContextWindow,
     raiseContextWindowTo,
     resolveCatalogContextWindow,
+    primeLocalContextWindow,
     resolveCurrentVisionProvider,
     visionOnLiveRoute,
   };

@@ -6,6 +6,7 @@
 export {
   analyticsConfigWrite,
   analyticsEnabled,
+  analyticsStateDir,
   currentRunMode,
   flushAnalytics,
   globalProps,

@@ -157,24 +157,28 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
       "{ repo?: string, includeRemote?: boolean, contains?: string, pattern?: string }",
     tier: "rare",
   },
+  // One descriptor per git write tool (ATO-1296): each matches the
+  // implementation in tools/os/git/ and its JSON Schema in
+  // github-tool-args-schemas.ts.
   {
     name: "os.git.checkout",
     summary:
-      "Switch to a branch, or create one first (may require approval). Never discards local changes.",
+      "Switch to a branch, or create one first (`startPoint` only with `create`). Branches only, never paths (may require approval). Never discards local changes.",
     argsSchema:
       "{ branch: string, create?: boolean, startPoint?: string, repo?: string }",
   },
   {
     name: "os.git.commit",
     summary:
-      "Stage (`paths` or `all`) and commit with `message` (may require approval). Neither → commits what is already staged.",
+      "Stage (`paths` or `all`, not both) and commit with `message` (may require approval). Neither → commits what is already staged.",
     argsSchema:
       "{ message: string, paths?: string[], all?: boolean, repo?: string }",
+    examples: ['{"message":"feat: add parser"}'],
   },
   {
     name: "os.git.push",
     summary:
-      "Push the current (or named) branch to a remote, `-u` by default (may require approval). No force-push. Uses the connected GitHub token for github.com.",
+      "Push the current (or named) branch to a remote (default origin), `-u` on first push (may require approval). No force-push. Needs Remote sync on. Uses the connected GitHub token for github.com.",
     argsSchema:
       "{ remote?: string, branch?: string, setUpstream?: boolean, repo?: string }",
   },
@@ -242,14 +246,6 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
-    name: "os.git.push",
-    summary:
-      "Push a branch (default: current) to a remote (default origin); sets upstream on first push; never forces. Needs Remote sync on; approval-gated.",
-    argsSchema: "{ repo?: string, remote?: string, branch?: string }",
-    examples: ['{"remote":"origin"}'],
-    tier: "rare",
-  },
-  {
     name: "os.git.clone",
     summary: "Clone a repository into the working directory (or dest). Needs Remote sync on; approval-gated.",
     argsSchema: "{ url: string, dest?: string, branch?: string, depth?: number }",
@@ -271,21 +267,6 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     argsSchema:
       "{ repo?: string, paths?: string[], all?: boolean, unstage?: boolean }",
     examples: ['{"all":true}'],
-  },
-  {
-    name: "os.git.commit",
-    summary:
-      "Commit staged changes with a message; `all` also commits tracked modifications. Approval like a file write.",
-    argsSchema: "{ repo?: string, message: string, all?: boolean }",
-    examples: ['{"message":"feat: add parser"}'],
-  },
-  {
-    name: "os.git.checkout",
-    summary:
-      "Switch branches; `create` makes a new one (optionally from `startPoint`). Branches only, never paths. Approval like a file write.",
-    argsSchema:
-      "{ repo?: string, branch: string, create?: boolean, startPoint?: string }",
-    tier: "rare",
   },
   {
     name: "os.proc.list",

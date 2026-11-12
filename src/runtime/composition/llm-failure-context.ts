@@ -3,12 +3,18 @@ import type { LlmFailureContext } from "../../error-reporting/index.js";
 import { managedPortsOf } from "../../llm/describe-llama-health-failure.js";
 import { readErrnoCode } from "../../llm/errno-code.js";
 import { readFailingLink } from "../../llm/fallback/index.js";
+import { findLocalPortTaken } from "../../llm/reliability/local-port-taken.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import {
+  classifyLocalFault,
+  explainManagedEngineLiveness,
   readChatDaemonPidState,
-  readManagedEngineLiveness,
+  readLogTail,
+  resolveLogFilePath,
   type ChatDaemonPidState,
+  type LocalFaultTag,
   type ManagedEngineLiveness,
+  type ManagedEngineLivenessReport,
 } from "../../local-llm/index.js";
 import { resolveTurnLocalEngine } from "./runtime-turn-service.js";
 
@@ -21,12 +27,32 @@ export interface LlmFailureContextDeps {
    * engine. Asked for refused connections only.
    */
   readEngineLiveness?: (dataDir: string) => ManagedEngineLiveness;
+  /**
+   * The same reading with the branch that decided it and the engine lock
+   * as read (ATO-1275). Preferred over `readEngineLiveness` when given.
+   */
+  explainEngineLiveness?: (dataDir: string) => ManagedEngineLivenessReport;
+  /**
+   * The managed engine's fault in its current run, as a fixed word read
+   * from its log (ATO-1279). The log text stays on the machine. Absent
+   * means no `localFault` is reported.
+   */
+  readLocalFault?: (dataDir: string) => LocalFaultTag;
+}
+
+/** How much of the managed engine's log the fault tag reads. */
+const LOCAL_FAULT_LOG_BYTES = 64 * 1024;
+
+/** The current run's fault, by fixed strings, from the tail of the engine's log. */
+export function readLocalFaultFromLog(dataDir: string): LocalFaultTag {
+  return classifyLocalFault(readLogTail(resolveLogFilePath(dataDir), LOCAL_FAULT_LOG_BYTES).text);
 }
 
 const defaultDeps: LlmFailureContextDeps = {
   readConfig: getConfig,
   readDaemonPidState: readChatDaemonPidState,
-  readEngineLiveness: readManagedEngineLiveness,
+  explainEngineLiveness: explainManagedEngineLiveness,
+  readLocalFault: readLocalFaultFromLog,
 };
 
 /**
@@ -54,6 +80,8 @@ export function describeLlmFailure(
   // turn ended (`LocalEngineDownError`) keeps the refusal on its cause.
   const connectionRefused = readErrnoCode(event.error) === "ECONNREFUSED";
   if (connectionRefused) context.connectionRefused = true;
+  // ATO-1277: the managed port answered 401 with our engine not running.
+  if (findLocalPortTaken(event.error) !== null) context.portHeldByOther = true;
   const requestUrl = readRequestUrl(event.error);
   if (requestUrl !== undefined) context.requestUrl = requestUrl;
   let config: AtomicAgentConfig;
@@ -75,7 +103,26 @@ export function describeLlmFailure(
   } catch {
     context.daemonState = "unknown";
   }
-  if (connectionRefused && deps.readEngineLiveness !== undefined) {
+  // Why the managed model failed, when its log says (out of memory, a
+  // crash): without it an alive engine answering 500 or cutting a stream
+  // has no cause in the report at all (ATO-1279).
+  if (context.providerId === MANAGED_LOCAL_LINK && deps.readLocalFault !== undefined) {
+    try {
+      context.localFault = deps.readLocalFault(config.paths.localModelsDataDir);
+    } catch {
+      context.localFault = "unknown";
+    }
+  }
+  if (connectionRefused && deps.explainEngineLiveness !== undefined) {
+    try {
+      const report = deps.explainEngineLiveness(config.paths.localModelsDataDir);
+      context.engineLiveness = report.state;
+      context.engineLivenessReason = report.reason;
+      context.engineLock = report.lock;
+    } catch {
+      context.engineLiveness = "unknown";
+    }
+  } else if (connectionRefused && deps.readEngineLiveness !== undefined) {
     try {
       context.engineLiveness = deps.readEngineLiveness(config.paths.localModelsDataDir);
     } catch {
@@ -84,6 +131,9 @@ export function describeLlmFailure(
   }
   return context;
 }
+
+/** The built-in managed local link, the only one whose log is ours to read. */
+const MANAGED_LOCAL_LINK = "local-llama";
 
 /** How far down `cause` the request URL is looked for. */
 const MAX_URL_CAUSE_DEPTH = 4;

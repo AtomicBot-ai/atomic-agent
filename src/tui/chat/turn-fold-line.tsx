@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
+import { describeToolCalls } from "../../tools/describe-tool-call.js";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import {
@@ -11,7 +12,9 @@ import { theme } from "../theme/theme.js";
 
 /**
  * The one line a finished turn folds into (ATO-963):
- * `Used 6 tools · 1 failed · 40s ▸`. A click opens the steps under it and
+ * `Read 3 files, ran 2 commands · 1 failed · 40s ▸`. The words come from
+ * the shared step verbs (ATO-962); "Used N tools" stays the fallback when
+ * they have nothing to say. A click opens the steps under it and
  * a second click folds them again; `/expand` does the same from the
  * keyboard. One row plus the blank row above it: the label truncates, the
  * failure count and the time never do. `estimateMessageHeight` charges the
@@ -28,7 +31,7 @@ export function TurnFoldLine({
 }): ReactElement {
   const parts = turnFoldLineParts(fold, {
     open,
-    ...(describe ? { describe } : {}),
+    describe: describe ?? describeFoldedCards,
   });
   const sep = ` ${theme.glyphs.dotSeparator} `;
   const line = (
@@ -71,6 +74,10 @@ export function TurnFoldLine({
   );
   return <FoldToggle messageId={fold.messageId}>{line}</FoldToggle>;
 }
+
+/** "Read 3 files, ran 2 commands" for the folded cards; "" lets the caller fall back. */
+const describeFoldedCards: DescribeFoldedCards = (cards) =>
+  describeToolCalls(cards.map((c) => ({ name: c.tool })));
 
 /** A click on the line opens / folds that one turn. Transparent without a mouse layer. */
 function FoldToggle({

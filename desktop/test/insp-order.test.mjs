@@ -56,6 +56,37 @@ test('newest first, text growing in the running block: only what sits below it m
   assert.equal(O.inspGrowScroll({scrollHeight: 200, clientHeight: 300, scrollTop: 0}, 50, false), null);
 });
 
+test('newest first, a rebuild that paints unpainted text: a reader keeps the block at the top edge (ATO-1336)', () => {
+  // A fake panel: blocks as {rs, top, height} in content px, a viewport at 100px on screen.
+  const panel = (scrollTop, blocks) => ({
+    scrollTop,
+    getBoundingClientRect: () => ({top: 100}),
+    querySelectorAll: () => blocks.map((b) => ({
+      dataset: {rs: b.rs},
+      getBoundingClientRect: () => ({top: 100 + b.top - scrollTop, bottom: 100 + b.top + b.height - scrollTop}),
+    })),
+  });
+  // Reading 240px into the running block r2 (on top), r1 below it.
+  const before = panel(240, [{rs: 'r2', top: 20, height: 600}, {rs: 'r1', top: 620, height: 400}]);
+  const anchor = O.inspReadAnchor(before);
+  assert.deepEqual(anchor, {rs: 'r2', off: 220});
+  // The rebuild paints 150px r2's stream frame had not drawn: from-the-end
+  // keeping would scroll to 390; held by r2, the reader stays at 240.
+  const after = panel(390, [{rs: 'r2', top: 20, height: 750}, {rs: 'r1', top: 770, height: 400}]);
+  assert.equal(O.inspAnchorScroll(after, anchor), 240);
+  // A new block above (r3, 300px) still moves the reader down with r2.
+  const withNew = panel(390, [{rs: 'r3', top: 20, height: 300}, {rs: 'r2', top: 320, height: 600}, {rs: 'r1', top: 920, height: 400}]);
+  assert.equal(O.inspAnchorScroll(withNew, anchor), 540);
+  // Reading r1 below the running block: held by r1, which moved down by the new text.
+  const inR1 = O.inspReadAnchor(panel(700, [{rs: 'r2', top: 20, height: 600}, {rs: 'r1', top: 620, height: 400}]));
+  assert.deepEqual(inR1, {rs: 'r1', off: 80});
+  assert.equal(O.inspAnchorScroll(after, inR1), 850);
+  // Block gone, or no panel: the caller keeps its fallback.
+  assert.equal(O.inspAnchorScroll(panel(0, [{rs: 'x', top: 0, height: 10}]), anchor), null);
+  assert.equal(O.inspReadAnchor(null), null);
+  assert.equal(O.inspAnchorScroll(null, anchor), null);
+});
+
 test('oldest first: the end follows new text, as before', () => {
   const atEnd = O.inspScrollKeep({scrollTop: 700, scrollHeight: 1000, clientHeight: 300}, false);
   assert.deepEqual(atEnd, {at: 'end'});
@@ -76,4 +107,6 @@ test('the page loads insp-order.js before renderer.js, and the panel lists with 
   assert.match(r, /inspOrdered\(r\)\.map\(\(m\) => '<div class="insp-rs"/);
   assert.match(r, /if \(k === 'inspord'\)\s+\{ inspOrderSet\(!INSP_ORDER\.newestFirst\);/);
   assert.match(r, /now\.scrollTop = inspScrollTo\(keep, now\)/);
+  assert.match(r, /inspReadAnchor\(prev\)/);
+  assert.match(r, /inspAnchorScroll\(now, anchor\)/);
 });

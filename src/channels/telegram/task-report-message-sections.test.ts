@@ -167,4 +167,28 @@ describe("formatTaskReportDigest", () => {
       for (const r of group) expect(text).toContain(r.taskId);
     });
   });
+
+  it("shows the task's spend against its cap, not only this run's (ATO-1288)", () => {
+    const text = formatTaskReportMessage(
+      makeReport({ spendUsd: 0.5, spentUsd: 4.8, maxCostUsd: 5, stopCause: "cost_ceiling" }),
+    );
+    expect(text).toContain("spent ~$4.80 of $5.00");
+    expect(text).not.toContain("spend ~$0.50");
+  });
+
+  it("puts a task blocked on a used-up budget under Needs you (ATO-1288)", () => {
+    const text = formatTaskReportMessage(
+      makeReport({
+        status: "blocked",
+        replyText: null,
+        errorCategory: "tool",
+        errorMessage: "budget_spent: $5.00 of $5.00 already spent by earlier attempts",
+        spentUsd: 5,
+        maxCostUsd: 5,
+      }),
+    );
+    expect(text).toContain("Needs you:");
+    expect(text).toContain("Stopped at the budget limit.");
+    expect(text).toContain("budget_spent: $5.00 of $5.00");
+  });
 });

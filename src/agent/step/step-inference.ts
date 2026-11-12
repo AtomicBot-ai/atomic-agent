@@ -356,7 +356,7 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       deps.onEvent?.({ type: "prompt_built", prompt: next, slotId: slot.slotId });
       if (next.contextBudget) assertContextCapacity(next.text + JSON.stringify(wire?.tools ?? llmParams.tools ?? []), next.contextBudget);
       return { prompt: next.text, messages: next.messages, contextBudget: next.contextBudget,
-        ...(wire ? { grammar: wire.grammar, tools: wire.tools, toolChoice: wire.toolChoice, parallelToolCalls: wire.parallelToolCalls } : {}),
+        ...(wire ? { grammar: wire.grammar, tools: wire.tools, toolWireNames: wire.toolWireNames, toolChoice: wire.toolChoice, parallelToolCalls: wire.parallelToolCalls } : {}),
         ...(template.useServerTemplate ? { chat: { system: next.stablePrefix, user: next.tail,
           prefixHash: hashPrefix(next.stablePrefix), enableThinking: template.enableThinking } } : { chat: undefined }) };
     };
@@ -565,6 +565,11 @@ export function buildLlmStreamParams(args: {
   const tools = adapter.descriptorsToTools(args.toolDescriptors, {
     strict: args.deps.strictTools === true,
   });
+  // Only when two tools escaped alike: the history then names a past
+  // call by the wire name this request offers for it (ATO-1365).
+  const toolWireNames = adapter.suffixedWireNames?.(args.toolDescriptors, {
+    strict: args.deps.strictTools === true,
+  });
   return {
     ...base,
     // The structured prompt rides only on the native path; the seam
@@ -576,6 +581,7 @@ export function buildLlmStreamParams(args: {
     // ignore `grammar` entirely and read `tools`, so carrying both makes
     // the request valid for whichever link actually serves it.
     tools,
+    ...(toolWireNames && toolWireNames.size > 0 ? { toolWireNames } : {}),
     // `auto` instead of `required`. Three production-observed reasons:
     //   * Qwen-thinking providers (Alibaba gate) reject `required` outright
     //     with `<400> InvalidParameter: tool_choice does not support being

@@ -63,10 +63,22 @@ export const FAILURE_CATALOG = {
     phrase: "The local model isn't running.",
     action: "none",
   },
+  // ATO-1278: the Atomic Chat app's server refused the connection.
+  atomic_chat_not_running: {
+    phrase: "Atomic Chat is not running. Open it and try again.",
+    action: "retry",
+  },
   // Same sentence as `LOCAL_SERVER_NOT_FOUND_MESSAGE`; the host's
   // Reconnect button keys on the frame's `code`, not on this action.
   local_server_not_found: {
     phrase: "This address isn't a model server, or the model isn't loaded there.",
+    action: "none",
+  },
+  // ATO-1277: our engine is not running and another program answers on
+  // its port. The words that say which setting to change ride the
+  // frame's `advice` (`local-port-taken.ts`).
+  local_port_taken: {
+    phrase: "Another program is using the local model's port.",
     action: "none",
   },
   model_loading: {

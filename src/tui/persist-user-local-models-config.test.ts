@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +8,8 @@ import {
   getUserConfigPath,
   writeUserConfigFileSync,
 } from "../config/config-file.js";
-import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
+import { USER_CONFIG_DEFAULTS, USER_CONFIG_VERSION } from "../config/config-schema.js";
+import { setConfigNoticeSink } from "../config/config-primitives.js";
 import { getConfig } from "../config/index.js";
 import {
   isLoopbackBaseUrl,
@@ -269,5 +270,55 @@ describe("pointsAtManagedDaemon", () => {
       false,
     );
     expect(pointsAtManagedDaemon("not a url", 19091)).toBe(false);
+  });
+});
+
+/* ATO-1265: a newer build's engine or variant reads here as the default; picking that default is still a choice. */
+describe("persistUserLocalModelsConfig over a newer build's engine and variant", () => {
+  let stateDir: string;
+  let path: string;
+  const managedOnDisk = () =>
+    (JSON.parse(readFileSync(path, "utf8")) as { localModels: { managed: Record<string, unknown> } }).localModels.managed;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-local-llm-set-aside-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    setConfigNoticeSink(() => {});
+    path = getUserConfigPath(stateDir);
+    const tree = structuredClone(USER_CONFIG_DEFAULTS) as Record<string, any>;
+    tree.version = USER_CONFIG_VERSION;
+    tree.localModels.managed = { ...tree.localModels.managed, engine: "atomic-core-next", backendVariant: "future-gpu" };
+    writeFileSync(path, JSON.stringify(tree));
+    resetConfigCache();
+  });
+
+  afterEach(() => {
+    setConfigNoticeSink(null);
+    rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+    vi.restoreAllMocks();
+  });
+
+  it("writes atomic-core when it is picked here, keeping the variant nobody touched", () => {
+    expect(getConfig().localModels.managed.engine).toBe("atomic-core");
+    persistUserLocalModelsConfig({ managed: { engine: "atomic-core" } });
+    expect(managedOnDisk().engine).toBe("atomic-core");
+    expect(managedOnDisk().backendVariant).toBe("future-gpu");
+  });
+
+  it("writes backendVariant auto when it is picked here, keeping the engine nobody touched", () => {
+    expect(getConfig().localModels.managed.backendVariant).toBe("auto");
+    persistUserLocalModelsConfig({ managed: { backendVariant: "auto" } });
+    expect(managedOnDisk().backendVariant).toBe("auto");
+    expect(managedOnDisk().engine).toBe("atomic-core-next");
+  });
+
+  it("an unrelated write keeps the newer build's engine and variant", () => {
+    persistUserLocalModelsConfig({ managed: { autoUpdate: false } });
+    expect(managedOnDisk().autoUpdate).toBe(false);
+    expect(managedOnDisk().engine).toBe("atomic-core-next");
+    expect(managedOnDisk().backendVariant).toBe("future-gpu");
   });
 });

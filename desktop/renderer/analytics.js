@@ -94,6 +94,17 @@ const ANX = (() => {
   }
 
   /* ---------- approvals ---------- */
+  /* ATO-1396: the categories counted by name, the same list as main's
+     APPROVAL_CATEGORIES (catalog-values.ts). Not the renderer's CATS: that
+     list feeds the permission settings and leaves out kinds such as
+     `shell_dangerous`, whose answers were all counted as `other`. */
+  const APPROVAL_CATEGORY_IDS = [
+    'fs_write_workspace', 'fs_write_home', 'fs_trash', 'http', 'shell', 'shell_dangerous', 'script', 'proc_kill', 'publish',
+    'git_remote', 'fusion_fanout', 'browser_nonweb', 'browser_commit', 'browser_secret', 'browser_offsite',
+    'trust_config', 'state_secret', 'email', 'fs_read_outside', 'paid_generation', 'screen_control', 'screen_capture',
+    'local_model_restart', 'hook_ask', 'other',
+  ];
+  function apprCategory(req) { return APPROVAL_CATEGORY_IDS.includes(req.cat) ? req.cat : 'other'; }
   const apprShownAt = new WeakMap();
   function apprShown(req) { try { if (req && typeof req === 'object') apprShownAt.set(req, Date.now()); } catch (e) { /* ignore */ } }
   /* key: y / n / esc / s / a / c (allow in this chat, ATO-473) from the card, or 'prose' for a typed refusal. */
@@ -105,11 +116,10 @@ const ANX = (() => {
       : key === 'w' ? 'allow_always'
       : (key === 'y' || key === 's' || key === 'a') ? 'allow_once' : 'deny';
     const at = apprShownAt.get(req);
-    const cats = reg(() => CATS.map((c) => c[0]), []);
     const lvl = Number(req.lvl);
     track('approval_answered', {
       choice,
-      category: cats.includes(req.cat) ? req.cat : 'other',
+      category: apprCategory(req),
       level: Number.isInteger(lvl) ? lvl : null,
       input: key === 'prose' ? 'key' : viaPending === 'click' ? 'click' : 'key',   // the shortcut marker is a key
       ms_to_answer: typeof at === 'number' ? Math.max(0, Date.now() - at) : null,
@@ -124,11 +134,10 @@ const ANX = (() => {
     if (!req || typeof req !== 'object' || apprClosedSeen.has(req)) return;
     try { apprClosedSeen.add(req); } catch (e) { return; }
     const at = apprShownAt.get(req);
-    const cats = reg(() => CATS.map((c) => c[0]), []);
     const lvl = Number(req.lvl);
     track('approval_closed', {
       how,
-      category: cats.includes(req.cat) ? req.cat : 'other',
+      category: apprCategory(req),
       level: Number.isInteger(lvl) ? lvl : null,
       ms_open: typeof at === 'number' ? Math.max(0, Date.now() - at) : null,
     });
@@ -214,8 +223,35 @@ const ANX = (() => {
      read per provider (Ollama, LM Studio, DeepSeek…) as provider_setup_started is. */
   function providerFailed(reason, inOnboarding, row) {
     const props = {step: inOnboarding ? 'onboarding' : 'settings', reason};
-    if (row) props.provider_preset = presetId(row);
+    if (row) {
+      props.provider_preset = presetId(row);
+      /* ATO-1195: the provider's type, the same as model_configured's
+         (setup.ts configuredRoute). An app the user runs here (Ollama, LM
+         Studio, Atomic Chat: local:true rows) is Custom, like a custom URL
+         (ATO-816); `local` is only the managed llama.cpp, which this wizard
+         never sets up. The local:true ids are LOCAL_APP_PRESETS in
+         catalog-values.ts. */
+      props.kind = row.custom || row.local ? 'custom' : 'cloud';
+    }
     track('provider_setup_failed', props);
+  }
+
+  /* ---------- ATO-845: signing in to a subscription CLI ----------
+     The funnel: the Sign in click, whether the system terminal opened, and
+     the sign-in the wizard then saw. Only the CLI name and fixed words. */
+  function subCli(cli) { return cli === 'claude' || cli === 'codex' ? cli : 'other'; }
+  function subStep(inOnboarding) { return inOnboarding ? 'onboarding' : 'settings'; }
+  function subscriptionLoginClicked(cli, inOnboarding) {
+    track('subscription_login_clicked', {cli: subCli(cli), step: subStep(inOnboarding)});
+  }
+  function subscriptionTerminalOpened(cli, inOnboarding, opened, detail) {
+    const props = {cli: subCli(cli), step: subStep(inOnboarding), opened: !!opened};
+    if (opened && detail) props.terminal = detail;
+    if (!opened) props.reason = detail || 'other';
+    track('subscription_terminal_opened', props);
+  }
+  function subscriptionLoginSucceeded(cli, inOnboarding, seconds) {
+    track('subscription_login_succeeded', {cli: subCli(cli), step: subStep(inOnboarding), seconds_to_sign_in: typeof seconds === 'number' ? seconds : null});
   }
 
   /* ---------- MCP servers ---------- */
@@ -263,6 +299,6 @@ const ANX = (() => {
     track, via, viaNow, sanitizeAct, aroundAct, slashUsed, messageAction, attachmentAdded,
     apprShown, apprAnswered, apprClosed, modeVia, modeChanged, planHandoff, paneTick,
     obStep, obSkipped, modelPicked, ramBucket, endpointTested, providerStarted, providerFailed,
-    mcpAdded, mcpAction,
+    mcpAdded, mcpAction, subscriptionLoginClicked, subscriptionTerminalOpened, subscriptionLoginSucceeded,
   };
 })();

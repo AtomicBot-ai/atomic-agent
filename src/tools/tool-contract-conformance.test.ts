@@ -1,7 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -114,14 +113,10 @@ const CONDITIONAL = {
   wrapper: { owner: "tools/read-scope/confine-reads", reason: "The protection phase replaces selected definitions without changing their catalog metadata" },
 };
 
-// Existing catalog debt, independently captured from the immutable pre-05l graph.
-// Both copies affect stable-prefix bytes; discovery is last-wins and native wire is first-wins.
-// This bounded compatibility ledger grants no permission for another duplicate.
-const KNOWN_DESCRIPTOR_DUPLICATES = new Map<string, { indices: number[]; fingerprints: string[]; owner: string; reason: string }>([
-  ["os.git.push", { indices: [34, 44], fingerprints: ["093e96423e4d2e226a0c520bea7398f10f6f9fc22a02b382e57191b57412e67f", "9d8ae0fa05777782f8218cfa69b6661e2c85c0a191406ee581cc52a9e2602a48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
-  ["os.git.commit", { indices: [33, 48], fingerprints: ["95ef51ed40cc6ce5a762a7138f9f840dfa3e932b6f0f01bea11dd81a02fed773", "76a621b86514c6c0de7bdc5987127ccb26ebec8534bdf273cf46a5fb2f83227e"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
-  ["os.git.checkout", { indices: [32, 49], fingerprints: ["838fd065d1f322f4948821d4e787582d513bd86336b003f3e7143142080030ce", "981cfd260f769a8d38355113818ad41766037e142d4e5f5bbe37fff689ee2e48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
-]);
+// Descriptor names are unique, with no exceptions: ATO-1296 removed the last
+// duplicates (os.git.push/commit/checkout), whose second copies hid the first
+// from discovery (`getToolDescriptorByName` is last-wins) and doubled them in
+// the prompt.
 
 const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -200,8 +195,7 @@ interface Catalog {
 /**
  * A descriptor without its compact-prompt form (`compact`), which
  * `tool-descriptors.ts` attaches from its own table like
- * `argsJsonSchema`: neither is part of a tool's contract or of a known
- * duplicate's fingerprint.
+ * `argsJsonSchema`: neither is part of a tool's contract.
  */
 function withoutCompactForm(descriptor: GateDescriptor): GateDescriptor {
   const core = { ...descriptor };
@@ -210,17 +204,9 @@ function withoutCompactForm(descriptor: GateDescriptor): GateDescriptor {
 }
 function conformanceErrors(catalog: Catalog): string[] {
   const errors: string[] = [];
-  const admittedDebt = new Set<string>();
-  for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
-    const entries = catalog.descriptors.flatMap((descriptor, index) => descriptor.name === name ? [{ descriptor, index }] : []);
-    const indices = entries.map((entry) => entry.index);
-    const fingerprints = entries.map((entry) => createHash("sha256").update(JSON.stringify(withoutCompactForm(entry.descriptor))).digest("hex"));
-    if (JSON.stringify(indices) === JSON.stringify(debt.indices) && JSON.stringify(fingerprints) === JSON.stringify(debt.fingerprints)) admittedDebt.add(name);
-    else errors.push(`changed known descriptor debt: ${name}`);
-  }
   const unique = (facet: string, names: readonly string[]): Set<string> => {
     const seen = new Set<string>();
-    for (const name of names) { if (seen.has(name) && !(facet === "descriptor" && admittedDebt.has(name))) errors.push(`duplicate ${facet}: ${name}`); seen.add(name); }
+    for (const name of names) { if (seen.has(name)) errors.push(`duplicate ${facet}: ${name}`); seen.add(name); }
     return seen;
   };
   const descriptors = unique("descriptor", catalog.descriptors.map((d) => d.name));
@@ -347,14 +333,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(100);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(97);
-    for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
-      expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
-      const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);
-      expect(copies).toHaveLength(2);
-      expect(getToolDescriptorByName(name)).toBe(copies[1]);
-    }
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(97);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {
       expect(typeof definition.readonly).toBe("boolean");
@@ -382,10 +362,10 @@ describe("whole built-in tool catalog conformance", () => {
       { mutate: (input) => ({ ...input, descriptors: input.descriptors.map((item) => item === descriptor ? { ...item, argsJsonSchema: { type: "object", properties: {}, required: ["absent"], additionalProperties: true } } : item) }), expected: `invalid schema: ${descriptor.name}` },
     ];
     expect(conformanceErrors({ ...base, descriptors: [...base.descriptors, { ...descriptor, name: "orphan" }] })).toContain("missing registration: orphan");
-    const known = base.descriptors.find((item) => item.name === "os.git.push")!;
-    expect(conformanceErrors({ ...base, descriptors: base.descriptors.map((item) => item === known ? { ...item, summary: "changed known copy" } : item) })).toContain("changed known descriptor debt: os.git.push");
-    expect(conformanceErrors({ ...base, descriptors: [...base.descriptors, known] })).toContain("duplicate descriptor: os.git.push");
-    expect(conformanceErrors({ ...base, descriptors: base.descriptors.filter((item) => item.name !== "os.git.push") })).toContain("changed known descriptor debt: os.git.push");
+    for (const name of ["os.git.push", "os.git.commit", "os.git.checkout"]) {
+      const git = base.descriptors.find((item) => item.name === name)!;
+      expect(conformanceErrors({ ...base, descriptors: [...base.descriptors, { ...git, summary: "second copy" }] })).toContain(`duplicate descriptor: ${name}`);
+    }
     expect(conformanceErrors({ ...base, classes: new Map([...base.classes, [descriptor.name, "unrecognized"]]) })).toContain(`missing class: ${descriptor.name}`);
     for (const mutation of mutations) expect(conformanceErrors(mutation.mutate(base))).toContain(mutation.expected);
     expect(conformanceErrors(base)).toEqual([]); // Fixtures never mutate shipped references.

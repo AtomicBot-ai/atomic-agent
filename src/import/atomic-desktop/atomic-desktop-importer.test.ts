@@ -19,6 +19,8 @@ import {
   createEmptySessionState,
 } from "../../session/index.js";
 import { TaskStore } from "../../tasks/index.js";
+import { assistantReplyTurn, userTurn } from "../../session/conversation-turn.js";
+import { compactionBoundaryHash } from "../../session/session-compaction.js";
 import {
   checkAtomicDesktopSource,
   importAtomicDesktop,
@@ -136,6 +138,41 @@ describe("importAtomicDesktop", () => {
       expect(target.sessionStore.load("s-shared")?.workingDir).toBe(
         "/terminal",
       );
+    });
+
+    it("copies the turns a source keeps in its turn archive (ATO-1271)", async () => {
+      const turns = [
+        userTurn("first question", 1),
+        assistantReplyTurn("first answer", 2),
+        userTurn("second question", 3),
+        assistantReplyTurn("second answer", 4),
+      ];
+      src().sessionStore.save({
+        ...createEmptySessionState({ id: "s-archived", workingDir: "/d" }),
+        status: "completed",
+        turns,
+        turnCount: 2,
+        compaction: {
+          version: 1,
+          summary: "Earlier: the first question.",
+          coveredThrough: 2,
+          boundaryHash: compactionBoundaryHash(turns[1]!),
+          createdAt: 1,
+          reason: "threshold",
+          model: null,
+          kind: "extractive",
+          tokensBefore: 10,
+          tokensAfter: 2,
+        },
+      });
+      closeSource();
+
+      const result = await run();
+
+      expect(result.sessions.imported).toBe(1);
+      const copied = target.sessionStore.load("s-archived");
+      expect(copied?.turns).toEqual(turns);
+      expect(copied?.compaction?.coveredThrough).toBe(2);
     });
 
     it("ends a live turn and never copies its owner mark", async () => {

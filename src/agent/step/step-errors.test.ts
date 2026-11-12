@@ -9,6 +9,8 @@ import { RequestTooLargeError } from "../../llm/reliability/request-too-large.js
 import { classifyFailure } from "../../llm/reliability/classify-failure.js";
 import { shouldAdvance } from "../../llm/fallback/should-advance.js";
 import { contextCompactionRejection } from "../turn/compaction-recovery.js";
+import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../../llm/provider/openai/parse-provider-error-body.js";
 
 const URL = "http://127.0.0.1:9931/completion";
 const ctx = { signal: new AbortController().signal } as unknown as StepContext;
@@ -119,5 +121,26 @@ describe("toLlmFailure: the tool a catch-all failure names (ATO-710)", () => {
     const failure = toLlmFailure(new SyntaxError("Unexpected token"), ctx);
     expect(failure).toBeInstanceOf(ToolExecutionError);
     expect((failure as ToolExecutionError).tool).toBe("unknown");
+  });
+});
+
+describe("toLlmFailure: Groq's 413 over the plan limit (ATO-1283)", () => {
+  it("reads the plan-limit sentence alone, without Groq's raw body after it", () => {
+    const text = JSON.stringify({ error: {
+      message: "Request too large for model `llama-3.3-70b-versatile` in organization `org_01abc` service tier `on_demand` on tokens per minute (TPM): Limit 6000, Requested 9531, please reduce your message size and try again.",
+      type: "tokens", code: "rate_limit_exceeded",
+    } });
+    const raw = new OpenAiHttpError(
+      `openai provider 413: ${text.slice(0, 300)}`, 413,
+      "https://api.groq.com/openai/v1/chat/completions", false, null, "groq", undefined,
+      { body: parseProviderErrorBody(text) },
+    );
+    const failure = toLlmFailure(raw, ctx);
+    expect(failure).toBeInstanceOf(TransportError);
+    expect(failure.message).toBe(
+      "Groq refused the request (413): it is larger than your Groq plan's limit (limit 6000 tokens per minute, this request 9531). " +
+      "Pick a model with a higher limit or a larger Groq plan.",
+    );
+    expect(failure.cause).toBe(raw);
   });
 });

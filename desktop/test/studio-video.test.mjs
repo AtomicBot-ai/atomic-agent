@@ -84,7 +84,7 @@ test('form → cloud request: only what the model takes', () => {
 test('form → local request: width and height, no cloud fields, never image-to-video', () => {
   const r = V.buildRequest({ prompt: 'fox', negativePrompt: 'text', mode: 'image', durationSecs: 4, aspectRatio: '9:16', audio: true, firstFrame: { path: '/a.png' } }, wan);
   assert.deepEqual({ ...r }, { provider: 'local', model: 'wan2.2-5b', mode: 'create', prompt: 'fox', negativePrompt: 'text', width: 704, height: 1280 });
-  assert.equal(V.blockReason({ mode: 'image', prompt: 'x' }, wan), 'Starting from an image on this Mac is coming soon. Pick a cloud model.');
+  assert.equal(V.blockReason({ mode: 'image', prompt: 'x' }, wan), 'Starting from an image on this Mac is coming soon. Switch the chat to the cloud to use it.');
   assert.equal(V.blockReason({ mode: 'text', prompt: ' ' }, veo), 'Write a prompt first.');
   assert.equal(V.blockReason({ mode: 'image', prompt: '' }, veo), 'Add a first frame.');
   assert.equal(V.blockReason({ mode: 'image', prompt: '', firstFrame: { path: '/a' } }, veo), '');
@@ -310,4 +310,269 @@ test('gallery: "Load more" reads older clips; the Pinned tab finds a pinned clip
   assert.equal(S.gallery.at(-1).id, 'clip-129');
   assert.deepEqual([...S.pinnedMore.map((x) => x.id)], [], 'a loaded page folds the found pinned clip back in');
   assert.doesNotMatch(gal.innerHTML, /data-vact="more"/, 'no Load more once every clip is loaded');
+});
+
+test('the local model hint says what Generate does: it loads a downloaded model by itself (ATO-1303)', () => {
+  const local = (o) => ({ ...wan, local: { ...wan.local, ...o } });
+  assert.equal(V.localHint(local({ loaded: false, installed: true })), 'This model loads when you press Generate.');
+  assert.equal(V.localHint(local({ loaded: false, installed: false })), 'This model is not downloaded yet.');
+  assert.equal(V.localHint(local({ loaded: true, installed: true })), '');
+  assert.equal(V.localHint(veo), '');
+  assert.match(SRC, /const hint = localHint\(m\);/);
+  assert.doesNotMatch(SRC, /Load this model in Atomic Core first/);
+});
+
+test('local video models say "this Mac" only on macOS, "this computer" on Windows and Linux (ATO-1400)', () => {
+  assert.equal(V.machine(), 'this Mac');
+  for (const platform of ['win32', 'linux']) {
+    const W = load({ atomic: { platform } }).StudioVideo;
+    assert.equal(W.machine(), 'this computer');
+    assert.equal(W.blockReason({ mode: 'image', prompt: 'x' }, wan), 'Starting from an image on this computer is coming soon. Switch the chat to the cloud to use it.');
+  }
+  assert.equal(load({ atomic: { platform: 'darwin' } }).StudioVideo.machine(), 'this Mac');
+  const strings = (SRC.match(/'[^'\n]*'/g) || []).filter((x) => /this Mac|This Mac|Show in Finder/.test(x));
+  assert.deepEqual(strings.filter((x) => x !== "'this Mac'" && x !== "'Show in Finder'"), []);
+});
+
+test('after Generate loads a local model the page reads the catalog again and stops saying "Not loaded" (ATO-1394)', async () => {
+  let loaded = false;
+  let reads = 0;
+  const cat = () => ({ cloud: { models: [veo], keyMissing: false }, local: { models: [{ ...wan, local: { ...wan.local, installed: true, loaded } }] } });
+  const studio = {
+    catalog: async () => { reads++; return { ok: true, data: cat() }; },
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => JSON.stringify({ modelId: wan.id }), setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; } } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const foot = { innerHTML: '' };
+  const root = { innerHTML: '', addEventListener() {}, contains: () => true, querySelector: (q) => (q === '[data-vregion="foot"]' ? foot : null) };
+  page.render(root);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(page._state.form.modelId, wan.id);
+  assert.equal(reads, 1);
+  loaded = true;
+  page.onLocal({ type: 'load', id: wan.id, state: 'loading', message: '' });
+  page.onLocal({ type: 'download', download: { id: wan.id, state: 'downloading' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 1, 'progress events do not read the catalog');
+  page.onEvent({ id: 'j1', kind: 'video', state: 'completed', cloud: false, outputs: [] });
+  page.onLocal({ type: 'load', id: wan.id, state: 'loaded', message: '' });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 2, 'a burst of changes makes one read');
+  assert.equal(page._state.catalog.local.models[0].local.loaded, true);
+  assert.equal(page._state.form.modelId, wan.id, 'the chosen model stays');
+  assert.doesNotMatch(foot.innerHTML, /loads when you press Generate/);
+});
+
+test('the model follows where the chat runs: only that place, the last one chosen there first (ATO-1306)', () => {
+  const ltx = { ...wan, id: 'ltx-2', name: 'LTX 2', local: { family: 'ltx-2', loaded: false, installed: true } };
+  const cold = { ...wan, id: 'cold', name: 'Cold', local: { family: 'cold', loaded: false, installed: false } };
+  const kling = { ...veo, id: 'kling/2', name: 'Kling', default: false };
+  const cat = { cloud: { models: [kling, veo] }, local: { models: [cold, ltx, wan] } };
+  assert.equal(V.placeOf(wan), 'local');
+  assert.equal(V.placeOf(veo), 'cloud');
+  assert.equal(V.placeOf(null), null);
+  // Cloud: the saved local model is not taken; the cloud default is.
+  assert.equal(V.pickModel(cat, 'wan2.2-5b', 'cloud').id, veo.id);
+  assert.equal(V.pickModel(cat, ['gone', 'kling/2'], 'cloud').id, 'kling/2');
+  // Local: the saved cloud model is not taken; a loaded model, else a downloaded one.
+  assert.equal(V.pickModel(cat, veo.id, 'local').id, 'wan2.2-5b');
+  assert.equal(V.pickModel({ cloud: { models: [veo] }, local: { models: [cold, ltx] } }, null, 'local').id, 'ltx-2');
+  assert.equal(V.pickModel(cat, ['cold'], 'local').id, 'cold', 'one chosen there is kept even when not downloaded');
+  // Nothing there: no model, never the other place.
+  assert.equal(V.pickModel({ cloud: { models: [veo] }, local: { models: [cold] } }, null, 'local'), null);
+  assert.equal(V.pickModel({ cloud: { models: [] }, local: { models: [wan] } }, null, 'cloud'), null);
+  // Settings not read yet: as before.
+  assert.equal(V.pickModel(cat, 'wan2.2-5b', null).id, 'wan2.2-5b');
+  assert.equal(V.pickModel(cat, 'gone', null).id, veo.id);
+});
+
+test('the Video page switches its model when the chat moves, keeps the prompt, and returns to the old one (ATO-1306)', async () => {
+  let place = 'cloud';
+  const cat = { cloud: { models: [veo], keyMissing: false }, local: { models: [wan] } };
+  const studio = {
+    catalog: async () => ({ ok: true, data: cat }),
+    job: async () => ({ ok: false }),
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+  };
+  let page;
+  const store = {};
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: (k) => store[k] || null, setItem: (k, v) => { store[k] = v; } },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; }, chatPlace: () => place } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const root = { innerHTML: '', addEventListener() {}, contains: () => true, querySelector: () => null };
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+  page.render(root);
+  await settle();
+  const S = page._state;
+  assert.equal(S.form.modelId, veo.id, 'cloud chat: a cloud model');
+  S.form.prompt = 'a fox';
+  place = 'local';
+  page.onHide(); page.onShow();
+  await settle();
+  assert.equal(S.form.modelId, wan.id, 'local chat: a local model');
+  assert.equal(S.form.prompt, 'a fox');
+  page.onHide(); place = 'cloud'; page.onShow();
+  await settle();
+  assert.equal(S.form.modelId, veo.id, 'back in the cloud: the cloud model again');
+  // Not while a clip is being made.
+  S.job = { id: 'j', kind: 'video', state: 'generating', cloud: true };
+  page.onHide(); place = 'local'; page.onShow();
+  await settle();
+  assert.equal(S.form.modelId, veo.id, 'the running clip keeps its form');
+});
+
+test('the model kept for a place is the latest one used there, a restored one included (ATO-1306)', async () => {
+  let place = 'cloud';
+  const kling = { ...veo, id: 'kling/2', name: 'Kling', default: false };
+  const cat = { cloud: { models: [veo, kling], keyMissing: false }, local: { models: [wan] } };
+  const studio = {
+    catalog: async () => ({ ok: true, data: cat }),
+    job: async () => ({ ok: false }),
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; }, chatPlace: () => place } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const on = {};
+  const root = { innerHTML: '', addEventListener: (t, fn) => { on[t] = fn; }, contains: () => true, querySelector: () => null };
+  const click = (vact) => on.click({ target: { closest: (q) => (q === '[data-vact]' ? { getAttribute: (k) => (k === 'data-vact' ? vact : null), disabled: false } : null) }, preventDefault() {} });
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+  const move = async (to) => { page.onHide(); place = to; page.onShow(); await settle(); };
+  page.render(root);
+  await settle();
+  const S = page._state;
+  assert.equal(S.form.modelId, veo.id);
+  // The cloud slot already says Veo; the form now runs Kling (picked by a path that did not record it).
+  S.form = Object.assign({}, S.form, { modelId: kling.id, modelByPlace: { cloud: veo.id } });
+  await move('local');
+  assert.equal(S.form.modelId, wan.id);
+  await move('cloud');
+  assert.equal(S.form.modelId, kling.id, 'back in the cloud: the model last used there, not the older slot');
+  // Restoring a clip made with Veo makes Veo the cloud choice.
+  S.result = { id: 'v1', path: '/x/v1.mp4', prompt: 'a fox', model: { id: veo.id }, recipe: { prompt: 'a fox' } };
+  click('restore');
+  assert.equal(S.form.modelId, veo.id);
+  assert.equal(S.form.modelByPlace.cloud, veo.id);
+  await move('local');
+  await move('cloud');
+  assert.equal(S.form.modelId, veo.id, 'the restored model is the one the cloud comes back to');
+});
+
+test('the Video picker lists only the place the chat runs in, and Restore keeps the model from the other place (ATO-1307)', async () => {
+  let place = 'cloud';
+  const cat = { cloud: { models: [veo], keyMissing: false }, local: { models: [wan] } };
+  const studio = {
+    catalog: async () => ({ ok: true, data: cat }),
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+    job: async () => ({ ok: false }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; }, chatPlace: () => place } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const list = { innerHTML: '' };
+  const on = {};
+  const root = { innerHTML: '', addEventListener: (t, fn) => { on[t] = fn; }, contains: () => true, querySelector: (q) => (q === '.studio-video-plist' ? list : null) };
+  page.render(root);
+  await new Promise((r) => setTimeout(r, 20));
+  const S = page._state;
+  S.pickerOpen = true;
+  on.input({ target: { matches: (q) => q === '[data-vfield="pickerq"]', value: '' } });
+  assert.match(list.innerHTML, /Veo 3\.1 Fast/);
+  assert.doesNotMatch(list.innerHTML, /Wan 2\.2/);
+  assert.match(list.innerHTML, /Studio follows your chat\. To use a model on this Mac, switch the chat to local\./);
+  // A clip made locally: its prompt comes back, the cloud model stays.
+  const click = (act) => on.click({ target: { closest: (q) => (q === '[data-vact]' ? { disabled: false, getAttribute: (n) => (n === 'data-vact' ? act : null) } : null) }, preventDefault() {} });
+  S.pickerOpen = false;
+  S.result = { id: 'c1', path: '/v/c1.mp4', prompt: 'a fox runs', model: { id: wan.id, name: wan.name }, recipe: { prompt: 'a fox runs' } };
+  click('restore');
+  assert.equal(S.form.prompt, 'a fox runs');
+  assert.equal(S.form.modelId, veo.id);
+  assert.match(S.notice, /That clip was made on this Mac\. Studio follows your chat/);
+  assert.equal(V.followLine('local'), 'Studio follows your chat. To use a cloud model, switch the chat to the cloud.');
+  assert.equal(V.followLine(null), '');
+});
+
+test('a local video model that is not on disk is downloaded from Studio, then Generate works (ATO-1395, ATO-1308)', async () => {
+  let installed = false;
+  const q = { id: 'ltx-2:q8', quant: 'q8', label: 'Q8', bytes: 8e9, downloadBytes: 8e9, installed: false, recommended: true, fit: { verdict: 'ok' } };
+  const ltx = () => ({ ...wan, id: 'ltx-2', name: 'LTX 2', local: { family: 'ltx-2', loaded: false, installed, defaultQuant: 'ltx-2:q8', quants: [{ ...q, installed }] } });
+  const calls = [];
+  const studio = {
+    catalog: async () => ({ ok: true, data: { cloud: { models: [veo], keyMissing: false }, local: { models: [ltx()] } } }),
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+    localDownload: async (id) => { calls.push(id); return { ok: true, data: { id, state: 'downloading', percent: 0 } }; },
+    job: async () => ({ ok: false }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; }, chatPlace: () => 'local' } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(readFileSync(new URL('../renderer/studio/images-logic.js', import.meta.url), 'utf8'), ctx, { filename: 'images-logic.js' });
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const form = { innerHTML: '' }, foot = { innerHTML: '' };
+  const on = {};
+  const root = { innerHTML: '', addEventListener: (t, fn) => { on[t] = fn; }, contains: () => true,
+    querySelector: (sel) => (sel === '[data-vregion="form"]' ? form : sel === '[data-vregion="foot"]' ? foot : null) };
+  const click = (act, v) => on.click({ target: { closest: (s) => (s === '[data-vact]' ? { disabled: false, getAttribute: (n) => (n === 'data-vact' ? act : n === 'data-v' ? v : null) } : null) }, preventDefault() {} });
+  page.render(root);
+  await new Promise((r) => setTimeout(r, 20));
+  const S = page._state;
+  assert.equal(S.form.modelId, null, 'nothing downloaded: no model, and no cloud one either');
+  assert.match(root.innerHTML, /No video model on this Mac yet/);
+  assert.match(root.innerHTML, /data-vact="download" data-v="ltx-2"/);
+  assert.match(root.innerHTML, /Download · 8\.0 GB/);
+  click('download', 'ltx-2');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(calls, ['ltx-2:q8']);
+  assert.equal(S.form.modelId, 'ltx-2');
+  assert.equal(V.blockReason({ mode: 'text', prompt: 'x' }, ltx()), 'Download this model first.');
+  page.onLocal({ type: 'download', download: { id: 'ltx-2:q8', state: 'downloading', percent: 42, file: null } });
+  assert.match(foot.innerHTML, /Downloading 42%/);
+  installed = true;
+  page.onLocal({ type: 'download', download: { id: 'ltx-2:q8', state: 'done', percent: 100 } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(S.catalog.local.models[0].local.installed, true);
+  assert.equal(V.blockReason({ mode: 'text', prompt: 'x' }, S.catalog.local.models[0]), '');
+  assert.doesNotMatch(foot.innerHTML, /data-vact="download"/);
+});
+
+test('the Video page re-reads the catalog after a cancelled download and an engine change, not during an install (ATO-1395)', async () => {
+  let reads = 0;
+  const studio = {
+    catalog: async () => { reads++; return { ok: true, data: { cloud: { models: [veo], keyMissing: false }, local: { models: [wan] } } }; },
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; } } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const root = { innerHTML: '', addEventListener() {}, contains: () => true, querySelector: () => null };
+  page.render(root);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(reads, 1);
+  page.onLocal({ type: 'download', download: { id: 'wan2.2-5b:q4', state: 'cancelled' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 2, 'a cancel changes what is left to download');
+  page.onLocal({ type: 'engine', engine: { state: 'installing' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 2);
+  page.onLocal({ type: 'engine', engine: { state: 'ready' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 3);
 });

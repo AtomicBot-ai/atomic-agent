@@ -29,6 +29,14 @@ const SIMG_RATIO = {
 };
 const SIMG_LOCAL_RATIOS = ['1:1', '4:5', '4:3', '16:9', '9:16'];
 
+/** What the copy calls the machine (renderer.js THIS_MACHINE): "this Mac" on macOS and
+    with no bridge, "this computer" on Windows and Linux (ATO-1400). */
+function simgMachine() {
+  const a = typeof globalThis !== 'undefined' ? globalThis.atomic : null;
+  return a && a.platform && a.platform !== 'darwin' ? 'this computer' : 'this Mac';
+}
+const simgMachineCap = () => { const s = simgMachine(); return s.charAt(0).toUpperCase() + s.slice(1); };
+
 /** Every model of a catalog answer, cloud first, each with its group. */
 function simgModels(catalog) {
   if (!catalog) return [];
@@ -43,13 +51,54 @@ function simgFindModel(catalog, id, provider) {
   return simgModels(catalog).find((m) => m.id === id && (!provider || m.provider === provider)) || null;
 }
 
-/** The model a fresh form starts on: the cloud default, else a loaded local one, else the first. */
-function simgDefaultModel(catalog) {
+/** 'local' | 'cloud': where a model runs; null for no model. */
+function simgPlaceOf(model) {
+  if (!model) return null;
+  return model.group === 'local' || model.provider === 'local' ? 'local' : 'cloud';
+}
+
+/** The model a fresh form starts on. For a place (STUDIO.chatPlace, ATO-1305) only that place's
+    models: in the cloud the cloud default, else the first; here a loaded model, else a downloaded
+    one; else none (Studio never moves to the other place by itself). With no place (the settings
+    are not read yet): the cloud default, else a loaded local one, else the first. */
+function simgDefaultModel(catalog, place) {
   const all = simgModels(catalog);
+  if (place === 'cloud') return all.find((m) => m.group === 'cloud' && m.default) || all.find((m) => m.group === 'cloud') || null;
+  if (place === 'local') {
+    const here = all.filter((m) => m.group === 'local');
+    return here.find((m) => m.local && m.local.loaded) || here.find((m) => m.local && m.local.installed) || null;
+  }
   return all.find((m) => m.group === 'cloud' && m.default)
     || all.find((m) => m.group === 'cloud')
     || all.find((m) => m.local && m.local.loaded)
     || all[0] || null;
+}
+
+/** The picker's line under its one group (ATO-1307): Studio follows the chat, and how to reach the other place. */
+function simgFollowLine(place) {
+  if (place === 'cloud') return 'Studio follows your chat. To use a model on ' + simgMachine() + ', switch the chat to local.';
+  if (place === 'local') return 'Studio follows your chat. To use a cloud model, switch the chat to the cloud.';
+  return '';
+}
+
+/** Why "Restore these settings" kept the current model (ATO-1307): the picture was made in the other place. */
+function simgRestoreNote(item, place) {
+  const r = simgRecipeToForm(item);
+  if (!place || !r.provider) return '';
+  const from = r.provider === 'local' ? 'local' : 'cloud';
+  if (from === place) return '';
+  return (from === 'local' ? 'That picture was made on ' + simgMachine() : 'That picture was made in the cloud')
+    + '. Studio follows your chat, so the current model stays.';
+}
+
+/** The model to open on: the first of `wants` ({modelId, provider}, remembered choices in order)
+    still listed and, with a place, from that place; else simgDefaultModel(catalog, place). */
+function simgPickModel(catalog, place, wants) {
+  for (const w of wants || []) {
+    const m = w && w.modelId ? simgFindModel(catalog, w.modelId, w.provider) : null;
+    if (m && (!place || simgPlaceOf(m) === place)) return m;
+  }
+  return simgDefaultModel(catalog, place);
 }
 
 /** A mode as the end of "<model> cannot ...". */
@@ -59,7 +108,7 @@ const SIMG_MODE_VERB = {
 };
 
 /** The mode tabs for a model: each enabled or greyed with the reason.
-    `need` says why a greyed one is off: 'local' (only a model on this Mac runs it),
+    `need` says why a greyed one is off: 'local' (only a model on this machine runs it),
     'model' (this model cannot), 'pick' (no model chosen). */
 function simgModeTabs(model, catalog) {
   const locals = simgModels(catalog).filter((m) => m.group === 'local');
@@ -70,7 +119,7 @@ function simgModeTabs(model, catalog) {
     if (!ok) {
       const localCan = locals.some((m) => (m.modes || []).includes(id));
       need = model.group === 'cloud' && localCan ? 'local' : 'model';
-      why = need === 'local' ? 'Needs a model on this Mac' : model.name + ' cannot do this';
+      why = need === 'local' ? 'Needs a model on ' + simgMachine() + '. Switch the chat to local to use it' : model.name + ' cannot do this';
     }
     return {id, label, ok, why, need};
   });
@@ -78,12 +127,12 @@ function simgModeTabs(model, catalog) {
 
 const simgList = (xs, conj) => (xs.length === 1 ? xs[0] : xs.slice(0, -1).join(', ') + ' ' + conj + ' ' + xs[xs.length - 1]);
 
-/** One hint line for the greyed modes: the ones a model on this Mac runs, then the
+/** One hint line for the greyed modes: the ones a model on this machine runs, then the
     ones the chosen model cannot do ("Nano Banana cannot inpaint, extend or upscale."). */
 function simgModeNote(tabs, model) {
   const out = [];
-  const off = tabs.filter((t) => !t.ok && t.why === 'Needs a model on this Mac').map((t) => t.label);
-  if (off.length) out.push(simgList(off, 'and') + (off.length === 1 ? ' needs' : ' need') + ' a model on this Mac.');
+  const off = tabs.filter((t) => !t.ok && t.need === 'local').map((t) => t.label);
+  if (off.length) out.push(simgList(off, 'and') + (off.length === 1 ? ' needs' : ' need') + ' a model on ' + simgMachine() + ': switch the chat to local to use ' + (off.length === 1 ? 'it' : 'them') + '.');
   const cannot = model ? tabs.filter((t) => !t.ok && t.need === 'model').map((t) => SIMG_MODE_VERB[t.id]) : [];
   if (cannot.length) out.push(model.name + ' cannot ' + simgList(cannot, 'or') + '.');
   return out.join(' ');
@@ -92,14 +141,16 @@ function simgModeNote(tabs, model) {
 /** The hint line's words after a click on one greyed mode. */
 function simgModeWhy(tab, model) {
   if (!tab || tab.ok) return '';
-  if (tab.need === 'local') return tab.label + ' needs a model on this Mac.';
+  if (tab.need === 'local') return tab.label + ' needs a model on ' + simgMachine() + ': switch the chat to local to use it.';
   if (tab.need === 'model' && model) return model.name + ' cannot ' + SIMG_MODE_VERB[tab.id] + '.';
   return 'Pick a model first.';
 }
 
-/** Whether another model in the catalog runs one of these modes (the hint's "Pick one" link). */
-function simgOtherCan(catalog, model, modes) {
+/** Whether another model in the catalog runs one of these modes (the hint's "Pick one" link).
+    With a place (ATO-1307) only that place's models count: the picker lists no others. */
+function simgOtherCan(catalog, model, modes, place) {
   return simgModels(catalog).some((m) => !(model && m.id === model.id && m.provider === model.provider)
+    && (!place || simgPlaceOf(m) === place)
     && modes.some((id) => (m.modes || []).includes(id)));
 }
 
@@ -176,6 +227,7 @@ const simgSource = (s) => (s && s.path ? {path: s.path} : s && s.base64 ? {base6
 /** The form as BR.studio.generateImage's request, or why it cannot go yet. */
 function simgBuildRequest(form, model) {
   if (!model) return {ok: false, message: 'Pick a model first.'};
+  if (simgNotDownloaded(model)) return {ok: false, message: 'Download this model first.'};
   const mode = form.mode || 'create';
   if (!(model.modes || []).includes(mode)) return {ok: false, message: model.name + ' cannot do this mode.'};
   const prompt = String(form.prompt || '').trim();
@@ -238,6 +290,28 @@ function simgPriceLabel(price) {
     return '≈ ' + lo + '–' + simgUsd(price.maxUsd).slice(1);
   }
   return '≈ ' + lo;
+}
+
+/* ATO-814: a model OpenRouter bills per output token (Nano Banana, GPT
+   Image) has no price per picture before it runs. The line under the button
+   gives the published rate instead, never a made-up total, and says the
+   real cost comes after. '' when there is no rate. */
+function simgTokenRateLine(price) {
+  const t = price && price.perToken;
+  if (!t || typeof t.usdPerMillion !== 'number' || !Number.isFinite(t.usdPerMillion) || t.usdPerMillion <= 0) return '';
+  const money = (n) => '$' + (Number.isInteger(n) ? String(n) : n.toFixed(2));
+  const hi = typeof t.maxUsdPerMillion === 'number' && Number.isFinite(t.maxUsdPerMillion) && t.maxUsdPerMillion > t.usdPerMillion
+    ? '–' + money(t.maxUsdPerMillion).slice(1) : '';
+  return 'Billed per token: ' + money(t.usdPerMillion) + hi + ' per 1M output tokens. The exact cost shows when it is done.';
+}
+
+/** What a finished picture cost, as the provider reported it: "$0.039". '' when nothing was reported. */
+function simgCostLabel(item) {
+  const c = item && item.costUsd;
+  if (typeof c !== 'number' || !Number.isFinite(c) || c < 0) return '';
+  if (c === 0) return '$0';
+  if (c < 0.01) return '$' + c.toFixed(4).replace(/0+$/, '');
+  return '$' + c.toFixed(3).replace(/0$/, '');
 }
 
 /** The Generate button's words: the price only when there is one. */
@@ -312,7 +386,7 @@ function simgModelMeta(model) {
   if (!model) return '';
   if (model.group === 'local' || model.provider === 'local') {
     const dev = model.local && model.local.developer;
-    return (dev ? dev + ' · ' : '') + 'On this Mac';
+    return (dev ? dev + ' · ' : '') + 'On ' + simgMachine();
   }
   const maker = simgMaker(String(model.id || '').split('/')[0]);
   return (maker ? maker + ' · ' : '') + 'via OpenRouter';
@@ -327,6 +401,71 @@ const SIMG_MAKERS = {
 function simgMaker(slug) {
   if (!slug) return '';
   return SIMG_MAKERS[slug] || slug.split(/[-_]/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+/* ---------- local downloads (ATO-1395, ATO-1308) ---------- */
+
+/** The quant Download fetches for a local model (CONTRACT.md LocalQuant): the one the picker
+    opens on, else the one recommended for this machine, else the smallest; null for none. */
+function simgQuantToGet(model) {
+  const l = model && model.local;
+  const qs = l && Array.isArray(l.quants) ? l.quants.filter((q) => q && q.id) : [];
+  if (!qs.length) return null;
+  return qs.find((q) => q.id === l.defaultQuant) || qs.find((q) => q.recommended)
+    || qs.slice().sort((a, b) => (Number(a.bytes) || 0) - (Number(b.bytes) || 0))[0];
+}
+
+/** True when a local model is known not to be on disk yet (an older catalog without `installed` is not). */
+function simgNotDownloaded(model) {
+  return !!(model && model.local && model.local.installed === false);
+}
+
+/** The model to offer when the chat is local and no image model is downloaded: the catalog's
+    default, else one that runs here without a Hugging Face token, smallest download first. */
+function simgSuggestDownload(catalog) {
+  const fits = (m) => { const q = simgQuantToGet(m); return !!q && !(q.fit && q.fit.verdict === 'no'); };
+  const local = simgModels(catalog).filter((m) => m.group === 'local' && simgQuantToGet(m));
+  const size = (m) => Number(simgQuantToGet(m).downloadBytes || simgQuantToGet(m).bytes) || 0;
+  return local.find((m) => m.default && fits(m))
+    || local.filter((m) => fits(m) && !(m.local && m.local.gated)).sort((a, b) => size(a) - size(b))[0]
+    || local.find(fits) || local[0] || null;
+}
+
+/** The download of one of a model's quants this window knows of (`dls`: artifact id → LocalDownload), running first. */
+function simgDownloadOf(model, dls) {
+  const l = model && model.local;
+  if (!l || !dls) return null;
+  const ids = (l.quants || []).map((q) => q && q.id).filter(Boolean);
+  const got = ids.map((id) => dls[id]).filter(Boolean);
+  return got.find((d) => d.state === 'downloading' || d.state === 'verifying') || got.find((d) => d.state === 'failed') || null;
+}
+
+const simgGb = (b) => { const n = Number(b); return n > 0 ? (n / 1e9).toFixed(n >= 1e10 ? 0 : 1) + ' GB' : ''; };
+
+/** The Download button's words: "Download · 6.2 GB" (what is still missing). */
+function simgDownloadLabel(quant) {
+  const gb = simgGb(quant && (quant.downloadBytes || quant.bytes));
+  return 'Download' + (gb ? ' · ' + gb : '');
+}
+
+/** A download in words: "Downloading 42% · file 2 of 3", "Checking the files…", or why it failed. */
+function simgDownloadLine(dl) {
+  if (!dl) return '';
+  if (dl.state === 'verifying') return 'Checking the files…';
+  if (dl.state === 'failed') {
+    const e = dl.error || {};
+    if (e.code === 'GATED') return 'This model needs a Hugging Face token (HF_TOKEN) and its licence accepted on Hugging Face.';
+    return e.message || 'The download did not finish.';
+  }
+  const pct = Math.max(0, Math.min(100, Math.round(Number(dl.percent) || 0)));
+  const file = dl.file && dl.file.count > 1 ? ' · file ' + dl.file.index + ' of ' + dl.file.count : '';
+  return 'Downloading ' + pct + '%' + file;
+}
+
+/** True when this computer cannot make pictures or clips locally (Core names no engine build for it). */
+function simgLocalUnsupported(catalog) {
+  const e = catalog && catalog.local && catalog.local.engine;
+  return !!(e && e.state === 'unsupported');
 }
 
 /** The labels a model carries: Non-commercial and 18+ are shown, never hidden. */
@@ -395,7 +534,7 @@ function simgPinnedList(items, more) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
+  module.exports = {simgTokenRateLine, simgCostLabel, SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgModels, simgFindModel, simgPlaceOf, simgDefaultModel, simgPickModel, simgFollowLine, simgRestoreNote, simgQuantToGet, simgNotDownloaded, simgSuggestDownload, simgDownloadOf, simgDownloadLabel, simgDownloadLine, simgLocalUnsupported, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
     simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgMaker, simgModelTags,
     simgLocalChips, simgModesLine, SIMG_PHASE_ORDER, simgFindPinned, simgPinnedList};
