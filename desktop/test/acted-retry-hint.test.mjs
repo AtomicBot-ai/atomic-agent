@@ -49,14 +49,14 @@ test("a turn that acted draws the muted hint with its sentence in data-tip and n
   assert.match(tag, /aria-label="Repeating this turn could create or delete files a second time"/);
   assert.doesNotMatch(tag, /\stitle=/, "a native title too would show the sentence twice");
   // Inert: no handler hook, skipped by Tab, disabled for assistive tech.
-  assert.doesNotMatch(tag, /data-resend|data-act/);
+  assert.doesNotMatch(tag, /data-regen|data-resend|data-act/);
   assert.match(tag, /aria-disabled="true"/);
   assert.match(tag, /tabindex="-1"/);
 });
 
-test("a turn without tools keeps Ask again with its native title", () => {
+test("a turn without tools keeps Regenerate with its native title", () => {
   const html = msgActsFor({ acted: false });
-  assert.match(html, /data-resend="u1" title="Ask again"/);
+  assert.match(html, /data-regen="u1" title="Regenerate"/);
   assert.doesNotMatch(html, /msgact-off/);
 });
 

@@ -3062,13 +3062,16 @@ function msgActs(m) {
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">'
     + ic('copy') + '</button>';
   if (m.k !== 'user') {
-    /* ATO-861: under the last reply of a turn that used no tools, "Ask again"
-       sends the question once more through the same data-resend path as the
-       user bubble's retry (resendUser). A turn that ran a tool or asked for an
+    /* ATO-861: under the last reply of a turn that used no tools, a retry
+       asks the question once more. ATO-1300: it is "Regenerate" now, with its
+       own data-regen (regenerateReply): the agent first takes the question
+       and this reply back, so the new answer replaces the old one instead of
+       stacking a copy under it. An agent without that route still gets the
+       old resend (resendUser). A turn that ran a tool or asked for an
        approval did something, and repeating it is not a harmless re-ask, so
        no button there. Never while a turn runs, never under a placeholder.
        ATO-862: in its place a turn that acted shows a muted retry icon that
-       only explains why: no data-resend and no data-act, so a click reaches
+       only explains why: no data-regen, data-resend or data-act, so a click reaches
        no handler and sends nothing; aria-disabled for assistive tech and
        tabindex -1 so Tab does not stop on a control that does nothing.
        ATO-900: its sentence is drawn by CSS from data-tip on hover
@@ -3081,7 +3084,7 @@ function msgActs(m) {
     const last = cls === 'msgacts msgacts-last' && !m.placeholder && !S.busy;
     const ask = last ? replyRetryAsk(m) : null;
     const again = ask
-      ? '<button class="msgact" data-resend="' + esc(ask.id) + '" title="Ask again" aria-label="Ask again">' + ic('retry') + '</button>'
+      ? '<button class="msgact" data-regen="' + esc(ask.id) + '" title="Regenerate" aria-label="Regenerate">' + ic('retry') + '</button>'
       : last && replyTurnActed(m)
         ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + ACTED_RETRY_HINT
           + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
@@ -3126,10 +3129,12 @@ function copyMessage(id) {
   copyText(m.k === 'user' ? attPlainText(String(m.text || '')) : String(m.text || ''), 'Copied message');
 }
 
-/* Retry = send this message's text again as a new turn. It cannot mean
-   "regenerate": the agent's HTTP surface has no edit, truncate or rewind for a
-   session, so the transcript keeps both copies and the context window grows
-   accordingly. The tooltip therefore says "Send this message again".
+/* Retry = send this message's text again as a new turn. The transcript keeps
+   both copies and the context window grows accordingly, so the user bubble's
+   tooltip says "Send this message again". ATO-1300: "Regenerate" under the
+   last reply (and a failed turn's Try again, ATO-1301) first asks the agent to
+   take the last turn back (regenerateReply, below) and only lands here when
+   the agent has no such route or, for Try again, refuses.
 
    While a turn runs the button does NOT send. Not because the agent refuses —
    it does not; the TurnController is strictly FIFO, so a second POST
@@ -3191,6 +3196,158 @@ function resendUser(id) {
   // agent line and the local-model turn gate.
   S.draft = attToEditor(text);
   if (e) { e.value = S.draft; autosize(e); }
+  submit();
+}
+
+/* ATO-1299: whether the agent can take a turn back. Left true until an agent
+   answers with its unknown-route 404; then every Regenerate resends. */
+const ROLLBACK = {supported: true, pending: false, stash: new Map()};
+/* A question the agent took back while its chat was not on screen (the
+   person switched chats during the call): it lives only here until that
+   chat is opened again, then waits in the composer (openSession). */
+function rollbackStashBack(sid) {
+  const text = ROLLBACK.stash.get(sid);
+  if (!text) return;
+  const e = $('#entry');
+  if (String((e ? e.value : S.draft) || '').trim()) return;   // kept until the composer is free
+  ROLLBACK.stash.delete(sid);
+  S.draft = attToEditor(text);
+  if (e) { e.value = S.draft; autosize(e); }
+  refreshSend();
+  ctxDraftChanged();
+  toast('Your question is back in the box', 'Its old answer was taken back. Send it when you are ready.');
+}
+/** How many questions (steers not counted) come before `m` in the log. */
+function priorQuestions(m) {
+  let count = 0;
+  for (const x of S.log) {
+    if (x === m) return count;
+    if (x.k === 'user' && !x.steered) count++;
+  }
+  return count;
+}
+/** ATO-1300: the words for the agent refusing to take the last turn back (its 409 code). */
+function rollbackRefusalText(r) {
+  const code = r && r.code;
+  if (code === 'turn_in_progress') return 'The agent is still answering. Wait for it to finish, then try again.';
+  if (code === 'turn_has_tools') return 'This answer used tools, so it cannot be replaced. Send the question again instead.';
+  if (code === 'turn_steered') return 'You added to this answer while it ran, so it cannot be replaced. Send the question again instead.';
+  if (code === 'turn_compacted') return 'This part of the chat was summarized, so the answer cannot be replaced.';
+  if (code === 'nothing_to_undo') return 'There is no answer to replace in this chat.';
+  if (code === 'turn_unrecognized') return 'The agent could not match this answer to its question. Nothing was changed.';
+  if (code === 'session_not_found') return 'This chat is not saved yet. Send the question again instead.';
+  return (r && r.error) || 'The agent gave no reason. Nothing was changed.';
+}
+/* ATO-1300 / ATO-1301: "Regenerate" under the last reply and a failed turn's
+   "Try again". The agent removes the chat's last question and its answer
+   (POST /api/sessions/{id}/rollback-last-turn), the window drops the same
+   rows from S.log, and the question goes out again through submit(), as a
+   resend does. So the new answer replaces the old one in the agent's memory
+   too, instead of stacking a second copy of the question on top of it.
+
+   `id` is the question's row. Every gate resendUser has is checked BEFORE
+   the agent is asked, because once the turn is taken back the question only
+   lives in this window: an open microphone or a draft in the way would leave
+   it nowhere. Falls back to resendUser (the old behaviour) when the agent has
+   no such route, the chat is not saved with the agent, a turn is running, or
+   the question is not the chat's last one. `fromFailure` (Try again): any
+   refusal other than "a turn is running" falls back too, since a failed turn
+   that ran a tool still has to be retryable. */
+async function regenerateReply(id, fromFailure) {
+  const m = S.log.find((x) => x.id === id && x.k === 'user');
+  if (!m) return;
+  const text = String(m.text || '').trim();
+  if (!text) return;
+  if (ROLLBACK.pending) return;   // a second click while the first is out
+  const sid = S.agentSession;
+  const at = S.log.indexOf(m);
+  const lastAsk = !S.log.slice(at + 1).some((x) => x.k === 'user' && !x.steered);
+  const running = S.busy || !!S.pending || (!!sid && [...RUNNING.values()].includes(sid));
+  if (!ROLLBACK.supported || !(BR && BR.rollbackLastTurn) || !sid || !lastAsk || running) { resendUser(id); return; }
+  const e = $('#entry');
+  // The same composer gates as resendUser, in the same words.
+  if (VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing') {
+    toast('The microphone is open', 'finish or cancel the dictation, then retry', 'bad');
+    return;
+  }
+  const draft = String((e ? e.value : S.draft) || '').trim();
+  const split = attSplitMessage(text);
+  const caption = split ? split.caption.trim() : text;
+  const own = new Set(split ? split.items.map((i) => i.path) : []);
+  if ((draft && draft !== caption) || ATT.items.some((i) => !(i.saved && own.has(i.saved.path)))) {
+    toast('Your draft is in the way', 'send or clear the composer, then retry', 'bad');
+    if (e) e.focus();
+    return;
+  }
+  const log = S.log;
+  ROLLBACK.pending = true;
+  let r;
+  /* The question by its text AND its position: a failed "continue" the
+     agent never stored must not match an earlier "continue" with a real
+     answer. The count is of the questions before this one, so a question
+     that never reached the agent cannot line up with the one before it. */
+  try { r = await BR.rollbackLastTurn(sid, String(m.text || ''), priorQuestions(m)); }
+  catch (err) { r = {ok: false, supported: true, error: String((err && err.message) || err)}; }
+  finally { ROLLBACK.pending = false; }
+  if (r && r.supported === false) { ROLLBACK.supported = false; resendUser(id); return; }
+  if (!r || !r.ok) {
+    /* turn_mismatch: the agent's last question is not this one (a failed
+       turn it never stored), and it removed nothing: the old resend is right. */
+    if (r && (r.code === 'turn_mismatch' || r.code === 'turn_stopped')) { resendUser(id); return; }
+    if (fromFailure && !(r && r.code === 'turn_in_progress')) { resendUser(id); return; }
+    toast("Couldn't regenerate", rollbackRefusalText(r), 'bad');
+    return;
+  }
+  // The person opened another chat while the agent answered: that chat is
+  // right on the agent side and redraws from it when opened again.
+  if (S.log !== log || S.agentSession !== sid) {
+    ROLLBACK.stash.set(sid, text);
+    toast('The answer was taken back', 'Your question waits in the box when you open that chat again.', 'bad');
+    return;
+  }
+  /* The agent removed ITS last question. When that is not the one on screen
+     (a failed turn it never stored, say), the window no longer matches the
+     agent: it is drawn again from the agent, and the question the agent
+     handed back waits in the composer instead of being sent. */
+  const back = typeof r.text === 'string' ? r.text.trim() : '';
+  if (back !== text) {
+    toast('The chat changed on the agent side', 'It is drawn again from the agent. The question it took back is in the box.', 'bad');
+    await openSession(sid);
+    if (back && S.agentSession === sid) {
+      S.draft = attToEditor(back);
+      const e2 = $('#entry');
+      if (e2) { e2.value = S.draft; autosize(e2); e2.focus(); }
+      refreshSend();
+      ctxDraftChanged();
+    }
+    return;
+  }
+  /* Something got in the way while the agent answered (a turn started, a
+     draft was typed): nothing is sent over it, and the rows stay on screen,
+     so the question can still be sent with its own retry. */
+  const e3 = $('#entry');
+  const draftNow = String((e3 ? e3.value : S.draft) || '').trim();
+  if (S.busy || S.pending || (draftNow && draftNow !== caption)) {
+    /* The agent dropped the old answer, so the screen must too: drawn
+       again from the agent, and the question kept for the composer (it goes
+       in as soon as the box is free, now or on the next open of this chat). */
+    ROLLBACK.stash.set(sid, text);
+    toast('The answer was taken back', 'Your question was not sent because the composer is in use. It waits for you in the box.', 'bad');
+    await openSession(sid);
+    return;
+  }
+  ANX.messageAction('regenerate');
+  /* The question and every row after it go: the reply, its steps and any
+     failure row. Spliced IN PLACE: the transcript window (chat-window.js,
+     ATO-1272) keys on the S.log array itself, and a new array would reset
+     what "Show earlier" opened. A window that started at a removed row
+     finds no such id and is worked out again from the end. */
+  const cut = S.log.indexOf(m);
+  if (cut >= 0) S.log.splice(cut);
+  S.stick = true;
+  // As resendUser: both the editor and S.draft, and through submit() for every gate.
+  S.draft = attToEditor(text);
+  if (e3) { e3.value = S.draft; autosize(e3); }
   submit();
 }
 
@@ -7939,6 +8096,8 @@ document.addEventListener('click', (e) => {
   // ATO-1046: the speaker under a reply.
   const sp = t.closest('[data-speak]'); if (sp) { e.preventDefault(); const m = S.log.find((x) => x.id === sp.dataset.speak); if (m) ttsToggle(m.id, m.text); return; }
   const rs = t.closest('[data-resend]'); if (rs) { e.preventDefault(); resendUser(rs.dataset.resend); return; }
+  // ATO-1300 / ATO-1301: Regenerate under the last reply; a failed turn's Try again carries data-regen-fail.
+  const rg = t.closest('[data-regen]'); if (rg) { e.preventDefault(); regenerateReply(rg.dataset.regen, rg.hasAttribute('data-regen-fail')); return; }
   const es = t.closest('[data-engine-start]'); if (es) { e.preventDefault(); deadEngineStart(es.dataset.engineStart); return; }
   const fill = t.closest('[data-fill]');
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
@@ -20651,6 +20810,7 @@ async function openSession(id) {
   S.agentSession = id;
   S.history = [];
   markSeen(id);   // item 6: opening a chat is reading it
+  rollbackStashBack(id);   // ATO-1300: a question taken back while this chat was not on screen
   /* Item 38: not under a turn running on screen again. It runs on the model
      the window is on, and the notice would land below its reply, saying the
      session ran on the model of the turn before it. */
@@ -21841,14 +22001,16 @@ function sysGlyph(m) {
   return '<span class="sys-ic' + (sev ? ' ' + sev : '') + '">' + ic(name) + '</span>';
 }
 /** ATO-381: "Try again" on a failed turn's row sends the person's message
-    before it once more, through the same data-resend path as the message's
-    own "Send this message again" (resendUser). A steer is folded into the
-    turn, so it is skipped like the palette's retry. '' when there is none. */
+    before it once more. ATO-1301: through regenerateReply, so the agent
+    first takes the failed turn back; when it refuses (the turn ran a tool,
+    say) or has no such route, it falls back to resendUser, the message's own
+    "Send this message again". A steer is folded into the turn, so it is
+    skipped like the palette's retry. '' when there is none. */
 function sysRetryHTML(m) {
   const at = S.log.indexOf(m);
   for (let i = (at < 0 ? S.log.length : at) - 1; i >= 0; i--) {
     const u = S.log[i];
-    if (u.k === 'user' && !u.steered && String(u.text || '').trim()) return ' <button class="btn xs btn-s sysact" data-resend="' + esc(u.id) + '">Try again</button>';
+    if (u.k === 'user' && !u.steered && String(u.text || '').trim()) return ' <button class="btn xs btn-s sysact" data-regen="' + esc(u.id) + '" data-regen-fail="1">Try again</button>';
   }
   return '';
 }
@@ -31356,7 +31518,7 @@ if (typeof window !== 'undefined') {
             anchorLeft: anchor ? Math.round(anchor.getBoundingClientRect().left) : null,
             dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
             height: Math.round(br.height),
-            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.dataset.speak ? 'speak' : b.classList.contains('msgact-off') ? 'hint' : '?'),
+            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.regen ? 'regen' : b.dataset.resend ? 'resend' : b.dataset.speak ? 'speak' : b.classList.contains('msgact-off') ? 'hint' : '?'),
             // ATO-900: the muted hint names itself in data-tip (a CSS tooltip), the others in title.
             titles: btns.map((b) => b.getAttribute('title') || b.getAttribute('data-tip')),
             dangerColor: danger ? getComputedStyle(danger).color : null,
@@ -31381,8 +31543,9 @@ if (typeof window !== 'undefined') {
          ATO-900: its sentence is data-tip (the CSS tooltip), and one that
          also carried a native title would show it twice, so it reads '?'. */
       // ATO-1046: Read aloud is not part of the retry contract these checks pin.
-      return Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.speak).map((b) => b.dataset.resend
-        ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
+      return Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.speak).map((b) => b.dataset.regen
+        ? 'regen:' + b.dataset.regen + ':' + b.getAttribute('title')
+        : b.dataset.resend ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
         : b.dataset.copy ? 'copy'
           : b.classList.contains('msgact-off') && !b.dataset.act && !b.hasAttribute('title') && b.getAttribute('aria-label') === b.getAttribute('data-tip')
             ? 'hint:' + b.getAttribute('aria-disabled') + ':' + b.getAttribute('data-tip') : '?');
@@ -31409,10 +31572,11 @@ if (typeof window !== 'undefined') {
          handler. Drawn again, clicked for real, and every resend counted. */
       drawn([{id: 'rr-u', k: 'user', text: 'list my files'}, tool, {id: 'rr-a', k: 'assistant', text: 'one file'}]);
       const hint = document.querySelector('.msgacts-last .msgact-off');
-      const realResend = resendUser, logLen = S.log.length;
+      const realResend = resendUser, realRegen = regenerateReply, logLen = S.log.length;
       let resends = 0;
       resendUser = function () { resends++; };
-      try { if (hint) hint.click(); } finally { resendUser = realResend; }
+      regenerateReply = function () { resends++; };   // ATO-1300: Regenerate counts as a resend here
+      try { if (hint) hint.click(); } finally { resendUser = realResend; regenerateReply = realRegen; }
       out.toolClick = {found: !!hint, resends, logSame: S.log.length === logLen, focusable: hint ? hint.tabIndex >= 0 : null};
       /* ATO-900: the hint's tooltip is its ::after, filled from data-tip,
          hidden at rest and shown by the hover rule (read as text, since
