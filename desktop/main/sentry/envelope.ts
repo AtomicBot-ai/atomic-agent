@@ -65,9 +65,14 @@ export interface EnvelopeEvent {
   level?: "error" | "warning" | "info";
 }
 
+/** The event's Sentry `fingerprint`; also the rate limiter's key (ATO-1286). */
+export function fingerprintOf(ev: Pick<EnvelopeEvent, "type" | "tags" | "frames">): string[] {
+  const top = ev.frames[0]?.filename ?? "";
+  return ["{{ default }}", ev.type, ev.tags.source ?? "", ev.tags.kind ?? "", ev.tags.reason ?? "", top];
+}
+
 export function buildEnvelope(dsn: ParsedDsn, ev: EnvelopeEvent): { eventId: string; body: string } {
   const eventId = randomUUID().replace(/-/g, "");
-  const top = ev.frames[0]?.filename ?? "";
   const event = {
     event_id: eventId,
     timestamp: Date.now() / 1000,
@@ -79,7 +84,7 @@ export function buildEnvelope(dsn: ParsedDsn, ev: EnvelopeEvent): { eventId: str
     release: ev.release,
     user: { id: ev.installId, ip_address: null },
     tags: ev.tags,
-    fingerprint: ["{{ default }}", ev.type, ev.tags.source ?? "", ev.tags.kind ?? "", ev.tags.reason ?? "", top],
+    fingerprint: fingerprintOf(ev),
     exception: {
       values: [
         {
