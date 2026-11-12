@@ -93,6 +93,15 @@ test("the dialog: budget hidden for local models, Telegram switch only when pair
   assert.match(local, /Pair Telegram/);
 });
 
+test("the Telegram row says the report goes out when the run finishes, not in the morning", () => {
+  const form = { message: "", folder: "/x", budget: "", hours: "8", notify: true };
+  for (const tgPaired of [true, false]) {
+    const html = O.ovnDialogHTML({ local: false, tgPaired, busy: false, error: null, form }, h);
+    assert.match(html, /Send the report to Telegram when it finishes/);
+    assert.doesNotMatch(html, /morning/i);
+  }
+});
+
 test("in Fusion the budget field says it covers the planning model only", () => {
   const st = { local: false, fusion: false, tgPaired: false, busy: false, error: null,
     form: { message: "", folder: "/x", budget: "", hours: "8", notify: false } };
