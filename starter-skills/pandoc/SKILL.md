@@ -4,6 +4,11 @@ description: Convert documents between formats (Markdown, DOCX, HTML, PDF, RST, 
 version: 1.0.1
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "pandoc"
+install:
+  darwin: "brew install pandoc"
+  linux: "apt-get install pandoc"
 dangerous: false
 ---
 

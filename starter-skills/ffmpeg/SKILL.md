@@ -4,6 +4,12 @@ description: Process audio and video with the `ffmpeg` / `ffprobe` CLIs — conv
 version: 1.0.1
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "ffmpeg"
+  - "ffprobe"
+install:
+  darwin: "brew install ffmpeg"
+  linux: "apt-get install ffmpeg"
 dangerous: false
 ---
 

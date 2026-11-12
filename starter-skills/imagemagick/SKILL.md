@@ -5,6 +5,11 @@ version: 1.0.1
 requires_tools:
   - os.shell.run
   - vision.describe
+requires_bins:
+  - "magick|convert"
+install:
+  darwin: "brew install imagemagick"
+  linux: "apt-get install imagemagick"
 dangerous: false
 ---
 
