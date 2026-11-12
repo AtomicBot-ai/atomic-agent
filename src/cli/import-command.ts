@@ -33,6 +33,7 @@ import {
 } from "../import/index.js";
 import { importAtomicDesktopCommand } from "./import-atomic-desktop-command.js";
 import { importOhMyPi, importPi } from "./import-pi-family-command.js";
+import { processFinaleIo, writeImportFinale } from "./import-finale.js";
 
 const HELP =
   [
@@ -252,6 +253,7 @@ async function importHermes(args: string[]): Promise<number> {
     const final = importer.run({ options, execute: true, overwrite, limit });
     process.stdout.write("\nResult:\n");
     process.stdout.write(`${formatReport(final)}\n`);
+    await writeImportFinale(final, processFinaleIo(args));
     return final.summary.error > 0 ? 1 : 0;
   } finally {
     source.close();
@@ -351,6 +353,7 @@ async function importOpenclaw(args: string[]): Promise<number> {
     const final = importer.run({ options, execute: true, overwrite, limit });
     process.stdout.write("\nResult:\n");
     process.stdout.write(`${formatReport(final)}\n`);
+    await writeImportFinale(final, processFinaleIo(args));
     return final.summary.error > 0 ? 1 : 0;
   } finally {
     source.close();
@@ -466,6 +469,7 @@ async function importClaudeCode(args: string[]): Promise<number> {
     });
     process.stdout.write("\nResult:\n");
     process.stdout.write(`${formatReport(final)}\n`);
+    await writeImportFinale(final, processFinaleIo(args));
     return final.summary.error > 0 ? 1 : 0;
   } finally {
     sessionStore.close();
@@ -575,6 +579,7 @@ async function importCodex(args: string[]): Promise<number> {
     });
     process.stdout.write("\nResult:\n");
     process.stdout.write(`${formatReport(final)}\n`);
+    await writeImportFinale(final, processFinaleIo(args));
     return final.summary.error > 0 ? 1 : 0;
   } finally {
     sessionStore.close();
