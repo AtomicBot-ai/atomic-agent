@@ -77,12 +77,16 @@ export function describeModel(id: string, trigger: unknown): Record<string, unkn
   };
 }
 
-/** `cli:modelsPull` took the slot. */
-export function downloadStarted(id: string, trigger?: unknown): void {
+/**
+ * `cli:modelsPull` took the slot. `projectorOnly` (ATO-1369): the weights were
+ * already on disk and only the vision projector downloads, which is not a new
+ * model download; dashboards filter on it.
+ */
+export function downloadStarted(id: string, trigger?: unknown, projectorOnly = false): void {
   try {
     current = null;
     if (!analyticsEnabled()) return;   // describeModel reads the config: not while analytics is off
-    const props = describeModel(id, trigger);
+    const props = { ...describeModel(id, trigger), projector_only: projectorOnly };
     current = { id, startedAt: Date.now(), props, maxPercent: 0, maxBytes: 0, cancelled: false };
     track("model_download_started", props);
   } catch {
@@ -112,7 +116,9 @@ export function downloadFinished(id: string, res: { ok?: boolean; error?: string
     const ok = res.ok === true;
     const result = ok ? "ok" : d.cancelled ? "cancelled" : "failed";
     const secs = ms / 1000;
-    const bytes = d.maxBytes || (ok && typeof d.props.size_gb === "number" ? d.props.size_gb * 1024 ** 3 : 0);
+    // A projector-only pull moved the projector's bytes, not the weights' (ATO-1369).
+    const promised = d.props.projector_only === true ? curatedMeta(id)?.mmprojSizeGb : d.props.size_gb;
+    const bytes = d.maxBytes || (ok && typeof promised === "number" ? promised * 1024 ** 3 : 0);
     track("model_download_finished", {
       ...d.props,
       result,

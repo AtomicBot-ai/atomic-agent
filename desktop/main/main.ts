@@ -237,7 +237,7 @@ import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMetaIds, spotlightIds } from "./model-catalog.js";
-import { catalogPullWantsProjector, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
+import { catalogPullWantsProjector, weightsOnDisk, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, LEGACY_DESKTOP_STATE_DIR, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
@@ -1709,9 +1709,13 @@ function wireIpc(client: AgentClient): void {
     if (running) { if (running.id !== id) A.downloadRefusedBusy(id, trigger); return { ok: false, error: DOWNLOAD_BUSY, running }; }
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
-    A.downloadStarted(id, trigger);
     const withProjector = mmproj || catalogPullWantsProjector(id);   // ATO-1331: every catalogue pull, whoever asked
-    const whole = withProjector ? wholePullProgress(id) : null;
+    /* ATO-1369: the weights already on disk, the agent fetches the projector
+       alone. The bar is then the projector's own size, and analytics marks it
+       projector_only so it does not read as a new model download. */
+    const projectorOnly = withProjector && !client.isRemote && weightsOnDisk(join(modelsDirOf(managedDataDirNow()), id));
+    A.downloadStarted(id, trigger, projectorOnly);
+    const whole = withProjector ? wholePullProgress(id, projectorOnly) : null;
     const started = modelsPull(id, (line) => {
       const parsed = parsePullProgress(line, "weights");
       const progress = whole ? whole(line, parsed) : parsed;

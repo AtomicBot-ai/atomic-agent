@@ -75,6 +75,8 @@ const downloadProps: Record<string, PropSpec> = {
   has_projector: bool,
   fit: en(FIT, { nullable: true }),
   trigger: en(DOWNLOAD_TRIGGERS),
+  /** ATO-1369: the weights were on disk, only the vision projector downloaded. */
+  projector_only: bool,
 };
 
 export const EVENTS: Record<string, EventSpec> = {
