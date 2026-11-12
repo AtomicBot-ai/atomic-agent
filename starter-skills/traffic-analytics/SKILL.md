@@ -89,7 +89,10 @@ How to get each value:
 
 **Optional other paths.** If an MCP server or a Composio toolkit for GA4,
 Search Console or PostHog is already connected in this agent, you may use
-its tools instead. The same rule applies: only numbers that tool returned.
+its tools instead. If the `gog-workspace` skill is signed in with the
+`analytics` and `searchconsole` services, its `gog analytics` and
+`gog searchconsole` commands are another route (read their flags with
+`gog schema analytics --json` first). The same rule applies: only numbers that tool returned.
 Do not tell the user a given toolkit works unless a call to it just did.
 
 ## Before any report
