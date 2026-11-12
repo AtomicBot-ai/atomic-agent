@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   pairedOwnerLine,
+  pairingDeepLink,
   pairingInstruction,
   replaceOwnerPrompt,
 } from "./pairing-copy.js";
@@ -42,5 +43,21 @@ describe("pairing copy (ATO-718)", () => {
       replaceOwnerPrompt({ ownerUserId: 1, confirmSeconds: 1, again: "x" }),
     ];
     for (const line of lines) expect(line).not.toContain("—");
+  });
+
+  it("builds the t.me deep link that sends /start <code> (ATO-516)", () => {
+    expect(pairingDeepLink("my_test_bot", "012345")).toBe(
+      "https://t.me/my_test_bot?start=012345",
+    );
+  });
+
+  it("gives no link when the bot or the code cannot make a working one", () => {
+    expect(pairingDeepLink(null, "012345")).toBeNull();
+    expect(pairingDeepLink("", "012345")).toBeNull();
+    expect(pairingDeepLink("bot", "012345")).toBeNull();
+    expect(pairingDeepLink("evil.com/x", "012345")).toBeNull();
+    expect(pairingDeepLink("my_test_bot?a=b", "012345")).toBeNull();
+    expect(pairingDeepLink("my_test_bot", "12345")).toBeNull();
+    expect(pairingDeepLink("my_test_bot", "01234a")).toBeNull();
   });
 });

@@ -18,6 +18,30 @@ export function pairingInstruction(input: {
   return `Send /start ${input.code} to ${bot} in Telegram within ${window}. The code works once; other messages are ignored.`;
 }
 
+/** A Telegram bot @username: 5 to 32 letters, digits or underscores. */
+const BOT_USERNAME = /^[A-Za-z0-9_]{5,32}$/;
+/** A pairing code as `pairing-mode.ts` makes it. */
+const CODE = /^\d{6}$/;
+
+/**
+ * The deep link that opens the bot with the code filled in (ATO-516):
+ * `https://t.me/<bot>?start=<code>`. Telegram shows a Start button and
+ * then sends `/start <code>` from that account, which is exactly the
+ * message `pairing-mode.ts` accepts, so the link and typing the code by
+ * hand claim the same window. `null` when the bot's @username is not
+ * known yet or either part is not the shape it must be, so a caller
+ * never shows a link that cannot work. It carries the code, so it goes
+ * only where the code goes: the operator's own screen.
+ */
+export function pairingDeepLink(
+  botUsername: string | null,
+  code: string,
+): string | null {
+  if (!botUsername || !BOT_USERNAME.test(botUsername)) return null;
+  if (!CODE.test(code)) return null;
+  return `https://t.me/${botUsername}?start=${code}`;
+}
+
 /** Who became the owner, by @username when the account has one. */
 export function pairedOwnerLine(claim: {
   userId: number;
