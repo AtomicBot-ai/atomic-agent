@@ -55,6 +55,13 @@ export interface ApprovalRule {
   path?: string;
   /** Only for sessions whose working directory is inside this one. */
   project?: string;
+  /**
+   * Only for requests to this origin (`https://api.example.com`): matched
+   * against the request's `grantKey`, which `os.http.request` sets to its
+   * target's origin. "Allow always" on an HTTP prompt saves it, so the
+   * rule covers that one host, not every host (ATO-1471).
+   */
+  origin?: string;
   createdAt: string;
   source: ApprovalRuleSource;
   note?: string;
@@ -185,6 +192,11 @@ export function parseApprovalRule(entry: unknown): ApprovalRule | string {
     }
     rule[key] = resolvePath(value);
   }
+  if (e.origin !== undefined) {
+    const origin = typeof e.origin === "string" ? parseRuleOrigin(e.origin) : null;
+    if (origin === null) return "origin must be an http(s) origin like https://api.example.com";
+    rule.origin = origin;
+  }
   // An allow that names nothing would silence every grantable prompt in
   // one line; that is what approval level 5 is for, not a rule.
   if (
@@ -211,6 +223,17 @@ export function parseApprovalRule(entry: unknown): ApprovalRule | string {
   };
 }
 
+/** `https://API.example.com/` → `https://api.example.com`; anything else → null. */
+function parseRuleOrigin(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
 function isKnownCategory(value: string): value is ApprovalCategory {
   return Object.prototype.hasOwnProperty.call(APPROVAL_CATEGORY_LABELS, value);
 }
@@ -224,6 +247,8 @@ function contentRuleId(rule: Omit<ApprovalRule, "id" | "createdAt" | "source">):
     rule.commandPrefix ?? null,
     rule.path ?? null,
     rule.project ?? null,
+    // Appended only when set, so the ids of rules without one stay as they were.
+    ...(rule.origin !== undefined ? [rule.origin] : []),
   ]);
   return `r_${createHash("sha256").update(key).digest("hex").slice(0, 8)}`;
 }
@@ -236,7 +261,8 @@ export function sameRuleScope(a: NewApprovalRule, b: NewApprovalRule): boolean {
     a.category === b.category &&
     JSON.stringify(a.commandPrefix ?? null) === JSON.stringify(b.commandPrefix ?? null) &&
     a.path === b.path &&
-    a.project === b.project
+    a.project === b.project &&
+    a.origin === b.origin
   );
 }
 
@@ -263,6 +289,7 @@ type MatchableRequest = Pick<
   | "commandUnreadable"
   | "targetPaths"
   | "affectedResources"
+  | "grantKey"
 >;
 
 /** The tool a command rule is written against. */
@@ -320,6 +347,7 @@ export function ruleMatches(
     return false;
   }
   if (rule.path !== undefined && !allPathsInside(request, rule.path)) return false;
+  if (rule.origin !== undefined && rule.origin !== request.grantKey) return false;
   if (rule.project !== undefined) {
     if (ctx.workdir === undefined) return rule.decision !== "allow";
     if (!isInside(rule.project, resolvePath(ctx.workdir))) return false;
@@ -407,11 +435,13 @@ export function buildAlwaysRule(
     };
   }
   const readRoot = request.category === "fs_read_outside" ? alwaysReadRoot(request) : undefined;
+  const origin = alwaysOrigin(request);
   return {
     decision: "allow",
     tool: request.tool,
     category: request.category,
     ...(readRoot !== undefined ? { path: readRoot } : {}),
+    ...(origin !== undefined ? { origin } : {}),
     project,
     source: "prompt",
   };
@@ -425,6 +455,16 @@ export function buildAlwaysRule(
 function alwaysReadRoot(request: ApprovalRequest): string | undefined {
   const root = request.affectedResources?.[0];
   return root !== undefined && isAbsolute(root) ? root : undefined;
+}
+
+/**
+ * The origin an "Allow always" of an HTTP request covers: the one the
+ * prompt was about (`grantKey`). Without it the rule would let any POST
+ * to any host through, for good (ATO-1471).
+ */
+function alwaysOrigin(request: ApprovalRequest): string | undefined {
+  if (request.category !== "http" || request.grantKey === undefined) return undefined;
+  return parseRuleOrigin(request.grantKey) ?? undefined;
 }
 
 /**
@@ -448,6 +488,7 @@ export function canGrantAlways(request: ApprovalRequest): boolean {
   // per site for the chat only (`site-grants.ts`, ATO-1181).
   if (isSiteScopedCategory(request.category)) return false;
   if (request.category === "fs_read_outside") return alwaysReadRoot(request) !== undefined;
+  if (request.category === "http") return alwaysOrigin(request) !== undefined;
   return true;
 }
 
@@ -458,9 +499,10 @@ export function describeAlwaysRule(request: ApprovalRequest): string {
     return `Always allow "${prefix.join(" ")}" in this project`;
   }
   const under = request.category === "fs_read_outside" ? alwaysReadRoot(request) : undefined;
+  const origin = alwaysOrigin(request);
   return `Always allow ${request.tool} (${APPROVAL_CATEGORY_LABELS[request.category]})${
     under !== undefined ? ` under ${under}` : ""
-  } in this project`;
+  }${origin !== undefined ? ` to ${origin}` : ""} in this project`;
 }
 
 /** One line naming what a rule matches, for a denial reason or a list. */
@@ -472,6 +514,7 @@ export function describeRule(rule: ApprovalRule): string {
     parts.push(`(${APPROVAL_CATEGORY_LABELS[rule.category]})`);
   }
   if (rule.path !== undefined) parts.push(`under ${rule.path}`);
+  if (rule.origin !== undefined) parts.push(`to ${rule.origin}`);
   if (rule.project !== undefined) parts.push(`in project ${rule.project}`);
   if (parts.length === 1) parts.push("everything");
   return parts.join(" ");
