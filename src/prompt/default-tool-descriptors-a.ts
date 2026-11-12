@@ -10,6 +10,7 @@ import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
 import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
+import { OS_FS_DOCX_CONTRACT, OS_FS_XLSX_CONTRACT } from "../tools/os/office/office-contracts.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
@@ -95,6 +96,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     argsSchema:
       "{ path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
   },
+  OS_FS_DOCX_CONTRACT.descriptor,
+  OS_FS_XLSX_CONTRACT.descriptor,
   {
     name: "os.fs.archive.list",
     summary: "List archive entries (zip, tar, tar.gz, gz) without extracting.",

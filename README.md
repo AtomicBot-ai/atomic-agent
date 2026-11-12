@@ -693,6 +693,7 @@ Everything Atomic Agent does is inspectable and interruptible:
 - **Replaced files come back:** before a write replaces a file the agent did not create this session, the previous content is copied to `<stateDir>/restore/` (the last 20 copies per working directory, files up to 5 MB), and `os.fs.restore` puts it back.
 - **Deletes go to the Trash:** `os.fs.trash` moves files to the system Trash or Recycle Bin instead of deleting them, behind approval.
 - **Moves without the shell:** `os.fs.move` moves or renames files and folders, creating missing folders, as one approval for a whole batch; it never replaces an existing file unless asked, and its result lists the moves to undo it.
+- **Word and Excel without extra installs:** `os.fs.docx` creates a `.docx` from paragraphs and headings, appends to one, or finds and replaces text in it keeping the formatting; `os.fs.xlsx` creates a `.xlsx`, writes values and formulas into a sheet, or reads a range with its formulas. Both are built in (no Python, pandoc or office app), ask like any file write, and save the previous version for `os.fs.restore`.
 - **Long commands detach:** a shell command still running after 10 minutes becomes a background job the agent can wait on or kill; it stops when the turn ends unless kept (1-hour cap from start, 3 jobs per session).
 - **Reads stay in the workspace:** with `agent.readScope` at its default, `working-dir`, a read outside the working directory asks first; `unrestricted` turns this off.
 

@@ -260,6 +260,12 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
       return P(a.mode === "append" ? V.addedTo : V.wrote, fileObject(a, "a file"));
     case "os.fs.edit":
       return P(V.edited, fileObject(a, "a file"));
+    case "os.fs.docx":
+    case "os.fs.xlsx":
+      return P(
+        a.op === "read" ? V.read : a.op === "create" ? V.created : V.edited,
+        fileObject(a, "a document"),
+      );
     case "os.fs.patch": {
       // An inline patch names its files in `+++ b/<path>` headers.
       const targets = typeof a.patch === "string" && !pathsOf(a).first ? patchTargets(a.patch) : [];

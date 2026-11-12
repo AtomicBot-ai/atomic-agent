@@ -29,6 +29,10 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
   ["os.fs.hash", pathArg],
   ["os.fs.watch", pathArg],
   ["os.fs.read_document", pathArg],
+  // The office tools read the file they edit or show; `create` makes a
+  // new one, which the approval ladder classifies as a write.
+  ["os.fs.docx", (args) => (args.op === "create" ? [] : pathArg(args))],
+  ["os.fs.xlsx", (args) => (args.op === "create" ? [] : pathArg(args))],
   ["os.fs.archive.list", pathArg],
   ["os.fs.archive.read_entry", pathArg],
   ["os.fs.grep", pathArg],
