@@ -218,33 +218,33 @@ async function memoryPoll(js: Js, check: Check, agent: StandIn): Promise<void> {
        rightly starts no read while one is loading, and on a loaded machine a
        read took longer than the 150 ms each step used to give it: the next
        step's trigger then counted 0 reads and failed in full runs only. */
-    const landed = async () => { for (const until = Date.now() + 10000; MEM.loading && Date.now() < until;) await tick(50); };
+    const waitLanded = async () => { for (const until = Date.now() + 10000; MEM.loading && Date.now() < until;) await tick(50); };
     try {
       Object.assign(MEM, {auto: true, mode: 'list', channel: 'profile', search: ''});
       S.overlay = null; S.settings = 1; S.settingsPane = 'memory'; render(); await tick(200);
       const visible = memoryVisible();
       // Shown again with rows already read: it reads again at once.
-      await landed();
+      await waitLanded();
       let n = reads(); MEM.lastRefreshedAt = Date.now() - 60000; memoryTabEntered(); await tick(150);
       const entered = reads() - n;
       // A read on its way lands first: a tick starts no other.
-      await landed();
+      await waitLanded();
       n = reads(); MEM.loading = true; MEM.loadingAt = Date.now(); memAutoRefresh(); await tick(100);
       const inFlight = reads() - n;
       n = reads(); MEM.loading = false; memAutoRefresh(); await tick(150);
       const landed = reads() - n;
       // The window back to the front reads again; paused, it does not.
-      await landed();
+      await waitLanded();
       n = reads(); window.dispatchEvent(new Event('focus')); await tick(150);
       const focus = reads() - n;
-      await landed();
+      await waitLanded();
       n = reads(); MEM.auto = false; window.dispatchEvent(new Event('focus')); await tick(150);
       const paused = reads() - n; MEM.auto = true;
-      await landed();
+      await waitLanded();
       n = reads(); document.dispatchEvent(new Event('visibilitychange')); await tick(150);
       const shown = document.hidden ? 1 : reads() - n;
       // And the 5 s poll itself: a read, and the time it landed (ATO-1414: 15 s, slack for a loaded machine; it ends as soon as both are seen).
-      await landed();
+      await waitLanded();
       n = reads(); const before = MEM.lastRefreshedAt;
       for (const until = Date.now() + 15000; Date.now() < until && !(reads() > n && MEM.lastRefreshedAt !== before);) await tick(200);
       return {visible, entered, inFlight, landed, focus, paused, shown, ticked: reads() - n, tickMoved: MEM.lastRefreshedAt !== before};
