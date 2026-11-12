@@ -5,7 +5,7 @@ Scope: `src/memory/`. Inherit the root instructions; read [README.md](README.md)
 ## Constraints
 
 - Keep durable memory outside the model. Reads refresh turn context; memory writes must not change the stable prefix. Let prompt assembly own section placement.
-- Notes content remains append-only through tag evolution; profile facts have temporal history. Preserve dedup, bounds, leases and durable lesson/procedure lifecycle.
+- Notes content remains append-only through tag evolution (the one exception is the person's own edit, `MemoryStore.updateContent` behind `PATCH /api/memory/notes/{id}`); profile facts have temporal history. Preserve dedup, bounds, leases and durable lesson/procedure lifecycle.
 - Optional embedding/sub-call failures must retain the documented fallback; isolate sub-call provider/session/slot state from the user turn.
 - Consult current config defaults: rewriter is enabled, typedNotes and segmentation are disabled. Archive rollout flags are not current defaults.
 
