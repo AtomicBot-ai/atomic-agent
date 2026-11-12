@@ -6128,6 +6128,36 @@ async function approvalRulesAct(v) {
   render();
   if (res && res.ok) toast('Rule deleted', 'Atomic Agent will ask about it again');
 }
+/* ATO-1087: Settings › Privacy › Offline mode (renderer/offline-mode.js).
+   Read on entry to Privacy and every 5 s while it is open, so the "sent out"
+   line is the agent's live counter; an agent without /api/offline-mode gets
+   a disabled switch that says to update it. */
+const OFFM = createOfflineMode({
+  read: () => BR && BR.offlineMode ? BR.offlineMode() : {supported: false},
+  set: (on) => BR && BR.offlineModeSet ? BR.offlineModeSet(on) : {supported: false},
+});
+let OFFM_GEN = null;
+let OFFM_TIMER = null;
+function offlineModeKey() { const o = OFFM.state; return JSON.stringify([o.supported, o.enabled, o.egress, o.error, o.busy]); }
+async function offlineModeLoad() {
+  if (OFFM_GEN !== AGENT_GEN) { OFFM_GEN = AGENT_GEN; OFFM.reset(); }
+  const before = offlineModeKey();
+  await OFFM.load();
+  // Only a change repaints: the 5 s re-read must not redraw an unchanged pane.
+  if (approvalRulesShown() && offlineModeKey() !== before) render();
+  if (!OFFM_TIMER && approvalRulesShown() && OFFM.state.supported !== false) {
+    OFFM_TIMER = setTimeout(() => { OFFM_TIMER = null; if (approvalRulesShown()) offlineModeLoad(); }, 5000);
+  }
+}
+async function offlineModeAct(v) {
+  if (v === 'reload') { offlineModeLoad(); return; }
+  if (v !== 'toggle') return;
+  const pending = OFFM.toggle();
+  render();
+  const res = await pending;
+  render();
+  if (res && res.ok) toast(res.enabled ? 'Offline mode on' : 'Offline mode off', res.enabled ? 'The agent blocks requests to other hosts' : 'The agent can reach the network again');
+}
 async function refreshSkillList() {
   if (!BR || !BR.skillList) return;
   projectTrustCheck();
@@ -6180,6 +6210,8 @@ function settingsPaneEntered(opened) {
   if (['general', 'privacy'].includes(settingsPaneId(S.settingsPane)) && privacyEffective() === null && !PRIV.effectiveBusy) privacyRefresh();
   // ATO-1144: the saved approval rules, read again on every entry to Privacy.
   if (settingsPaneId(S.settingsPane) === 'privacy') approvalRulesLoad();
+  // ATO-1087: offline mode and its outbound counter, read again on every entry to Privacy.
+  if (settingsPaneId(S.settingsPane) === 'privacy') offlineModeLoad();
   // Item 7 part B: the Skills / Memory / MCP tabs start their own 5 s poll and first load on entry.
   const pane = settingsPaneId(S.settingsPane);
   if (pane === 'skills') skillsTabEntered();
@@ -6709,6 +6741,8 @@ function privacyPane() {
   const sentLine = (label, items) => '<p class="set-privline"><b>' + esc(label) + ':</b> ' + esc(items.join(', ')) + '.</p>';
   return '<div class="set-pane set-privacy">'
     + '<div class="tk-list set-setlist">'
+      // ATO-1087: offline mode, drawn only from what the agent reports (offline-mode.js).
+      + offlineModeHTML(OFFM.state, {esc})
       /* B3: `agent.readScope` (agent 0.6.3). The agent reads it through its
          config cache, which a CLI write does not reset in a running
          `atag serve` (checked live: a write with the chat open still asked),
@@ -7023,6 +7057,7 @@ function act(a) {
   // ATO-1250: the folder-trust dialog and Settings › Skills' switch.
   if (k === 'ptrust') { projectTrustAct(v || ''); return; }
   if (k === 'arules') { approvalRulesAct(v || ''); return; }
+  if (k === 'offline') { offlineModeAct(v || ''); return; }
   // ATO-1156: Continue from Claude Code / Codex (handoff.js). Opening it takes every other overlay
   // and the settings window down first, so Escape and the scrim close the sheet itself.
   if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
