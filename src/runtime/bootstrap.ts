@@ -1,3 +1,4 @@
+import { PrefixInvalidationLedger, notePrefixInvalidation } from "../agent/prefix-drift-warning.js";
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
@@ -532,6 +533,10 @@ export async function createAgentRuntime(
   // that survived a restart would be a mystery rather than a memory.
   let planMode = false;
 
+  // What this runtime rebuilt on purpose, so the loop can label the
+  // stable-prefix change that follows as expected (ATO-316).
+  const prefixInvalidations = new PrefixInvalidationLedger();
+
   // The `skillCatalog` is a getter so that `agent-loop` reads the current
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
@@ -544,6 +549,7 @@ export async function createAgentRuntime(
     // gate is the single live switch rather than a boolean copied into
     // each tool registration.
     isPlanMode: () => planMode,
+    prefixInvalidations,
     // The gate itself, not a copied level: a batch of approval-gated calls
     // runs in order when nothing in it would ask (`--no-approval`), and the
     // step must see the level the operator has now, not at boot.
@@ -755,9 +761,22 @@ export async function createAgentRuntime(
     get errorReporter() { return observability.getErrorReporter(); },
   });
   const { shutdown } = lifecycle;
-  const refreshSkills = skillCatalogState.createRefreshSkills(options);
+  const refreshSkills = notePrefixInvalidation(
+    skillCatalogState.createRefreshSkills(options),
+    prefixInvalidations,
+    "skills refreshed",
+    ["skills"],
+  );
 
-  const refreshMcp = mcpCatalog.createRefreshMcp();
+  // MCP rebuilds the tool catalog; a GitHub token save lands here too
+  // (`### integrations`), and a catalog that crosses the tool-search
+  // threshold rewords the persona and rules.
+  const refreshMcp = notePrefixInvalidation(
+    mcpCatalog.createRefreshMcp(),
+    prefixInvalidations,
+    "tool catalog rebuilt",
+    ["system", "rules", "tools", "integrations"],
+  );
   // "Stop its code" (and plugin off / removed) stops that plugin's live
   // MCP servers now, not at the next start (ATO-1407).
   stopPluginMcpWatch = mcpCatalog.watchPluginMcp(refreshMcp);
