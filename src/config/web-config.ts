@@ -9,6 +9,9 @@ import {
 
 export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
 
+/** Main-content extractor `os.web.fetch` runs first on an HTML page. */
+export type WebFetchExtractorName = "readability" | "defuddle";
+
 /**
  * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
  * 30s overall budget with no connect timeout and no retries, so a single
@@ -51,6 +54,15 @@ export interface WebFetchConfig {
    * parking the agent for minutes on a header value.
    */
   retryMaxDelayMs: number;
+  /**
+   * Main-content extractor tried first on an HTML page (ATO-698). Default
+   * `"readability"` (Mozilla Readability, as before). `"defuddle"` runs
+   * Defuddle first, which keeps code blocks, math and tables in the
+   * markdown, and falls back to Readability when it finds nothing. Off by
+   * default until it has been compared on real pages. Unversioned and
+   * additive: an older file has no field and keeps Readability.
+   */
+  extractor: WebFetchExtractorName;
 }
 
 export interface WebSearchConfig {
@@ -160,6 +172,7 @@ export function createWebFetchDefaults(): WebFetchConfig {
     maxRetries: 2,
     retryBaseDelayMs: 500,
     retryMaxDelayMs: 5_000,
+    extractor: "readability",
   };
 }
 
@@ -330,5 +343,20 @@ export function parseWebFetchConfig(
       raw.retryMaxDelayMs ?? readDefaults().retryMaxDelayMs,
       "web.fetch.retryMaxDelayMs",
     ),
+    extractor: parseWebFetchExtractorName(
+      raw.extractor ?? readDefaults().extractor,
+      "web.fetch.extractor",
+    ),
   };
+}
+
+export function parseWebFetchExtractorName(
+  raw: unknown,
+  field: string,
+): WebFetchExtractorName {
+  if (raw === "readability" || raw === "defuddle") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of readability|defuddle, got ${JSON.stringify(raw)}`,
+  );
 }

@@ -60,9 +60,9 @@ describe("web configuration ownership and compatibility", () => {
       exa: { endpoint: "https://mcp.exa.ai/mcp", apiEndpoint: "https://api.exa.ai/search", apiKeyEnv: "EXA_API_KEY" },
       brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
     });
-    expect(fetch).toStrictEqual({ timeoutMs: 30_000, connectTimeoutMs: 10_000, maxRetries: 2, retryBaseDelayMs: 500, retryMaxDelayMs: 5_000 });
+    expect(fetch).toStrictEqual({ timeoutMs: 30_000, connectTimeoutMs: 10_000, maxRetries: 2, retryBaseDelayMs: 500, retryMaxDelayMs: 5_000, extractor: "readability" });
     expect(Object.keys(search)).toEqual(["enabled", "provider", "maxResults", "timeoutMs", "cacheTtlMinutes", "persistCache", "fallback", "searxng", "exa", "brave"]);
-    expect(Object.keys(fetch)).toEqual(["timeoutMs", "connectTimeoutMs", "maxRetries", "retryBaseDelayMs", "retryMaxDelayMs"]);
+    expect(Object.keys(fetch)).toEqual(["timeoutMs", "connectTimeoutMs", "maxRetries", "retryBaseDelayMs", "retryMaxDelayMs", "extractor"]);
     expect(search).not.toBe(otherSearch);
     expect(search.fallback).not.toBe(otherSearch.fallback);
     expect(search.searxng).not.toBe(otherSearch.searxng);
@@ -123,9 +123,15 @@ describe("web configuration ownership and compatibility", () => {
     expect(parseSearch(raw)).toStrictEqual(expected);
     expect(parseUserConfigFile({ web: { search: raw } }).web.search).toStrictEqual(expected);
     const fetch = { timeoutMs: "1", connectTimeoutMs: "2", maxRetries: "0", retryBaseDelayMs: "9", retryMaxDelayMs: "3" };
-    const expectedFetch = { timeoutMs: 1, connectTimeoutMs: 2, maxRetries: 0, retryBaseDelayMs: 9, retryMaxDelayMs: 3 };
+    const expectedFetch = { timeoutMs: 1, connectTimeoutMs: 2, maxRetries: 0, retryBaseDelayMs: 9, retryMaxDelayMs: 3, extractor: "readability" };
     expect(parseFetch(fetch)).toStrictEqual(expectedFetch);
     expect(parseUserConfigFile({ web: { fetch } }).web.fetch).toStrictEqual(expectedFetch);
+  });
+
+  it("accepts both web.fetch.extractor values and defaults to readability (ATO-698)", () => {
+    expect(parseUserConfigFile({}).web.fetch.extractor).toBe("readability");
+    expect(parseUserConfigFile({ web: { fetch: { extractor: "defuddle" } } }).web.fetch.extractor).toBe("defuddle");
+    expect(parseFetch({ extractor: "readability" }).extractor).toBe("readability");
   });
 
   it.each([false, 42, "primitive", [], new Date(0)])("retains permissive field lookup for a non-plain block (%j)", (block) => {
@@ -154,6 +160,7 @@ describe("web configuration ownership and compatibility", () => {
     { fetch: { maxRetries: -1 }, field: "web.fetch.maxRetries", reason: "expected non-negative integer, got -1" },
     { fetch: { retryBaseDelayMs: 0 }, field: "web.fetch.retryBaseDelayMs", reason: "expected positive integer, got 0" },
     { fetch: { retryMaxDelayMs: 0 }, field: "web.fetch.retryMaxDelayMs", reason: "expected positive integer, got 0" },
+    { fetch: { extractor: "Defuddle" }, field: "web.fetch.extractor", reason: 'expected one of readability|defuddle, got "Defuddle"' },
   ])("preserves fetch owner/root errors for $field", ({ fetch, field, reason }) => {
     for (const error of [thrownError(() => parseFetch(fetch)), thrownError(() => parseUserConfigFile({ web: { fetch } }))]) {
       expect(error).toBeInstanceOf(OwnedValidationError);

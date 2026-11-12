@@ -7,7 +7,19 @@ import { convertHtmlToText, looksLikeHtml } from "./html-to-text.js";
 export type ExtractMode = "markdown" | "text";
 
 /** Which path produced the extracted content (for tool-result diagnostics). */
-export type Extractor = "cf-markdown" | "readability" | "basic" | "raw";
+export type Extractor =
+  | "cf-markdown"
+  | "defuddle"
+  | "readability"
+  | "basic"
+  | "raw";
+
+/**
+ * Which main-content extractor runs first on an HTML page
+ * (`web.fetch.extractor`). `"readability"` is the shipped default; with
+ * `"defuddle"` Defuddle runs first and Readability is the fallback.
+ */
+export type HtmlExtractorPreference = "readability" | "defuddle";
 
 export interface ExtractResult {
   text: string;
@@ -21,6 +33,26 @@ export interface ExtractWebContentParams {
   url: string;
   mode: ExtractMode;
 }
+
+export interface ExtractWebContentAsyncParams extends ExtractWebContentParams {
+  /** Main-content extractor to try first on HTML. Default `"readability"`. */
+  preferred?: HtmlExtractorPreference;
+  /**
+   * Injectable Defuddle runner for tests; defaults to the lazily loaded
+   * `defuddle/node` package.
+   */
+  runDefuddle?: DefuddleRunner;
+}
+
+/**
+ * Runs Defuddle over a parsed page. Returns cleaned main-content HTML or
+ * markdown (per `markdown`), or `null` when nothing was found.
+ */
+export type DefuddleRunner = (input: {
+  html: string;
+  url: string;
+  markdown: boolean;
+}) => Promise<{ content: string; title?: string } | null>;
 
 let turndown: TurndownService | null = null;
 
@@ -80,6 +112,89 @@ function tryReadability(
 }
 
 /**
+ * Defuddle must never reach the network on its own: by default its "async
+ * extractors" call third-party APIs (YouTube transcripts, Reddit comments)
+ * when a page has no local content. `os.web.fetch` has already fetched the
+ * page through the SSRF guard, so extraction stays offline.
+ */
+const refuseFetch: typeof globalThis.fetch = () =>
+  Promise.reject(new Error("os.web.fetch: Defuddle may not fetch"));
+
+type DefuddleNodeModule = typeof import("defuddle/node");
+let defuddleModule: Promise<DefuddleNodeModule> | null = null;
+
+/**
+ * The package is ~2.7 MB, so it is loaded on first use and only when
+ * `web.fetch.extractor` is `"defuddle"`.
+ */
+const defaultRunDefuddle: DefuddleRunner = async ({ html, url, markdown }) => {
+  defuddleModule ??= import("defuddle/node");
+  const { Defuddle } = await defuddleModule;
+  const { document } = parseHTML(html);
+  const result = await Defuddle(
+    document as unknown as Parameters<typeof Defuddle>[0],
+    url,
+    { markdown, useAsync: false, fetch: refuseFetch },
+  );
+  const content = (result.content ?? "").trim();
+  if (!content || !(result.wordCount > 0)) return null;
+  return { content, title: result.title || undefined };
+};
+
+/** Defuddle → markdown or plain text, or `null` to fall back. */
+async function tryDefuddle(
+  html: string,
+  url: string,
+  mode: ExtractMode,
+  run: DefuddleRunner,
+): Promise<{ text: string; title?: string } | null> {
+  try {
+    const parsed = await run({ html, url, markdown: mode === "markdown" });
+    if (!parsed) return null;
+    const text =
+      mode === "markdown" ? parsed.content : convertHtmlToText(parsed.content);
+    return text.trim() ? { text: text.trim(), title: parsed.title } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `extractWebContent` with a choice of main-content extractor (ATO-698).
+ * With `preferred: "defuddle"` an HTML page goes through Defuddle first
+ * (keeps code blocks, math and tables in markdown); when Defuddle throws or
+ * finds no content the usual Readability → basic chain runs. Every other
+ * input, and the default `"readability"`, behaves exactly like
+ * `extractWebContent`.
+ */
+export async function extractWebContentAsync(
+  params: ExtractWebContentAsyncParams,
+): Promise<ExtractResult> {
+  const { preferred = "readability", runDefuddle = defaultRunDefuddle } =
+    params;
+  if (
+    preferred === "defuddle" &&
+    !isMarkdownType(params.contentType) &&
+    looksLikeHtml(params.contentType, params.body)
+  ) {
+    const defuddled = await tryDefuddle(
+      params.body,
+      params.url,
+      params.mode,
+      runDefuddle,
+    );
+    if (defuddled) return { ...defuddled, extractor: "defuddle" };
+  }
+  return extractWebContent(params);
+}
+
+function isMarkdownType(contentType: string | null | undefined): boolean {
+  return (
+    (contentType ?? "").toLowerCase().split(";")[0]?.trim() === "text/markdown"
+  );
+}
+
+/**
  * Turn a fetched response body into LLM-friendly text or markdown.
  *
  * Priority order mirrors the OpenClaw web-fetch pipeline:
@@ -97,9 +212,8 @@ export function extractWebContent(
   params: ExtractWebContentParams,
 ): ExtractResult {
   const { body, contentType, url, mode } = params;
-  const ct = (contentType ?? "").toLowerCase();
 
-  if (ct.split(";")[0]?.trim() === "text/markdown") {
+  if (isMarkdownType(contentType)) {
     return {
       text: mode === "text" ? markdownToPlain(body) : body.trim(),
       extractor: "cf-markdown",

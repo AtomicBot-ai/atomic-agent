@@ -5,7 +5,11 @@ import {
 } from "../../../sandbox/command-runner.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import type { AtomicAgentConfig, WebFetchConfig } from "../../../config/index.js";
-import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
+import {
+  extractWebContentAsync,
+  type DefuddleRunner,
+  type ExtractMode,
+} from "./web-fetch-extract.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import { parseRetryAfterValueMs } from "./retry-after-header.js";
 import { explainCurlStderr, runCurl } from "./run-curl.js";
@@ -37,6 +41,7 @@ const DEFAULT_FETCH_CONFIG: WebFetchConfig = {
   maxRetries: 2,
   retryBaseDelayMs: 500,
   retryMaxDelayMs: 5_000,
+  extractor: "readability",
 };
 
 /**
@@ -75,6 +80,8 @@ export interface OsWebFetchOptions {
   config?: Pick<AtomicAgentConfig, "web">;
   /** Injectable sleep so retry-backoff tests do not wait in real time. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Injectable Defuddle runner so extractor tests need no real package. */
+  runDefuddle?: DefuddleRunner;
 }
 
 interface WebFetchArgs {
@@ -178,11 +185,15 @@ export function buildOsWebFetchTool(
         });
       }
 
-      const extracted = extractWebContent({
+      const extracted = await extractWebContentAsync({
         body: outcome.body,
         contentType: outcome.contentType,
         url: outcome.finalUrl,
         mode: args.mode,
+        // `?? "readability"`: configs built by hand (tests, embedders)
+        // may predate the field.
+        preferred: fetchCfg.extractor ?? "readability",
+        ...(options.runDefuddle ? { runDefuddle: options.runDefuddle } : {}),
       });
       const capped = (ctx.modelMode !== "cloud" || rawArgs.maxChars !== undefined) && extracted.text.length > args.maxChars;
       const text = capped

@@ -95,6 +95,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `web.fetch.maxRetries` (default `2`).
 - `web.fetch.retryBaseDelayMs` (default `500`).
 - `web.fetch.retryMaxDelayMs` (default `5000`).
+- `web.fetch.extractor` (default `"readability"`): `"defuddle"` runs Defuddle first on HTML pages and falls back to Readability.
 
 ## tools
 
