@@ -30,13 +30,18 @@ export function geminiModelFromNotFound(text: string): string | null {
 
 /**
  * What the user reads for a 404 from that endpoint. Keeps "answered 404"
- * so the desktop still reads it as the provider having replied.
+ * so the desktop still reads it as the provider having replied. Only a
+ * body that names a missing model is told as one; any other 404 (a wrong
+ * base path such as `/v1beta` without `/openai`, a typo) keeps the
+ * generic "model id or base URL" sentence.
  */
 export function geminiNotFoundSentence(who: string, text: string): string {
   const model = geminiModelFromNotFound(text);
-  const subject = model === null ? "the model" : `the model "${model}"`;
+  if (model === null) {
+    return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;
+  }
   return (
-    `${who} answered 404: ${subject} is not available on Gemini. ` +
+    `${who} answered 404: the model "${model}" is not available on Gemini. ` +
     `Check the model id against the Gemini model list, or pick another model.`
   );
 }

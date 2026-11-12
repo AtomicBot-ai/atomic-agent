@@ -29,6 +29,9 @@ describe("geminiNotFoundSentence (ATO-1282)", () => {
 
   it("still says what to do when the body names no model", () => {
     expect(geminiModelFromNotFound("Not Found")).toBeNull();
-    expect(geminiNotFoundSentence('"gemini"', "Not Found")).toContain("the model is not available on Gemini");
+    // A 404 that names no model (wrong base path, typo) is not told as a missing model.
+    expect(geminiNotFoundSentence('"gemini"', "Not Found")).toBe(
+      '"gemini" answered 404 (not found). The model id or the base URL is likely wrong.',
+    );
   });
 });

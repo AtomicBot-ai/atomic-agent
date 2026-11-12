@@ -99,6 +99,18 @@ describe("Gemini's 404 for a model it does not serve (ATO-1282)", () => {
     );
   });
 
+  it("does not blame the model for a Gemini 404 that names none (wrong base path)", () => {
+    const err = new OpenAiHttpError(
+      "openai provider 404: Not Found",
+      404,
+      "https://generativelanguage.googleapis.com/v1beta/chat/completions",
+      false,
+      null,
+      "gemini",
+    );
+    expect(humanizeOpenAiHttpError(err)).toBe('"gemini" answered 404 (not found). The model id or the base URL is likely wrong.');
+  });
+
   it("keeps the generic 404 wording for other cloud services", () => {
     const err = new OpenAiHttpError("openai provider 404: not found", 404, "https://api.example.com/v1/chat/completions", false, null, "testprov");
     expect(humanizeOpenAiHttpError(err)).toBe('"testprov" answered 404 (not found). The model id or the base URL is likely wrong.');
