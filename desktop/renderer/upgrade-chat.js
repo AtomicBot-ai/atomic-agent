@@ -1,8 +1,9 @@
 /* ATO-1044 — "Getting the best model for this computer, 42%", then the ask.
 
    After the starter model (starter-chat.js) the app downloads the model this
-   computer can really carry (main/upgrade-model.ts, app:upgradeModel). While
-   it comes, one strip above the composer says how far it is; the chat keeps
+   computer can really carry (main/upgrade-model.ts, app:upgradeModel).
+   ATO-1475: it asks first, Download (size) / Not now; nothing comes down
+   until the click, and Not now is not asked again. While it comes, one strip above the composer says how far it is; the chat keeps
    working on the starter. Once it is on disk the strip asks: Switch now /
    Later. The switch is the person's click, never silent (Nadya, ATO-1044);
    a turn in flight holds it until the turn ends. */
@@ -26,7 +27,13 @@ function upgradeNoticeHTML() {
   let tone = '';
   let text = '';
   let buttons = '';
-  if (p === 'downloading') {
+  if (p === 'ask') {
+    text = name + ' answers better on this computer. It is a '
+      + (UPGRADE.sizeLabel || 'large') + ' download; chats keep running on the small model.';
+    buttons = '<button class="btn btn-p xs" data-act="upg:download">Download'
+      + (UPGRADE.sizeLabel ? ' (' + esc(UPGRADE.sizeLabel) + ')' : '') + '</button>'
+      + '<button class="btn btn-g xs" data-act="upg:notnow">Not now</button>';
+  } else if (p === 'downloading') {
     text = 'Getting the best model for this computer: ' + name
       + (UPGRADE.percent != null ? ', ' + UPGRADE.percent + '%' : '')
       + '. Chats keep running on the small model meanwhile.';
@@ -93,6 +100,17 @@ function upgradeAct(a) {
     if (!BR || !BR.upgradeSwitch) return true;
     UPGRADE.phase = 'switching'; render();
     BR.upgradeSwitch().catch((err) => upgradeOnEvent({ id: UPGRADE.id, phase: 'failed', switching: true, error: String(err && err.message || err) }));
+    return true;
+  }
+  if (a === 'upg:download') {
+    if (!BR || !BR.upgradeDownload) return true;
+    UPGRADE.phase = null; render();
+    BR.upgradeDownload().catch((err) => upgradeOnEvent({ id: UPGRADE.id, phase: 'failed', error: String(err && err.message || err) }));
+    return true;
+  }
+  if (a === 'upg:notnow') {
+    UPGRADE.phase = null; render();
+    if (BR && BR.upgradeNotNow) BR.upgradeNotNow().catch(() => {});
     return true;
   }
   if (a === 'upg:later') {
