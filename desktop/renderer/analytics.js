@@ -94,6 +94,17 @@ const ANX = (() => {
   }
 
   /* ---------- approvals ---------- */
+  /* ATO-1396: the categories counted by name, the same list as main's
+     APPROVAL_CATEGORIES (catalog-values.ts). Not the renderer's CATS: that
+     list feeds the permission settings and leaves out kinds such as
+     `shell_dangerous`, whose answers were all counted as `other`. */
+  const APPROVAL_CATEGORY_IDS = [
+    'fs_write_workspace', 'fs_write_home', 'fs_trash', 'http', 'shell', 'shell_dangerous', 'script', 'proc_kill', 'publish',
+    'git_remote', 'fusion_fanout', 'browser_nonweb', 'browser_commit', 'browser_secret', 'browser_offsite',
+    'trust_config', 'state_secret', 'email', 'fs_read_outside', 'paid_generation', 'screen_control', 'screen_capture',
+    'local_model_restart', 'hook_ask', 'other',
+  ];
+  function apprCategory(req) { return APPROVAL_CATEGORY_IDS.includes(req.cat) ? req.cat : 'other'; }
   const apprShownAt = new WeakMap();
   function apprShown(req) { try { if (req && typeof req === 'object') apprShownAt.set(req, Date.now()); } catch (e) { /* ignore */ } }
   /* key: y / n / esc / s / a / c (allow in this chat, ATO-473) from the card, or 'prose' for a typed refusal. */
@@ -105,11 +116,10 @@ const ANX = (() => {
       : key === 'w' ? 'allow_always'
       : (key === 'y' || key === 's' || key === 'a') ? 'allow_once' : 'deny';
     const at = apprShownAt.get(req);
-    const cats = reg(() => CATS.map((c) => c[0]), []);
     const lvl = Number(req.lvl);
     track('approval_answered', {
       choice,
-      category: cats.includes(req.cat) ? req.cat : 'other',
+      category: apprCategory(req),
       level: Number.isInteger(lvl) ? lvl : null,
       input: key === 'prose' ? 'key' : viaPending === 'click' ? 'click' : 'key',   // the shortcut marker is a key
       ms_to_answer: typeof at === 'number' ? Math.max(0, Date.now() - at) : null,
@@ -124,11 +134,10 @@ const ANX = (() => {
     if (!req || typeof req !== 'object' || apprClosedSeen.has(req)) return;
     try { apprClosedSeen.add(req); } catch (e) { return; }
     const at = apprShownAt.get(req);
-    const cats = reg(() => CATS.map((c) => c[0]), []);
     const lvl = Number(req.lvl);
     track('approval_closed', {
       how,
-      category: cats.includes(req.cat) ? req.cat : 'other',
+      category: apprCategory(req),
       level: Number.isInteger(lvl) ? lvl : null,
       ms_open: typeof at === 'number' ? Math.max(0, Date.now() - at) : null,
     });

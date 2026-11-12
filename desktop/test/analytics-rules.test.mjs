@@ -282,3 +282,39 @@ test("every envelope is platform node and tells Sentry not to infer the IP", () 
   assert.equal(event.user.ip_address, null);
   assert.equal("minidumpUrl" in dsn, false);
 });
+
+/* ---- ATO-1396: approval answers keep their category ---- */
+
+function agentApprovalCategories() {
+  const src = readFileSync(join(HERE, "..", "..", "src", "approval", "approval-level.ts"), "utf8");
+  const at = src.indexOf("export const APPROVAL_CATEGORY_LABELS");
+  assert.ok(at >= 0, "APPROVAL_CATEGORY_LABELS is in approval-level.ts");
+  const body = src.slice(src.indexOf("{", at) + 1, src.indexOf("\n};", at));
+  return [...body.matchAll(/^\s*([a-z_]+):/gm)].map((m) => m[1]);
+}
+
+test("renderer: a dangerous command's answer is counted as shell_dangerous, not other (ATO-1396)", () => {
+  const { ANX, sent } = loadRenderer();
+  const req = { cat: "shell_dangerous", lvl: 4 };
+  ANX.apprShown(req);
+  ANX.apprAnswered(req, "n");
+  const answered = sent.find((e) => e.event === "approval_answered");
+  assert.equal(answered.props.category, "shell_dangerous");
+  assert.equal(V.validateEvent("approval_answered", answered.props, "ui").props.category, "shell_dangerous");
+  ANX.apprClosed({ cat: "screen_capture", lvl: 3 }, "stopped");
+  const closed = sent.find((e) => e.event === "approval_closed");
+  assert.equal(V.validateEvent("approval_closed", closed.props, "ui").props.category, "screen_capture");
+  ANX.apprAnswered({ cat: "made_up_kind", lvl: 2 }, "y");
+  assert.equal(sent[sent.length - 1].props.category, "other", "a kind nobody knows is still other");
+});
+
+test("every agent approval category is counted by name, in main and the renderer alike (ATO-1396)", () => {
+  const agent = agentApprovalCategories();
+  assert.ok(agent.includes("shell_dangerous") && agent.length >= 20);
+  assert.deepEqual(agent.filter((id) => !CV.APPROVAL_CATEGORIES.includes(id)), [], "catalog-values.ts APPROVAL_CATEGORIES");
+  const analytics = readFileSync(join(HERE, "..", "renderer", "analytics.js"), "utf8");
+  const list = /const APPROVAL_CATEGORY_IDS = \[([\s\S]*?)\];/.exec(analytics);
+  assert.ok(list, "APPROVAL_CATEGORY_IDS is in analytics.js");
+  const ids = [...list[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  assert.deepEqual([...ids].sort(), [...CV.APPROVAL_CATEGORIES].sort(), "the renderer's list is main's list");
+});
