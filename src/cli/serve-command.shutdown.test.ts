@@ -70,9 +70,10 @@ vi.mock("./serve-orphan-guard.js", async (importOriginal) => {
 
 /** Start serve, end it the way `end` says once it is up, and return its exit code. */
 async function serveEndedBy(end: "memory" | "orphaned"): Promise<number> {
-  edges.shutdown = [];
-  edges.exhaust = null;
-  edges.orphan = null;
+  // Object.assign, not plain assignments: `edges.exhaust = null` would narrow
+  // the field to null for the rest of this function, and the calls below
+  // would not type-check.
+  Object.assign(edges, { shutdown: [], exhaust: null, orphan: null });
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
   const running = serveCommand(["--parent-pid", "4242"]);
   await vi.waitFor(() => {
