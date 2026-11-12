@@ -1,4 +1,7 @@
-import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
+import {
+  catalogForProvider,
+  modelsDevEntryForProvider,
+} from "../llm/provider/catalog-for-provider.js";
 import {
   resolveModel,
   type ModelCatalogEntry,
@@ -11,10 +14,11 @@ import { getCachedOpenRouterChatPicks } from "../llm/provider/openrouter/fetch-o
 /**
  * Pricing for a model id on one provider, when any is known.
  *
- * Two sources, in `resolveModel`'s own precedence: a hand-configured
- * `userModels[].pricing` first, then the provider's bundled catalog.
- * The catalog is what makes cost work out of the box on OpenRouter and
- * aimlapi, whose published prices ship with the agent; without it only
+ * Sources, first that knows the model wins: a hand-configured
+ * `userModels[]` row, then the provider's bundled catalog (OpenRouter,
+ * aimlapi), then the bundled models.dev snapshot (ATO-647), which prices
+ * and sizes the direct presets (Anthropic, Groq, DeepSeek, Moonshot,
+ * Mistral, xAI, …) and the `gemini` kind. Without the last two only
  * operators who priced their models by hand ever saw a `cost_usd`.
  *
  * `providerId` is the link that SERVED the completion — the fallback
@@ -36,6 +40,8 @@ export function resolveModelPricingFor(
   if (!entry) return undefined;
   const model = resolveModel(entry, modelId, catalogForProvider(entry));
   if (model.source !== "default") return model;
+  const modelsDev = modelsDevEntryForProvider(entry, modelId);
+  if (modelsDev !== undefined) return { ...modelsDev, source: "catalog" };
   // Nothing configured and nothing bundled: OpenRouter's live model list
   // (fetched for the picker, cached for an hour) still knows the row's
   // `context_length` and prices. Better than the nominal 128k default,
