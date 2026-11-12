@@ -3,6 +3,10 @@ import { getConfig } from "../../config/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import { persistAnalyticsEnabled } from "../persist-analytics-enabled.js";
+import {
+  readOfflineModeControl,
+  snapshotOfflineMode,
+} from "./offline-mode.js";
 
 /**
  * Only TUI module that persists `analytics.enabled` and hot-applies it
@@ -27,11 +31,45 @@ export class PrivacyOrchestrator {
       type: "privacy_synced",
       analyticsEnabled: getConfig().analytics.enabled,
       sessionGrants: this.runtime.approvals.sessionGrants(),
+      offline: snapshotOfflineMode(readOfflineModeControl(this.runtime)),
     });
     this.bus.emit({
       type: "approval_level_changed",
       approvalLevel: this.runtime.getApprovalLevel(),
     });
+  }
+
+  /**
+   * Flip offline mode (ATO-1087) through the agent's own kill switch
+   * (ATO-1084), which persists and applies it. A runtime without the switch
+   * gets a plain line and no state change: the tab never fakes the mode.
+   */
+  async toggleOffline(): Promise<void> {
+    const control = readOfflineModeControl(this.runtime);
+    if (!control) {
+      this.bus.emit({
+        type: "privacy_action_settled",
+        error: "offline mode is not available in this agent build",
+      });
+      return;
+    }
+    this.bus.emit({ type: "privacy_action_started" });
+    try {
+      const next = !control.isEnabled();
+      await control.setEnabled(next);
+      this.bus.emit({
+        type: "privacy_action_settled",
+        message: next ? "offline mode on" : "offline mode off",
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.bus.emit({
+        type: "privacy_action_settled",
+        error: `offline mode toggle failed: ${msg}`,
+      });
+    }
+    // Re-read either way: the panel shows what the agent says now.
+    this.refresh();
   }
 
   /** Flip analytics to the opposite of the live config value (settings tab). */

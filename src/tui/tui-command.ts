@@ -851,6 +851,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         // Only the `/analytics enable|disable` slash verbs call this.
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled, "slash"),
+        onOfflineToggleRequested: () => orchestrator.privacy.toggleOffline(),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
         onIntegrationsRefreshRequested: () =>
           orchestrator.integrations.refresh(),

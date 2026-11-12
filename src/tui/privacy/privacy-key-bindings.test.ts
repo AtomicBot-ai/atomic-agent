@@ -99,4 +99,24 @@ describe("handlePrivacyTabKey", () => {
     );
     expect(handlePrivacyTabKey("a", emptyKey(), otherTab)).toBe(false);
   });
+
+  it("o toggles offline mode only when the agent has the kill switch", () => {
+    const onOfflineToggleRequested = vi.fn();
+    const base = privacyState();
+    const without = ctx(base, { onOfflineToggleRequested });
+    // Consumed (no editor echo) but nothing is asked of the agent.
+    expect(handlePrivacyTabKey("o", emptyKey(), without)).toBe(true);
+    expect(onOfflineToggleRequested).not.toHaveBeenCalled();
+
+    const supported: TuiState = {
+      ...base,
+      privacyPanel: {
+        ...base.privacyPanel,
+        offline: { supported: true, enabled: false, egress: null },
+      },
+    };
+    const withSwitch = ctx(supported, { onOfflineToggleRequested });
+    expect(handlePrivacyTabKey("o", emptyKey(), withSwitch)).toBe(true);
+    expect(onOfflineToggleRequested).toHaveBeenCalledTimes(1);
+  });
 });

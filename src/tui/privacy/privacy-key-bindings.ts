@@ -15,6 +15,7 @@ export interface PrivacyTabKeyContext {
  * the key was consumed so the editor echo is suppressed.
  *
  *  - `a` — toggle anonymous analytics + error reporting.
+ *  - `o` — toggle offline mode, only when the agent has the kill switch.
  *  - `r` — refresh the persisted snapshot.
  */
 export function handlePrivacyTabKey(
@@ -27,6 +28,11 @@ export function handlePrivacyTabKey(
   if (state.privacyPanel.busy) return true;
   if (input === "a") {
     void callbacks.onAnalyticsToggleRequested?.();
+    return true;
+  }
+  if (input === "o") {
+    if (!state.privacyPanel.offline.supported) return true;
+    void callbacks.onOfflineToggleRequested?.();
     return true;
   }
   if (input === "r") {

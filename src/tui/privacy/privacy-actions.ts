@@ -1,4 +1,5 @@
 import type { SessionGrantsSnapshot } from "../../approval/approval-gate.js";
+import type { OfflinePanelState } from "./offline-mode.js";
 
 /**
  * Reducer actions specific to the Privacy tab. The orchestrator and the
@@ -11,6 +12,8 @@ export type PrivacyAction =
       type: "privacy_synced";
       analyticsEnabled: boolean;
       sessionGrants: SessionGrantsSnapshot;
+      /** Offline mode snapshot; omitted by callers that do not read it. */
+      offline?: OfflinePanelState;
     }
   | { type: "privacy_action_started" }
   | { type: "privacy_action_settled"; message?: string; error?: string }

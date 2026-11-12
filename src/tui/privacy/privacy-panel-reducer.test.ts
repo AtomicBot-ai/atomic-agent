@@ -83,4 +83,38 @@ describe("reducePrivacyAction", () => {
     expect(cleared?.privacyPanel.message).toBeNull();
     expect(cleared?.privacyPanel.lastError).toBeNull();
   });
+
+  it("folds the offline snapshot and keeps the old one when it is omitted", () => {
+    const offline = {
+      supported: true,
+      enabled: true,
+      egress: {
+        bytesOut: 0,
+        requestsOut: 0,
+        requestsBlocked: 2,
+        since: "2026-11-12T10:00:00.000Z",
+      },
+    };
+    const synced = reducePrivacyAction(baseState(), {
+      type: "privacy_synced",
+      analyticsEnabled: true,
+      sessionGrants: { categories: [], shapes: [] },
+      offline,
+    });
+    expect(synced?.privacyPanel.offline).toEqual(offline);
+    const again = reducePrivacyAction(synced!, {
+      type: "privacy_synced",
+      analyticsEnabled: false,
+      sessionGrants: { categories: [], shapes: [] },
+    });
+    expect(again?.privacyPanel.offline).toEqual(offline);
+  });
+
+  it("starts with offline mode unsupported", () => {
+    expect(baseState().privacyPanel.offline).toEqual({
+      supported: false,
+      enabled: false,
+      egress: null,
+    });
+  });
 });
