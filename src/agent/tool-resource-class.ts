@@ -212,6 +212,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
 
   // video — always a paid cloud clip that runs for minutes: solo.
   "video.generate": "approval_gated",
+  // A headless browser held for the whole recording, then a file write: solo.
+  "video.render_html": "approval_gated",
 
   // fusion — `approval_gated` is the "must be solo" class, and that is
   // what this needs: one call runs several worker turns concurrently
@@ -398,6 +400,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "image.generate": ["paid_generation"],
     // Always cloud, always billed per second.
     "video.generate": ["paid_generation"],
+    // Asks like a file write onto its output (`categorizeFsMutation`).
+    "video.render_html": FS_WRITE_CATEGORIES,
   };
 
 /**

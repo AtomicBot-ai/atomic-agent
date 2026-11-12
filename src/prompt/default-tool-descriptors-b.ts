@@ -241,6 +241,20 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // ATO-1164: free and local (headless browser + ffmpeg), so not gated
+    // on a key; rare tier, loaded through tool.view / tool.search.
+    name: "video.render_html",
+    summary:
+      "Record an HTML page to an .mp4 video in the working folder: an animated title card, a chart, a product teaser made in HTML/CSS/JS. Frames are taken on a virtual clock (requestAnimationFrame, timers, Date and CSS animations step exactly 1/fps per frame), then put together by the local ffmpeg. Free, nothing goes to the cloud. Pass `path` (an .html file in the working folder) or `html` (the markup). Returns the path; to show it, pass the path in reply.attachments. Needs Chrome (or another Chromium browser) and ffmpeg; it says how to install whichever is missing.",
+    argsSchema:
+      '{ path?: string /* .html file in the working folder */, html?: string /* the markup, instead of path */, duration?: number /* seconds; default 5, max 60 */, fps?: number /* 1..60; default 30 */, width?: number /* 64..1920; default 1280 */, height?: number /* 64..1920; default 720 */, output?: string /* .mp4 name in the working folder; default video-html-<time>.mp4 */ }',
+    examples: [
+      '{"path":"intro.html","duration":6}',
+      '{"html":"<body style=\'margin:0;background:#111\'><h1 style=\'color:#fff;animation:f 2s\'>Hello</h1><style>@keyframes f{from{opacity:0}}</style></body>","duration":3,"width":1080,"height":1920}',
+    ],
+    tier: "rare",
+  },
+  {
     // MCP discovery / resource / prompt tools. The actual MCP tool
     // calls themselves come from the dynamic descriptor builder
     // (see `mcp-descriptor-builder.ts`) and ship at tier `rare`.

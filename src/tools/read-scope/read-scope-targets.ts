@@ -66,6 +66,8 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
       return image === undefined ? [] : [image];
     },
   ],
+  // The page `video.render_html` records (ATO-1164).
+  ["video.render_html", pathArg],
   [
     // Not a read, but a way to one: a file moved from outside the scope
     // into the working directory could then be read without asking. Its

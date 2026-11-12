@@ -192,7 +192,7 @@ function bucketOf(tool: string): BucketId {
   }
   if (tool.startsWith("memory.")) return "memory";
   if (tool === "image.generate") return "image";
-  if (tool === "video.generate") return "video";
+  if (tool === "video.generate" || tool === "video.render_html") return "video";
   return "other";
 }
 
