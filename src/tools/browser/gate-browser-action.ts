@@ -22,11 +22,13 @@ import {
 } from "./classify-browser-action.js";
 
 export interface BrowserActionRequest {
-  tool: "browser.click" | "browser.type";
+  tool: "browser.click" | "browser.type" | "browser.act";
   kind: BrowserActionKind;
   ref: string;
   /** Text `browser.type` is about to enter; shown only for non-secret commits. */
   text?: string;
+  /** Verb for the preview instead of click / type ("press Enter on"), for `browser.act`. */
+  label?: string;
 }
 
 const NAME_PREVIEW_CAP = 80;
@@ -68,6 +70,7 @@ export function buildBrowserActionPreview(
 ): string {
   const where = host ? ` on ${host}` : "";
   const target = elementLabel(element, request.ref);
+  if (request.label !== undefined) return `${request.label} ${target}${where}`;
   if (request.kind === "click") return `click ${target}${where}`;
   const text = request.text ?? "";
   const shown =

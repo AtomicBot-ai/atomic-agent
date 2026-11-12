@@ -151,6 +151,34 @@ export interface ScreenshotResult {
   clipped: boolean;
 }
 
+/**
+ * One `browser.act` step (ATO-957): thin Playwright wrappers kept behind
+ * a single tool so the tool list and grammar stay small. Arguments are
+ * validated by `page-action-args.ts`; the approval gate runs in `act.ts`
+ * before the backend sees any of these.
+ */
+export type PageActionInput =
+  | { action: "select"; ref: string; values: string[] }
+  | { action: "upload"; ref: string; paths: string[] }
+  | { action: "back" }
+  | { action: "forward" }
+  | { action: "key"; key: string; ref?: string }
+  | { action: "hover"; ref: string }
+  /** Answer the next JS dialog (alert / confirm / prompt) on the active tab. */
+  | { action: "dialog"; accept: boolean; text?: string }
+  | { action: "wait"; ms: number }
+  | { action: "wait"; text: string; state: "visible" | "hidden"; timeoutMs: number }
+  | { action: "wait"; ref: string; state: "visible" | "hidden"; timeoutMs: number };
+
+export type PageActionName = PageActionInput["action"];
+
+export interface PageActionResult {
+  /** `false` when the step ran but did not happen (no history, a wait that timed out). */
+  done: boolean;
+  /** One short line for the model ("went back", "selected 2 options"). */
+  note: string;
+}
+
 export interface BrowserBackend {
   /** Lazy init; must be safe to call multiple times. */
   ensureReady(): Promise<void>;
@@ -193,4 +221,10 @@ export interface BrowserBackend {
    * for the capture (passwords already are). Never written to disk here.
    */
   screenshot(input: ScreenshotInput): Promise<ScreenshotResult>;
+  /**
+   * Select, upload, back / forward, key press, hover, dialog answer and
+   * wait (`browser.act`). Optional so test fakes that do not need it
+   * stay valid; the tool reports "not supported" when it is missing.
+   */
+  act?(input: PageActionInput): Promise<PageActionResult>;
 }

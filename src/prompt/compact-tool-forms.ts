@@ -41,6 +41,11 @@ const FORMS: Record<string, CompactToolForm> = {
   },
   "browser.tabs": { summary: "List, switch, close or open browser tabs.", tier: RARE },
   "browser.scroll": { summary: "Scroll the page; read_aria after if needed.", tier: RARE },
+  "browser.act": {
+    summary:
+      "select, upload, back, forward, key, hover, dialog (before the click that opens it) or wait, by `action`.",
+    tier: RARE,
+  },
   "browser.screenshot": {
     summary: "JPEG of the page or one element; returns a path.",
     tier: RARE,
