@@ -33,7 +33,7 @@ import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActi
 import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
-import { openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
+import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
 import { registerVideoTools, VIDEO_GENERATE_TOOL } from "../../tools/video/index.js";
 import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
@@ -274,13 +274,20 @@ export function registerRuntimeImageTools(input: {
   toolRegistry: ToolRegistry;
   dangerous: DangerousToolOptions;
   getAnalytics: () => AnalyticsClient | null;
+  /** Absent: no progress lines (the Core download on the first picture goes unannounced). */
+  emitAgentLoopEventFor?: FusionDelegateDeps["emitEvent"];
 }): void {
-  const { toolRegistry, dangerous, getAnalytics } = input;
+  const { toolRegistry, dangerous, getAnalytics, emitAgentLoopEventFor } = input;
   registerImageTools(toolRegistry, {
     ...dangerous,
     dataDir: () => getConfig().paths.localModelsDataDir,
     openRouterKey: () => openRouterImageKey(getConfig()),
     report: (event) => captureImageGenerated(getAnalytics(), event),
+    ...(emitAgentLoopEventFor ? {
+      onProgress: (sessionId: string, update: { fraction: number; elapsedMs: number; label: string }) => emitAgentLoopEventFor(sessionId, {
+        type: "tool_progress", tool: IMAGE_GENERATE_TOOL, fraction: update.fraction, elapsedMs: update.elapsedMs, label: update.label,
+      }),
+    } : {}),
   });
 }
 

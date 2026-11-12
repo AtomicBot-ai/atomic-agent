@@ -5,6 +5,7 @@ import {
   DEFAULT_OPENROUTER_IMAGE_MODEL,
   defaultImageModel,
   describeCoreImageError,
+  forgetOpenRouterMedia,
   listCoreImageModels,
   OPENROUTER_MEDIA_BASE_URL,
   registerOpenRouterMedia,
@@ -76,6 +77,34 @@ describe("runCoreImageJob", () => {
     expect(call.mock.calls.some(([path]) => path === "/diffusion/jobs/abc/cancel")).toBe(true);
   });
 
+  it("ATO-425: Esc during a slow submit returns at once, and the job Core made after all is cancelled", async () => {
+    const controller = new AbortController();
+    let release!: (v: unknown) => void;
+    const call = vi.fn(async (path: string, _body?: unknown, opts?: { signal?: AbortSignal }) => {
+      if (path === "/diffusion/jobs") {
+        expect(opts?.signal).toBeUndefined();   // the submit is never cut off mid-way
+        return new Promise((r) => { release = r; });
+      }
+      return { cancelled: true };
+    });
+    const running = runCoreImageJob({ call } as unknown as CoreControlClient, request, { pollMs: 1, signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();                        // Esc while Core is still answering the submit
+    await expect(running).rejects.toThrow();   // ...returns without waiting for Core
+    expect(call.mock.calls.some(([path]) => String(path).endsWith("/cancel"))).toBe(false);
+    release({ jobId: "late" });                // Core had made the job after all
+    await vi.waitFor(() => expect(call.mock.calls.some(([path]) => path === "/diffusion/jobs/late/cancel")).toBe(true));
+    expect(call.mock.calls.filter(([path]) => path === "/diffusion/jobs/late")).toHaveLength(0);
+  });
+
+  it("does not submit at all when already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { client, call } = fakeCore([job({})]);
+    await expect(runCoreImageJob(client, request, { signal: controller.signal })).rejects.toThrow();
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it("cancels and says so when the job outlives its timeout", async () => {
     const { client, call } = fakeCore([job({})]);
     await expect(runCoreImageJob(client, request, { pollMs: 1, timeoutMs: 10 })).rejects.toMatchObject({ code: "TIMEOUT" });
@@ -113,6 +142,28 @@ describe("cloud media", () => {
     expect(call).toHaveBeenCalledWith("/media/providers/openrouter/models?kind=image", undefined, { timeoutMs: 20_000 });
     const broken = vi.fn(async () => { throw new CoreRequestError(409, "not configured", "REMOTE_NOT_CONFIGURED"); });
     expect(await listCoreImageModels({ call: broken } as unknown as CoreControlClient, "openrouter")).toEqual([]);
+  });
+});
+
+describe("forgetOpenRouterMedia (ATO-425)", () => {
+  const withCoreOn = (call: ReturnType<typeof vi.fn>) =>
+    (async (_d: string, fn: (c: CoreControlClient, f: string) => Promise<unknown>) => fn({ call } as unknown as CoreControlClient, "/d")) as never;
+
+  it("asks Core to drop the OpenRouter provider and its key", async () => {
+    const call = vi.fn(async () => ({ removed: true }));
+    expect(await forgetOpenRouterMedia("/data", { installed: () => true, withCore: withCoreOn(call) })).toBe(true);
+    expect(call).toHaveBeenCalledWith("/cloud/providers/openrouter", undefined, expect.objectContaining({ method: "DELETE" }));
+  });
+
+  it("does nothing, and downloads nothing, when Core was never installed", async () => {
+    const withCore = vi.fn();
+    expect(await forgetOpenRouterMedia("/data", { installed: () => false, withCore: withCore as never })).toBe(false);
+    expect(withCore).not.toHaveBeenCalled();
+  });
+
+  it("never throws when Core cannot do it", async () => {
+    const call = vi.fn(async () => { throw new CoreRequestError(404, "not registered", "NOT_FOUND"); });
+    expect(await forgetOpenRouterMedia("/data", { installed: () => true, withCore: withCoreOn(call) })).toBe(false);
   });
 });
 

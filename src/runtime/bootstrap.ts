@@ -414,7 +414,7 @@ export async function createAgentRuntime(
   // before the first turn sizes a prompt. Silent and non-blocking.
   void modelContext.primeLocalContextWindow();
   registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
-  registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics });
+  registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
   registerRuntimeVideoTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
 
   const mcpCatalog = await connectRuntimeMcpCatalog({
