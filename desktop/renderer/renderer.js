@@ -25524,12 +25524,12 @@ function memoryTab() {
     ? '<div class="tk-seg">' + MEM_NOTES_FILTERS.map((f) => '<button class="' + (f === MEM.notesFilter ? 'on' : '') + '" aria-pressed="' + (f === MEM.notesFilter) + '" data-act="memory:filter:' + f + '">' + esc(f) + '</button>').join('') + '</div>'
     : '';
   return '<div class="sd-pane sd-mem">'
-    + '<div class="tk-bar"><div class="tk-seg" role="group" aria-label="Memory channel">' + seg + '</div>' + filter + '<span class="grow"></span>'
+    + '<div class="tk-bar"><div class="tk-seg" role="group" aria-label="Memory channel">' + seg + '</div>' + filter + memGraphToggleHTML() /* ATO-584 */ + '<span class="grow"></span>'
     // Calm (S5): Refresh is a button (the `r` key). The auto-refresh status is the window's, beside Done (Д26); `a` still pauses it.
     + '<span class="set-counts">' + memVisibleRows().length + ' shown</span>'
     + '<button class="iconbtn sm" data-act="memory:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
     + (MEM.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MEM.lastError) + '</span></div>' : '')
-    + (MEM.mode === 'list' ? memListHTML() : memDetailHTML()) + '</div>';
+    + (MEM.mode === 'list' ? (memGraphOn() ? memGraphHTML() : memListHTML()) : memDetailHTML()) + '</div>';
 }
 function memListHTML() {
   if (MEM.channelHint) {
@@ -25857,6 +25857,7 @@ function memoryAct(what) {
     if (row.channel === 'links' && row.linkFromId !== undefined) { memOpenNoteById(row.linkFromId); return; }
     memOpenDetail(row); return;
   }
+  if (memGraphAct(verb, arg)) return; // ATO-584: List | Graph (memory-graph.js)
   if (verb === 'refresh') { memRefresh(); return; }
   if (verb === 'auto') { MEM.auto = !MEM.auto; render(); return; }
   if (verb === 'filter') {
@@ -25881,6 +25882,7 @@ function memoryKey(e, k, inText) {
     return false;
   }
   const rows = memVisibleRows();
+  if (memGraphOn() && memGraphListKey(k)) return false; // ATO-584: the list is not on screen under the graph
   if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); MEM.cursor = Math.min(MEM.cursor + 1, Math.max(0, rows.length - 1)); render(); return true; }
   if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); MEM.cursor = Math.max(MEM.cursor - 1, 0); render(); return true; }
   if (k === 'Enter') { e.preventDefault(); memoryAct('open'); return true; }
