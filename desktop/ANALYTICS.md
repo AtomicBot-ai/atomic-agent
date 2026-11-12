@@ -15,6 +15,9 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
 - `DO_NOT_TRACK=1` (also `true` / `yes` / `on`) in the environment turns
   analytics and crash reports off whatever the config says, and the agent
   the desktop spawns gets `ATOMIC_AGENT_ANALYTICS=off`.
+- `ATOMIC_AGENT_ANALYTICS=off` (also `0` / `false` / `no` / `disabled`), the
+  terminal agent's own kill switch, does the same for the desktop: no events,
+  no crash reports, and the agent inherits it.
 - Settings › Privacy applies live, no restart. Turning it off: the config
   write happens first; only if it succeeded is `analytics_disabled` sent and
   flushed (2 s at most), and then sending stops and the queue is dropped. A
@@ -52,7 +55,7 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
 | `ATOMIC_AGENT_SURFACE` | `desktop` |
 | `ATOMIC_AGENT_INSTALL_CHANNEL` | `dmg` / `exe` / `appimage` / `deb` |
 | `ATOMIC_AGENT_DESKTOP_VERSION` | the app version, when known |
-| `ATOMIC_AGENT_ANALYTICS` | `off` on a test or dev run, when the terminal opt-out is inherited, or under `DO_NOT_TRACK=1` |
+| `ATOMIC_AGENT_ANALYTICS` | `off` on a test or dev run, when the terminal opt-out is inherited, or under `DO_NOT_TRACK=1` / `ATOMIC_AGENT_ANALYTICS=off` |
 | `ATOMIC_AGENT_INSTALL_ID_FILE` | `<desktop state dir>/install-id` on a test or dev run; otherwise inherited unchanged |
 
 `ATOMIC_AGENT_TEAM` is not set here, it is inherited: with it (`1` / `true` / `yes` / `on`), or with a file `~/.atomic-agent-team`, the machine is one of ours (ATO-1247). The desktop and the agent still send their events, each tagged `test_run: true` with the person property `atomic_team: true`, so PostHog can leave them out of the metrics.
