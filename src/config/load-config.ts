@@ -780,5 +780,7 @@ function mapUserLlmToRuntime(
     // Without this `llm.openrouter.preferCacheRoutes: false` never
     // reached the provider factory, which fell back to `true`.
     ...(llm.openrouter ? { openrouter: { ...llm.openrouter } } : {}),
+    // Without this the router block (ATO-483) never reached the runtime.
+    ...(llm.router ? { router: llm.router } : {}),
   };
 }

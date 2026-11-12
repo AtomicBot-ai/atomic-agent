@@ -24,6 +24,8 @@ Read docs/profiles.md for framing/grammar and docs/fallback.md for reliability; 
 
 Read [model behavior mode](docs/model-mode.md) for the explicit local/cloud policy flag, configuration precedence, per-turn lifetime and full cloud context. Native message IDs remain stable across checkpoints; the final OpenAI body checks messages, schemas and output reserve against a known cloud window before sending.
 
+Read [router/README.md](router/README.md) for the opt-in rule-based model router (`llm.router`, ATO-483): it pins a turn to a provider by request features and stays silent under a run mode or Fusion.
+
 ## Validation
 
 `npx vitest run src/llm`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).

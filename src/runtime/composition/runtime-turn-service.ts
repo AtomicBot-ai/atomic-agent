@@ -31,6 +31,7 @@ import type { RuntimeProviders } from "./runtime-inference.js";
 import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "../../llm/model-mode.js";
 import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
 import { createRuntimeGoalRunner } from "./runtime-goal.js";
+import { routeTurnProvider } from "./runtime-turn-router.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 
 export function prepareRuntimeTurnState() {
@@ -408,6 +409,23 @@ export function createRuntimeTurnService(
           slotManager.release(session.id);
         }
       });
+    }
+    // The model router (ATO-483), once per turn and before anything reads
+    // the pin: a rule's provider becomes this turn's pin, which keeps the
+    // whole turn on it. Off by default; silent under a run mode, Fusion or
+    // a turn that is already pinned.
+    const routedProviderId = routeTurnProvider({
+      config: getConfig(),
+      userMessage,
+      workingDir: session.workingDir,
+      pinnedProviderId: runOptions.providerId,
+      runMode: resolveCurrentRunMode(),
+      isRegistered: (id) => providerRegistry.getProvider(id) !== undefined,
+      logger,
+      sessionId: session.id,
+    });
+    if (routedProviderId !== undefined) {
+      runOptions = { ...runOptions, providerId: routedProviderId };
     }
     // Resolved before the turn runs, from the live config: the model the
     // operator chose for this turn is what the session should remember,
