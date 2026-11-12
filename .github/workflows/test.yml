@@ -21,7 +21,9 @@ name: Test
 
 on:
   pull_request:
-    branches: [main]
+    # rel/xp-build is the desktop release branch. It carries the same agent
+    # code as main, so PRs into it get the same checks (ATO-916).
+    branches: [main, rel/xp-build]
   push:
     branches: [main]
 
