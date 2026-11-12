@@ -234,7 +234,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 
 ## analytics
 
-- `analytics.enabled` (default `true`). `ATOMIC_AGENT_ANALYTICS=off` or `DO_NOT_TRACK=1` in the environment turns analytics and crash reports off for that process whatever this says. `ATOMIC_AGENT_TEAM=1`, or a file `~/.atomic-agent-team`, marks the machine as one of ours: events are still sent, tagged `test_run` (for the team's own QA and test runs).
+- `analytics.enabled` (default `true`). `ATOMIC_AGENT_ANALYTICS=off` or `DO_NOT_TRACK=1` in the environment turns analytics and crash reports off for that process whatever this says. `ATOMIC_AGENT_TEAM=1`, or a file `~/.atomic-agent-team`, marks the machine as one of ours: events are still sent, tagged `test_run` (for the team's own QA and test runs). On a CI server (`CI`, `GITHUB_ACTIONS` and similar variables set) events are still sent too, tagged `automation`.
 
 ## telegram
 

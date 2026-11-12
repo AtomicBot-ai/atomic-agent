@@ -62,6 +62,7 @@ export {
   isAnalyticsKilledByEnv,
   isDoNotTrackSet,
 } from "./read-analytics-kill-switch.js";
+export { CI_ENV_VARS, isCiEnvironment } from "./read-ci-environment.js";
 export { reportAnalyticsOptOut } from "./report-analytics-opt-out.js";
 export {
   buildRuntimeTelemetry,
