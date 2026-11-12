@@ -1,6 +1,6 @@
 // ATO-1136: HTML artifacts in the chat (renderer/chat-artifact.js): where
-// they come from (`event: canvas`, a reply's .html file, a ```html block's
-// Preview), the box a reply draws, the frame's sandbox, and the hooks in
+// they come from (an ok canvas.render's `tool_result.canvas`, a reply's
+// .html file, a ```html block's Preview), the box a reply draws, the frame's sandbox, and the hooks in
 // renderer.js.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -33,15 +33,14 @@ test("the frame is sandboxed to scripts alone and allowed no device or clipboard
   }
 });
 
-test("an event's payload is checked: an id and a page, or nothing", () => {
-  assert.deepEqual(A.artifactFromEvent({ id: " sales ", title: " Sales ", html: "<b>1</b>", path: "/w/sales.html" }),
-    { id: "sales", title: "Sales", html: "<b>1</b>", path: "/w/sales.html" });
-  assert.equal(A.artifactFromEvent({ id: "x", html: "   " }), null);
-  assert.equal(A.artifactFromEvent({ html: "<b>1</b>" }), null);
-  assert.equal(A.artifactFromEvent({ id: 3, html: "<b>1</b>" }), null);
-  assert.equal(A.artifactFromEvent(null), null);
-  assert.equal(A.artifactFromEvent("x"), null);
-  assert.equal(A.artifactFromEvent({ id: "big", html: "x".repeat(2 * 1024 * 1024 + 1) }), null);
+test("a canvas.render tool_result's canvas is checked: an .html path, or nothing", () => {
+  assert.deepEqual(A.canvasFromToolResult({ tool: "canvas.render", canvas: { path: "/w/canvas-sales-20261112-142233.html", title: " Sales ", kind: "chart", chart: "bar", bytes: 2048 } }),
+    { path: "/w/canvas-sales-20261112-142233.html", title: "Sales", kind: "chart", chart: "bar" });
+  assert.deepEqual(A.canvasFromToolResult({ canvas: { path: "/w/p.html", kind: "html" } }), { path: "/w/p.html", title: "", kind: "html", chart: "" });
+  assert.equal(A.canvasFromToolResult({ canvas: { path: 42 } }), null);
+  assert.equal(A.canvasFromToolResult({ canvas: { path: "/w/notes.md" } }), null);
+  assert.equal(A.canvasFromToolResult({ tool: "os.fs.write" }), null);
+  assert.equal(A.canvasFromToolResult(null), null);
 });
 
 test("a page's height is clamped; nonsense is the default", () => {
@@ -52,31 +51,38 @@ test("a page's height is clamped; nonsense is the default", () => {
   assert.equal(A.artClampHeight(-5), A.ART_DEFAULT_H);
 });
 
-test("an event puts the page in main and the reply draws one box for it, kept by the morph", async () => {
+test("an ok canvas.render reads the page it wrote and the reply draws one box for it, kept by the morph", async () => {
+  previews["/w/canvas-rev.html"] = { ok: true, kind: "html", text: "<p>v1</p>", truncated: false };
   const item = {};
-  assert.equal(A.chatArtifactEvent(item, { id: "d1", title: "Revenue", html: "<p>v1</p>" }), true);
-  assert.deepEqual(item.artifacts, [{ key: "id:d1", title: "Revenue", path: "" }]);
-  assert.equal(A.chatArtifactEvent(item, { id: "d1", html: "" }), false, "nothing to draw");
-  await until(() => A.CHAT_ART.get("id:d1").state === "ok");
+  const frame = { tool: "canvas.render", canvas: { path: "/w/canvas-rev.html", title: "Revenue", kind: "chart", chart: "line", bytes: 9 } };
+  assert.equal(A.chatArtifactCanvas(item, frame), true);
+  assert.equal(A.chatArtifactCanvas(item, { tool: "os.fs.write" }), false, "no canvas on the frame");
+  assert.deepEqual(item.artifacts, [{ key: "file:/w/canvas-rev.html", title: "Revenue", path: "/w/canvas-rev.html" }]);
+  await until(() => A.CHAT_ART.get("file:/w/canvas-rev.html").state === "ok");
   const [box] = A.chatArtifactEventSlots(item);
   assert.match(box, /class="chat-art"/);
-  assert.match(box, /data-chat-art="id:d1"/);
-  assert.match(box, /data-morph-keep="art:id:d1"/);
+  assert.match(box, /data-chat-art="file:\/w\/canvas-rev.html"/);
+  assert.match(box, /data-morph-keep="art:file:\/w\/canvas-rev.html"/);
   assert.match(box, /Revenue/);
+  assert.match(box, /data-file="\/w\/canvas-rev.html"/, "the file's chip opens the preview, Cmd-click the browser");
   // The page's text never goes into the window's markup: only main has it.
   assert.doesNotMatch(box, /v1/);
   assert.equal(puts.at(-1), "<p>v1</p>");
+  // The same frame again (a replayed frame) adds nothing.
+  A.chatArtifactCanvas(item, frame);
+  assert.equal(item.artifacts.length, 1);
+  // A canvas main cannot read (out of the roots, another machine's path) is not drawn.
+  A.chatArtifactCanvas(item, { canvas: { path: "/remote/canvas-x.html", title: "X" } });
+  await until(() => A.CHAT_ART.get("file:/remote/canvas-x.html").state === "fail");
+  assert.equal(A.chatArtifactEventSlots(item).length, 1);
 });
 
-test("the same id again loads the new page in the same artifact and drops the old one", async () => {
-  const item = {};
-  A.chatArtifactEvent(item, { id: "d2", html: "<p>a</p>" });
+test("a new page for the same artifact loads in place and drops the old one", async () => {
+  A.chatArtifactSet("id:d2", "<p>a</p>");
   await until(() => A.CHAT_ART.get("id:d2").state === "ok");
   const first = A.CHAT_ART.get("id:d2").url;
-  A.chatArtifactEvent(item, { id: "d2", title: "Now", html: "<p>b</p>" });
+  A.chatArtifactSet("id:d2", "<p>b</p>");
   await until(() => A.CHAT_ART.get("id:d2").url !== first);
-  assert.equal(item.artifacts.length, 1);
-  assert.equal(item.artifacts[0].title, "Now");
   assert.ok(drops.includes(first));
   // The same page again is not sent again.
   const n = puts.length;
@@ -111,9 +117,10 @@ test("a reply's .html file is read through main's preview and drawn; anything el
   A.chatArtifactFileSlotHTML("/etc/x.html");
   await until(() => A.CHAT_ART.get("file:/etc/x.html").state === "fail");
   assert.equal(A.chatArtifactFileSlotHTML("/etc/x.html"), null);
-  // The file an event already drew is not drawn twice.
+  // The file a canvas.render already drew is not drawn twice when the reply attaches it too.
+  previews["/w/d3.html"] = { ok: true, kind: "html", text: "<p>c</p>", truncated: false };
   const m = {};
-  A.chatArtifactEvent(m, { id: "d3", html: "<p>c</p>", path: "/w/d3.html" });
+  A.chatArtifactCanvas(m, { canvas: { path: "/w/d3.html", title: "D3" } });
   assert.equal(A.chatArtifactFileSlotHTML("/w/d3.html", undefined, m), "");
 });
 
@@ -149,10 +156,10 @@ test("only a frame of ours can set its height, and only with a size message", ()
   A.CHAT_ART.delete("id:h");
 });
 
-test("renderer.js hooks: the canvas event, the reply's boxes, Preview on a code block", () => {
+test("renderer.js hooks: canvas.render's tool_result, the reply's boxes, Preview on a code block", () => {
   const src = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
-  assert.match(src, /const LIVE_DRAWS = new Set\(\[[^\]]*'canvas'/);
-  assert.match(src, /if \(ev\.kind === 'canvas'\) \{\s*if \(item && typeof chatArtifactEvent === 'function' && chatArtifactEvent\(item, ev\.payload\)\) render\(\);\s*return;/);
+  const tr = src.slice(src.indexOf("if (ev.kind === 'tool_result') {"), src.indexOf("if (ev.kind === 'tool_update') {"));
+  assert.match(tr, /toolSettle\(card, p, ev\.at \|\| Date\.now\(\)\);\s*\/\/[^\n]*\n\s*if \(p\.canvas && item && typeof chatArtifactCanvas === 'function'\) chatArtifactCanvas\(item, p, card\);\s*render\(\);/);
   const strip = src.slice(src.indexOf("\nfunction replyFilesStrip("), src.indexOf("\nfunction chatPicHTML("));
   assert.match(strip, /chatArtifactEventSlots\(m, esc\)/);
   assert.match(strip, /chatArtifactFileSlotHTML\(p, esc, m\)/);

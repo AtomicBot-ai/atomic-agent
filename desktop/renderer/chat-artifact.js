@@ -2,11 +2,12 @@
    A page the agent made (a chart, a small dashboard, a mini app) is drawn in
    the reply and runs there, with nothing of the window's:
 
-   - where one comes from: `event: canvas` (`{id, title?, html, path?}`, the
-     agent's canvas.render, ATO-1137), a reply's own .html file (read through
-     main's preview check, file-preview.ts, so only inside the allowed roots
-     and at most 512 KB), or a ```html block the person asks to preview (its
-     Preview button, beside Copy);
+   - where one comes from: the page an ok `canvas.render` call wrote (the
+     agent's tool, ATO-1137: its `tool_result` frame carries
+     `canvas: {path, title, kind, chart?, bytes}`), a reply's own .html file
+     (both read through main's preview check, file-preview.ts, so only inside
+     the allowed roots and at most 512 KB), or a ```html block the person
+     asks to preview (its Preview button, beside Copy);
    - how it runs: main keeps the page's text and serves it from its own
      scheme (`atomic-art://<token>/`, main/artifact-frame.ts) under a strict
      CSP (inline script and style; no network, no frames, no forms; images
@@ -35,7 +36,7 @@ const ART_MIN_H = 80;
 const ART_MAX_H = 1400;
 const ART_DEFAULT_H = 320;
 const ART_HTML_EXT = /\.html?$/i;
-/* A page sent by an event or a code block: at most this many characters (main caps it at 4 MB too). */
+/* A code block's page: at most this many characters (main caps any page at 4 MB too). */
 const ART_HTML_MAX = 2 * 1024 * 1024;
 
 /* key → {key, title, html, url, node, state 'loading'|'ok'|'fail', h, rev}. One frame per artifact. */
@@ -65,16 +66,14 @@ function artHash(s) {
   return h.toString(16).padStart(8, '0') + t.length.toString(16);
 }
 
-/** `event: canvas`'s payload, checked: {id, title, html, path} or null (nothing to draw). */
-function artifactFromEvent(p) {
-  if (!p || typeof p !== 'object') return null;
-  const id = typeof p.id === 'string' ? p.id.trim().slice(0, 200) : '';
-  if (!id) return null;
-  const title = typeof p.title === 'string' ? p.title.trim().slice(0, 120) : '';
-  const path = typeof p.path === 'string' && p.path.length < 4096 ? p.path : '';
-  const html = typeof p.html === 'string' && p.html.trim() && p.html.length <= ART_HTML_MAX ? p.html : '';
-  if (!html) return null;
-  return {id, title, html, path};
+/** The `canvas` an ok canvas.render's `tool_result` frame carries, checked: {path, title, kind, chart} or null. */
+function canvasFromToolResult(p) {
+  const c = p && typeof p === 'object' ? p.canvas : null;
+  if (!c || typeof c !== 'object') return null;
+  const path = typeof c.path === 'string' && c.path.length < 4096 ? c.path : '';
+  if (!path || !isHtmlArtifactPath(path)) return null;
+  const title = typeof c.title === 'string' ? c.title.trim().slice(0, 120) : '';
+  return {path, title, kind: c.kind === 'chart' ? 'chart' : 'html', chart: typeof c.chart === 'string' ? c.chart : ''};
 }
 
 /** The window's theme now, for the frame's colour scheme (the page's prefers-color-scheme follows it). */
@@ -162,20 +161,35 @@ function chatArtifactSlotHTML(key, opts) {
 
 /* ---------- where artifacts come from ---------- */
 
-/** `event: canvas` into the reply `item`: its artifact list, and the page shown. False when there is nothing to draw. */
-function chatArtifactEvent(item, payload) {
-  const a = artifactFromEvent(payload);
-  if (!item || !a) return false;
-  const key = 'id:' + a.id;
+/** Read a page file through main's preview check and show it as `key`; a file it refuses fails (a chip is drawn). */
+function artLoadFile(key, path, title) {
+  const st = artEntry(key, title);
+  const br = artBridge();
+  if (!br || typeof br.filePreview !== 'function') { st.state = 'fail'; return st; }
+  Promise.resolve(br.filePreview(path)).then((d) => {
+    if (!d || !d.ok || d.kind !== 'html' || d.truncated || typeof d.text !== 'string') { st.state = 'fail'; artChanged(key); return; }
+    chatArtifactSet(key, d.text, {title});
+  }, () => { st.state = 'fail'; artChanged(key); });
+  return st;
+}
+
+/**
+ * An ok canvas.render (`tool_result` with `canvas`) into the reply `item`:
+ * its artifact list, and the page it wrote read and shown. False when the
+ * frame carries no canvas.
+ */
+function chatArtifactCanvas(item, payload) {
+  const c = canvasFromToolResult(payload);
+  if (!item || !c) return false;
+  const key = 'file:' + c.path;
+  const title = c.title || String(c.path).split(/[\\/]/).pop();
   const list = Array.isArray(item.artifacts) ? item.artifacts : (item.artifacts = []);
-  const had = list.find((x) => x.key === key);
-  if (had) { had.title = a.title || had.title; had.path = a.path || had.path; }
-  else list.push({key, title: a.title, path: a.path});
-  chatArtifactSet(key, a.html, {title: a.title});
+  if (!list.some((x) => x.key === key)) list.push({key, title, path: c.path});
+  if (!CHAT_ART.has(key) || CHAT_ART.get(key).state === 'fail') { CHAT_ART.delete(key); artLoadFile(key, c.path, title); }
   return true;
 }
 
-/** The boxes for a reply's own artifacts (event ones), in order. */
+/** The boxes for a reply's own artifacts (its canvases), in order. */
 function chatArtifactEventSlots(m, escape) {
   const out = [];
   for (const a of (m && Array.isArray(m.artifacts) ? m.artifacts : [])) {
@@ -189,24 +203,14 @@ function chatArtifactEventSlots(m, escape) {
  * A reply's .html file: its box once main has read it (the read starts the
  * first time it is asked for). null: not shown as an artifact (not .html, out
  * of the roots, too large to read whole, failed); the caller draws a chip.
- * '': already drawn by the reply's own artifact of that file.
+ * '': already drawn by the reply's own canvas of that file.
  */
 function chatArtifactFileSlotHTML(path, escape, m) {
   if (!isHtmlArtifactPath(path)) return null;
   if (m && Array.isArray(m.artifacts) && m.artifacts.some((a) => a.path === path && CHAT_ART.has(a.key) && CHAT_ART.get(a.key).state !== 'fail')) return '';
   const key = 'file:' + path;
   const name = String(path).split(/[\\/]/).pop() || path;
-  if (!CHAT_ART.has(key)) {
-    const st = artEntry(key, name);
-    const br = artBridge();
-    if (!br || typeof br.filePreview !== 'function') st.state = 'fail';
-    else {
-      Promise.resolve(br.filePreview(path)).then((d) => {
-        if (!d || !d.ok || d.kind !== 'html' || d.truncated || typeof d.text !== 'string') { st.state = 'fail'; artChanged(); return; }
-        chatArtifactSet(key, d.text, {title: name});
-      }, () => { st.state = 'fail'; artChanged(); });
-    }
-  }
+  if (!CHAT_ART.has(key)) artLoadFile(key, path, name);
   return chatArtifactSlotHTML(key, {title: name, path, escape});
 }
 
@@ -283,7 +287,7 @@ if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {ART_SANDBOX, ART_ALLOW, ART_MIN_H, ART_MAX_H, ART_DEFAULT_H, CHAT_ART, ART_CODE_OPEN,
-    isHtmlArtifactPath, artClampHeight, artHash, artifactFromEvent, chatArtifactSet, chatArtifactSlotHTML, chatArtifactEvent,
+    isHtmlArtifactPath, artClampHeight, artHash, canvasFromToolResult, chatArtifactSet, chatArtifactSlotHTML, chatArtifactCanvas,
     chatArtifactEventSlots, chatArtifactFileSlotHTML, chatArtifactCodeKey, chatArtifactCodeButton, chatArtifactCodeSlot,
     chatArtifactToggleCode, chatArtifactHydrate, chatArtifactMessage, artNode};
 }

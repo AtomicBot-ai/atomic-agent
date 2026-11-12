@@ -2179,7 +2179,7 @@ function toolDisabledLine(p) {
 }
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
-const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'reply_polished', 'progress_note', 'reply_attachments', 'canvas', 'fusion_worker',
+const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'reply_polished', 'progress_note', 'reply_attachments', 'fusion_worker',
   'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched', 'tool_disabled',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
@@ -10968,6 +10968,8 @@ function onChatEvent(ev) {
     const card = toolResultCard(p, ev.turnId);
     if (!card) return;   // reply / finish draw no card
     toolSettle(card, p, ev.at || Date.now());
+    // ATO-1136: the page an ok canvas.render wrote (`canvas` on the frame, ATO-1137) runs in the reply, sandboxed (chat-artifact.js).
+    if (p.canvas && item && typeof chatArtifactCanvas === 'function') chatArtifactCanvas(item, p, card);
     render();
     return;
   }
@@ -11010,11 +11012,6 @@ function onChatEvent(ev) {
     // A path an earlier reply showed may be a file the agent has since overwritten.
     void revalidateChatImages(files);
     render();
-    return;
-  }
-  /* ATO-1136: a page the agent made (`event: canvas`, canvas.render, ATO-1137), drawn in the reply in a sandboxed frame (chat-artifact.js). */
-  if (ev.kind === 'canvas') {
-    if (item && typeof chatArtifactEvent === 'function' && chatArtifactEvent(item, ev.payload)) render();
     return;
   }
   /* B1 — a progress note (agent ≥ 0.6.3, `event: progress_note`). The model
