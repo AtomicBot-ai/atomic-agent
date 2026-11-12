@@ -54,6 +54,13 @@ export const MEMORY_SQL: Record<string, NamedStatement> = {
   "links.listAll": { sql: `SELECT ${LINK_COLS} FROM memory_links ORDER BY created_at DESC LIMIT ?`, params: ["int"] },
   "links.outgoing": { sql: `SELECT ${LINK_COLS} FROM memory_links WHERE from_id = ? ORDER BY weight DESC, created_at DESC`, params: ["int"] },
   "links.incoming": { sql: `SELECT ${LINK_COLS} FROM memory_links WHERE to_id = ? ORDER BY weight DESC, created_at DESC`, params: ["int"] },
+  // ATO-584: the Notes graph. The N most linked notes (degree over both ends, then newest), a short preview each,
+  // and the strongest edges; the renderer keeps the edges whose both ends are among the nodes.
+  "graph.nodes": {
+    sql: `WITH d AS (SELECT id, COUNT(*) AS degree FROM (SELECT from_id AS id FROM memory_links UNION ALL SELECT to_id AS id FROM memory_links) GROUP BY id) SELECT m.id, substr(m.content, 1, 200) AS content, m.source, m.consolidated_into, COALESCE(d.degree, 0) AS degree FROM memories m LEFT JOIN d ON d.id = m.id ORDER BY degree DESC, m.updated_at DESC, m.id DESC LIMIT ?`,
+    params: ["int"],
+  },
+  "graph.edges": { sql: `SELECT from_id, to_id, kind, weight FROM memory_links ORDER BY weight DESC, created_at DESC LIMIT ?`, params: ["int"] },
   // vote-store.ts listEvents
   "votes.listEvents": {
     sql: `SELECT id, kind, target_id AS targetId, direction, session_id AS sessionId, turn_index AS turnIndex, created_at AS createdAt FROM vote_events ORDER BY id DESC LIMIT ?`,
