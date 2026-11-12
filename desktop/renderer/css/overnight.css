@@ -20,7 +20,7 @@
 .ovn-row.is-off .tk-switch{opacity:.5}
 
 /* The runs card: bottom left, over the sidebar's foot, under the sheets and
-   toasts. The download card owns the bottom right (#dlcard, shell.css). */
+   toasts. The download card hangs from the sidebar header (#dlcard, shell.css). */
 .ovn-card{position:absolute;left:12px;bottom:60px;z-index:15;width:min(320px,calc(100% - 24px));
   display:flex;flex-direction:column;gap:2px;padding:6px;border-radius:var(--r-comp);
   background:var(--lift);box-shadow:var(--sh-pop)}

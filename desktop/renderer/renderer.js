@@ -813,12 +813,13 @@ const SPOT = {gate: false, ids: null, asked: false, dismissed: null};
    under a running turn). {id, pid, busy, error} or null. */
 const VISION = {restart: null};
 const DLC = {
-  /** Folded to the round badge. A fold lasts one run of downloads: the next
-      run, after the card has been empty, starts open (DownloadPanel). */
+  /** Closed to the header icon (ATO-1185). A close lasts one run of downloads:
+      the next run, after the list has been empty, starts open (DownloadPanel),
+      so a download a person did not start by a click is seen without one. */
   collapsed: false,
   had: false,
   shape: null,
-  /** The composer wrap the card is kept clear of, and the observer on it. */
+  /** The sidebar the list stands under (ATO-1185), and the observer on it. */
   anchor: null,
   ro: null,
   /** The height the card takes from the window's bottom edge (0 while it is
@@ -827,9 +828,9 @@ const DLC = {
   /** How far the card reaches up over the conversation's bottom edge,
       published as --dlcard-chat (0 while it is away or beside the column). */
   chat: 0,
-  /** Chat review (Д19): that reach as the open card took it, which the
-      folded badge keeps (null while the card is away). */
-  openRoom: null,
+  /** ATO-1185: the header icon's markup and its key (dlIndicatorKey). */
+  ind: '',
+  indKey: '',
 };
 /* The card's distance from the window's edges, and from whatever it keeps clear of. */
 const DLC_EDGE = 16, DLC_GAP = 8;
@@ -2376,7 +2377,9 @@ function renderSidebar() {
     // the traffic lights on its left, Search and the toggle on its right.
     (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML() + sidebarToggleHTML() + '</div>' : '')
     + '<div class="sb-head">' + MARK_COLOR
-      + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
+      + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button>'
+      // ATO-1185: the downloads icon (renderDlcard paints it between renders).
+      + '<span class="sb-dl" data-k="' + esc(DLC.indKey) + '">' + DLC.ind + '</span></div>'
     // ATO-1032: the chord is shown on the row (drawn by CSS from data-kbd, so the row's text stays "New chat").
     + '<button class="sb-new" data-act="session:new" data-kbd="' + esc(IS_MAC ? '⌘N' : kbd('⌘ N')) + '" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
@@ -6919,7 +6922,10 @@ function toastsClearCard() {
   const live = all.filter((n) => !n.dataset.upd);
   const card = document.getElementById('dlcard');
   if (!card || card.hidden || live.length < 2) return;
-  const limit = card.getBoundingClientRect().top - DLC_GAP;
+  // ATO-1185: the list opens under the sidebar header, left of the toast column; nothing to step aside for.
+  const cr = card.getBoundingClientRect();
+  if (live.every((n) => n.getBoundingClientRect().left >= cr.right)) return;
+  const limit = cr.top - DLC_GAP;
   for (let i = 0; i < live.length - 1 && live[live.length - 1].getBoundingClientRect().bottom > limit; i++) {
     live[i].hidden = true;
   }
@@ -13540,22 +13546,22 @@ function dlEtaFrom(done, total, rate, samples) {
 /* ====================================================================
    Backlog 18 — the download card.
 
-   Atomic Chat's DownloadPanel, in this window: a card floating in the
-   bottom-right corner of the agent window, one row per download — the
+   ATO-1185 (ATO-1032 item 4): it no longer floats in the bottom-right
+   corner. The sidebar header carries a downloads icon with the count
+   (dlCardBadgeHTML, dlIndicatorPaint) and the card below is its popover,
+   under the header (dlCardPlace). A new run of downloads opens it by itself;
+   the icon or the card's chevron closes it.
+
+   Atomic Chat's DownloadPanel, in this window: one row per download — the
    model's own name, a 6px bar, "2.5 of 6.2 GB · 41% · 3 min left" and a
    Cancel (×). It replaced the #dlbar strip, a flex child between the
    toolbar and the chat that pushed the whole chat down ~46px when a
    download started and let it jump back up when it ended. The card floats:
    nothing under it moves.
 
-   It stands above the composer whenever the two share a column, so the send
-   button and the chips are never under it, above the console drawer when
-   that is open, and to the left of the inspector panel when that is open.
-   How far it reaches up over the transcript is published as --dlcard-chat:
-   a conversation takes that as room under its last message, so its end —
-   the newest reply, an approval's buttons — scrolls clear of the card (the
-   empty chat's greeting is left as it is). The toast column stops above it
-   (toastsClearCard).
+   Up under the sidebar header it is clear of the composer, the console, the
+   inspector and the toast column, so --dlcard-chat (the room a conversation
+   once kept under its last message for the corner card) stays 0.
 
    Rows: the setup queue (DL — the llama.cpp runtime and the weights, and the
    moment between Download and the queue starting), the one other pull
@@ -13732,20 +13738,22 @@ function dlCardHTML(rows) {
       + '<span>' + title + '</span>'
       // A pill, not part of the sentence — the DownloadPanel's own choice.
       + (n > 1 ? '<span class="dlc-count">' + n + '</span>' : '') + '</span>'
-      + '<button class="iconbtn sm dlc-fold" data-act="dlc:fold" aria-label="Collapse downloads" aria-expanded="true"'
-      + ' title="Collapse">' + ic('chevD') + '</button></div>'
+      + '<button class="iconbtn sm dlc-fold" data-act="dlc:fold" aria-label="Hide downloads" aria-expanded="true"'
+      + ' title="Hide">' + ic('chevU') + '</button></div>'
     + '<ul class="dlc-list">' + rows.map(dlCardRowHTML).join('') + '</ul>'
     + (offer ? '<button class="dlc-cloud" data-act="dlc:cloud">'
       + (moving ? 'Set up a cloud model meanwhile' : 'Set up a cloud model instead') + '</button>' : '')
     + '</section>';
 }
 
-/** Folded: a round button that is still a live count. Red when one failed. */
-function dlCardBadgeHTML(rows) {
+/** The downloads icon in the sidebar header (ATO-1185): a live count, red when one failed.
+    A press opens the list under the header, or closes it. */
+function dlCardBadgeHTML(rows, open) {
   const failed = rows.some((r) => r.state === 'failed');
   const moving = rows.some((r) => dlRowMoving(r));
-  return '<button class="dlc-badge' + (failed ? ' has-failed' : '') + '" data-act="dlc:unfold" aria-expanded="false"'
-    + ' aria-label="Show downloads (' + rows.length + ')" title="'
+  return '<button class="dlc-badge' + (failed ? ' has-failed' : '') + (moving ? ' is-moving' : '') + '" data-act="dlc:' + (open ? 'fold' : 'unfold') + '"'
+    + ' aria-expanded="' + (open ? 'true' : 'false') + '"'
+    + ' aria-label="' + (open ? 'Hide' : 'Show') + ' downloads (' + rows.length + ')" title="'
     + (failed ? 'A download failed' : moving ? 'Downloading' : 'Download complete') + '">'
     + ic('download') + '<span class="dlc-n">' + rows.length + '</span></button>';
 }
@@ -13771,12 +13779,12 @@ function renderDlcard() {
   const rows = OB.open ? [] : dlCardRows();
   if (!rows.length) {
     // Nothing downloading or waiting: the card's corner is free for a launch's model.
+    dlIndicatorPaint(null);
     const spot = modelSpotlightNow();
     if (spot) { modelSpotlightPaint(el, spot); return; }
     if (!el.hidden || el.innerHTML) { el.hidden = true; el.innerHTML = ''; }
     DLC.shape = null;
     DLC.had = false;
-    DLC.openRoom = null;
     dlCardFollow(null);
     dlCardPublish(0);
     return;
@@ -13786,11 +13794,19 @@ function renderDlcard() {
   DLC.had = true;
   const shape = (DLC.collapsed ? 'c|' : 'o|') + rows.map((r) =>
     [r.src, r.kind, r.id, r.state, r.n || '', r.error || '', r.cancel || '', dlCardName(r)].join('~')).join('|');
+  dlIndicatorPaint(rows);
+  // ATO-1185: closed, the list is away and the header icon is all there is.
+  if (DLC.collapsed) {
+    if (!el.hidden || el.innerHTML) { el.hidden = true; el.innerHTML = ''; }
+    DLC.shape = shape;
+    dlCardPublish(0);
+    return;
+  }
   const appearing = el.hidden;
   if (DLC.shape !== shape) {
     DLC.shape = shape;
-    el.innerHTML = DLC.collapsed ? dlCardBadgeHTML(rows) : dlCardHTML(rows);
-  } else if (!DLC.collapsed) {
+    el.innerHTML = dlCardHTML(rows);
+  } else {
     const nodes = el.querySelectorAll('.dlc-row');
     rows.forEach((r, i) => {
       if (r.state !== 'active' || !nodes[i]) return;
@@ -13805,89 +13821,52 @@ function renderDlcard() {
   dlCardShow(el, appearing);
 }
 
+/** ATO-1185: the header icon, redrawn only when what it says changes (rows null: none). */
+function dlIndicatorPaint(rows) {
+  const n = rows ? rows.length : 0;
+  const open = !DLC.collapsed;
+  const key = dlIndicatorKey(n, n && rows.some((r) => r.state === 'failed'), n && rows.some((r) => dlRowMoving(r)), open);
+  if (key === DLC.indKey) return;
+  DLC.indKey = key;
+  DLC.ind = n ? dlCardBadgeHTML(rows, open) : '';
+  const slot = document.querySelector('#sidebar .sb-head .sb-dl');
+  if (slot && slot.getAttribute('data-k') !== key) { slot.setAttribute('data-k', key); slot.innerHTML = DLC.ind; }
+}
+
 function dlCardShow(el, appearing) {
   el.hidden = false;
   dlCardPlace(el);
   if (appearing && typeof el.animate === 'function') {
     el.animate(reducedMotion() ? [{opacity: 0}, {opacity: 1}]
-      : [{opacity: 0, transform: 'translateY(8px)'}, {opacity: 1, transform: 'translateY(0)'}],
+      // ATO-1185: it hangs from the sidebar header, so it drops into place rather than rising.
+      : [{opacity: 0, transform: 'translateY(-6px)'}, {opacity: 1, transform: 'translateY(0)'}],
       {duration: OVM.IN_MS, easing: OVM.EASE_OUT});
   }
 }
 
 /**
- * Where the card stands: the window's right edge — or the inspector's left
- * edge while that panel is open, so it covers none of it — and above
- * whatever it would otherwise cover in that column: the composer (from the
- * top of its dock, so the status line and the queue above the card stay
- * clear too) and the console drawer. The list gets what is left under the
- * toolbar and scrolls rather than pushing the card over it.
+ * ATO-1185: where the list stands — under the sidebar header it opens from
+ * (beside the icon rail when the sidebar is folded), as a popover
+ * (dlPopoverSpot, dl-indicator.js). Up there it covers none of the composer,
+ * its picker or the toast column, and the conversation takes no room for it.
+ * The list gets what is left down to the window's bottom and scrolls.
  */
 function dlCardPlace(el) {
   const win = document.getElementById('window');
   if (!win || el.hidden) return;
-  const w = win.getBoundingClientRect();
-  let right = DLC_EDGE;
-  const insp = document.getElementById('inspector');
-  const ir = insp ? insp.getBoundingClientRect() : null;
-  if (ir && ir.width > 0 && ir.height > 0) right = Math.max(right, Math.round(w.right - ir.left + DLC_GAP));
-  if (el.style.right !== right + 'px') el.style.right = right + 'px';
-  const width = el.getBoundingClientRect().width;
-  const from = w.right - right - width, to = w.right - right;
-  let bottom = DLC_EDGE;
-  const clear = (across, top) => {
-    if (!across || !(across.width > 0) || across.right <= from || across.left >= to) return;
-    bottom = Math.max(bottom, Math.round(w.bottom - top + DLC_GAP));
-  };
-  const wrap = document.querySelector('#content .composerwrap');
-  const comp = wrap && wrap.querySelector('#composer');
-  if (comp) clear(comp.getBoundingClientRect(), wrap.getBoundingClientRect().top);
-  const con = document.getElementById('console');
-  if (con && !con.classList.contains('hide')) { const r = con.getBoundingClientRect(); clear(r, r.top); }
-  if (el.style.bottom !== bottom + 'px') el.style.bottom = bottom + 'px';
-  const tb = document.getElementById('toolbar');
-  const top = tb ? tb.getBoundingClientRect().bottom : w.top;
-  const room = Math.max(120, Math.round(w.bottom - bottom - top - DLC_GAP)) + 'px';
+  const rect = (n) => (n ? n.getBoundingClientRect() : null);
+  const sb = document.getElementById('sidebar');
+  const spot = dlPopoverSpot(win.getBoundingClientRect(), rect(sb), rect(sb && sb.querySelector('.sb-head')),
+    rect(document.getElementById('toolbar')), DLC_GAP, DLC_EDGE);
+  if (el.style.left !== spot.left + 'px') el.style.left = spot.left + 'px';
+  if (el.style.top !== spot.top + 'px') el.style.top = spot.top + 'px';
+  const room = spot.room + 'px';
   if (el.style.getPropertyValue('--dlc-room') !== room) el.style.setProperty('--dlc-room', room);
-  dlCardPublish(bottom + el.offsetHeight + DLC_GAP, dlCardOverChat(el));
-  dlCardFollow(wrap);
+  dlCardPublish(0, 0);
+  dlCardFollow(sb);
 }
 
-/**
- * Backlog 18 review: how far the card reaches up over the conversation —
- * from the transcript's bottom edge to the card's top, and a gap — when it
- * crosses the column the messages are drawn in. Under it sat the newest reply
- * and an approval's right-aligned "Abort run". The empty chat has no column
- * and keeps the overlap it has.
- */
-function dlCardOverChat(el) {
-  const sc = document.getElementById('scroller');
-  const col = sc && sc.querySelector(':scope > .col720');
-  const face = el.firstElementChild;
-  if (!col || !face) return 0;
-  /* Chat review (Д19): a chat too short to scroll takes the room too, so a
-     newest reply or an approval's buttons that reach down to the card lift
-     clear of it when the card comes and settle back when it goes (since
-     06.10 the transcript starts at the top, so a short one rarely does). Folded to its
-     badge, the card keeps the room it took open, so folding and opening
-     move nothing (T18c). */
-  if (DLC.collapsed && DLC.openRoom !== null) return DLC.openRoom;
-  const s = sc.getBoundingClientRect(), c = col.getBoundingClientRect(), f = face.getBoundingClientRect();
-  const cs = getComputedStyle(col);
-  const left = c.left + (parseFloat(cs.paddingLeft) || 0), right = c.right - (parseFloat(cs.paddingRight) || 0);
-  /* The card's top as laid out (its own `bottom` and height in the window),
-     not as drawn: it arrives sliding up from 8px lower, and room measured off
-     that slide would be short by as much until the card is next drawn —
-     moving the chat again then. */
-  const win = document.getElementById('window');
-  const top = win ? win.getBoundingClientRect().bottom - (parseFloat(el.style.bottom) || 0) - el.offsetHeight : f.top;
-  const room = !(f.width > 0) || f.right <= left || f.left >= right || top >= s.bottom ? 0
-    : Math.max(0, Math.round(s.bottom - top + DLC_EDGE));
-  if (!DLC.collapsed) DLC.openRoom = room;
-  return room;
-}
-
-/** The composer grows as it is typed into without a render: follow it. */
+/** The sidebar folds and unfolds without a full render: follow it. */
 function dlCardFollow(wrap) {
   if (DLC.anchor === wrap || typeof ResizeObserver === 'undefined') return;
   if (!DLC.ro) {
@@ -14048,11 +14027,13 @@ function dlCardAct(verb) {
   }
   if (v === 'fold' || v === 'unfold') {
     const el = document.getElementById('dlcard');
-    const hadFocus = !!(el && el.contains(document.activeElement));
+    const a = document.activeElement;
+    const hadFocus = !!(a && ((el && el.contains(a)) || (a.closest && a.closest('.sb-dl'))));
     DLC.collapsed = v === 'fold';
     renderDlcard();
-    // The control that was pressed is gone with the face it was on; the other face's takes the focus.
-    const next = hadFocus && el ? el.querySelector(DLC.collapsed ? '.dlc-badge' : '.dlc-fold') : null;
+    // ATO-1185: the header icon is redrawn with its new state; focus goes back to it, or into the list.
+    const next = !hadFocus ? null : DLC.collapsed ? document.querySelector('#sidebar .sb-dl .dlc-badge')
+      : el && el.querySelector('.dlc-fold');
     if (next) next.focus();
     return;
   }
@@ -31494,7 +31475,8 @@ if (typeof window !== 'undefined') {
       // `visible` is the setup download on screen in the download card
       // (backlog 18; it was the #dlbar strip); `running` is a pull in
       // flight, wherever it is reported (the card, or the wizard during setup).
-      visible: !!(el && !el.hidden) && (!!job || !!DL.preparing),
+      // ATO-1185: closed to the header icon, it is still on screen.
+      visible: (!!(el && !el.hidden) || !!document.querySelector('#sidebar .sb-dl .dlc-badge')) && (!!job || !!DL.preparing),
       running: !!job,
       label: job ? dlJobLabel(job) : null,
       kind: job ? job.kind : null,
@@ -31517,10 +31499,13 @@ if (typeof window !== 'undefined') {
   window.__dlcard = () => {
     const el = document.getElementById('dlcard');
     const on = !!(el && !el.hidden);
+    // ATO-1185: closed, the downloads are the header icon alone.
+    const badge = document.querySelector('#sidebar .sb-dl .dlc-badge');
     const r = on ? el.getBoundingClientRect() : null;
     const t = (n) => (n ? (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim() : '');
+    if (!on && badge) return {visible: true, collapsed: true, rect: null, title: '', count: Number(t(badge.querySelector('.dlc-n'))) || 0, rows: []};
     return {
-      visible: on, collapsed: on && !!el.querySelector('.dlc-badge'),
+      visible: on, collapsed: false,
       rect: r ? {top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right),
         width: Math.round(r.width), height: Math.round(r.height)} : null,
       title: t(on && el.querySelector('.dlc-ttl > span')),

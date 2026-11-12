@@ -242,7 +242,7 @@ async function downloadCard(js: Js, check: Check): Promise<void> {
       const fold = document.querySelector('#dlcard .dlc-fold'); if (fold) fold.click();
       await tick(150);
       const folded = shot();
-      const badge = document.querySelector('#dlcard .dlc-badge'); if (badge) badge.click();
+      const badge = document.querySelector('#sidebar .sb-dl .dlc-badge'); if (badge) badge.click();
       await tick(150);
       const reopened = shot();
       window.__dlClear(); await tick(200);
@@ -259,9 +259,12 @@ async function downloadCard(js: Js, check: Check): Promise<void> {
     return;
   }
   const { plain, open, folded, reopened, gone } = r;
-  const within = (s: Shot | undefined) => !!s && !!s.appr && !!s.card && s.appr.bottom <= s.card.top && s.abort && s.allow && s.deny;
+  /* ATO-1185: the card hangs under the sidebar header; within reach means it
+     covers none of the approval and the three presses land on their buttons. */
+  const meet = (a: Box, b: Box) => !!a && !!b && a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+  const within = (s: Shot | undefined) => !!s && !!s.appr && !!s.card && !meet(s.appr, s.card) && s.abort && s.allow && s.deny;
   check(
-    "T46 Д19: with the download card open, a one-turn chat ending on an approval sits above it — Abort run, Allow once and Deny all within reach",
+    "T46 Д19: with the download card open, it covers none of a one-turn chat's approval — Abort run, Allow once and Deny all within reach",
     !!plain && plain.abort && within(open),
     q({ plain, open }),
   );
