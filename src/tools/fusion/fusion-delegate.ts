@@ -474,7 +474,10 @@ export function buildFusionDelegateTool(
           const asksPerson =
             declinedInScope &&
             deps.approvalRequired &&
-            (deps.approvals.wouldPrompt?.(ctx.sessionId, "fusion_fanout") ??
+            (deps.approvals.wouldPrompt?.(ctx.sessionId, "fusion_fanout", {
+              tool: FUSION_DELEGATE_TOOL,
+              affectedResources: [...writeScope],
+            }) ??
               false);
           await requireApproval(
             {
