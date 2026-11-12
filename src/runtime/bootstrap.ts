@@ -3,6 +3,7 @@ import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
 import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
+import { createCompactionTokenCounter } from "./compaction-token-counter.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
@@ -498,6 +499,7 @@ export async function createAgentRuntime(
     route: compactionRoute,
     sideCallSlotId: compactionSideSlot,
     costOf: compactionCost,
+    tokenCounter: createCompactionTokenCounter({ config: () => getConfig(), route: compactionRoute }),
     background: createBackgroundCompaction({
       config: () => getConfig().agent.compaction,
       sessionStore, complete: llmComplete, promptInput: compactionPromptInput,
