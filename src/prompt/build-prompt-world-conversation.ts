@@ -10,19 +10,51 @@ import {
   type ConversationTurn,
   type RenderTurnOptions,
 } from "../session/conversation-turn.js";
-import { neutraliseControlMarkers } from "../tools/control-marker-guard.js";
+import { BROWSER_PAGE_SOURCE, frameUntrustedText } from "../tools/untrusted-tool-output.js";
+import { estimateTokens, truncateToTokens } from "./token-budget.js";
 
+/** Source named in the framing line above a browser page (ATO-1378). */
+export const WORLD_SNAPSHOT_SOURCE = BROWSER_PAGE_SOURCE;
+
+/** The `### world` section, the page whole. */
 export function renderWorldSnapshotSection(session: SessionState): string {
+  return fitWorldSnapshotSection(session).text;
+}
+
+/**
+ * The `### world` section within `maxTokens`. A page too long for it is
+ * cut inside the fence, so the closing marker of the untrusted block
+ * always stays (a cut fence would leave the rest of the prompt looking
+ * like page text). `truncated` says whether the page was cut.
+ */
+export function fitWorldSnapshotSection(
+  session: SessionState,
+  maxTokens?: number,
+): { text: string; truncated: boolean } {
   const snap = session.worldSnapshot;
-  if (!snap || snap.kind === "none") return "(no world snapshot available)";
+  if (!snap || snap.kind === "none") return { text: "(no world snapshot available)", truncated: false };
   // The snapshot is the page's own text: fake chat-template tokens on a
-  // web page must not reach the model as control markup.
-  return [
-    `kind: ${snap.kind}`,
-    `digest: ${snap.digest}`,
-    ``,
-    neutraliseControlMarkers(snap.text),
-  ].join("\n");
+  // web page must not reach the model as control markup, and the page is
+  // framed as data in a nonce-fenced block, like a fetched page
+  // (ATO-1378). The nonce is stable for the same text, so re-rendering
+  // the same page keeps the prompt's bytes.
+  const render = (text: string): string =>
+    [
+      `kind: ${snap.kind}`,
+      `digest: ${snap.digest}`,
+      ``,
+      frameUntrustedText(text, WORLD_SNAPSHOT_SOURCE),
+    ].join("\n");
+  const full = render(snap.text);
+  if (maxTokens === undefined || estimateTokens(full) <= maxTokens) return { text: full, truncated: false };
+  let budget = maxTokens - (estimateTokens(full) - estimateTokens(snap.text));
+  for (let tries = 0; tries < 8 && budget > 0; tries += 1) {
+    const cut = render(truncateToTokens(snap.text, budget));
+    const over = estimateTokens(cut) - maxTokens;
+    if (over <= 0) return { text: cut, truncated: true };
+    budget -= over;
+  }
+  return { text: render("… [truncated]"), truncated: true };
 }
 
 type PackedTurns = {

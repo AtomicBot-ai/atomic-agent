@@ -28,6 +28,10 @@ Owner: src/tools/browser/
   - `browser.read_aria` and the world snapshot of a blocked page, or of a page that frames one (AI-mode snapshots include iframe content): no page content reaches the model.
 - With a non-empty allow-list, navigate, tabs new, search, and a link or form target outside it ask first (`browser_offsite`, level 3).
 
+## Page text is outside data
+
+The page in `### world` and the summaries of `browser.navigate`, `browser.read_aria` and `browser.tabs` (page titles) are framed as external content in a nonce-fenced block, like a fetched page (ATO-1378, `../untrusted-text.ts`). The framing lowers the odds that a page steers the model; the approval gates above are what stop an action.
+
 ## Screenshots
 
 `browser.screenshot { ref?, fullPage? }` (`screenshot.ts`, `screenshot-geometry.ts`, ATO-515): a JPEG of the viewport, the whole page (cut at 8000 CSS px) or one element. Long side at most 1280 px, never upscaled; at most 900 KB, retaken smaller (quality 70 → 50 → 40) and refused if still over. Taken through CDP `Page.captureScreenshot` with a scaled clip, with card-number / one-time-code field values drawn as dots for the capture.
