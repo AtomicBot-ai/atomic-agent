@@ -16,6 +16,7 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 - [reconnect-backoff.ts](reconnect-backoff.ts)
 - [telegram-channel.ts](telegram/telegram-channel.ts)
 - [discord-channel.ts](discord/discord-channel.ts)
+- [imessage-channel.ts](imessage/imessage-channel.ts) — iMessage on macOS through the external `imsg` CLI
 
 ## Ownership and dependencies
 
