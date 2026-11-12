@@ -38,4 +38,5 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `ffmpeg/` | Audio / video transform: convert, trim, extract, resize, GIF | `brew install ffmpeg` |
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
+| `meeting-notes/` | Minutes of a meeting from a transcript or recording: summary, decisions, action items, saved as `<name>.notes.md` next to it; reminders on request | none (`whisper` for recordings, see `audio-transcribe/`) |
 | `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |
