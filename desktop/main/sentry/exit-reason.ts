@@ -26,12 +26,13 @@ function categoryOf(line: string): Exclude<LastErrorCategory, "none" | "other" |
   if (/out of memory|ENOMEM|heap limit|allocation failed/i.test(line)) return "oom";
   if (/EADDRINUSE|address already in use/i.test(line)) return "port_in_use";
   if (/terminated by other getUpdates|telegram\b.*\b(409|conflict)\b/i.test(line)) return "telegram_conflict";
+  // ATO-1285: a native addon (better-sqlite3, the speech helper) that does not load on this machine.
+  // Before sqlite: /sqlite/ also matches the addon's file name, better_sqlite3.node.
+  if (/NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|was compiled against a different Node|not a valid Win32 application|specified module could not be found|invalid ELF header|\.node\b.*(cannot open|failed)/i.test(line)) return "native_module";
   if (/SQLITE_|sqlite|database disk image is malformed|database is locked/i.test(line)) return "sqlite";
   if (/EACCES|EPERM|permission denied|operation not permitted/i.test(line)) return "permission";
   if (/ENOENT|no such file or directory|cannot find module/i.test(line)) return "missing_file";
   if (/ECONNREFUSED/i.test(line)) return "econnrefused";
-  // ATO-1285: a native addon (better-sqlite3, the speech helper) that does not load on this machine.
-  if (/NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|was compiled against a different Node|not a valid Win32 application|specified module could not be found|invalid ELF header|\.node\b.*(cannot open|failed)/i.test(line)) return "native_module";
   if (/EBUSY|resource busy or locked|being used by another process/i.test(line)) return "file_locked";
   if (/ENOSPC|no space left on device|disk is full/i.test(line)) return "disk_full";
   if (/invalid config|config(uration)? (is )?invalid|could not (read|parse) (the )?config|Unexpected token .* in JSON|JSON\.parse|SyntaxError: .*JSON|YAMLException|ZodError/i.test(line)) return "config_invalid";
