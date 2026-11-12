@@ -490,6 +490,34 @@ describe("reduceUiAction finished-turn folds (ATO-963)", () => {
   });
 });
 
+describe("reduceUiAction clearedQuestions (ATO-1420)", () => {
+  it("counts the questions /clear hides, and forgets them on a switch", () => {
+    const state = {
+      ...createInitialTuiState(SESSION),
+      messages: [
+        { id: "u1", role: "user" as const, text: "q1" },
+        { id: "s1", role: "user" as const, text: "also", steered: true },
+        { id: "a1", role: "assistant" as const, text: "r1" },
+        { id: "u2", role: "user" as const, text: "q2" },
+      ],
+    };
+    const once = reduceUiAction(state, { type: "chat_cleared" });
+    expect(once?.clearedQuestions).toBe(2);
+    const twice = reduceUiAction(
+      { ...once!, messages: [{ id: "u3", role: "user" as const, text: "q3" }] },
+      { type: "chat_cleared" },
+    );
+    expect(twice?.clearedQuestions).toBe(3);
+    const switched = reduceUiAction(twice!, {
+      type: "session_switched",
+      sessionId: "s2",
+      workingDir: "/tmp",
+      messages: [],
+    });
+    expect(switched?.clearedQuestions).toBe(0);
+  });
+});
+
 describe("reduceUiAction chat_messages_truncated (ATO-1302)", () => {
   const withPairs = () => ({
     ...createInitialTuiState(SESSION),

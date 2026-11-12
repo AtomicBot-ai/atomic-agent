@@ -319,6 +319,13 @@ export function reduceUiAction(
       return {
         ...state,
         messages: [],
+        // The session keeps what the screen drops: `[try again]` still
+        // has to count those questions (ATO-1420).
+        clearedQuestions:
+          (state.clearedQuestions ?? 0) +
+          state.messages.filter(
+            (message) => message.role === "user" && message.steered !== true,
+          ).length,
         pendingSteers: [],
         reasoning: [],
         feed: [],
@@ -521,6 +528,8 @@ export function reduceUiAction(
         plan: action.plan ?? null,
         sessionUsage: action.sessionUsage ?? null,
         messages: [...action.messages],
+        // Rebuilt from the session: nothing of it is hidden any more.
+        clearedQuestions: 0,
         reasoning: [],
         feed: [],
         logs: [],

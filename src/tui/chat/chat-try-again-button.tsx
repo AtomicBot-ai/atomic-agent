@@ -105,6 +105,24 @@ export function priorQuestions(
   return count;
 }
 
+/**
+ * Whether the screen shows no answer to `messageId`: no reply (progress
+ * notes aside) between it and the next question. A failed turn's
+ * question looks like this.
+ */
+export function shownUnanswered(
+  messages: readonly ChatMessage[],
+  messageId: string,
+): boolean {
+  const at = messages.findIndex((message) => message.id === messageId);
+  if (at < 0) return false;
+  for (const message of messages.slice(at + 1)) {
+    if (message.role === "user" && message.steered !== true) break;
+    if (message.role === "assistant" && message.progressNote !== true) return false;
+  }
+  return true;
+}
+
 /** Nothing running, waiting, or parked that the cut could race with. */
 function chatIsIdle(state: TuiState): boolean {
   return (
@@ -147,10 +165,17 @@ export function retryChatMessage(
   ) {
     // The clicked question by text and by how many questions precede it:
     // a failed turn that never reached the store must not match an
-    // earlier question with the same text.
+    // earlier question with the same text. The questions `/clear` took
+    // off the screen are still in the session and count (ATO-1420); and
+    // a question the screen shows no answer to must never take back a
+    // stored one that has an answer, however the count lines up.
     const outcome = rollback({
       expectText: text,
-      expectPriorQuestions: priorQuestions(state.messages, messageId),
+      expectPriorQuestions:
+        (state.clearedQuestions ?? 0) + priorQuestions(state.messages, messageId),
+      ...(shownUnanswered(state.messages, messageId)
+        ? { expectUnanswered: true }
+        : {}),
     });
     if (outcome.ok) {
       mouse.dispatch({ type: "chat_messages_truncated", fromMessageId: messageId });
