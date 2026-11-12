@@ -179,6 +179,25 @@ describe("captureMessageSent", () => {
     });
   });
 
+  it("attaches prefill_ms / gen_ms / gen_tokens_per_s for a local turn (ATO-1026)", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, {
+      provider: "local-llama",
+      model: "qwen",
+      prefillMs: 1500,
+      genMs: 5000,
+      genTokensPerS: 20,
+    });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.messageSent, {
+      provider: "local-llama",
+      model: "qwen",
+      prefill_ms: 1500,
+      gen_ms: 5000,
+      gen_tokens_per_s: 20,
+    });
+  });
+
   it("attaches cost_usd to message_sent when provided", () => {
     const client = fakeClient();
     const store = fakeStore({ firstMessage: true });

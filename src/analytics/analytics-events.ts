@@ -80,6 +80,12 @@ export interface AppInstalledContext {
  *  - `fallbackCalls` — how many of the turn's completions were served
  *                    by a fallback link rather than the provider the
  *                    turn was meant for. Omitted when unknown.
+ *  - `prefillMs` / `genMs` / `genTokensPerS` (ATO-1026)
+ *                  — for a local llama-server turn: milliseconds spent
+ *                    reading the prompt and generating, summed over the
+ *                    turn's completions, and tokens generated per second
+ *                    of generation. From llama.cpp's own `timings`.
+ *                    Omitted for cloud turns, which report no timings.
  *
  * `provider` and `model` name the link that actually served the turn
  * (its last completion), so after a fallover they are the fallback's.
@@ -96,6 +102,9 @@ export interface MessageEventContext {
   costUsd?: number;
   localEngine?: LocalEngine;
   fallbackCalls?: number;
+  prefillMs?: number;
+  genMs?: number;
+  genTokensPerS?: number;
 }
 
 /**
@@ -270,6 +279,13 @@ export function captureMessageSent(
       : {}),
     ...(context.fallbackCalls !== undefined
       ? { fallback_calls: context.fallbackCalls }
+      : {}),
+    ...(context.prefillMs !== undefined
+      ? { prefill_ms: context.prefillMs }
+      : {}),
+    ...(context.genMs !== undefined ? { gen_ms: context.genMs } : {}),
+    ...(context.genTokensPerS !== undefined
+      ? { gen_tokens_per_s: context.genTokensPerS }
       : {}),
   });
 }

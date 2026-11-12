@@ -39,6 +39,17 @@ export interface TurnUsageSnapshot {
    * Present only when that provider was given and a completion landed.
    */
   fallbackCalls?: number;
+  /**
+   * ATO-1026: for a local llama-server turn, the time its completions
+   * spent reading the prompt (`prefillMs`, llama.cpp `timings.prompt_ms`)
+   * and generating (`genMs`, `timings.predicted_ms`), summed over the
+   * turn, and the generation speed (`genTokensPerS`: tokens generated per
+   * second of `genMs`). Present only when a completion reported timings:
+   * cloud providers report none, so their turns carry none of the three.
+   */
+  prefillMs?: number;
+  genMs?: number;
+  genTokensPerS?: number;
 }
 
 interface TurnBucket {
@@ -52,6 +63,10 @@ interface TurnBucket {
   intendedProviderId: string | undefined;
   servedProviderId: string | undefined;
   fallbackCalls: number;
+  sawTiming: boolean;
+  prefillMs: number;
+  genMs: number;
+  genTokens: number;
 }
 
 /**
@@ -93,6 +108,10 @@ export class TurnUsageMeter {
       intendedProviderId,
       servedProviderId: undefined,
       fallbackCalls: 0,
+      sawTiming: false,
+      prefillMs: 0,
+      genMs: 0,
+      genTokens: 0,
     });
   }
 
@@ -111,6 +130,28 @@ export class TurnUsageMeter {
     ) {
       bucket.fallbackCalls += 1;
     }
+  }
+
+  /**
+   * ATO-1026: fold one completion's llama.cpp timings into the open turn
+   * for `sessionId`. Only a completion with no `usage` block counts: that
+   * is a local llama-server, whose `timings` are llama.cpp's own. A cloud
+   * or OpenAI-compatible completion reports zeros, and a subscription CLI's
+   * one figure is its whole run (usage block present), so both are left
+   * out and absent data stays absent. No-ops when that session has no turn
+   * open.
+   */
+  recordTiming(sessionId: string, result: { usage?: CompletionUsage; timing?: CompletionTiming }): void {
+    const bucket = this.buckets.get(sessionId);
+    const timing = result.timing;
+    if (!bucket || !timing || result.usage) return;
+    const promptMs = finiteNonNegative(timing.promptMs);
+    const predictedMs = finiteNonNegative(timing.predictedMs);
+    if (promptMs <= 0 && predictedMs <= 0) return;
+    bucket.sawTiming = true;
+    bucket.prefillMs += promptMs;
+    bucket.genMs += predictedMs;
+    bucket.genTokens += finiteNonNegative(timing.predictedTokens);
   }
 
   /**
@@ -185,15 +226,34 @@ export class TurnUsageMeter {
               ? { fallbackCalls: bucket.fallbackCalls }
               : {}),
           };
-    if (!bucket.sawUsage) return served;
+    const timed = timingSnapshot(bucket);
+    if (!bucket.sawUsage) return { ...served, ...timed };
     return {
       promptTokens: bucket.promptTokens,
       completionTokens: bucket.completionTokens,
       ...(bucket.sawCachedUsage ? { cachedTokens: bucket.cachedTokens } : {}),
       ...(bucket.sawPricedUsage ? { costUsd: bucket.costUsd } : {}),
       ...served,
+      ...timed,
     };
   }
+}
+
+function finiteNonNegative(n: number | undefined): number {
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** ATO-1026: the turn's prefill / generation time and speed, rounded; `{}` when no completion reported timings. */
+function timingSnapshot(bucket: TurnBucket): Pick<TurnUsageSnapshot, "prefillMs" | "genMs" | "genTokensPerS"> {
+  if (!bucket.sawTiming) return {};
+  const genMs = Math.round(bucket.genMs);
+  return {
+    prefillMs: Math.round(bucket.prefillMs),
+    genMs,
+    ...(bucket.genMs > 0 && bucket.genTokens > 0
+      ? { genTokensPerS: Math.round((bucket.genTokens / (bucket.genMs / 1000)) * 10) / 10 }
+      : {}),
+  };
 }
 
 /**
