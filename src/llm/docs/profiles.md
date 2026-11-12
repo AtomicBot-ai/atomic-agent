@@ -19,10 +19,12 @@ Thinking=off on a hand-built Qwen prompt uses its explicit disabled marker and p
 
 ReasoningBudgetTokens defaults to 0 (unbounded) since config v78; the grammar body uses an approximately four-characters-per-token bound. Zero retains the unbounded variant. Whitespace between the reasoning-close sentinel and array is bounded. Forced terminal steps use the unbounded reasoning variant. Preserve these distinctions in grammar, unary parsing, streaming and repair prompts.
 
+Grammar argument rules (ATO-633, `localModels.strictToolArgs`, default off) are added per request after narrowing: each tool on the generic call branch with a convertible JSON Schema gets its own call rule and leaves `tool-name`; generated rules reuse the host `string`/`value` rules so the reasoning profiles' marker guard still applies. Unconvertible or oversized schemas keep that one tool on the any-object rule; `reply` and the dedicated branches are untouched.
+
 Native-tool wire contracts live under provider/. Strict conversion is per tool, does not close an originally open schema, and tracks which top-level optional arguments were widened to null. Do not drop required nullable data. Emitted strict functions force parallel_tool_calls=false. Nested third-party schemas require inspecting both tagged validation and null normalization rather than assuming built-in flat shapes.
 
 ## Sources and tests
 
-- [Profiles](../model-profile.ts), [template policy](../server-template-policy.ts), [grammar](../grammar/build-grammar.ts), [call branches](../grammar/tool-call-branches.ts), [prelude variants](../grammar/reasoning-prelude.ts).
+- [Profiles](../model-profile.ts), [template policy](../server-template-policy.ts), [grammar](../grammar/build-grammar.ts), [call branches](../grammar/tool-call-branches.ts), [prelude variants](../grammar/reasoning-prelude.ts), [argument rules](../grammar/strict-tool-args.ts), [schema to GBNF](../grammar/json-schema-to-gbnf.ts).
 - [Profile assertions](../profile-invariants.ts), [profile tests](../profile-invariants.test.ts), [grammar tests](../grammar/build-grammar.test.ts), [stream parser tests](../grammar/stream-parser.test.ts).
 - [Strict schema conversion](../provider/openai/strict-tool-schema.ts), [native adapter tests](../provider/openai/openai-tool-call-adapter.test.ts), [tagged adapter tests](../provider/openai/qwen-tagged-tool-response-adapter.test.ts).

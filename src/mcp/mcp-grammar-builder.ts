@@ -12,9 +12,10 @@
  * names and references it from `tool-name`, so the LLM can only emit
  * names that resolve to a registered `ToolDefinition`.
  *
- * Touching this rule **invalidates the main agent slot's KV cache
- * for one inference** (the grammar bytes change). The same cost
- * applies to skill install / uninstall. Acceptable because the
+ * Touching this rule changes the grammar bytes, not the prompt: the
+ * grammar is sent with each request, outside the KV-cached prompt
+ * prefix, so the slot's cache survives it. What it does cost is a fresh
+ * per-request grammar cache entry (`buildGrammarForTools`); the
  * operation is rare (server connect / disconnect, never per turn).
  */
 
@@ -47,7 +48,8 @@ const REFERENCE_ANCHORS: Readonly<Record<string, readonly string[]>> = {
  * that admits no `mcp.<server>.<tool>` name.
  *
  * The names are deduplicated and sorted so the same input always
- * produces the same bytes — load-bearing for KV-cache stability.
+ * produces the same bytes, so the per-request grammar caches keyed on
+ * the grammar text keep hitting.
  */
 export function buildMcpToolNameRule(
   metas: readonly McpToolMeta[],
