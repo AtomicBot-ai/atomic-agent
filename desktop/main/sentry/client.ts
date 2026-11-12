@@ -103,7 +103,7 @@ export function reportError(input: ErrorInput): void {
     const signature = `${type}|${tags.source ?? ""}|${tags.kind ?? ""}|${tags.reason ?? ""}|${frames[0]?.filename ?? ""}:${frames[0]?.lineno ?? ""}`;
     const n = seen.get(signature) ?? 0;
     if (sent >= MAX_PER_SESSION || n >= MAX_PER_SIGNATURE) return;
-    if (!rateLimiter().shouldSend(sentryGroupingKey({ fingerprint: fingerprintOf({ type, tags, frames }) }))) return;
+    if (!rateLimiter().shouldSend(sentryGroupingKey(fingerprintOf({ type, tags, frames }), input.message))) return;
     seen.set(signature, n + 1);
     sent += 1;
     const release = desktopVersion() || "unknown";

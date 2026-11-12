@@ -206,7 +206,8 @@ no agent is running).
   `kind` / `reason` / `exit_code` enums. `RenderProcessGone` also carries
   `recovered` (`yes`: main reloaded the page; `no`: it crashed more than
   twice in a minute and the person was asked instead, ATO-765). At most 30 reports per session,
-  3 per signature, and across launches at most 10 per fingerprint per install
+  3 per signature, and across launches at most 10 identical events (same
+  fingerprint and same message, numbers, paths and ids aside) per install
   per rolling hour (ATO-1286, `main/sentry/rate-limit.ts`; the count is kept
   as key hashes and timestamps in `sentry-rate-limit-desktop.json` in the
   state dir).

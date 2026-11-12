@@ -2,7 +2,8 @@
  * Send-side limiter for the desktop shell's Sentry events (ATO-1286).
  *
  * A copy of `src/error-reporting/sentry-rate-limit.ts` (the desktop build
- * cannot import from `src/`; keep the two in step). At most
+ * cannot import from `src/`; keep the two in step), except for the key:
+ * see {@link sentryGroupingKey}. At most
  * {@link SENTRY_RATE_LIMIT_MAX_EVENTS} events with the same grouping key
  * are sent per install in any rolling {@link SENTRY_RATE_LIMIT_WINDOW_MS};
  * the rest are dropped before an envelope is built. This sits on top of
@@ -24,25 +25,6 @@ export const SENTRY_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 export const SENTRY_RATE_LIMIT_MAX_KEYS = 500;
 /** File name in the state dir. */
 export const SENTRY_RATE_LIMIT_FILE = "sentry-rate-limit-desktop.json";
-
-/** The parts of a Sentry event (wire shape) the grouping key reads. */
-export interface SentryLikeEvent {
-  fingerprint?: readonly string[];
-  message?: string | { formatted?: string; message?: string };
-  exception?: {
-    values?: ReadonlyArray<{
-      type?: string;
-      value?: string;
-      stacktrace?: {
-        frames?: ReadonlyArray<{
-          filename?: string;
-          function?: string;
-          in_app?: boolean;
-        }>;
-      };
-    }>;
-  };
-}
 
 /**
  * Reduce a message to its shape: the parts that differ between two
@@ -67,40 +49,19 @@ export function normalizeMessage(message: string): string {
 }
 
 /**
- * The key two events must share to count as "identical": Sentry's own
- * grouping input. `fingerprint` when the event sets one; otherwise the
- * exception type + normalized value + innermost in-app frame; otherwise
- * the normalized message.
+ * The key two events must share to count as "identical": the envelope's
+ * `fingerprint` (`fingerprintOf`) plus the error's normalized message.
+ *
+ * The fingerprint alone is too coarse here: it is type + source + kind +
+ * reason + top frame file name, so every `TypeError` thrown anywhere in
+ * `renderer.js` would share one budget and one noisy bug would silence
+ * the rest. The message tells them apart; normalizing it keeps two copies
+ * of one failure together. Only the key's hash reaches the state file, and
+ * the message never goes into the fingerprint Sentry groups on.
  */
-export function sentryGroupingKey(event: SentryLikeEvent): string {
-  if (event.fingerprint && event.fingerprint.length > 0) {
-    return `fp\u0001${event.fingerprint.join("\u0001")}`;
-  }
-  const exception = event.exception?.values?.at(-1);
-  if (exception && (exception.type || exception.value)) {
-    // Wire order is oldest frame first, so the crash site is the last
-    // in-app frame. Line numbers stay out: they shift between builds.
-    const frames = exception.stacktrace?.frames ?? [];
-    let top = "";
-    for (let i = frames.length - 1; i >= 0; i -= 1) {
-      const frame = frames[i];
-      if (frame && frame.in_app !== false) {
-        top = `${frame.function ?? ""}@${frame.filename ?? ""}`;
-        break;
-      }
-    }
-    return [
-      "ex",
-      exception.type ?? "",
-      normalizeMessage(exception.value ?? ""),
-      top,
-    ].join("\u0001");
-  }
-  const raw =
-    typeof event.message === "string"
-      ? event.message
-      : (event.message?.formatted ?? event.message?.message ?? "");
-  return `msg\u0001${normalizeMessage(raw)}`;
+export function sentryGroupingKey(fingerprint: readonly string[], message?: unknown): string {
+  const text = typeof message === "string" ? normalizeMessage(message) : "";
+  return [...fingerprint, text].join("\u0001");
 }
 
 /**
