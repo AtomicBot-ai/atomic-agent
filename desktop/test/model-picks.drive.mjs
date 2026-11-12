@@ -253,7 +253,7 @@ try {
     /* Д30: the setup tabs read "Local models · Cloud providers · Custom
        server" now (they were "Local · Cloud · Custom server"). */
     let pane = '';
-    for (let attempt = 1; attempt <= 4 && !/^download a model$/i.test(pane.trim()); attempt += 1) {
+    for (let attempt = 1; attempt <= 4 && !/^local models$/i.test(pane.trim()); attempt += 1) {
       if (!(await app.eval('!!document.querySelector("#settings")'))) {
         await app.clickSel('.sb-settings');
         await app.clickText('Models', { scope: '#settings' });
@@ -274,14 +274,14 @@ try {
          selector, not by its text: the pane's footer hint also says the
          word "Local" ("←/→ switch Local/Cloud/External/Fallback") and it is
          clickable, and clicking THAT walks the mode on instead. */
-      if (pane && !/^download a model$/i.test(pane.trim())) {
+      if (pane && !/^local models$/i.test(pane.trim())) {
         await app.clickSel('#settings .llmmode', { nth: 0 });
         await sleep(1500);
         pane = await app.eval("(document.querySelector('#settings .llmmode.on') || {}).innerText || ''");
       }
-      if (!/^download a model$/i.test(pane.trim())) await sleep(4000);
+      if (!/^local models$/i.test(pane.trim())) await sleep(4000);
     }
-    check('the mode strip reaches the Local pane', /^download a model$/i.test(pane.trim()), JSON.stringify(pane));
+    check('the mode strip reaches the Local pane', /^local models$/i.test(pane.trim()), JSON.stringify(pane));
     for (let i = 0; i < 60; i += 1) {
       if (await app.eval("document.querySelectorAll('#settings [data-llm-row^=\"local-text:\"]').length")) break;
       await sleep(500);

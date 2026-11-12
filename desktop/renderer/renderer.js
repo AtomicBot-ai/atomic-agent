@@ -26128,17 +26128,13 @@ function llmStatusTone(line) {
    write nothing; where chats run is the choice above them, and their words
    are not that choice's words ("Cloud providers", not "Cloud"). Fallback is
    reached from Cloud providers and keeps that tab lit. Drivers read
-   `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`.
-   ATO-460: the tab words no longer repeat the cards above them. "Local
-   models" sat both on a card and on a tab, so picking the Cloud tab read
-   as moving chats to the cloud. The strip is "Add models" now, and each tab
-   says what you do there. */
-const LLM_BAR_MODES = [['local', 'Download a model'], ['cloud', 'Cloud keys'], ['external', 'Custom server']];
+   `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`. */
+const LLM_BAR_MODES = [['local', 'Local models'], ['cloud', 'Cloud providers'], ['external', 'Custom server']];
 function llmBarHTML(mode) {
   const lit = mode === 'fallback' ? 'cloud' : mode;
   return '<div class="tk-bar llm-bar llm-srcbar">'
-    + '<span class="llm-sh-t">Add models</span>'
-    + '<span class="tk-seg llm-seg" role="tablist" aria-label="Add models">'
+    + '<span class="llm-sh-t">Set up models</span>'
+    + '<span class="tk-seg llm-seg" role="tablist" aria-label="Set up models">'
     + LLM_BAR_MODES.map(([m, label]) => '<button class="llmmode' + (m === lit ? ' on' : '') + '" role="tab" aria-selected="' + (m === lit) + '" data-act="llm:mode:' + m + '">'
       + esc(label) + '</button>').join('')
     + '</span></div>';

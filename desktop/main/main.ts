@@ -7935,7 +7935,7 @@ async function settingsTestPartC(
   );
   const localCopy = ["Where chats run now", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
   const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
-  if (!same(localView.modes, ["Download a model", "Cloud keys", "Custom server"]) || !same(localView.on, ["Download a model"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
+  if (!same(localView.modes, ["Local models", "Cloud providers", "Custom server"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
   if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
   // A remote row's pill says Download with its size, and its tooltip is the TUI's "Enter: download"; a downloaded row never offers a download.
   const badPills = localView.effects.filter(([label, title, remote]) => remote
