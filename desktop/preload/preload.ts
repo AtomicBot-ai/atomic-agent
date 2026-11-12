@@ -448,6 +448,13 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1299: remove the chat's last question and answer (POST /api/sessions/{id}/rollback-last-turn). */
   rollbackLastTurn: (sessionId: string, expectText?: string, expectPriorQuestions?: number, expectUnanswered?: boolean) =>
     ipcRenderer.invoke("agent:rollbackLastTurn", { sessionId, expectText, expectPriorQuestions, expectUnanswered }),
+  /** ATO-1056/1058: roll a chat back to a question (files first), preview it, or fork it there (chat-rewind-ipc.ts). */
+  rewindPreview: (sessionId: string, priorQuestions: number, expectText: string) =>
+    ipcRenderer.invoke("agent:rewindPreview", { sessionId, priorQuestions, expectText }),
+  rewind: (sessionId: string, priorQuestions: number, expectText: string) =>
+    ipcRenderer.invoke("agent:rewind", { sessionId, priorQuestions, expectText }),
+  forkSession: (sessionId: string, priorQuestions: number, expectText: string) =>
+    ipcRenderer.invoke("agent:forkSession", { sessionId, priorQuestions, expectText }),
 
   /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
   hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),
