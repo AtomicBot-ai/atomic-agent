@@ -386,8 +386,8 @@ describe("ChatTryAgainButton", () => {
           {
             ...createInitialTuiState(SESSION),
             messages: [
-              { id: "u0", role: "user", text: "first" },
-              { id: "a0", role: "assistant", text: "one" },
+              { id: "u0", role: "user", text: "first", timestamp: 0 },
+              { id: "a0", role: "assistant", text: "one", timestamp: 0 },
             ],
           },
           { type: "chat_cleared" },
@@ -405,10 +405,10 @@ describe("ChatTryAgainButton", () => {
           <ChatTryAgainButton text="continue" messageId="u2" />,
           {
             initial: cleared([
-              { id: "u1", role: "user", text: "continue" },
-              { id: "a1", role: "assistant", text: "real answer" },
-              { id: "u2", role: "user", text: "continue" },
-              { id: "f2", role: "system", text: "Turn failed", variant: "warn", retryText: "continue" },
+              { id: "u1", role: "user", text: "continue", timestamp: 0 },
+              { id: "a1", role: "assistant", text: "real answer", timestamp: 0 },
+              { id: "u2", role: "user", text: "continue", timestamp: 0 },
+              { id: "f2", role: "system", text: "Turn failed", variant: "warn", retryText: "continue", timestamp: 0 },
             ]),
             rollback: (expect) => {
               asked.push(expect);
@@ -434,8 +434,8 @@ describe("ChatTryAgainButton", () => {
           <ChatTryAgainButton text="continue" messageId="u1" />,
           {
             initial: cleared([
-              { id: "u1", role: "user", text: "continue" },
-              { id: "a1", role: "assistant", text: "real answer" },
+              { id: "u1", role: "user", text: "continue", timestamp: 0 },
+              { id: "a1", role: "assistant", text: "real answer", timestamp: 0 },
             ]),
             rollback: orchestrator(session),
           },
@@ -477,12 +477,12 @@ describe("isLastQuestion", () => {
 describe("shownUnanswered", () => {
   it("is true only when no reply follows the question before the next one", () => {
     const messages: ChatMessage[] = [
-      { id: "u0", role: "user", text: "a" },
-      { id: "p0", role: "assistant", text: "working on it", progressNote: true },
-      { id: "u1", role: "user", text: "b" },
-      { id: "a1", role: "assistant", text: "reply" },
-      { id: "u2", role: "user", text: "c" },
-      { id: "f2", role: "system", text: "Turn failed", variant: "warn" },
+      { id: "u0", role: "user", text: "a", timestamp: 0 },
+      { id: "p0", role: "assistant", text: "working on it", progressNote: true, timestamp: 0 },
+      { id: "u1", role: "user", text: "b", timestamp: 0 },
+      { id: "a1", role: "assistant", text: "reply", timestamp: 0 },
+      { id: "u2", role: "user", text: "c", timestamp: 0 },
+      { id: "f2", role: "system", text: "Turn failed", variant: "warn", timestamp: 0 },
     ];
     expect(shownUnanswered(messages, "u0")).toBe(true);
     expect(shownUnanswered(messages, "u1")).toBe(false);
