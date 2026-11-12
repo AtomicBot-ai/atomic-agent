@@ -5,6 +5,7 @@ import { BROWSER_BUNDLE_IDS } from "../screen/screen-protected.js";
 import { NESTED_SHELL_PROGRAMS, PREFIX_COMMANDS } from "./command-segments.js";
 import type { GuardVerdict } from "./guard-types.js";
 import { basenameCommand } from "./normalise.js";
+import { blankPrintedLiterals, outputStaysHere } from "./printed-literals.js";
 import { lexShellLine, type ShellWord } from "./shell-line-lexer.js";
 
 /**
@@ -57,7 +58,10 @@ import { lexShellLine, type ShellWord } from "./shell-line-lexer.js";
  * in a quoted string of an unrelated command (an `echo`) passes; only
  * scripting contexts look for one. Likewise a message a script only
  * prints: a device sign-in saying `echo 'open https://… and enter the
- * code'` is the step the agent has to run and hand over.
+ * code'` is the step the agent has to run and hand over. The same holds
+ * for the string literals given to Python `print` / `sys.stdout.write` /
+ * `logging`, and JavaScript `console.*` / `process.stdout.write`, unless
+ * the output is piped on to something that could run it.
  */
 
 export const BROWSER_BYPASS_RULE = "browser.use_browser_tool";
@@ -161,12 +165,12 @@ const LINE_PROBLEMS: readonly ScriptProblem[] = [
 ];
 
 /**
- * `echo` / `printf` with one quoted argument and nothing taking the output
+ * `echo` / `printf` with only quoted arguments and nothing taking the output
  * (a pipe or a file could carry it to a shell). What it says is not run,
  * so the line-level rules do not read it.
  */
 const PRINTED_MESSAGE =
-  /(^|[\s;&|(])(echo|printf)((?:\s+-[a-z]+)*)\s+(?:'[^'\n]*'|"[^"\n$`]*")(?=[ \t]*(?:[12]?>&[12][ \t]*)?(?:$|[\n;#]|&&|\|\|))/gm;
+  /(^|[\s;&|(])(echo|printf)((?:\s+-[a-z]+)*)(?:\s+(?:'[^'\n]*'|"[^"\n$`]*"))+(?=[ \t]*(?:[12]?>&[12][ \t]*)?(?:$|[\n;#]|&&|\|\|))/gm;
 
 const NESTED_SHELLS: ReadonlySet<string> = new Set(NESTED_SHELL_PROGRAMS);
 
@@ -202,6 +206,11 @@ interface CommandContext {
   depth: number;
   /** Where a script file named by the command is read from. */
   cwd: string;
+  /**
+   * What the command prints stays on the terminal (no pipe, file or
+   * substitution takes it on), so a print-only call's text is not run.
+   */
+  printsSafe: boolean;
 }
 
 /**
@@ -209,7 +218,10 @@ interface CommandContext {
  * or `null`. A line the lexer cannot read is still checked as text.
  */
 export function checkBrowserBypassLine(line: string, cwd: string): GuardVerdict | null {
-  return checkText(line, line) ?? checkLineCommands(line, { viaXargs: false, depth: 0, cwd });
+  return (
+    checkText(line, line, outputStaysHere(line)) ??
+    checkLineCommands(line, { viaXargs: false, depth: 0, cwd, printsSafe: true })
+  );
 }
 
 /** The refusal for a direct exec (`spawn(cmd, args)`), or `null`. */
@@ -220,7 +232,8 @@ export function checkBrowserBypassArgv(
 ): GuardVerdict | null {
   const words = [cmd, ...args].map((text) => ({ text, dynamic: false }));
   const text = [cmd, ...args].join(" ");
-  return checkText(text, text) ?? checkCommand(words, { viaXargs: false, depth: 0, cwd });
+  // A direct exec hands its output back to the caller, not to a shell.
+  return checkText(text, text, true) ?? checkCommand(words, { viaXargs: false, depth: 0, cwd, printsSafe: true });
 }
 
 /** Interpreters whose first operand is a script file read here before it runs. */
@@ -251,14 +264,16 @@ function checkScriptFile(word: ShellWord, ctx: CommandContext, shell: boolean): 
   const text = readScriptFile(word, ctx.cwd);
   if (text === null || text === "binary") return null;
   return (
-    checkText(text, text) ??
+    checkText(text, text, shell ? ctx.printsSafe && outputStaysHere(text) : ctx.printsSafe) ??
     (shell ? checkLineCommands(text, { ...ctx, depth: ctx.depth + 1 }) : null)
   );
 }
 
-function checkText(raw: string, osascriptSource: string): GuardVerdict | null {
+/** `printsSafe`: the output of `raw` stays on the terminal, so print-only calls are not read. */
+function checkText(raw: string, osascriptSource: string, printsSafe: boolean): GuardVerdict | null {
   const text = raw.normalize("NFKC").toLowerCase();
-  const whatRuns = text.replace(PRINTED_MESSAGE, "$1$2$3 ''");
+  const echoed = text.replace(PRINTED_MESSAGE, "$1$2$3 ''");
+  const whatRuns = printsSafe ? blankPrintedLiterals(echoed) : echoed;
   for (const problem of LINE_PROBLEMS) {
     if (problem.test.test(whatRuns)) return refuse(problem.what);
   }
@@ -290,8 +305,9 @@ function hiddenOsascriptSource(text: string): string | null {
   return null;
 }
 
-function checkLineCommands(line: string, ctx: CommandContext): GuardVerdict | null {
-  if (ctx.depth > 4) return null;
+function checkLineCommands(line: string, outer: CommandContext): GuardVerdict | null {
+  if (outer.depth > 4) return null;
+  const ctx = { ...outer, printsSafe: outer.printsSafe && outputStaysHere(line) };
   const tokens = lexShellLine(line, "posix");
   if (tokens === null) return null;
   let words: ShellWord[] = [];
@@ -322,7 +338,7 @@ function checkCommand(all: readonly ShellWord[], outer: CommandContext): GuardVe
   // With its quotes off a printed message reads like a command; the line it
   // came from was already checked with them on.
   const printsOnly = ["echo", "printf"].includes(all[0]?.text ?? "");
-  const asText = printsOnly ? null : checkText(dequoted, dequoted);
+  const asText = printsOnly ? null : checkText(dequoted, dequoted, outer.printsSafe);
   if (asText) return asText;
   const ctx = { ...outer };
   let i = 0;
@@ -365,7 +381,7 @@ function checkCommand(all: readonly ShellWord[], outer: CommandContext): GuardVe
       if (!flag.startsWith("-")) return checkScriptFile(args[j]!, ctx, true);
       if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(flag)) {
         const script = args[j + 1];
-        return script ? checkText(script.text, script.text) ?? checkLineCommands(script.text, { ...ctx, depth: ctx.depth + 1 }) : null;
+        return script ? checkText(script.text, script.text, ctx.printsSafe && outputStaysHere(script.text)) ?? checkLineCommands(script.text, { ...ctx, depth: ctx.depth + 1 }) : null;
       }
     }
     return null;
@@ -383,7 +399,7 @@ function checkCommand(all: readonly ShellWord[], outer: CommandContext): GuardVe
   }
   if (name === "eval") {
     const line = args.map((a) => a.text).join(" ");
-    return checkText(line, line) ?? checkLineCommands(line, { ...ctx, depth: ctx.depth + 1 });
+    return checkText(line, line, false) ?? checkLineCommands(line, { ...ctx, depth: ctx.depth + 1, printsSafe: false });
   }
   if (name === "find") {
     // `find … -exec open -a Safari {} \;`: the words after `-exec` are a command.
@@ -510,7 +526,7 @@ function checkOsascriptArgs(args: readonly ShellWord[], ctx: CommandContext): Gu
     if (script === null || script === "binary") {
       return refuse("an osascript script file that cannot be read here (pass the script inline with -e so it can be checked)");
     }
-    return checkText(`osascript\n${script}`, script);
+    return checkText(`osascript\n${script}`, script, false);
   }
   if (ctx.viaXargs) return refuse("a script read into osascript from somewhere this cannot read");
   return null;
