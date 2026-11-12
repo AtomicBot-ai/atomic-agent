@@ -51,6 +51,10 @@ A page on a blocked host is never captured. A capture is discarded, never saved,
 
 Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; others get `full`. The same default applies to the world snapshot after navigate / search. The size budget is 4% of the window (2k–24k chars). Compact views read the whole tree before filtering; a name Playwright writes as a quoted YAML key (`- 'button "Pay: $5" [ref=e7]'`) is unquoted first, so such a control is never dropped. A blocked page, or one framing a blocked site (AI-mode snapshots include iframe content), is neither rendered nor remembered for `diff`.
 
+## Web identity
+
+One honest, fixed identity for the browser the agent launches and for the curl tools (`os.web.fetch`, `os.http.request`, web search), from `web-identity.ts` (ATO-969): Chrome's reduced User-Agent for this OS with the installed browser's major version (`chrome-version.ts`, else `FALLBACK_CHROME_MAJOR`), and Accept-Language from the system locale. The timezone is never overridden. Headless runs as `--headless=new` and gets that UA (only when the version is known), `--lang` and a 1440x900 window; a headed launch keeps Chrome's own. Fingerprints are never rotated or faked.
+
 ## Your own Chrome
 
 `browser.connect: "user-chrome"` in config.json (opt-in; default `"agent"`, the agent's own profile). The agent then works in the user's signed-in Chrome (`attach-user-chrome.ts`, `user-chrome-endpoint.ts`):

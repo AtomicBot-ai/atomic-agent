@@ -252,7 +252,7 @@ describe("searchHttp keeps headers out of argv (ATO-1177)", () => {
     let headerPath = "";
     const runCommand = (async (_command: string, args: string[]) => {
       seenArgs = args;
-      const ref = args[args.indexOf("-H", args.indexOf("Accept-Language: en-US,en;q=0.9")) + 1];
+      const ref = args[args.indexOf("-H", args.findIndex((a) => a.startsWith("Accept-Language: "))) + 1];
       headerPath = ref?.startsWith("@") ? ref.slice(1) : "";
       seenFile = headerPath ? readFileSync(headerPath, "utf8") : "";
       return {
