@@ -1,6 +1,7 @@
 import { compressToolResult, retainToolOutput } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
+import type { SkillRecord } from "../../skills/skill-loader.js";
 import { runSkillScript } from "../../skills/skill-script-runner.js";
 import { realpathSync } from "node:fs";
 import { isWithinWorkspace } from "../../skills/workspace-files.js";
@@ -152,6 +153,8 @@ export interface SkillRunScriptToolOptions extends DangerousToolOptions {
    * (`runsCodeAccepted`), the same consent its local MCP servers need.
    */
   pluginsStateDir?: string;
+  /** Called once the script is about to run, for the skill usage ledger (ATO-580). */
+  onSkillUsed?: (record: SkillRecord) => void;
 }
 
 export function buildSkillRunScriptTool(
@@ -226,6 +229,7 @@ export function buildSkillRunScriptTool(
       }
 
       ctx.workspaceSkills?.assertAvailable(skillName);
+      options.onSkillUsed?.(record);
       const outcome = await runSkillScript(record, {
         script: scriptName,
         args: scriptArgs,

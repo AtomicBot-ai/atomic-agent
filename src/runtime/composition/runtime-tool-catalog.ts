@@ -27,7 +27,8 @@ import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, ty
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
 import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
-import { registerSkillTools } from "../../tools/skill/index.js";
+import { registerSkillTools, skillNameForPath, trackSkillEdits } from "../../tools/skill/index.js";
+import { SkillChangeRecorder, skillCuratorPaths } from "../../skills/curator/index.js";
 import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { planUpdateTool } from "../../tools/plan/index.js";
 import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
@@ -203,13 +204,30 @@ export function registerRuntimeCoreTools(input: {
   registerGithubTools(toolRegistry, dangerous);
   // Skill scripts inherit the shell's filtered environment and its
   // passthrough list (ATO-877): one answer to "which keys reach a child".
+  // Skill history (ATO-580): every `skill.view` / `skill.run_script` of a
+  // user-installed skill counts as a use, and the file tools snapshot a
+  // skill folder before the agent changes it and log the change after.
+  const skillHistory = new SkillChangeRecorder(config.paths.globalSkillsDir, skillCuratorPaths(config.paths.stateDir));
+  const reportSkillHistoryError = (err: unknown, tool: string): void => {
+    logger.warn("skill history: bookkeeping failed; the tool call was not affected", {
+      tool,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  };
   registerSkillTools(
     toolRegistry,
     skillRegistry,
     dangerous,
     config.tools.shell.envPassthrough,
     config.paths.stateDir,
+    (record) => {
+      if (record.source !== "global" || record.plugin !== undefined) return;
+      const name = skillNameForPath(config.paths.globalSkillsDir, record.rootDir);
+      if (name === null) return;
+      void skillHistory.recordUse(name).catch((err: unknown) => reportSkillHistoryError(err, "skill usage"));
+    },
   );
+  trackSkillEdits(toolRegistry, { recorder: skillHistory, onError: reportSkillHistoryError });
   // `tool.view` is registered with `tool.search` in the MCP catalog phase:
   // it reads the same live descriptor list.
   // The live checklist (ATO-486): pure, always on, no approval.
