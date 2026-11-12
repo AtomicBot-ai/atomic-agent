@@ -804,6 +804,8 @@ const DL = {
    `ids` is null until main has said which catalogue rows are marked, and `gate`
    false until the boot gate has decided whether setup is due. */
 const SPOT = {gate: false, ids: null, asked: false, dismissed: null};
+/* ATO-1467: the interview invite's sidebar card (interviewTick). `asked`: main was asked this launch; `show`: the card is up. */
+const INV = {asked: false, show: false};
 /* Backlog 18 — the download card's own state (renderDlcard). Declared up
    here for the same reason as DL: the first top-level render() reads it. */
 /* ATO-1373: a vision projector landed for the model that is serving now. The
@@ -1919,6 +1921,8 @@ const SLASH = [
   ['import','open the Import tab (one-shot migration)'],
   ['privacy','analytics opt-out + session grants','analytics on|off'],
   ['analytics','toggle anonymous analytics','on|off|status'],
+  // ATO-1467: the interview invite's permanent entry; `/feedback never` hides the sidebar card for good.
+  ['feedback','15 min call with the team, $50 in OpenRouter credits','never'],
 ];
 
 // approval categories → the level at which each stops asking (approval-level.ts)
@@ -2001,6 +2005,7 @@ const PAL = [
     ['doc','List built-in tools','','⌥ ⌘ T','tools'],
     ['download','Save report for support','','','dump'],
     ['flag','Report an issue…','','','help.report'],
+    ['chat','Talk to the team ($50 credits)…','','/feedback','help.feedback'],   // ATO-1467
     ['x','Quit','','⌘ Q','quit'],
   ]],
 ];
@@ -2416,6 +2421,7 @@ function renderSidebar() {
     + '</div>'
     // The bottom-left Settings entry: gear icon (ATO-166; it was a house) and the word. The ⌘ , chord
     // lives in the tooltip, the palette and the app menu, not on the button.
+    + interviewCardHTML(INV.show && !(S.busy || S.pending) && !OB.open)   // ATO-1467
     + '<div class="sb-footwrap">'
       + '<button class="btn sb-settings" data-act="settings:open" title="' + kbdText('Settings (⌘ ,)') + '" aria-label="' + kbdText('Settings (⌘ ,)') + '">'
         + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
@@ -2427,6 +2433,54 @@ function renderSidebar() {
     if (lists) lists.scrollTop = keepScroll;
   }
   queuesKeep();   // ATO-135
+  interviewTick();   // ATO-1467
+}
+
+/* ---- ATO-1467: the "Talk to the team" interview invite ----
+   Main decides whether the card may show (analytics, the PostHog flag and
+   the limits, main/interview-invite.ts); the window adds what it sees:
+   no card while a turn runs, during first-run setup or with an error up
+   (interview-card.js). Asked once per launch, once the agent is up.
+   INV is declared up by SPOT, for the same reason. */
+function interviewWin() {
+  return interviewWindowState({live: S.live, busy: S.busy || S.pending, onboarding: OB.open, dlError: DL.error});
+}
+function interviewTick() {
+  if (INV.asked || !BR || typeof BR.interviewCheck !== 'function') return;
+  if (!interviewMayAsk({live: S.live, busy: S.busy || S.pending, onboarding: OB.open, dlError: DL.error})) return;
+  INV.asked = true;
+  BR.interviewCheck(interviewWin())
+    .then((ok) => (ok === true ? BR.interviewShown(interviewWin()) : false))
+    .then((shown) => { if (shown === true) { INV.show = true; renderSidebar(); } })
+    .catch(() => { /* no card */ });
+}
+function interviewOpen(via) {
+  if (!BR || typeof BR.interviewOpen !== 'function') return Promise.resolve(null);
+  return BR.interviewOpen(via).catch(() => null);
+}
+function interviewCardAct(verb) {
+  INV.show = false;
+  renderSidebar();
+  if (verb === 'card') { interviewOpen('card'); return; }
+  if (BR && typeof BR.interviewDismiss === 'function') BR.interviewDismiss(verb === 'never' ? 'never' : 'later').catch(() => {});
+}
+function interviewSlash(rest) {
+  const verb = (rest[0] || '').toLowerCase();
+  if (verb === 'never') {
+    INV.show = false; renderSidebar();
+    const done = BR && typeof BR.interviewDismiss === 'function' ? BR.interviewDismiss('never') : Promise.resolve(false);
+    done.catch(() => false).then((ok) => {
+      S.log.push({id: nid(), k: 'system', text: ok ? 'The invite will not show again. /feedback still opens the form.' : 'Could not save that; the invite may show again.'});
+      render();
+    });
+    return;
+  }
+  if (rest.length) { S.log.push({id: nid(), k: 'system', text: 'usage: /feedback | /feedback never'}); render(); return; }
+  interviewOpen('slash').then((url) => {
+    if (!url) return;
+    S.log.push({id: nid(), k: 'system', text: '15 min call with the team, $50 in OpenRouter credits after it. Form opened in your browser: ' + esc(url)});
+    render();
+  });
 }
 
 /* ATO-457: the Tasks and Skills section rows. They reuse the New chat row's
@@ -7050,6 +7104,9 @@ function act(a) {
      were allowed to claim the key works. */
   if (a === 'wiz:saveUnchecked') { WIZ.acceptUnchecked = true; wizNext(); return; }
   if (a === 'help.report' || a === 'report') { close(); render(); helpReport(); return; }
+  // ATO-1467: Help › Talk to the team, and the sidebar card's three buttons.
+  if (a === 'help.feedback') { close(); render(); interviewOpen('menu'); return; }
+  if (a === 'interview:card' || a === 'interview:later' || a === 'interview:never') { interviewCardAct(a.slice('interview:'.length)); return; }
   /* Run mode — every route to it lands here or in fzSlash: the native menu's
      Run › Where it runs…, the Settings › LLM cards and worker count, the
      composer's ⇄, and the palette row. One switch path per verb, shared with
@@ -7949,6 +8006,7 @@ function runSlash(parts) {
     S.log.push({id:nid(), k:'system', text:'usage: /privacy | /privacy analytics on|off|status'}); render(); return;
   }
   if (name === 'analytics') { analyticsSlash(rest); return; }
+  if (name === 'feedback') { interviewSlash(rest); return; }   // ATO-1467
   if (name === 'telegram' && rest[0] === 'pair') { act('settings:telegram'); telegramAct('pair'); return; } // ATO-426
   if (name === 'compact') {
     if (rest.length) { S.log.push({id:nid(), k:'system', text:'usage: /compact'}); render(); return; }

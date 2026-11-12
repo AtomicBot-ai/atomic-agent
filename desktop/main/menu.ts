@@ -191,6 +191,8 @@ export function menuTemplate(
            menu's report is counted (ui_action) and opens the same prefilled
            issue with a saved support report, not the bare issue list. */
         item("Report an Issue…", "help.report"),
+        /* ATO-1467: the interview invite's permanent entry, no limits. */
+        item("Talk to the Team ($50 Credits)…", "help.feedback"),
         ...(mac ? [] : [sep, { role: "about" } as MenuItemConstructorOptions]),
       ],
     },
