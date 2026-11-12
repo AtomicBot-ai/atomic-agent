@@ -4055,6 +4055,9 @@ function apprWhy(m) {
     return 'Allowing it also lets the agent read anything in ' + apprCode(apprPath(m.readRoot || m.affectsDir + m.affectsBase)) + ' for the rest of this chat.';
   }
   if (m.cat === 'trust_config') return 'This changes what Atomic Agent may do without asking you.';
+  // ATO-1390: the agent's own .env, config or local server keys. The title keeps only what it does
+  // ("read …"), so the reason the agent sends ("the agent's own secret file") is said here.
+  if (m.cat === 'state_secret') return "This is the agent's own secret file (API keys, tokens, approval settings). It asks every time.";
   if (m.cat === 'fs_trash') return 'You can put them back from the Trash.';
   if (m.cat === 'paid_generation') return m.tool === 'video.generate' ? esc(VIDEO_PAID_WHY) : 'OpenRouter charges your account for each image.';
   if (m.cat === 'shell' || m.tool === 'os.shell.run') {
