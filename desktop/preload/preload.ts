@@ -104,8 +104,9 @@ contextBridge.exposeInMainWorld("atomic", {
   codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */
-  chat: (messages: Array<{ role: string; content: string }>, sessionId?: string) =>
-    ipcRenderer.invoke("agent:chat", { messages, sessionId }),
+  /** ATO-490: `reasoning` is the chat's level (low | medium | high); absent for Auto. */
+  chat: (messages: Array<{ role: string; content: string }>, sessionId?: string, reasoning?: string) =>
+    ipcRenderer.invoke("agent:chat", { messages, sessionId, ...(reasoning ? { reasoning } : {}) }),
   cancel: (turnId: string) => ipcRenderer.invoke("agent:cancel", turnId),
   onChat: (cb: (payload: unknown) => void) => on("agent:chat", cb),
 

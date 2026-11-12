@@ -269,6 +269,7 @@ import { lastErrorCategory, lastErrorSentence, reportAgentExit, reportRendererEr
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
+import { reasoningLevelFromWindow, type ReasoningLevel } from "./reasoning-level.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -1511,10 +1512,12 @@ function wireIpc(client: AgentClient): void {
   });
 
   ipcMain.handle("agent:chat", async (_event, payload: unknown) => {
-    const { messages, sessionId } = payload as {
+    const { messages, sessionId, reasoning: reasoningRaw } = payload as {
       messages?: Array<{ role: string; content: string }>;
       sessionId?: string;
+      reasoning?: unknown;
     };
+    const reasoning = reasoningLevelFromWindow(reasoningRaw);
     if (!Array.isArray(messages) || messages.length === 0) {
       return { ok: false, error: "messages must be a non-empty array" };
     }
@@ -1528,8 +1531,8 @@ function wireIpc(client: AgentClient): void {
        here, with its own line, until the generation ends and the model is on
        its way back; a cloud turn never asks. */
     const held = chatRouteIsLocal() ? await gpuShare.chatTurn().catch(() => null) : null;
-    if (held) return holdForStudio(held, clean, sessionId, queuedAt);
-    return startTurn(randomUUID(), clean, sessionId, queuedAt, false);
+    if (held) return holdForStudio(held, clean, sessionId, queuedAt, reasoning);
+    return startTurn(randomUUID(), clean, sessionId, queuedAt, false, reasoning);
   });
 
   async function startTurn(
@@ -1538,6 +1541,7 @@ function wireIpc(client: AgentClient): void {
     sessionId: string | undefined,
     queuedAt: number,
     listed: boolean,
+    reasoning?: ReasoningLevel,
   ): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
     /* Backlog 18 (its second review): a restart a switch held back for the
        turns runs as the last one ends (backend-switch restartAfterSwitch), and
@@ -1564,7 +1568,7 @@ function wireIpc(client: AgentClient): void {
     }
     // ATO-731: a new chat opens in the folder the window shows; an existing one keeps its own.
     // A remote agent opens new chats in its own folder: this computer's path means nothing there.
-    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined, client.isRemote ? undefined : client.status.workingDir);
+    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined, client.isRemote ? undefined : client.status.workingDir, reasoning);
     return { ok: true, turnId };
   }
 
@@ -1578,6 +1582,7 @@ function wireIpc(client: AgentClient): void {
     clean: Array<{ role: string; content: string }>,
     sessionId: string | undefined,
     queuedAt: number,
+    reasoning?: ReasoningLevel,
   ): { ok: true; turnId: string } {
     const turnId = randomUUID();
     const known = typeof sessionId === "string" && sessionId ? sessionId : null;
@@ -1602,7 +1607,7 @@ function wireIpc(client: AgentClient): void {
       heldForStudio.delete(turnId);
       if (dropped) return;
       client.emit("chat", { turnId, kind: "provider_recovered", payload: { waited_ms: Date.now() - queuedAt, studio: true } });
-      const res = await startTurn(turnId, clean, sessionId, queuedAt, true);
+      const res = await startTurn(turnId, clean, sessionId, queuedAt, true, reasoning);
       if (!res.ok) client.emit("chat", { turnId, kind: "error", error: res.error });
     });
     return { ok: true, turnId };
