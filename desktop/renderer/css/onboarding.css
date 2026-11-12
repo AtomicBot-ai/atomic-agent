@@ -18,6 +18,9 @@
 .ob-kicker{font:600 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none}
 .ob-wiz .ob-h{display:flex;align-items:center;gap:10px;min-width:0;font-size:var(--fs-lead);font-weight:600;letter-spacing:-.015em;color:var(--ink)}
 .ob-help{font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2);max-width:62ch}
+/* ATO-845: the subscription step's fallback ("Terminal did not open? Run this"), under the Sign in button. */
+.ob-help.wiz-sub-small{font-size:var(--fs-micro);color:var(--ink-3);margin-top:6px}
+.wiz-sub-copy{margin-left:6px;vertical-align:baseline}
 .ob-err{color:var(--critical);white-space:pre-wrap;max-width:62ch;font-size:var(--fs-cap);line-height:1.45}
 .ob-inp{width:100%;min-width:0;height:38px;padding:0 15px;border-radius:var(--r-pill);border:1px solid transparent;
   background:var(--well);color:var(--ink);font:400 var(--fs-ui)/1 var(--font-ui);outline:none;

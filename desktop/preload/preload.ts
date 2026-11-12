@@ -145,6 +145,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:providerKeyPresent", entry),
   // ATO-756: {ok, status: {cli, installed, binPath, signedIn, apiKeyLogin?}} — never a token.
   subscriptionStatus: (cli: "claude" | "codex") => ipcRenderer.invoke("cli:subscriptionStatus", cli),
+  // ATO-845: open the system terminal with `claude` / `codex login` running. {ok, terminal?, reason?}
+  subscriptionLogin: (cli: "claude" | "codex") => ipcRenderer.invoke("cli:subscriptionLogin", cli),
   removeProvider: (id: string) => ipcRenderer.invoke("cli:removeProvider", id),
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
   traceUsage: (stateDir: string, sessionId: string) =>

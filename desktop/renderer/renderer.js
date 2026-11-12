@@ -7037,6 +7037,8 @@ function act(a) {
   // ATO-1372: the picker's Get vision files chip.
   if (a.startsWith('sel:vision:')) { selVisionFetch(a.slice('sel:vision:'.length)); return; }
   if (a === 'wiz:subRecheck') { wizSubRecheck(WIZ.row); return; }
+  if (a === 'wiz:subLogin') { wizSubLogin(WIZ.row); return; }
+  if (a === 'wiz:subCopy') { wizSubCopy(WIZ.row); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -15298,8 +15300,10 @@ function obWizardHTML() {
       + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
         + ic('chevL') + 'Back</button><span class="grow"></span>'
         + '<button class="btn btn-s" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
-        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
-        + (verifying ? 'Adding…' : esc(wizSubButton(k)) + ic('arrowR')) + '</button></div>'
+        + (wizSubNeedsLogin(k) && !verifying
+          ? '<button class="btn btn-p" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + ic('arrowR') + '</button></div>'
+          : '<button class="btn btn-p" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+            + (verifying ? 'Adding…' : esc(wizSubButton(k)) + ic('arrowR')) + '</button></div>')
       + '</div>';
   }
   /* B.4 — one label, not three: "API key" once as the kicker, the provider
@@ -17561,7 +17565,7 @@ if (BR) {
        nothing at all until they were listed. Same shape as the defect the
        operator once reported as "when I click on next, nothing happens". */
     if (OB.open && OB.step === 'cloud'
-        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck')) {
+        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck' || a === 'wiz:subLogin' || a === 'wiz:subCopy')) {
       return prevAct(a);
     }
     if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
@@ -21337,8 +21341,10 @@ function wizardHTML() {
       + '</div>',
       '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
         + '<button class="btn btn-s xs" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
-        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
-        + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : esc(wizSubButton(k))) + '</button>',
+        + (wizSubNeedsLogin(k) && !verifying
+          ? '<button class="btn btn-p xs" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + '</button>'
+          : '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+            + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : esc(wizSubButton(k))) + '</button>'),
       lead);
   }
   /* This is the SECOND place the app asks for an API key — the wizard's own
@@ -21482,14 +21488,23 @@ function wizSubscriptionLines(k) {
   } else if (!st.installed) {
     lines.push({warn: true, text: wizService(k) + ' is not installed on ' + THIS_MACHINE + '. To use your ' + k.plan + ' subscription:'});
     lines.push({text: '1. Open ' + terminal + ' and run:'});
-    lines.push({code: true, text: wizSubInstallCmd(cli)});
+    lines.push({code: true, copy: true, text: wizSubInstallCmd(cli)});
     lines.push({text: '2. Run ' + cli + (cli === 'codex' ? ' login' : '') + ' once and sign in with your ' + k.plan + ' account.'});
     lines.push({text: '3. Come back here and press Check again.'});
   } else if (st.signedIn === false) {
+    /* ATO-845: the main way in is the Sign in button, which opens the
+       terminal with the command already running; the command itself is the
+       small fallback under it, with Copy. */
     lines.push({warn: true, text: 'Found ' + wizService(k) + ', but it is not signed in' + (st.apiKeyLogin ? ' with ChatGPT (it is using an API key, which bills per token)' : '') + '.'});
-    lines.push({text: '1. Open ' + terminal + ' and run:'});
-    lines.push({code: true, text: cli === 'codex' ? 'codex login' : 'claude'});
-    lines.push({text: '2. Sign in with your ' + k.plan + ' account' + (cli === 'claude' ? ' (type /login if it does not ask)' : '') + ', then press Check again.'});
+    if (WIZ_SUB_POLL.cli === cli && WIZ_SUB_POLL.opened) {
+      lines.push({text: 'A ' + terminal + ' window opened with the sign-in running. Finish signing in with your ' + k.plan + ' account in the browser'
+        + (cli === 'claude' ? ' (type /login there if it does not ask)' : '') + '. This screen moves on by itself.'});
+    } else {
+      lines.push({text: 'Press ' + wizSubLoginButton(k) + '. A ' + terminal + ' window opens with the sign-in running, you finish in the browser, and this screen moves on by itself.'});
+    }
+    if (WIZ_SUB_POLL.cli === cli && WIZ_SUB_POLL.failed) lines.push({warn: true, text: 'Could not open ' + terminal + '. Run the command below in it yourself.'});
+    lines.push({small: true, text: (WIZ_SUB_POLL.cli === cli && WIZ_SUB_POLL.failed ? '' : terminal + ' did not open? ') + 'Run this in ' + terminal + ':'});
+    lines.push({code: true, copy: true, text: cli === 'codex' ? 'codex login' : 'claude'});
   } else if (st.signedIn === true) {
     lines.push({text: 'Found ' + wizService(k) + ' and you are signed in. Press the button and the agent answers on your ' + k.plan + ' plan, no API key needed.'});
   } else {
@@ -21513,8 +21528,75 @@ function wizSubscriptionEntry(k) {
 function wizSubButton(k) { return 'Use my ' + (k.plan || wizService(k)) + ' subscription'; }
 /** One line of the step, a command line drawn as code the person copies. */
 function wizSubLineHTML(l, cls, warnCls) {
-  return '<' + (cls === 'p' ? 'p' : 'div') + ' class="ob-help' + (l.warn ? ' ' + warnCls : '') + '">'
-    + (l.code ? '<code class="mono">' + esc(l.text) + '</code>' : esc(l.text)) + '</' + (cls === 'p' ? 'p' : 'div') + '>';
+  return '<' + (cls === 'p' ? 'p' : 'div') + ' class="ob-help' + (l.warn ? ' ' + warnCls : '') + (l.small ? ' wiz-sub-small' : '') + '">'
+    + (l.code ? '<code class="mono">' + esc(l.text) + '</code>' : esc(l.text))
+    + (l.code && l.copy ? ' <button class="btn btn-g xs wiz-sub-copy" data-act="wiz:subCopy">Copy</button>' : '')
+    + '</' + (cls === 'p' ? 'p' : 'div') + '>';
+}
+/* ATO-845: "Sign in with Claude" / "Sign in with ChatGPT". */
+function wizSubLoginButton(k) { return 'Sign in with ' + (k.plan || wizService(k)); }
+/** Signed out, as far as the login file says: the step's main button is Sign in. */
+function wizSubNeedsLogin(k) { const st = wizSubStatus(k); return !!(st && st.installed && st.signedIn === false); }
+/* The sign-in poll. After the click the step asks main every few seconds
+   (files only, nothing is run) and moves on once the CLI is signed in; it
+   stops when the step is left, after ten minutes, or on success. */
+const WIZ_SUB_POLL = {cli: null, timer: null, until: 0, opened: false, failed: false, startedAt: 0, opening: false};
+const WIZ_SUB_POLL_MS = 3000;
+function wizSubPollStop() {
+  if (WIZ_SUB_POLL.timer) clearInterval(WIZ_SUB_POLL.timer);
+  WIZ_SUB_POLL.timer = null;
+}
+function wizSubPollTick() {
+  const k = WIZ.row;
+  const cli = WIZ_SUB_POLL.cli;
+  if (!k || k.subscriptionCli !== cli || WIZ.phase !== 'configure' || Date.now() > WIZ_SUB_POLL.until || !BR || !BR.subscriptionStatus) { wizSubPollStop(); return; }
+  Promise.resolve(BR.subscriptionStatus(cli)).then((r) => {
+    if (!WIZ_SUB_POLL.timer || WIZ_SUB_POLL.cli !== cli) return;
+    const st = r && r.ok && r.status ? r.status : null;
+    if (!st) return;
+    const before = WIZ_SUB.get(cli);
+    WIZ_SUB.set(cli, st);
+    if (st.installed && st.signedIn === true) {
+      wizSubPollStop();
+      ANX.subscriptionLoginSucceeded(cli, OB.open, Math.round((Date.now() - WIZ_SUB_POLL.startedAt) / 1000));
+      /* Through act, so first run's router (obKey) takes it exactly as it takes the button. */
+      if (WIZ.row && WIZ.row.subscriptionCli === cli && WIZ.phase === 'configure' && !WIZ.stepping) { act('wiz:next'); return; }
+      render();
+      return;
+    }
+    const same = before && typeof before === 'object' && before.installed === st.installed && before.signedIn === st.signedIn;
+    if (!same) render();
+  }).catch(() => {});
+}
+/** Copy: the step's one command line (install, or sign in). */
+function wizSubCopy(k) {
+  if (!k || !k.subscriptionCli) return;
+  const line = wizSubscriptionLines(k).find((l) => l.code && l.copy);
+  if (line) copyText(line.text, 'Copied', 'paste it into the terminal and press Return');
+}
+async function wizSubLogin(k) {
+  if (!k || !k.subscriptionCli || !BR || !BR.subscriptionLogin) return;
+  /* A second click while the terminal is still opening would open a second
+     one and start a second poll. */
+  if (WIZ_SUB_POLL.opening) return;
+  WIZ_SUB_POLL.opening = true;
+  render();
+  const cli = k.subscriptionCli;
+  ANX.subscriptionLoginClicked(cli, OB.open);
+  wizSubPollStop();
+  Object.assign(WIZ_SUB_POLL, {cli, opened: false, failed: false, startedAt: Date.now()});
+  WIZ.error = null;
+  let res = null;
+  try { res = await Promise.resolve(BR.subscriptionLogin(cli)).catch(() => null); } finally { WIZ_SUB_POLL.opening = false; }
+  const opened = !!(res && res.ok);
+  WIZ_SUB_POLL.opened = opened; WIZ_SUB_POLL.failed = !opened;
+  ANX.subscriptionTerminalOpened(cli, OB.open, opened, opened ? res.terminal : (res && res.reason));
+  /* Poll even when the terminal did not open: the person may run the
+     fallback command themselves. */
+  WIZ_SUB_POLL.until = Date.now() + 10 * 60 * 1000;
+  wizSubPollStop();
+  WIZ_SUB_POLL.timer = setInterval(wizSubPollTick, WIZ_SUB_POLL_MS);
+  render();
 }
 async function wizSubscriptionStep(k) {
   const id = k.id;

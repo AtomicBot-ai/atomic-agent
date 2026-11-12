@@ -153,6 +153,22 @@ export const EVENTS: Record<string, EventSpec> = {
       kind: en(["local", "cloud", "custom"], { nullable: true }),
     },
   },
+  /* ATO-845: the subscription sign-in funnel (renderer.js wizSubLogin). */
+  subscription_login_clicked: { owner: "ui", props: { cli: en(["claude", "codex"]), step: en(["onboarding", "settings"]) } },
+  subscription_terminal_opened: {
+    owner: "ui",
+    props: {
+      cli: en(["claude", "codex"]),
+      step: en(["onboarding", "settings"]),
+      opened: bool,
+      terminal: en(["terminal_app", "cmd", "x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal", "xterm"], { nullable: true }),
+      reason: en(["no_terminal", "launch_failed", "unsupported_platform", "other"], { nullable: true }),
+    },
+  },
+  subscription_login_succeeded: {
+    owner: "ui",
+    props: { cli: en(["claude", "codex"]), step: en(["onboarding", "settings"]), seconds_to_sign_in: int({ min: 0, nullable: true }) },
+  },
   custom_endpoint_tested: { owner: "ui", props: { kind: en(["chat", "embedding"]), reachable: bool } },
   model_configured: {
     owner: "main",

@@ -62,7 +62,7 @@ const ANX_ACTS = (() => {
       scope:L, taskfilter:set(taskFilters), skillstab:L, memtab:L,
       // composer selector and the add-provider wizard
       sel:{add:L, browseLocal:L, closeAdd:L, savePreset:L, cancelPull:L, vision:L},
-      wiz:{back:L, next:L, cancel:L, model:L, useDefault:L, saveUnchecked:L},
+      wiz:{back:L, next:L, cancel:L, model:L, useDefault:L, saveUnchecked:L, subRecheck:L, subLogin:L, subCopy:L},
       // Settings › Privacy and General
       privacy:{analytics:L, refresh:L, readscope:set(readScopes)}, notify:{toggle:L}, names:{toggle:L},
       // ATO-229: the update toast and General's update rows
