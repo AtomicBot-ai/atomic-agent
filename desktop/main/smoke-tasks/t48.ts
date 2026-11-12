@@ -350,9 +350,9 @@ async function ollama(js: Js, check: Check): Promise<void> {
   })()`);
   const wiz = r["wizard"] ?? {};
   check(
-    "T48 (Д34): no Ollama signpost under the lists; Add Ollama opens the provider setup on Ollama with its address filled in, and goes once Ollama is added",
+    "T48 (Д34): no Ollama signpost under the lists; Add Ollama opens the provider setup on Ollama with its address filled in, on the Custom tab, and goes once Ollama is added",
     r["signpost"] === false && r["button"] === "Add Ollama" && wiz.open === true && wiz.phase === "configure" && wiz.row === "ollama"
-      && wiz.baseUrl === "http://localhost:11434" && r["mode"] === "cloud" && r["afterAdded"] === false,
+      && wiz.baseUrl === "http://localhost:11434" && r["mode"] === "external" && r["afterAdded"] === false,
     show(r),
   );
 }
