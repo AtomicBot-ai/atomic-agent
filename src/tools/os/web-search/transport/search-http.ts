@@ -11,6 +11,7 @@ import {
 import { CurlUnavailableError, isCurlMissingError } from "../../web/ensure-curl.js";
 import { writeCurlHeaderFile } from "../../web/curl-header-file.js";
 import { explainCurlStderr, runCurl } from "../../web/run-curl.js";
+import { getWebIdentity } from "../../../browser/web-identity.js";
 import {
   computeRetryDelayMs,
   DEFAULT_SEARCH_RETRY_POLICY,
@@ -22,9 +23,6 @@ const CURL_META_MARKER = "__ATOMIC_WEB_SEARCH_META__";
 const CURL_HEADER_MARKER = "__ATOMIC_WEB_SEARCH_HEADERS__";
 const DEFAULT_MAX_RESPONSE_BYTES = 1_000_000;
 const MAX_REDIRECTS = 3;
-const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
@@ -236,9 +234,9 @@ function buildCurlArgs(input: {
     "--resolve",
     formatResolveEntry(host, port, input.pinnedIps),
     "-H",
-    `User-Agent: ${USER_AGENT}`,
+    `User-Agent: ${getWebIdentity().userAgent}`,
     "-H",
-    "Accept-Language: en-US,en;q=0.9",
+    `Accept-Language: ${getWebIdentity().acceptLanguage}`,
   ];
   args.push(...input.headerArgs);
   if (input.method === "POST" || input.hasBody) {

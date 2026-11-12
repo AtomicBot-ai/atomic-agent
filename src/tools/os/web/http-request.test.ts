@@ -16,6 +16,7 @@ import {
   parseCurlOutput,
 } from "./http-request.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
+import { getWebIdentity } from "../../browser/web-identity.js";
 
 function makeCtx(): ToolContext {
   return {
@@ -471,6 +472,26 @@ describe("os.http.request", () => {
       a.toLowerCase().startsWith("accept:"),
     );
     expect(acceptOccurrences).toHaveLength(1);
+  });
+
+  it("sends the shared web identity's User-Agent, the same as the browser's (ATO-969)", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: "ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01",
+      }),
+    });
+    await tool.run({ url: "https://api.example.com" }, makeCtx());
+    const at = capture.args!.indexOf("-A");
+    expect(at).toBeGreaterThan(-1);
+    expect(capture.args![at + 1]).toBe(getWebIdentity().userAgent);
+    // Set once in argv, ahead of the caller's headers so theirs can replace it.
+    expect(capture.args!.filter((a) => a === "-A")).toHaveLength(1);
   });
 
   it("rejects headers containing CR/LF to prevent injection", async () => {
