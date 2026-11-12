@@ -63,6 +63,27 @@ export interface WebFetchConfig {
    * additive: an older file has no field and keeps Readability.
    */
   extractor: WebFetchExtractorName;
+  /**
+   * Step 2 of the page-read ladder (ATO-968): when curl gets a
+   * bot-protection challenge, render the page in the agent's own browser
+   * and extract from that. Default `true`. Needs `browser.enabled`; never
+   * used with `browser.connect: "user-chrome"` (the user's signed-in
+   * Chrome), and the browser domain lists apply.
+   */
+  renderWithBrowser: boolean;
+  /**
+   * Step 3: Jina Reader without a key (rate-limited by Jina) when the
+   * page is still walled. Default `false`: it sends the URL to Jina. A key
+   * in `jinaApiKeyEnv` turns Jina on by itself.
+   */
+  jinaReader: boolean;
+  /** Environment variable holding a Jina Reader key. Default `"JINA_API_KEY"`. */
+  jinaApiKeyEnv: string;
+  /**
+   * Environment variable holding a Firecrawl key; Firecrawl runs after
+   * Jina only when it is set. Default `"FIRECRAWL_API_KEY"`.
+   */
+  firecrawlApiKeyEnv: string;
 }
 
 export interface WebSearchConfig {
@@ -173,6 +194,10 @@ export function createWebFetchDefaults(): WebFetchConfig {
     retryBaseDelayMs: 500,
     retryMaxDelayMs: 5_000,
     extractor: "readability",
+    renderWithBrowser: true,
+    jinaReader: false,
+    jinaApiKeyEnv: "JINA_API_KEY",
+    firecrawlApiKeyEnv: "FIRECRAWL_API_KEY",
   };
 }
 
@@ -346,6 +371,22 @@ export function parseWebFetchConfig(
     extractor: parseWebFetchExtractorName(
       raw.extractor ?? readDefaults().extractor,
       "web.fetch.extractor",
+    ),
+    renderWithBrowser: parseBool(
+      raw.renderWithBrowser ?? readDefaults().renderWithBrowser,
+      "web.fetch.renderWithBrowser",
+    ),
+    jinaReader: parseBool(
+      raw.jinaReader ?? readDefaults().jinaReader,
+      "web.fetch.jinaReader",
+    ),
+    jinaApiKeyEnv: parseNonEmptyString(
+      raw.jinaApiKeyEnv ?? readDefaults().jinaApiKeyEnv,
+      "web.fetch.jinaApiKeyEnv",
+    ),
+    firecrawlApiKeyEnv: parseNonEmptyString(
+      raw.firecrawlApiKeyEnv ?? readDefaults().firecrawlApiKeyEnv,
+      "web.fetch.firecrawlApiKeyEnv",
     ),
   };
 }

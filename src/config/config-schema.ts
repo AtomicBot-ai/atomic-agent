@@ -1071,6 +1071,13 @@ export interface UserConfigFile {
 // `defuddle`, default `readability`, ATO-698). `defuddle` makes
 // `os.web.fetch` run Defuddle before Readability on HTML pages; an older
 // file has no field and keeps Readability.
+// Unversioned, additive: the `os.web.fetch` page-read ladder (ATO-968).
+// `web.fetch.renderWithBrowser` (default `true`) renders a page that
+// answered curl with a bot wall in the agent's own browser;
+// `web.fetch.jinaReader` (default `false`), `jinaApiKeyEnv`
+// (`JINA_API_KEY`) and `firecrawlApiKeyEnv` (`FIRECRAWL_API_KEY`) enable
+// the third-party readers after that. An older file has no fields and
+// gets the defaults.
 // Unversioned, additive: `localModels.drySampler` (default `false`,
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
 // every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp

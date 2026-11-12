@@ -25,6 +25,12 @@ const TOOL_NAME = "os.web.fetch";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 import { describeChallenge, detectChallenge } from "./web-fetch-challenge.js";
+import {
+  describeReadVia,
+  readPastWall,
+  type PageRenderer,
+  type ReadVia,
+} from "./web-fetch-ladder.js";
 
 const MAX_RESPONSE_BYTES = 2_000_000;
 const MAX_REDIRECTS = 3;
@@ -42,6 +48,10 @@ const DEFAULT_FETCH_CONFIG: WebFetchConfig = {
   retryBaseDelayMs: 500,
   retryMaxDelayMs: 5_000,
   extractor: "readability",
+  renderWithBrowser: true,
+  jinaReader: false,
+  jinaApiKeyEnv: "JINA_API_KEY",
+  firecrawlApiKeyEnv: "FIRECRAWL_API_KEY",
 };
 
 /**
@@ -82,6 +92,13 @@ export interface OsWebFetchOptions {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Injectable Defuddle runner so extractor tests need no real package. */
   runDefuddle?: DefuddleRunner;
+  /**
+   * Step 2 of the page-read ladder (ATO-968): renders a walled page in the
+   * agent's own browser. Absent ⇒ the ladder goes straight to the readers.
+   */
+  renderPage?: PageRenderer;
+  /** Environment the reader keys are read from. Defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
 }
 
 interface WebFetchArgs {
@@ -166,23 +183,64 @@ export function buildOsWebFetchTool(
         contentType: outcome.contentType,
         body: outcome.body,
       });
+      let readVia: ReadVia = "curl";
+      let ladderTitle: string | undefined;
       if (challenge.challenged) {
-        return compressToolResult({
-          tool: TOOL_NAME,
-          status: "error",
-          output: describeChallenge(
-            outcome.finalUrl,
-            outcome.status,
-            challenge.marker ?? "",
-          ),
-          details: {
-            url: args.url,
-            finalUrl: outcome.finalUrl,
-            status: outcome.status,
-            challenge: challenge.marker,
-            retryWith: "browser.navigate",
+        // ATO-968: the agent's own browser, then the readers the user
+        // turned on. Only a page they actually read replaces the wall.
+        const ladder = await readPastWall({
+          url: outcome.finalUrl,
+          timeoutMs: args.timeoutMs,
+          cwd: ctx.workingDir,
+          signal: ctx.signal,
+          renderWithBrowser: fetchCfg.renderWithBrowser ?? true,
+          readers: {
+            jinaReader: fetchCfg.jinaReader ?? false,
+            jinaApiKeyEnv: fetchCfg.jinaApiKeyEnv ?? "JINA_API_KEY",
+            firecrawlApiKeyEnv:
+              fetchCfg.firecrawlApiKeyEnv ?? "FIRECRAWL_API_KEY",
           },
+          runCommand,
+          ...(options.renderPage ? { renderPage: options.renderPage } : {}),
+          ...(options.lookup ? { lookup: options.lookup } : {}),
+          ...(options.env ? { env: options.env } : {}),
         });
+        if (ladder.page === null) {
+          const tried =
+            ladder.attempts.length > 0
+              ? ` Also tried: ${ladder.attempts.join("; ")}.`
+              : "";
+          return compressToolResult({
+            tool: TOOL_NAME,
+            status: "error",
+            output:
+              describeChallenge(
+                outcome.finalUrl,
+                outcome.status,
+                challenge.marker ?? "",
+              ) + tried,
+            details: {
+              url: args.url,
+              finalUrl: outcome.finalUrl,
+              status: outcome.status,
+              challenge: challenge.marker,
+              retryWith: "browser.navigate",
+              ...(ladder.attempts.length > 0
+                ? { ladderAttempts: ladder.attempts }
+                : {}),
+            },
+          });
+        }
+        readVia = ladder.page.via;
+        ladderTitle = ladder.page.title;
+        outcome = {
+          ...outcome,
+          finalUrl: ladder.page.finalUrl,
+          status: 200,
+          contentType: ladder.page.contentType,
+          body: ladder.page.body,
+          truncated: false,
+        };
       }
 
       const extracted = await extractWebContentAsync({
@@ -195,10 +253,13 @@ export function buildOsWebFetchTool(
         preferred: fetchCfg.extractor ?? "readability",
         ...(options.runDefuddle ? { runDefuddle: options.runDefuddle } : {}),
       });
+      // Past step 1 the page opens with a line naming the step that read
+      // it, so the model knows it came through the browser or a reader.
+      const lead = readVia === "curl" ? "" : `${describeReadVia(readVia)}\n\n`;
       const capped = (ctx.modelMode !== "cloud" || rawArgs.maxChars !== undefined) && extracted.text.length > args.maxChars;
       const text = capped
-        ? `${extracted.text.slice(0, args.maxChars)}\n… [truncated]`
-        : extracted.text;
+        ? `${lead}${extracted.text.slice(0, args.maxChars)}\n… [truncated]`
+        : `${lead}${extracted.text}`;
       // ATO-913: in local mode a capped page hands the compressor the
       // whole extracted text, so the summary is still cut at `maxChars`
       // while the registry's output spill saves the full page to a file
@@ -220,8 +281,12 @@ export function buildOsWebFetchTool(
         finalUrl: outcome.finalUrl,
         status: outcome.status,
         contentType: outcome.contentType,
-        extractor: extracted.extractor,
-        title: extracted.title,
+        extractor:
+          readVia === "jina" || readVia === "firecrawl"
+            ? readVia
+            : extracted.extractor,
+        title: extracted.title ?? ladderTitle,
+        readVia,
         redirectChain: outcome.redirectChain,
         extractMode: args.mode,
         truncated: outcome.truncated || capped,
@@ -235,7 +300,7 @@ export function buildOsWebFetchTool(
           output: isHttpError
             ? `HTTP ${outcome.status} for ${outcome.finalUrl}`
             : spillable
-              ? extracted.text
+              ? `${lead}${extracted.text}`
               : text,
           details,
         },

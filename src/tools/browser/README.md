@@ -51,6 +51,10 @@ A page on a blocked host is never captured. A capture is discarded, never saved,
 
 Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; others get `full`. The same default applies to the world snapshot after navigate / search. The size budget is 4% of the window (2k–24k chars). Compact views read the whole tree before filtering; a name Playwright writes as a quoted YAML key (`- 'button "Pay: $5" [ref=e7]'`) is unquoted first, so such a control is never dropped. A blocked page, or one framing a blocked site (AI-mode snapshots include iframe content), is neither rendered nor remembered for `diff`.
 
+## Rendering for os.web.fetch
+
+`renderHtml` (`playwright-backend.ts`) and `render-page.ts` serve the `os.web.fetch` page-read ladder (ATO-968): a page that answered curl with a bot wall is loaded in a throwaway tab of the agent's own browser, its rendered HTML read once the challenge has cleared (polled, at most the fetch timeout) and the tab closed. The tab is left out of the tab list and is never the active page. It is not available with `browser.connect: "user-chrome"`, and the domain lists apply as for `browser.navigate` (a host outside a non-empty allow-list is skipped, not asked about).
+
 ## Your own Chrome
 
 `browser.connect: "user-chrome"` in config.json (opt-in; default `"agent"`, the agent's own profile). The agent then works in the user's signed-in Chrome (`attach-user-chrome.ts`, `user-chrome-endpoint.ts`):

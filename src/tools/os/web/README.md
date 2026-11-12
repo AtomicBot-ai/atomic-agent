@@ -7,11 +7,19 @@ This area owns `os.web.fetch` page retrieval and `os.http.request` raw GET/POST 
 
 ## Entry points and contracts
 
-- [web-fetch.ts](web-fetch.ts) owns curl page retrieval, redirect/retry limits and compressed results. [web-fetch-extract.ts](web-fetch-extract.ts) selects offered Markdown, Readability or basic extraction (with `web.fetch.extractor: "defuddle"`, Defuddle runs before Readability, offline: its third-party fetches are disabled; ATO-698); [html-to-text.ts](html-to-text.ts) provides conversion. [web-fetch-challenge.ts](web-fetch-challenge.ts) distinguishes challenge pages from useful content. Fetch does not silently launch a browser or execute page JavaScript.
+- [web-fetch.ts](web-fetch.ts) owns curl page retrieval, redirect/retry limits and compressed results. [web-fetch-extract.ts](web-fetch-extract.ts) selects offered Markdown, Readability or basic extraction (with `web.fetch.extractor: "defuddle"`, Defuddle runs before Readability, offline: its third-party fetches are disabled; ATO-698); [html-to-text.ts](html-to-text.ts) provides conversion. [web-fetch-challenge.ts](web-fetch-challenge.ts) distinguishes challenge pages from useful content. Fetch runs no page JavaScript itself; only after a bot wall does it go down the page-read ladder below.
 - [http-request.ts](http-request.ts) owns argument validation, configured host allowlist and approval routing. [http-request-fetch.ts](http-request-fetch.ts) owns guarded curl transport, response metadata and retry state. Raw response bodies do not go through HTML extraction.
 - [web-fetch-ssrf-guard.ts](web-fetch-ssrf-guard.ts) owns HTTP URL validation, DNS/private-address checks and curl address pinning. Each redirect hop must be validated; following redirects with an unchecked curl flag would bypass this contract.
 - [retry-after-header.ts](retry-after-header.ts) parses server retry hints for both request and fetch. Retry state follows the actual hop method/body: an earlier POST may already have been processed. Preserve the existing explicit invitation requirement for POST replay and the bodyless GET transition after a redirect.
 - [ensure-curl.ts](ensure-curl.ts) classifies a missing curl binary and provides its error type. Web-search transport uses this helper directly; it does not acquire page-fetch or raw-request orchestration.
+
+## Page-read ladder (ATO-968)
+
+[web-fetch-ladder.ts](web-fetch-ladder.ts) runs only when curl got a challenge page. Each step is tried in order and the first one that returns a real page wins; `details.readVia` (`curl` | `browser` | `jina` | `firecrawl`) names it and the page text opens with one line saying how it was read. When none gets through, the wall error stays and lists what was tried (`details.ladderAttempts`).
+
+1. `curl` + extraction, as always.
+2. `browser`: the page is rendered in a throwaway tab of the agent's own browser (`web.fetch.renderWithBrowser`, default on; needs `browser.enabled`). Never the user's own Chrome (`browser.connect: "user-chrome"`). `browser.blockedDomains` and `browser.allowedDomains` apply before and after the load, and the page it landed on must pass the same private-address check as every curl hop. The tab is never the model's active page.
+3. Readers that render on their own servers, so the URL leaves the machine: [web-fetch-readers.ts](web-fetch-readers.ts). Jina Reader runs when `web.fetch.jinaReader` is on (keyless, rate-limited) or a key is in `web.fetch.jinaApiKeyEnv`; Firecrawl when a key is in `web.fetch.firecrawlApiKeyEnv`. Both are off by default. Keys go to curl in a header file, never on the command line.
 
 ## Approval and credentials (ATO-1182)
 
