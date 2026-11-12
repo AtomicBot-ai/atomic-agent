@@ -578,6 +578,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["prompt"],
     ),
   ],
+  // ── audio (ATO-497; registered only with `vision.audioInput`) ───────────
+  ["audio.listen", obj({ path: stringSchema, prompt: stringSchema }, ["path"])],
 
   // ── image ────────────────────────────────────────────────────────────────
   // Plain types only, so the schema stays strict-convertible: the tool's

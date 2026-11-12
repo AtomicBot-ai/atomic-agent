@@ -91,6 +91,7 @@ describe("describeToolCall (ATO-962)", () => {
     expect(line("mcp.composio.GMAIL_SEND_EMAIL", {}, true)).toBe("Used Composio: gmail send email");
     expect(line("image.generate", { count: 2, prompt: "a cat" }, true)).toBe("Generated 2 images \u00b7 \u201ca cat\u201d");
     expect(line("video.generate", {}, true)).toBe("Generated a video");
+    expect(line("audio.listen", {}, true)).toBe("Listened to a recording");
     expect(line("fusion.delegate", { tasks: [{}, {}, {}] })).toBe("Delegating 3 tasks");
     expect(line("fusion_worker", {}, true)).toBe("Ran a worker");
   });

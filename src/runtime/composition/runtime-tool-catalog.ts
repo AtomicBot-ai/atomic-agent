@@ -1,5 +1,5 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
-import { getConfig, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
+import { DEFAULT_MAX_AUDIO_BYTES, getConfig, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
@@ -34,6 +34,7 @@ import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActi
 import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
+import { registerAudioTools } from "../../tools/audio/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
 import { registerVideoTools, VIDEO_GENERATE_TOOL } from "../../tools/video/index.js";
 import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
@@ -263,6 +264,13 @@ export function registerRuntimeVisionTools(input: {
     },
     logger,
   });
+  // `audio.listen` (ATO-497): opt-in via `vision.audioInput`, on the
+  // same live route as vision; each call checks the model can hear.
+  registerAudioTools(toolRegistry, {
+    provider: resolveCurrentVisionProvider,
+    enabled: config.vision.audioInput === true,
+    maxAudioBytes: config.vision.maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
+  });
 }
 
 /**
@@ -491,6 +499,8 @@ export async function connectRuntimeMcpCatalog(input: {
         enabled: config.vision.enabled,
         providerAvailable: visionOnLiveRoute(),
       },
+      // Boot-time, like its registration: opt-in, off by default.
+      audio: { enabled: config.vision.audioInput === true },
       memory: {
         profile: { enabled: config.memory.profile.enabled },
         notes: { enabled: config.memory.notes.enabled },

@@ -58,7 +58,7 @@ const FAMILY_ALIASES: ReadonlyMap<string, string> = new Map([
 export interface ToolGateSourceConfig {
   readonly browser: { readonly enabled: boolean };
   readonly web: { readonly search: { readonly enabled: boolean } };
-  readonly vision: { readonly enabled: boolean };
+  readonly vision: { readonly enabled: boolean; readonly audioInput?: boolean };
   readonly memory: {
     readonly profile: { readonly enabled: boolean };
     readonly notes: { readonly enabled: boolean };
@@ -107,6 +107,7 @@ export function effectiveToolDescriptors(
       enabled: config.vision.enabled,
       providerAvailable: config.vision.enabled,
     },
+    audio: { enabled: config.vision.audioInput === true },
     email: {
       available:
         readAtomicMailApiKey() !== null && config.atomicMail.address !== null,

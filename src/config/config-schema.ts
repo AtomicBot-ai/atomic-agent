@@ -482,6 +482,7 @@ export interface AtomicAgentConfig {
       apiKeyEnvVar?: string;
       supportsTools?: boolean;
       supportsVision?: boolean;
+      supportsAudio?: boolean;
       requestTimeoutMs?: number;
       promptCache?: "auto" | "off" | "explicit-markers";
       /**
@@ -531,6 +532,7 @@ export interface AtomicAgentConfig {
         contextWindow?: number;
         dim?: number;
         supportsVision?: boolean;
+        supportsAudio?: boolean;
         supportsTools?: "none" | "basic" | "parallel" | "strict";
         supportsPromptCache?: boolean;
         reasoningFormat?:

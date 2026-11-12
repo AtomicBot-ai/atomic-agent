@@ -548,6 +548,9 @@ describe("parseUserConfigFile", () => {
       autoDetect: false,
       maxImageBytes: 2_097_152,
       maxImagesPerCall: 1,
+      // ATO-497: audio input stays opt-in.
+      audioInput: false,
+      maxAudioBytes: 16 * 1024 * 1024,
     });
   });
 

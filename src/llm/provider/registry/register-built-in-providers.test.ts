@@ -313,3 +313,33 @@ describe("the vision request budget through the llama-server factory", () => {
     expect(await visionOutcome({ requestTimeoutMs: 20 })).toBe("rejected");
   });
 });
+
+describe("audio input through the built-in factories (ATO-497)", () => {
+  async function build(entry: LlmProviderConfigEntry) {
+    registerBuiltInProviderKinds();
+    const factory = getProviderFactory(entry.kind);
+    if (!factory) throw new Error(`${entry.kind} is not registered`);
+    return factory({
+      config: {} as AtomicAgentConfig,
+      entry,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+    });
+  }
+
+  it("turns audio on only for the model the config says hears", async () => {
+    const entry = (model: string): LlmProviderConfigEntry => ({
+      id: "house",
+      kind: "openai-compatible",
+      baseUrl: "https://x.invalid",
+      apiKey: "k",
+      defaultChatModel: model,
+      userModels: [{ id: "ear-1", kind: "chat", supportsAudio: true }],
+    });
+    const hears = await build(entry("ear-1"));
+    expect(hears.capabilities.audio).toBe(true);
+    expect(hears.capabilities.audioSource).toBe("config.userModels");
+    const deaf = await build(entry("text-1"));
+    expect(deaf.capabilities.audio).toBe(false);
+    expect(deaf.capabilities.audioSource).toBe("unknown");
+  });
+});

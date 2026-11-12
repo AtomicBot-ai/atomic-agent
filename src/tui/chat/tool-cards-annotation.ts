@@ -155,6 +155,7 @@ const READ_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.diff",
   "os.fs.hash",
   "vision.describe",
+  "audio.listen",
 ]);
 
 const SEARCH_TOOLS: ReadonlySet<string> = new Set([

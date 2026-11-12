@@ -205,6 +205,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
 
   // vision
   "vision.describe": "vision",
+  // A model call on the same provider, like vision: one at a time.
+  "audio.listen": "vision",
 
   // image — a cloud generation asks before it bills the account, and a
   // local one holds the GPU for minutes: solo either way.

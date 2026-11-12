@@ -44,6 +44,7 @@ import { buildToolSearchTool } from "./tool-search/index.js";
 import { registerMemoryTools } from "./memory/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerVisionTools } from "./vision/index.js";
+import { registerAudioTools } from "./audio/index.js";
 import { registerImageTools } from "./image/index.js";
 import { registerVideoTools } from "./video/index.js";
 import { buildFusionDelegateTool } from "./fusion/fusion-delegate.js";
@@ -107,7 +108,7 @@ const TERMINALS = {
   finish: { owner: "tools/finish + OpenAI adapter", reason: "Native adapter supplies the session terminal even when a role hides its descriptor; its wire schema overrides the catalog schema" },
 };
 const CONDITIONAL = {
-  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, vision and screen builders follow their enabled gates" },
+  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, vision, audio and screen builders follow their enabled gates" },
   availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub, fusion, image and video definitions stay registered while unavailable descriptors are hidden" },
   mcp: { owner: "mcp/McpManager + runtime/bootstrap", reason: "Meta tools are registered once; server-qualified tools and external schemas belong to the live catalog" },
   wrapper: { owner: "tools/read-scope/confine-reads", reason: "The protection phase replaces selected definitions without changing their catalog metadata" },
@@ -253,6 +254,7 @@ const names = (items: readonly { name: string }[]) => items.map((item) => item.n
 const gates: ToolGateConfig = {
   browser: { enabled: true }, web: { search: { enabled: true } },
   vision: { enabled: true, providerAvailable: true },
+  audio: { enabled: true },
   memory: { profile: { enabled: true }, notes: { enabled: true }, lessons: { enabled: true }, procedures: { enabled: true } },
   tasks: { agentToolsEnabled: true }, email: { available: true }, mcp: { enabled: true }, github: { connected: true }, fusion: { enabled: true },
   image: { available: true },
@@ -300,6 +302,7 @@ beforeAll(() => {
   registerMemoryTools(registry, memoryOptions(true));
   registerTaskTools(registry, taskOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
+  registerAudioTools(registry, { enabled: true, provider: () => undefined, maxAudioBytes: 1024 });
   registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registerVideoTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registry.register(buildFusionDelegateTool({ ...dangerous, slotManager: { poolSize: () => 1 }, resolveRunMode: unexpected, workerSupportsSlotAffinity: () => false, warmWorkerBackend: async () => unexpected(), outputCharCap: 1000, logger: new StructuredLogger({ level: "error", sinks: [] }), runTurn: async () => unexpected(), createEphemeralSession: unexpected, emitEvent: unexpected, workingDir: directory }));
@@ -333,7 +336,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(97);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(98);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {
@@ -413,6 +416,8 @@ describe("whole built-in tool catalog conformance", () => {
     registerTaskTools(disabled, taskOptions(false));
     registerVisionTools(disabled, { enabled: false, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
     registerVisionTools(disabled, { enabled: true, provider: undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
+    registerAudioTools(disabled, { enabled: false, provider: () => undefined, maxAudioBytes: 1024 });
+    registerAudioTools(disabled, { enabled: true, provider: undefined, maxAudioBytes: 1024 });
     registerOsScreenTools(disabled, { ...dangerous, enabled: false, platform: "darwin" });
     registerOsScreenTools(disabled, { ...dangerous, enabled: true, platform: "linux" });
     expect(disabled.registrations).toEqual([]);
@@ -420,6 +425,7 @@ describe("whole built-in tool catalog conformance", () => {
       { group: GATED_TOOL_NAMES.browser, next: { ...gates, browser: { enabled: false } } },
       { group: GATED_TOOL_NAMES.webSearch, next: { ...gates, web: { search: { enabled: false } } } },
       { group: GATED_TOOL_NAMES.vision, next: { ...gates, vision: { enabled: true, providerAvailable: false } } },
+      { group: GATED_TOOL_NAMES.audio, next: { ...gates, audio: { enabled: false } } },
       ...Object.entries(gates.memory).map(([key]) => ({ group: key === "profile" ? GATED_TOOL_NAMES.memoryProfile : key === "notes" ? GATED_TOOL_NAMES.memoryNotes : key === "lessons" ? GATED_TOOL_NAMES.memoryLessons : GATED_TOOL_NAMES.memoryProcedures, next: { ...gates, memory: { ...gates.memory, [key]: { enabled: false } } } })),
       { group: GATED_TOOL_NAMES.tasks, next: { ...gates, tasks: { agentToolsEnabled: false } } },
       { group: GATED_TOOL_NAMES.email, next: { ...gates, email: { available: false } } },

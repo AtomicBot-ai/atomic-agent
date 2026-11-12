@@ -57,6 +57,8 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
         ...(Array.isArray(args.paths) ? args.paths.map(nonEmpty) : []),
       ].filter((path): path is string => path !== undefined),
   ],
+  // The clip is read from disk and sent to the model (ATO-497).
+  ["audio.listen", pathArg],
   [
     // The first frame of an image-to-video clip: Core reads the file and
     // sends it to OpenRouter, so it is scoped like any read.

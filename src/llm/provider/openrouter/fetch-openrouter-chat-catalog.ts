@@ -34,6 +34,8 @@ let cached: { fetchedAt: number; picks: readonly OpenRouterChatPick[] } | null =
   null;
 /** Stated image support per id from the cached fetch; see `getAdvertisedOpenRouterVision`. */
 let advertisedVision: ReadonlyMap<string, boolean> = new Map();
+/** Stated audio input per id, from the same rows; see `getAdvertisedOpenRouterAudio`. */
+let advertisedAudio: ReadonlyMap<string, boolean> = new Map();
 
 function apiRowToEntry(m: OpenRouterApiModel): ModelCatalogEntry {
   const id = m.id!;
@@ -116,6 +118,16 @@ export function getCachedOpenRouterChatPicks():
 export function getAdvertisedOpenRouterVision(id: string): boolean | undefined {
   if (!cached || Date.now() - cached.fetchedAt > CACHE_TTL_MS) return undefined;
   return advertisedVision.get(id);
+}
+
+/**
+ * Whether OpenRouter's own model list says this id takes audio input
+ * (`architecture.input_modalities` contains `"audio"`). `undefined` when
+ * the list was not fetched, is stale, or the row stated no modalities.
+ */
+export function getAdvertisedOpenRouterAudio(id: string): boolean | undefined {
+  if (!cached || Date.now() - cached.fetchedAt > CACHE_TTL_MS) return undefined;
+  return advertisedAudio.get(id);
 }
 
 export function listOpenRouterChatPicks(): readonly OpenRouterChatPick[] {
@@ -201,13 +213,16 @@ async function fetchAndCacheCatalog(): Promise<CatalogRefreshResult> {
       return { ok: false, reason: `no usable chat models in ${rows.length} rows` };
     }
     const stated = new Map<string, boolean>();
+    const hears = new Map<string, boolean>();
     for (const m of rows) {
       const modalities = m.architecture?.input_modalities;
       if (typeof m.id === "string" && Array.isArray(modalities)) {
         stated.set(m.id, modalities.includes("image"));
+        hears.set(m.id, modalities.includes("audio"));
       }
     }
     advertisedVision = stated;
+    advertisedAudio = hears;
     cached = { fetchedAt: Date.now(), picks };
     return { ok: true };
   } catch (err) {

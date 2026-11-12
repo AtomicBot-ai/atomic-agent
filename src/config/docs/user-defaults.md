@@ -209,6 +209,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `vision.autoDetect` (default `true`).
 - `vision.maxImageBytes` (default `8388608`).
 - `vision.maxImagesPerCall` (default `4`).
+- `vision.audioInput` (default `false`): registers `audio.listen`, which sends a WAV/MP3 file to a chat model that takes audio input.
+- `vision.maxAudioBytes` (default `16777216`).
 
 ## skills
 

@@ -1,6 +1,10 @@
 export {
   VisionUnsupportedError,
   ModelCannotSeeError,
+  AudioUnsupportedError,
+  type AudioInputFormat,
+  type AudioRequest,
+  type AudioSource,
   type LlmProvider,
   type ProviderCapabilities,
   type ProviderHealthResult,

@@ -94,6 +94,8 @@ describe("runtime tool contract composition", () => {
         expect(runtime.toolDescriptors.some((descriptor) => descriptor.name === name), name).toBe(enabled && tasksEnabled);
       }
       for (const name of GATED_TOOL_NAMES.vision) expect(runtime.toolRegistry.has(name)).toBe(false);
+      // ATO-497: audio input is opt-in, so a default config registers no audio.listen.
+      for (const name of GATED_TOOL_NAMES.audio) expect(runtime.toolRegistry.has(name)).toBe(false);
       // These gates hide availability, while calls keep their live credential/mode checks.
       for (const name of [...GATED_TOOL_NAMES.email, ...GATED_TOOL_NAMES.github, ...GATED_TOOL_NAMES.fusion]) {
         expect(runtime.toolRegistry.has(name), name).toBe(true);

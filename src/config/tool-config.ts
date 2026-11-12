@@ -199,6 +199,15 @@ export interface RuntimeVisionConfig {
   maxImageBytes: number;
   /** Hard upper bound on the number of images per `vision.describe` call. */
   maxImagesPerCall: number;
+  /**
+   * Opt-in (default off): register `audio.listen`, which sends a wav/mp3
+   * file straight to a chat model that takes audio input (ATO-497). With
+   * it off, or on a model that cannot hear, audio stays a file on disk
+   * for the `audio-transcribe` skill, as before.
+   */
+  audioInput?: boolean;
+  /** Hard upper bound on one `audio.listen` file, in bytes. */
+  maxAudioBytes?: number;
 }
 
 export interface UserVisionConfig {
@@ -206,7 +215,13 @@ export interface UserVisionConfig {
   autoDetect: boolean;
   maxImageBytes: number;
   maxImagesPerCall: number;
+  /** Optional in the type so older fixtures still build; parse always sets it. */
+  audioInput?: boolean;
+  maxAudioBytes?: number;
 }
+
+/** `vision.maxAudioBytes` when nothing sets it. */
+export const DEFAULT_MAX_AUDIO_BYTES = 16 * 1024 * 1024;
 
 export function createVisionDefaults(): UserVisionConfig {
   return {
@@ -214,6 +229,9 @@ export function createVisionDefaults(): UserVisionConfig {
     autoDetect: true,
     maxImageBytes: 8 * 1024 * 1024,
     maxImagesPerCall: 4,
+    audioInput: false,
+    // OpenAI caps a request body near 25 MB and base64 adds a third.
+    maxAudioBytes: DEFAULT_MAX_AUDIO_BYTES,
   };
 }
 
@@ -237,6 +255,14 @@ export function parseVisionConfig(
     maxImagesPerCall: parsePositiveInt(
       raw.maxImagesPerCall ?? readDefaults().maxImagesPerCall,
       "vision.maxImagesPerCall",
+    ),
+    audioInput: parseBool(
+      raw.audioInput ?? readDefaults().audioInput ?? false,
+      "vision.audioInput",
+    ),
+    maxAudioBytes: parsePositiveInt(
+      raw.maxAudioBytes ?? readDefaults().maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
+      "vision.maxAudioBytes",
     ),
   };
 }

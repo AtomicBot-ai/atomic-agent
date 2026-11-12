@@ -210,6 +210,14 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // ATO-497. Offered only with `vision.audioInput` on (`GATED_TOOLS.audio`).
+    name: "audio.listen",
+    summary:
+      "Listen to a WAV or MP3 file with the current model, when it takes audio input (transcribe, answer a voice message). On a model that cannot hear it says so: then use the audio-transcribe skill. Other formats (ogg voice notes, m4a): the skill.",
+    argsSchema: "{ path: string /* .wav|.mp3 */, prompt?: string /* default: transcribe */ }",
+    examples: ['{"path":"./voice.mp3","prompt":"What does the speaker ask for?"}'],
+  },
+  {
     // Frequent tier, like vision.describe: "draw me a ..." must reach a
     // valid call first time, and the summary carries the one step a
     // model would otherwise skip (attaching the file to the reply).

@@ -34,6 +34,8 @@ export {
   parseUserConfigFile,
   parseWhileBusySubmit,
 } from "./config-schema.js";
+/** `vision.maxAudioBytes` when nothing sets it (ATO-497). */
+export { DEFAULT_MAX_AUDIO_BYTES } from "./tool-config.js";
 export type { ConfigNoticeSink, UserConfigSnapshot } from "./config-file.js";
 export {
   ensureUserConfigFileSync,
