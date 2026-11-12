@@ -7,6 +7,7 @@ import { LlamaServerClient } from "../../llm/llama-server-client.js";
 import {
   buildGrammar,
   detectModelProfile,
+  detectModelProfileWithMatch,
   extractTotalSlots,
   ModelProfileManager,
   PLAIN_INSTRUCT_PROFILE,
@@ -388,7 +389,7 @@ function logResolvedProfile(
   props: Record<string, unknown>,
   logger: StructuredLogger,
 ): ResolvedModelProfile {
-  const resolved = detectModelProfile(props);
+  const { profile: resolved, matchedBy } = detectModelProfileWithMatch(props);
   const alias =
     typeof props.model_alias === "string" ? props.model_alias : null;
   const totalSlots = extractTotalSlots(props);
@@ -401,6 +402,9 @@ function logResolvedProfile(
   );
   logger.info("model profile resolved", {
     id: resolved.id,
+    // What decided the profile: the chat template alone, a model-name
+    // hint (alias / GGUF file name), or nothing (plain fallback). ATO-1294.
+    matchedBy,
     alias,
     contextWindow: resolved.contextWindow ?? null,
     totalSlots,
