@@ -49,7 +49,9 @@ export function createWebhookHandler(): HttpHandler {
       return;
     }
     const webhook = ctx.runtime.config.webhooks[name];
-    if (!webhook) {
+    // A mail binding (ATO-601) is fired by the inbox only: over HTTP it
+    // does not exist, so nobody can post a forged "mail" into it.
+    if (!webhook || webhook.source === "atomic-mail") {
       sendError(res, 404, openaiError(`webhook not found: ${name}`));
       ctx.runtime.metrics.recordWebhookReceived({
         webhookName: name,
@@ -130,9 +132,10 @@ export function createWebhookHandler(): HttpHandler {
  * `sessionMode`. The lookup side-effects only for `persistent`
  * mode — the first hit creates a fresh session via
  * `runtime.createSession` and persists the mapping so subsequent hits
- * (and process restarts) reuse the same id.
+ * (and process restarts) reuse the same id. Shared with the mail
+ * trigger (ATO-601), whose bindings live in the same block.
  */
-function resolveWebhookSessionId(
+export function resolveWebhookSessionId(
   webhook: WebhookConfig,
   name: string,
   runtime: {

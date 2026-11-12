@@ -19,6 +19,11 @@ import {
   parseInboxList,
   parseSendResult,
 } from "./atomic-mail-batches.js";
+import {
+  buildTriggerInboxBatch,
+  parseTriggerInbox,
+  type TriggerMail,
+} from "./atomic-mail-trigger-batches.js";
 
 export {
   ATOMIC_MAIL_API_URL,
@@ -374,6 +379,23 @@ export class AtomicMailClient {
       await this.jmapCall(
         session,
         buildInboxBatch(ctx.accountId, inbox, limit),
+        opts?.signal,
+      ),
+    );
+  }
+
+  /** The newest `limit` inbox messages with their text, for the mail trigger. */
+  async listInboxForTrigger(
+    session: AtomicMailSession,
+    limit: number,
+    opts?: { signal?: AbortSignal },
+  ): Promise<TriggerMail[]> {
+    const ctx = await this.context(session);
+    const inbox = await this.mailboxId(session, "inbox");
+    return parseTriggerInbox(
+      await this.jmapCall(
+        session,
+        buildTriggerInboxBatch(ctx.accountId, inbox, limit),
         opts?.signal,
       ),
     );

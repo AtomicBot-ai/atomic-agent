@@ -10,6 +10,7 @@ import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeS
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
 import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
+import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
 export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
 export { managedLocalLlmHealthFailureHint } from "./composition/runtime-local-profile.js";
@@ -798,8 +799,12 @@ export async function createAgentRuntime(
     orchestratorTurnSpendUsd: (sessionId) => turnUsageMeter.peekCostUsd(sessionId),
   });
 
+  const mailTrigger = createRuntimeMailTrigger({
+    config, taskRunner, taskStore, sessionStore, createSession, webhookSessionStore, logger,
+  });
   const scheduler = createRuntimeScheduler({
     config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
+    ...(mailTrigger ? { sidecars: [mailTrigger] } : {}),
   });
   const consolidatorJob = createRuntimeMemoryConsolidator({
     config, notesStore, linkStore, lessonStore, procedureStore, voteStore,

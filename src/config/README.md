@@ -25,6 +25,7 @@ This area owns configuration and compatibility. Read [AGENTS.md](AGENTS.md) befo
 - [integration-config.ts](integration-config.ts)
 - [session-rail-config.ts](session-rail-config.ts)
 - [webhook-config.ts](webhook-config.ts)
+- [email-trigger-config.ts](email-trigger-config.ts)
 - [load-config.ts](load-config.ts)
 - [config-file.ts](config-file.ts)
 - [config-shape.ts](config-shape.ts)
@@ -45,7 +46,7 @@ config-primitives owns scalar coercion and validation and imports only the exist
 
 session-rail-config owns the stored session order/pinning type and parser. It depends only on the existing validation error, without loading defaults or sessions. config-schema keeps compatible type/parser exports and assembles the whole file. Filtering stale ids, persistence and display order belong to [the TUI rail](../tui/session-rail/README.md).
 
-webhook-config owns webhook map normalization, session-mode requirements and schedule shapes. It uses scalar/error owners and the TaskSchedule type without loading task execution or HTTP. config-schema keeps compatible type/parser exports; the [HTTP webhook route](../http/route-webhooks.ts) materializes tasks and [task scheduling](../tasks/task-schedule.ts) owns canonical execution-time validation.
+webhook-config owns webhook map normalization, session-mode requirements and schedule shapes; email-trigger-config owns the `email` block of a binding with `source: "atomic-mail"` (sender allow-list, poll interval, reply flag), run by the [mail trigger](../atomic-mail/README.md). It uses scalar/error owners and the TaskSchedule type without loading task execution or HTTP. config-schema keeps compatible type/parser exports; the [HTTP webhook route](../http/route-webhooks.ts) materializes tasks and [task scheduling](../tasks/task-schedule.ts) owns canonical execution-time validation.
 
 config-values owns shared URL, trimmed nullable-string and nullable-string-list validation. mcp-server-config owns server name/enabled/trust and stdio/HTTP/SSE transport normalization, using values/primitives/error and [neutral MCP types](../mcp/mcp-types.ts). config-schema keeps compatible parser exports and whole-file/default assembly; MCP commands and import consumers continue using that API. Parsing performs no connection/process/file operation and does not derive resource trust defaults; the manager/client retain execution and lifetime ownership.
 

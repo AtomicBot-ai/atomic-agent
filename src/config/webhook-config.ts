@@ -1,5 +1,9 @@
 import { ConfigValidationError } from "./config-validation-error.js";
 import { parseNonEmptyString } from "./config-primitives.js";
+import {
+  parseEmailTriggerConfig,
+  type EmailTriggerConfig,
+} from "./email-trigger-config.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
 
 /**
@@ -21,9 +25,19 @@ import type { TaskSchedule } from "../tasks/task-types.js";
  * against the parsed JSON request body. `secret`, when set, is
  * matched against the `x-webhook-secret` request header in addition
  * to the global API-key check.
+ *
+ * `source` picks what fires the binding (ATO-601): `"http"` (the
+ * default) is `POST /api/webhooks/<name>`; `"atomic-mail"` is a new
+ * message in the agent's own inbox from a sender in
+ * `email.allowedSenders` (see `email-trigger-config.ts`). A mail
+ * binding is never reachable over HTTP, and its template only sees
+ * `{{body.from}}` and `{{body.receivedAt}}`: the subject and text are
+ * appended below it as fenced, untrusted data.
  */
 export interface WebhookConfig {
   userMessageTemplate: string;
+  source?: "http" | "atomic-mail";
+  email?: EmailTriggerConfig;
   secret?: string;
   schedule?: TaskSchedule;
   sessionMode?: "ephemeral" | "persistent" | "named";
@@ -106,8 +120,31 @@ export function parseWebhookMap(
         `${field}.${name}.schedule`,
       );
     }
+    const source = cfg.source ?? "http";
+    if (source !== "http" && source !== "atomic-mail") {
+      throw new ConfigValidationError(
+        `${field}.${name}.source`,
+        `expected http|atomic-mail, got ${JSON.stringify(source)}`,
+      );
+    }
+    let email: EmailTriggerConfig | undefined;
+    if (source === "atomic-mail") {
+      email = parseEmailTriggerConfig(cfg.email, `${field}.${name}.email`);
+    } else if (cfg.email !== undefined && cfg.email !== null) {
+      throw new ConfigValidationError(
+        `${field}.${name}.email`,
+        'only allowed with source "atomic-mail"',
+      );
+    }
+    if (source === "atomic-mail" && schedule) {
+      throw new ConfigValidationError(
+        `${field}.${name}.schedule`,
+        'not allowed with source "atomic-mail": each mail is one task',
+      );
+    }
     out[name] = {
       userMessageTemplate,
+      ...(source === "atomic-mail" ? { source, email } : {}),
       sessionMode,
       ...(sessionId ? { sessionId } : {}),
       ...(secret ? { secret } : {}),
