@@ -6,6 +6,8 @@ import {
 } from "../../config/provider-auth-mode.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/index.js";
+import { forgetOpenRouterMedia } from "../../local-llm/core/core-image.js";
+import { openRouterImageKey } from "../../tools/image/openrouter-key.js";
 import { resolveRunMode } from "../../llm/run-mode/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
@@ -637,9 +639,16 @@ export class ProvidersOrchestrator {
         this.refresh();
         return;
       }
+      const removedKind = getConfig().llm?.providers?.find((p) => p.id === id)?.kind;
       removeLlmProvider(id);
       await this.runtime.providerRegistry.removeProvider(id);
       await this.runtime.reloadLlmProviders();
+      // ATO-425: Core keeps the OpenRouter key the image and video tools gave
+      // it; once no OpenRouter key is left, take it out of Core too. In the
+      // background: it may start Core for a moment.
+      if (removedKind === "openrouter" && openRouterImageKey(getConfig()) === undefined) {
+        void forgetOpenRouterMedia(getConfig().paths.localModelsDataDir);
+      }
       this.bus.emit({ type: "providers_remove_succeeded" });
       this.bus.emit({
         type: "runtime_info",

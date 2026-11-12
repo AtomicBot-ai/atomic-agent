@@ -5,6 +5,7 @@ import {
   DEFAULT_OPENROUTER_IMAGE_MODEL,
   defaultImageModel,
   describeCoreImageError,
+  forgetOpenRouterMedia,
   listCoreImageModels,
   OPENROUTER_MEDIA_BASE_URL,
   registerOpenRouterMedia,
@@ -140,6 +141,28 @@ describe("cloud media", () => {
     expect(call).toHaveBeenCalledWith("/media/providers/openrouter/models?kind=image", undefined, { timeoutMs: 20_000 });
     const broken = vi.fn(async () => { throw new CoreRequestError(409, "not configured", "REMOTE_NOT_CONFIGURED"); });
     expect(await listCoreImageModels({ call: broken } as unknown as CoreControlClient, "openrouter")).toEqual([]);
+  });
+});
+
+describe("forgetOpenRouterMedia (ATO-425)", () => {
+  const withCoreOn = (call: ReturnType<typeof vi.fn>) =>
+    (async (_d: string, fn: (c: CoreControlClient, f: string) => Promise<unknown>) => fn({ call } as unknown as CoreControlClient, "/d")) as never;
+
+  it("asks Core to drop the OpenRouter provider and its key", async () => {
+    const call = vi.fn(async () => ({ removed: true }));
+    expect(await forgetOpenRouterMedia("/data", { installed: () => true, withCore: withCoreOn(call) })).toBe(true);
+    expect(call).toHaveBeenCalledWith("/cloud/providers/openrouter", undefined, expect.objectContaining({ method: "DELETE" }));
+  });
+
+  it("does nothing, and downloads nothing, when Core was never installed", async () => {
+    const withCore = vi.fn();
+    expect(await forgetOpenRouterMedia("/data", { installed: () => false, withCore: withCore as never })).toBe(false);
+    expect(withCore).not.toHaveBeenCalled();
+  });
+
+  it("never throws when Core cannot do it", async () => {
+    const call = vi.fn(async () => { throw new CoreRequestError(404, "not registered", "NOT_FOUND"); });
+    expect(await forgetOpenRouterMedia("/data", { installed: () => true, withCore: withCoreOn(call) })).toBe(false);
   });
 });
 

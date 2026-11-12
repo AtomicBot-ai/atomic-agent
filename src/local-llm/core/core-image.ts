@@ -160,6 +160,28 @@ export async function registerOpenRouterMedia(client: CoreControlClient, apiKey:
   } catch (err) { throw toImageError(err, true); }
 }
 
+/**
+ * Take the OpenRouter key back out of Core (ATO-425). `registerOpenRouterMedia`
+ * leaves it in Core's own `credentials.json`, so removing the key from the
+ * agent left Core holding it. Called once no OpenRouter key is left.
+ *
+ * Only on a computer whose Core of this build's pin is installed (nothing
+ * to forget otherwise, and nothing is downloaded for it); Core is started
+ * for the call if it was not running and stopped again when idle, like a
+ * generation. Answers whether Core said it removed one; never throws.
+ */
+export async function forgetOpenRouterMedia(dataDir: string, deps: { withCore?: typeof withImageCore; installed?: (dataDir: string) => boolean } = {}): Promise<boolean> {
+  if (!(deps.installed ?? ((d: string) => isCoreInstalled(d, CORE_VERSION)))(dataDir)) return false;
+  try {
+    return await (deps.withCore ?? withImageCore)(dataDir, async (client) => {
+      await client.call("/cloud/providers/openrouter", undefined, { method: "DELETE", timeoutMs: 10_000 });
+      return true;
+    }, { waitMs: 30_000 });
+  } catch {
+    return false;   // Core busy, not registered, or not reachable: the next key set replaces it anyway.
+  }
+}
+
 /** Core's image models for a provider (catalog merged with the provider's live list). Empty when Core cannot say. */
 export async function listCoreImageModels(client: CoreControlClient, provider: string, signal?: AbortSignal): Promise<CoreMediaModel[]> {
   try {
