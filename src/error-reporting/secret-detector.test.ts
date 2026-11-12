@@ -298,10 +298,29 @@ describe("maskSecretsDeep (ATO-1176)", () => {
     expect(value.nested.lines[1]).toContain(ANTHROPIC);
   });
 
-  it("returns the input itself when nothing is masked, and survives a cycle", () => {
-    const value: Record<string, unknown> = { a: "plain", b: [1, "two"] };
-    value.self = value;
+  it("returns the input itself when nothing is masked", () => {
+    const value = { a: "plain", b: [1, "two"], c: { d: "x" } };
     expect(maskSecretsDeep(value)).toBe(value);
+  });
+
+  it("masks a shared object at every place it is referenced", () => {
+    // The second reference used to come back as the unmasked original.
+    const shared = { out: `OPENROUTER_API_KEY=${OPENROUTER}` };
+    const value = { a: shared, b: shared, list: [shared] };
+    const out = maskSecretsDeep(value);
+    expect(JSON.stringify(out)).not.toContain(OPENROUTER);
+    expect(out.a).toBe(out.b);
+    expect(out.list[0]).toBe(out.a);
+    expect(shared.out).toContain(OPENROUTER);
+  });
+
+  it("cuts a cycle instead of returning the unmasked ancestor", () => {
+    const value: Record<string, unknown> = { s: `key ${ANTHROPIC}` };
+    value.self = value;
+    const out = maskSecretsDeep(value) as Record<string, unknown>;
+    expect(out.self).toBe("[circular]");
+    expect(String(out.s)).not.toContain(ANTHROPIC);
+    expect(value.self).toBe(value);
   });
 
   it("uses the known exact values", () => {

@@ -383,8 +383,12 @@ const MAX_MASK_DEPTH = 32;
 
 /**
  * `value` with {@link maskSecrets} applied to every string inside it:
- * plain objects and arrays are walked (to {@link MAX_MASK_DEPTH}, and a
- * cycle is visited once), other values pass through. Object keys are not
+ * plain objects and arrays are walked (to {@link MAX_MASK_DEPTH}), other
+ * values pass through. An object reached twice (`{ a: shared, b: shared }`)
+ * gets the same masked copy both times, never the unmasked original; a
+ * reference back into its own ancestors (a cycle) becomes the string
+ * `"[circular]"`, since the original there would carry the unmasked
+ * strings and a trace row cannot hold a cycle anyway. Object keys are not
  * masked. Returns `value` itself when nothing was masked, and copies only
  * the containers on the path to a masked string otherwise, so the input
  * is never mutated (ATO-1176: a tool result's `details` before the trace
@@ -392,12 +396,22 @@ const MAX_MASK_DEPTH = 32;
  */
 export function maskSecretsDeep<T>(value: T, known: readonly KnownSecret[] = []): T {
   const usable = usableKnownSecrets(known);
-  const seen = new WeakSet<object>();
+  // node -> its masked result, so a shared object is masked once and the
+  // same copy is reused; `active` holds the ancestors being walked.
+  const done = new Map<object, unknown>();
+  const active = new Set<object>();
   const walk = (node: unknown, depth: number): unknown => {
     if (typeof node === "string") return maskSecrets(node, usable);
     if (node === null || typeof node !== "object" || depth >= MAX_MASK_DEPTH) return node;
-    if (seen.has(node)) return node;
-    seen.add(node);
+    if (done.has(node)) return done.get(node);
+    if (active.has(node)) return "[circular]";
+    active.add(node);
+    const result = walkContainer(node, depth);
+    active.delete(node);
+    done.set(node, result);
+    return result;
+  };
+  const walkContainer = (node: object, depth: number): unknown => {
     if (Array.isArray(node)) {
       let out: unknown[] | null = null;
       for (let i = 0; i < node.length; i++) {
