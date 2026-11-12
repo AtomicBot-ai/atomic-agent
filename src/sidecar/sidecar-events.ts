@@ -5,6 +5,7 @@
  */
 
 import type { ApprovalCategory } from "../approval/approval-level.js";
+import type { RiskLevel } from "../approval/risk-review.js";
 
 export type HostRequestType =
   | "start_session"
@@ -125,6 +126,14 @@ export interface ApprovalResponsePayload {
    * it as what the user said, so a host never sends a label here.
    */
   reason?: string;
+  /**
+   * With `approved: true`, remember the answer: `session` for the whole
+   * category in this chat, `shape` for this command's binary in this
+   * chat, `always` to save an allow rule for the project. Send only one
+   * the request's `canSession` / `canShape` / `canAlways` allows; any
+   * other fails the request and the approval stays pending.
+   */
+  grant?: "session" | "shape" | "always";
 }
 
 export interface GetSessionPayload {
@@ -165,6 +174,23 @@ export interface ApprovalRequestPayload {
   /** Human-readable preview of the action (diff snippet, command, URL, etc.). */
   preview?: string;
   affectedResources?: string[];
+  /** The binary a `shape` grant would cover (`git`); shell requests only. */
+  commandShape?: string;
+  /** What smart approval's risk review said, when it ran. */
+  riskNote?: string;
+  riskLevel?: RiskLevel;
+  /**
+   * Whether `grant: "session"` may be offered (the TUI's `[s]`). This
+   * agent always sends the three `can*` flags; absent (an older agent)
+   * reads as `false`.
+   */
+  canSession?: boolean;
+  /** Whether `grant: "shape"` may be offered (the TUI's `[a]`). */
+  canShape?: boolean;
+  /** Whether `grant: "always"` may be offered ("Allow always"). */
+  canAlways?: boolean;
+  /** The text of that choice, when `canAlways`: `Always allow "git status" in this project`. */
+  alwaysLabel?: string;
 }
 
 export interface ToolCallStartedPayload {

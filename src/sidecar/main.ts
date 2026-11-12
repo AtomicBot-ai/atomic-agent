@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 
+import { approvalRequestPayload, responseGrant } from "./approval-payload.js";
 import { MessageRouter } from "./message-router.js";
 import { StdioProtocol } from "./stdio-protocol.js";
 import { getConfig } from "../config/index.js";
@@ -224,15 +225,12 @@ export async function bootstrapSidecar(): Promise<{
           active?.eventSink(event);
         },
         onApprovalRequest: (request) => {
-          protocol.emitEvent("approval_request", {
-            approvalId: request.approvalId,
-            sessionId: request.sessionId,
-            tool: request.tool,
-            category: request.category,
-            reason: request.reason,
-            preview: request.preview,
-            affectedResources: request.affectedResources,
-          });
+          // All the fields a host needs to offer "in this chat" and
+          // "always", not only the prompt text (ATO-1270).
+          protocol.emitEvent(
+            "approval_request",
+            approvalRequestPayload(request, active?.runtime.approvals),
+          );
         },
         onSkillRegistryChange: (entries) => {
           protocol.emitEvent("skill_registry_updated", {
@@ -375,12 +373,15 @@ export async function bootstrapSidecar(): Promise<{
     "approval_response",
     (request) => {
       if (!active) return { resolved: false };
-      const resolved = active.runtime.approvals.resolve({
+      const gate = active.runtime.approvals;
+      const grant = responseGrant(request.payload, gate);
+      const resolved = gate.resolve({
         approvalId: request.payload.approvalId,
         approved: request.payload.approved,
         ...(request.payload.reason !== undefined
           ? { reason: request.payload.reason }
           : {}),
+        ...(grant !== undefined ? { grant } : {}),
       });
       return { resolved };
     },

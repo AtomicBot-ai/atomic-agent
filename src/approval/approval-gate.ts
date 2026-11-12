@@ -814,12 +814,38 @@ export class ApprovalGate {
 
   /**
    * Whether a request of `category` from `sessionId` would be put to a
-   * person now: neither the level nor a grant settles it, and no refuse
-   * policy answers for the session.
+   * person now, in the order `request` decides it: a saved deny or allow
+   * rule settles it without a person; an ask rule puts it to one
+   * whatever the level or a grant says; otherwise neither the level nor
+   * a grant settles it, and no refuse policy answers for the session.
+   * `check` names the call for the rules (tool, resources, command);
+   * without it only rules that name no tool or command can match.
+   * Asks nothing and records nothing (ATO-1270).
    */
-  wouldPrompt(sessionId: string, category: ApprovalCategory): boolean {
-    const probe = { approvalId: "", sessionId, tool: "", category, reason: "" };
-    if (this.autoApproval(probe) !== null) return false;
+  wouldPrompt(
+    sessionId: string,
+    category: ApprovalCategory,
+    check: Partial<Omit<RuleCheck, "sessionId" | "category">> = {},
+  ): boolean {
+    const workdir = check.workdir ?? currentApprovalWorkdir();
+    const rule = this.matchRule({
+      tool: "",
+      ...check,
+      sessionId,
+      category,
+      ...(workdir !== undefined ? { workdir } : {}),
+    });
+    if (rule?.decision === "deny" || rule?.decision === "allow") return false;
+    if (rule?.decision !== "ask") {
+      const probe = {
+        approvalId: "",
+        sessionId,
+        tool: check.tool ?? "",
+        category,
+        reason: "",
+      };
+      if (this.autoApproval(probe) !== null) return false;
+    }
     return this.policiesBySession.get(sessionId)?.onPrompt !== "refuse";
   }
 
