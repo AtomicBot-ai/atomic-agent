@@ -14,6 +14,7 @@ import { prepareAgentTurn, prepareTurnPolicies, prepareTurnBudgets, createTurnLo
 import { refreshMemoryContext, createSurfacedMemoryTracker } from "./turn/turn-memory-context.js";
 export { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn/turn-memory-context.js";
 import { finalizeAgentTurn, finalizeFailedAgentTurn } from "./turn/turn-finalization.js";
+import { armApprovalDeadline } from "./turn/approval-deadline.js";
 import { costCeilingNotice, costCeilingReached, recordCompactionSpend, recordStepSpend } from "./turn/turn-spend.js";
 export { formatTaskStoppedReply } from "./turn/turn-finalization.js";
 import { delegationProducedWork, recordDelegation, wouldRefuse as fusionGateWouldRefuse } from "./policies/fusion-orchestrator-mode.js";
@@ -648,7 +649,21 @@ export class AgentLoop {
           }
         }
         requestStartedAt = Date.now();
-        const outcome = await executeStep(stepContext, stepDeps);
+        // A task's time limit also ends a wait on an approval prompt
+        // nobody is there to answer (ATO-1367).
+        const disposeApprovalDeadline =
+          options.taskMaxDurationMs !== undefined && this.deps.denyPendingApprovals
+            ? armApprovalDeadline({
+                msLeft: durationCeilingMs - (Date.now() - taskStartedAt),
+                deny: (reason) => this.deps.denyPendingApprovals?.(state.id, reason),
+              })
+            : () => undefined;
+        let outcome: Awaited<ReturnType<typeof executeStep>>;
+        try {
+          outcome = await executeStep(stepContext, stepDeps);
+        } finally {
+          disposeApprovalDeadline();
+        }
         requestDeadline.dispose();
         const durationMs = Date.now() - started;
         if (turn.awaitingRecovery) {
