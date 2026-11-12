@@ -17,6 +17,7 @@
 //   npm run eval:full -- --reporter=verbose              # any vitest flag
 //   ATOMIC_AGENT_EVAL_KEEP_DAEMON=1 npm run eval:full    # keep daemon up after the run
 //   ATOMIC_AGENT_EVAL_LLAMA_URL=http://...  npm run eval:full   # bypass managed mode entirely
+//   ATOMIC_AGENT_EVAL_VITEST_CONFIG=eval/vitest.attacks.config.ts  # another suite (used by eval:attacks)
 //
 // Anything after `--` (in npm) lands in `process.argv.slice(2)` and is
 // forwarded verbatim to the underlying `vitest run` invocation.
@@ -28,6 +29,8 @@ import { fileURLToPath } from "node:url";
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
 const CLI_BIN = resolve(REPO_ROOT, "dist", "cli", "index.js");
+
+const VITEST_CONFIG = process.env.ATOMIC_AGENT_EVAL_VITEST_CONFIG || "eval/vitest.config.ts";
 
 const log = (msg) => console.error(`[eval:full] ${msg}`);
 
@@ -111,7 +114,7 @@ async function main() {
 
   let exitCode = 1;
   try {
-    exitCode = await runVitest(baseUrl);
+    exitCode = await runVitest(baseUrl, info.modelId);
   } finally {
     if (startedByUs && process.env.ATOMIC_AGENT_EVAL_KEEP_DAEMON !== "1") {
       log("stopping managed daemon (set ATOMIC_AGENT_EVAL_KEEP_DAEMON=1 to keep it running)");
@@ -123,17 +126,25 @@ async function main() {
   return exitCode;
 }
 
-function runVitest(baseUrl) {
+function runVitest(baseUrl, modelId = null) {
   // Forward any extra args (e.g. `-t gaia-pdf-disambiguate-name`) verbatim
   // to `vitest run`. `npm run` collects everything after `--` into argv.
   const forwarded = process.argv.slice(2);
   return new Promise((resolvePromise) => {
     const child = spawn(
       "npx",
-      ["vitest", "run", "--config", "eval/vitest.config.ts", ...forwarded],
+      ["vitest", "run", "--config", VITEST_CONFIG, ...forwarded],
       {
         cwd: REPO_ROOT,
-        env: { ...process.env, ATOMIC_AGENT_EVAL_LLAMA_URL: baseUrl },
+        env: {
+          ...process.env,
+          ATOMIC_AGENT_EVAL_LLAMA_URL: baseUrl,
+          // The managed daemon's model id, for reports that name the model
+          // (the attack report). A value already set by hand wins.
+          ...(modelId && !process.env.ATOMIC_AGENT_EVAL_MODEL_ID
+            ? { ATOMIC_AGENT_EVAL_MODEL_ID: modelId }
+            : {}),
+        },
         stdio: "inherit",
       },
     );

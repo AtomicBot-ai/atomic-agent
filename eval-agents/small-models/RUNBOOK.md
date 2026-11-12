@@ -118,6 +118,19 @@ Useful flags: `--tasks core|stress|all|t1,h2`, `--repeats N`, `--keep fail|all|n
   per cell, `agent.approvalLevel: 5` (headless), per-task `agent.maxSteps`, tracing on,
   and `ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS=1800000` so a slow 27B step is not cut at 5 min.
 
+## Attack run (same machine, same yes)
+
+After the bench, with the same model still served, run the prompt-injection
+suite (ATO-623) against it:
+
+```bash
+ATOMIC_AGENT_EVAL_LLAMA_URL=http://127.0.0.1:<port> npm run eval:attacks
+```
+
+Attach `eval/reports/attacks-latest.md` (scenario, verdict, model, date) to the
+release notes. What to do about a "fell" row is the product owner's call. Format and
+verdicts: "Attack suite" in `eval/README.md`.
+
 ## llama-server settings
 
 All in `matrix.json` → `server.args`. Same for every model so rows compare models, not tweaks:

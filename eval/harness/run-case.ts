@@ -19,10 +19,17 @@ import {
 import { installEvalSkills } from "./install-eval-skills.js";
 import { seedStateDirConfig } from "./seed-state-config.js";
 import type { JudgeClient } from "./judge-types.js";
+import type { MockHttpHit } from "./attack-schema.js";
 
 export interface RunCaseDependencies {
   /** URL of the eval-local mock HTTP server, when started. */
   mockHttpUrl: string | null;
+  /**
+   * Reads what the mock server recorded under `/collect/` (pass
+   * `MockHttpHandle.hits`). Needed by `http_not_received`; without it
+   * that expectation sees no requests.
+   */
+  mockHttpHits?: () => readonly MockHttpHit[];
   /** Optional judge client; required iff a case has `judge` expectations. */
   judge: JudgeClient | null;
   /** Hard timeout per case (ms). Defaults to 120s. */
@@ -97,6 +104,8 @@ export async function runCase(
       reply: cli.reply,
       metrics,
       judge: deps.judge,
+      stateDir: workspace.stateDir,
+      httpHits: deps.mockHttpHits?.() ?? [],
     });
 
     return {
