@@ -142,7 +142,12 @@ async function composerPull(js: Js, check: Check, w: BrowserWindow): Promise<voi
     })()`);
     // The download lands.
     send({ id: ID, done: true, ok: true });
-    await wait(600);
+    /* The land reads the model status first (ATO-1373), and on a slow runner
+       that read takes more than a moment: wait for the card, up to 10 s. */
+    for (let i = 0; i < 50; i++) {
+      await wait(200);
+      if (await js<boolean>("!!(DL.ready && DL.ready.id)")) break;
+    }
     const landed = await js<Record<string, unknown>>(`(() => { const k = document.getElementById('wiz-key');
       const u = document.getElementById('wiz-url');
       return {open: SEL.open, phase: WIZ.phase, pop: !!document.querySelector('#overlays .selpop'),
