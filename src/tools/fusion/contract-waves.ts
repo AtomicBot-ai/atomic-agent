@@ -145,6 +145,44 @@ export function dependencyWarnings(
 /** Outcome notes carried into a later wave, and how much of each. */
 const MAX_OUTCOME_NOTES = 8;
 const OUTCOME_DETAIL_CHARS = 120;
+/** A finished task's `PROVIDED:` list gets more room than its prose (ATO-945). */
+export const PROVIDED_DETAIL_CHARS = 240;
+const MAX_PROVIDED_ITEMS = 12;
+
+/**
+ * The `PROVIDED:` list a worker ends its reply with (the brief asks for
+ * it whenever there is a contract), as one `; `-joined line, or
+ * `undefined` when the reply has none.
+ *
+ * The list is the board's "what is actually exposed": the names and
+ * paths the task really produced, including the ones it named
+ * differently from the contract. It sits at the END of the reply, so
+ * the head-of-reply cut below used to drop exactly it, and a dependent
+ * learned that its provider was "ok" but not what it had exposed. The
+ * last `PROVIDED:` wins (a reply that quotes the brief's rule first
+ * still ends with its own list); the list runs to the first blank line.
+ */
+export function providedList(reply: string): string | undefined {
+  const lines = reply.split(/\r?\n/);
+  let start = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^\s*[*_`]*PROVIDED[*_`]*\s*:/i.test(lines[i]!)) {
+      start = i;
+      break;
+    }
+  }
+  if (start < 0) return undefined;
+  const items: string[] = [];
+  const inline = lines[start]!.replace(/^\s*[*_`]*PROVIDED[*_`]*\s*:[*_`]*/i, "").trim();
+  if (inline.length > 0) items.push(inline);
+  for (const line of lines.slice(start + 1)) {
+    const item = line.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim();
+    if (item.length === 0) break;
+    items.push(item);
+    if (items.length >= MAX_PROVIDED_ITEMS) break;
+  }
+  return items.length === 0 ? undefined : items.join("; ");
+}
 
 /**
  * What the waves that already ran actually did, for the workers that
@@ -174,13 +212,29 @@ export function completedWaveNotes(
     // A failure's own words; a success's own summary. Both are what a
     // worker needs to decide whether its task still means what the
     // orchestrator thought it meant when it wrote the brief.
-    const detail = UNDELIVERED_STATUSES.has(result.status)
-      ? (result.error ?? "no reason given")
-      : result.reply;
+    if (UNDELIVERED_STATUSES.has(result.status)) {
+      const error = result.error ?? "no reason given";
+      notes.push(
+        error.length === 0
+          ? head
+          : `${head}: ${oneLine(error, OUTCOME_DETAIL_CHARS)}`,
+      );
+      continue;
+    }
+    // A delivered task's PROVIDED list, when it wrote one, is what a
+    // dependent builds against (ATO-945): the real names and paths, not
+    // the first sentence of its prose.
+    const provided = providedList(result.reply);
+    if (provided !== undefined) {
+      notes.push(
+        `${head}: provided ${oneLine(provided, PROVIDED_DETAIL_CHARS)}`,
+      );
+      continue;
+    }
     notes.push(
-      detail.length === 0
+      result.reply.length === 0
         ? head
-        : `${head}: ${oneLine(detail, OUTCOME_DETAIL_CHARS)}`,
+        : `${head}: ${oneLine(result.reply, OUTCOME_DETAIL_CHARS)}`,
     );
   }
   return notes;
