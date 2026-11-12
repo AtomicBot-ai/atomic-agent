@@ -240,6 +240,28 @@ function simgPriceLabel(price) {
   return '≈ ' + lo;
 }
 
+/* ATO-814: a model OpenRouter bills per output token (Nano Banana, GPT
+   Image) has no price per picture before it runs. The line under the button
+   gives the published rate instead, never a made-up total, and says the
+   real cost comes after. '' when there is no rate. */
+function simgTokenRateLine(price) {
+  const t = price && price.perToken;
+  if (!t || typeof t.usdPerMillion !== 'number' || !Number.isFinite(t.usdPerMillion) || t.usdPerMillion <= 0) return '';
+  const money = (n) => '$' + (Number.isInteger(n) ? String(n) : n.toFixed(2));
+  const hi = typeof t.maxUsdPerMillion === 'number' && Number.isFinite(t.maxUsdPerMillion) && t.maxUsdPerMillion > t.usdPerMillion
+    ? '–' + money(t.maxUsdPerMillion).slice(1) : '';
+  return 'Billed per token: ' + money(t.usdPerMillion) + hi + ' per 1M output tokens. The exact cost shows when it is done.';
+}
+
+/** What a finished picture cost, as the provider reported it: "$0.039". '' when nothing was reported. */
+function simgCostLabel(item) {
+  const c = item && item.costUsd;
+  if (typeof c !== 'number' || !Number.isFinite(c) || c < 0) return '';
+  if (c === 0) return '$0';
+  if (c < 0.01) return '$' + c.toFixed(4).replace(/0+$/, '');
+  return '$' + c.toFixed(3).replace(/0$/, '');
+}
+
 /** The Generate button's words: the price only when there is one. */
 function simgGenerateLabel(price) {
   const p = simgPriceLabel(price);
@@ -395,7 +417,7 @@ function simgPinnedList(items, more) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
+  module.exports = {simgTokenRateLine, simgCostLabel, SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
     simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgMaker, simgModelTags,
     simgLocalChips, simgModesLine, SIMG_PHASE_ORDER, simgFindPinned, simgPinnedList};

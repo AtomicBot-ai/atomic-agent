@@ -434,6 +434,7 @@ interface StudioItem {
   prompt: string
   model: { id, name, provider }  // provider 'local' or e.g. 'openrouter'
   recipe: unknown                // Core's ImageRecipe / VideoRecipe, verbatim: "Restore settings"
+  costUsd: number | null         // what the provider reported for this item (recipe.engine.costUsd); null = not reported (ATO-814)
 }
 ```
 
@@ -473,7 +474,8 @@ disk. Same once-per-session rule and the same silent failure.
 
 ```ts
 interface PriceParams { kind; count?: number; resolution?: string; durationSecs?: number; audio?: boolean; mode?: string }
-interface StudioPrice { usd: number; maxUsd: number | null; basis: string }   // whole request
+interface StudioPrice { usd: number | null; maxUsd: number | null; basis: string;   // whole request; usd null = billed per token
+  perToken?: { usdPerMillion: number; maxUsdPerMillion: number | null } | null }   // published rate per 1M output tokens (ATO-814)
 ```
 
 Show `~$0.20` (or `~$0.32–0.40` with `maxUsd`) on the Generate button; `null`
