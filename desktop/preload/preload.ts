@@ -117,6 +117,13 @@ contextBridge.exposeInMainWorld("atomic", {
   liveTurns: () => ipcRenderer.invoke("agent:liveTurns"),
   /** B01 review: the agent replays the approvals still pending (asked once the page has taken the turns over). */
   replayApprovals: () => ipcRenderer.invoke("agent:replayApprovals"),
+  /* ATO-1063: the mini chat page (main/mini-chat-ipc.ts). The page: start
+     getting the agent's frames on onChat / onApproval, and "Open in big
+     window" for its chat. The main window: "a chat is waiting" and taking it once. */
+  miniChatAttach: () => ipcRenderer.invoke("mini:attach"),
+  miniChatOpenInMain: (sessionId: string) => ipcRenderer.invoke("mini:openInMain", sessionId),
+  miniChatTake: () => ipcRenderer.invoke("mini:take"),
+  onMiniChatOpen: (cb: (payload: unknown) => void) => on("mini:openSession", cb),
 
   /** Setup wizard: real config writes and the real model catalogue. */
   configGet: () => ipcRenderer.invoke("cli:configGet"),
