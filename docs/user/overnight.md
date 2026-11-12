@@ -22,7 +22,7 @@ atomic-agent overnight "migrate the tests to vitest" --budget 5 --hours 8 --dir 
 
 `atag overnight` is the same command.
 
-In the foreground you get one line per step, for example `[step 12 | 14m | $0.42 of $5.00] read src/app.ts`, and a summary at the end. Ctrl+C cancels the run; a second Ctrl+C quits. The exit code is 0 only when the task completed.
+In the foreground you get one line per step, for example `[step 12 | 14m | $0.42 of $5.00] read src/app.ts`, and a summary at the end. Ctrl+C cancels the run; a second Ctrl+C quits. The summary says `overnight completed` when the agent finished on its own and `overnight stopped (<cause>)` when a limit ended the run. The exit code is 0 when the agent finished, 2 when it stopped at the budget, time or step limit, made no progress, or the provider ran out of credit (including a resume that found the budget or time already used), and 1 when the run failed or was cancelled.
 
 With `--detach`, check on the run with `atomic-agent task show <id>` and stop it with `atomic-agent task cancel <id>`.
 
@@ -32,7 +32,7 @@ Nobody is there to answer, so nobody is asked. An action that needs approval is 
 
 ## Limits
 
-- **Money.** When the cap is reached the agent writes a short summary and stops with `stopped: spent $X of $Y budget`. Spend is an estimate from the provider's price list and counts the main agent loop only (not memory, compaction or Fusion workers), so a run can end slightly over the cap. Local models count as $0.
+- **Money.** When the cap is reached the agent writes a short summary and stops with `stopped: spent $X of $Y budget`. Spend is an estimate from the provider's price list and counts the main agent loop only (not memory, compaction or Fusion workers), so a run can end slightly over the cap. Local models count as $0. In Fusion mode, paid workers (a cloud worker or role model, an escalation, the judge) are not in this figure at all and do not stop the run, so with them the run can end well over the cap. Cap them per turn with `llm.runMode.fusion.turnBudgetUsd`.
 - **Time.** The run stops after `--hours`. If both caps are set, the first one reached ends the run.
 - **Loops.** The loop guard leaves long normal work alone. Re-running the tests after an edit or polling a long build is fine. A poll that keeps getting the same answer is stopped after 20 identical answers, and the guard stops a real loop sooner.
 

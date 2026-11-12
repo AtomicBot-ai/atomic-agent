@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { opendir, readdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
 import { isInside } from "../../../approval/fanout-scope.js";
@@ -23,6 +23,13 @@ export { candidateRoots, type CandidateRoot } from "./path-candidate-roots.js";
  * hidden folders and known heavy trees, never descends into a folder the
  * roots marked as blocked (macOS privacy-protected folders the session
  * has not touched), does not follow symlinked folders, and never throws.
+ *
+ * Roots marked `outer` (folders above the session, such as the parent of
+ * a working folder in the system temp folder, which can hold ~20,000
+ * entries) are searched only after the others, under their own small
+ * budget and a per-folder cap, so a crowded parent cannot use up the
+ * search near the session (ATO-1333). Their matches are listed after the
+ * near ones.
  */
 
 export interface PathCandidate {
@@ -40,8 +47,12 @@ export interface CandidateSearch {
 export interface PathCandidateLimits {
   /** Wall-clock budget for the whole search. */
   timeBudgetMs: number;
-  /** Directory entries examined before giving up. */
+  /** Directory entries examined under the near roots before giving up. */
   maxEntries: number;
+  /** Directory entries examined under `outer` roots, after the near ones. */
+  maxOuterEntries: number;
+  /** Entries read from any one folder under an `outer` root. */
+  maxEntriesPerOuterDir: number;
   /** Matches collected before stopping (one more than will be shown). */
   maxResults: number;
 }
@@ -49,6 +60,8 @@ export interface PathCandidateLimits {
 export const DEFAULT_CANDIDATE_LIMITS: PathCandidateLimits = {
   timeBudgetMs: 300,
   maxEntries: 20_000,
+  maxOuterEntries: 2_000,
+  maxEntriesPerOuterDir: 500,
   maxResults: 6,
 };
 
@@ -91,8 +104,10 @@ export function nameKey(name: string): string {
 }
 
 /**
- * Entries named like the last segment of `missing`, shallowest first, at
- * most `limits.maxResults`. `missing` itself is never returned.
+ * Entries named like the last segment of `missing`, at most
+ * `limits.maxResults`: those under the near roots first, shallowest
+ * first, then those under `outer` roots. `missing` itself is never
+ * returned.
  */
 export async function findPathCandidates(
   missing: string,
@@ -115,7 +130,15 @@ export async function findPathCandidates(
     timer.unref?.();
   });
   const walk = new Walk(nameKey(name), resolve(missing), limits, deadline, state, found, filter);
-  const search = walk.run(roots).catch(() => {
+  const near = roots.filter((root) => root.outer !== true);
+  const outer = roots.filter((root) => root.outer === true);
+  const search = (async () => {
+    await walk.run(near, { maxEntries: limits.maxEntries });
+    await walk.run(outer, {
+      maxEntries: limits.maxOuterEntries,
+      perDir: limits.maxEntriesPerOuterDir,
+    });
+  })().catch(() => {
     // Best effort: whatever was found before the failure stands.
   });
   try {
@@ -134,13 +157,21 @@ interface WalkState {
   stopped: boolean;
   /** The time or entry budget ran out before the walk ended. */
   cut: boolean;
+  /** Entries examined in the current pass. */
   scanned: number;
 }
 
+/** One pass's entry budget; `perDir` caps the entries read from each folder. */
+interface PassBudget {
+  maxEntries: number;
+  perDir?: number;
+}
+
 /**
- * Breadth-first over every root at once, level by level, so a match one
- * level below the nearest folder is found before a deep one elsewhere.
- * A folder reached from two roots is listed once.
+ * Breadth-first over every root of a pass at once, level by level, so a
+ * match one level below the nearest folder is found before a deep one
+ * elsewhere. A folder reached from two roots, or in both passes, is
+ * listed once.
  */
 class Walk {
   private readonly visited = new Set<string>();
@@ -160,7 +191,8 @@ class Walk {
     this.blocked = (filter.blocked ?? []).map((dir) => resolve(dir));
   }
 
-  async run(roots: readonly CandidateRoot[]): Promise<void> {
+  async run(roots: readonly CandidateRoot[], budget: PassBudget): Promise<void> {
+    this.state.scanned = 0;
     let level = roots
       .map((root) => ({ dir: resolve(root.dir), left: root.depth }))
       .filter(({ dir }) => !this.isBlocked(dir));
@@ -169,9 +201,10 @@ class Walk {
       for (const { dir, left } of level) {
         if (left <= 0 || this.visited.has(dir)) continue;
         this.visited.add(dir);
-        if (this.shouldStop()) return;
-        const entries = await listDir(dir);
+        if (this.shouldStop(budget)) return;
+        const { entries, more } = await listDir(dir, budget.perDir);
         if (this.state.stopped) return;
+        if (more) this.state.cut = true;
         for (const entry of entries) {
           this.state.scanned++;
           const path = join(dir, entry.name);
@@ -201,9 +234,9 @@ class Walk {
     return this.found.length >= this.limits.maxResults;
   }
 
-  private shouldStop(): boolean {
+  private shouldStop(budget: PassBudget): boolean {
     if (this.state.stopped || this.full()) return true;
-    if (this.state.scanned >= this.limits.maxEntries || Date.now() >= this.deadline) {
+    if (this.state.scanned >= budget.maxEntries || Date.now() >= this.deadline) {
       this.state.cut = true;
       return true;
     }
@@ -215,11 +248,27 @@ class Walk {
   }
 }
 
-async function listDir(dir: string): Promise<Dirent[]> {
+/**
+ * The entries of `dir`, or none when it cannot be listed. With `max`, at
+ * most that many are read and `more` says whether the folder held more.
+ */
+async function listDir(
+  dir: string,
+  max?: number,
+): Promise<{ entries: Dirent[]; more: boolean }> {
   try {
-    return (await readdir(dir, { withFileTypes: true })) as Dirent[];
+    if (max === undefined) {
+      return { entries: (await readdir(dir, { withFileTypes: true })) as Dirent[], more: false };
+    }
+    const entries: Dirent[] = [];
+    // Breaking out of the loop closes the handle.
+    for await (const entry of await opendir(dir)) {
+      if (entries.length >= max) return { entries, more: true };
+      entries.push(entry);
+    }
+    return { entries, more: false };
   } catch {
-    return [];
+    return { entries: [], more: false };
   }
 }
 

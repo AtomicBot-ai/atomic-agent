@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { attachFailingLink } from "../../llm/fallback/index.js";
-import { LocalEngineDownError, TransportError } from "../../llm/index.js";
+import { LlamaServerError, LocalEngineDownError, LocalPortTakenError, TransportError } from "../../llm/index.js";
 import { describeLlmFailure, type LlmFailureContextDeps } from "./llm-failure-context.js";
 
 /** Only the fields the description reads: the provider list and local-model mode. */
@@ -143,14 +143,75 @@ describe("describeLlmFailure", () => {
       expect(readEngineLiveness).not.toHaveBeenCalled();
     });
 
+    it("carries why the engine was judged so, and the lock as read (ATO-1275)", () => {
+      const explainEngineLiveness = vi.fn(() => ({ state: "unknown" as const, reason: "lock_held" as const, lock: "held" as const }));
+      const d = { ...deps(config({}), "no_pid"), explainEngineLiveness };
+      expect(describeLlmFailure({ error: refusedError() }, d)).toMatchObject({
+        engineLiveness: "unknown",
+        engineLivenessReason: "lock_held",
+        engineLock: "held",
+      });
+      expect(explainEngineLiveness).toHaveBeenCalledWith("/state/models");
+    });
+
+    it("an explaining probe that throws reports unknown with no reason", () => {
+      const d = { ...deps(config({})), explainEngineLiveness: () => { throw new Error("EACCES"); } };
+      const context = describeLlmFailure({ error: refusedError() }, d);
+      expect(context.engineLiveness).toBe("unknown");
+      expect(context.engineLivenessReason).toBeUndefined();
+    });
+
     it("a liveness probe that throws reports unknown", () => {
       const d = { ...deps(config({})), readEngineLiveness: () => { throw new Error("EACCES"); } };
       expect(describeLlmFailure({ error: refusedError() }, d).engineLiveness).toBe("unknown");
     });
   });
 
+  describe("the managed engine's fault from its log (ATO-1279)", () => {
+    it("reads it for a managed local-llama failure", () => {
+      const readLocalFault = vi.fn(() => "out_of_memory" as const);
+      const context = describeLlmFailure(
+        { error: new Error("llama-server returned http 500") },
+        { ...deps(config({}), "alive"), readLocalFault },
+      );
+      expect(context).toMatchObject({ providerId: "local-llama", daemonState: "alive", localFault: "out_of_memory" });
+      expect(readLocalFault).toHaveBeenCalledWith("/state/models");
+    });
+
+    it("never reads it for an external server or a cloud link", () => {
+      const readLocalFault = vi.fn(() => "none" as const);
+      describeLlmFailure({ error: new Error("x") }, { ...deps(config({ mode: "external" })), readLocalFault });
+      const cloud = config({ llm: { activeTextProvider: "openrouter", providers: [{ id: "openrouter", kind: "openrouter" }] } });
+      describeLlmFailure({ error: new Error("x") }, { ...deps(cloud), readLocalFault });
+      expect(readLocalFault).not.toHaveBeenCalled();
+    });
+
+    it("a log read that throws reports unknown", () => {
+      const readLocalFault = vi.fn((): "none" => {
+        throw new Error("EACCES");
+      });
+      const context = describeLlmFailure({ error: new Error("x") }, { ...deps(config({})), readLocalFault });
+      expect(context.localFault).toBe("unknown");
+    });
+  });
+
   it("a config read that throws still returns the outage numbers", () => {
     const d = { readConfig: () => { throw new Error("no config"); }, readDaemonPidState: vi.fn() };
     expect(describeLlmFailure({ error: new Error("x"), outage }, d)).toEqual({ outageWaitedMs: 30_000, outageAttempts: 4 });
+  });
+});
+
+describe("describeLlmFailure: a taken managed port (ATO-1277)", () => {
+  it("marks a LocalPortTakenError as a port held by another program", () => {
+    const url = "http://127.0.0.1:9931/completion";
+    const err = new LocalPortTakenError("local-llama", url, new LlamaServerError("llama-server returned http 401", 401, url));
+    const context = describeLlmFailure({ error: err }, deps(config({}), "no_pid"));
+    expect(context).toMatchObject({ portHeldByOther: true, daemonState: "no_pid", requestUrl: url });
+  });
+
+  it("a plain 401 carries no such mark", () => {
+    const url = "http://127.0.0.1:9931/completion";
+    const context = describeLlmFailure({ error: new LlamaServerError("llama-server returned http 401", 401, url) }, deps(config({}), "alive"));
+    expect(context.portHeldByOther).toBeUndefined();
   });
 });

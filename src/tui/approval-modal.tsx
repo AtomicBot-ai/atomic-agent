@@ -3,6 +3,7 @@ import type { ReactElement } from "react";
 import {
   canGrantCategory,
   canGrantShape,
+  describeCategoryGrant,
   type ApprovalGrantScope,
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
@@ -203,7 +204,7 @@ export function ApprovalModal({
                     grant="category"
                     tone="secondary"
                   >
-                    {`allow ${categoryLabel} this session${request.category === "shell" ? RISKY_STILL_ASK : ""} · ctrl+${APPROVAL_CHORDS.grantCategory}`}
+                    {`allow ${describeCategoryGrant(request)}${request.grantKey !== undefined ? ` to ${request.grantKey}` : ""} this session${request.category === "shell" ? RISKY_STILL_ASK : ""} · ctrl+${APPROVAL_CHORDS.grantCategory}`}
                   </ApprovalButton>
                   <Text> </Text>
                 </>

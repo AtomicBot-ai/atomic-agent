@@ -12,12 +12,14 @@ import { join } from "node:path";
 import type { RunTurnResult } from "../../agent/agent-loop.js";
 import { resetConfigCache } from "../../config/index.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
-import { createEmptySessionState } from "../../session/session-state.js";
+import { createEmptySessionState, type SessionState } from "../../session/session-state.js";
+import { createRuntimeSessionFactories } from "../../runtime/composition/runtime-session-services.js";
 import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ToolContext } from "../tool-registry.js";
 import {
   buildFusionDelegateTool,
+  scopeInsideStateDir,
   type FusionDelegateDeps,
 } from "./fusion-delegate.js";
 import type { WorkerTaskResult } from "./worker-result.js";
@@ -112,13 +114,31 @@ function sixTasks(): Array<{
 
 describe("fusion.delegate", () => {
   it("passes a cloud parent's workspace into worker creation", async () => {
-    const create = vi.fn((meta, workingDir?: string) => createEmptySessionState({ id: `${FUSION_WORKER_ID_PREFIX}inherit`, workingDir: workingDir ?? "/boot", metadata: { fusionWorker: meta } }));
+    const create = vi.fn((meta, workingDir?: string, _inheritWorkspace?: boolean) => createEmptySessionState({ id: `${FUSION_WORKER_ID_PREFIX}inherit`, workingDir: workingDir ?? "/boot", metadata: { fusionWorker: meta } }));
     const runTurn = vi.fn(async session => {
       expect(session.workingDir).toBe("/selected"); return turnResult({ session });
     });
     const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
       { tasks: [TASKS[0]!] }, ctx({ workingDir: "/selected", modelMode: "cloud" }));
     expect(result.status).toBe("ok"); expect(create.mock.calls[0]?.[1]).toBe("/selected"); expect(runTurn).toHaveBeenCalledOnce();
+    expect(create.mock.calls[0]?.[2]).toBe(true);
+  });
+
+  it("runs a local worker in the parent's folder without inheriting a workspace (issue #1121)", async () => {
+    // The real factory: bootstrap folder /boot, parent switched live to /selected.
+    const factories = createRuntimeSessionFactories("/boot", { save: () => {} }, () => null);
+    const create = vi.fn(factories.createEphemeralSession);
+    const runTurn = vi.fn(async (session: SessionState) => {
+      expect(session.workingDir).toBe("/selected");
+      expect(session.inheritedWorkspace).toBeUndefined();
+      return turnResult({ session });
+    });
+    const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
+      { tasks: [TASKS[0]!] }, ctx({ workingDir: "/selected", modelMode: "local" }));
+    expect(result.status).toBe("ok");
+    expect(create.mock.calls[0]?.[1]).toBe("/selected");
+    expect(create.mock.calls[0]?.[2]).toBe(false);
+    expect(runTurn).toHaveBeenCalledOnce();
   });
   it("is not readonly and carries its own name", () => {
     const tool = buildFusionDelegateTool(deps());
@@ -139,6 +159,38 @@ describe("fusion.delegate", () => {
     expect(result.status).toBe("error");
     expect(result.summary).toContain("not available to a worker");
     expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("refuses a fan-out that would write in the agent's state directory (ATO-1267)", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    const tool = buildFusionDelegateTool(
+      deps({ runTurn, agentStateDir: "/home/u/.atomic-agent" }),
+    );
+    const result = await tool.run(
+      {
+        tasks: [
+          {
+            id: "t1",
+            title: "Tweak skills",
+            instructions: "Write /home/u/.atomic-agent/skills/x/SKILL.md",
+          },
+        ],
+      },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("agent's own state directory");
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("still runs a fan-out whose scope only sits next to the state directory", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    const tool = buildFusionDelegateTool(
+      deps({ runTurn, agentStateDir: "/repo-state/.atomic-agent" }),
+    );
+    const result = await tool.run({ tasks: [TASKS[0]!] }, ctx());
+    expect(result.status).toBe("ok");
+    expect(runTurn).toHaveBeenCalledOnce();
   });
 
   it("refuses when the run mode is no longer effectively fusion", async () => {
@@ -1896,5 +1948,29 @@ describe("fusion.delegate — task tree (ATO-940)", () => {
     expect(rows[0]?.status).toBe("needs_orchestrator");
     expect(rows[0]?.error).toMatch(/split proposal refused: .*limit is 3/);
     expect(result.details.taskTree).toMatchObject({ splits: 0, rejected: 1, nodes: 2 });
+  });
+});
+
+describe("scopeInsideStateDir (ATO-1267)", () => {
+  it("flags the state directory itself and anything under it", () => {
+    expect(
+      scopeInsideStateDir(
+        ["/repo", "/home/u/.atomic-agent", "/home/u/.atomic-agent/plugins"],
+        "/home/u/.atomic-agent",
+      ),
+    ).toEqual(["/home/u/.atomic-agent", "/home/u/.atomic-agent/plugins"]);
+  });
+
+  it("leaves a parent (home) and a look-alike sibling alone", () => {
+    expect(
+      scopeInsideStateDir(
+        ["/home/u", "/home/u/.atomic-agent-backup"],
+        "/home/u/.atomic-agent",
+      ),
+    ).toEqual([]);
+  });
+
+  it("checks nothing when no state directory is known", () => {
+    expect(scopeInsideStateDir(["/home/u/.atomic-agent"], undefined)).toEqual([]);
   });
 });

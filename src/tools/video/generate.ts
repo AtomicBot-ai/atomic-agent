@@ -17,6 +17,7 @@ import {
 } from "../../local-llm/core/core-video.js";
 import { loadImageFile } from "../vision/load-image.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { coreDownloadProgress } from "../image/core-download-progress.js";
 import { parseVideoArgs, type VideoArgs } from "./args.js";
 import { fitVideoToModel, nominalSize } from "./fit-model.js";
 
@@ -206,7 +207,11 @@ export function buildVideoGenerateTool(options: VideoGenerateToolOptions): ToolD
             if (ctx.signal.aborted || !isProviderBusy(err)) throw err;
             throw new CoreVideoError(busyMessage(modelId, models, args), (err as CoreVideoError).code);
           }
-        }, { signal: ctx.signal });
+        }, {
+          signal: ctx.signal,
+          // The first clip on a computer without Core downloads it first (ATO-425).
+          ...coreDownloadProgress(options.onProgress ? (u) => options.onProgress!(ctx.sessionId, u) : undefined),
+        });
 
         made = result.output;
         const path = await saveIntoWorkingDir(made, ctx.workingDir, now());

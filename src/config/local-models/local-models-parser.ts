@@ -501,6 +501,10 @@ export function parseUserLocalModelsConfig(
         readDefaults().completionMaxTokens,
       "localModels.completionMaxTokens",
     ),
+    requestTimeoutMs: parsePositiveInt(
+      localModels.requestTimeoutMs ?? readDefaults().requestTimeoutMs,
+      "localModels.requestTimeoutMs",
+    ),
     useServerTemplate: parseLocalTemplateSetting(
       localModels.useServerTemplate ??
         readDefaults().useServerTemplate,

@@ -427,9 +427,10 @@ describe("pruneSessions", () => {
 });
 
 /**
- * Wrap a handle so the test can count how many DELETE statements actually
- * ran — the difference between "the rows are gone" and "the rows are gone
- * in bounded batches", which is the whole point of the loop.
+ * Wrap a handle so the test can count how many `DELETE FROM sessions`
+ * statements actually ran — the difference between "the rows are gone" and
+ * "the rows are gone in bounded batches", which is the whole point of the
+ * loop. The archived-turn delete that goes with each batch is not counted.
  */
 function countingDeletes(db: Database.Database): {
   db: Database.Database;
@@ -441,7 +442,7 @@ function countingDeletes(db: Database.Database): {
       if (prop !== "prepare") return Reflect.get(target, prop, receiver);
       return (sql: string): unknown => {
         const statement = target.prepare(sql);
-        if (!/^\s*DELETE/i.test(sql)) return statement;
+        if (!/^\s*DELETE FROM sessions\b/i.test(sql)) return statement;
         return new Proxy(statement, {
           get(inner, innerProp, innerReceiver): unknown {
             if (innerProp !== "run") {

@@ -41,4 +41,15 @@ describe("readLocalEngineState (ATO-772)", () => {
   it("a probe that throws reads unknown", () => {
     expect(readLocalEngineState("local-llama", cfg("managed"), "local-llama", () => { throw new Error("boom"); })).toBe("unknown");
   });
+
+  it("the Atomic Chat link, as the active provider, reads atomic_chat_app without probing the managed engine (ATO-1278)", () => {
+    const probe = vi.fn((): ManagedEngineLiveness => "alive");
+    expect(readLocalEngineState("atomic-chat", cfg("managed"), "atomic-chat", probe)).toBe("atomic_chat_app");
+    expect(readLocalEngineState("atomic-chat", cfg("external"), "atomic-chat", probe)).toBe("atomic_chat_app");
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("the Atomic Chat link as a fallback behind another provider stays unknown", () => {
+    expect(readLocalEngineState("atomic-chat", cfg("managed"), "openrouter")).toBe("unknown");
+  });
 });

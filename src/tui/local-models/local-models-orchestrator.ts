@@ -5,6 +5,7 @@ import { ModelOperationQueue } from "./model-operation-queue.js";
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
+import { readSetAsideEnumValueOnDiskSync } from "../../config/config-file.js";
 import {
   addCustomModel,
   removeCustomModel,
@@ -1938,7 +1939,9 @@ export class LocalModelsOrchestrator {
   private async chooseEngineNow(engine: "atomic-core" | "llama-server", wanted: () => boolean, quietIfSelected: boolean): Promise<boolean> {
     if (!wanted()) return false;
     const cfg = getConfig();
-    if ((cfg.localModels.managed.engine ?? "atomic-core") === engine) {
+    // A newer build's engine reads here as the default, so picking the default is still a change (ATO-1265).
+    const setAside = readSetAsideEnumValueOnDiskSync(cfg.paths.userConfigFile, "localModels.managed.engine") !== undefined;
+    if ((cfg.localModels.managed.engine ?? "atomic-core") === engine && !setAside) {
       // The composer's one local row carries the engine already selected: picking it names no engine.
       if (!quietIfSelected) this.bus.emit({ type: "composer_notice", text: `${engine === "atomic-core" ? "Atomic Chat" : "Local llama"} is already selected.` });
       return true;

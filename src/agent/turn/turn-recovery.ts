@@ -2,7 +2,7 @@ import { isSubscriptionCliSetupError } from "../../llm/provider/subscription-cli
 import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
-import { CancelledError, LlamaServerError, LlmFailure, LocalEngineDownError, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
+import { AtomicChatNotRunningError, CancelledError, LlamaServerError, LlmFailure, LocalEngineDownError, LocalPortTakenError, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
 import type { LlmFailureCategory, TruncationDetail } from "../../llm/index.js";
 import { readFailingLink } from "../../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../../llm/fallback/failed-links.js";
@@ -11,6 +11,7 @@ import { readProviderErrorVerdict } from "../../llm/reliability/provider-error-v
 import { classifyFailureCause } from "../../llm/reliability/classify-failure-cause.js";
 import { classifyProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import { composeSizeRejectionNotice, planSizeRejectionRepack } from "./size-rejection-recovery.js";
+import { MID_REPLY_TIMEOUT_STEP_BUDGET, composeMidReplyTimeoutNotice, planMidReplyTimeoutRetry } from "./mid-reply-timeout-recovery.js";
 import { composeTruncationNotice, planTruncationRetry, truncationRetryMaxTokens, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
 import { PARSE_RECOVERY_BUDGET, composeParseFailureNotice, isRecoverableParseFailure } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET, composeEmptyCompletionNotice, isRecoverableEmptyCompletion, repeatedEmptyCompletionError } from "./empty-completion-recovery.js";
@@ -39,6 +40,8 @@ export interface TurnRecoveryContext {
   recoveryStepAvailable: (stepIndex: number) => boolean;
   /** The model mode serving the step; absent (legacy wiring) reads as `local`. */
   modelMode?: "local" | "cloud";
+  /** How long the failed step's request ran. */
+  requestElapsedMs?: number;
   /**
    * The plain error the turn ends with when it fails on a context-size
    * refusal after the loop's overflow compaction (ATO-1028). Replaces the
@@ -506,6 +509,60 @@ export function recoverTurnStep(
       return { kind: "local_out_of_memory", contextWindow: outOfMemory.contextWindow, cause: runError };
     }
   }
+  // A provider's time limit ended a long reply. Waiting and replaying
+  // the same request hits the same limit, so the retry asks for less.
+  // Bounded per step; a request that ran only briefly falls through to
+  // the outage wait below.
+  if (category === "transport" && !cancelled && !creditRefused && providerWaitCfg.enabled) {
+    const stepAttempts =
+      turn.midReplyTimeoutRetry?.stepIndex === i ? turn.midReplyTimeoutRetry.attempts : 0;
+    const plan = planMidReplyTimeoutRetry({
+      error: err,
+      requestElapsedMs: context.requestElapsedMs,
+      stepAttempts,
+    });
+    if (plan && turn.awaitingRecovery) {
+      // An earlier outage wait on this step is over: the provider has
+      // just been answering for a minute or more.
+      deps.onEvent?.({ type: "provider_recovered", waitedMs: turn.outageWaitedMs });
+      turn.awaitingRecovery = false;
+      turn.outageWaitedMs = 0;
+      turn.outageAttempts = 0;
+    }
+    if (plan?.kind === "give_up") {
+      return reportTurnFailure(
+        plan.error,
+        { category, cancelled: false, creditRefused: false },
+        { state, stepIndex: i },
+        deps,
+        turn,
+      );
+    }
+    if (plan?.kind === "retry") {
+      turn.midReplyTimeoutRetry = { stepIndex: i, attempts: plan.attempts };
+      turn.pendingNotice = composeMidReplyTimeoutNotice(noticeForThisStep);
+      const waitedOn = readFailingLink(err);
+      // Its own event, not `provider_waiting`: the provider is answering,
+      // so nothing here may read as an outage.
+      deps.onEvent?.({
+        type: "reply_time_limit_retried",
+        stepIndex: i,
+        attempt: plan.attempts,
+        budget: MID_REPLY_TIMEOUT_STEP_BUDGET,
+        reason: runError.message,
+      });
+      deps.logger?.warn("provider time limit ended a long reply; retrying the step with a notice", {
+        sessionId: state.id,
+        stepIndex: i,
+        attempt: plan.attempts,
+        requestElapsedMs: context.requestElapsedMs,
+        error: runError.message,
+        ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
+      });
+      runError = null;
+      return { kind: "retry_same" };
+    }
+  }
   // The provider is not answering. Park the turn instead of
   // killing it: nothing of this step has been committed (a
   // completion failure throws before any tool is dispatched —
@@ -522,6 +579,41 @@ export function recoverTurnStep(
   // buys a second helping of the same silence — see
   // `isOwnLlamaDeadlineExpiry`.
   const retryHint = verdict?.kind === "retry_after" ? verdict : null;
+  // The managed local model is running but cut this step's reply off
+  // mid-stream (ATO-1279): the connection broke while the body was read,
+  // or llama-server sent an error event (a 5xx) inside the stream. Not an
+  // outage to wait out, since the model is up; retry the step once. Same
+  // replay argument as the outage wait below: a completion failure throws
+  // before any tool is dispatched, so nothing of the step was committed.
+  // What the cut attempt had streamed was only a preview, and the
+  // surfaces already showed the failure (`step_error`). After the out-of-
+  // memory check above, which handles a cut that is a full memory, and
+  // never for a cancelled turn or one of our own deadlines. A second cut
+  // on the same step ends the turn instead of waiting.
+  let localStreamCutRepeated = false;
+  if (
+    category === "transport" &&
+    !cancelled &&
+    !creditRefused &&
+    deps.localEngineState !== undefined &&
+    isServerStreamCut(err)
+  ) {
+    const failingLink = readFailingLink(err);
+    if (deps.localEngineState(failingLink) === "alive") {
+      if (turn.localStreamCutRetry?.stepIndex !== i) {
+        turn.localStreamCutRetry = { stepIndex: i };
+        deps.logger?.warn("local model cut the reply mid-stream; retrying the step once", {
+          sessionId: state.id,
+          stepIndex: i,
+          error: runError.message,
+          ...(failingLink !== undefined ? { providerId: failingLink } : {}),
+        });
+        runError = null;
+        return { kind: "retry_same" };
+      }
+      localStreamCutRepeated = true;
+    }
+  }
   // Before parking: is the thing we would wait for coming back at all?
   // A refused connection to the managed local model whose process is
   // certainly gone (pid dead, or none recorded, and no start, load or
@@ -539,6 +631,12 @@ export function recoverTurnStep(
   // An engine that is alive or whose state is unknown keeps the wait
   // below, unchanged; so does every other link, an external server
   // included, because the runtime answers `unknown` for them.
+  //
+  // The Atomic Chat app's server (`atomic_chat_app`, ATO-1278) is judged
+  // the same way with less to read: nothing here starts that app, so a
+  // connection it refuses outright (`ECONNREFUSED`, not a reset, a timeout
+  // or an HTTP error) for a short start grace means it is not open. The
+  // grace covers an app that is still bringing its server up.
   let localEngineGone = false;
   let localEngineDown = false;
   if (
@@ -551,12 +649,29 @@ export function recoverTurnStep(
     isWaitableOutage(err)
   ) {
     const failingLink = readFailingLink(err);
-    localEngineGone = deps.localEngineState(failingLink) === "dead";
+    const engineState = deps.localEngineState(failingLink);
+    const atomicChatRefused =
+      engineState === "atomic_chat_app" && readErrnoCode(err) === "ECONNREFUSED";
+    localEngineGone = engineState === "dead" || atomicChatRefused;
     const graceSpent =
       !providerWaitCfg.enabled ||
       turn.outageWaitedMs >=
-        Math.min(LOCAL_ENGINE_RESTART_GRACE_MS, providerWaitCfg.maxWaitMs);
-    if (localEngineGone && graceSpent) {
+        Math.min(
+          atomicChatRefused ? ATOMIC_CHAT_START_GRACE_MS : LOCAL_ENGINE_RESTART_GRACE_MS,
+          providerWaitCfg.maxWaitMs,
+        );
+    if (atomicChatRefused && graceSpent) {
+      localEngineDown = true;
+      deps.logger?.warn("Atomic Chat is not running; ending the turn instead of waiting", {
+        sessionId: state.id,
+        stepIndex: i,
+        waitedMs: turn.outageWaitedMs,
+        error: runError.message,
+        causeCode: "ECONNREFUSED",
+        ...(failingLink !== undefined ? { providerId: failingLink } : {}),
+      });
+      runError = new AtomicChatNotRunningError(failingLink ?? "atomic-chat", err);
+    } else if (localEngineGone && graceSpent) {
       localEngineDown = true;
       const causeCode = readErrnoCode(err);
       deps.logger?.warn("local model is not running; ending the turn instead of waiting", {
@@ -575,6 +690,7 @@ export function recoverTurnStep(
     !cancelled &&
     !creditRefused &&
     !localEngineDown &&
+    !localStreamCutRepeated &&
     providerWaitCfg.enabled &&
     (isWaitableOutage(err) || retryHint !== null) &&
     turn.outageWaitedMs < providerWaitCfg.maxWaitMs
@@ -628,6 +744,28 @@ export function recoverTurnStep(
       ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
     });
     return { kind: "wait", nextRetryMs };
+  }
+  // The managed local model's address refused the key while our engine's
+  // process is certainly not there (no pid recorded, or a dead one, and
+  // nothing starting): the server that answered is another program on the
+  // port, a second Core or Atomic Chat's own (ATO-1277). "Refused the
+  // agent's key, restart the model" sent people to restart a model that
+  // was not running. Judged by the same engine reading as the refusal
+  // above, so only the built-in managed link qualifies; a live or unknown
+  // engine keeps the key wording.
+  if (!cancelled && deps.localEngineState !== undefined) {
+    const refusal = findLlamaUnauthorized(err);
+    if (refusal !== null) {
+      const failingLink = readFailingLink(err);
+      if (deps.localEngineState(failingLink) === "dead") {
+        deps.logger?.warn("managed model port answered 401 with our engine not running; another program holds it", {
+          sessionId: state.id,
+          stepIndex: i,
+          ...(failingLink !== undefined ? { providerId: failingLink } : {}),
+        });
+        runError = new LocalPortTakenError(failingLink ?? "local-llama", refusal.url, err);
+      }
+    }
   }
   // A raised cap the provider refused — a 400 naming `max_tokens`
   // or the context length — is not a new failure. The turn fails
@@ -742,6 +880,16 @@ function isWaitableOutage(err: unknown): boolean {
   return err.status >= 500 || err.status === 408 || err.status === 429;
 }
 
+/** A llama-server 401 on the error or one of its causes. */
+function findLlamaUnauthorized(err: unknown): LlamaServerError | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 6 && current instanceof Error; depth += 1) {
+    if (current instanceof LlamaServerError) return current.status === 401 ? current : null;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
 /**
  * A server answered, and with a server error. What an out-of-memory
  * llama-server answers every request with; a refused connection or a
@@ -750,6 +898,27 @@ function isWaitableOutage(err: unknown): boolean {
 function isServerErrorAnswer(err: unknown): boolean {
   if (!(err instanceof TransportError) && !(err instanceof LlamaServerError)) return false;
   return err.status !== null && err.status >= 500;
+}
+
+/**
+ * The server ended a stream it had answered (`LlamaServerError.midStream`):
+ * a broken connection, or a 5xx error event inside the stream. A 4xx
+ * event (a full context, say) keeps its own handling, and our own
+ * deadlines never carry the flag.
+ */
+function isServerStreamCut(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    if (current instanceof LlamaServerError) {
+      return (
+        current.midStream &&
+        !current.timedOut &&
+        (current.status === null || current.status >= 500)
+      );
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /**
@@ -862,6 +1031,12 @@ function isOwnLlamaDeadlineExpiry(err: unknown): boolean {
 export const LOCAL_ENGINE_RESTART_GRACE_MS = 8_000;
 /** The retry interval while that process is gone. */
 const LOCAL_ENGINE_GONE_RETRY_MS = 2_000;
+/**
+ * How long a turn keeps retrying the Atomic Chat app's server while it
+ * refuses connections before it ends with `AtomicChatNotRunningError`
+ * (ATO-1278): two quick retries, for an app that is still starting.
+ */
+export const ATOMIC_CHAT_START_GRACE_MS = 4_000;
 
 /** First backoff after the provider stops answering. */
 const PROVIDER_WAIT_BASE_MS = 2_000;

@@ -221,6 +221,10 @@ export const codexCliAdapter: CliAdapterDescriptor = {
   healthArgs() {
     return ["--version"];
   },
+  authStatusArgs() {
+    // Exits 1 when signed out; reads the local auth file, sends no turn.
+    return ["login", "status"];
+  },
   parseResult,
   parseStreamEvent(): CliStreamEvent {
     return { kind: "ignore" };

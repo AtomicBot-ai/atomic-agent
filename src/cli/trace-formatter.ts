@@ -97,6 +97,7 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
         event.elapsedMs / 1000,
       )}s`;
     case "parse_failure_recovered":
+    case "reply_time_limit_retried":
       return `${head} step=${event.stepIndex} attempt=${event.attempt}/${event.budget} reason=${truncate(event.reason, 120, raw)}`;
     case "empty_completion_recovered":
       return `${head} step=${event.stepIndex} attempt=${event.attempt}/${event.budget}`;

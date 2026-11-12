@@ -4,9 +4,16 @@
  * Two tiers, because they answer two different questions:
  *
  * - `maskSecrets` — "could this string let someone act as the
- *   operator?" Applied at every level, including `full`: API keys,
- *   GitHub / Slack / OpenAI-shaped tokens and bearer headers are never
- *   wanted in a bug report, whatever else the operator chose to share.
+ *   operator?" Applied at every level, including `full`. It runs the
+ *   credential detector shared with tool output and error reporting
+ *   (`src/error-reporting/secret-detector.ts`, ATO-1077 / ATO-1176):
+ *   vendor key shapes, bearer / basic / cookie headers, JWTs, PEM keys,
+ *   URL passwords, secret-named pairs and the exact values of the
+ *   agent's own `.env`, each replaced by `[redacted:<hint>]`. A report
+ *   then adds a looser pass of its own for shapes the shared detector
+ *   leaves alone to keep false positives out of the model's view
+ *   (Telegram / Discord bot tokens, a digit-less `sk-` key, a short
+ *   secret-named value): over-masking a bug report costs nothing.
  * - `redactPersonal` — "does this string say who or where the operator
  *   is?" Applied at `scrubbed`: the home directory, other users' home
  *   directories, emails, IPv4 addresses and URL query strings. Paths
@@ -18,6 +25,12 @@
  * the free text altogether.
  */
 
+import {
+  knownSecretsFromEnv,
+  maskSecrets as maskSharedSecrets,
+  type KnownSecret,
+} from "../../error-reporting/secret-detector.js";
+
 export interface RedactionContext {
   /** `os.homedir()` — replaced by `~`. */
   homeDir: string;
@@ -25,7 +38,14 @@ export interface RedactionContext {
   workingDir?: string;
 }
 
-const SECRET_PATTERNS: readonly [RegExp, string][] = [
+/** Not inside a marker the shared detector already put there. */
+const NOT_MARKER = String.raw`(?!\[redacted:)`;
+
+/**
+ * The report's own looser layer, run after the shared detector. Each
+ * pattern skips a `[redacted:…]` marker, so a value is masked once.
+ */
+const REPORT_SECRET_PATTERNS: readonly [RegExp, string][] = [
   // GitHub
   [/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, "<token>"],
   [/\bgithub_pat_[A-Za-z0-9_]{40,}\b/g, "<token>"],
@@ -37,24 +57,39 @@ const SECRET_PATTERNS: readonly [RegExp, string][] = [
   [/\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}\b/g, "<token>"],
   // Authorization headers of any scheme
   [
-    /(authorization\s*[:=]\s*(?:bearer|basic|token)\s+)[A-Za-z0-9+/=._-]+/gi,
+    new RegExp(
+      String.raw`(authorization\s*[:=]\s*(?:bearer|basic|token)\s+)${NOT_MARKER}[A-Za-z0-9+/=._-]+`,
+      "gi",
+    ),
     "$1<redacted>",
   ],
-  [/(\bbearer\s+)[A-Za-z0-9+/=._-]{16,}/gi, "$1<redacted>"],
+  [new RegExp(String.raw`(\bbearer\s+)${NOT_MARKER}[A-Za-z0-9+/=._-]{16,}`, "gi"), "$1<redacted>"],
   // KEY=value lines and JSON fields whose name says secret
   [
-    /((?:api[_-]?key|secret|token|password|passwd)["']?\s*[:=]\s*["']?)[^\s"',}]{6,}/gi,
+    new RegExp(
+      String.raw`((?:api[_-]?key|secret|token|password|passwd)["']?\s*[:=]\s*["']?)${NOT_MARKER}[^\s"',}]{6,}`,
+      "gi",
+    ),
     "$1<redacted>",
   ],
   // AWS
   [/\bAKIA[0-9A-Z]{16}\b/g, "<key>"],
-  // Credentials embedded in a URL
+  // Credentials embedded in a URL (the user name goes too)
   [/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, "$1<redacted>@"],
 ];
 
-export function maskSecrets(text: string): string {
-  let out = text;
-  for (const [pattern, replacement] of SECRET_PATTERNS) {
+/**
+ * Mask credentials in report text: the shared detector first (with the
+ * exact values in `known`, by default the secret-looking variables of
+ * `process.env`, which carries the agent's `.env`), then the report's
+ * looser layer.
+ */
+export function maskSecrets(
+  text: string,
+  known: readonly KnownSecret[] = knownSecretsFromEnv(),
+): string {
+  let out = maskSharedSecrets(text, known);
+  for (const [pattern, replacement] of REPORT_SECRET_PATTERNS) {
     out = out.replace(pattern, replacement);
   }
   return out;

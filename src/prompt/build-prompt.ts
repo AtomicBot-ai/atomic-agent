@@ -23,7 +23,7 @@ import type { PromptMessages } from "../llm/provider/completion-types.js";
 import {
   packedConversationTurns,
   renderPackedConversation,
-  renderWorldSnapshotSection,
+  fitWorldSnapshotSection,
 } from "./build-prompt-world-conversation.js";
 import type {
   BuildPromptInput,
@@ -131,6 +131,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     input.sessionSectionsMaxTokens ?? config.agent.sessionSectionsMaxTokens;
   const completionMaxTokens =
     input.completionMaxTokens ?? config.localModels.completionMaxTokens;
+  // A reasoning model thinks inside the reply reserve before its tool
+  // call; a bounded think block is reserved for on top (ATO-1295). Not
+  // when the profile has no reasoning channel or thinking is off.
+  const reasoningBudgetTokens =
+    input.profile !== undefined &&
+    input.profile.reasoningStyle !== "none" &&
+    (input.thinking ?? config.localModels.thinking) !== "off"
+      ? (input.reasoningBudgetTokens ?? config.localModels.reasoningBudgetTokens)
+      : 0;
 
   // Under auto the conversation share is pinned to the schema default
   // rather than left to `defaultBudget`'s `tokenBudget * 0.35`.
@@ -203,7 +212,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const effectiveCatalog = workspaceCatalog ?? upstreamCatalog;
   const stablePrefix = buildStablePrefix({
     toolDescriptors: input.toolDescriptors,
-    capabilities: input.workspace ? { ...input.capabilities, workingDir: input.session.workingDir } : input.capabilities,
+    // The session's folder, in every model mode: bootstrap capabilities
+    // carry the folder the runtime started in, and a live folder switch
+    // only moves `session.workingDir`. Local mode prepares no workspace,
+    // so gating on it left the old folder in the prompt (issue #1121).
+    // The prefix still moves only when the folder does.
+    capabilities: { ...input.capabilities, workingDir: input.session.workingDir },
     skillCatalog: effectiveCatalog?.entries ?? input.skillCatalog,
     ...(effectiveCatalog ? { skillCatalogDropped: effectiveCatalog.dropped } : input.skillCatalogDropped !== undefined
       ? { skillCatalogDropped: input.skillCatalogDropped }
@@ -357,7 +371,10 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       : null;
   const proceduresTokens = procedures !== null ? estimateTokens(procedures) : 0;
 
-  const worldSnapshotFull = renderWorldSnapshotSection(input.session);
+  // The page is cut inside its untrusted fence, so the closing marker
+  // stays (ATO-1378); the plain cut below is a safety net only.
+  const worldFit = fitWorldSnapshotSection(input.session, limits.worldSnapshot);
+  const worldSnapshotFull = worldFit.text;
   const worldSnapshot = truncateToTokens(
     worldSnapshotFull,
     limits.worldSnapshot,
@@ -380,6 +397,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     proceduresTokens,
     loadedToolsTokens,
     completionMaxTokens,
+    reasoningBudgetTokens,
   });
 
   // One option set for every pack of this build: the `### request`
@@ -574,7 +592,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     sessionFacts: sessionParts.truncationFacts,
     loadedTools: loadedToolsRendered.truncated,
     profile: profileSection?.clip !== undefined,
-    worldSnapshot: worldSnapshot !== worldSnapshotFull,
+    worldSnapshot: worldFit.truncated || worldSnapshot !== worldSnapshotFull,
     conversation: packed.droppedCount > 0,
     recalled: recalledFull !== null && recalled !== recalledFull,
     memoryIndex: memoryIndexFull !== null && memoryIndex !== memoryIndexFull,

@@ -175,6 +175,13 @@ describe("overnightTaskInput", () => {
     expect(input).not.toHaveProperty("maxCostUsd");
   });
 
+  it("records the run's approval level on the row (ATO-1324)", () => {
+    const input = overnightTaskInput(args, "t-1", "s-1", {
+      agent: { task: { maxSteps: 1000, maxCostUsd: 0 } },
+    }, 2);
+    expect(input.approvalLevel).toBe(2);
+  });
+
   it("takes agent.task.maxSteps from the loaded config", () => {
     const config = getConfig();
     const input = overnightTaskInput(args, "t-1", "s-1", config);

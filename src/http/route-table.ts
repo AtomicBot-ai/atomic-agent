@@ -1,4 +1,5 @@
 import { createSessionCompactionHandler } from "./route-compaction.js";
+import { createRollbackLastTurnHandler } from "./route-rollback-last-turn.js";
 import type { RouteDefinition } from "./http-server.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
@@ -181,6 +182,8 @@ export function buildRouteTable(): RouteDefinition[] {
     },
     // ATO-731: one chat's folder, changed without restarting serve.
     { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
+    // ATO-1298: take the last plain question and answer back, for a real retry.
+    { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
     {
       method: "POST",
       path: "/api/sessions/{id}/steer",

@@ -56,6 +56,7 @@ function nativeRequestFields(params: LlmStreamParams) {
     // renders the flat text through its own template and GBNF prelude.
     ...(params.messages ? { messages: params.messages } : {}),
     ...(params.tools ? { tools: params.tools } : {}),
+    ...(params.toolWireNames ? { toolWireNames: params.toolWireNames } : {}),
     ...(params.toolChoice !== undefined
       ? { toolChoice: params.toolChoice }
       : {}),

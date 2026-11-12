@@ -1,4 +1,4 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import JSZip from "jszip";
 
@@ -8,6 +8,7 @@ import {
   type DebugBundleSnapshot,
 } from "./build-snapshot.js";
 import { traceFilePath } from "../../tracing/trace/trace-sink.js";
+import { writePrivateFile } from "./write-private-file.js";
 import type { TuiState } from "../tui-state.js";
 
 export interface DebugBundleManifest {
@@ -125,7 +126,7 @@ export async function writeDebugBundleZip(
 
   await mkdir(options.outDir, { recursive: true });
   const filePath = join(options.outDir, debugBundleFileName(options.now));
-  await writeFile(filePath, payload);
+  await writePrivateFile(filePath, payload);
 
   return {
     path: filePath,

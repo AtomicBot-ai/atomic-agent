@@ -21,6 +21,8 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
     url: DEFAULT_EXTERNAL_LLAMA_URL,
     mode: "external",
     completionMaxTokens: 16384,
+    // Same 5 minutes as `ENV_DEFAULTS.REQUEST_TIMEOUT_MS` (ATO-922).
+    requestTimeoutMs: 300_000,
     useServerTemplate: "auto",
     thinking: "auto",
     reasoningBudgetTokens: 0,

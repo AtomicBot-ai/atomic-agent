@@ -269,6 +269,13 @@ export interface RuntimeLocalModelsConfig {
    * hand-built runtime config that predates the field reads as off.
    */
   drySampler?: boolean;
+  /**
+   * Where `completionMaxTokens` and `requestTimeoutMs` came from
+   * (ATO-922): the env override or `config.json`. Logged at start so a
+   * file value the env silently beat is visible. Optional so a
+   * hand-built runtime config reads as "unknown".
+   */
+  valueSources?: LocalModelsValueSources;
   managed: UserManagedLocalLlmConfig;
   /**
    * Memory-v2 phase 1B. Second managed daemon for `/embedding`.
@@ -282,6 +289,14 @@ export interface RuntimeLocalModelsConfig {
   download: LocalModelDownloadConfig;
 }
 
+/** Which layer set a local-model knob (ATO-922). */
+export type LocalModelsValueSource = "env" | "config";
+
+export interface LocalModelsValueSources {
+  completionMaxTokens: LocalModelsValueSource;
+  requestTimeoutMs: LocalModelsValueSource;
+}
+
 export interface UserLocalModelsConfig {
   url: string;
   mode: LocalLlmMode;
@@ -293,6 +308,15 @@ export interface UserLocalModelsConfig {
    * this file value (operator override).
    */
   completionMaxTokens: number;
+  /**
+   * Budget of one request to the local model: the whole request for a
+   * unary completion, the idle gap between bytes for a stream (see
+   * `RuntimeLocalModelsConfig.requestTimeoutMs`). Default 300 000 ms.
+   * `ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS`, when set, still wins over
+   * this file value (ATO-922). Unversioned and additive: an older file
+   * has no field and reads the default, as before.
+   */
+  requestTimeoutMs: number;
   /**
    * Render local prompts through the model's own chat template
    * (llama-server `POST /apply-template`) instead of atag's hand-built

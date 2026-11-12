@@ -1244,11 +1244,16 @@ describe("TelegramChannel live-control surface", () => {
       const delivery = await channel.sendTaskReport(makeReport());
       expect(delivery).toBe("queued");
       expect(state.sendMessageCalls).toHaveLength(0);
+      // What `overnight` reads before it exits (ATO-1358).
+      const queuedId = makeReport().taskId;
+      expect(channel.hasPendingTaskReport(queuedId)).toBe(true);
+      expect(channel.hasPendingTaskReport("t-other")).toBe(false);
 
       await channel.start();
       await vi.waitFor(() => {
         expect(state.sendMessageCalls).toHaveLength(1);
       });
+      expect(channel.hasPendingTaskReport(queuedId)).toBe(false);
       expect(state.sendMessageCalls[0]!.chatId).toBe(42);
       expect(state.sendMessageCalls[0]!.text).toContain(
         "✅ Scheduled task completed",

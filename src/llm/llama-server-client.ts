@@ -10,6 +10,7 @@ import { readContextOverflowCounts, type ContextOverflowCounts } from "./reliabi
 import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
 import { drySamplerFields } from "./dry-sampler.js";
 import { takePromptProgress } from "./llama-prompt-progress.js";
+import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -386,7 +387,7 @@ export class LlamaServerError extends Error {
      * that both surface as `status === null`.
      */
     public readonly code: string | undefined = undefined,
-    options?: { cause?: unknown; body?: LlamaErrorBody },
+    options?: { cause?: unknown; body?: LlamaErrorBody; midStream?: boolean },
   ) {
     super(message);
     this.name = "LlamaServerError";
@@ -394,7 +395,17 @@ export class LlamaServerError extends Error {
       (this as { cause?: unknown }).cause = options.cause;
     }
     if (options?.body !== undefined) this.body = options.body;
+    this.midStream = options?.midStream === true;
   }
+
+  /**
+   * The server ended a stream after answering it (ATO-1279): the
+   * connection broke while the body was being read, or llama-server
+   * reported an error event inside the stream. Never set for one of our
+   * own deadlines (`timedOut`) or for the caller's abort. The agent loop
+   * retries such a step once on a managed model that is still alive.
+   */
+  readonly midStream: boolean;
 
   /**
    * The reason code out of an HTTP error body, when llama.cpp sent one
@@ -546,7 +557,22 @@ export interface LlamaServerClientOptions {
    * client reads the config on each request.
    */
   drySampler?: boolean;
+  /**
+   * Debug-level phase log for every streamed completion: sent, headers,
+   * first byte, and how it ended (with the phase it was in when it was
+   * aborted). Off unless the runtime passes one — the bootstrap client
+   * does — so a field log can show whether a request after a cut-off
+   * worker was ever sent (ATO-1357, issue #490).
+   */
+  logger?: Pick<StructuredLogger, "debug">;
 }
+
+/**
+ * Where a streamed completion was when it ended. `sending` is before any
+ * response header, `waiting` is headers in and no body byte yet,
+ * `streaming` is after the first byte.
+ */
+export type LlamaStreamPhase = "sending" | "waiting" | "streaming";
 
 export interface LlamaServerProps {
   [key: string]: unknown;
@@ -582,6 +608,7 @@ export class LlamaServerClient {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly refreshApiKey: (url: string) => Promise<string | null>;
   private readonly drySamplerOverride: boolean | undefined;
+  private readonly logger: Pick<StructuredLogger, "debug"> | undefined;
   /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
   private readonly throughputSamples: number[] = [];
   /**
@@ -647,6 +674,7 @@ export class LlamaServerClient {
     this.refreshApiKey = options.refreshApiKey ??
       ((url) => refreshCoreKeyForUrl(getConfig().paths.localModelsDataDir, url));
     this.drySamplerOverride = options.drySampler;
+    this.logger = options.logger;
   }
 
   /**
@@ -944,6 +972,17 @@ export class LlamaServerClient {
     request: CompletionRequest,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
     const { url, headers, body } = this.prepareRequest(request, true);
+    // Phase trace (ATO-1357). Debug level, and every field is ours: no
+    // prompt text, no key. Enough to tell "never sent" from "sent and
+    // never answered" from "answered and then cut" in a field log.
+    const sentAt = Date.now();
+    const trace = {
+      sessionId: request.sessionId ?? null,
+      slotId: request.slotId ?? -1,
+      url,
+    };
+    let phase: LlamaStreamPhase = "sending";
+    let attempt = 0;
     // Retry only the initial fetch. Once the body starts streaming we
     // can't safely replay — partial tokens have already been delivered
     // to the caller and the model has been charged for them server-side.
@@ -968,12 +1007,25 @@ export class LlamaServerClient {
           } = this.createRequestController(request.signal, "first-token", {
             slotId: request.slotId ?? -1,
           });
+          attempt += 1;
+          this.logger?.debug("llama stream: request sent", {
+            ...trace,
+            attempt,
+            callerAborted: request.signal?.aborted === true,
+          });
           try {
             const response = await this.fetchImpl(url, {
               method: "POST",
               headers,
               body,
               signal: controller.signal,
+            });
+            phase = "waiting";
+            this.logger?.debug("llama stream: headers received", {
+              ...trace,
+              attempt,
+              status: response.status,
+              elapsedMs: Date.now() - sentAt,
             });
             if (!response.ok || !response.body) {
               throw await buildHttpError(response, url);
@@ -988,6 +1040,16 @@ export class LlamaServerClient {
             };
           } catch (err) {
             cleanup();
+            this.logger?.debug("llama stream: ended before the body", {
+              ...trace,
+              attempt,
+              phase,
+              elapsedMs: Date.now() - sentAt,
+              aborted: controller.signal.aborted,
+              callerAborted: request.signal?.aborted === true,
+              deadline: timedOut(),
+              error: err instanceof Error ? err.message : String(err),
+            });
             throw this.wrapTransportError(err, url, timedOut());
           }
         },
@@ -1035,6 +1097,10 @@ export class LlamaServerClient {
       slotId: request.slotId ?? -1,
       modelId: null,
     };
+    // How the body ended, for the trace in `finally`. Stays `abandoned`
+    // when a consumer walked away (`.return()`), which runs no `catch`.
+    let outcome: "done" | "error" | "abandoned" = "abandoned";
+    let failure: string | undefined;
     try {
       if (!response.body) {
         throw new LlamaServerError(
@@ -1070,6 +1136,13 @@ export class LlamaServerClient {
       while (looped === null) {
         const { value, done } = await reader.read();
         if (done) break;
+        if (phase !== "streaming") {
+          phase = "streaming";
+          this.logger?.debug("llama stream: first byte", {
+            ...trace,
+            elapsedMs: Date.now() - sentAt,
+          });
+        }
         // A byte arrived: the server is alive, so start the clock over —
         // and from now on a silence really is a mid-reply stall.
         // Deliberately not called on `done` — that breaks straight out of
@@ -1096,6 +1169,24 @@ export class LlamaServerClient {
         while (eventEnd !== -1) {
           const rawEvent = buffer.slice(0, eventEnd);
           buffer = buffer.slice(eventEnd + 2);
+          // llama-server reports a failure after the stream opened as an
+          // error event (ATO-1279), not as a status: read it as one
+          // instead of letting the stream end as an empty reply.
+          const streamError = parseSseErrorEvent(rawEvent);
+          if (streamError !== null) {
+            throw new LlamaServerError(
+              `llama-server reported an error mid-stream (http ${streamError.status})` +
+                (streamError.detail ? `: ${streamError.detail}` : ""),
+              streamError.status,
+              url,
+              false,
+              undefined,
+              {
+                ...(streamError.type !== undefined ? { body: { type: streamError.type } } : {}),
+                midStream: true,
+              },
+            );
+          }
           const parsed = parseSseEvent(rawEvent);
           if (parsed && takePromptProgress(parsed, request.onPromptProgress)) {
             eventEnd = buffer.indexOf("\n\n");
@@ -1151,11 +1242,29 @@ export class LlamaServerClient {
         void reader?.cancel().catch(() => undefined);
         controller.abort();
         yield { delta: "", reasoningDelta: "", done: true };
+        outcome = "done";
         return looped;
       }
+      outcome = "done";
       return finalResult;
     } catch (err) {
-      throw this.wrapTransportError(err, url, timedOut());
+      outcome = "error";
+      failure = err instanceof Error ? err.message : String(err);
+      const wrapped = this.wrapTransportError(err, url, timedOut());
+      // The body was open and the connection broke under it: the server
+      // cut the reply, not our clock and not the caller (ATO-1279).
+      if (
+        reader !== null &&
+        !(err instanceof LlamaServerError) &&
+        !wrapped.timedOut &&
+        request.signal?.aborted !== true
+      ) {
+        throw new LlamaServerError(wrapped.message, wrapped.status, wrapped.url, false, wrapped.code, {
+          cause: err,
+          midStream: true,
+        });
+      }
+      throw wrapped;
     } finally {
       // Release the transport, whatever ended this generator.
       //
@@ -1187,9 +1296,23 @@ export class LlamaServerClient {
       // be aborted must never hang the consumer trying to walk away.
       // Nothing here helps a generator dropped without `.return()` — GC
       // never runs `finally` — but every reachable exit is covered.
+      const abortedBefore = controller.signal.aborted;
       void reader?.cancel().catch(() => undefined);
       if (!controller.signal.aborted) controller.abort();
       cleanup();
+      this.logger?.debug("llama stream: closed", {
+        ...trace,
+        outcome,
+        phase,
+        elapsedMs: Date.now() - sentAt,
+        // Which side ended it: the caller's signal (a worker's clock, a
+        // cancel), one of this client's own deadlines, or neither (a
+        // finished body, or a consumer that walked away).
+        callerAborted: request.signal?.aborted === true,
+        deadline: timedOut(),
+        abortedBeforeRelease: abortedBefore,
+        ...(failure === undefined ? {} : { error: failure }),
+      });
     }
   }
 
@@ -1785,6 +1908,56 @@ export class LlamaServerClient {
     throw lastError instanceof Error
       ? lastError
       : new LlamaServerError(String(lastError), null, url);
+  }
+}
+
+/**
+ * An error llama-server reported inside an open stream, or null. Two
+ * shapes: an `error:` event line carrying `{code, message, type}`, and a
+ * `data:` payload whose `error` is an object or a string. The status is
+ * the event's numeric `code`, else 500. The detail is capped like an
+ * HTTP error body's.
+ */
+export function parseSseErrorEvent(
+  rawEvent: string,
+): { status: number; detail: string; type?: string } | null {
+  for (const line of rawEvent.split("\n")) {
+    let payload: unknown;
+    if (line.startsWith("error:")) {
+      const text = line.slice(6).trim();
+      payload = tryParseJson(text);
+      if (payload === null || typeof payload !== "object") {
+        return { status: 500, detail: extractLlamaErrorDetail(typeof payload === "string" ? payload : text) };
+      }
+    } else if (line.startsWith("data:")) {
+      const parsed = tryParseJson(line.slice(5).trim());
+      if (parsed === null || typeof parsed !== "object" || !("error" in parsed)) continue;
+      payload = (parsed as { error?: unknown }).error;
+      if (typeof payload === "string") return { status: 500, detail: extractLlamaErrorDetail(payload) };
+      if (payload === null || typeof payload !== "object") continue;
+    } else {
+      continue;
+    }
+    // `{code, message, type}`, or the same wrapped in `error`.
+    const outer = payload as Record<string, unknown>;
+    const inner = outer["error"];
+    const record =
+      inner !== null && typeof inner === "object" ? (inner as Record<string, unknown>) : outer;
+    const code = record["code"];
+    const status =
+      typeof code === "number" && Number.isInteger(code) && code >= 400 && code < 600 ? code : 500;
+    const type = typeof record["type"] === "string" ? record["type"] : undefined;
+    const detail = extractLlamaErrorDetail(JSON.stringify({ error: record }));
+    return { status, detail, ...(type !== undefined ? { type } : {}) };
+  }
+  return null;
+}
+
+function tryParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
   }
 }
 

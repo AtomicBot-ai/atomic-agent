@@ -14,7 +14,8 @@ import { prepareAgentTurn, prepareTurnPolicies, prepareTurnBudgets, createTurnLo
 import { refreshMemoryContext, createSurfacedMemoryTracker } from "./turn/turn-memory-context.js";
 export { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn/turn-memory-context.js";
 import { finalizeAgentTurn, finalizeFailedAgentTurn } from "./turn/turn-finalization.js";
-import { costCeilingNotice, costCeilingReached, recordStepSpend } from "./turn/turn-spend.js";
+import { armApprovalDeadline } from "./turn/approval-deadline.js";
+import { costCeilingNotice, costCeilingReached, recordCompactionSpend, recordStepSpend } from "./turn/turn-spend.js";
 export { formatTaskStoppedReply } from "./turn/turn-finalization.js";
 import { delegationProducedWork, recordDelegation, wouldRefuse as fusionGateWouldRefuse } from "./policies/fusion-orchestrator-mode.js";
 import { observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
@@ -50,6 +51,7 @@ import { getConfig } from "../config/index.js";
 
 import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.js";
 import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
+import { toolDisabledEvents } from "./tool-disabled-notice.js";
 import { CompactPromptLatch } from "../prompt/compact-prompt.js";
 
 /**
@@ -148,6 +150,9 @@ export class AgentLoop {
     const { fusionOrchestratorTurn, toolRole, claimEvidence, linkEvidence, progressNotes, unknownTools } = policies;
     let { fusionState, reviewStall, replan } = policies;
     const turn = createTurnLoopState();
+    // ATO-1417: tools a provider left out of this turn's requests (the
+    // server refused their schema), each said once per turn.
+    const announcedDroppedTools = new Set<string>();
     // ATO-486: a new message on a session whose plan is still open gets
     // one short reminder on the turn's first step, so the model carries
     // the checklist on or says it is dropped. Never on a plan that is
@@ -384,6 +389,9 @@ export class AgentLoop {
       // summary step gets at least its own five minutes — it is
       // reserved whichever ceiling bit, and llama-server keeps decoding
       // the abandoned request until it notices the closed connection.
+      // Reset right before the model call: a slow compaction ahead of it
+      // must not count as a long reply.
+      let requestStartedAt = Date.now();
       const requestDeadline = createRequestDeadline(
         options.signal,
         finalizationStep
@@ -574,6 +582,13 @@ export class AgentLoop {
               // spend ceiling exists for.
               if (event.type === "llm_completed") {
                 recordStepSpend(turn, event.completion, contextProviderId, this.deps.priceCompletion);
+                for (const disabled of toolDisabledEvents(
+                  event.completion.droppedTools,
+                  announcedDroppedTools,
+                  i,
+                )) {
+                  this.deps.onEvent?.(disabled);
+                }
               }
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
@@ -619,6 +634,7 @@ export class AgentLoop {
             signal: requestDeadline.signal,
             ...(options.providerId ? { providerId: options.providerId } : {}),
             ...(options.ephemeral ? { ephemeral: true } : {}),
+            onSpend: (usd) => recordCompactionSpend(turn, usd),
           });
           while (maintenance) {
             state = await maintenance;
@@ -639,10 +655,26 @@ export class AgentLoop {
               signal: requestDeadline.signal,
               ...(options.providerId ? { providerId: options.providerId } : {}),
               ...(options.ephemeral ? { ephemeral: true } : {}),
+              onSpend: (usd) => recordCompactionSpend(turn, usd),
             });
           }
         }
-        const outcome = await executeStep(stepContext, stepDeps);
+        requestStartedAt = Date.now();
+        // A task's time limit also ends a wait on an approval prompt
+        // nobody is there to answer (ATO-1367).
+        const disposeApprovalDeadline =
+          options.taskMaxDurationMs !== undefined && this.deps.denyPendingApprovals
+            ? armApprovalDeadline({
+                msLeft: durationCeilingMs - (Date.now() - taskStartedAt),
+                deny: (reason) => this.deps.denyPendingApprovals?.(state.id, reason),
+              })
+            : () => undefined;
+        let outcome: Awaited<ReturnType<typeof executeStep>>;
+        try {
+          outcome = await executeStep(stepContext, stepDeps);
+        } finally {
+          disposeApprovalDeadline();
+        }
         requestDeadline.dispose();
         const durationMs = Date.now() - started;
         if (turn.awaitingRecovery) {
@@ -996,6 +1028,7 @@ export class AgentLoop {
               signal: requestDeadline.signal, requested: "overflow",
               ...(options.providerId ? { providerId: options.providerId } : {}),
               ...(options.ephemeral ? { ephemeral: true } : {}),
+              onSpend: (usd) => recordCompactionSpend(turn, usd),
             }) ?? Promise.resolve(state));
           } catch (compactionError) {
             this.deps.logger?.warn("overflow compaction failed", { ...logFields,
@@ -1037,6 +1070,7 @@ export class AgentLoop {
           state, options, stepIndex: i, finalizationStep, noticeForThisStep,
           effectiveTransport, requestDeadline, resumesStoppedTask, taskStartedAt,
           durationCeilingMs, providerWaitCfg, recoveryStepAvailable,
+          requestElapsedMs: Date.now() - requestStartedAt,
           ...(stepModelMode !== undefined ? { modelMode: stepModelMode } : {}),
           ...(contextExhausted !== undefined ? { contextExhausted } : {}),
         }, this.deps, turn);

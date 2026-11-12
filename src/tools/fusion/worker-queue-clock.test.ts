@@ -337,7 +337,12 @@ describe("a local worker sized for a cloud model (ATO-234)", () => {
       }),
       // Both slots working — on this fan-out's own two prompts.
       probeSlotOccupancy: async () => ({ total: 2, busy: 2 }),
-      logger: { info: (_message, context) => logged.push(context) },
+      // Only the budget lines: every local dispatch also logs its own line.
+      logger: {
+        info: (message, context) => {
+          if (!message.includes("local worker dispatched")) logged.push(context);
+        },
+      },
     };
     const run = runWorkerTasks(deps, {
       ...BASE,

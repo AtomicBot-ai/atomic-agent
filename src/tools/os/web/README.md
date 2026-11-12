@@ -13,6 +13,14 @@ This area owns `os.web.fetch` page retrieval and `os.http.request` raw GET/POST 
 - [retry-after-header.ts](retry-after-header.ts) parses server retry hints for both request and fetch. Retry state follows the actual hop method/body: an earlier POST may already have been processed. Preserve the existing explicit invitation requirement for POST replay and the bodyless GET transition after a redirect.
 - [ensure-curl.ts](ensure-curl.ts) classifies a missing curl binary and provides its error type. Web-search transport uses this helper directly; it does not acquire page-fetch or raw-request orchestration.
 
+## Approval and credentials (ATO-1182)
+
+- "Allow for this session" on an `os.http.request` prompt covers the target's origin (scheme, host, port) only: the request carries `grantKey` and the gate keys the grant by it. A POST to another host asks again.
+- A redirect that would carry the method and body to another origin (a 307/308 after a POST) is not followed. The result names the `Location` (`details.redirectNotFollowed`) and the model has to make a new request there, which is gated like any other. Same-origin redirects and bodyless GET hops are still followed.
+- Any hop on another origin is sent without credential headers (`Authorization`, `Proxy-Authorization`, `Cookie`, `X-Api-Key` and any name containing token, secret, key, auth, password, session, cookie, credential or signature).
+- The approval preview masks the values of those headers (`Authorization: Bearer ****`), since it is shown in the terminal, the desktop app and Telegram.
+- Known limitation: with the default `http.approvalMode: "writes"` a GET runs without a prompt, and a GET can still carry data out in its URL (query string, path) and headers. Use `approvalMode: "always"` or `http.hostAllowlist` where that matters.
+
 Callers inject command execution, DNS lookup and, where supported, sleep for deterministic tests. Request-local state owns redirect/retry progress and abortable backoff; there is no new persistent store here. Sandbox owns command processes, approval owns grants, and config owns HTTP/fetch defaults. Response bounds, abort checks, marker parsing and SSRF posture must survive mechanical moves unchanged.
 
 ## Validation

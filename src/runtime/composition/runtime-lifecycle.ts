@@ -47,6 +47,8 @@ export interface RuntimeLifecycleResources {
   readonly telegramChannelForShutdown: Pick<TelegramChannel, "stop"> | null;
   readonly discordChannelForShutdown: Pick<DiscordChannel, "stop"> | null;
   readonly swarmForShutdown: Pick<SwarmRegistry, "stopAll"> | null;
+  /** Unwatch of the plugin MCP live stop (ATO-1407); cleared before the manager shuts down. */
+  readonly pluginMcpWatch?: (() => void) | null;
   readonly consolidatorJob: Pick<ConsolidatorJob, "stop"> | null;
   readonly taskStore: Pick<TaskStore, "close">;
   readonly analytics: Pick<AnalyticsClient, "shutdown"> | null;
@@ -158,6 +160,11 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
           error: err instanceof Error ? err.message : String(err),
         });
       }
+    }
+    try {
+      resources.pluginMcpWatch?.();
+    } catch {
+      // best-effort: an unwatch never blocks the rest of shutdown
     }
     try {
       // MCP manager closes every connected `McpClient` (transport

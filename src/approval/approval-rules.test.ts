@@ -120,6 +120,20 @@ describe("matchRules", () => {
       expect(matchRules(ask, line([["/usr/bin/git", "push"]]))?.decision).toBe("ask");
     });
 
+    it("a deny or ask matches a script piped into a shell whatever its prefix, an allow does not", () => {
+      const piped = line([["printf", "x"], ["sh"]], { commandUnreadable: true });
+      expect(
+        matchRules([rule({ decision: "deny", commandPrefix: ["npm", "publish"] })], piped)?.decision,
+      ).toBe("deny");
+      expect(
+        matchRules([rule({ decision: "ask", commandPrefix: ["rm"] })], piped)?.decision,
+      ).toBe("ask");
+      expect(matchRules([rule({ decision: "allow", commandPrefix: ["sh"] })], piped)).toBeNull();
+      expect(
+        matchRules([rule({ decision: "deny", commandPrefix: ["rm"] })], line([["printf", "x"], ["sh"]])),
+      ).toBeNull();
+    });
+
     it("an allow never matches through segments", () => {
       const allow = [rule({ decision: "allow", commandPrefix: ["git"] })];
       expect(matchRules(allow, line([["git", "status"]]))).toBeNull();

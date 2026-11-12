@@ -62,6 +62,16 @@ describe("sanitizeLlmFailureTags", () => {
     });
   });
 
+  it("sends the managed engine's fault as a fixed word, never anything else (ATO-1279)", () => {
+    expect(sanitizeLlmFailureTags({ localEngine: "llama-server", localFault: "out_of_memory" })).toEqual({
+      local_engine: "llama-server",
+      local_fault: "out_of_memory",
+    });
+    expect(sanitizeLlmFailureTags({ localFault: "server_crashed" })).toEqual({ local_fault: "server_crashed" });
+    expect(sanitizeLlmFailureTags({ localFault: "GGML_ASSERT in /Users/me/src" })).toEqual({ local_fault: "unknown" });
+    expect(sanitizeLlmFailureTags({ localEngine: "external", localFault: "none" })).toEqual({ local_engine: "external" });
+  });
+
   it("returns undefined when there is nothing to tag", () => {
     expect(sanitizeLlmFailureTags(undefined)).toBeUndefined();
     expect(sanitizeLlmFailureTags({})).toBeUndefined();
@@ -135,6 +145,38 @@ describe("local refusal tags (ATO-421, ATO-769)", () => {
     expect(alive("unknown")).toBe("unknown");
     expect(alive("pid 4242 at /Users/someone")).toBe("unknown");
     expect(alive(undefined)).toBe("unknown");
+  });
+
+  it("says why the managed engine was judged as it was, in fixed words only (ATO-1275)", () => {
+    expect(sanitizeLlmFailureTags({
+      localEngine: "atomic-core",
+      connectionRefused: true,
+      engineLiveness: "unknown",
+      engineLivenessReason: "lock_held",
+      engineLock: "held",
+    })).toMatchObject({ engine_liveness: "unknown", engine_liveness_reason: "lock_held", engine_lock: "held" });
+    const odd = sanitizeLlmFailureTags({
+      localEngine: "atomic-core",
+      connectionRefused: true,
+      engineLiveness: "pid 4242",
+      engineLivenessReason: "EACCES /Users/someone/.atomic-agent",
+      engineLock: "/tmp/lock",
+    });
+    expect(odd).toMatchObject({ engine_liveness: "unknown", engine_liveness_reason: "unknown", engine_lock: "unknown" });
+    expect(JSON.stringify(odd)).not.toContain("someone");
+  });
+
+  it("an external engine carries no liveness reason tags", () => {
+    const tags = sanitizeLlmFailureTags({
+      localEngine: "external",
+      connectionRefused: true,
+      engineLiveness: "dead",
+      engineLivenessReason: "pid_dead",
+      engineLock: "free",
+    });
+    expect(tags?.engine_liveness).toBeUndefined();
+    expect(tags?.engine_liveness_reason).toBeUndefined();
+    expect(tags?.engine_lock).toBeUndefined();
   });
 
   it("an external engine is never judged alive or dead", () => {
@@ -258,5 +300,20 @@ describe("llm_failure context through scrubber and envelope", () => {
       payloadOf(buildEnvelope(DSN, bare, META).body).fingerprint,
     );
     expect(payloadOf(buildEnvelope(DSN, bare, META).body).tags.local_engine).toBeUndefined();
+  });
+});
+
+describe("port_holder (ATO-1277)", () => {
+  it("says other_process for a 401 on the managed port with our engine gone", () => {
+    expect(sanitizeLlmFailureTags({ providerId: "local-llama", daemonState: "no_pid", portHeldByOther: true })).toEqual({
+      provider_id: "local-llama",
+      daemon_state: "no_pid",
+      port_holder: "other_process",
+    });
+  });
+
+  it("is absent otherwise", () => {
+    expect(sanitizeLlmFailureTags({ providerId: "local-llama", daemonState: "alive" })?.port_holder).toBeUndefined();
+    expect(sanitizeLlmFailureTags({ providerId: "local-llama", portHeldByOther: false })?.port_holder).toBeUndefined();
   });
 });

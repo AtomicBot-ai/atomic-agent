@@ -79,6 +79,7 @@ import {
 } from "../local-llm/index.js";
 import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../local-llm/core/core-errors.js";
 import { retireIdleCore } from "../local-llm/core/core-sessions.js";
+import { isCoreOperationBusy } from "../local-llm/core/core-operation.js";
 import { activeCoreVersion, CORE_VERSION } from "../local-llm/core/core-state.js";
 import { selectManagedEngine } from "../local-llm/engine-selection.js";
 import { persistManagedEngine } from "./models-engine.js";
@@ -1045,7 +1046,7 @@ function persistBackendVariantCpu(path: string): void {
         managed: { ...user.localModels.managed, backendVariant: "cpu" },
       },
     };
-    writeUserConfigFileSync(path, next);
+    writeUserConfigFileSync(path, next, { chosen: ["localModels.managed.backendVariant"] });
     resetConfigCache();
     process.stderr.write(
       'recorded backendVariant "cpu" in config.json — set it to "auto" or "vulkan" to try the GPU build again (e.g. after a driver update)\n',
@@ -1519,6 +1520,15 @@ export async function runLocalModelsUpdate(signal?: AbortSignal): Promise<number
     );
     return 0;
   } catch (e) {
+    /* ATO-1348: refused because another process holds the engine lock.
+       Nothing was installed or started here, and the holder (Studio putting
+       Core in place, a model load) may have just started a Core it is about
+       to use: retiring an "idle" Core now would pull it out from under that
+       caller. Say so and leave Core alone. */
+    if (isCoreOperationBusy(e)) {
+      process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+      return 1;
+    }
     const failure = coreFailureOf(e);
     await reportCoreFailure(failure);
     // No Core build for this computer: install llama.cpp instead, so the

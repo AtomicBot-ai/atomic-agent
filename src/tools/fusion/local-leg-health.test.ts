@@ -5,6 +5,7 @@ import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import { createEmptySessionState } from "../../session/session-state.js";
 import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
+import { FusionLiveWorkers } from "./escalation.js";
 import {
   LocalLegHealth,
   LOCAL_LEG_UNRESPONSIVE_ERROR,
@@ -132,7 +133,7 @@ describe("dispatch after a cut-off local worker (ATO-917)", () => {
 
   it("dispatches as before once the server answers, and clears the mark", async () => {
     const health = new LocalLegHealth();
-    health.noteCut("task t9 was cancelled");
+    health.noteCut("task t9 was cancelled", "local-llama");
     const deps = harness(okTurn, {
       localLegHealth: health,
       probeLocalHealth: async () => "answered",
@@ -166,5 +167,74 @@ describe("dispatch after a cut-off local worker (ATO-917)", () => {
     });
     expect(probes).toBe(0);
     expect(deps.turns).toBe(1);
+  });
+
+  it("marks the leg when the person stops a local worker (ATO-1317)", async () => {
+    const health = new LocalLegHealth();
+    const live = new FusionLiveWorkers();
+    const deps = harness(servedThenHung, { localLegHealth: health, liveWorkers: live });
+    const run = runWorkerTasks(deps, {
+      ...BASE,
+      tasks: TASK,
+      signal: new AbortController().signal,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(live.stop("s-parent", "t0")).toBe(true);
+    await run;
+    expect(health.isSuspect()).toBe(true);
+    expect(health.cause()).toBe("task t0 was stopped by the person");
+  });
+
+  it("keeps each local server's mark apart and asks only the leg's own server (ATO-1318)", async () => {
+    const health = new LocalLegHealth();
+    health.noteCut("task t9 was timed out", "second-llama");
+    const asked: string[] = [];
+    const deps = harness(okTurn, {
+      localLegHealth: health,
+      probeLocalHealthFor: (providerId) =>
+        providerId === "local-llama"
+          ? async () => {
+              asked.push(providerId);
+              return "unanswered";
+            }
+          : undefined,
+    });
+    // The main server was never cut: no question, the worker goes.
+    const [main] = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: TASK,
+      signal: new AbortController().signal,
+    });
+    expect(main!.status).not.toBe("failed");
+    expect(asked).toEqual([]);
+    // The cut server has no probe of its own: not checked against the
+    // main one, and its mark stays.
+    const [second] = await runWorkerTasks(deps, {
+      ...BASE,
+      providerId: "second-llama",
+      tasks: TASK,
+      signal: new AbortController().signal,
+    });
+    expect(second!.status).not.toBe("failed");
+    expect(asked).toEqual([]);
+    expect(health.isSuspect("second-llama")).toBe(true);
+    expect(health.isSuspect("local-llama")).toBe(false);
+  });
+
+  it("files a cut under the worker's own server", async () => {
+    vi.useFakeTimers();
+    const health = new LocalLegHealth();
+    const deps = harness(servedThenHung, { localLegHealth: health });
+    const run = runWorkerTasks(deps, {
+      ...BASE,
+      providerId: "second-llama",
+      tasks: TASK,
+      signal: new AbortController().signal,
+    });
+    await vi.advanceTimersByTimeAsync(46 * MIN);
+    await run;
+    expect(health.isSuspect("second-llama")).toBe(true);
+    expect(health.isSuspect("local-llama")).toBe(false);
+    expect(health.cause("second-llama")).toMatch(/task t0 was timed out/);
   });
 });

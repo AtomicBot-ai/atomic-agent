@@ -40,6 +40,12 @@ export interface TurnLoopState {
   /** Retried a step after an outage and have not yet seen it succeed. */
   awaitingRecovery: boolean;
   /**
+   * The step index already retried after the managed local model, still
+   * running, cut its reply mid-stream (ATO-1279). Once per step: a
+   * second cut on the same step ends the turn.
+   */
+  localStreamCutRetry: { stepIndex: number } | null;
+  /**
    * Restarts of the local model after it ran out of memory with no step
    * completed in between (ATO-334). Bounded by
    * `OUT_OF_MEMORY_MAX_RESTARTS`; a completed step resets it.
@@ -68,6 +74,8 @@ export interface TurnLoopState {
    * a step that completes without a cut resets it.
    */
   truncationRetries: number;
+  /** Retries of one step after a provider's time limit ended its reply. */
+  midReplyTimeoutRetry: { stepIndex: number; attempts: number } | null;
   /** The step index already retried after a request-size refusal. */
   sizeRepackRetry: { stepIndex: number } | null;
   /** The loop's own estimate of the last prompt built, for the repack fallback. */
@@ -113,12 +121,14 @@ export function createTurnLoopState(): TurnLoopState {
     spendUsd: 0,
     spendPriced: false,
     legMadeProgress: false,
+    localStreamCutRetry: null,
     outageWaitedMs: 0,
     outageAttempts: 0,
     awaitingRecovery: false,
     oomRestarts: 0,
     truncationRetry: null,
     truncationRetries: 0,
+    midReplyTimeoutRetry: null,
     sizeRepackRetry: null,
     lastPromptTokens: 0,
     lastBoundaryIndex: -1,

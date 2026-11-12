@@ -93,6 +93,52 @@ const BASE = {
 };
 
 describe("runWorkerTasks", () => {
+  it("starts no further task after the turn is stopped, with no budget cap set (ATO-1334)", async () => {
+    const stop = new AbortController();
+    const { deps, calls } = harness(async () => {
+      stop.abort(new Error("stopped"));
+      return turnResult({ reason: "cancelled" });
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(3),
+      maxWorkers: 1,
+      signal: stop.signal,
+    });
+    expect(calls).toHaveLength(1);
+    expect(results.map((r) => r.status)).toEqual(["cancelled", "cancelled", "cancelled"]);
+    expect(results[1]!.error).toBe("not started: the turn was stopped");
+    expect(results[2]!.error).toBe("not started: the turn was stopped");
+  });
+
+  it("names the spend cap, not a stop, when the cap also aborts the turn's signal (ATO-1420)", async () => {
+    // The real wiring (fusion-delegate): reaching the cap aborts the same
+    // signal the pool reads. Both say "stop" by the next claim, and the
+    // row must name the cap. With the signal read first, these rows read
+    // "not started: the turn was stopped" and this test fails.
+    const stop = new AbortController();
+    const capMessage = "the spend cap for this turn is reached";
+    let capReached = false;
+    const { deps, calls } = harness(async () => {
+      capReached = true;
+      stop.abort(new Error(capMessage));
+      return turnResult({ reason: "cancelled" });
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(3),
+      maxWorkers: 1,
+      signal: stop.signal,
+      shouldStart: () => (capReached ? capMessage : undefined),
+    });
+    expect(stop.signal.aborted).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(results.map((r) => r.status)).toEqual(["cancelled", "cancelled", "cancelled"]);
+    expect(results[1]!.error).toBe(`not started: ${capMessage}`);
+    expect(results[2]!.error).toBe(`not started: ${capMessage}`);
+    expect(results[1]!.error).not.toMatch(/the turn was stopped/);
+  });
+
   it("pins each worker turn to the local leg with the fusion origin and the worker filter", async () => {
     const { deps, calls } = harness(async ({ options }) => {
       options.eventHook?.({
@@ -1688,5 +1734,40 @@ describe("runWorkerTasks — task tree (ATO-940)", () => {
     });
     expect(steers).toEqual([]);
     expect(result!.reply).toMatch(/\(4 of 8 steps/);
+  });
+});
+
+describe("runWorkerTasks — shouldStartTask (ATO-1406)", () => {
+  it("does not start a task once shouldStartTask gives a reason, after the cap is asked", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    let stop: string | undefined;
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(3),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+      shouldStartTask: () => stop,
+      onTaskFinished: () => {
+        stop = "the fan-out was stopped because the leg is broken";
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(results.map((r) => r.status)).toEqual(["ok", "cancelled", "cancelled"]);
+    expect(results[1]!.error).toBe(
+      "not started: the fan-out was stopped because the leg is broken",
+    );
+  });
+
+  it("lets the cap's reason win over the breaker's", async () => {
+    const { deps } = harness(async () => turnResult());
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+      shouldStart: () => "the spend cap",
+      shouldStartTask: () => "the breaker",
+    });
+    expect(results[0]!.error).toBe("not started: the spend cap");
   });
 });

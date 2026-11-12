@@ -1,6 +1,10 @@
 import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
 import { readErrnoCode } from "../../errno-code.js";
+import {
+  groqRequestTooLargeSentence,
+  isGroqRequestTooLarge,
+} from "./groq-plan-limit.js";
 import { providerServiceName } from "../provider-service-name.js";
 import { isLocalProviderUrl } from "../presets/is-local-provider-url.js";
 import {
@@ -11,6 +15,10 @@ import {
   type CreditLimitRetryPlan,
 } from "./plan-credit-limit-retry.js";
 import {
+  geminiNotFoundSentence,
+  isGeminiOpenAiCompatUrl,
+} from "../gemini/gemini-openai-compat.js";
+import {
   CREDENTIAL_WORDING,
   MODERATION_WORDING,
   parseProviderErrorBody,
@@ -18,10 +26,16 @@ import {
   type ProviderErrorBody,
 } from "./parse-provider-error-body.js";
 import {
-  LOCAL_BAD_REQUEST_ADVICE,
   LOCAL_BAD_REQUEST_SENTENCE,
+  localBadRequestAdvice,
   localBadRequestKind,
 } from "./local-bad-request.js";
+import { isToolSchemaErrorText } from "./tool-schema-rejection.js";
+import {
+  ATOMIC_CHAT_KEY_ADVICE,
+  atomicChatKeyMessage,
+  isAtomicChatKeyRefusal,
+} from "./atomic-chat-key.js";
 
 export type OpenAiHttpDeps = {
   baseUrl: string;
@@ -208,8 +222,18 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
     // the key instead of quoting a status the provider never answered.
     return `${who} can't use its API key: the key has a character API keys never contain (often a letter or quote picked up while pasting), so it was not sent. Re-enter the key in the Providers panel.`;
   }
+  if (isAtomicChatKeyRefusal(err)) {
+    // ATO-1274: Atomic Chat checks a key only when its key protection is
+    // on, so this is that, not a dead key.
+    return `${atomicChatKeyMessage(err)} ${ATOMIC_CHAT_KEY_ADVICE}`;
+  }
   if (err.keyProblem === "missing") {
     return `${who} needs an API key and none is set. Add the key in the Providers panel.`;
+  }
+  if (isGroqRequestTooLarge(err)) {
+    // The plan's tokens-per-minute allowance, not a malformed request
+    // (ATO-1283): say which limit it is and what helps.
+    return groqRequestTooLargeSentence(err);
   }
   if ((err.status === 403 || err.status === 429) && isCreditExhausted(err)) {
     return billingRefusalSentence(err);
@@ -226,6 +250,14 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   }
   if ((err.status === 404 || err.status === 405) && isLocalProviderUrl(err.url)) {
     return localServerNotFoundSentence(err.url, err.status);
+  }
+  if (err.status === 404 && err.streamError === undefined && isGeminiOpenAiCompatUrl(err.url)) {
+    // Gemini's 404 is a model id it does not serve (ATO-1282); its own
+    // sentence names the model, and the raw body helps nobody.
+    return geminiNotFoundSentence(
+      who,
+      `${err.body?.message ?? ""}\n${err.body?.text ?? ""}\n${err.message}`,
+    );
   }
   if (err.status === 404) {
     return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;
@@ -252,6 +284,14 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   }
   if (err.status === 429) {
     return `${who} is rate-limiting this key (429). Tried ${OPENAI_MAX_ATTEMPTS} times — wait a minute and retry.`;
+  }
+  if (isToolSchemaErrorText(err.message)) {
+    // Not retried and not "server trouble": the server could not use a
+    // tool's JSON schema and no single tool could be left out (ATO-1399).
+    return (
+      `${who} could not use the JSON schema of one of the agent's tools (${err.status}). ` +
+      `Turn off the MCP server or plugin that added the tool, or update the model server.`
+    );
   }
   if (err.status >= 500) {
     return `${who} is having server trouble (${err.status}). Tried ${OPENAI_MAX_ATTEMPTS} times — this is on the provider, not your setup.`;
@@ -311,24 +351,25 @@ function localServerNotFoundSentence(url: string, status: 404 | 405): string {
 
 /**
  * A 400 from a server on this machine whose body says why (ATO-707,
- * ATO-737): the conversation outgrew the context window, or the server
- * would not accept something in the request. Plain words and what to
- * do, instead of "rejected the request (400)". Keeps "(400)" so the
- * desktop still reads it as the provider having replied. A context
- * overflow leaves the server's own words out: the agent loop appends
- * the size excerpt for that one (`isRequestSizeRejection`). Null for a
- * 400 whose body names neither reason.
+ * ATO-737, ATO-1209): the conversation outgrew the context window, the
+ * server takes no tool calls, or it would not accept something else in
+ * the request. Plain words and what to do, instead of "rejected the
+ * request (400)". Keeps "(400)" so the desktop still reads it as the
+ * provider having replied. A context overflow leaves the server's own
+ * words out: the agent loop appends the size excerpt for that one
+ * (`isRequestSizeRejection`). Null for a 400 whose body names no reason.
  */
 function localBadRequestSentence(err: OpenAiHttpError): string | null {
   const raw = err.message.replace(/^openai provider \d+:\s*/, "");
   const type = err.body?.type ?? parseProviderErrorBody(raw).type;
-  const kind = localBadRequestKind(err.status, type, err.body?.text ?? raw);
+  const text = err.body?.text ?? raw;
+  const kind = localBadRequestKind(err.status, type, text);
   if (kind === null) return null;
   const program = localServerProgram(err.url);
   const server = program === null ? "The local server" : `The local ${program} server`;
   const head =
     `${server} at ${hostOf(err.url)} turned the request down (400). ` +
-    `${LOCAL_BAD_REQUEST_SENTENCE[kind]} ${LOCAL_BAD_REQUEST_ADVICE[kind]}`;
+    `${LOCAL_BAD_REQUEST_SENTENCE[kind]} ${localBadRequestAdvice(kind, text)}`;
   if (kind === "context_exceeded") return head;
   const own = providerReason(err);
   return own ? `${head} The server said: ${own}` : head;
@@ -953,6 +994,10 @@ function isRetryableOpenAiError(err: unknown): boolean {
   // up, and three fast retries only multiply the refusals (42 per
   // worker, once).
   if (isCreditExhausted(err)) return false;
+  // A server that cannot use a tool's JSON Schema (llama.cpp, LM Studio)
+  // answers it with a 500, and the same body gets the same 500. The
+  // provider drops the tool and resends instead (ATO-1399).
+  if (isToolSchemaErrorText(err.message)) return false;
   return err.status >= 500 || err.status === 429 || err.status === 408;
 }
 

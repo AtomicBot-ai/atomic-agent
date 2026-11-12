@@ -30,7 +30,10 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
 import { McpClient, type McpClientDeps } from "./mcp-client.js";
 import { McpConnectError, scrubErrorMessage } from "./mcp-errors.js";
 import { createMcpResourceClassResolver } from "./mcp-resource-class.js";
-import { createMcpToolDefinition } from "./mcp-tool-adapter.js";
+import {
+  createMcpToolDefinition,
+  trustsReadOnlyHintFor,
+} from "./mcp-tool-adapter.js";
 import type {
   McpServerCatalog,
   McpServerConfig,
@@ -58,7 +61,8 @@ export interface McpManagerDeps extends McpClientDeps {
    * dangerous tools (`os.shell.run`, `os.fs.write`, …) receive.
    * Tools from a server whose resolved trust is `approval_gated`
    * call `requireApproval` before every `tools/call` (discovery-time
-   * `annotations.readOnlyHint === true` exempts). Optional only as a
+   * `annotations.readOnlyHint === true` exempts, for stdio servers and
+   * `trustedReadOnlyTools` only — ATO-1178). Optional only as a
    * test seam — production bootstrap always passes it.
    */
   dangerous?: DangerousToolOptions;
@@ -213,9 +217,10 @@ export class McpManager {
    * Map. After this call, `runtime.refreshMcp()` should be invoked so
    * the stable-prefix catalog and grammar drop the qualified names
    * too. Idempotent on absence — removing a non-existent name
-   * short-circuits to `{ removed: false }`.
+   * short-circuits to `{ removed: false }`. `reason` is the error a
+   * tool call still waiting on the server ends with.
    */
-  async removeServerLive(name: string): Promise<{
+  async removeServerLive(name: string, reason?: string): Promise<{
     removed: boolean;
     tools: string[];
   }> {
@@ -225,7 +230,7 @@ export class McpManager {
       return { removed: false, tools: [] };
     }
     const tools = [...s.registeredToolNames];
-    await this.stopOne(s);
+    await this.stopOne(s, reason);
     this.servers.delete(name);
     // Rebuild the resource-class resolver so the now-gone server name
     // no longer satisfies the lookup; future model emissions of its
@@ -314,10 +319,10 @@ export class McpManager {
     }
   }
 
-  private async stopOne(s: ManagedServer): Promise<void> {
+  private async stopOne(s: ManagedServer, reason?: string): Promise<void> {
     this.unregisterToolsFor(s);
     try {
-      await s.client.close();
+      await s.client.close(reason);
     } catch {
       // best-effort
     }
@@ -334,6 +339,7 @@ export class McpManager {
       const def = createMcpToolDefinition(meta, s.client, {
         trust,
         dangerous: this.deps.dangerous,
+        trustReadOnlyHint: trustsReadOnlyHintFor(s.config, meta.rawName),
       });
       // ToolRegistry.register is last-writer-wins. Two servers
       // cannot collide because the qualified name carries the

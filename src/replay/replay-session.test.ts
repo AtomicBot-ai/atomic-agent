@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { buildStablePrefix } from "../prompt/stable-prefix.js";
 import { hashPrefix } from "../llm/slot-manager.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/index.js";
+import { applyToolSearch } from "../tools/tool-search/index.js";
 
 import { replaySession } from "./replay-session.js";
 
@@ -239,6 +240,53 @@ describe("replaySession", () => {
       expect(pinnedFull.steps.every((s) => s.matchedCompact === null)).toBe(true);
     } finally {
       rmSync(fx.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("matches a trace recorded with search mode off or on (ATO-1335)", async () => {
+    // The runtime mounts `tool.search` only in search mode, and traces do
+    // not record the mode: the replay gets the full catalog and must try
+    // the prefix with and without it.
+    const base = buildCurrentContext();
+    const context = {
+      ...base,
+      toolDescriptors: [
+        ...base.toolDescriptors,
+        { name: "os.git.show", summary: "show a commit", argsSchema: "{rev:string}" },
+        { name: "tool.search", summary: "find a tool", argsSchema: "{query:string}" },
+      ],
+    };
+    const hashWith = (toolSearch: boolean): string =>
+      hashPrefix(
+        buildStablePrefix({
+          toolDescriptors: applyToolSearch(context.toolDescriptors, toolSearch),
+          capabilities: context.capabilities,
+          skillCatalog: context.skillCatalog,
+          reasoningSystemToken: context.profile.reasoningSystemToken,
+        }),
+      );
+    expect(hashWith(false)).not.toBe(hashWith(true));
+
+    const off = writeTrace({ recordedHash: hashWith(false) });
+    const on = writeTrace({ recordedHash: hashWith(true) });
+    try {
+      const offReport = await replaySession({ path: off.path, context });
+      expect(offReport.driftCount).toBe(0);
+      expect(offReport.steps.every((s) => s.matchedToolSearch === false)).toBe(true);
+
+      const onReport = await replaySession({ path: on.path, context });
+      expect(onReport.driftCount).toBe(0);
+      expect(onReport.steps.every((s) => s.matchedToolSearch === true)).toBe(true);
+
+      const pinnedOn = await replaySession({
+        path: off.path,
+        context: { ...context, toolSearch: true },
+      });
+      expect(pinnedOn.driftCount).toBe(2);
+      expect(pinnedOn.steps.every((s) => s.matchedToolSearch === null)).toBe(true);
+    } finally {
+      rmSync(off.tmp, { recursive: true, force: true });
+      rmSync(on.tmp, { recursive: true, force: true });
     }
   });
 });

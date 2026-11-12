@@ -310,6 +310,36 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
   });
 });
 
+describe("fusion escalation calls in the session readout (ATO-1388)", () => {
+  it("records an escalation or judge call on the session that delegated, and nothing without one", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "catalog-usage-"));
+    try {
+      const config = getConfig(); const toolRegistry = new ToolRegistry();
+      const approvals = new ApprovalGate({ emit: () => {}, level: 5 });
+      const builder = vi.spyOn(fusionTools, "buildFusionDelegateTool");
+      const record = vi.fn();
+      const usage = { promptTokens: 1_000, completionTokens: 200, totalTokens: 1_200 };
+      const provider = { complete: vi.fn(async () => ({ content: "advice", usage, modelId: "big" })) };
+      registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous: { approvals, approvalRequired: false }, declaredInputs: new osTools.DeclaredInputsRegistry(),
+        resolveOriginalRequest: () => undefined, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
+        prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
+        providerRegistry: { getProvider: () => provider as never }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
+        slotManager: { poolSize: () => 2 }, workingDir: directory, logger, sessionUsage: { record } });
+      const wired = builder.mock.calls.at(-1)?.[0];
+      if (!wired?.escalationComplete) throw new Error("escalation seam missing");
+      const signal = new AbortController().signal;
+      await wired.escalationComplete({ providerId: "cloud", prompt: "p", maxOutputTokens: 100, signal, sessionId: "s-1" });
+      expect(record).toHaveBeenCalledTimes(1);
+      expect(record).toHaveBeenCalledWith("s-1", expect.objectContaining({ providerId: "cloud", modelId: "big", usage, local: false }));
+      await wired.escalationComplete({ providerId: "cloud", prompt: "p", maxOutputTokens: 100, signal });
+      expect(record).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("runtimeKnownSecrets (ATO-1077)", () => {
   it("lists the env's secret variables and the credentials stored in config", () => {
     const config = {

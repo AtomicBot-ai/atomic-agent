@@ -34,6 +34,12 @@ export interface ToolBatchOptions {
    * report it on `ToolCallBatch.jsonRepair` (ATO-637). Off by default.
    */
   repairJson?: boolean;
+  /**
+   * Wire function name -> qualified tool name, from `wireToCanonical`
+   * for the descriptors the request was built from. Consulted before
+   * `nameUnescape`, which is not injective (ATO-1365).
+   */
+  wireToCanonical?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -63,6 +69,26 @@ export interface ToolCallAdapter {
     descriptors: readonly ToolDescriptor[],
     options?: ToolDefinitionOptions,
   ): ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * For the same descriptors `descriptorsToTools` was called with: each
+   * emitted function name mapped to the qualified tool name it stands
+   * for. Fed back into `toolCallsToBatch` as `wireToCanonical`. An
+   * adapter whose escape is injective may omit this.
+   */
+  wireToCanonical?(
+    descriptors: readonly ToolDescriptor[],
+    options?: ToolDefinitionOptions,
+  ): ReadonlyMap<string, string>;
+  /**
+   * For the same descriptors: the qualified names `descriptorsToTools`
+   * could not give their plain `nameEscape`, mapped to the wire name it
+   * used instead. Carried on the request as `toolWireNames` for the
+   * history's `tool_calls`. Omitted by an adapter that never renames.
+   */
+  suffixedWireNames?(
+    descriptors: readonly ToolDescriptor[],
+    options?: ToolDefinitionOptions,
+  ): ReadonlyMap<string, string>;
   /** Convert provider tool_calls into the runtime `ToolCallBatch`. */
   toolCallsToBatch(
     toolCalls: ReadonlyArray<OpenAiToolCall>,

@@ -120,6 +120,14 @@ describe("formatCliApprovalPrompt", () => {
     expect(prompt).toContain("s = allow this kind this session");
     expect(prompt).not.toContain("never granted");
   });
+
+  it("names the host when the session grant is narrowed to it (ATO-1182)", () => {
+    const prompt = formatCliApprovalPrompt({
+      ...request("http"),
+      grantKey: "https://api.example.com",
+    });
+    expect(prompt).toContain("s = allow this kind to https://api.example.com this session");
+  });
 });
 
 describe("formatAgentEvent llama hint", () => {

@@ -7,13 +7,24 @@ import type { TuiMouseEvent } from "../mouse/mouse-event.js";
 import { MouseProvider } from "../mouse/mouse-context.js";
 import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
 import type { TuiAction } from "../tui-action.js";
-import type { TuiAppCallbacks } from "../tui-app.js";
+import type { LastTurnRollbackOutcome, TuiAppCallbacks } from "../tui-app.js";
+import { createEmptySessionState, type SessionState } from "../../session/index.js";
+import {
+  planLastTurnRollback,
+  type LastTurnRollbackOptions,
+} from "../../session/session-truncate.js";
 import {
   createInitialTuiState,
+  type ChatMessage,
   type TuiSessionInfo,
   type TuiState,
 } from "../tui-state.js";
-import { ChatTryAgainButton } from "./chat-try-again-button.js";
+import {
+  ChatTryAgainButton,
+  isLastQuestion,
+  priorQuestions,
+  shownUnanswered,
+} from "./chat-try-again-button.js";
 
 const SESSION: TuiSessionInfo = fakeSession({
   sessionId: "again",
@@ -83,6 +94,8 @@ interface Harness {
   actions: TuiAction[];
   submitted: string[];
   steered: string[];
+  /** How many times the button asked the orchestrator for a rollback. */
+  rollbacks: () => number;
   unmount: () => void;
 }
 
@@ -91,7 +104,12 @@ function mount(
   {
     withMouse = true,
     initial,
-  }: { withMouse?: boolean; initial?: TuiState } = {},
+    rollback,
+  }: {
+    withMouse?: boolean;
+    initial?: TuiState;
+    rollback?: (expect?: LastTurnRollbackOptions) => LastTurnRollbackOutcome;
+  } = {},
 ): Harness {
   const registry = new MouseTargetRegistry();
   // A real reducer behind the provider: the point of these tests is what
@@ -105,7 +123,16 @@ function mount(
   };
   const submitted: string[] = [];
   const steered: string[] = [];
+  let rollbackCalls = 0;
   const callbacks: TuiAppCallbacks = {
+    ...(rollback
+      ? {
+          onLastTurnRollbackRequested: (expect) => {
+            rollbackCalls += 1;
+            return rollback(expect);
+          },
+        }
+      : {}),
     onApprovalDecision: () => {},
     onAbort: () => {},
     onQuit: () => {},
@@ -146,6 +173,7 @@ function mount(
     actions,
     submitted,
     steered,
+    rollbacks: () => rollbackCalls,
     unmount,
   };
 }
@@ -246,4 +274,233 @@ describe("ChatTryAgainButton", () => {
     expect(app.steered).toEqual(["expensive turn"]);
     app.unmount();
   });
+
+  describe("a real retry of the last question (ATO-1302)", () => {
+    const pair: ChatMessage[] = [
+      { id: "u1", role: "user", text: "first question", timestamp: 0 },
+      { id: "a1", role: "assistant", text: "first answer", timestamp: 0 },
+      { id: "u2", role: "user", text: "second question", timestamp: 0 },
+      { id: "a2", role: "assistant", text: "second answer", timestamp: 0 },
+      { id: "n2", role: "system", text: "a notice about that turn", timestamp: 0 },
+    ];
+    const withMessages = (extra: Partial<TuiState> = {}): TuiState => ({
+      ...createInitialTuiState(SESSION),
+      messages: pair,
+      ...extra,
+    });
+
+    it("takes the last turn back, drops it from the screen, and asks again", async () => {
+      const app = mount(
+        <ChatTryAgainButton text="second question" messageId="u2" />,
+        {
+          initial: withMessages(),
+          rollback: () => ({ ok: true, text: "second question" }),
+        },
+      );
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(1);
+      expect(app.submitted).toEqual(["second question"]);
+      const types = app.actions.map((a) => a.type);
+      // The cut lands before the resend, so the new turn's prompt (echoed
+      // by the runtime once it starts) is the only copy on screen.
+      expect(types.indexOf("chat_messages_truncated")).toBeLessThan(
+        types.indexOf("message_submitted"),
+      );
+      expect(app.state().messages.map((m) => m.text)).toEqual([
+        "first question",
+        "first answer",
+      ]);
+      app.unmount();
+    });
+
+    it("resends as a new turn when the orchestrator refuses (tools ran)", async () => {
+      const app = mount(
+        <ChatTryAgainButton text="second question" messageId="u2" />,
+        {
+          initial: withMessages(),
+          rollback: () => ({ ok: false, code: "turn_has_tools" }),
+        },
+      );
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(1);
+      expect(app.submitted).toEqual(["second question"]);
+      expect(app.actions.map((a) => a.type)).not.toContain(
+        "chat_messages_truncated",
+      );
+      expect(app.state().messages.map((m) => m.text)).toContain("second answer");
+      app.unmount();
+    });
+
+    it("does not ask for a rollback on an earlier question", async () => {
+      const app = mount(
+        <ChatTryAgainButton text="first question" messageId="u1" />,
+        {
+          initial: withMessages(),
+          rollback: () => ({ ok: true, text: "second question" }),
+        },
+      );
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(0);
+      expect(app.submitted).toEqual(["first question"]);
+      app.unmount();
+    });
+
+    it("does not ask for a rollback while a turn is running", async () => {
+      const app = mount(
+        <ChatTryAgainButton text="second question" messageId="u2" />,
+        {
+          initial: withMessages({ status: "running", whileBusyMode: "queue" }),
+          rollback: () => ({ ok: true, text: "second question" }),
+        },
+      );
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(0);
+      app.unmount();
+    });
+
+    describe("after /clear (ATO-1420)", () => {
+      // The session the orchestrator holds: "first" was answered before
+      // `/clear`, then "continue" was answered for real.
+      const stored = (): SessionState => ({
+        ...createEmptySessionState({ id: "again", workingDir: "/tmp/again" }),
+        status: "pending",
+        turns: [
+          { kind: "user", text: "first", at: 1 },
+          { kind: "assistant_reply", text: "one", at: 2 },
+          { kind: "user", text: "continue", at: 3 },
+          { kind: "assistant_reply", text: "real answer", at: 4 },
+        ],
+        turnCount: 2,
+        macroTurnStarts: [2, 4],
+      });
+      // The orchestrator's rollback, on that session (`rollbackLastTurn`).
+      const orchestrator = (session: { current: SessionState }) =>
+        (expect?: LastTurnRollbackOptions): LastTurnRollbackOutcome => {
+          const plan = planLastTurnRollback(session.current, expect);
+          if (!plan.ok) return { ok: false, code: plan.code };
+          session.current = plan.state;
+          return { ok: true, text: plan.text };
+        };
+      const cleared = (messages: ChatMessage[]): TuiState => ({
+        ...reduceTuiState(
+          {
+            ...createInitialTuiState(SESSION),
+            messages: [
+              { id: "u0", role: "user", text: "first", timestamp: 0 },
+              { id: "a0", role: "assistant", text: "one", timestamp: 0 },
+            ],
+          },
+          { type: "chat_cleared" },
+        ),
+        messages,
+      });
+
+      it("a failed repeat of a question never takes back the earlier real answer", async () => {
+        // On screen after /clear: "continue" answered, then a second
+        // "continue" that failed and never reached the session.
+        const session = { current: stored() };
+        const asked: (LastTurnRollbackOptions | undefined)[] = [];
+        const rollback = orchestrator(session);
+        const app = mount(
+          <ChatTryAgainButton text="continue" messageId="u2" />,
+          {
+            initial: cleared([
+              { id: "u1", role: "user", text: "continue", timestamp: 0 },
+              { id: "a1", role: "assistant", text: "real answer", timestamp: 0 },
+              { id: "u2", role: "user", text: "continue", timestamp: 0 },
+              { id: "f2", role: "system", text: "Turn failed", variant: "warn", retryText: "continue", timestamp: 0 },
+            ]),
+            rollback: (expect) => {
+              asked.push(expect);
+              return rollback(expect);
+            },
+          },
+        );
+        await app.clickUntil("[try again]", () => app.submitted.length > 0);
+        expect(asked).toEqual([
+          { expectText: "continue", expectPriorQuestions: 2, expectUnanswered: true },
+        ]);
+        // Nothing was taken back; the question goes out again as a new turn.
+        expect(session.current.turns).toHaveLength(4);
+        expect(session.current.turns[3]).toMatchObject({ text: "real answer" });
+        expect(app.submitted).toEqual(["continue"]);
+        expect(app.actions.map((a) => a.type)).not.toContain("chat_messages_truncated");
+        app.unmount();
+      });
+
+      it("still takes back the last answered question, counting the cleared ones", async () => {
+        const session = { current: stored() };
+        const app = mount(
+          <ChatTryAgainButton text="continue" messageId="u1" />,
+          {
+            initial: cleared([
+              { id: "u1", role: "user", text: "continue", timestamp: 0 },
+              { id: "a1", role: "assistant", text: "real answer", timestamp: 0 },
+            ]),
+            rollback: orchestrator(session),
+          },
+        );
+        await app.clickUntil("[try again]", () => app.submitted.length > 0);
+        // One question before it in the session ("first"), none on screen.
+        expect(session.current.turns.map((t) => t.kind)).toEqual(["user", "assistant_reply"]);
+        expect(app.submitted).toEqual(["continue"]);
+        expect(app.state().messages).toEqual([]);
+        app.unmount();
+      });
+    });
+
+    it("a notice's button (no message id) always resends", async () => {
+      const app = mount(<ChatTryAgainButton text="second question" />, {
+        initial: withMessages(),
+        rollback: () => ({ ok: true, text: "second question" }),
+      });
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(0);
+      app.unmount();
+    });
+  });
 });
+
+describe("isLastQuestion", () => {
+  it("skips steers and answers to find the turn-opening prompt", () => {
+    const messages: ChatMessage[] = [
+      { id: "u1", role: "user", text: "ask", timestamp: 0 },
+      { id: "s1", role: "user", text: "also this", steered: true, timestamp: 0 },
+      { id: "a1", role: "assistant", text: "reply", timestamp: 0 },
+    ];
+    expect(isLastQuestion(messages, "u1")).toBe(true);
+    expect(isLastQuestion(messages, "s1")).toBe(false);
+    expect(isLastQuestion([], "u1")).toBe(false);
+  });
+});
+
+describe("shownUnanswered", () => {
+  it("is true only when no reply follows the question before the next one", () => {
+    const messages: ChatMessage[] = [
+      { id: "u0", role: "user", text: "a", timestamp: 0 },
+      { id: "p0", role: "assistant", text: "working on it", progressNote: true, timestamp: 0 },
+      { id: "u1", role: "user", text: "b", timestamp: 0 },
+      { id: "a1", role: "assistant", text: "reply", timestamp: 0 },
+      { id: "u2", role: "user", text: "c", timestamp: 0 },
+      { id: "f2", role: "system", text: "Turn failed", variant: "warn", timestamp: 0 },
+    ];
+    expect(shownUnanswered(messages, "u0")).toBe(true);
+    expect(shownUnanswered(messages, "u1")).toBe(false);
+    expect(shownUnanswered(messages, "u2")).toBe(true);
+    expect(shownUnanswered(messages, "missing")).toBe(false);
+  });
+});
+
+describe("priorQuestions", () => {
+  it("counts the turn-opening prompts before a message, steers left out", () => {
+    const messages: ChatMessage[] = [
+      { id: "u0", role: "user", text: "continue", timestamp: 0 },
+      { id: "s0", role: "user", text: "also", steered: true, timestamp: 0 },
+      { id: "a0", role: "assistant", text: "reply", timestamp: 0 },
+      { id: "u1", role: "user", text: "continue", timestamp: 0 },
+    ];
+    expect(priorQuestions(messages, "u0")).toBe(0);
+    expect(priorQuestions(messages, "u1")).toBe(1);
+  });
+});
+

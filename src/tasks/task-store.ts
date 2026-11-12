@@ -17,9 +17,11 @@ import {
 
 import { applyMigrations } from "./task-schema.js";
 import {
+  ensureApprovalLevelColumn,
   ensureBudgetColumns,
   validateMaxCostUsd,
   validateMaxDurationMs,
+  validateApprovalLevel,
 } from "./task-budget.js";
 import { parseScheduleRow, serializeScheduleValue } from "./task-schedule.js";
 import {
@@ -91,6 +93,11 @@ export interface TaskCreateInput {
   maxCostUsd?: number | null;
   maxDurationMs?: number | null;
   /**
+   * Run only at this approval level (ATO-1324). Omit / `null` to let
+   * any process run it at its own.
+   */
+  approvalLevel?: number | null;
+  /**
    * Optional explicit id. Used by tests to make assertions; production
    * callers always let the store generate one.
    */
@@ -136,6 +143,7 @@ interface TaskRow {
   spent_usd?: number | null;
   elapsed_ms?: number | null;
   stop_cause?: string | null;
+  approval_level?: number | null;
 }
 
 interface RunningRow {
@@ -191,6 +199,8 @@ export class TaskStore {
    * or `null`. Without them a task asking for a budget is refused.
    */
   readonly budgetsUnavailable: string | null;
+  /** Why this database has no `approval_level` column, or `null` (ATO-1324). */
+  readonly approvalLevelUnavailable: string | null;
   /**
    * Why this database has no `run_owner` column — the open that should
    * have added it could not (see `ensureRunOwnerColumn`) — or `null`.
@@ -216,6 +226,10 @@ export class TaskStore {
     const budgetValues = withBudgets
       ? ",\n         @max_cost_usd, @max_duration_ms, @spent_usd, @elapsed_ms, @stop_cause"
       : "";
+    this.approvalLevelUnavailable = ensureApprovalLevelColumn(this.db);
+    const withLevel = this.approvalLevelUnavailable === null;
+    const levelColumn = withLevel ? ", approval_level" : "";
+    const levelValue = withLevel ? ", @approval_level" : "";
     this.ownerProbe = options.ownerProbe ?? currentTurnOwnerProbe();
     this.dbIdentity = databaseIdentity(options.dbFile);
 
@@ -225,13 +239,13 @@ export class TaskStore {
          attempts, max_attempts, last_error, last_error_cat,
          created_at, updated_at, started_at, completed_at,
          schedule_kind, schedule_value, scheduled_for, recurring,
-         last_scheduled_at, trigger_source, notify${budgetColumns}
+         last_scheduled_at, trigger_source, notify${budgetColumns}${levelColumn}
        ) VALUES (
          @id, @session_id, @user_message, @max_steps, @status, @origin,
          @attempts, @max_attempts, @last_error, @last_error_cat,
          @created_at, @updated_at, @started_at, @completed_at,
          @schedule_kind, @schedule_value, @scheduled_for, @recurring,
-         @last_scheduled_at, @trigger_source, @notify${budgetValues}
+         @last_scheduled_at, @trigger_source, @notify${budgetValues}${levelValue}
        )`,
     );
     // Names no `run_owner`: a copied row never carries a claim.
@@ -241,13 +255,13 @@ export class TaskStore {
          attempts, max_attempts, last_error, last_error_cat,
          created_at, updated_at, started_at, completed_at,
          schedule_kind, schedule_value, scheduled_for, recurring,
-         last_scheduled_at, trigger_source, notify${budgetColumns}
+         last_scheduled_at, trigger_source, notify${budgetColumns}${levelColumn}
        ) VALUES (
          @id, @session_id, @user_message, @max_steps, @status, @origin,
          @attempts, @max_attempts, @last_error, @last_error_cat,
          @created_at, @updated_at, @started_at, @completed_at,
          @schedule_kind, @schedule_value, @scheduled_for, @recurring,
-         @last_scheduled_at, @trigger_source, @notify${budgetValues}
+         @last_scheduled_at, @trigger_source, @notify${budgetValues}${levelValue}
        )`,
     );
     this.selectStmt = this.db.prepare(`SELECT * FROM tasks WHERE id = ?`);
@@ -414,6 +428,7 @@ export class TaskStore {
     const notify = validateNotify(input.notify);
     const maxCostUsd = validateMaxCostUsd(input.maxCostUsd);
     const maxDurationMs = validateMaxDurationMs(input.maxDurationMs);
+    const approvalLevel = validateApprovalLevel(input.approvalLevel);
     if (
       (maxCostUsd !== null || maxDurationMs !== null) &&
       this.budgetsUnavailable !== null
@@ -460,6 +475,7 @@ export class TaskStore {
       spent_usd: null,
       elapsed_ms: null,
       stop_cause: null,
+      approval_level: approvalLevel,
     };
     this.insertStmt.run(this.bindRow(row));
     return rowToRecord(row);
@@ -858,23 +874,29 @@ export class TaskStore {
 
   /** The row as bound to an INSERT: without budget keys when the columns are missing. */
   private bindRow(row: TaskRow): TaskRow {
+    const bound: TaskRow = { ...row };
     if (this.budgetsUnavailable === null) {
-      return {
-        ...row,
-        max_cost_usd: row.max_cost_usd ?? null,
-        max_duration_ms: row.max_duration_ms ?? null,
-        spent_usd: row.spent_usd ?? null,
-        elapsed_ms: row.elapsed_ms ?? null,
-        stop_cause: row.stop_cause ?? null,
-      };
+      bound.max_cost_usd = row.max_cost_usd ?? null;
+      bound.max_duration_ms = row.max_duration_ms ?? null;
+      bound.spent_usd = row.spent_usd ?? null;
+      bound.elapsed_ms = row.elapsed_ms ?? null;
+      bound.stop_cause = row.stop_cause ?? null;
+    } else {
+      delete bound.max_cost_usd;
+      delete bound.max_duration_ms;
+      delete bound.spent_usd;
+      delete bound.elapsed_ms;
+      delete bound.stop_cause;
     }
-    const bare = { ...row };
-    delete bare.max_cost_usd;
-    delete bare.max_duration_ms;
-    delete bare.spent_usd;
-    delete bare.elapsed_ms;
-    delete bare.stop_cause;
-    return bare;
+    // Without the column (it could not be added) the level is dropped and
+    // the task runs as one without, as before ATO-1324: refusing to start
+    // the run would be worse than the old behaviour.
+    if (this.approvalLevelUnavailable === null) {
+      bound.approval_level = row.approval_level ?? null;
+    } else {
+      delete bound.approval_level;
+    }
+    return bound;
   }
 
   private requireRecord(id: string): TaskRecord {
@@ -946,6 +968,7 @@ function rowToRecord(row: TaskRow): TaskRecord {
     spentUsd: row.spent_usd ?? null,
     elapsedMs: row.elapsed_ms ?? null,
     stopCause: row.stop_cause ?? null,
+    approvalLevel: row.approval_level ?? null,
   };
 }
 
@@ -979,6 +1002,7 @@ function recordToRow(record: TaskRecord): TaskRow {
     spent_usd: record.spentUsd ?? null,
     elapsed_ms: record.elapsedMs ?? null,
     stop_cause: record.stopCause ?? null,
+    approval_level: record.approvalLevel ?? null,
   };
 }
 

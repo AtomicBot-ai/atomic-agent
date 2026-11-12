@@ -22,6 +22,10 @@ import {
   type SessionSummaryCursor,
 } from "../session/session-summary-page.js";
 import { readSessionTitle } from "../session/session-title.js";
+import {
+  planLastTurnRollback,
+  type LastTurnRollbackOptions,
+} from "../session/session-truncate.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
 import {
@@ -76,7 +80,7 @@ import {
   configSessionRailLayoutStore,
   type SessionRailLayoutStore,
 } from "./session-rail/index.js";
-import type { TuiEventBus } from "./tui-app.js";
+import type { LastTurnRollbackOutcome, TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
 import { readGoalState, type GoalState } from "../agent/goal/index.js";
 import type { GoalCommand } from "./commands/goal-command.js";
@@ -1498,6 +1502,53 @@ export class ChatOrchestrator {
     if (this.queue.length === 0) return;
     this.queue.length = 0;
     this.emitQueue();
+  }
+
+  /**
+   * Take the chat's last question and its answer back out of the session
+   * (ATO-1302), so `[try again]` on that question asks it afresh instead
+   * of appending a second turn the model reads after the first answer.
+   *
+   * Only removes, the way `POST /api/sessions/{id}/rollback-last-turn`
+   * does (`../http/route-rollback-last-turn.ts`); the caller sends the
+   * returned text again through the ordinary submit path, so a retry
+   * runs exactly the path a first try does. What may be undone is
+   * `planLastTurnRollback`'s call (no tools, no steer, not compacted).
+   *
+   * Refused while anything could still write the session or depends on
+   * its tail: a turn of ours (`currentController`), parked messages
+   * (they were typed after the answer being removed), a model change
+   * holding submissions, a manual compaction, or a turn another origin
+   * runs on the same chat. A refusal changes nothing.
+   */
+  rollbackLastTurn(expect: LastTurnRollbackOptions = {}): LastTurnRollbackOutcome {
+    const session = this.session;
+    if (this.quitting || !session) return { ok: false, code: "nothing_to_undo" };
+    if (
+      this.currentController !== null ||
+      this.queue.length > 0 ||
+      this.composerRoutePending ||
+      this.pendingCompactions.has(session.id) ||
+      this.waitingModelMessages.has(session.id) ||
+      this.runtime.turnController.isBusy(session.id)
+    ) {
+      return { ok: false, code: "turn_in_progress" };
+    }
+    // `expect`: the bubble clicked, by text and position; a different
+    // stored last question (a failed turn never recorded) is refused, not
+    // removed. A stopped turn is refused too (`turn_stopped`).
+    const plan = planLastTurnRollback(session, expect);
+    if (!plan.ok) return { ok: false, code: plan.code };
+    // Stop a compaction started on this chat: it would summarise the turn
+    // being removed (a background rolling summary re-checks before saving).
+    this.runtime.cancelSessionCompaction?.(session.id);
+    this.session = plan.state;
+    // Saved, not only held: `/resume` and the rail read the store, and a
+    // restart before the resend lands must not bring the old answer back.
+    this.runtime.sessionStore.save(plan.state);
+    // A stopped turn keeps its resume marker; the turn it points at is gone.
+    this.runtime.sessionStore.clearTurnProgress(session.id);
+    return { ok: true, text: plan.text };
   }
 
   /**

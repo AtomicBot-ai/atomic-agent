@@ -1,5 +1,5 @@
 import { ConfigValidationError } from "../config-validation-error.js";
-import { emitConfigNoticeOnce } from "../config-primitives.js";
+import { isSetAsideString } from "../config-primitives.js";
 
 /**
  * `agent.prompt.compact`: whether the stable prefix uses the compact
@@ -23,17 +23,15 @@ export function createPromptDefaults(): PromptConfig {
  * Lenient on an unknown string, strict on a wrong type: a newer build
  * may write a mode this build does not know (the desktop app and the
  * terminal share one config file), and that must read as the default
- * rather than fail every command. Same rule as #1020's
- * `isSetAsideString`; switch to that helper once it is on main.
+ * rather than fail every command. A whole-file write keeps the value on
+ * disk (`SET_ASIDE_ENUM_KEYS` in `keep-set-aside-values.ts`, ATO-1330).
  */
 function parseCompactPromptMode(raw: unknown, fallback: CompactPromptMode): CompactPromptMode {
   if (typeof raw !== "string") {
     throw new ConfigValidationError("agent.prompt.compact", `expected one of ${COMPACT_PROMPT_MODES.join(", ")}`);
   }
   if ((COMPACT_PROMPT_MODES as readonly string[]).includes(raw)) return raw as CompactPromptMode;
-  emitConfigNoticeOnce(
-    `config: agent.prompt.compact "${raw}" is not a value this build knows; using "${fallback}"`,
-  );
+  isSetAsideString(raw, COMPACT_PROMPT_MODES, "agent.prompt.compact", fallback);
   return fallback;
 }
 

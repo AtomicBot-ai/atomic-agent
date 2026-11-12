@@ -4,7 +4,10 @@ import type {
   CompletionResult,
   StreamChunk,
 } from "../completion-types.js";
-import { forgetLearnedModelParams } from "./model-params.js";
+import {
+  forgetLearnedModelParams,
+  rememberTemperatureForbidden,
+} from "./model-params.js";
 import { OpenAiProvider } from "./openai-provider.js";
 
 /**
@@ -134,5 +137,78 @@ describe("OpenAiProvider — named-temperature retry (ATO-1217)", () => {
       /400/,
     );
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+});
+
+const DEPRECATED_400 = JSON.stringify({
+  type: "error",
+  error: {
+    type: "invalid_request_error",
+    message: "`temperature` is deprecated for this model.",
+  },
+});
+
+describe("OpenAiProvider — refused-temperature retry (ATO-1397)", () => {
+  it("resends a unary completion once without temperature", async () => {
+    const { fetchImpl, bodies } = scripted([
+      () => json(DEPRECATED_400, 400),
+      okUnary,
+    ]);
+    const result = await provider(fetchImpl).complete({ prompt: "hi" });
+
+    expect(result.content).toBe("ok");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(bodies[0]!.temperature).toBe(0.2);
+    expect(bodies[1]).not.toHaveProperty("temperature");
+  });
+
+  it("resends a streamed completion once and keeps omitting it for the model", async () => {
+    const { fetchImpl, bodies } = scripted([
+      () => json(DEPRECATED_400, 400),
+      okStream,
+      okStream,
+    ]);
+    const p = provider(fetchImpl);
+    const result = await drain(p.completeStream({ prompt: "hi" }));
+
+    expect(result.content).toBe("ok");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(bodies[1]).not.toHaveProperty("temperature");
+
+    await drain(p.completeStream({ prompt: "again" }));
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(bodies[2]).not.toHaveProperty("temperature");
+  });
+
+  it("does not resend when the refusal is on record and the body carried no temperature", async () => {
+    rememberTemperatureForbidden(MODEL);
+    const { fetchImpl, bodies } = scripted([
+      () => json(DEPRECATED_400, 400),
+      okUnary,
+    ]);
+    await expect(provider(fetchImpl).complete({ prompt: "hi" })).rejects.toThrow(/400/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(bodies[0]).not.toHaveProperty("temperature");
+
+    const streamed = scripted([() => json(DEPRECATED_400, 400), okStream]);
+    await expect(drain(provider(streamed.fetchImpl).completeStream({ prompt: "hi" }))).rejects.toThrow(
+      /400/,
+    );
+    expect(streamed.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends no temperature to claude-sonnet-5-5 in the first place", async () => {
+    const { fetchImpl, bodies } = scripted([okUnary]);
+    const p = new OpenAiProvider({
+      id: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      apiKey: "",
+      defaultChatModel: "claude-sonnet-5-5",
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    await p.complete({ prompt: "hi", temperature: 0.7 });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(bodies[0]).not.toHaveProperty("temperature");
   });
 });

@@ -1,6 +1,7 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { listingResultCaps } from "../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { BROWSER_PAGE_SOURCE } from "../untrusted-tool-output.js";
 import type { BrowserBackend, TabsInput } from "./browser-backend.js";
 import { isSafeUrl, refuseScriptUrl } from "./navigate.js";
 import {
@@ -30,6 +31,8 @@ export function buildBrowserTabsTool(
     description:
       "Manage browser tabs: list, switch, close, or open a new one. Opening a new tab with a non-http(s) URL requires approval (same gate as browser.navigate).",
     readonly: false,
+    // Tab titles are the sites' own text (ATO-1378).
+    untrustedOutput: BROWSER_PAGE_SOURCE,
     async run(rawArgs, ctx) {
       const action = rawArgs.action;
       if (

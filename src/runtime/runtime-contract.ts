@@ -546,7 +546,7 @@ export interface AgentRuntime {
    * list. The orchestrator reads the returned transcript and discards
    * it. See `src/session/fusion-worker-session.ts`.
    */
-  createEphemeralSession(meta: FusionWorkerMeta, workingDir?: string): SessionState;
+  createEphemeralSession(meta: FusionWorkerMeta, workingDir?: string, inheritWorkspace?: boolean): SessionState;
   /** Session-scoped cloud skills/instructions; null retains the legacy local view. */
   getSessionWorkspace(session: SessionState | string): import("../session/workspace-context.js").SessionWorkspace | null;
   /** Maintain context without creating a turn or a transcript message. */

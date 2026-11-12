@@ -385,6 +385,17 @@ export interface TuiState {
   feed: FeedEntry[];
   /** Chat transcript: human-friendly view onto the session turn list. */
   messages: ChatMessage[];
+  /**
+   * Questions (steers not counted) that `/clear` took off the screen
+   * while the session still holds them (ATO-1420). `[try again]` adds it
+   * to the questions it sees before the one clicked, so the position it
+   * hands the rollback is the session's, not the screen's. A failed
+   * question that never reached the session is counted here too: a count
+   * too high only makes the rollback refuse (and the button resend),
+   * never take back a different question. Reset when the transcript is
+   * rebuilt from the session (`session_switched`). Absent means 0.
+   */
+  clearedQuestions?: number;
   /** Counts tool steps inside the currently running turn. */
   currentTurnToolSteps: number;
   /**

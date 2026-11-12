@@ -18,6 +18,8 @@ const REMOTE_MUTATORS: ReadonlySet<string> = new Set(["add", "set-url"]);
 /**
  * Global git options that consume the next token, so the subcommand is
  * found after them: `git -C <dir> push`, `git -c key=val fetch`.
+ * `--exec-path` is not one: it takes its value only as `--exec-path=…`,
+ * and bare it prints the path and exits.
  */
 const GLOBAL_OPTIONS_WITH_VALUE: ReadonlySet<string> = new Set([
   "-c",
@@ -25,7 +27,6 @@ const GLOBAL_OPTIONS_WITH_VALUE: ReadonlySet<string> = new Set([
   "--git-dir",
   "--work-tree",
   "--namespace",
-  "--exec-path",
   "--config-env",
 ]);
 

@@ -10,6 +10,9 @@ import type { TraceEvent } from "../../tracing/trace/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import { createRuntimeTraces } from "./runtime-traces.js";
+import type { SentryClient } from "../../error-reporting/index.js";
+import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
+import { TransportError } from "../../llm/reliability/llm-failures.js";
 
 const logger = new StructuredLogger({ level: "error", sinks: [] });
 
@@ -157,5 +160,21 @@ describe("runtime trace ownership and deferred event routing", () => {
     expect(getter).toHaveBeenCalledTimes(1);
     expect(hook).not.toHaveBeenCalled();
     expect(host).toHaveBeenCalledWith(event, undefined);
+  });
+
+  it("does not report Groq's plan-limit 413, and still reports other failures (ATO-1283)", () => {
+    const { traces } = fixture();
+    const capture = vi.fn();
+    const reporter = { capture } as unknown as SentryClient;
+    const routing = traces.createEventRouting({ emit: vi.fn() }, { handlers: {} }, () => reporter);
+    const groq = new OpenAiHttpError(
+      "openai provider 413: Request too large for model on tokens per minute (TPM): Limit 6000, Requested 9531",
+      413, "https://api.groq.com/openai/v1/chat/completions", false, null, "groq",
+    );
+    const planLimit = new TransportError("Groq refused the request (413)", 413, groq.url, { cause: groq });
+    routing.emitAgentLoopEventFor(undefined, { type: "loop_failed", error: planLimit, category: "transport" });
+    expect(capture).not.toHaveBeenCalled();
+    routing.emitAgentLoopEventFor(undefined, { type: "loop_failed", error: new Error("synthetic failure"), category: "transport" });
+    expect(capture).toHaveBeenCalledTimes(1);
   });
 });

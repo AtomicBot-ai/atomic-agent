@@ -42,11 +42,25 @@ export {
   isLocalEngineDown,
 } from "./local-engine-down.js";
 export {
+  ATOMIC_CHAT_NOT_RUNNING_CODE,
+  ATOMIC_CHAT_NOT_RUNNING_MESSAGE,
+  AtomicChatNotRunningError,
+  isAtomicChatNotRunning,
+} from "./atomic-chat-not-running.js";
+export {
+  LOCAL_PORT_TAKEN_ADVICE,
+  LOCAL_PORT_TAKEN_CODE,
+  LOCAL_PORT_TAKEN_MESSAGE,
+  LocalPortTakenError,
+  findLocalPortTaken,
+} from "./local-port-taken.js";
+export {
   LOCAL_OUT_OF_MEMORY_CODE,
   LocalOutOfMemoryError,
   isLocalOutOfMemory,
 } from "./local-out-of-memory.js";
 export {
+  ATOMIC_CHAT_KEY_REQUIRED_CODE,
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_PROVIDER_NOT_FOUND_CODE,
   LOCAL_REQUEST_INVALID_CODE,
@@ -55,13 +69,16 @@ export {
   LOCAL_SERVER_NOT_FOUND_MESSAGE,
   LOCAL_SERVER_RECHECK_COMMAND,
   LOCAL_SERVER_RECHECK_HINT,
+  LOCAL_TOOLS_UNSUPPORTED_CODE,
   classifyLocalServerError,
+  isUnreportedLocalServerFailure,
   localServerErrorLines,
   type ClassifyLocalServerErrorOptions,
   type LocalServerError,
   type LocalServerErrorCode,
 } from "./local-server-error.js";
 export { isRequestSizeRejection } from "./request-size-rejection.js";
+export { isExpectedProviderLimit } from "./expected-provider-limit.js";
 export {
   readProviderErrorVerdict,
   type ProviderErrorVerdict,
