@@ -304,6 +304,21 @@ function composerOwnsCtrlC(state: TuiState, menuLeaderArmed: boolean): boolean {
   );
 }
 
+/**
+ * The keys the coding-mode menu acts on while it is up: ↑↓ move its
+ * cursor, Enter applies the row, Esc closes it.
+ *
+ * The menu leaves the composer focused on purpose (any other key closes
+ * it and types through), so the composer's `claimKey` consults this to
+ * stand down for exactly these four. Without it the same ↑ also walked
+ * the input history behind the menu, and the same Enter applied the
+ * mode *and* sent whatever that walk had put in the buffer.
+ */
+export function codingModeMenuOwnsKey(state: TuiState, key: Key): boolean {
+  if (!state.codingModeMenu) return false;
+  return key.upArrow || key.downArrow || key.return || key.escape;
+}
+
 export function handleAppKey(
   input: string,
   key: Key,
