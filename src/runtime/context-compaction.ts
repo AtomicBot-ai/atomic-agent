@@ -78,6 +78,19 @@ export function skipMessage(skip: CompactionSkip, contextWindow?: number | null)
   return SKIP_MESSAGES[skip];
 }
 
+/**
+ * What automatic compaction says, once per session and window, when no
+ * cut fits on a model without prefix reuse (ATO-1295). Before this the
+ * skip was silent and trimming dropped turns with no word; only a window
+ * too small for any summary was named. Kept to the no-reuse case, where a
+ * small window makes this the usual outcome rather than a passing one.
+ */
+export function noSliceFitsMessage(contextWindow?: number | null): string {
+  const window = contextWindow && contextWindow > 0 ? ` (${contextWindow} tokens)` : "";
+  return `Automatic compaction found no safe cut that fits the model's context window${window}: ` +
+    "the newest steps alone fill the history it may keep, so older turns are trimmed instead of summarized; raise the context size to keep a summary.";
+}
+
 /** A control inbox, separate from user messages and from the FIFO's occupied lock. */
 export function createContextCompaction(deps: ContextCompactionDependencies) {
   const accepting = new Map<string, AbortSignal>();
@@ -99,8 +112,8 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
    * silently. A `compaction_failed` event with a `noop` result reaches the
    * TUI, traces and HTTP streams like any other compaction outcome.
    */
-  function noticeTooSmall(id: string, contextWindow: number | null, reason: CompactionResult["reason"], message: string) {
-    const key = JSON.stringify([id, contextWindow]);
+  function noticeTooSmall(id: string, contextWindow: number | null, reason: CompactionResult["reason"], message: string, kind: CompactionSkip = "window_too_small") {
+    const key = JSON.stringify([id, contextWindow, kind]);
     if (tooSmallNoticed.has(key)) return;
     tooSmallNoticed.add(key);
     deps.warn?.(id, message);
@@ -150,6 +163,9 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
       const message = skipMessage(skip ?? "no_reduction", prompt.contextWindow);
       if (request) request.settle({ status: "noop", reason, message });
       else if (skip === "window_too_small") noticeTooSmall(id, prompt.contextWindow, reason, message);
+      else if (skip === "no_reduction" && prefixReuse === "none") {
+        noticeTooSmall(id, prompt.contextWindow, reason, noSliceFitsMessage(prompt.contextWindow), "no_reduction");
+      }
       return undefined;
     }
     const controller = request?.controller ?? new AbortController();

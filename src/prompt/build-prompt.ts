@@ -131,6 +131,15 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     input.sessionSectionsMaxTokens ?? config.agent.sessionSectionsMaxTokens;
   const completionMaxTokens =
     input.completionMaxTokens ?? config.localModels.completionMaxTokens;
+  // A reasoning model thinks inside the reply reserve before its tool
+  // call; a bounded think block is reserved for on top (ATO-1295). Not
+  // when the profile has no reasoning channel or thinking is off.
+  const reasoningBudgetTokens =
+    input.profile !== undefined &&
+    input.profile.reasoningStyle !== "none" &&
+    (input.thinking ?? config.localModels.thinking) !== "off"
+      ? (input.reasoningBudgetTokens ?? config.localModels.reasoningBudgetTokens)
+      : 0;
 
   // Under auto the conversation share is pinned to the schema default
   // rather than left to `defaultBudget`'s `tokenBudget * 0.35`.
@@ -385,6 +394,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     proceduresTokens,
     loadedToolsTokens,
     completionMaxTokens,
+    reasoningBudgetTokens,
   });
 
   // One option set for every pack of this build: the `### request`

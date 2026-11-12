@@ -183,6 +183,13 @@ export interface EffectiveConversationCapInput {
   loadedToolsTokens?: number;
   completionMaxTokens: number;
   /**
+   * Bounded think block of a local reasoning model that thinks on this
+   * prompt, so the reply reserve keeps room for the tool call after it
+   * (see {@link effectiveReplyReserve}). Omitted or `0`: no reasoning to
+   * account for.
+   */
+  reasoningBudgetTokens?: number;
+  /**
    * `agent.conversationMaxTokens` was left at {@link CONVERSATION_CAP_AUTO}:
    * the transcript takes whatever the window leaves rather than being
    * held under a fixed ceiling. `configuredCap` is then only the
@@ -258,6 +265,16 @@ export const SMALL_WINDOW_REPLY_SHARE = 0.25;
 export const MIN_SMALL_WINDOW_REPLY_RESERVE = 1024;
 
 /**
+ * Room a bounded think block must leave for the tool call after it
+ * (ATO-1295). A reasoning model spends its reply reserve on thinking
+ * first; when `localModels.reasoningBudgetTokens` is close to the
+ * reserve (4096 on a 16k window) the think block eats it and the tool
+ * call is cut. The reserve is raised to the reasoning budget plus this
+ * much, within the same caps.
+ */
+export const MIN_REPLY_AFTER_REASONING_TOKENS = 1024;
+
+/**
  * The reply reservation the prompt budget actually uses on a given
  * window: `completionMaxTokens`, never more than
  * {@link REPLY_RESERVE_MAX_WINDOW_SHARE} of a known window, and on a
@@ -269,6 +286,15 @@ export const MIN_SMALL_WINDOW_REPLY_RESERVE = 1024;
  * (nothing to compare it against), and a non-positive cap (`0`, "no
  * client-side cap") reserves nothing, as before.
  *
+ * `reasoningBudgetTokens`: the bounded think block of a local reasoning
+ * model (`localModels.reasoningBudgetTokens`, only when the model really
+ * thinks on this prompt; `0` or omitted for an unbounded budget, a plain
+ * model or thinking switched off). The reserve then holds at least that
+ * budget plus {@link MIN_REPLY_AFTER_REASONING_TOKENS} for the tool
+ * call, never more than `completionMaxTokens` or half the window
+ * (ATO-1295). Without it a 16k window reserved 4096 tokens, and a
+ * reasoning budget above about 3000 left the tool call no room.
+ *
  * This is the budget's reservation, not `n_predict`: the request still
  * carries the configured cap, and a local reply may run past this figure
  * into whatever the prompt left free, up to the end of the window.
@@ -276,20 +302,60 @@ export const MIN_SMALL_WINDOW_REPLY_RESERVE = 1024;
 export function effectiveReplyReserve(
   completionMaxTokens: number,
   contextWindow: number | null | undefined,
+  reasoningBudgetTokens = 0,
 ): number {
   if (!Number.isFinite(completionMaxTokens) || completionMaxTokens <= 0) {
     return 0;
   }
   if (!contextWindow || contextWindow <= 0) return completionMaxTokens;
+  const halfWindow = Math.floor(contextWindow * REPLY_RESERVE_MAX_WINDOW_SHARE);
   const smallWindowCap = Math.max(
     MIN_SMALL_WINDOW_REPLY_RESERVE,
     Math.floor(contextWindow * SMALL_WINDOW_REPLY_SHARE),
     contextWindow - SMALL_WINDOW_PROMPT_ROOM,
   );
-  return Math.min(
+  const reserve = Math.min(completionMaxTokens, halfWindow, smallWindowCap);
+  if (!Number.isFinite(reasoningBudgetTokens) || reasoningBudgetTokens <= 0) {
+    return reserve;
+  }
+  const withReasoning = Math.min(
     completionMaxTokens,
-    Math.floor(contextWindow * REPLY_RESERVE_MAX_WINDOW_SHARE),
-    smallWindowCap,
+    halfWindow,
+    Math.floor(reasoningBudgetTokens) + MIN_REPLY_AFTER_REASONING_TOKENS,
+  );
+  return Math.max(reserve, withReasoning);
+}
+
+/**
+ * True when a bounded reasoning budget plus room for the tool call does
+ * not fit the reply reserve this window can give, even after
+ * `effectiveReplyReserve` raised it: the think block can still eat the
+ * reply. The runtime warns about it at load time (ATO-1295).
+ */
+export function reasoningBudgetExceedsReplyReserve(
+  completionMaxTokens: number,
+  contextWindow: number | null | undefined,
+  reasoningBudgetTokens: number,
+): boolean {
+  if (!Number.isFinite(reasoningBudgetTokens) || reasoningBudgetTokens <= 0) {
+    return false;
+  }
+  if (!Number.isFinite(completionMaxTokens) || completionMaxTokens <= 0) {
+    // No client-side cap: nothing in the request cuts the reply, but a
+    // known window still bounds what the budget can reserve.
+    if (!contextWindow || contextWindow <= 0) return false;
+    return (
+      Math.floor(reasoningBudgetTokens) + MIN_REPLY_AFTER_REASONING_TOKENS >
+      Math.floor(contextWindow * REPLY_RESERVE_MAX_WINDOW_SHARE)
+    );
+  }
+  return (
+    Math.floor(reasoningBudgetTokens) + MIN_REPLY_AFTER_REASONING_TOKENS >
+    effectiveReplyReserve(
+      completionMaxTokens,
+      contextWindow,
+      reasoningBudgetTokens,
+    )
   );
 }
 
@@ -314,12 +380,16 @@ export function effectiveReplyReserve(
 export function minUsableContextWindow(
   completionMaxTokens: number,
   contextWindow?: number | null,
-  options?: { compact?: boolean },
+  options?: { compact?: boolean; reasoningBudgetTokens?: number },
 ): number {
   return (
     (options?.compact ? AGENT_FIXED_PROMPT_TOKENS_COMPACT : AGENT_FIXED_PROMPT_TOKENS) +
     (contextWindow
-      ? effectiveReplyReserve(completionMaxTokens, contextWindow)
+      ? effectiveReplyReserve(
+          completionMaxTokens,
+          contextWindow,
+          options?.reasoningBudgetTokens,
+        )
       : completionMaxTokens) +
     CONVERSATION_CAP_SAFETY_MARGIN
   );
@@ -399,7 +469,11 @@ export function computeEffectiveConversationCap(
     (input.lessonsTokens ?? 0) -
     (input.proceduresTokens ?? 0) -
     (input.loadedToolsTokens ?? 0) -
-    effectiveReplyReserve(input.completionMaxTokens, input.contextWindow) -
+    effectiveReplyReserve(
+      input.completionMaxTokens,
+      input.contextWindow,
+      input.reasoningBudgetTokens,
+    ) -
     CONVERSATION_CAP_SAFETY_MARGIN;
   if (input.autoFill) return Math.max(CONVERSATION_CAP_FLOOR, available);
   return Math.max(
