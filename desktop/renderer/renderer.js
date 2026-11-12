@@ -18263,7 +18263,9 @@ async function swxExecute(label, want, run, refuse, current) {
   /* Backlog 28: a running turn in ANY chat (restartStopsTurn), and the chat
      on screen keeps its words. The coding mode (`route:false`) restarts
      nothing, so it keeps the old rule. */
-  const held = want && want.route === false ? (S.busy ? {here:true, title:''} : null) : restartStopsTurn();
+  /* ATO-1184: nor is it held by a turn of this chat any more. The agent's
+     POST /api/coding-mode takes it mid-turn and the next tool call reads it. */
+  const held = want && want.route === false ? null : restartStopsTurn();
   if (held) {
     if (refuse) refuse(held); else restartRefusedToast(held);
     return {ok:false, error:'a turn is running'};
@@ -19737,7 +19739,9 @@ function reassertCodingMode(id) {
    "came back !ok" branch through it, rather than patching window.atomic,
    which the contextBridge freezes. Nothing else passes it. */
 async function setCodingMode(id, post, anxViaGiven) {
-  if (S.busy) { toast('Not while a turn is running'); return; }
+  // ATO-1184: no longer refused while a turn runs; the agent applies it from the next tool call (mode-mid-turn.js).
+  const midTurn = !!(S.busy || approvalOpen(S.pending));
+  const line = (entry) => (S.busy || approvalOpen(S.pending)) ? placeInLiveTurn(entry) : S.log.push(entry);   // inside a running turn, not under its reply
   const anxFrom = MODE.current, anxVia = anxViaGiven || ANX.modeVia();   // analytics: a caller that knows says so; else the marker
   // An explicit click outranks anything the reconnect path is still waiting
   // to re-assert: without this a queued re-assert would land after the turn
@@ -19766,7 +19770,7 @@ async function setCodingMode(id, post, anxViaGiven) {
       : 'could not change the mode: ' + ((res && res.error) || '');
     // An empty chat keeps its start screen here too (see the success path below).
     if (!S.log.length) toast('The mode did not change', why, 'bad');
-    else S.log.push({id:nid(), k:'system', text: esc(why)});
+    else line({id:nid(), k:'system', text: esc(why)});
     render();
     return;
   }
@@ -19795,8 +19799,9 @@ async function setCodingMode(id, post, anxViaGiven) {
      take the start screen ("What should we work on?", the suggestions, the
      folder) off the screen with it. Say it in a toast there instead; inside a
      conversation the line stays, where it records when the stance changed. */
-  if (!S.log.length) toast('Mode changed to ' + (look ? look.word : res.mode), summary);
-  else S.log.push({id:nid(), k:'system', text: esc(summary)});
+  const note = modeChangeNote(summary, {midTurn, cardWaiting: approvalOpen(S.pending)});   // ATO-1184
+  if (!S.log.length) toast('Mode changed to ' + (look ? look.word : res.mode), note);
+  else line({id:nid(), k:'system', text: esc(note)});
   render();
 }
 
