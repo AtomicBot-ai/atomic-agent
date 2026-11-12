@@ -1,0 +1,33 @@
+/* ============================================================
+   ATO-563 — a unified diff as coloured lines (renderer/diff-lines.js), and
+   the Changes / Revert row under a reply's "Saved to" lines
+   (renderer/diff-review.js). Colours come from tokens only, so the light and
+   dark themes both follow styles.css.
+   ============================================================ */
+
+/* One block per line; added and removed lines get a wash and a 2px edge in
+   the success / critical colour, the text stays in the body ink. */
+.difflines{display:block;font:400 var(--fs-label)/1.55 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.difflines .dl{display:block;padding:0 6px;margin:0 -6px;min-height:1.55em}
+.difflines .dl-add{background:var(--success-tint);box-shadow:inset 2px 0 0 var(--success);color:var(--ink)}
+.difflines .dl-del{background:var(--critical-wash);box-shadow:inset 2px 0 0 var(--critical);color:var(--ink)}
+.difflines .dl-hunk,.difflines .dl-file{color:var(--ink-3)}
+.difflines .dl-note{color:var(--ink-2)}
+
+/* ---- Under a "Saved to" line ------------------------------------------ */
+.dr-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;min-width:0;margin:2px 0 4px}
+.dr-diff{flex:1 1 100%;min-width:0}
+.dr-diff > summary{display:inline-flex;align-items:center;gap:4px;cursor:pointer;list-style:none;
+  font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2)}
+.dr-diff > summary::-webkit-details-marker{display:none}
+.dr-diff > summary:hover{color:var(--ink)}
+.dr-diff > summary svg{width:12px;height:12px;transition:transform var(--t-state) var(--ease)}
+.dr-diff[open] > summary svg{transform:rotate(90deg)}
+.dr-count{font:400 var(--fs-label)/1 var(--font-mono)}
+.dr-add{color:var(--success)}
+.dr-del{color:var(--critical)}
+.dr-body{margin-top:6px;max-height:320px;overflow:auto;padding:8px 10px;border-radius:var(--r-well);background:var(--well)}
+.dr-sep{display:block;height:1px;margin:8px 0;background:var(--bd-2)}
+.dr-confirm{font-size:var(--fs-cap);line-height:1.5;color:var(--ink)}
+.dr-done{display:inline-flex;align-items:center;gap:4px;font-size:var(--fs-cap);line-height:1.5;color:var(--ink-3)}
+.dr-done svg{width:13px;height:13px;color:var(--success)}

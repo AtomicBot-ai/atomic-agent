@@ -2489,6 +2489,14 @@ function wireIpc(client: AgentClient): void {
     );
   });
 
+  // ATO-563: Revert under a reply puts back a file the agent replaced.
+  ipcMain.handle("agent:fsRestore", (_event, payload: unknown) => {
+    const { sessionId, path } = (payload ?? {}) as { sessionId?: unknown; path?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
+    if (typeof path !== "string" || !isAbsoluteOn(process.platform, path) || path.includes("\0")) return { ok: false, supported: true, error: "Not a file path" };
+    return client.restoreFile(sessionId, path);
+  });
+
   // Files the agent produced: open, reveal, copy, save elsewhere.
   const safePath = (p: unknown): string | null => {
     // Absolute by this platform's rules: `/x` here, `C:\x` on Windows.
