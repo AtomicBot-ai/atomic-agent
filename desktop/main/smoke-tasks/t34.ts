@@ -295,9 +295,19 @@ async function supersededOnItsRoute(js: Js, check: Check, g: Guard, agent: Stand
   let p: Answer = null;
   try {
     await within(30_000, "the check's daemon turn", begun);
+    // Nothing behind the held turn can end while it is held: the count only grows.
+    const queued = daemonTurnsOnTheirWay();
     const pick = js<Answer>(`window.atomic.selectLocalModel(${JSON.stringify(MODEL)})`);
     if (!(await g.pickAsked())) throw new Error(`the pick never asked for its turn: ${JSON.stringify(g.verbs())}`);
-    stop = await within(10_000, "Settings' Stop", js<Answer>("window.atomic.modelsStop()"));
+    /* ATO-1414: and its turn is counted in the daemon's queue. pickAsked reads
+       the guard's log (no call for half a second), and on a loaded machine the
+       pick could sit longer than that between its last write and its ask: Stop
+       then came first, the pick rightly ran, and check 1 failed in full runs
+       only. The queue is the pick's own word that it asked. */
+    if (!(await g.until(() => daemonTurnsOnTheirWay() > queued, 20_000))) {
+      throw new Error(`the pick never asked for its daemon turn: ${JSON.stringify(g.verbs())}`);
+    }
+    stop = await within(30_000, "Settings' Stop", js<Answer>("window.atomic.modelsStop()"));
     release();
     await held;
     p = await within(30_000, "the superseded pick", pick);
@@ -344,7 +354,7 @@ async function heldWhileTurnsRun(js: Js, check: Check, g: Guard, agent: StandIn)
   // The last turn ends (the client's `idle`): the restart runs, once.
   agent.turns = 0;
   lastTurnEnded();
-  await within(10_000, "the held restart", waitForSwitchRestart());
+  await within(30_000, "the held restart", waitForSwitchRestart());
   lastTurnEnded();
   await waitForSwitchRestart();
   check(
@@ -383,12 +393,12 @@ async function noSpawnOnceMovedOn(js: Js, check: Check, g: Guard, main: SmokeDow
   const reopen = main.quit();
   let closed: Awaited<ReturnType<typeof modelsStart>> | null = null;
   try {
-    closed = await within(10_000, "a start once the app quits", modelsStart());
+    closed = await within(30_000, "a start once the app quits", modelsStart());
   } finally {
     reopen();
   }
   const whileClosed = g.verbs();
-  const open = await within(10_000, "a start", modelsStart());
+  const open = await within(30_000, "a start", modelsStart());
   const reopened = g.verbs();
   check(
     "T34 3: once the quit has begun `models start` spawns nothing, and says so — the quit undone, it spawns as before",
@@ -431,7 +441,7 @@ async function noSpawnOnceMovedOn(js: Js, check: Check, g: Guard, main: SmokeDow
     g.holdStatus(false);
     throw new Error(`Settings' Start never reached its models status: ${JSON.stringify(g.verbs())}`);
   }
-  const stop = await within(10_000, "Settings' Stop", js<Answer>("window.atomic.modelsStop()"));
+  const stop = await within(30_000, "Settings' Stop", js<Answer>("window.atomic.modelsStop()"));
   g.mark("stop");
   g.holdStatus(false);
   const s = await within(20_000, "Settings' Start", settings);
@@ -509,21 +519,23 @@ async function pickThenStop(js: Js, g: Guard, agent: StandIn, n: number): Promis
   try {
     await within(30_000, "the check's daemon turn", begun);
     const pending: Promise<Answer>[] = [];
-    let queued = 0;
+    // Nothing behind the held turn can end while it is held: the count only grows.
+    let queued = daemonTurnsOnTheirWay();
     for (let i = 0; i < n; i++) {
       pending.push(js<Answer>(`window.atomic.selectLocalModel(${JSON.stringify(MODEL)})`));
       // Each pick has made its reads and writes and asked for its turn before the next one comes.
       if (!(await g.until(() => count(g.verbs(), "models list end") >= i + 1, 20_000))) throw new Error(`pick ${i + 1} never read the catalogue: ${JSON.stringify(g.verbs())}`);
       if (i === 0 && !(await g.pickAsked())) throw new Error(`the pick never asked for its turn: ${JSON.stringify(g.verbs())}`);
-      /* A later pick is counted in the daemon's queue before Stop comes, not
-         given a fixed pause: its reads before it asks can take longer than any
-         pause on a busy machine, and a pick that asks after Stop rightly runs. */
-      if (i > 0 && !(await g.until(() => daemonTurnsOnTheirWay() >= queued + 1, 20_000))) {
+      /* Every pick (ATO-1414: the first too, not only pickAsked's quiet half
+         second) is counted in the daemon's queue before Stop comes, not given
+         a fixed pause: its reads before it asks can take longer than any pause
+         on a busy machine, and a pick that asks after Stop rightly runs. */
+      if (!(await g.until(() => daemonTurnsOnTheirWay() >= queued + 1, 20_000))) {
         throw new Error(`pick ${i + 1} never asked for its turn: ${JSON.stringify(g.verbs())}`);
       }
       queued = daemonTurnsOnTheirWay();
     }
-    stop = await within(10_000, "Settings' Stop", js<Answer>("window.atomic.modelsStop()"));
+    stop = await within(30_000, "Settings' Stop", js<Answer>("window.atomic.modelsStop()"));
     release();
     await held;
     picks = await within(30_000, "the superseded picks", Promise.all(pending));

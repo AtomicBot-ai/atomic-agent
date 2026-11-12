@@ -29,6 +29,32 @@ type Check = (name: string, ok: boolean, detail?: string) => void;
 const show = (s: unknown) => JSON.stringify(s);
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/* ATO-1414: the renderer has taken a resize of the window. setContentSize
+   returns before the renderer sees the new width, and on a loaded machine the
+   resize (and the 1000px media query behind sidebarExpanded) landed after the
+   fixed 500 ms this used to wait: (c) then read a narrow window's chrome — the
+   sidebar a drawer, no top row — and failed in full runs only. Waits for the
+   width itself, 10 s at most; past that the checks read what is there. */
+async function sized(js: Js, width: number, ms = 10_000): Promise<boolean> {
+  const end = Date.now() + ms;
+  for (;;) {
+    const ok = await js<boolean>(`Math.abs(window.innerWidth - ${width}) <= 1`).catch(() => false);
+    if (ok || Date.now() >= end) return ok;
+    await wait(100);
+  }
+}
+
+/* ATO-1414: the chrome once it shows what a check is about to assert, or as it
+   is after `ms` (the check then fails on what it reads, as before). */
+async function chromeWhen(js: Js, ready: (c: Chrome) => boolean, ms = 5_000): Promise<Chrome> {
+  const end = Date.now() + ms;
+  for (;;) {
+    const c = await js<Chrome>(CHROME);
+    if (ready(c) || Date.now() >= end) return c;
+    await wait(100);
+  }
+}
+
 /* Where the chrome's two buttons are, read off the live DOM. */
 const CHROME = String.raw`(() => {
   const r = (n) => { if (!n) return null; const b = n.getBoundingClientRect();
@@ -109,7 +135,8 @@ export async function checks114(js: Js, check: Check): Promise<void> {
     );
     if (w && size) {
       w.setContentSize(940, 620);
-      await wait(500);
+      await sized(js, 940);
+      await wait(150);
       const narrow = await js<Record<string, unknown>>(hero);
       check(
         "T114b: on the narrowest window (940×620) the bigger greeting still fits its column, the mark in proportion",
@@ -121,14 +148,18 @@ export async function checks114(js: Js, check: Check): Promise<void> {
       process.stdout.write("SKIP T114b narrow: no BrowserWindow to resize in this run\n");
     }
   } finally {
-    if (w && size && !w.isDestroyed()) { w.setContentSize(size[0], size[1]); await wait(500); }
+    if (w && size && !w.isDestroyed()) {
+      w.setContentSize(size[0], size[1]);
+      if (!(await sized(js, size[0]))) process.stdout.write(`WARN T114: the renderer did not take the window's width back (${size[0]}px) within 10 s\n`);
+      await wait(150);
+    }
   }
 
   // ---- (c) the sidebar's top row --------------------------------------------
   const before = await js<string>("S.sidebar");
   try {
     if (before !== "open") { await js<unknown>("act('toggle:sidebar')"); await wait(150); }
-    const open = await js<Chrome>(CHROME);
+    const open = await chromeWhen(js, (c) => c.expanded && !!c.top && c.toolbar.open);
     const [s, t] = open.top ? open.top.buttons : [];
     check(
       "T114c: expanded, the sidebar's top row carries Search then the sidebar toggle, and the toolbar carries neither",
@@ -197,7 +228,7 @@ export async function checks114(js: Js, check: Check): Promise<void> {
     // Collapsed: back in the toolbar, next to the traffic lights.
     await js<unknown>("act('toggle:sidebar')");
     await wait(150);
-    const rail = await js<Chrome>(CHROME);
+    const rail = await chromeWhen(js, (c) => c.state === "rail" && c.top === null && !c.toolbar.open);
     const [rt, rs] = rail.toolbar.buttons;
     check(
       "T114c: collapsed, the toggle and Search stand in the toolbar next to the lights, and the rail has no top row",
