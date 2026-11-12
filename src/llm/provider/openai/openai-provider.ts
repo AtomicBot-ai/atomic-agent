@@ -198,6 +198,17 @@ export class OpenAiProvider implements LlmProvider {
    * rebuilt on every config write, which is the cheapest re-probe.
    */
   private readonly flatSessions = new Set<string>();
+  /**
+   * Tools whose JSON schema this server refused, per session (`"*"` for
+   * requests without a session id): wire name -> the exact tool
+   * definition that was refused (ATO-1443). Every later request of the
+   * session goes out without them, instead of paying one failed request
+   * per agent step. Keyed on the definition as well as the name, so a
+   * tool whose schema changed (an MCP server reload) is tried again.
+   * Per instance, like `flatSessions`: a config write rebuilds the
+   * provider, which is the re-probe.
+   */
+  private readonly rejectedTools = new Map<string, Map<string, string>>();
 
   constructor(options: OpenAiProviderOptions) {
     this.id = options.id;
@@ -284,18 +295,22 @@ export class OpenAiProvider implements LlmProvider {
       : { ...result, rateLimits: this.lastRateLimits };
   }
 
-  async complete(request: CompletionRequest): Promise<CompletionResult> {
+  async complete(original: CompletionRequest): Promise<CompletionResult> {
+    // Tools this session already learned the server refuses stay out
+    // from the first send (ATO-1443).
+    const known = this.withoutRememberedTools(original);
+    const request = known.request;
     try {
-      return await this.completeOnce(request);
+      return withDroppedTools(await this.completeOnce(request), known.dropped);
     } catch (err) {
       // One resend without the tool whose schema the server could not
       // use (ATO-1399); a second refusal goes back as the server wrote it.
       const reduced = this.withoutRejectedTool(request, err);
       if (!reduced) throw err;
       try {
-        return withDroppedTool(
+        return withDroppedTools(
           await this.completeOnce(reduced.request),
-          reduced.dropped,
+          [...known.dropped, reduced.dropped],
         );
       } catch (retryErr) {
         if (request.signal?.aborted) throw retryErr;
@@ -504,6 +519,7 @@ export class OpenAiProvider implements LlmProvider {
       tools,
     );
     if (!culprit) return null;
+    this.rememberRejectedTool(request, tools[culprit.index]!, culprit.name);
     const tool = this.toolCallAdapter.nameUnescape(culprit.name);
     this.http.logger?.warn(
       `llm: "${this.id}" could not use the JSON schema of tool "${tool}" (at ${culprit.pointer}); resending this request without that tool`,
@@ -524,6 +540,51 @@ export class OpenAiProvider implements LlmProvider {
       },
       dropped: { name: tool, reason: "schema_rejected" },
     };
+  }
+
+  /** Remember a refused tool for the rest of the session (ATO-1443). */
+  private rememberRejectedTool(
+    request: CompletionRequest,
+    tool: Record<string, unknown>,
+    wireName: string,
+  ): void {
+    const key = sessionKey(request);
+    let known = this.rejectedTools.get(key);
+    if (!known) {
+      known = new Map();
+      this.rejectedTools.set(key, known);
+    }
+    known.set(wireName, JSON.stringify(tool));
+  }
+
+  /**
+   * The request without the tools this session already learned the
+   * server refuses (ATO-1443), and those tools for `droppedTools`. The
+   * request itself when there are none.
+   */
+  private withoutRememberedTools(request: CompletionRequest): {
+    request: CompletionRequest;
+    dropped: DroppedTool[];
+  } {
+    const known = this.rejectedTools.get(sessionKey(request));
+    const tools = request.tools;
+    if (!known || known.size === 0 || !tools || tools.length === 0) {
+      return { request, dropped: [] };
+    }
+    const dropped: DroppedTool[] = [];
+    const kept = tools.filter((tool) => {
+      const name = toolWireName(tool);
+      if (name === null) return true;
+      const refused = known.get(name);
+      if (refused === undefined || refused !== JSON.stringify(tool)) return true;
+      dropped.push({
+        name: this.toolCallAdapter.nameUnescape(name),
+        reason: "schema_rejected",
+      });
+      return false;
+    });
+    if (dropped.length === 0) return { request, dropped };
+    return { request: { ...request, tools: kept }, dropped };
   }
 
   private markFlat(request: CompletionRequest, err: unknown): void {
@@ -550,9 +611,11 @@ export class OpenAiProvider implements LlmProvider {
       );
     }
     let shape = this.shapeFor(request);
-    // The request the body is built from: the caller's, until a schema
-    // error names a tool to leave out (`withoutRejectedTool`).
-    let activeRequest = request;
+    // The request the body is built from: the caller's without the tools
+    // this session already learned the server refuses (ATO-1443), until
+    // a schema error names one more to leave out (`withoutRejectedTool`).
+    const known = this.withoutRememberedTools(request);
+    let activeRequest = known.request;
     let body = this.buildBody(activeRequest, true, shape);
     const path = `${this.chatPathPrefix}/chat/completions`;
     let accumulated = "";
@@ -827,7 +890,10 @@ export class OpenAiProvider implements LlmProvider {
       sentBody,
     );
     return this.withRateLimits(
-      toolDropped ? withDroppedTool(safe, toolDropped) : safe,
+      withDroppedTools(
+        safe,
+        toolDropped ? [...known.dropped, toolDropped] : known.dropped,
+      ),
     );
   }
 
@@ -1083,6 +1149,24 @@ function withDroppedTool(
   const already = result.droppedTools ?? [];
   if (already.some((tool) => tool.name === dropped.name)) return result;
   return { ...result, droppedTools: [...already, dropped] };
+}
+
+/** `withDroppedTool` for each tool in order; the result itself when none. */
+function withDroppedTools(
+  result: CompletionResult,
+  dropped: readonly DroppedTool[],
+): CompletionResult {
+  let out = result;
+  for (const tool of dropped) out = withDroppedTool(out, tool);
+  return out;
+}
+
+/** A chat-completions tool's `function.name`, or null for any other shape. */
+function toolWireName(tool: Record<string, unknown>): string | null {
+  const fn = tool.function;
+  if (typeof fn !== "object" || fn === null) return null;
+  const name = (fn as { name?: unknown }).name;
+  return typeof name === "string" ? name : null;
 }
 
 /**

@@ -245,3 +245,79 @@ describe("OpenAiProvider — drop a tool the server cannot use (ATO-1399)", () =
     });
   });
 });
+
+describe("OpenAiProvider — remember a refused tool for the session (ATO-1443)", () => {
+  it("leaves the refused tool out of the session's next streamed step from the start", async () => {
+    const { provider, fetchImpl, bodies } = setup([
+      () => json(SCHEMA_500, 500),
+      okStream,
+      okStream,
+    ]);
+    const step = { prompt: "hi", sessionId: "s1", tools: [GOOD_TOOL, BAD_TOOL] };
+    await drain(provider.completeStream(step));
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    const next = await drain(provider.completeStream(step));
+    // One request, not a refusal and a resend.
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(names(bodies[2]!)).toEqual(["os__fs__read"]);
+    // Still named, so the chat can say the tool is off.
+    expect(next.droppedTools).toEqual([
+      { name: "plugin.records.lookup", reason: "schema_rejected" },
+    ]);
+  });
+
+  it("remembers across unary and streamed calls of the same session", async () => {
+    const { provider, fetchImpl, bodies } = setup([
+      () => json(SCHEMA_500, 500),
+      okUnary,
+      okUnary,
+    ]);
+    const step = { prompt: "hi", sessionId: "s1", tools: [GOOD_TOOL, BAD_TOOL] };
+    await provider.complete(step);
+    const next = await provider.complete(step);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(names(bodies[2]!)).toEqual(["os__fs__read"]);
+    expect(next.droppedTools).toEqual([
+      { name: "plugin.records.lookup", reason: "schema_rejected" },
+    ]);
+  });
+
+  it("does not carry the refusal into another session", async () => {
+    const { provider, bodies } = setup([
+      () => json(SCHEMA_500, 500),
+      okStream,
+      okStream,
+    ]);
+    await drain(
+      provider.completeStream({ prompt: "hi", sessionId: "s1", tools: [GOOD_TOOL, BAD_TOOL] }),
+    );
+    const other = await drain(
+      provider.completeStream({ prompt: "hi", sessionId: "s2", tools: [GOOD_TOOL, BAD_TOOL] }),
+    );
+    expect(names(bodies[2]!)).toEqual(["os__fs__read", "plugin__records__lookup"]);
+    expect(other.droppedTools).toBeUndefined();
+  });
+
+  it("tries the tool again once its schema changed", async () => {
+    const { provider, bodies } = setup([
+      () => json(SCHEMA_500, 500),
+      okStream,
+      okStream,
+    ]);
+    await drain(
+      provider.completeStream({ prompt: "hi", sessionId: "s1", tools: [GOOD_TOOL, BAD_TOOL] }),
+    );
+    const fixed = {
+      type: "function",
+      function: {
+        name: "plugin__records__lookup",
+        parameters: { type: "object", properties: { id: { type: "string" } } },
+      },
+    };
+    await drain(
+      provider.completeStream({ prompt: "hi", sessionId: "s1", tools: [GOOD_TOOL, fixed] }),
+    );
+    expect(names(bodies[2]!)).toEqual(["os__fs__read", "plugin__records__lookup"]);
+  });
+});
