@@ -290,16 +290,20 @@ export function normalizeItem(raw: unknown, kind: StudioKind): StudioItem | null
       provider: remote && typeof engine.provider === "string" ? engine.provider : "local",
     },
     recipe: i.recipe ?? null,
-    costUsd: remote ? reportedCost(engine, recipe) : null,
+    costUsd: remote ? reportedCost(engine) : null,
   };
 }
 
-/** A cost the provider reported, read where Core records it; never a guess. */
-function reportedCost(engine: Obj, recipe: Obj): number | null {
-  for (const v of [engine.costUsd, obj(recipe.usage)?.cost, recipe.costUsd]) {
-    if (typeof v === "number" && Number.isFinite(v) && v >= 0) return v;
-  }
-  return null;
+/**
+ * The cost of this one item, read only from `recipe.engine.costUsd`: the
+ * field ATO-1440 asks Core to fill per picture (the request's
+ * `usage.cost` split over its pictures). A request-level cost elsewhere in
+ * the recipe is not read: shown on each picture of a batch it would
+ * overstate the total n times. Never a guess.
+ */
+function reportedCost(engine: Obj): number | null {
+  const v = engine.costUsd;
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 const STATES = new Set(["queued", "generating", "completed", "failed", "cancelled"]);
