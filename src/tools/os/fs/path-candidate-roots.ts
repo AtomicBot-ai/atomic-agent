@@ -14,6 +14,11 @@ import { isInside } from "../../../approval/fanout-scope.js";
  * So such a folder is searched, or even descended into, only when the
  * missing path, the working folder or a user-named path is already
  * inside it; otherwise it is blocked.
+ *
+ * A root that is not inside the working folder or a user-named path and
+ * does not hold the missing path (the folders above the session) is
+ * marked `outer`: it is searched after the others, under a small budget
+ * of its own, so a crowded one cannot starve the search near the session.
  */
 
 /** One directory to search and how many levels below it to look. */
@@ -21,6 +26,8 @@ export interface CandidateRoot {
   dir: string;
   /** 1 = the root's direct children only. */
   depth: number;
+  /** Above the session: searched last, under its own small budget. */
+  outer?: boolean;
 }
 
 export interface CandidatePlan {
@@ -78,6 +85,10 @@ export async function candidateRoots(
   const { searchable, guarded } = protectedFolders(input);
   const blocked = [...searchable, ...guarded].filter((dir) => !qualifies(dir));
 
+  const near = [resolve(input.workingDir), ...named];
+  const placed = (dir: string, depth: number): CandidateRoot =>
+    near.some((root) => isInside(root, dir)) ? { dir, depth } : { dir, depth, outer: true };
+
   const roots: CandidateRoot[] = [
     { dir: resolve(input.workingDir), depth: WORKING_DEPTH },
     ...named.map((dir) => ({ dir, depth: NAMED_DEPTH })),
@@ -85,16 +96,16 @@ export async function candidateRoots(
   const ancestor = await nearestExisting(dirname(missing), exists);
   if (ancestor !== null) {
     const parent = dirname(ancestor);
-    roots.push(
-      { dir: ancestor, depth: 2 },
-      { dir: parent, depth: 1 },
-      { dir: dirname(parent), depth: 1 },
-    );
+    // The folder the missing path points into stays near: it is where the
+    // file was expected. Only the folders above it are outer.
+    roots.push({ dir: ancestor, depth: 2 }, placed(parent, 1), placed(dirname(parent), 1));
   }
   roots.push(
     ...searchable
       .filter((dir) => qualifies(dir))
-      .map((dir) => ({ dir, depth: PROTECTED_DEPTH })),
+      .map((dir) =>
+        isInside(dir, missing) ? { dir, depth: PROTECTED_DEPTH } : placed(dir, PROTECTED_DEPTH),
+      ),
   );
   return {
     roots: roots.filter(({ dir }) => dir !== home && !isFilesystemRoot(dir)),

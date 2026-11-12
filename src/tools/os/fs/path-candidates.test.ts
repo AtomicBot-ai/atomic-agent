@@ -101,6 +101,45 @@ describe("findPathCandidates", () => {
     expect(found).toHaveLength(3);
   });
 
+  // ATO-1333: the working folder in the system temp folder, whose ~20,000
+  // entries used to spend the whole shared budget before the search
+  // reached a match two levels below the working folder.
+  it("a crowded outer root cannot starve the near search", async () => {
+    await mkdir(join(base, "work", "projects", "target"), { recursive: true });
+    await mkdir(join(base, "crowd"), { recursive: true });
+    for (let i = 0; i < 40; i++) {
+      await writeFile(join(base, "crowd", `entry-${i}`), "x");
+    }
+    const search = await findPathCandidates(
+      join(base, "work", "target"),
+      [{ ...at("crowd", 1), outer: true }, at("work")],
+      {
+        ...DEFAULT_CANDIDATE_LIMITS,
+        maxEntries: 20,
+        maxOuterEntries: 10,
+        maxEntriesPerOuterDir: 10,
+      },
+    );
+    expect(search.found).toEqual([
+      { path: join(base, "work", "projects", "target"), kind: "folder" },
+    ]);
+    // The crowded folder was read only in part, so the search says it was cut.
+    expect(search.complete).toBe(false);
+  });
+
+  it("lists near matches before outer ones, however shallow", async () => {
+    await mkdir(join(base, "work", "a", "b", "same"), { recursive: true });
+    await mkdir(join(base, "above", "same"), { recursive: true });
+    const { found } = await findPathCandidates(join(base, "work", "same"), [
+      { ...at("above", 1), outer: true },
+      at("work"),
+    ]);
+    expect(found.map((c) => c.path)).toEqual([
+      join(base, "work", "a", "b", "same"),
+      join(base, "above", "same"),
+    ]);
+  });
+
   it("never throws, and says when a budget cut the search short", async () => {
     await mkdir(join(base, "desk", "thing"), { recursive: true });
     expect(
