@@ -733,6 +733,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "setup.vim",
+    label: "Vim keys in the prompt on/off",
+    group: "setup",
+    slash: {
+      name: "vim",
+      description:
+        "vim keys in the prompt (NORMAL / INSERT): `/vim` toggles | `/vim on` | `/vim off`",
+      // Right after /mouse: both are how-the-input-behaves switches.
+      rank: 37.5,
+    },
+  },
+  {
+    kind: "action",
     id: "setup.sidebar",
     label: "Hide or show the sidebar",
     group: "setup",

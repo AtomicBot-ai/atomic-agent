@@ -412,6 +412,13 @@ export function runSlashCommand(
     dispatch({ type: "show_steps_set", on });
     callbacks.onShowStepsPersistRequested?.(on);
   }
+  // `/vim`: same shape as `/steps`, written to `tui.vimMode` (ATO-662).
+  if (result.vimVerb) {
+    const on =
+      result.vimVerb === "toggle" ? !state.vimMode : result.vimVerb === "on";
+    dispatch({ type: "vim_mode_set", on });
+    callbacks.onVimModePersistRequested?.(on);
+  }
 }
 
 /**

@@ -149,6 +149,12 @@ export interface SlashDispatchResult {
    */
   readonly showStepsVerb?: "on" | "off" | "toggle";
   /**
+   * `/vim [on|off]` — vim keys in the composer (ATO-662). Bare `/vim` is
+   * `toggle`. The caller sets `TuiState.vimMode` and writes
+   * `tui.vimMode` through `onVimModePersistRequested`.
+   */
+  readonly vimVerb?: "on" | "off" | "toggle";
+  /**
    * `/uninstall`: measure the install and feed the result back as
    * `uninstall_plan_loaded`. Nothing is removed on this path — the
    * dialog it opens is what eventually asks for that.
@@ -412,6 +418,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       ]);
     case "steps":
       return dispatchStepsSub(parsed.args);
+    case "vim":
+      return dispatchVimSub(parsed.args);
     case "session":
       return pureActions([], {
         systemMessage: "use /sessions to switch, /new to start fresh",
@@ -690,6 +698,20 @@ function dispatchStepsSub(rawArgs: string): SlashDispatchResult {
   if (verb === "off") return pureActions([], { showStepsVerb: "off" });
   return pureActions([], {
     systemMessage: `usage: /steps [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
+/**
+ * `/vim` flips the composer's vim keys (`tui.vimMode`); `on` / `off`
+ * set them. Same shape as `/steps`: the toggle needs the live value, so
+ * the caller applies and persists it.
+ */
+function dispatchVimSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { vimVerb: "toggle" });
+  if (verb === "on" || verb === "off") return pureActions([], { vimVerb: verb });
+  return pureActions([], {
+    systemMessage: `usage: /vim [on|off] (got "${rawArgs.trim()}")`,
   });
 }
 

@@ -330,6 +330,8 @@ export interface TuiAppCallbacks {
   onThemePersistRequested?(themeName: string): void;
   /** Persist "always show steps" into `tui.showSteps` (`/steps`). */
   onShowStepsPersistRequested?(on: boolean): void;
+  /** Persist the composer's vim keys into `tui.vimMode` (`/vim`). */
+  onVimModePersistRequested?(on: boolean): void;
   /**
    * `/mouse on|off` — flip terminal mouse reporting live. `null` asks
    * for the current state to be reported without changing it. The
@@ -2629,6 +2631,7 @@ export function TuiApp({
                         }
                         onHistoryPrev={onHistoryPrev}
                         onHistoryNext={onHistoryNext}
+                        vim={state.vimMode}
                       />
                     </ComposerOverlay>
                   </>

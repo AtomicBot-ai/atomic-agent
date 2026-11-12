@@ -480,6 +480,15 @@ describe("reduceUiAction finished-turn folds (ATO-963)", () => {
     expect(reduceUiAction(state, { type: "show_steps_set", on: true })?.showSteps).toBe(true);
   });
 
+  it("sets the composer's vim keys, off by default (ATO-662)", () => {
+    const state = createInitialTuiState(SESSION);
+    expect(state.vimMode).toBe(false);
+    expect(
+      createInitialTuiState(SESSION, undefined, { vimMode: true }).vimMode,
+    ).toBe(true);
+    expect(reduceUiAction(state, { type: "vim_mode_set", on: true })?.vimMode).toBe(true);
+  });
+
   it("forgets opened turns when the chat is cleared", () => {
     const opened = reduceUiAction(withTurns(), {
       type: "turn_expand_toggled",

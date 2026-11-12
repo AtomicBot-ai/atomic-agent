@@ -1,5 +1,5 @@
 import { Box } from "ink";
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import type { ComposerBackendMeta } from "../composer-switch/composer-backend-selectors.js";
 import { useRotatingPlaceholder } from "../hooks/use-rotating-placeholder.js";
 import { fusionComposerGround } from "../theme/fusion-tint.js";
@@ -12,6 +12,7 @@ import {
   type MultiLineEditorProps,
 } from "./multi-line-editor.js";
 import { PromptMetaBar, type PromptMetaBarProps } from "./prompt-meta-bar.js";
+import { VimModeIndicator, type VimMode } from "./vim/index.js";
 
 /**
  * The composer: a framed input field with Send in it and a toolbar under
@@ -134,8 +135,12 @@ export function PromptShell(props: PromptShellProps): ReactElement {
     onChange,
     onSubmit,
     mouseLayer,
+    vim = false,
+    onVimModeChange,
     ...editorProps
   } = props;
+  // The editor owns the vim state; the shell only shows which mode it is in.
+  const [vimMode, setVimMode] = useState<VimMode>("insert");
   // Rotate only while the phrase is on screen. `effectivePlaceholder`
   // below already blanks it for a non-empty buffer; without the same
   // condition on the timer, typing left a four-second full-frame repaint
@@ -229,9 +234,20 @@ export function PromptShell(props: PromptShellProps): ReactElement {
               onSubmit={onSubmit}
               placeholder={effectivePlaceholder}
               mouseLayer={mouseLayer}
+              vim={vim}
+              onVimModeChange={(mode) => {
+                setVimMode(mode);
+                onVimModeChange?.(mode);
+              }}
               bare
             />
           </Box>
+          {vim ? (
+            <Box flexShrink={0} marginLeft={1}>
+              {/* ATO-662: in NORMAL the keys are commands, so say so. */}
+              <VimModeIndicator mode={vimMode} />
+            </Box>
+          ) : null}
           {running && onStop ? (
             <Box flexShrink={0} marginLeft={1}>
               {/*

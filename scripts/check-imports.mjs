@@ -36,6 +36,9 @@ const sharedViews = new Set([
   'multi-line-editor-clipboard.ts', 'multi-line-editor-cursor.ts',
   'multi-line-editor-edits.ts', 'multi-line-editor-input.ts',
   'multi-line-editor-keys.ts', 'multi-line-editor-pointer.ts',
+  'vim/index.ts', 'vim/use-vim-keys.ts', 'vim/vim-insert.ts', 'vim/vim-keys.ts',
+  'vim/vim-mode-indicator.tsx', 'vim/vim-motions.ts', 'vim/vim-normal.ts',
+  'vim/vim-operators.ts', 'vim/vim-text.ts', 'vim/vim-types.ts',
 ].map((name) => `src/tui/components/${name}`));
 sharedViews.add('src/tui/row-window.ts');
 

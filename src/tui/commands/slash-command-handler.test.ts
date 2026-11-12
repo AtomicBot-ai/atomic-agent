@@ -601,4 +601,14 @@ describe("/enhance", () => {
     expect(bad.systemMessage).toMatch(/usage: \/steps/);
     expect(dispatchSlashCommand("/steps").forwardAsMessage).toBe(false);
   });
+
+  it("/vim toggles the composer's vim keys, on and off set them (ATO-662)", () => {
+    expect(dispatchSlashCommand("/vim").vimVerb).toBe("toggle");
+    expect(dispatchSlashCommand("/vim on").vimVerb).toBe("on");
+    expect(dispatchSlashCommand("/vim OFF").vimVerb).toBe("off");
+    const bad = dispatchSlashCommand("/vim emacs");
+    expect(bad.vimVerb).toBeUndefined();
+    expect(bad.systemMessage).toMatch(/usage: \/vim/);
+    expect(dispatchSlashCommand("/vim").forwardAsMessage).toBe(false);
+  });
 });

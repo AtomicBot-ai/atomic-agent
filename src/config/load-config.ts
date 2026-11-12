@@ -702,6 +702,7 @@ export function loadConfig(): AtomicAgentConfig {
       whileBusySubmit: user.tui.whileBusySubmit,
       mouse: user.tui.mouse,
       showSteps: user.tui.showSteps,
+      vimMode: user.tui.vimMode,
       notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {

@@ -627,6 +627,12 @@ export interface TuiState {
    * and flipped with `/steps on|off` (persisted).
    */
   showSteps: boolean;
+  /**
+   * Vim keys in the composer (ATO-662). Seeded from `tui.vimMode` and
+   * flipped with `/vim on|off` (persisted). The NORMAL / INSERT mode
+   * itself lives in the editor, not here.
+   */
+  vimMode: boolean;
   /** Is the session picker overlay visible? */
   sessionPickerOpen: boolean;
   /** Entries shown in the picker, newest first. */
@@ -897,6 +903,8 @@ export interface InitialTuiLayoutOptions {
   whileBusyMode?: WhileBusySubmitMode;
   /** Seeds {@link TuiState.showSteps} from `tui.showSteps`. */
   showSteps?: boolean;
+  /** Seeds {@link TuiState.vimMode} from `tui.vimMode`. */
+  vimMode?: boolean;
   /**
    * Seeds the local-models slice's config-derived facts (mode + chosen
    * model), so the composer's route controls are right on the home
@@ -987,6 +995,7 @@ export function createInitialTuiState(
     toolsExpandedById: {},
     turnsExpandedById: {},
     showSteps: layout?.showSteps ?? false,
+    vimMode: layout?.vimMode ?? false,
     sessionPickerOpen: false,
     sessionPickerList: [],
     sessionPickerCursor: 0,
