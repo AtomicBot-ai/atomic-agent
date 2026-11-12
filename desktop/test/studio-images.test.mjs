@@ -523,7 +523,8 @@ test('the Images page downloads for the mode in use, and re-reads the catalog af
   P.page.act('mode:transform');
   P.page.act('download:flux');
   await settle();
-  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [['flux:q8', undefined], ['flux:q8', {workflow: 'transform'}]], 'create sends no workflow, another mode sends its own');
+  // The JSON round trip writes a missing options argument as null.
+  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [['flux:q8', null], ['flux:q8', {workflow: 'transform'}]], 'create sends no workflow, another mode sends its own');
   const before = P.reads();
   P.page.onLocal({type: 'download', download: {id: 'flux:q8', state: 'cancelled'}});
   P.flush();
