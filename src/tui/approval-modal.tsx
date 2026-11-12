@@ -37,6 +37,7 @@ import { theme } from "./theme/theme.js";
 import { MouseTarget, useMouseCommands } from "./mouse/mouse-context.js";
 import { isPrimaryPress } from "./mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "./mouse/mouse-registry.js";
+import { QuestionPrompt } from "./question-prompt.js";
 
 interface ApprovalModalProps {
   request: ApprovalRequest;
@@ -94,6 +95,20 @@ export function ApprovalModal({
   previewPage = null,
   onPreviewPage = () => {},
 }: ApprovalModalProps): ReactElement {
+  // An `ask_user` question (ATO-489): numbered options, answered from the
+  // composer; the deny chord skips it.
+  if (request.question) {
+    return (
+      <QuestionPrompt
+        question={request.question}
+        skipButton={
+          <ApprovalButton request={request} approved={false} tone="danger">
+            {`skip · ctrl+${APPROVAL_CHORDS.deny}`}
+          </ApprovalButton>
+        }
+      />
+    );
+  }
   const categoryLabel = formatApprovalCategory(request.category);
   // `[s]` for any grantable category (everything but trust_config);
   // `[a]` only when the shell tool supplied a command shape to grant.

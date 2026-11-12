@@ -182,6 +182,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // The live plan (ATO-486): writes only the session's own record, so it
   // batches with anything; the step commit applies results in order.
   "plan.update": "pure_read",
+  // ATO-489: waits for the person like an approval, so it runs alone.
+  ask_user: "approval_gated",
   "tool.search": "pure_read",
   "skill.run_script": "approval_gated",
 

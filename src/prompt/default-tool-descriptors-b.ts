@@ -337,6 +337,18 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // Frequent tier (ATO-489): a model that must `tool.view` first asks in
+    // prose instead, and the person gets no cards to click.
+    name: "ask_user",
+    summary:
+      "Stop and ask the user ONE clarifying question with 2-8 short ready answers, when a choice only they can make blocks the work (which of several targets, a style, a scope). The turn waits; the answer comes back as this tool's result. multiSelect: true lets them pick several; they can always type their own answer unless allowOther: false. Do not use it for confirmation of a risky action (that asks by itself) or when the request already says what to do.",
+    argsSchema:
+      "{ question: string, options: [{ label: string, description?: string }] /* 2..8 */, multiSelect?: boolean, allowOther?: boolean /* default true */ }",
+    examples: [
+      '{"question":"Which database should the app use?","options":[{"label":"SQLite","description":"one file, no server"},{"label":"Postgres","description":"a server, scales further"}]}',
+    ],
+  },
+  {
     name: "reply",
     summary:
       "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary. `attachments`: paths of existing files to deliver with the reply (a report you wrote, a screenshot, a converted file) — on Telegram/Discord they are sent as files after the text; never paste a file's contents into `text` when you can attach it.",

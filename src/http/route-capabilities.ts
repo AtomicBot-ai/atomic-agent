@@ -72,6 +72,9 @@ export function createCapabilitiesHandler(): HttpHandler {
         // "allow in this chat" answer only when `allow-in-chat` is listed:
         // an older agent answers it with a 400.
         approvalDecisions: [...APPROVAL_DECISIONS],
+        // ATO-489: `user_question` requests on /api/events are answered
+        // with POST /api/question/answer. Absent on an older agent.
+        questions: true,
       },
       tools: runtime.toolRegistry
         .list()

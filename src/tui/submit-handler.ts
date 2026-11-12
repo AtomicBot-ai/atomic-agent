@@ -24,6 +24,10 @@ import {
   THEMES,
 } from "./theme/theme.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
+import {
+  describeUserQuestionAnswer,
+  parseTypedUserQuestionAnswer,
+} from "../approval/user-question.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import {
   canAcceptMessage,
@@ -95,6 +99,28 @@ export function handleEditorSubmit(
   }
 
   if (trimmed.startsWith("/")) {
+    return;
+  }
+
+  // An `ask_user` question (ATO-489): what was typed is the answer, a
+  // number, several, or the person's own words. One that does not fit
+  // keeps the question open and says why.
+  const question = state.pendingApproval?.question;
+  if (
+    question &&
+    state.pendingApproval &&
+    state.pendingApproval.sessionId === state.session.sessionId &&
+    callbacks.onQuestionAnswer
+  ) {
+    const { approvalId } = state.pendingApproval;
+    const answer = parseTypedUserQuestionAnswer(question, trimmed);
+    if (typeof answer === "string") {
+      dispatch({ type: "system_message", text: `Not an answer to the question: ${answer}.` });
+      return;
+    }
+    callbacks.onQuestionAnswer(approvalId, answer);
+    dispatch({ type: "approval_resolved", approvalId, approved: true });
+    dispatch({ type: "system_message", text: `You answered. ${describeUserQuestionAnswer(answer)}` });
     return;
   }
 

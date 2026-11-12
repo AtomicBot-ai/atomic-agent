@@ -154,6 +154,9 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Show a live checklist for work of 3+ steps; send the whole plan each call.",
     tier: RARE,
   },
+  ask_user: {
+    summary: "Ask the user a question with 2-8 ready answers when a choice only they can make blocks the work; waits for the answer.",
+  },
   "skill.run_script": { summary: "Run a skill's script (may require approval).", tier: RARE },
   "memory.profile.set": {
     summary: "Save a durable user fact; pinned=false needs keywords.",

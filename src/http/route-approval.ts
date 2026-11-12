@@ -107,6 +107,19 @@ export function createResolveApprovalHandler(): HttpHandler {
       return;
     }
     const { approved, grant } = parsed;
+    if (approved) {
+      // An `ask_user` question (ATO-489) is answered with a choice, not an
+      // Allow: a bare approve would reach the model as no answer at all.
+      const pending = ctx.runtime.approvals.pendingRequest(approvalId);
+      if (pending?.category === "user_question") {
+        sendError(
+          res,
+          400,
+          openaiError("this is a question; answer it with POST /api/question/answer"),
+        );
+        return;
+      }
+    }
     const inChat = grant === "shape";
     if (grant === "always") {
       const request = ctx.runtime.approvals.pendingRequest(approvalId);

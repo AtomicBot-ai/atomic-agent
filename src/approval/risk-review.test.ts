@@ -183,6 +183,7 @@ describe("isRiskReviewEligible", () => {
     expect(isRiskReviewEligible("browser_secret")).toBe(false);
     expect(isRiskReviewEligible("fusion_fanout")).toBe(false);
     expect(isRiskReviewEligible("local_model_restart")).toBe(false);
+    expect(isRiskReviewEligible("user_question")).toBe(false);
     expect(isRiskReviewEligible("fs_read_outside")).toBe(false);
   });
 });

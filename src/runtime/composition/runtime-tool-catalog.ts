@@ -20,7 +20,7 @@ import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/sec
 import { isSecretEnvName } from "../../sandbox/command-env.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
-import { replyTool } from "../../tools/conversation/index.js";
+import { buildAskUserTool, replyTool } from "../../tools/conversation/index.js";
 import { buildBrowserTools, UserSiteApprovals } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
 import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
@@ -214,6 +214,10 @@ export function registerRuntimeCoreTools(input: {
   // it reads the same live descriptor list.
   // The live checklist (ATO-486): pure, always on, no approval.
   toolRegistry.register(planUpdateTool);
+  // Clarifying questions with ready answers (ATO-489): through the
+  // approval gate, so the turn waits like an approval and only the
+  // person answers.
+  toolRegistry.register(buildAskUserTool({ approvals: dangerous.approvals }));
   // Older stored names stay out of the prompt until checked against actual
   // user messages. The background walk never deletes facts or blocks boot.
   const nameGroundingSource = sessionGroundingSource(sessionStore);

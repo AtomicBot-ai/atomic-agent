@@ -47,6 +47,9 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   // The live checklist is the operator's view of the orchestrator's
   // work (ATO-486); a worker's own list would reach nobody.
   "plan.update",
+  // Nobody watches a worker's session, so its question would reach nobody
+  // (ATO-489); the gate would refuse it anyway.
+  "ask_user",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */

@@ -532,7 +532,7 @@ describe("toStrictJsonSchema", () => {
    * knowingly — either the schema loses a bound it does not need, or
    * the tool joins this list.
    */
-  it("converts all but eight of the sampled built-in tool schemas", () => {
+  it("converts all but nine of the sampled built-in tool schemas", () => {
     const refused: string[] = [];
     let converted = 0;
     for (const name of DEFAULT_TOOL_NAMES) {
@@ -542,6 +542,8 @@ describe("toStrictJsonSchema", () => {
       else refused.push(name);
     }
     expect(refused).toEqual([
+      // minItems on `options`, whose items nest an object.
+      "ask_user",
       // minItems / maxItems on the task list.
       "fusion.delegate",
       // `arguments` is a map of arbitrary string keys.
@@ -560,9 +562,9 @@ describe("toStrictJsonSchema", () => {
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 93 registered schemas, 85 of them strict. Pinned as a number so
+    // 94 registered schemas, 85 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
-    expect(DEFAULT_TOOL_NAMES.length).toBe(93);
+    expect(DEFAULT_TOOL_NAMES.length).toBe(94);
     expect(converted).toBe(85);
   });
 
@@ -663,6 +665,7 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "skill.view",
   "tool.view",
   "plan.update",
+  "ask_user",
   "skill.run_script",
   "memory.profile.set",
   "memory.profile.remove",

@@ -1,4 +1,4 @@
-import type { ApprovalGate, ApprovalRequest } from "../../approval/index.js";
+import type { ApprovalGate, ApprovalRequest, UserQuestion } from "../../approval/index.js";
 import {
   describeAlwaysRule,
   excerptPreview,
@@ -76,6 +76,8 @@ interface PendingState {
   /** Read by `/status` and status snapshots (ATO-965). */
   sessionId: string;
   tool: string;
+  /** An `ask_user` question (ATO-489): its options are the buttons. */
+  question?: UserQuestion;
 }
 
 /**
@@ -198,7 +200,11 @@ export class ApprovalBridge {
               : FULL_COMMAND_MISSING_NOTE,
         ).text,
         withThread(
-          { reply_markup: buildKeyboard(request.approvalId, alwaysLabel) },
+          {
+            reply_markup: request.question
+              ? buildQuestionKeyboard(request.approvalId, request.question)
+              : buildKeyboard(request.approvalId, alwaysLabel),
+          },
           threadId,
         ),
       );
@@ -241,6 +247,7 @@ export class ApprovalBridge {
       ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
       sessionId: request.sessionId,
       tool: request.tool,
+      ...(request.question ? { question: request.question } : {}),
     });
   }
 
@@ -264,7 +271,8 @@ export class ApprovalBridge {
     const parts = data.slice(CALLBACK_PREFIX.length).split(":");
     if (parts.length !== 2) return;
     const [approvalId, kind] = parts;
-    if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "w")) return;
+    const option = kind !== undefined && /^o\d{1,2}$/.test(kind) ? Number(kind.slice(1)) : null;
+    if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "w" && option === null)) return;
     const approved = kind !== "n";
 
     const pending = this.pending.get(approvalId);
@@ -272,6 +280,13 @@ export class ApprovalBridge {
       // Stale button — the timer fired (or the operator clicked twice
       // in quick succession). Acknowledge so the spinner dismisses.
       await this.acknowledge(update.id, "Already resolved");
+      return;
+    }
+    // A question is answered by an option or skipped; an option button
+    // answers nothing else. A forged callback cannot do either across.
+    if (pending.question !== undefined || option !== null) {
+      if (kind === "y" || kind === "w") return;
+      await this.handleQuestionCallback(update.id, approvalId, pending, option);
       return;
     }
 
@@ -304,6 +319,39 @@ export class ApprovalBridge {
           : approved
             ? "✅ approved"
             : "❌ denied",
+      );
+    }
+  }
+
+  /**
+   * An option button (`o<index>`) or Skip (`n`) on a question (ATO-489).
+   * Anything else on a question, or an option on an approval, is dropped.
+   */
+  private async handleQuestionCallback(
+    callbackId: string,
+    approvalId: string,
+    pending: PendingState,
+    option: number | null,
+  ): Promise<void> {
+    const question = pending.question;
+    if (question === undefined) return;
+    const label = option === null ? undefined : question.options[option]?.label;
+    if (option !== null && label === undefined) return;
+    pending.cancelTimer();
+    this.pending.delete(approvalId);
+    const resolved = this.deps.approvals.resolve(
+      label === undefined
+        ? { approvalId, approved: false }
+        : { approvalId, approved: true, answer: { selected: [label] } },
+    );
+    await this.acknowledge(callbackId, label === undefined ? "Skipped" : "Answered");
+    if (resolved) {
+      await this.editFinal(
+        pending.chatId,
+        pending.messageId,
+        label === undefined
+          ? `❔ ${question.prompt}\nskipped`
+          : `❔ ${question.prompt}\n✅ ${label}`,
       );
     }
   }
@@ -501,6 +549,45 @@ function buildKeyboard(
   return { inline_keyboard: rows };
 }
 
+/** Longest option button text. */
+const OPTION_BUTTON_MAX_CHARS = 60;
+
+/**
+ * One button per option of an `ask_user` question (ATO-489), one per
+ * row so long labels stay readable, then Skip. A button answers with
+ * that one option: on a question that takes several, more than one is
+ * picked in the TUI or the desktop.
+ */
+function buildQuestionKeyboard(
+  approvalId: string,
+  question: UserQuestion,
+): {
+  inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
+} {
+  const rows = question.options.map((option, index) => [
+    {
+      text:
+        option.label.length <= OPTION_BUTTON_MAX_CHARS
+          ? option.label
+          : `${option.label.slice(0, OPTION_BUTTON_MAX_CHARS - 1)}…`,
+      callback_data: `${CALLBACK_PREFIX}${approvalId}:o${index}`,
+    },
+  ]);
+  rows.push([{ text: "Skip", callback_data: `${CALLBACK_PREFIX}${approvalId}:n` }]);
+  return { inline_keyboard: rows };
+}
+
+/** The message a question is sent as: the question, then its options. */
+function formatQuestionText(question: UserQuestion): string {
+  const options = question.options.map((o, i) =>
+    o.description ? `${i + 1}. ${o.label} - ${o.description}` : `${i + 1}. ${o.label}`,
+  );
+  const text = `Question from the agent\n${question.prompt}\n\n${options.join("\n")}`;
+  return text.length <= APPROVAL_MESSAGE_MAX_CHARS
+    ? text
+    : `${text.slice(0, APPROVAL_MESSAGE_MAX_CHARS - 1)}…`;
+}
+
 /**
  * Telegram caps one `sendMessage` at 4096 UTF-16 units, and a failed
  * send auto-denies the request. The approval text stays under this,
@@ -544,6 +631,7 @@ function formatApprovalText(
   req: ApprovalRequest,
   attachNote: string | null,
 ): { text: string; cut: boolean } {
+  if (req.question) return { text: formatQuestionText(req.question), cut: false };
   const head: string[] = [
     "Approval requested",
     `tool: ${req.tool}`,

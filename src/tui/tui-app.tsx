@@ -51,6 +51,7 @@ import {
 import { reduceTuiState } from "./agent-event-reducer.js";
 import { deriveHerdrReport, type HerdrReporter } from "./herdr-reporter.js";
 import type { ApprovalGrantScope } from "../approval/approval-gate.js";
+import type { UserQuestionAnswer } from "../approval/user-question.js";
 import type { TuiNotifyConfig, WhileBusySubmitMode } from "../config/index.js";
 import { getConfig } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
@@ -239,6 +240,11 @@ export interface TuiAppCallbacks {
    * running turn.
    */
   onApprovalReply?(approvalId: string, message: string): void;
+  /**
+   * The answer typed for an `ask_user` question (ATO-489), already
+   * checked against it (`parseTypedUserQuestionAnswer`).
+   */
+  onQuestionAnswer?(approvalId: string, answer: UserQuestionAnswer): void;
   /**
    * Remove a session for good. Confirmed by the operator in the dialog
    * the rail's `x` opens — the host does the deleting and decides where
