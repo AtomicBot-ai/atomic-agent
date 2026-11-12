@@ -19,6 +19,7 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `wttr-weather/` | Weather lookup via `wttr.in` | none |
 | `currency/` | Exchange rates & conversion via the Frankfurter API | none |
 | `skill-creator/` | Author or edit `SKILL.md` files | none |
+| `code-graph/` | Who calls what, where a feature lives, how two parts connect, with `path:line` per link (built on `os.fs.code_map`) | none |
 | `verify-work/` | Run what you just wrote and prove it works before reporting | none |
 | `github/` | GitHub repos / issues / PRs / Actions via the `gh` CLI | `gh` installed + `gh auth login` |
 | `apple-calendar/` | Read Calendar via `icalBuddy`, create events via AppleScript | macOS + `brew install ical-buddy` + Calendar permission |
