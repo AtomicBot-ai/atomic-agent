@@ -501,6 +501,20 @@
 .attach-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;min-width:0}
 .attach .filechip{vertical-align:0}
 
+/* ---------------- ATO-1187: Changed files card, and the Results tab ----------------
+   One row per file the turn wrote or edited, its lines added and removed on
+   the right. The rows are .filechip buttons, so a click previews or opens. */
+.cf-card{margin-top:10px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.cf-head{font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2)}
+.cf-list{display:flex;flex-direction:column;gap:4px;min-width:0}
+.cf-row{display:flex;align-items:center;gap:6px;max-width:100%;min-width:0;text-align:left}
+.cf-row .cf-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cf-counts{flex:none;font-size:var(--fs-label)}
+.cf-add{color:var(--success)}
+.cf-del{color:var(--critical)}
+.cf-none{color:var(--ink-2)}
+.cf-pane .cf-list{padding:0 6px}
+
 /* ---------------- plan hand-off (item 1) ----------------
    Under the last assistant message of a finished plan turn, below its action
    row. The button text is compared verbatim by the smoke (`▶ run it · auto`),
