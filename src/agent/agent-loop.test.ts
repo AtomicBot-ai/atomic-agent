@@ -4586,7 +4586,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // off the operator has swapped the loaded model to Gemma. The
     // turn-start `/props` probe must pick that up before step 0 builds
     // its prompt.
-    const fetchProps = vi.fn<[], Promise<Record<string, unknown>>>();
+    const fetchProps = vi.fn<() => Promise<Record<string, unknown>>>();
     fetchProps.mockResolvedValue(GEMMA4_PROPS);
     const fakeLlama = { fetchProps } as unknown as LlamaServerClient;
 
@@ -4652,7 +4652,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
 
     // Turn-start probe still sees the original Qwen model — the swap
     // happens only between step 0 and step 1.
-    const fetchProps = vi.fn<[], Promise<Record<string, unknown>>>();
+    const fetchProps = vi.fn<() => Promise<Record<string, unknown>>>();
     fetchProps.mockResolvedValueOnce(QWEN3_PROPS);
     fetchProps.mockResolvedValue(GEMMA4_PROPS);
     const fakeLlama = { fetchProps } as unknown as LlamaServerClient;

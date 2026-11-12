@@ -26,9 +26,10 @@ export default defineConfig({
     fileParallelism: false,
     maxConcurrency: 1,
     pool: "forks",
-    poolOptions: {
-      forks: { singleFork: true },
-    },
+    // Vitest 4 dropped `poolOptions.forks.singleFork`; one worker without
+    // per-file isolation is the documented equivalent.
+    maxWorkers: 1,
+    isolate: false,
     reporters: [
       "default",
       ["json", { outputFile: "eval-memory/reports/last-run.json" }],
