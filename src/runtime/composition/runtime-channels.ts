@@ -4,6 +4,10 @@ import { TelegramChannel } from "../../channels/telegram/index.js";
 import { DiscordChannel } from "../../channels/discord/index.js";
 import { DiscordLockfile } from "../../channels/discord/discord-lockfile.js";
 import { SwarmRegistry } from "../../channels/swarm/index.js";
+import { ChannelRegistry } from "../../channels/channel-registry.js";
+import { EXTRA_CHANNELS } from "../../channels/channel-catalog.js";
+import { buildExtraChannels } from "../../channels/build-extra-channels.js";
+import type { ChannelDefinition } from "../../channels/channel.js";
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { ApprovalRouter } from "../../approval/approval-router.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
@@ -15,6 +19,7 @@ export function connectRuntimeChannels(args: {
     telegramChannel: TelegramChannel | null;
     discordChannel: DiscordChannel | null;
     swarm: SwarmRegistry | null;
+    channels: ChannelRegistry | null;
   };
   config: AtomicAgentConfig;
   logger: StructuredLogger;
@@ -25,6 +30,10 @@ export function connectRuntimeChannels(args: {
   connectTelegram: (channel: TelegramChannel) => void;
   connectDiscord: (channel: DiscordChannel) => void;
   connectSwarm: (swarm: SwarmRegistry) => void;
+  /** Receives the registry so shutdown can stop the catalog adapters. */
+  connectChannels?: (channels: ChannelRegistry) => void;
+  /** Test seam: replaces `EXTRA_CHANNELS`. */
+  extraChannels?: readonly ChannelDefinition[];
 }): void {
   const { runtime, config, logger, metrics, approvals, approvalRouter, options, connectTelegram, connectDiscord, connectSwarm } = args;
   // Telegram remote-control channel. The channel is always constructed
@@ -105,4 +114,28 @@ export function connectRuntimeChannels(args: {
   runtime.swarm = swarm;
   connectSwarm(swarm);
   void swarm.startEnabled();
+
+  // Every other messenger (ATO-1169): the primaries are registered for
+  // listing only (they started above, and shutdown stops them in its own
+  // order); catalog adapters are built here, started when
+  // `channels.<id>.enabled`, and reachable only through the registry.
+  const channels = new ChannelRegistry(logger);
+  channels.register(telegramChannel);
+  channels.register(discordChannel);
+  const toStart = buildExtraChannels({
+    definitions: args.extraChannels ?? EXTRA_CHANNELS,
+    registry: channels,
+    ctx: {
+      runtime,
+      config,
+      logger,
+      approvals,
+      approvalRouter,
+      stateDir: config.paths.stateDir,
+      emitStatus: (status) => options.handlers?.onChannelStatus?.(status),
+    },
+  });
+  runtime.channels = channels;
+  args.connectChannels?.(channels);
+  channels.startInBackground(toStart);
 }
