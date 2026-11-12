@@ -1,0 +1,210 @@
+name: windows-packages
+
+# Brings Scoop and winget up to a published release. Rendering:
+# scripts/windows-packages.ts, scripts/windows-packaging.ts; setup and usage:
+# scripts/docs/windows-packages.md.
+#
+#   Scoop  bucket AtomicBot-ai/scoop-bucket, bucket/atomic-agent.json: the CLI (vX.Y.Z).
+#   winget AtomicBot.AtomicAgent.CLI (vX.Y.Z) and AtomicBot.AtomicAgent (desktop-vX.Y.Z),
+#          a pull request to microsoft/winget-pkgs through wingetcreate (MIT).
+#
+# Publishing a release on GitHub fires `release: published`, which runs this; drafts,
+# pre-releases and tags of neither product change nothing. By hand:
+#
+#   gh workflow run windows-packages.yml -f tag=v0.7.1
+#   gh workflow run windows-packages.yml -f tag=desktop-v0.0.9 -f winget_first_submission=true
+#
+# The rendered winget manifests are kept as an artifact of every run.
+#
+# winget-pkgs takes a new package only after Microsoft's manual review, and
+# `wingetcreate update` needs the package to be there already. So a package is updated
+# only once its id is listed in the repository variable WINGET_PACKAGES (comma
+# separated, e.g. "AtomicBot.AtomicAgent,AtomicBot.AtomicAgent.CLI"); before that, the
+# first submission is a run by hand with winget_first_submission=true.
+#
+# Secrets: SCOOP_BUCKET_TOKEN (fine-grained, Contents read and write on
+# AtomicBot-ai/scoop-bucket only); WINGET_TOKEN (classic token with public_repo of the
+# account whose fork of microsoft/winget-pkgs opens the pull requests). A missing secret
+# skips its job with a notice.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The published release (vX.Y.Z or desktop-vX.Y.Z)"
+        type: string
+        required: true
+      winget_first_submission:
+        description: "Submit the full manifests as a new winget package (first time only)"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    outputs:
+      go: ${{ steps.release.outputs.go }}
+      product: ${{ steps.release.outputs.product }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - name: Is this a published stable release
+        id: release
+        run: |
+          set -euo pipefail
+          go=false; product=none
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then product=cli; fi
+          if [[ "$TAG" =~ ^desktop-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then product=desktop; fi
+          if [ "$product" = none ]; then
+            echo "$TAG is not a stable CLI or desktop release; nothing to do"
+          else
+            flags="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')"
+            if [ "$flags" = "false false" ]; then go=true; else echo "$TAG is a draft or a pre-release"; fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "product=$product" >> "$GITHUB_OUTPUT"
+
+  scoop:
+    needs: release
+    if: needs.release.outputs.go == 'true' && needs.release.outputs.product == 'cli'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: scoop-bucket
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+    steps:
+      - name: Bucket token
+        id: token
+        run: |
+          if [ -z "$BUCKET_TOKEN" ]; then
+            echo "::notice::SCOOP_BUCKET_TOKEN is not set; the Scoop bucket was not updated for $TAG (scripts/docs/windows-packages.md)"
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.go == 'true'
+
+      - name: Check out the bucket
+        if: steps.token.outputs.go == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: AtomicBot-ai/scoop-bucket
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          path: bucket-checkout
+
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.go == 'true'
+        with:
+          node-version: "25.7"
+          check-latest: true
+
+      - name: Install dependencies (tsx only; no native builds)
+        if: steps.token.outputs.go == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Render bucket/atomic-agent.json
+        id: render
+        if: steps.token.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dl -p 'atomic-agent-win32-x64.zip.sha256'
+          npx tsx scripts/windows-packages.ts scoop --tag "$TAG" --assets dl --bucket bucket-checkout | tee -a "$GITHUB_OUTPUT"
+
+      - name: Commit and push to the bucket
+        if: steps.token.outputs.go == 'true' && steps.render.outputs.written == 'true'
+        working-directory: bucket-checkout
+        env:
+          FILE: ${{ steps.render.outputs.path }}
+        run: |
+          set -euo pipefail
+          git add "$FILE"
+          if git diff --cached --quiet; then echo "$FILE already matches $TAG"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "atomic-agent: update to ${TAG#v}"
+          git push origin HEAD
+
+  winget:
+    needs: release
+    if: needs.release.outputs.go == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 20
+    concurrency:
+      group: winget-${{ needs.release.outputs.product }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+      WINGET_PACKAGES: ${{ vars.WINGET_PACKAGES }}
+      FIRST: ${{ inputs.winget_first_submission && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+
+      - name: Install dependencies (tsx only; no native builds)
+        run: npm ci --ignore-scripts
+
+      - name: Render the winget manifests
+        id: render
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ($env:TAG -like "desktop-v*") {
+            gh release download $env:TAG --repo $env:GITHUB_REPOSITORY --dir dl -p SHA256SUMS.txt
+          } else {
+            gh release download $env:TAG --repo $env:GITHUB_REPOSITORY --dir dl -p 'atomic-agent-win32-x64.zip.sha256'
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          npx tsx scripts/windows-packages.ts winget --tag $env:TAG --assets dl --out winget | Tee-Object -FilePath render.txt
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Get-Content render.txt | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Keep the manifests
+        uses: actions/upload-artifact@v4
+        with:
+          name: winget-manifests-${{ inputs.tag || github.event.release.tag_name }}
+          path: winget
+          retention-days: 30
+
+      - name: Submit to winget-pkgs
+        env:
+          ID: ${{ steps.render.outputs.id }}
+          DIR: ${{ steps.render.outputs.dir }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:WINGET_TOKEN) {
+            Write-Output "::notice::WINGET_TOKEN is not set; nothing was submitted to winget for $env:TAG (scripts/docs/windows-packages.md)"
+            exit 0
+          }
+          $known = @($env:WINGET_PACKAGES -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+          if ($env:FIRST -ne "1" -and -not ($known -contains $env:ID)) {
+            Write-Output "::notice::$env:ID is not in WINGET_PACKAGES yet: make the first submission by hand (winget_first_submission=true), then add it there"
+            exit 0
+          }
+          Invoke-WebRequest -Uri "https://aka.ms/wingetcreate/latest" -OutFile wingetcreate.exe
+          if ($env:FIRST -eq "1") {
+            .\wingetcreate.exe submit --token $env:WINGET_TOKEN "winget\$env:DIR"
+          } else {
+            $wcArgs = @(Get-Content winget\wingetcreate-args.txt | Where-Object { $_ })
+            .\wingetcreate.exe @wcArgs --submit --token $env:WINGET_TOKEN
+          }
+          if ($LASTEXITCODE -ne 0) { Write-Error "wingetcreate failed"; exit 1 }
