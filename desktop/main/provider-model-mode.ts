@@ -27,8 +27,17 @@ const CLOUD_ORIGINS = new Set([
   "https://api.sambanova.ai",
   "https://api.sarvam.ai",
   "https://api.together.xyz",
+  "https://api.inference.wandb.ai",
   "https://api.x.ai",
 ]);
+
+// Per-account endpoints (ATO-468): presets whose baseUrl is only a template
+// (an Azure resource, an AWS Region) match by host, https only. Mirrors
+// `perAccountEndpoint.hostPattern` in src/llm/provider/presets/provider-presets.ts.
+const CLOUD_HOST_PATTERNS: readonly RegExp[] = [
+  /\.(?:openai|services\.ai|cognitiveservices)\.azure\.com$/i,
+  /^bedrock-(?:mantle|runtime)\.[a-z0-9-]+\.(?:api\.aws|amazonaws\.com)$/i,
+];
 
 /** Only for a new connection. Existing choices, including inherit, stay put. */
 export function defaultProviderModelMode(entry: ProviderModeInput): ModelMode {
@@ -39,7 +48,9 @@ export function defaultProviderModelMode(entry: ProviderModeInput): ModelMode {
   ) return "cloud";
   if (entry.kind !== "openai-compatible" || !entry.baseUrl) return "local";
   try {
-    if (CLOUD_ORIGINS.has(new URL(entry.baseUrl).origin)) return "cloud";
+    const url = new URL(entry.baseUrl);
+    if (CLOUD_ORIGINS.has(url.origin)) return "cloud";
+    if (url.protocol === "https:" && CLOUD_HOST_PATTERNS.some((p) => p.test(url.hostname))) return "cloud";
   } catch {
     // Invalid/custom endpoints retain the core's conservative local policy.
   }

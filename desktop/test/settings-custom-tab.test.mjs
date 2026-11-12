@@ -52,6 +52,19 @@ test('apps and any address you typed are on Custom, keys, subscriptions and clou
   assert.equal(g.of(saved[1]), 'cloud');
 });
 
+test('Azure OpenAI and Bedrock added in the terminal, and W&B, sit on Cloud; Lemonade on Custom', () => {
+  // ATO-468 / ATO-931 / ATO-626: per-account hosts match their preset by host pattern.
+  const g = grouping([
+    { id: 'azure-openai', kind: 'openai-compatible', baseUrl: 'https://my-team.openai.azure.com/openai' },
+    { id: 'bedrock', kind: 'openai-compatible', baseUrl: 'https://bedrock-mantle.eu-west-1.api.aws' },
+    { id: 'wandb', kind: 'openai-compatible', baseUrl: 'https://api.inference.wandb.ai' },
+    { id: 'lemonade', kind: 'openai-compatible', baseUrl: 'http://localhost:13305' },
+    { id: 'lookalike', kind: 'openai-compatible', baseUrl: 'https://openai.azure.com.example.com' },
+  ]);
+  assert.deepEqual(Array.from(g.tab('cloud'), (p) => p.id), ['azure-openai', 'bedrock', 'wandb']);
+  assert.deepEqual(Array.from(g.tab('external'), (p) => p.id), ['lemonade', 'lookalike']);
+});
+
 test('the built-in llama.cpp entry is on neither provider list', () => {
   const g = grouping(saved);
   for (const t of ['cloud', 'external']) assert.ok(!g.tab(t).some((p) => p.id === 'local-llama'), t);

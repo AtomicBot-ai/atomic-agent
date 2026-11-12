@@ -274,6 +274,8 @@ const PRESETS = [
   {id:'mistral', label:'Mistral', kind:'openai-compatible', baseUrl:'https://api.mistral.ai', env:'MISTRAL_API_KEY'},
   {id:'cerebras', label:'Cerebras', kind:'openai-compatible', baseUrl:'https://api.cerebras.ai', env:'CEREBRAS_API_KEY'},
   {id:'together', label:'Together AI', kind:'openai-compatible', baseUrl:'https://api.together.xyz', env:'TOGETHER_API_KEY'},
+  // provider-presets.ts wandb (ATO-931): CoreWeave Serverless Inference on the W&B hostname, Bearer key.
+  {id:'wandb', label:'W&B Inference (CoreWeave)', kind:'openai-compatible', baseUrl:'https://api.inference.wandb.ai', env:'WANDB_API_KEY'},
   {id:'fireworks', label:'Fireworks AI', kind:'openai-compatible', baseUrl:'https://api.fireworks.ai/inference', env:'FIREWORKS_API_KEY'},
   {id:'xai', label:'xAI (Grok)', kind:'openai-compatible', baseUrl:'https://api.x.ai', env:'XAI_API_KEY'},
   {id:'moonshot', label:'Moonshot AI (Kimi)', kind:'openai-compatible', baseUrl:'https://api.moonshot.ai', env:'MOONSHOT_API_KEY'},
@@ -286,6 +288,8 @@ const PRESETS = [
   {id:'atomic-chat', label:'Atomic Chat (local)', kind:'openai-compatible', baseUrl:'http://127.0.0.1:1337', env:'ATOMIC_CHAT_API_KEY', local:true},
   {id:'ollama', label:'Ollama (local)', kind:'openai-compatible', baseUrl:'http://localhost:11434', env:'OLLAMA_API_KEY', local:true},
   {id:'lmstudio', label:'LM Studio (local)', kind:'openai-compatible', baseUrl:'http://localhost:1234', env:'LMSTUDIO_API_KEY', local:true},
+  // provider-presets.ts lemonade (ATO-626): AMD's local server, default port 13305, no key unless the server sets one.
+  {id:'lemonade', label:'Lemonade (local)', kind:'openai-compatible', baseUrl:'http://localhost:13305', env:'LEMONADE_API_KEY', local:true},
 ];
 PRESETS.filter((p) => !['openrouter','aimlapi'].includes(p.id)).forEach((p) =>
   KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers, local:p.local}));
@@ -2210,7 +2214,7 @@ const shortModel = (id) => id.replace(/-instruct$/, '');
 const BACKEND_WORDS = {cloud:'Cloud', local:'Local models', custom:'Custom server', fusion:'Fusion'};
 function backendWord(b) { return BACKEND_WORDS[b] || String(b || ''); }
 /* Presets the TUI offers and this window's wizard does not (provider-presets.ts): a provider added there keeps a name here. */
-const TUI_ONLY_PRESET_WORDS = {};
+const TUI_ONLY_PRESET_WORDS = {'azure-openai': 'Azure OpenAI', bedrock: 'Amazon Bedrock', 'foundry-local': 'Foundry Local'};
 /** A provider id → its preset's name ("OpenRouter", "Atomic Chat"), qualifier dropped. */
 function providerWord(id) {
   const s = String(id || '');
@@ -26295,6 +26299,8 @@ function llmIsCloudPreset(p) {
   if (cloud.some((x) => x.id === p.id)) return true;
   let host = '';
   try { host = new URL(p.baseUrl).hostname.toLowerCase(); } catch (err) { return true; }   // no address to run yourself: left on Cloud, as before
+  // ATO-468: an Azure resource or a Bedrock Region is a per-account host of a cloud preset (provider-presets.ts perAccountEndpoint).
+  if (/\.(?:openai|services\.ai|cognitiveservices)\.azure\.com$|^bedrock-(?:mantle|runtime)\.[a-z0-9-]+\.(?:api\.aws|amazonaws\.com)$/.test(host)) return true;
   return cloud.some((x) => { try { return new URL(x.baseUrl).hostname.toLowerCase() === host; } catch (err) { return false; } });
 }
 function llmIsCustomEntry(p) {
