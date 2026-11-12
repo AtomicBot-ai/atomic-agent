@@ -18,6 +18,8 @@ import type { TuiState } from "../tui-state.js";
 import { describeFusionBlocker } from "../run-mode/fusion-preflight.js";
 import { selectComposerBackend } from "./composer-backend-selectors.js";
 import { filterSwitchRows } from "./composer-switch-filter.js";
+import { gateRowsForOffline } from "./composer-switch-offline.js";
+import { isOfflineNetwork } from "../../llm/offline-network.js";
 import {
   COMPOSER_SWITCH_TITLES,
   type ComposerBackendKind,
@@ -81,8 +83,9 @@ function fusionDetail(state: TuiState): string {
 export function backendSwitchRow(
   state: TuiState,
   backend: ComposerBackendKind,
+  offline: boolean = isOfflineNetwork(),
 ): ComposerSwitchRow {
-  const row = backendRows(state).find(
+  const row = gateRowsForOffline(backendRows(state), state, offline).find(
     (candidate) =>
       candidate.intent.kind === "backend" &&
       candidate.intent.backend === backend,
@@ -210,8 +213,11 @@ function modelRows(state: TuiState): readonly ComposerSwitchRow[] {
 export function selectComposerSwitchRows(
   state: TuiState,
   kind: ComposerSwitchKind,
+  // ATO-1088: the agent's network kill switch, read live (the TUI runs
+  // the runtime in this process). Tests pass it explicitly.
+  offline: boolean = isOfflineNetwork(),
 ): readonly ComposerSwitchRow[] {
-  const rows =
+  const all =
     kind === "backend"
       ? backendRows(state)
       : kind === "provider"
@@ -220,6 +226,7 @@ export function selectComposerSwitchRows(
         : kind === "workers"
           ? fusionModelRows(state, "worker")
           : modelRows(state);
+  const rows = gateRowsForOffline(all, state, offline);
   const open = state.composerSwitch;
   // The typed filter is applied here, not in the renderer: cursor
   // clamping, Enter and the popup must all see the same narrowed list,

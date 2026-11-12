@@ -27,6 +27,12 @@ export { ComposerMetaControls } from "./composer-meta-controls.js";
 export {
   selectWorkerRows,
 } from "./composer-switch-worker-rows.js";
+export {
+  gateRowsForOffline,
+  OFFLINE_ROW_REASON,
+  providerRunsOnThisMachine,
+  rowNeedsInternet,
+} from "./composer-switch-offline.js";
 export { ComposerSwitchPopup } from "./composer-switch-popup.js";
 export { reduceComposerSwitchAction } from "./composer-switch-reducer.js";
 export {
