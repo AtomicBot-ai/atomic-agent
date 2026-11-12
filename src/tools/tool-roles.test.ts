@@ -48,6 +48,7 @@ describe("tool roles", () => {
       "browser.navigate",
       "os.fs.trash",
       "os.fs.move",
+      "os.fs.write_pptx",
       "os.git.commit",
       "os.web.search",
       "vision.describe",

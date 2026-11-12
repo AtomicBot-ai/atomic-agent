@@ -284,6 +284,8 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
       if (from && to) return P(V.moved, `${shortPath(from)} to ${shortPath(to)}`);
       return P(V.moved, moves > 1 ? plural(moves, "file") : "a file");
     }
+    case "os.fs.write_pptx":
+      return P(V.created, fileObject(a, "a presentation"));
     case "os.fs.trash":
       return P(V.moved, `${fileObject(a, "files")} to the Trash`);
     case "os.fs.diff": {

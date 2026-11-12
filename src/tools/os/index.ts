@@ -16,6 +16,7 @@ import type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
 import { buildOsFsGrepTool } from "./fs/fs-grep.js";
 import { buildOsFsEditTool } from "./fs/fs-edit.js";
 import { buildOsFsReadDocumentTool } from "./read-document/index.js";
+import { buildOsFsWritePptxTool } from "./pptx/index.js";
 import {
   buildOsFsArchiveListTool,
   buildOsFsArchiveReadEntryTool,
@@ -69,6 +70,7 @@ export type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
 export { buildOsFsGrepTool } from "./fs/fs-grep.js";
 export { buildOsFsEditTool } from "./fs/fs-edit.js";
 export { buildOsFsReadDocumentTool } from "./read-document/index.js";
+export { buildOsFsWritePptxTool } from "./pptx/index.js";
 export {
   buildOsFsArchiveListTool,
   buildOsFsArchiveReadEntryTool,
@@ -250,6 +252,13 @@ export function registerOsTools(
   registry.register(buildOsFsGrepTool());
   registry.register(buildOsFsEditTool(fsMutation));
   registry.register(buildOsFsReadDocumentTool());
+  registry.register(
+    buildOsFsWritePptxTool({
+      approvals: options.approvals,
+      approvalRequired: options.approvalRequired,
+      trustConfigPaths: options.trustConfigPaths,
+    }),
+  );
   registry.register(buildOsFsArchiveListTool());
   registry.register(buildOsFsArchiveReadEntryTool());
   registry.register(
