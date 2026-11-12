@@ -6,6 +6,7 @@ import { createChatCompletionsHandler } from "./openai-chat-completions.js";
 import { createCancelCompletionHandler } from "./openai-completions-cancel.js";
 import { createHealthHandler } from "./route-health.js";
 import { createLocalModelRecheckHandler } from "./route-local-model-recheck.js";
+import { createLocalModelPerformanceHandler } from "./route-local-model-performance.js";
 import { createModelTiersHandler } from "./route-model-tiers.js";
 import { createModelsHandler } from "./route-models.js";
 import { createCapabilitiesHandler } from "./route-capabilities.js";
@@ -226,6 +227,8 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
     // ATO-873: the desktop's Reconnect button after a local server answered 404/405.
     { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },
+    // Issue #996: the desktop's Performance pane; recent local request timings and the live slots.
+    { method: "GET", path: "/api/local-model/performance", handler: createLocalModelPerformanceHandler() },
     // ATO-1021: the desktop's model pick, swapped live instead of restarting serve.
     { method: "POST", path: "/api/llm/active", handler: createSetActiveLlmHandler() },
     // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
