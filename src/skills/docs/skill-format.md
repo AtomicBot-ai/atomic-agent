@@ -58,6 +58,9 @@ Atomic Agent ships with 17 starter skills that are auto-installed into the globa
 ```sh
 atomic-agent skill install <path|owner/repo[/path]|@owner/slug> [--force] [--yes] [--acknowledge-risk]
                                         # install from a local folder, a GitHub tap, or ClawHub (@owner/slug)
+atomic-agent skill update [<name>...] [--check] [--yes] [--acknowledge-risk]
+                                        # update skills installed from a GitHub tap or ClawHub
+atomic-agent skill update --rollback <name>   # restore the copy the last update replaced
 atomic-agent skill uninstall <name>     # remove an installed global skill
 atomic-agent skill list                 # list installed skills (project + global) with enabled/disabled state
 atomic-agent skill show <name>          # print SKILL.md for an installed skill
@@ -81,6 +84,12 @@ The verdict gates the install (`enforceScanGate`):
 - `dangerous` is refused unless `--acknowledge-risk` (HTTP/sidecar `acknowledgeRisk: "<scanId>"`); `--yes` and `confirm` do not override it.
 
 The scan is a tripwire, not a sandbox: a clean verdict does not prove a skill is safe.
+
+### Hub skill lock and updates
+
+A skill installed from a GitHub tap or ClawHub gets a `.atomic-skill-lock.json` file in its folder: the source, the identifier, the exact version that was downloaded and scanned (GitHub: the commit the download was pinned to, plus the git tree sha of the skill folder; ClawHub: the registry version, also pinned for the download and the registry verdict), the scan id and verdict, and a sha256 digest of every file in the folder (the lock file itself excluded). A lock file shipped inside a download or a local folder is dropped; local installs never get one, so `skill update` leaves them and the starter skills alone.
+
+`skill update --check` asks each source for its latest version and prints what is outdated. `skill update` stages each outdated skill in a temp folder and runs the same scan and gate as `skill install` (`--yes`, `--acknowledge-risk`, the `[y/N]` question); a refused scan keeps the installed version. A skill whose files no longer match the digest was changed by hand: it is reported and never overwritten (reinstall with `--force` to discard the changes). Before the swap the previous copy is moved to `skill-backups/<name>/` next to the skills folder (never inside it, where it would load as a second skill) and put back if the swap fails; `skill update --rollback <name>` swaps it back later. Nothing checks for updates in the background.
 
 ## Agent tools
 

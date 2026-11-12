@@ -41,6 +41,7 @@ import {
   createInstallConfirm,
   formatScanFindings,
 } from "./skill-install-confirm.js";
+import { handleUpdate } from "./skill-update.js";
 
 const HELP =
   [
@@ -51,6 +52,10 @@ const HELP =
     "                             Install a skill from a local directory, the GitHub skill hub, or ClawHub (@owner/slug).",
     "                             Every install is security-scanned: caution asks first (--yes skips the question;",
     "                             without a terminal it is required), dangerous needs --acknowledge-risk",
+    "  update [<name>...] [--check] [--yes] [--acknowledge-risk]",
+    "                             Update skills installed from GitHub or ClawHub. Each new version is re-scanned",
+    "                             like an install; skills changed locally are reported, never overwritten.",
+    "                             --check only lists what is outdated; --rollback <name> restores the previous copy",
     "  uninstall <name>           Remove an installed global skill",
     "  list                       List installed skills (project + global) with enabled/disabled state",
     "  show <name>                Print SKILL.md for an installed skill",
@@ -81,6 +86,8 @@ export async function skillCommand(args: string[]): Promise<number> {
     switch (sub) {
       case "install":
         return await handleInstall(args.slice(1));
+      case "update":
+        return await handleUpdate(args.slice(1));
       case "uninstall":
         return await handleUninstall(args.slice(1));
       case "list":

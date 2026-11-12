@@ -46,6 +46,19 @@ export interface SkillHubClient {
     dir: string,
     destDir: string,
   ): Promise<DownloadedSkillFile[]>;
+  /**
+   * Resolve `ref` to its commit sha and the git tree sha of the skill
+   * folder `dir` at that commit (null when the folder is missing). The
+   * installer pins downloads to the commit; `skill update` compares the
+   * tree sha, which changes only when the skill's own files change.
+   * Optional so minimal stubs need not implement it.
+   */
+  resolveSkillRevision?(
+    owner: string,
+    repo: string,
+    ref: string,
+    dir: string,
+  ): Promise<{ commit: string; tree: string | null }>;
 }
 
 export type GithubSkillErrorCode =
@@ -83,6 +96,7 @@ const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
 interface GitTreeEntry {
   path: string;
   type: "blob" | "tree" | "commit";
+  sha?: string;
 }
 
 export class GithubSkillClient implements SkillHubClient {
@@ -141,6 +155,36 @@ export class GithubSkillClient implements SkillHubClient {
     const url = `${this.rawBase}/${owner}/${repo}/${ref}/${path}`;
     const res = await this.rawFetch(url);
     return await res.text();
+  }
+
+  async resolveSkillRevision(
+    owner: string,
+    repo: string,
+    ref: string,
+    dir: string,
+  ): Promise<{ commit: string; tree: string | null }> {
+    const res = await this.apiFetch(
+      `/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`,
+    );
+    const body = (await res.json()) as {
+      sha?: unknown;
+      commit?: { tree?: { sha?: unknown } };
+    };
+    if (typeof body.sha !== "string" || !/^[0-9a-f]{40,64}$/.test(body.sha)) {
+      throw new GithubSkillError(
+        `unexpected commit response for ${owner}/${repo}@${ref}`,
+        "unexpected",
+      );
+    }
+    const commit = body.sha;
+    const prefix = normalizeDir(dir);
+    if (prefix === "") {
+      const root = body.commit?.tree?.sha;
+      return { commit, tree: typeof root === "string" ? root : null };
+    }
+    const tree = await this.listTree(owner, repo, commit);
+    const entry = tree.find((e) => e.type === "tree" && e.path === prefix);
+    return { commit, tree: entry?.sha ?? null };
   }
 
   async downloadSkillDir(
@@ -222,7 +266,11 @@ export class GithubSkillClient implements SkillHubClient {
       if (typeof e.path !== "string") continue;
       const type = e.type;
       if (type === "blob" || type === "tree" || type === "commit") {
-        entries.push({ path: e.path, type });
+        entries.push({
+          path: e.path,
+          type,
+          ...(typeof e.sha === "string" ? { sha: e.sha } : {}),
+        });
       }
     }
     return entries;

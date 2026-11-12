@@ -24,6 +24,7 @@ export type { ClawHubBrowseOptions } from "./clawhub-catalog.js";
 
 export {
   mergeRegistryVerdict,
+  resolveLatestVersion,
   stageSkillFromClawHub,
 } from "./install-from-clawhub.js";
 export type { StageClawHubOptions } from "./install-from-clawhub.js";
@@ -38,3 +39,21 @@ export type {
   SkillSourceKind,
   StageSkillOptions,
 } from "./stage-skill.js";
+
+export {
+  applySkillUpdate,
+  checkSkillUpdates,
+  defaultBackupRoot,
+  rollbackSkillUpdate,
+  SkillUpdateError,
+} from "./skill-updates.js";
+export type {
+  ApplySkillUpdateOptions,
+  ApplySkillUpdateResult,
+  CheckSkillUpdatesOptions,
+  RollbackSkillUpdateOptions,
+  SkillUpdateErrorCode,
+  SkillUpdateSources,
+  SkillUpdateState,
+  SkillUpdateStatus,
+} from "./skill-updates.js";

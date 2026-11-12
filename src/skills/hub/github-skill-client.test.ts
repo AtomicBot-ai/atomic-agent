@@ -127,3 +127,58 @@ describe("GithubSkillClient", () => {
     });
   });
 });
+
+describe("GithubSkillClient.resolveSkillRevision", () => {
+  const COMMIT = "c".repeat(40);
+  function revisionFetch(seen: string[]): typeof fetch {
+    return (async (url: string) => {
+      seen.push(url);
+      if (url === `${API}/repos/o/r/commits/main`) {
+        return jsonResponse({ sha: COMMIT, commit: { tree: { sha: "root-tree" } } });
+      }
+      if (url === `${API}/repos/o/r/git/trees/${COMMIT}?recursive=1`) {
+        return jsonResponse({
+          tree: [
+            { path: "skills", type: "tree", sha: "skills-tree" },
+            { path: "skills/pdf", type: "tree", sha: "pdf-tree" },
+            { path: "skills/pdf/SKILL.md", type: "blob", sha: "blob" },
+          ],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    }) as unknown as typeof fetch;
+  }
+
+  it("returns the commit and the skill folder's tree sha at that commit", async () => {
+    const seen: string[] = [];
+    const client = new GithubSkillClient({ fetchImpl: revisionFetch(seen), token: null });
+    expect(await client.resolveSkillRevision("o", "r", "main", "skills/pdf")).toEqual({
+      commit: COMMIT,
+      tree: "pdf-tree",
+    });
+    // The tree is read at the resolved commit, not the moving branch.
+    expect(seen).toContain(`${API}/repos/o/r/git/trees/${COMMIT}?recursive=1`);
+  });
+
+  it("uses the root tree for a skill at the repo root, and null for a missing folder", async () => {
+    const client = new GithubSkillClient({ fetchImpl: revisionFetch([]), token: null });
+    expect(await client.resolveSkillRevision("o", "r", "main", "")).toEqual({
+      commit: COMMIT,
+      tree: "root-tree",
+    });
+    expect(await client.resolveSkillRevision("o", "r", "main", "nope")).toEqual({
+      commit: COMMIT,
+      tree: null,
+    });
+  });
+
+  it("rejects a commit response without a sha", async () => {
+    const client = new GithubSkillClient({
+      fetchImpl: (async () => jsonResponse({})) as unknown as typeof fetch,
+      token: null,
+    });
+    await expect(client.resolveSkillRevision("o", "r", "main", "x")).rejects.toBeInstanceOf(
+      GithubSkillError,
+    );
+  });
+});
