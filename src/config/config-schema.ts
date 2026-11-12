@@ -22,6 +22,7 @@ import { createSkillsDefaults, parseSkillsConfig, parseClawHubConfigWithDefaults
 export { DEFAULT_SKILLS_CATALOG_BUDGET, parseSkillNameArray, parseSkillTapArray } from "./skills-config.js";
 import { createSessionDefaults, parseSessionConfig, type RuntimeSessionsConfig, type UserSessionsConfig } from "./session-retention-config.js";
 import { createTracingDefaults, parseTracingConfig, type RuntimeTracingConfig, type UserTracingConfig } from "./tracing-config.js";
+import { createNetworkDefaults, parseNetworkConfig, type NetworkConfig } from "./network-config.js";
 
 import {
   createTuiDefaults, parseTuiConfig,
@@ -272,6 +273,13 @@ export interface AtomicAgentConfig {
    */
   sessions: RuntimeSessionsConfig;
   tracing: RuntimeTracingConfig;
+  /**
+   * Network kill switch (ATO-1084). Mirrors `UserConfigFile.network`,
+   * with `ATOMIC_AGENT_OFFLINE=1` folded in by `loadConfig`. Optional so
+   * hand-built configs (tests, embedders) keep compiling; absent reads
+   * as `{ offline: false }`. See `src/llm/offline-network.ts`.
+   */
+  network?: NetworkConfig;
   /**
    * Durable task queue. All values are env-only operational tuning —
    * not part of the user config file because the queue is an
@@ -644,6 +652,11 @@ export interface UserConfigFile {
    */
   sessions: UserSessionsConfig;
   tracing: UserTracingConfig;
+  /**
+   * Network kill switch (ATO-1084): `{ offline: false }` by default.
+   * Additive and unversioned: a file without the block reads the default.
+   */
+  network: NetworkConfig;
   memory: UserMemoryConfig;
   /**
    * Keyed map of webhook ingress bindings. Each entry is mounted at
@@ -1284,6 +1297,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   browser: createBrowserDefaults(),
   sessions: createSessionDefaults(),
   tracing: createTracingDefaults(),
+  network: createNetworkDefaults(),
   memory: createMemoryDefaults(),
   webhooks: {},
   vision: createVisionDefaults(),
@@ -1544,6 +1558,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const legacyTelemetry =
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
+  const network = (obj.network as Record<string, unknown> | undefined) ?? {};
   const traceFromLegacy =
     (legacyTelemetry.trace as Record<string, unknown> | undefined) ?? {};
   const traceFromTracing =
@@ -1647,6 +1662,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     browser: parseBrowserConfig(browser, () => USER_CONFIG_DEFAULTS.browser),
     sessions: parseSessionConfig(sessionsRetention, () => USER_CONFIG_DEFAULTS.sessions),
     tracing: parseTracingConfig(mergedTrace, () => USER_CONFIG_DEFAULTS.tracing),
+    network: parseNetworkConfig(network, () => USER_CONFIG_DEFAULTS.network),
     memory: parseMemoryConfig(
       preparedMemory,
       version,

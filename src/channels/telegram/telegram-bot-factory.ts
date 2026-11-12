@@ -12,6 +12,7 @@ import {
   type InboundFileUpdate,
   type TelegramFileMessage,
 } from "./telegram-file-update.js";
+import { offlineRefusalFor } from "../../llm/offline-network.js";
 
 /**
  * Every filter query that carries a file. Registered as one `bot.on`
@@ -162,6 +163,10 @@ function pollHealth(
  * inject their own factory via `TelegramChannel`'s `botFactory` dep.
  */
 export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
+  // ATO-1084: grammy brings its own HTTP client (node-fetch), which the
+  // agent's guarded pool never sees, so offline mode stops the bot here.
+  const offline = offlineRefusalFor("api.telegram.org", "telegram");
+  if (offline) throw offline;
   const grammy = await import("grammy");
   const bot = new grammy.Bot(token);
   // grammy reports polling failures through `bot.catch`, and without a

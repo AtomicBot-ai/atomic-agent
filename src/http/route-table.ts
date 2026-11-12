@@ -57,6 +57,7 @@ import {
 } from "./route-tasks.js";
 import { createWebhookHandler } from "./route-webhooks.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
+import { createGetOfflineModeHandler, createSetOfflineModeHandler } from "./route-offline-mode.js";
 import { createContextPreviewHandler } from "./route-context-preview.js";
 import {
   createRestartMcpServerHandler,
@@ -223,6 +224,9 @@ export function buildRouteTable(): RouteDefinition[] {
     // shows before the first message of a session.
     { method: "GET", path: "/api/coding-mode", handler: codingMode.get },
     { method: "POST", path: "/api/coding-mode", handler: codingMode.set },
+    // ATO-1084: the network kill switch and its outbound counter.
+    { method: "GET", path: "/api/offline-mode", handler: createGetOfflineModeHandler() },
+    { method: "POST", path: "/api/offline-mode", handler: createSetOfflineModeHandler() },
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
     // ATO-873: the desktop's Reconnect button after a local server answered 404/405.
     { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },

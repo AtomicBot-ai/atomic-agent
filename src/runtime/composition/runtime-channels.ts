@@ -4,6 +4,7 @@ import { TelegramChannel } from "../../channels/telegram/index.js";
 import { DiscordChannel } from "../../channels/discord/index.js";
 import { DiscordLockfile } from "../../channels/discord/discord-lockfile.js";
 import { SwarmRegistry } from "../../channels/swarm/index.js";
+import { isOfflineNetwork } from "../../llm/offline-network.js";
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { ApprovalRouter } from "../../approval/approval-router.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
@@ -51,7 +52,10 @@ export function connectRuntimeChannels(args: {
   });
   runtime.telegramChannel = telegramChannel;
   connectTelegram(telegramChannel);
-  if (config.telegram.enabled) {
+  // ATO-1084: offline mode starts no remote channel (see
+  // runtime-offline-mode.ts, which starts them when it is turned off).
+  const offline = isOfflineNetwork();
+  if (config.telegram.enabled && !offline) {
     void telegramChannel.start().catch((err) => {
       logger.error("telegram: start() rejected unexpectedly", {
         error: err instanceof Error ? err.message : String(err),
@@ -79,7 +83,7 @@ export function connectRuntimeChannels(args: {
   });
   runtime.discordChannel = discordChannel;
   connectDiscord(discordChannel);
-  if (config.discord.enabled) {
+  if (config.discord.enabled && !offline) {
     void discordChannel.start().catch((err) => {
       logger.error("discord: start() rejected unexpectedly", {
         error: err instanceof Error ? err.message : String(err),
@@ -104,5 +108,5 @@ export function connectRuntimeChannels(args: {
   });
   runtime.swarm = swarm;
   connectSwarm(swarm);
-  void swarm.startEnabled();
+  if (!offline) void swarm.startEnabled();
 }

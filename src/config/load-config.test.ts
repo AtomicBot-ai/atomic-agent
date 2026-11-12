@@ -43,6 +43,23 @@ describe("loadConfig", () => {
     vi.restoreAllMocks();
   });
 
+  it("network.offline: off by default, on from the file or ATOMIC_AGENT_OFFLINE (ATO-1084)", () => {
+    expect(loadConfig().network?.offline).toBe(false);
+    resetConfigCache();
+    process.env.ATOMIC_AGENT_OFFLINE = "1";
+    try {
+      expect(loadConfig().network?.offline).toBe(true);
+    } finally {
+      delete process.env.ATOMIC_AGENT_OFFLINE;
+    }
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      network: { offline: true },
+    });
+    resetConfigCache();
+    expect(loadConfig().network?.offline).toBe(true);
+  });
+
   it("creates a defaults-only config on first run", () => {
     const config = loadConfig();
     const path = getUserConfigPath(stateDir);

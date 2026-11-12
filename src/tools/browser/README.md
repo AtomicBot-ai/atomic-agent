@@ -28,6 +28,10 @@ Owner: src/tools/browser/
   - `browser.read_aria` and the world snapshot of a blocked page, or of a page that frames one (AI-mode snapshots include iframe content): no page content reaches the model.
 - With a non-empty allow-list, navigate, tabs new, search, and a link or form target outside it ask first (`browser_offsite`, level 3).
 
+## Offline mode
+
+While offline mode is on (ATO-1084), navigate, tabs new and search refuse a URL that is not on this machine (`offline_mode`), a page that lands elsewhere is cleared, and a Chrome the agent starts gets a dead proxy for everything but loopback. An attached Chrome only gets the URL gate. See [offline mode](../../llm/docs/offline-network.md).
+
 ## Page text is outside data
 
 The page in `### world` and the summaries of `browser.navigate`, `browser.read_aria` and `browser.tabs` (page titles) are framed as external content in a nonce-fenced block, like a fetched page (ATO-1378, `../untrusted-text.ts`). The framing lowers the odds that a page steers the model; the approval gates above are what stop an action.
