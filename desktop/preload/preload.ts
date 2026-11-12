@@ -170,6 +170,10 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-731: the chat on screen moves to the folder picked (sessionId), without restarting the agent.
   chooseWorkspace: (sessionId?: string | null) => ipcRenderer.invoke("app:chooseWorkspace", sessionId ?? null),
   openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
+  // ATO-1424 (macOS): a new Terminal window in `cwd` (home if missing) with `command` typed, not run.
+  // → {ok:true, cwd, usedHome} | {ok:false, error:"unsupported"|"invalid-request"|"empty-command"|
+  //   "command-too-long"|"control-characters"|"open-failed", message}
+  terminalOpenWithCommand: (req: { command: string; cwd?: string | null }) => ipcRenderer.invoke("terminal:openWithCommand", req),
   // Chat review Д23: `fromReply` for a chip from a reply's text, which main checks again.
   fileMenu: (path: string, fromReply?: boolean) => ipcRenderer.invoke("app:fileMenu", path, fromReply === true),
   // item 5: existence check for the files a turn wrote (fs.stat only)
