@@ -186,7 +186,14 @@ export async function attachConfiguredEmbeddings(args: {
         store: embStore,
         metrics,
       });
+      // Recall stays keyword-only while the backfill below rebuilds this
+      // model's vectors (ATO-342): ranking a half-indexed corpus by
+      // cosine would favour the notes that happen to be done. Ready again
+      // when the run ends, however it ends: a run that stopped early
+      // must not keep vectors off until the next boot.
+      const reindex = { running: false };
       notesStore.attachEmbeddings({
+        vectorRecallReady: () => !reindex.running,
         writer,
         store: embStore,
         // Parsed from config but, before ATO-366, never passed on: recall
@@ -203,6 +210,12 @@ export async function attachConfiguredEmbeddings(args: {
           writer,
           ...(logger ? { logger } : {}),
         });
+        if (backfill) {
+          reindex.running = true;
+          void backfill.done.then(() => {
+            reindex.running = false;
+          });
+        }
       }
     } catch (e) {
       failure = { kind: "wire", message: e instanceof Error ? e.message : String(e) };

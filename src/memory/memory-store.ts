@@ -268,6 +268,9 @@ export class MemoryStore {
   private embeddingVectorWeight: number;
   private embeddingBruteForceCeiling: number;
   private embeddingMinCosine: number | undefined;
+  // `false` while the attached model's vectors are still being rebuilt:
+  // recall stays keyword-only until then (see `attachEmbeddings`).
+  private vectorRecallReady: (() => boolean) | undefined;
   private readonly now: () => number;
   private readonly insertStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
@@ -1042,8 +1045,19 @@ export class MemoryStore {
     bruteForceCeiling?: number;
     /** The model's floor for meaning-only recall; omitted ⇒ the default. */
     minCosine?: number;
+    /**
+     * Whether recall may use the vectors yet. The runtime passes one that
+     * is `false` while the background reindex of this model runs (a model
+     * switch, or embeddings turned on over older notes): a half-indexed
+     * corpus would rank the notes that already have a vector above the
+     * ones that do not, so recall stays keyword-only (BM25) until the
+     * reindex ends. New notes are still embedded meanwhile. Omitted ⇒
+     * always ready.
+     */
+    vectorRecallReady?: () => boolean;
   }): void {
     this.embeddingMinCosine = args.minCosine;
+    this.vectorRecallReady = args.vectorRecallReady;
     this.embeddingWriter = args.writer;
     this.embeddingStore = args.store;
     if (args.fts5Weight !== undefined) this.embeddingFts5Weight = args.fts5Weight;
@@ -1054,6 +1068,7 @@ export class MemoryStore {
   detachEmbeddings(): void {
     this.embeddingWriter = undefined;
     this.embeddingStore = undefined;
+    this.vectorRecallReady = undefined;
   }
 
   /**
@@ -1108,9 +1123,10 @@ export class MemoryStore {
       requiredTags,
       k * 4,
     );
-    if (!this.embeddingWriter || !this.embeddingStore) {
-      // No hybrid wiring — return BM25 top-K and bump recall_count
-      // the same way `recall()` does.
+    if (!this.embeddingWriter || !this.embeddingStore || this.vectorRecallReady?.() === false) {
+      // No hybrid wiring, or the model's vectors are still being
+      // rebuilt — return BM25 top-K and bump recall_count the same way
+      // `recall()` does.
       const sliced = bm25Hits.slice(0, k);
       if (sliced.length > 0) this.touchOnRecall(sliced);
       return sliced;
