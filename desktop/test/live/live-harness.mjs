@@ -50,7 +50,8 @@ function standProblem() {
  * unchanged. A browser scenario gets it on and headless, so nothing opens on
  * the stand's screen, and the binary is found here with the agent's own
  * lookup and handed over by path: the app runs with a throwaway HOME, where a
- * per-user install would not be found.
+ * per-user install would not be found. On macOS it is started through
+ * browserLaunchPath (no keychain in that HOME).
  *
  * Returns `{ env }`, or `{ problem }` when this machine has no Chrome, Edge,
  * Brave or Chromium; the scenario is then a SKIP with that reason, not a FAIL.
@@ -66,6 +67,25 @@ export async function liveBrowser() {
   if (!path) return { problem: 'no Chrome, Edge, Brave or Chromium on this machine: the browser scenario needs one' };
   return { path, env: { ATOMIC_AGENT_BROWSER_ENABLED: 'true', ATOMIC_AGENT_BROWSER_HEADLESS: 'true',
     ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH: path } };
+}
+
+/**
+ * On macOS, the path the app is told to start: a two-line wrapper in the run
+ * directory that adds `--use-mock-keychain` and execs the real browser (same
+ * process, so the leftover sweep still sees it). The app runs with a
+ * throwaway HOME that has no login keychain, and a Chrome started there can
+ * block on its keychain lookup when it first reads cookies, so navigation
+ * hangs until page.goto times out (the likely cause of L18's 30 s timeout on
+ * the MBP, 12.11: Chrome's profile kept no trace of the page's URL).
+ * Playwright adds the same flag on macOS for the same reason. The product's
+ * own launch is unchanged; this only exists in the test tier.
+ */
+function browserLaunchPath(base, path) {
+  if (process.platform !== 'darwin') return path;
+  const wrapper = join(base, 'browser-mock-keychain.sh');
+  writeFileSync(wrapper, `#!/bin/sh\nexec ${JSON.stringify(path)} --use-mock-keychain "$@"\n`, { mode: 0o755 });
+  chmodSync(wrapper, 0o755);
+  return wrapper;
 }
 
 /* ------------------------------------------------------- throwaway dirs -- */
@@ -260,6 +280,10 @@ export async function liveScenario(name, body, { setup, skip = null, browser = f
     const extra = setup ? await setup({ ...dirs, model, config }) : null;
     writeFileSync(join(dirs.stateDir, 'config.json'), JSON.stringify(config, null, 2), { mode: 0o600 });
     const shim = writeAgentShim(dirs.base);
+    if (browserEnv) {
+      browserEnv = { ...browserEnv,
+        ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH: browserLaunchPath(dirs.base, browserEnv.ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH) };
+    }
     app = await launch({ port: LIVE_PORT, stateDir: dirs.stateDir, workspace: dirs.workspace,
       env: liveEnv(dirs, shim, { ...browserEnv, ...extra }) });
     await waitReady(app);
