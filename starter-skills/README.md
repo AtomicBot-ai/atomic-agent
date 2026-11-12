@@ -22,6 +22,7 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `code-graph/` | Who calls what, where a feature lives, how two parts connect, with `path:line` per link (built on `os.fs.code_map`) | none |
 | `verify-work/` | Run what you just wrote and prove it works before reporting | none |
 | `github/` | GitHub repos / issues / PRs / Actions via the `gh` CLI | `gh` installed + `gh auth login` |
+| `publish-site/` | Put a static site the agent built online on the user's own GitHub Pages (or Cloudflare Pages / Netlify), with a read-only secrets preflight, versions and rollback; always asks before publishing | `gh` signed in (or `wrangler` / `netlify-cli` signed in) |
 | `audit/` | `/audit`: security review in two passes, only findings that survive a refutation pass are reported | none |
 | `apple-calendar/` | Read Calendar via `icalBuddy`, create events via AppleScript | macOS + `brew install ical-buddy` + Calendar permission |
 | `obsidian/` | Read / search / write notes in an Obsidian vault | `OBSIDIAN_VAULT_PATH` env var (default `~/Documents/Obsidian Vault`) |
