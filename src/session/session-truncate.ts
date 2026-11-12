@@ -136,7 +136,7 @@ export type LastTurnRollbackPlan =
     }
   | { ok: false; code: LastTurnRollbackRefusal };
 
-/**
+/** What the caller expects the last turn to be. */
 export interface LastTurnRollbackOptions {
   /**
    * The question the caller means to take back. When the stored last
