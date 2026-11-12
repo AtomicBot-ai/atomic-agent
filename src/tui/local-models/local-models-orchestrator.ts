@@ -927,17 +927,15 @@ export class LocalModelsOrchestrator {
   }
 
   /**
-   * ATO-1045: after the starter lands, start the best model's background
-   * download and say so. Fire and forget: the landing never waits on the
-   * device probe, and a failure leaves the starter running as it is.
+   * ATO-1045: after the starter lands, name the best model for this
+   * machine and its size. ATO-1475: only a suggestion, the download starts
+   * when the person runs `/models pull`. Fire and forget: the landing never
+   * waits on the device probe, and a failure leaves the starter as it is.
    */
   private async followStarterWithUpgrade(def: LocalModelDef): Promise<void> {
     const line = await upgradeAfterStarter(def);
     if (!line) return;
     this.bus.emit({ type: "runtime_info", line });
-    // The job is a detached worker like `models pull --background`: the
-    // next refresh adopts it, so its progress shows in the top bar.
-    await this.refresh().catch(() => undefined);
   }
 
   /**
