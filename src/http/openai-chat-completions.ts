@@ -598,6 +598,7 @@ export function buildStreamEventHook(
           }).line,
           ...keyRequiredFrame(inner.result),
           ...screenMarksFrame(inner.result),
+          ...diffstatFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
           // them (`tool_result.approvals`), so a live turn summary can list
           // what was auto-approved (`verdict: "auto-approved"`, `via`,
@@ -1022,6 +1023,33 @@ function screenMarksFrame(
   if (!Array.isArray(marks) || marks.length === 0) return {};
   if (typeof seconds !== "number" || !Number.isFinite(seconds)) return {};
   return { screen_marks: { marks, seconds } };
+}
+
+/** Tools whose ok result carries `details.diffstat` (ATO-1187). */
+const DIFFSTAT_TOOLS: ReadonlySet<string> = new Set(["os.fs.write", "os.fs.edit"]);
+
+/**
+ * `diffstat` on a `tool_result` frame (ATO-1187): the file an ok
+ * `os.fs.write` / `os.fs.edit` changed and how many lines it added and
+ * removed, for the desktop's "Changed files" card. The frame is the
+ * only live path: the summary is clipped and the store keeps no
+ * `details`. Left out unless the path is a string and both counts are
+ * whole non-negative numbers.
+ */
+function diffstatFrame(
+  result: CompressedToolResult,
+): { diffstat?: { path: string; added: number; removed: number } } {
+  if (!DIFFSTAT_TOOLS.has(result.tool) || result.status !== "ok") return {};
+  const details = result.details ?? {};
+  const path = details.path;
+  const raw = details.diffstat;
+  if (typeof path !== "string" || path.length === 0) return {};
+  if (typeof raw !== "object" || raw === null) return {};
+  const { added, removed } = raw as { added?: unknown; removed?: unknown };
+  const count = (n: unknown): n is number =>
+    typeof n === "number" && Number.isInteger(n) && n >= 0;
+  if (!count(added) || !count(removed)) return {};
+  return { diffstat: { path, added, removed } };
 }
 
 /** Longest `summary` a `tool_result` carries; the store keeps the whole one. */
