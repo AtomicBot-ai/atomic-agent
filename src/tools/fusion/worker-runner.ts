@@ -575,6 +575,12 @@ export interface RunWorkerTasksOptions {
    * ATO-947). Absent, every task starts as before.
    */
   shouldStart?: () => string | undefined;
+  /**
+   * Asked only before a task starts, after `shouldStart`: the failure
+   * breaker (ATO-1406). Unlike `shouldStart` it never refuses an
+   * escalation or cuts a run already going, so running workers finish.
+   */
+  shouldStartTask?: () => string | undefined;
   /** Every worker completion's usage, as it lands (live spend, ATO-947). */
   onWorkerUsage?: (taskId: string, usage: CompletionUsage) => void;
   /**
@@ -672,12 +678,12 @@ export async function runWorkerTasks(
   const width = Math.max(1, Math.min(options.maxWorkers, options.tasks.length));
   const runners = Array.from({ length: width }, async () => {
     for (let i = claim(); i < options.tasks.length; i = claim()) {
-      // A stopped turn starts nothing more, capped or not (ATO-1334):
-      // `shouldStart` is only wired when a budget cap is set. The cap is
-      // asked first: a cap reached aborts the same signal, and its row
-      // must say the cap, not the person, stopped it.
+      // The cap first (its row must name the cap), then the failure
+      // breaker (ATO-1406), then a stopped turn (ATO-1334, #1139):
+      // `shouldStart` is only wired when a budget cap is set.
       const stop =
         options.shouldStart?.() ??
+        options.shouldStartTask?.() ??
         (options.signal.aborted ? "the turn was stopped" : undefined);
       results[i] =
         stop === undefined

@@ -72,10 +72,19 @@ import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
   FusionTurnBudget,
   TURN_BUDGET_INSTRUCTION,
+  TURN_COUNT_INSTRUCTION,
   formatUsd,
   type TurnBudgetLimits,
   type TurnBudgetStop,
+  type TurnCountLimits,
 } from "./turn-budget.js";
+import {
+  FAILURE_BREAKER_INSTRUCTION,
+  FanoutFailureBreaker,
+  describeTrip,
+  refusalFromTrips,
+  type BreakerTrip,
+} from "./failure-breaker.js";
 import {
   delegateOutcome,
   fanoutSpend,
@@ -343,6 +352,46 @@ export function buildFusionDelegateTool(
           },
         );
       }
+      // The turn's memory of earlier rounds (ATO-1406). Only with the
+      // runtime's per-turn state: the tool's own fallback has no turn
+      // boundary, and counts carried across turns would refuse forever.
+      const tracksTurn = deps.turnBudget !== undefined;
+      if (tracksTurn) {
+        const priorTrip = refusalFromTrips(
+          turnBudget.trips(ctx.sessionId),
+          workerProviderId,
+          [...roleLegs.keys()],
+        );
+        if (priorTrip !== undefined) {
+          return error(
+            `fusion.delegate did not run: earlier this turn ${describeTrip(priorTrip)}. Running the workers again would fail the same way. ${FAILURE_BREAKER_INSTRUCTION}`,
+            {
+              reason: "failure-breaker",
+              blocker: priorTrip.blocker,
+              signature: priorTrip.signature,
+            },
+          );
+        }
+        const countLimits: TurnCountLimits = {
+          ...(mode.maxRoundsPerTurn === undefined
+            ? {}
+            : { rounds: mode.maxRoundsPerTurn }),
+          ...(mode.maxTasksPerTurn === undefined
+            ? {}
+            : { tasks: mode.maxTasksPerTurn }),
+        };
+        const countStop = turnBudget.checkCounts(
+          ctx.sessionId,
+          countLimits,
+          parsed.tasks.length,
+        );
+        if (countStop !== undefined) {
+          return error(
+            `fusion.delegate did not run: ${countStop.message}. ${TURN_COUNT_INSTRUCTION}`,
+            { reason: "turn-count", kind: countStop.kind },
+          );
+        }
+      }
 
       // Before the pool is measured: warming replays the probes a cloud
       // boot deferred, and it is the `/props` round trip inside it that
@@ -492,7 +541,7 @@ export function buildFusionDelegateTool(
                 roleLegs.size === 0
                   ? ""
                   : ` and ${[...roleLegs.values()].map((l) => l.model).join(", ")}`
-              }`,
+              }${tracksTurn ? describeTurnCounts(turnBudget.counts(ctx.sessionId), parsed.tasks.length, mode) : ""}`,
               preview: describeFanoutPreview(parsed.tasks, writeScope),
               affectedResources: [...writeScope],
             },
@@ -619,7 +668,6 @@ export function buildFusionDelegateTool(
               },
             }
           : {};
-      const budgetOptions = budgetOptionsFor(workerPricing);
       // Escalation (ATO-942): only to the configured target, priced with
       // the same resolver as the workers, and counted in the turn's cap.
       const escalationTarget = mode.escalation ?? null;
@@ -722,7 +770,48 @@ export function buildFusionDelegateTool(
                 }
               },
             };
-      const checkpointOptions = checkpointOptionsFor(workerPricing);
+      // One failure breaker per leg (ATO-1406): a run of identical
+      // failures, or one blocker, stops new starts on that leg; workers
+      // already running finish. Fed by every finished row, consulted
+      // with the turn's caps before each task starts.
+      const breakers = new Map<string, FanoutFailureBreaker>();
+      const breakerFor = (providerId: string): FanoutFailureBreaker => {
+        let breaker = breakers.get(providerId);
+        if (breaker === undefined) {
+          breaker = new FanoutFailureBreaker(providerId);
+          breakers.set(providerId, breaker);
+        }
+        return breaker;
+      };
+      const guardOptionsFor = (
+        providerId: string,
+        pricing: WorkerPricing | undefined,
+      ): Pick<
+        Parameters<typeof runWorkerTasks>[1],
+        | "shouldStart"
+        | "shouldStartTask"
+        | "onWorkerUsage"
+        | "onWorkerTool"
+        | "onTaskFinished"
+      > => {
+        const budget: Pick<
+          Parameters<typeof runWorkerTasks>[1],
+          "shouldStart" | "onWorkerUsage"
+        > = budgetOptionsFor(pricing);
+        const checkpoint = checkpointOptionsFor(pricing);
+        const breaker = breakerFor(providerId);
+        return {
+          ...budget,
+          ...checkpoint,
+          // The breaker only gates new tasks; the budget's own check
+          // still governs escalations and cuts (ATO-1406).
+          shouldStartTask: () => breaker.stopReason(),
+          onTaskFinished: (result: WorkerTaskResult): void => {
+            breaker.observe(result);
+            checkpoint.onTaskFinished?.(result);
+          },
+        };
+      };
       // The task tree (ATO-940): off unless configured, and then the wave
       // runs and a judge's retry read proposals.
       const tree =
@@ -819,7 +908,7 @@ export function buildFusionDelegateTool(
               : { workerMaxOutputTokens }),
             writeScope,
             signal: runSignal,
-            ...budgetOptions,
+            ...guardOptionsFor(workerProviderId, workerPricing),
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
@@ -827,7 +916,6 @@ export function buildFusionDelegateTool(
             ...(allowSplit && canProposeSplit !== undefined
               ? { canProposeSplit }
               : {}),
-            ...checkpointOptions,
           },
         );
       // A role model's leg (ATO-943): its own provider, label, price and
@@ -889,7 +977,7 @@ export function buildFusionDelegateTool(
               : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
             writeScope,
             signal: runSignal,
-            ...budgetOptionsFor(pricing),
+            ...guardOptionsFor(leg.providerId, pricing),
             ...(escalationTarget?.providerId === leg.providerId
               ? {}
               : escalationOptions),
@@ -899,7 +987,6 @@ export function buildFusionDelegateTool(
             ...(allowSplit && canProposeSplit !== undefined
               ? { canProposeSplit }
               : {}),
-            ...checkpointOptionsFor(pricing),
           },
         );
       };
@@ -1019,6 +1106,15 @@ export function buildFusionDelegateTool(
                 r,
               ]),
         );
+        // Workers are about to start: this round counts toward the
+        // turn's caps (ATO-1406), with only the tasks it will run — a
+        // resume's finished ones are not counted twice.
+        if (tracksTurn) {
+          turnBudget.noteRound(
+            ctx.sessionId,
+            parsed.tasks.filter((t) => !finished.has(t.id)).length,
+          );
+        }
         for (const [waveIndex, wave] of plan.waves.entries()) {
           waveWarnings.push(
             ...dependencyWarnings(wave, plan.dependencies, finished),
@@ -1103,6 +1199,19 @@ export function buildFusionDelegateTool(
             turnBudget.noteAttempt(ctx.sessionId, r.id);
           }
         }
+      }
+      // What the failure breakers saw (ATO-1406): remembered for the
+      // rest of the turn, so the next round on a broken leg is refused.
+      const trips: BreakerTrip[] = [...breakers.values()]
+        .map((b) => b.tripped())
+        .filter((t): t is BreakerTrip => t !== undefined);
+      // One trip per error per round: two legs stopping on the same
+      // repeat are one round's evidence, not two.
+      const seen = new Set<string>();
+      for (const trip of trips) {
+        if (seen.has(trip.signature)) continue;
+        seen.add(trip.signature);
+        turnBudget.noteTrip(ctx.sessionId, trip);
       }
       // Rows a cap cut short say so, so a cancelled worker is not read
       // as the operator's doing.
@@ -1310,7 +1419,10 @@ export function buildFusionDelegateTool(
         resume?.needsConfirmation.map((r) => r.id) ?? [],
       );
       const replan =
-        autoReplan > 0 && stoppedBy === undefined && !ctx.signal.aborted
+        autoReplan > 0 &&
+        stoppedBy === undefined &&
+        trips.length === 0 &&
+        !ctx.signal.aborted
           ? describeReplan(
               results.filter((r) => !awaitingYes.has(r.id)),
               (id) => turnBudget.attempts(ctx.sessionId, id),
@@ -1431,6 +1543,10 @@ export function buildFusionDelegateTool(
         budgetStopped === undefined
           ? ""
           : `\n\nStopped: ${budgetStopped.message}. ${TURN_BUDGET_INSTRUCTION}`;
+      const breakerNote =
+        trips.length === 0
+          ? ""
+          : `\n\nStopped: ${trips.map(describeTrip).join("; ")}. ${FAILURE_BREAKER_INSTRUCTION}`;
       return compressToolResult(
         {
           tool: FUSION_DELEGATE_TOOL,
@@ -1451,7 +1567,7 @@ export function buildFusionDelegateTool(
             roleSpendUsd > 0
               ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
               : ""
-          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}`,
+          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
           details: {
             tasks: results,
             outcome,
@@ -1501,6 +1617,26 @@ export function buildFusionDelegateTool(
       );
     },
   };
+}
+
+/**
+ * What this round adds to the turn, for the fan-out's approval line
+ * (ATO-1406): the round number and the tasks so far, each against its
+ * cap when one is on. A subscription leg has no price to show, so the
+ * count is what the person weighs before saying yes.
+ */
+export function describeTurnCounts(
+  before: { rounds: number; tasks: number },
+  taskCount: number,
+  mode: Pick<ResolvedRunMode, "maxRoundsPerTurn" | "maxTasksPerTurn">,
+): string {
+  const round = before.rounds + 1;
+  const tasks = before.tasks + taskCount;
+  const roundCap =
+    mode.maxRoundsPerTurn === undefined ? "" : ` of at most ${mode.maxRoundsPerTurn}`;
+  const taskCap =
+    mode.maxTasksPerTurn === undefined ? "" : ` of at most ${mode.maxTasksPerTurn}`;
+  return ` (round ${round}${roundCap} this turn, ${tasks} task${tasks === 1 ? "" : "s"}${taskCap} in all)`;
 }
 
 /**
