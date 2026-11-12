@@ -256,6 +256,7 @@ import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
+import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { AgentMemoryTracker } from "./agent-memory-sample.js";
@@ -1953,6 +1954,35 @@ function wireIpc(client: AgentClient): void {
     const res = await addCustomModelEntry(built.def as unknown as Record<string, unknown>);
     if (!res.ok) return { ok: false, error: res.error ?? "could not write the config" };
     return { ok: true, id: built.def.id, def: built.def };
+  });
+  /* ATO-1402: "Use a .gguf file I already have". The open dialog picks the
+     file, and it is registered where it lies (main/local-gguf.ts, the TUI's
+     own entry for a pasted path): nothing is copied or downloaded. The
+     renderer then hands the id to the same `models pull` a curated pick
+     uses, which finds the weights present and starts the model.
+     `--fake-gguf=<path>` (TEST ONLY, like --fake-pick) answers the dialog. */
+  ipcMain.handle("cli:ggufPick", async () => {
+    const fake = process.argv.find((a) => a.startsWith("--fake-gguf="));
+    let path: string | null = fake ? fake.slice("--fake-gguf=".length) : null;
+    if (!path) {
+      if (!win) return { ok: false, cancelled: true, error: "cancelled" };
+      const picked = await dialog.showOpenDialog(win, {
+        properties: ["openFile"],
+        message: "Choose a .gguf model file",
+        filters: [{ name: "GGUF models", extensions: ["gguf"] }],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, cancelled: true, error: "cancelled" };
+      path = picked.filePaths[0];
+    }
+    let def: ReturnType<typeof buildLocalGgufModelDef>;
+    try {
+      def = buildLocalGgufModelDef(resolveLocalGgufFile(path, { managedModelsDir: modelsDirOf(managedDataDirNow()) }));
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    const res = await addCustomModelEntry(def as unknown as Record<string, unknown>);
+    if (!res.ok) return { ok: false, error: res.error ?? "could not write the config" };
+    return { ok: true, id: def.id, def };
   });
   /**
    * `atag models pull` fetches weights only, so the projector is fetched
