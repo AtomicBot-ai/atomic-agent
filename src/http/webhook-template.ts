@@ -8,13 +8,24 @@
  * Unknown paths substitute to an empty string; callers that need a
  * stricter contract should validate `body` upstream. Escape literal
  * `{{` with a double-backslash prefix: `\\{{not a placeholder}}`.
+ *
+ * `vars` adds single-word placeholders such as `{{event}}`, `{{action}}`
+ * and `{{delivery}}` that the signed webhook schemes fill from headers
+ * (ATO-438); a name not in `vars` renders empty.
  */
-export function renderWebhookTemplate(template: string, body: unknown): string {
+export function renderWebhookTemplate(
+  template: string,
+  body: unknown,
+  vars: Readonly<Record<string, string>> = {},
+): string {
   return template.replace(
     /\\\{\{|\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g,
     (match, path: string | undefined) => {
       if (match.startsWith("\\")) return match.slice(1);
       if (!path) return "";
+      if (!path.includes(".") && path !== "body") {
+        return Object.hasOwn(vars, path) ? (vars[path] ?? "") : "";
+      }
       return renderPath(path, body);
     },
   );
