@@ -4,6 +4,7 @@ import { resolve, sep } from "node:path";
 import type Database from "better-sqlite3";
 import { traceFilePath } from "../tracing/trace/trace-sink.js";
 import type { SessionStatus } from "./session-state.js";
+import { deleteArchivedTurns } from "./turn-archive.js";
 
 /**
  * One bounded retention pass over the `sessions` table, run at startup.
@@ -236,7 +237,11 @@ function removeIds(
   result: PruneSessionsResult,
 ): void {
   const placeholders = ids.map(() => "?").join(", ");
-  db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(...ids);
+  db.transaction(() => {
+    db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(...ids);
+    // Their compacted turns (`turn-archive.ts`) go with them.
+    deleteArchivedTurns(db, ids);
+  })();
   result.deleted += ids.length;
   if (tracesDir === null) return;
   for (const id of ids) {

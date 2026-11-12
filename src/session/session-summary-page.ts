@@ -1,4 +1,5 @@
 import type { SessionSummary } from "./session-summary.js";
+import { ARCHIVED_TURNS_KEY } from "./turn-archive.js";
 
 /**
  * One page of list rows, newest first, with the fields a list renders
@@ -27,6 +28,11 @@ import type { SessionSummary } from "./session-summary.js";
  * index rather than sorting the table, and reads the cursor as a range
  * seek on it (`SEARCH sessions USING INDEX idx_sessions_updated_id`) —
  * page 40 costs what page 1 costs.
+ *
+ * A session whose compacted turns moved to the archive (`turn-archive.ts`)
+ * may have its opening prompt there rather than in `$.turns`; the
+ * payload's marker carries that prompt, and counts as "someone has spoken
+ * to it" for the `EXISTS` guard.
  */
 function summaryPageSql(cursored: boolean): string {
   return `
@@ -37,19 +43,22 @@ SELECT id,
        updated_at AS updatedAt,
        json_extract(payload, '$.turnCount') AS turnCount,
        json_extract(payload, '$.stepCount') AS stepCount,
-       (SELECT json_extract(t.value, '$.text')
-          FROM json_each(payload, '$.turns') AS t
-         WHERE t.type = 'object'
-           AND json_extract(t.value, '$.kind') = 'user'
-         LIMIT 1) AS firstPrompt,
+       COALESCE(
+         json_extract(payload, '$.${ARCHIVED_TURNS_KEY}.firstUserText'),
+         (SELECT json_extract(t.value, '$.text')
+            FROM json_each(payload, '$.turns') AS t
+           WHERE t.type = 'object'
+             AND json_extract(t.value, '$.kind') = 'user'
+           LIMIT 1)) AS firstPrompt,
        json_extract(payload, '$.metadata.title') AS title,
        json_extract(payload, '$.metadata.importedFrom') AS importedFrom
   FROM sessions
  WHERE json_valid(payload) AND json_type(payload, '$.turns') = 'array'
-   AND EXISTS (SELECT 1
-                 FROM json_each(payload, '$.turns') AS t
-                WHERE t.type = 'object'
-                  AND json_extract(t.value, '$.kind') = 'user')${
+   AND (json_type(payload, '$.${ARCHIVED_TURNS_KEY}.firstUserText') = 'text'
+        OR EXISTS (SELECT 1
+                     FROM json_each(payload, '$.turns') AS t
+                    WHERE t.type = 'object'
+                      AND json_extract(t.value, '$.kind') = 'user'))${
                     cursored
                       ? `
    AND (updated_at < :afterUpdatedAt
