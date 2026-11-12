@@ -25882,6 +25882,7 @@ function memoryKey(e, k, inText) {
     return false;
   }
   const rows = memVisibleRows();
+  if (memGraphOn() && memGraphListKey(k)) return false; // ATO-584: the list is not on screen under the graph
   if (k === 'j' || k === 'ArrowDown') { e.preventDefault(); MEM.cursor = Math.min(MEM.cursor + 1, Math.max(0, rows.length - 1)); render(); return true; }
   if (k === 'k' || k === 'ArrowUp') { e.preventDefault(); MEM.cursor = Math.max(MEM.cursor - 1, 0); render(); return true; }
   if (k === 'Enter') { e.preventDefault(); memoryAct('open'); return true; }

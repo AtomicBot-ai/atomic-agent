@@ -154,6 +154,9 @@ function memGraphHit(nodes, view, w, h, sx, sy) {
 
 function memGraphOn() { return MEMGRAPH.on && MEM.channel === 'notes' && MEM.mode === 'list'; }
 
+/* The list's own keys (move, open, page): under the graph the list is not on screen, so they do nothing. */
+function memGraphListKey(k) { return k === 'j' || k === 'k' || k === 'ArrowDown' || k === 'ArrowUp' || k === 'Enter'; }
+
 function memGraphToggleHTML() {
   if (MEM.channel !== 'notes' || MEM.mode !== 'list') return '';
   const b = (v, label) => '<button class="' + (MEMGRAPH.on === v ? 'on' : '') + '" aria-pressed="' + (MEMGRAPH.on === v) + '" data-act="memory:graph:' + (v ? 'on' : 'off') + '">' + label + '</button>';
@@ -329,6 +332,6 @@ if (typeof window !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {MEMGRAPH_MAX_NODES, MEMGRAPH_FORCE, memGraphLabel, memGraphShape, memGraphSeed, memGraphRadius, memGraphStep, memGraphSettle,
+  module.exports = {MEMGRAPH_MAX_NODES, MEMGRAPH_FORCE, memGraphListKey, memGraphLabel, memGraphShape, memGraphSeed, memGraphRadius, memGraphStep, memGraphSettle,
     memGraphFit, memGraphToScreen, memGraphToWorld, memGraphZoomAt, memGraphHit};
 }

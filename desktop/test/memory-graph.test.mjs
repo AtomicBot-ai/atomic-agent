@@ -107,3 +107,8 @@ test('hit finds the dot under the pointer, -1 on empty space', () => {
   assert.equal(G.memGraphHit(nodes, v, 400, 300, 302, 151), 1);
   assert.equal(G.memGraphHit(nodes, v, 400, 300, 250, 250), -1);
 });
+
+test('under the graph the hidden list does not take its keys; the tab keys still work', () => {
+  for (const k of ['j', 'k', 'ArrowDown', 'ArrowUp', 'Enter']) assert.equal(G.memGraphListKey(k), true, k);
+  for (const k of ['r', 'a', 'f', '[', ']', '1', 'Escape']) assert.equal(G.memGraphListKey(k), false, k);
+});
