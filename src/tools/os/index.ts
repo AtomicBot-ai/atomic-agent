@@ -12,6 +12,7 @@ import { osFsListTool } from "./fs/fs-list.js";
 import { osFsGlobTool } from "./fs/fs-glob.js";
 import { buildOsFsLocateProjectTool } from "./fs/fs-locate-project.js";
 import { buildOsFsCodeMapTool } from "./code-map/index.js";
+import { buildOsCodeRewriteTool, buildOsCodeSearchTool } from "./code/index.js";
 import type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
 import { buildOsFsGrepTool } from "./fs/fs-grep.js";
 import { buildOsFsEditTool } from "./fs/fs-edit.js";
@@ -298,6 +299,10 @@ export function registerOsTools(
   registry.register(buildOsFsPatchTool(fsMutation));
   registry.register(buildOsFsRestoreTool(fsMutation));
   registry.register(buildOsFsMoveTool(fsMutation));
+  // Structural search / rewrite through the user's ast-grep CLI (ATO-696);
+  // the rewrite rides the same write funnel and guards as the patch.
+  registry.register(buildOsCodeSearchTool());
+  registry.register(buildOsCodeRewriteTool(fsMutation));
   registry.register(osFsWatchTool);
   registry.register(osGitStatusTool);
   registry.register(osGitLogTool);

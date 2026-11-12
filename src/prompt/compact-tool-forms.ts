@@ -80,6 +80,14 @@ const FORMS: Record<string, CompactToolForm> = {
     summary:
       "Outline a code project (key files, symbols, line numbers) before reading; path = one file gives its skeleton.",
   },
+  "os.code.search": {
+    summary: "Syntax-aware code search (ast-grep): pattern is code with $VAR metavariables. Needs the ast-grep CLI.",
+    tier: RARE,
+  },
+  "os.code.rewrite": {
+    summary: "Syntax-aware search and replace (ast-grep); dry-run unless apply=true (may require approval).",
+    tier: RARE,
+  },
   "os.fs.edit": {
     summary:
       "Replace text in a file (may require approval). oldString must match the file text exactly (copy it from os.fs.read, same indentation) and be unique unless replaceAll.",

@@ -164,6 +164,7 @@ const SEARCH_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.watch",
   "os.fs.locate_project",
   "os.fs.code_map",
+  "os.code.search",
   "os.fs.archive.list",
 ]);
 
@@ -172,6 +173,7 @@ const EDIT_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.edit",
   "os.fs.patch",
   "os.fs.restore",
+  "os.code.rewrite",
 ]);
 
 function bucketOf(tool: string): BucketId {

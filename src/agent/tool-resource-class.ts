@@ -111,6 +111,10 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   [OS_FS_MOVE_CONTRACT.name]: OS_FS_MOVE_CONTRACT.resourceClass,
   "os.fs.archive.extract": "approval_gated",
 
+  // os.code.* — structural search (read) and rewrite (fs write funnel)
+  "os.code.search": "pure_read",
+  "os.code.rewrite": "approval_gated",
+
   // os.git.* — read-only shell-outs
   "os.git.status": "pure_read",
   "os.git.log": "pure_read",
@@ -370,6 +374,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.fs.restore": FS_WRITE_CATEGORIES,
     // Both ends ride the write funnel (`fs-move.ts`).
     "os.fs.move": FS_WRITE_CATEGORIES,
+    // Writes the files ast-grep rewrote, through the same funnel.
+    "os.code.rewrite": FS_WRITE_CATEGORIES,
     "os.fs.trash": ["fs_trash", "trust_config", "other"],
     "os.fs.archive.extract": ["fs_write_home", "other"],
     // Local git writes ride the fs funnel against the repository root.

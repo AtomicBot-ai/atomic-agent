@@ -1,6 +1,8 @@
 import type { ToolDescriptor } from "./stable-prefix.js";
 import { SCREEN_TOOL_DESCRIPTORS } from "./screen-tool-descriptors.js";
 import { OS_FS_CODE_MAP_CONTRACT } from "../tools/os/code-map/code-map-contract.js";
+import { OS_CODE_SEARCH_CONTRACT } from "../tools/os/code/code-search-contract.js";
+import { OS_CODE_REWRITE_CONTRACT } from "../tools/os/code/code-rewrite-contract.js";
 
 /** Second half of `DEFAULT_TOOL_DESCRIPTORS` (order is load-bearing). */
 export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
@@ -52,6 +54,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
   // Appended in list B so the positions pinned for list A's duplicates
   // (tool-contract-conformance) do not move (ATO-652).
   OS_FS_CODE_MAP_CONTRACT.descriptor,
+  // Same reason (ATO-696).
+  OS_CODE_SEARCH_CONTRACT.descriptor,
+  OS_CODE_REWRITE_CONTRACT.descriptor,
   {
     name: "skill.view",
     summary: "Load an installed skill body (SKILL.md) into the session tail.",
