@@ -4776,7 +4776,7 @@ function exitAfterAgentStop(code: number): void {
   // ATO-825: 20 s, not 10: the run's model-server stop (stopLocalDaemonOnQuit) needs up to ~12 s of it.
   void Promise.race([shutdown, new Promise((r) => setTimeout(r, 20_000))])
     .catch(() => undefined)
-    .finally(() => app.exit(code));
+    .finally(() => { removeSmokeTuiFixture(); app.exit(code); });
 }
 
 
@@ -8930,6 +8930,38 @@ function snapshotTuiState(): Record<string, string> {
  */
 let TUI_BASELINE: Record<string, string> | null = null;
 
+/* ATO-826: the import / seam / wizard checks need a terminal setup to import
+   from. They used to lean on the operator's real ~/.atomic-agent; the MBP
+   smoke runs with HOME pointed at an empty throwaway folder, so six of them
+   failed on every full run ("no terminal-agent setup at …/home/.atomic-agent").
+   Seed a tiny keyless one, ONLY when this run owns its state and there is no
+   ~/.atomic-agent at all (an operator's real tree is never written), before the
+   untouched-baseline snapshot so it is not counted as drift; removed on exit. */
+let SMOKE_TUI_FIXTURE = false;
+function seedSmokeTuiFixture(): void {
+  if (!smokeOwnsItsState({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV })) return;
+  if (existsSync(TUI_STATE_DIR)) return;
+  try {
+    mkdirSync(TUI_STATE_DIR, { recursive: true, mode: 0o700 });
+    writeFileSync(join(TUI_STATE_DIR, "config.json"), JSON.stringify({
+      llm: {
+        activeTextProvider: "smoke-tui-fixture",
+        providers: [{ id: "smoke-tui-fixture", kind: "openai-compatible", baseUrl: "https://smoke-tui.invalid/v1", defaultChatModel: "smoke-model" }],
+      },
+    }, null, 2), { mode: 0o600 });
+    writeFileSync(join(TUI_STATE_DIR, ".env"), "SMOKE_TUI_FIXTURE_KEY=not-a-real-key\n", { mode: 0o600 });
+    SMOKE_TUI_FIXTURE = true;
+    process.stdout.write(`DIAG smoke seeded a fixture terminal setup at ${TUI_STATE_DIR} (removed on exit)\n`);
+  } catch (e) {
+    process.stdout.write(`DIAG smoke could not seed a fixture terminal setup at ${TUI_STATE_DIR}: ${(e as Error).message}\n`);
+  }
+}
+function removeSmokeTuiFixture(): void {
+  if (!SMOKE_TUI_FIXTURE) return;
+  SMOKE_TUI_FIXTURE = false;
+  try { rmSync(TUI_STATE_DIR, { recursive: true, force: true }); } catch { /* best effort, a throwaway HOME */ }
+}
+
 /**
  * r5 items 9 and 10 — isolation, and the optimistic switch.
  *
@@ -9543,10 +9575,12 @@ async function isolationAndSwitchTest(
   }>("window.__swxBusyFace()");
   check(
     "send button: a turn adopted mid-switch keeps its steer and its stop",
-    busyFace.locked.disabled === true && busyFace.locked.act === "send"
+    /* ATO-826: since #622 (speedy model switcher) Send stays live while a switch
+       lands and says the reply may be slower; it is no longer a disabled lock. */
+    busyFace.locked.disabled === false && busyFace.locked.act === "send" && /model is switching/.test(busyFace.locked.title)
       && busyFace.steer.disabled === false && busyFace.steer.title === "Steer this turn"
       && busyFace.enter.steers === 1 && busyFace.enter.toasts.length === 0
-      && busyFace.stop.act === "stop" && busyFace.stop.title === "Stop (Ctrl+.)",
+      && busyFace.stop.act === "stop" && /^Stop \((?:Ctrl\+\.|⌘ \.)\)$/.test(busyFace.stop.title),
     JSON.stringify(busyFace),
   );
 
@@ -9628,6 +9662,31 @@ async function backendSwitchTest(
   const localEntry = (c: UserConfigShape | undefined) =>
     (c?.llm?.providers ?? []).find((p) => p.id === "local-llama");
 
+  /* ATO-826: the block is a round trip FROM cloud (see "To local" below). A
+     seed already on local (the MBP's seed-local: local-llama only, no cloud
+     provider) made the first switch a no-op and left nothing to switch back
+     to, so seven checks failed on every full run without telling anything.
+     Put the file on a throwaway cloud route first and boot serve on it. The
+     entry points at a dead loopback port and carries an inline dummy key, so
+     the "re-activate the live provider" leg (which needs a key) runs too;
+     nothing here sends a request to it. The ORIGINAL file is restored in
+     finally. */
+  const originalConfig = await cfgNow();
+  const routeKind = (c: UserConfigShape | undefined) =>
+    (c?.llm?.providers ?? []).find((p) => p.id === c?.llm?.activeTextProvider)?.kind;
+  if (originalConfig && routeKind(originalConfig) === "llama-server") {
+    const fx = JSON.parse(JSON.stringify(originalConfig)) as UserConfigShape;
+    fx.llm = fx.llm ?? ({} as NonNullable<UserConfigShape["llm"]>);
+    fx.llm.providers = [
+      ...(fx.llm.providers ?? []).filter((p) => p.id !== "smoke-cloud"),
+      { id: "smoke-cloud", kind: "openai-compatible", baseUrl: "http://127.0.0.1:9/v1", defaultChatModel: "smoke-model", apiKey: "smoke-fixture-not-a-key" } as never,
+    ];
+    fx.llm.activeTextProvider = "smoke-cloud";
+    const wrote = await configSetWhole(fx);
+    process.stdout.write(`DIAG backend block: seed is on local, started from a throwaway cloud route (write ok=${wrote.ok})\n`);
+    if (agent) { await agent.stop(); await agent.start(); }
+    await waitConnected();
+  }
   const beforeConfig = await cfgNow();
   const daemonWasRunning = await localDaemonRunning();
   const portBefore = agent?.status.port ?? null;
@@ -10054,7 +10113,7 @@ async function backendSwitchTest(
       `file moved first: ${preMoved.changed}; switch ok=${behind?.ok} restart=${behind?.restart} error=${behind?.error ?? ""}; state=${stBehind} port ${portCloud} → ${agent?.status.port}`,
     );
   } finally {
-    if (beforeConfig) await configSetWhole(beforeConfig);
+    if (originalConfig) await configSetWhole(originalConfig);
     if (daemonWasRunning !== (await localDaemonRunning())) {
       if (daemonWasRunning) await modelsStart();
       else await modelsStop();
@@ -10468,7 +10527,7 @@ void app.whenReady().then(async () => {
   /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
      exists yet, no `atag` subprocess has been spawned, and nothing has been
      written. Anything the app touches from this line on shows as drift. */
-  if (SMOKE) TUI_BASELINE = snapshotTuiState();
+  if (SMOKE) { seedSmokeTuiFixture(); TUI_BASELINE = snapshotTuiState(); }
   /* ATO-132: before any config read or write of this launch, config.json —
      which holds the providers' API keys — and .env are made readable by this
      user only, and the tmp files a write that died half way left beside
