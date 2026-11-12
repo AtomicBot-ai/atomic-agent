@@ -67,7 +67,7 @@ import { SessionUsageLedger, forwardWorkerUsage } from "../session/usage-meter.j
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
-import { readLocalEngineState } from "./local-engine-state.js";
+import { explainLocalEngineState, readLocalEngineState } from "./local-engine-state.js";
 import { createLocalOutOfMemoryPort, type LocalModelRestarter } from "./local-out-of-memory.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
@@ -595,6 +595,12 @@ export async function createAgentRuntime(
     localEngineState: (providerId: string | undefined) => {
       const config = getConfig();
       return readLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
+    },
+    // The same reading with why, so the turn's error report says what the
+    // wait decided on (ATO-1432).
+    explainLocalEngineState: (providerId: string | undefined) => {
+      const config = getConfig();
+      return explainLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
     },
     // A managed local model that ran out of memory is restarted with a
     // smaller window instead of waited on (ATO-334). Read live, like the

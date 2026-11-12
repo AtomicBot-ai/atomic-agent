@@ -15,7 +15,7 @@ import { keyRefusedError } from "../../llm/llama-server-client.js";
 import { classifyFailureCause } from "../../llm/reliability/index.js";
 import { attachFailingLink } from "../../llm/fallback/failed-attempts.js";
 import { createEmptySessionState } from "../../session/session-state.js";
-import type { AgentLoopEvent, LocalEngineState } from "../agent-contract.js";
+import type { AgentLoopEvent, LocalEngineState, LocalEngineVerdict } from "../agent-contract.js";
 import { ATOMIC_CHAT_START_GRACE_MS, LOCAL_ENGINE_RESTART_GRACE_MS, recoverTurnStep, type TurnRecoveryContext } from "./turn-recovery.js";
 import { createTurnLoopState } from "./turn-state.js";
 
@@ -332,5 +332,99 @@ describe("turn recovery: a 401 on the managed port with our engine gone", () => 
     const decision = recoverTurnStep(err, context(), { localEngineState: probe }, createTurnLoopState());
     expect(decision.kind === "failure" && decision.runError).toBe(err);
     expect(probe).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * ATO-1432: the turn keeps what it decided "wait or not" on, at the moment
+ * it decided, and reports it with `loop_failed`'s outage.
+ */
+describe("turn recovery: the engine verdicts the wait decided on", () => {
+  it("ECONNREFUSED with the engine lock held for the whole 300 s budget reports unknown / lock_held", () => {
+    const turn = createTurnLoopState();
+    const events: AgentLoopEvent[] = [];
+    const explainLocalEngineState = vi.fn((providerId: string | undefined): LocalEngineVerdict =>
+      providerId === "local-llama" ? { state: "unknown", reason: "lock_held" } : { state: "unknown", reason: "not_local_link" });
+    const deps = { explainLocalEngineState, onEvent: (e: AgentLoopEvent) => events.push(e) };
+    for (;;) {
+      const decision = recoverTurnStep(refused("local-llama"), context(), deps, turn);
+      if (decision.kind !== "wait") break;
+      turn.outageWaitedMs += decision.nextRetryMs;
+    }
+    expect(turn.outageWaitedMs).toBe(300_000);
+    const failed = events.at(-1);
+    expect(failed).toMatchObject({
+      type: "loop_failed",
+      outage: {
+        waitedMs: 300_000,
+        engineVerdicts: {
+          first: { state: "unknown", reason: "lock_held" },
+          last: { state: "unknown", reason: "lock_held" },
+        },
+      },
+    });
+  });
+
+  it("keeps the first verdict and the latest one apart", () => {
+    const turn = createTurnLoopState();
+    const events: AgentLoopEvent[] = [];
+    const verdicts: LocalEngineVerdict[] = [
+      { state: "unknown", reason: "lock_held" },
+      { state: "dead", reason: "pid_dead" },
+    ];
+    let call = 0;
+    const deps = {
+      explainLocalEngineState: () => verdicts[Math.min(call++, verdicts.length - 1)]!,
+      onEvent: (e: AgentLoopEvent) => events.push(e),
+    };
+    for (;;) {
+      const decision = recoverTurnStep(refused("local-llama"), context(), deps, turn);
+      if (decision.kind !== "wait") {
+        expect(decision.kind).toBe("failure");
+        if (decision.kind === "failure") expect(decision.runError).toBeInstanceOf(LocalEngineDownError);
+        break;
+      }
+      turn.outageWaitedMs += decision.nextRetryMs;
+    }
+    expect(events.at(-1)).toMatchObject({
+      type: "loop_failed",
+      outage: {
+        engineVerdicts: {
+          first: { state: "unknown", reason: "lock_held" },
+          last: { state: "dead", reason: "pid_dead" },
+        },
+      },
+    });
+  });
+
+  it("explainLocalEngineState is asked in place of localEngineState, once per decision", () => {
+    const localEngineState = vi.fn((): LocalEngineState => "dead");
+    const explainLocalEngineState = vi.fn((): LocalEngineVerdict => ({ state: "alive", reason: "pid_alive" }));
+    const decision = recoverTurnStep(refused("local-llama"), context(), { localEngineState, explainLocalEngineState }, createTurnLoopState());
+    // Alive keeps the wait, so the explaining reading decided.
+    expect(decision.kind).toBe("wait");
+    expect(explainLocalEngineState).toHaveBeenCalledTimes(1);
+    expect(localEngineState).not.toHaveBeenCalled();
+  });
+
+  it("with only the plain reading the verdict carries no reason", () => {
+    const turn = createTurnLoopState();
+    turn.outageWaitedMs = LOCAL_ENGINE_RESTART_GRACE_MS;
+    const events: AgentLoopEvent[] = [];
+    recoverTurnStep(refused("local-llama"), context(), { localEngineState: engine("dead"), onEvent: (e) => events.push(e) }, turn);
+    expect(events.at(-1)).toMatchObject({
+      type: "loop_failed",
+      outage: { engineVerdicts: { first: { state: "dead" }, last: { state: "dead" } } },
+    });
+    const outage = (events.at(-1) as Extract<AgentLoopEvent, { type: "loop_failed" }>).outage;
+    expect(outage?.engineVerdicts?.last.reason).toBeUndefined();
+  });
+
+  it("a turn that never read the engine reports no verdicts", () => {
+    const events: AgentLoopEvent[] = [];
+    const error = new TransportError("fetch failed", null, "http://127.0.0.1:8080/v1");
+    recoverTurnStep(error, context({ providerWaitCfg: { enabled: false, maxWaitMs: 300_000 } }), { onEvent: (e) => events.push(e) }, createTurnLoopState());
+    const outage = (events.at(-1) as Extract<AgentLoopEvent, { type: "loop_failed" }>).outage;
+    expect(outage?.engineVerdicts).toBeUndefined();
   });
 });

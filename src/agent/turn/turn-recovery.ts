@@ -1,5 +1,5 @@
 import { isSubscriptionCliSetupError } from "../../llm/provider/subscription-cli/subscription-cli-errors.js";
-import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js";
+import type { AgentLoopDependencies, LocalEngineVerdict, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import { AtomicChatNotRunningError, CancelledError, LlamaServerError, LlmFailure, LocalEngineDownError, LocalPortTakenError, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
@@ -22,7 +22,7 @@ import type { TurnLoopState } from "./turn-state.js";
 export type TurnRecoveryDependencies = Pick<
   AgentLoopDependencies,
   "contextWindow" | "onContextWindowObserved" | "onEvent" | "logger" | "metrics" | "localEngineState"
-  | "localOutOfMemory"
+  | "explainLocalEngineState" | "localOutOfMemory"
 >;
 
 export interface TurnRecoveryContext {
@@ -528,6 +528,7 @@ export function recoverTurnStep(
       turn.awaitingRecovery = false;
       turn.outageWaitedMs = 0;
       turn.outageAttempts = 0;
+      turn.engineWaitVerdicts = null;
     }
     if (plan?.kind === "give_up") {
       return reportTurnFailure(
@@ -644,12 +645,16 @@ export function recoverTurnStep(
     !cancelled &&
     !creditRefused &&
     retryHint === null &&
-    deps.localEngineState !== undefined &&
+    (deps.localEngineState !== undefined || deps.explainLocalEngineState !== undefined) &&
     noAnswerAtAll(err) &&
     isWaitableOutage(err)
   ) {
     const failingLink = readFailingLink(err);
-    const engineState = deps.localEngineState(failingLink);
+    const verdict = readEngineVerdict(deps, failingLink);
+    // Kept at decision time for the error report (ATO-1432): by the time
+    // the turn ends, the disk may say something else.
+    turn.engineWaitVerdicts = { first: turn.engineWaitVerdicts?.first ?? verdict, last: verdict };
+    const engineState = verdict.state;
     const atomicChatRefused =
       engineState === "atomic_chat_app" && readErrnoCode(err) === "ECONNREFUSED";
     localEngineGone = engineState === "dead" || atomicChatRefused;
@@ -681,6 +686,7 @@ export function recoverTurnStep(
         error: runError.message,
         ...(causeCode !== undefined ? { causeCode } : {}),
         ...(failingLink !== undefined ? { providerId: failingLink } : {}),
+        ...(verdict.reason !== undefined ? { engineReason: verdict.reason } : {}),
       });
       runError = new LocalEngineDownError(failingLink ?? "local-llama", err);
     }
@@ -733,6 +739,7 @@ export function recoverTurnStep(
         ? { fallbackFailures: failedBefore }
         : {}),
     });
+    const engineVerdict = turn.engineWaitVerdicts?.last;
     deps.logger?.warn("provider unreachable; parking the turn", {
       sessionId: state.id,
       stepIndex: i,
@@ -742,6 +749,8 @@ export function recoverTurnStep(
       error: runError.message,
       ...(causeCode !== undefined ? { causeCode } : {}),
       ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
+      ...(engineVerdict !== undefined ? { engineState: engineVerdict.state } : {}),
+      ...(engineVerdict?.reason !== undefined ? { engineReason: engineVerdict.reason } : {}),
     });
     return { kind: "wait", nextRetryMs };
   }
@@ -795,6 +804,20 @@ export function recoverTurnStep(
 }
 
 /**
+ * The local engine reading the outage wait decides on, with its reason
+ * when the runtime gives one (ATO-1432). `explainLocalEngineState` is
+ * asked in place of `localEngineState`, never both, so the engine is read
+ * once per decision.
+ */
+function readEngineVerdict(
+  deps: Pick<TurnRecoveryDependencies, "localEngineState" | "explainLocalEngineState">,
+  failingLink: string | undefined,
+): LocalEngineVerdict {
+  if (deps.explainLocalEngineState !== undefined) return deps.explainLocalEngineState(failingLink);
+  return { state: deps.localEngineState?.(failingLink) ?? "unknown" };
+}
+
+/**
  * The end of a step that failed for good: log it, tell the surfaces
  * (`loop_failed`, which every one of them renders) and count it. Shared
  * with the out-of-memory recovery, whose verdict arrives after the
@@ -805,7 +828,7 @@ export function reportTurnFailure(
   outcome: { category: LlmFailureCategory; cancelled: boolean; creditRefused: boolean },
   where: { state: SessionState; stepIndex: number },
   deps: Pick<TurnRecoveryDependencies, "logger" | "onEvent" | "metrics">,
-  turn: Pick<TurnLoopState, "outageWaitedMs" | "outageAttempts">,
+  turn: Pick<TurnLoopState, "outageWaitedMs" | "outageAttempts"> & Partial<Pick<TurnLoopState, "engineWaitVerdicts">>,
 ): Extract<TurnRecoveryDecision, { kind: "failure" }> {
   const { category, cancelled, creditRefused } = outcome;
   const { state, stepIndex: i } = where;
@@ -830,7 +853,11 @@ export function reportTurnFailure(
     type: "loop_failed",
     error: runError,
     category,
-    outage: { waitedMs: turn.outageWaitedMs, attempts: turn.outageAttempts },
+    outage: {
+      waitedMs: turn.outageWaitedMs,
+      attempts: turn.outageAttempts,
+      ...(turn.engineWaitVerdicts ? { engineVerdicts: turn.engineWaitVerdicts } : {}),
+    },
     failure: classifyFailureCause(runError, category),
   });
   deps.metrics?.recordLlmFailure({

@@ -692,6 +692,7 @@ export class AgentLoop {
           turn.awaitingRecovery = false;
           turn.outageWaitedMs = 0;
           turn.outageAttempts = 0;
+          turn.engineWaitVerdicts = null;
         }
         state = outcome.nextSession;
         turn.stepsTaken += 1;
