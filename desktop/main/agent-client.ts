@@ -1731,7 +1731,7 @@ export class AgentClient extends EventEmitter {
    * agent without the route answers its unknown-route 404 with no code and is
    * reported as unsupported, so the window falls back to resending.
    */
-  async rollbackLastTurn(sessionId: string, expectText?: string, expectPriorQuestions?: number): Promise<{
+  async rollbackLastTurn(sessionId: string, expectText?: string, expectPriorQuestions?: number, expectUnanswered?: boolean): Promise<{
     ok: boolean; supported: boolean; text?: string; code?: string; error?: string;
   }> {
     try {
@@ -1746,6 +1746,9 @@ export class AgentClient extends EventEmitter {
         body: JSON.stringify({
           ...(typeof expectText === "string" && expectText ? { expectText } : {}),
           ...(Number.isInteger(expectPriorQuestions) && (expectPriorQuestions as number) >= 0 ? { expectPriorQuestions } : {}),
+          // ATO-1420: the window shows no answer to it, so a stored question
+          // with one is not it (an agent without the field ignores it).
+          ...(expectUnanswered === true ? { expectUnanswered: true } : {}),
         }),
         signal: AbortSignal.timeout(30_000),
       });
