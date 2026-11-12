@@ -25,6 +25,7 @@ import { runModelsSearch } from "./models-search-command.js";
 import { runLocalModelsCheck } from "./models-check.js";
 import { runModelsRecommend, runModelsUpgrade } from "./models-recommend.js";
 import { runLocalModelsPullAndRun } from "./models-pull-run.js";
+import { runModelsAsk, runModelsToolcallBench } from "./models-toolcall-bench.js";
 
 const HELP =
   [
@@ -69,6 +70,12 @@ const HELP =
     "                                vendor and capability (`claude vision`, `free tools`,",
     "                                `1m cache`). Flags: --provider <id> --limit <n>",
     "                                --json --refresh (pull live lists first)",
+    "  toolcall-bench [--models a,b] Send fixed tool-call prompts to each model --tries times",
+    "            [--tries n] [--json] (default 3) and count valid JSON, right tool, required",
+    "                                args, parse failures. A model is <provider> or",
+    "                                <provider>:<model>; default the active provider",
+    '  ask "<question>" --models a,b  One question, no tools, to several models at once;',
+    "            [--json]            answers printed one after another",
     "",
     "GPU subcommands:",
     "  devices                       List GPU devices (llama-server --list-devices); active marked with *",
@@ -134,6 +141,10 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await modelsStopEmbedding();
       case "search":
         return await runModelsSearch(args.slice(1));
+      case "toolcall-bench":
+        return await runModelsToolcallBench(args.slice(1));
+      case "ask":
+        return await runModelsAsk(args.slice(1));
       case "list":
         return runLocalModelsList();
       case "pull":
