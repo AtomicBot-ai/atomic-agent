@@ -7912,7 +7912,7 @@ async function settingsTestPartC(
     mode: string; rows: number; view: string; localRows: number; embRows: number; refreshed: number | null; localErr: string | null; statusErr: string | null;
     status: { mode: string; dataDir: string | null; activeModel: string | null; daemon: string; health: string | null } | null; daemonLabel: string; statusLine: string; msg: string; restart: boolean;
     keysKnown: boolean; modelsFor: string | null; models: number; modelsBusy: boolean; modelsErr: string | null; externalDraft: string | null; steerUrl: string | null;
-    activeText: string; providers: Array<{ id: string; kind: string; hasKey: boolean; active: boolean }>;
+    activeText: string; providers: Array<{ id: string; kind: string; hasKey: boolean; active: boolean }>; customIds?: string[];
     fallback: { links: Array<{ providerId: string; isActive: boolean; isAppendedLocal: boolean }>; addableProviderIds: string[]; appendLocal: boolean };
     section: { provider: string | null; status: string; models: number; filtered: number }; flatRows: string[];
   };
@@ -8037,7 +8037,7 @@ async function settingsTestPartC(
   );
   const localCopy = ["Where chats run now", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
   const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
-  if (!same(localView.modes, ["Local models", "Cloud providers", "Custom server"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
+  if (!same(localView.modes, ["Local models", "Cloud providers", "Custom"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
   if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
   // A remote row's pill says Download with its size, and its tooltip is the TUI's "Enter: download"; a downloaded row never offers a download.
   const badPills = localView.effects.filter(([label, title, remote]) => remote
@@ -8066,7 +8066,9 @@ async function settingsTestPartC(
   // ---- LLM: Cloud pane ----
   const cloud = await js<LlmPane>("window.__llmOpen('cloud')");
   const cloudBody = await js<string>("window.__settingsBody()");
-  const cloudProviders = (cfg0.llm?.providers ?? []).filter((p) => p.kind !== "llama-server");
+  // ATO-1418: apps and addresses you run yourself (Atomic Chat, Ollama, LM Studio, …) are on the Custom tab, not here.
+  const customIds = cloud.customIds ?? [];
+  const cloudProviders = (cfg0.llm?.providers ?? []).filter((p) => p.kind !== "llama-server" && !customIds.includes(p.id));
   const stateDir = (await js<{ data?: { paths?: { stateDir?: string } } }>("window.atomic.capabilities()")).data?.paths?.stateDir ?? "";
   const keyNames = (p: Provider): string[] => p.apiKeyEnvVar ? [p.apiKeyEnvVar] : p.kind === "openrouter" ? ["OPENROUTER_API_KEY"] : p.kind === "aimlapi" ? ["AIMLAPI_API_KEY"] : p.kind === "gemini" ? ["GEMINI_API_KEY"]
     : p.kind === "openai-compatible" || p.kind === "qwen-openai-compatible" ? ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"] : [];
@@ -8075,6 +8077,7 @@ async function settingsTestPartC(
   // A server on this Mac (Atomic Chat, Ollama, LM Studio, a loopback endpoint) has no key at all.
   const keylessLocal = (p: Provider) => p.kind === "openai-compatible" && (["atomic-chat", "lmstudio", "ollama"].includes(p.id) || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(p.baseUrl ?? ""));
   const expectKey = (p: Provider) => realKey(p) || keylessLocal(p);
+  const misfiled = (cfg0.llm?.providers ?? []).filter((p) => keylessLocal(p) && !customIds.includes(p.id)).map((p) => p.id);
   // Each provider row as drawn (Calm S5): the preset's name, the id in mono only when the name differs, the key chip in words,
   // the action pill in words, and the TUI's sentence for what Enter does as that pill's tooltip.
   const cloudRows = await js<Array<{ row: string; name: string; id: string | null; auth: string; effect: string; title: string }>>(
@@ -8098,8 +8101,8 @@ async function settingsTestPartC(
   if (cloudProviders.length && !filterBox) cloudMissing.push("the model filter box");
   check(
     "llm tab: Cloud providers rows carry the key status from the env ∪ .env names",
-    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers yet.")),
-    `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}${providersOk ? "" : " drawn " + JSON.stringify(cloudRows)}`,
+    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && misfiled.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers yet.")),
+    `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${misfiled.length ? " on this computer but under Cloud: " + misfiled.join(",") : ""}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}${providersOk ? "" : " drawn " + JSON.stringify(cloudRows)}`,
   );
   const models = await until(pane, (p) => p.section.status !== "loading", 90_000);
   const modelsBody = await js<string>("window.__settingsBody()");
@@ -8126,9 +8129,10 @@ async function settingsTestPartC(
     + " effect: e ? e.textContent.trim() : '', title: e ? e.title : ''}; })()",
   );
   check(
-    "llm tab: Custom server pane is the one server-address row and the way back to Local",
-    ext.rows === 1 && !!extRow && extRow.label === "Server address" && extRow.url === extUrl && (extActive || extRow.status === "not active")
-      && extBody.includes("Custom llama.cpp server") && extBody.includes("pick one under Local")
+    // ATO-1418: the Custom pane also lists the apps you run (Atomic Chat, Ollama, LM Studio); the server-address row is its last.
+    "llm tab: Custom pane ends with the one server-address row and the way back to Local",
+    ext.rows >= 1 && !!extRow && extRow.label === "Server address" && extRow.url === extUrl && (extActive || extRow.status === "not active")
+      && extBody.includes("Your own llama.cpp server") && extBody.includes("Apps you already run") && extBody.includes("pick one under Local")
       && extRow.effect === (extActive ? "Edit address" : "Use this server") && extRow.title === (extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp"),
     `${ext.rows} row(s), active=${extActive}, drawn ${JSON.stringify(extRow)}`,
   );

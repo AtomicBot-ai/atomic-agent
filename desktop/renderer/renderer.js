@@ -8288,7 +8288,7 @@ document.addEventListener('input', (e) => {
     return;
   }
   // Item 7 part C: the LLM filter / URL prompt, the Telegram token prompt and the Import form edit state in place.
-  if (e.target.id === 'llm-filter') { LLMP.filter = e.target.value; LLMP.cursor.cloud = llmCloudSectionStart(); llmRepaintList(); return; }
+  if (e.target.id === 'llm-filter') { LLMP.filter = e.target.value; LLMP.cursor[llmProvTabNow()] = llmCloudSectionStart(llmProvTabNow()); llmRepaintList(); return; }
   // Item 7A: editing the reference clears its error (local-models-reducer.ts:101-110).
   // Nothing else repaints on a keystroke — a full render would drop the caret.
   if (e.target.id === 'llm-hf-ref') {
@@ -26277,6 +26277,35 @@ function llmBlock() {
 }
 function llmProviders() { return (llmBlock().providers || []).filter((p) => p && typeof p.id === 'string'); }
 function llmCloudProviders() { return llmProviders().filter((p) => p.kind !== 'llama-server'); }
+/* ATO-1418 (Nadya's ATO-816 decision, 12.11): Settings › Models groups like
+   the first-run wizard, Local / Cloud / Custom. Custom is what you already
+   run yourself: Atomic Chat, Ollama, LM Studio, your own llama.cpp server,
+   and any OpenAI-compatible address you typed in, on this computer or on
+   another machine (the onboarding wizard's "custom base URL" row lands
+   here too). Cloud providers is the rest: keys and subscriptions, and the
+   cloud presets (Groq, DeepSeek, Anthropic...), which are openai-compatible
+   entries too, so they are told apart by their id or their preset's host.
+   The Cloud and Custom tabs share the provider-and-models machinery below;
+   each lists only its own providers, and `tab` says which. */
+function llmIsCloudPreset(p) {
+  const cloud = PRESETS.filter((x) => !x.local);
+  if (cloud.some((x) => x.id === p.id)) return true;
+  let host = '';
+  try { host = new URL(p.baseUrl).hostname.toLowerCase(); } catch (err) { return true; }   // no address to run yourself: left on Cloud, as before
+  return cloud.some((x) => { try { return new URL(x.baseUrl).hostname.toLowerCase() === host; } catch (err) { return false; } });
+}
+function llmIsCustomEntry(p) {
+  if (!p || p.kind === 'llama-server') return false;
+  if (llmKeylessLocal(p)) return true;
+  return p.kind === 'openai-compatible' && !llmIsCloudPreset(p);
+}
+function llmProviderTab(p) { return llmIsCustomEntry(p) ? 'external' : 'cloud'; }
+function llmTabProviders(tab) {
+  const want = tab === 'external' ? 'external' : 'cloud';
+  return llmCloudProviders().filter((p) => llmProviderTab(p) === want);
+}
+/* The tab whose provider list the pane's model block and filter belong to now. */
+function llmProvTabNow() { return LLMP.mode === 'external' ? 'external' : 'cloud'; }
 function llmActiveTextId() { return llmBlock().activeTextProvider || 'local-llama'; }
 function llmActiveEmbId() { return llmBlock().activeEmbeddingProvider || 'local-llama'; }
 function llmProvider(id) { return llmProviders().find((p) => p.id === id) || null; }
@@ -26512,12 +26541,12 @@ async function llmRefreshStatus(quiet) {
   }
 }
 /* The Cloud text-models block lists the active (or first) cloud provider's catalogue. */
-function llmCloudSectionProvider() {
-  const cloud = llmCloudProviders();
+function llmCloudSectionProvider(tab) {
+  const cloud = llmTabProviders(tab || 'cloud');
   return cloud.find((p) => p.id === llmActiveTextId()) || cloud[0] || null;
 }
 async function llmEnsureModels() {
-  const p = llmCloudSectionProvider();
+  const p = llmCloudSectionProvider(llmProvTabNow());
   if (!p || !BR) return;
   if (LLMP.modelsFor === p.id && (LLMP.modelsBusy || LLMP.models.length || LLMP.modelsErr)) return;
   if (LLMP.modelsRetry) { clearTimeout(LLMP.modelsRetry); LLMP.modelsRetry = null; }
@@ -26541,7 +26570,7 @@ async function llmFetchModels(p) {
     LLMP.models = res.models || []; LLMP.modelsErr = null; LLMP.modelsStale = res.stale === true;
     if (LLMP.modelsStale && !LLMP.modelsRetry) {
       LLMP.modelsRetry = setTimeout(() => {
-        const q = llmCloudSectionProvider();
+        const q = llmCloudSectionProvider(llmProvTabNow());
         if (llmVisible() && q && q.id === p.id && LLMP.modelsFor === p.id && LLMP.modelsStale && !LLMP.modelsBusy) llmRetryModels();
       }, 15000);
     }
@@ -26551,7 +26580,7 @@ async function llmFetchModels(p) {
 }
 /* Ask for the live list again (the Retry under a built-in list, or the one timed retry). */
 function llmRetryModels() {
-  const p = llmCloudSectionProvider();
+  const p = llmCloudSectionProvider(llmProvTabNow());
   if (!p || !BR || LLMP.modelsBusy) return;
   LLMP.modelsFor = p.id; LLMP.modelsBusy = true; LLMP.modelsErr = null;
   llmRepaintList();
@@ -26569,7 +26598,7 @@ function llmRepaint() {
 function llmRepaintList() {
   const box = document.getElementById('llm-cloud-models');
   if (!box) { llmRepaint(); return; }
-  box.innerHTML = llmCloudModelListHTML();
+  box.innerHTML = llmCloudModelListHTML(llmProvTabNow());
 }
 
 /* --- rows (llm-panel-row-builders.ts) --- */
@@ -26637,7 +26666,7 @@ function llmProviderRow(p) {
   const auth = p.kind === 'subscription-cli' ? 'cli auth' : badKey ? 'invalid key' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
   return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey, badKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
-    enterEffect: badKey ? 'Enter: paste the API key for ' + p.id + ' again' : !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch cloud route to ' + p.id,
+    enterEffect: badKey ? 'Enter: paste the API key for ' + p.id + ' again' : !hasKey ? 'Enter: configure API key for ' + p.id : active ? 'Current provider: ' + p.id : 'Enter: switch ' + (llmIsCustomEntry(p) ? 'chats' : 'cloud route') + ' to ' + p.id,
     text: p.id + ' [' + p.kind + '] ' + auth};
 }
 function llmChatRow(p, modelId) {
@@ -26663,9 +26692,10 @@ function llmEmbRow(p, modelId) {
 /* llm-panel-row-builders.ts inlineModelsForProvider: chatModelOptions + the
    current model first, then the catalogue (`atag models search --json`,
    the same list the composer's selector reads). */
-function llmCloudSection() {
-  const p = llmCloudSectionProvider();
-  if (!p) return {provider:null, status:'ready', error:null, models:[], filtered:[], sectionStart:llmCloudProviders().length};
+function llmCloudSection(tab) {
+  const t = tab || 'cloud';
+  const p = llmCloudSectionProvider(t);
+  if (!p) return {provider:null, status:'ready', error:null, models:[], filtered:[], sectionStart:llmTabProviders(t).length};
   const out = [];
   const add = (id) => { if (id && !out.includes(id)) out.push(id); };
   add(p.defaultChatModel || p.model);
@@ -26674,32 +26704,34 @@ function llmCloudSection() {
   const status = LLMP.modelsFor === p.id ? (LLMP.modelsBusy ? 'loading' : LLMP.modelsErr ? 'error' : 'ready') : 'loading';
   const f = LLMP.filter.trim().toLowerCase();
   const filtered = f ? out.filter((id) => modelMatches(id, '', f)) : out;
-  return {provider:p, status, error:LLMP.modelsErr, models:out, filtered, sectionStart:llmCloudProviders().length};
+  return {provider:p, status, error:LLMP.modelsErr, models:out, filtered, sectionStart:llmTabProviders(t).length};
 }
-function llmCloudSectionStart() { return llmCloudProviders().length; }
+function llmCloudSectionStart(tab) { return llmTabProviders(tab || 'cloud').length; }
 function llmEmbModelsFor(p) {
   const out = [];
   if (p.defaultEmbeddingModel) out.push(p.defaultEmbeddingModel);
   (LLMP.modelsFor === p.id ? LLMP.models : []).filter((m) => m && m.kind === 'embedding').forEach((m) => { if (!out.includes(m.id)) out.push(m.id); });
   return out;
 }
-function llmCloudRows() {
-  const rows = llmCloudProviders().map(llmProviderRow);
-  const section = llmCloudSection();
+function llmCloudRows(tab) {
+  const rows = llmTabProviders(tab || 'cloud').map(llmProviderRow);
+  const section = llmCloudSection(tab);
   if (section.provider) {
     section.filtered.forEach((id) => rows.push(llmChatRow(section.provider, id)));
     llmEmbModelsFor(section.provider).forEach((id) => rows.push(llmEmbRow(section.provider, id)));
   }
   return rows;
 }
-/* The External pane is one row: an external llama.cpp IS one base URL. */
+/* The Custom pane (ATO-1418): the apps and addresses you run yourself, with
+   the models of the one in use (or the first), then your own llama.cpp
+   server, which IS one base URL, as the last row. */
 function llmExternalRows() {
   const lm = llmLocalModels();
   const active = lm.mode === 'external' && llmLocalActive();
   const url = lm.url || DEFAULT_LLAMA_URL;
-  return [{kind:'externalUrl', id:'external-url', url, active, available:true, primaryAction: active ? 'current' : 'use',
+  return llmCloudRows('external').concat([{kind:'externalUrl', id:'external-url', url, active, available:true, primaryAction: active ? 'current' : 'use',
     enterEffect: active ? 'Enter: edit the base URL' : 'Enter: point the chat route at an external llama.cpp',
-    text: 'base URL ' + url + ' [' + llmExternalStatus(active) + ']'}];
+    text: 'base URL ' + url + ' [' + llmExternalStatus(active) + ']'}]);
 }
 /* Health only describes the active route (llm-mode-rows.tsx externalStatus); the desktop's probe is /health.llama on the serve process. */
 function llmExternalStatus(active) {
@@ -26711,7 +26743,7 @@ function llmExternalStatus(active) {
 }
 function llmRows(mode) {
   const m = mode || LLMP.mode;
-  if (m === 'cloud') return llmCloudRows();
+  if (m === 'cloud') return llmCloudRows('cloud');
   if (m === 'external') return llmExternalRows();
   if (m === 'fallback') return [];
   return llmLocalRows();
@@ -26839,7 +26871,8 @@ function llmStatusTone(line) {
    are not that choice's words ("Cloud providers", not "Cloud"). Fallback is
    reached from Cloud providers and keeps that tab lit. Drivers read
    `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`. */
-const LLM_BAR_MODES = [['local', 'Local models'], ['cloud', 'Cloud providers'], ['external', 'Custom server']];
+/* ATO-1418: 'Custom' as in the first-run wizard (ATO-816): apps and servers you already run. */
+const LLM_BAR_MODES = [['local', 'Local models'], ['cloud', 'Cloud providers'], ['external', 'Custom']];
 function llmBarHTML(mode) {
   const lit = mode === 'fallback' ? 'cloud' : mode;
   return '<div class="tk-bar llm-bar llm-srcbar">'
@@ -26948,7 +26981,7 @@ function llmRunModeHTML(status, tone) {
  * @returns {{local: {line:string, title:string}|null, cloud: {line:string, title:string}|null, fusion: {line:string, title:string}|null}}
  */
 function llmRouteNeeds() {
-  const cloud = llmCloudProviders();
+  const cloud = llmTabProviders('cloud');   // an app or your own server is not a cloud provider (ATO-1418)
   const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
   const out = {local:null, cloud:null, fusion:null};
   if (!cloud.length) out.cloud = {line:'Add a cloud provider first', title:'Cloud needs a cloud provider. Click to add one.'};
@@ -26966,7 +26999,7 @@ function llmRouteNeeds() {
 }
 /** What a blocked choice opens (llm:needs:local | llm:needs:cloud | llm:needs:fusion). */
 function llmRouteNeedsOpen(id) {
-  const cloud = llmCloudProviders();
+  const cloud = llmTabProviders('cloud');
   const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
   if (id === 'local') {
     LLMP.msg = {text:'Local models needs a model on ' + THIS_MACHINE + '. Download one below, then choose Local models again.'};
@@ -27415,11 +27448,11 @@ function llmLocalHTML() {
       {note: '<p class="llm-note">Used to search the agent\u2019s memory by meaning. Without one, it searches by keyword.</p>'});
 }
 function llmCloudHTML() {
-  const rows = llmCloudRows();
+  const rows = llmCloudRows('cloud');
   const cursor = LLMP.cursor.cloud;
   const providers = rows.filter((r) => r.kind === 'cloudProvider');
   const emb = rows.filter((r) => r.kind === 'cloudEmbeddingModel');
-  const section = llmCloudSection();
+  const section = llmCloudSection('cloud');
   const embOffset = providers.length + section.filtered.length;
   const sp = section.provider;
   /* ATO-504: an empty list offers the popular presets the wizard knows, each
@@ -27434,13 +27467,23 @@ function llmCloudHTML() {
         + '<span class="grow"></span>'
         + '<span class="llm-filter"><label class="tk-inpwrap llm-filterbox">' + ic('search')
           + '<input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="Filter models" aria-label="Filter models" title="Filter (f)"></label></span></div>'
-      + '<div id="llm-cloud-models">' + llmCloudModelListHTML() + '</div></section>'
+      + '<div id="llm-cloud-models">' + llmCloudModelListHTML('cloud') + '</div></section>'
       + (emb.length ? llmSectionHTML('Embedding models', emb, embOffset, cursor) : '') : '');
 }
+/* "Models on <provider>" with its filter, for the Cloud or the Custom tab. */
+function llmProviderModelsHTML(tab, sp) {
+  return '<section class="llm-section">'
+    + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Models on ' + esc(providerWord(sp.id)) + '</span>'
+      + '<span class="grow"></span>'
+      + '<span class="llm-filter"><label class="tk-inpwrap llm-filterbox">' + ic('search')
+        + '<input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="Filter models" aria-label="Filter models" title="Filter (f)"></label></span></div>'
+    + '<div id="llm-cloud-models">' + llmCloudModelListHTML(tab) + '</div></section>';
+}
 /* The 12-row window of the text-model rows around the cursor, and how many there are. */
-function llmCloudModelListHTML() {
-  const section = llmCloudSection();
-  const cursor = LLMP.cursor.cloud;
+function llmCloudModelListHTML(tab) {
+  const t = tab || llmProvTabNow();
+  const section = llmCloudSection(t);
+  const cursor = LLMP.cursor[t];
   const rows = section.filtered.map((id) => llmChatRow(section.provider, id));
   const cursorInSection = Math.max(0, Math.min(cursor - section.sectionStart, rows.length - 1));
   const start = Math.max(0, Math.min(cursorInSection - Math.floor(LLM_MODEL_WINDOW / 2), rows.length - LLM_MODEL_WINDOW));
@@ -27461,13 +27504,25 @@ function llmCloudModelListHTML() {
 function llmExternalHTML() {
   const rows = llmExternalRows();
   const status = llmStatusLine();
-  /* ATO-1401: someone with LM Studio or Ollama comes here first. Those are
-     apps on this computer, added in one click from here, not through this
-     llama.cpp field (which cannot drive them). */
-  const apps = llmAppButtonsHTML(['ollama', 'lmstudio', 'atomic-chat']);
-  return llmSectionHTML('Custom llama.cpp server', rows, 0, LLMP.cursor.external, null, false,
-      {note: '<p class="llm-ram">Point chats at a llama.cpp server you run yourself.</p>'
-        + (apps ? '<p class="llm-ram">Use an app you already run:</p><div class="llm-apps">' + apps + '</div>' : '')})
+  const cursor = LLMP.cursor.external;
+  /* ATO-1418: the apps first, as in the wizard's Custom list. An app not
+     added yet is one button that opens the provider setup with it filled in. */
+  const apps = rows.filter((r) => r.kind === 'cloudProvider');
+  const emb = rows.filter((r) => r.kind === 'cloudEmbeddingModel');
+  const url = rows.filter((r) => r.kind === 'externalUrl');
+  const section = llmCloudSection('external');
+  const sp = section.provider;
+  const embOffset = apps.length + section.filtered.length;
+  const urlOffset = rows.length - url.length;
+  /* ATO-1401: one click adds the app at its usual address. */
+  const addApps = llmAppButtonsHTML(['atomic-chat', 'ollama', 'lmstudio']);
+  return llmSectionHTML('Apps you already run', apps, 0, cursor, 'No apps added yet.', true,
+      {note: '<p class="llm-ram">Atomic Chat, Ollama, LM Studio or any server you run yourself. Nothing to download.</p>',
+        actions: addApps, emptyActions: addApps ? '<span class="llm-empty-acts">' + addApps + '</span>' : ''})
+    + (sp ? llmProviderModelsHTML('external', sp)
+      + (emb.length ? llmSectionHTML('Embedding models', emb, embOffset, cursor) : '') : '')
+    + llmSectionHTML('Your own llama.cpp server', url, urlOffset, cursor, null, false,
+      {note: '<p class="llm-ram">Point chats at a llama.cpp server you run yourself.</p>'})
     + llmStatusNoteHTML(status, llmStatusTone(status))
     + '<p class="llm-back">To go back to a local model, <button class="llm-link" data-act="llm:mode:local">pick one under Local models</button>.</p>'
     + llmTuneHTML();
@@ -27720,6 +27775,7 @@ function llmAppButtonsHTML(ids) {
 function llmAddApp(id, url) {
   const preset = KIND_ROWS.find((k) => k.id === id);
   if (!preset) return;
+  llmSetMode('external');   // ATO-1418: an app on this computer lives under Custom
   llmOpenWizard({id:preset.id, kind:preset.kind, baseUrl:url || preset.baseUrl}, url || preset.baseUrl);
   ANX.providerStarted(preset);
   if (preset.local && WIZ.phase === 'configure') wizNext();
@@ -28678,8 +28734,11 @@ async function llmFallbackPersist(chain, appendLocal) {
  */
 function llmSyncModeToRoute() {
   if (!LLMP.syncModeToRoute) return;
-  const mode = llmRouteMode();
-  if (mode === null) return; // no snapshot yet — stay armed, as the reducer does
+  const route = llmRouteMode();
+  if (route === null) return; // no snapshot yet — stay armed, as the reducer does
+  // ATO-1418: a chat route on an app of this computer (Ollama, LM Studio, Atomic Chat) opens on the Custom tab, where it is listed.
+  const p = activeProvider();
+  const mode = route === 'cloud' && p ? llmProviderTab(p) : route;
   LLMP.syncModeToRoute = false; LLMP.routeSyncSpent = true;
   if (LLMP.mode !== mode) llmSetMode(mode);
 }
@@ -28721,7 +28780,7 @@ function llmSetMode(mode) {
   LLMP.syncModeToRoute = false; LLMP.routeSyncSpent = true;
   LLMP.mode = mode; LLMP.filterFocused = false; LLMP.fallbackPicker = null;
   llmRepaint();
-  if (mode === 'cloud') llmEnsureModels();
+  if (mode === 'cloud' || mode === 'external') llmEnsureModels();
 }
 function llmAct(what) {
   const [verb, ...rest] = what.split(':');
@@ -28736,13 +28795,20 @@ function llmAct(what) {
   if (verb === 'enter') { if (LLMP.mode === 'fallback') { llmFallbackEnter(); return; } llmPrimary(llmRowAt()); return; }
   if (verb === 'refresh') { llmRefresh(); return; }
   if (verb === 'modelsRetry') { llmRetryModels(); return; }
-  if (verb === 'filter') { llmSetMode('cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
+  if (verb === 'filter') { llmSetMode(LLMP.mode === 'external' && llmCloudSectionProvider('external') ? 'external' : 'cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
   if (verb === 'pricing') return; // inert: pricing is not in the CLI's model list
   if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null); return; }
   // ATO-504: an empty list's preset button, Add provider opened on that provider.
   // It skips the wizard's kind list, so it reports the setup start that list's pick would have (provider_setup_started).
-  if (verb === 'preset') { llmSetMode('cloud'); const row = KIND_ROWS.find((k) => k.id === arg && !k.custom) || null; llmOpenWizard(row); if (row) ANX.providerStarted(row); return; }
-  if (verb === 'configure') { llmSetMode('cloud'); const cloud = llmCloudProviders(); const p = cloud.find((x) => x.id === llmActiveTextId()) || cloud[0]; llmOpenWizard(p || null); return; }
+  if (verb === 'preset') { const row = KIND_ROWS.find((k) => k.id === arg && !k.custom) || null; llmSetMode(row && row.local ? 'external' : 'cloud'); llmOpenWizard(row); if (row) ANX.providerStarted(row); return; }
+  if (verb === 'configure') {
+    // ATO-1418: open the active provider on its own tab (an app on Custom), else the first cloud provider on Cloud.
+    const active = llmProvider(llmActiveTextId());
+    const tab = active && active.kind !== 'llama-server' ? llmProviderTab(active) : 'cloud';
+    const list = llmTabProviders(tab);
+    const p = list.find((x) => x.id === llmActiveTextId()) || list[0];
+    llmSetMode(tab); llmOpenWizard(p || null); return;
+  }
   if (verb === 'embedding') { llmActivateProviderEmbedding(); return; }
   if (verb === 'embToggle') { llmEmbToggle(); return; }
   // The server up though the route does not count it (a Custom server since) is stopped too, not started again.
@@ -28812,7 +28878,7 @@ function llmAct(what) {
   if (verb === 'removeAt') { LLMP.cursor[LLMP.mode] = +arg; llmAct('remove'); return; }
   // ATO-1370: the row's Get vision files.
   if (verb === 'visionAt') { LLMP.cursor[LLMP.mode] = +arg; const row = llmRowAt(); if (row && row.kind === 'localTextModel') llmVisionFetch(row.model); return; }
-  if (verb === 'edit') { const p = llmProvider(arg); if (p) { llmSetMode('cloud'); llmOpenWizard(p); } return; }
+  if (verb === 'edit') { const p = llmProvider(arg); if (p) { llmSetMode(llmProviderTab(p)); llmOpenWizard(p); } return; }
   if (verb === 'confirm') {
     const c = LLMP.confirm; if (!c) return;
     if (c.kind === 'removeProvider') llmRemoveProviderConfirm();
@@ -28831,13 +28897,13 @@ function llmAct(what) {
   // Д34: Ollama as a provider, its preset and address filled in.
   // ATO-725: like `preset`, it skips the kind list, so it reports the setup start itself.
   if (verb === 'app') { if (LLM_APP_WORDS[arg]) llmAddApp(arg); return; }
-  if (verb === 'ollama') { llmSetMode('cloud'); const row = KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}; llmOpenWizard(row); ANX.providerStarted(row); return; }
+  if (verb === 'ollama') { llmSetMode('external'); const row = KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}; llmOpenWizard(row); ANX.providerStarted(row); return; }
   // A confirm that is working is not let go of mid-way (Cancel, n and Esc wait for it).
   if (verb === 'cancel') { if (LLMP.confirm && LLMP.confirm.submitting) return; LLMP.confirm = null; llmRepaint(); return; }
   if (verb === 'external') {
     if (arg === 'save') { llmExternalSave(); return; }
     if (arg === 'cancel') { LLMP.externalDraft = null; LLMP.externalInvalid = false; llmRepaint(); return; }
-    if (arg === 'edit') { llmSetMode('external'); llmPrimary(llmExternalRows()[0]); return; }
+    if (arg === 'edit') { llmSetMode('external'); llmPrimary(llmExternalRows().find((r) => r.kind === 'externalUrl')); return; }
     return;
   }
   if (verb === 'steer') {
@@ -28847,8 +28913,8 @@ function llmAct(what) {
       const presetId = llmSteerPresetId(url);
       // ATO-1401: a model app on this computer is added in one click, at the probed address.
       if (presetId && LLM_APP_WORDS[presetId]) { llmAddApp(presetId, url); return; }
-      llmSetMode('cloud');
       const preset = presetId ? KIND_ROWS.find((k) => k.id === presetId) : null;
+      llmSetMode(preset && !preset.local ? 'cloud' : 'external');   // ATO-1418: a typed-in address is Custom, like the onboarding wizard's
       llmOpenWizard(preset ? {id:preset.id, kind:preset.kind, baseUrl:url} : {id:'', kind:'openai-compatible', baseUrl:url, custom:true}, url);
       if (!preset) WIZ.row = KIND_ROWS.find((k) => k.custom);
       render();
@@ -28887,9 +28953,10 @@ function llmKey(e, k, inText) {
     if (k === 'Enter') { e.preventDefault(); const row = llmRowAt(); if (row && row.kind === 'cloudChatModel') { LLMP.filterFocused = false; llmPrimary(row); } return true; }
     if (k === 'ArrowDown' || k === 'ArrowUp') {
       e.preventDefault();
-      const s = llmCloudSection(); if (!s.filtered.length) return true;
+      const tab = llmProvTabNow();
+      const s = llmCloudSection(tab); if (!s.filtered.length) return true;
       const first = s.sectionStart, last = s.sectionStart + s.filtered.length - 1;
-      LLMP.cursor.cloud = Math.min(last, Math.max(first, LLMP.cursor.cloud + (k === 'ArrowDown' ? 1 : -1)));
+      LLMP.cursor[tab] = Math.min(last, Math.max(first, LLMP.cursor[tab] + (k === 'ArrowDown' ? 1 : -1)));
       llmRepaintList(); return true;
     }
     return false;
@@ -29895,8 +29962,10 @@ if (typeof window !== 'undefined') {
     daemonLabel: llmFormatDaemon(), statusLine: llmStatusLine(), msg: LLMP.msg ? LLMP.msg.text : '', restart: !!(LLMP.msg && LLMP.msg.restart),
     cursor: Object.assign({}, LLMP.cursor), keysKnown: llmKeysKnown(), modelsFor: LLMP.modelsFor, models: LLMP.models.length, modelsBusy: LLMP.modelsBusy, modelsErr: LLMP.modelsErr,
     confirm: LLMP.confirm ? Object.assign({}, LLMP.confirm) : null, externalDraft: LLMP.externalDraft, steerUrl: LLMP.steerUrl, picker: LLMP.fallbackPicker ? Object.assign({}, LLMP.fallbackPicker) : null,
-    activeText: llmActiveTextId(), providers: llmCloudProviders().map((p) => ({id: p.id, kind: p.kind, hasKey: llmHasKey(p), active: p.id === llmActiveTextId()})),
-    fallback: llmFallbackView(), section: (() => { const s = llmCloudSection(); return {provider: s.provider ? s.provider.id : null, status: s.status, models: s.models.length, filtered: s.filtered.length}; })(),
+    // ATO-1418: the providers of the tab on screen (Cloud or Custom), and which saved ones the Custom tab holds.
+    activeText: llmActiveTextId(), providers: llmTabProviders(llmProvTabNow()).map((p) => ({id: p.id, kind: p.kind, hasKey: llmHasKey(p), active: p.id === llmActiveTextId()})),
+    customIds: llmTabProviders('external').map((p) => p.id),
+    fallback: llmFallbackView(), section: (() => { const s = llmCloudSection(llmProvTabNow()); return {provider: s.provider ? s.provider.id : null, status: s.status, models: s.models.length, filtered: s.filtered.length}; })(),
     flatRows: llmRows().map((r) => r.id)});
   window.__llmOpen = async (mode) => { window.__settingsOpen('llm'); llmSetMode(mode || 'local'); if (LLMP.inflight) await LLMP.inflight; return window.__llmPane(); };
   window.__llmAct = (what) => { llmAct(what); return window.__llmPane(); };
