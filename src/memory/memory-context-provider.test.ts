@@ -194,4 +194,40 @@ describe("createDefaultMemoryContextProvider", () => {
     expect(ids).toContain(a.id);
     expect(ids).not.toContain(b.id);
   });
+
+  it("keeps notes that claim an ungrounded user name out of recalled and index (ATO-321)", async () => {
+    store.store({ content: "I am Alex and I prefer rust tooling" });
+    store.store({ content: "rust tooling: use cargo nextest" });
+    const nameGuard = { allows: (text: string) => !text.includes("Alex") };
+    const provider = createDefaultMemoryContextProvider({
+      store,
+      recall: { enabled: true, k: 5 },
+      index: { enabled: true, limit: 20, previewChars: 40 },
+      nameGuard,
+    });
+    const ctx = (await provider.buildMemoryContext(
+      input("rust tooling"),
+    )) as unknown as {
+      recalled: Array<{ content: string }>;
+      index: Array<{ preview: string }>;
+    };
+    expect(ctx.recalled.map((e) => e.content)).toEqual([
+      "rust tooling: use cargo nextest",
+    ]);
+    expect(ctx.index.some((e) => e.preview.includes("Alex"))).toBe(false);
+  });
+
+  it("checks the whole note for the index, not only the preview (ATO-321)", async () => {
+    store.store({ content: "project notes\nThe user is Alex." });
+    const provider = createDefaultMemoryContextProvider({
+      store,
+      recall: { enabled: false, k: 0 },
+      index: { enabled: true, limit: 20, previewChars: 40 },
+      nameGuard: { allows: (text: string) => !text.includes("Alex") },
+    });
+    const ctx = (await provider.buildMemoryContext(input(null))) as unknown as {
+      index: unknown[];
+    };
+    expect(ctx.index).toEqual([]);
+  });
 });
