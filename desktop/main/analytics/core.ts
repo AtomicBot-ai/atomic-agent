@@ -14,7 +14,7 @@ import { app } from "electron";
 import { validateEvent, type Props } from "./validate.js";
 import { daysSince, DesktopFlagsStore, resolveInstallId, seedDesktopFlags, sharedIdPath } from "./identity.js";
 import {
-  analyticsEnabledFor, desktopVersion, doNotTrackIn, explicitAnalyticsEnabled, inheritedOptOut, installChannelFor, isTestRun,
+  analyticsEnabledFor, analyticsOffByEnv, desktopVersion, explicitAnalyticsEnabled, inheritedOptOut, installChannelFor, isTestRun,
   readConfigFile, runModeIn, setAgentGate, teamRunIn,
 } from "./environment.js";
 import { writeAnalyticsSwitch } from "./opt-out.js";
@@ -73,8 +73,9 @@ function readGate(): boolean {
   const tuiCfg = readConfigFile(S.tuiStateDir);
   S.inheritedOff = inheritedOptOut(cfg, tuiCfg);
   S.tuiOptedOut = explicitAnalyticsEnabled(tuiCfg) === false;
-  // DO_NOT_TRACK=1 in the environment wins over both files (ATO-1189).
-  if (doNotTrackIn()) return false;
+  // DO_NOT_TRACK=1 or ATOMIC_AGENT_ANALYTICS=off in the environment wins
+  // over both files (ATO-1189, ATO-760).
+  if (analyticsOffByEnv()) return false;
   return analyticsEnabledFor(cfg, tuiCfg);
 }
 
