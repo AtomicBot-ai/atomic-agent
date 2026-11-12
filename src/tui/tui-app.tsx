@@ -760,6 +760,8 @@ export interface TuiAppCallbacks {
   onAnalyticsToggleRequested?(): void | Promise<void>;
   /** Privacy tab: set analytics to an explicit value (slash-command path). */
   onAnalyticsSetEnabledRequested?(enabled: boolean): void | Promise<void>;
+  /** Privacy tab: toggle offline mode through the agent's kill switch. */
+  onOfflineToggleRequested?(): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Integrations tab: re-read credential presence + live server state. */

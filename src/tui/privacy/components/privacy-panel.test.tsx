@@ -13,6 +13,7 @@ function panelState(
     message: null,
     lastError: null,
     sessionGrants: { categories: [], shapes: [] },
+    offline: { supported: false, enabled: false, egress: null },
     ...overrides,
   };
 }
@@ -59,5 +60,48 @@ describe("PrivacyPanel", () => {
     expect(frame).toContain("anonymous usage");
     expect(frame).toContain("a: analytics on");
     expect(frame).toContain("r: refresh");
+  });
+
+  it("says offline mode is not available when the agent has no kill switch", () => {
+    const frame = renderFlat();
+    expect(frame).toContain("Offline mode");
+    expect(frame).toContain("not available in this agent build");
+    expect(frame).not.toContain("o: offline");
+    expect(frame).not.toContain("sent out");
+  });
+
+  it("shows the agent's own counter, not a fixed zero", () => {
+    const since = "2026-11-12T10:00:00.000Z";
+    const frame = renderFlat({
+      offline: {
+        supported: true,
+        enabled: false,
+        egress: { bytesOut: 2048, requestsOut: 3, requestsBlocked: 0, since },
+      },
+    });
+    expect(frame).toContain("offline mode off");
+    expect(frame).toContain("2 KB sent out since");
+    expect(frame).not.toContain("0 bytes");
+    expect(frame).toContain("o: offline on");
+
+    const on = renderFlat({
+      offline: {
+        supported: true,
+        enabled: true,
+        egress: { bytesOut: 0, requestsOut: 0, requestsBlocked: 4, since },
+      },
+    });
+    expect(on).toContain("offline mode on");
+    expect(on).toContain("0 bytes sent out since");
+    expect(on).toContain("4 requests blocked");
+    expect(on).toContain("o: offline off");
+  });
+
+  it("says so when the agent gave no readable counter", () => {
+    const frame = renderFlat({
+      offline: { supported: true, enabled: true, egress: null },
+    });
+    expect(frame).toContain("could not read the outbound counter");
+    expect(frame).not.toContain("sent out since");
   });
 });
