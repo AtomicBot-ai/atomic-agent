@@ -461,6 +461,7 @@ export class TelegramChannel {
             command: "model",
             description: "Show or switch the provider and model",
           },
+          { command: "cron", description: "List, add, pause or delete scheduled tasks" },
           { command: "cancel", description: "Cancel this chat's current turn" },
         ]);
       } catch (err) {

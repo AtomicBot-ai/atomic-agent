@@ -20,6 +20,8 @@ import {
   type AttachmentOutcome,
 } from "../attachments/inbox.js";
 import { runModelCommand } from "../model-command.js";
+import { runCronCommand } from "./cron-command.js";
+import { cronTaskServiceFromRuntime } from "./cron-task-service.js";
 import { formatTaskLiveStatus } from "./task-status-message.js";
 import {
   shouldAnnounceSender,
@@ -286,6 +288,7 @@ function helpText(ctx: InboundContext): string {
     "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
     "  /model — show the provider and model in use; /model <provider> [model-id] switches\n" +
+    "  /cron — list scheduled tasks; /cron add <cron> <task>, /cron pause|resume|delete <id> (/cron help)\n" +
     "  /cancel — abort this chat's current turn if one is running"
   );
 }
@@ -358,7 +361,7 @@ export async function handleInboundText(
   // then silently fill from `legacy`.
   adoptLegacyForDm(ref, ctx);
   if (text.startsWith("/")) {
-    await handleSlashCommand(text, ref, ctx);
+    await handleSlashCommand(text, ref, ctx, fromId);
     return;
   }
   // Who is speaking, and in which group/topic. Skipped in a DM: a
@@ -704,6 +707,7 @@ async function handleSlashCommand(
   text: string,
   ref: ChatRef,
   ctx: InboundContext,
+  fromId: number,
 ): Promise<void> {
   const [verb, ...rest] = text.split(/\s+/);
   switch (verb) {
@@ -732,6 +736,19 @@ async function handleSlashCommand(
           runtime: ctx.runtime,
           sessionId: ctx.sessionPointer.get(ref.key).current,
           code: (text) => text,
+        }),
+      );
+      return;
+    }
+    case "/cron": {
+      // ATO-21. Takes the raw remainder: a task's text keeps its spacing.
+      await sendText(
+        ctx,
+        ref.target,
+        runCronCommand(text.slice("/cron".length), {
+          service: cronTaskServiceFromRuntime(ctx.runtime),
+          senderId: fromId,
+          ownerUserId: ctx.ownerUserId,
         }),
       );
       return;
