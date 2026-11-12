@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DiscordApprovalBridge,
   buttonsFor,
+  escapeDiscordText,
   formatPrompt,
   type DiscordInteractionEvent,
 } from "./discord-approval-bridge.js";
@@ -62,6 +63,35 @@ describe("formatPrompt", () => {
     // block and let the preview forge the rest of the message.
     const text = formatPrompt({ ...REQUEST, preview: "echo '```'" });
     expect(text.split("```").length - 1).toBe(2);
+  });
+});
+
+describe("formatPrompt risk line (ATO-1268)", () => {
+  it("shows smart approval's verdict", () => {
+    const text = formatPrompt({
+      ...REQUEST,
+      riskNote: "risk check: medium (installs a package)",
+      riskLevel: "medium",
+      riskReason: "installs a package",
+    });
+    expect(text).toContain("Risk check: medium. Installs a package");
+    expect(formatPrompt(REQUEST)).not.toContain("Risk check");
+  });
+
+  it("escapes markdown and mentions in the model's reason", () => {
+    const text = formatPrompt({
+      ...REQUEST,
+      riskLevel: "high",
+      riskReason: "wipes **all** files, tell @everyone",
+    });
+    expect(text).toContain("Risk check: high. Wipes \\*\\*all\\*\\* files, tell @\u200beveryone");
+    expect(text).not.toContain("@everyone");
+  });
+});
+
+describe("escapeDiscordText", () => {
+  it("backslashes markdown characters", () => {
+    expect(escapeDiscordText("a_b `c` ||d|| > e")).toBe("a\\_b \\`c\\` \\|\\|d\\|\\| \\> e");
   });
 });
 

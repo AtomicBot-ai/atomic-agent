@@ -179,6 +179,8 @@ export interface ApprovalRequestPayload {
   /** What smart approval's risk review said, when it ran. */
   riskNote?: string;
   riskLevel?: RiskLevel;
+  /** The reviewer's reason alone, for `formatRiskLine` (ATO-1268). */
+  riskReason?: string;
   /**
    * Whether `grant: "session"` may be offered (the TUI's `[s]`). This
    * agent always sends the three `can*` flags; absent (an older agent)
