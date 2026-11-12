@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CompletionUsage } from "../llm/provider/completion-types.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
-import { TurnUsageMeter, completionUsageForTurn } from "./turn-usage-meter.js";
+import { TurnUsageMeter, completionUsageForTurn, generationMsFor } from "./turn-usage-meter.js";
 
 const S = "session-a";
 
@@ -303,5 +303,53 @@ describe("TurnUsageMeter — served provider", () => {
     meter.recordServed(S, "cloud");
     meter.begin(S, "cloud");
     expect(meter.snapshot(S)).toEqual({});
+  });
+});
+
+describe("TurnUsageMeter — generation time (ATO-1186)", () => {
+  it("sums the timed completions' output tokens and generation time", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.record({ sessionId: S, usage: usage(100, 40), generationMs: 1000 });
+    meter.record({ sessionId: S, usage: usage(120, 20), generationMs: 500.4 });
+    expect(meter.snapshot(S).generation).toEqual({ completionTokens: 60, durationMs: 1500 });
+  });
+
+  it("leaves an untimed completion out of the speed but in the totals", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.record({ sessionId: S, usage: usage(100, 40), generationMs: 1000 });
+    meter.record({ sessionId: S, usage: usage(50, 25) });
+    meter.record({ sessionId: S, usage: usage(50, 0), generationMs: 300 });
+    const snap = meter.snapshot(S);
+    expect(snap.completionTokens).toBe(65);
+    expect(snap.generation).toEqual({ completionTokens: 40, durationMs: 1000 });
+  });
+
+  it("reports no generation when nothing was timed", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.record({ sessionId: S, usage: usage(100, 40) });
+    meter.record({ sessionId: S, usage: usage(100, 40), generationMs: 0 });
+    meter.record({ sessionId: S, usage: usage(100, 40), generationMs: Number.NaN });
+    expect(meter.snapshot(S)).not.toHaveProperty("generation");
+  });
+});
+
+describe("generationMsFor (ATO-1186)", () => {
+  const timing = (predictedMs: number) => ({ promptMs: 900, predictedMs, promptTokens: 10, predictedTokens: 5 });
+
+  it("prefers the server's own decode time, which leaves out prompt processing", () => {
+    expect(generationMsFor({ timing: timing(420) }, 2000)).toBe(420);
+  });
+
+  it("falls back to the stream's own time when the provider measures none", () => {
+    expect(generationMsFor({ timing: timing(0) }, 2000)).toBe(2000);
+    expect(generationMsFor({}, 750)).toBe(750);
+  });
+
+  it("is undefined when neither is known", () => {
+    expect(generationMsFor({ timing: timing(0) }, undefined)).toBeUndefined();
+    expect(generationMsFor({ timing: timing(0) }, 0)).toBeUndefined();
   });
 });
