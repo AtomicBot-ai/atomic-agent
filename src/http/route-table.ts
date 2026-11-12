@@ -3,6 +3,7 @@ import { createRollbackLastTurnHandler } from "./route-rollback-last-turn.js";
 import type { RouteDefinition } from "./http-server.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
+import { createAgUiRunHandler } from "./route-ag-ui.js";
 import { createCancelCompletionHandler } from "./openai-completions-cancel.js";
 import { createHealthHandler } from "./route-health.js";
 import { createLocalModelRecheckHandler } from "./route-local-model-recheck.js";
@@ -110,6 +111,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/v1/chat/completions/{completion_id}/cancel",
       handler: createCancelCompletionHandler(),
     },
+    // ATO-694: the same turn as AG-UI events, for AG-UI web frontends (route-ag-ui.ts).
+    { method: "POST", path: "/api/ag-ui", handler: createAgUiRunHandler() },
     {
       method: "GET",
       path: "/api/capabilities",
