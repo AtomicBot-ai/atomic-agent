@@ -135,6 +135,7 @@ export function createRuntimeTurnService(
     toolFilter?: (name: string) => boolean;
     toolRole?: ToolRole;
     reasoningEffort?: ReasoningEffort;
+    reasoningOverride?: ReasoningEffort;
     maxOutputTokens?: number;
     interactive?: boolean;
   }) => ({
@@ -144,6 +145,9 @@ export function createRuntimeTurnService(
     ...(runOptions.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: runOptions.reasoningEffort }),
+    ...(runOptions.reasoningOverride === undefined
+      ? {}
+      : { reasoningOverride: runOptions.reasoningOverride }),
     ...(runOptions.maxOutputTokens === undefined
       ? {}
       : { maxOutputTokens: runOptions.maxOutputTokens }),
@@ -352,6 +356,7 @@ export function createRuntimeTurnService(
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
+      reasoningOverride?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
       /** What the turn's progress marker records beyond the message (ATO-1109). */
@@ -624,6 +629,7 @@ export function createRuntimeTurnService(
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
+      reasoningOverride?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
       checkpoint?: TurnCheckpointOptions;

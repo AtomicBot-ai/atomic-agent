@@ -1021,3 +1021,40 @@ describe("POST /v1/chat/completions with reply attachments", () => {
     }
   });
 });
+
+describe("POST /v1/chat/completions reasoning_effort (ATO-490)", () => {
+  let harness: Harness | null = null;
+
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+    harness = null;
+  });
+
+  it("passes low/medium/high to the turn as its reasoning level, and nothing for auto, absent or unknown", async () => {
+    harness = await startTestHarness({ llamaComplete: scriptedLlama(["a", "b", "c", "d", "e", "f"]) });
+    const runTurn = harness.runtime.runTurn.bind(harness.runtime);
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    vi.spyOn(harness.runtime, "runTurn").mockImplementation(async (...args: Parameters<typeof runTurn>) => {
+      seen.push(args[2] as Record<string, unknown> | undefined);
+      return runTurn(...args);
+    });
+    const send = async (extra: Record<string, unknown>, stream = false) => {
+      const response = await postChat(harness!.baseUrl, {
+        ...extra,
+        ...(stream ? { stream: true } : {}),
+        messages: [{ role: "user", content: `hello ${seen.length}` }],
+      });
+      expect(response.status).toBe(200);
+      await response.text();
+    };
+    await send({ reasoning_effort: "high" });
+    await send({ reasoning_effort: "Low" }, true);
+    await send({ reasoning_effort: "auto" });
+    await send({});
+    await send({ reasoning_effort: "xhigh" });
+    await send({ reasoning_effort: 3 });
+    expect(seen.map((o) => o?.reasoningOverride)).toEqual(["high", "low", undefined, undefined, undefined, undefined]);
+    // Absent, the key itself is absent: the turn is built as before.
+    for (const options of seen.slice(2)) expect(options).not.toHaveProperty("reasoningOverride");
+  });
+});

@@ -97,6 +97,8 @@ export interface LlmStreamParams {
   maxOutputTokens?: number;
   /** The turn's reasoning effort (`RunTurnOptions.reasoningEffort`). */
   reasoningEffort?: ReasoningEffort;
+  /** The chat's reasoning level (`RunTurnOptions.reasoningOverride`, ATO-490). */
+  reasoningOverride?: ReasoningEffort;
   /** See `CompletionRequest.disableThinking`. */
   disableThinking?: boolean;
   /**
@@ -368,6 +370,12 @@ export interface StepContext {
   answerChannel?: import("../../prompt/answer-style.js").AnswerChannel;
   /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * The chat's reasoning level (ATO-490): a cloud reasoning effort over
+   * the model's `params`, and a local think budget in the grammar
+   * (`resolveStepGrammar`). Absent, the step is built as before.
+   */
+  reasoningOverride?: ReasoningEffort;
   /** The turn's output ceiling — see `LlmStreamParams.maxOutputTokens`. */
   maxOutputTokens?: number;
   /**

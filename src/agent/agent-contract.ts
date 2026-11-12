@@ -572,6 +572,14 @@ export interface RunTurnOptions {
    */
   reasoningEffort?: ReasoningEffort;
   /**
+   * The reasoning level a person picked for this chat (ATO-490, the
+   * desktop composer's switch). Beats `reasoningEffort` and the model's
+   * `params` on a cloud model that reasons, and sets the think budget of
+   * a local grammar-served one (`reasoning-levels.ts`). Absent ("Auto"),
+   * every completion is built as before.
+   */
+  reasoningOverride?: ReasoningEffort;
+  /**
    * Output ceiling for every completion of this turn, below the
    * provider's own. A fusion worker's `workerMaxOutputTokens`; the
    * truncation retry's per-step cap still wins over it.

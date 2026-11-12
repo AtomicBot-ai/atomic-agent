@@ -1,6 +1,45 @@
 import { sendJson, sendError, type HttpHandler } from "./request-context.js";
 import { openaiError } from "./openai-errors.js";
 import { APPROVAL_DECISIONS } from "./route-approval.js";
+import type { AgentRuntime } from "../runtime/runtime-contract.js";
+import { resolveLlmConfig } from "../llm/provider/registry/index.js";
+import { getConfig } from "../config/index.js";
+import {
+  reasoningControlFor,
+  reasoningLevelsFor,
+  type ReasoningControl,
+  type ReasoningLevel,
+} from "../llm/reasoning-levels.js";
+
+/**
+ * ATO-490: whether the active route takes a reasoning level, and how
+ * (`reasoningControlFor`). The desktop draws its composer switch only
+ * when `control` is not `none`. Never throws: a route it cannot read
+ * answers `none`, so a client draws no switch rather than a wrong one.
+ */
+export function activeReasoningControl(
+  runtime: Pick<AgentRuntime, "config" | "providerRegistry">,
+): { control: ReasoningControl; levels: readonly ReasoningLevel[] } {
+  try {
+    const registry = runtime.providerRegistry;
+    const active = registry.activeText;
+    const id = registry.activeTextProviderId;
+    // The boot snapshot first; a provider added since (the desktop's
+    // wizard, then `POST /api/llm/active`) is only in the live file.
+    const entry =
+      resolveLlmConfig(runtime.config).providers.find((p) => p.id === id) ??
+      resolveLlmConfig(getConfig()).providers.find((p) => p.id === id);
+    const caps = active.capabilities;
+    const control = reasoningControlFor({
+      providerKind: entry?.kind,
+      modelId: active.chatModelId,
+      localThinks: caps.toolTransport === "grammar" && caps.reasoningFormat !== "none",
+    });
+    return { control, levels: reasoningLevelsFor(control) };
+  } catch {
+    return { control: "none", levels: reasoningLevelsFor("none") };
+  }
+}
 
 /**
  * `GET /api/capabilities` — summary of the host environment and
@@ -100,6 +139,9 @@ export function createCapabilitiesHandler(): HttpHandler {
       // guess this field exists to remove. The `skills` array itself is
       // untouched at zero.
       skillsOmitted: workspace ? 0 : runtime.skillCatalogDropped,
+      // ATO-490: the composer's reasoning switch for the active route.
+      // An agent from before it has no field, and the client draws none.
+      reasoning: activeReasoningControl(runtime),
     });
   };
 }
