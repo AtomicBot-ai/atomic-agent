@@ -507,6 +507,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
           runtime.setPlanMode(resolved.planMode);
         },
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
+        onRewindPickerRequested: () => orchestrator.openRewindPicker(),
+        onRewindRequested: (turnIndex, expectText) =>
+          orchestrator.rewindTo(turnIndex, expectText),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
         onSessionPinToggled: (id) => orchestrator.togglePinned(id),
         onSessionMoveRequested: (id, toIndex) =>

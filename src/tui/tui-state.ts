@@ -68,6 +68,7 @@ import {
   type IntegrationsPanelState,
 } from "./integrations/integrations-panel-state.js";
 import type { IssueReportState } from "./issue-report/issue-report-state.js";
+import type { RewindPoint } from "../session/session-rewind.js";
 import {
   createInitialPluginsPanelState,
   type PluginsPanelState,
@@ -365,6 +366,13 @@ export interface SessionDeleteConfirm {
   sessionId: string;
   preview: string;
   cursor: "yes" | "cancel";
+}
+
+/** The open `/rewind` picker (ATO-1057). */
+export interface RewindPickerState {
+  readonly points: readonly RewindPoint[];
+  /** Highlighted row in `points`. */
+  readonly cursor: number;
 }
 
 export interface TuiState {
@@ -846,6 +854,12 @@ export interface TuiState {
    */
   codingModeMenu: { readonly cursor: number } | null;
   /**
+   * `/rewind` (ATO-1057): the chat's earlier questions, newest first,
+   * or `null`/absent when the picker is closed. Enter takes the chat
+   * back to just before the highlighted one.
+   */
+  rewindPicker?: RewindPickerState | null;
+  /**
    * A plan is on screen and nothing has been done with it yet.
    *
    * Set when a turn completes in plan mode, cleared the moment the next
@@ -1036,6 +1050,7 @@ export function createInitialTuiState(
     abortArmed: false,
     codingMode: "default",
     codingModeMenu: null,
+    rewindPicker: null,
     planHandoff: false,
     // `session` is optional in practice: several reducer tests build a
     // state with no session info at all, and a seed that assumed one

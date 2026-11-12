@@ -39,6 +39,7 @@ export function resolveBackdropDismissal(state: TuiState): TuiAction | null {
   // out of.
   if (state.themePickerOpen) return { type: "theme_picker_closed" };
   if (state.sessionPickerOpen) return { type: "session_picker_closed" };
+  if (state.rewindPicker) return { type: "rewind_picker_closed" };
   if (state.slashPaletteOpen) return { type: "slash_palette_closed" };
   return null;
 }
