@@ -805,7 +805,23 @@ Honestly degraded, and labelled as such in the UI:
   every 2 s until the code is claimed, and the claim shows as
   "Paired: @username is now the owner." A paired owner is replaced only from
   the Owner row's Replace, which takes a second click. The code lives in
-  memory while its window is open and is never logged.
+  memory while its window is open and is never logged. ATO-516: the waiting
+  card also shows the code as a `t.me/<bot>?start=<code>` deep link (the
+  agent's `link`, or built from `botUsername` on an older agent) with Copy
+  link and Open in Telegram, and how long the code has left, ticked each
+  second while the tab is on screen.
+- **Discord** (Settings › Connections, after Telegram; ATO-516,
+  `renderer/discord-settings.js`) sets up the agent's Discord channel
+  (`src/channels/discord/discord-settings.ts`): the bot token goes to
+  `<stateDir>/.env` as `DISCORD_BOT_TOKEN` through `app:dotenvSet` (main
+  checks it is one run of printable characters, 20 to 200 long), and
+  `discord.enabled` and `discord.ownerUserIds` (the Discord accounts the bot
+  answers, 15 to 25 digit user ids) through `configSetPath`. Discord has no
+  pairing step, so the owner's id is typed in. The first owner added with a
+  token in place (or a token saved with an owner in place) turns Discord on
+  too. Every change owes a restart; the tab's Restart agent works as on the
+  Telegram tab (an `agent_restarted` `manual` trigger). The token never
+  reaches state, markup or a message.
 - **Composio** (Settings › Connections, beside MCP servers and Telegram; the
   palette's Composio row) is the TUI Integrations tab's Composio row
   (`src/integrations/composio-integration.ts`, its setup walkthrough and

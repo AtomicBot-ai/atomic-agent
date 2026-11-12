@@ -1188,7 +1188,7 @@ const MENU_ACTS = {
 const SETTINGS_SECTIONS = [
   ['general','General','sliders',['general']],
   ['models','Models','cpu',['llm']],
-  ['connections','Connections','plug',['mcp','telegram','composio']],
+  ['connections','Connections','plug',['mcp','telegram','discord','composio']],   // ATO-516: discord-settings.js
   ['memory','Memory','memory',['memory']],
   ['tasks','Tasks','tasks',['tasks']],
   ['skills','Skills','skills',['skills']],
@@ -1199,7 +1199,7 @@ const SETTINGS_SECTIONS = [
   ['diagnostics','Diagnostics','gauge',['diagnostics']],
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
-const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['composio','Composio'],['memory','Memory'],
+const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['discord','Discord'],['composio','Composio'],['memory','Memory'],
                        ['tasks','Tasks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
@@ -1960,6 +1960,7 @@ const PAL = [
     ['cpu','Models','Settings','/llm','settings:models'],
     ['plug','MCP servers','Settings · Connections','/mcp','settings:mcp'],
     ['send','Telegram','Settings · Connections','/telegram','settings:telegram'],
+    ['chat','Discord','Settings · Connections','','settings:discord'],
     ['link','Composio','Settings · Connections','','settings:composio'],
     ['memory','Memory','Settings','⌘ 4','settings:memory'],
     ['tasks','Tasks','Settings','','settings:tasks'],
@@ -6189,6 +6190,7 @@ function settingsPaneEntered(opened) {
   // Item 7 part C: the LLM / Telegram / Import tabs' first load on entry.
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
+  else if (pane === 'discord') discordTabEntered();
   else if (pane === 'composio') composioTabEntered();
   else if (pane === 'import') importTabEntered();
   // ATO-720: the Model row reads `models status`; ask once on entry when the route uses a local model server.
@@ -6212,6 +6214,7 @@ function settingsPane() {
   // Item 7 part C: the LLM, Telegram and Import tabs.
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
+  if (p === 'discord') return discordTab();
   if (p === 'composio') return composioTab();
   if (p === 'import') return importTab();
   return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
@@ -7239,6 +7242,7 @@ function act(a) {
   // Item 7 part C: the LLM / Telegram / Import tabs' verbs.
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
+  if (k === 'discord') { close(); discordAct(a.slice(8)); return; }
   if (k === 'composio') { close(); composioAct(a.slice(9)); return; }
   // ATO-328: Save on the Exa key card or its Settings row. No close(): the card is in the chat, the row in Settings.
   if (k === 'exakey') { exaKeyAct(v); return; }
@@ -8302,6 +8306,8 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'llm-hf-mirror') { hfMirrorTyped(e.target.value, llmHfMirrorRepaint, 'llm-hf-mirror'); return; }
   if (e.target.id === 'llm-url') { LLMP.externalDraft = e.target.value; if (LLMP.externalInvalid) { LLMP.externalInvalid = false; llmRepaint(); const n = $('#llm-url'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } } return; }
   if (e.target.id === 'tg-token') { if (TG.token.error) { TG.token.error = null; } return; }
+  // ATO-516: the Discord owner id field keeps its draft so a repaint does not wipe it; the token field keeps nothing.
+  if (e.target.id === 'dc-owner') { DC.setDraftId(e.target.value); return; }
   // Composio: the key field keeps its draft in memory only (composioKeyRestore puts it back after a repaint).
   if (e.target.id === 'cmp-key') { CMP.draft = e.target.value; if (CMP.keyError) CMP.keyError = null; return; }
   // ATO-328: the Exa key fields keep their draft in memory only (exaKeyRestore puts it back after a repaint).
@@ -24341,6 +24347,7 @@ function settingsKey(e, k, inText) {
   // Item 7 part C: the LLM / Telegram / Import tabs' keys (the LLM pane's ←/→ switch its mode, not the tab).
   if (pane === 'llm' && llmKey(e, k, inText)) return true;
   if (pane === 'telegram' && telegramKey(e, k, inText)) return true;
+  if (pane === 'discord' && discordKey(e, k, inText)) return true;
   if (pane === 'composio' && composioKey(e, k, inText)) return true;
   if (pane === 'import' && importKey(e, k, inText)) return true;
   if (k === 'Escape') { e.preventDefault(); S.settings = null; render(); return true; }
@@ -29241,11 +29248,11 @@ function telegramTab() {
     // setup-state.ts needs_pairing. ATO-859: the card pairs here, through the agent's pairing route.
     if (owner === null) {
       body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
-        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HOWTO, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Pair', restart:tgRestartButtonHTML(TG.restart, {esc, ic})}, {esc}) + '</div>';
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HOWTO, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Pair', restart:tgRestartButtonHTML(TG.restart, {esc, ic}), now:Date.now()}, {esc}) + '</div>';
     } else if (TG.pair.phase !== 'idle' || TG.pair.error) {
       // Replacing the owner (confirmed beside the Owner row): the same card, until its window ends.
       body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--blue">' + ic('user') + '</span><b>Pair a different Telegram account</b></div>'
-        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HAS_OWNER, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Replace', restart:tgRestartButtonHTML(TG.restart, {esc, ic})}, {esc}) + '</div>';
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HAS_OWNER, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Replace', restart:tgRestartButtonHTML(TG.restart, {esc, ic}), now:Date.now()}, {esc}) + '</div>';
     }
     body += tgRowsHTML(enabled, owner);
   }
@@ -29425,6 +29432,9 @@ function telegramAct(what) {
   if (verb === 'pairStart') { tgPairStart(tgOwner() !== null); return; }
   if (verb === 'pairReplace') { tgPairStart(true); return; }
   if (verb === 'pairCancel') { tgPairCancel(); return; }
+  // ATO-516: the code's t.me link (telegram-pairing.js tgPairLink), copied or opened in Telegram; never logged.
+  if (verb === 'pairCopy') { if (TG.pair.link) copyText(TG.pair.link, 'Link copied'); return; }
+  if (verb === 'pairOpen') { if (TG.pair.link && BR && BR.openExternal) BR.openExternal(TG.pair.link); return; }
 }
 /* ATO-900 item 6: Restart agent, from any line in the tab that asks for one. It
    restarts the agent in place (the app stays open), says so while it runs, then
@@ -29499,6 +29509,14 @@ function tgPairSchedule() {
   if (TG.pairTimer) { clearTimeout(TG.pairTimer); TG.pairTimer = null; }
   // Only while the Telegram tab is on screen; telegramTabEntered asks again on the way back.
   if (tgPairPolling(TG.pair) && telegramVisible()) TG.pairTimer = setTimeout(tgPairPoll, TG_PAIR_POLL_MS);
+  // ATO-516: the code's countdown, ticked in place each second between repaints.
+  if (TG.pairTick) { clearInterval(TG.pairTick); TG.pairTick = null; }
+  if (tgPairPolling(TG.pair) && telegramVisible()) TG.pairTick = setInterval(() => {
+    const n = document.querySelector('[data-tg-countdown]');
+    const left = tgPairCountdown(TG.pair.expiresAt, Date.now());
+    if (!n || !left || !tgPairPolling(TG.pair) || !telegramVisible()) { clearInterval(TG.pairTick); TG.pairTick = null; return; }
+    n.textContent = left;
+  }, 1000);
 }
 /* Asks whether the code was claimed. */
 async function tgPairPoll() {
@@ -29735,6 +29753,64 @@ function composioKey(e, k, inText) {
   if (CMP.mode === 'key' && k === 'Escape') { e.preventDefault(); composioAct('keyCancel'); return true; }
   const map = {e:'enable', t:'key', r:'restart', R:'check'};
   if (map[k] && cmpHasKey() === true) { e.preventDefault(); composioAct(map[k]); return true; }
+  return false;
+}
+
+/* ---------------- Discord tab (ATO-516, discord-settings.js) ----------------
+   The token goes to <stateDir>/.env as DISCORD_BOT_TOKEN through app:dotenvSet,
+   `discord.enabled` and `discord.ownerUserIds` through one config write; the
+   agent reads them when it starts, so each change owes a restart (the same
+   restart as the Telegram tab's, without its Telegram wording). */
+const DC = createDiscordSettings({
+  readConfig: () => BR ? BR.configGetKey('discord') : {ok:false, error:'the app is still starting'},
+  tokenPresent: async () => {
+    if (!BR) return {ok:false};
+    const stateDir = memStateDir();
+    const [env, dotenv] = await Promise.all([BR.envPresent([DISCORD_TOKEN_ENV]), stateDir ? BR.dotenvKeys(stateDir) : Promise.resolve({ok:true, keys:[]})]);
+    if (dotenv && dotenv.ok === false) return {ok:false, error:dotenv.error};
+    return {ok:true, has:(Array.isArray(env) && env.includes(DISCORD_TOKEN_ENV)) || (!!dotenv && Array.isArray(dotenv.keys) && dotenv.keys.includes(DISCORD_TOKEN_ENV))};
+  },
+  setToken: (v) => { const stateDir = memStateDir(); return BR && stateDir ? BR.dotenvSet(stateDir, DISCORD_TOKEN_ENV, v) : {ok:false, error:'The app is still starting. Try again in a moment.'}; },
+  // One configSetPath per key (owners, then enabled): at most two, and the first failure stops the rest.
+  write: (entries) => BR ? entries.reduce((p, [key, value]) => p.then((r) => r && r.ok === false ? r : BR.configSetPath(key, value)), Promise.resolve({ok:true}))
+    : {ok:false, error:'the app is still starting'},
+  restart: async () => { const st = await BR.restart(); try { applyStatus(st); } catch (e) { /* the status still says how it went */ } return st; },
+  restartBlocked: () => restartStopsTurn(),
+  agentGen: () => AGENT_GEN,
+});
+function discordVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'discord'; }
+function discordTab() { return discordPaneHTML(DC.state, {owed:DC.restartOwed(), stale:DC.state.msgGen !== AGENT_GEN}, {esc, ic}); }
+function dcRepaint() { if (discordVisible()) paneRepaintKeepFocus(discordTab()); }
+function discordTabEntered() { DC.entered().then(dcRepaint); dcRepaint(); }
+async function discordAct(what) {
+  const [verb] = what.split(':');
+  const arg = what.slice(verb.length + 1);
+  // Remove token / Remove an owner take a second click on the same button; any other action disarms them.
+  if (verb === 'clearToken' || verb === 'removeOwner') {
+    if (!DC.arm(verb === 'clearToken' ? verb : 'removeOwner:' + arg)) { dcRepaint(); return; }
+    if (verb === 'clearToken') { const p = DC.clearToken(); dcRepaint(); await p; } else { const p = DC.removeOwner(arg); dcRepaint(); await p; }
+    dcRepaint(); return;
+  }
+  DC.disarm();
+  if (verb === 'token') { DC.openToken(); dcRepaint(); const n = $('#dc-token'); if (n) n.focus(); return; }
+  if (verb === 'tokenCancel') { DC.cancelToken(); dcRepaint(); return; }
+  if (verb === 'tokenSave') { const n = $('#dc-token'); const p = DC.saveToken(n ? n.value : ''); dcRepaint(); await p; dcRepaint(); if (DC.state.mode === 'tokenPrompt') { const m = $('#dc-token'); if (m) m.focus(); } return; }
+  if (verb === 'addOwner') { const p = DC.addOwner(); dcRepaint(); await p; dcRepaint(); return; }
+  if (verb === 'enable') { const p = DC.setEnabled(!DC.state.cfg.enabled); dcRepaint(); await p; dcRepaint(); return; }
+  if (verb === 'restart') { const p = DC.restart(); dcRepaint(); await p; dcRepaint(); return; }
+  if (verb === 'refresh') { await DC.refresh(); dcRepaint(); return; }
+  if (verb === 'portal') { if (BR && BR.openExternal) BR.openExternal(DC_PORTAL_URL); return; }
+}
+function discordKey(e, k, inText) {
+  if (e.target && e.target.id === 'dc-token') {
+    if (k === 'Enter') { e.preventDefault(); discordAct('tokenSave'); return true; }
+    if (k === 'Escape') { e.preventDefault(); discordAct('tokenCancel'); return true; }
+    return false;
+  }
+  if (e.target && e.target.id === 'dc-owner') {
+    if (k === 'Enter') { e.preventDefault(); discordAct('addOwner'); return true; }
+    return false;
+  }
   return false;
 }
 

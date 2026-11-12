@@ -3305,7 +3305,8 @@ function wireIpc(client: AgentClient): void {
     envPresent(Array.isArray(names) ? names.filter((n): n is string => typeof n === "string").slice(0, 64) : []),
   );
   // The keys the desktop writes into .env (DESKTOP_DOTENV_KEYS): the Telegram bot token (the TUI's
-  // telegram-settings.ts setToken) and the Exa key for web search (ATO-328). Never logged, never echoed back.
+  // telegram-settings.ts setToken), the Exa key for web search (ATO-328) and the Discord bot token
+  // (ATO-516, discord-settings.ts writeDiscordToken). Never logged, never echoed back.
   ipcMain.handle("app:dotenvSet", async (_event, payload: unknown) => {
     const { stateDir, key, value } = (payload ?? {}) as { stateDir?: unknown; key?: unknown; value?: unknown };
     if (!ownDir(stateDir)) return { ok: false, error: "state dir required" };
@@ -5969,15 +5970,15 @@ async function settingsTest(
   // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
-  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const PANES = ["general", "llm", "mcp", "telegram", "discord", "composio", "memory", "tasks", "skills", "plugins", "privacy", "import", "diagnostics"];
   const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", composio: "connections", memory: "memory",
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", composio: "connections", memory: "memory",
     tasks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
   const tabs = await js<string[]>("window.__settingsTabs()");
-  check("settings: the panes are General, Models, Connections (MCP, Telegram, Composio) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
+  check("settings: the panes are General, Models, Connections (MCP, Telegram, Discord, Composio) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
 
   // Every node of the menu tree, verbatim label and ctrl+g chord, in registry
   // order (src/tui/menu/menu-registry.ts:107-675) — except that Go, Observe and
