@@ -42,7 +42,7 @@ export function guardStream(stream: GuardableStream, onOther: (err: unknown) => 
     onOther(err);
   });
   const write = stream.write.bind(stream) as (...args: unknown[]) => boolean;
-  (stream as { write: (...args: unknown[]) => boolean }).write = (...args: unknown[]): boolean => {
+  (stream as unknown as { write: (...args: unknown[]) => boolean }).write = (...args: unknown[]): boolean => {
     if (dead) {
       // Call a write callback, if any, so nobody waits on it forever.
       const cb = args.find((a) => typeof a === "function") as ((err?: Error | null) => void) | undefined;
