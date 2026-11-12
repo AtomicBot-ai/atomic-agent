@@ -1,0 +1,29 @@
+/* ============================================================
+   Find the best model for my tasks (ATO-1091): the card on Settings › Models
+   and the progress / results sheet. fit-test.js draws both; colours come
+   from tokens only. The sheet reuses overlays.css, the card the tune card's look.
+   ============================================================ */
+
+.llm-pane .fit-card{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:var(--r-block);
+  background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd)}
+.fit-line{display:flex;align-items:center;gap:8px;margin:0;font-size:var(--fs-ui);color:var(--ink);line-height:1.45}
+.fit-acts{display:flex;flex-wrap:wrap;gap:8px}
+.llm-pane .fit-err{color:var(--critical)}
+
+#fittest .fit-wrap{z-index:27}
+.fit-sheet{width:min(640px,calc(100vw - 32px))}
+.fit-body{display:grid;gap:14px;padding:0 22px 18px;overflow-y:auto}
+.fit-bar{height:6px;border-radius:var(--r-pill);background:var(--well);overflow:hidden}
+.fit-bar > span{display:block;height:100%;background:var(--brand);transition:width .3s ease}
+.fit-tablewrap{overflow-x:auto}
+.fit-table{width:100%;border-collapse:collapse;font-size:var(--fs-cap);color:var(--ink);font-variant-numeric:tabular-nums}
+.fit-table th,.fit-table td{padding:8px 10px;text-align:left;vertical-align:middle;border-bottom:1px solid var(--line-hair)}
+.fit-table thead th{font-weight:600;color:var(--ink-2);white-space:nowrap}
+.fit-table tbody th{font-weight:600}
+.fit-table tr.is-best{background:var(--brand-wash)}
+.fit-name{margin-right:8px}
+.fit-dnf{color:var(--ink-2)}
+.fit-act{text-align:right;white-space:nowrap}
+.fit-chip{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-pill);
+  font-size:var(--fs-label);font-weight:600;background:var(--well);color:var(--ink-2);white-space:nowrap}
+.fit-chip--best{background:var(--brand);color:var(--on-brand)}

@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="css/attachments.css">
 <link rel="stylesheet" href="css/window-snapshot.css">
 <link rel="stylesheet" href="css/overnight.css">
+<link rel="stylesheet" href="css/fit-test.css">
 <link rel="stylesheet" href="css/file-preview.css">
 <link rel="stylesheet" href="css/onboarding.css">
 <link rel="stylesheet" href="css/settings.css">
@@ -47,6 +48,7 @@
       <div id="overlays"></div>
       <!-- ATO-1113: the Run overnight dialog and its runs card (overnight.js draws it, render() never does). -->
       <div id="overnight"></div>
+      <div id="fittest"></div>
       <div id="toasts"></div>
     </div>
   </div>
@@ -98,6 +100,7 @@
 <!-- ATO-519: a new task in plain words, sent to the agent in a new chat. -->
 <script src="task-ask.js"></script>
 <script src="overnight.js"></script>
+<script src="fit-test.js"></script>
 <!-- ATO-669: forgiving ⌘K search; fuzzysort is vendored (MIT, licence beside it). -->
 <script src="vendor/fuzzysort.js"></script>
 <script src="fuzzy-match.js"></script>
