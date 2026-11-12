@@ -4167,6 +4167,7 @@ function composer() {
     : '';
   const q = S.queued.length ? '<div class="qtray">' + S.queued.map((t, i) =>
       '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(attQueueLabel(t)) + '</span>'
+      + (steerNowShown(t) ? steerNowButtonHTML(i, {esc}) : '')   // ATO-1183 (steer-now.js)
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   const backend = selBackend();
   // ATO-486: the agent's live plan, above the queue (plan-bar.js).
@@ -7458,6 +7459,7 @@ async function steerOrQueueRun(text, post, typedIn) {
     asked = true;
     const res = await send(sid, text);
     steered = !!(res && res.ok && res.steered);
+    if (!steered) steerNowNoteRefusal(text, res);   // ATO-1183: no "Steer now" loop on a 409
   }
   /* Review fix: the POST above is a round trip, and the user can click
      another chat inside it. openSession replaces S.log and clears
@@ -8168,6 +8170,7 @@ document.addEventListener('click', (e) => {
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
   const sl = t.closest('[data-slash]'); if (sl) { acceptSlash(sl.dataset.slash); return; }
+  const sn = t.closest('[data-steernow]'); if (sn) { ANX.messageAction('steer'); steerQueuedNow(+sn.dataset.steernow); return; }
   const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); unqueueMessage(+uq.dataset.unqueue); return; }
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
   const ask = t.closest('[data-ask]'); if (ask) { const q = S.q; act('close'); S.draft = q; render(); submit(); return; }
@@ -11169,6 +11172,7 @@ function onChatEvent(ev) {
     const idle = !ownQueue && !S.busy && !queueChatRunning(queueKey());
     if (ownQueue || idle) STEER.ahead = 0;
     STEER.mine.length = 0;
+    steerNowTurnEnded();   // ATO-1183: the next turn may be asked again
     if ((ownQueue || idle) && S.queued.length) {
       /* Backlog 24: not from under a loading line (or a failed open's
          error). That transcript is replaced when the answer lands, and until
@@ -11329,6 +11333,23 @@ function queueTurnEnded(sid, turnId) {
 function drainOwed() {
   if (DRAIN_OWED && S.queued.length && !S.busy && !S.pending && !openHoldsComposer()
       && S.live.state === 'connected' && !swxWaitsForRoute()) drainQueued();
+}
+/** ATO-1183: whether queued `text` shows "Steer now" (steer-now.js): this
+    chat runs a turn that has a session to ask and has not refused it. */
+function steerNowShown(text) {
+  return steerNowAvailable(text, {running: queueChatRunning(queueKey()), sid: S.agentSession,
+    canSteer: !!(BR && BR.steer), refused: STEER_NOW.refused});
+}
+/** ATO-1183: "Steer now" on a queued chip. Out of the queue as unqueueMessage
+    takes it (its files stay: the message still goes), then the path a message
+    typed under the turn takes. A refusal parks it again, without the button. */
+function steerQueuedNow(at) {
+  const text = S.queued[at];
+  if (typeof text !== 'string' || !steerNowShown(text)) return;
+  STEER.ahead = steerNowTake(S.queued, at, STEER.ahead);
+  if (!S.queued.length) DRAIN_OWED = false;
+  render();
+  return steerOrQueue(text, {sid:S.agentSession, key:queueKey(), card: approvalOpen(S.pending)});
 }
 /** Cancel a locally accepted message, including an unsaved chat's last one. */
 function unqueueMessage(at) {
