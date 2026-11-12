@@ -256,7 +256,7 @@ const V0_2_2_SLASH_COMMANDS = [
   },
   {
     name: "compact",
-    description: "summarize older context; show displays the saved summary",
+    description: "summarize older context; add text to say what to keep; show displays the saved summary",
   },
   {
     name: "enhance",

@@ -549,8 +549,12 @@ export interface AgentRuntime {
   createEphemeralSession(meta: FusionWorkerMeta, workingDir?: string, inheritWorkspace?: boolean): SessionState;
   /** Session-scoped cloud skills/instructions; null retains the legacy local view. */
   getSessionWorkspace(session: SessionState | string): import("../session/workspace-context.js").SessionWorkspace | null;
-  /** Maintain context without creating a turn or a transcript message. */
-  compactSession(sessionId: string, options?: { signal?: AbortSignal }): Promise<CompactionResult>;
+  /**
+   * Maintain context without creating a turn or a transcript message.
+   * `instructions` (ATO-661) says what the summary must keep; it is data
+   * inside the summary prompt, trimmed and capped at 2000 characters.
+   */
+  compactSession(sessionId: string, options?: { signal?: AbortSignal; instructions?: string }): Promise<CompactionResult>;
   getSessionCompaction(sessionId: string): SessionCompaction | null;
   cancelSessionCompaction(sessionId: string): boolean;
   /**

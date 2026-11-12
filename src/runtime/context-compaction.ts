@@ -11,6 +11,7 @@ import { SessionNotFoundError } from "./session-not-found-error.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { runContextCompaction, type CompactionRunnerDependencies } from "./context-compaction-runner.js";
 import type { BackgroundCompaction } from "./compaction-background.js";
+import { normalizeCompactionInstructions } from "./compaction-instructions.js";
 
 /**
  * After an automatic compaction times out, history must grow by this factor
@@ -24,6 +25,8 @@ interface ManualRequest {
   signal: AbortSignal;
   running: boolean;
   queued: boolean;
+  /** What the user asked this compaction to keep (ATO-661). */
+  instructions?: string;
   settle(result: CompactionResult): void;
 }
 
@@ -174,7 +177,8 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     const signal = AbortSignal.any([options.signal, request?.signal ?? controller.signal]);
     const release = () => { if (active.get(input.session.id) === controller) active.delete(input.session.id); };
     const preferExtractive = slowRoutes.size > 0 && slowRoutes.has(routeKey());
-    return runContextCompaction(input, plan, config, { ...options, signal, inTurn, preferExtractive }, deps)
+    const instructions = request?.instructions;
+    return runContextCompaction(input, plan, config, { ...options, signal, inTurn, preferExtractive, ...(instructions ? { instructions } : {}) }, deps)
       .then(({ state, result, timedOut }) => {
         if (result.status === "failed" && plan.reason !== "manual") autoFailed.add(id);
         if (timedOut) slowRoutes.add(routeKey());
@@ -226,7 +230,7 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
 
   return {
     control,
-    compactSession(id: string, options: { signal?: AbortSignal } = {}): Promise<CompactionResult> {
+    compactSession(id: string, options: { signal?: AbortSignal; instructions?: string } = {}): Promise<CompactionResult> {
       if (stopped || options.signal?.aborted) return Promise.resolve(cancelled());
       if (requests.has(id) || active.has(id)) return Promise.resolve({ status: "busy", reason: "manual" });
       deps.background?.cancel(id);
@@ -234,10 +238,11 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
       if (!turnSignal) load(id);
       const controller = new AbortController();
       const signal = AbortSignal.any([controller.signal, ...(options.signal ? [options.signal] : []), ...(turnSignal ? [turnSignal] : [])]);
+      const instructions = normalizeCompactionInstructions(options.instructions);
       return new Promise((resolve) => {
         const onAbort = () => { if (!request.running) request.settle(cancelled()); };
         const request: ManualRequest = {
-          controller, signal, running: false, queued: false,
+          controller, signal, running: false, queued: false, ...(instructions ? { instructions } : {}),
           settle(result) {
             if (requests.get(id) === request) requests.delete(id);
             signal.removeEventListener("abort", onAbort);

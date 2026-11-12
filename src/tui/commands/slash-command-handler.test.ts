@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { dispatchSlashCommand } from "./slash-command-handler.js";
 import { SLASH_COMMANDS } from "./slash-commands.js";
+import { MAX_COMPACTION_INSTRUCTIONS_CHARS } from "../../runtime/compaction-instructions.js";
 
 describe("dispatchSlashCommand", () => {
   it("lists slash commands with descriptions for /help", () => {
@@ -541,10 +542,21 @@ describe("context compaction commands", () => {
   it("routes compact and show without forwarding a user message", () => {
     expect(dispatchSlashCommand("/compact")).toMatchObject({ compactionVerb: "run", forwardAsMessage: false });
     expect(dispatchSlashCommand("/compact show")).toMatchObject({ compactionVerb: "show", forwardAsMessage: false });
-    expect(dispatchSlashCommand("/compact anything").systemMessage).toBe("Usage: /compact [show]");
+    expect(dispatchSlashCommand("/compact").compactionInstructions).toBeUndefined();
     expect(dispatchSlashCommand("/compound").compactionVerb).toBeUndefined();
     expect(dispatchSlashCommand("/help").systemMessage).toContain("/compact —");
     expect(dispatchSlashCommand("/help").systemMessage).not.toContain("/compound");
+  });
+
+  it("passes any other text as what the summary must keep (ATO-661)", () => {
+    expect(dispatchSlashCommand("/compact keep the names of failing tests")).toMatchObject({
+      compactionVerb: "run", compactionInstructions: "keep the names of failing tests", forwardAsMessage: false,
+    });
+    expect(dispatchSlashCommand("/compact show me the paths").compactionInstructions).toBe("show me the paths");
+    const tooLong = dispatchSlashCommand(`/compact ${"x".repeat(MAX_COMPACTION_INSTRUCTIONS_CHARS + 1)}`);
+    expect(tooLong.compactionVerb).toBeUndefined();
+    expect(tooLong.systemMessage).toContain("Usage: /compact [show | what to keep]");
+    expect(tooLong.systemMessage).toContain(`at most ${MAX_COMPACTION_INSTRUCTIONS_CHARS} characters`);
   });
 });
 

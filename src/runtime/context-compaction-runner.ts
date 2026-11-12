@@ -15,6 +15,9 @@ import { compactFromRolling } from "./compaction-rolling.js";
 import { chooseCompactionMethod, type CompactionRouteFacts } from "./compaction-mode.js";
 import { modelSummaryFailure, summarizeWithModel, type ModelSummaryRoute, type ModelSummaryTally } from "./context-compaction-model.js";
 
+/** An extractive checkpoint copies records; it cannot follow what the user asked to keep. */
+export const NOT_APPLIED = "Your compaction instructions were not applied: the checkpoint was extracted without a model call.";
+
 export interface CompactionRunnerDependencies {
   complete(params: LlmStreamParams): Promise<CompletionResult>;
   route(sessionId: string, providerId?: string): ModelSummaryRoute & CompactionRouteFacts;
@@ -28,6 +31,12 @@ export interface CompactionRunOptions extends CompactionStepOptions {
   inTurn: boolean;
   /** Under `auto`, skip the model: a model summary on this route already ran out of time. */
   preferExtractive?: boolean;
+  /**
+   * What the user asked a manual compaction to keep (ATO-661), already
+   * normalized. Only a model summary can follow it, so it skips the rolling
+   * summary; an extractive checkpoint says it was not applied.
+   */
+  instructions?: string;
 }
 
 /**
@@ -88,7 +97,7 @@ export async function runContextCompaction(
     };
     // A summary made between turns makes this checkpoint without a model call,
     // unless its cut does not reach the target; then the usual methods run.
-    let rolled = config.mode === "auto" ? compactFromRolling(state, plan) : null;
+    let rolled = config.mode === "auto" && !options.instructions ? compactFromRolling(state, plan) : null;
     if (rolled && !reduced(checkpointed(rolled.summary, rolled.through, { model: null }))) rolled = null;
     const through = rolled?.through ?? plan.through;
     const method = rolled ? "rolling" : options.preferExtractive && config.mode === "auto"
@@ -107,6 +116,7 @@ export async function runContextCompaction(
       try {
         ({ summary, model } = await summarizeWithModel({
           input, prompt, plan, config, route, previous, source: source(), signal: options.signal, tally, emit,
+          ...(options.instructions ? { instructions: options.instructions } : {}),
           complete: deps.complete, sideCallSlotId: deps.sideCallSlotId,
           ...(deps.costOf ? { costOf: deps.costOf } : {}),
         }));
@@ -130,9 +140,13 @@ export async function runContextCompaction(
     next.contextUsage = contextUsageFromPrompt(rebuilt);
     options.signal.throwIfAborted();
     if (!options.ephemeral) deps.persist(next, options.inTurn);
+    const notes = [
+      ...(fellBack && modelFailure ? [`The model summary failed (${modelFailure.message.replace(/[.!?]+$/, "")}); an extractive summary was used instead.`] : []),
+      ...(options.instructions && kind === "extractive" ? [NOT_APPLIED] : []),
+    ];
     const result: CompactionResult = { status: "compacted", reason: plan.reason, tokensBefore: plan.tokensBefore, tokensAfter: after,
       ...(costUsd !== undefined ? { costUsd } : {}),
-      ...(fellBack && modelFailure ? { message: `The model summary failed (${modelFailure.message.replace(/[.!?]+$/, "")}); an extractive summary was used instead.` } : {}),
+      ...(notes.length ? { message: notes.join(" ") } : {}),
     };
     reportSpend();
     emit({ type: "compaction_completed", sessionId: state.id, result, usage, calls, contextUsage: next.contextUsage });

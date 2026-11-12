@@ -447,7 +447,7 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action", id: "session.compact", label: "Compact context", group: "session",
-    slash: { name: "compact", description: "summarize older context; show displays the saved summary", rank: 44 },
+    slash: { name: "compact", description: "summarize older context; add text to say what to keep; show displays the saved summary", rank: 44 },
   },
   {
     kind: "action", id: "session.enhance", label: "Enhance prompt", group: "session",

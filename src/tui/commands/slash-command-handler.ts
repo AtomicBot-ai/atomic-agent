@@ -13,6 +13,7 @@ import { resolveSlashCommand, SLASH_COMMANDS, type SlashCommandDef } from "./sla
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
+import { compactionInstructionsError, normalizeCompactionInstructions } from "../../runtime/compaction-instructions.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -32,6 +33,8 @@ export interface SlashDispatchResult {
   /** Text to inject into the chat log as a system confirmation. */
   readonly systemMessage?: string;
   readonly compactionVerb?: "run" | "show";
+  /** `/compact <text>` (ATO-661): what the summary must keep. */
+  readonly compactionInstructions?: string;
   /** `/goal …` (ATO-451): the orchestrator acts on the open chat's goal. */
   readonly goalCommand?: GoalCommand;
   /**
@@ -346,10 +349,14 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerOnboardingRerun: true });
     case "debug":
       return pureActions([{ type: "ui_mode_toggled" }]);
-    case "compact":
-      return parsed.args === "" || parsed.args === "show"
-        ? pureActions([], { compactionVerb: parsed.args === "show" ? "show" : "run" })
-        : pureActions([], { systemMessage: "Usage: /compact [show]" });
+    case "compact": {
+      if (parsed.args === "show") return pureActions([], { compactionVerb: "show" });
+      // Any other text says what the summary must keep, like `/compact keep the failing test names`.
+      const invalid = compactionInstructionsError(parsed.args);
+      if (invalid) return pureActions([], { systemMessage: `Usage: /compact [show | what to keep]; ${invalid}.` });
+      const instructions = normalizeCompactionInstructions(parsed.args);
+      return pureActions([], { compactionVerb: "run", ...(instructions ? { compactionInstructions: instructions } : {}) });
+    }
     case "goal": {
       const goal = parseGoalCommand(parsed.args);
       return goal.kind === "error"

@@ -140,6 +140,11 @@ export interface GetSessionPayload {
   sessionId: string;
 }
 
+/** `compact_session`: `instructions` (ATO-661) says what the summary must keep. */
+export interface CompactSessionPayload extends GetSessionPayload {
+  instructions?: string;
+}
+
 export interface SkillInstallPayload {
   sourcePath: string;
   force?: boolean;

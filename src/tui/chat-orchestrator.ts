@@ -1976,7 +1976,7 @@ export class ChatOrchestrator {
     this.promptEnhance = null;
   }
 
-  async compactContext(verb: "run" | "show"): Promise<void> {
+  async compactContext(verb: "run" | "show", instructions?: string): Promise<void> {
     const id = this.session?.id;
     if (!id) { this.notify("No conversation to compact yet."); return; }
     if (verb === "show") {
@@ -1992,7 +1992,7 @@ export class ChatOrchestrator {
     this.bus.emit({ type: "compaction_requested", sessionId: id });
     let busy = false;
     try {
-      const result = await this.runtime.compactSession(id);
+      const result = await this.runtime.compactSession(id, instructions ? { instructions } : {});
       busy = result.status === "busy";
       // The loop owns its live state. Never install a saved snapshot here.
       if (this.session?.id === id && result.status !== "compacted" && result.status !== "failed" && result.status !== "cancelled") {
