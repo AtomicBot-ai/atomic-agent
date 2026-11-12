@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { codexCliAdapter } from "./codex-cli-adapter.js";
+import { CODEX_CLI_SYSTEM_PROMPT, codexCliAdapter } from "./codex-cli-adapter.js";
 import {
   SubscriptionCliAuthError,
   SubscriptionCliInvocationError,
@@ -81,6 +81,25 @@ describe("codexCliAdapter argv", () => {
     expect(args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
     expect(args).not.toContain("--dangerously-bypass-hook-trust");
     expect(args).not.toContain("--add-dir");
+  });
+
+  it("scopes the read-only sandbox to codex's own tools, not the workspace (#1177)", () => {
+    // Codex reports its sandbox as read-only; the steering has to say that
+    // edits still go out as protocol tool calls, or the model refuses them.
+    expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(
+      /read-only sandbox you see applies only to your own tools/,
+    );
+    expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(/workspace is writable/);
+    expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(/never tell the user to change permissions/i);
+    expect(codexCliAdapter.systemPrompt).toBe(CODEX_CLI_SYSTEM_PROMPT);
+    // The wording changed, the sandbox did not.
+    const args = codexCliAdapter.completeArgs(input);
+    expect(args.slice(args.indexOf("-s"), args.indexOf("-s") + 2)).toEqual([
+      "-s",
+      "read-only",
+    ]);
+    expect(args).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(args).not.toContain("--full-auto");
   });
 
   it("carries the steering in stdin, since codex has no system-prompt flag", () => {
