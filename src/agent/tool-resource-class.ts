@@ -213,6 +213,10 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // video — always a paid cloud clip that runs for minutes: solo.
   "video.generate": "approval_gated",
 
+  // audio — whisper.cpp holds the CPU/GPU for as long as the recording
+  // lasts, and the first call may ask before a model download: solo.
+  "audio.transcribe": "approval_gated",
+
   // fusion — `approval_gated` is the "must be solo" class, and that is
   // what this needs: one call runs several worker turns concurrently
   // inside itself, for minutes. Batching it beside other tools would
@@ -398,6 +402,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "image.generate": ["paid_generation"],
     // Always cloud, always billed per second.
     "video.generate": ["paid_generation"],
+    // Asks only before downloading a speech model (ATO-702).
+    "audio.transcribe": ["http"],
   };
 
 /**

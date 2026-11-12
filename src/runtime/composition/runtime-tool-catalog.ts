@@ -36,6 +36,7 @@ import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/nam
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
 import { registerVideoTools, VIDEO_GENERATE_TOOL } from "../../tools/video/index.js";
+import { registerAudioTools } from "../../tools/audio/index.js";
 import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
 import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } from "../../tools/fusion/index.js";
@@ -181,6 +182,13 @@ export function registerRuntimeCoreTools(input: {
     enabled: config.tools.screen.enabled,
     // ATO-1018: drawing marks only (and the screenshot it reads), on by default.
     point: config.tools.screen.point,
+  });
+  // Speech to text with the user's whisper.cpp (ATO-702): always on; a
+  // missing binary is an answer with the install line, and the speech
+  // model downloads into the models folder only after an approval.
+  registerAudioTools(toolRegistry, {
+    ...dangerous,
+    dataDir: () => getConfig().paths.localModelsDataDir,
   });
   // The read-only `verify.*` family: syntax per file, and (below) a
   // command / service / page run against a throwaway copy of the

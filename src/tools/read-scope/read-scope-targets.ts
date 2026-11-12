@@ -67,6 +67,14 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
     },
   ],
   [
+    // whisper.cpp reads the recording: scoped like any read (ATO-702).
+    "audio.transcribe",
+    (args) => {
+      const path = nonEmpty(args.path);
+      return path === undefined ? [] : [path];
+    },
+  ],
+  [
     // Not a read, but a way to one: a file moved from outside the scope
     // into the working directory could then be read without asking. Its
     // sources are checked like reads; destinations are writes, which the

@@ -615,6 +615,19 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["prompt"],
     ),
   ],
+  [
+    "audio.transcribe",
+    obj(
+      {
+        path: stringSchema,
+        language: stringSchema,
+        model: stringSchema,
+        translate: booleanSchema,
+        download: booleanSchema,
+      },
+      ["path"],
+    ),
+  ],
 
   // ── mcp aggregates ───────────────────────────────────────────────────────
   [

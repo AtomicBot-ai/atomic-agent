@@ -1,7 +1,7 @@
 ---
 name: audio-transcribe
-description: Transcribe speech from audio files (mp3, m4a, wav, ogg, flac, webm) to text using the local `whisper` CLI — no API key. Use whenever a task hinges on the spoken content of an audio attachment.
-version: 1.0.0
+description: "Transcribe speech from audio files and Telegram voice messages (ogg, mp3, m4a, wav, flac, webm) to text locally, no API key: the built-in audio.transcribe tool (whisper.cpp) first, the Python whisper CLI as a fallback. Use whenever a task hinges on the spoken content of an audio attachment."
+version: 1.1.0
 requires_tools:
   - os.shell.run
   - os.fs.read
@@ -10,12 +10,36 @@ dangerous: false
 
 # audio-transcribe
 
+## First choice: the built-in `audio.transcribe` tool
+
+Atomic Agent has a built-in tool that runs [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+on this computer, with no Python or PyTorch. It converts Telegram voice messages
+(OGG/Opus) and other formats itself and returns the transcript as text:
+
+```
+[{ "tool": "audio.transcribe", "args": { "path": "voice.ogg" } }]
+```
+
+- Add `"language": "ru"` (or another ISO code) when you know the language; the default is `auto`.
+- The result says what is missing, and you relay it:
+  - `whisper-cli` not installed → offer `brew install whisper-cpp` (macOS/Linux with Homebrew);
+    on Windows the whisper.cpp release zip.
+  - `ffmpeg` not installed → offer `brew install ffmpeg` / `sudo apt install ffmpeg` / `winget install ffmpeg`.
+  - the speech model is not downloaded → the result gives its size; ask the user, then call again
+    with `"download": true`.
+- Answer strictly from the returned text.
+
+Use the Python route below only when `audio.transcribe` is not available in this build, or the user
+already has `openai-whisper` and asks for it.
+
+## Fallback: the Python `whisper` CLI
+
 Turn spoken audio into text locally with [`whisper`](https://github.com/openai/whisper).
 Whisper writes a plain-text transcript next to the audio; you then read that file
 and answer from its content. The chat model never "hears" the audio — `whisper`
 does the listening as a separate process, so this works regardless of model size.
 
-## Setup health check (run first, every session)
+### Setup health check (run first, every session)
 
 Verify with **one solo step**:
 
@@ -27,9 +51,9 @@ Outcome map:
 - `exit 0` + usage text → ready, proceed.
 - `command not found: whisper` → enter **Setup playbook → "whisper missing"**.
 
-## Setup playbook (when prerequisites are missing)
+### Setup playbook (when prerequisites are missing)
 
-### whisper missing
+#### whisper missing
 
 Reply (solo `reply` step):
 

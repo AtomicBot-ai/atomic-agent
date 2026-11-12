@@ -241,6 +241,20 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // Rare: a voice message is the usual reason, and the Telegram
+    // attachments hint names this tool (ATO-702).
+    name: "audio.transcribe",
+    summary:
+      "Transcribe speech in a local audio file (Telegram voice message .ogg, mp3, m4a, wav, flac, ...) to text with whisper.cpp on this computer; no Python needed. Needs `whisper-cli` and `ffmpeg` installed; if one is missing the result says how to install it, tell the user. The first use needs a speech model download: the result gives its size, ask the user, then call again with `download: true`. Answer from the returned text.",
+    argsSchema:
+      '{ path: string, language?: string /* ISO code like en|ru, default auto */, model?: string /* tiny|base|small|medium|large-v3-turbo; default base */, translate?: boolean /* into English */, download?: boolean /* only after the user agreed to the model download */ }',
+    tier: "rare",
+    examples: [
+      '{"path":"/Users/me/.atomic-agent/inbox/telegram/2026-11-12/voice-101500.ogg"}',
+      '{"path":"meeting.m4a","language":"ru","model":"small"}',
+    ],
+  },
+  {
     // MCP discovery / resource / prompt tools. The actual MCP tool
     // calls themselves come from the dynamic descriptor builder
     // (see `mcp-descriptor-builder.ts`) and ship at tier `rare`.
