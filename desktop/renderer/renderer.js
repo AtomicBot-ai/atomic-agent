@@ -15749,7 +15749,8 @@ function obPullFinished(job, ev) {
      obFetchProjector's failure is. The weights stay; Retry fetches the projector. */
   if (ev.projectorSkipped === true) {
     DL.landed = null;
-    DL.error = 'the vision projector did not download — the model was not started: it would serve text only';
+    // ATO-1371: still a choice for text. Added after the old words, which t18c.ts and model-spotlight.test.mjs read.
+    DL.error = 'the vision projector did not download — the model was not started: it would serve text only. You can still pick this model for text.';
     dlFail({kind: 'projector', id: job.id}, DL.error, () => dlRequeue(job));
     bswSnapshot();
     render();
@@ -16112,7 +16113,7 @@ function obFetchProjector(id, pending) {
       // The daemon would serve a vision model text-only; say so and
       // do not activate behind the operator's back.
       DL.error = ((res && res.error) || 'the vision projector did not download')
-        + ' — the model was not started: it would serve text only';
+        + ' — the model was not started: it would serve text only. You can still pick this model for text.';   // ATO-1371
       dlFail({kind:'projector', id}, DL.error, () => obFetchProjector(id, pending));
       render();
       dlProjectorNext();
