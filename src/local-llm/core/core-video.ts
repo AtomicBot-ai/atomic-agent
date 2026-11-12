@@ -1,5 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { CoreRequestError, type CoreControlClient } from "./core-client.js";
+import { submitUnlessAborted } from "./core-image.js";
 
 /**
  * Video generation through Atomic Core's video jobs (`src/server/control/routes/diffusion-video.ts`
@@ -182,13 +183,12 @@ export async function runCoreVideoJob(client: CoreControlClient, request: CoreVi
   const timeoutMs = opts.timeoutMs ?? CORE_VIDEO_TIMEOUT_MS;
   const pollMs = opts.pollMs ?? POLL_MS;
   const sig = opts.signal ? { signal: opts.signal } : {};
-  // The submit is not aborted: Esc mid-submit would lose the id of a job
-  // Core already made, and nothing could cancel it (ATO-425). Core answers
-  // at once; an Esc that came meanwhile cancels the job right after.
+  // Esc mid-submit returns at once without cutting the request off: a job
+  // Core made meanwhile is cancelled when its id arrives (ATO-425).
   opts.signal?.throwIfAborted();
   let jobId: string;
   try {
-    const answer = await client.call<{ jobId?: unknown }>("/diffusion/video/jobs", request, { timeoutMs: 60_000 });
+    const answer = await submitUnlessAborted(client, "/diffusion/video/jobs", request, opts.signal);
     if (typeof answer.jobId !== "string" || answer.jobId.length === 0) throw new CoreVideoError("Atomic Core did not return a video job id.", "BAD_ANSWER");
     jobId = answer.jobId;
   } catch (err) { throw toVideoError(err); }

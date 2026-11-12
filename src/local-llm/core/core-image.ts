@@ -205,6 +205,40 @@ export async function configureCoreDiffusion(client: CoreControlClient, dataFold
   } catch (err) { throw toImageError(err, false); }
 }
 
+/**
+ * Submit a generation job without cutting the request off on abort. An
+ * abort returns at once (the caller stops waiting); the submit carries on
+ * and, if Core answers with a job id after all, that job is cancelled
+ * (`<path>/<id>/cancel`), so a job made just as Esc landed cannot run on
+ * and bill unseen (ATO-425). Shared by images and video.
+ */
+export async function submitUnlessAborted(client: CoreControlClient, path: string, request: unknown, signal: AbortSignal | undefined): Promise<{ jobId?: unknown }> {
+  const submit = client.call<{ jobId?: unknown }>(path, request, { timeoutMs: 60_000 });
+  if (!signal) return submit;
+  signal.throwIfAborted();
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([submit, aborted]);
+  } catch (err) {
+    if (signal.aborted) {
+      void submit.then((answer) => {
+        if (typeof answer?.jobId === "string" && answer.jobId.length > 0) {
+          return client.call(`${path}/${encodeURIComponent(answer.jobId)}/cancel`, {}, { timeoutMs: 5_000 });
+        }
+        return undefined;
+      }).catch(() => {});
+    }
+    throw err;
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+    aborted.catch(() => {});
+  }
+}
+
 export interface RunCoreImageJobOptions {
   signal?: AbortSignal;
   onProgress?: (progress: CoreImageProgress) => void;
@@ -217,10 +251,11 @@ export interface RunCoreImageJobOptions {
  * a cloud provider would bill twice. Abort (Esc) and the timeout cancel
  * the job in Core. A completed job with no files is a failure.
  *
- * The submit itself is not aborted (ATO-425): Core may already have made
- * the job when Esc lands, and an aborted request never learns its id, so
- * nothing could cancel a job that goes on to bill. Core answers a submit
- * at once, so Esc waits that moment for the id, then cancels the job.
+ * Esc during the submit (ATO-425): the call returns at once, but the
+ * submit request itself is not cut off. Core may already have made the
+ * job, and an aborted request would never learn its id, so nothing could
+ * cancel a job that goes on to bill. When the id arrives late it is
+ * cancelled then (`submitUnlessAborted`).
  */
 export async function runCoreImageJob(client: CoreControlClient, request: CoreImageRequest, opts: RunCoreImageJobOptions = {}): Promise<CoreImageJob> {
   const cloud = request.target !== undefined;
@@ -228,7 +263,7 @@ export async function runCoreImageJob(client: CoreControlClient, request: CoreIm
   opts.signal?.throwIfAborted();
   let jobId: string;
   try {
-    const answer = await client.call<{ jobId?: unknown }>("/diffusion/jobs", request, { timeoutMs: 60_000 });
+    const answer = await submitUnlessAborted(client, "/diffusion/jobs", request, opts.signal);
     if (typeof answer.jobId !== "string" || answer.jobId.length === 0) throw new CoreImageError("Atomic Core did not return an image job id.", "BAD_ANSWER");
     jobId = answer.jobId;
   } catch (err) { throw toImageError(err, cloud); }

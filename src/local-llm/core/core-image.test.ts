@@ -77,7 +77,7 @@ describe("runCoreImageJob", () => {
     expect(call.mock.calls.some(([path]) => path === "/diffusion/jobs/abc/cancel")).toBe(true);
   });
 
-  it("ATO-425: an Esc during the submit still learns the job id and cancels it", async () => {
+  it("ATO-425: Esc during a slow submit returns at once, and the job Core made after all is cancelled", async () => {
     const controller = new AbortController();
     let release!: (v: unknown) => void;
     const call = vi.fn(async (path: string, _body?: unknown, opts?: { signal?: AbortSignal }) => {
@@ -89,10 +89,11 @@ describe("runCoreImageJob", () => {
     });
     const running = runCoreImageJob({ call } as unknown as CoreControlClient, request, { pollMs: 1, signal: controller.signal });
     await Promise.resolve();
-    controller.abort();          // Esc while Core is still answering the submit
-    release({ jobId: "late" });  // ...and Core had made the job
-    await expect(running).rejects.toThrow();
-    expect(call.mock.calls.some(([path]) => path === "/diffusion/jobs/late/cancel")).toBe(true);
+    controller.abort();                        // Esc while Core is still answering the submit
+    await expect(running).rejects.toThrow();   // ...returns without waiting for Core
+    expect(call.mock.calls.some(([path]) => String(path).endsWith("/cancel"))).toBe(false);
+    release({ jobId: "late" });                // Core had made the job after all
+    await vi.waitFor(() => expect(call.mock.calls.some(([path]) => path === "/diffusion/jobs/late/cancel")).toBe(true));
     expect(call.mock.calls.filter(([path]) => path === "/diffusion/jobs/late")).toHaveLength(0);
   });
 
