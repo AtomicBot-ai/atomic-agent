@@ -437,6 +437,103 @@ describe("runWorkerTasks", () => {
     ]);
   });
 
+  it("reports steps against the budget, distinct files written and reply tokens on the row's usage line (ATO-1364, ATO-78)", async () => {
+    const parsed = (tool: string, args: Record<string, unknown>, batchIndex = 0): AgentLoopEvent => ({
+      type: "llm_event",
+      event: { type: "tool_call_parsed", call: { tool, args }, batchIndex, batchSize: 2 },
+    });
+    const executed = (tool: string, status: "ok" | "error", batchIndex = 0): AgentLoopEvent => ({
+      type: "llm_event",
+      event: {
+        type: "tool_call_executed",
+        result: { tool, status, summary: "", details: {}, truncated: false },
+        batchIndex,
+        batchSize: 2,
+      },
+    });
+    const completed: AgentLoopEvent = {
+      type: "llm_event",
+      event: {
+        type: "llm_completed",
+        completion: {
+          content: "",
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: { promptMs: 1, predictedMs: 1, promptTokens: 1_000, predictedTokens: 50 },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "m",
+        },
+      },
+    };
+    const finishedStep = (stepIndex: number): AgentLoopEvent => ({
+      type: "step_finished",
+      stepIndex,
+      summary: "",
+      durationMs: 1,
+    });
+    const { deps, events } = harness(async ({ options }) => {
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      // Step 1: two writes to two files in one batch.
+      options.eventHook?.(completed);
+      options.eventHook?.(parsed("os.fs.write", { path: "src/a.ts" }, 0));
+      options.eventHook?.(parsed("os.fs.edit", { path: "./src/b.ts" }, 1));
+      options.eventHook?.(executed("os.fs.write", "ok", 0));
+      options.eventHook?.(executed("os.fs.edit", "ok", 1));
+      options.eventHook?.(finishedStep(0));
+      // Step 2: the same file again, and a failed write — neither is a new file.
+      options.eventHook?.(completed);
+      options.eventHook?.(parsed("os.fs.edit", { path: "src/a.ts" }, 0));
+      options.eventHook?.(parsed("os.fs.write", { path: "src/c.ts" }, 1));
+      options.eventHook?.(executed("os.fs.edit", "ok", 0));
+      options.eventHook?.(executed("os.fs.write", "error", 1));
+      options.eventHook?.(finishedStep(1));
+      return turnResult({ stepCount: 2 });
+    });
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    const lines = events.flatMap(({ event }) => (event.type === "fusion_worker" ? [event] : []));
+    expect(lines[0]).toMatchObject({ phase: "started", stepBudget: 7 });
+    const lastUsage = lines.filter((e) => e.phase === "usage").at(-1);
+    expect(lastUsage).toMatchObject({
+      stepCount: 2,
+      stepBudget: 7,
+      filesWritten: 2,
+      tokens: 2_100,
+      tokensOut: 100,
+    });
+    expect(lines.at(-1)).toMatchObject({
+      phase: "finished",
+      status: "ok",
+      stepCount: 2,
+      stepBudget: 7,
+      filesWritten: 2,
+    });
+  });
+
+  it("names the task's status on the end line, so a timeout or a hand-back is not just `finished`", async () => {
+    const { deps, events } = harness(async () => turnResult({ reason: "max_steps", stepCount: 7 }));
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(events.at(-1)!.event).toMatchObject({
+      type: "fusion_worker",
+      phase: "finished",
+      status: "max_steps",
+      stepCount: 7,
+      stepBudget: 7,
+    });
+    expect(events.at(-1)!.event).not.toHaveProperty("filesWritten");
+  });
+
   it("bounds the tool lines: consecutive repeats collapse and the count is capped", async () => {
     // Eight workers times a dozen tools each is a feed that shows
     // nothing else. The complete tally still comes back on the result
@@ -1237,8 +1334,15 @@ describe("early hand-back when nothing is written (D4 / F19, F42)", () => {
         "handed back early: declared files but wrote none by half the budget (4 steps completed, none a successful write)",
       ),
     );
-    const finished = events.map((e) => e.event).find((e) => e.type === "fusion_worker" && e.phase !== "started" && e.phase !== "tool");
-    expect(finished).toMatchObject({ phase: "finished", summary: "needs the orchestrator" });
+    // `usage` lines now ride along every finished step (ATO-1364).
+    const finished = events.map((e) => e.event).find((e) => e.type === "fusion_worker" && e.phase !== "started" && e.phase !== "tool" && e.phase !== "usage");
+    expect(finished).toMatchObject({
+      phase: "finished",
+      summary: "needs the orchestrator",
+      status: "needs_orchestrator",
+      stepCount: 4,
+      stepBudget: 8,
+    });
   });
 
   it("lets a worker that wrote something before the half-way mark run on", async () => {

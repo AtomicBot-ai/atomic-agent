@@ -1,5 +1,12 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
+import type { WorkerTaskStatus } from "../tools/fusion/worker-result.js";
 import { formatTokens } from "./components/format-tokens.js";
+import {
+  clipRowTitle,
+  describeOutcome,
+  describeProgress,
+  describeSpend,
+} from "./fusion-worker-row-details.js";
 
 /** One leg of a fan-out, as the chat surface shows it while it runs. */
 export interface FusionLiveWorker {
@@ -45,6 +52,22 @@ export interface FusionLiveWorker {
    */
   readonly tokens?: number | null;
   readonly spentUsd?: number | null;
+  /** The reply part of `tokens`: what this leg generated (ATO-78). */
+  readonly tokensOut?: number | null;
+  /**
+   * Steps finished so far and the budget it runs under, and distinct
+   * files written (ATO-1364). Live on `phase: "usage"`, final on the
+   * end line; kept once the leg is done.
+   */
+  readonly stepCount?: number | null;
+  readonly stepBudget?: number | null;
+  readonly filesWritten?: number | null;
+  /**
+   * Why an ended leg ended — the task's status, or `failed` /
+   * `cancelled` read off the phase when the end line carried none.
+   * `null` while it runs, and for a `finished` line with no status.
+   */
+  readonly outcome?: WorkerTaskStatus | null;
 }
 
 /**
@@ -92,11 +115,26 @@ export function reduceFusionLiveWorkers(
     contextTokens: event.contextTokens ?? previous?.contextTokens ?? null,
     tokens: event.tokens ?? previous?.tokens ?? null,
     spentUsd: event.spentUsd ?? previous?.spentUsd ?? null,
+    tokensOut: event.tokensOut ?? previous?.tokensOut ?? null,
+    stepCount: event.stepCount ?? previous?.stepCount ?? null,
+    stepBudget: event.stepBudget ?? previous?.stepBudget ?? null,
+    filesWritten: event.filesWritten ?? previous?.filesWritten ?? null,
+    outcome: done ? endOutcome(event) : null,
   };
   if (at < 0) return [...current, next];
   const copy = [...current];
   copy[at] = next;
   return copy;
+}
+
+function endOutcome(
+  event: Extract<AgentLoopEvent, { type: "fusion_worker" }>,
+): WorkerTaskStatus | null {
+  if (event.status !== undefined) return event.status;
+  if (event.phase === "failed" || event.phase === "cancelled") {
+    return event.phase;
+  }
+  return null;
 }
 
 /**
@@ -360,7 +398,11 @@ export function formatFusionLiveWorker(
   expectation: FanoutExpectation | number | null = null,
 ): string {
   const model = worker.model ?? "local";
-  const what = worker.done ? "done" : (worker.tool ?? "working");
+  // An ended leg says how it ended: "returned to planner" and "hit max
+  // steps" are why a task came back, and "done" said neither.
+  const what = worker.done
+    ? describeOutcome(worker.outcome)
+    : (worker.tool ?? "working");
   const elapsedMs = (worker.finishedAt ?? now) - worker.startedAt;
   const elapsed = formatElapsed(elapsedMs);
   const measured = asExpectation(expectation);
@@ -373,12 +415,16 @@ export function formatFusionLiveWorker(
     worker.contextTokens === null
       ? ""
       : ` · ${formatTokens(worker.contextTokens)} ctx`;
+  // Steps and files before spend: how far the leg got is the next
+  // question after whether it needs attention, and the $ / token
+  // figures are also on the feed's end line.
+  const progress = describeProgress(worker);
   const spend = describeSpend(worker);
-  return `${worker.title} · ${model} — ${what} · ${elapsed}${describeExpectation(
+  return `${clipRowTitle(worker.title)} · ${model} — ${what} · ${elapsed}${describeExpectation(
     worker,
     elapsedMs,
     measured,
-  )}${stuck}${spend}${context}`;
+  )}${stuck}${progress}${spend}${context}`;
 }
 
 /**
@@ -405,19 +451,6 @@ function describeExpectation(
     return ` (past the ~${formatElapsed(expectedMs)} expected)`;
   }
   return ` (~${formatElapsed(expectedMs)} expected)`;
-}
-
-/** ` · 41.2k tok · $0.031`, or less of it when that is all that is known. */
-function describeSpend(worker: FusionLiveWorker): string {
-  const tokens =
-    worker.tokens == null || worker.tokens <= 0
-      ? ""
-      : ` · ${formatTokens(worker.tokens)} tok`;
-  const usd =
-    worker.spentUsd == null
-      ? ""
-      : ` · ${worker.spentUsd > 0 && worker.spentUsd < 0.01 ? `$${worker.spentUsd.toFixed(4)}` : `$${worker.spentUsd.toFixed(2)}`}`;
-  return `${tokens}${usd}`;
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { ContextCompactionControl, CompactionEvent } from "./compaction-control.js";
 import type { SessionUsageState } from "../session/usage-meter.js";
 import type { ToolRole } from "../tools/tool-roles.js";
+import type { WorkerTaskStatus } from "../tools/fusion/worker-result.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
 import type { ReasoningEffort, ToolCallTransport } from "../llm/provider/completion-types.js";
@@ -930,6 +931,29 @@ export type AgentLoopEvent =
        */
       tokens?: number;
       spentUsd?: number;
+      /**
+       * `phase: "usage"`: the reply part of `tokens` — what this worker
+       * generated, every completion summed (ATO-78). The prompt part is
+       * re-read on every step, so `tokens` alone mostly measures context.
+       */
+      tokensOut?: number;
+      /**
+       * The step budget this worker runs under (`maxSteps`, clamped), on
+       * `started`, `usage` and the end line, so the row can say
+       * `12/40 steps` (ATO-1364).
+       */
+      stepBudget?: number;
+      /**
+       * Distinct files this worker has written so far, on `usage` and
+       * the end line (ATO-1364, `worker-files-written.ts`).
+       */
+      filesWritten?: number;
+      /**
+       * End lines (`finished` / `failed` / `cancelled`): the task's own
+       * status, so the row can say why it came back — `needs_orchestrator`,
+       * `max_steps`, `timeout` — where the phase only says it ended.
+       */
+      status?: WorkerTaskStatus;
       /** `phase: "tool"` only: the tool this leg just started. */
       tool?: string;
       /**
@@ -939,6 +963,7 @@ export type AgentLoopEvent =
        * slow. Nothing is scheduled or timed out against it.
        */
       etaSeconds?: number;
+      /** Steps completed: the end line's total, and live on `usage`. */
       stepCount?: number;
       durationMs?: number;
       /** One line about the outcome; the worker's reply, clipped. */
