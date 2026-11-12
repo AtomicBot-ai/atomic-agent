@@ -20,6 +20,8 @@ import { createVoteRunner, createVoteAwareReflectionRunner, type VoteRunnerLlmCo
 import { createVoteTraceSink, observeVoteRunnerHealth, type MemoryHealthAnnouncer } from "../announce-memory-health.js";
 import { abortableSubcall, type SubcallComplete } from "../abortable-subcall.js";
 import type { RuntimeMemoryStores } from "./runtime-memory-stores.js";
+import type { GroundingConversationSource } from "../../memory/name-grounding.js";
+import { startRecallNameGuard } from "./runtime-recall-name-guard.js";
 
 interface MemoryServiceDependencies extends Omit<RuntimeMemoryStores, "embeddingHealth" | "embeddingBackfill"> {
   config: Pick<AtomicAgentConfig, "memory">;
@@ -34,6 +36,8 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
   toolTransport?: ToolCallTransport;
   touchRecorder: (sessionId: string) => TraceRecorder | undefined;
   memoryHealth: MemoryHealthAnnouncer;
+  /** ATO-321. Stored user messages; enables the recall-time name check. */
+  nameGroundingSource?: GroundingConversationSource;
 }): { reflectionRunner: ReflectionRunner | undefined; memoryContextProvider: MemoryContextProvider | undefined } {
   const { config, slotManager, llmComplete, profileStore, notesStore, logger, metrics, linkStore, lessonStore, procedureStore, voteStore, embeddingClient, touchRecorder, memoryHealth } = args;
 
@@ -232,9 +236,19 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
   // memory-index pointer rendering. Wired only when `memory.notes` is
   // enabled — otherwise the runtime has nothing to read from and the
   // prompt tail skips both sections.
+  const nameGuard =
+    config.memory.notes.enabled && args.nameGroundingSource
+      ? startRecallNameGuard({
+          source: args.nameGroundingSource,
+          notesStore,
+          lessonStore: config.memory.lessons.enabled ? lessonStore : null,
+          logger,
+        })
+      : undefined;
   const baseMemoryContextProvider = config.memory.notes.enabled
     ? createDefaultMemoryContextProvider({
         store: notesStore,
+        ...(nameGuard ? { nameGuard } : {}),
         recall: {
           enabled: config.memory.recallInjection.enabled,
           k: config.memory.recallInjection.k,

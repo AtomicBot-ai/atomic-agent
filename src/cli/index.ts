@@ -123,7 +123,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "memory",
-    summary: "Inspect, export + reindex the cross-session memory store (export|reindex)",
+    summary: "Inspect, export, reindex + clear the cross-session memory store (export|reindex|forget)",
     run: memoryCommand,
   },
   {

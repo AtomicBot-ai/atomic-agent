@@ -17,6 +17,7 @@ import {
   connectMemoryEmbeddings,
   type MemoryEmbeddingConnection,
 } from "../memory/embeddings/memory-embedding-connection.js";
+import { forgetMemoryBefore, parseForgetDate } from "./memory-forget.js";
 
 const HELP =
   [
@@ -55,12 +56,19 @@ const HELP =
     "                            and failure alike: model, embedded, skipped,",
     "                            remaining, and stoppedReason + message when it",
     "                            did not finish.",
+    "  forget --before <YYYY-MM-DD> [--yes]",
+    "                            Clear memory older than a date, e.g. what test",
+    "                            runs left behind: deletes notes created before",
+    "                            it and deprecates lessons created before it.",
+    "                            Profile facts are not touched. Without --yes",
+    "                            it only prints what would be cleared.",
     "",
     "Examples:",
     "  atomic-agent memory export --vault ~/Documents/MyVault",
     "  OBSIDIAN_VAULT_PATH=~/Documents/MyVault atomic-agent memory export",
     "  atomic-agent memory reindex",
     "  atomic-agent memory reindex --prune",
+    "  atomic-agent memory forget --before 2026-10-15",
   ].join("\n") + "\n";
 
 export async function memoryCommand(args: string[]): Promise<number> {
@@ -74,6 +82,8 @@ export async function memoryCommand(args: string[]): Promise<number> {
       return handleExport(args.slice(1));
     case "reindex":
       return handleReindex(args.slice(1));
+    case "forget":
+      return handleForget(args.slice(1));
     default:
       process.stderr.write(`unknown subcommand: ${sub}\n`);
       process.stderr.write(HELP);
@@ -116,6 +126,50 @@ function handleExport(args: string[]): number {
       return 2;
     }
     process.stderr.write(`memory export failed: ${message}\n`);
+    return 1;
+  }
+}
+
+const FORGET_USAGE = "usage: atomic-agent memory forget --before <YYYY-MM-DD> [--yes]\n";
+
+/** `memory forget`: exit 0 on success (dry run included), 1 on failure, 2 on usage errors. */
+export function handleForget(args: string[]): number {
+  if (args.includes("-h") || args.includes("--help")) {
+    process.stdout.write(HELP);
+    return 0;
+  }
+  const before = readOption(args, "--before");
+  const unknown = args.find((a, i) => a !== "--yes" && a !== "--before" && args[i - 1] !== "--before");
+  if (unknown !== undefined) {
+    process.stderr.write(`unknown option: ${unknown}\n${FORGET_USAGE}`);
+    return 2;
+  }
+  const cutoff = before === undefined ? null : parseForgetDate(before);
+  if (cutoff === null) {
+    process.stderr.write(FORGET_USAGE);
+    return 2;
+  }
+  const apply = args.includes("--yes");
+  const config = getConfig();
+  try {
+    const result = forgetMemoryBefore({
+      dbFile: config.paths.memoryDbFile,
+      maxEntries: config.memory.notes.maxEntries,
+      cutoff,
+      apply,
+    });
+    if (result.applied) {
+      process.stdout.write(
+        `deleted ${result.notes} notes, deprecated ${result.lessons} lessons created before ${before}\n`,
+      );
+    } else {
+      process.stdout.write(
+        `would delete ${result.notes} notes and deprecate ${result.lessons} lessons created before ${before}; rerun with --yes to do it\n`,
+      );
+    }
+    return 0;
+  } catch (err) {
+    process.stderr.write(`memory forget failed: ${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
 }
