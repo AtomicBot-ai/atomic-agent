@@ -494,10 +494,10 @@ describe("reduceUiAction chat_messages_truncated (ATO-1302)", () => {
   const withPairs = () => ({
     ...createInitialTuiState(SESSION),
     messages: [
-      { id: "u1", role: "user" as const, text: "q1" },
-      { id: "a1", role: "assistant" as const, text: "r1" },
-      { id: "u2", role: "user" as const, text: "q2" },
-      { id: "a2", role: "assistant" as const, text: "r2" },
+      { id: "u1", role: "user" as const, text: "q1", timestamp: 0 },
+      { id: "a1", role: "assistant" as const, text: "r1", timestamp: 0 },
+      { id: "u2", role: "user" as const, text: "q2", timestamp: 0 },
+      { id: "a2", role: "assistant" as const, text: "r2", timestamp: 0 },
     ],
   });
 

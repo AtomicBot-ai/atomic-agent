@@ -267,11 +267,11 @@ describe("ChatTryAgainButton", () => {
 
   describe("a real retry of the last question (ATO-1302)", () => {
     const pair: ChatMessage[] = [
-      { id: "u1", role: "user", text: "first question" },
-      { id: "a1", role: "assistant", text: "first answer" },
-      { id: "u2", role: "user", text: "second question" },
-      { id: "a2", role: "assistant", text: "second answer" },
-      { id: "n2", role: "system", text: "a notice about that turn" },
+      { id: "u1", role: "user", text: "first question", timestamp: 0 },
+      { id: "a1", role: "assistant", text: "first answer", timestamp: 0 },
+      { id: "u2", role: "user", text: "second question", timestamp: 0 },
+      { id: "a2", role: "assistant", text: "second answer", timestamp: 0 },
+      { id: "n2", role: "system", text: "a notice about that turn", timestamp: 0 },
     ];
     const withMessages = (extra: Partial<TuiState> = {}): TuiState => ({
       ...createInitialTuiState(SESSION),
@@ -363,9 +363,9 @@ describe("ChatTryAgainButton", () => {
 describe("isLastQuestion", () => {
   it("skips steers and answers to find the turn-opening prompt", () => {
     const messages: ChatMessage[] = [
-      { id: "u1", role: "user", text: "ask" },
-      { id: "s1", role: "user", text: "also this", steered: true },
-      { id: "a1", role: "assistant", text: "reply" },
+      { id: "u1", role: "user", text: "ask", timestamp: 0 },
+      { id: "s1", role: "user", text: "also this", steered: true, timestamp: 0 },
+      { id: "a1", role: "assistant", text: "reply", timestamp: 0 },
     ];
     expect(isLastQuestion(messages, "u1")).toBe(true);
     expect(isLastQuestion(messages, "s1")).toBe(false);
@@ -376,10 +376,10 @@ describe("isLastQuestion", () => {
 describe("priorQuestions", () => {
   it("counts the turn-opening prompts before a message, steers left out", () => {
     const messages: ChatMessage[] = [
-      { id: "u0", role: "user", text: "continue" },
-      { id: "s0", role: "user", text: "also", steered: true },
-      { id: "a0", role: "assistant", text: "reply" },
-      { id: "u1", role: "user", text: "continue" },
+      { id: "u0", role: "user", text: "continue", timestamp: 0 },
+      { id: "s0", role: "user", text: "also", steered: true, timestamp: 0 },
+      { id: "a0", role: "assistant", text: "reply", timestamp: 0 },
+      { id: "u1", role: "user", text: "continue", timestamp: 0 },
     ];
     expect(priorQuestions(messages, "u0")).toBe(0);
     expect(priorQuestions(messages, "u1")).toBe(1);
