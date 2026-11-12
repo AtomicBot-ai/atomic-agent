@@ -565,6 +565,15 @@ export interface AgentRuntime {
     options?: { sessionId?: string; signal?: AbortSignal },
   ): Promise<import("./prompt-enhancer.js").PromptEnhanceResult>;
   /**
+   * One plain request to the current model, no tools (`POST /api/complete`,
+   * the desktop Studio's "Improve prompt"). A sub-call under its own
+   * `complete:` fallback partition with an output bound and a deadline:
+   * no turn, nothing written to any session. Optional like `enhancePrompt`.
+   */
+  completePlain?(
+    input: import("./plain-complete.js").PlainCompleteInput,
+  ): Promise<import("./plain-complete.js").PlainCompleteResult>;
+  /**
    * Build — never run, never persist — the prompt the next turn would
    * open with, for a composer's context readout before any message is
    * sent (the desktop's `POST /api/context-preview`). `sessionId` null
