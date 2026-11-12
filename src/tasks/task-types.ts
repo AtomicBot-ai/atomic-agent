@@ -21,9 +21,26 @@ import type { LlmFailureCategory } from "../llm/reliability/index.js";
  * This is the only path that resets `attempts`/`last_error`/`started_at`/
  * `completed_at` on an already-terminal row; `session_id` is preserved
  * across requeues so the recurring task's conversation stays continuous.
+ *
+ * An operator can pause a waiting task and resume it (ATO-590):
+ *
+ *   pending  -> paused    (`TaskStore.pause`; the scheduler only picks
+ *                          `pending` rows, so a paused task never fires)
+ *   paused   -> pending   (`TaskStore.resume`; a recurring task is armed
+ *                          for its next firing after the resume, missed
+ *                          firings are skipped)
+ *   paused   -> cancelled (operator cancellation)
+ *
+ * A `running` task cannot be paused: its run ends first.
  */
 export type TaskStatus =
-  "pending" | "running" | "completed" | "failed" | "blocked" | "cancelled";
+  | "pending"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "blocked"
+  | "cancelled";
 
 /**
  * Where the task was created. Mirrors `TurnOrigin` but kept as its own

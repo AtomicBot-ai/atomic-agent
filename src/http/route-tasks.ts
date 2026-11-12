@@ -304,6 +304,7 @@ function parseStatusParam(
   const allowed: TaskStatus[] = [
     "pending",
     "running",
+    "paused",
     "completed",
     "failed",
     "blocked",
@@ -319,7 +320,7 @@ function parseStatusParam(
   return parts as TaskStatus[];
 }
 
-function recordToJson(record: TaskRecord): Record<string, unknown> {
+export function recordToJson(record: TaskRecord): Record<string, unknown> {
   return {
     id: record.id,
     sessionId: record.sessionId,

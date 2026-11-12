@@ -14,10 +14,15 @@ This area owns durable task queue. Read [AGENTS.md](AGENTS.md) before changing i
 - [task-resume.ts](task-resume.ts)
 - [task-run-summary.ts](task-run-summary.ts)
 - [task-report-hold.ts](task-report-hold.ts)
+- [task-run-log.ts](task-run-log.ts)
 
 ## Ownership and dependencies
 
 TaskStore owns the durable queue, TaskRunner owns claiming/execution/retry/reporting, and schedule/backoff helpers compute eligibility. The scheduler submits work through runtime; channels and HTTP can create tasks. A queued task is durable state rather than an in-memory timeout, and stopping producers is part of runtime shutdown.
+
+## Pause, resume and run history
+
+An operator can pause a waiting task (`pending` -> `paused`) and resume it (ATO-590): `TaskStore.pause` / `resume`, `POST /api/tasks/:id/pause|resume`, `task pause|resume <id>`. Every query that finds work reads `pending` rows only, so a paused task never fires; a resumed recurring task is armed for its next firing after the resume and missed firings are skipped. A running task cannot be paused. Each claim also writes a row to `task_runs` in the same file ([task-run-log.ts](task-run-log.ts)): start, end, outcome, error and session, newest first through `listRuns`, `GET /api/tasks/:id/runs` and `task runs <id>`, at most 200 per task. The table sits outside the numbered migrations, like `run_owner`, and the history is best effort: a write that fails never fails the transition it follows.
 
 ## Resuming an interrupted run
 
