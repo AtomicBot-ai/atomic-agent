@@ -3,6 +3,8 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  PageActionInput,
+  PageActionResult,
   RefDescription,
   ScreenshotInput,
   ScreenshotResult,
@@ -76,7 +78,7 @@ export class GateBackend implements BrowserBackend {
     return { url: this.url, title: "Page", text: "- secret page text [ref=e1]", digest: "d", refs: ["e1"] };
   }
   async hasRef(): Promise<boolean> {
-    return true;
+    return this.refPresent;
   }
   async describeRef(): Promise<RefDescription | null> {
     if (this.describeThrows) throw new Error("evaluate timed out");
@@ -111,6 +113,17 @@ export class GateBackend implements BrowserBackend {
   }
   async scroll(): Promise<{ scrollY: number; scrollHeight: number; viewportHeight: number }> {
     return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
+  }
+  public acts: PageActionInput[] = [];
+  /** What `act` reports; `back` / `forward` / Enter also move to `landAfterAction`. */
+  public actResult: PageActionResult = { done: true, note: "done" };
+  public refPresent = true;
+  async act(input: PageActionInput): Promise<PageActionResult> {
+    this.acts.push(input);
+    if (this.landAfterAction !== null && (input.action === "back" || input.action === "forward" || input.action === "key")) {
+      this.url = this.landAfterAction;
+    }
+    return this.actResult;
   }
   public shots: ScreenshotInput[] = [];
   /** Bytes per capture attempt (the last entry repeats); frame URLs reported with the shot. */

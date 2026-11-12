@@ -40,6 +40,15 @@ Saved under `<tmp>/atomic-agent-browser-shots/<session>/` (outside the working f
 
 A page on a blocked host is never captured. A capture is discarded, never saved, when the page or any of its frames is on a blocked host by the time the pixels are taken (a racing redirect, a blocked iframe).
 
+## More page actions
+
+`browser.act { action, … }` (`act.ts`, `page-action-args.ts`, `playwright-page-actions.ts`, ATO-957) holds the actions click / type do not cover, in one tool so the tool list and a local model's grammar stay small:
+
+- `select` (`ref`, `values`: option values or labels), `upload` (`ref`, `paths`: a file input, or a button that opens a file chooser), `back`, `forward`, `key` (`key` in Playwright's syntax from a closed set, e.g. `Enter`, `Escape`, `Shift+Tab`, `Control+a`; optional `ref`), `hover` (`ref`), `dialog` (`accept`, optional `text` for a prompt), `wait` (`text` to appear, or with `state: "hidden"` to go; a `ref`; or `ms`, at most 10 s; `timeoutMs` at most 30 s).
+- `dialog` answers the next alert / confirm / prompt on the active tab within 60 s, so it is called before the click that opens one. Without it Playwright dismisses every dialog, as before.
+- Gates, before the backend acts: any action on a blocked host is refused. `upload` asks as `browser_secret` every time, with each file's name, size and full path in the preview; its paths are also checked like reads (`../read-scope/read-scope-targets.ts`), so the agent's own secret files and files outside the read scope ask first. `key` Enter / Space on a `ref` goes through the click / type gate above (Enter like `type` with Enter, Space like a click); without a `ref` the focused element cannot be read, so Enter / Space ask as `browser_commit`. Accepting a dialog asks as `browser_commit` (it may confirm a delete or a payment); dismissing does not. In the user's own Chrome these `browser_commit` prompts ask as `browser_secret`. select, hover, back, forward, wait and other keys do not ask.
+- After select, key, back and forward the landed page is re-checked against the block list, like after a click.
+
 ## Page views
 
 `browser.read_aria` takes `mode` (`aria-view.ts`, `compact-aria.ts`, ATO-956):
