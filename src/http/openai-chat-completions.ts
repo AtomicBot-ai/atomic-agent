@@ -26,6 +26,7 @@ import {
 import { getConfig } from "../config/index.js";
 
 import { checkWorkingDir } from "./session-working-dir.js";
+import { parseProjectFields, type SessionProject } from "../session/session-project.js";
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
@@ -88,6 +89,13 @@ interface ChatCompletionRequest {
   session_id?: string;
   /** ATO-731: the folder a NEW session works in (absolute); an existing one keeps its own. */
   working_dir?: string;
+  /**
+   * ATO-42: the instructions of the client's project this chat belongs to,
+   * re-sent each turn; null clears them, absent keeps what the session has.
+   */
+  project_instructions?: string | null;
+  /** ATO-42: the project's name, shown to the model beside its instructions. */
+  project_name?: string | null;
 }
 
 interface ParsedRequest {
@@ -101,6 +109,8 @@ interface ParsedRequest {
   sessionIdOverride: string | null;
   /** ATO-731: `working_dir`, checked; null for the server's own folder. */
   workingDir: string | null;
+  /** ATO-42: the project fields, checked (see `parseProjectFields`). */
+  project: SessionProject | null | undefined;
   extensionsEnabled: boolean;
   /** `X-Atomic-Screen-Overlay` on an extensions request (ATO-1018). */
   screenOverlay: boolean;
@@ -169,6 +179,9 @@ async function handleNonStream(
     result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
       signal: controller.signal,
       origin: "http",
+      // ATO-42: stamped inside the session's turn lock, so a turn that
+      // is running cannot save over it.
+      ...(env.request.project !== undefined ? { project: env.request.project } : {}),
       // An extensions client (the desktop) draws approval prompts, so a
       // person can be asked before an out-of-memory restart (ATO-334); a
       // plain OpenAI client cannot answer and gets the automatic one.
@@ -323,6 +336,7 @@ async function handleStream(
       signal: controller.signal,
       origin: "http",
       eventHook: hook,
+      ...(env.request.project !== undefined ? { project: env.request.project } : {}),
       // See the non-stream path: only a client that draws approval
       // prompts is asked before an out-of-memory restart (ATO-334).
       // Desktop answer style and reply polish too, see the non-stream path.
@@ -1237,6 +1251,11 @@ async function parseRequestBody(
     }
     workingDir = check.dir;
   }
+  const project = parseProjectFields(body.project_instructions, body.project_name);
+  if (!project.ok) {
+    sendError(res, 400, openaiError(project.error, "invalid_request_error", project.param));
+    return null;
+  }
   return {
     model:
       typeof body.model === "string" && body.model.length > 0
@@ -1249,6 +1268,7 @@ async function parseRequestBody(
     firstUserMessage: firstUser?.content ?? lastUser.content,
     sessionIdOverride,
     workingDir,
+    project: project.value,
     extensionsEnabled: isExtensionsHeaderTruthy(
       getHeader(req, EXTENSIONS_HEADER),
     ),

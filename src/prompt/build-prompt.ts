@@ -52,6 +52,14 @@ import {
   SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
 } from "./token-budget.js";
+import { renderSessionProjectBody } from "../session/session-project.js";
+
+/**
+ * ATO-42: the most the `### project` block takes in the local prompt. The
+ * client caps the text at 16k characters; a small local window gets the
+ * start of it, the cloud prompt (its own `project` section) all of it.
+ */
+export const PROJECT_SECTION_MAX_TOKENS = 1_500;
 
 export type {
   BuildPromptInput,
@@ -265,6 +273,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   if (input.modelMode?.mode === "cloud") return buildCloudPrompt(input, stablePrefix);
 
   const sessionParts = buildSessionSectionParts(input.session, limits.session);
+  // ATO-42: the client's project instructions, fixed for the turn, so they
+  // sit ahead of the conversation; capped so a small window keeps room.
+  const projectFull = renderSessionProjectBody(input.session);
+  const project =
+    projectFull !== null ? truncateToTokens(projectFull, PROJECT_SECTION_MAX_TOKENS) : null;
+  const projectTokens = project !== null ? estimateTokens(project) : 0;
   const loadedForTail = sessionParts.loaded;
   const factsForTail = sessionParts.facts;
   const sessionPartsForBudget = [loadedForTail, factsForTail]
@@ -382,7 +396,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   // `contextWindow` was resolved above, before the stable prefix.
   const sessionTokenEstimate =
-    estimateTokens(sessionPartsForBudget) + loadedToolsTokens;
+    estimateTokens(sessionPartsForBudget) + loadedToolsTokens + projectTokens;
   const conversationCapEffective = computeEffectiveConversationCap({
     configuredCap: limits.conversation,
     ...(conversationCapAuto ? { autoFill: true } : {}),
@@ -465,6 +479,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // conversation as real chat messages and the two halves as one final
   // user message.
   const tailBefore: string[] = [];
+  if (project !== null) {
+    tailBefore.push("### project", project, ``);
+  }
   if (memoryIndex !== null) {
     tailBefore.push("### memory-index", memoryIndex, ``);
   }

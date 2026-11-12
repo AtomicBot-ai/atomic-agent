@@ -15,7 +15,7 @@ The [compact scaffold](../compact-prompt.ts) (`agent.prompt.compact`, default `a
 
 The actual flat assembly in `build-prompt.ts` is:
 
-1. Optional memory-index, session-facts, recalled; world.
+1. Optional project (the client's project instructions, ATO-42, capped at `PROJECT_SECTION_MAX_TOKENS`), memory-index, session-facts, recalled; world.
 2. Optional request when the original user request was packed out of view.
 3. Optional context summary, then fresh conversation.
 4. Optional route, profile, lessons, procedures, loaded-skills, loaded-tools, task-policy, notice.

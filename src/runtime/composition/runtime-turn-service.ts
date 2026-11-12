@@ -12,6 +12,7 @@ import type { ProviderFallbackChain } from "../../llm/fallback/index.js";
 import type { SessionStore } from "../../session/session-store.js";
 import { readFusionWorkerMeta, SESSION_LLM_METADATA_KEY, SESSION_ROUTE_METADATA_KEY, readSessionRoute, resolveTurnRoute, SESSION_TITLE_METADATA_KEY, SESSION_TITLE_TIMEOUT_MS, generateSessionTitle, readSessionTitle, shouldNameSession, type SessionLlmStamp, type SessionState } from "../../session/index.js";
 import { renderRouteChangeNote } from "../../prompt/route-change-note.js";
+import { applySessionProject, type SessionProject } from "../../session/session-project.js";
 import { previousReplyText, workerRequestRecord } from "../../prompt/request-section.js";
 import { pickOriginalRequest } from "../../tools/fusion/index.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
@@ -631,6 +632,8 @@ export function createRuntimeTurnService(
       onGoalProgress?: (goal: GoalState) => void;
       /** See `executeTurn`'s `answerChannel`. */
       answerChannel?: AnswerChannel;
+      /** ATO-42: see the runtime contract's `project`. */
+      project?: SessionProject | null;
     } = {},
   ): Promise<RunTurnResult> => {
     if (runOptions.goal !== undefined) {
@@ -672,12 +675,12 @@ export function createRuntimeTurnService(
       // the store cannot answer for (never persisted, or deleted while
       // parked) falls back to the caller's copy, the pre-existing
       // behaviour.
-      run: () =>
-        executeTurn(
-          sessionStore.load(session.id) ?? session,
-          userMessage,
-          runOptions,
-        ),
+      run: () => {
+        const fresh = sessionStore.load(session.id) ?? session;
+        // ATO-42: on the copy the turn runs and saves, never before the lock.
+        applySessionProject(fresh, runOptions.project);
+        return executeTurn(fresh, userMessage, runOptions);
+      },
       ...(runOptions.eventHook ? { eventHook: runOptions.eventHook } : {}),
       ...(runOptions.signal ? { signal: runOptions.signal } : {}),
     } as const;
