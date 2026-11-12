@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildOpenAiChatBody } from "./openai-build-body.js";
+import { estimateTokens } from "../../../prompt/token-budget.js";
 
 describe("buildOpenAiChatBody", () => {
   it("forwards responseFormat as response_format with type=json_schema and strict=true by default", () => {
@@ -732,5 +733,93 @@ describe("buildOpenAiChatBody: reasoning handed back to a local template (ATO-88
     for (const options of [{ providerKind: "openai-compatible" }, { providerKind: "openrouter" }, {}]) {
       expect(assistant(ask(options))).not.toHaveProperty("reasoning_content");
     }
+  });
+});
+
+describe("buildOpenAiChatBody: reasoning DeepSeek requires back (ATO-1397)", () => {
+  const messages = {
+    system: "sys",
+    droppedSummary: null,
+    tail: "",
+    turns: [
+      { kind: "user" as const, text: "read a.txt" },
+      { kind: "assistant_tool_call" as const, tool: "os.fs.read", args: { path: "a.txt" }, reasoning: "need the file" },
+      { kind: "tool_result" as const, tool: "os.fs.read", status: "ok" as const, body: "hello", truncated: false },
+    ],
+  };
+  const tools = [{ type: "function" as const, function: { name: "os__fs__read", parameters: { type: "object" } } }];
+  const ask = (options: Parameters<typeof buildOpenAiChatBody>[7]) =>
+    buildOpenAiChatBody({ prompt: "flat", messages, tools } as Parameters<typeof buildOpenAiChatBody>[0], "deepseek-v4-flash", false, undefined, undefined, undefined, undefined, options);
+  const assistant = (body: Record<string, unknown>) =>
+    (body.messages as Array<Record<string, unknown>>).find((m) => m.role === "assistant");
+
+  it("sends reasoning_content on a cloud body when the service requires it", () => {
+    expect(
+      assistant(ask({ providerKind: "openai-compatible", reasoningRequired: true }))?.reasoning_content,
+    ).toBe("need the file");
+  });
+
+  it("keeps the field off the same cloud body otherwise", () => {
+    expect(assistant(ask({ providerKind: "openai-compatible" }))).not.toHaveProperty("reasoning_content");
+  });
+
+  const words = (count: number) => Array.from({ length: count }, (_, i) => `step${i}`).join(" ");
+  const cloudRequest = (reasoning: string, window: number, extra: Record<string, unknown> = {}) =>
+    ({
+      prompt: "flat",
+      messages: {
+        ...messages,
+        turns: messages.turns.map((turn) =>
+          turn.kind === "assistant_tool_call" ? { ...turn, reasoning } : turn,
+        ),
+      },
+      tools,
+      modelMode: { mode: "cloud" as const, source: "provider" as const, providerId: "deepseek", modelId: "deepseek-v4-flash" },
+      contextBudget: { window, replyReserve: 1000 },
+      ...extra,
+    }) as Parameters<typeof buildOpenAiChatBody>[0];
+
+  it("sends less reasoning instead of failing the capacity check when the window is tight", () => {
+    const long = words(4000);
+    const body = buildOpenAiChatBody(cloudRequest(long, 4000), "deepseek-v4-flash", false,
+      undefined, undefined, undefined, undefined, { providerKind: "openai-compatible", reasoningRequired: true });
+    const sent = assistant(body)?.reasoning_content as string;
+    // The whole reasoning would not have fitted: the cap did the work.
+    expect(estimateTokens(long)).toBeGreaterThan(4000);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(long.endsWith(sent)).toBe(true);
+    // Roughly the room left: 4000 - 1000 reply - 1024 margin - the rest of the body.
+    expect(estimateTokens(sent)).toBeGreaterThan(1000);
+    expect(estimateTokens(sent)).toBeLessThanOrEqual(4000 - 1000 - 1024);
+  });
+
+  it("sizes the reasoning against a max_tokens from model params, as the capacity check does", () => {
+    const long = words(40000);
+    const build = () =>
+      buildOpenAiChatBody(cloudRequest(long, 128000), "deepseek-v4-flash", false,
+        undefined, undefined, undefined, undefined,
+        { providerKind: "openai-compatible", reasoningRequired: true, modelParams: { max_tokens: 65536 } });
+    expect(build).not.toThrow();
+    const body = build();
+    expect(body.max_tokens).toBe(65536);
+    const sent = assistant(body)?.reasoning_content as string;
+    expect(sent.length).toBeGreaterThan(0);
+    expect(estimateTokens(sent)).toBeLessThanOrEqual(128000 - 65536 - 1024);
+    expect(estimateTokens(sent)).toBeGreaterThan(40000);
+  });
+
+  it("measures the strict tools that go on the wire", () => {
+    const long = words(4000);
+    const strictTools = [{ type: "function" as const, function: { name: "os__fs__read",
+      parameters: { type: "object", properties: Object.fromEntries(
+        Array.from({ length: 40 }, (_, i) => [`field_${i}`, { type: "string", description: `field number ${i}` }]),
+      ) } } }];
+    const build = () =>
+      buildOpenAiChatBody(cloudRequest(long, 6000, { tools: strictTools }), "deepseek-v4-flash", false,
+        undefined, undefined, true, undefined, { providerKind: "openai-compatible", reasoningRequired: true });
+    expect(build).not.toThrow();
+    const sent = assistant(build())?.reasoning_content as string;
+    expect(sent.length).toBeGreaterThan(0);
+    expect(long.endsWith(sent)).toBe(true);
   });
 });

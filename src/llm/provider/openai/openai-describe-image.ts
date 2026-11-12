@@ -38,7 +38,8 @@ export async function describeImageViaOpenAi(
   userContent.push({ type: "text", text: request.prompt });
   // Same per-model rules as a turn (`model-params.ts`): OpenAI's
   // reasoning models get no temperature and `max_completion_tokens`,
-  // Kimi K3.1 gets its one allowed temperature.
+  // the newer Claude models get no temperature, Kimi K3.1 gets its one
+  // allowed temperature.
   const profile = modelParamProfile(defaultChatModel);
   const temperature = resolveTemperature(profile, request.temperature, 0.1);
   const base: Record<string, unknown> = {
@@ -99,6 +100,11 @@ function withPassthrough(
   // `buildOpenAiChatBody`.
   if (profile.temperature.kind === "fixed" && profile.temperature.learned) {
     merged.temperature = profile.temperature.value;
+  } else if (
+    profile.temperature.kind === "forbidden" &&
+    profile.temperature.learned
+  ) {
+    delete merged.temperature;
   }
   return merged;
 }

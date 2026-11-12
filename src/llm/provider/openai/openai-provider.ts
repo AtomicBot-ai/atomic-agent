@@ -30,8 +30,11 @@ import {
   type OpenAiBodyOptions,
 } from "./openai-build-body.js";
 import { isNativeShapeRejection } from "./openai-native-messages.js";
-import { allowedTemperatureFromError } from "./allowed-temperature.js";
-import { rememberAllowedTemperature } from "./model-params.js";
+import { temperatureLessonFromError } from "./allowed-temperature.js";
+import {
+  rememberAllowedTemperature,
+  rememberTemperatureForbidden,
+} from "./model-params.js";
 import { OPENAI_DEFAULT_REQUEST_TIMEOUT_MS } from "../../transport-deadlines.js";
 import {
   buildOpenAiHeaders,
@@ -243,6 +246,7 @@ export class OpenAiProvider implements LlmProvider {
       ...(resolveAnthropicCacheControl(options)
         ? { anthropicCacheControl: true }
         : {}),
+      ...(isDeepSeekHost(options.baseUrl) ? { reasoningRequired: true } : {}),
     };
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
@@ -306,8 +310,8 @@ export class OpenAiProvider implements LlmProvider {
           ),
       );
     // One resend per completion when the service names the only
-    // temperature it takes (`allowed-temperature.ts`); the rebuilt body
-    // carries the lesson.
+    // temperature it takes, or refuses the field altogether
+    // (`allowed-temperature.ts`); the rebuilt body carries the lesson.
     let temperatureRetried = false;
     const sendOnce = async (
       shape: "native" | "flat",
@@ -315,7 +319,7 @@ export class OpenAiProvider implements LlmProvider {
       try {
         return await send(shape);
       } catch (err) {
-        if (temperatureRetried || !this.learnAllowedTemperature(request, err)) {
+        if (temperatureRetried || !this.learnTemperature(request, err, sentBody)) {
           throw err;
         }
         temperatureRetried = true;
@@ -397,27 +401,44 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   /**
-   * Whether a failed send is a 400 naming the one temperature this model
-   * accepts (Moonshot's "only 1 is allowed"). The value is remembered for
-   * the model for the rest of the process, so the next body built — the
-   * resend, and every later turn — carries it. The caller allows one
-   * such resend per completion.
+   * Whether a failed send is a 400 that teaches this model's temperature:
+   * the one value it accepts (Moonshot's "only 1 is allowed"), or that it
+   * takes none (Anthropic's "temperature is deprecated for this model",
+   * ATO-1397). The lesson is remembered for the model for the rest of the
+   * process, so the next body built — the resend, and every later turn —
+   * carries it. The caller allows one such resend per completion.
+   *
+   * A refusal already on record for a body that carried no temperature
+   * is not this lesson at all (the 400 is about something else that names
+   * temperature), so it gets no resend: the same body would go out again.
    */
-  private learnAllowedTemperature(
+  private learnTemperature(
     request: CompletionRequest,
     err: unknown,
+    sentBody: Record<string, unknown> | undefined,
   ): boolean {
     if (request.signal?.aborted) return false;
-    const value = allowedTemperatureFromError(err);
-    if (value === undefined) return false;
-    if (!rememberAllowedTemperature(this.defaultChatModel!, value)) return true;
+    const lesson = temperatureLessonFromError(err);
+    if (lesson === undefined) return false;
+    const model = this.defaultChatModel!;
+    if (lesson.kind === "forbidden") {
+      if (!rememberTemperatureForbidden(model)) {
+        return sentBody === undefined || "temperature" in sentBody;
+      }
+      this.http.logger?.warn(
+        `llm: "${this.id}" refused temperature for this model; resending once without it and keeping that for this model`,
+        { provider: this.id, model, status: 400, temperature: null },
+      );
+      return true;
+    }
+    if (!rememberAllowedTemperature(model, lesson.value)) return true;
     this.http.logger?.warn(
-      `llm: "${this.id}" accepts only temperature ${value} for this model; resending once and keeping it for this model`,
+      `llm: "${this.id}" accepts only temperature ${lesson.value} for this model; resending once and keeping it for this model`,
       {
         provider: this.id,
-        model: this.defaultChatModel,
+        model,
         status: 400,
-        temperature: value,
+        temperature: lesson.value,
       },
     );
     return true;
@@ -596,14 +617,14 @@ export class OpenAiProvider implements LlmProvider {
         // stopped. `signal.reason` is abort-shaped by construction.
         if (request.signal?.aborted)
           throw cancellationError(request.signal, err);
-        // The service named the one temperature it takes: resend once
-        // with it. Same window as the flat resend below — a 400 comes
+        // The service named the one temperature it takes, or refused the
+        // field: resend once with the lesson. Same window as the flat resend below — a 400 comes
         // from the open, before any output — and only once per
         // completion, so a second rejection falls through.
         if (
           !committed &&
           !temperatureRetried &&
-          this.learnAllowedTemperature(request, err)
+          this.learnTemperature(request, err, body)
         ) {
           temperatureRetried = true;
           body = this.buildBody(request, true, shape);
@@ -853,6 +874,23 @@ function resolveAnthropicCacheControl(options: OpenAiProviderOptions): boolean {
         (options.defaultChatModel && isAnthropicModel(options.defaultChatModel)) ||
         isAnthropicHost(options.baseUrl)
       );
+  }
+}
+
+/**
+ * Whether the base URL is DeepSeek's own API, whose thinking mode
+ * requires the previous tool calls' `reasoning_content` back on the next
+ * request and answers a history without it with a 400 (ATO-1397). Kept to
+ * the vendor's host: other services may reject the unknown field, and
+ * routers (OpenRouter) carry reasoning their own way.
+ */
+export function isDeepSeekHost(baseUrl: string | undefined): boolean {
+  if (!baseUrl) return false;
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase();
+    return host === "deepseek.com" || host.endsWith(".deepseek.com");
+  } catch {
+    return false;
   }
 }
 
