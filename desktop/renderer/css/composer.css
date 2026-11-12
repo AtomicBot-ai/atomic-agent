@@ -64,6 +64,12 @@
 .qchip .qtx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
 .qchip .qx{width:24px;height:24px}
 .qchip .qx svg{width:12px;height:12px}
+/* ATO-1183: "Steer now", a text button before the ×, while this chat's turn runs. */
+.qchip .qsteer{flex:none;height:22px;padding:0 8px;border:0;border-radius:var(--r-pill);
+  background:transparent;box-shadow:inset 0 0 0 1px var(--bd-2);font:inherit;font-weight:600;
+  color:var(--ink);cursor:pointer}
+.qchip .qsteer:hover{background:var(--bd-2)}
+.qchip .qsteer:focus-visible{outline:none;box-shadow:var(--focus-ring)}
 
 /* ---- Voice strip -------------------------------------------------------
    Always in the DOM; `hidden` while idle, so the display rule below must
