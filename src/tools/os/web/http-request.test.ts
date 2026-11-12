@@ -828,11 +828,15 @@ describe("os.http.request", () => {
     }
   });
 
-  it("maskHeaderValue keeps the scheme word only", () => {
+  it("maskHeaderValue keeps a known scheme word only", () => {
     expect(maskHeaderValue("Bearer abc.def")).toBe("Bearer ****");
     expect(maskHeaderValue("token abc")).toBe("token ****");
+    expect(maskHeaderValue("Basic dXNlcjpwYXNz")).toBe("Basic ****");
     expect(maskHeaderValue("abc123")).toBe("****");
     expect(maskHeaderValue("")).toBe("");
+    // An unknown first word is part of the secret, not a scheme.
+    expect(maskHeaderValue("abc123 def456")).toBe("****");
+    expect(maskHeaderValue("sk-live-1 extra")).toBe("****");
   });
 
   it("reports a cross-origin 307 after a POST instead of following it (ATO-1182)", async () => {

@@ -363,14 +363,39 @@ function buildApprovalPreview(args: HttpArgs): string {
 }
 
 /**
- * The value of a credential header as the approval preview shows it: the
- * scheme word kept (`Bearer ****`, `Basic ****`), everything else masked.
- * The preview reaches the terminal, the desktop app and Telegram, so a
- * token in it would be one more copy of the token (ATO-1182).
+ * Auth scheme words (RFC 9110 / IANA registry, plus common vendor ones)
+ * the preview may keep in front of the mask. Anything else is treated as
+ * part of the secret: `X-Auth-Token: abc123 def456` must not show
+ * `abc123`.
+ */
+const AUTH_SCHEMES = new Set([
+  "basic",
+  "bearer",
+  "digest",
+  "token",
+  "negotiate",
+  "ntlm",
+  "hoba",
+  "mutual",
+  "vapid",
+  "aws4-hmac-sha256",
+  "dpop",
+  "gnap",
+  "privatetoken",
+]);
+
+/**
+ * The value of a credential header as the approval preview shows it: a
+ * known scheme word kept (`Bearer ****`, `Basic ****`), everything else
+ * masked. The preview reaches the terminal, the desktop app and
+ * Telegram, so a token in it would be one more copy of the token
+ * (ATO-1182).
  */
 export function maskHeaderValue(value: string): string {
   const trimmed = value.trim();
   if (trimmed.length === 0) return value;
-  const scheme = /^([A-Za-z][A-Za-z0-9-]{0,19})\s+\S/.exec(trimmed);
-  return scheme ? `${scheme[1]} ****` : "****";
+  const scheme = /^(\S+)\s+\S/.exec(trimmed);
+  return scheme && AUTH_SCHEMES.has(scheme[1]!.toLowerCase())
+    ? `${scheme[1]} ****`
+    : "****";
 }
