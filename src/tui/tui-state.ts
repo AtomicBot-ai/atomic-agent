@@ -9,6 +9,7 @@ import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 import type { SessionUsageState } from "../session/usage-meter.js";
+import type { StepSpeed } from "../llm/step-speed.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
@@ -279,6 +280,13 @@ export interface RollingMetrics {
   totalTokens: number;
   toolsOk: number;
   toolsError: number;
+  /**
+   * The last model step's speed (ATO-631): decode rate, how much of the
+   * prompt the KV cache served, prefill time, draft acceptance. Drawn in
+   * the composer bar so a slow reply says why. Per-turn like the other
+   * `*Last` fields; optional so older fixtures need not spell it.
+   */
+  stepSpeedLast?: StepSpeed | null;
 }
 
 /**
@@ -956,6 +964,7 @@ export function createInitialTuiState(
       totalTokens: 0,
       toolsOk: 0,
       toolsError: 0,
+      stepSpeedLast: null,
     },
     contextUsage: EMPTY_CONTEXT_USAGE,
     plan: null,

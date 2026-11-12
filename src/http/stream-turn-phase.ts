@@ -1,5 +1,6 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { SlowFirstTokenHint } from "./slow-first-token-hint.js";
+import { stepSpeedFromCompletion } from "../llm/step-speed.js";
 
 /**
  * What a running turn is doing right now, told to an HTTP host
@@ -30,6 +31,10 @@ import type { SlowFirstTokenHint } from "./slow-first-token-hint.js";
  * produced nothing at all `slowFirstTokenMs` after the turn began,
  * carrying what the host could offer instead (`buildSlowFirstTokenHint`).
  * A suggestion only: nothing is switched.
+ *
+ * And after every completion, a `step_speed` frame (ATO-631): prompt
+ * size, the part the KV cache served, prefill and decode time, the
+ * decode rate and, under speculative decoding, the draft counts.
  *
  * Extensions-only, like every atomic frame: the caller creates a tracker
  * only for a stream that opted in.
@@ -183,6 +188,34 @@ export function createTurnPhaseTracker(deps: TurnPhaseTrackerDeps): TurnPhaseTra
         }
         progress = { processed: inner.processed, total: inner.total, cached: inner.cached };
         emit();
+        return;
+      }
+      case "llm_completed": {
+        // ATO-631: one `step_speed` frame per completion, so a host can
+        // say whether a slow step was re-reading the prompt or writing
+        // slowly. Only what the provider reported; nothing for a
+        // completion that reported nothing.
+        const speed = stepSpeedFromCompletion(inner.completion);
+        if (speed === null || disposed) return;
+        deps.write("step_speed", {
+          object: "atomic.step_speed",
+          session_id: deps.sessionId,
+          ...(stepIndex !== undefined ? { step_index: stepIndex } : {}),
+          prompt_tokens: speed.promptTokens,
+          cached_tokens: speed.cachedTokens,
+          prefill_ms: speed.prefillMs,
+          decode_ms: speed.decodeMs,
+          decode_tokens_per_second:
+            speed.decodeTokensPerSecond === null
+              ? null
+              : Math.round(speed.decodeTokensPerSecond * 10) / 10,
+          ...(speed.draftTokens !== undefined
+            ? {
+                draft_tokens: speed.draftTokens,
+                draft_accepted_tokens: speed.draftAcceptedTokens ?? 0,
+              }
+            : {}),
+        });
         return;
       }
       case "first_token":

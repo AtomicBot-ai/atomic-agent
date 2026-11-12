@@ -84,6 +84,7 @@ import {
   isIssueReportAction,
   reduceIssueReport,
 } from "./issue-report/index.js";
+import { stepSpeedFromCompletion } from "../llm/step-speed.js";
 import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
@@ -1393,10 +1394,18 @@ function reduceStepEvent(
       // Prefer it, and leave the estimate standing when nothing was
       // reported.
       const counted = event.completion.timing?.promptTokens ?? 0;
-      if (counted <= 0) return state;
+      // ATO-631: the step's speed for the composer bar. A completion
+      // that reported nothing leaves the last reading standing.
+      const speed = stepSpeedFromCompletion(event.completion);
+      if (counted <= 0 && speed === null) return state;
       return {
         ...state,
-        contextUsage: { ...state.contextUsage, tokens: counted },
+        ...(counted > 0
+          ? { contextUsage: { ...state.contextUsage, tokens: counted } }
+          : {}),
+        ...(speed !== null
+          ? { metrics: { ...state.metrics, stepSpeedLast: speed } }
+          : {}),
       };
     }
     case "llm_raw_completion":
