@@ -13,6 +13,14 @@ export {
   type RunAppUpdateResult,
 } from "./run-app-update.js";
 export {
+  verifySha256Sums,
+  parseSha256Sums,
+  resolveSignedArchiveSha256,
+  ReleaseSignatureError,
+  RELEASE_SIGNING_PUBLIC_KEY,
+  type SumsVerification,
+} from "./release-signature.js";
+export {
   compareSemver,
   isNewerVersion,
   parseSemver,

@@ -11,6 +11,9 @@
 #   ATOMIC_AGENT_NO_PATH=1                 (optional: skip rc-file PATH update)
 #   ATOMIC_AGENT_VERIFY_TIMEOUT=20         (optional: seconds to allow the macOS
 #                                           signature check; 0 skips it)
+#   ATOMIC_AGENT_EXPECTED_SHA256=<hex>     (set by `atomic-agent update` from the
+#                                           release's signed SHA256SUMS; the
+#                                           archive must hash to it)
 
 set -eu
 
@@ -18,6 +21,12 @@ set -eu
 # POSIX sh: local may not exist; we avoid local for dash compatibility.
 
 REPO_DEFAULT="AtomicBot-ai/atomic-agent"
+
+# Public half of the release signing key (SPKI PEM), the same value as
+# RELEASE_SIGNING_PUBLIC_KEY in src/update/release-signature.ts. Empty until the
+# key exists; then the installer checks the release's SHA256SUMS.sig with openssl
+# when it can. See scripts/docs/bundling.md, "Release signature".
+RELEASE_SIGNING_PUBLIC_KEY=""
 REPO="${ATOMIC_AGENT_REPO:-$REPO_DEFAULT}"
 VERSION="${ATOMIC_AGENT_VERSION:-}"
 INSTALL_DIR="${ATOMIC_AGENT_INSTALL_DIR:-$HOME/.local/bin}"
@@ -460,6 +469,66 @@ else
   echo "error: cannot verify the download: none of shasum, sha256sum or openssl is installed." >&2
   echo "install one of them (for example coreutils, which provides sha256sum) and run the installer again." >&2
   exit 1
+fi
+
+sha256_of() {
+  if have shasum; then
+    shasum -a 256 "$1" | awk '{ print tolower($1) }'
+  elif have sha256sum; then
+    sha256sum "$1" | awk '{ print tolower($1) }'
+  else
+    openssl dgst -sha256 -r "$1" | awk '{ print tolower($1) }'
+  fi
+}
+
+require_sha() {
+  # $1 expected digest, $2 where it came from
+  _rs_actual="$(sha256_of "$WORK/${TAR_NAME}")"
+  _rs_expected="$(printf '%s' "$1" | tr 'A-F' 'a-f')"
+  if [ "$_rs_actual" != "$_rs_expected" ]; then
+    echo "checksum mismatch for ${TAR_NAME} against $2" >&2
+    echo "  expected: ${_rs_expected}" >&2
+    echo "  actual:   ${_rs_actual}" >&2
+    exit 1
+  fi
+}
+
+# The .sha256 above lives in the same release as the archive, so whoever can
+# replace one can replace both. `atomic-agent update` checks the release's
+# signed SHA256SUMS first and passes the archive's digest down here.
+if [ -n "${ATOMIC_AGENT_EXPECTED_SHA256:-}" ]; then
+  require_sha "$ATOMIC_AGENT_EXPECTED_SHA256" "the signed SHA256SUMS"
+  echo "${TAR_NAME}: matches the signed SHA256SUMS"
+fi
+
+# Signed SHA256SUMS on a fresh install. Needs an embedded key, a release that
+# ships SHA256SUMS.sig, and an openssl with Ed25519 (`pkeyutl -rawin`, OpenSSL
+# 3; the LibreSSL in macOS has neither, and is skipped with a note).
+if [ -n "$RELEASE_SIGNING_PUBLIC_KEY" ]; then
+  SIG_BASE="${TAR_URL%/*}"
+  if ! have curl; then
+    echo "note: release signature is checked only with curl; sha256 was checked."
+  elif ! have openssl || ! openssl pkeyutl -help 2>&1 | grep -q -- '-rawin'; then
+    echo "note: openssl with Ed25519 not found; release signature not checked (sha256 was)."
+  elif asset_missing "${SIG_BASE}/SHA256SUMS.sig"; then
+    echo "note: this release ships no SHA256SUMS.sig; release signature not checked."
+  else
+    download "${SIG_BASE}/SHA256SUMS.sig" "$WORK/SHA256SUMS.sig"
+    download "${SIG_BASE}/SHA256SUMS" "$WORK/SHA256SUMS"
+    printf '%s\n' "$RELEASE_SIGNING_PUBLIC_KEY" > "$WORK/release-signing.pub.pem"
+    if ! openssl pkeyutl -verify -pubin -inkey "$WORK/release-signing.pub.pem" -rawin \
+      -in "$WORK/SHA256SUMS" -sigfile "$WORK/SHA256SUMS.sig" >/dev/null 2>&1; then
+      echo "error: SHA256SUMS.sig does not verify against the release signing key; aborting" >&2
+      exit 1
+    fi
+    SIGNED_SHA="$(awk -v n="$TAR_NAME" '{ f = $2; sub(/^[*]/, "", f); sub(/^[.][/]/, "", f); if (f == n) { print $1; exit } }' "$WORK/SHA256SUMS")"
+    if [ -z "$SIGNED_SHA" ]; then
+      echo "error: the signed SHA256SUMS does not list ${TAR_NAME}; aborting" >&2
+      exit 1
+    fi
+    require_sha "$SIGNED_SHA" "the signed SHA256SUMS"
+    echo "${TAR_NAME}: release signature OK"
+  fi
 fi
 
 (cd "$WORK" && tar -xzf "${TAR_NAME}")

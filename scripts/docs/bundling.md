@@ -123,6 +123,69 @@ on notarised macOS app builds.
 Mach-O binaries are not stapled; Gatekeeper uses an online ticket on
 first launch.
 
+## Release provenance and signature
+
+Every release carries two things a swapped archive cannot fake by also swapping
+its `.sha256` (ATO-680):
+
+- **Build provenance.** The `release` job runs `actions/attest-build-provenance`
+  over every asset and `SHA256SUMS`. It needs no secret, only the job's
+  `id-token: write` and `attestations: write`. Anyone can check a download:
+  `gh attestation verify atomic-agent-linux-x64.tar.gz --repo AtomicBot-ai/atomic-agent`.
+- **Release signature.** The job writes `SHA256SUMS` (`sha256sum` of every asset
+  except the `.sha256` files) and, when the `RELEASE_SIGNING_KEY` secret is set,
+  `SHA256SUMS.sig`: a raw 64-byte Ed25519 signature made with
+  `openssl pkeyutl -sign -rawin`. Without the secret the step prints a notice and
+  the release ships unsigned, as before.
+
+The format is a plain Ed25519 detached signature, not minisign: minisign wraps
+the signature with a key id and a BLAKE2b prehash, and Node's `node:crypto` and
+OpenSSL 3 both verify the plain form with no extra code or tool.
+
+Who checks it:
+
+- `atomic-agent update` ([src/update/release-signature.ts](../../src/update/release-signature.ts))
+  fetches `SHA256SUMS.sig` and `SHA256SUMS` from the release, verifies them with
+  the embedded public key, and hands the archive's signed digest to the installer
+  as `ATOMIC_AGENT_EXPECTED_SHA256`. A bad signature, or a signed list that does
+  not name the archive, stops the update.
+- [install.sh](../install.sh) on a fresh install, when curl and an OpenSSL 3
+  `openssl` are present (the LibreSSL in macOS cannot, and is skipped with a note).
+- [install.ps1](../install.ps1) only compares `ATOMIC_AGENT_EXPECTED_SHA256`:
+  Windows PowerShell 5.1 has no Ed25519.
+
+All of it is skipped while no public key is embedded, and for a release that
+ships no `SHA256SUMS.sig` (every release cut before the key existed).
+
+### Turning the signature on
+
+1. Make the key on a trusted machine, not in CI:
+   `openssl genpkey -algorithm ed25519 -out release-signing-key.pem`
+2. Store the whole PEM (with its BEGIN/END lines) as the repository secret
+   `RELEASE_SIGNING_KEY`, and keep an offline copy. The next release then ships
+   `SHA256SUMS.sig`.
+3. Print the public half, `openssl pkey -in release-signing-key.pem -pubout`, and
+   paste it into `RELEASE_SIGNING_PUBLIC_KEY` in both
+   `src/update/release-signature.ts` and `scripts/install.sh` (the same text in
+   both). Builds from that commit on check the signature.
+
+### Rotation
+
+A binary trusts only the key it was built with, so a new key has to reach users
+through a release the old key still signs:
+
+1. Make the new key. Ship a release signed with the **old** key whose binaries
+   and `install.sh` embed the **new** public key.
+2. Swap `RELEASE_SIGNING_KEY` to the new key. Releases from then on are signed
+   with it, and the binaries from step 1 accept them.
+3. Users who skip the release from step 1 get a failed update; they reinstall
+   with `install.sh`, which comes from `main` and already has the new key.
+
+If the private key leaks, do the same at once, and say in the release notes that
+updates from older versions fail until reinstalled. The release signature does
+not replace macOS notarisation or Windows Authenticode: those cover the binary,
+this covers which archive the updater accepts.
+
 ## Linux packages and the repository
 
 The deb and rpm (`npm run linux:packages -- build`, [linux-packages.ts](../linux-packages.ts),
