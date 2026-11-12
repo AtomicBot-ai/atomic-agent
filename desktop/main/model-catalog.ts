@@ -53,6 +53,13 @@ export interface CuratedModelMeta {
    * has no such field yet, so it is not part of the verbatim copy above.
    */
   purpose?: ModelPurpose;
+  /**
+   * ATO-492: a mixture-of-experts model (only part of it works on each
+   * word). Desktop only, like `purpose`; set by hand from the model's
+   * name (-A3B / -A4B), because the id does not always carry it
+   * (`qwen-3.5-35b` is Qwen 3.5 35B-A3B).
+   */
+  moe?: boolean;
   /** `tag`, when the catalogue sets one. */
   tag?: string;
   /** `uncensored` — reduced-refusal weights; never auto-recommended. */
@@ -95,6 +102,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "gemma-4-26b-a4b",
+    moe: true,
     purpose: "vision",
     name: "Gemma 4 26B-A4B QAT GGUF",
     description: "Big Gemma that stays quick for its size, 20 GB and up",
@@ -150,6 +158,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.6-35b-a3b",
+    moe: true,
     purpose: "coding",
     name: "Qwen 3.6 35B-A3B GGUF",
     description: "Big Qwen that stays quick for its size, 36 GB and up",
@@ -200,6 +209,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.5-35b",
+    moe: true,
     purpose: "reasoning",
     name: "Qwen 3.5 35B-A3B GGUF",
     description: "Older big Qwen, for 36 GB machines and up",
@@ -214,6 +224,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "nemotron-3.5-30b-a3b",
+    moe: true,
     purpose: "reasoning",
     name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B GGUF",
     description: "Big NVIDIA model, text only, for 32 GB machines and up",

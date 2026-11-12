@@ -14176,13 +14176,23 @@ function modelPurpose(model) {
    only part of it works at a time (a mixture of experts, `-A3B` / `-A4B`,
    which is why it stays quick for its size). Plain words, the engineering
    term in the tooltip. */
+/* ATO-492: a mixture-of-experts model. The catalogue says so (`moe`); a
+   model from elsewhere (Hugging Face, a .gguf) is read by its "-A3B" style
+   suffix in the id OR the name, since the id does not always carry it
+   ("qwen-3.5-35b" is "Qwen 3.5 35B-A3B"). */
+function modelIsMoe(model) {
+  if (!model) return false;
+  if (model.moe === true) return true;
+  const suffix = /(?:^|[-_\s])a\d+(?:\.\d+)?b(?:$|[-_\s.])/i;
+  return suffix.test(String(model.id || '')) || suffix.test(String(model.name || ''));
+}
 function modelTechChips(model) {
   if (!model) return [];
   const out = [];
   const ctx = String(model.context || model.contextLabel || '').trim();
   if (ctx && ctx !== '-') out.push({word: ctx + ' context', title: 'How much text it can read at once: ' + ctx + ' tokens.'});
   if (model.vision) out.push({word: 'Reads images', title: 'It can look at pictures and screenshots.'});
-  if (/-a\d+b(?:$|-)/i.test(String(model.id || ''))) out.push({word: 'MoE', title: 'Mixture of experts: only part of the model works on each word, so it stays quick for its size.'});
+  if (modelIsMoe(model)) out.push({word: 'MoE', title: 'Mixture of experts: only part of the model works on each word, so it stays quick for its size.'});
   return out;
 }
 function modelTechChipsHTML(model, cls) {

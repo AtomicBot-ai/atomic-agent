@@ -35,11 +35,13 @@ type Check = (name: string, ok: boolean, detail?: string) => void;
 const q = (v: unknown) => JSON.stringify(v);
 
 /* The local list at 18 GB: a best fit, a small model, reduced-refusal weights,
-   a tight fit, and two that will not run (one of them the model with no mark). */
+   a tight fit, and two that will not run (one of them the model with no mark).
+   ATO-492: small carries the catalogue's `moe` flag and unc has "-A2B" in its
+   name only, so the MoE chip is checked on both paths, not just the id. */
 const MODELS = [
   { id: "qwen-smoke-t45-best", name: "Smoke Best 9B GGUF", description: "Balanced performance", size: "6.2 GB", sizeGb: 6.2, minRamGb: 8, recommendedRamGb: 16, downloaded: false, purpose: "everyday", context: "256K", vision: true },
-  { id: "qwen-smoke-t45-small", name: "Smoke Small 4B GGUF", description: "Quality-size sweet spot", size: "3.4 GB", sizeGb: 3.4, minRamGb: 6, recommendedRamGb: 8, downloaded: false },
-  { id: "qwen-smoke-t45-unc", name: "Smoke Unc 9B GGUF", description: "Reduced-refusal Smoke 9B (abliterated)", size: "6 GB", sizeGb: 6, minRamGb: 8, recommendedRamGb: 12, downloaded: false, uncensored: true, tag: "Use at your own risk" },
+  { id: "qwen-smoke-t45-small", name: "Smoke Small 4B GGUF", description: "Quality-size sweet spot", size: "3.4 GB", sizeGb: 3.4, minRamGb: 6, recommendedRamGb: 8, downloaded: false, moe: true },
+  { id: "qwen-smoke-t45-unc", name: "Smoke Unc 9B-A2B GGUF", description: "Reduced-refusal Smoke 9B (abliterated)", size: "6 GB", sizeGb: 6, minRamGb: 8, recommendedRamGb: 12, downloaded: false, uncensored: true, tag: "Use at your own risk" },
   { id: "gemma-smoke-t45-tight-a4b", name: "Smoke Tight 26B GGUF", description: "Fast MoE with 256K context (QAT)", size: "15.4 GB", sizeGb: 15.4, minRamGb: 16, recommendedRamGb: 24, downloaded: false },
   { id: "qwen-smoke-t45-over", name: "Smoke Over 35B GGUF", description: "High quality reasoning", size: "22 GB", sizeGb: 22, minRamGb: 24, recommendedRamGb: 36, downloaded: false },
   { id: "muse-glimmer-30b", name: "Meta Muse Glimmer 30B GGUF", description: "Multimodal 30B MoE, generic tool calling", size: "18.6 GB", sizeGb: 18.6, minRamGb: 20, recommendedRamGb: 32, downloaded: false },
@@ -257,7 +259,12 @@ async function modelStep(run: Run, check: Check): Promise<void> {
   check(
     "T45 (ATO-492): the facts an enthusiast reads are grey chips on a line of their own: context, reads images, MoE",
     q(byId("qwen-smoke-t45-best")?.tech ?? null) === q(["256K context", "Reads images"])
-      && q(byId("gemma-smoke-t45-tight-a4b")?.tech ?? null) === q(["MoE"]),
+      && q(byId("gemma-smoke-t45-tight-a4b")?.tech ?? null) === q(["MoE"])
+      /* MoE three ways: the id's suffix (tight), the catalogue flag with no
+         suffix anywhere (small), and the suffix in the name only (unc, as
+         "qwen-3.5-35b" is "Qwen 3.5 35B-A3B"). */
+      && q(byId("qwen-smoke-t45-small")?.tech ?? null) === q(["MoE"])
+      && q(byId("qwen-smoke-t45-unc")?.tech ?? null) === q(["MoE"]),
     q(rows.map((x) => [x.id, x.tech])),
   );
   check(
