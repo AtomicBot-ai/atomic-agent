@@ -18,6 +18,13 @@ export const PROVIDER_PRESETS = [
   "fireworks", "hyperbolic", "lmstudio", "mistral", "moonshot", "nous", "novita", "ollama", "ollama-cloud",
   "perplexity", "dashscope", "sambanova", "sarvam", "together", "xai", "local-llama", "custom",
 ] as const;
+/**
+ * ATO-1195 / ATO-816: presets for an app the user already runs on this
+ * computer (the wizard's `local:true` rows). Like a custom URL they are
+ * `kind: custom` ("Custom" = any app or server you already run); `local`
+ * is only the managed llama.cpp backend. Keep in step with renderer.js.
+ */
+export const LOCAL_APP_PRESETS = ["atomic-chat", "ollama", "lmstudio"] as const;
 /** `model_configured.provider` as the agent runtime spells it: the managed local backend is `llama.cpp`. */
 export const CONFIGURED_PROVIDERS = [...PROVIDER_PRESETS, "llama.cpp"] as const;
 

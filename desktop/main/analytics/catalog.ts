@@ -144,8 +144,13 @@ export const EVENTS: Record<string, EventSpec> = {
        provider (the same list as provider_setup_started). */
     props: {
       step: en(["onboarding", "settings"]),
-      reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "key_rejected", "provider_error", "list_failed", "other"]),
+      /* ATO-1195: list_failed split by what went wrong on our side:
+         agent_crashed, not_json, no_binary. `kind` is the provider's type,
+         as in model_configured: cloud, or custom for a custom URL and for
+         an app the user runs (Ollama, LM Studio, Atomic Chat). */
+      reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "key_rejected", "provider_error", "agent_crashed", "not_json", "no_binary", "list_failed", "other"]),
       provider_preset: en(PROVIDER_PRESETS, { fallback: "custom" }),
+      kind: en(["local", "cloud", "custom"], { nullable: true }),
     },
   },
   custom_endpoint_tested: { owner: "ui", props: { kind: en(["chat", "embedding"]), reachable: bool } },
