@@ -2,7 +2,7 @@
  * ATO-1043 — the IO half of the model recommendation: what this machine
  * has, read once. The decision itself is pure (`model-upgrade.ts`).
  *
- * - RAM: `os.totalmem()`.
+ * - RAM: `os.totalmem()`, in GB as the machine is sold (`marketedRamGb`, ATO-1442).
  * - GPU memory: unified memory on macOS (no spawn); elsewhere the
  *   engine's `--list-devices` (`probeManagedDevices`), and `nvidia-smi`
  *   when the engine is not installed yet, which is exactly the first
@@ -19,6 +19,7 @@ import { totalmem } from "node:os";
 import type { MachineForModels } from "../catalog/model-upgrade.js";
 import type { ManagedEngine } from "../core/core-state.js";
 import { resolveGpuBudgetGb } from "./gpu-memory-budget.js";
+import { marketedRamGb } from "./host-ram.js";
 import { pickBestDevice, type GpuDevice } from "./gpu-devices.js";
 import { probeManagedDevices } from "./managed-devices.js";
 import { probeNvidiaVramMiB } from "./nvidia-smi-vram.js";
@@ -43,7 +44,7 @@ export async function probeMachineForModels(
 ): Promise<MachineForModels> {
   const platform = input.platform ?? process.platform;
   const totalRamBytes = input.totalRamBytes ?? totalmem();
-  const ramGb = Math.max(1, Math.floor(totalRamBytes / BYTES_PER_GB));
+  const ramGb = marketedRamGb(totalRamBytes);
   const freeBytes = await (input.freeDiskBytes ?? freeDiskBytesAt)(
     input.dataDir,
   );

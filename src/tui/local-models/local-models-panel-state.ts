@@ -203,8 +203,8 @@ export interface LocalModelsPanelState {
    */
   dataDir: string | null;
   /**
-   * Total physical RAM reported by `os.totalmem()` rounded to whole GB
-   * (decimal). `null` until the first snapshot lands. Used by the list
+   * Total physical RAM from `os.totalmem()` in whole GB as the machine
+   * is sold (`marketedRamGb`, ATO-1442). `null` until the first snapshot lands. Used by the list
    * view to flag models whose `minRamGb` / `recommendedRamGb` exceed
    * what the host can realistically load.
    */

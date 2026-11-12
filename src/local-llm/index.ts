@@ -38,6 +38,7 @@ export {
   probeMachineForModels,
   type ProbeMachineInput,
 } from "./backend/machine-for-models.js";
+export { hostRamGb, marketedRamGb } from "./backend/host-ram.js";
 export {
   readRecommendSnapshot,
   startModelUpgrade,
