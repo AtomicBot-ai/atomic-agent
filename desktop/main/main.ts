@@ -11157,7 +11157,7 @@ async function onboardingTest(
     check(
       "wizard: the choose step offers all three backends, in the TUI's order",
       labels.length === 3 &&
-        labels[0] === "Local models" && labels[1] === "Cloud models" && labels[2] === "Custom endpoint" &&
+        labels[0] === "Local models" && labels[1] === "Cloud models" && labels[2] === "Custom" &&
         copy.footer === "↑/↓ move   enter choose   1–3 jump   esc skip",
       `${JSON.stringify(labels)} footer=${JSON.stringify(copy.footer)}`,
     );
@@ -11794,9 +11794,28 @@ async function onboardingTest(
 
     /* ---- the branches the desktop used to be missing ---- */
     await js<ObState>("window.__obOpen('choose')");
-    const toCustom = await js<ObState>("window.__obKey('3')");
+    /* ATO-816: `3` is Custom now, a list of what you already run: the apps
+       on this Mac, a llama.cpp server, any URL. Cloud lists keys only. The
+       llama.cpp row is the old custom-endpoint screen. */
+    const customList = await js<{ step: string; rows: string[] }>(
+      "(window.__obKey('3'), { step: window.__ob().step, rows: window.__wizList().rows })");
+    await js<ObState>("window.__obKey('esc')");
+    const keysList = await js<{ rows: string[] }>("(window.__obKey('2'), { rows: window.__wizList().rows })");
+    await js<ObState>("window.__obKey('esc')");
+    const appRows = ["Atomic Chat (local)", "Ollama (local)", "LM Studio (local)"];
     check(
-      "wizard: `3` opens the custom-endpoint branch the desktop had dropped",
+      "wizard: Custom lists the apps on this Mac, a llama.cpp server and any URL; Cloud lists none of them",
+      customList.step === "cloud" &&
+        JSON.stringify(customList.rows.slice(0, 4)) === JSON.stringify([...appRows, "llama.cpp server"]) &&
+        customList.rows.length === 5 && /custom base URL/.test(customList.rows[4] ?? "") &&
+        keysList.rows.length > 3 && !keysList.rows.some((r) => appRows.includes(r) || r === "llama.cpp server" || /custom base URL/.test(r)),
+      `custom=${JSON.stringify(customList)} keys=${JSON.stringify(keysList.rows)}`,
+    );
+    const toCustom = await js<ObState>(
+      "(() => { window.__obKey('3'); const n = window.__wizList().rows.indexOf('llama.cpp server');" +
+        " for (let i = 0; i < n; i += 1) window.__obKey('down'); return window.__obKey('enter'); })()");
+    check(
+      "wizard: Custom › llama.cpp server opens the URL step",
       toCustom.step === "custom_chat_url",
       `step=${toCustom.step}`,
     );
@@ -11843,7 +11862,9 @@ async function onboardingTest(
       : null;
     try {
       await js<ObState>("window.__obOpen('choose')");
-      await js<ObState>("window.__obKey('3')");
+      await js<ObState>(
+        "(() => { window.__obKey('3'); const n = window.__wizList().rows.indexOf('llama.cpp server');" +
+          " for (let i = 0; i < n; i += 1) window.__obKey('down'); return window.__obKey('enter'); })()");
       await js<void>(
         `(function(){const i=document.getElementById('ob-url'); i.value=${JSON.stringify(healthUrl)};` +
           " i.dispatchEvent(new Event('input',{bubbles:true}));})()",
