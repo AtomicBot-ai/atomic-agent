@@ -17,6 +17,8 @@ import {
 import {
   FUSION_WORKER_APPROVAL_MARKER,
   FUSION_WORKER_APPROVAL_REFUSED,
+  FUSION_WORKER_OPERATOR_ONLY_MARKER,
+  FUSION_WORKER_OPERATOR_ONLY_REFUSED,
 } from "./worker-tool-policy.js";
 
 const TASK = {
@@ -73,6 +75,17 @@ describe("renderWorkerBrief", () => {
     const brief = renderWorkerBrief(TASK, { workingDir: "/repo" });
     expect(brief).toContain(FUSION_WORKER_APPROVAL_MARKER);
     expect(brief).toMatch(/exactly what was blocked and where/);
+  });
+
+  it("tells the worker not to forward an operator-only refusal for a re-send (ATO-1267)", () => {
+    const brief = renderWorkerBrief(TASK, { workingDir: "/repo" });
+    expect(brief).toContain(FUSION_WORKER_OPERATOR_ONLY_MARKER);
+    expect(brief).toMatch(/re-sending will not help/);
+    expect(brief).toMatch(/only the user can run or approve/);
+    // The marker the brief names is the one the gate really returns.
+    expect(FUSION_WORKER_OPERATOR_ONLY_REFUSED).toContain(
+      FUSION_WORKER_OPERATOR_ONLY_MARKER,
+    );
   });
 
   it("says the reply is the whole handover, and bounds it", () => {

@@ -806,6 +806,8 @@ export function registerRuntimeFusionAndReadScope(input: {
       // throwaway nobody is listening to.
       emitEvent: emitAgentLoopEventFor,
       workingDir,
+      // Fan-outs never write in the agent's own state directory (ATO-1267).
+      agentStateDir: config.paths.stateDir,
       outputCharCap: config.agent.batchToolResultCharCap,
       // A contract's declared `checks` run through the verify family,
       // each on a throwaway copy of the workspace, so a fan-out is judged
