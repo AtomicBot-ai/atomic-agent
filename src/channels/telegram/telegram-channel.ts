@@ -45,6 +45,7 @@ import { sendWelcomeMessage } from "./welcome-message.js";
 import { formatTaskLiveStatus } from "./task-status-message.js";
 import { TASK_MESSAGE_MAX_CHARS } from "./task-report-format.js";
 import { TelegramProgressIndicator } from "./telegram-progress-indicator.js";
+import { resolveTelegramStreamReplies } from "./telegram-stream-mode.js";
 import {
   POLL_STALL_MS,
   TelegramReconnect,
@@ -424,6 +425,10 @@ export class TelegramChannel {
         // flipping `telegram.progressIndicator` takes effect on the
         // next channel (re)start.
         progressIndicator: this.deps.config.telegram.progressIndicator,
+        // Env override wins; resolved once per (re)start like the above.
+        streamReplies: resolveTelegramStreamReplies(
+          this.deps.config.telegram.streamReplies,
+        ),
         inflight: this.inflight,
         liveTurns: this.liveTurns,
         statusSnapshot: this.deps.config.statusSnapshot ?? null,

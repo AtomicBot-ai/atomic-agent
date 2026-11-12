@@ -11,6 +11,13 @@ import { parseNullableString } from "./config-values.js";
 export type TelegramParseMode = "plain" | "html";
 
 /**
+ * Where agent replies stream into Telegram while the model writes them
+ * (ATO-634): `"private"` streams in the owner's DM only, `"all"` also in
+ * groups and forum topics, `"off"` keeps the one-message-at-the-end path.
+ */
+export type TelegramStreamReplies = "off" | "private" | "all";
+
+/**
  * Telegram channel configuration. Single-operator semantics: only
  * messages whose `from.id` matches `ownerUserId` are dispatched into
  * the agent loop. Group chats are dropped unconditionally.
@@ -42,6 +49,13 @@ export interface TelegramConfig {
    * `true` via the defaults-fallback in `parseUserConfigFile`.
    */
   progressIndicator: boolean;
+  /**
+   * Live streamed replies (ATO-634). Optional and presence-driven: an
+   * absent key means the built-in default (`"private"`), so older files
+   * need no migration. `ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES` overrides
+   * it for one process.
+   */
+  streamReplies?: TelegramStreamReplies;
 }
 
 /**
@@ -253,6 +267,17 @@ export function parseDiscordOwnerUserIds(
  * Accepts `"plain"` and `"html"` only — `markdownV2` is intentionally
  * excluded (see `TelegramParseMode` doc-comment for rationale).
  */
+export function parseTelegramStreamReplies(
+  raw: unknown,
+  field: string,
+): TelegramStreamReplies {
+  if (raw === "off" || raw === "private" || raw === "all") return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected one of off|private|all, got ${JSON.stringify(raw)}`,
+  );
+}
+
 function parseTelegramParseMode(
   raw: unknown,
   field: string,
@@ -324,6 +349,14 @@ export function parseTelegramConfig(
           readDefaults().progressIndicator,
         "telegram.progressIndicator",
       ),
+      ...(raw.streamReplies !== undefined
+        ? {
+            streamReplies: parseTelegramStreamReplies(
+              raw.streamReplies,
+              "telegram.streamReplies",
+            ),
+          }
+        : {}),
     };
 }
 

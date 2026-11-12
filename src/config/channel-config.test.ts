@@ -177,4 +177,14 @@ describe("channel configuration ownership and compatibility", () => {
       schema.USER_CONFIG_DEFAULTS.swarm = originalSwarm;
     }
   });
+
+  it("parses telegram.streamReplies only when present (ATO-634)", () => {
+    const base = { enabled: false, ownerUserId: null, parseMode: "html", progressIndicator: true };
+    expect("streamReplies" in parseTelegramConfig(base, createTelegramDefaults)).toBe(false);
+    for (const mode of ["off", "private", "all"] as const) {
+      expect(parseTelegramConfig({ ...base, streamReplies: mode }, createTelegramDefaults).streamReplies).toBe(mode);
+    }
+    expect(thrownError(() => parseTelegramConfig({ ...base, streamReplies: "groups" }, createTelegramDefaults)))
+      .toBeInstanceOf(ConfigValidationError);
+  });
 });

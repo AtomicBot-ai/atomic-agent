@@ -49,6 +49,11 @@ import {
   telegramChatKey,
   type TelegramSessionPointer,
 } from "./telegram-session-pointer.js";
+import { TelegramLiveReply } from "./telegram-live-reply.js";
+import {
+  shouldStreamReplies,
+  type TelegramStreamReplies,
+} from "./telegram-stream-mode.js";
 
 /**
  * Adapt the runtime's `StructuredLogger` to the narrow
@@ -223,6 +228,12 @@ export interface InboundContext {
    * `agentReplyParseMode`.
    */
   progressIndicator?: boolean;
+  /**
+   * Streamed replies (ATO-634, `telegram.streamReplies` resolved with its
+   * env override). Absent = off, so a context built without it keeps the
+   * one-message-at-the-end path.
+   */
+  streamReplies?: TelegramStreamReplies;
 }
 
 /** How long Telegram displays a `chatAction: "typing"` indicator. */
@@ -897,6 +908,19 @@ async function dispatchToRuntime(
   // The bubble that carries snapshots: the progress bubble when it is on,
   // otherwise one of its own, posted with the first snapshot.
   let snapshotBubble: TelegramProgressIndicator | null = progress;
+  // The reply itself, streamed while the model writes it (ATO-634).
+  const live =
+    shouldStreamReplies(ctx.streamReplies, ref.isPrivate) &&
+    TelegramLiveReply.supported(ctx.api)
+      ? new TelegramLiveReply({
+          api: ctx.api,
+          chatId: ref.target.chatId,
+          ...(ref.target.threadId === undefined
+            ? {}
+            : { threadId: ref.target.threadId }),
+          logger: toTelegramLogger(ctx.logger),
+        })
+      : null;
   const postSnapshotIfDue = (): void => {
     const state = tracker.state();
     const now = Date.now();
@@ -942,6 +966,7 @@ async function dispatchToRuntime(
     if (event.type === "loop_failed") {
       failure = { error: event.error, category: event.category };
     }
+    live?.onEvent(event);
     if (progress === null) return;
     const label = progressLabel(event);
     if (label !== null) progress.update(label);
@@ -994,6 +1019,9 @@ async function dispatchToRuntime(
     await snapshotBubble.remove();
   }
 
+  // Streamed text of a turn that ends without a reply stays as it is.
+  if (controller.signal.aborted || reply === null) await live?.close();
+
   // Only the agent's natural-language reply gets parse-mode
   // formatting. Cancellation acks, the empty-reply marker, and
   // failure envelopes are channel infrastructure and stay plain so
@@ -1003,7 +1031,13 @@ async function dispatchToRuntime(
   if (controller.signal.aborted) {
     await sendText(ctx, ref.target, "Turn cancelled.");
   } else if (reply !== null) {
-    await sendText(ctx, ref.target, reply, ctx.agentReplyParseMode ?? "plain");
+    const parseMode = ctx.agentReplyParseMode ?? "plain";
+    const streamed = await live?.finalize(reply, parseMode);
+    if (streamed?.delivered) {
+      if (streamed.messages > 0) ctx.onMessageSent?.(streamed.messages);
+    } else {
+      await sendText(ctx, ref.target, reply, parseMode);
+    }
     // Files follow the text, one message each. A file that could not
     // be delivered is announced in plain text — the operator asked for
     // the file, not for the sentence saying it was sent.
