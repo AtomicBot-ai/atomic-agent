@@ -26060,6 +26060,8 @@ function mcpAddModalHTML() {
     /* ATO-510 (U-74): one box for JSON, a command or an address
        (mcp-smart-add.js); what it understood shows under it for a check. */
     + '<p>Paste the server\u2019s config (JSON), the command that starts it, or its address. It\u2019s usually in the server\u2019s README.</p>'
+    /* ATO-1131: the built-in catalog (mcp-catalog.js); a pick fills the box below. */
+    + (typeof mcpCatalogHTML === 'function' ? mcpCatalogHTML(m, {esc}) : '')
     + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc('Examples:\n' + mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
     + '<div id="mcp-detect">' + mcpAddPreview() + '</div>'
     + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
@@ -26116,6 +26118,9 @@ async function mcpAddSubmit(json) {
   const m = MCP.addModal;
   if (!BR || !m || m.submitting) return {ok:false, error:'no add modal'};
   m.json = json; m.error = null;
+  // ATO-1131: a catalog pick leaves <your ...> values; never write one as the key.
+  const unfilled = typeof mcpCatalogUnfilled === 'function' ? mcpCatalogUnfilled(json) : null;
+  if (unfilled) { ANX.mcpAdded(false); m.error = unfilled; render(); return {ok:false, error:unfilled}; }
   const parsed = mcpAddParsed();
   if (!parsed.ok) { ANX.mcpAdded(false); m.error = parsed.error; render(); return parsed; }
   m.submitting = true; render();
@@ -26175,6 +26180,8 @@ function mcpAct(what) {
   if (verb === 'add') { MCP.addModal = {json:'', error:null, submitting:false, name:null, auto:null}; MCP.removeConfirm = null; render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
   if (verb === 'addSubmit') { const n = $('#mcp-json'); mcpAddSubmit(n ? n.value : (MCP.addModal ? MCP.addModal.json : '')); return; }
   if (verb === 'addCancel') { MCP.addModal = null; render(); return; }
+  // ATO-1131: a catalog chip puts that server's config in the box (mcp-catalog.js).
+  if (verb === 'catalog') { const j = typeof mcpCatalogJson === 'function' ? mcpCatalogJson(arg) : null; if (!j || !MCP.addModal || MCP.addModal.submitting) return; Object.assign(MCP.addModal, {json:j, catalogId:arg, error:null, name:null, auto:null}); render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
   if (verb === 'remove') { const name = sel(); if (!name) return; MCP.removeConfirm = {name, error:null, submitting:false}; render(); return; }
   if (verb === 'removeConfirm') { mcpRemoveConfirm(); return; }
   if (verb === 'removeCancel') { MCP.removeConfirm = null; render(); return; }

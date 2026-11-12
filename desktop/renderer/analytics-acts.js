@@ -68,7 +68,7 @@ const ANX_ACTS = (() => {
       // ATO-229: the update toast and General's update rows
       appupd:{update:L, notnow:L, skip:L, cancel:L, install:L, later:L, check:L, auto:L},
       // the Manage panes' own verbs (renderer.js mcpAct / skillsAct / memoryAct / tasksAct / llmAct / telegramAct / composioAct / importAct)
-      mcp:{add:L, addSubmit:L, addCancel:L, auto:L, back:L, detail:L, refresh:L, remove:L,
+      mcp:{add:L, addSubmit:L, addCancel:L, catalog:L, auto:L, back:L, detail:L, refresh:L, remove:L,
         removeCancel:L, removeConfirm:L, restart:L, toggle:L, enable:L, disable:L,
         dtab:Object.assign(set(mcpTabs), {cycle:L})},
       skills:{auto:L, back:L, card:L, cardScroll:UPDOWN, detail:L, filter:set(skillFilters), hub:L,
