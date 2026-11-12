@@ -1417,10 +1417,10 @@ export async function runLocalModelsUseEmbedding(
  * download / enabled / active status. Mirrors `runLocalModelsList`
  * with the embedding-specific columns.
  */
-export async function runLocalModelsListEmbeddings(): Promise<number> {
+export async function runLocalModelsListEmbeddings(write: (text: string) => void = (t) => { process.stdout.write(t); }): Promise<number> {
   const cfg = getConfig();
   const dataDir = cfg.paths.localModelsDataDir;
-  process.stdout.write(
+  write(
     "ID                       | SIZE   | DIM | POOLING | DL  | ACTIVE\n",
   );
   for (const m of EMBEDDING_MODELS_CATALOG) {
@@ -1430,7 +1430,7 @@ export async function runLocalModelsListEmbeddings(): Promise<number> {
       cfg.localModels.embeddings.enabled
         ? "*"
         : " ";
-    process.stdout.write(
+    write(
       `${m.id.padEnd(24)} | ${m.sizeLabel.padEnd(6)} | ${String(m.dim).padEnd(3)} | ${m.pooling.padEnd(7)} | ${dl.padEnd(3)} | ${active}\n`,
     );
   }
@@ -1438,7 +1438,7 @@ export async function runLocalModelsListEmbeddings(): Promise<number> {
   // confirm "is the embedding daemon up?" without an extra round-trip.
   const embPort = cfg.localModels.embeddings.port;
   const st = await getEmbeddingDaemonStatus(dataDir, embPort);
-  process.stdout.write(
+  write(
     `\nembedding daemon: ${st.running ? `running (pid ${st.pid})` : "stopped"} on port ${st.port}, health: ${
       st.healthy ? "ok" : st.authMismatch ? "key rejected" : st.loading ? "loading" : "down"
     }\n`,

@@ -674,8 +674,11 @@ export class AgentClient extends EventEmitter {
     return `http://127.0.0.1:${this.port}`;
   }
 
-  /** ATO-1127: what `models list` / `models status` print on the agent's own machine (GET /api/local-models/*); null when it cannot say. */
-  async localModelsText(view: "list" | "status"): Promise<string | null> {
+  /**
+   * ATO-1127: what `models list` / `models status` print on the agent's own machine (GET /api/local-models/*); null when it cannot say.
+   * ATO-1213: and `models list-embeddings`; an agent older than that answers 404, so null.
+   */
+  async localModelsText(view: "list" | "status" | "list-embeddings"): Promise<string | null> {
     try {
       const res = await fetch(`${this.base()}/api/local-models/${view}`, { headers: this.headers(), signal: AbortSignal.timeout(20_000) });
       if (!res.ok) return null;

@@ -24,6 +24,16 @@ describe("GET /api/local-models/* (ATO-1127)", () => {
     expect(body.text).toMatch(/^mode:/);
   });
 
+  // ATO-1213: the remote desktop listed no embedding models at all.
+  it("answers the text `models list-embeddings` prints", async () => {
+    const res = await get("/api/local-models/list-embeddings");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; text: string };
+    expect(body.ok).toBe(true);
+    expect(body.text).toMatch(/^ID\s+\| SIZE\s+\| DIM/);
+    expect(body.text).toMatch(/embedding daemon: /);
+  });
+
   it("needs the key", async () => {
     expect((await get("/api/local-models/list", "wrong")).status).toBe(401);
   });

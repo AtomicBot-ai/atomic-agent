@@ -229,6 +229,8 @@ export function buildRouteTable(): RouteDefinition[] {
     // ATO-1127: this machine's local models, for a desktop connected from another computer.
     { method: "GET", path: "/api/local-models/list", handler: createLocalModelsTextHandler("list") },
     { method: "GET", path: "/api/local-models/status", handler: createLocalModelsTextHandler("status") },
+    // ATO-1213: and its embedding models, which the remote desktop listed as none.
+    { method: "GET", path: "/api/local-models/list-embeddings", handler: createLocalModelsTextHandler("list-embeddings") },
     // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
     { method: "POST", path: "/api/memory/embeddings/reconnect", handler: createReconnectMemoryEmbeddingsHandler() },
     // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.

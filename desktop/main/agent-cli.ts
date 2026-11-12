@@ -112,7 +112,7 @@ export function inCliStandIn(): boolean {
    `remoteModels` too. `models search` (cloud catalogs) is not a local model.
    --------------------------------------------------------------- */
 export interface RemoteModels {
-  text(view: "list" | "status"): Promise<string | null>;
+  text(view: "list" | "status" | "list-embeddings"): Promise<string | null>;
 }
 let remoteModels: RemoteModels | null = null;
 /** main.ts: the remote agent's models while connected to one, null otherwise. */
@@ -3264,9 +3264,17 @@ export interface EmbeddingCatalogModel {
 export async function modelsListEmbeddings(): Promise<{
   ok: boolean; models?: EmbeddingCatalogModel[]; daemon?: { running: boolean; pid: number | null; port: number | null; health: string }; error?: string;
 }> {
-  // Remote agent: its embedding models are not listed over the network yet; an empty list, not an error line.
-  if (remoteModels) return { ok: true, models: [] };
-  const res = await cli(["models", "list-embeddings"], 45_000);
+  /* ATO-1213: connected to an agent on another computer, its embedding models
+     (GET /api/local-models/list-embeddings, the same text the CLI prints). An
+     agent too old to say gives an empty list, not an error line, as before. */
+  let res: CliResult;
+  if (remoteModels) {
+    const text = await remoteModels.text("list-embeddings");
+    if (text === null) return { ok: true, models: [] };
+    res = { ok: true, stdout: text, stderr: "" };
+  } else {
+    res = await cli(["models", "list-embeddings"], 45_000);
+  }
   if (!res.ok) return { ok: false, error: res.error };
   const models: EmbeddingCatalogModel[] = [];
   let daemon: { running: boolean; pid: number | null; port: number | null; health: string } | undefined;
@@ -3597,6 +3605,11 @@ export async function stopEmbeddingServer(): Promise<{ ok: boolean; error?: stri
  * false: no server there.
  */
 export async function servedModels(): Promise<{ ok: true; chat: ServerAnswer; embedding: ServerAnswer }> {
+  /* ATO-1213: connected to an agent on another computer, the servers that
+     count are that computer's, and its `models status` already says what they
+     run. 127.0.0.1 here is this Mac: probing it named a server of this Mac in
+     the "now" line beside the remote's status. */
+  if (remoteModels) return { ok: true, chat: { answered: false, ids: [] }, embedding: { answered: false, ids: [] } };
   const facts = managedFactsFromFile();
   const [chat, embedding] = await Promise.all([
     probeServer(`http://127.0.0.1:${facts.chatPort}`, facts.dataDir, 1500),
