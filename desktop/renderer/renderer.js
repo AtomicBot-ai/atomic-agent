@@ -1746,6 +1746,8 @@ const P = {
   expand:'<path d="M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"/>',
   list:'<path d="M5.5 4h8M5.5 8h8M5.5 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/>',
   flag:'<path d="M3.5 14V2.5M3.5 3h8l-1.5 3 1.5 3h-8"/>',
+  // ATO-1465: the Discord mark in the set's own line style (a controller face, two eyes).
+  discord:'<path d="M5.6 4.2c-1 .2-1.9.5-2.7 1.1-1 1.8-1.3 3.7-1.1 5.6.9.8 1.9 1.3 3 1.6l.8-1.2M10.4 4.2c1 .2 1.9.5 2.7 1.1 1 1.8 1.3 3.7 1.1 5.6-.9.8-1.9 1.3-3 1.6l-.8-1.2M4.6 10.8c2.2 1 4.6 1 6.8 0M5.2 4.9c1.9-.5 3.7-.5 5.6 0"/><circle cx="6" cy="8.5" r=".8"/><circle cx="10" cy="8.5" r=".8"/>',
   /* #61: a whole dial. The old glyph was only the dial's upper half (y 5.5..11),
      which at 15px in Settings' nav read as a circle with its bottom cut off. */
   gauge:'<circle cx="8" cy="8" r="5.5"/><path d="M8 8.5l2.4-2.9M5 8.5h.01M8 5h.01M11 8.5h.01"/>',
@@ -1942,6 +1944,11 @@ const CATS = [
 ];
 
 
+/* ATO-1464/1465: the community Discord invite, the one place it lives in the desktop
+   (the old invite died on 25.10). Help › Join Discord, the palette row, the sidebar
+   button and the Diagnostics caption all open this. */
+const DISCORD_URL = 'https://discord.gg/DCqtG8WZX8';
+
 /* palette catalogue — every row has a menu-bar home */
 const PAL = [
   ['Go', [
@@ -2001,6 +2008,8 @@ const PAL = [
     ['doc','List built-in tools','','⌥ ⌘ T','tools'],
     ['download','Save report for support','','','dump'],
     ['flag','Report an issue…','','','help.report'],
+    // ATO-1465: the community server, the same act as Help › Join Discord and the sidebar button.
+    ['discord','Join Discord','','','help.discord'],
     ['x','Quit','','⌘ Q','quit'],
   ]],
 ];
@@ -2420,7 +2429,9 @@ function renderSidebar() {
       + '<button class="btn sb-settings" data-act="settings:open" title="' + kbdText('Settings (⌘ ,)') + '" aria-label="' + kbdText('Settings (⌘ ,)') + '">'
         + '<span class="sb-settings-ic">' + ic('gear') + '</span>'
         + '<span class="sb-settings-lb">Settings</span>'
-      + '</button></div>'
+      + '</button>'
+      // ATO-1465: our Discord, one click from anywhere (help.discord, counted as a ui_action).
+      + '<button class="iconbtn sb-discord" data-act="help.discord" title="Join Discord" aria-label="Join Discord">' + ic('discord') + '</button></div>'
     ;
   if (keepScroll) {
     const lists = $('#sidebar').querySelector('.sb-lists');
@@ -6356,7 +6367,7 @@ function diagnosticsPane() {
     + '</div>'
     + '<p class="set-cap set-diagwhat">Saves a text file to your Downloads folder with the app version, your settings with keys, tokens and passwords taken out, and the end of the agent’s log. That log can include parts of your recent chats and file paths. It is not sent anywhere: attach it when you write to us on '
       // ATO-535: where to write, opened in the browser by the [data-url] click handler (BR.openExternal).
-      + '<a class="msglink" href="#" data-url="https://discord.gg/kXWDFSJpMW">Discord</a> or in a '
+      + '<a class="msglink" href="#" data-url="' + DISCORD_URL + '">Discord</a> or in a '
       + '<a class="msglink" href="#" data-url="https://github.com/AtomicBot-ai/atomic-agent/issues/new">GitHub issue</a>.</p>'
     + doctorDataHTML(DOCD, {esc, ic})
     + diagLogHTML()
@@ -6964,6 +6975,11 @@ function copyText(text, okTitle, okSub) {
 /* ============================================================
    behaviour
    ============================================================ */
+/** ATO-1465: Help › Join Discord, the palette row and the sidebar button (help.discord). */
+function openDiscord() {
+  if (BR && BR.openExternal) BR.openExternal(DISCORD_URL);
+}
+
 /** Help › Report an issue (the menu, the palette, /report): a prefilled issue in the browser and a
     support report saved beside it. ATO-279: the native menu reaches it through `help.report` too, so
     it is counted, and it works over first-run setup (which lets this act through). */
@@ -7050,6 +7066,7 @@ function act(a) {
      were allowed to claim the key works. */
   if (a === 'wiz:saveUnchecked') { WIZ.acceptUnchecked = true; wizNext(); return; }
   if (a === 'help.report' || a === 'report') { close(); render(); helpReport(); return; }
+  if (a === 'help.discord') { close(); render(); openDiscord(); return; }   // ATO-1465
   /* Run mode — every route to it lands here or in fzSlash: the native menu's
      Run › Where it runs…, the Settings › LLM cards and worker count, the
      composer's ⇄, and the palette row. One switch path per verb, shared with
@@ -17608,6 +17625,7 @@ if (BR) {
     /* ATO-279: Help › Report an Issue… still opens over setup, as it did when
        the menu went straight to the browser; without close(), which would
        drop a provider wizard in progress. */
+    if (OB.open && a === 'help.discord') { openDiscord(); return; }   // ATO-1465: the same over setup
     if (OB.open && a === 'help.report') { helpReport(); return; }
     if (OB.open) return;
     return prevAct(a);

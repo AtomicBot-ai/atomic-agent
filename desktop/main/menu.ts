@@ -191,6 +191,8 @@ export function menuTemplate(
            menu's report is counted (ui_action) and opens the same prefilled
            issue with a saved support report, not the bare issue list. */
         item("Report an Issue…", "help.report"),
+        /* ATO-1465: the renderer opens the invite (DISCORD_URL, renderer.js) and counts the click. */
+        item("Join Discord", "help.discord"),
         ...(mac ? [] : [sep, { role: "about" } as MenuItemConstructorOptions]),
       ],
     },
