@@ -20655,7 +20655,12 @@ function sessionTurnsToLog(turns) {
       log.push({id:nid(), k:'tool', name:t.tool || 'tool',
         arg: summariseArgs(t.args), args: JSON.stringify(t.args ?? {}, null, 2),
         argsKey: JSON.stringify(t.args ?? {}), at: t.at,   // item 4: what the trace merge matches on
-        where:'local', ok:null, open:false});
+        where:'local', ok:null, open:false,
+        /* ATO-1382: the agent's words for the call, as the live card got them
+           from `tool_progress.done_line`; the history route builds the same
+           line from the stored args. An older agent sends none: the table's
+           own wording stays. */
+        doneLine: typeof t.done_line === 'string' && t.done_line ? t.done_line.slice(0, 200) : null});
       return;
     }
     if (t.kind === 'tool_result') {
