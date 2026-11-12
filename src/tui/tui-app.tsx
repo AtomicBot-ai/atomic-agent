@@ -63,6 +63,7 @@ import { getConfig } from "../config/index.js";
 import type { TuiAction } from "./tui-action.js";
 import {
   approvalHotkey,
+  codingModeMenuOwnsKey,
   handleAppKey,
   submitApprovalPath,
   handlePanelEscape,
@@ -1448,7 +1449,8 @@ export function TuiApp({
     // The coding-mode menu is deliberately NOT in this list: it closes
     // on any unrecognised key and lets that key through, so an operator
     // who opened it mid-sentence keeps typing. Unfocusing the editor
-    // there would swallow the letter that closed it.
+    // there would swallow the letter that closed it. The keys the menu
+    // does act on are claimed instead (`composerClaimKey`).
     !state.uninstall &&
     !state.sessionDelete &&
     // The issue-report popup is modal in the same sense as the ladders.
@@ -2033,7 +2035,9 @@ export function TuiApp({
   /**
    * The composer's stand-down rule. Ink hands a keypress to every
    * subscription, so without this the same `y` would both answer the
-   * prompt and type itself into the buffer.
+   * prompt and type itself into the buffer. The coding-mode menu claims
+   * its own ↑↓ / Enter / Esc the same way, so `/mode` cannot also walk
+   * the input history or send the draft behind it.
    */
   const composerClaimKey = useCallback(
     (input: string, key: Key) =>
@@ -2042,7 +2046,8 @@ export function TuiApp({
         input,
         key,
         state.vimMode && vimClaimsEsc(vimEscClaim.current),
-      ) !== null,
+      ) !== null ||
+      codingModeMenuOwnsKey(state, key),
     [state],
   );
 
