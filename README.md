@@ -720,7 +720,7 @@ Local-first bounds where control lives, not where packets go. Network egress hap
 - the agent's e-mail integration reads or sends mail;
 - the GitHub tools open issues or pull requests, or `git.remoteSync` is on and a repository syncs;
 - managed mode downloads a model from Hugging Face or the `llama.cpp` backend from GitHub Releases;
-- you install a skill from ClawHub or a GitHub skill repo;
+- you search for or install a skill from ClawHub, skills.sh or a GitHub skill repo (a search sends the query to ClawHub and skills.sh);
 - the TUI checks GitHub Releases for a newer version at startup (set `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP=false` to skip), or `atomic-agent update` fetches the installer;
 - analytics or crash reporting is enabled, as described above.
 
