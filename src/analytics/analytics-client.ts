@@ -38,7 +38,7 @@ export interface AnalyticsClientOptions {
   version: string;
   /**
    * Process-wide dimensions (`surface`, `arch`, `install_channel`,
-   * `desktop_version`) stamped on every event. `arch` falls back to
+   * `install_source`, `desktop_version`) stamped on every event. `arch` falls back to
    * `process.arch` when omitted.
    */
   dimensions?: AnalyticsDimensions;
@@ -65,7 +65,8 @@ export interface AnalyticsClientOptions {
  *   - stamped with the `platform` OS tag (`darwin` / `linux` / `win32`);
  *   - stamped with the `app_version` tag (the running app version);
  *   - stamped with `arch`, and — when dimensions are given — `surface`,
- *     `install_channel` and `desktop_version` (desktop only).
+ *     `install_channel`, `install_source` and `desktop_version` (desktop
+ *     only).
  *
  * The client is fire-safe: capture failures are swallowed so an
  * analytics outage never disturbs the agent runtime.
@@ -237,6 +238,9 @@ function globalProperties(
   if (!dimensions) return props;
   props.surface = dimensions.surface;
   props.install_channel = dimensions.installChannel;
+  if (dimensions.installSource !== undefined) {
+    props.install_source = dimensions.installSource;
+  }
   if (dimensions.desktopVersion !== undefined) {
     props.desktop_version = dimensions.desktopVersion;
   }

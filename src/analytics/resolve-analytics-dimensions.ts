@@ -27,6 +27,12 @@ export interface AnalyticsDimensions {
   arch: string;
   /** How this copy was installed (see {@link INSTALL_CHANNELS}). */
   installChannel: InstallChannel;
+  /**
+   * Where the install came from (see {@link INSTALL_SOURCE_TAGS}). Optional
+   * so callers that build dimensions by hand stay valid; the resolver
+   * always sets it.
+   */
+  installSource?: InstallSourceTag;
   /** Desktop app version, only when running under the desktop app. */
   desktopVersion?: string;
 }
@@ -53,6 +59,37 @@ export const INSTALL_CHANNEL_ENV = "ATOMIC_AGENT_INSTALL_CHANNEL";
 export const DESKTOP_VERSION_ENV = "ATOMIC_AGENT_DESKTOP_VERSION";
 /** Marker file written by `scripts/install.sh` / `install.ps1`. */
 export const INSTALL_CHANNEL_FILE = "install-channel";
+
+/**
+ * Every install source value that may leave the machine (ATO-419): the
+ * `?from=` tag on the published install links. One fixed word, never a
+ * URL, a referrer or a UTM string. Untagged installs (search, direct
+ * links, word of mouth) stay `unknown`. Keep the lists in
+ * `scripts/install.sh` and `scripts/install.ps1` in step with this one
+ * (`scripts/install-source-marker.test.ts` checks it).
+ */
+export const INSTALL_SOURCE_TAGS = [
+  "x",
+  "reddit",
+  "github",
+  "email",
+  "site",
+  "discord",
+  "hn",
+  "youtube",
+  "other",
+  "unknown",
+] as const;
+export type InstallSourceTag = (typeof INSTALL_SOURCE_TAGS)[number];
+
+export const INSTALL_SOURCE_ENV = "ATOMIC_AGENT_INSTALL_SOURCE";
+/**
+ * Marker file written by the install scripts in the state dir. Not to be
+ * confused with the Linux package marker of the same name beside the
+ * binary (`src/update/install-source.ts`), which records the package
+ * format.
+ */
+export const INSTALL_SOURCE_FILE = "install-source";
 
 /** Narrow an arbitrary value to a known channel, else `undefined`. */
 export function parseInstallChannel(
@@ -98,6 +135,34 @@ export function resolveInstallChannel(
   return "unknown";
 }
 
+/** Narrow an arbitrary value to a known install source, else `undefined`. */
+export function parseInstallSourceTag(
+  value: unknown,
+): InstallSourceTag | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.replace(/^\uFEFF/, "").trim().toLowerCase();
+  return (INSTALL_SOURCE_TAGS as readonly string[]).includes(trimmed)
+    ? (trimmed as InstallSourceTag)
+    : undefined;
+}
+
+/**
+ * Resolve where this install came from: the env set by the desktop app
+ * wins, then the `<stateDir>/install-source` marker written by the install
+ * scripts, else `unknown`. Anything outside the allowlist is treated as
+ * absent.
+ */
+export function resolveInstallSource(
+  stateDir: string,
+  env: NodeJS.ProcessEnv = process.env,
+): InstallSourceTag {
+  const fromEnv = parseInstallSourceTag(env[INSTALL_SOURCE_ENV]);
+  if (fromEnv) return fromEnv;
+  const raw = readTextFile(join(stateDir, INSTALL_SOURCE_FILE));
+  const fromFile = parseInstallSourceTag(raw?.split(/\r?\n/, 1)[0]);
+  return fromFile ?? "unknown";
+}
+
 /** Desktop version from env, kept only when it looks like a version. */
 export function resolveDesktopVersion(
   env: NodeJS.ProcessEnv = process.env,
@@ -119,6 +184,7 @@ export function resolveAnalyticsDimensions(options: {
     surface: resolveSurface(options.surface, env),
     arch: process.arch,
     installChannel: resolveInstallChannel(options.stateDir, env),
+    installSource: resolveInstallSource(options.stateDir, env),
     ...(desktopVersion !== undefined ? { desktopVersion } : {}),
   };
 }
