@@ -39,6 +39,26 @@ describe("maskSecrets", () => {
     expect(out).not.toContain("hunter2");
   });
 
+  it("uses the shared detector: its markers, PEM keys and the agent's own exact values (ATO-1176)", () => {
+    const pem = [
+      "-----BEGIN PRIVATE KEY-----",
+      "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7",
+      "-----END PRIVATE KEY-----",
+    ].join("\n");
+    const text = [
+      `OPENROUTER_API_KEY=sk-or-v1-${"0123456789abcdef".repeat(4)}`,
+      pem,
+      "custom value plainShapeless9Value in a log",
+    ].join("\n");
+    const out = maskSecrets(text, [{ label: "MY_SERVICE_TOKEN", value: "plainShapeless9Value" }]);
+    expect(out).toContain("[redacted:");
+    expect(out).toContain("[redacted:private-key]");
+    expect(out).toContain("custom value [redacted:MY_SERVICE_TOKEN] in a log");
+    expect(out).not.toMatch(/sk-or-v1-0123|MIIEvQ|plainShapeless9Value/);
+    // A marker is masked once, not re-wrapped by the report's own layer.
+    expect(out).not.toContain("<redacted>");
+  });
+
   it("leaves ordinary prose and short words alone", () => {
     const text = "The token field was empty; secret sauce is fine.";
     expect(maskSecrets(text)).toBe(text);
@@ -96,7 +116,7 @@ describe("scrubText and mapStrings", () => {
       b: true,
     };
     expect(mapStrings(value, (s) => scrubText(s, CTX))).toEqual({
-      "~/k": ["<token>", { deep: "<email>" }],
+      "~/k": ["[redacted:github-token]", { deep: "<email>" }],
       n: 1,
       b: true,
     });

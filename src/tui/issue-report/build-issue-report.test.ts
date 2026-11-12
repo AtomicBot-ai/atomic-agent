@@ -245,7 +245,7 @@ describe("buildIssueReport", () => {
     expect(json).toContain("thinking about secrets");
     expect(json).toContain('"message":"please read the secret file"');
     for (const s of [md, json]) expect(s).not.toContain(TOKEN);
-    expect(json).toContain("<token>");
+    expect(json).toContain("[redacted:github-token]");
   });
 
   it("falls back to a generic title when the last run did not fail", () => {

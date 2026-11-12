@@ -8,6 +8,7 @@ import type { BatchExecutionResult } from "../dispatch/batch-contract.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import { compressToolResult, fullToolResult } from "../../compressor/result-compressor.js";
+import { knownSecretsFromEnv, maskSecretsDeep } from "../../error-reporting/secret-detector.js";
 import { evidenceMarks } from "./step-evidence.js";
 import type { SessionState } from "../../session/session-state.js";
 import { rememberConversationPackStart, recordLoadedTool, recordLatestResult, recordTurn, recordLoadedSkill, recordWorldSnapshot, recordPlan } from "../../session/session-state.js";
@@ -150,7 +151,13 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
       tool: result.tool,
       status: result.status,
       summary: result.summary,
-      ...(result.details !== undefined ? { details: result.details } : {}),
+      // The session file keeps this copy on disk; only the summary and
+      // the prompt-bound details were masked on the way in (ATO-1077),
+      // so the rest is masked here (ATO-1176). The state effects below
+      // still read the result as the tool wrote it.
+      ...(result.details !== undefined
+        ? { details: maskSecretsDeep(result.details, knownSecretsFromEnv()) }
+        : {}),
     });
     nextSession = applyStateEffects(nextSession, result, modelMode);
   }

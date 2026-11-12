@@ -1,4 +1,5 @@
 import type { ToolApprovalRecord } from "../approval/approval-ledger.js";
+import { knownSecretsFromEnv, maskSecrets } from "../error-reporting/secret-detector.js";
 
 export interface RawToolResult {
   tool: string;
@@ -37,6 +38,13 @@ export interface CompressorOptions {
   overflow?: "head" | "tail";
 }
 
+/**
+ * The terminal tools whose output is the model's own words, kept in step
+ * with `UNMASKED_TOOLS` (`src/tools/tool-output-secrets.ts`, which
+ * imports this module).
+ */
+const UNMASKED_SUMMARY_TOOLS: ReadonlySet<string> = new Set(["reply", "finish"]);
+
 const DEFAULTS: CompressorOptions = {
   maxSummaryLength: 400,
   maxTailLines: 12,
@@ -53,7 +61,15 @@ export function compressToolResult(
   options: Partial<CompressorOptions> = {},
 ): CompressedToolResult {
   const merged = { ...DEFAULTS, ...options };
-  const normalised = raw.output.replace(/\r\n/g, "\n").trimEnd();
+  // Secrets are masked before the summary is cut (ATO-1176). The
+  // registry masks the finished result again (ATO-1077), but a key the
+  // slices below cut in half no longer matches any shape or exact value,
+  // and its first half would reach the model. `fullOutput` stays the raw
+  // text: the registry masks it whole, with the config's keys as well.
+  const text = raw.output.replace(/\r\n/g, "\n").trimEnd();
+  const normalised = UNMASKED_SUMMARY_TOOLS.has(raw.tool)
+    ? text
+    : maskSecrets(text, knownSecretsFromEnv());
   const { text: tail, truncated: tailTruncated } = extractTail(
     normalised,
     merged.maxTailLines,
