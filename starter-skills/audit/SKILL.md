@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Security audit of a code project in two passes. The first pass collects candidate vulnerabilities, the second tries to refute every one of them, and only findings that survive go into the report. Use when the user runs /audit or asks to check a repository, folder or change for security problems, vulnerabilities or leaked secrets.
+description: Two-pass security audit: find vulnerabilities and leaked secrets, then refute each. Use for /audit.
 version: 1.0.0
 requires_tools:
   - os.fs.code_map
