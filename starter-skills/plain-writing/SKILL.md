@@ -1,6 +1,6 @@
 ---
 name: plain-writing
-description: Make a landing page, post or any text read human: no long dashes or stock phrases. Use to remove AI slop.
+description: "Make a landing page, post or any text read human: no long dashes or stock phrases. Use to remove AI slop."
 version: 1.0.0
 requires_tools:
   - os.fs.read
