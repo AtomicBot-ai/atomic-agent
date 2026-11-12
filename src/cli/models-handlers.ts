@@ -44,6 +44,7 @@ import {
   readBackendVersion,
   readDownloadJob,
   readLaunchRecord,
+  loraAdapterForModel,
   DEFAULT_HF_ENDPOINT,
   huggingFaceEndpointHost,
   readPartialDownload,
@@ -759,6 +760,9 @@ export async function runLocalModelsStart(
         parallel: cfg.localModels.managed.parallel,
         localLegRole,
         swaFull: cfg.localModels.managed.swaFull,
+        ...(loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid)
+          ? { loraAdapter: loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid) }
+          : {}),
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(dev ? { device: dev } : {}),

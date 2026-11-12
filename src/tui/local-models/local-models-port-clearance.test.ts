@@ -39,10 +39,30 @@ describe("clearChatPort", () => {
     const h = harness({ kind: "free" });
     expect(await clearChatPort(cfg, "qwen-3.5-4b", h.deps)).toEqual({ port: 19091, adoptedPid: null });
     expect(h.requests).toEqual([
-      { port: 19091, role: "chat", ownDataDir: "/state/models", alias: "qwen-3.5-4b", avoidPorts: [19092] },
+      { port: 19091, role: "chat", ownDataDir: "/state/models", alias: "qwen-3.5-4b", avoidPorts: [19092], loraAdapter: null },
     ]);
     expect(h.lines).toEqual([]);
     expect(h.persist).not.toHaveBeenCalled();
+  });
+
+  it("asks for the LoRA adapter configured for this model, so another one restarts the server (ATO-1106)", async () => {
+    const h = harness({ kind: "free" });
+    const withAdapter = {
+      ...cfg,
+      localModels: {
+        ...cfg.localModels,
+        managed: {
+          port: 19091,
+          loraAdapters: {
+            "qwen-3.5-4b": { path: "/adapters/style.gguf", scale: 0.5 },
+            "other-model": { path: "/adapters/other.gguf" },
+          },
+        },
+      },
+    } as unknown as ReturnType<typeof getConfig>;
+    await clearChatPort(withAdapter, "qwen-3.5-4b", h.deps);
+    await clearChatPort(withAdapter, "gemma-4-e4b", h.deps);
+    expect(h.requests.map((r) => r.loraAdapter)).toEqual(["/adapters/style.gguf:0.5", null]);
   });
 
   it("a move is saved to config and the live route is re-pointed", async () => {

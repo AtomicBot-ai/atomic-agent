@@ -95,6 +95,13 @@ import {
 import { resolvePlatformAsset } from "../backend/platform-assets.js";
 import { assertBackendRunsOnThisMac } from "../backend/macos-min-version.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
+import {
+  loraAdapterArgs,
+  loraAdapterFileProblem,
+  loraAdapterKey,
+  loraAdapterShapeProblem,
+  type LoraAdapter,
+} from "./lora-adapter.js";
 import { noteReleaseTimeout, waitForProcessRelease } from "./process-release.js";
 import {
   buildDaemonEnv,
@@ -120,6 +127,14 @@ export interface DaemonStartOptions {
    * undefined for text-only operation.
    */
   mmprojFile?: string;
+  /**
+   * LoRA adapter for this model (`localModels.managed.loraAdapters`,
+   * ATO-1106): appended as `--lora <path>` or `--lora-scaled
+   * <path>:<scale>`. `startDaemon` refuses to launch when the file is
+   * missing or the shape is one llama.cpp would misread. Undefined keeps
+   * the launch byte-identical.
+   */
+  loraAdapter?: LoraAdapter;
   /**
    * Resolved compute device for offloading. A concrete backend device
    * id (e.g. `Vulkan0`) appends `--device <id>`; the literal `"cpu"`
@@ -415,6 +430,12 @@ export interface LaunchRecord {
    * grow. Read by whoever owns the daemon to decide a growth restart.
    */
   autoContextCeiling?: number | null;
+  /**
+   * `loraAdapterKey` of the adapter this server was launched with;
+   * `null` / absent for none. Port reclaim compares it with the adapter
+   * the next launch wants, so changing the adapter restarts the server.
+   */
+  loraAdapter?: string | null;
 }
 
 export function writeLaunchRecord(dataDir: string, record: LaunchRecord): void {
@@ -447,6 +468,7 @@ export function readLaunchRecord(
           : null,
       launchedAt: toFiniteNumber(parsed.launchedAt) ?? 0,
       autoContextCeiling: toFiniteNumber(parsed.autoContextCeiling) ?? null,
+      loraAdapter: typeof parsed.loraAdapter === "string" ? parsed.loraAdapter : null,
     };
   } catch {
     return null;
@@ -702,6 +724,7 @@ export function buildLlamaServerArgs(
       "2048",
     );
   }
+  args.push(...loraAdapterArgs(opts.loraAdapter));
   return args;
 }
 
@@ -1274,6 +1297,13 @@ export async function startDaemon(
         : `model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`,
     );
   }
+  if (opts.loraAdapter) {
+    const problem =
+      loraAdapterShapeProblem(opts.loraAdapter) ?? loraAdapterFileProblem(opts.loraAdapter);
+    if (problem) {
+      throw new Error(`${problem} (localModels.managed.loraAdapters["${opts.modelId}"])`);
+    }
+  }
 
   // A configured tensor split flips `auto` device resolution to "leave
   // every GPU visible" — pinning one `--device` would defeat the split.
@@ -1455,7 +1485,8 @@ export async function startDaemon(
       probe: opts.throughputProbe !== false,
     });
     writeLaunchRecord(opts.dataDir, { pid: session.pid, modelId: model.id, contextSize,
-      swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now(), autoContextCeiling });
+      swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now(), autoContextCeiling,
+      loraAdapter: loraAdapterKey(opts.loraAdapter) });
     // Core retries a load that fails with the projector once without it and
     // reports `mmproj_path: null`; an older Core omits the field.
     const projectorDropped = Boolean(opts.mmprojFile) && (session.mmproj_path === null || session.mmproj_path === "");
@@ -1525,6 +1556,7 @@ export async function startDaemon(
       prefixReuse: effectivePrefixReuse,
       launchedAt: Date.now(),
       autoContextCeiling,
+      loraAdapter: loraAdapterKey(opts.loraAdapter),
     });
     return {
       pid: child.pid,

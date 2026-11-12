@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { realpathSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
 import {
   resolveEmbeddingPidFilePath,
+  resolveLaunchFilePath,
   resolvePidFilePath,
 } from "../backend-paths.js";
 import { fetchServedModelIds } from "./daemon-launch-guard.js";
@@ -18,7 +19,9 @@ import { hasOtherLiveSessions } from "./session-registry.js";
  * `PortTakenError` it could have resolved itself. The rules, in order:
  *
  *   - our own data dir's llama-server serving the alias we want →
- *     **adopt** it (write its pid; the model is already warm);
+ *     **adopt** it (write its pid; the model is already warm), unless the
+ *     chat launch wants another LoRA adapter than the one it was launched
+ *     with (ATO-1106), which **stops** it like another model would;
  *   - our own data dir's llama-server serving anything else → **stop** it:
  *     the config it was launched for is gone, and every session of this
  *     data dir reads the same config;
@@ -54,6 +57,11 @@ export interface ReclaimRequest {
   alias: string;
   /** Ports a move must not land on (the other daemon's). */
   avoidPorts: readonly number[];
+  /**
+   * `loraAdapterKey` of the adapter the launch would use (`null`: none).
+   * Omitted: the adapter is not compared, as for the embedding daemon.
+   */
+  loraAdapter?: string | null;
 }
 
 export interface ReclaimDeps {
@@ -71,6 +79,8 @@ export interface ReclaimDeps {
   stopCoreRole?: (dataDir: string, role: ReclaimRequest["role"]) => Promise<boolean>;
   /** Restart a crashed Core so it reaps the model it left running. */
   recoverCore?: (dataDir: string) => Promise<boolean>;
+  /** The LoRA adapter key the live server `pid` of `dataDir` was launched with. */
+  launchedLoraAdapter?: (dataDir: string, pid: number) => string | null;
   waitMs?: number;
 }
 
@@ -90,11 +100,14 @@ export async function reclaimManagedPort(
   // treated as a foreign holder (which would move the port and save it).
   const core = deps.coreSessionOnPort?.(req.ownDataDir, req.port) ?? null;
   if (core) {
-    if (core.role === req.role && core.modelId === req.alias) {
+    const sameModel = core.role === req.role && core.modelId === req.alias;
+    if (sameModel && sameLoraAdapter(req, deps, core.pid)) {
       deps.writePidFile(req.ownDataDir, req.role, core.pid);
       return { kind: "adopted", pid: core.pid };
     }
-    const why = `unloaded Atomic Core's ${core.role} model ${core.modelId} (pid ${core.pid}) through Core: not ${req.alias}`;
+    const why = sameModel
+      ? `unloaded Atomic Core's ${core.role} model ${core.modelId} (pid ${core.pid}) through Core: launched with another LoRA adapter`
+      : `unloaded Atomic Core's ${core.role} model ${core.modelId} (pid ${core.pid}) through Core: not ${req.alias}`;
     await deps.stopCoreRole?.(req.ownDataDir, core.role);
     if (await waitClosed(req.port, deps)) return { kind: "stopped", pid: core.pid, why };
     return move(req, deps, `${why}, but it did not release the port`);
@@ -155,7 +168,12 @@ async function judgeHolder(
   if (deps.samePath(holder.atagDataDir, req.ownDataDir)) {
     const served = await deps.servedModels(req.port);
     if (served !== null && served.includes(req.alias)) {
-      return { kind: "adopt", pid: holder.pid };
+      if (sameLoraAdapter(req, deps, holder.pid)) return { kind: "adopt", pid: holder.pid };
+      return {
+        kind: "stop",
+        pid: holder.pid,
+        why: `stopped our own llama-server ${who}: it was launched with another LoRA adapter`,
+      };
     }
     return {
       kind: "stop",
@@ -174,6 +192,29 @@ async function judgeHolder(
     pid: holder.pid,
     why: `stopped a leftover llama-server ${who} — nothing of ${holder.atagDataDir} is running`,
   };
+}
+
+/** Whether the server `pid` carries the adapter the launch wants (ATO-1106). */
+function sameLoraAdapter(req: ReclaimRequest, deps: ReclaimDeps, pid: number): boolean {
+  if (req.loraAdapter === undefined || !deps.launchedLoraAdapter) return true;
+  return deps.launchedLoraAdapter(req.ownDataDir, pid) === req.loraAdapter;
+}
+
+/**
+ * The adapter key in the launch record of `pid`; `null` for none, an
+ * unreadable record or one of another pid (a server started before the
+ * key existed was launched without an adapter).
+ */
+function readLaunchedLoraAdapter(dataDir: string, pid: number): string | null {
+  try {
+    const record = JSON.parse(readFileSync(resolveLaunchFilePath(dataDir), "utf-8")) as {
+      pid?: unknown;
+      loraAdapter?: unknown;
+    };
+    return record.pid === pid && typeof record.loraAdapter === "string" ? record.loraAdapter : null;
+  } catch {
+    return null;
+  }
 }
 
 async function waitClosed(port: number, deps: ReclaimDeps): Promise<boolean> {
@@ -271,6 +312,7 @@ export function defaultReclaimDeps(): ReclaimDeps {
     },
     stopCoreRole: (dataDir, role) => stopCoreSession(dataDir, role),
     recoverCore: (dataDir) => recoverOrphanedCoreSessions(dataDir),
+    launchedLoraAdapter: readLaunchedLoraAdapter,
   };
 }
 
