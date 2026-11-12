@@ -82,6 +82,49 @@ export function verifyStandardWebhook(
   return { ok: false, reason: "bad_signature" };
 }
 
+/** Stripe: reject a `stripe-signature` timestamp this far from now (ATO-625). */
+export const STRIPE_TOLERANCE_MS = 5 * 60 * 1000;
+
+/**
+ * Stripe (ATO-625): `Stripe-Signature: t=<unix seconds>,v1=<hex>[,v1=<hex>]`,
+ * where each `v1` is the hex HMAC-SHA256 of `<t>.<body>` keyed with the
+ * `whsec_...` endpoint secret as UTF-8 (unlike Standard Webhooks, the
+ * secret is not base64-decoded). Any one `v1` may match, which is how
+ * Stripe rolls secrets; `t` must be within `STRIPE_TOLERANCE_MS` of now.
+ */
+export function verifyStripeSignature(
+  rawBody: Buffer,
+  header: string | null,
+  secret: string,
+  nowMs: number,
+): SignatureCheck {
+  if (!header) return { ok: false, reason: "missing_signature" };
+  let timestamp: string | null = null;
+  const candidates: string[] = [];
+  for (const part of header.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key === "t") timestamp = value;
+    else if (key === "v1") candidates.push(value);
+  }
+  if (timestamp === null) return { ok: false, reason: "missing_headers" };
+  if (!/^\d{1,12}$/.test(timestamp)) return { ok: false, reason: "bad_timestamp" };
+  if (Math.abs(nowMs - Number(timestamp) * 1000) > STRIPE_TOLERANCE_MS) {
+    return { ok: false, reason: "stale_timestamp" };
+  }
+  const expected = createHmac("sha256", secret)
+    .update(`${timestamp}.`)
+    .update(rawBody)
+    .digest();
+  for (const candidate of candidates) {
+    if (!/^[0-9a-fA-F]{64}$/.test(candidate)) continue;
+    if (bytesEqual(Buffer.from(candidate, "hex"), expected)) return { ok: true };
+  }
+  return { ok: false, reason: "bad_signature" };
+}
+
 /** Key bytes of a Standard Webhooks secret; the `whsec_` prefix is optional. */
 export function standardWebhooksKey(secret: string): Buffer {
   const body = secret.startsWith("whsec_") ? secret.slice(6) : secret;

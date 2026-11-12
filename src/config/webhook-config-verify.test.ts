@@ -54,6 +54,12 @@ describe("webhook verify scheme", () => {
       secret: STANDARD_SECRET,
       verify: "standard-webhooks",
     })).toMatchObject({ verify: "standard-webhooks", secret: STANDARD_SECRET });
+    expect(parsedHook({
+      userMessageTemplate: "on {{event}}",
+      secret: "whsec_synthetic-stripe-secret",
+      verify: "stripe",
+      events: ["invoice.paid"],
+    })).toMatchObject({ verify: "stripe", events: ["invoice.paid"] });
   });
 
   it("accepts a standard-webhooks secret without the whsec_ prefix", () => {
@@ -62,12 +68,12 @@ describe("webhook verify scheme", () => {
   });
 
   it.each([
-    [{ userMessageTemplate: "e", verify: "hmac" }, "webhooks.ping.verify", 'expected secret|github|standard-webhooks, got "hmac"'],
+    [{ userMessageTemplate: "e", verify: "hmac" }, "webhooks.ping.verify", 'expected secret|github|standard-webhooks|stripe, got "hmac"'],
     [{ userMessageTemplate: "e", verify: "github" }, "webhooks.ping.secret", "verify=github requires a non-empty secret"],
     [{ userMessageTemplate: "e", verify: "standard-webhooks" }, "webhooks.ping.secret", "verify=standard-webhooks requires a non-empty secret"],
     [{ userMessageTemplate: "e", verify: "standard-webhooks", secret: "whsec_not base64!" }, "webhooks.ping.secret", "verify=standard-webhooks expects a base64 secret such as whsec_<base64>"],
     [{ userMessageTemplate: "e", verify: "standard-webhooks", secret: "whsec_" }, "webhooks.ping.secret", "verify=standard-webhooks expects a base64 secret such as whsec_<base64>"],
-    [{ userMessageTemplate: "e", secret: "s", events: ["push"] }, "webhooks.ping.events", "events requires verify=github or verify=standard-webhooks"],
+    [{ userMessageTemplate: "e", secret: "s", events: ["push"] }, "webhooks.ping.events", "events requires verify=github, verify=standard-webhooks or verify=stripe"],
     [{ userMessageTemplate: "e", secret: "s", verify: "github", events: [] }, "webhooks.ping.events", "expected a non-empty array of event names"],
     [{ userMessageTemplate: "e", secret: "s", verify: "github", events: "push" }, "webhooks.ping.events", "expected a non-empty array of event names"],
     [{ userMessageTemplate: "e", secret: "s", verify: "github", events: ["push", ""] }, "webhooks.ping.events[1]", 'expected non-empty string, got ""'],

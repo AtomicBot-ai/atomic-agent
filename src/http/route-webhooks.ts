@@ -25,7 +25,8 @@ import { TaskValidationError } from "../tasks/index.js";
  * the named binding from `config.webhooks`, authenticates it by the
  * binding's `verify` scheme (in addition to the global API key): the
  * optional `x-webhook-secret` header by default, or a GitHub /
- * Standard Webhooks HMAC signature over the raw body (ATO-438), renders
+ * Standard Webhooks (ATO-438) / Stripe (ATO-625) HMAC signature over the
+ * raw body, renders
  * `userMessageTemplate` against the JSON body, and
  * materialises the result as a task via `TaskRunner.create`. The
  * handler NEVER calls `runTurn` directly — that invariant is what
@@ -40,15 +41,36 @@ import { TaskValidationError } from "../tasks/index.js";
  * Responses:
  *  - 202 `{ taskId }` on success
  *  - 200 `{ taskId: null, ignored | duplicate }` for a genuine hit that
- *    starts nothing (filtered event, GitHub `ping`, repeated `webhook-id`)
+ *    starts nothing (filtered event, GitHub `ping`, repeated `webhook-id`;
+ *    with `dedupeDeliveries`, any repeated delivery id)
  *  - 404 when the webhook name is unknown or `tasks.enabled` is false
  *  - 401 on bad/missing secret header (only when the config declares one;
  *    compared in constant time, see `secretEquals`), or on a missing,
  *    wrong or stale signature for the signed schemes
+ *  - 403 `webhook_secret_required` when `requireSecret` is set and the
+ *    binding has no secret (the tunnel gateway, ATO-625)
  *  - 400 on invalid JSON body, unknown template fields, or schedule validation
  */
+export interface WebhookHandlerOptions {
+  replayCache?: WebhookReplayCache;
+  now?: () => number;
+  /**
+   * Refuse bindings without a `secret` (the tunnel gateway, ATO-625:
+   * there is no API key in front of it, so such a binding is never
+   * reachable from the internet).
+   */
+  requireSecret?: boolean;
+  /**
+   * Start at most one task per delivery id on every signed scheme, not
+   * only Standard Webhooks: `X-GitHub-Delivery`, `webhook-id` or the
+   * Stripe event `id` (the tunnel gateway, ATO-625). A repeat answers
+   * `200 { taskId: null, duplicate: true }`.
+   */
+  dedupeDeliveries?: boolean;
+}
+
 export function createWebhookHandler(
-  options: { replayCache?: WebhookReplayCache; now?: () => number } = {},
+  options: WebhookHandlerOptions = {},
 ): HttpHandler {
   const replayCache = options.replayCache ?? new WebhookReplayCache();
   const now = options.now ?? Date.now;
@@ -66,7 +88,10 @@ export function createWebhookHandler(
       sendError(res, 400, openaiError("webhook name is required"));
       return;
     }
-    const webhook = ctx.runtime.config.webhooks[name];
+    // Own keys only: `constructor` or `__proto__` must not resolve to
+    // something off Object.prototype.
+    const webhooks = ctx.runtime.config.webhooks;
+    const webhook = Object.hasOwn(webhooks, name) ? webhooks[name] : undefined;
     if (!webhook) {
       sendError(res, 404, openaiError(`webhook not found: ${name}`));
       ctx.runtime.metrics.recordWebhookReceived({
@@ -75,14 +100,25 @@ export function createWebhookHandler(
       });
       return;
     }
-    const reject = (status: number, message: string): void => {
-      sendError(res, status, openaiError(message, "invalid_request_error"));
+    const reject = (status: number, message: string, code?: string): void => {
+      sendError(res, status, openaiError(message, "invalid_request_error", null, code ?? null));
       ctx.runtime.metrics.recordWebhookReceived({
         webhookName: name,
         status: "rejected",
       });
     };
-    const signed = webhook.verify === "github" || webhook.verify === "standard-webhooks";
+    if (options.requireSecret && !webhook.secret) {
+      reject(
+        403,
+        `webhook ${name} has no secret, so it is not reachable through the tunnel`,
+        "webhook_secret_required",
+      );
+      return;
+    }
+    const signed =
+      webhook.verify === "github" ||
+      webhook.verify === "standard-webhooks" ||
+      webhook.verify === "stripe";
     if (!signed && !checkSharedSecret(webhook, req)) {
       reject(401, "invalid webhook secret");
       return;
@@ -105,6 +141,9 @@ export function createWebhookHandler(
       return;
     }
     const hit = describeWebhookEvent(webhook, req, body);
+    if (signed && options.dedupeDeliveries && hit.delivery) {
+      replayKey = `${name}\n${hit.delivery}`;
+    }
     if (replayKey && replayCache.has(replayKey)) {
       ignore(res, ctx, name, { duplicate: true, delivery: hit.delivery });
       return;

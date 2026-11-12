@@ -28,12 +28,14 @@ import type { TaskSchedule } from "../tasks/task-types.js";
  *  - `github` — `X-Hub-Signature-256: sha256=<hex HMAC of the raw body>`
  *  - `standard-webhooks` — the Standard Webhooks headers (`webhook-id`,
  *    `webhook-timestamp`, `webhook-signature`) with a `whsec_` secret
+ *  - `stripe` — `Stripe-Signature: t=<unix>,v1=<hex HMAC of "<t>.<body>">`
+ *    with the endpoint's `whsec_` secret used as-is (ATO-625)
  * The signed schemes require `secret`. `events`, allowed only with a
  * signed scheme, limits which events start a task: a GitHub event name
  * (`pull_request`) or event plus action (`pull_request.opened`), or a
- * Standard Webhooks payload `type`.
+ * Standard Webhooks or Stripe payload `type`.
  */
-export type WebhookVerifyScheme = "secret" | "github" | "standard-webhooks";
+export type WebhookVerifyScheme = "secret" | "github" | "standard-webhooks" | "stripe";
 
 export interface WebhookConfig {
   userMessageTemplate: string;
@@ -128,7 +130,7 @@ export function parseWebhookMap(
     if (events && verify === "secret") {
       throw new ConfigValidationError(
         `${field}.${name}.events`,
-        "events requires verify=github or verify=standard-webhooks",
+        "events requires verify=github, verify=standard-webhooks or verify=stripe",
       );
     }
     let schedule: TaskSchedule | undefined;
@@ -153,12 +155,17 @@ export function parseWebhookMap(
 
 function parseVerifyScheme(raw: unknown, field: string): WebhookVerifyScheme {
   if (raw === undefined || raw === null) return "secret";
-  if (raw === "secret" || raw === "github" || raw === "standard-webhooks") {
+  if (
+    raw === "secret" ||
+    raw === "github" ||
+    raw === "standard-webhooks" ||
+    raw === "stripe"
+  ) {
     return raw;
   }
   throw new ConfigValidationError(
     field,
-    `expected secret|github|standard-webhooks, got ${JSON.stringify(raw)}`,
+    `expected secret|github|standard-webhooks|stripe, got ${JSON.stringify(raw)}`,
   );
 }
 
