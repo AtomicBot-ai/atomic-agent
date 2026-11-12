@@ -159,6 +159,15 @@ export {
   type DownloadNotifyChannel,
 } from "./downloads/download-notify-file.js";
 export {
+  cancelDownloadJob,
+  downloadJobPartialPaths,
+  pauseDownloadJob,
+  resumeDownloadJob,
+  type DownloadControlOptions,
+  type DownloadControlResult,
+  type ResumeDownloadResult,
+} from "./downloads/download-job-control.js";
+export {
   downloadWorkerArgs,
   looksLikeDownloadWorker,
   spawnDownloadWorker,

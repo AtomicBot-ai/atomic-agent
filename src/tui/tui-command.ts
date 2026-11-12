@@ -760,6 +760,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.pullModel(id, mode),
         onLocalModelsPullCancelRequested: (kind) =>
           void orchestrator.localModels.cancelPull(kind),
+        onLocalModelsPullPauseRequested: (kind) =>
+          void orchestrator.localModels.pausePull(kind),
         onComposerEngineRequested: (engine, leg) => { void orchestrator.chooseComposerEngine(engine, leg); },
         onComposerFusionModelRequested: (leg, model) => { void orchestrator.chooseComposerFusionModel(leg, model); },
         onLocalModelsEngineRequested: (engine) => { void orchestrator.localModels.chooseEngine(engine); },

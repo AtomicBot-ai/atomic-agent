@@ -418,7 +418,8 @@ function startBackgroundPull(input: {
       ping +
       `  progress: atomic-agent models downloads\n` +
       `  follow:   atomic-agent models pull${input.kind === "embedding" ? "-embedding" : ""} ${input.modelId}\n` +
-      `  stop:     atomic-agent models downloads cancel ${input.modelId}\n` +
+      `  pause:    atomic-agent models downloads pause ${input.modelId}\n` +
+      `  cancel:   atomic-agent models downloads cancel ${input.modelId}\n` +
       `  log:      ${logPath}\n` +
       `the download keeps running after this terminal closes.\n`,
   );

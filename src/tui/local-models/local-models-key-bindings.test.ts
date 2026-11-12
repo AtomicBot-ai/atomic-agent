@@ -770,6 +770,61 @@ describe("handleLocalModelsTabKey — x cancels the download in flight", () => {
   });
 });
 
+describe("handleLocalModelsTabKey — p pauses the download in flight", () => {
+  const pull = {
+    kind: "chat" as const,
+    modelId: "qwen-3.5-4b" as const,
+    label: "Qwen 3.5 4B (gguf)",
+    percent: 40,
+    transferredBytes: 4,
+    totalBytes: 10,
+    error: null,
+  };
+  const row = makeRow("qwen-3.5-4b", {
+    supportsVision: false,
+    downloaded: false,
+    mmprojStatus: "n/a",
+  });
+
+  it("pauses the chat pull, and never cancels it", () => {
+    const onPause = vi.fn();
+    const onCancel = vi.fn();
+    const base = stateWithRow(row);
+    const handled = handleLocalModelsTabKey("p", emptyKey(), {
+      state: { ...base, localModelsPanel: { ...base.localModelsPanel, pull } },
+      dispatch: vi.fn(),
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+        onMessageSubmitted: vi.fn(),
+        onLocalModelsPullPauseRequested: onPause,
+        onLocalModelsPullCancelRequested: onCancel,
+      },
+    });
+    expect(handled).toBe(true);
+    expect(onPause).toHaveBeenCalledWith("chat");
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("is not handled when nothing is downloading", () => {
+    const onPause = vi.fn();
+    const handled = handleLocalModelsTabKey("p", emptyKey(), {
+      state: stateWithRow(row),
+      dispatch: vi.fn(),
+      callbacks: {
+        onApprovalDecision: vi.fn(),
+        onAbort: vi.fn(),
+        onQuit: vi.fn(),
+        onMessageSubmitted: vi.fn(),
+        onLocalModelsPullPauseRequested: onPause,
+      },
+    });
+    expect(handled).toBe(false);
+    expect(onPause).not.toHaveBeenCalled();
+  });
+});
+
 describe("handleLocalModelsTabKey — tell me when it lands", () => {
   function callbacksWith(over: Partial<TuiAppCallbacks>): TuiAppCallbacks {
     return {
