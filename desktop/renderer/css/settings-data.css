@@ -111,6 +111,8 @@ input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
 .sd-tokwrap input{font:400 var(--fs-ui)/1 var(--font-mono);letter-spacing:.06em}
 .sd-tokwrap.is-error{background:var(--lift);border-color:var(--critical);box-shadow:0 0 0 4px var(--critical-wash)}
 .sd-acts{display:flex;align-items:center;gap:8px;margin-top:2px}
+/* ATO-516: the pairing deep link, cut with an ellipsis rather than pushing the buttons out. */
+.sd-pair [data-tg-link] .sd-mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-cap)}
 .sd-well{display:flex;flex-direction:column;gap:8px;padding:16px 18px;border-radius:var(--r-card);background:var(--well)}
 .sd-pairhead{display:flex;align-items:center;gap:10px}
 .sd-pairhead b{font-size:var(--fs-lead);font-weight:600;color:var(--ink)}

@@ -18,8 +18,27 @@ const TG_PAIR_GRACE_MS = 5000;
 const TG_PAIR_EXPIRED = 'The code expired. Press Pair for a new one.';
 const TG_PAIR_NOT_RUNNING = 'Telegram is not running in the agent yet. Restart the agent, then press Pair. The app stays open.';
 
+/* ATO-516: the code as a t.me deep link. Opening it in Telegram shows a Start
+   button that sends `/start <code>` from that account, the same claim as
+   typing it. The agent sends it as `link`; an agent from before that field
+   gets the same link built here from its botUsername and code. Null when
+   either part is not the shape a working link needs. */
+const TG_BOT_USERNAME_RE = /^[A-Za-z0-9_]{5,32}$/;
+function tgPairLink(botUsername, code, given) {
+  if (typeof code !== 'string' || !/^\d{6}$/.test(code)) return null;
+  if (typeof given === 'string' && /^https:\/\/t\.me\/[A-Za-z0-9_]{5,32}\?start=\d{6}$/.test(given) && given.endsWith('=' + code)) return given;
+  if (typeof botUsername !== 'string' || !TG_BOT_USERNAME_RE.test(botUsername)) return null;
+  return 'https://t.me/' + botUsername + '?start=' + code;
+}
+/* "4:59" until the window ends, "0:00" after; null without an expiry. */
+function tgPairCountdown(expiresAt, now) {
+  if (typeof expiresAt !== 'number' || typeof now !== 'number') return null;
+  const left = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  return Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+}
+
 function tgPairInitial() {
-  return {phase:'idle', supported:null, code:null, expiresAt:null, instruction:null, botUsername:null, pairedLine:null,
+  return {phase:'idle', supported:null, code:null, link:null, expiresAt:null, instruction:null, botUsername:null, pairedLine:null,
     error:null, askReplace:false};
 }
 
@@ -27,7 +46,7 @@ function tgPairInitial() {
    ('start' | 'status' | 'cancel') does to `pair`. Returns a new object. */
 function tgPairApply(pair, op, res, now) {
   const p = Object.assign({}, pair, {askReplace:false});
-  const ended = (phase, extra) => Object.assign(p, {phase, code:null, expiresAt:null, instruction:null}, extra || {});
+  const ended = (phase, extra) => Object.assign(p, {phase, code:null, link:null, expiresAt:null, instruction:null}, extra || {});
   const pastExpiry = p.phase === 'waiting' && typeof p.expiresAt === 'number' && typeof now === 'number' && now > p.expiresAt + TG_PAIR_GRACE_MS;
   if (res && res.unsupported) return ended('idle', {supported:false, error:null});
   if (!res || res.ok !== true) {
@@ -45,9 +64,10 @@ function tgPairApply(pair, op, res, now) {
   p.supported = true;
   if (op === 'start') {
     if (typeof d.code !== 'string' || !d.code) return Object.assign(p, {error:'Could not start pairing: the agent sent no code.'});
-    return Object.assign(p, {phase:'waiting', code:d.code, expiresAt:typeof d.expiresAt === 'number' ? d.expiresAt : null,
+    const bot = typeof d.botUsername === 'string' ? d.botUsername : null;
+    return Object.assign(p, {phase:'waiting', code:d.code, link:tgPairLink(bot, d.code, d.link), expiresAt:typeof d.expiresAt === 'number' ? d.expiresAt : null,
       instruction:typeof d.instruction === 'string' ? d.instruction : null,
-      botUsername:typeof d.botUsername === 'string' ? d.botUsername : null, pairedLine:null, error:null});
+      botUsername:bot, pairedLine:null, error:null});
   }
   if (op === 'cancel') return ended('idle', {error:null});
   // status: only the window this tab opened moves; a claim from an earlier visit is not news.
@@ -66,7 +86,9 @@ function tgPairApply(pair, op, res, now) {
 /* Whether the tab should ask again in TG_PAIR_POLL_MS. */
 function tgPairPolling(pair) { return !!pair && pair.phase === 'waiting'; }
 
-/* The pairing card's inside. `ctx`: {howto, note, busy, label, restart?}; `h`: {esc}.
+/* The pairing card's inside. `ctx`: {howto, note, busy, label, restart?, now?}; `h`: {esc}.
+   `now` (epoch ms) shows how long the code has left; the renderer ticks
+   [data-tg-countdown] in place between repaints (ATO-516).
    `label` names the start button ('Pair', or the replace wording). `restart` is the
    Restart agent button's markup (telegram-restart.js): when the agent said Telegram
    is not running, it stands beside Pair as the step to take first (ATO-900 item 6). */
@@ -77,10 +99,18 @@ function tgPairCardHTML(pair, ctx, h) {
   if (p.supported === false) return '<p data-tg-pair-note>' + esc(ctx.note) + '</p>';
   const startBtn = (label) => '<button class="btn btn-p sm" data-act="telegram:pairStart"' + (ctx.busy ? ' disabled' : '') + '>' + esc(label) + '</button>';
   if (p.phase === 'waiting') {
+    const left = tgPairCountdown(p.expiresAt, ctx.now);
+    // ATO-516: one click instead of typing: the link opens the bot with the code filled in.
+    const link = p.link ? '<p class="sd-cap">Or open the bot with the code filled in, then press Start:</p>'
+      + '<div class="sd-acts" data-tg-link><span class="sd-mono sd-grow" title="' + esc(p.link) + '">' + esc(p.link.replace(/^https:\/\//, '')) + '</span>'
+      + '<button class="btn btn-s sm" data-act="telegram:pairCopy">Copy link</button>'
+      + '<button class="btn btn-p sm" data-act="telegram:pairOpen">Open in Telegram</button></div>' : '';
     return '<div class="sd-paircode" data-tg-code aria-label="Pairing code">' + esc(p.code || '') + '</div>'
       + '<p>' + esc(p.instruction || ('Send /start ' + (p.code || '') + ' to your bot in Telegram.')) + '</p>'
+      + link
       + err
-      + '<div class="sd-acts"><span class="sd-cap">Waiting for your message…</span><span class="sd-grow"></span>'
+      + '<div class="sd-acts"><span class="sd-cap">Waiting for your message…</span>'
+      + (left ? '<span class="sd-cap">Expires in <b data-tg-countdown>' + esc(left) + '</b></span>' : '') + '<span class="sd-grow"></span>'
       + '<button class="btn btn-g sm" data-act="telegram:pairCancel"' + (ctx.busy ? ' disabled' : '') + '>Cancel</button>'
       + '<button class="btn btn-s sm" data-act="telegram:pairStart"' + (ctx.busy ? ' disabled' : '') + '>New code</button></div>';
   }
@@ -96,5 +126,5 @@ function tgPairCardHTML(pair, ctx, h) {
 
 if (typeof module !== 'undefined') {
   module.exports = {TG_PAIR_POLL_MS, TG_PAIR_GRACE_MS, TG_PAIR_EXPIRED, TG_PAIR_NOT_RUNNING,
-    tgPairInitial, tgPairApply, tgPairPolling, tgPairCardHTML};
+    tgPairLink, tgPairCountdown, tgPairInitial, tgPairApply, tgPairPolling, tgPairCardHTML};
 }

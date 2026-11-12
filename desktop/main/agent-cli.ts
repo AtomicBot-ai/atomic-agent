@@ -4073,7 +4073,8 @@ export function dotenvSet(stateDir: string, key: string, value: string | null): 
    since ATO-328, the Exa key web search reads (`web.search.exa.apiKeyEnv`,
    default EXA_API_KEY; the agent has no config.json field for it, so its
    environment, loaded from this file at start, is the only way in). */
-export const DESKTOP_DOTENV_KEYS: readonly string[] = ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY"];
+// ATO-516: DISCORD_BOT_TOKEN for Settings › Connections › Discord (the TUI's discord-settings.ts writeDiscordToken).
+export const DESKTOP_DOTENV_KEYS: readonly string[] = ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN"];
 
 /* Why an Exa key cannot be written as given, or null. One line of printable
    ASCII with no spaces, 8 to 256 characters: the renderer's exaKeyClean rule
@@ -4092,12 +4093,21 @@ export function exaKeyValueError(value: string): string | null {
    that is, a second variable the agent loads. */
 export function desktopDotenvError(key: unknown, value: unknown): string | null {
   if (typeof key !== "string" || !DESKTOP_DOTENV_KEYS.includes(key)) {
-    return `only ${DESKTOP_DOTENV_KEYS.join(" and ")} may be written from the desktop`;
+    return `only ${DESKTOP_DOTENV_KEYS.join(", ")} may be written from the desktop`;
   }
   if (value !== null && typeof value !== "string") return "value must be a string or null";
   if (value !== null && /[\r\n\0]/.test(value)) return "value must be one line";
   if (key === "EXA_API_KEY" && value !== null) return exaKeyValueError(value);
+  if (key === "DISCORD_BOT_TOKEN" && value !== null) return discordTokenValueError(value);
   return null;
+}
+
+/* ATO-516: why a Discord bot token cannot be written as given, or null. One
+   run of printable ASCII with no spaces, 20 to 200 characters: the renderer's
+   dcTokenClean rule (renderer/discord-settings.js), checked again here because
+   the value crosses IPC. Never quoted back. */
+export function discordTokenValueError(value: string): string | null {
+  return /^[\x21-\x7e]{20,200}$/.test(value) ? null : "That does not look like a Discord bot token.";
 }
 
 function applyDotenvMutation(original: string, key: string, value: string | null): string | null {
