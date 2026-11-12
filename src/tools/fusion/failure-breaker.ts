@@ -54,7 +54,8 @@ const TOOL_PROTOCOL = new RegExp(
   [
     // ToolCallParseError's own messages (tool-call-grammar.ts).
     String.raw`invalid tool-call JSON`,
-    String.raw`\btool-call (?:root|array|args|array entry \d+) must`,
+    String.raw`\btool-call (?:root|array(?: root)?|args|array entry \d+) must`,
+    String.raw`\btool-call body is empty`,
     String.raw`\btool-call must include`,
     // ToolCallArgumentsParseError (openai-tool-call-adapter.ts).
     String.raw`arguments are not a valid JSON object`,
@@ -73,16 +74,24 @@ const CLI_MISSING =
   /isn't installed \(the `[^`]+` command was not found\)|was not found on PATH|could not be started \(spawn|spawn \S+ ENOENT/i;
 /** `SubscriptionCliAuthError` and a provider rejecting the key. */
 const NOT_SIGNED_IN =
-  /is not signed in|not logged in|please (?:log|sign) in|\b401\b|unauthori[sz]ed|invalid (?:api )?key|incorrect api key|authentication failed/i;
+  /is not signed in|not logged in|please (?:log|sign) in|(?:HTTP|status|code)\s*401\b|^401\b|unauthori[sz]ed|invalid (?:api )?key|incorrect api key|authentication failed/i;
 /**
  * Out of credit or the subscription's usage limit. Deliberately narrower
  * than the hint's `CREDIT_OR_QUOTA`: a bare 429 or "rate limit" can pass
  * in seconds, so it only stops a fan-out as a repeat, never at once.
  */
 const OUT_OF_CREDIT =
-  /\b402\b|payment required|insufficient (?:credits?|funds|balance|quota)|out of (?:credits?|funds)|quota (?:exceeded|exhausted)|exceeded (?:your|the) (?:current )?quota|usage limit|(?:subscription|plan|weekly|daily|hourly|5-hour) limit|is out of credit/i;
+  /(?:HTTP|status|code)\s*402\b|^402\b|402 Payment|payment required|insufficient (?:credits?|funds|balance|quota)|out of (?:credits?|funds)|quota (?:exceeded|exhausted)|exceeded (?:your|the) (?:current )?quota|usage limit|(?:subscription|plan|weekly|daily|hourly|5-hour) limit|is out of credit/i;
 
+// The protocol check first: its messages carry positions and counts
+// ("at position 401") that the other patterns must not claim.
 const BLOCKERS: ReadonlyArray<{ re: RegExp; signature: string; label: string }> = [
+  {
+    re: TOOL_PROTOCOL,
+    signature: "blocker:tool-protocol",
+    label:
+      "the worker model's replies do not fit the agent's tool-call protocol, so its tools never run",
+  },
   {
     re: CLI_MISSING,
     signature: "blocker:cli-missing",
@@ -97,12 +106,6 @@ const BLOCKERS: ReadonlyArray<{ re: RegExp; signature: string; label: string }> 
     re: OUT_OF_CREDIT,
     signature: "blocker:out-of-credit",
     label: "the worker leg is out of credit or hit its usage limit",
-  },
-  {
-    re: TOOL_PROTOCOL,
-    signature: "blocker:tool-protocol",
-    label:
-      "the worker model's replies do not fit the agent's tool-call protocol, so its tools never run",
   },
 ];
 
@@ -236,8 +239,10 @@ export const FAILURE_BREAKER_INSTRUCTION =
 export function refusalFromTrips(
   trips: readonly BreakerTrip[],
   providerId: string,
+  otherLegs: readonly string[] = [],
 ): BreakerTrip | undefined {
-  const blocker = trips.find((t) => t.blocker && t.providerId === providerId);
+  const legs = new Set([providerId, ...otherLegs]);
+  const blocker = trips.find((t) => t.blocker && legs.has(t.providerId));
   if (blocker !== undefined) return blocker;
   const counts = new Map<string, number>();
   for (const trip of trips) {

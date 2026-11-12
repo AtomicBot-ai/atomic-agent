@@ -360,6 +360,7 @@ export function buildFusionDelegateTool(
         const priorTrip = refusalFromTrips(
           turnBudget.trips(ctx.sessionId),
           workerProviderId,
+          [...roleLegs.keys()],
         );
         if (priorTrip !== undefined) {
           return error(
@@ -778,7 +779,11 @@ export function buildFusionDelegateTool(
         pricing: WorkerPricing | undefined,
       ): Pick<
         Parameters<typeof runWorkerTasks>[1],
-        "shouldStart" | "onWorkerUsage" | "onWorkerTool" | "onTaskFinished"
+        | "shouldStart"
+        | "shouldStartTask"
+        | "onWorkerUsage"
+        | "onWorkerTool"
+        | "onTaskFinished"
       > => {
         const budget: Pick<
           Parameters<typeof runWorkerTasks>[1],
@@ -789,7 +794,9 @@ export function buildFusionDelegateTool(
         return {
           ...budget,
           ...checkpoint,
-          shouldStart: () => budget.shouldStart?.() ?? breaker.stopReason(),
+          // The breaker only gates new tasks; the budget's own check
+          // still governs escalations and cuts (ATO-1406).
+          shouldStartTask: () => breaker.stopReason(),
           onTaskFinished: (result: WorkerTaskResult): void => {
             breaker.observe(result);
             checkpoint.onTaskFinished?.(result);
@@ -1179,7 +1186,14 @@ export function buildFusionDelegateTool(
       const trips: BreakerTrip[] = [...breakers.values()]
         .map((b) => b.tripped())
         .filter((t): t is BreakerTrip => t !== undefined);
-      for (const trip of trips) turnBudget.noteTrip(ctx.sessionId, trip);
+      // One trip per error per round: two legs stopping on the same
+      // repeat are one round's evidence, not two.
+      const seen = new Set<string>();
+      for (const trip of trips) {
+        if (seen.has(trip.signature)) continue;
+        seen.add(trip.signature);
+        turnBudget.noteTrip(ctx.sessionId, trip);
+      }
       // Rows a cap cut short say so, so a cancelled worker is not read
       // as the operator's doing.
       const budgetStopped = stoppedBy as TurnBudgetStop | undefined;

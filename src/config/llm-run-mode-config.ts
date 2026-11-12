@@ -316,7 +316,7 @@ export const FUSION_AUTO_REPLAN_MAX = 5;
  * growing without converging.
  */
 export const DEFAULT_FUSION_MAX_ROUNDS_PER_TURN = 6;
-export const DEFAULT_FUSION_MAX_TASKS_PER_TURN = 24;
+export const DEFAULT_FUSION_MAX_TASKS_PER_TURN = 48;
 export const FUSION_MAX_ROUNDS_PER_TURN_MAX = 100;
 export const FUSION_MAX_TASKS_PER_TURN_MAX = 1000;
 /** Upper bound on `turnBudgetUsd`; anything larger is a typo. */

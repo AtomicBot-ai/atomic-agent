@@ -23,6 +23,8 @@ describe("classifyWorkerFailure (ATO-1406)", () => {
     ["Codex isn't installed (the `codex` command was not found). Install it", "blocker:cli-missing"],
     ['"codex" is not signed in. Run codex login', "blocker:not-signed-in"],
     ["401 Unauthorized", "blocker:not-signed-in"],
+    ["tool-call array root must be a JSON array", "blocker:tool-protocol"],
+    ["invalid tool-call JSON: Unexpected token at position 401", "blocker:tool-protocol"],
     ['"openrouter" is out of credit after 3 steps', "blocker:out-of-credit"],
     ["You have hit your usage limit, try again later", "blocker:out-of-credit"],
   ])("files %j as a blocker", (error, signature) => {
@@ -36,6 +38,10 @@ describe("classifyWorkerFailure (ATO-1406)", () => {
     const b = classifyWorkerFailure(failed("worker died after 40 steps on /repo/lib/b.ts"));
     expect(a?.blocker).toBe(false);
     expect(a?.signature).toBe(b?.signature);
+  });
+
+  it("does not read a stray 401 or 402 in an ordinary error as a blocker", () => {
+    expect(classifyWorkerFailure(failed("build failed: 401 tests, 402 warnings"))?.blocker).toBe(false);
   });
 
   it("does not file a bare 429 as a blocker: a rate limit can pass in seconds", () => {
