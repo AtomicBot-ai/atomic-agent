@@ -11,6 +11,8 @@
  */
 
 import type { ChannelDefinition } from "./channel.js";
+import { SIGNAL_CHANNEL } from "./signal/index.js";
 
 export const EXTRA_CHANNELS: readonly ChannelDefinition[] = [
+  SIGNAL_CHANNEL,
 ];

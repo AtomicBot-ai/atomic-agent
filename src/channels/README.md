@@ -16,6 +16,7 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 - [reconnect-backoff.ts](reconnect-backoff.ts)
 - [telegram-channel.ts](telegram/telegram-channel.ts)
 - [discord-channel.ts](discord/discord-channel.ts)
+- [signal/index.ts](signal/index.ts) — Signal through a user-run signal-cli daemon
 
 ## Ownership and dependencies
 
