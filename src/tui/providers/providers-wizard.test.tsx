@@ -11,6 +11,19 @@ import type {
   ProvidersWizardState,
 } from "./providers-wizard-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
+import { checkSubscriptionCli } from "../../llm/provider/subscription-cli/subscription-cli-status.js";
+
+// The wizard reads the configured binPath through getConfig (ATO-1204 fix
+// round): one codex entry has a custom path, nothing touches a real state dir.
+vi.mock("../../config/config-cache.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/config-cache.js")>();
+  return {
+    ...actual,
+    getConfig: () => ({
+      llm: { providers: [{ id: "codex-cli", kind: "subscription-cli", subscriptionCli: { cli: "codex", binPath: "/opt/codex/bin/codex" } }] },
+    }),
+  };
+});
 
 // ATO-1204: the subscription CLI step asks `checkSubscriptionCli` for one
 // status line. No test here may spawn a real `claude` / `codex`.
@@ -222,8 +235,11 @@ describe("ProvidersWizard CLI-backed configure step", () => {
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain("Chat model id — codex CLI");
     expect(text).toContain("the CLI resolves the model");
-    // ATO-1204: one status line from the core check.
+    // ATO-1204: one status line from the core check, on the configured binary.
     expect(text).toContain("Codex is not signed in. Run: codex login");
+    const calls = vi.mocked(checkSubscriptionCli).mock.calls;
+    const codexCall = calls.find((c) => (c[0] as { cli: string }).cli === "codex");
+    expect(codexCall?.[1]).toEqual({ binPath: "/opt/codex/bin/codex" });
   });
 
   it("shows ready for a signed-in claude CLI (ATO-1204)", async () => {

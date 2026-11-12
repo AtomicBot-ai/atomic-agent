@@ -6,7 +6,7 @@ import type { SubscriptionCliName } from "../../../config/llm-config.js";
 import type { CliAdapterDescriptor } from "./cli-adapter-descriptor.js";
 import { resolveCliBinary } from "./resolve-cli-binary.js";
 import { runCliCommand, type CliRunner } from "./run-cli-completion.js";
-import { SubscriptionCliNotInstalledError } from "./subscription-cli-errors.js";
+import { SubscriptionCliAuthError, SubscriptionCliNotInstalledError } from "./subscription-cli-errors.js";
 
 /**
  * ATO-1200: is a subscription CLI ready to answer, without spending the plan?
@@ -58,6 +58,22 @@ export interface SubscriptionCliStatusDeps {
   cwd?: string;
   exists?: (path: string) => boolean;
   readText?: (path: string) => string | null;
+}
+
+/**
+ * The configured `subscriptionCli.binPath` for one CLI: the entry named
+ * `preferId` first (the one being edited), else the first entry for that
+ * CLI. `providers status` and the terminal wizard both ask this, so they
+ * check the same binary.
+ */
+export function configuredSubscriptionBinPath(
+  providers: ReadonlyArray<{ id: string; subscriptionCli?: { cli: string; binPath?: string } }> | undefined,
+  cli: SubscriptionCliName,
+  preferId?: string | null,
+): string | undefined {
+  const list = (providers ?? []).filter((p) => p.subscriptionCli?.cli === cli && p.subscriptionCli.binPath);
+  const pick = (preferId ? list.find((p) => p.id === preferId) : undefined) ?? list[0];
+  return pick?.subscriptionCli?.binPath;
 }
 
 const VERSION_RE = /\b(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\b/;
@@ -183,15 +199,20 @@ export async function checkSubscriptionCli(
         message: `${product}${version ? ` ${version}` : ""} is installed and signed in.`,
       };
     } catch (err) {
-      if (isTimeout(err)) {
+      // Only a failure that reads as signed out ("Not logged in", the
+      // mapper's SubscriptionCliAuthError) is signed_out. A hang, a crash,
+      // a permission error or a signal says nothing about the login.
+      if (err instanceof SubscriptionCliAuthError) {
         return {
-          ...base, state: "unknown", installed: true, version, signedIn: null, loginCheck: "none", fix: null,
-          message: `${product} is installed, but its login check did not answer in time. Can't verify the login.`,
+          ...base, state: "signed_out", installed: true, version, signedIn: false, loginCheck: "command", fix: loginFix,
+          message: `${product} is installed but not signed in. Sign in with: ${loginFix}`,
         };
       }
       return {
-        ...base, state: "signed_out", installed: true, version, signedIn: false, loginCheck: "command", fix: loginFix,
-        message: `${product} is installed but not signed in. Sign in with: ${loginFix}`,
+        ...base, state: "unknown", installed: true, version, signedIn: null, loginCheck: "none", fix: null,
+        message: isTimeout(err)
+          ? `${product} is installed, but its login check did not answer in time. Can't verify the login.`
+          : `${product} is installed, but its login check failed. Can't verify the login.`,
       };
     }
   }

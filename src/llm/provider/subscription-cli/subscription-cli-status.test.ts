@@ -8,7 +8,7 @@ import {
   SubscriptionCliInvocationError,
   SubscriptionCliNotInstalledError,
 } from "./subscription-cli-errors.js";
-import { checkSubscriptionCli } from "./subscription-cli-status.js";
+import { checkSubscriptionCli, configuredSubscriptionBinPath } from "./subscription-cli-status.js";
 
 /** A fake CLI: `--version` and `login status` answer from the table; nothing is spawned. */
 function fakeRunner(answers: Record<string, string | Error>): { run: CliRunner; calls: string[][] } {
@@ -71,6 +71,17 @@ describe("checkSubscriptionCli (ATO-1200)", () => {
     expect(r).toMatchObject({ state: "unknown", installed: true, signedIn: null });
   });
 
+  it("a login check that crashes or is refused is unknown, not signed out", async () => {
+    for (const failure of [
+      new SubscriptionCliInvocationError('"codex" exited with code 134: Abort trap', 134),
+      new Error("EACCES: permission denied"),
+    ]) {
+      const { run } = fakeRunner({ "--version": "codex-cli 0.46.0", "login status": failure });
+      const r = await checkSubscriptionCli(codexCliAdapter, { run, ...noFiles });
+      expect(r).toMatchObject({ state: "unknown", signedIn: null, fix: null });
+    }
+  });
+
   it("Claude never runs a turn: only --version, then its account file", async () => {
     const { run, calls } = fakeRunner({ "--version": "2.1.3 (Claude Code)" });
     const files: Record<string, string> = { "/Users/nadia/.claude.json": JSON.stringify({ oauthAccount: { emailAddress: "x" } }) };
@@ -118,5 +129,19 @@ describe("checkSubscriptionCli (ATO-1200)", () => {
     const run: CliRunner = async (o) => { strip = o.stripEnv; return { stdout: "0.46.0", stderr: "", exitCode: 0, durationMs: 1 }; };
     await checkSubscriptionCli(codexCliAdapter, { run, ...noFiles });
     expect(strip).toEqual(codexCliAdapter.billingEnvKeys);
+  });
+});
+
+describe("configuredSubscriptionBinPath", () => {
+  const providers = [
+    { id: "a", subscriptionCli: { cli: "codex", binPath: "/a/codex" } },
+    { id: "b", subscriptionCli: { cli: "codex", binPath: "/b/codex" } },
+    { id: "c", subscriptionCli: { cli: "claude" } },
+  ];
+  it("prefers the entry being edited, else the first with a path", () => {
+    expect(configuredSubscriptionBinPath(providers, "codex", "b")).toBe("/b/codex");
+    expect(configuredSubscriptionBinPath(providers, "codex", null)).toBe("/a/codex");
+    expect(configuredSubscriptionBinPath(providers, "claude")).toBeUndefined();
+    expect(configuredSubscriptionBinPath(undefined, "codex")).toBeUndefined();
   });
 });

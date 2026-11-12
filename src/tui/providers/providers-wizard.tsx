@@ -32,8 +32,10 @@ import {
 } from "./providers-model-options.js";
 import { CLAUDE_CLI_DEFAULT_CHAT_MODEL } from "../../llm/provider/subscription-cli/claude-cli-models.js";
 import { subscriptionCliForWizardKind } from "./providers-wizard-state.js";
+import { getConfig } from "../../config/index.js";
 import {
   checkSubscriptionCli,
+  configuredSubscriptionBinPath,
   registerBuiltInCliAdapters,
   resolveCliAdapter,
   type SubscriptionCliStatusReport,
@@ -158,19 +160,31 @@ function renderLineField(props: {
  * the step opens (`--version`, and `codex login status`; never a turn), the
  * same check as `atomic-agent providers status`.
  */
-function useSubscriptionCliStatus(cli: "claude" | "codex" | null): SubscriptionCliStatusReport | null {
+function useSubscriptionCliStatus(
+  cli: "claude" | "codex" | null,
+  providerId: string | null,
+): SubscriptionCliStatusReport | null {
   const [report, setReport] = useState<SubscriptionCliStatusReport | null>(null);
   useEffect(() => {
     if (!cli) return;
     let alive = true;
     setReport(null);
     registerBuiltInCliAdapters();
-    checkSubscriptionCli(resolveCliAdapter(cli)).then(
+    // The configured binPath, as `providers status` uses: a CLI installed
+    // off PATH is not "missing" here while the agent runs it fine.
+    let binPath: string | undefined;
+    try {
+      binPath = configuredSubscriptionBinPath(getConfig().llm?.providers, cli, providerId);
+    } catch {
+      binPath = undefined;
+    }
+    checkSubscriptionCli(resolveCliAdapter(cli), binPath ? { binPath } : {}).then(
       (r) => { if (alive) setReport(r); },
       () => { /* no line beats a wrong one */ },
     );
     return () => { alive = false; };
-  }, [cli]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cli, providerId]);
   return report;
 }
 
@@ -181,7 +195,7 @@ function CompatChatModelStep(props: {
 }): ReactElement {
   const w = props.wizard;
   // Before any early return: the hook order must not depend on the kind.
-  const cliReport = useSubscriptionCliStatus(w.kind ? subscriptionCliForWizardKind(w.kind) : null);
+  const cliReport = useSubscriptionCliStatus(w.kind ? subscriptionCliForWizardKind(w.kind) : null, w.providerId);
   const baseUrl = baseUrlForWizard(w);
   const isCompat = w.kind === "openai-compatible";
   const isGemini = w.kind === "gemini";

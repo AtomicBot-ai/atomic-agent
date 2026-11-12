@@ -2,6 +2,7 @@ import { getUserConfigPath, readUserConfigFileSync, resolveStateDir } from "../c
 import { SUBSCRIPTION_CLIS, type SubscriptionCliName } from "../config/llm-config.js";
 import {
   checkSubscriptionCli,
+  configuredSubscriptionBinPath,
   registerBuiltInCliAdapters,
   resolveCliAdapter,
   type SubscriptionCliStatusReport,
@@ -32,7 +33,7 @@ export interface ProvidersCommandDeps {
   binPaths?: () => Partial<Record<SubscriptionCliName, string>>;
 }
 
-/** `subscriptionCli.binPath` of the first configured entry for each CLI. */
+/** `subscriptionCli.binPath` per CLI from config.json (`configuredSubscriptionBinPath`). */
 function configuredBinPaths(stateDir: string): Partial<Record<SubscriptionCliName, string>> {
   const out: Partial<Record<SubscriptionCliName, string>> = {};
   let file;
@@ -41,9 +42,9 @@ function configuredBinPaths(stateDir: string): Partial<Record<SubscriptionCliNam
   } catch {
     return out;
   }
-  for (const p of file?.llm?.providers ?? []) {
-    const sub = p.subscriptionCli;
-    if (sub && sub.binPath && !out[sub.cli]) out[sub.cli] = sub.binPath;
+  for (const cli of SUBSCRIPTION_CLIS) {
+    const binPath = configuredSubscriptionBinPath(file?.llm?.providers, cli);
+    if (binPath) out[cli] = binPath;
   }
   return out;
 }
