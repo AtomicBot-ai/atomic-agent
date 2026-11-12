@@ -280,14 +280,13 @@ export function createRuntimeTurnService(
   };
 
   // Next-step suggestion (ATO-1093): the namer's path, off unless
-  // `agent.suggestNextStep` turns it on. Shares the namer's teardown set.
+  // `tui.nextStepSuggestions` turns it on. Shares the namer's teardown set.
   const nextStep = createNextStepSuggester({
     getConfig,
     sessionStore,
     llmComplete,
     slotManager,
     resolveTransport: () => resolveActiveLlmSlice().transport,
-    standingOverrideFor: (id) => fallbackChain.standingOverrideFor(id),
     pending: pendingSessionNamings,
     isShutdown: () => lifecycle.isShutdown(),
     ...(deps.emitEvent ? { emitEvent: deps.emitEvent } : {}),

@@ -61,7 +61,6 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.conversationMaxTokens` (default `0`).
 - `agent.conversationMaxPairs` (default `200`).
 - `agent.nameSessions` (default `true`).
-- `agent.suggestNextStep` (default `off`; `local` | `on`).
 - `agent.conversationLowWater` (default `0.65`).
 - `agent.sessionSectionsMaxTokens` (default `0`).
 - `agent.worldSnapshotMaxTokens` (default `8000`).

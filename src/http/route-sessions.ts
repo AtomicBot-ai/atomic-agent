@@ -19,7 +19,7 @@ import {
  * `/api/sessions/{id}` when they need it. `title` is the generated
  * session name (`agent.nameSessions`), `null` until one is stored.
  * `nextStep` is the suggested next message after the last answered turn
- * (`agent.suggestNextStep`, ATO-1093): `null` when none is stored, the
+ * (`tui.nextStepSuggestions`, ATO-1093): `null` when none is stored, the
  * setting is off, a turn is running, or a later turn made it stale.
  */
 export function createListSessionsHandler(): HttpHandler {
@@ -88,6 +88,31 @@ export function createGetSessionHandler(): HttpHandler {
       ...withToolCallDoneLines(state),
       nextStep: readSessionNextStep(state),
     });
+  };
+}
+
+/**
+ * `GET /api/sessions/{id}/next-step` (ATO-1093, for the desktop composer)
+ * — `200 { sessionId, suggestion }`: the suggested next message for the
+ * session's last finished turn, or `null` until the call has landed, while
+ * a new turn runs (and after it, until its own suggestion lands), and when
+ * `tui.nextStepSuggestions` is off or the call produced nothing. Nothing
+ * is written to clear it: `readSessionNextStep` ties it to `turnCount`.
+ * 404 for an unknown id.
+ */
+export function createGetSessionNextStepHandler(): HttpHandler {
+  return async (_req, res, ctx) => {
+    const id = ctx.params.id;
+    if (!id) {
+      sendError(res, 400, openaiError("session id is required"));
+      return;
+    }
+    const state = ctx.runtime.sessionStore.load(id);
+    if (!state) {
+      sendError(res, 404, openaiError(`session not found: ${id}`));
+      return;
+    }
+    sendJson(res, 200, { sessionId: id, suggestion: readSessionNextStep(state) });
   };
 }
 

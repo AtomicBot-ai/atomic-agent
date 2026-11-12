@@ -404,7 +404,7 @@ describe("runtime turn ownership recipes", () => {
     await flushNaming();
     expect(calls).not.toHaveBeenCalled();
 
-    fixture.config.agent.suggestNextStep = "on";
+    (fixture.config.tui as unknown as { nextStepSuggestions: boolean }).nextStepSuggestions = true;
     service = createRuntimeTurnService(fixture.config, fixture.deps);
     const output = await service.executeTurn(session("on"), "request");
     await flushNaming(); await flushNaming();

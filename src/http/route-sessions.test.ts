@@ -65,6 +65,19 @@ describe("/api/sessions", () => {
     expect(full.nextStep).toBe("Add tests for the parser");
   });
 
+  it("answers GET /api/sessions/{id}/next-step with the fresh suggestion or null (ATO-1093)", async () => {
+    const fresh = harness.runtime.createSession({
+      metadata: { nextStep: { text: "Add tests for the parser", afterTurn: 0, at: 1 } },
+    });
+    const none = harness.runtime.createSession();
+    const ask = (id: string) => fetch(`${harness.baseUrl}/api/sessions/${id}/next-step`);
+    const first = await ask(fresh.id);
+    expect(first.status).toBe(200);
+    expect(await first.json()).toEqual({ sessionId: fresh.id, suggestion: "Add tests for the parser" });
+    expect(await (await ask(none.id)).json()).toEqual({ sessionId: none.id, suggestion: null });
+    expect((await ask("no-such-session")).status).toBe(404);
+  });
+
   it("returns the full session state for a known id", async () => {
     const session = harness.runtime.createSession();
     const response = await fetch(

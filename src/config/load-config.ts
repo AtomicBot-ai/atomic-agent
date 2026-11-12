@@ -335,7 +335,6 @@ export function loadConfig(): AtomicAgentConfig {
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
       prompt: user.agent.prompt,
       ...(user.agent.tools ? { tools: user.agent.tools } : {}),
-      ...(user.agent.suggestNextStep ? { suggestNextStep: user.agent.suggestNextStep } : {}),
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",
         ENV_DEFAULTS.LOADED_TOOLS_CAP,

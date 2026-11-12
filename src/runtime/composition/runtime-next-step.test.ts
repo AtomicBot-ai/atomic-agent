@@ -6,14 +6,14 @@ import { createEmptySessionState, type SessionState } from "../../session/index.
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import {
   createNextStepSuggester,
-  nextStepAllowed,
-  readNextStepMode,
+  nextStepSuggestionsEnabled,
   type NextStepSuggesterDeps,
 } from "./runtime-next-step.js";
 
-function cfg(suggestNextStep?: "off" | "local" | "on"): AtomicAgentConfig {
+function cfg(nextStepSuggestions?: unknown): AtomicAgentConfig {
   return {
-    agent: suggestNextStep === undefined ? {} : { suggestNextStep },
+    agent: {},
+    tui: nextStepSuggestions === undefined ? {} : { nextStepSuggestions },
     localModels: { useServerTemplate: "auto" },
   } as unknown as AtomicAgentConfig;
 }
@@ -41,38 +41,26 @@ function rig(overrides: Partial<NextStepSuggesterDeps> = {}) {
   const events: Array<[string, AgentLoopEvent]> = [];
   const llmComplete = vi.fn(async () => completion("Add tests for the parser"));
   const deps: NextStepSuggesterDeps = {
-    getConfig: () => cfg("on"),
+    getConfig: () => cfg(true),
     sessionStore: { save: (s) => { rows.set(s.id, s); }, load: (id) => rows.get(id) ?? null },
     llmComplete,
     slotManager: { sideCallSlotId: () => 3 },
     resolveTransport: () => "grammar",
-    standingOverrideFor: () => null,
     pending: new Set(),
     isShutdown: () => false,
     emitEvent: (id, event) => { events.push([id, event]); },
-    activeIsLocal: () => true,
     logger: new StructuredLogger({ level: "debug", sinks: [] }),
     ...overrides,
   };
   return { deps, rows, events, llmComplete, suggester: createNextStepSuggester(deps) };
 }
 
-describe("readNextStepMode / nextStepAllowed", () => {
-  it("reads an absent setting as off", () => {
-    expect(readNextStepMode(cfg())).toBe("off");
-    expect(readNextStepMode(cfg("local"))).toBe("local");
-  });
-
-  it("local mode allows only a local link that is not standing on a fallback", () => {
-    const facts = (local: boolean, override: string | null) => ({
-      activeIsLocal: () => local,
-      standingOverride: () => override,
-    });
-    expect(nextStepAllowed("off", facts(true, null))).toBe(false);
-    expect(nextStepAllowed("on", facts(false, "cloud"))).toBe(true);
-    expect(nextStepAllowed("local", facts(true, null))).toBe(true);
-    expect(nextStepAllowed("local", facts(false, null))).toBe(false);
-    expect(nextStepAllowed("local", facts(true, "cloud"))).toBe(false);
+describe("nextStepSuggestionsEnabled", () => {
+  it("is on only when tui.nextStepSuggestions is true", () => {
+    expect(nextStepSuggestionsEnabled(cfg())).toBe(false);
+    expect(nextStepSuggestionsEnabled(cfg(false))).toBe(false);
+    expect(nextStepSuggestionsEnabled(cfg("true"))).toBe(false);
+    expect(nextStepSuggestionsEnabled(cfg(true))).toBe(true);
   });
 });
 
@@ -95,8 +83,8 @@ describe("createNextStepSuggester", () => {
   it("makes no call when off, for unwatched origins, or after a stopped turn", async () => {
     const off = rig({ getConfig: () => cfg() });
     off.suggester.maybeSuggest(answered(), "tui");
-    const local = rig({ getConfig: () => cfg("local"), activeIsLocal: () => false });
-    local.suggester.maybeSuggest(answered(), "http");
+    const explicitOff = rig({ getConfig: () => cfg(false) });
+    explicitOff.suggester.maybeSuggest(answered(), "http");
     const on = rig();
     on.suggester.maybeSuggest(answered(), "scheduler");
     on.suggester.maybeSuggest(answered(), "fusion");
@@ -105,7 +93,7 @@ describe("createNextStepSuggester", () => {
     on.suggester.maybeSuggest(stopped, "tui");
     await flush();
     expect(off.llmComplete).not.toHaveBeenCalled();
-    expect(local.llmComplete).not.toHaveBeenCalled();
+    expect(explicitOff.llmComplete).not.toHaveBeenCalled();
     expect(on.llmComplete).not.toHaveBeenCalled();
   });
 

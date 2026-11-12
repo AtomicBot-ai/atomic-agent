@@ -31,16 +31,6 @@ export interface AgentToolsConfig {
   search: ToolSearchMode;
 }
 
-/**
- * `agent.suggestNextStep` (ATO-1093): after a turn answers, one short
- * side call guesses the operator's next message. `off` (default) never
- * makes the call; `local` makes it only while the active text provider
- * is a local llama-server link, so it never adds a cloud bill; `on`
- * makes it on any provider. Additive (no schema version bump): absent
- * reads as `off`.
- */
-export type NextStepMode = "off" | "local" | "on";
-
 export interface RuntimeAgentConfig {
   /**
    * Compact target for the upper prompt. Its only remaining effect on
@@ -225,8 +215,6 @@ export interface RuntimeAgentConfig {
   replyPolish?: boolean;
   /** Mirrors `UserAgentConfig.prompt`. */
   prompt: PromptConfig;
-  /** Mirrors `UserAgentConfig.suggestNextStep`; absent means `off`. */
-  suggestNextStep?: NextStepMode;
 }
 
 export interface UserAgentConfig {
@@ -333,10 +321,4 @@ export interface UserAgentConfig {
    * valid; the parser always fills it.
    */
   tools?: AgentToolsConfig;
-  /**
-   * Next-step suggestion after each answered turn (ATO-1093). See
-   * {@link NextStepMode}. Optional, and only written by the parser when
-   * the file sets it, so older files and fixtures stay byte-identical.
-   */
-  suggestNextStep?: NextStepMode;
 }

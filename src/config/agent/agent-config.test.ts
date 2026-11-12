@@ -7,7 +7,6 @@ import {
   parseAgentConfig,
   parseApprovalLevel,
   parseAgentToolsConfig,
-  parseNextStepMode,
   parseReadScope,
   parseSmartApprovalModel,
   READ_SCOPES,
@@ -238,25 +237,5 @@ describe("agent.tools.search (ATO-558)", () => {
   it("round-trips through the whole-file parser without a version bump", () => {
     expect(parseUserConfigFile({ agent: { tools: { search: "off" } } }).agent.tools).toEqual({ search: "off" });
     expect(parseUserConfigFile({ agent: {} }).agent.tools).toEqual({ search: "auto" });
-  });
-});
-
-describe("agent.suggestNextStep (ATO-1093)", () => {
-  it("parses the three modes and a boolean toggle", () => {
-    expect(parseNextStepMode("off")).toBe("off");
-    expect(parseNextStepMode("local")).toBe("local");
-    expect(parseNextStepMode("on")).toBe("on");
-    expect(parseNextStepMode(true)).toBe("on");
-    expect(parseNextStepMode(false)).toBe("off");
-  });
-
-  it("reads a word a newer build wrote as off, and rejects a wrong type", () => {
-    expect(parseNextStepMode("cloud-only")).toBe("off");
-    expect(() => parseNextStepMode(3)).toThrow(ConfigValidationError);
-  });
-
-  it("is absent from a file that does not set it, and kept when it does", () => {
-    expect(parseUserConfigFile({ agent: {} }).agent).not.toHaveProperty("suggestNextStep");
-    expect(parseUserConfigFile({ agent: { suggestNextStep: "local" } }).agent.suggestNextStep).toBe("local");
   });
 });
