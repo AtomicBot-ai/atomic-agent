@@ -1,0 +1,23 @@
+{
+  "name": "atomic-agent",
+  "version": "0.0.0",
+  "description": "Atomic Agent: a local-first AI agent for your terminal. Installs the atag command.",
+  "license": "MIT",
+  "homepage": "https://atomicagent.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AtomicBot-ai/atomic-agent.git"
+  },
+  "bugs": "https://github.com/AtomicBot-ai/atomic-agent/issues",
+  "keywords": ["ai", "agent", "local", "llm", "cli", "terminal", "llama.cpp"],
+  "type": "module",
+  "bin": {
+    "atag": "bin/atag.js",
+    "atomic-agent": "bin/atag.js"
+  },
+  "files": ["bin", "lib", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {}
+}
