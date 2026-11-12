@@ -13,6 +13,7 @@ This area owns session state and persistence. Read [AGENTS.md](AGENTS.md) before
 - [session-retention.ts](session-retention.ts)
 - [turn-owner.ts](turn-owner.ts)
 - [turn-progress.ts](turn-progress.ts)
+- [chat-export/](chat-export/index.ts): one chat as a redacted HTML or Markdown file for `atomic-agent share` (ATO-581)
 
 ## Ownership and dependencies
 
