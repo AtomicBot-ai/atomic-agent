@@ -12,6 +12,7 @@ import { LineSplitter, lineLevel } from "./agent-output.js";
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
+import { projectBodyFields as projectFields } from "./projects-store.js";
 import {
   pairingRequest,
   readPairingReply,
@@ -1789,6 +1790,13 @@ export class AgentClient extends EventEmitter {
     messages: Array<{ role: string; content: string }>,
     sessionId?: string,
     workingDir?: string,
+    /**
+     * ATO-42: the instructions of the chat's project, re-sent every turn
+     * (`project_instructions` / `project_name`); null says the chat is in
+     * no project, so the agent drops any it stamped before. Undefined
+     * sends nothing (an agent from before the field ignores both anyway).
+     */
+    project?: { name: string; text: string } | null,
   ): Promise<void> {
     const controller = new AbortController();
     this.turns.set(turnId, controller);
@@ -1817,6 +1825,7 @@ export class AgentClient extends EventEmitter {
           session_id: chatSessionIdFor(sessionId),
           // ATO-731: the folder a NEW session works in; the agent keeps an existing session's own.
           ...(workingDir ? { working_dir: workingDir } : {}),
+          ...projectFields(project),
         }),
         signal: controller.signal,
       });
