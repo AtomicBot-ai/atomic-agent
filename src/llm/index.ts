@@ -80,6 +80,7 @@ export {
   FABRICATED_TRANSCRIPT_MIN_LINES,
   formatTruncatedMessage,
   isRequestSizeRejection,
+  isExpectedProviderLimit,
 } from "./reliability/index.js";
 export type {
   DetectModelFailureOptions,
