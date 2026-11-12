@@ -25604,7 +25604,8 @@ function memDetailHTML() {
   return '<div class="tk-bar"><button class="btn btn-g sm sd-back" data-act="memory:back">' + ic('chevL') + esc(back) + '</button><span class="grow"></span>'
     + '<button class="iconbtn sm" data-act="memory:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
     + (d.channel === 'notes' ? '<button class="btn btn-s sm" data-act="memory:expand"' + (linksOn ? '' : ' disabled title="memory.links.enabled is off in config"') + '>Expand graph</button>' : '')
-    + '</div>'
+    + memEditButtonsHTML(d) // ATO-582
+    + '</div>' + memEditPanelHTML(d)
     + (d.channel === 'notes' ? memNoteDetailView(d, title) : memPlateDetailView(d, title))
     + tuiHints(hints);
 }
@@ -25842,6 +25843,7 @@ function memSetChannel(ch) {
 function memoryAct(what) {
   const [verb, ...rest] = what.split(':');
   const arg = rest.join(':');
+  if (memEditAct(verb, arg)) return; // ATO-582: edit / delete (memory-edit.js)
   if (verb === 'ch') { memSetChannel(arg); return; }
   if (verb === 'cycle') {
     const order = MEM.available.length ? MEM.available : MEM_CHANNEL_ORDER;

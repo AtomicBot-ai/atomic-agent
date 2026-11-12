@@ -335,6 +335,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("app:clawhubSkillDetail", { apiBase, slug, owner: owner ?? null }),
   memoryQuery: (stateDir: string, name: string, params?: unknown[]) =>
     ipcRenderer.invoke("app:memoryQuery", { stateDir, name, params: params ?? [] }),
+  /** ATO-582: `{op:'note.edit', id, text}` / `{op:'note.delete', id}` / `{op:'profile.delete', key}`, through the agent. */
+  memoryWrite: (op: unknown) => ipcRenderer.invoke("app:memoryWrite", op),
 
   /** Item 7 part C: the LLM, Telegram and Import tabs. */
   modelsEngine: (action: string) => ipcRenderer.invoke("cli:modelsEngine", action),

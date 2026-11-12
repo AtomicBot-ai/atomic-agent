@@ -12,6 +12,7 @@ import { LineSplitter, lineLevel } from "./agent-output.js";
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
+import { runMemoryWrite, type MemoryWriteResult } from "./memory-write.js";
 import {
   pairingRequest,
   readPairingReply,
@@ -1383,6 +1384,11 @@ export class AgentClient extends EventEmitter {
     } catch {
       return null;
     }
+  }
+
+  /** ATO-582: the Memory tab's edit or delete, through the agent's own memory routes (memory-write.ts). Never throws. */
+  memoryWrite(op: unknown): Promise<MemoryWriteResult> {
+    return runMemoryWrite(op, () => ({ base: this.base(), headers: this.headers() }));
   }
 
   /**
