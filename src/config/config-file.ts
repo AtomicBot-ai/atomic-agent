@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 
 import { carryUnknownConfigKeys } from "./carry-unknown-config-keys.js";
-import { keepSetAsideConfigValues } from "./keep-set-aside-values.js";
+import { keepSetAsideConfigValues, setAsideEnumValueAt } from "./keep-set-aside-values.js";
 import {
   ConfigValidationError,
   ENV_DEFAULTS,
@@ -134,6 +134,8 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
 export function writeUserConfigFileSync(
   path: string,
   data: UserConfigFile,
+  /** Dotted keys this write sets on purpose: they replace a value set aside on read (ATO-1265). */
+  opts: { readonly chosen?: readonly string[] } = {},
 ): void {
   mkdirSync(dirname(path), { recursive: true });
   const diskTree = readJsonObjectFromFileSync(path);
@@ -145,7 +147,7 @@ export function writeUserConfigFileSync(
       `[atomic-agent] kept config version ${onDisk} (this build writes v${data.version}) at ${path}\n`,
     );
   }
-  const carried = diskTree ? carryUnknownConfigKeys(keepSetAsideConfigValues(data, diskTree), diskTree) : data;
+  const carried = diskTree ? carryUnknownConfigKeys(keepSetAsideConfigValues(data, diskTree, opts.chosen), diskTree) : data;
   const payload =
     JSON.stringify(
       version === carried.version ? carried : { ...carried, version },
@@ -340,6 +342,16 @@ function readRawUserConfigFileSync(path: string): RawUserConfigFile | null {
  */
 export function readUserConfigVersionOnDiskSync(path: string): number | null {
   return readVersionFieldFromFileSync(path);
+}
+
+/**
+ * The value a newer build wrote at an enum-like `key` that this build set
+ * aside on read (`localModels.managed.engine: "atomic-core-next"`), or
+ * undefined. Total, like the version read. A setter uses it to tell that
+ * a choice equal to what it read is still a change (ATO-1265).
+ */
+export function readSetAsideEnumValueOnDiskSync(path: string, key: string): string | undefined {
+  return setAsideEnumValueAt(readJsonObjectFromFileSync(path), key);
 }
 
 function readVersionFieldFromFileSync(path: string): number | null {

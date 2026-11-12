@@ -74,8 +74,34 @@ const FUSION_ROLES_KEY = "llm.runMode.fusion.roles";
  *
  * "What this build read" is the disk tree parsed again; when that fails
  * the file is broken in some other way and `data` is written as is.
+ *
+ * Equality cannot tell a choice that happens to equal the stand-in (the
+ * operator picking `atomic-core` while the file holds a newer engine)
+ * from no choice at all, so a setter names the keys it set in `chosen`
+ * (dotted paths): `data` wins at those keys whatever was set aside there
+ * (ATO-1265).
  */
-export function keepSetAsideConfigValues(data: UserConfigFile, disk: Tree): UserConfigFile {
+export function keepSetAsideConfigValues(data: UserConfigFile, disk: Tree, chosen: readonly string[] = []): UserConfigFile {
+  const kept = keepSetAsideValues(data, disk);
+  let out = kept as unknown as Tree;
+  for (const key of chosen) {
+    const value = getPath(data, key);
+    if (value !== undefined && !isDeepStrictEqual(getPath(out, key), value)) out = setPath(out, key, value);
+  }
+  return out === (kept as unknown) ? kept : (out as unknown as UserConfigFile);
+}
+
+/**
+ * The value a newer build wrote at an enum-like `key` that this build
+ * does not know and so set aside on read; undefined when there is none.
+ */
+export function setAsideEnumValueAt(disk: unknown, key: string): string | undefined {
+  const known = SET_ASIDE_ENUM_KEYS.get(key);
+  const d = getPath(disk, key);
+  return known && typeof d === "string" && d.length > 0 && !known.includes(d) ? d : undefined;
+}
+
+function keepSetAsideValues(data: UserConfigFile, disk: Tree): UserConfigFile {
   const withLocalModels = keepSetAsideLocalModelValues(data, disk);
   let read: UserConfigFile;
   try {
@@ -84,9 +110,8 @@ export function keepSetAsideConfigValues(data: UserConfigFile, disk: Tree): User
     return withLocalModels;
   }
   let out = withLocalModels as unknown as Tree;
-  for (const [key, known] of SET_ASIDE_ENUM_KEYS) {
-    const d = getPath(disk, key);
-    if (typeof d === "string" && d.length > 0 && !known.includes(d)) out = keepAt(out, disk, read, key);
+  for (const key of SET_ASIDE_ENUM_KEYS.keys()) {
+    if (setAsideEnumValueAt(disk, key) !== undefined) out = keepAt(out, disk, read, key);
   }
   out = keepSetAsideProviders(out, disk, read);
   out = keepUnknownRolePins(out, disk, read);
