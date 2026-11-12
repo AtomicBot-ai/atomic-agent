@@ -20,8 +20,8 @@ browser.
 
 | Slug           | Platform | Arch   | Runner (GH)        | Archive  |
 |----------------|----------|--------|--------------------|----------|
-| `darwin-arm64` | darwin   | arm64  | `macos-14`         | `tar.gz` |
-| `darwin-x64`   | darwin   | x64    | `macos-13`         | `tar.gz` |
+| `darwin-arm64` | darwin   | arm64  | `macos-15`         | `tar.gz` |
+| `darwin-x64`   | darwin   | x64    | `macos-15-intel`   | `tar.gz` |
 | `linux-x64`    | linux    | x64    | `ubuntu-22.04`     | `tar.gz` |
 | `linux-arm64`  | linux    | arm64  | `ubuntu-24.04-arm` | `tar.gz` |
 | `win32-x64`    | win32    | x64    | `windows-2022`     | `zip`    |
