@@ -30,7 +30,10 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
 import { McpClient, type McpClientDeps } from "./mcp-client.js";
 import { McpConnectError, scrubErrorMessage } from "./mcp-errors.js";
 import { createMcpResourceClassResolver } from "./mcp-resource-class.js";
-import { createMcpToolDefinition } from "./mcp-tool-adapter.js";
+import {
+  createMcpToolDefinition,
+  trustsReadOnlyHintFor,
+} from "./mcp-tool-adapter.js";
 import type {
   McpServerCatalog,
   McpServerConfig,
@@ -58,7 +61,8 @@ export interface McpManagerDeps extends McpClientDeps {
    * dangerous tools (`os.shell.run`, `os.fs.write`, …) receive.
    * Tools from a server whose resolved trust is `approval_gated`
    * call `requireApproval` before every `tools/call` (discovery-time
-   * `annotations.readOnlyHint === true` exempts). Optional only as a
+   * `annotations.readOnlyHint === true` exempts, for stdio servers and
+   * `trustedReadOnlyTools` only — ATO-1178). Optional only as a
    * test seam — production bootstrap always passes it.
    */
   dangerous?: DangerousToolOptions;
@@ -334,6 +338,7 @@ export class McpManager {
       const def = createMcpToolDefinition(meta, s.client, {
         trust,
         dangerous: this.deps.dangerous,
+        trustReadOnlyHint: trustsReadOnlyHintFor(s.config, meta.rawName),
       });
       // ToolRegistry.register is last-writer-wins. Two servers
       // cannot collide because the qualified name carries the
