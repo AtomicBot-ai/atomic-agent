@@ -1,6 +1,6 @@
 ---
 name: code-graph
-description: Map code with file and line: who calls X, where payments or login live. Use for /code-graph.
+description: "Map code with file and line: who calls X, where payments or login live. Use for /code-graph."
 version: 1.0.0
 requires_tools:
   - os.fs.code_map
