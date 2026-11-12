@@ -317,6 +317,11 @@ const CATEGORY_PLAIN = {
   trust_config:'change the agent\u2019s trust settings', fusion_fanout:'split the work across helper models',
   other:'take this step', publish:'publish to GitHub', git_remote:'sync with a git remote', email:'send an email',
   fs_read_outside:'read files outside this folder', paid_generation:'make a paid cloud image',
+  // ATO-1393: the rest of the agent's categories (approval-level.ts APPROVAL_CATEGORY_LABELS).
+  browser_commit:'submit, publish or delete on a website', browser_secret:'enter a password or payment details',
+  browser_offsite:'open a site outside the allowed list', state_secret:'touch the agent\u2019s secret files',
+  screen_control:'click and type on your screen', screen_capture:'take a screenshot of your screen',
+  local_model_restart:'restart the local model', hook_ask:'take a step a hook asked about',
 };
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
 /* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
@@ -3739,6 +3744,11 @@ const APPR_FALLBACK = {
   trust_config:'change its own settings', fusion_fanout:'hand work to its workers', publish:'publish to GitHub',
   git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',
   paid_generation:'make a paid image in the cloud',
+  // ATO-1393
+  browser_commit:'submit, publish or delete something on a website', browser_secret:'enter a password or payment details on a website',
+  browser_offsite:'open a site outside the allowed list', state_secret:'touch its own secret files',
+  screen_control:'click and type on your screen', screen_capture:'take a screenshot of your screen',
+  local_model_restart:'restart the local model', hook_ask:'take a step one of your hooks asked about',
 };
 /** ATO-473: whether the card offers "Allow in this chat". The agent grants
     the request's command shape (the binary, `git`) for the rest of the chat;
@@ -11514,6 +11524,11 @@ const CATEGORY_LABEL = {
   fs_read_outside:'read outside the working directory',
   // image.generate on a cloud model (agent, ATO-409)
   paid_generation:'paid generation · cloud',
+  // ATO-1393 (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
+  browser_commit:'browser · submit / publish / delete', browser_secret:'browser · password or payment',
+  browser_offsite:'browser · site outside the allow-list', state_secret:'agent secret file',
+  screen_control:'screen · click / type', screen_capture:'screen · screenshot',
+  local_model_restart:'local model · restart', hook_ask:'hook · confirm',
 };
 
 /* Calm (S7): why an answer to an approval did not land, in words. The
