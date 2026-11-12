@@ -20,6 +20,7 @@ import { basename, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { formatGgufSize, ggufSizeGb } from "./huggingface-model-def.js";
+import { estimateRamGbFromFileSize } from "./model-memory-words.js";
 import type { LocalModelDef, LocalModelId } from "./models-catalog.js";
 
 /** A validated, readable `.gguf` on local disk. */
@@ -196,8 +197,7 @@ export function buildLocalGgufModelDef(file: LocalGgufFile): LocalModelDef {
     description: `Local file: ${file.path}`,
     maxContextLength: 0,
     contextLabel: "auto",
-    minRamGb: Math.max(1, Math.ceil(fileSizeGb * 1.2)),
-    recommendedRamGb: Math.max(2, Math.ceil(fileSizeGb * 1.5) + 2),
+    ...estimateRamGbFromFileSize(fileSizeGb),
     family: "custom",
     supportsVision: false,
   };

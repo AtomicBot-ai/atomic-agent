@@ -18,7 +18,11 @@ import {
   modelDownloadGb,
   type ModelUpgradeDecision,
 } from "../local-llm/catalog/model-upgrade.js";
-import type { LocalModelDef } from "../local-llm/index.js";
+import {
+  modelDisplayName,
+  modelMemoryNeedWords,
+  type LocalModelDef,
+} from "../local-llm/index.js";
 import {
   readRecommendSnapshot,
   startModelUpgrade,
@@ -33,10 +37,15 @@ export const RECOMMEND_JSON_VERSION = 1;
 interface ModelJson {
   id: string;
   name: string;
+  /** ATO-1410: the name both clients print ("Gemma 4 E4B"). */
+  displayName: string;
   sizeLabel: string;
   downloadGb: number;
   description: string;
   supportsVision: boolean;
+  /** ATO-1410: the catalogue's two memory figures, so a client need not keep its own copy. */
+  minRamGb: number;
+  recommendedRamGb: number;
 }
 
 function modelJson(def: LocalModelDef | null): ModelJson | null {
@@ -44,10 +53,13 @@ function modelJson(def: LocalModelDef | null): ModelJson | null {
   return {
     id: def.id,
     name: def.name,
+    displayName: modelDisplayName(def),
     sizeLabel: def.sizeLabel,
     downloadGb: Math.round(modelDownloadGb(def) * 100) / 100,
     description: def.description,
     supportsVision: def.supportsVision === true,
+    minRamGb: def.minRamGb,
+    recommendedRamGb: def.recommendedRamGb,
   };
 }
 
@@ -99,7 +111,7 @@ export function describeRecommendation(snap: RecommendSnapshot): string {
   const disk = m.freeDiskGb === null ? "free disk unknown" : `${m.freeDiskGb.toFixed(0)} GB free on disk`;
   const lines = [`this machine: ${m.ramGb} GB RAM, ${gpu}, ${disk}`, ""];
   const row = (label: string, def: LocalModelDef | null) =>
-    `  ${label.padEnd(9)} ${def ? `${def.id.padEnd(20)} ${def.sizeLabel.padEnd(8)} ${def.description}` : "none fits this machine"}`;
+    `  ${label.padEnd(9)} ${def ? `${modelDisplayName(def).padEnd(24)} ${def.sizeLabel.padEnd(8)} ${modelMemoryNeedWords(def).padEnd(13)} ${def.description} (${def.id})` : "none fits this machine"}`;
   lines.push(
     row("fast", snap.tiers.fast),
     row("balanced", snap.tiers.balanced),

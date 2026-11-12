@@ -9,6 +9,7 @@ import {
   resolveHuggingFaceFileUrl,
   type HuggingFaceFile,
 } from "./huggingface-api.js";
+import { estimateRamGbFromFileSize } from "./model-memory-words.js";
 import type { LocalModelDef, LocalModelId } from "./models-catalog.js";
 
 const BYTES_PER_GB = 1024 * 1024 * 1024;
@@ -73,8 +74,7 @@ export function buildCustomModelDef(input: {
     description: `Added from huggingface.co/${repoId}`,
     maxContextLength: 0,
     contextLabel: "auto",
-    minRamGb: Math.max(1, Math.ceil(fileSizeGb * 1.2)),
-    recommendedRamGb: Math.max(2, Math.ceil(fileSizeGb * 1.5) + 2),
+    ...estimateRamGbFromFileSize(fileSizeGb),
     family: "custom",
     supportsVision: mmproj !== null,
   };

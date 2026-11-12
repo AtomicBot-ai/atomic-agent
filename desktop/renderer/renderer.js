@@ -12305,10 +12305,25 @@ function needsOnboarding(cfg, readyIds) {
    file size by 1.6 and called the product a RAM requirement. That guess
    said "fits this Mac" for a 22 GB model on a 36 GB machine the
    catalogue itself rates at 36 GB recommended, and it had no way at all
-   to say that a model does not run here. The 1.6× heuristic survives in
+   to say that a model does not run here. A size estimate survives in
    one place only — a `custom-…` model added from Hugging Face, which no
-   catalogue describes — and it is labelled as an estimate there.
+   catalogue describes — and it is labelled as an estimate there. Since
+   ATO-1410 that estimate is the agent's own size rule
+   (ramEstimateFromSize, a copy of estimateRamGbFromFileSize in
+   model-memory-words.ts), so the terminal and this window give an added
+   model the same figure; the old 1.6× guess is gone.
    ============================================================ */
+
+/**
+ * ATO-1410: the agent's size rule for a model no catalogue describes
+ * (src/local-llm/catalog/model-memory-words.ts estimateRamGbFromFileSize,
+ * also desktop/main/model-memory-words.ts). Kept in step by
+ * desktop/test/model-catalog-drift.test.mjs.
+ */
+function ramEstimateFromSize(gb) {
+  const g = Number.isFinite(gb) && gb > 0 ? gb : 0;
+  return {minRamGb: Math.max(1, Math.ceil(g * 1.2)), recommendedRamGb: Math.max(2, Math.ceil(g * 1.5) + 2)};
+}
 
 /** The catalogue's 4B class, by its own recommendedRamGb. */
 const SMALL_MODEL_RAM_GB = 8;
@@ -12360,16 +12375,17 @@ function fitFor(model, ram) {
   // No catalogue entry (a model added from Hugging Face). Say so, and say
   // that the figure is an estimate rather than dressing it as a fact.
   const gb = sizeStringGb(model && model.size);
-  const needed = Math.ceil(gb * 1.6);
-  if (!needed || !have) {
+  if (!gb || !have) {
     return {v:'comfortable', rank:0, known:false, caution:null,
       label:'not in the catalogue — no RAM guidance', short:'no RAM guidance'};
   }
+  const est = ramEstimateFromSize(gb);
+  const needed = est.recommendedRamGb;
   if (needed <= have) {
     return {v:'comfortable', rank:0, known:false, caution:null,
       label:'about ' + needed + ' GB to run (estimated from its size)', short:'about ' + needed + ' GB (estimated)'};
   }
-  if (needed <= have * 1.4) {
+  if (est.minRamGb <= have) {
     return {v:'tight', rank:1, known:false, caution:TIGHT_FIT_CAUTION,
       label:'tight on ' + have + ' GB (about ' + needed + ' GB estimated)', short:'tight on ' + have + ' GB (estimated)'};
   }
@@ -12456,7 +12472,8 @@ function modelRamWarning(model, models, ram) {
   if (fit.v !== 'over' || !fit.known) return null;
   const alt = bestModelFor((models || []).filter((m) => m && m.id !== model.id), have);
   return {title: 'Not enough memory for this model',
-    text: 'This model needs ' + min + ' GB of memory. ' + THIS_MACHINE_CAP + ' has ' + have + ' GB.'
+    // ATO-1410: the same "needs" figure as every other row and the terminal; min only decides that it will not run.
+    text: 'This model needs ' + (Number(model.recommendedRamGb) || min) + ' GB of memory. ' + THIS_MACHINE_CAP + ' has ' + have + ' GB.'
       + (alt ? ' ' + llmModelName(alt) + ' runs here.' : ''),
     alt};
 }
@@ -14696,7 +14713,8 @@ DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
   if (fit.v === 'over') {
-    const need = fit.known && model.minRamGb ? 'Needs ' + model.minRamGb + ' GB' : fit.short.replace(/^will not run — n/, 'N').replace(/^n/, 'N');
+    // ATO-1410: "Needs N GB" is the one figure the terminal prints too, the catalogue's recommendedRamGb.
+    const need = fit.known && model.recommendedRamGb ? 'Needs ' + model.recommendedRamGb + ' GB' : fit.short.replace(/^will not run — n/, 'N').replace(/^n/, 'N');
     return {v:'over', text: need + (ram ? '. ' + THIS_MACHINE_CAP + ' has ' + ram + ' GB.' : '.')};
   }
   if (fit.v === 'tight') return {v:'tight', text:'Tight fit on ' + ram + ' GB. It will run slowly.'};
@@ -14737,7 +14755,7 @@ function obOutOfReachHTML() {
     + '<div class="ob-out-list" id="ob-out-list"' + (open ? '' : ' hidden') + '>' + out.map((model) =>
       '<div class="ob-out">' + modelMark(model.id, 'xs')
       + '<span class="t">' + esc(obModelName(model)) + '</span>'
-      + '<span class="ob-fit ob-fit-over">' + esc(model.minRamGb ? 'Needs ' + model.minRamGb + ' GB' : fitFor(model, OB.ram).short) + '</span></div>').join('')
+      + '<span class="ob-fit ob-fit-over">' + esc(model.recommendedRamGb ? 'Needs ' + model.recommendedRamGb + ' GB' : fitFor(model, OB.ram).short) + '</span></div>').join('')
     + '</div>';
 }
 
@@ -27189,8 +27207,9 @@ function llmFitBadge(m, ram) {
       : 'It needs at least ' + min + ' GB of memory, and ' + THIS_MACHINE + ' has ' + have + ' GB.';
   } else {
     // A model added from Hugging Face: fitFor's own estimate from the file size, said to be one.
-    const need = Math.ceil(sizeStringGb(m.size) * 1.6);
-    if (!need) return null;
+    const gb = sizeStringGb(m.size);
+    if (!gb) return null;
+    const need = ramEstimateFromSize(gb).recommendedRamGb;
     why = 'About ' + need + ' GB to run, estimated from its file size; ' + THIS_MACHINE + ' has ' + have + ' GB.' + (fit.v === 'tight' ? ' ' + TIGHT_FIT_CAUTION : '');
   }
   if (isSmallModel(m)) why += ' ' + SMALL_MODEL_CAUTION;
