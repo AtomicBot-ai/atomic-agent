@@ -27,6 +27,14 @@ export interface CompletionUsage {
    */
   cachedTokens?: number;
   /**
+   * Prompt tokens this call wrote to the service's prompt cache
+   * (`prompt_tokens_details.cache_write_tokens` on Kimi). A subset of
+   * `promptTokens`, disjoint from `cachedTokens`, priced at the model's
+   * `cacheWrite` rate when one is known (ATO-912). Absent when the
+   * service did not report it.
+   */
+  cacheWriteTokens?: number;
+  /**
    * What the service itself says the call cost, in USD (OpenRouter's
    * `usage.cost`). Preferred over any price-table estimate because it
    * is the bill, not a guess at it. Absent when the service said

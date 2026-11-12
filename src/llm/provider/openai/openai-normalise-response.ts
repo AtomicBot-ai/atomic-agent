@@ -68,12 +68,21 @@ export function normaliseOpenAiUsage(
     details !== null && typeof details === "object"
       ? (details as Record<string, unknown>).cached_tokens
       : usage.cache_read_input_tokens;
+  // Kimi reports cache writes beside the hits (ATO-912); they are billed
+  // at their own rate, so keep the count for the cost estimate.
+  const written =
+    details !== null && typeof details === "object"
+      ? (details as Record<string, unknown>).cache_write_tokens
+      : undefined;
   return {
     promptTokens: Number(usage.prompt_tokens ?? 0),
     completionTokens: Number(usage.completion_tokens ?? 0),
     totalTokens: Number(usage.total_tokens ?? 0),
     ...(typeof cached === "number" && Number.isFinite(cached) && cached >= 0
       ? { cachedTokens: cached }
+      : {}),
+    ...(typeof written === "number" && Number.isFinite(written) && written > 0
+      ? { cacheWriteTokens: written }
       : {}),
     // OpenRouter reports the call's own charge in credits (USD) as
     // `usage.cost`; it beats a price-table estimate (ATO-569).

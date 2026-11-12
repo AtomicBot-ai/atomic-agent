@@ -375,6 +375,32 @@ describe("OpenAiProvider — cached prompt tokens", () => {
     expect(result.cacheHitTokens).toBe(900);
   });
 
+  // ATO-912: Kimi's usage carries cache writes beside the hits.
+  it("reads Kimi's prompt_tokens_details.cache_write_tokens", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "kimi-k3.1-pro",
+            choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            usage: {
+              prompt_tokens: 1000,
+              completion_tokens: 5,
+              total_tokens: 1005,
+              cached_tokens: 600,
+              prompt_tokens_details: { cached_tokens: 600, cache_write_tokens: 300 },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const result = await provider(fetchImpl as unknown as typeof fetch, undefined).complete({
+      prompt: "hi",
+    });
+    expect(result.usage?.cachedTokens).toBe(600);
+    expect(result.usage?.cacheWriteTokens).toBe(300);
+  });
+
   it("reads it on the streamed path, and leaves it absent when the service says nothing", async () => {
     const frame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
     const streamWith = (usage: Record<string, unknown>) =>
