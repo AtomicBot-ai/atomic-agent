@@ -27047,7 +27047,8 @@ function llmLocalHTML() {
      gone once Ollama is added. */
   return llmSectionHTML('Local models', text, 0, cursor, null, false, {
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'
-        + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')})
+        + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')
+        + llmAppButtonsHTML(['lmstudio', 'atomic-chat'])})
     + llmTuneHTML()
     + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false,
       {note: '<p class="llm-note">Used to search the agent\u2019s memory by meaning. Without one, it searches by keyword.</p>'});
@@ -27099,8 +27100,13 @@ function llmCloudModelListHTML() {
 function llmExternalHTML() {
   const rows = llmExternalRows();
   const status = llmStatusLine();
+  /* ATO-1401: someone with LM Studio or Ollama comes here first. Those are
+     apps on this computer, added in one click from here, not through this
+     llama.cpp field (which cannot drive them). */
+  const apps = llmAppButtonsHTML(['ollama', 'lmstudio', 'atomic-chat']);
   return llmSectionHTML('Custom llama.cpp server', rows, 0, LLMP.cursor.external, null, false,
-      {note: '<p class="llm-ram">Point chats at a llama.cpp server you run yourself.</p>'})
+      {note: '<p class="llm-ram">Point chats at a llama.cpp server you run yourself.</p>'
+        + (apps ? '<p class="llm-ram">Use an app you already run:</p><div class="llm-apps">' + apps + '</div>' : '')})
     + llmStatusNoteHTML(status, llmStatusTone(status))
     + '<p class="llm-back">To go back to a local model, <button class="llm-link" data-act="llm:mode:local">pick one under Local models</button>.</p>'
     + llmTuneHTML();
@@ -27299,28 +27305,63 @@ function llmModalHTML() {
   if (LLMP.steerUrl !== null) {
     const url = LLMP.steerUrl;
     const known = llmSteerPresetId(url);
-    const ollama = known === 'ollama', atomic = known === 'atomic-chat';
-    // ST-24: an amber prompt, because nothing failed — the server is just the other kind.
+    const app = known ? LLM_APP_WORDS[known] : null;
+    /* ST-24: an amber prompt, because nothing failed — the server is just the other kind.
+       ATO-1401: no word "cloud". Ollama, LM Studio and Atomic Chat are apps on
+       this computer: one click adds the app with this address. */
     return '<div class="tk-modal tk-modal--warn llm-modal" role="alertdialog">'
-      + '<div class="llm-modal-h">' + (ollama ? logoHTML('ollama', '') : atomic ? logoHTML('atomicchat', '') : '<span class="tk-ico tk-ico--amber">' + ic('info') + '</span>')
-      + '<h4>' + (ollama ? 'Ollama detected — add it as a cloud provider?' : atomic ? 'Atomic Chat detected — add it as a provider?' : 'OpenAI-compatible server — add it as a cloud provider?') + '</h4></div>'
-      + '<p><span class="mono">' + esc(url) + '</span>' + esc(' answers like ' + (ollama ? 'Ollama' : atomic ? 'Atomic Chat\u2019s Local API Server' : 'an OpenAI-compatible server') + ', which the External llama.cpp route cannot drive.') + '</p>'
+      + '<div class="llm-modal-h">' + (app ? logoHTML(LLM_APP_LOGOS[known], '') : '<span class="tk-ico tk-ico--amber">' + ic('info') + '</span>')
+      + '<h4>' + esc(app ? 'This is ' + app + '. Add it as a local app?' : 'This server answers the OpenAI way. Add it as a provider?') + '</h4></div>'
+      + '<p><span class="mono">' + esc(url) + '</span>' + esc(app
+          ? ' is ' + app + ' (OpenAI-compatible), an app on this computer. This field is for a llama.cpp server, so ' + app + ' is added as an app instead, at this address.'
+          : ' answers like an OpenAI-compatible server. This field is for a llama.cpp server, so it is added as a provider instead, at this address.') + '</p>'
       + '<div class="acts"><button class="btn btn-s sm" data-act="llm:steer:n">Dismiss</button>'
-      + '<button class="btn btn-p sm" data-act="llm:steer:y">Open the provider wizard with this URL</button></div></div>';
+      + '<button class="btn btn-p sm" data-act="llm:steer:y">' + esc(app ? 'Add ' + app : 'Add it as a provider') + '</button></div></div>';
   }
   return '';
 }
 function llmLooksLikeOllama(url) { try { return new URL(url).port === '11434'; } catch (err) { return false; } }
-/* openai-compat-steer.ts wizardForOpenAiCompatUrl's preset pick: Ollama's
-   port (any host), Atomic Chat's :1337 only on this machine (its preset
-   saves 127.0.0.1), anything else → null (the manual compat row). */
+/* openai-compat-steer.ts wizardForOpenAiCompatUrl's preset pick, on this
+   machine only (ATO-1401): Ollama's :11434, Atomic Chat's :1337, LM Studio's
+   :1234; anything else → null (the manual compat row). */
 function llmSteerPresetId(url) {
-  if (llmLooksLikeOllama(url)) return 'ollama';
   try {
     const u = new URL(url);
-    if (u.port === '1337' && ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(u.hostname.toLowerCase())) return 'atomic-chat';
+    const here = ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(u.hostname.toLowerCase());
+    /* ATO-1401: every preset here is "an app on this computer", keyless and
+       labelled local in Fusion, so each is matched on this machine only.
+       Ollama on another host (:11434 on a LAN box) is a plain provider. */
+    if (llmLooksLikeOllama(url) && here) return 'ollama';
+    if (u.port === '1337' && here) return 'atomic-chat';
+    /* ATO-1401: LM Studio's server port (its default, 1234), on this machine only:
+       1234 elsewhere is just a port, and its preset is keyless and "local". */
+    if (u.port === '1234' && here) return 'lmstudio';
   } catch (err) { /* not a URL */ }
   return null;
+}
+/* ATO-1401: the model apps on this computer, by preset id, as people call them. */
+const LLM_APP_WORDS = {ollama:'Ollama', lmstudio:'LM Studio', 'atomic-chat':'Atomic Chat'};
+const LLM_APP_LOGOS = {ollama:'ollama', lmstudio:'lmstudio', 'atomic-chat':'atomicchat'};
+/* One "Add <app>" button per app not added yet (llm:app:<id>). Ollama keeps
+   its own llm:ollama verb where it already had one. */
+function llmAppButtonsHTML(ids) {
+  return ids.filter((id) => !llmProvider(id)).map((id) => {
+    const k = KIND_ROWS.find((r) => r.id === id);
+    const word = LLM_APP_WORDS[id];
+    const title = word + ' runs its own models on this computer: this adds it at ' + (k ? k.baseUrl : '') + '. Nothing downloads.';
+    return '<button class="btn btn-s sm" data-act="llm:app:' + id + '" title="' + esc(title) + '">'
+      + logoHTML(LLM_APP_LOGOS[id], 'xs') + esc('Add ' + word) + '</button>';
+  }).join('');
+}
+/* ATO-1401: the provider wizard for one app, at `url` when given, and its
+   first step taken at once: a local app needs no key, so the person lands on
+   its model list (one click to choose) instead of a key form. */
+function llmAddApp(id, url) {
+  const preset = KIND_ROWS.find((k) => k.id === id);
+  if (!preset) return;
+  llmOpenWizard({id:preset.id, kind:preset.kind, baseUrl:url || preset.baseUrl}, url || preset.baseUrl);
+  ANX.providerStarted(preset);
+  if (preset.local && WIZ.phase === 'configure') wizNext();
 }
 
 /* ============================================================
@@ -28428,6 +28469,7 @@ function llmAct(what) {
   if (verb === 'needs') { llmRouteNeedsOpen(arg); return; }
   // Д34: Ollama as a provider, its preset and address filled in.
   // ATO-725: like `preset`, it skips the kind list, so it reports the setup start itself.
+  if (verb === 'app') { if (LLM_APP_WORDS[arg]) llmAddApp(arg); return; }
   if (verb === 'ollama') { llmSetMode('cloud'); const row = KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}; llmOpenWizard(row); ANX.providerStarted(row); return; }
   // A confirm that is working is not let go of mid-way (Cancel, n and Esc wait for it).
   if (verb === 'cancel') { if (LLMP.confirm && LLMP.confirm.submitting) return; LLMP.confirm = null; llmRepaint(); return; }
@@ -28441,8 +28483,10 @@ function llmAct(what) {
     const url = LLMP.steerUrl; LLMP.steerUrl = null;
     if (arg === 'y' && url) {
       // openai-compat-steer.ts wizardForOpenAiCompatUrl: Ollama's and Atomic Chat's ports land on their presets, anything else on the manual compat row, the probed URL prefilled.
-      llmSetMode('cloud');
       const presetId = llmSteerPresetId(url);
+      // ATO-1401: a model app on this computer is added in one click, at the probed address.
+      if (presetId && LLM_APP_WORDS[presetId]) { llmAddApp(presetId, url); return; }
+      llmSetMode('cloud');
       const preset = presetId ? KIND_ROWS.find((k) => k.id === presetId) : null;
       llmOpenWizard(preset ? {id:preset.id, kind:preset.kind, baseUrl:url} : {id:'', kind:'openai-compatible', baseUrl:url, custom:true}, url);
       if (!preset) WIZ.row = KIND_ROWS.find((k) => k.custom);

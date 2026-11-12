@@ -67,6 +67,8 @@
 .llm-pane .llm-sh-t{font-weight:600;color:var(--ink);white-space:nowrap}
 .llm-pane .llm-sh .btn .logo{margin-left:-4px}
 .llm-pane .llm-ram{margin:-6px 2px 2px;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
+/* ATO-1401: "Use an app you already run" on the Custom server pane: one Add button per app. */
+.llm-pane .llm-apps{display:flex;flex-wrap:wrap;gap:8px;margin:2px 2px 6px}
 .llm-pane .llm-list{padding:4px}
 .llm-pane .llm-empty{padding:14px 16px;border-radius:var(--r-card);background:var(--well);color:var(--ink-2);font-size:var(--fs-cap);font-weight:400;white-space:normal}
 .llm-pane .llm-empty.is-strong{color:var(--ink);font-weight:500}
