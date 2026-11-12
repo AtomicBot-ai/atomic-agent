@@ -107,6 +107,7 @@ import {
   selectSidebarTasks,
 } from "./sidebar-tasks-selector.js";
 import { SlashPalette } from "./components/slash-palette.js";
+import { FileMentionPalette, useFileMentions } from "./file-mentions/index.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./tasks/tasks-cancel-modal.js";
 import { UpdateModal } from "./update/update-modal.js";
@@ -260,6 +261,13 @@ export interface TuiAppCallbacks {
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
+  /**
+   * The working directory's files for the composer's `@` palette
+   * (file-mentions/). Absent: no palette.
+   */
+  listMentionFiles?(): Promise<readonly string[]>;
+  /** Inline the files a message `@`-mentions before it is sent. */
+  expandFileMentions?(message: string): string;
   /**
    * `[try again]` on the chat's last question (ATO-1302): take that
    * question and its answer back out of the session so the resend is a
@@ -1683,14 +1691,37 @@ export function TuiApp({
     }
   });
 
+  // The `@` file palette (ATO-665): composer-local, only on the Run
+  // screen and never while the slash palette or a prompt owns the keys.
+  const listMentionFiles = useMemo(
+    () => (callbacks.listMentionFiles ? () => callbacks.listMentionFiles!() : undefined),
+    [callbacks],
+  );
+  const mentions = useFileMentions({
+    buffer: state.inputValue,
+    enabled: state.uiMode === "chat" && !state.slashPaletteOpen && !state.pendingApproval,
+    listFiles: listMentionFiles,
+  });
+  /** Complete the highlighted path; `false` when there was none. */
+  const acceptMention = useCallback((): boolean => {
+    if (!mentions.open) return false;
+    const next = mentions.accept();
+    if (next === null) return false;
+    dispatch({ type: "input_changed", value: next });
+    return true;
+  }, [mentions]);
+
   const submit = useCallback(
     (buffer: string) => {
       // Same stale-subscription window as `onEditorChange`: an Enter
       // that arrives while the composer is leaving must not send.
       if (!composerVisibleRef.current) return;
+      // Enter on an open `@` palette picks the path, like Tab; with no
+      // match it falls through and sends.
+      if (acceptMention()) return;
       handleEditorSubmit(buffer, state, dispatch, callbacks);
     },
-    [state, callbacks],
+    [state, callbacks, acceptMention],
   );
 
   /**
@@ -1740,6 +1771,10 @@ export function TuiApp({
     }
     if (state.slashPaletteOpen) {
       dispatch({ type: "slash_palette_closed" });
+      return;
+    }
+    if (mentions.open) {
+      mentions.dismiss();
       return;
     }
     // Reached only with a draft in the buffer: an empty buffer means
@@ -1804,7 +1839,7 @@ export function TuiApp({
     dispatch({ type: "menu_path_set", path: null });
     dispatch({ type: "menu_cursor_set", cursor: 0 });
     dispatch({ type: "menu_opened" });
-  }, [state, callbacks]);
+  }, [state, callbacks, mentions]);
 
   /**
    * The composer's stand-down rule. Ink hands a keypress to every
@@ -1852,13 +1887,14 @@ export function TuiApp({
   // stale `state` closure). The editor still consumes Tab without
   // inserting a literal tab character — see `multi-line-editor.tsx`.
   const onTab = useCallback(() => {
+    if (acceptMention()) return;
     if (!state.slashPaletteOpen) return;
     const completions = filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel));
     const chosen = completions[state.slashPaletteCursor];
     if (!chosen) return;
     dispatch({ type: "input_changed", value: `/${chosen.name} ` });
     dispatch({ type: "slash_palette_closed" });
-  }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor, state.skillsPanel]);
+  }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor, state.skillsPanel, acceptMention]);
 
   // Live-preview: swap the active palette to the theme at `cursor` (clamped)
   // so the whole UI repaints as the operator moves through the list. The
@@ -1884,8 +1920,13 @@ export function TuiApp({
       dispatch({ type: "slash_palette_cursor_moved", delta: -1 });
       return;
     }
+    if (mentions.open && (mentions.results?.length ?? 0) > 0) {
+      mentions.move(-1);
+      return;
+    }
     dispatch({ type: "input_history_navigated", delta: -1 });
   }, [
+    mentions,
     state.slashPaletteOpen,
     state.sessionPickerOpen,
     state.themePickerOpen,
@@ -1918,8 +1959,13 @@ export function TuiApp({
       dispatch({ type: "slash_palette_cursor_moved", delta: 1 });
       return;
     }
+    if (mentions.open && (mentions.results?.length ?? 0) > 0) {
+      mentions.move(1);
+      return;
+    }
     dispatch({ type: "input_history_navigated", delta: 1 });
   }, [
+    mentions,
     state.slashPaletteOpen,
     state.sessionPickerOpen,
     state.sessionPickerCursor,
@@ -2521,6 +2567,14 @@ export function TuiApp({
                     query={state.slashQuery}
                     cursor={state.slashPaletteCursor}
                     commands={filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel))}
+                  />
+                ) : null}
+                {mentions.open && composerVisible ? (
+                  <FileMentionPalette
+                    results={mentions.results}
+                    cursor={mentions.cursor}
+                    onSelect={mentions.select}
+                    onActivate={acceptMention}
                   />
                 ) : null}
                 {state.tasksPanel.cancelConfirm ? (

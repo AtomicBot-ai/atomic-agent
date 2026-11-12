@@ -31,6 +31,7 @@ This area owns terminal interface. Read [AGENTS.md](AGENTS.md) before changing i
 - [Context readout and controls](context/README.md)
 - [Coding stance and plan handoff](coding-mode/README.md)
 - [Session selection and rail layout](session-rail/README.md)
+- [File mentions in the composer](file-mentions/README.md)
 - [Theme chooser](theme-picker/README.md)
 - [Observation views](observe/README.md)
 - [Privacy settings](privacy/README.md)
