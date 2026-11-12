@@ -16,6 +16,16 @@ class CoreOperationBusyError extends Error {
   override readonly name = "CoreOperationBusyError";
 }
 
+/**
+ * The engine operation lock was held by another live process: the refusal
+ * says nothing about Core itself. ATO-1348: a command refused this way must
+ * not then tidy up a Core the lock's owner (Studio, a model load) may have
+ * just started and still needs.
+ */
+export function isCoreOperationBusy(err: unknown): boolean {
+  return err instanceof CoreOperationBusyError;
+}
+
 function ownerIsDead(path: string): boolean {
   let pid: number;
   try { pid = Number(readFileSync(path, "utf8")); } catch { return false; }
