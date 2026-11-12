@@ -428,6 +428,8 @@ contextBridge.exposeInMainWorld("atomic", {
   onDaemonWatch: (cb: (payload: unknown) => void) => on("app:daemonWatch", cb),
   daemonWatch: () => ipcRenderer.invoke("app:daemonWatch"),
   fusionWorkers: (workers: number) => ipcRenderer.invoke("cli:fusionWorkers", workers),
+  /** ATO-606: llm.runMode.fusion.workerReasoning, "default" removing it (main/fusion-reasoning-ipc.ts). */
+  fusionWorkerReasoning: (level: string) => ipcRenderer.invoke("cli:fusionWorkerReasoning", level),
   composerEngine: (engine: string, leg?: string) => ipcRenderer.invoke("cli:composerEngine", engine, leg),
   fusionModel: (leg: string, model: string) => ipcRenderer.invoke("cli:fusionModel", leg, model),
   fusionWorkerModel: (id: string) => ipcRenderer.invoke("cli:fusionWorkerModel", id),
