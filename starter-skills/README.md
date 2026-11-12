@@ -21,6 +21,7 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `skill-creator/` | Author or edit `SKILL.md` files | none |
 | `verify-work/` | Run what you just wrote and prove it works before reporting | none |
 | `github/` | GitHub repos / issues / PRs / Actions via the `gh` CLI | `gh` installed + `gh auth login` |
+| `audit/` | `/audit`: security review in two passes, only findings that survive a refutation pass are reported | none |
 | `apple-calendar/` | Read Calendar via `icalBuddy`, create events via AppleScript | macOS + `brew install ical-buddy` + Calendar permission |
 | `obsidian/` | Read / search / write notes in an Obsidian vault | `OBSIDIAN_VAULT_PATH` env var (default `~/Documents/Obsidian Vault`) |
 | `apple-notes/` | Manage Apple Notes via the `memo` CLI | macOS + `brew install antoniorodr/memo/memo` + Automation permission |
