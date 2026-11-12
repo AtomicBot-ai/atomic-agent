@@ -122,6 +122,18 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ],
   ["browser.screenshot", obj({ ref: stringSchema, fullPage: booleanSchema })],
   [
+    "browser.debug",
+    obj(
+      {
+        action: { type: "string", enum: ["console", "network"] },
+        errorsOnly: booleanSchema,
+        limit: integerSchema,
+        clear: booleanSchema,
+      },
+      ["action"],
+    ),
+  ],
+  [
     "browser.scroll",
     obj(
       {

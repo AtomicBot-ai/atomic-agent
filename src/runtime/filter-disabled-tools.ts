@@ -111,6 +111,7 @@ const GATED_TOOLS = {
     "browser.tabs",
     "browser.scroll",
     "browser.screenshot",
+    "browser.debug",
   ],
   webSearch: ["os.web.search"],
   vision: ["vision.describe"],

@@ -8,6 +8,8 @@
  * `aria-ref=<id>` locator.
  */
 
+import type { PageDebugLog } from "./page-debug-log.js";
+
 export interface AriaSnapshot {
   url: string;
   title: string;
@@ -193,4 +195,11 @@ export interface BrowserBackend {
    * for the capture (passwords already are). Never written to disk here.
    */
   screenshot(input: ScreenshotInput): Promise<ScreenshotResult>;
+  /**
+   * Recent console messages, page errors and requests of the pages the
+   * agent can see (`browser.debug`, ATO-701), recorded from the moment
+   * the browser was attached. Optional: a backend without it makes the
+   * tool say so.
+   */
+  debugLog?(): PageDebugLog;
 }
