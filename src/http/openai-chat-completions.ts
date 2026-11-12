@@ -40,6 +40,7 @@ import {
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
+import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
 import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
@@ -446,6 +447,8 @@ async function handleStream(
  *    (extensions opt-in only, ATO-486)
  *  - compaction lifecycle and `history_trimmed` → named frames of the
  *    same names (extensions opt-in only, `stream-maintenance-frames.ts`)
+ *  - `tool_disabled` → `event: tool_disabled` with the chat sentence
+ *    (extensions opt-in only, ATO-1417)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
  *    whether extensions are opted in)
  *
@@ -759,6 +762,24 @@ export function buildStreamEventHook(
           ...(event.failure !== undefined ? { cause: event.failure } : {}),
           notice: falloverSentence(event.from, event.to, event.failure, event.toModel),
           reason: event.reason,
+        });
+      }
+      return;
+    }
+    /* ATO-1417: the server refused a tool's JSON schema and the provider
+       resent the request without it, so the model cannot call that tool
+       this turn. One plain sentence (`notice`) for the chat, once per
+       tool per turn. Extensions-only: an older host never asked for named
+       frames, and one that did ignores a frame name it does not know. */
+    if (event.type === "tool_disabled") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("tool_disabled", {
+          object: "atomic.tool_disabled",
+          session_id: env.session.id,
+          step_index: event.stepIndex,
+          tool: event.tool,
+          reason: event.reason,
+          notice: toolDisabledNotice(event.tool),
         });
       }
       return;

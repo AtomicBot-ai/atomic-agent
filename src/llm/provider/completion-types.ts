@@ -320,6 +320,23 @@ export interface CompletionResult {
    * can be looked up at the provider.
    */
   generationId?: string;
+  /**
+   * Tools the provider left out of the request that produced this
+   * completion, in the order it dropped them: the server refused the
+   * JSON schema of each one, so the request was sent again without it
+   * (ATO-1399). The model never saw them. The agent loop turns each into
+   * a `tool_disabled` event so the person is told (ATO-1417). Absent
+   * when every tool the caller sent went out.
+   */
+  droppedTools?: readonly DroppedTool[];
+}
+
+/** One tool a provider left out of a request (`CompletionResult.droppedTools`). */
+export interface DroppedTool {
+  /** The tool's own name, as the registry knows it (not its wire name). */
+  name: string;
+  /** `schema_rejected`: the server did not accept the tool's JSON schema. */
+  reason: "schema_rejected";
 }
 
 export interface OpenAiToolCall {

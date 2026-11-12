@@ -1763,6 +1763,32 @@ describe("history trimmed (ATO-295)", () => {
   });
 });
 
+describe("tool disabled (ATO-1417)", () => {
+  it("tells the chat which tool the model cannot use and why", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const next = reduceTuiState(initial, {
+      type: "agent_event",
+      sessionId: "s1",
+      event: { type: "tool_disabled", stepIndex: 0, tool: "notion.search", reason: "schema_rejected" },
+    });
+    const last = next.messages.at(-1);
+    expect(last?.role).toBe("system");
+    expect(last?.text).toBe(
+      "Tool notion.search is disabled for this turn: the model server did not accept its schema.",
+    );
+  });
+
+  it("does not paint a background session's notice into the chat on screen", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const next = reduceTuiState(initial, {
+      type: "agent_event",
+      sessionId: "s2",
+      event: { type: "tool_disabled", stepIndex: 0, tool: "notion.search", reason: "schema_rejected" },
+    });
+    expect(next.messages).toEqual(initial.messages);
+  });
+});
+
 describe("empty-completion recovery", () => {
   const recovered = (over: Record<string, unknown> = {}): TuiAction => ({
     type: "agent_event",
