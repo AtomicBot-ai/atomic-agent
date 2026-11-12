@@ -110,6 +110,8 @@ function renderer(names, extra) {
     function render() {}
     async function llmRefreshStatus() {}
     function visionLanded() { return false; }
+    function visionFetchable() { return false; }
+    function projectorDiskFit() { return { ok: true }; }
   `, c);
   for (const name of ["projectorSkippedText", ...names]) vm.runInContext(fn(name), c);
   return c;

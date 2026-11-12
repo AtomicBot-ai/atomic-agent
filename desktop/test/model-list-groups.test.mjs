@@ -40,6 +40,8 @@ function load({ backend, active, providers, ready, local = [], models = [], list
     fitFor: () => ({ v: 'ok' }),
     modelPickNote: () => null,
     modelDiskFit: () => ({ ok: true }),
+    visionFetchable: () => false,
+    visionFetchLabel: () => null,
     llmModelName: (m) => m.id,
     modelBlurb: () => '',
     modelSizeWord: () => '',
