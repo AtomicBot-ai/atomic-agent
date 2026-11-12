@@ -15,6 +15,12 @@ export interface FileOutcome {
   reason?: string;
   addedLines: number;
   removedLines: number;
+  /** What the patch does to the file (`*** Begin Patch` format only). */
+  action?: "add" | "update" | "delete";
+  /** This file is the new path of a moved file. */
+  movedFrom?: string;
+  /** This file is removed because it moves to this path. */
+  movedTo?: string;
 }
 
 export interface PreviewOutcome extends FileOutcome {
@@ -22,6 +28,8 @@ export interface PreviewOutcome extends FileOutcome {
   originalContent?: string;
   /** Whether the target was on disk at preview time — a patch may create a file. */
   existed: boolean;
+  /** The file's content once the patch lands (set when `applied`). */
+  patchedContent?: string;
 }
 
 /** Try one file of the patch against the disk without writing anything. */
@@ -90,6 +98,7 @@ export async function dryRunFile(
     removedLines: counts.removed,
     originalContent,
     existed,
+    patchedContent: patched,
   };
 }
 
