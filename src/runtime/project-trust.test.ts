@@ -16,6 +16,7 @@ import {
   ProjectTrustConflictError,
   setProjectTrust,
 } from "./project-trust.js";
+import { loadAgentProfiles } from "../agent-profiles/index.js";
 
 describe("project folder trust (ATO-298 soft trust)", () => {
   let base: string; let repo: string; let logs: LogRecord[]; let logger: StructuredLogger;
@@ -149,6 +150,21 @@ describe("project folder trust (ATO-298 soft trust)", () => {
     expect(off.declined).toEqual({ skills: ["alpha"], instructions: ["AGENTS.md"] });
     expect(cloud().skills).toEqual([]); expect(cloud().instructions).toEqual([]);
     expect(off.question).toBeNull();
+  });
+
+  it("asks about project subagent profiles by path and loads them only after yes (ATO-566)", () => {
+    mkdirSync(join(repo, ".claude/agents"), { recursive: true });
+    writeFileSync(join(repo, ".claude/agents/deploy.md"), "---\nname: deploy\n---\nDEPLOY PROFILE");
+    const profiles = () => loadAgentProfiles({ workingDir: repo, stateDir: getConfig().paths.stateDir,
+      configFile: getConfig().paths.userConfigFile, startupTrust: getConfig().skills.projectTrust });
+    expect(profiles().get("deploy")).toBeUndefined();
+    expect(profiles().withheld).toEqual([".claude/agents/deploy.md"]);
+    const status = inspectProjectTrust(getConfig(), repo);
+    expect(status.pending).toEqual({ skills: [], instructions: [".claude/agents/deploy.md"] });
+    answerProjectTrust(getConfig(), repo, "trust", status.questionId!);
+    expect(profiles().get("deploy")?.prompt).toBe("DEPLOY PROFILE");
+    setProjectTrust(getConfig(), repo, false);
+    expect(profiles().get("deploy")).toBeUndefined();
   });
 
   it("never covers global skills, which stay trusted", async () => {

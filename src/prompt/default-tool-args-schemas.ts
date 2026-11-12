@@ -674,6 +674,9 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
                 enum: ["plan", "build", "review", "explore", "utility"],
               },
               model: stringSchema,
+              // A subagent profile by name (ATO-566): explore, review,
+              // research, or one the user defined.
+              profile: stringSchema,
             },
             ["id", "instructions"],
           ),

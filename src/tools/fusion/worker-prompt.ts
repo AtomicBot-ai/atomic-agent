@@ -7,7 +7,7 @@ import {
   ORIGINAL_REQUEST_END_MARKER,
   REQUEST_FOLLOW_UP_MARKER,
 } from "../../prompt/request-section.js";
-import type { DelegateTask } from "./delegate-args.js";
+import type { AppliedAgentProfile, DelegateTask } from "./delegate-args.js";
 import {
   renderContractBlock,
   renderContractForTask,
@@ -156,6 +156,21 @@ function quoteContract(contract: DelegateContract, taskId: string): string[] {
 }
 
 /**
+ * A subagent profile's instructions (ATO-566): how this worker works, set
+ * apart from the TASK, which says what it does. A profile that narrowed
+ * the tools says so, so a worker that misses a tool does not hunt for it.
+ */
+function quoteProfile(profile: AppliedAgentProfile): string[] {
+  return [
+    `PROFILE ${profile.name} — how to work on this task; the TASK below says what to do, and the RULES at the end still apply.`,
+    profile.prompt,
+    ...(profile.tools === undefined
+      ? []
+      : [`This profile limits your tools to: ${profile.tools.join(", ")}. If the task needs another tool, say so in your reply instead of working around it.`]),
+  ];
+}
+
+/**
  * Workers of one fan-out run side by side, so a file a sibling writes
  * may not exist yet when this worker looks for it. Measured (ATO-919): a
  * worker re-read a neighbour's not-yet-written file until the loop
@@ -189,6 +204,7 @@ export function renderWorkerBrief(
   const lines: string[] = [
     `You are a worker agent executing one delegated task inside ${options.workingDir}; you have no memory of the parent conversation.`,
     ``,
+    ...(task.agentProfile ? [...quoteProfile(task.agentProfile), ``] : []),
     ...(request.length > 0 ? [...quoteOriginalRequest(request), ``] : []),
     ...(options.contract ? [...quoteContract(options.contract, task.id), ``] : []),
     `TASK ${task.id}: ${task.title}`,
