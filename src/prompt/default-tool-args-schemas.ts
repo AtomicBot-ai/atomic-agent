@@ -667,6 +667,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
               // planner's estimate of the work, not a malformed call.
               maxSteps: { type: "integer", minimum: 1 },
               timeoutMs: { type: "integer", minimum: 1 },
+              // The planner's output-size estimate (ATO-1363), checked
+              // against the worker's time limit (`worker-fit.ts`).
+              outputTokens: { type: "integer", minimum: 1, maximum: 1_000_000 },
+              outputLines: { type: "integer", minimum: 1, maximum: 100_000 },
               // Models by role (ATO-943): the task runs on that role's
               // model, or on the named one from the `### fusion` list.
               role: {

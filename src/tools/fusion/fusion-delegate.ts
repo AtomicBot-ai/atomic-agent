@@ -35,10 +35,18 @@ import {
   UNDELIVERED_STATUSES,
 } from "./contract-waves.js";
 import {
+  clampTaskBudget,
+  localTaskBudgetFloorMs,
   notStartedResult,
   runWorkerTasks,
+  WORKER_BUDGET_CEILING_FACTOR,
   type WorkerRunnerDeps,
 } from "./worker-runner.js";
+import {
+  checkWorkerFit,
+  estimateRows,
+  renderEstimateBlock,
+} from "./worker-fit.js";
 import { describeReplan, renderReplanBlock } from "./replan.js";
 import { LocalLegHealth } from "./local-leg-health.js";
 import {
@@ -532,6 +540,32 @@ export function buildFusionDelegateTool(
           { reason: "agent-state-dir", scope: intoState },
         );
       }
+      // A local worker's time limit is sized from the machine's measured
+      // speed (F19); a cloud leg has no such measurement and keeps the
+      // configured ceiling.
+      const localTokensPerSecond = Number.isFinite(poolSize)
+        ? (deps.localTokensPerSecond?.() ?? null)
+        : null;
+      // Will each task's stated output fit its time limit at that speed
+      // (ATO-1363)? A task over it runs with a warning on its row; one no
+      // allowed limit could hold is refused before the operator is asked.
+      // Without a measured speed, or without estimates, nothing happens.
+      const fit = checkWorkerFit({
+        tasks: parsed.tasks.filter(
+          (t) => taskLegs.get(t.id)?.isWorkerLeg !== false,
+        ),
+        tokensPerSecond: localTokensPerSecond,
+        concurrency: maxWorkers,
+        budgetMsFor: (t) =>
+          Math.max(
+            clampTaskBudget(t.timeoutMs, mode.workerTimeoutMs).value,
+            localTaskBudgetFloorMs(mode.workerTimeoutMs),
+          ),
+        maxBudgetMs: mode.workerTimeoutMs * WORKER_BUDGET_CEILING_FACTOR,
+      });
+      if (fit.refusal !== undefined) {
+        return error(fit.refusal, { reason: "worker-fit", tasks: fit.refused });
+      }
       // A turn is one job. An orchestrator that reviews and re-delegates
       // runs five fan-outs to build one library, and asking the same
       // question five times is attrition, not consent. The operator's
@@ -615,12 +649,6 @@ export function buildFusionDelegateTool(
       const originalRequest =
         resumedFrom?.originalRequest ??
         deps.resolveOriginalRequest?.(ctx.sessionId);
-      // A local worker's time limit is sized from the machine's measured
-      // speed (F19); a cloud leg has no such measurement and keeps the
-      // configured ceiling.
-      const localTokensPerSecond = Number.isFinite(poolSize)
-        ? (deps.localTokensPerSecond?.() ?? null)
-        : null;
       // The reply cap the local pool was divided by (`workerSlotFootprint`
       // sizes each worker's reply at `workerReplyAllowance`, not at the raw
       // `completionMaxTokens`). A cap above that allowance is sent as the
@@ -1485,6 +1513,23 @@ export function buildFusionDelegateTool(
                 : `, ${resume.needsConfirmation.length} not run again until the person agrees (${resume.needsConfirmation.map((r) => r.id).join(", ")})`
             }.`;
 
+      // The fit warnings ride their task's row (ATO-1363).
+      if (fit.warnings.size > 0) {
+        results = results.map((r) => {
+          const warning = fit.warnings.get(r.id);
+          return warning === undefined
+            ? r
+            : { ...r, notes: [...(r.notes ?? []), warning] };
+        });
+      }
+      const estimates = estimateRows(
+        parsed.tasks,
+        results,
+        localTokensPerSecond,
+        maxWorkers,
+      );
+      const estimateNote = renderEstimateBlock(estimates);
+
       // Where each task ran (ATO-943): the model and role on the row, and
       // a note when it is not the worker leg or not where it asked to be.
       // Without roles and without a task naming a model, rows are as before.
@@ -1591,7 +1636,7 @@ export function buildFusionDelegateTool(
             ...(contractLine === undefined ? {} : { contractLine }),
             spend,
             ...(ordered ? { waves: plan.waves } : {}),
-          })}${hint}${
+          })}${hint}${estimateNote}${
             escalationSpendUsd > 0
               ? `\n\nEscalations to ${escalationTarget?.model ?? escalationTarget?.providerId ?? "the escalation model"} cost ${formatUsd(escalationSpendUsd)} this fan-out (each worker's row says what for).`
               : ""
@@ -1618,6 +1663,7 @@ export function buildFusionDelegateTool(
             ...(escalationSpendUsd > 0 ? { escalationSpendUsd } : {}),
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
             ...(roleSpendUsd > 0 ? { roleSpendUsd } : {}),
+            ...(estimates.length === 0 ? {} : { estimates }),
             ...(merges.length === 0 ? {} : { merges }),
             ...(replan === undefined ||
             (replan.pending.length === 0 && replan.exhausted.length === 0)

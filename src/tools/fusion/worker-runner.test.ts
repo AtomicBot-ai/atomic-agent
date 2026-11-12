@@ -1082,6 +1082,18 @@ describe("worker limits from throughput (F19)", () => {
     expect(estimateWorkerTimeoutMs({ briefChars: 400, declaredFiles: 1, tokensPerSecond: 200, ceilingMs: 60_000 })).toBe(60_000);
   });
 
+  it("estimateWorkerTimeoutMs uses the planner's output estimate when it is bigger (ATO-1363)", () => {
+    const ceilingMs = 2_700_000;
+    // (4000/4 + 9,000 stated) / 10 tok/s × 3 = 3,000 s = 50 min → ceiling.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 1, tokensPerSecond: 10, ceilingMs, outputTokens: 9_000 })).toBe(ceilingMs);
+    // (4000/4 + 4,000 stated) / 10 × 3 = 1,500 s.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 1, tokensPerSecond: 10, ceilingMs, outputTokens: 4_000 })).toBe(1_500_000);
+    // Smaller than the per-file guess: never shortens the limit.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 2, tokensPerSecond: 10, ceilingMs, outputTokens: 100 })).toBe(1_500_000);
+    // Absent or null: exactly as before.
+    expect(estimateWorkerTimeoutMs({ briefChars: 4000, declaredFiles: 2, tokensPerSecond: 10, ceilingMs, outputTokens: null })).toBe(1_500_000);
+  });
+
   it("gives each worker turn its own estimated time limit on a measured local leg", async () => {
     const { deps, calls } = harness(async () => turnResult());
     const withFiles = { ...tasks(1)[0]!, files: ["a.js", "b.js"] };
