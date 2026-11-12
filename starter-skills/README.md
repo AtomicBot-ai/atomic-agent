@@ -35,6 +35,7 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `exa-web-search/` | Key-less web search via the hosted Exa MCP endpoint over HTTP (browser fallback) | none |
 | `pandoc/` | Convert documents between formats (md/docx/html/pdf/epub) | `brew install pandoc` (+ TeX engine for PDF) |
 | `plain-writing/` | Rewrite text and landing pages without AI tells (long dashes, stock phrases, template layouts), meaning kept | none |
+| `post-drafts/` | Draft a Reddit / LinkedIn / X / Hacker News post within the platform's limits, the subreddit's rules and your `brand-context.md` voice; draft only, never publishes | none (bundled Node scripts fetch subreddit rules and lint the draft) |
 | `ffmpeg/` | Audio / video transform: convert, trim, extract, resize, GIF | `brew install ffmpeg` |
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
