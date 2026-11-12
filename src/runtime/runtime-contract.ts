@@ -1,4 +1,5 @@
 import type { TurnCheckpointOptions } from "./turn-checkpoints.js";
+import type { InterruptedTurns } from "./interrupted-turns.js";
 import type { CompactionResult, SessionCompaction } from "../session/session-compaction.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import type { AtomicAgentConfig } from "../config/index.js";
@@ -262,6 +263,16 @@ export interface AgentRuntime {
     resumeMessage(sessionId: string, runId?: string): string | null;
     discard(sessionId: string, runId?: string): string | null;
   };
+  /**
+   * A chat turn a restart cut off (ATO-448), never continued on its own:
+   * `pending` says whether `sessionId`'s last turn is one;
+   * `resumeMessage` returns the message that continues it (a note
+   * telling the model to check before repeating side effects, then the
+   * request) and records it as resumed, so it is offered once. The
+   * caller sends that message through `runTurn`. Optional so embedders
+   * and test runtimes need not provide it.
+   */
+  readonly interruptedTurns?: InterruptedTurns;
   /**
    * Durable user-profile store. Present even when
    * `memory.profile.enabled` is `false`, because the store owns the

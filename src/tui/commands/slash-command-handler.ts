@@ -191,6 +191,11 @@ export interface SlashDispatchResult {
     action: "list" | "resume" | "discard";
     runId?: string;
   };
+  /**
+   * `/resume`: continue the current session's last turn when a restart
+   * cut it off (ATO-448). Needs the runtime, so the caller runs it.
+   */
+  readonly resumeInterruptedTurn?: true;
 }
 
 export type FusionWorkerAction =
@@ -323,6 +328,13 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         fusionRunAction: { action, ...(runId === undefined ? {} : { runId }) },
       });
     }
+    case "resume":
+      if (parsed.args.trim().length > 0) {
+        return pureActions([], {
+          systemMessage: "usage: /resume (continues the last reply a restart cut off; takes no arguments)",
+        });
+      }
+      return pureActions([], { resumeInterruptedTurn: true });
     case "abort":
       return pureActions([{ type: "abort_requested" }], {
         triggerAbort: true,

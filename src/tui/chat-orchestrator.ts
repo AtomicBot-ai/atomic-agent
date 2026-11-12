@@ -93,6 +93,7 @@ import {
 } from "./local-turn-gate.js";
 import { turnsToMessages } from "./chat/turns-to-messages.js";
 import { formatSessionFusionNotice } from "./fusion-resume-notice.js";
+import { INTERRUPTED_TURN_NOTICE } from "./interrupted-turn-notice.js";
 import { createHeapGuard } from "../runtime/heap-guard.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 
@@ -1054,6 +1055,14 @@ export class ChatOrchestrator {
     );
     if (fusionNotice !== null) {
       this.bus.emit({ type: "system_message", text: fusionNotice });
+    } else if (
+      !running &&
+      (this.runtime.interruptedTurns?.pending(loaded.id) ?? null) !== null
+    ) {
+      // A chat turn of this thread that a restart cut off (ATO-448):
+      // offered, never continued on its own. A fusion run's own offer
+      // above already covers a cut-off fan-out.
+      this.bus.emit({ type: "system_message", text: INTERRUPTED_TURN_NOTICE });
     }
     // A turn parked on an approval in THIS thread asked its question
     // while another transcript was on screen, where it surfaced only as
