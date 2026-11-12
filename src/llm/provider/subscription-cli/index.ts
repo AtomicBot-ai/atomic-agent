@@ -21,6 +21,13 @@ export {
 export { registerBuiltInCliAdapters } from "./register-cli-adapters.js";
 export { resolveCliBinary } from "./resolve-cli-binary.js";
 export {
+  checkSubscriptionCli,
+  subscriptionInstallCommand,
+  subscriptionLoginCommand,
+  type SubscriptionCliState,
+  type SubscriptionCliStatusReport,
+} from "./subscription-cli-status.js";
+export {
   runCliCommand,
   type CliRunner,
   type CliRunOptions,

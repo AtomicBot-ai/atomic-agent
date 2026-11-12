@@ -12,6 +12,21 @@ import type {
 } from "./providers-wizard-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 
+// ATO-1204: the subscription CLI step asks `checkSubscriptionCli` for one
+// status line. No test here may spawn a real `claude` / `codex`.
+vi.mock("../../llm/provider/subscription-cli/subscription-cli-status.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../llm/provider/subscription-cli/subscription-cli-status.js")>();
+  return {
+    ...actual,
+    checkSubscriptionCli: vi.fn(async (adapter: { cli: "claude" | "codex"; productName: string }) =>
+      adapter.cli === "codex"
+        ? { cli: "codex", productName: "Codex", state: "signed_out", installed: true, version: "0.46.0", signedIn: false,
+            loginCheck: "command", fix: "codex login", message: "", billingEnvSet: [] }
+        : { cli: "claude", productName: "Claude Code", state: "ready", installed: true, version: "2.1.3", signedIn: true,
+            loginCheck: "file", fix: null, message: "", billingEnvSet: [] }),
+  };
+});
+
 function stripAnsi(value: string): string {
   return value.replace(/\[[0-9;]*m/g, "");
 }
@@ -207,6 +222,18 @@ describe("ProvidersWizard CLI-backed configure step", () => {
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain("Chat model id — codex CLI");
     expect(text).toContain("the CLI resolves the model");
+    // ATO-1204: one status line from the core check.
+    expect(text).toContain("Codex is not signed in. Run: codex login");
+  });
+
+  it("shows ready for a signed-in claude CLI (ATO-1204)", async () => {
+    const { lastFrame } = render(
+      <ProvidersWizard
+        wizard={createProvidersWizardState("configure", { providerId: "claude-cli", kind: "claude-cli" })}
+      />,
+    );
+    await flush();
+    expect(stripAnsi(lastFrame() ?? "")).toContain("✓ ready: Claude Code 2.1.3, signed in");
   });
 });
 
