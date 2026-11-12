@@ -30,6 +30,8 @@ User and plugin commands that run before and after a tool call, in the Claude Co
 
 `matcher` is a regular expression tested against the whole tool name (empty or `*` = every tool). It is tested against our name (`os.shell.run`) and the Claude name from [hook-matcher.ts](hook-matcher.ts): `Bash`, `Read`, `Write`, `Edit` (also `os.fs.patch`), `MultiEdit`, `Glob`, `Grep`, `LS`, `WebFetch`, `WebSearch`, `Task` (`fusion.delegate`), and `mcp__<server>__<tool>` for `mcp.<server>.<tool>`.
 
+`Bash` matches only `os.shell.run`. The built-in git tools (`os.git.*`) have no Claude name, so a `Bash` hook does not see them. A hook that should see git calls too needs its own matcher: `Bash|os\.git\..*`, written in `hooks.json` as `"matcher": "Bash|os\\.git\\..*"`.
+
 ## Input and decisions
 
 stdin is JSON: `session_id`, `cwd`, `hook_event_name`, `tool_name` (Claude name when there is one), `atomic_tool_name`, `claude_tool_name`, `tool_input` (our arguments plus `file_path`, `command`, `old_string`, `new_string`), and for PostToolUse `tool_response` (`status`, `output`, `truncated`).
