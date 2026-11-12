@@ -47,3 +47,23 @@
 .st-shot .st-img{object-fit:contain;background:var(--well)}
 /* a picture opened from a chat that Studio did not make */
 .st-glass.st-name{display:inline-block;line-height:30px;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ATO-807: Inpaint, painting the mask on the source (studio/mask-painter.js). */
+.st-mask-dlg{position:fixed;inset:0;z-index:900;display:grid;place-items:center;padding:24px;background:color-mix(in srgb,#000 55%,transparent)}
+.st-mask-box{display:flex;flex-direction:column;gap:12px;width:min(1100px,100%);max-height:100%;padding:14px;border-radius:var(--r-panel);background:var(--lift);box-shadow:var(--sh-pop)}
+.st-mask-top{display:flex;align-items:center;gap:10px}
+.st-mask-stage{position:relative;display:grid;place-items:center;height:calc(100vh - 190px);min-height:240px;overflow:hidden;border-radius:var(--r-panel);background:var(--well)}
+.st-mask-pic{position:relative;line-height:0}
+.st-mask-pic img,.st-mask-pic canvas{display:block;width:100%;height:100%;user-select:none}
+.st-mask-pic canvas{position:absolute;inset:0;opacity:.55;cursor:none;touch-action:none}
+.st-mask-wait{position:absolute;inset:0;display:grid;place-items:center;color:var(--ink-3);background:var(--well)}
+.st-mask-cursor{position:absolute;pointer-events:none;border:1.5px solid #fff;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.55);transform:translate(-50%,-50%);display:none}
+.st-mask-cursor.on{display:block}
+.st-mask-cursor.erase{border-style:dashed}
+.st-mask-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.st-mask-bar .st-seg{flex:none}
+.st-mask-bar .st-seg button{display:inline-flex;align-items:center;gap:6px}
+.st-mask-size{width:240px}
+.st-mask-msg{min-width:0}
+.st-mask-done{background:var(--brand);color:#fff;border-color:transparent}
+.st-mask-done:disabled{opacity:.5}

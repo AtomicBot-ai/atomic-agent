@@ -493,6 +493,8 @@
   function baseName(p) { return String(p || '').split(/[\\/]/).pop(); }
 
   function setSlot(slot, src) {
+    // A mask painted on the old source does not fit a new one (ATO-807).
+    if (slot === 'source' && IM.form.mask && IM.form.mask.painted) IM.form.mask = null;
     if (slot === 'ref') {
       const max = Math.max(0, ((IM.model && IM.model.maxInputImages) || 16) - 1);
       if (IM.form.refs.length >= max) { toast('That is the most this model takes', '', 'bad'); return; }
@@ -540,6 +542,33 @@
       setSlot(slot, {path: f.path, key: f.path, name: f.name, note: 'from your ' + (simgMachine() === 'this Mac' ? 'Mac' : 'computer')});
       if (slot !== 'ref') break;
     }
+  }
+
+  /* ATO-807: paint the Inpaint mask on the source picture (mask-painter.js). */
+  async function paintMask() {
+    const src = IM.form.source;
+    if (!src || typeof smaskOpen !== 'function') return;
+    let url = src.base64 || LOCAL.get(src.key) || '';
+    if (!url) {
+      const s = br();
+      const r = s && s.preview ? await Promise.resolve(s.preview(src.path)).catch(() => null) : null;
+      const d = r && r.ok ? r.data : null;
+      url = d && d.ok && typeof d.dataUrl === 'string' ? d.dataUrl : '';
+    }
+    if (!url) { toast('Could not open the picture', 'Add the source again and retry.', 'bad'); return; }
+    if (IM.form.source !== src) return;   // the source changed while it loaded
+    const old = IM.form.mask;
+    smaskOpen({
+      src: url,
+      mask: old && old.painted ? LOCAL.get(old.key) : null,
+      onDone(mask, w, h) {
+        if (IM.form.source !== src) return;
+        const key = 'local:' + (++localSeq);
+        LOCAL.set(key, mask);
+        if (old && old.painted) { LOCAL.delete(old.key); PICS.delete(old.key); }
+        setSlot('mask', {base64: mask, key, name: 'Painted mask', note: w + ' × ' + h + ' · painted here', painted: true});
+      },
+    });
   }
 
   /* ---------- result actions ---------- */
@@ -610,6 +639,7 @@
     const mode = can.includes('edit') ? 'edit' : can.find((x) => x !== 'create');
     if (mode) switchMode(mode);
     IM.form.source = sourceFromItem(item);
+    if (IM.form.mask && IM.form.mask.painted) IM.form.mask = null;   // painted on the old source (ATO-807)
     if (!mode) toast('Source added', 'Pick a model that can edit pictures to use it');
     paintForm();
   }
@@ -700,7 +730,11 @@
         if (IM.improve && IM.improve.undo !== null) { IM.form.prompt = IM.improve.undo; IM.improve.undo = null; IM.improve.err = ''; save(); paintForm(); }
         return;
       case 'idea': IM.form.prompt = a; paintForm(); { const t = document.getElementById('sti-prompt'); if (t) t.focus(); } save(); return;
-      case 'clear': if (a === 'mask') IM.form.mask = null; else IM.form.source = null; paintForm(); return;
+      case 'clear':
+        if (a === 'mask') IM.form.mask = null;
+        else { IM.form.source = null; if (IM.form.mask && IM.form.mask.painted) IM.form.mask = null; }
+        paintForm(); return;
+      case 'paintmask': paintMask(); return;
       case 'unref': IM.form.refs = IM.form.refs.filter((_, n) => n !== Number(a)); paintForm(); return;
       case 'pick': pickFiles(a); return;
       case 'fromlib': IM.picking = a || null; paintForm(); paintGallery(); return;
