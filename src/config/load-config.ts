@@ -746,6 +746,8 @@ export function loadConfig(): AtomicAgentConfig {
       userId: user.composio.userId,
       sessionId: user.composio.sessionId,
       mcpUrl: user.composio.mcpUrl,
+      accounts: user.composio.accounts.map((a) => ({ ...a })),
+      sessionPins: user.composio.sessionPins,
     },
     mcp: {
       // Servers are owned by the user-config file. Deep clone the

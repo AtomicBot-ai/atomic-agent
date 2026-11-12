@@ -3,10 +3,12 @@
  * `backend.composio.dev` over HTTP.
  *
  * atomic-agent deliberately does **not** depend on `@composio/core`.
- * The whole integration needs exactly one call (create a tool-router
- * session), and the SDK would drag a transitive dependency tree into
- * a project that ships a single-file SEA binary. Everything past this
- * module speaks the neutral shapes declared here.
+ * The integration needs two calls (create a tool-router session, list
+ * the user's connected accounts), and the SDK would drag a transitive
+ * dependency tree into a project that ships a single-file SEA binary.
+ * Everything past this module speaks the neutral shapes declared here.
+ * The account listing lives in `composio-accounts-api.ts` and shares
+ * `composioRequest` below.
  *
  * The session endpoint returns a hosted MCP URL; from that point on
  * the existing MCP client in `src/mcp/` does all the work — see
@@ -51,6 +53,20 @@ export interface CreateSessionOptions {
   apiKey: string;
   /** Stable per-install id. Scopes connected accounts; never an email. */
   userId: string;
+  /**
+   * Per-toolkit pins, `{ gmail: ["ca_…"] }` (ATO-548). Sent as
+   * `connected_accounts` only when non-empty, so an install with no
+   * named defaults sends the same body as before.
+   */
+  connectedAccounts?: Readonly<Record<string, readonly string[]>>;
+  baseUrl?: string;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+/** Transport options shared by every call in this module. */
+export interface ComposioRequestOptions {
+  apiKey: string;
   baseUrl?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -67,20 +83,41 @@ export interface CreateSessionOptions {
 export async function createComposioSession(
   opts: CreateSessionOptions,
 ): Promise<ComposioSession> {
+  const pins = opts.connectedAccounts;
+  const hasPins = pins !== undefined && Object.keys(pins).length > 0;
+  const body = await composioRequest(opts, "/tool_router/session", {
+    method: "POST",
+    body: JSON.stringify({
+      user_id: opts.userId,
+      workbench: { enable: false },
+      ...(hasPins ? { connected_accounts: pins } : {}),
+    }),
+  });
+  return parseSessionResponse(body);
+}
+
+/**
+ * One authenticated JSON call to Composio, with the module's error
+ * translation: a caller-side cancel passes through untouched, a network
+ * failure is status 0, 401/403 names the key, anything else non-2xx
+ * names the status.
+ */
+export async function composioRequest(
+  opts: ComposioRequestOptions,
+  path: string,
+  init: { method: "GET" | "POST"; body?: string },
+): Promise<unknown> {
   const base = opts.baseUrl ?? COMPOSIO_API_BASE;
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? 20_000);
   let res: Response;
   try {
-    res = await fetch(`${base}/tool_router/session`, {
-      method: "POST",
+    res = await fetch(`${base}${path}`, {
+      method: init.method,
       headers: {
         [COMPOSIO_API_KEY_HEADER]: opts.apiKey,
-        "Content-Type": "application/json",
+        ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
       },
-      body: JSON.stringify({
-        user_id: opts.userId,
-        workbench: { enable: false },
-      }),
+      ...(init.body === undefined ? {} : { body: init.body }),
       signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
     });
   } catch (err) {
@@ -104,7 +141,7 @@ export async function createComposioSession(
       res.status,
     );
   }
-  return parseSessionResponse(await res.json());
+  return res.json();
 }
 
 /** Narrow the untyped JSON body into `ComposioSession`. */

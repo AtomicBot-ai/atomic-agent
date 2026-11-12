@@ -270,3 +270,5 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `composio.userId` (default `null`).
 - `composio.sessionId` (default `null`).
 - `composio.mcpUrl` (default `null`).
+- `composio.accounts` (default `[]`).
+- `composio.sessionPins` (default `null`).

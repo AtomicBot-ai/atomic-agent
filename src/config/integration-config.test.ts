@@ -58,6 +58,7 @@ describe("integration configuration ownership", () => {
     expect(createComposioDefaults()).not.toBe(createComposioDefaults());
     expect(Object.keys(createComposioDefaults())).toEqual([
       "enabled", "apiKeyEnv", "userId", "sessionId", "mcpUrl",
+      "accounts", "sessionPins",
     ]);
   });
 
@@ -188,9 +189,11 @@ describe("integration configuration ownership", () => {
     };
     expect(parseComposioConfig({}, () => defaults)).toEqual({
       enabled: false, apiKeyEnv: " CUSTOM_KEY ", userId: null, sessionId: null, mcpUrl: null,
+      accounts: [], sessionPins: null,
     });
     expect(parseComposioConfig({ userId: " install ", sessionId: " ", mcpUrl: " deferred endpoint " }, () => defaults))
-      .toEqual({ enabled: false, apiKeyEnv: " CUSTOM_KEY ", userId: "install", sessionId: null, mcpUrl: "deferred endpoint" });
+      .toEqual({ enabled: false, apiKeyEnv: " CUSTOM_KEY ", userId: "install", sessionId: null, mcpUrl: "deferred endpoint",
+        accounts: [], sessionPins: null });
   });
 
   it("reads composio defaults per expression after within-call replacement", () => {

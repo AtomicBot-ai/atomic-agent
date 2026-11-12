@@ -22,7 +22,7 @@ This area owns configuration and compatibility. Read [AGENTS.md](AGENTS.md) befo
 - [local model configuration](local-models/README.md)
 - [tui-config.ts](tui-config.ts)
 - [channel-config.ts](channel-config.ts)
-- [integration-config.ts](integration-config.ts)
+- [integration-config.ts](integration-config.ts), [composio-accounts-config.ts](composio-accounts-config.ts)
 - [session-rail-config.ts](session-rail-config.ts)
 - [webhook-config.ts](webhook-config.ts)
 - [load-config.ts](load-config.ts)
