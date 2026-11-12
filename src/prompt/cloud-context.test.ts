@@ -133,14 +133,14 @@ describe("cloud message retention", () => {
   it("puts the current turn's call reasoning on the outgoing cloud turns, not in the journal (ATO-1397)", () => {
     const input = fixture();
     input.session.turns.push(
-      assistantToolCallTurn({ tool: "os.fs.read", args: { path: "a" }, reasoning: "need a", at: 2 }),
+      assistantToolCallTurn({ tool: "os.fs.read", args: { path: "a" }, reasoning: "zq-ato1397-reasoning", at: 2 }),
       toolResultTurn({ tool: "os.fs.read", status: "ok", summary: "A", at: 3 }),
     );
     const first = buildPrompt(input);
     const call = first.messages.turns.find((turn) => turn.kind === "assistant_tool_call");
-    expect(call).toMatchObject({ reasoning: "need a" });
-    expect(JSON.stringify(first.cloudContext)).not.toContain("need a");
-    expect(first.text).not.toContain("need a");
+    expect(call).toMatchObject({ reasoning: "zq-ato1397-reasoning" });
+    expect(JSON.stringify(first.cloudContext)).not.toContain("zq-ato1397-reasoning");
+    expect(first.text).not.toContain("zq-ato1397-reasoning");
     // A body that does not hand reasoning back is unchanged.
     expect(JSON.stringify(native(first))).not.toContain("reasoning_content");
 
