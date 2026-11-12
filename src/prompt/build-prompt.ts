@@ -23,7 +23,7 @@ import type { PromptMessages } from "../llm/provider/completion-types.js";
 import {
   packedConversationTurns,
   renderPackedConversation,
-  renderWorldSnapshotSection,
+  fitWorldSnapshotSection,
 } from "./build-prompt-world-conversation.js";
 import type {
   BuildPromptInput,
@@ -357,7 +357,10 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       : null;
   const proceduresTokens = procedures !== null ? estimateTokens(procedures) : 0;
 
-  const worldSnapshotFull = renderWorldSnapshotSection(input.session);
+  // The page is cut inside its untrusted fence, so the closing marker
+  // stays (ATO-1378); the plain cut below is a safety net only.
+  const worldFit = fitWorldSnapshotSection(input.session, limits.worldSnapshot);
+  const worldSnapshotFull = worldFit.text;
   const worldSnapshot = truncateToTokens(
     worldSnapshotFull,
     limits.worldSnapshot,
@@ -574,7 +577,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     sessionFacts: sessionParts.truncationFacts,
     loadedTools: loadedToolsRendered.truncated,
     profile: profileSection?.clip !== undefined,
-    worldSnapshot: worldSnapshot !== worldSnapshotFull,
+    worldSnapshot: worldFit.truncated || worldSnapshot !== worldSnapshotFull,
     conversation: packed.droppedCount > 0,
     recalled: recalledFull !== null && recalled !== recalledFull,
     memoryIndex: memoryIndexFull !== null && memoryIndex !== memoryIndexFull,
