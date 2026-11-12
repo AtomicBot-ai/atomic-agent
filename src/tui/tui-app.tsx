@@ -1326,6 +1326,8 @@ export function TuiApp({
     // "press any key to restart" prompt claims every key for the same reason.
     !state.updatePrompt &&
     state.updateStatus !== "done" &&
+    // The folder trust question claims y / n / Esc the same way (ATO-1481).
+    state.projectTrustPrompt === null &&
     // When the slash-command palette is open the editor must hold focus
     // regardless of the active debug tab so the operator can type the
     // command and drive ↑↓ / tab / enter selection. Panels that open the
