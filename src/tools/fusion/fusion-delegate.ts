@@ -649,6 +649,14 @@ export function buildFusionDelegateTool(
       const runSignal = capped
         ? AbortSignal.any([ctx.signal, budgetAbort.signal])
         : ctx.signal;
+      // Escalation and judge calls name the delegating session, so they
+      // count in its spend readout like the workers' own calls (ATO-1388).
+      const sideComplete: FusionDelegateDeps["escalationComplete"] =
+        deps.escalationComplete === undefined
+          ? undefined
+          : (call) => deps.escalationComplete!({ ...call, sessionId: ctx.sessionId });
+      const workerDeps: FusionDelegateDeps =
+        sideComplete === undefined ? deps : { ...deps, escalationComplete: sideComplete };
 
       // The judge's acceptance lists (ATO-944), built before any work so
       // every brief carries its own, read-only. Off: no list, no suffix.
@@ -719,6 +727,8 @@ export function buildFusionDelegateTool(
           ? undefined
           : new TaskTreeState(mode.taskTree, workerModel);
       tree?.addRoots(parsed.tasks, parsed.contract);
+      // A split's subtasks count on their root in the checkpoint (ATO-1320).
+      if (tree !== undefined) run?.useParents((id) => tree.parentOf(id));
       // One of the orchestrator's own tasks whose worker proposed a split.
       const awaitsExpansion = (row: WorkerTaskResult): boolean =>
         tree !== undefined &&
@@ -785,7 +795,7 @@ export function buildFusionDelegateTool(
           // Workers run in the parent's folder in every model mode, so a
           // live folder switch reaches them too (#1121). Only cloud
           // workers inherit the parent's workspace.
-          { ...deps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
+          { ...workerDeps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
@@ -846,7 +856,7 @@ export function buildFusionDelegateTool(
         );
         const onlyRole = roles.size === 1 ? [...roles][0] : "-";
         return runWorkerTasks(
-          { ...deps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
+          { ...workerDeps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
@@ -1210,7 +1220,7 @@ export function buildFusionDelegateTool(
               workingDir: ctx.workingDir,
               target: judgeTarget,
               pricing: judgePricing,
-              complete: deps.escalationComplete!,
+              complete: sideComplete!,
               signal: ctx.signal,
             });
             if (verdict.costUsd !== null && verdict.costUsd > 0) {

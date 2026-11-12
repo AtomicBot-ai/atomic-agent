@@ -61,7 +61,7 @@ import {
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
-import { SessionUsageLedger } from "../session/usage-meter.js";
+import { SessionUsageLedger, forwardWorkerUsage } from "../session/usage-meter.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
@@ -750,7 +750,10 @@ export async function createAgentRuntime(
     logger, localProfile, connectedLocal, providerRegistry,
   );
 
-  const { createSession, createEphemeralSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
+  const { createSession, createEphemeralSession: createWorkerSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
+  // A fusion worker's calls count on the session that spawned it, so the
+  // composer's `$` readout includes what the workers spent (ATO-1388).
+  const createEphemeralSession: typeof createWorkerSession = forwardWorkerUsage(createWorkerSession, sessionUsage);
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
   const { executeTurn, steer, runTurn, controlGoal } = createRuntimeTurnService(config, {
@@ -771,6 +774,7 @@ export async function createAgentRuntime(
     declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
     turnBudget: fusionTurnBudget,
+    sessionUsage,
     liveWorkers: fusionLiveWorkers,
     runCheckpoints: fusionRuns,
     steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),
