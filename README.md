@@ -514,7 +514,7 @@ atomic-agent serve \
 
 Without a key, anyone who reaches the port can run the agent and its tools, so `serve` refuses to start on a host other than loopback (`0.0.0.0`, a LAN address) unless `--api-key` or `ATOMIC_AGENT_API_KEY` is set. On loopback it still starts without one and prints a one-line warning.
 
-`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
+`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. `POST /v1/messages` (Anthropic Messages, for Claude Code: `ANTHROPIC_BASE_URL=http://127.0.0.1:8787`) and `POST /v1/responses` (OpenAI Responses, for Codex and the Agents SDK) run the same turn and answer in their own format; the agent uses its own tools, not the client's ([details](src/http/README.md)). Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
 `serve` boots the same runtime the TUI does, so enabled Telegram and Discord bots, and every enabled Swarm bot that has a token, come up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. Each bot runs in one process at a time; see Channels below.
 
