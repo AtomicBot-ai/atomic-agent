@@ -513,11 +513,18 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "base_url") {
+    // A per-account preset (Azure, Bedrock) says what to change in its
+    // prefilled template; every other URL step keeps the plain hint.
+    const endpointHint = w.presetId
+      ? findProviderPreset(w.presetId)?.perAccountEndpoint?.hint
+      : undefined;
     return renderLineField({
       title: "API base URL",
       value: w.baseUrlLine,
       placeholder: OPENAI_COMPAT_DEFAULT_BASE_URL,
-      hint: "Enter to continue · Esc back",
+      hint: endpointHint
+        ? `${endpointHint} · Enter to continue · Esc back`
+        : "Enter to continue · Esc back",
       error: w.error,
     });
   }

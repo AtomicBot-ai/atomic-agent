@@ -89,6 +89,20 @@ export interface ProviderPreset {
   readonly local?: boolean;
   /** One-line hint shown under the label. */
   readonly note?: string;
+  /**
+   * Set for services whose endpoint is per account (an Azure resource, an
+   * AWS Region), so no single `baseUrl` serves everyone. `baseUrl` is then
+   * a template: the wizard opens the base URL step prefilled with it and
+   * shows `hint`, and refuses to go on while the URL still contains
+   * `placeholder`. `hostPattern` (cloud services) names the real hosts, so a
+   * saved entry on `my-team.openai.azure.com` still counts as this cloud
+   * service (`defaultProviderModelMode`, `classifyTransportHost`).
+   */
+  readonly perAccountEndpoint?: {
+    readonly hint: string;
+    readonly placeholder?: string;
+    readonly hostPattern?: RegExp;
+  };
 }
 
 /**
@@ -100,6 +114,26 @@ export interface ProviderPreset {
  * list reads predictably; a test enforces this.
  */
 export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
+  {
+    id: "bedrock",
+    label: "Amazon Bedrock",
+    // Bedrock's OpenAI-compatible surface with a Bedrock API key sent as
+    // Bearer (no SigV4, no AWS SDK). `bedrock-mantle`, not
+    // `bedrock-runtime`: only Mantle serves `/v1/models` (Runtime answers
+    // 404 UnknownOperationException there). Probed 2026-11-12 with a bogus
+    // key: `/v1/models` and `/v1/chat/completions` answer 401
+    // `invalid_api_key` "Invalid bearer token" (a Bedrock API key *is* a
+    // bearer token), a bogus sibling path 404. The Region is the
+    // operator's, so the URL is asked for.
+    baseUrl: "https://bedrock-mantle.us-east-1.api.aws",
+    // The variable AWS's own SDKs and CLI read a Bedrock API key from.
+    envVar: "AWS_BEARER_TOKEN_BEDROCK",
+    note: "Bedrock models with a Bedrock API key; set your AWS Region in the URL",
+    perAccountEndpoint: {
+      hint: "Change us-east-1 to the AWS Region your Bedrock models are in",
+      hostPattern: /^bedrock-(?:mantle|runtime)\.[a-z0-9-]+\.(?:api\.aws|amazonaws\.com)$/i,
+    },
+  },
   {
     id: "anthropic",
     label: "Anthropic (Claude)",
@@ -126,6 +160,23 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     envVar: "ATOMIC_CHAT_API_KEY",
     local: true,
     note: "the Local API Server Atomic Chat runs on your machine; no API key needed",
+  },
+  {
+    id: "azure-openai",
+    label: "Azure OpenAI",
+    // Azure's v1 API: `<resource>/openai/v1/...`, no dated `api-version`
+    // query, the key accepted as `Authorization: Bearer` (also as
+    // `api-key`; Bearer keeps this preset on the shared convention).
+    // The model id is the operator's *deployment* name. The resource name
+    // is per account, so the URL is asked for and the template refused.
+    baseUrl: "https://your-resource.openai.azure.com/openai",
+    envVar: "AZURE_OPENAI_API_KEY",
+    note: "your Azure resource; the model is your deployment name",
+    perAccountEndpoint: {
+      hint: "Replace your-resource with your Azure OpenAI resource name",
+      placeholder: "your-resource",
+      hostPattern: /\.(?:openai|services\.ai|cognitiveservices)\.azure\.com$/i,
+    },
   },
   {
     id: "cerebras",
@@ -270,6 +321,28 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "Grok models direct from the vendor",
   },
 ];
+
+/**
+ * The cloud preset `url` belongs to: the preset's own `baseUrl` origin, or
+ * a per-account host its `perAccountEndpoint.hostPattern` names (https
+ * only). Local presets never match: they are the operator's machine.
+ */
+export function cloudPresetForUrl(url: string): ProviderPreset | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  return PROVIDER_PRESETS.find((preset) => {
+    if (preset.local) return false;
+    if (new URL(preset.baseUrl).origin === parsed.origin) return true;
+    return (
+      parsed.protocol === "https:" &&
+      (preset.perAccountEndpoint?.hostPattern?.test(parsed.hostname) ?? false)
+    );
+  });
+}
 
 export function findProviderPreset(id: string): ProviderPreset | undefined {
   return PROVIDER_PRESETS.find((p) => p.id === id);

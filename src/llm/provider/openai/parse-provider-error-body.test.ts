@@ -358,10 +358,19 @@ describe("CREDENTIAL_WORDING", () => {
       "Invalid token",
       "access token expired",
       "bad credentials",
+      // ATO-468: Bedrock (AWS) and Azure OpenAI.
+      "Bearer Token has expired",
+      "The security token included in the request is invalid.",
+      "Access denied due to invalid subscription key or wrong API endpoint.",
     ]) {
       expect(CREDENTIAL_WORDING.test(text), text).toBe(true);
     }
     expect(CREDENTIAL_WORDING.test("You've run out of funds")).toBe(false);
     expect(CREDENTIAL_WORDING.test("Your input was flagged")).toBe(false);
+    // Bedrock's "no access to this model" is the account's permission,
+    // not its key.
+    expect(
+      CREDENTIAL_WORDING.test("You don't have access to the model with the specified model ID."),
+    ).toBe(false);
   });
 });
