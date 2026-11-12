@@ -173,6 +173,10 @@ const FORMS: Record<string, CompactToolForm> = {
   "tasks.list": { summary: "List tasks.", tier: RARE },
   "tasks.cancel": { summary: "Cancel a task.", tier: RARE },
   "tasks.show": { summary: "Show one task.", tier: RARE },
+  "sessions.list": { summary: "List other chats.", tier: RARE },
+  "sessions.read": { summary: "Read another chat (asks first).", tier: RARE },
+  "sessions.send": { summary: "Send a request to another chat (asks first).", tier: RARE },
+  "sessions.check": { summary: "Answer to a sent request.", tier: RARE },
   "vision.describe": {
     summary: "Describe images (at most 4 per call). `prompt` is required.",
   },

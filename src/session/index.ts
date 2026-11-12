@@ -2,6 +2,7 @@ export { SessionStore, INTERRUPTED_TURN_ENDING } from "./session-store.js";
 export type {
   SessionStoreOptions,
   RecentWorkingDirRow,
+  SessionChatLine,
   TurnEnding,
 } from "./session-store.js";
 export {

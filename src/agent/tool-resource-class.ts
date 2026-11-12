@@ -203,6 +203,14 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "tasks.cron": "tasks_write",
   "tasks.cancel": "tasks_write",
 
+  // sessions.* (ATO-570) — a listing of chat names and the status of a
+  // message this chat sent are plain reads; reading another chat or
+  // sending into one asks first (`session_cross`), so those are solo.
+  "sessions.list": "pure_read",
+  "sessions.check": "pure_read",
+  "sessions.read": "approval_gated",
+  "sessions.send": "approval_gated",
+
   // vision
   "vision.describe": "vision",
 
@@ -398,6 +406,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "image.generate": ["paid_generation"],
     // Always cloud, always billed per second.
     "video.generate": ["paid_generation"],
+    // Another chat's messages, read or written (ATO-570).
+    "sessions.read": ["session_cross"],
+    "sessions.send": ["session_cross"],
   };
 
 /**

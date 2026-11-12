@@ -194,6 +194,38 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "sessions.list",
+    summary:
+      "List the operator's other chats: id, status, last activity, name. Read-only; names only.",
+    argsSchema: "{ query?: string /* name contains */, limit?: number /* 1..50 */ }",
+    tier: "rare",
+  },
+  {
+    name: "sessions.read",
+    summary:
+      "Last messages of another chat (the person's words and the agent's replies, no tool output). Asks the operator first.",
+    argsSchema: "{ sessionId: string, limit?: number /* 1..100 */ }",
+    tier: "rare",
+  },
+  {
+    name: "sessions.send",
+    summary:
+      "Queue a request for the agent in another chat (or a new one); returns a taskId. Asks first; nothing waits, follow up with sessions.check.",
+    argsSchema: "{ message: string, sessionId?: string, newSession?: boolean }",
+    examples: [
+      '{"sessionId":"s_123","message":"What did we decide about the API names?"}',
+      '{"newSession":true,"message":"Draft release notes from CHANGELOG.md"}',
+    ],
+    tier: "rare",
+  },
+  {
+    name: "sessions.check",
+    summary:
+      "Status of a message sent with sessions.send, and the other agent's reply once it answered. Read-only.",
+    argsSchema: "{ taskId: string }",
+    tier: "rare",
+  },
+  {
     // `frequent` tier: vision.describe needs the full args schema +
     // examples in the stable prefix so the model first-shots a valid
     // call. `rare` (single-line manifest) led to the model guessing

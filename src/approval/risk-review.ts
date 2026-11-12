@@ -99,10 +99,12 @@ export const RISK_REVIEW_SESSION_PREFIX = "risk:";
  * Categories that never go to the reviewer even though they are grantable.
  * `fs_read_outside`: a yes to it also widens the session's read roots
  * (`ReadScopeGrants.widen`), so a model's `low` would quietly move the read
- * scope the person set.
+ * scope the person set. `session_cross`: whether another chat's private
+ * context may be read or written is the person's call, not a model's.
  */
 const NEVER_REVIEWED: ReadonlySet<ApprovalCategory> = new Set<ApprovalCategory>([
   "fs_read_outside",
+  "session_cross",
 ]);
 
 /**

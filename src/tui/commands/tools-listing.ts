@@ -69,6 +69,7 @@ export interface ToolGateSourceConfig {
   readonly tasks: {
     readonly enabled: boolean;
     readonly agentToolsEnabled: boolean;
+    readonly sessionToolsEnabled?: boolean;
   };
   readonly mcp: { readonly servers: readonly unknown[] };
   /** `tools.screen.enabled`; optional so hand-built test configs need not name it. */
@@ -119,6 +120,9 @@ export function effectiveToolDescriptors(
     },
     tasks: {
       agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
+    },
+    sessions: {
+      agentToolsEnabled: config.tasks.enabled && config.tasks.sessionToolsEnabled === true,
     },
     mcp: { enabled: config.mcp.servers.length > 0 },
     // `/tools` reads the same env the runtime does, so this gate is

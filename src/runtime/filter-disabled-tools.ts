@@ -41,6 +41,14 @@ export interface ToolGateConfig {
   };
   tasks: { agentToolsEnabled: boolean };
   /**
+   * Cross-chat tools (ATO-570): `tasks.enabled` and
+   * `tasks.sessionToolsEnabled`, default off. Absent means off, so a
+   * hand-built gate set never advertises them; every runtime caller
+   * passes it. The tools are not registered while it is off either
+   * (`registerSessionTools`).
+   */
+  sessions?: { agentToolsEnabled: boolean };
+  /**
    * The agent's own inbox. Without a registered Atomic Mail inbox the
    * `os.email.*` tools can only answer "set one up", so they leave the
    * prefix; the tools stay registered and grammar-valid.
@@ -134,6 +142,12 @@ const GATED_TOOLS = {
     "tasks.cancel",
     "tasks.show",
   ],
+  sessions: [
+    "sessions.list",
+    "sessions.read",
+    "sessions.send",
+    "sessions.check",
+  ],
   fusion: ["fusion.delegate"],
   mcp: [
     "mcp.resource.list",
@@ -201,6 +215,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.tasks.agentToolsEnabled) {
     for (const name of GATED_TOOLS.tasks) disabled.add(name);
+  }
+  if (gates.sessions?.agentToolsEnabled !== true) {
+    for (const name of GATED_TOOLS.sessions) disabled.add(name);
   }
   if (!gates.mcp.enabled) {
     for (const name of GATED_TOOLS.mcp) disabled.add(name);

@@ -528,6 +528,10 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_TASKS_AGENT_TOOLS_ENABLED",
         ENV_DEFAULTS.TASKS_AGENT_TOOLS_ENABLED,
       ),
+      sessionToolsEnabled: readBool(
+        "ATOMIC_AGENT_SESSION_TOOLS_ENABLED",
+        ENV_DEFAULTS.SESSION_TOOLS_ENABLED,
+      ),
       minIntervalMs: readInt(
         "ATOMIC_AGENT_TASKS_MIN_INTERVAL_MS",
         ENV_DEFAULTS.TASKS_MIN_INTERVAL_MS,
