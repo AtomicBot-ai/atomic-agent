@@ -206,6 +206,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "what the running turn is doing: plan, now, last result, blocked on an approval, time, steps",
   },
+  // ATO-1152: a side question that is not saved to the session.
+  {
+    name: "btw",
+    description:
+      "ask a quick side question: `/btw <question>` — the model sees this chat, runs no tools, and nothing is saved to the session",
+  },
   {
     name: "window",
     description: "open a new terminal window running atomic-agent (ctrl+n)",

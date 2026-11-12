@@ -240,6 +240,13 @@ export class ChatOrchestrator {
    */
   private promptEnhance: AbortController | null = null;
   /**
+   * The running `/btw` side question, if any (ATO-1152). One at a time;
+   * aborted on switch, new and quit so an answer never lands in a chat
+   * it was not asked in. Sending or aborting the main turn leaves it be:
+   * asking beside a running turn is the point.
+   */
+  private sideQuestion: AbortController | null = null;
+  /**
    * Messages refused since the queue last had room, so a burst reads as
    * one escalating counter instead of N identical lines. Reset by the
    * first push that fits again.
@@ -972,6 +979,7 @@ export class ChatOrchestrator {
   switchSession(sessionId: string): void {
     if (this.quitting) return;
     this.cancelPromptEnhance();
+    this.cancelSideQuestion();
     if (this.currentController && this.session?.id === sessionId) {
       // Enter on the picker row that is already open, mid-run.
       // Re-loading would replace the live transcript with the stale
@@ -1335,6 +1343,7 @@ export class ChatOrchestrator {
   newSession(): void {
     if (this.quitting) return;
     this.cancelPromptEnhance();
+    this.cancelSideQuestion();
     // A running turn keeps running in its old thread — see
     // `leaveCurrentSession`. A fresh session starts with no point
     // exceptions of its own; the previous thread's grants are cleared
@@ -1970,6 +1979,52 @@ export class ChatOrchestrator {
     }
   }
 
+  /**
+   * `/btw <question>` (ATO-1152): one answer from the runtime's side
+   * call, shown as a chat notice. Nothing is written to the session, so
+   * the question and the answer are gone after a restart and the model
+   * never sees them in later turns.
+   */
+  async askSideQuestion(question: string): Promise<void> {
+    if (!this.runtime.askSideQuestion) {
+      this.bus.emit({ type: "system_message", text: "Side questions are not available here.", variant: "warn" });
+      return;
+    }
+    if (this.sideQuestion) {
+      this.bus.emit({ type: "system_message", text: "Already answering a side question; wait for it to finish.", variant: "warn" });
+      return;
+    }
+    const controller = new AbortController();
+    this.sideQuestion = controller;
+    this.bus.emit({ type: "system_message", text: `btw: ${question}\n(asking; not saved to this chat)` });
+    try {
+      const sessionId = this.session?.id;
+      const result = await this.runtime.askSideQuestion(question, {
+        ...(sessionId ? { sessionId } : {}),
+        signal: controller.signal,
+      });
+      // Cancelled by a switch, new chat or quit: say nothing.
+      if (controller.signal.aborted) return;
+      if (result.ok) {
+        this.bus.emit({ type: "system_message", text: `btw › ${result.text}` });
+      } else {
+        this.bus.emit({ type: "system_message", text: `Could not answer the side question (${result.reason}).`, variant: "warn" });
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const reason = error instanceof Error ? error.message : String(error);
+      this.bus.emit({ type: "system_message", text: `Could not answer the side question (${reason}).`, variant: "warn" });
+    } finally {
+      if (this.sideQuestion === controller) this.sideQuestion = null;
+    }
+  }
+
+  /** Stop a running `/btw` quietly. */
+  cancelSideQuestion(): void {
+    this.sideQuestion?.abort();
+    this.sideQuestion = null;
+  }
+
   /** Stop a running `/enhance` quietly; idle Esc and every exit path call it. */
   cancelPromptEnhance(): void {
     this.promptEnhance?.abort();
@@ -2068,6 +2123,7 @@ export class ChatOrchestrator {
     if (this.quitting) return;
     this.quitting = true;
     this.cancelPromptEnhance();
+    this.cancelSideQuestion();
     this.clearQueue();
     this.currentController?.abort();
     this.detachedTurns.abortAll();

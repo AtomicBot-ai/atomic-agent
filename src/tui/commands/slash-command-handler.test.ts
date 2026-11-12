@@ -548,6 +548,27 @@ describe("context compaction commands", () => {
   });
 });
 
+describe("/btw (ATO-1152)", () => {
+  it("hands the side question to the caller and sends nothing as a message", () => {
+    const result = dispatchSlashCommand("/btw what file were we editing?");
+    expect(result).toMatchObject({
+      sideQuestionText: "what file were we editing?",
+      forwardAsMessage: false,
+    });
+    expect(result.actions).toEqual([]);
+  });
+
+  it("keeps a multi-line question whole", () => {
+    expect(dispatchSlashCommand("/btw first\nsecond").sideQuestionText).toBe("first\nsecond");
+  });
+
+  it("prints usage for a bare /btw instead of asking an empty question", () => {
+    const result = dispatchSlashCommand("/btw   ");
+    expect(result.sideQuestionText).toBeUndefined();
+    expect(result.systemMessage).toContain("/btw <question>");
+  });
+});
+
 describe("/enhance", () => {
   it("keeps the draft in the composer and asks for one rewrite, never sending it", () => {
     const result = dispatchSlashCommand("/enhance fix the login bug");

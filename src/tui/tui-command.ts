@@ -517,6 +517,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onGoalCommand: (command) => orchestrator.goalCommand(command),
         onPromptEnhanceRequested: (draft) => { void orchestrator.enhancePrompt(draft); },
         onPromptEnhanceCancel: () => orchestrator.cancelPromptEnhance(),
+        onSideQuestionRequested: (question) => { void orchestrator.askSideQuestion(question); },
         onSessionDeleteConfirmed: (sessionId) =>
           orchestrator.deleteSession(sessionId),
         onUninstallPlanRequested: () =>
