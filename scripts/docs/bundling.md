@@ -227,6 +227,13 @@ Set `ATOMIC_AGENT_REPO=owner/atomic-agent` if the default in
 [scripts/install.sh](../install.sh) does not match your fork.
 Optional: `ATOMIC_AGENT_VERSION`, `ATOMIC_AGENT_INSTALL_DIR`.
 
+On macOS the installer checks the binary with `codesign --verify --strict`
+and then pins its Apple Team ID: a binary signed by any other team is
+refused. An ad-hoc signature (no Team ID, a release built without the
+signing secrets) still installs, covered by the sha256 check. The pin
+applies to the default repo; a fork sets `ATOMIC_AGENT_TEAM_ID` to its own
+Team ID to get the same check.
+
 ## Signing / notarisation (local / manual)
 
 On macOS you can run the same shell scripts the workflow uses, or produce

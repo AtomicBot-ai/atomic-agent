@@ -11,6 +11,9 @@
 #   ATOMIC_AGENT_NO_PATH=1                 (optional: skip rc-file PATH update)
 #   ATOMIC_AGENT_VERIFY_TIMEOUT=20         (optional: seconds to allow the macOS
 #                                           signature check; 0 skips it)
+#   ATOMIC_AGENT_TEAM_ID=XXXXXXXXXX        (optional: Apple Team ID a signed macOS
+#                                           binary must carry; default: ours for
+#                                           the default repo, none for a fork)
 
 set -eu
 
@@ -19,6 +22,16 @@ set -eu
 
 REPO_DEFAULT="AtomicBot-ai/atomic-agent"
 REPO="${ATOMIC_AGENT_REPO:-$REPO_DEFAULT}"
+# The Apple Team ID the release workflow signs the macOS binary with
+# (Developer ID Application: AtomicMail Systems OU). A fork signs with its
+# own certificate, so the pin applies to the default repo only unless
+# ATOMIC_AGENT_TEAM_ID names one.
+TEAM_ID_DEFAULT="MU9G7XKJUL"
+if [ "$REPO" = "$REPO_DEFAULT" ]; then
+  EXPECTED_TEAM_ID="${ATOMIC_AGENT_TEAM_ID:-$TEAM_ID_DEFAULT}"
+else
+  EXPECTED_TEAM_ID="${ATOMIC_AGENT_TEAM_ID:-}"
+fi
 VERSION="${ATOMIC_AGENT_VERSION:-}"
 INSTALL_DIR="${ATOMIC_AGENT_INSTALL_DIR:-$HOME/.local/bin}"
 
@@ -359,6 +372,30 @@ verify_signature() {
   fi
   if [ "$_vs_rc" -ne 0 ]; then
     echo "error: downloaded binary failed 'codesign --verify --strict'; aborting" >&2
+    exit 1
+  fi
+  verify_team_id "$_vs_file"
+  return 0
+}
+
+verify_team_id() {
+  # $1 path to a binary whose signature just verified. A valid signature
+  # only proves the bytes match SOME certificate: pin the Team ID too, so a
+  # binary re-signed with someone else's Developer ID is refused (ATO-760).
+  # Only a Team ID that codesign reports is compared: a release built
+  # without the signing secrets is signed ad hoc (no Team ID, "not set"),
+  # and the sha256 above already covers that case. The scan that makes the
+  # first codesign slow has run by now, so this one returns at once.
+  if [ -z "$EXPECTED_TEAM_ID" ]; then
+    return 0
+  fi
+  _vt_team="$(codesign -dv "$1" 2>&1 | awk -F= '/^TeamIdentifier=/ { print $2; exit }' || true)"
+  case "$_vt_team" in
+    '' | 'not set') return 0 ;;
+  esac
+  if [ "$_vt_team" != "$EXPECTED_TEAM_ID" ]; then
+    echo "error: downloaded binary is signed by Apple Team ID ${_vt_team}, expected ${EXPECTED_TEAM_ID}; aborting" >&2
+    echo "  (set ATOMIC_AGENT_TEAM_ID to the Team ID your fork signs with)" >&2
     exit 1
   fi
   return 0
