@@ -11,6 +11,7 @@ import { classifyTransportHost } from "./classify-transport-host.js";
 import { sanitizeLlmFailureTags, type LlmFailureContext } from "./llm-failure-tags.js";
 import { maskSecrets } from "./secret-detector.js";
 import { extractAnswerFailureTags } from "./answer-failure-tag.js";
+import { extractSubscriptionCliFailureTags } from "./subscription-cli-failure-tag.js";
 
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
@@ -123,6 +124,13 @@ export interface ScrubbedErrorEvent {
    * `sanitizeLlmFailureTags`.
    */
   llmFailureTags?: Record<string, string>;
+  /**
+   * `cli_failure` / `cli_exit_code` of a failed Claude Code or Codex run
+   * (ATO-1446), fixed words and a bounded integer from
+   * `extractSubscriptionCliFailureTags`. Context only, like
+   * `llmFailureTags`: they stay out of the fingerprint.
+   */
+  cliFailureTags?: Record<string, string>;
   /** Path-stripped stack frames (basenames only — no home dir / username). */
   frames: SentryStackFrame[];
 }
@@ -520,5 +528,9 @@ export function scrubError(
   }
   const llmFailureTags = sanitizeLlmFailureTags(opts.llmFailure);
   if (llmFailureTags !== undefined) event.llmFailureTags = llmFailureTags;
+  const cliFailureTags = extractSubscriptionCliFailureTags(err);
+  if (cliFailureTags !== undefined) {
+    event.cliFailureTags = cliFailureTags;
+  }
   return event;
 }
