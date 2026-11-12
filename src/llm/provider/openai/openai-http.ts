@@ -11,6 +11,10 @@ import {
   type CreditLimitRetryPlan,
 } from "./plan-credit-limit-retry.js";
 import {
+  geminiNotFoundSentence,
+  isGeminiOpenAiCompatUrl,
+} from "../gemini/gemini-openai-compat.js";
+import {
   CREDENTIAL_WORDING,
   MODERATION_WORDING,
   parseProviderErrorBody,
@@ -226,6 +230,14 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   }
   if ((err.status === 404 || err.status === 405) && isLocalProviderUrl(err.url)) {
     return localServerNotFoundSentence(err.url, err.status);
+  }
+  if (err.status === 404 && err.streamError === undefined && isGeminiOpenAiCompatUrl(err.url)) {
+    // Gemini's 404 is a model id it does not serve (ATO-1282); its own
+    // sentence names the model, and the raw body helps nobody.
+    return geminiNotFoundSentence(
+      who,
+      `${err.body?.message ?? ""}\n${err.body?.text ?? ""}\n${err.message}`,
+    );
   }
   if (err.status === 404) {
     return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;

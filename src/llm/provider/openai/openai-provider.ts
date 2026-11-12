@@ -7,6 +7,8 @@ import {
   type VisionRequest,
   type VisionResult,
 } from "../llm-provider.js";
+import { isGeminiOpenAiCompatUrl } from "../gemini/gemini-openai-compat.js";
+import { toGeminiTools } from "../gemini/gemini-tool-schema.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -361,7 +363,7 @@ export class OpenAiProvider implements LlmProvider {
     stream: boolean,
     shape: "native" | "flat",
   ): Record<string, unknown> {
-    return buildOpenAiChatBody(
+    const body = buildOpenAiChatBody(
       request,
       this.defaultChatModel!,
       stream,
@@ -371,6 +373,13 @@ export class OpenAiProvider implements LlmProvider {
       this.providerPreferences,
       { ...this.bodyOptions, messageShape: shape },
     );
+    // Google's OpenAI-compatible Gemini endpoint refuses the whole request
+    // over a schema keyword it does not know (ATO-1282). Other services
+    // get the tools exactly as built.
+    if (body.tools !== undefined && isGeminiOpenAiCompatUrl(this.http.baseUrl)) {
+      body.tools = toGeminiTools(body.tools);
+    }
+    return body;
   }
 
   /** The layout this request goes out in, given what the session learned. */
