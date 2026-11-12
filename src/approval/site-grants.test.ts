@@ -109,7 +109,7 @@ describe("per-site browser grants", () => {
 
   it("other categories keep their whole-category grant", async () => {
     const { gate, prompts } = grantingGate();
-    const http = { sessionId: "s", tool: "http.fetch", category: "http", reason: "r", affectedResources: ["a.example"] } as const;
+    const http = { sessionId: "s", tool: "http.fetch", category: "http" as const, reason: "r", affectedResources: ["a.example"] };
     await gate.request(http);
     await gate.request({ ...http, affectedResources: ["b.example"] });
     expect(prompts).toHaveLength(1);
