@@ -165,8 +165,12 @@ try {
   }
 
   /* --- the custom-endpoint branch: two screens that had NO control --- */
-  await pick('Custom endpoint');
-  check('a click and Continue reach the custom endpoint step', (await step()) === 'custom_chat_url', await step());
+  /* ATO-816: the third card is Custom, a list of what you already run; its
+     llama.cpp row is the old custom endpoint step. */
+  await pick('An app or server you already run');
+  check('a click and Continue on Custom open its list', (await step()) === 'cloud', await step());
+  await pick('llama.cpp server');
+  check('a click and Continue on llama.cpp server reach the custom endpoint step', (await step()) === 'custom_chat_url', await step());
   check('the URL step offers Back and a primary action',
     JSON.stringify(await foot()) === JSON.stringify(['Back', 'Test and continue']), JSON.stringify(await foot()));
   await snapshot('custom-url');
@@ -283,25 +287,6 @@ try {
     check('Back leaves the local list', (await step()) === 'choose', await step());
   }
 
-  /* --- ATO-816: Ollama, LM Studio and Atomic Chat, from the Local models screen ---
-     They run on this computer, so they are not in the Cloud list any more.
-     "Use an app you already have" under the model list opens exactly those
-     three, and its Back returns to the model list. */
-  {
-    check('the choose screen has no "Already run Ollama" hint any more',
-      !(await app.boxOf('#onboarding [data-obact="route:apps"]')), 'hint still drawn');
-    await pick('Local models');
-    await app.waitFor('#onboarding .ob-wayin', { timeout: 40000 });
-    say(await app.clickText('Use an app you already have', { selector: '#onboarding .ob-wayin' }));
-    const names = (await app.snap()).wizRows.map((r) => r.replace(/^[> ]+/, ''));
-    check('"Use an app you already have" lists exactly Atomic Chat, Ollama and LM Studio',
-      names.length === 3 && /^Atomic Chat/.test(names[0]) && /^Ollama/.test(names[1]) && /^LM Studio/.test(names[2]),
-      JSON.stringify(names));
-    say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
-    check('Back from the apps list returns to the model list', (await step()) === 'local_pick', await step());
-    say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
-  }
-
   /* --- Enter presses the button under the ring, not the step's chord ---
      On this screen the ambient Enter starts a multi-gigabyte download, so
      a keyboard user who tabbed to `Back` and pressed Enter had a great
@@ -310,8 +295,8 @@ try {
     await pick('Local models');
     await app.waitFor('#onboarding .ob-foot button', { timeout: 40000 });
     let on = null;
-    // ATO-816: the two ways in under the list ("Use an app…", "Use a .gguf…") come before the action bar.
-    for (let i = 0; i < 9 && !(on && /Back/.test(on.label)); i += 1) {
+    // ATO-1402: the .gguf way in under the list comes before the action bar.
+    for (let i = 0; i < 8 && !(on && /Back/.test(on.label)); i += 1) {
       await app.press('Tab', { settle: 150 });
       on = await app.focusInfo();
     }
@@ -381,6 +366,7 @@ try {
   /* --- the keyboard is untouched --- */
   {
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
+    check('Back from the key screen returns to the provider list', (await step()) === 'cloud', await step());
     say(await app.clickText('Back', { selector: '#onboarding .ob-foot button' }));
     check('back on the choice screen', (await step()) === 'choose', await step());
     say(await app.press('ArrowDown'));
@@ -388,7 +374,7 @@ try {
     const rows = (await app.snap()).rows;
     check('the arrows still move the cursor', (rows[2] || '').startsWith('> '), JSON.stringify(rows));
     say(await app.press('Enter'));
-    check('Enter still activates the row under the cursor', (await step()) === 'custom_chat_url', await step());
+    check('Enter still activates the row under the cursor', (await step()) === 'cloud', await step());
     say(await app.press('Escape'));
     check('Escape still goes back', (await step()) === 'choose', await step());
   }

@@ -152,9 +152,6 @@ let MODE_REASSERT = null;
    checked, and whether the user has said to save it anyway. */
 const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:false, cur:0, q:null,
   uncheckedFor:null, acceptUnchecked:false,
-  /* ATO-816: the setup flow's list shows only the model apps on this
-     computer (opened from the Local models screen). obOpenCloudWizard sets it. */
-  appsOnly:false,
   /* The model step. `modelChosen` is what lets wizNext run twice: once
      to verify and offer the catalogue, once to save the choice. */
   models:[], modelPick:null, defaultModel:null, modelChosen:false, savedId:null,
@@ -443,8 +440,6 @@ const OB = {
   /** ATO-822 item 5: how the local model's start went when setup selected it
    *  (obLocalStartOf): 'started', 'failed', or null when nothing said. */
   localStart: null,
-  /** ATO-816: the provider set up came from "Use an app you already have". */
-  viaApps: false,
   /** r5 item 7 review fix: the in-flight `useManagedMode()` write. Picking
    *  local records managed mode NOW so a quit mid-download does not lose
    *  the choice — but `models update` REFUSES outside managed mode
@@ -465,6 +460,15 @@ let HOST_RAM_GB = 0;
    provider missing here shows its host, as before. */
 const OB_WIZ_TOP = new Set(['openrouter', 'aimlapi']);
 const OB_WIZ_LOCAL = ['atomic-chat', 'ollama', 'lmstudio'];
+/* ATO-816: which of the two lists the provider step is showing. 'keys' is
+   the Cloud card (API keys and subscriptions); 'custom' is the Custom card
+   (the apps on this Mac, a llama.cpp server, any URL). Set each time the
+   step opens; everything that opens it without saying (the download
+   screen's "set up a cloud model meanwhile") gets the keys list. */
+let OB_WIZ_ROUTE = 'keys';
+/* The Custom list's own row for a llama.cpp server: not a provider, so it
+   is not in KIND_ROWS. Picking it opens the URL step (custom_chat_url). */
+const OB_WIZ_LLAMA_ROW = {id:'llamacpp-server', label:'llama.cpp server', kind:'llama-server', llamaServer:true};
 const OB_WIZ_BLURB = {
   openrouter: 'Hundreds of models with one key',
   aimlapi: 'Many models with one key',
@@ -481,6 +485,7 @@ const OB_WIZ_BLURB = {
   perplexity: 'Sonar models',
   nous: 'Hermes models',
   novita: 'Open models in the cloud',
+  'llamacpp-server': 'A llama-server you started yourself',
   'atomic-chat': 'Models you already have in Atomic Chat',
   ollama: 'Models you run with Ollama',
   lmstudio: 'Models you run in LM Studio',
@@ -494,16 +499,19 @@ const OB_ATOMIC_CHAT = { running: null, asking: false };
    the choose screen made three paragraphs the eye had to read before it could
    choose — too much to peer at. A route is picked on what it
    costs you, so that is the line. */
-/* Calm (S6): short declaratives. ATO-816: the model apps on this computer
-   (Atomic Chat, Ollama, LM Studio) are local, so the first card covers them
-   ("Use an app you already have" on its screen) and the second is cloud only. */
+/* Calm (S6): short declaratives. ATO-816 (Nadya, 12.11): three positions
+   that do not mix. Local downloads a model, Cloud is API keys only, and
+   Custom is everything you already run yourself: the model apps on this Mac
+   (Atomic Chat, Ollama, LM Studio), your own llama.cpp server, or any URL.
+   The apps used to sit in the Cloud list, so an Ollama owner looked for
+   Ollama under Local models and did not find it. */
 const OB_CHOICES = [
   {id:'local', label:'Local models', detail:[
-    'Private and free on ' + THIS_MACHINE + '. Download a model or use an app you have.', '']},
+    'Private and free on ' + THIS_MACHINE + ', after one download.', '']},
   {id:'cloud', label:'Cloud models', detail:[
-    'Connect a provider with your key or subscription.', '']},
-  {id:'custom', label:'Custom endpoint', detail:[
-    'A llama.cpp server you already run. Nothing to download.', '']},
+    'Use an API key from a cloud provider.', '']},
+  {id:'custom', label:'Custom', detail:[
+    'An app or server you already run. Nothing to download.', '']},
 ];
 
 /* The flow has two phases, and the header says which one you are in as a
@@ -522,10 +530,6 @@ const OB_PHASE_OF = {
   finished:null,
 };
 let obRailPhase = '01';
-/* ATO-816: the cloud step's title when it lists only the model apps on this
-   computer, opened from the Local models screen. The same words as the card
-   that opens it. */
-const OB_APPS_TITLE = 'Use an app you already have';
 /* The screen's own title, in the app's voice rather than the TUI's status
    line. Plainest possible form: what this screen asks you to decide.
    The first one asks the person, not about the app in the third person
@@ -608,8 +612,6 @@ const OB_COPY = {
   starting: 'starting…',
   // onboarding-wait-or-jump-step.tsx / onboarding-screen.tsx:63
   cloudReadyLabel: 'Cloud model ready',
-  // ATO-816: the same screen after an app from "Use an app you already have".
-  appReadyLabel: 'Model ready',
   // onboarding-propose-step.tsx:11-33
   proposeExplainer: [
     'Atomic Agent runs both side by side — local for private or offline work,',
@@ -12257,11 +12259,6 @@ function obReduce(s, action) {
       const from = s.step === 'wait_or_jump' ? 'wait_or_jump' : 'local_download';
       return Object.assign({}, s, {step:'cloud', resumeAfterCloud: from, cursor:0, error:null});
     }
-    /* ATO-816, desktop only (the TUI has no such way in yet): the apps list
-       is the cloud step opened from local_pick, so closing it lands there. */
-    case 'onboarding_apps_opened':
-      if (s.step !== 'local_pick') return null;
-      return Object.assign({}, s, {step:'cloud', resumeAfterCloud:'local_pick', cursor:0, error:null});
     case 'onboarding_import_opened':
       return Object.assign({}, s, {step:'import_pick', importAgents: action.agents,
         importOptions: [], importReport: null, cursor: 0, error: null, busy: false});
@@ -12424,7 +12421,8 @@ function obHeadHTML() {
      cloud step's key and model screens title themselves with the provider
      (the wizard's `.ob-h`), so the step title is left off there rather than
      saying "Connect a cloud provider" over a screen that is no longer that. */
-  const title = (OB.step === 'cloud' && WIZ.appsOnly ? OB_APPS_TITLE : OB_TITLES[OB.step]) || OB_SUBTITLES[OB.step] || '';
+  const title = (OB.step === 'cloud' && OB_WIZ_ROUTE === 'custom' ? 'Choose what you already run'
+    : OB_TITLES[OB.step]) || OB_SUBTITLES[OB.step] || '';
   const wizTitled = OB.step === 'cloud' && WIZ.phase !== 'pick_kind' && !!WIZ.row;
   return '<div class="ob-head">'
     + (title && !wizTitled ? '<h2 class="ob-title">' + esc(title) + '</h2>' : '')
@@ -13985,15 +13983,18 @@ function obModelLabel() {
  *  model ready" only once the model really started (OB.localStart). A pick
  *  whose start was not seen says it is selected; a start that failed says so
  *  (the reason is in the transcript, bswReport). */
+/* ATO-816: a model set up from the Custom list (Ollama, LM Studio, Atomic
+   Chat, a URL) is not a cloud model, so it does not say so. */
+function obCloudReadyLabel() {
+  return OB_WIZ_ROUTE === 'custom' ? 'Model ready' : OB_COPY.cloudReadyLabel;
+}
 function obConfiguredLabel() {
   if (OB.outcome === 'local') {
     if (OB.localStart === 'started') return 'Local model ready';
     if (OB.localStart === 'failed') return 'Local model selected, but it did not start';
     return 'Local model selected';
   }
-  /* ATO-816: a model app on this computer (Ollama, LM Studio, Atomic Chat)
-     is not a cloud model. The outcome stays 'cloud', analytics reads it. */
-  if (OB.outcome === 'cloud') return OB.viaApps ? OB_COPY.appReadyLabel : OB_COPY.cloudReadyLabel;
+  if (OB.outcome === 'cloud') return obCloudReadyLabel();
   return 'Backend ready';
 }
 
@@ -14068,20 +14069,18 @@ function obChooseHTML() {
       '<span class="tk-ico tk-ico--lg' + l[1] + '">' + ic(l[0]) + '</span>',
       OB.cursor === i ? obTickHTML() : '');
   }).join('');
-  /* ATO-816: no "Already run Ollama or LM Studio?" hint under the cards any
-     more (ATO-442 added it while the apps lived in the Cloud list). The
-     Local models card is where they are now: its screen has a way in for an
-     app you already have, and one for a .gguf file you already have. */
+  /* ATO-816: the ATO-442 hint ("Already run Ollama or LM Studio? Use it
+     instead") is gone. Those apps are under Custom now, named on its card. */
   return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join(' ')) + '</div>'
     + '<div class="ob-list ob-routes">' + rows + '</div>';
 }
 
-/* ATO-816 / ATO-1402: the two ways in under the Local models list for
-   someone who already has a model: an app that serves one (Atomic Chat,
-   Ollama, LM Studio) and a .gguf file on disk. Buttons of their own, not
-   list rows: the list's row numbers are positions (obRowClick), and these
-   are not models. Tab reaches them in order after the list. */
-const OB_APPS_LABEL = 'Use an app you already have';
+/* ATO-1402: the way in under the Local models list for someone who already
+   has a model file: a .gguf on disk. A button of its own, not a list row:
+   the list's row numbers are positions (obRowClick), and this is not a
+   model. Tab reaches it after the list. The apps that serve a model
+   (Atomic Chat, Ollama, LM Studio) are not here: they are under Custom
+   (ATO-816, Local / Cloud / Custom). */
 const OB_GGUF_LABEL = 'Use a .gguf file I already have';
 function obWayInHTML(act, label, detail, icon) {
   return '<button class="ob-wayin" data-obact="' + act + '">'
@@ -14091,9 +14090,9 @@ function obWayInHTML(act, label, detail, icon) {
     + '<span class="ob-chev" aria-hidden="true">' + ic('chevR') + '</span></button>';
 }
 function obLocalWaysInHTML() {
+  if (!(BR && BR.ggufPick)) return '';
   return '<div class="ob-wayins">'
-    + obWayInHTML('route:apps', OB_APPS_LABEL, 'Atomic Chat, Ollama or LM Studio, already running', 'laptop')
-    + (BR && BR.ggufPick ? obWayInHTML('local:gguf', OB_GGUF_LABEL, 'Runs it from where it is. No model download', 'file') : '')
+    + obWayInHTML('local:gguf', OB_GGUF_LABEL, 'Runs it from where it is. No model download', 'file')
     + '</div>';
 }
 
@@ -14478,7 +14477,7 @@ function obWaitOrJumpHTML() {
     '<span class="tk-ico">' + ic('retry') + '</span>',
   ];
   const cursor = OB.cursor % rows.length;
-  return obReadyHTML(OB.viaApps ? OB_COPY.appReadyLabel : OB_COPY.cloudReadyLabel)
+  return obReadyHTML(obCloudReadyLabel())
     + (status === 'running'
         ? '<div class="ob-explain">' + esc('Still downloading ' + label + ' — it keeps running whichever row you pick.') + '</div>' : '')
     + (status === 'ready' ? obReadyHTML(label + ' downloaded — the local model is ready too') : '')
@@ -14670,15 +14669,15 @@ function obImportReportHTML(executed) {
 /** The rows the cloud step's list is showing — KIND_ROWS through `/`. */
 function obWizRows() {
   /* Calm (S6): in the order they are drawn, so the arrows walk the screen
-     top to bottom — the two one-key services, then every other cloud
-     provider (the custom URL row last).
-     ATO-816: the model apps on this computer (Atomic Chat, Ollama, LM Studio)
-     are not cloud. They have their own list, opened from the Local models
-     screen ("Use an app you already have", WIZ.appsOnly), and the Cloud
-     models list leaves them out. Rendering, arrows and clicks all read this
-     one function, so the filter here is the whole of it. */
-  const all = KIND_ROWS.map((k, i) => ({k, i})).filter(({k}) => !!k.local === !!WIZ.appsOnly);
-  const group = ({k}) => OB_WIZ_TOP.has(k.id) ? 0 : k.local ? 1 : k.custom ? 3 : 2;
+     top to bottom — the two one-key services, the model apps on this Mac,
+     then every other cloud provider (the custom URL row last). */
+  /* ATO-816: the Cloud card lists keys only; the Custom card lists the apps
+     on this Mac, then a llama.cpp server, then any URL. */
+  const custom = OB_WIZ_ROUTE === 'custom';
+  const all = KIND_ROWS.map((k, i) => ({k, i}))
+    .filter(({k}) => custom ? (k.local || k.custom) : !(k.local || k.custom));
+  if (custom) all.push({k: OB_WIZ_LLAMA_ROW, i: KIND_ROWS.length});
+  const group = ({k}) => OB_WIZ_TOP.has(k.id) ? 0 : k.local ? 1 : k.llamaServer ? 2 : k.custom ? 3 : 2;
   const ordered = all.slice().sort((a, b) => (group(a) - group(b))
     || (group(a) === 1 ? OB_WIZ_LOCAL.indexOf(a.k.id) - OB_WIZ_LOCAL.indexOf(b.k.id) : a.i - b.i));
   const q = (WIZ.q || '').trim().toLowerCase();
@@ -14807,10 +14806,9 @@ function obWizardHTML() {
        wears the provider's real mark (renderer/logos, on a white badge); a
        URL you supply gets the server badge, never a monogram.
        Calm (S6): the name over one line of what it is (not its base URL),
-       in two groups — the two one-key services, then more cloud providers
-       (ATO-816: the model apps on this computer are a list of their own).
-       A click ticks a row; Continue, Enter or a double click opens its key
-       screen. */
+       in three groups — the two one-key services, the model apps on this
+       Mac, then more cloud providers. A click ticks a row; Continue, Enter
+       or a double click opens its key screen. */
     const row = ({k}, n) =>
       '<button class="prow' + (n === cur ? ' on' : '') + '"'
       + ' data-obwiz="' + n + '" tabindex="' + (n === cur ? '0' : '-1')
@@ -14822,11 +14820,12 @@ function obWizardHTML() {
       + (taken[k.id] ? '<span class="ann lit">Configured</span>' : '')
       + (n === cur ? '<span class="prow-tick" aria-hidden="true">' + ic('check') + '</span>' : '')
       + '</button>';
-    /* ATO-816: no "Local on this Mac" group any more. obWizRows keeps the
-       model apps out of the Cloud list and shows only them in the apps list,
-       where they are the whole list under the screen's own title. */
     const top = rows.filter(({k}) => OB_WIZ_TOP.has(k.id));
-    const rest = rows.filter(({k}) => !OB_WIZ_TOP.has(k.id));
+    const local = rows.filter(({k}) => k.local);
+    const rest = rows.filter(({k}) => !OB_WIZ_TOP.has(k.id) && !k.local);
+    /* ATO-816: on the Custom list the second group is a server you run
+       yourself (llama.cpp, any URL), not "more providers". */
+    const restTitle = OB_WIZ_ROUTE === 'custom' ? 'A server you run' : 'More providers';
     const at = (r) => rows.indexOf(r);
     const group = (title, list) => !list.length ? ''
       : (title ? '<div class="prow-more">' + esc(title) + '</div>' : '')
@@ -14835,10 +14834,11 @@ function obWizardHTML() {
     return '<div class="ob-wiz">'
       + (WIZ.q === null ? ''
           : '<div class="ob-field ob-search">' + ic('search')
-            + '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '"></div>')
+            + '<input class="ob-inp" id="wiz-q" placeholder="' + (OB_WIZ_ROUTE === 'custom' ? 'Search' : 'Search providers') + '" value="' + esc(WIZ.q) + '"></div>')
       + '<div class="ob-wizlist">'
         + group('', top)
-        + group(top.length ? 'More providers' : '', rest)
+        + group('Apps on ' + THIS_MACHINE, local)
+        + group(top.length || local.length ? restTitle : '', rest)
       + '</div>'
       // Esc is the TUI's way out of the list; the desktop needs a control
       // for it too, and it routes through the same action. Continue presses
@@ -15170,7 +15170,8 @@ function obChooseKey(input, key) {
 /** pickBackend (onboarding-step-keys.ts:95-115). */
 function obPickBackend(choice) {
   if (choice === 'cloud') { obOpenCloudWizard(); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
-  if (choice === 'custom') { obDispatch({type:'onboarding_step_set', step:'custom_chat_url'}); return; }
+  // ATO-816: Custom opens its own list (apps on this Mac, llama.cpp, any URL).
+  if (choice === 'custom') { obOpenCloudWizard('custom'); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
   // Managed mode is recorded NOW so a quit mid-download does not lose
   // the choice; the model id follows when the pull completes. The promise
   // is kept because `models update` refuses outside managed mode.
@@ -15445,6 +15446,12 @@ function obCloudKey(input, key) {
     if (key.return) {
       const picked = rows[rows.length ? WIZ.cur % rows.length : 0];
       if (!picked) return true;
+      // ATO-816: the llama.cpp row is the old Custom endpoint screen.
+      if (picked.k.llamaServer) {
+        WIZ.phase = null; WIZ.q = null;
+        obDispatch({type:'onboarding_step_set', step:'custom_chat_url'});
+        return true;
+      }
       // Same rule as the popover's row: a new provider starts with an empty field.
       WIZ.row = picked.k; WIZ.phase = 'configure'; WIZ.error = null; ANX.providerStarted(WIZ.row);
       WIZ.apiKey = ''; WIZ.baseUrl = picked.k.custom ? WIZ.baseUrl : '';
@@ -15460,18 +15467,10 @@ function obCloudKey(input, key) {
 
 /* ---------------- effects ---------------- */
 
-/* ATO-816: "Use an app you already have" on the Local models screen. The
-   cloud step's own wizard, with only the model apps in its list; Back (Esc,
-   or the wizard's Back) returns to the model list it was opened from. */
-function obOpenApps() {
-  obOpenCloudWizard('apps');
-  obDispatch({type:'onboarding_apps_opened'});
-}
-
 /* ATO-1402: "Use a .gguf file I already have". main registers the file where
    it lies (cli:ggufPick); then it is the same hand-over as a curated pick's
-   Download, whose pull finds the weights present and starts the model. */
-/* The card is drawn while the catalogue is still loading (OB.busy), and it
+   Download, whose pull finds the weights present and starts the model.
+   The card is drawn while the catalogue is still loading (OB.busy), and it
    works then too: the file dialog does not need the list. Only a dialog
    already open is a reason to do nothing. */
 let OB_GGUF_PICKING = false;
@@ -15494,11 +15493,9 @@ async function obGgufPick() {
   obDownloadAndHandOver(res.id);
 }
 
-/** The setup flow's provider list. `mode` 'apps' shows only the model apps
- *  on this computer (ATO-816); anything else is the Cloud models list. */
-function obOpenCloudWizard(mode) {
+function obOpenCloudWizard(route) {
+  OB_WIZ_ROUTE = route === 'custom' ? 'custom' : 'keys';
   OB_ATOMIC_CHAT.running = null;   // re-asked on this visit to the list
-  WIZ.appsOnly = mode === 'apps';
   WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.forId = null;
   WIZ.cur = 0; WIZ.q = null;
   wizKeyPresenceRead();
@@ -16648,7 +16645,7 @@ async function openOnboarding(at) {
     outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false, leftEarly: false,
-    localStart: null, viaApps: false,
+    localStart: null,
   });
   // The out-of-reach models start folded again (obOutOpen decides).
   OB.outOpen = null;
@@ -16772,7 +16769,9 @@ function obOwnEscape() {
        had its own busy branch (it cancels the lookup); this one has no
        socket to drop — llamaProbe carries its own AbortSignal timeout. */
     if (OB.busy) return;
-    obDispatch({type:'onboarding_step_set', step: OB.step === 'custom_chat_url' ? 'choose' : 'custom_chat_url'});
+    // ATO-816: back from the URL step is the Custom list it was picked from.
+    if (OB.step === 'custom_chat_url') { obPickBackend('custom'); return; }
+    obDispatch({type:'onboarding_step_set', step:'custom_chat_url'});
     return;
   }
 }
@@ -16991,7 +16990,7 @@ function obRowClick(index, clicks) {
 function obControlClick(spec) {
   if (spec === 'key:c') { obKey('c', {}); return; }
   if (spec === 'key:s') { obKey('s', {}); return; }
-  if (spec === 'route:apps') { obOpenApps(); return; }
+  if (spec === 'route:apps') { obPickBackend('custom'); return; }
   if (spec === 'local:gguf') { obGgufPick(); return; }
   /* r6 cloud item 1: the hint strip's `esc` chord, clickable. The split is
      obKeydown's own — a step that owns its keyboard answers Escape through
@@ -21436,7 +21435,6 @@ async function wizActivate(k, id, model, unverified) {
   if (OB.open && OB.step === 'cloud') {
     // ATO-1021: a pick the running agent took live is on its route already, like one it restarted for.
     OB.restarted = !!(sel && (sel.restart || sel.liveSwapped));
-    if (WIZ.appsOnly) OB.viaApps = true;   // ATO-816: "Model ready", not "Cloud model ready"
     toast(unverified ? 'Provider added, key not checked' : 'Provider added', added);
     obDispatch({type:'providers_wizard_succeeded'});
     return;
@@ -30817,9 +30815,7 @@ if (typeof window !== 'undefined') {
     Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
       skipSecondOffer: false, handOver: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
       importAgents: [], importOptions: [], importReport: null, introTyped: false,
-      settling: false, testClose: true, pendingMmproj: null, restarted: false, managedWrite: null, localStart: null,
-      viaApps: false});
-    WIZ.appsOnly = false;   // ATO-816: a driven open starts on the Cloud list, as a real one does
+      settling: false, testClose: true, pendingMmproj: null, restarted: false, managedWrite: null, localStart: null});
     /* r5 item 7 review fix: the stamps are NO LONGER pre-marked here. They
        used to be, which short-circuited obStampOnce for the whole driven
        pass — so the five acceptance lines about write-on-arrival had no
