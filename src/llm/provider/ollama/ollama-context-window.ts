@@ -21,24 +21,20 @@
  *  - `POST /api/show`: the modelfile's `num_ctx` (the `parameters` text
  *    block, a `num_ctx <n>` line), capped by the model's own
  *    `<arch>.context_length` from `model_info`.
- *  - Neither: `OLLAMA_DEFAULT_NUM_CTX`. The server's environment may
- *    raise its default and we cannot see that from here. Being
- *    conservative only means compacting earlier; the learned window is
- *    raised again when a larger request goes through.
+ *  - Neither: unknown (null). The server's own default (4096 on many
+ *    builds, larger on newer ones or with `OLLAMA_CONTEXT_LENGTH`) cannot
+ *    be read from here while the model is not loaded. Guessing 4096
+ *    would stick: the learned window only takes the minimum, and a
+ *    budget packed under 4096 never sends the larger request that would
+ *    raise it again. So nothing is learned; the caller probes again
+ *    later, when `/api/ps` lists the loaded model, and the overflow
+ *    recovery covers a first request that is too long.
  *
  * Every failure (unreachable, timeout, not Ollama, garbage) is null:
  * the caller keeps its current behaviour.
  */
 
 import { normalizeOpenAiBaseUrl } from "../openai/normalize-openai-base-url.js";
-
-/**
- * Ollama's default `num_ctx` when neither the modelfile nor the loaded
- * model says otherwise. 4096 since Ollama 0.6.x (2048 before). Newer
- * builds may pick a larger default from available VRAM; 4096 is the
- * safe floor for budgeting.
- */
-export const OLLAMA_DEFAULT_NUM_CTX = 4096;
 
 /** Per-request cap: a local server answers these in milliseconds. */
 export const OLLAMA_PROBE_TIMEOUT_MS = 1500;
@@ -120,12 +116,14 @@ export function parseOllamaPsContextLength(body: unknown, model: string): number
 }
 
 /**
- * The window Ollama will give the model: the loaded window, else the
- * modelfile's `num_ctx`, else the default; never above the model's own
- * maximum.
+ * The window Ollama gives the model, when the server tells us: the
+ * loaded window, else the modelfile's `num_ctx`; never above the model's
+ * own maximum. Undefined when neither is known (see the header: the
+ * server default is not guessed).
  */
-export function effectiveOllamaWindow(show: OllamaShowWindow, loaded?: number): number {
-  const allocated = loaded ?? show.numCtx ?? OLLAMA_DEFAULT_NUM_CTX;
+export function knownOllamaWindow(show: OllamaShowWindow, loaded?: number): number | undefined {
+  const allocated = loaded ?? show.numCtx;
+  if (allocated === undefined) return undefined;
   return show.contextLength !== undefined ? Math.min(allocated, show.contextLength) : allocated;
 }
 
@@ -169,7 +167,8 @@ async function readJson(
 
 /**
  * Ask the Ollama server at `baseUrl` for `model`'s real window. Null when
- * `/api/show` does not answer like Ollama (the caller keeps what it had).
+ * `/api/show` does not answer like Ollama, or when neither the loaded
+ * model nor the modelfile names a window (the caller keeps what it had).
  */
 export async function readOllamaContextWindow(
   baseUrl: string,
@@ -193,5 +192,5 @@ export async function readOllamaContextWindow(
   if (showRoot === undefined || (showRoot.model_info === undefined && showRoot.parameters === undefined && showRoot.modelfile === undefined)) {
     return null;
   }
-  return effectiveOllamaWindow(parseOllamaShow(showRoot), parseOllamaPsContextLength(psBody, model));
+  return knownOllamaWindow(parseOllamaShow(showRoot), parseOllamaPsContextLength(psBody, model)) ?? null;
 }

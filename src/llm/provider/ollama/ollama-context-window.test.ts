@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  OLLAMA_DEFAULT_NUM_CTX,
-  effectiveOllamaWindow,
+  knownOllamaWindow,
   isOllamaEntry,
   ollamaApiBase,
   parseNumCtxParameter,
@@ -96,18 +95,21 @@ describe("parseOllamaPsContextLength", () => {
   });
 });
 
-describe("effectiveOllamaWindow", () => {
-  it("is min(num_ctx or default, context_length)", () => {
-    expect(effectiveOllamaWindow({ numCtx: 8192, contextLength: 40960 })).toBe(8192);
-    expect(effectiveOllamaWindow({ numCtx: 65536, contextLength: 40960 })).toBe(40960);
-    expect(effectiveOllamaWindow({ contextLength: 131072 })).toBe(OLLAMA_DEFAULT_NUM_CTX);
-    expect(effectiveOllamaWindow({ contextLength: 2048 })).toBe(2048);
-    expect(effectiveOllamaWindow({})).toBe(OLLAMA_DEFAULT_NUM_CTX);
+describe("knownOllamaWindow", () => {
+  it("is min(num_ctx, context_length)", () => {
+    expect(knownOllamaWindow({ numCtx: 8192, contextLength: 40960 })).toBe(8192);
+    expect(knownOllamaWindow({ numCtx: 65536, contextLength: 40960 })).toBe(40960);
+  });
+
+  it("guesses no server default when neither num_ctx nor a loaded window is known", () => {
+    expect(knownOllamaWindow({ contextLength: 131072 })).toBeUndefined();
+    expect(knownOllamaWindow({})).toBeUndefined();
   });
 
   it("prefers the loaded window, still capped by context_length", () => {
-    expect(effectiveOllamaWindow({ numCtx: 8192, contextLength: 40960 }, 16384)).toBe(16384);
-    expect(effectiveOllamaWindow({ contextLength: 40960 }, 262144)).toBe(40960);
+    expect(knownOllamaWindow({ numCtx: 8192, contextLength: 40960 }, 16384)).toBe(16384);
+    expect(knownOllamaWindow({ contextLength: 40960 }, 262144)).toBe(40960);
+    expect(knownOllamaWindow({ contextLength: 131072 }, 32768)).toBe(32768);
   });
 });
 
@@ -138,9 +140,11 @@ describe("readOllamaContextWindow", () => {
     expect(JSON.parse(String(init.body))).toEqual({ model: "qwen3:8b" });
   });
 
-  it("uses the default when only context_length is known", async () => {
-    const fetchImpl = fakeFetch({ "/api/show": () => jsonResponse(SHOW_LENGTH_ONLY) });
-    await expect(readOllamaContextWindow("http://localhost:11434", "llama3.1", { fetchImpl })).resolves.toBe(4096);
+  it("is null, not a guessed 4096, when the model is not loaded and the modelfile sets no num_ctx", async () => {
+    // e.g. a server started with OLLAMA_CONTEXT_LENGTH=32768: 4096 would
+    // stick and compact every turn far below what the server gives.
+    const fetchImpl = fakeFetch({ "/api/show": () => jsonResponse(SHOW_LENGTH_ONLY), "/api/ps": () => jsonResponse({ models: [] }) });
+    await expect(readOllamaContextWindow("http://localhost:11434", "llama3.1", { fetchImpl })).resolves.toBeNull();
   });
 
   it("prefers the loaded window from /api/ps", async () => {

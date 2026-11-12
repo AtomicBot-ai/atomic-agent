@@ -146,6 +146,32 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(readOllamaWindow).not.toHaveBeenCalled();
   });
 
+  it("an Ollama model that is not loaded yet is probed again later, not stuck at a guess (ATO-1276)", async () => {
+    config = { ...config, llm: { ...resolveLlmConfig(config), activeTextProvider: "ollama", providers: [
+      ...resolveLlmConfig(config).providers,
+      { id: "ollama", kind: "openai-compatible", baseUrl: "http://localhost:11434", defaultChatModel: "llama3.1" },
+    ] } };
+    // First probe: model not loaded, no num_ctx -> the reader knows nothing.
+    // After the first request the server loaded it with 32768.
+    const readOllamaWindow = vi.fn(async (): Promise<number | null> => null);
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      const context = createRuntimeModelContext(config, providers, { readOllamaWindow });
+      await context.primeLocalContextWindow();
+      expect(context.resolveCatalogContextWindow()).toBeNull();
+      // Inside the retry window: no new probe.
+      await context.primeLocalContextWindow();
+      expect(readOllamaWindow).toHaveBeenCalledTimes(1);
+      readOllamaWindow.mockResolvedValue(32768);
+      now.mockReturnValue(1_000_000 + 16_000);
+      await context.primeLocalContextWindow();
+      expect(readOllamaWindow).toHaveBeenCalledTimes(2);
+      expect(context.resolveCatalogContextWindow()).toBe(32768);
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   it("vision wiring follows live providers while retaining the original boot enable snapshot", async () => {
     const context = createRuntimeModelContext(config, providers);
     expect(context.visionOnLiveRoute()).toBe(false);
