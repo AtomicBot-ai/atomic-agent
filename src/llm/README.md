@@ -13,6 +13,7 @@ This area owns inference protocols and model profiles. Read [AGENTS.md](AGENTS.m
 - [llama-server-client.ts](llama-server-client.ts)
 - [dry-sampler.ts](dry-sampler.ts): the opt-in DRY anti-repeat fields for `/completion` (`localModels.drySampler`)
 - [slot-manager.ts](slot-manager.ts)
+- [toolcall-bench/](toolcall-bench/index.ts): the fixed tool-call reliability prompts, their scoring, and asking one question to several models (`models toolcall-bench`, `models ask`)
 
 ## Ownership and dependencies
 
