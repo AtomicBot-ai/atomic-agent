@@ -116,6 +116,7 @@ import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } fr
 import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
 import { localPickTakenLive, parseRecommendJson, upgradeStillWanted, upgradeVerdict, type UpgradeModel } from "./upgrade-model.js";
 import { cleanRemoteUrl, readRemoteAgent, writeRemoteAgent, type KeyBox } from "./remote-agent.js";
+import { createBinCache, envPath, fsIsExecutable, withSkillBins } from "./skill-bins.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
   activateProvider,
@@ -2845,6 +2846,16 @@ function wireIpc(client: AgentClient): void {
       client.status.workingDir,
     ).then((res) => (A.taskCreated(kind, res), res));
   });
+  /* ATO-526: each skill's external programs looked up on the PATH the agent's
+     shell gets (skill-bins.ts); a remote agent's computer is not this one. */
+  const skillBinCache = createBinCache(30_000);
+  const skillRowsWithBins = <T extends { requiresBins?: unknown; installHints?: unknown }>(rows: T[]) => {
+    const env = agentEnv();
+    const lookup = { platform: process.platform, path: envPath(env, process.platform),
+      pathext: process.platform === "win32" ? env.PATHEXT ?? process.env.PATHEXT : undefined,
+      isExecutable: fsIsExecutable(process.platform) };
+    return withSkillBins(rows, lookup, (bin) => skillBinCache.find(bin, lookup));
+  };
   // Cloud uses the same live snapshot as inference. Local retains the CLI's
   // installed/disabled list and its existing restart semantics.
   ipcMain.handle("cli:skillList", async (_event, sessionId: unknown) => {
@@ -2852,11 +2863,13 @@ function wireIpc(client: AgentClient): void {
       const data = await client.skills(skillSession(sessionId)) as {
         workingDir?: string; projectSkillsEnabled?: boolean; errors?: unknown[];
         skills: Array<{ name: string; version?: string; source: string; description: string;
-          disabled?: boolean; disabledReasons?: string[]; rootDir?: string; sources?: string[] }>;
+          disabled?: boolean; disabledReasons?: string[]; rootDir?: string; sources?: string[];
+          requiresBins?: string[]; installHints?: Record<string, string> }>;
       };
       if (!data.workingDir) return skillList(client.status.workingDir);
+      const rows = data.skills.map(row => ({ ...row, version: row.version || "—", enabled: !row.disabled }));
       return { ok: true, workingDir: data.workingDir, projectSkillsEnabled: data.projectSkillsEnabled,
-        errors: data.errors, rows: data.skills.map(row => ({ ...row, version: row.version || "—", enabled: !row.disabled })) };
+        errors: data.errors, rows: client.isRemote ? rows : skillRowsWithBins(rows) };
     } catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) }; }
   });
   ipcMain.handle("cli:configGetKey", (_event, key: unknown) =>

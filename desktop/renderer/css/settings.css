@@ -251,6 +251,10 @@ button.set-search:hover{border-color:var(--bd)}
 .set-skrow .d{min-width:0;font-size:var(--fs-cap);color:var(--ink-2);white-space:nowrap}
 .set-skrow.dim .t,.set-skrow.dim .d{color:var(--ink-3)}
 .set-skrow.on .t{color:var(--blue)}
+/* ATO-526: a skill's external programs: quiet when found, amber words when one is missing. */
+.set-skbins--ok{color:var(--ink-3)}
+.set-skbins--miss{color:var(--warn)}
+.set-skbins .mono{font-family:var(--font-mono)}
 .set-src{min-width:0;display:flex}
 .set-hubrow{min-height:54px}
 .set-hubrow .t{font:500 var(--fs-cap)/1.35 var(--font-mono);letter-spacing:0}
