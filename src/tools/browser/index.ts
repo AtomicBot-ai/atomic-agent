@@ -34,13 +34,23 @@ export type {
 export { PlaywrightBackend } from "./playwright-backend.js";
 export {
   currentBrowserScope,
+  endBrowserWorker,
   isAttendedTurn,
+  onBrowserWorkerEnd,
   resolveLaunchHeadless,
   runInBrowserScope,
 } from "./browser-run-scope.js";
 export type { BrowserHeadlessSetting, BrowserRunScope } from "./browser-run-scope.js";
 export { BROWSER_PROFILE_CHOICES, MAX_TEMP_PROFILES, TempProfiles } from "./temp-profiles.js";
 export type { BrowserProfileChoice } from "./temp-profiles.js";
+export {
+  BROWSER_WORKER_ISOLATIONS,
+  BrowserTabLimitError,
+  DEFAULT_BROWSER_MAX_TABS,
+  MAX_BROWSER_MAX_TABS,
+  MIN_BROWSER_MAX_TABS,
+} from "./worker-tabs.js";
+export type { BrowserWorkerIsolation } from "./worker-tabs.js";
 export type { PlaywrightBackendOptions } from "./playwright-backend.js";
 export { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
 export type { BuildChromeLaunchArgsInput } from "./build-chrome-launch-args.js";

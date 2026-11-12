@@ -21,10 +21,17 @@ import {
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
 import {
   currentBrowserScope,
+  onBrowserWorkerEnd,
   resolveLaunchHeadless,
   type BrowserHeadlessSetting,
 } from "./browser-run-scope.js";
 import { TempProfiles, type BrowserProfileChoice } from "./temp-profiles.js";
+import {
+  BrowserTabLimitError,
+  DEFAULT_BROWSER_MAX_TABS,
+  MAX_BROWSER_MAX_TABS,
+  type BrowserWorkerIsolation,
+} from "./worker-tabs.js";
 import {
   collectSecretFieldValuesInPage,
   ONE_TIME_CODE_HINT,
@@ -72,6 +79,14 @@ export interface PlaywrightBackendOptions {
    * in until it picks another with `browser.tabs new` (`temp-profiles.ts`).
    */
   profile?: BrowserProfileChoice;
+  /**
+   * `browser.workerIsolation` (default `"tabs"`, ATO-961): fusion workers
+   * browse in tabs of their own in the agent's profile, or each in its own
+   * throwaway context (`"context"`; not in the user's own Chrome).
+   */
+  workerIsolation?: BrowserWorkerIsolation;
+  /** `browser.maxTabs`: tabs the agent may have open at once (default 8). */
+  maxTabs?: number;
   /** Overall budget for "spawn + CDP becomes reachable". */
   launchTimeoutMs: number;
   /** When set, attach to a running browser via CDP instead of launching. */
@@ -141,6 +156,13 @@ export class PlaywrightBackend implements BrowserBackend {
   private relaunching: Promise<void> | null = null;
   /** Per-session throwaway profiles (`browser.profile: "temp"`). */
   private readonly tempProfiles = new TempProfiles();
+  /** `workerIsolation: "context"`: a throwaway context per fusion worker. */
+  private readonly workerContexts = new TempProfiles(MAX_BROWSER_MAX_TABS);
+  /** Fusion worker that opened a tab in the shared context (ATO-961). */
+  private readonly pageOwners = new WeakMap<Page, string>();
+  /** Tabs being opened right now, counted against `maxTabs`. */
+  private pendingTabs = 0;
+  private stopWorkerEnd: (() => void) | null = null;
 
   constructor(private readonly options: PlaywrightBackendOptions) {}
 
@@ -157,7 +179,10 @@ export class PlaywrightBackend implements BrowserBackend {
   }
 
   async shutdown(): Promise<void> {
+    this.stopWorkerEnd?.();
+    this.stopWorkerEnd = null;
     await this.tempProfiles.closeAll();
+    await this.workerContexts.closeAll();
     if (this.context) {
       const browser = this.context.browser();
       // The user's own Chrome: disconnect only, never close their
@@ -387,8 +412,7 @@ export class PlaywrightBackend implements BrowserBackend {
       case "list":
         return { tabs: await enumerateTabs(pages) };
       case "new": {
-        const page = await context.newPage();
-        this.adopt(page);
+        const page = await this.openTab(context);
         if (input.url) {
           await page.goto(input.url).catch(() => undefined);
         }
@@ -439,6 +463,9 @@ export class PlaywrightBackend implements BrowserBackend {
   }
 
   private async initialise(): Promise<void> {
+    this.stopWorkerEnd ??= onBrowserWorkerEnd((workerId) => {
+      void this.closeWorkerTabs(workerId);
+    });
     if (this.options.connect === "user-chrome") {
       await this.attachUserChrome();
       return;
@@ -509,10 +536,67 @@ export class PlaywrightBackend implements BrowserBackend {
     });
   }
 
-  /** Every tab, or in the user's Chrome only the agent's own. */
+  /**
+   * Every tab, or in the user's Chrome only the agent's own; in the shared
+   * context only the caller's: a fusion worker's own tabs, or for anyone
+   * else the tabs no worker opened (ATO-961).
+   */
   private visiblePages(context: PwBrowserContext): Page[] {
-    if (!this.userProfile || context !== this.context) return context.pages();
-    return [...this.ownedPages].filter((page) => !page.isClosed());
+    if (context !== this.context) return context.pages();
+    const pages = this.userProfile
+      ? [...this.ownedPages].filter((page) => !page.isClosed())
+      : context.pages();
+    const owner = callerWorkerId();
+    return pages.filter((page) => this.pageOwners.get(page) === owner);
+  }
+
+  /**
+   * Open a tab for the caller in `context`, within `browser.maxTabs`. A
+   * worker's tab, and the pop-ups it opens, are named after the worker.
+   */
+  private async openTab(context: PwBrowserContext): Promise<Page> {
+    const max = this.options.maxTabs ?? DEFAULT_BROWSER_MAX_TABS;
+    const open = this.openTabCount() + this.pendingTabs;
+    if (open >= max) throw new BrowserTabLimitError(open, max);
+    this.pendingTabs += 1;
+    let page: Page;
+    try {
+      page = await context.newPage();
+    } finally {
+      this.pendingTabs -= 1;
+    }
+    this.adopt(page);
+    const owner = callerWorkerId();
+    if (owner !== undefined && context === this.context) this.claim(page, owner);
+    return page;
+  }
+
+  private claim(page: Page, owner: string): void {
+    this.pageOwners.set(page, owner);
+    page.on("popup", (popup) => this.claim(popup, owner));
+  }
+
+  /** Tabs the agent has open: its own (not the user's), throwaway ones, workers'. */
+  private openTabCount(): number {
+    let count = this.tempProfiles.tabCount() + this.workerContexts.tabCount();
+    if (this.context) {
+      count += this.userProfile
+        ? [...this.ownedPages].filter((page) => !page.isClosed()).length
+        : this.context.pages().length;
+    }
+    return count;
+  }
+
+  /** A fusion worker's turn ended: its tabs and context go with it. */
+  private async closeWorkerTabs(workerId: string): Promise<void> {
+    const pages = this.context?.pages() ?? [];
+    await Promise.all(
+      pages
+        .filter((page) => this.pageOwners.get(page) === workerId)
+        .map((page) => page.close().catch(() => undefined)),
+    );
+    await this.workerContexts.close(workerId);
+    await this.tempProfiles.close(workerId);
   }
 
   /**
@@ -586,13 +670,20 @@ export class PlaywrightBackend implements BrowserBackend {
   private async callerContext(): Promise<PwBrowserContext> {
     const main = await this.requireContext();
     const scope = currentBrowserScope();
-    if (!scope || this.tempProfiles.choiceFor(scope.sessionId, this.options.profile ?? "agent") !== "temp") {
-      return main;
+    if (!scope) return main;
+    if (this.tempProfiles.choiceFor(scope.sessionId, this.options.profile ?? "agent") === "temp") {
+      if (this.userProfile) throw new Error(TEMP_PROFILE_IN_USER_CHROME);
+      // Workers draw from their own pool, so parallel workers never push
+      // each other's profile out.
+      const pool = scope.workerOf !== undefined ? this.workerContexts : this.tempProfiles;
+      return pool.open(requireBrowser(main), scope.sessionId);
     }
-    if (this.userProfile) throw new Error(TEMP_PROFILE_IN_USER_CHROME);
-    const browser = main.browser();
-    if (!browser) throw new Error("browser backend has no browser to open a logged-out profile in");
-    return this.tempProfiles.open(browser, scope.sessionId);
+    // A worker's own context where that is cheap: never in the user's
+    // Chrome, where the agent stays in the tabs it opened.
+    if (scope.workerOf !== undefined && this.options.workerIsolation === "context" && !this.userProfile) {
+      return this.workerContexts.open(requireBrowser(main), scope.sessionId);
+    }
+    return main;
   }
 
   /**
@@ -638,10 +729,20 @@ export class PlaywrightBackend implements BrowserBackend {
     const pages = this.visiblePages(context);
     const active = pages[pages.length - 1];
     if (active) return active;
-    const page = await context.newPage();
-    this.adopt(page);
-    return page;
+    return this.openTab(context);
   }
+}
+
+/** The calling fusion worker's id (its session), else `undefined`. */
+function callerWorkerId(): string | undefined {
+  const scope = currentBrowserScope();
+  return scope?.workerOf !== undefined ? scope.sessionId : undefined;
+}
+
+function requireBrowser(context: PwBrowserContext): PwBrowser {
+  const browser = context.browser();
+  if (!browser) throw new Error("browser backend has no browser to open a separate context in");
+  return browser;
 }
 
 /** The CDP connection behind `context` is gone (the browser quit). */

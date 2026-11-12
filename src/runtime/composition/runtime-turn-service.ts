@@ -15,7 +15,7 @@ import { renderRouteChangeNote } from "../../prompt/route-change-note.js";
 import { previousReplyText, workerRequestRecord } from "../../prompt/request-section.js";
 import { pickOriginalRequest } from "../../tools/fusion/index.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
-import { currentBrowserScope, isAttendedTurn, runInBrowserScope } from "../../tools/browser/browser-run-scope.js";
+import { currentBrowserScope, endBrowserWorker, isAttendedTurn, runInBrowserScope } from "../../tools/browser/browser-run-scope.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
 import { captureMessageSent, type AnalyticsStateStore, type LocalEngine, type TurnUsageMeter } from "../../analytics/index.js";
 import type { SessionUsageLedger } from "../../session/usage-meter.js";
@@ -392,8 +392,13 @@ export function createRuntimeTurnService(
             turnPreviousReplies?.set(session.id, parentReply);
           }
           // The browser treats a worker like the turn that fanned it out:
-          // a window when someone watches that chat (ATO-959).
-          const browserScope = { sessionId: session.id, attended: currentBrowserScope()?.attended ?? false };
+          // a window when someone watches that chat (ATO-959). It browses
+          // in tabs of its own (ATO-961).
+          const browserScope = {
+            sessionId: session.id,
+            attended: currentBrowserScope()?.attended ?? false,
+            workerOf: worker.parentSessionId,
+          };
           return await runInBrowserScope(browserScope, () => loop.runTurn(session, {
             userMessage,
             modelModePolicy,
@@ -410,6 +415,8 @@ export function createRuntimeTurnService(
           shellJobs.endSession(session.id);
           // A throwaway worker must not keep its server slot pinned.
           slotManager.release(session.id);
+          // Nor its browser tabs (ATO-961).
+          endBrowserWorker(session.id);
         }
       });
     }

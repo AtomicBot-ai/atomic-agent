@@ -61,6 +61,15 @@ Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; oth
 
 `browser.profile` (default `"agent"`, `temp-profiles.ts`): `"temp"` makes each chat browse in its own throwaway, logged-out profile: a separate browser context in the same Chrome, like an incognito window, with no cookies, storage or logins from the agent's profile and nothing written to disk. Per call, `browser.tabs { action: "new", profile: "temp" }` switches the chat to its throwaway profile and `profile: "agent"` back. A throwaway profile closes with its last tab, when more than four are open (oldest first), or with the browser. Not available in your own Chrome.
 
+## Fusion workers: parallel tabs
+
+`worker-tabs.ts` (ATO-961). The runtime marks a fusion worker's turn (`BrowserRunScope.workerOf`):
+
+- A worker browses only in tabs it opened (and their pop-ups), named by its session: `browser.tabs` lists, switches and closes only those, and its page reads and actions go to its own active tab. It never sees another worker's tabs, and the orchestrator's chat does not see the workers' tabs. Workers running at once each have a tab, so five shops can be read side by side.
+- When a worker's turn ends, its tabs close.
+- `browser.workerIsolation`: `"tabs"` (default) keeps the workers in the agent's profile, with its logins; `"context"` gives each worker its own throwaway browser context (no cookies or logins shared). In your own Chrome workers always use tabs.
+- `browser.maxTabs` (default 8, 1 to 50) caps the tabs the agent has open at once, throwaway profiles and workers included. One more fails with a plain error naming the setting, until a tab closes. Pop-ups a page opens are not refused.
+
 ## Your own Chrome
 
 `browser.connect: "user-chrome"` in config.json (opt-in; default `"agent"`, the agent's own profile). The agent then works in the user's signed-in Chrome (`attach-user-chrome.ts`, `user-chrome-endpoint.ts`):

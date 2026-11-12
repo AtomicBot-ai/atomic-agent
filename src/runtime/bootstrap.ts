@@ -237,6 +237,8 @@ export async function createAgentRuntime(
       executablePath: config.browser.executablePath,
       headless: config.browser.headlessSetting ?? config.browser.headless,
       profile: config.browser.profile ?? "agent",
+      ...(config.browser.maxTabs !== undefined ? { maxTabs: config.browser.maxTabs } : {}),
+      workerIsolation: config.browser.workerIsolation ?? "tabs",
       noSandbox: config.browser.noSandbox,
       launchTimeoutMs: config.browser.launchTimeoutMs,
       cdpUrl: config.browser.cdpUrl,

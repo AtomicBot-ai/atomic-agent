@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { USER_CONFIG_DEFAULTS, parseUserConfigFile } from "./config-schema.js";
 import { cdpUrlProblem } from "./browser-config.js";
 
-const CONNECT_DEFAULTS = { connect: "agent", cdpUrl: null, userDataDir: null, headless: "auto", profile: "agent" };
+const CONNECT_DEFAULTS = { connect: "agent", cdpUrl: null, userDataDir: null, headless: "auto", profile: "agent", maxTabs: 8, workerIsolation: "tabs" };
 
 describe("browser block in config.json", () => {
   it("defaults to empty domain lists, so an older file blocks and gates nothing", () => {
@@ -62,6 +62,14 @@ describe("browser block in config.json", () => {
     expect(parse({ profile: "temp" }).profile).toBe("temp");
     expect(() => parse({ headless: "yes" })).toThrow(/browser\.headless/);
     expect(() => parse({ profile: "incognito" })).toThrow(/browser\.profile/);
+  });
+
+  it("reads maxTabs (1 to 50) and workerIsolation (tabs / context) (ATO-961)", () => {
+    const parse = (browser: Record<string, unknown>) =>
+      parseUserConfigFile({ version: USER_CONFIG_DEFAULTS.version, browser }).browser;
+    expect(parse({ maxTabs: 3, workerIsolation: "context" })).toMatchObject({ maxTabs: 3, workerIsolation: "context" });
+    for (const maxTabs of [0, 51, 2.5, "4"]) expect(() => parse({ maxTabs })).toThrow(/browser\.maxTabs/);
+    expect(() => parse({ workerIsolation: "process" })).toThrow(/browser\.workerIsolation/);
   });
 
   it("holds a file cdpUrl to this machine", () => {
