@@ -236,7 +236,7 @@ import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
-import { curatedMetaIds, spotlightIds } from "./model-catalog.js";
+import { curatedMeta, curatedMetaIds, spotlightIds } from "./model-catalog.js";
 import { catalogPullWantsProjector, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
@@ -7917,6 +7917,34 @@ async function settingsTestPartC(
         ? `no metadata for ${JSON.stringify(noMeta)}; metadata for ids the agent does not list: ${JSON.stringify(stale)}`
         : `${vendored.length} curated ids, all with a description and both RAM figures`,
     );
+    /* ATO-1410: ids alone let a renamed model or a changed RAM figure through,
+       and the terminal and this window then disagreed. `models recommend
+       --json` names three catalogue models with their name and, from an
+       agent that has ATO-1410, both RAM figures: they must be this table's.
+       (desktop/test/model-catalog-drift.test.mjs compares every row against
+       the agent's source; this is the same check against the agent binary.) */
+    const recRaw = await modelsRecommend();
+    let recTiers: Array<{ id: string; name?: string; minRamGb?: number; recommendedRamGb?: number }> = [];
+    try {
+      const tiers = recRaw ? (JSON.parse(recRaw) as { tiers?: Record<string, unknown> }).tiers : null;
+      recTiers = Object.values(tiers ?? {}).filter((t): t is { id: string } => !!t && typeof (t as { id?: unknown }).id === "string");
+    } catch { recTiers = []; }
+    if (recTiers.length) {
+      const drift = recTiers.flatMap((t) => {
+        const m = curatedMeta(t.id);
+        if (!m) return t.id.startsWith("custom-") ? [] : [`${t.id}: no vendored row`];
+        const out: string[] = [];
+        if (typeof t.name === "string" && t.name !== m.name) out.push(`${t.id} name ${JSON.stringify(t.name)} ≠ ${JSON.stringify(m.name)}`);
+        if (typeof t.minRamGb === "number" && t.minRamGb !== m.minRamGb) out.push(`${t.id} minRamGb ${t.minRamGb} ≠ ${m.minRamGb}`);
+        if (typeof t.recommendedRamGb === "number" && t.recommendedRamGb !== m.recommendedRamGb) out.push(`${t.id} recommendedRamGb ${t.recommendedRamGb} ≠ ${m.recommendedRamGb}`);
+        return out;
+      });
+      check(
+        "llm tab: the vendored names and RAM figures match `atag models recommend --json`",
+        drift.length === 0,
+        drift.length ? drift.join("; ") : `${recTiers.map((t) => t.id).join(", ")} agree on name and memory`,
+      );
+    }
   }
   /* What the pane draws (Calm S5): the setup tabs' three words (Local
      models pressed — Д30 renamed them and put where chats run above them),

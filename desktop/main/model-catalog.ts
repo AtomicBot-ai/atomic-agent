@@ -1,7 +1,7 @@
 /**
  * The curated catalogue's METADATA, vendored.
  *
- * SOURCE OF TRUTH: `src/local-llm/models-catalog.ts` — `LOCAL_MODELS_CATALOG`.
+ * SOURCE OF TRUTH: `src/local-llm/catalog/models-catalog.ts` — `LOCAL_MODELS_CATALOG`.
  * Every field below is copied from there, verbatim, id for id. Nothing here
  * is estimated, rounded or reworded.
  *
@@ -14,10 +14,16 @@
  * is the honest option: real numbers, one source named, and a smoke check
  * (`main.ts`, "the vendored catalogue metadata still matches `atag models
  * list`") that fails the moment the agent's catalogue and this table disagree
- * on which ids exist.
+ * on which ids exist. Since ATO-1410 that is not the only check: the unit
+ * test `test/model-catalog-drift.test.mjs` compares every field below
+ * against the agent's source (name, both RAM figures, size, blurb, flags),
+ * and the smoke also compares names and RAM figures with `atag models
+ * recommend --json`. What a person reads off a row (its display name, the
+ * one "needs N GB" figure) comes from `model-memory-words.ts`, the agent's
+ * own file copied byte for byte.
  *
- * DRIFT PROCEDURE: when that check goes red, diff this file against
- * `src/local-llm/models-catalog.ts` and copy the entries across. Never invent
+ * DRIFT PROCEDURE: when a check goes red, diff this file against
+ * `src/local-llm/catalog/models-catalog.ts` and copy the entries across. Never invent
  * a row to make the check pass — an id with no entry here simply renders
  * without a blurb, which is the designed behaviour for a model the desktop
  * does not know (every `custom-…` model added from Hugging Face is one).

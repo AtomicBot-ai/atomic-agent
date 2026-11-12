@@ -18,6 +18,15 @@ export {
 } from "./catalog/models-catalog.js";
 export { spotlightModelFor } from "./catalog/spotlight-model.js";
 export {
+  estimateRamGbFromFileSize,
+  modelDisplayName,
+  modelMemoryFit,
+  modelMemoryNeedGb,
+  modelMemoryNeedWords,
+  type ModelMemoryFit,
+  type ModelRamFigures,
+} from "./catalog/model-memory-words.js";
+export {
   recommendedModelFor,
   type RecommendedModelOptions,
 } from "./catalog/recommended-model.js";

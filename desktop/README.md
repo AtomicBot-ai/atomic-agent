@@ -657,7 +657,7 @@ Honestly degraded, and labelled as such in the UI:
   the two surfaces cannot disagree. `atag models list` prints no description
   and no RAM figures and has no `--json`, so `desktop/main/model-catalog.ts`
   vendors `description` / `minRamGb` / `recommendedRamGb` / `fileSizeGb` /
-  `supportsVision` / `recommendRank` / `tag` / `uncensored` from `src/local-llm/models-catalog.ts`
+  `supportsVision` / `recommendRank` / `tag` / `uncensored` from `src/local-llm/catalog/models-catalog.ts`
   and `modelsList()` joins them on by id. `app:hostRam` (`os.totalmem()`) is
   the other input. A model whose `recommendedRamGb` the machine meets runs
   comfortably; between `minRamGb` and `recommendedRamGb` it is a tight fit and
@@ -672,8 +672,17 @@ Honestly degraded, and labelled as such in the UI:
   plainly that it is small and will get more wrong, which on a weak machine is
   exactly the model being recommended. An id the vendored table does not know
   — every `custom-…` model added from Hugging Face — renders with no blurb and
-  with its RAM figure labelled an estimate; nothing is invented for it, and
+  with its RAM figure labelled an estimate (the agent's own size rule,
+  `ramEstimateFromSize`); nothing is invented for it, and
   the smoke asserts the two id lists agree so the copy cannot rot in silence.
+  ATO-1410: a bare "Needs N GB" is always `recommendedRamGb`, the figure the
+  terminal prints too, and a model is named by its catalogue name without
+  the "GGUF" tail in both clients. Those rules are
+  `main/model-memory-words.ts`, a byte-for-byte copy of the agent's
+  `src/local-llm/catalog/model-memory-words.ts`;
+  `test/model-catalog-drift.test.mjs` compares that copy and every vendored
+  field (names and both RAM figures included) with the agent's source, and the
+  smoke compares names and RAM figures with `atag models recommend --json`.
   Driven on three machine sizes by `npm run drive:models` (68 GB real, 8 GB
   and 4 GB simulated with the test-only `--fake-ram`).
 - **A model under `minRamGb` asks first** (ATO-337, `modelRamWarning` in

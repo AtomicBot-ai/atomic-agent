@@ -24,7 +24,7 @@ function constBlock(name) {
 
 const c = vm.createContext({});
 vm.runInContext(constBlock("TIGHT_FIT_CAUTION"), c);
-for (const name of ["sizeStringGb", "fitFor", "orderModelsByFit", "bestModelFor"]) vm.runInContext(fn(name), c);
+for (const name of ["sizeStringGb", "ramEstimateFromSize", "fitFor", "orderModelsByFit", "bestModelFor"]) vm.runInContext(fn(name), c);
 
 // Figures from the vendored catalogue (desktop/main/model-catalog.ts).
 const models = [

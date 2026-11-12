@@ -15,8 +15,15 @@ import { theme } from "../theme/theme.js";
 /** Rows drawn at once; the rest are counted in a trailing line. */
 export const LOCAL_PICK_WINDOW = 6;
 
-/** Model-name column, wide enough for the catalog's longest id plus a gap. */
+/** Model-name column, wide enough for most catalogue names plus a gap. */
 const LABEL_COLUMNS = 24;
+
+/** The name cut to its column, so a long one cannot push the size out of line. */
+function labelCell(label: string): string {
+  const room = LABEL_COLUMNS - 1;
+  const fitted = label.length > room ? `${label.slice(0, room - 1)}…` : label;
+  return fitted.padEnd(LABEL_COLUMNS);
+}
 /** Size column, right-aligned so the numbers compare down the column. */
 const SIZE_COLUMNS = 8;
 /** Gap between the size and the note that follows it. */
@@ -32,7 +39,7 @@ function pickRow(
   fit: OnboardingFit,
 ): string {
   return (
-    `${rowPrefix(selected)}${pick.label.padEnd(LABEL_COLUMNS)}` +
+    `${rowPrefix(selected)}${labelCell(pick.label)}` +
     `${pick.sizeLabel.padStart(SIZE_COLUMNS)}${NOTE_GAP}${note(pick, fit)}`
   );
 }
@@ -133,7 +140,7 @@ export function OnboardingLocalPickStep(props: {
               bold={selected}
               wrap="truncate"
             >
-              {`${rowPrefix(selected)}${pick.label.padEnd(LABEL_COLUMNS)}${pick.sizeLabel.padStart(SIZE_COLUMNS)}${NOTE_GAP}`}
+              {`${rowPrefix(selected)}${labelCell(pick.label)}${pick.sizeLabel.padStart(SIZE_COLUMNS)}${NOTE_GAP}`}
               <Text color={noteColour(pick)}>{note(pick, props.fit)}</Text>
             </Text>
           </MouseListRow>

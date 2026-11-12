@@ -3,6 +3,9 @@ import {
   getLocalModelDef,
   isKnownLocalModelId,
   LOCAL_MODELS_CATALOG,
+  modelDisplayName,
+  modelMemoryFit,
+  modelMemoryNeedGb,
   recommendedModelFor,
   STARTER_LOCAL_MODEL_ID,
   type LocalModelDef,
@@ -16,10 +19,12 @@ export function hostRamGb(): number {
 
 export interface LocalModelPick {
   id: LocalModelId;
+  /** The name a person reads ("Gemma 4 E4B"), the desktop's own (ATO-1410). */
   label: string;
   sizeLabel: string;
   /** "fits" — runs comfortably here; "tight" — over recommended; "over" — under minimum. */
   fit: "fits" | "tight" | "over";
+  /** "20 GB RAM": the one need figure both clients print (`modelMemoryNeedGb`). */
   ramLabel: string;
   description: string;
   recommended: boolean;
@@ -73,10 +78,10 @@ export function buildLocalModelPicks(
     : null;
   return catalog.map((def) => ({
     id: def.id,
-    label: def.id,
+    label: modelDisplayName(def),
     sizeLabel: def.sizeLabel,
     fit: fitFor(def, ramGb),
-    ramLabel: `${def.recommendedRamGb} GB RAM`,
+    ramLabel: `${modelMemoryNeedGb(def)} GB RAM`,
     description: def.description,
     recommended: def.id === recommendedId,
     uncensored: def.uncensored === true,
@@ -89,7 +94,7 @@ export function buildLocalModelPicks(
       ? {
           quickStart: true,
           followedBy: quick.followedBy,
-          description: `no key, answers in a minute; ${quick.followedBy} follows in the background`,
+          description: `no key, answers in a minute; ${followUpName(catalog, quick.followedBy)} follows in the background`,
         }
       : {}),
   }));
@@ -153,10 +158,18 @@ export function recommendLocalModel(
   ).id;
 }
 
+/** The shared verdict (`modelMemoryFit`), in this screen's own three words. */
 function fitFor(def: LocalModelDef, ramGb: number): LocalModelPick["fit"] {
-  if (def.recommendedRamGb <= ramGb) return "fits";
-  if (def.minRamGb <= ramGb) return "tight";
-  return "over";
+  const fit = modelMemoryFit(def, ramGb);
+  return fit === "comfortable" ? "fits" : fit;
+}
+
+function followUpName(
+  catalog: readonly LocalModelDef[],
+  id: LocalModelId,
+): string {
+  const def = catalog.find((d) => d.id === id);
+  return def ? modelDisplayName(def) : id;
 }
 
 /**
@@ -196,7 +209,7 @@ export function describeDownloadingModel(id: string | null): string {
   if (!id) return "the model";
   if (!isKnownLocalModelId(id)) return id;
   const def = getLocalModelDef(id);
-  if (def.family !== "custom") return def.id;
+  if (def.family !== "custom") return modelDisplayName(def);
   return def.filename.replace(/\.gguf$/i, "");
 }
 

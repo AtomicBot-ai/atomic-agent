@@ -50,6 +50,7 @@ import { pipeline } from "node:stream/promises";
 
 import { agentHuggingFaceToken } from "./hf-token.js";
 import { DESKTOP_STATE_DIR } from "./state-dir.js";
+import { estimateRamGbFromFileSize } from "./model-memory-words.js";
 
 /* ------------------------------------------------------------------ *
  * src/local-llm/catalog/huggingface-ref.ts
@@ -611,8 +612,7 @@ export function buildCustomModelDef(input: {
     description: `Added from huggingface.co/${repoId}`,
     maxContextLength: 0,
     contextLabel: "auto",
-    minRamGb: Math.max(1, Math.ceil(fileSizeGb * 1.2)),
-    recommendedRamGb: Math.max(2, Math.ceil(fileSizeGb * 1.5) + 2),
+    ...estimateRamGbFromFileSize(fileSizeGb),
     family: "custom",
     supportsVision: mmproj !== null,
   };

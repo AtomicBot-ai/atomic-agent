@@ -28,7 +28,7 @@ const c = vm.createContext({
   llmModelName: (m) => m.name,
 });
 vm.runInContext(constBlock("TIGHT_FIT_CAUTION"), c);
-for (const name of ["sizeStringGb", "fitFor", "orderModelsByFit", "bestModelFor", "modelRamWarning"]) vm.runInContext(fn(name), c);
+for (const name of ["sizeStringGb", "ramEstimateFromSize", "fitFor", "orderModelsByFit", "bestModelFor", "modelRamWarning"]) vm.runInContext(fn(name), c);
 
 const big = { id: "big-70b", name: "Big 70B", minRamGb: 48, recommendedRamGb: 64, size: "40 GB" };
 const qwen = { id: "qwen-3.8-27b", name: "Qwen 3.8 27B", minRamGb: 20, recommendedRamGb: 32, size: "17 GB" };
@@ -38,7 +38,7 @@ const models = [big, qwen, small];
 test("a model over this Mac's memory names what it needs, what is here, and one that runs", () => {
   const w = c.modelRamWarning(big, models, 32);
   assert.equal(w.title, "Not enough memory for this model");
-  assert.equal(w.text, "This model needs 48 GB of memory. This Mac has 32 GB. Qwen 3.8 27B runs here.");
+  assert.equal(w.text, "This model needs 64 GB of memory. This Mac has 32 GB. Qwen 3.8 27B runs here.");
   assert.equal(w.alt.id, "qwen-3.8-27b");
   assert.ok(!/—/.test(w.title + w.text));
 });
@@ -50,7 +50,7 @@ test("no warning for a model that runs, even a tight fit", () => {
 
 test("no suggestion when nothing else runs here", () => {
   const w = c.modelRamWarning(big, [big], 32);
-  assert.equal(w.text, "This model needs 48 GB of memory. This Mac has 32 GB.");
+  assert.equal(w.text, "This model needs 64 GB of memory. This Mac has 32 GB.");
   assert.equal(w.alt, null);
 });
 

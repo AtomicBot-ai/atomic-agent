@@ -193,8 +193,9 @@ describe("buildLocalPickRows", () => {
 });
 
 describe("describeDownloadingModel", () => {
-  it("uses the curated id, which is already the name people use", () => {
-    expect(describeDownloadingModel("qwen-3.5-4b")).toBe("qwen-3.5-4b");
+  it("names a curated model the way the desktop does (ATO-1410)", () => {
+    expect(describeDownloadingModel("qwen-3.5-4b")).toBe("Qwen 3.5 4B");
+    expect(describeDownloadingModel("gemma-4-e4b")).toBe("Gemma 4 E4B");
   });
 
   it("falls back to the raw id for a model no longer in the catalog", () => {
