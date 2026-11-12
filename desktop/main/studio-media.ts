@@ -161,6 +161,27 @@ export class StudioMedia {
     return client;
   }
 
+  /**
+   * ATO-1441: take the OpenRouter key out of Core (it keeps it in its
+   * credentials.json) after the app's last OpenRouter key was removed
+   * (studio-forget-key.ts decides when). The running Core is used, else one
+   * is started for the call and asked to exit again when idle, as the
+   * terminal's `forgetOpenRouterMedia` does. The next key set (even the same
+   * key) is sent to Core again. Throws when Core cannot be reached.
+   */
+  async forgetOpenRouterKey(): Promise<void> {
+    const dataDir = this.deps.dataDir();
+    const version = this.deps.coreVersion;
+    this.keyFor = "";
+    const running = await connectStudioCore(dataDir, version).catch(() => null);
+    const client = running ?? await ensureStudioCore(dataDir, version);
+    try {
+      await client.call("/cloud/providers/openrouter", undefined, { method: "DELETE", timeoutMs: 10_000 });
+    } finally {
+      if (!running && !this.client) await retireIdleStudioCore(dataDir, version);
+    }
+  }
+
   /** The stable default output folders (not Core's per-version ones, which an upgrade empties). */
   private get defaultDirs(): { image: string; video: string } {
     return studioDefaultOutputDirs(this.deps.dataDir());
