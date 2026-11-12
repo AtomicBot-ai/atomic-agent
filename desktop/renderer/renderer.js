@@ -14352,6 +14352,27 @@ function obChooseHTML() {
     + '<div class="ob-list ob-routes">' + rows + '</div>';
 }
 
+/* ATO-1402: the way in under the Local models list for someone who already
+   has a model file: a .gguf on disk. A button of its own, not a list row:
+   the list's row numbers are positions (obRowClick), and this is not a
+   model. Tab reaches it after the list. The apps that serve a model
+   (Atomic Chat, Ollama, LM Studio) are not here: they are under Custom
+   (ATO-816, Local / Cloud / Custom). */
+const OB_GGUF_LABEL = 'Use a .gguf file I already have';
+function obWayInHTML(act, label, detail, icon) {
+  return '<button class="ob-wayin" data-obact="' + act + '">'
+    + '<span class="tk-ico">' + ic(icon) + '</span>'
+    + '<span class="ob-wayin-t"><span class="ob-wayin-l">' + esc(label) + '</span>'
+    + '<span class="ob-wayin-d">' + esc(detail) + '</span></span>'
+    + '<span class="ob-chev" aria-hidden="true">' + ic('chevR') + '</span></button>';
+}
+function obLocalWaysInHTML() {
+  if (!(BR && BR.ggufPick)) return '';
+  return '<div class="ob-wayins">'
+    + obWayInHTML('local:gguf', OB_GGUF_LABEL, 'Runs it from where it is. No model download', 'file')
+    + '</div>';
+}
+
 function obLocalPickHTML() {
   const rows = obPickRows();
   const models = rows.filter((r) => r.kind === 'model');
@@ -14402,7 +14423,8 @@ function obLocalPickHTML() {
        shrinkage and renders 0px tall — rows present in the DOM, readable by
        script, and invisible on screen. `min-height` on `.ob-models` is the
        second belt. */
-    + '<div class="ob-list ob-models ob-scroll">' + body + obOutOfReachHTML() + '</div>' + hf;
+    + '<div class="ob-list ob-models ob-scroll">' + body + obOutOfReachHTML() + '</div>' + hf
+    + obLocalWaysInHTML();
 }
 
 /** The selected row's tick, at its right end (the provider list's `.prow-tick`). */
@@ -15768,6 +15790,32 @@ function obCloudKey(input, key) {
 }
 
 /* ---------------- effects ---------------- */
+
+/* ATO-1402: "Use a .gguf file I already have". main registers the file where
+   it lies (cli:ggufPick); then it is the same hand-over as a curated pick's
+   Download, whose pull finds the weights present and starts the model.
+   The card is drawn while the catalogue is still loading (OB.busy), and it
+   works then too: the file dialog does not need the list. Only a dialog
+   already open is a reason to do nothing. */
+let OB_GGUF_PICKING = false;
+async function obGgufPick() {
+  if (!BR || !BR.ggufPick || OB_GGUF_PICKING) return;
+  if (dlBusy() || DL.projector || SEL.pulling || LLMP.pulling) {
+    obDispatch({type:'onboarding_error_set', error:'a download is already running'});
+    return;
+  }
+  OB_GGUF_PICKING = true;
+  let res;
+  try { res = await BR.ggufPick(); } finally { OB_GGUF_PICKING = false; }
+  if (!OB.open || OB.step !== 'local_pick') return;
+  if (!res || res.ok !== true) {
+    if (res && res.cancelled) return;
+    obDispatch({type:'onboarding_error_set', error: (res && res.error) || 'could not add the file'});
+    return;
+  }
+  OB.pendingMmproj = null;
+  obDownloadAndHandOver(res.id);
+}
 
 function obOpenCloudWizard(route) {
   OB_WIZ_ROUTE = route === 'custom' ? 'custom' : 'keys';
@@ -17268,6 +17316,7 @@ function obControlClick(spec) {
   if (spec === 'key:c') { obKey('c', {}); return; }
   if (spec === 'key:s') { obKey('s', {}); return; }
   if (spec === 'route:apps') { obPickBackend('custom'); return; }
+  if (spec === 'local:gguf') { obGgufPick(); return; }
   /* r6 cloud item 1: the hint strip's `esc` chord, clickable. The split is
      obKeydown's own — a step that owns its keyboard answers Escape through
      obOwnEscape, everything else through the key table — so the button and

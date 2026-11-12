@@ -295,7 +295,8 @@ try {
     await pick('Local models');
     await app.waitFor('#onboarding .ob-foot button', { timeout: 40000 });
     let on = null;
-    for (let i = 0; i < 6 && !(on && /Back/.test(on.label)); i += 1) {
+    // ATO-1402: the .gguf way in under the list comes before the action bar.
+    for (let i = 0; i < 8 && !(on && /Back/.test(on.label)); i += 1) {
       await app.press('Tab', { settle: 150 });
       on = await app.focusInfo();
     }

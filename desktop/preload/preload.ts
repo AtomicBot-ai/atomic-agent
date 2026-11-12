@@ -455,6 +455,8 @@ contextBridge.exposeInMainWorld("atomic", {
   hfMirrorSet: (value: string) => ipcRenderer.invoke("cli:hfMirrorSet", value),
   hfDef: (repo: unknown, index: number) => ipcRenderer.invoke("cli:hfDef", { repo, index }),
   hfAdd: (repo: unknown, index: number) => ipcRenderer.invoke("cli:hfAdd", { repo, index }),
+  /** ATO-1402: pick a .gguf on disk and register it where it lies (main/local-gguf.ts). */
+  ggufPick: () => ipcRenderer.invoke("cli:ggufPick"),
   hfProjector: (id: string, mmprojUrl: string, mmprojFilename: string, name?: string) =>
     ipcRenderer.invoke("cli:hfProjector", { id, mmprojUrl, mmprojFilename, name }),
 
