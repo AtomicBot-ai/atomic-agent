@@ -379,16 +379,16 @@
 .conbody > .tk-empty p{font-size:var(--fs-cap)}
 
 /* ---------------- download card (backlog 18) ---------------- */
-/* Atomic Chat's DownloadPanel: a lifted card floating in the bottom-right
-   corner over the window, so nothing under it moves (the #dlbar strip it
-   replaced was a flex child and pushed the chat down). The renderer sets
-   `bottom` (dlCardPlace) so it stands above the composer and the console,
-   and --dlc-room to what is left under the toolbar; the list scrolls inside
-   that. z 15: under #overlays (20), the voice language menu (16) and the
-   slash list (40), so everything that opens over the composer opens over
-   the card too, and the toasts (29) stay on top. */
-#dlcard{position:absolute;right:16px;bottom:16px;z-index:15;width:min(352px,calc(100% - 32px));
-  display:flex;flex-direction:column;align-items:flex-end;pointer-events:none;-webkit-app-region:no-drag}
+/* Atomic Chat's DownloadPanel, as the popover of the downloads icon in the
+   sidebar header (ATO-1185, Jan's pattern). A lifted card over the window,
+   so nothing under it moves (the #dlbar strip it replaced was a flex child
+   and pushed the chat down). The renderer sets `left` and `top`
+   (dlCardPlace, dl-indicator.js) so it hangs under the header, or beside the
+   icon rail, and --dlc-room to what is left down to the window's bottom; the
+   list scrolls inside that. 288px: DLI_POP_W. z 15: under #overlays (20) and
+   the toasts (29). */
+#dlcard{position:absolute;left:16px;top:96px;z-index:15;width:min(288px,calc(100% - 32px));
+  display:flex;flex-direction:column;align-items:flex-start;pointer-events:none;-webkit-app-region:no-drag}
 #dlcard[hidden]{display:none}
 #dlcard > *{pointer-events:auto}
 .dlc{align-self:stretch;display:flex;flex-direction:column;min-height:0;max-height:var(--dlc-room,60vh);
@@ -431,17 +431,27 @@
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .dlc-cloud:hover{background:var(--brand-wash);color:var(--blue-deep)}
 .dlc-cloud:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
-/* Folded: a 44px round button that is still a live count — brand, or red
-   once a download in it has failed. */
-.dlc-badge{position:relative;width:44px;height:44px;flex:none;border-radius:50%;display:grid;place-items:center;
-  background:var(--lift);box-shadow:var(--sh-pop);color:var(--ink-2)}
-.dlc-badge:hover{color:var(--ink)}
-.dlc-badge:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
-.dlc-badge > svg{width:17px;height:17px}
-.dlc-n{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:var(--r-pill);
-  background:var(--brand);color:var(--on-strong);font:700 var(--fs-micro)/20px var(--font-ui);text-align:center;
+/* ATO-1185: the downloads icon in the sidebar header, right of the
+   workspace chip — a 32px icon button that is still a live count: brand, or
+   red once a download in it has failed. On the icon rail it sits on the
+   mark's corner. Empty (no downloads), its slot takes no room. */
+.sb-dl{flex:none;display:flex;align-items:center}
+.sb-dl:empty{display:none}
+.sb-head .sb-dl{margin-left:4px}
+#sidebar.rail .sb-dl{position:absolute;top:-6px;right:-8px;z-index:2;margin:0}
+@media (max-width:1000px){#sidebar:not(.drawer) .sb-dl{position:absolute;top:-6px;right:-8px;z-index:2;margin:0}}
+.dlc-badge{position:relative;width:32px;height:32px;flex:none;border-radius:var(--r-row);display:grid;place-items:center;
+  color:var(--ink-2);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.dlc-badge:hover,.dlc-badge[aria-expanded="true"]{background:var(--hover);color:var(--ink)}
+.dlc-badge.is-moving > svg{color:var(--blue)}
+.dlc-badge:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.dlc-badge > svg{width:16px;height:16px}
+.dlc-n{position:absolute;top:0;right:-2px;min-width:16px;height:16px;padding:0 4px;border-radius:var(--r-pill);
+  background:var(--brand);color:var(--on-strong);font:700 var(--fs-micro)/16px var(--font-ui);text-align:center;
   font-variant-numeric:tabular-nums}
 .dlc-badge.has-failed .dlc-n{background:var(--critical);color:var(--on-fill)}
+#sidebar.rail .dlc-badge{width:24px;height:24px;background:var(--lift);box-shadow:var(--sh-pop)}
+@media (max-width:1000px){#sidebar:not(.drawer) .dlc-badge{width:24px;height:24px;background:var(--lift);box-shadow:var(--sh-pop)}}
 
 /* ---------------- responsive ---------------- */
 @media (max-width:1180px){#inspector{display:none!important}}

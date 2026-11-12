@@ -233,13 +233,13 @@ async function lanes(only) {
     if (!only || only === 'a') await bothWays(app, 'the card’s Cancel (×)', CARD_CANCEL);
     // B: the cloud offer under the rows.
     if (!only || only === 'b') await bothWays(app, 'the card’s "Set up a cloud model meanwhile"', '#dlcard .dlc-cloud');
-    // C: folded, the round badge — clicked into place the way a person folds it.
+    // C: folded, the downloads icon in the sidebar header (ATO-1185) — clicked into place the way a person folds it.
     if (!only || only === 'c') {
       await app.clickSel('#dlcard .dlc-fold', { scroll: false });
       await sleep(300);
       await shot(app, 'c0-card-folded.png');
-      await bothWays(app, 'the folded card’s badge', '#dlcard .dlc-badge');
-      await app.clickSel('#dlcard .dlc-badge', { scroll: false });
+      await bothWays(app, 'the downloads icon in the sidebar header', '#sidebar .sb-dl .dlc-badge');
+      await app.clickSel('#sidebar .sb-dl .dlc-badge', { scroll: false });
       await sleep(300);
     }
   } finally {
