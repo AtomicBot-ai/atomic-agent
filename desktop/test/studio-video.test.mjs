@@ -311,3 +311,13 @@ test('gallery: "Load more" reads older clips; the Pinned tab finds a pinned clip
   assert.deepEqual([...S.pinnedMore.map((x) => x.id)], [], 'a loaded page folds the found pinned clip back in');
   assert.doesNotMatch(gal.innerHTML, /data-vact="more"/, 'no Load more once every clip is loaded');
 });
+
+test('the local model hint says what Generate does: it loads a downloaded model by itself (ATO-1303)', () => {
+  const local = (o) => ({ ...wan, local: { ...wan.local, ...o } });
+  assert.equal(V.localHint(local({ loaded: false, installed: true })), 'This model loads when you press Generate.');
+  assert.equal(V.localHint(local({ loaded: false, installed: false })), 'This model is not downloaded yet.');
+  assert.equal(V.localHint(local({ loaded: true, installed: true })), '');
+  assert.equal(V.localHint(veo), '');
+  assert.match(SRC, /const hint = localHint\(m\);/);
+  assert.doesNotMatch(SRC, /Load this model in Atomic Core first/);
+});
