@@ -19,6 +19,7 @@ import {
 } from "../../tracing/trace/index.js";
 import { captureError, type SentryClient } from "../../error-reporting/index.js";
 import { describeLlmFailure } from "./llm-failure-context.js";
+import { runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 
 export function createRuntimeTraces(
   config: AtomicAgentConfig,
@@ -143,6 +144,9 @@ export function createRuntimeTraces(
     const recorder = createTraceRecorder({
       sessionId: session.id,
       emit: (event) => traceBus.emit(event),
+      // The same exact values tool output is masked with (ATO-1077), so
+      // a config-stored key in a tool's details stays off disk (ATO-1176).
+      knownSecrets: () => runtimeKnownSecrets(config),
     });
     const metadata = headerMetadata ?? session.metadata;
     recorder.beginSession({

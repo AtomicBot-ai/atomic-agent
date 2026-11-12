@@ -377,3 +377,49 @@ export function knownSecretsFromEnv(
   }
   return out;
 }
+
+/** Deepest nesting {@link maskSecretsDeep} walks; anything below is left as is. */
+const MAX_MASK_DEPTH = 32;
+
+/**
+ * `value` with {@link maskSecrets} applied to every string inside it:
+ * plain objects and arrays are walked (to {@link MAX_MASK_DEPTH}, and a
+ * cycle is visited once), other values pass through. Object keys are not
+ * masked. Returns `value` itself when nothing was masked, and copies only
+ * the containers on the path to a masked string otherwise, so the input
+ * is never mutated (ATO-1176: a tool result's `details` before the trace
+ * writes it to disk).
+ */
+export function maskSecretsDeep<T>(value: T, known: readonly KnownSecret[] = []): T {
+  const usable = usableKnownSecrets(known);
+  const seen = new WeakSet<object>();
+  const walk = (node: unknown, depth: number): unknown => {
+    if (typeof node === "string") return maskSecrets(node, usable);
+    if (node === null || typeof node !== "object" || depth >= MAX_MASK_DEPTH) return node;
+    if (seen.has(node)) return node;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      let out: unknown[] | null = null;
+      for (let i = 0; i < node.length; i++) {
+        const next = walk(node[i], depth + 1);
+        if (next !== node[i]) {
+          out ??= node.slice();
+          out[i] = next;
+        }
+      }
+      return out ?? node;
+    }
+    const proto = Object.getPrototypeOf(node) as unknown;
+    if (proto !== Object.prototype && proto !== null) return node;
+    let out: Record<string, unknown> | null = null;
+    for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
+      const next = walk(child, depth + 1);
+      if (next !== child) {
+        out ??= { ...(node as Record<string, unknown>) };
+        out[key] = next;
+      }
+    }
+    return out ?? node;
+  };
+  return walk(value, 0) as T;
+}

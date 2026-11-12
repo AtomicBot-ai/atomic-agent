@@ -247,6 +247,60 @@ describe("createTraceRecorder", () => {
     expect(invocation && "batchSize" in invocation).toBe(false);
   });
 
+  it("masks secrets anywhere in a tool result's details before writing them (ATO-1176)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({
+      sessionId: "s-mask",
+      emit,
+      now,
+      knownSecrets: () => [{ label: "MY_SERVICE_TOKEN", value: "plainShapeless9Value" }],
+    });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "tool_call_parsed",
+        call: { tool: "shell.run", args: { command: "cat .env" } },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    const details = {
+      exitCode: 0,
+      stdout: `OPENROUTER_API_KEY=sk-or-v1-${"0123456789abcdef".repeat(4)}\n`,
+      nested: { lines: ["ok", "token plainShapeless9Value here"] },
+    };
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "tool_call_executed",
+        result: {
+          tool: "shell.run",
+          status: "ok",
+          summary: "printed .env",
+          details,
+          truncated: false,
+        },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    });
+    const invocation = events.find((e) => e.type === "tool_invocation");
+    const written = JSON.stringify(invocation);
+    expect(written).not.toContain("sk-or-v1-0123456789");
+    expect(written).not.toContain("plainShapeless9Value");
+    expect(invocation).toMatchObject({
+      details: {
+        exitCode: 0,
+        nested: { lines: ["ok", "token [redacted:MY_SERVICE_TOKEN] here"] },
+      },
+    });
+    expect(written).toContain("[redacted:");
+    // The live result the loop keeps using is not mutated.
+    expect(details.nested.lines[1]).toBe("token plainShapeless9Value here");
+  });
+
   it("emits N tool_invocation events per stepIndex with monotonic batchIndex", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-batch", emit, now });

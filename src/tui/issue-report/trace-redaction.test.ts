@@ -81,7 +81,7 @@ describe("redactTraceNdjson", () => {
     const { text, stats } = redactTraceNdjson(NDJSON, "errors", CTX);
     const rows = parse(text);
     expect(rows.map((r) => r.type)).toEqual(["error", "step_finished"]);
-    expect(rows[0]?.message).toBe("boom at <cwd>/x <token>");
+    expect(rows[0]?.message).toBe("boom at <cwd>/x [redacted:github-token]");
     // Paths outside home / cwd go too, and the stack keeps only its shape.
     expect(rows[0]?.stack).toBe("at <path>:1");
     expect(rows[1]?.summary).toBe("<removed>");

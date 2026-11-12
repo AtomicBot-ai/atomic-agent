@@ -93,6 +93,28 @@ describe("compressToolResult", () => {
     expect(out.summary.endsWith("… [truncated]")).toBe(true);
     expect(out.truncated).toBe(true);
   });
+
+  it("masks a secret before cutting, so no half of it survives the cut (ATO-1176)", () => {
+    const key = `sk-or-v1-${"0123456789abcdef".repeat(4)}`;
+    for (const overflow of ["head", "tail"] as const) {
+      // Unmasked, the 200-char cut would land in the middle of the key
+      // and keep most of it; masked first, the marker fits whole.
+      const output = overflow === "head" ? `${"a".repeat(130)} ${key}` : `${key} ${"a".repeat(130)}`;
+      const out = compressToolResult(
+        { tool: "shell.run", status: "ok", output },
+        { maxSummaryLength: 200, maxTailLines: 100, overflow },
+      );
+      expect(out.summary).toContain("[redacted:openrouter-key]");
+      expect(out.summary).not.toContain("sk-or-v1");
+      expect(out.summary).not.toContain("0123456789abcdef");
+    }
+  });
+
+  it("leaves the model's own words in reply and finish unmasked", () => {
+    const text = `my example: sk-or-v1-${"0123456789abcdef".repeat(4)}`;
+    const out = compressToolResult({ tool: "reply", status: "ok", output: text });
+    expect(out.summary).toBe(text);
+  });
 });
 
 describe("summariseLog", () => {
