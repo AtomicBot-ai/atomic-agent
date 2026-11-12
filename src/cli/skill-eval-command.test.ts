@@ -25,6 +25,8 @@ describe("parseSkillEvalArgs", () => {
     ).toEqual({
       skill: "pdf",
       tasksFile: "t.yaml",
+      all: false,
+      checkTasks: false,
       repeat: 3,
       variants: ["without"],
       maxSteps: 9,
@@ -44,13 +46,19 @@ describe("parseSkillEvalArgs", () => {
     expect(parseSkillEvalArgs(["pdf", "--tasks", "t.yaml", "--judge-url"])).toEqual({ error: "--judge-url requires a value" });
   });
 
+  it("lets the tasks file be found next to the skill, and reads --all and --check-tasks", () => {
+    expect(parseSkillEvalArgs(["pdf"])).toMatchObject({ skill: "pdf", tasksFile: null, all: false });
+    expect(parseSkillEvalArgs(["--all", "--check-tasks"])).toMatchObject({ skill: null, all: true, checkTasks: true });
+  });
+
   it("defaults to both variants, one attempt", () => {
     expect(parseSkillEvalArgs(["pdf", "--tasks", "t.yaml"])).toMatchObject({ repeat: 1, variants: ["with", "without"], maxSteps: null });
   });
 
   it.each([
-    [["--tasks", "t.yaml"], "missing <skill>"],
-    [["pdf"], "missing --tasks"],
+    [["--tasks", "t.yaml"], "missing <skill> (or --all)"],
+    [["pdf", "--all"], "--all evaluates every skill with a tasks file; leave out <skill>"],
+    [["--all", "--tasks", "t.yaml"], "--all finds each skill's tasks file; leave out --tasks"],
     [["pdf", "--tasks"], "--tasks requires a file"],
     [["pdf", "--tasks", "t.yaml", "--repeat", "0"], "--repeat expects a positive integer"],
     [["pdf", "--tasks", "t.yaml", "--only", "both"], "--only expects with or without"],
@@ -74,9 +82,24 @@ describe("skillEvalCommand", () => {
   afterEach(() => vi.restoreAllMocks());
 
   it("exits 2 on bad arguments before booting anything", async () => {
-    expect(await skillEvalCommand(["pdf"])).toBe(2);
-    expect(stderr).toContain("missing --tasks");
+    expect(await skillEvalCommand(["--tasks", "t.yaml"])).toBe(2);
+    expect(stderr).toContain("missing <skill>");
     expect(stderr).toContain("usage: atomic-agent skill eval");
+  });
+
+  it("exits 2 when a skill has no tasks file and none is given", async () => {
+    expect(await skillEvalCommand(["no-such-skill-here"])).toBe(2);
+    expect(stderr).toContain("no tasks file for no-such-skill-here");
+  });
+
+  it("--check-tasks prints where each starter's tasks file is and runs nothing", async () => {
+    let stdout = "";
+    vi.mocked(process.stdout.write).mockImplementation((chunk) => {
+      stdout += String(chunk);
+      return true;
+    });
+    expect(await skillEvalCommand(["--all", "--check-tasks"])).toBe(0);
+    expect(stdout).toMatch(/^plain-writing\t\d+ tasks\t.*plain-writing[\\/]evals[\\/]tasks\.yaml$/m);
   });
 
   it("exits 2 before booting when judge checks have no usable judge", async () => {

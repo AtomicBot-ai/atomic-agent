@@ -62,10 +62,12 @@ const HELP =
     "  browse [--source owner/repo]   Browse installable skills (ClawHub + configured GitHub taps)",
     "  search <query>             Search ClawHub + the configured GitHub taps",
     "  tap list|add <owner/repo>|remove <owner/repo>   Manage hub taps (mutates config.json)",
-    "  eval <name> --tasks <tasks.yaml> [--repeat <n>] [--only with|without] [--max-steps <n>] [--no-approval] [--json]",
+    "  eval <name> [--tasks <tasks.yaml>] | --all  [--check-tasks] [--repeat <n>] [--only with|without] [--max-steps <n>] [--no-approval] [--json]",
     "       [--judge-url <url>] [--judge-model <id>]   judge for `judge` checks (else skills.eval.judgeProvider, else the active cloud provider)",
     "                             Run each task with the skill and without it, check the answers, and save",
-    "                             accuracy, time, tokens and cost to <stateDir>/skill-evals/<name>/ (Skill Lab)",
+    "                             accuracy, time, tokens and cost to <stateDir>/skill-evals/<name>/ (Skill Lab).",
+    "                             Without --tasks the skill's own evals/tasks.yaml is used; --all runs every skill",
+    "                             that has one; --check-tasks only prints where the tasks file is",
   ].join("\n") + "\n";
 
 export async function skillCommand(args: string[]): Promise<number> {

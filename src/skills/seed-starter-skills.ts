@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { platform as osPlatform } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { isSkillEligibleForPlatform } from "./skill-loader.js";
@@ -43,6 +43,14 @@ const REMOVED_STARTER_SKILLS: readonly string[] = [
   "ddgr-web-search",
   "exa-web-search",
 ];
+
+/**
+ * A starter's Skill Lab tasks folder (ATO-1163). Not copied into
+ * `globalSkillsDir`: the model can read any file under a loaded skill's
+ * folder, and these hold the expected answers. `skill eval` reads them
+ * from the packaged tree (`src/skills/eval/tasks-location.ts`).
+ */
+export const STARTER_EVALS_DIR_NAME = "evals";
 
 function markerPath(root: string): string {
   return join(root, "skill-creator", "SKILL.md");
@@ -174,7 +182,11 @@ export async function seedStarterSkillsIfMissing(
       await rm(destPath, { recursive: true, force: true });
     }
 
-    await cp(srcPath, destPath, { recursive: true });
+    const evalsDir = join(srcPath, STARTER_EVALS_DIR_NAME);
+    await cp(srcPath, destPath, {
+      recursive: true,
+      filter: (src) => src !== evalsDir && !src.startsWith(evalsDir + sep),
+    });
     installed.push(name);
   }
 

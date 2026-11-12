@@ -3,7 +3,7 @@
 Status: current
 Owner: src/skills/eval/
 
-`atomic-agent skill eval <skill> --tasks tasks.yaml` runs each task twice: once with the skill in the model's catalog (`with`) and once with it hidden (`without`). It checks every answer and saves accuracy, wall time, tokens and cost for both to one JSON file. Epic ATO-996; format ATO-1099, command ATO-1098.
+`atomic-agent skill eval <skill> [--tasks tasks.yaml]` runs each task twice: once with the skill in the model's catalog (`with`) and once with it hidden (`without`). It checks every answer and saves accuracy, wall time, tokens and cost for both to one JSON file. Epic ATO-996; format ATO-1099, command ATO-1098, judge ATO-1101, starter tasks ATO-1163.
 
 ## Entry points
 
@@ -12,6 +12,7 @@ Owner: src/skills/eval/
 - [judge.ts](judge.ts): the judge model behind `judge` checks (ATO-1101).
 - [run-skill-eval.ts](run-skill-eval.ts): plans and runs the with/without runs through a driver (`SkillEvalDriver`), so tests need no model.
 - [eval-result.ts](eval-result.ts): the result document and its summary.
+- [tasks-location.ts](tasks-location.ts): finds a skill's own tasks file when `--tasks` is left out (ATO-1163).
 - [run-store.ts](run-store.ts): saves and reads results under `<stateDir>/skill-evals/`.
 - [../../cli/skill-eval-command.ts](../../cli/skill-eval-command.ts): the CLI and the driver over a live runtime.
 
@@ -71,6 +72,36 @@ A local llama-server entry is never the judge (it is the model under test). A ta
 
 Judge calls are eval overhead: their tokens and cost are not counted in the runs or the summary. They are reported apart, as `judgeUsage` in the result and a `judge: N tokens, $X` line under the table. The cost is the service's bill when it reports one, else the model's price from `userModels` or the bundled catalog; null when neither prices it.
 
+## Where the tasks file lives
+
+Without `--tasks`, `skill eval <skill>` looks in this order and takes the first file found (`findSkillTasksFile`):
+
+1. `<starter-skills>/<skill>/evals/tasks.yaml` (or `.yml`): the packaged starter tree (`resolveStarterSkillsSourceDir`).
+2. `<stateDir>/skills/<skill>/evals/tasks.yaml`, `evals/tasks.yml`, `tasks.yaml`, `tasks.yml`: the installed skill folder.
+
+Project skills are not looked up: the eval runtime works in a temp folder, so it never loads them.
+
+The seeder leaves a starter's `evals/` folder out of the installed copy (`STARTER_EVALS_DIR_NAME` in `../seed-starter-skills.ts`). The model can read any file under a loaded skill's folder, and `evals/` holds the expected answers. A skill you write yourself can keep its tasks in its own folder; the same caveat applies to it.
+
+- `--all` runs every skill that has a tasks file, on one runtime, one result file per skill. A skill with tasks that is not installed is skipped and listed; the exit code is then 1.
+- `--check-tasks` runs nothing: it prints `<skill>\t<n> tasks\t<path>` per skill and exits 0, or exits 2 when there is no tasks file. A UI can use it to decide whether to offer the eval.
+- `command` checks get `SKILL_EVAL_TASKS_DIR`, the folder of the tasks file, so a check can call a helper script shipped next to it: `node "$SKILL_EVAL_TASKS_DIR/checks/x.mjs"`.
+
+### Starter tasks (ATO-1163)
+
+| Skill | Tasks | Needs on the machine |
+|---|---|---|
+| `audit` | find the SQL injection and the hard-coded password with file:line; audit read-only | node |
+| `code-graph` | callers of `chargeCard` with path:line (a decoy has a similar name); where login lives | node |
+| `pandoc` | Markdown to .docx; Markdown to a standalone HTML page | node; pandoc for the agent |
+| `pdf` | page count; a figure from the text; save page 2 as its own PDF | poppler (`pdfinfo`, `pdftotext`) for the check; qpdf or poppler for the agent |
+| `plain-writing` | rewrite landing copy without AI tells, facts kept; rewrite one sentence | node |
+| `skill-creator` | write a valid `SKILL.md` for two small skills | node |
+| `verify-work` | run a script and report its real output; fix a bug and prove the test passes | node |
+| `xlsx` | build a sales workbook with a SUM formula | node; python3 + openpyxl for the agent |
+
+The command checks are POSIX shell lines (`node "$SKILL_EVAL_TASKS_DIR/…"`, `grep`), so the starter tasks expect macOS or Linux. `src/skills/eval/starter-evals.test.ts` loads every starter tasks file and checks that the helper scripts its checks call exist. The tasks are kept small so a full run stays short; they say whether a skill helps a model on its typical job, not how good the model is.
+
 ## How a run works
 
 - One runtime is booted on a fresh temp folder. Before each run the folder is emptied and the task's fixtures are copied in; the agent works there and the command checks run there.
@@ -80,7 +111,7 @@ Judge calls are eval overhead: their tokens and cost are not counted in the runs
 - Approval requests are refused, since nobody is there to answer; `--no-approval` runs at level 5 instead. Refusals are counted per run (`approvalsDenied`).
 - Memory is read-only during an eval (`memoryReadOnly` on `runTurn`): recall works as in a normal chat, but no run writes to memory. No end-of-turn reflection (notes, lessons, procedures), no lesson success/failure bump, and the `memory.*` write tools (`memory.notes.store` / `forget`, `memory.profile.set` / `remove`) are hidden from the model (`memoryReadOnlyToolFilter` in `src/agent/tool-resource-class.ts`). So nothing one variant does can help or hurt the other through memory. Both still see the same memory the person already had.
 
-Options: `--repeat <n>` runs everything n times; `--only with|without` runs one variant; `--max-steps <n>` is the step limit for tasks without their own `maxSteps`; `--json` prints the result document instead of the table; `--keep-workdir` keeps the temp folder.
+Options: `--repeat <n>` runs everything n times; `--only with|without` runs one variant; `--max-steps <n>` is the step limit for tasks without their own `maxSteps`; `--json` prints the result document instead of the table; `--keep-workdir` keeps the temp folder; `--all` and `--check-tasks` are described above.
 
 ## Result file
 
@@ -125,5 +156,9 @@ Options: `--repeat <n>` runs everything n times; `--only with|without` runs one 
 ```
 
 `delta` is `with` minus `without`: positive accuracy means the skill helps, positive time, tokens or cost means it costs more. It is null unless both variants ran; a token or cost delta is null when either side reported none. A with/without table (the TUI, ATO-1100; the desktop button, ATO-1102) reads `summary` and `summary.perTask` as they are.
+
+`--json` prints this document (pretty-printed, the whole of stdout; progress goes to stderr). With `--all --json` stdout is one object `{ "schema": "atomic-agent.skill-eval-batch/1", "results": [ …one document per skill… ], "missing": ["skill-not-installed"] }`.
+
+Exit codes: 0 when every run finished; 1 when stopped early (Ctrl-C or SIGTERM abort the run, the partial result is still saved with `"complete": false` and printed) or a skill was not installed; 2 for bad arguments, a missing or invalid tasks file, or a judge that cannot be used.
 
 Tokens and cost come from the turn result (`RunTurnResult.usage`, `RunTurnResult.spendUsd`): the same usage the provider reports and the same per-model pricing the cost accumulator (`src/llm/provider/cost-accumulator.ts`) uses. Side calls outside the step loop (memory, compaction) are not included.
