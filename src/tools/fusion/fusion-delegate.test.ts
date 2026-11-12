@@ -113,7 +113,7 @@ function sixTasks(): Array<{
 
 describe("fusion.delegate", () => {
   it("passes a cloud parent's workspace into worker creation", async () => {
-    const create = vi.fn((meta, workingDir?: string) => createEmptySessionState({ id: `${FUSION_WORKER_ID_PREFIX}inherit`, workingDir: workingDir ?? "/boot", metadata: { fusionWorker: meta } }));
+    const create = vi.fn((meta, workingDir?: string, _inheritWorkspace?: boolean) => createEmptySessionState({ id: `${FUSION_WORKER_ID_PREFIX}inherit`, workingDir: workingDir ?? "/boot", metadata: { fusionWorker: meta } }));
     const runTurn = vi.fn(async session => {
       expect(session.workingDir).toBe("/selected"); return turnResult({ session });
     });
