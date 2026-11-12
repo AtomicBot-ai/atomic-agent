@@ -109,3 +109,56 @@ test("the catalogue takes the split reasons and the provider type", () => {
     assert.deepEqual(v.props, { step: "onboarding", reason: r, provider_preset: "deepseek", kind: "cloud" });
   }
 });
+
+// Review round: provider_setup_failed.kind must agree with model_configured's
+// kind for the same provider (ATO-816: an app the user runs, such as Ollama,
+// LM Studio or Atomic Chat, is Custom, like a custom URL). Both sides run
+// for real: the wizard's ANX.providerFailed (renderer/analytics.js in a vm)
+// and setup.ts configuredRoute over a config.json naming the same provider.
+test("the wizard and model_configured give one provider the same kind", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const require = createRequire(import.meta.url);
+  const SU = require("../out/main/analytics/setup.js");
+  const { LOCAL_APP_PRESETS } = require("../out/main/analytics/catalog-values.js");
+
+  const sent = [];
+  const noop = () => {};
+  const rctx = vm.createContext({
+    window: { atomic: { track: (event, props) => sent.push({ event, props }) }, addEventListener: noop },
+    setTimeout, clearTimeout,
+  });
+  const dir = new URL("../renderer/", import.meta.url);
+  vm.runInContext(readFileSync(new URL("analytics-acts.js", dir), "utf8")
+    + "\n" + readFileSync(new URL("analytics.js", dir), "utf8") + "\n;globalThis.__ANX = ANX;", rctx);
+  const wizardKind = (row) => {
+    sent.length = 0;
+    rctx.__ANX.providerFailed("list_failed", true, row);
+    return sent.find((s) => s.event === "provider_setup_failed").props.kind;
+  };
+  const configuredKind = (provider) => {
+    const stateDir = mkdtempSync(join(tmpdir(), "kind-"));
+    writeFileSync(join(stateDir, "config.json"), JSON.stringify({
+      llm: { activeTextProvider: provider.id, providers: [{ id: provider.id, kind: provider.kind }] },
+    }));
+    SU.configureSetup({ stateDir });
+    return SU.configuredRoute().kind;
+  };
+
+  // the wizard's own rows, read from renderer.js: every local:true row is a LOCAL_APP_PRESETS id
+  const localIds = [...source.matchAll(/\{id:'([\w.-]+)'[^}]*\blocal:true\b/g)].map((m) => m[1]).sort();
+  assert.deepEqual(localIds, [...LOCAL_APP_PRESETS].sort());
+
+  for (const id of LOCAL_APP_PRESETS) {
+    const row = { id, kind: "openai-compatible", local: true };
+    assert.equal(wizardKind(row), "custom", id);
+    assert.equal(configuredKind(row), "custom", id);
+  }
+  const cloud = { id: "deepseek", kind: "deepseek" };
+  assert.equal(wizardKind(cloud), "cloud");
+  assert.equal(configuredKind(cloud), "cloud");
+  const custom = { id: "openai-compatible", kind: "openai-compatible", custom: true };
+  assert.equal(wizardKind(custom), "custom");
+  assert.equal(configuredKind({ id: "my-proxy", kind: "openai-compatible" }), "custom");
+});

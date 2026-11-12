@@ -216,8 +216,13 @@ const ANX = (() => {
     const props = {step: inOnboarding ? 'onboarding' : 'settings', reason};
     if (row) {
       props.provider_preset = presetId(row);
-      // ATO-1195: the provider's type, as model_configured says it.
-      props.kind = row.custom ? 'custom' : row.local ? 'local' : 'cloud';
+      /* ATO-1195: the provider's type, the same as model_configured's
+         (setup.ts configuredRoute). An app the user runs here (Ollama, LM
+         Studio, Atomic Chat: local:true rows) is Custom, like a custom URL
+         (ATO-816); `local` is only the managed llama.cpp, which this wizard
+         never sets up. The local:true ids are LOCAL_APP_PRESETS in
+         catalog-values.ts. */
+      props.kind = row.custom || row.local ? 'custom' : 'cloud';
     }
     track('provider_setup_failed', props);
   }

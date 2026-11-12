@@ -144,7 +144,8 @@ export const EVENTS: Record<string, EventSpec> = {
       step: en(["onboarding", "settings"]),
       /* ATO-1195: list_failed split by what went wrong on our side:
          agent_crashed, not_json, no_binary. `kind` is the provider's type,
-         as in model_configured (local, cloud, custom). */
+         as in model_configured: cloud, or custom for a custom URL and for
+         an app the user runs (Ollama, LM Studio, Atomic Chat). */
       reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "key_rejected", "provider_error", "agent_crashed", "not_json", "no_binary", "list_failed", "other"]),
       provider_preset: en(PROVIDER_PRESETS, { fallback: "custom" }),
       kind: en(["local", "cloud", "custom"], { nullable: true }),

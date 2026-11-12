@@ -6,6 +6,7 @@
 
 import { curatedMeta } from "../model-catalog.js";
 import { backendFailReason, daemonEffect, keyCheckResult, presetOf, supervisedProps, switchOutcome } from "./classify.js";
+import { LOCAL_APP_PRESETS } from "./catalog-values.js";
 import { localEngineOf, readConfigFile } from "./environment.js";
 import { analyticsEnabled, currentRunMode, flagsStore, refreshRunMode, track } from "./core.js";
 
@@ -48,7 +49,7 @@ export function providerKeyChecked(providerId: unknown, res: unknown): void {
 }
 
 /** The provider the config now routes to, as `model_configured` names it. */
-function configuredRoute(): { provider: string; kind: "local" | "cloud" | "custom" } | null {
+export function configuredRoute(): { provider: string; kind: "local" | "cloud" | "custom" } | null {
   const cfg = readConfigFile(stateDir);
   if (!cfg) return null;
   const llm = cfg["llm"] as { activeTextProvider?: unknown; providers?: unknown } | undefined;
@@ -62,7 +63,9 @@ function configuredRoute(): { provider: string; kind: "local" | "cloud" | "custo
     return lm?.mode === "external" ? { provider: "custom", kind: "custom" } : { provider: "llama.cpp", kind: "local" };
   }
   const preset = presetOf(active);
-  return { provider: preset, kind: preset === "custom" ? "custom" : "cloud" };
+  // ATO-1195: an app the user runs (Ollama, LM Studio, Atomic Chat) is Custom, as in provider_setup_failed.
+  const custom = preset === "custom" || (LOCAL_APP_PRESETS as readonly string[]).includes(preset);
+  return { provider: preset, kind: custom ? "custom" : "cloud" };
 }
 
 /** A switch / activation / custom-endpoint write landed with a usable provider: `model_configured`, once. */
