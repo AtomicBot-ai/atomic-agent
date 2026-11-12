@@ -107,8 +107,12 @@ export class SkillsOrchestrator {
   /** Validate live policy; the model still loads the body through skill.view. */
   prepareInvocation(name: string, input: string): string {
     const workspace = this.workspace();
-    if (!workspace) throw new Error("Skill slash commands require cloud mode");
-    workspace.skills.assertAvailable(name);
+    if (workspace) workspace.skills.assertAvailable(name);
+    else {
+      // Local mode: the boot registry is what the local prompt and skill.view see.
+      if (this.runtime.skillRegistry.isDisabled(name)) throw new Error(`skill ${name} is disabled`);
+      this.runtime.skillRegistry.get(name);
+    }
     return `Use the ${JSON.stringify(name)} skill. Load its instructions with skill.view(${JSON.stringify({ name })}) before proceeding.`
       + (input ? `\n\n${input}` : "");
   }

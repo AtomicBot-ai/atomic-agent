@@ -25,7 +25,8 @@ describe("cloud skill slash submission", () => {
     expect(s.slashPaletteCursor).toBe(filterSlashCommands("skill", commands).length - 1);
     s = tuiReducer(s, { type: "slash_palette_cursor_set", row: 100 });
     expect(s.slashPaletteCursor).toBe(filterSlashCommands("skill", commands).length - 1);
-    expect(skillSlashCommands({ ...s.skillsPanel, workspace: undefined })).toEqual([]);
+    // Local mode (no workspace) offers the same enabled skills (ATO-1469).
+    expect(skillSlashCommands({ ...s.skillsPanel, workspace: undefined }).map(c => c.name)).toEqual(["openspec-explore", "other-skill"]);
   });
 
   it.each(["steer", "queue"] as const)("uses the normal %s path while busy", mode => {
