@@ -45,9 +45,9 @@ test('apps and any address you typed are on Custom, keys, subscriptions and clou
   const g = grouping(saved);
   // ATO-816 (Nadya): Custom is any app or server you already run, a remote OpenAI-compatible URL included,
   // the same rule as the onboarding wizard's "custom base URL" row (#1189).
-  assert.deepEqual(g.tab('external').map((p) => p.id), ['ollama', 'lmstudio', 'atomic-chat', 'my-vllm', 'office-box']);
+  assert.deepEqual(Array.from(g.tab('external'), (p) => p.id), ['ollama', 'lmstudio', 'atomic-chat', 'my-vllm', 'office-box']);
   // A cloud preset is openai-compatible too: told apart by its id or its preset's host.
-  assert.deepEqual(g.tab('cloud').map((p) => p.id), ['openrouter', 'claude-cli', 'groq', 'my-groq', 'qwen']);
+  assert.deepEqual(Array.from(g.tab('cloud'), (p) => p.id), ['openrouter', 'claude-cli', 'groq', 'my-groq', 'qwen']);
   assert.equal(g.of(saved[5]), 'external');
   assert.equal(g.of(saved[1]), 'cloud');
 });
