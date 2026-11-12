@@ -393,6 +393,12 @@ contextBridge.exposeInMainWorld("atomic", {
   /** `kind` (dump | report) only labels the bundle for analytics. */
   debugBundle: (kind?: "dump" | "report") =>
     kind === undefined ? ipcRenderer.invoke("app:debugBundle") : ipcRenderer.invoke("app:debugBundle", kind),
+  /** ATO-1466: the support id (read only with analytics off) and whether analytics is on. */
+  supportId: () => ipcRenderer.invoke("app:supportId"),
+  /** ATO-1466: support id, analytics on/off, install channel and the scrubbed agent.log tail for a bug report. */
+  bugReportInfo: () => ipcRenderer.invoke("app:bugReportInfo"),
+  /** ATO-1466: write that scrubbed log tail to Downloads, for a link too long to carry it. */
+  bugReportSaveLog: () => ipcRenderer.invoke("app:bugReportSaveLog"),
   unverified: () => ipcRenderer.invoke("app:unverified"),
   unverifiedSet: (id: string, on: boolean) => ipcRenderer.invoke("app:unverifiedSet", { id, on }),
 
