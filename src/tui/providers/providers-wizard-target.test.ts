@@ -99,6 +99,22 @@ describe("apiKeyPhaseError", () => {
     }
   });
 
+  it("makes the key optional for a server on another computer on this network (ATO-1066)", () => {
+    for (const baseUrlLine of [
+      "http://192.168.1.20:8080",
+      "192.168.1.20:8080", // no scheme, as typed
+      "gpu-box.local:1234",
+      "http://10.0.0.5:11434",
+    ]) {
+      const wizard = { ...wizardFor("openai-compatible"), baseUrlLine };
+      expect(wizardKeyIsOptional(wizard), baseUrlLine).toBe(true);
+      expect(apiKeyPhaseError(wizard)).toBeNull();
+      expect(emptyKeyMeaningForWizard(wizard)).toContain("Optional");
+      // No credential check to run: the model list is the reachability check.
+      expect(verifyTargetForWizard(wizard)).toBeNull();
+    }
+  });
+
   it("still requires a key for a non-loopback custom URL", () => {
     const wizard = {
       ...wizardFor("openai-compatible"),

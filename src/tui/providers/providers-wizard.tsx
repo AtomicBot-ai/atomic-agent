@@ -5,6 +5,7 @@ import {
   refreshAimlapiChatCatalogFromApi,
 } from "../../llm/provider/aimlapi/fetch-aimlapi-chat-catalog.js";
 import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-compat-models.js";
+import { describeOtherComputerUnreachable } from "../../llm/provider/openai/network-server-address.js";
 import { fetchGeminiModels } from "../../llm/provider/gemini/fetch-gemini-models.js";
 import {
   getCachedOpenRouterChatPicks,
@@ -62,6 +63,10 @@ function explainModelListError(error: string, w: ProvidersWizardState): string {
   // `http <status>` leads; the provider's own sentence may follow it, and
   // a number inside that sentence is not the status.
   const status = /^http (\d{3})\b/.exec(error)?.[1];
+  // ATO-1066: a server on another computer that did not answer is about
+  // that computer (asleep, server stopped, bound to 127.0.0.1, firewall).
+  const unreachable = describeOtherComputerUnreachable(baseUrlForWizard(w), error);
+  if (unreachable) return unreachable;
   if (status === "401" || status === "403") {
     return `${service} rejected this key, check it belongs to ${service}`;
   }
@@ -517,7 +522,8 @@ export function ProvidersWizard(props: {
       title: "API base URL",
       value: w.baseUrlLine,
       placeholder: OPENAI_COMPAT_DEFAULT_BASE_URL,
-      hint: "Enter to continue · Esc back",
+      // ATO-1066: a model on another computer is this row too.
+      hint: "Enter to continue · Esc back · another computer: its address, e.g. 192.168.1.20:8080",
       error: w.error,
     });
   }
