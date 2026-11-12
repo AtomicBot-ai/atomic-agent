@@ -205,10 +205,9 @@ async function dispatchToRuntime(text: string, ref: SlackRef, ctx: SlackInboundC
   };
   try {
     await ctx.runtime.runTurn(session, text, {
-      // No Slack entry in `TurnOrigin` / `AnswerChannel` yet (shared
-      // types, follow-up): a human-driven remote turn, shaped for a chat
-      // surface without tables or headings and with a ~3500 cap.
-      origin: "http",
+      origin: "slack",
+      // No Slack entry in `AnswerChannel` yet (shared type, follow-up):
+      // shaped for a chat surface without tables or headings, ~3500 cap.
       answerChannel: "telegram",
       signal: controller.signal,
       eventHook,

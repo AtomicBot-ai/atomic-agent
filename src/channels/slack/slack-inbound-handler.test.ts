@@ -71,6 +71,12 @@ describe("handleSlackEvent", () => {
     expect(posted).toEqual([{ target: { channel: "D1", threadTs: "10.1" }, text: "*done*" }]);
   });
 
+  it("runs the turn with the slack origin and a chat answer style", async () => {
+    const { ctx, runTurn } = makeCtx();
+    await handleSlackEvent(dm("hello"), ctx);
+    expect(runTurn.mock.calls[0]?.[2]).toMatchObject({ origin: "slack", answerChannel: "telegram" });
+  });
+
   it("strips the mention and answers in the channel thread", async () => {
     const { ctx, posted, runTurn } = makeCtx();
     await handleSlackEvent(mention("build it", { thread_ts: "19.0" }), ctx);
