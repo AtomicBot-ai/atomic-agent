@@ -67,6 +67,15 @@ import { createSetActiveLlmHandler } from "./route-llm-active.js";
 import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.js";
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
+import {
+  createDeleteMemoryNoteHandler,
+  createDeleteProfileFactHandler,
+  createEditMemoryNoteHandler,
+  createEditProfileFactHandler,
+  createListMemoryNotesHandler,
+  createListProfileFactsHandler,
+  createProfileFactHistoryHandler,
+} from "./route-memory.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 
 /**
@@ -230,6 +239,14 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/llm/active", handler: createSetActiveLlmHandler() },
     // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
     { method: "POST", path: "/api/memory/embeddings/reconnect", handler: createReconnectMemoryEmbeddingsHandler() },
+    // ATO-1124: the person's own list / edit / delete of notes and profile facts (route-memory.ts).
+    { method: "GET", path: "/api/memory/notes", handler: createListMemoryNotesHandler() },
+    { method: "PATCH", path: "/api/memory/notes/{id}", handler: createEditMemoryNoteHandler() },
+    { method: "DELETE", path: "/api/memory/notes/{id}", handler: createDeleteMemoryNoteHandler() },
+    { method: "GET", path: "/api/memory/profile", handler: createListProfileFactsHandler() },
+    { method: "GET", path: "/api/memory/profile/{key}/history", handler: createProfileFactHistoryHandler() },
+    { method: "PATCH", path: "/api/memory/profile/{key}", handler: createEditProfileFactHandler() },
+    { method: "DELETE", path: "/api/memory/profile/{key}", handler: createDeleteProfileFactHandler() },
     // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.
     { method: "POST", path: "/api/telegram/pairing", handler: telegramPairing.start },
     { method: "GET", path: "/api/telegram/pairing", handler: telegramPairing.status },
