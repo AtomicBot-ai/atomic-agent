@@ -283,6 +283,8 @@ contextBridge.exposeInMainWorld("atomic", {
   upgradeGet: () => ipcRenderer.invoke("app:upgradeGet"),
   upgradeSwitch: () => ipcRenderer.invoke("app:upgradeSwitch"),
   upgradeLater: () => ipcRenderer.invoke("app:upgradeLater"),
+  upgradeDownload: () => ipcRenderer.invoke("app:upgradeDownload"),   // ATO-1475: the ask's Download click
+  upgradeNotNow: () => ipcRenderer.invoke("app:upgradeNotNow"),       // ATO-1475: Not now, kept across launches
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */
   task: (id: string) => ipcRenderer.invoke("agent:task", id),

@@ -114,7 +114,7 @@ import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pre
 import { probeLinuxSandbox, sandboxVerdict } from "./linux-sandbox.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
 import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
-import { localPickTakenLive, parseRecommendJson, upgradeStillWanted, upgradeVerdict, type UpgradeModel } from "./upgrade-model.js";
+import { localPickTakenLive, parseRecommendJson, parseUpgradeDeclined, upgradeDownloadLabel, upgradeStillWanted, upgradeVerdict, type UpgradeModel } from "./upgrade-model.js";
 import { cleanRemoteUrl, readRemoteAgent, writeRemoteAgent, type KeyBox } from "./remote-agent.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
@@ -1797,13 +1797,20 @@ function wireIpc(client: AgentClient): void {
   };
   /* ATO-1044: after the starter, the best model for this computer
      (upgrade-model.ts). The agent names it (`models recommend --json`,
-     ATO-1043); it downloads in the one pull slot, so the window's card and
-     the chat line follow it through `cli:pull`. On disk, the chat asks:
-     Switch now / Later (`app:upgradeModel`, phases downloading | ready |
-     switching | switched | failed). Never switched without the click. */
+     ATO-1043). ATO-1475: the chat asks first, Download (size) / Not now
+     (phase ask); only the click starts it, in the one pull slot, so the
+     window's card and the chat line follow it through `cli:pull`. Not now
+     is kept in upgrade-declined.json, so it is not asked again. On disk,
+     the chat asks: Switch now / Later (`app:upgradeModel`, phases ask |
+     downloading | ready | switching | switched | failed). Never switched
+     without the click. */
   let upgradeLast: Record<string, unknown> | null = null;
   let upgradeLaterId: string | null = null;   // Later: not asked again in this run of the app
   let upgradeModel: UpgradeModel | null = null;
+  const upgradeDeclinedFile = () => join(app.getPath("userData"), "upgrade-declined.json");
+  const upgradeDeclinedId = (): string | null => {
+    try { return parseUpgradeDeclined(readFileSync(upgradeDeclinedFile(), "utf8")); } catch { return null; }
+  };
   const upgradeSay = (ev: Record<string, unknown>) => { upgradeLast = ev; send("app:upgradeModel", ev); };
   ipcMain.handle("app:upgradeGet", () => upgradeLast);
   const upgradeState = async () => {
@@ -1832,12 +1839,19 @@ function wireIpc(client: AgentClient): void {
       ...now,
       downloadBusy: !!downloadRunning(),
       laterId: upgradeLaterId,
+      declinedId: upgradeDeclinedId(),
       starterId: STARTER_MODEL_ID,
     });
     if (verdict.act === "none") return;
     const model = verdict.model;
     if (verdict.act === "offer") { offerUpgrade(model); return; }
     upgradeModel = model;
+    upgradeSay({ id: model.id, name: model.name, sizeLabel: upgradeDownloadLabel(model), phase: "ask" });
+  };
+  // ATO-1475: the person's Download click is the only thing that starts the big pull.
+  ipcMain.handle("app:upgradeDownload", () => {
+    const model = upgradeModel;
+    if (!model) return { ok: false, error: "nothing to download" };
     const r = startModelPull(model.id, "upgrade", (res, projectorSkipped) => {
       if (quitting) return;
       if (!res.ok) { upgradeSay({ id: model.id, name: model.name, phase: "failed", error: res.error ?? null }); return; }
@@ -1847,8 +1861,20 @@ function wireIpc(client: AgentClient): void {
         offerUpgrade(model, projectorSkipped);
       }).catch(() => undefined);
     });
-    if (r.ok) upgradeSay({ id: model.id, name: model.name, sizeLabel: model.sizeLabel, phase: "downloading" });
-  };
+    const error = r.ok ? null : ((r as { error?: string }).error ?? null);
+    upgradeSay(r.ok
+      ? { id: model.id, name: model.name, sizeLabel: model.sizeLabel, phase: "downloading" }
+      : { id: model.id, name: model.name, phase: "failed", error });
+    return { ok: r.ok, error };
+  });
+  ipcMain.handle("app:upgradeNotNow", () => {
+    if (upgradeModel) {
+      try { writeFileSync(upgradeDeclinedFile(), `${JSON.stringify({ id: upgradeModel.id, at: Date.now() })}\n`); } catch { /* asked again next launch */ }
+    }
+    upgradeModel = null;
+    upgradeLast = null;
+    return true;
+  });
   ipcMain.handle("app:upgradeLater", () => {
     if (upgradeModel) upgradeLaterId = upgradeModel.id;
     upgradeLast = null;
