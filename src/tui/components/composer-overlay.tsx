@@ -20,6 +20,23 @@ import { MOUSE_LAYER_PANEL } from "../mouse/mouse-registry.js";
  */
 export const COMPOSER_CHROME_ROWS = 8;
 
+/** Longest suggestion the ghost row paints before it is cut short. */
+const GHOST_SUGGESTION_MAX_CHARS = 96;
+
+/**
+ * The next-step suggestion as the empty composer paints it (ATO-1095):
+ * greyed after the caret, in the placeholder's place, with the key that
+ * takes it. The editor paints its placeholder on one row, so a long
+ * suggestion is cut here; Tab still fills the buffer with all of it.
+ */
+export function ghostSuggestionPlaceholder(suggestion: string): string {
+  const shown =
+    suggestion.length > GHOST_SUGGESTION_MAX_CHARS
+      ? `${suggestion.slice(0, GHOST_SUGGESTION_MAX_CHARS - 1).trimEnd()}…`
+      : suggestion;
+  return `${shown}  · Tab`;
+}
+
 /**
  * The same count with the meta bar's height as a parameter.
  *

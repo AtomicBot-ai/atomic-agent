@@ -186,6 +186,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "session_created":
       return {
         ...state,
+        nextStepSuggestion: null,
         session: { ...state.session, sessionId: action.sessionId },
         // A different thread has a different window fill. Carrying the
         // old figure over would read as "this fresh session is already
@@ -345,6 +346,17 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
     case "composer_notice":
       if (state.composerNotice === action.text) return state;
       return { ...state, composerNotice: action.text };
+    case "next_step_suggestion_accepted":
+      if (state.nextStepSuggestion === null || state.inputValue.length > 0) {
+        return state;
+      }
+      return {
+        ...state,
+        inputValue: state.nextStepSuggestion,
+        nextStepSuggestion: null,
+        inputHistoryCursor: null,
+        inputHistoryDraft: null,
+      };
     case "composer_selection_changed":
       if (state.composerHasSelection === action.hasSelection) return state;
       return { ...state, composerHasSelection: action.hasSelection };
@@ -390,6 +402,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return {
         ...state,
         inputValue: action.value,
+        // Typing anything retires the suggestion (ATO-1095).
+        ...(action.value.length > 0 ? { nextStepSuggestion: null } : {}),
         inputHistoryCursor: null,
         inputHistoryDraft: null,
       };
@@ -534,6 +548,15 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   }
 }
 
+/**
+ * One line of plain text, or `null` when nothing usable is left: the
+ * composer paints the suggestion as its single placeholder row.
+ */
+export function normaliseNextStepSuggestion(raw: string): string | null {
+  const text = raw.replace(/\s+/g, " ").trim();
+  return text.length > 0 ? text : null;
+}
+
 function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
   switch (event.type) {
     case "user_message": {
@@ -541,6 +564,11 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       const next = { ...state, pendingModelMessage: null };
       return pending?.sessionId === state.session.sessionId && pending?.text === event.text
         ? next : appendUserMessage(next, event.text);
+    }
+    case "next_step_suggestion": {
+      const text = normaliseNextStepSuggestion(event.text);
+      if (text === state.nextStepSuggestion) return state;
+      return { ...state, nextStepSuggestion: text };
     }
     case "steer_applied":
       // A message the operator sent mid-turn, folded into the prompt of
@@ -561,6 +589,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
     case "turn_started":
       return {
         ...state,
+        // A suggestion is about the turn that ended, never the next one.
+        nextStepSuggestion: null,
         status: "running",
         currentTurnToolSteps: 0,
         runStartedAt: Date.now(),

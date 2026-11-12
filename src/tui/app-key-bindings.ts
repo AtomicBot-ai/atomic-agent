@@ -286,6 +286,26 @@ export function isPanelModalOpen(state: TuiState): boolean {
 }
 
 /**
+ * Tab would accept the next-step suggestion (ATO-1095): there is one,
+ * the composer is empty and focused, no plan is on offer (its own hint
+ * owns the field then), and nothing else claims Tab — the slash
+ * palette, an approval, a menu or the context panel.
+ */
+export function canAcceptNextStepSuggestion(state: TuiState): boolean {
+  return (
+    state.nextStepSuggestion !== null &&
+    state.inputValue.length === 0 &&
+    !state.planHandoff &&
+    state.uiMode === "chat" &&
+    state.chatFocus === "editor" &&
+    !state.slashPaletteOpen &&
+    !state.pendingApproval &&
+    !state.menuOpen &&
+    !state.contextPanelOpen
+  );
+}
+
+/**
  * True when this Ctrl+C will be seen by the composer as "copy": a live
  * selection AND a focused editor. The conditions after the flag mirror
  * the states of `editorFocus` (tui-app.tsx) a selection can coexist
@@ -665,6 +685,18 @@ export function handleAppKey(
   ) {
     const next = cycleNavSlot(state, 1);
     applyNavSlot(dispatch, next);
+    return true;
+  }
+  // Tab on an empty composer takes the greyed next-step suggestion
+  // (ATO-1095). Ahead of the routing below, which would otherwise move
+  // focus to the rail; the slash palette keeps its own Tab.
+  if (
+    !debugTabBusy &&
+    key.tab &&
+    !key.shift &&
+    canAcceptNextStepSuggestion(state)
+  ) {
+    dispatch({ type: "next_step_suggestion_accepted" });
     return true;
   }
   // Tab / Shift+Tab routing:
