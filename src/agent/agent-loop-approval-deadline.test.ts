@@ -74,7 +74,7 @@ describe("AgentLoop approval wait and the task time limit (ATO-1367)", () => {
       run: (_args, ctx) =>
         new Promise((resolve, reject) => {
           release = (reason) =>
-            resolve({ tool: "os.fs.write", status: "error", summary: `denied: ${reason}` });
+            resolve({ tool: "os.fs.write", status: "error", summary: `denied: ${reason}`, details: {}, truncated: false });
           ctx.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
         }),
     });
