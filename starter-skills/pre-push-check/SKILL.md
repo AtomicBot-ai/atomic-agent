@@ -1,6 +1,6 @@
 ---
 name: pre-push-check
-description: Before pushing code you wrote or changed in this session, ask the user three short questions about it (what changed, what could break, how to check it) so they know what is leaving their machine. Use right before os.git.push or a `git push` in the shell when the commits include your own code, and when the user runs /pre-push-check.
+description: Before os.git.push of your own code, ask the user three short questions about it. Use for /pre-push-check.
 version: 1.0.0
 requires_tools:
   - os.git.diff
