@@ -47,7 +47,7 @@ import { pickOpenRouterKey } from "./studio-key.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
 import { spellcheckEnabled, wireEditContextMenu } from "./edit-context-menu.js";
-import { logTail, redactSecrets, scrubText } from "./report-redact.js";
+import { lastLines, logTail, redactSecrets, scrubForIssue, scrubText } from "./report-redact.js";
 import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
 import {
   configGet,
@@ -3154,6 +3154,35 @@ function wireIpc(client: AgentClient): void {
         log,
       ].join("\n"));
       A.debugReportSaved(kind, { ok: true });
+      return { ok: true, path: out };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  /* ATO-1466: Help › Report an Issue… and Settings › Diagnostics. The support
+     id (read only with analytics off), whether analytics is on (the issue's
+     "Include support ID" box starts unticked when it is off), how this copy
+     was installed, and the last 200 lines of agent.log with keys, tokens,
+     emails and home paths taken out — an issue is public. The conversation is
+     never read here. */
+  const issueLogTail = (): string => {
+    try { return scrubForIssue(lastLines(logTail(readFileSync(agentLogPath(), "utf8"), 400_000), 200), homedir()); } catch { return ""; }
+  };
+  ipcMain.handle("app:supportId", async () => ({ ok: true, supportId: A.supportId(), analyticsEnabled: A.analyticsEnabled() }));
+  ipcMain.handle("app:bugReportInfo", async () => ({
+    ok: true,
+    supportId: A.supportId(),
+    analyticsEnabled: A.analyticsEnabled(),
+    installChannel: A.installChannelFor(process.platform, process.env),
+    logTail: issueLogTail(),
+  }));
+  /* The link would be too long with the log in it: the same scrubbed tail goes to a file in Downloads too. */
+  ipcMain.handle("app:bugReportSaveLog", async () => {
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const out = join(app.getPath("downloads"), `atomic-agent-log-tail-${stamp}.txt`);
+      writeFileSync(out, `${issueLogTail()}\n`);
       return { ok: true, path: out };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };

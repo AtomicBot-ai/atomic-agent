@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { logTail, redactSecrets, scrubText } = require("../out/main/report-redact.js");
+const { lastLines, logTail, redactSecrets, scrubForIssue, scrubText } = require("../out/main/report-redact.js");
 
 /** Every secret in `secrets` is gone from `text`. */
 const noneLeft = (text, secrets) => {
@@ -164,3 +164,35 @@ test("the log's tail starts at a whole line", () => {
   assert.equal(logTail(text, 30), "second line\nthird line\n");
   assert.equal(logTail("no line break at all", 5), "");
 });
+
+/* ------------------------------------------------- bug report (ATO-1466) */
+
+test("scrubForIssue: a key, a Bearer token, an email and /Users/<name> do not reach a public issue", () => {
+  const key = "sk-ant-" + "k".repeat(40);
+  const bearer = "b".repeat(40);
+  const log = [
+    `2026-11-12 ERROR provider said 401 for ${key}`,
+    `POST /v1/chat Authorization: Bearer ${bearer}`,
+    "signed in as alice@example.com",
+    "ENOENT /Users/alice/Projects/app/src/x.ts",
+    "cwd /Users/me/work and /home/bob/.config/x",
+    "C:\\Users\\carol\\AppData\\agent.log",
+  ].join("\n");
+  const out = scrubForIssue(log, "/Users/me");
+  noneLeft(out, [key, bearer, "alice@example.com", "/Users/alice", "/Users/me", "/home/bob", "carol"]);
+  assert.match(out, /provider said 401 for <redacted/);
+  assert.match(out, /signed in as <email>/);
+  assert.match(out, /ENOENT ~\/Projects\/app\/src\/x\.ts/);
+  assert.match(out, /cwd ~\/work and ~\/\.config\/x/);
+});
+
+test("scrubForIssue: the home folder only where a path segment ends", () => {
+  assert.equal(scrubForIssue("/Users/me2/x and /Users/me/y", "/Users/me"), "~/x and ~/y");
+});
+
+test("lastLines keeps the last lines and ignores a trailing newline", () => {
+  assert.equal(lastLines("a\nb\nc\n", 2), "b\nc");
+  assert.equal(lastLines("a\r\nb", 5), "a\nb");
+  assert.equal(lastLines("", 3), "");
+});
+
