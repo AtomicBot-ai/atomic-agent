@@ -366,9 +366,94 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # One SHA256SUMS.txt for every file of the release, signed with the packages key into
+  # SHA256SUMS.txt.asc (the key in packaging/atomic-chat.asc that already signs the apt/dnf
+  # repository and the rpms), and a GitHub build-provenance attestation for each file, so
+  # `gh attestation verify <file> -R AtomicBot-ai/atomic-agent` proves it came from this workflow
+  # at the tagged commit (ATO-1035). Attestations are made only for runs that publish a draft; a
+  # run by hand with allow_unsigned writes the sums without a signature.
+  checksums:
+    name: checksums, signature, attestations
+    needs: [build, packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      ALLOW_UNSIGNED: ${{ github.ref_type != 'tag' && inputs.allow_unsigned && '1' || '0' }}
+      PUBLISHES: ${{ (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)) && '1' || '0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the release files
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: release-*
+          merge-multiple: true
+
+      # Every file but the per-file .sha256 digests, which only repeat what this lists.
+      - name: Write SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          mkdir -p sums
+          cd release-assets
+          find . -maxdepth 1 -type f ! -name '*.sha256' -printf '%f\n' | LC_ALL=C sort > ../sums/files.txt
+          if [ ! -s ../sums/files.txt ]; then echo "::error::no release files to sum"; exit 1; fi
+          xargs -d '\n' sha256sum -- < ../sums/files.txt > ../sums/SHA256SUMS.txt
+          rm ../sums/files.txt
+          cat ../sums/SHA256SUMS.txt
+
+      - name: Sign SHA256SUMS.txt with the packages key
+        if: env.ALLOW_UNSIGNED != '1'
+        env:
+          KEY: ${{ secrets.LINUX_PACKAGES_GPG_KEY }}
+          PASSPHRASE: ${{ secrets.LINUX_PACKAGES_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEY" ]; then echo "::error::the LINUX_PACKAGES_GPG_KEY secret is not set"; exit 1; fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          (umask 077; mkdir -p "$GNUPGHOME")
+          expected="$(gpg --show-keys --with-colons packaging/atomic-chat.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+          printf '%s\n' "$KEY" | gpg --batch --import
+          if ! gpg --list-secret-keys "$expected" >/dev/null 2>&1; then
+            echo "::error::LINUX_PACKAGES_GPG_KEY is not the key in packaging/atomic-chat.asc"; exit 1
+          fi
+          sign=(gpg --batch --yes --pinentry-mode loopback --local-user "$expected" --armor --detach-sign)
+          if [ -n "$PASSPHRASE" ]; then
+            printf '%s' "$PASSPHRASE" | "${sign[@]}" --passphrase-fd 0 --output sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          else
+            "${sign[@]}" --output sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          fi
+          # Check it the way README.md tells people to: against the published key only.
+          gpg --dearmor --output "$RUNNER_TEMP/atomic-chat.gpg" < packaging/atomic-chat.asc
+          gpgv --keyring "$RUNNER_TEMP/atomic-chat.gpg" sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          rm -rf "$GNUPGHOME"
+
+      - name: Attest build provenance
+        if: env.PUBLISHES == '1'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release-assets/*
+            !release-assets/*.sha256
+            sums/SHA256SUMS.txt
+
+      # `release-*` like the bundles, so the release job's merged download picks them up.
+      - name: Upload the sums
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums
+          path: sums/SHA256SUMS.txt*
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: publish draft release
-    needs: [build, packages]
+    needs: [build, packages, checksums]
     if: success() && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-22.04
     permissions:

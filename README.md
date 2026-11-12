@@ -47,6 +47,24 @@ irm https://atomicagent.io/install.ps1 | iex
 
 The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart. Outside the TUI, run `atomic-agent update` (or `atag update`) to check for a newer release and re-run the installer in place; `atomic-agent update --check` probes without installing, and `--version <tag>` pins a specific release. Only the installed binary can self-update; a dev checkout updates via git, and a Linux package (below) updates with the package manager.
 
+### Verify a download
+
+CLI releases carry `SHA256SUMS.txt` (releases up to v0.7.0 have only a `.sha256` beside each file), the SHA-256 of each file in the release, signed with the packages key in [`packaging/atomic-chat.asc`](packaging/atomic-chat.asc) (fingerprint `1047 F119 58C6 442D D472  E497 E4C3 D361 FB7F F123`) as `SHA256SUMS.txt.asc`. Check the signature, then the file you downloaded:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AtomicBot-ai/atomic-agent/main/packaging/atomic-chat.asc | gpg --import
+gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+sha256sum --check --ignore-missing SHA256SUMS.txt     # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS.txt
+```
+
+Each file also has a GitHub build-provenance attestation, which shows it was built by this repository's release workflow from the tagged commit:
+
+```bash
+gh attestation verify atomic-agent-linux-x64.tar.gz --repo AtomicBot-ai/atomic-agent
+```
+
+The macOS binary is also signed with an Apple Developer ID and notarized, and the Windows binaries are Authenticode-signed.
+
 ### Linux packages
 
 On Debian, Ubuntu, Fedora, RHEL-compatible systems and Arch, Atomic Agent also comes as a package, and the package manager then updates it with the rest of the system. A package carries the same release bundle as the installer, under `/usr/lib/atomic-agent`, with `atomic-agent` and `atag` in `/usr/bin`. The repository and the rpm packages are signed with the Atomic Chat packages key in [`packaging/atomic-chat.asc`](packaging/atomic-chat.asc), fingerprint `1047 F119 58C6 442D D472  E497 E4C3 D361 FB7F F123`.
