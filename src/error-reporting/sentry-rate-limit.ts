@@ -31,82 +31,21 @@ export const SENTRY_RATE_LIMIT_MAX_KEYS = 500;
 /** File name in the state dir. */
 export const SENTRY_RATE_LIMIT_FILE = "sentry-rate-limit.json";
 
-/** The parts of a Sentry event (wire shape) the grouping key reads. */
-export interface SentryLikeEvent {
-  fingerprint?: readonly string[];
-  message?: string | { formatted?: string; message?: string };
-  exception?: {
-    values?: ReadonlyArray<{
-      type?: string;
-      value?: string;
-      stacktrace?: {
-        frames?: ReadonlyArray<{
-          filename?: string;
-          function?: string;
-          in_app?: boolean;
-        }>;
-      };
-    }>;
-  };
-}
-
 /**
- * Reduce a message to its shape: the parts that differ between two
- * copies of the same failure (ports, numbers, paths, URLs, ids) become
- * placeholders, so `connect ECONNREFUSED 127.0.0.1:8093` and
- * `connect ECONNREFUSED 127.0.0.1:19091` share one key.
+ * The key two events must share to count as "identical": the
+ * `fingerprint` array the envelope attaches (`buildFingerprint`), so the
+ * limiter and the envelope can never disagree about what it is. Its
+ * elements are already fixed words (error type, category, a cause class /
+ * tool / reason / host class such as `localhost`, the top frame's file
+ * name), never a port, path or other per-occurrence value, so two copies
+ * of one failure always share it.
+ *
+ * The fingerprint starts with `{{ default }}`, so Sentry may still split
+ * one key into several issues by message or stack; the key is never finer
+ * than a Sentry issue, only sometimes coarser.
  */
-export function normalizeMessage(message: string): string {
-  return message
-    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>")
-    .replace(
-      /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-      "<id>",
-    )
-    .replace(/(?:[a-z]:)?(?:[\\/][^\s\\/'"`:]+){2,}[\\/]?/gi, "<path>")
-    .replace(/\b0x[0-9a-f]+\b/gi, "<n>")
-    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/gi, "<id>")
-    .replace(/\d+(?:\.\d+)*/g, "<n>")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 200);
-}
-
-/**
- * The key two events must share to count as "identical": Sentry's own
- * grouping input. `fingerprint` when the event sets one; otherwise the
- * exception type + normalized value + innermost in-app frame; otherwise
- * the normalized message.
- */
-export function sentryGroupingKey(event: SentryLikeEvent): string {
-  if (event.fingerprint && event.fingerprint.length > 0) {
-    return `fp\u0001${event.fingerprint.join("\u0001")}`;
-  }
-  const exception = event.exception?.values?.at(-1);
-  if (exception && (exception.type || exception.value)) {
-    // Wire order is oldest frame first, so the crash site is the last
-    // in-app frame. Line numbers stay out: they shift between builds.
-    const frames = exception.stacktrace?.frames ?? [];
-    let top = "";
-    for (let i = frames.length - 1; i >= 0; i -= 1) {
-      const frame = frames[i];
-      if (frame && frame.in_app !== false) {
-        top = `${frame.function ?? ""}@${frame.filename ?? ""}`;
-        break;
-      }
-    }
-    return [
-      "ex",
-      exception.type ?? "",
-      normalizeMessage(exception.value ?? ""),
-      top,
-    ].join("\u0001");
-  }
-  const raw =
-    typeof event.message === "string"
-      ? event.message
-      : (event.message?.formatted ?? event.message?.message ?? "");
-  return `msg\u0001${normalizeMessage(raw)}`;
+export function sentryGroupingKey(fingerprint: readonly string[]): string {
+  return fingerprint.join("\u0001");
 }
 
 /**

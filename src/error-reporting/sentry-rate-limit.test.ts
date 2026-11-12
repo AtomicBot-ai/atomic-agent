@@ -6,11 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SentryClient, type FetchLike } from "./sentry-client.js";
 import { parseSentryDsn } from "./sentry-config.js";
+import { buildFingerprint } from "./sentry-envelope.js";
 import {
   SENTRY_RATE_LIMIT_MAX_EVENTS,
   SENTRY_RATE_LIMIT_WINDOW_MS,
   SentryRateLimiter,
-  normalizeMessage,
   sentryGroupingKey,
 } from "./sentry-rate-limit.js";
 
@@ -134,65 +134,12 @@ describe("SentryRateLimiter persistence", () => {
 });
 
 describe("sentryGroupingKey", () => {
-  it("uses the fingerprint when the event sets one", () => {
-    const a = sentryGroupingKey({ fingerprint: ["{{ default }}", "TransportError", "x"] });
-    const b = sentryGroupingKey({
-      fingerprint: ["{{ default }}", "TransportError", "x"],
-      exception: { values: [{ type: "Other", value: "different" }] },
-    });
-    expect(a).toBe(b);
-    expect(sentryGroupingKey({ fingerprint: ["{{ default }}", "TransportError", "y"] })).not.toBe(a);
-  });
-
-  it("falls back to type + normalized message + top in-app frame", () => {
-    const ev = (value: string, fn = "connect") => ({
-      exception: {
-        values: [
-          {
-            type: "Error",
-            value,
-            stacktrace: {
-              frames: [
-                { filename: "main.js", function: "run", in_app: true },
-                { filename: "client.js", function: fn, in_app: true },
-                { filename: "node:net", function: "afterConnect", in_app: false },
-              ],
-            },
-          },
-        ],
-      },
-    });
-    expect(sentryGroupingKey(ev("connect ECONNREFUSED 127.0.0.1:8093"))).toBe(
-      sentryGroupingKey(ev("connect ECONNREFUSED 127.0.0.1:19091")),
-    );
-    expect(sentryGroupingKey(ev("connect ECONNREFUSED 127.0.0.1:8093"))).not.toBe(
-      sentryGroupingKey(ev("connect ECONNREFUSED 127.0.0.1:8093", "other")),
-    );
-    expect(sentryGroupingKey(ev("a"))).not.toBe(sentryGroupingKey(ev("b")));
-  });
-
-  it("falls back to the message last", () => {
-    expect(sentryGroupingKey({ message: "llama-server 500 after 12 ms" })).toBe(
-      sentryGroupingKey({ message: { formatted: "llama-server 503 after 7 ms" } }),
-    );
-  });
-});
-
-describe("normalizeMessage", () => {
-  it("strips numbers, ports, paths, urls and ids", () => {
-    expect(normalizeMessage("connect ECONNREFUSED 127.0.0.1:8093")).toBe(
-      "connect ECONNREFUSED <n>:<n>",
-    );
-    expect(normalizeMessage("ENOENT: open '/Users/ann/.atomic-agent/state/x.json'")).toBe(
-      "ENOENT: open '<path>'",
-    );
-    expect(normalizeMessage("GET http://localhost:19091/v1/chat failed: 500")).toBe(
-      "GET <url> failed: <n>",
-    );
-    expect(normalizeMessage("session 3f2a9c1e-1b2c-4d5e-8f90-123456789abc gone")).toBe(
-      "session <id> gone",
-    );
-    expect(normalizeMessage("C:\\Users\\ann\\AppData\\x.log locked")).toBe("<path> locked");
+  it("is the fingerprint, element for element", () => {
+    const a = sentryGroupingKey(["{{ default }}", "TransportError", "x"]);
+    expect(sentryGroupingKey(["{{ default }}", "TransportError", "x"])).toBe(a);
+    expect(sentryGroupingKey(["{{ default }}", "TransportError", "y"])).not.toBe(a);
+    // Elements are joined with a separator, so a split cannot collide.
+    expect(sentryGroupingKey(["ab", "c"])).not.toBe(sentryGroupingKey(["a", "bc"]));
   });
 });
 
@@ -224,5 +171,37 @@ describe("SentryClient rate limiting", () => {
     client.capture(flood);
     await client.flush();
     expect(fetchImpl).toHaveBeenCalledTimes(12);
+  });
+
+  it("gives copies with the same fingerprint one shared budget", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200 }));
+    const client = new SentryClient({
+      dsn: DSN,
+      installId: "install-1",
+      release: "0.6.0",
+      platform: "darwin",
+      fetchImpl: fetchImpl as unknown as FetchLike,
+    });
+    // Two copies of one refused connection: different port in the
+    // message, different line in the frame, but the transport host is
+    // classified to "localhost", so buildFingerprint gives both the same
+    // array.
+    const copy = (port: number, lineno: number) => ({
+      errorType: "TransportError",
+      category: "transport",
+      source: "llm_failure",
+      message: `connect ECONNREFUSED 127.0.0.1:${port}`,
+      transportHost: "localhost",
+      frames: [{ filename: "cli.mjs", lineno, colno: 2 }],
+    });
+    expect(buildFingerprint(copy(8093, 1))).toEqual(
+      buildFingerprint(copy(19091, 7)),
+    );
+    for (let i = 0; i < 5; i += 1) client.capture(copy(8093, 1));
+    for (let i = 0; i < 5; i += 1) client.capture(copy(19091, 7));
+    client.capture(copy(8093, 1));
+    client.capture(copy(19091, 7));
+    await client.flush();
+    expect(fetchImpl).toHaveBeenCalledTimes(10);
   });
 });

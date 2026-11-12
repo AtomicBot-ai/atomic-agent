@@ -77,9 +77,9 @@ export class SentryClient {
   capture(event: ScrubbedErrorEvent): void {
     try {
       // ATO-1286: one install repeating one failure must not flood the
-      // project. Same key Sentry groups on; dropped before any envelope
-      // is built.
-      const key = sentryGroupingKey({ fingerprint: buildFingerprint(event) });
+      // project. Keyed on the fingerprint the envelope attaches; dropped
+      // before any envelope is built.
+      const key = sentryGroupingKey(buildFingerprint(event));
       if (!this.rateLimiter.shouldSend(key)) return;
       const { body } = buildEnvelope(this.options.dsn, event, {
         installId: this.options.installId,

@@ -119,8 +119,7 @@ export function buildEnvelope(
 
 /**
  * The event's Sentry `fingerprint`. Exported so the send-side limiter
- * (`sentry-rate-limit.ts`) counts "identical" by exactly the key Sentry
- * groups on.
+ * (`sentry-rate-limit.ts`) counts "identical" by exactly this array.
  */
 export function buildFingerprint(ev: ScrubbedErrorEvent): string[] {
   // `frames[0]` is the innermost frame (V8 lists the throw site first),

@@ -36,13 +36,9 @@ export {
   SENTRY_RATE_LIMIT_MAX_KEYS,
   SENTRY_RATE_LIMIT_WINDOW_MS,
   hashKey,
-  normalizeMessage,
   sentryGroupingKey,
 } from "./sentry-rate-limit.js";
-export type {
-  SentryLikeEvent,
-  SentryRateLimiterOptions,
-} from "./sentry-rate-limit.js";
+export type { SentryRateLimiterOptions } from "./sentry-rate-limit.js";
 export type {
   EnvelopeMeta,
   BuiltEnvelope,
