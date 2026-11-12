@@ -549,8 +549,6 @@ export function buildFusionDelegateTool(
           }
         }
         deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
-        // Authorised: this round counts toward the turn's caps (ATO-1406).
-        if (tracksTurn) turnBudget.noteRound(ctx.sessionId, parsed.tasks.length);
 
       } catch (err) {
         // The user's own no already says what happened and what to do,
@@ -1096,6 +1094,15 @@ export function buildFusionDelegateTool(
                 r,
               ]),
         );
+        // Workers are about to start: this round counts toward the
+        // turn's caps (ATO-1406), with only the tasks it will run — a
+        // resume's finished ones are not counted twice.
+        if (tracksTurn) {
+          turnBudget.noteRound(
+            ctx.sessionId,
+            parsed.tasks.filter((t) => !finished.has(t.id)).length,
+          );
+        }
         for (const [waveIndex, wave] of plan.waves.entries()) {
           waveWarnings.push(
             ...dependencyWarnings(wave, plan.dependencies, finished),

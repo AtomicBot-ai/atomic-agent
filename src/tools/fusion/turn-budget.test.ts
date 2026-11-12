@@ -392,3 +392,21 @@ describe("round and task caps in fusion.delegate (ATO-1406)", () => {
     expect(reasons[0]).toContain("(round 1 of at most 6 this turn, 3 tasks of at most 24 in all)");
   });
 });
+
+describe("auto-replan after a breaker trip (ATO-1406)", () => {
+  it("does not hold the planner to a replan once the breaker stopped the fan-out", async () => {
+    const budget = new FusionTurnBudget();
+    budget.begin("s-parent");
+    const d = deps({
+      turnBudget: budget,
+      resolveRunMode: () => mode({ autoReplan: 2 }),
+    });
+    d.runTurn = (async () => {
+      d.turns += 1;
+      throw new Error("invalid tool-call JSON: Unexpected token");
+    }) as never;
+    const result = await buildFusionDelegateTool(d).run({ tasks: THREE }, ctx());
+    expect(d.turns).toBe(1);
+    expect(result.details.replan).toBeUndefined();
+  });
+});

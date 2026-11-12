@@ -669,7 +669,13 @@ export async function runWorkerTasks(
   const width = Math.max(1, Math.min(options.maxWorkers, options.tasks.length));
   const runners = Array.from({ length: width }, async () => {
     for (let i = claim(); i < options.tasks.length; i = claim()) {
-      const stop = options.shouldStart?.() ?? options.shouldStartTask?.();
+      // The cap first (its row must name the cap), then the failure
+      // breaker (ATO-1406), then a stopped turn (ATO-1334, #1139):
+      // `shouldStart` is only wired when a budget cap is set.
+      const stop =
+        options.shouldStart?.() ??
+        options.shouldStartTask?.() ??
+        (options.signal.aborted ? "the turn was stopped" : undefined);
       results[i] =
         stop === undefined
           ? await runOneTask(deps, options, options.tasks[i]!)

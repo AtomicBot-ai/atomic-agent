@@ -1690,3 +1690,38 @@ describe("runWorkerTasks — task tree (ATO-940)", () => {
     expect(result!.reply).toMatch(/\(4 of 8 steps/);
   });
 });
+
+describe("runWorkerTasks — shouldStartTask (ATO-1406)", () => {
+  it("does not start a task once shouldStartTask gives a reason, after the cap is asked", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    let stop: string | undefined;
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(3),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+      shouldStartTask: () => stop,
+      onTaskFinished: () => {
+        stop = "the fan-out was stopped because the leg is broken";
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(results.map((r) => r.status)).toEqual(["ok", "cancelled", "cancelled"]);
+    expect(results[1]!.error).toBe(
+      "not started: the fan-out was stopped because the leg is broken",
+    );
+  });
+
+  it("lets the cap's reason win over the breaker's", async () => {
+    const { deps } = harness(async () => turnResult());
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+      shouldStart: () => "the spend cap",
+      shouldStartTask: () => "the breaker",
+    });
+    expect(results[0]!.error).toBe("not started: the spend cap");
+  });
+});
