@@ -528,6 +528,12 @@ export interface RunTurnOptions {
    */
   taskMaxCostUsd?: number;
   /**
+   * Re-plan cadence in steps (ATO-609). Defaults to
+   * `config.agent.task.replanEveryNSteps`; `0` is off. See
+   * `src/agent/plan/replan-cadence.ts`.
+   */
+  replanEveryNSteps?: number;
+  /**
    * Carry on past a leg boundary while the work progresses. Defaults to
    * `config.agent.task.autoContinue`; `false` restores the historical
    * "stop at `maxSteps`" behaviour for a caller that wants one leg only.

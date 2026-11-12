@@ -46,6 +46,7 @@ import { formatOutcomeRepeatNotice, formatReadRepeatNotice, formatRepeatNotice, 
 import type { BatchLoopSignal } from "./dispatch/batch-contract.js";
 import { composeSteerNotice } from "./steer-notice.js";
 import { planReminderNotice } from "./plan/plan-snapshot.js";
+import { countReplanCadenceStep, resetReplanCadence, takeReplanCadenceNotice } from "./plan/replan-cadence.js";
 
 import { getConfig } from "../config/index.js";
 
@@ -174,8 +175,14 @@ export class AgentLoop {
       overflowWindow !== null && (lastPromptWindow === null || lastPromptWindow > overflowWindow)
         ? { ...input, contextWindow: overflowWindow, profileWindowApplies: false }
         : input;
-    const { legSteps, stepCeiling, durationCeilingMs, costCeilingUsd, taskStartedAt } =
-      prepareTurnBudgets(options);
+    const {
+      legSteps, stepCeiling, durationCeilingMs, costCeilingUsd, taskStartedAt, replanEveryNSteps,
+    } = prepareTurnBudgets(options);
+    // ATO-609: a new message starts the re-plan cadence over (the plan
+    // reminder above covers this boundary); a resumed task keeps it.
+    if (options.userMessage !== undefined) {
+      state = resetReplanCadence(state, replanEveryNSteps);
+    }
     // Provider-outage parking. A transport failure means "this link is
     // not answering", which is a state of the world, not a verdict on
     // the turn — so the turn waits for it rather than dying and taking
@@ -335,6 +342,25 @@ export class AgentLoop {
       if (outOfTime) turn.stopCause = "time_ceiling";
       else if (outOfBudget) turn.stopCause = "cost_ceiling";
       const finalizationStep = i === stepCeiling - 1 || outOfTime || outOfBudget;
+      // Re-plan cadence (ATO-609): every `replanEveryNSteps` completed
+      // steps the model is asked, in this step's `### notice`, to check
+      // its live plan against what it has found and resend it. No extra
+      // inference; off by default. Not on the reserved final step.
+      if (!finalizationStep) {
+        const cadence = takeReplanCadenceNotice(state, replanEveryNSteps);
+        state = cadence.state;
+        if (cadence.notice !== undefined) {
+          noticeForThisStep =
+            noticeForThisStep === undefined
+              ? cadence.notice
+              : `${noticeForThisStep}\n\n${cadence.notice}`;
+          this.deps.logger?.info("re-plan requested", {
+            sessionId: state.id,
+            stepIndex: i,
+            everyNSteps: replanEveryNSteps,
+          });
+        }
+      }
       // The stalled-review phase this step runs under, read before the
       // prompt is built (`review-stall.ts`): the notice joins the step's
       // `### notice` — inside `noticeForThisStep`, so a retry of the
@@ -694,6 +720,7 @@ export class AgentLoop {
           turn.outageAttempts = 0;
         }
         state = outcome.nextSession;
+        state = countReplanCadenceStep(state, replanEveryNSteps, outcome.toolResults);
         turn.stepsTaken += 1;
         // A step that came back ends a run of out-of-memory restarts.
         turn.oomRestarts = 0;

@@ -171,6 +171,15 @@ export interface SessionState {
    */
   plan?: PlanSnapshot;
   /**
+   * Steps since the model last re-planned (ATO-609): counted by the
+   * agent loop only while `agent.task.replanEveryNSteps` is on, reset by
+   * a successful `plan.update`, a re-plan notice or a new user message
+   * (`src/agent/plan/replan-cadence.ts`). Persisted with the session so
+   * a task resumed from its checkpoint keeps its cadence. Absent when
+   * the feature is off or has never counted.
+   */
+  stepsSinceReplan?: number;
+  /**
    * What the session has spent and the account limits last seen
    * (ATO-569). Stamped by `executeTurn` beside `contextUsage`, for the
    * same reason: a reopened session shows its spend at once, and its
