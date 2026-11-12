@@ -123,6 +123,10 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 
 - `tracing.trace.enabled` (default `null`).
 - `tracing.trace.maxBytesPerSession` (default `10485760`).
+- `tracing.otel.enabled` (default `null`): OpenTelemetry span export; `null` turns it on when an OTLP endpoint is known, `false` keeps it off.
+- `tracing.otel.endpoint` (default `null`): OTLP/HTTP base URL; `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` win over it.
+- `tracing.otel.headers` (default `{}`): extra request headers; `OTEL_EXPORTER_OTLP_HEADERS` adds to them.
+- `tracing.otel.captureContent` (default `false`): put prompt, reply, tool argument and error text into spans.
 
 ## memory
 

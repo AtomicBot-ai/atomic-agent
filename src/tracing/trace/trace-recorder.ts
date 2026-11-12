@@ -311,6 +311,9 @@ export function createTraceRecorder(
           ...(completion.generationId !== undefined
             ? { generationId: completion.generationId }
             : {}),
+          ...(completion.usage?.costUsd !== undefined
+            ? { costUsd: completion.usage.costUsd }
+            : {}),
         });
         return;
       }

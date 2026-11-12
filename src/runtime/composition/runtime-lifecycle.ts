@@ -53,6 +53,11 @@ export interface RuntimeLifecycleResources {
   readonly taskStore: Pick<TaskStore, "close">;
   readonly analytics: Pick<AnalyticsClient, "shutdown"> | null;
   readonly errorReporter: Pick<SentryClient, "shutdown"> | null;
+  /**
+   * OpenTelemetry span export (ATO-496): ends the turns still open and
+   * sends what is queued, bounded. Never rejects.
+   */
+  readonly traceExport?: { shutdown(): Promise<void> } | null;
 }
 
 /** Owns shutdown state and the existing ordered teardown, including its bounded grace. */
@@ -266,6 +271,12 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     // Flush any queued error reports before the process exits.
     if (resources.errorReporter) {
       await resources.errorReporter.shutdown();
+    }
+    // Last: the turns interrupted above have written their final rows.
+    try {
+      await resources.traceExport?.shutdown();
+    } catch {
+      // best-effort: telemetry never blocks the exit
     }
   };
 

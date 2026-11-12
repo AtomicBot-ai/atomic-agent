@@ -1646,7 +1646,11 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     tools: parseToolsConfig(toolsShell, () => USER_CONFIG_DEFAULTS.tools, toolsScreen),
     browser: parseBrowserConfig(browser, () => USER_CONFIG_DEFAULTS.browser),
     sessions: parseSessionConfig(sessionsRetention, () => USER_CONFIG_DEFAULTS.sessions),
-    tracing: parseTracingConfig(mergedTrace, () => USER_CONFIG_DEFAULTS.tracing),
+    tracing: parseTracingConfig(
+      mergedTrace,
+      () => USER_CONFIG_DEFAULTS.tracing,
+      (tracing.otel as Record<string, unknown> | undefined) ?? {},
+    ),
     memory: parseMemoryConfig(
       preparedMemory,
       version,

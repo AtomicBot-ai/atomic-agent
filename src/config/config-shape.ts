@@ -58,6 +58,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "sessions.retention",
   "tracing",
   "tracing.trace",
+  "tracing.otel",
   "memory",
   "memory.profile",
   "memory.reflection",
@@ -105,6 +106,8 @@ export const DICTIONARY_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "webhooks",
   "mcp.servers",
   "llm.providers",
+  // Header names are the operator's (`Authorization`, `x-api-key`, …).
+  "tracing.otel.headers",
 ]);
 
 /*

@@ -219,8 +219,8 @@ describe("resource configuration ownership", () => {
   });
 
   it("keeps tracing null fallback, explicit booleans and cap validation separate", () => {
-    expect(parseTracingConfig({ enabled: null }, () => ({ trace: { enabled: true, maxBytesPerSession: 1024 } })))
-      .toEqual({ trace: { enabled: true, maxBytesPerSession: 1024 } });
+    expect(parseTracingConfig({ enabled: null }, () => ({ ...createTracingDefaults(), trace: { enabled: true, maxBytesPerSession: 1024 } })))
+      .toEqual({ ...createTracingDefaults(), trace: { enabled: true, maxBytesPerSession: 1024 } });
     expect(parseTracingConfig({ enabled: false }, createTracingDefaults).trace.enabled).toBe(false);
     expect(parseTracingConfig({}, createTracingDefaults).trace.enabled).toBeNull();
     expect(validation(() => parseTracingConfig({ enabled: false, maxBytesPerSession: 0 }, createTracingDefaults)).field)
@@ -236,7 +236,7 @@ describe("resource configuration ownership", () => {
       get enabled() { events.push("raw.enabled"); return undefined; },
       get maxBytesPerSession() {
         events.push("raw.cap");
-        defaults = { trace: { enabled: false, maxBytesPerSession: 1024 } };
+        defaults = { ...createTracingDefaults(), trace: { enabled: false, maxBytesPerSession: 1024 } };
         return undefined;
       },
     }, () => { events.push("defaults"); return defaults; });

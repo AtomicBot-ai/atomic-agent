@@ -182,6 +182,11 @@ export interface TraceLlmCompletion extends TraceEventBase {
   stopType?: string;
   /** The provider's generation id, when it sent one. */
   generationId?: string;
+  /**
+   * What the service said the call cost, in USD (`usage.costUsd`, e.g.
+   * OpenRouter's `usage.cost`). Absent when it said nothing.
+   */
+  costUsd?: number;
 }
 
 export interface TraceToolInvocation extends TraceEventBase {

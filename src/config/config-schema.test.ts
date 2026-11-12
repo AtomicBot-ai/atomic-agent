@@ -883,6 +883,57 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/tracing.trace.maxBytesPerSession/);
   });
 
+  it("leaves tracing.otel export off by default", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.tracing.otel).toEqual({
+      enabled: null,
+      endpoint: null,
+      headers: {},
+      captureContent: false,
+    });
+  });
+
+  it("parses tracing.otel endpoint, headers and captureContent", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tracing: {
+        otel: {
+          endpoint: " http://localhost:4318 ",
+          headers: { Authorization: "Basic abc" },
+          captureContent: true,
+        },
+      },
+    });
+    expect(parsed.tracing.otel).toEqual({
+      enabled: null,
+      endpoint: "http://localhost:4318",
+      headers: { Authorization: "Basic abc" },
+      captureContent: true,
+    });
+    expect(parsed.tracing.trace.enabled).toBeNull();
+  });
+
+  it("rejects malformed tracing.otel values", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tracing: { otel: { endpoint: 4318 } },
+      }),
+    ).toThrow(/tracing.otel.endpoint/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tracing: { otel: { headers: { a: 1 } } },
+      }),
+    ).toThrow(/tracing.otel.headers.a/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tracing: { otel: { captureContent: "sometimes" } },
+      }),
+    ).toThrow(/tracing.otel.captureContent/);
+  });
+
   it("reads legacy telemetry.* as an alias of tracing.* (tracing wins on overlap)", () => {
     const fromLegacy = parseUserConfigFile({
       version: USER_CONFIG_VERSION,

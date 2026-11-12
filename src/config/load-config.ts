@@ -572,6 +572,12 @@ export function loadConfig(): AtomicAgentConfig {
         dir: resolve(stateDir, "traces"),
         maxBytesPerSession: user.tracing.trace.maxBytesPerSession,
       },
+      otel: {
+        enabled: user.tracing.otel.enabled,
+        endpoint: user.tracing.otel.endpoint,
+        headers: { ...user.tracing.otel.headers },
+        captureContent: user.tracing.otel.captureContent,
+      },
     },
     memory: {
       profile: {
