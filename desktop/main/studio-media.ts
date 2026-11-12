@@ -26,6 +26,7 @@ import { normalizeLocalFamilies, normalizeProviderModels, type StudioCatalogSect
 import { StudioCoreError, type StudioCoreClient } from "./studio-core-client.js";
 import type { CoreSeedResult } from "./core-seed.js";
 import { acquireStudioLease, connectStudioCore, ensureStudioCore, studioCorePaths, type StudioLease } from "./studio-core-start.js";
+import { retireIdleStudioCore } from "./studio-core-retire.js";
 import type { MachineProfile } from "./studio-local.js";
 import { queuedLine, type GpuShare } from "./studio-gpu-share.js";
 import { StudioLocalModels, type LocalEngineStatus, type LocalEvent } from "./studio-local-models.js";
@@ -580,6 +581,24 @@ export class StudioMedia {
     writeStudioSettings(this.deps.stateDir, s);
     if (this.client) { this.configuredFor = ""; await this.ready(); }
     return this.outputDir(kind);
+  }
+
+  /**
+   * ATO-1351 / ATO-1352: the quit's turn for the Core this Studio started or
+   * joined in this run. Its own lease goes first (Core counts it as a user
+   * and refuses to exit while it is held), then Core is asked to exit if
+   * nothing else needs it (studio-core-retire.ts). A Studio that never
+   * reached Core leaves whatever Core there is alone, and so does one with a
+   * generation, an engine install or a model load still under way: those are
+   * left as quitting left them before. Never throws.
+   */
+  async retireOnQuit(): Promise<boolean> {
+    if (!this.client || this.jobs.size > 0 || this.localBusy > 0 || this.localActive) return false;
+    if (this.leaseTimer) { clearTimeout(this.leaseTimer); this.leaseTimer = null; }
+    const lease = this.lease;
+    this.lease = null;
+    await lease?.release().catch(() => {});
+    return retireIdleStudioCore(this.deps.dataDir(), this.deps.coreVersion);
   }
 
   dispose(): void {

@@ -2765,6 +2765,7 @@ function wireIpc(client: AgentClient): void {
     },
   });
   app.once("will-quit", () => studio.dispose());
+  studioQuit = () => studio.retireOnQuit();
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
   ipcMain.handle("app:quit", () => { app.quit(); });
   ipcMain.handle("cli:taskCreate", (_event, input: unknown) => {
@@ -10634,6 +10635,25 @@ app.on("window-all-closed", () => {
    and only its own app.quit() at the end goes through. */
 let quitShutdown: { done: boolean } | null = null;
 
+/* ATO-1351 / ATO-1352: Studio's part of the quit (StudioMedia.retireOnQuit),
+   set once Studio is wired. The agent's `models stop` retired Atomic Core only
+   for a managed setup with stopOnExit on, and Core refused it while Studio's
+   own lease was held; with the chat model on an external server, stopOnExit
+   off, or the agent's CLI unable to run, a Core that Studio brought up
+   outlived the app. Studio now lets go of its lease and asks Core to exit
+   when nothing else needs it. Once per quit; never in a smoke run, whose own
+   model stop decides what it may stop (stopSmokeModels). */
+let studioQuit: (() => Promise<boolean>) | null = null;
+function retireStudioCoreOnQuit(): Promise<unknown> {
+  const retire = studioQuit;
+  studioQuit = null;
+  if (SMOKE || !retire) return Promise.resolve(false);
+  return settleWithin(retire().then((stopped) => {
+    if (stopped) console.error("[desktop] Atomic Core served nothing at the quit: asked it to exit");
+    return stopped;
+  }), 8_000, false);
+}
+
 /* ATO-135: a quit with messages still queued in a chat asks first — they are
    kept across a closed window, not across a quit. Once per quit. */
 let queuedQuitAsked = false;
@@ -10678,7 +10698,8 @@ app.on("before-quit", (event) => {
     if (!quitShutdown.done) event.preventDefault();
     return;
   }
-  if (!agent) { event.preventDefault(); const s: { done: boolean } = { done: false }; quitShutdown = s; void analyticsClosed.finally(() => { s.done = true; app.quit(); }); return; }   // still the bounded last flush
+  // Still the bounded last flush, and Studio's Core (ATO-1351): no agent left to run `models stop` for it.
+  if (!agent) { event.preventDefault(); const s: { done: boolean } = { done: false }; quitShutdown = s; void Promise.all([analyticsClosed, retireStudioCoreOnQuit()]).finally(() => { s.done = true; app.quit(); }); return; }
   event.preventDefault();
   const client = agent;
   agent = null;
@@ -10695,7 +10716,10 @@ app.on("before-quit", (event) => {
      and the app goes even if something stalls. */
   void runQuitShutdown({
     closeAgent: () => client.close(),
-    stopModelServer: () => stopLocalDaemonOnQuit(quitConfig),
+    /* ATO-1352: Studio's Core after the model server's stop, whatever the
+       config said: the stop leaves Core alone for an external server or
+       stopOnExit off, and Core refuses it while Studio's lease is held. */
+    stopModelServer: () => stopLocalDaemonOnQuit(quitConfig).finally(() => retireStudioCoreOnQuit()),
     flush: () => analyticsClosed,
   }).then((outcome) => {
     if (outcome === "timed-out") console.error("[desktop] the quit's shutdown ran out of time — quitting without waiting further");
