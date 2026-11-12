@@ -319,5 +319,6 @@ test('the local model hint says what Generate does: it loads a downloaded model 
   assert.equal(simgvLocalHint({ local: null }), '');
   const view = readFileSync(new URL('../renderer/studio/images-view.js', import.meta.url), 'utf8');
   assert.match(view, /runs on this Mac' \+ simgvLocalHint\(model\)/);
-  assert.doesNotMatch(view, /load the model first/);
+  // \b: the old hint stays banned, while "Download the model first" (ATO-1395) passes.
+  assert.doesNotMatch(view, /\bload the model first/i);
 });
