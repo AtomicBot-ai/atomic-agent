@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { runCommand as RunCommandType } from "../../../../sandbox/command-runner.js";
@@ -45,13 +46,17 @@ describe("createExaProvider", () => {
   it("uses the keyed Exa API when the configured env var is present", async () => {
     const previous = process.env.EXA_API_KEY;
     process.env.EXA_API_KEY = "test-key";
-    const calls: Array<{ args: string[]; input?: string }> = [];
+    const calls: Array<{ args: string[]; input?: string; headerFile?: string }> =
+      [];
     const runCommand = (async (
       _cmd: string,
       args: string[],
       opts: { input?: string },
     ) => {
-      calls.push({ args, input: opts.input });
+      // The header file only exists while curl runs: read it here.
+      const ref = args.find((a) => a.startsWith("@") && a !== "@-");
+      const headerFile = ref ? readFileSync(ref.slice(1), "utf8") : undefined;
+      calls.push({ args, input: opts.input, headerFile });
       return {
         command: "curl",
         args,
@@ -90,7 +95,10 @@ describe("createExaProvider", () => {
 
       expect(results[0]?.title).toBe("A");
       expect(calls[0]?.args).toContain("https://api.exa.ai/search");
-      expect(calls[0]?.args.join("\n")).toContain("x-api-key: test-key");
+      // The key reaches curl through an owner-only file, never argv,
+      // where any local account could read it in `ps` (ATO-1177).
+      expect(calls[0]?.args.join("\n")).not.toContain("test-key");
+      expect(calls[0]?.headerFile).toContain("x-api-key: test-key");
       expect(calls[0]?.input).toContain('"query":"atomic agent"');
     } finally {
       if (previous === undefined) delete process.env.EXA_API_KEY;

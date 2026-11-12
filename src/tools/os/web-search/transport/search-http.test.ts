@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { searchHttp } from "./search-http.js";
@@ -241,5 +242,46 @@ describe("searchHttp 429 retry", () => {
     });
 
     expect(slept).toEqual([500]);
+  });
+});
+
+describe("searchHttp keeps headers out of argv (ATO-1177)", () => {
+  it("passes provider headers through an owner-only file, removed afterwards", async () => {
+    let seenArgs: string[] = [];
+    let seenFile = "";
+    let headerPath = "";
+    const runCommand = (async (_command: string, args: string[]) => {
+      seenArgs = args;
+      const ref = args[args.indexOf("-H", args.indexOf("Accept-Language: en-US,en;q=0.9")) + 1];
+      headerPath = ref?.startsWith("@") ? ref.slice(1) : "";
+      seenFile = headerPath ? readFileSync(headerPath, "utf8") : "";
+      return {
+        command: "curl",
+        args,
+        exitCode: 0,
+        signal: null,
+        stdout: stubCurlStdout("{}"),
+        stderr: "",
+        durationMs: 1,
+        timedOut: false,
+        truncated: false,
+      };
+    }) as unknown as typeof RunCommandType;
+
+    await searchHttp({
+      url: "https://api.search.example/res",
+      method: "POST",
+      headers: { "X-Subscription-Token": "brave-secret" },
+      body: "{}",
+      timeoutMs: 5_000,
+      cwd: "/tmp",
+      signal: new AbortController().signal,
+      runCommand,
+      lookup: publicLookup,
+    });
+
+    expect(seenArgs.join(" ")).not.toContain("brave-secret");
+    expect(seenFile).toContain("X-Subscription-Token: brave-secret");
+    expect(existsSync(headerPath)).toBe(false);
   });
 });

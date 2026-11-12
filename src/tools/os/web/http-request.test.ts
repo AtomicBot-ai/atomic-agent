@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import type {
@@ -68,8 +69,35 @@ function denyAll(): ApprovalGate {
   return gate;
 }
 
+/**
+ * Headers reach curl as `-H @<owner-only file>` (ATO-1177). The file only
+ * exists while curl runs, so expand it here into the `-H "Name: value"`
+ * pairs curl reads from it; `rawArgs` keeps the real argv, which is what
+ * `ps` shows.
+ */
+function expandHeaderFiles(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const next = args[i + 1];
+    if (args[i] === "-H" && next?.startsWith("@") && next !== "@-") {
+      for (const line of readFileSync(next.slice(1), "utf8").split("\n")) {
+        if (line.length > 0) out.push("-H", line);
+      }
+      i++;
+      continue;
+    }
+    out.push(args[i]!);
+  }
+  return out;
+}
+
 function fakeRun(
-  capture: { cmd?: string; args?: string[]; opts?: CommandOptions },
+  capture: {
+    cmd?: string;
+    args?: string[];
+    rawArgs?: string[];
+    opts?: CommandOptions;
+  },
   result: Partial<CommandResult> = {},
 ) {
   return async (
@@ -78,7 +106,8 @@ function fakeRun(
     opts: CommandOptions,
   ): Promise<CommandResult> => {
     capture.cmd = cmd;
-    capture.args = args;
+    capture.rawArgs = args;
+    capture.args = expandHeaderFiles(args);
     capture.opts = opts;
     return makeCommandResult(result);
   };
@@ -360,8 +389,12 @@ describe("os.http.request", () => {
   });
 
   it("passes custom headers through to curl and does not override them", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
-      {};
+    const capture: {
+      cmd?: string;
+      args?: string[];
+      rawArgs?: string[];
+      opts?: CommandOptions;
+    } = {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: approveAll(),
@@ -385,6 +418,9 @@ describe("os.http.request", () => {
     );
     expect(capture.args).toContain("Content-Type: text/plain");
     expect(capture.args).toContain("Authorization: Bearer XYZ");
+    // ...but only through the header file: argv, which every local
+    // account can read in `ps`, never carries the value (ATO-1177).
+    expect(capture.rawArgs!.join(" ")).not.toContain("XYZ");
     const ctOccurrences = capture.args!.filter((a) =>
       a.toLowerCase().startsWith("content-type:"),
     );
