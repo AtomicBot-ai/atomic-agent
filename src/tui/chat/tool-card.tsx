@@ -4,6 +4,7 @@ import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { describeToolCall } from "../../tools/describe-tool-call.js";
 import { formatToolArgsBlock } from "../render/tool-args-preview.js";
+import { ToolCardImages } from "../terminal-image/index.js";
 import { theme } from "../theme/theme.js";
 import type { StreamingToolCall, ToolCardEntry } from "../tui-state.js";
 import { ToolCardPathChip, toolCardFilePath } from "./tool-card-path-chip.js";
@@ -109,6 +110,7 @@ export function ToolCard({
             notesOnly={preview === "errors" && status !== "error"}
           />
         ) : null}
+        {preview === "always" ? <ToolCardImages card={card} /> : null}
       </Box>
     );
   }
@@ -137,6 +139,7 @@ export function ToolCard({
           <Text color={theme.colors.muted}>(pending)</Text>
         )}
       </Box>
+      {preview === "always" ? <ToolCardImages card={card} /> : null}
     </Box>
   );
 }
