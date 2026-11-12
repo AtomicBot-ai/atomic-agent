@@ -19,7 +19,8 @@ import type {
  * The task spend ceiling (ATO-1108): each step's completion is priced
  * after it returns, and once the turn's spend reaches
  * `taskMaxCostUsd` the next step is the reserved summary step, the way
- * the time ceiling ends a task.
+ * the time ceiling ends a task. Since ATO-1472 the summary step is
+ * budgeted for: it starts while the spend still has room for it.
  */
 
 function completion(content: string): CompletionResult {
@@ -118,37 +119,58 @@ describe("AgentLoop task spend ceiling", () => {
 
   const fortyCents = () => 0.4;
 
-  it("makes the step after the one that crossed the cap the summary step", async () => {
+  it("starts the summary while the budget still has room for it (ATO-1472)", async () => {
     const { agent, prompts } = loop(
-      (call) => (call <= 3 ? readCall : replyCall("stopped: spent $1.20 of $1.00 budget; read the notes")),
+      (call) => (call <= 1 ? readCall : replyCall("stopped at the $1.00 budget; read the notes")),
       fortyCents,
     );
     const result = await agent.runTurn(
       createEmptySessionState({ id: "s-cost", workingDir }),
       options({ taskMaxCostUsd: 1 }),
     );
-    // Steps 1-3 spend $1.20; step 4 is the forced summary.
-    expect(prompts).toHaveLength(4);
-    expect(prompts[2]).not.toContain("The spend budget for this task is used up");
-    expect(prompts[3]).toContain("The spend budget for this task is used up ($1.20 of $1.00)");
-    expect(prompts[3]).toContain("stopped: spent $1.20 of $1.00 budget");
+    // Step 1 spends $0.40; another $0.40 step plus a $0.40 summary would
+    // pass $1.00, so step 2 is the summary and the run ends at $0.80.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain("The spend budget for this task");
+    expect(prompts[1]).toContain("The spend budget for this task is nearly used up ($0.40 of $1.00");
+    expect(prompts[1]).toContain("stopped at the $1.00 budget");
     expect(result.reason).toBe("reply");
     expect(result.stopCause).toBe("cost_ceiling");
-    expect(result.stepCount).toBe(4);
-    expect(result.spendUsd).toBeCloseTo(1.6, 6);
+    expect(result.stepCount).toBe(2);
+    expect(result.spendUsd).toBeCloseTo(0.8, 6);
+    expect(result.spendUsd!).toBeLessThanOrEqual(1);
+  });
+
+  it("makes no further paid call once one step reached the cap (ATO-1472)", async () => {
+    // The overnight case: a $0.01 cap and a first step that costs $0.01.
+    const { agent, prompts } = loop(
+      (call) => (call <= 1 ? readCall : replyCall("should not run")),
+      () => 0.01,
+    );
+    const result = await agent.runTurn(
+      createEmptySessionState({ id: "s-cost-one-step", workingDir }),
+      options({ taskMaxCostUsd: 0.01 }),
+    );
+    expect(prompts).toHaveLength(1);
+    expect(result.reason).toBe("max_steps");
+    expect(result.stopCause).toBe("cost_ceiling");
+    expect(result.spendUsd).toBeCloseTo(0.01, 6);
+    const last = result.session.turns[result.session.turns.length - 1];
+    expect(JSON.stringify(last)).toMatch(/stopped: spent \$0\.01 of \$0\.01 budget/);
   });
 
   it("closes with a plain spend line when the summary step does not reply", async () => {
-    const { agent } = loop(() => readCall, fortyCents);
+    const { agent, prompts } = loop(() => readCall, fortyCents);
     const result = await agent.runTurn(
       createEmptySessionState({ id: "s-cost-stalled", workingDir }),
       options({ taskMaxCostUsd: 1 }),
     );
+    expect(prompts).toHaveLength(2);
     expect(result.reason).toBe("max_steps");
     expect(result.stopCause).toBe("cost_ceiling");
     expect(result.session.lastError).toMatch(/task_stopped:cost_ceiling/);
     const last = result.session.turns[result.session.turns.length - 1];
-    expect(JSON.stringify(last)).toMatch(/stopped: spent \$1\.60 of \$1\.00 budget/);
+    expect(JSON.stringify(last)).toMatch(/stopped: spent \$0\.80 of \$1\.00 budget/);
   });
 
   it("changes nothing without a cap, but still reports the spend", async () => {

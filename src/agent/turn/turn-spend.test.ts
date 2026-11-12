@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import {
+  budgetStepPlan,
   costCeilingHeadline,
   costCeilingNotice,
   costCeilingReached,
@@ -69,6 +70,32 @@ describe("turn spend ceiling helpers", () => {
     });
     expect(stopped).toMatch(/^\(stopped: spent \$5\.31 of \$5\.00 budget, after 7 steps over ~2 min\.\)/);
     expect(stopped).toContain("agent.task.maxCostUsd");
+  });
+
+  it("names no spend figure when the summary starts with room left (ATO-1472)", () => {
+    const notice = costCeilingNotice(0.8, 1);
+    expect(notice).toContain("nearly used up ($0.80 of $1.00");
+    expect(notice).toContain('start with "stopped at the $1.00 budget"');
+    expect(notice).toContain("This is the final allowed step.");
+  });
+
+  it("keeps room for the summary step under a cap (ATO-1472)", () => {
+    // No cap: always work.
+    expect(budgetStepPlan(100, 5, 0)).toBe("work");
+    // First step or a free model: nothing to reserve.
+    expect(budgetStepPlan(0, 0, 1)).toBe("work");
+    expect(budgetStepPlan(0.9, 0, 1)).toBe("work");
+    // Room for one more step and the summary after it.
+    expect(budgetStepPlan(0.2, 0.4, 1)).toBe("work");
+    // One more step would leave no room for the summary.
+    expect(budgetStepPlan(0.4, 0.4, 1)).toBe("summary");
+    expect(budgetStepPlan(0.9, 0.04, 1)).toBe("summary");
+    // A paid step already reached the cap: no further paid call.
+    expect(budgetStepPlan(1, 0.4, 1)).toBe("stop");
+    expect(budgetStepPlan(0.02, 0.02, 0.01)).toBe("stop");
+    // Reached by compaction alone with a free model: the summary is free.
+    expect(budgetStepPlan(1.5, 0, 1)).toBe("summary");
+    expect(budgetStepPlan(1, Number.NaN, 1)).toBe("summary");
   });
 
   it("adds a compaction's summary cost to the turn spend (ATO-1322)", () => {
