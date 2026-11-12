@@ -295,4 +295,86 @@ describe("createLinkGeneratorRunner", () => {
     );
     expect(timeout).toBeDefined();
   });
+
+  it("does not retry on the next turn after a timeout (ATO-205)", async () => {
+    let calls = 0;
+    const traced: Array<{ outcome: string; reason?: string }> = [];
+    const runner = createLinkGeneratorRunner({
+      llmComplete: (params) => {
+        calls += 1;
+        return new Promise<CompletionResult>((_, reject) => {
+          params.signal.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        });
+      },
+      linkStore: h.linkStore,
+      reflectionSlotId: 7,
+      timeoutMs: 10,
+      metrics: h.metrics,
+      timeoutBackoff: { baseCalls: 2 },
+      emitTrace: (event) => traced.push(event),
+    });
+    const input = {
+      sessionId: "s1",
+      userMessage: "u",
+      assistantReply: "a",
+      candidates: [
+        { id: 1, body: "a" },
+        { id: 2, body: "b" },
+      ],
+    };
+    await runner.generate(input);
+    await runner.generate(input);
+    await runner.generate(input);
+    expect(calls).toBe(1);
+    expect(traced.map((e) => e.outcome)).toEqual([
+      "timeout",
+      "skipped",
+      "skipped",
+    ]);
+    expect(traced[1]?.reason).toMatch(/backoff after timeout/);
+    // Another session is not affected.
+    await runner.generate({ ...input, sessionId: "s2" });
+    expect(calls).toBe(2);
+    // Window over: the model is tried again.
+    await runner.generate(input);
+    expect(calls).toBe(3);
+  });
+
+  it("a healthy call clears the backoff (ATO-205)", async () => {
+    let mode: "hang" | "ok" = "hang";
+    let calls = 0;
+    const runner = createLinkGeneratorRunner({
+      llmComplete: (params) => {
+        calls += 1;
+        if (mode === "ok") return Promise.resolve(completion("NONE\n"));
+        return new Promise<CompletionResult>((_, reject) => {
+          params.signal.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        });
+      },
+      linkStore: h.linkStore,
+      reflectionSlotId: 7,
+      timeoutMs: 10,
+      metrics: h.metrics,
+      timeoutBackoff: { baseCalls: 1 },
+    });
+    const input = {
+      sessionId: "s1",
+      userMessage: "u",
+      assistantReply: "a",
+      candidates: [
+        { id: 1, body: "a" },
+        { id: 2, body: "b" },
+      ],
+    };
+    await runner.generate(input); // timeout
+    await runner.generate(input); // skipped
+    mode = "ok";
+    await runner.generate(input); // none, clears
+    await runner.generate(input); // runs again
+    expect(calls).toBe(3);
+  });
 });
