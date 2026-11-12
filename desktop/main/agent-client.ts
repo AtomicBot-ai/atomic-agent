@@ -12,6 +12,7 @@ import { LineSplitter, lineLevel } from "./agent-output.js";
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
+import { reasoningBodyField, type ReasoningLevel } from "./reasoning-level.js";
 import {
   pairingRequest,
   readPairingReply,
@@ -1789,6 +1790,8 @@ export class AgentClient extends EventEmitter {
     messages: Array<{ role: string; content: string }>,
     sessionId?: string,
     workingDir?: string,
+    /** ATO-490: the chat's reasoning level; absent for Auto. */
+    reasoning?: ReasoningLevel,
   ): Promise<void> {
     const controller = new AbortController();
     this.turns.set(turnId, controller);
@@ -1817,6 +1820,7 @@ export class AgentClient extends EventEmitter {
           session_id: chatSessionIdFor(sessionId),
           // ATO-731: the folder a NEW session works in; the agent keeps an existing session's own.
           ...(workingDir ? { working_dir: workingDir } : {}),
+          ...reasoningBodyField(reasoning),
         }),
         signal: controller.signal,
       });

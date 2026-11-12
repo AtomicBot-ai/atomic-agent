@@ -4313,6 +4313,7 @@ function routeChipsHtml(backend) {
         // a chatModel, or local before the snapshot lands); the pane stays
         // reachable through the provider chip and the backend rows.
         + modelChipHtml()
+        + reasoningChipHtml()   // ATO-490: Auto / Low / Medium / High, where the model reasons (reasoning-switch.js)
         + (backend === 'fusion' ? '</span>' : '')
         // Run mode — Fusion: the ⇄ between the two seats and the fourth control, `workers`.
         + fzChipsHtml();
@@ -9786,7 +9787,7 @@ function startLiveTurn(text) {
   // Backlog 25: read once. The person can open another chat before the
   // agent answers, and the turn still runs in the session it was sent with.
   const session = S.agentSession || undefined;
-  BR.chat([{role:'user', content:text}], session).then((res) => {
+  BR.chat([{role:'user', content:text}], session, reasoningTurnLevel(session)).then((res) => {
     if (!res || !res.ok) {
       S.busy = false; clearInterval(ticker);
       S.log.push({id:nid(), k:'system', text:'could not start the turn: ' + esc((res && res.error) || 'unknown error')});
@@ -10796,6 +10797,7 @@ function onChatEvent(ev) {
     if (S.log.some((m) => m.id === S.streamId)) {
       S.agentSession = pick(ev.payload, 'sessionId', 'session_id', 'id');
       S.sessionId = S.agentSession;
+      reasoningAdoptDraft(S.agentSession);   // ATO-490: a new chat's reasoning pick is its own now
       // Q60 review: a request this turn raised before it said its session waited for it (approvalOnScreen).
       if (showKeptApproval(S.agentSession)) render();
     }
@@ -17798,7 +17800,7 @@ async function refreshLiveConfig() {
   llmRefreshKeyNames();
   extRefreshModel();
   llmNoteRoute();
-  if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) { refreshContext(); refreshSkillList(); }
+  if (selActiveProviderId() + '\n' + activeModel() !== ctxWas) { refreshContext(); refreshSkillList(); reasoningRefresh(); }
 }
 
 /**
