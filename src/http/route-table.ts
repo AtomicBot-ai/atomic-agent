@@ -3,6 +3,11 @@ import { createRollbackLastTurnHandler } from "./route-rollback-last-turn.js";
 import type { RouteDefinition } from "./http-server.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
+import {
+  createAnthropicCountTokensHandler,
+  createAnthropicMessagesHandler,
+} from "./anthropic-messages.js";
+import { createResponsesHandler } from "./openai-responses.js";
 import { createCancelCompletionHandler } from "./openai-completions-cancel.js";
 import { createHealthHandler } from "./route-health.js";
 import { createLocalModelRecheckHandler } from "./route-local-model-recheck.js";
@@ -110,6 +115,11 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/v1/chat/completions/{completion_id}/cancel",
       handler: createCancelCompletionHandler(),
     },
+    // ATO-1080: Anthropic Messages and OpenAI Responses on the same turn path
+    // (compat-bridge.ts), for Claude Code, Codex and the Agents SDK.
+    { method: "POST", path: "/v1/messages", handler: createAnthropicMessagesHandler() },
+    { method: "POST", path: "/v1/messages/count_tokens", handler: createAnthropicCountTokensHandler() },
+    { method: "POST", path: "/v1/responses", handler: createResponsesHandler() },
     {
       method: "GET",
       path: "/api/capabilities",
