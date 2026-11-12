@@ -17,6 +17,7 @@ import { RequestTooLargeError } from "./request-too-large.js";
 import {
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_REQUEST_INVALID_CODE,
+  LOCAL_TOOLS_UNSUPPORTED_CODE,
   classifyLocalServerError,
 } from "./local-server-error.js";
 import {
@@ -96,6 +97,8 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
   if (local !== null) {
     if (local.code === LOCAL_CONTEXT_EXCEEDED_CODE) return "context_too_long";
     if (local.code === LOCAL_REQUEST_INVALID_CODE) return "request_rejected";
+    // ATO-1209: the server will not take tools; a request it refused, like any other.
+    if (local.code === LOCAL_TOOLS_UNSUPPORTED_CODE) return "request_rejected";
     return "local_server_not_found";
   }
 

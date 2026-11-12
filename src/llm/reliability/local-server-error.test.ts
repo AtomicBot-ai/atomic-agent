@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { LlamaServerError, readLlamaErrorBody } from "../llama-server-client.js";
+import { LlamaServerError, extractLlamaErrorDetail, readLlamaErrorBody } from "../llama-server-client.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
 import { GrammarError, TransportError } from "./llm-failures.js";
@@ -12,6 +12,7 @@ import {
   LOCAL_SERVER_NOT_FOUND_CODE,
   LOCAL_SERVER_NOT_FOUND_MESSAGE,
   LOCAL_SERVER_RECHECK_HINT,
+  LOCAL_TOOLS_UNSUPPORTED_CODE,
   classifyLocalServerError,
   localServerErrorLines,
 } from "./local-server-error.js";
@@ -25,14 +26,20 @@ const CONTEXT_BODY = JSON.stringify({
 });
 
 const INVALID_BODY = JSON.stringify({
+  error: { code: 400, message: "Unknown role: tool", type: "invalid_request_error" },
+});
+
+/** llama-server started without --jinja (ATO-1209). */
+const JINJA_BODY = JSON.stringify({
   error: { code: 400, message: "tools param requires --jinja flag", type: "invalid_request_error" },
 });
 
-/** A llama-server HTTP error the way `buildHttpError` makes one. */
+/** A llama-server HTTP error the way `buildHttpError` makes one: the body's words folded into the message. */
 function llamaHttp(status: number, url: string, rawBody = ""): LlamaServerError {
   const body = readLlamaErrorBody(rawBody);
+  const detail = extractLlamaErrorDetail(rawBody);
   return new LlamaServerError(
-    `llama-server returned http ${status}`,
+    detail ? `llama-server returned http ${status}: ${detail}` : `llama-server returned http ${status}`,
     status,
     url,
     false,
@@ -126,6 +133,34 @@ describe("classifyLocalServerError: 400 from a local server (ATO-707, ATO-737)",
       expect(verdict?.message).toBe("The local model server turned the request down as invalid.");
       expect(localServerErrorLines(verdict!)).toHaveLength(1);
     }
+  });
+
+  it("reads a server that takes no tool calls as local_tools_unsupported (ATO-1209)", () => {
+    const ollamaString = JSON.stringify({ error: "registry.ollama.ai/library/gemma2:2b does not support tools" });
+    for (const err of [
+      // llama.cpp: typed body, the words in the message.
+      llamaHttp(400, "http://127.0.0.1:9931/v1/chat/completions", JINJA_BODY),
+      // The same through the OpenAI-compatible client, wrapped the way the loop wraps it.
+      new TransportError("x", 400, "http://127.0.0.1:9931/v1/chat/completions", {
+        cause: openAiHttp(400, "http://127.0.0.1:9931/v1/chat/completions", JINJA_BODY),
+      }),
+      // Ollama: a plain string `error`, no type.
+      openAiHttp(400, "http://localhost:11434/v1/chat/completions", ollamaString),
+      openAiHttp(400, "http://localhost:11434/v1/chat/completions", "tool(s) not supported"),
+    ]) {
+      const verdict = classifyLocalServerError(err);
+      expect(verdict?.code).toBe(LOCAL_TOOLS_UNSUPPORTED_CODE);
+      expect(verdict?.status).toBe(400);
+      expect(verdict?.message).toBe("This local server doesn't accept tool calls.");
+      expect(verdict?.advice).toBe("Start llama-server with --jinja, or pick a model that supports tools.");
+      expect(localServerErrorLines(verdict!)).toHaveLength(1);
+    }
+  });
+
+  it("does not read tool wording from a cloud provider or a non-400", () => {
+    const body = JSON.stringify({ error: "model does not support tools" });
+    expect(classifyLocalServerError(openAiHttp(400, "https://api.example.com/v1/chat/completions", body))).toBeNull();
+    expect(classifyLocalServerError(openAiHttp(500, "http://localhost:11434/v1/chat/completions", body))).toBeNull();
   });
 
   it("leaves a bare 400 with no reason in its body alone", () => {

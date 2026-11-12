@@ -311,13 +311,13 @@ function localServerNotFoundSentence(url: string, status: 404 | 405): string {
 
 /**
  * A 400 from a server on this machine whose body says why (ATO-707,
- * ATO-737): the conversation outgrew the context window, or the server
- * would not accept something in the request. Plain words and what to
- * do, instead of "rejected the request (400)". Keeps "(400)" so the
- * desktop still reads it as the provider having replied. A context
- * overflow leaves the server's own words out: the agent loop appends
- * the size excerpt for that one (`isRequestSizeRejection`). Null for a
- * 400 whose body names neither reason.
+ * ATO-737, ATO-1209): the conversation outgrew the context window, the
+ * server takes no tool calls, or it would not accept something else in
+ * the request. Plain words and what to do, instead of "rejected the
+ * request (400)". Keeps "(400)" so the desktop still reads it as the
+ * provider having replied. A context overflow leaves the server's own
+ * words out: the agent loop appends the size excerpt for that one
+ * (`isRequestSizeRejection`). Null for a 400 whose body names no reason.
  */
 function localBadRequestSentence(err: OpenAiHttpError): string | null {
   const raw = err.message.replace(/^openai provider \d+:\s*/, "");

@@ -13,8 +13,9 @@ export interface FailureReasonFields {
    * `local_engine_down` (ATO-772); `local_server_not_found` (a 404/405 at
    * `localModels.url`, the address the Reconnect check probes),
    * `local_provider_not_found` (the same from another llama-server
-   * address: no Reconnect), `local_context_exceeded` or
-   * `local_request_invalid` (ATO-708, ATO-873, ATO-737);
+   * address: no Reconnect), `local_context_exceeded`,
+   * `local_tools_unsupported` or `local_request_invalid` (ATO-708,
+   * ATO-873, ATO-737, ATO-1209);
    * `local_out_of_memory` (ATO-334: the managed model ran out of memory
    * and was not brought back). Hosts branch on
    * it instead of reading the words.
