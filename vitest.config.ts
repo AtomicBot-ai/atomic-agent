@@ -16,6 +16,9 @@ export default defineConfig({
       "eval-memory/harness/**/*.test.ts",
       "eval-memory/experiments/**/*.test.ts",
       "eval-memory/competitors/**/*.test.ts",
+      // promptfoo provider helpers and the shape of the regression set;
+      // hermetic, the promptfoo runs themselves are `npm run eval:promptfoo`.
+      "eval/promptfoo/**/*.test.ts",
     ],
     environment: "node",
     testTimeout: 15_000,
