@@ -34,6 +34,7 @@
     "eval:full": "node eval/scripts/run-full-eval.mjs",
     "eval:gaia": "node eval/scripts/run-full-eval.mjs -t gaia-style",
     "eval:summary": "node eval/scripts/summarize-run.mjs",
+    "eval:attacks": "node eval/scripts/run-attacks.mjs",
     "eval:memory": "node eval-memory/scripts/run-all.mjs",
     "eval:memory:e1": "node eval-memory/scripts/run-e1.mjs",
     "eval:memory:e2": "node eval-memory/scripts/run-e2.mjs",
