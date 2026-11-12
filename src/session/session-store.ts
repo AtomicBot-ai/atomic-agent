@@ -56,6 +56,13 @@ import {
   turnArchiveTableExists,
   type TurnArchiveStatements,
 } from "./turn-archive.js";
+import {
+  isIncognitoSession,
+  newIncognitoMark,
+  orphanIncognitoSessionIds,
+  storedSessionIsIncognito,
+  type IncognitoMark,
+} from "./incognito.js";
 
 // `turn_owner` names the process running a turn on the row (see
 // `beginTurn`) and is null otherwise — a shutdown's stand-in keeps it
@@ -1071,6 +1078,35 @@ export class SessionStore {
     return this.listRecentDirsStmt.all(limit) as RecentWorkingDirRow[];
   }
 
+  /**
+   * The mark a new incognito chat carries (ATO-586), owned by this
+   * process in this database file — what `sweepOrphanIncognito` judges.
+   */
+  newIncognitoMark(now: number = Date.now()): IncognitoMark {
+    return newIncognitoMark(this.turnOwnerProbe, now, this.dbIdentity);
+  }
+
+  /** Whether the stored row `id` is an incognito chat. */
+  isIncognito(id: string): boolean {
+    return storedSessionIsIncognito(this.db, id);
+  }
+
+  /**
+   * Delete the incognito chats whose owning process is gone — the app
+   * was killed or crashed before it could close them. Boot only, before
+   * this process opens one of its own (see `orphanIncognitoSessionIds`).
+   * Returns the deleted ids so the caller can remove their trace files.
+   */
+  sweepOrphanIncognito(): string[] {
+    const ids = orphanIncognitoSessionIds(
+      this.db,
+      this.turnOwnerProbe,
+      this.dbIdentity,
+    );
+    for (const id of ids) this.delete(id);
+    return ids;
+  }
+
   delete(id: string): void {
     this.db.transaction(() => {
       this.deleteStmt.run(id);
@@ -1147,7 +1183,9 @@ export class SessionStore {
     const states: SessionState[] = [];
     for (const row of rows) {
       const state = this.readPayload(row, archive);
-      if (state) states.push(state);
+      // An incognito chat (ATO-586) is never listed; `load` by id still
+      // answers for it.
+      if (state && !isIncognitoSession(state)) states.push(state);
     }
     return states;
   }

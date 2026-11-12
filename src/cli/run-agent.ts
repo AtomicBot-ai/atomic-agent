@@ -51,6 +51,8 @@ interface RunArgs {
   workingDir: string;
   maxSteps: number | null;
   noApproval: boolean;
+  /** ATO-586: an incognito chat, deleted when the run ends. */
+  incognito: boolean;
 }
 
 const HELP =
@@ -67,17 +69,19 @@ const HELP =
     "  --working-dir <dir>  Alias for --cwd",
     "  --max-steps <n>      Hard step ceiling for one task (default: agent.task.maxSteps)",
     "  --no-approval        Force approval level 5: auto-approve every dangerous tool call",
+    "  --incognito          Incognito chat: nothing is saved to memory, the chat is deleted when the run ends",
     "",
     "In-session:  /quit exits · /abort cancels the current turn",
     "Exit codes:  0 replied · 1 failed · 2 usage error",
   ].join("\n") + "\n";
 
-function parseArgs(
+export function parseRunArgs(
   args: string[],
 ): RunArgs | { error: string } | { help: true } {
   let workingDir: string | null = null;
   let maxSteps: number | null = null;
   let noApproval = false;
+  let incognito = false;
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -116,6 +120,9 @@ function parseArgs(
       case "--no-approval":
         noApproval = true;
         break;
+      case "--incognito":
+        incognito = true;
+        break;
       default:
         return { error: `unknown flag: ${flag}` };
     }
@@ -124,6 +131,7 @@ function parseArgs(
     workingDir: workingDir ?? process.cwd(),
     maxSteps,
     noApproval,
+    incognito,
   };
 }
 
@@ -502,7 +510,7 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
  * assistant message. `/quit` exits, `/abort` cancels the current turn.
  */
 export async function runAgentCommand(args: string[]): Promise<number> {
-  const parsed = parseArgs(args);
+  const parsed = parseRunArgs(args);
   if ("help" in parsed) {
     process.stdout.write(HELP);
     return 0;
@@ -613,8 +621,12 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   process.once("SIGTERM", onSignal);
 
   let exitCode = 0;
+  let incognitoSessionId: string | null = null;
   try {
-    const session = runtime.createSession();
+    const session = runtime.createSession(
+      parsed.incognito ? { incognito: true } : undefined,
+    );
+    incognitoSessionId = parsed.incognito ? session.id : null;
     stdinLines = createStdinLineQueue({
       input: process.stdin,
       output: process.stderr,
@@ -630,7 +642,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       lines: stdinLines,
       piped: process.stdin.isTTY !== true,
     });
-    runtime.sessionStore.save(finalSession);
+    if (!parsed.incognito) runtime.sessionStore.save(finalSession);
     process.stderr.write(
       `${JSON.stringify(
         {
@@ -659,6 +671,9 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     stdinLines?.close();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
+    // The incognito chat goes before the store closes; one the delete
+    // misses is swept at the next start.
+    if (incognitoSessionId !== null) runtime.discardIncognitoSession?.(incognitoSessionId);
     await runtime.shutdown();
   }
   return exitCode;

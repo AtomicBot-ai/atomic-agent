@@ -121,6 +121,11 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "new",
     description: "start a fresh session (keeps warm runtime)",
   },
+  // ATO-586.
+  {
+    name: "incognito",
+    description: "start an incognito chat: nothing saved to memory, deleted when you leave it",
+  },
   {
     name: "skills",
     description:

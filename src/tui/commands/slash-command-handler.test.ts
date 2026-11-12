@@ -145,6 +145,14 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionPicker).toBe(false);
   });
 
+  it("signals triggerIncognitoSession for /incognito, and /new does not (ATO-586)", () => {
+    const result = dispatchSlashCommand("/incognito");
+    expect(result.triggerIncognitoSession).toBe(true);
+    expect(result.triggerSessionNew).toBe(false);
+    expect(result.forwardAsMessage).toBe(false);
+    expect(dispatchSlashCommand("/new").triggerIncognitoSession).not.toBe(true);
+  });
+
   it("signals triggerNewWindow for /window and its alias", () => {
     // `/new` restarts the session in place; `/window` is the OS-level
     // sibling of Ctrl+N — the two must never be confused.
