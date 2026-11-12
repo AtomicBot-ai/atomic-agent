@@ -105,15 +105,22 @@ export function buildOsWebSearchTool(
   // Exa key (ATO-345). Once per session: the note repeats on every search
   // while Exa is parked, and one line is enough for the model to pass on.
   const keyHintedSessions = new Set<string>();
+  const searchCfg = options.config.web.search;
+  const usesAnySearch =
+    searchCfg.provider === "anysearch" ||
+    searchCfg.fallback.includes("anysearch");
+  const baseDescription =
+    "Search the web through the configured provider and return compact " +
+    "title/url/snippet results. Default provider is Exa (its free " +
+    "keyless tier, or an environment API key when set), with " +
+    "DuckDuckGo as the fallback; SearXNG is keyless, Brave needs an " +
+    "environment API key. " +
+    "Use os.web.fetch to read a chosen result page.";
   return {
     name: TOOL_NAME,
-    description:
-      "Search the web through the configured provider and return compact " +
-      "title/url/snippet results. Default provider is Exa (its free " +
-      "keyless tier, or an environment API key when set), with " +
-      "DuckDuckGo as the fallback; SearXNG is keyless, Brave needs an " +
-      "environment API key. " +
-      "Use os.web.fetch to read a chosen result page.",
+    description: usesAnySearch
+      ? `${baseDescription} When AnySearch is selected, queries are sent to the hosted third-party API at api.anysearch.com.`
+      : baseDescription,
     readonly: true,
     untrustedOutput: "web search results",
     async run(rawArgs, ctx) {
