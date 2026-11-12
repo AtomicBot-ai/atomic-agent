@@ -177,6 +177,26 @@ describe("embedding backfill wiring", () => {
     await expect(stores.embeddingBackfill?.done).resolves.toBeNull();
   });
 
+  it("keeps recall keyword-only while the backfill runs, and lets vectors back in once it ends", async () => {
+    seedNotes("an older note");
+    const attach = vi.spyOn(MemoryStore.prototype, "attachEmbeddings");
+    stores = await bootWithClient();
+    expect(stores.embeddingBackfill).not.toBeNull();
+    const ready = attach.mock.calls[0]?.[0].vectorRecallReady;
+    expect(ready?.()).toBe(false);
+    // Stopped early (shutdown or a model switch) counts as ended too.
+    await stores.embeddingBackfill?.stop();
+    await Promise.resolve();
+    expect(ready?.()).toBe(true);
+  });
+
+  it("does not hold vectors back when nothing needs a reindex", async () => {
+    const attach = vi.spyOn(MemoryStore.prototype, "attachEmbeddings");
+    stores = await bootWithClient();
+    expect(stores.embeddingBackfill).toBeNull();
+    expect(attach.mock.calls[0]?.[0].vectorRecallReady?.()).toBe(true);
+  });
+
   it("attaches embeddings with the configured weights and scan ceiling", async () => {
     config.memory.embeddings.fts5Weight = 0.2;
     config.memory.embeddings.vectorWeight = 0.8;
