@@ -26,6 +26,8 @@ import {
 import { getConfig } from "../config/index.js";
 
 import { checkWorkingDir } from "./session-working-dir.js";
+import { chatGoalSpec, goalProgressFrame } from "./chat-goal.js";
+import type { GoalState } from "../agent/goal/index.js";
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
@@ -162,6 +164,7 @@ async function handleNonStream(
   const controller = new AbortController();
   onClientGone(res, () => controller.abort());
   let result: RunTurnResult;
+  const nonStreamGoal = chatGoalSpec(env.session, env.request.extensionsEnabled);
   try {
     // Non-stream mode ignores intermediate events — only the final
     // RunTurnResult matters. The TurnController per-session lock is
@@ -178,6 +181,8 @@ async function handleNonStream(
       ...(env.request.extensionsEnabled
         ? { interactive: true, answerChannel: "desktop" as const }
         : {}),
+      // ATO-1040: a chat with an active stored goal runs it (chat-goal.ts).
+      ...(nonStreamGoal === undefined ? {} : { goal: nonStreamGoal }),
     });
   } catch (err) {
     // Reaches this branch only for unclassified / programming
@@ -318,6 +323,8 @@ async function handleStream(
 
   let result: RunTurnResult | null = null;
   let error: Error | null = null;
+  // ATO-1040: an active stored goal runs as rounds, each change a frame.
+  const goal = chatGoalSpec(env.session, env.request.extensionsEnabled);
   try {
     result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
       signal: controller.signal,
@@ -329,6 +336,14 @@ async function handleStream(
       ...(env.request.extensionsEnabled
         ? { interactive: true, answerChannel: "desktop" as const }
         : {}),
+      ...(goal === undefined
+        ? {}
+        : {
+            goal,
+            onGoalProgress: (state: GoalState) => {
+              if (!sse.closed) sse.writeEvent("goal_progress", goalProgressFrame(env.session.id, state));
+            },
+          }),
     });
   } catch (err) {
     // Same contract as the non-stream branch above: classified
