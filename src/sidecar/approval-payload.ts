@@ -73,3 +73,23 @@ export function responseGrant(
   }
   return grant === "session" ? "category" : grant;
 }
+
+/**
+ * What the sidecar's `approval_response` handler does: resolve the
+ * pending approval with the person's answer and, when they chose one,
+ * the grant (`responseGrant` checks it first and throws on a grant the
+ * request cannot take, leaving it pending). `false` when nothing was
+ * waiting under that id.
+ */
+export function resolveApprovalResponse(
+  payload: ApprovalResponsePayload,
+  gate: Pick<ApprovalGate, "pendingRequest" | "canGrantAlways" | "resolve">,
+): boolean {
+  const grant = responseGrant(payload, gate);
+  return gate.resolve({
+    approvalId: payload.approvalId,
+    approved: payload.approved,
+    ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
+    ...(grant !== undefined ? { grant } : {}),
+  });
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 
-import { approvalRequestPayload, responseGrant } from "./approval-payload.js";
+import { approvalRequestPayload, resolveApprovalResponse } from "./approval-payload.js";
 import { MessageRouter } from "./message-router.js";
 import { StdioProtocol } from "./stdio-protocol.js";
 import { getConfig } from "../config/index.js";
@@ -373,16 +373,10 @@ export async function bootstrapSidecar(): Promise<{
     "approval_response",
     (request) => {
       if (!active) return { resolved: false };
-      const gate = active.runtime.approvals;
-      const grant = responseGrant(request.payload, gate);
-      const resolved = gate.resolve({
-        approvalId: request.payload.approvalId,
-        approved: request.payload.approved,
-        ...(request.payload.reason !== undefined
-          ? { reason: request.payload.reason }
-          : {}),
-        ...(grant !== undefined ? { grant } : {}),
-      });
+      const resolved = resolveApprovalResponse(
+        request.payload,
+        active.runtime.approvals,
+      );
       return { resolved };
     },
   );

@@ -6,7 +6,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ApprovalGate, type ApprovalRequest } from "../approval/approval-gate.js";
 import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
-import { approvalRequestPayload, responseGrant } from "./approval-payload.js";
+import {
+  approvalRequestPayload,
+  resolveApprovalResponse,
+  responseGrant,
+} from "./approval-payload.js";
 
 /**
  * ATO-1270: the sidecar's `approval_request` carries what a host needs
@@ -96,23 +100,52 @@ describe("sidecar approval payloads (ATO-1270)", () => {
     expect(approvalRequestPayload(request, undefined).canAlways).toBe(false);
   });
 
+  // Through `resolveApprovalResponse`, the function the sidecar's
+  // `approval_response` handler calls (main.ts), so dropping the grant
+  // from it fails these.
   it("a session grant from the host is recorded for the chat", async () => {
     const decision = gate.request(gitStatus());
     const request = pending[0]!;
-    const grant = responseGrant({ approvalId: request.approvalId, approved: true, grant: "session" }, gate);
-    expect(grant).toBe("category");
-    gate.resolve({ approvalId: request.approvalId, approved: true, grant: grant! });
+    expect(
+      resolveApprovalResponse({ approvalId: request.approvalId, approved: true, grant: "session" }, gate),
+    ).toBe(true);
     await expect(decision).resolves.toMatchObject({ approved: true });
     expect(gate.sessionGrants("s").categories).toEqual(["shell"]);
+    // The next ordinary shell call rides the grant: no prompt.
+    await expect(gate.request({ ...gitStatus(), commandArgv: ["git", "log"] })).resolves.toMatchObject({
+      approved: true,
+    });
+    expect(pending).toHaveLength(1);
   });
 
   it("a shape grant from the host is recorded for the binary", async () => {
     const decision = gate.request(gitStatus());
     const request = pending[0]!;
-    const grant = responseGrant({ approvalId: request.approvalId, approved: true, grant: "shape" }, gate);
-    gate.resolve({ approvalId: request.approvalId, approved: true, grant: grant! });
+    resolveApprovalResponse({ approvalId: request.approvalId, approved: true, grant: "shape" }, gate);
     await decision;
     expect(gate.sessionGrants("s").shapes).toEqual(["git"]);
+    expect(gate.sessionGrants("s").categories).toEqual([]);
+  });
+
+  it("an always grant from the host saves the rule", async () => {
+    const decision = gate.request(gitStatus());
+    const request = pending[0]!;
+    resolveApprovalResponse({ approvalId: request.approvalId, approved: true, grant: "always" }, gate);
+    await decision;
+    expect(gate.takeAlwaysRule(request.approvalId)).toMatchObject({
+      decision: "allow",
+      commandPrefix: ["git", "status"],
+    });
+  });
+
+  it("an answer without a grant records nothing, and a deny passes the reason on", async () => {
+    const first = gate.request(gitStatus());
+    resolveApprovalResponse({ approvalId: pending[0]!.approvalId, approved: true }, gate);
+    await first;
+    expect(gate.sessionGrants("s")).toEqual({ categories: [], shapes: [] });
+    const second = gate.request({ ...gitStatus(), commandArgv: ["git", "push"] });
+    resolveApprovalResponse({ approvalId: pending[1]!.approvalId, approved: false, reason: "not now" }, gate);
+    await expect(second).resolves.toMatchObject({ approved: false, reason: "not now" });
   });
 
   it("a grant the request cannot take fails and leaves it pending", () => {
@@ -125,9 +158,9 @@ describe("sidecar approval payloads (ATO-1270)", () => {
     });
     const request = pending[0]!;
     for (const grant of ["session", "shape", "always"] as const) {
-      expect(() => responseGrant({ approvalId: request.approvalId, approved: true, grant }, gate)).toThrow(
-        /still pending/,
-      );
+      expect(() =>
+        resolveApprovalResponse({ approvalId: request.approvalId, approved: true, grant }, gate),
+      ).toThrow(/still pending/);
     }
     expect(gate.isPending(request.approvalId)).toBe(true);
   });
