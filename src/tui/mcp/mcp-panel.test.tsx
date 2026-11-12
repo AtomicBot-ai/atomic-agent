@@ -6,6 +6,7 @@ import { render } from "ink-testing-library";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetConfigCache } from "../../config/config-cache.js";
+import { buildMcpCatalogJson, listMcpCatalog } from "../../mcp/mcp-catalog.js";
 import { McpPanel } from "./mcp-panel.js";
 import { MouseProvider } from "../mouse/mouse-context.js";
 import type { TuiMouseEvent } from "../mouse/mouse-event.js";
@@ -140,7 +141,9 @@ describe("MCP panel input seams", () => {
     const view = surface();
     await wait(() => (view.lastFrame() ?? "").includes("github"));
     view.stdin.write("n");
-    await wait(() => (view.lastFrame() ?? "").includes("+ add MCP server"));
+    await wait(() => (view.lastFrame() ?? "").includes("pick from the catalog"));
+    view.stdin.write("p");
+    await wait(() => (view.lastFrame() ?? "").includes("Paste one MCP server config"));
     const json = '{"name":"docs","command":"fixture"}';
     view.stdin.write(json);
     await wait(() => view.state().mcpPanel.addModal?.json === json);
@@ -149,6 +152,21 @@ describe("MCP panel input seams", () => {
     await wait(() => view.callbacks.onMcpAddServerSubmit.mock.calls.length === 1);
     expect(view.callbacks.onMcpAddServerSubmit).toHaveBeenCalledWith(json);
     expect(view.callbacks.onMcpDetailRequested).not.toHaveBeenCalled();
+  });
+
+  it("the add modal opens on the catalog and Enter fills the editor from the picked entry", async () => {
+    const view = surface();
+    view.dispatch({ type: "mcp_add_modal_opened" });
+    await wait(() => (view.lastFrame() ?? "").includes("pick from the catalog"));
+    expect(view.lastFrame()).toContain("Basics");
+    view.stdin.write("j");
+    await wait(() => view.state().mcpPanel.addModal?.picker?.cursor === 1);
+    view.stdin.write("\r");
+    const second = listMcpCatalog()[1]!;
+    await wait(() => view.state().mcpPanel.addModal?.catalogId === second.id);
+    expect(view.state().mcpPanel.addModal?.json).toBe(buildMcpCatalogJson(second));
+    expect(view.callbacks.onMcpAddServerSubmit).not.toHaveBeenCalled();
+    await wait(() => (view.lastFrame() ?? "").includes("+ add MCP server"));
   });
 
   it("Escape closes the add editor through its callback", async () => {
