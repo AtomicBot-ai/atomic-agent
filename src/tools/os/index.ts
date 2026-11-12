@@ -23,6 +23,7 @@ import {
 } from "./archive/index.js";
 import { buildOsHttpRequestTool } from "./web/http-request.js";
 import { buildOsWebFetchTool } from "./web/web-fetch.js";
+import type { PageRenderer } from "./web/web-fetch-ladder.js";
 import { buildOsWebSearchTool, type WebSearchKeyHelp } from "./web-search/index.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
@@ -76,6 +77,7 @@ export {
 } from "./archive/index.js";
 export { buildOsHttpRequestTool } from "./web/http-request.js";
 export { buildOsWebFetchTool } from "./web/web-fetch.js";
+export type { PageRenderer } from "./web/web-fetch-ladder.js";
 export { buildOsWebSearchTool } from "./web-search/index.js";
 export type { WebSearchKeyHelp } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
@@ -196,6 +198,12 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * keeps the desktop / `.env` advice.
    */
   webSearchKeyHelp?: WebSearchKeyHelp;
+  /**
+   * Renders a page that answered `os.web.fetch` with a bot wall in the
+   * agent's own browser (ATO-968). The composition root builds it from
+   * the browser backend; absent ⇒ the fetch ladder skips that step.
+   */
+  webFetchRenderPage?: PageRenderer;
 }
 
 export function registerOsTools(
@@ -275,7 +283,14 @@ export function registerOsTools(
         : { keyHelp: options.webSearchKeyHelp }),
     }),
   );
-  registry.register(buildOsWebFetchTool({ config: options.config }));
+  registry.register(
+    buildOsWebFetchTool({
+      config: options.config,
+      ...(options.webFetchRenderPage === undefined
+        ? {}
+        : { renderPage: options.webFetchRenderPage }),
+    }),
+  );
   registry.register(osClipboardReadTool);
   registry.register(osClipboardWriteTool);
   registry.register(osWindowListTool);

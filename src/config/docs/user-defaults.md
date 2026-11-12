@@ -96,6 +96,10 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `web.fetch.retryBaseDelayMs` (default `500`).
 - `web.fetch.retryMaxDelayMs` (default `5000`).
 - `web.fetch.extractor` (default `"readability"`): `"defuddle"` runs Defuddle first on HTML pages and falls back to Readability.
+- `web.fetch.renderWithBrowser` (default `true`): a page that answers curl with a bot-protection challenge is rendered in the agent's own browser (not with `browser.connect: "user-chrome"`).
+- `web.fetch.jinaReader` (default `false`): then try Jina Reader without a key; this sends the URL to Jina.
+- `web.fetch.jinaApiKeyEnv` (default `"JINA_API_KEY"`): a key here turns Jina Reader on.
+- `web.fetch.firecrawlApiKeyEnv` (default `"FIRECRAWL_API_KEY"`): a key here adds Firecrawl after Jina.
 
 ## tools
 

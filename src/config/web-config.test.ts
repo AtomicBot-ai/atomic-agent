@@ -60,9 +60,9 @@ describe("web configuration ownership and compatibility", () => {
       exa: { endpoint: "https://mcp.exa.ai/mcp", apiEndpoint: "https://api.exa.ai/search", apiKeyEnv: "EXA_API_KEY" },
       brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
     });
-    expect(fetch).toStrictEqual({ timeoutMs: 30_000, connectTimeoutMs: 10_000, maxRetries: 2, retryBaseDelayMs: 500, retryMaxDelayMs: 5_000, extractor: "readability" });
+    expect(fetch).toStrictEqual({ timeoutMs: 30_000, connectTimeoutMs: 10_000, maxRetries: 2, retryBaseDelayMs: 500, retryMaxDelayMs: 5_000, extractor: "readability", renderWithBrowser: true, jinaReader: false, jinaApiKeyEnv: "JINA_API_KEY", firecrawlApiKeyEnv: "FIRECRAWL_API_KEY" });
     expect(Object.keys(search)).toEqual(["enabled", "provider", "maxResults", "timeoutMs", "cacheTtlMinutes", "persistCache", "fallback", "searxng", "exa", "brave"]);
-    expect(Object.keys(fetch)).toEqual(["timeoutMs", "connectTimeoutMs", "maxRetries", "retryBaseDelayMs", "retryMaxDelayMs", "extractor"]);
+    expect(Object.keys(fetch)).toEqual(["timeoutMs", "connectTimeoutMs", "maxRetries", "retryBaseDelayMs", "retryMaxDelayMs", "extractor", "renderWithBrowser", "jinaReader", "jinaApiKeyEnv", "firecrawlApiKeyEnv"]);
     expect(search).not.toBe(otherSearch);
     expect(search.fallback).not.toBe(otherSearch.fallback);
     expect(search.searxng).not.toBe(otherSearch.searxng);
@@ -123,7 +123,7 @@ describe("web configuration ownership and compatibility", () => {
     expect(parseSearch(raw)).toStrictEqual(expected);
     expect(parseUserConfigFile({ web: { search: raw } }).web.search).toStrictEqual(expected);
     const fetch = { timeoutMs: "1", connectTimeoutMs: "2", maxRetries: "0", retryBaseDelayMs: "9", retryMaxDelayMs: "3" };
-    const expectedFetch = { timeoutMs: 1, connectTimeoutMs: 2, maxRetries: 0, retryBaseDelayMs: 9, retryMaxDelayMs: 3, extractor: "readability" };
+    const expectedFetch = { timeoutMs: 1, connectTimeoutMs: 2, maxRetries: 0, retryBaseDelayMs: 9, retryMaxDelayMs: 3, extractor: "readability", renderWithBrowser: true, jinaReader: false, jinaApiKeyEnv: "JINA_API_KEY", firecrawlApiKeyEnv: "FIRECRAWL_API_KEY" };
     expect(parseFetch(fetch)).toStrictEqual(expectedFetch);
     expect(parseUserConfigFile({ web: { fetch } }).web.fetch).toStrictEqual(expectedFetch);
   });
@@ -161,6 +161,10 @@ describe("web configuration ownership and compatibility", () => {
     { fetch: { retryBaseDelayMs: 0 }, field: "web.fetch.retryBaseDelayMs", reason: "expected positive integer, got 0" },
     { fetch: { retryMaxDelayMs: 0 }, field: "web.fetch.retryMaxDelayMs", reason: "expected positive integer, got 0" },
     { fetch: { extractor: "Defuddle" }, field: "web.fetch.extractor", reason: 'expected one of readability|defuddle, got "Defuddle"' },
+    { fetch: { renderWithBrowser: "maybe" }, field: "web.fetch.renderWithBrowser", reason: 'expected boolean, got "maybe"' },
+    { fetch: { jinaReader: 1 }, field: "web.fetch.jinaReader", reason: "expected boolean, got 1" },
+    { fetch: { jinaApiKeyEnv: "" }, field: "web.fetch.jinaApiKeyEnv", reason: 'expected non-empty string, got ""' },
+    { fetch: { firecrawlApiKeyEnv: "" }, field: "web.fetch.firecrawlApiKeyEnv", reason: 'expected non-empty string, got ""' },
   ])("preserves fetch owner/root errors for $field", ({ fetch, field, reason }) => {
     for (const error of [thrownError(() => parseFetch(fetch)), thrownError(() => parseUserConfigFile({ web: { fetch } }))]) {
       expect(error).toBeInstanceOf(OwnedValidationError);
