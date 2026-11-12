@@ -217,4 +217,13 @@ describe("sidecar send_message — step ceiling", () => {
     expect(turnOptions).toHaveLength(1);
     expect(turnOptions[0]!.maxSteps).toBe(7);
   }, 60_000);
+
+  // ATO-1290: the sidecar host draws approval prompts, so its turns are
+  // interactive and an out-of-memory restart is asked first (ATO-334).
+  it("marks every send_message turn as interactive", async () => {
+    const response = await sendOne({});
+    expect(response.kind === "response" && response.ok).toBe(true);
+    expect(turnOptions).toHaveLength(1);
+    expect(turnOptions[0]!.interactive).toBe(true);
+  }, 60_000);
 });

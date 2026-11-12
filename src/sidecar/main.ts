@@ -352,6 +352,10 @@ export async function bootstrapSidecar(): Promise<{
           signal: active.controller.signal,
           // The desktop app: picks the reply's `### answer-style`.
           origin: "sidecar",
+          // A person reads this chat and answers `approval_request`s, so
+          // a local model that runs out of memory is restarted with a
+          // smaller window only after they say yes (ATO-334, ATO-1290).
+          interactive: true,
         });
       },
     });
