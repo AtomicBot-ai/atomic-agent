@@ -353,7 +353,7 @@ test('the machine is "this Mac" only on macOS; Windows and Linux say "this compu
 /* ---------- ATO-1394: the page re-reads the catalog after a local change ---------- */
 
 /** images-logic.js, images-view.js and images.js in one vm context with a stub STUDIO, BR and timers. */
-function loadImagesPage(cat) {
+function loadImagesPage(cat, extra = {}) {
   const pages = {};
   const timers = [];
   let reads = 0;
@@ -367,6 +367,7 @@ function loadImagesPage(cat) {
   };
   ctx.window = ctx;
   ctx.atomic = { platform: 'darwin', studio: { catalog: () => { reads++; return Promise.resolve({ ok: true, data: cat }); }, price: () => Promise.resolve({ ok: false }) } };
+  Object.assign(ctx.atomic.studio, extra.studio || {});
   vm.createContext(ctx);
   for (const f of ['images-logic.js', 'images-view.js', 'images.js']) {
     vm.runInContext(readFileSync(new URL('../renderer/studio/' + f, import.meta.url), 'utf8'), ctx, { filename: f });
@@ -448,4 +449,91 @@ test('the picker and the hints keep to the place the chat runs in (ATO-1307)', (
   assert.equal(L.simgRestoreNote(fromLocal, 'local'), '');
   assert.equal(L.simgRestoreNote({model: {id: 'google/nano-banana', provider: 'openrouter'}}, 'local'), 'That picture was made in the cloud. Studio follows your chat, so the current model stays.');
   assert.equal(L.simgRestoreNote(fromLocal, null), '');
+});
+
+test('a local model that is not on disk gets a Download, not just an error (ATO-1395, ATO-1308)', () => {
+  const q = (o) => Object.assign({id: 'flux:q4', quant: 'q4', label: 'Q4', bytes: 6.2e9, downloadBytes: 6.2e9, installed: false, recommended: false, fit: {verdict: 'ok'}}, o);
+  const cold = localModel({id: 'flux', name: 'FLUX', local: {family: 'flux', loaded: false, installed: false, defaultQuant: 'flux:q8',
+    quants: [q({id: 'flux:q4', bytes: 6e9}), q({id: 'flux:q8', bytes: 12e9, downloadBytes: 12e9}), q({id: 'flux:q2', recommended: true})]}});
+  assert.equal(L.simgQuantToGet(cold).id, 'flux:q8', 'the quant the picker opens on');
+  assert.equal(L.simgQuantToGet(localModel({local: {quants: [q({id: 'a', bytes: 9}), q({id: 'b', recommended: true})]}})).id, 'b');
+  assert.equal(L.simgQuantToGet(localModel({local: {quants: [q({id: 'a', bytes: 9}), q({id: 'c', bytes: 3})]}})).id, 'c');
+  assert.equal(L.simgQuantToGet(cloudModel()), null);
+  assert.equal(L.simgNotDownloaded(cold), true);
+  assert.equal(L.simgNotDownloaded(localModel()), false, 'an older catalog without `installed` is not refused');
+  assert.equal(L.simgBuildRequest(form(), cold).message, 'Download this model first.');
+  assert.equal(L.simgDownloadLabel(L.simgQuantToGet(cold)), 'Download · 12 GB');
+  assert.equal(L.simgDownloadLabel(q({downloadBytes: 0, bytes: 0})), 'Download');
+
+  // The offer when nothing is downloaded: the default, else the smallest that runs here without a token.
+  const big = localModel({id: 'big', name: 'Big', local: {installed: false, quants: [q({id: 'big:q', downloadBytes: 9e9})]}});
+  const small = localModel({id: 'small', name: 'Small', local: {installed: false, quants: [q({id: 'small:q', downloadBytes: 2e9})]}});
+  const gated = localModel({id: 'gated', name: 'Gated', local: {installed: false, gated: true, quants: [q({id: 'gated:q', downloadBytes: 1e9})]}});
+  const tooBig = localModel({id: 'huge', name: 'Huge', local: {installed: false, quants: [q({id: 'huge:q', downloadBytes: 1e8, fit: {verdict: 'no'}})]}});
+  assert.equal(L.simgSuggestDownload(catalog([], [big, gated, tooBig, small])).id, 'small');
+  assert.equal(L.simgSuggestDownload(catalog([], [big, Object.assign({}, small, {default: true})])).id, 'small');
+  assert.equal(L.simgSuggestDownload(catalog([], [])), null);
+
+  // Progress in words, and which download belongs to a model.
+  const dls = {'flux:q8': {id: 'flux:q8', state: 'downloading', percent: 41.6, file: {index: 2, count: 3, name: 'ae.safetensors'}}};
+  assert.equal(L.simgDownloadLine(L.simgDownloadOf(cold, dls)), 'Downloading 42% · file 2 of 3');
+  assert.equal(L.simgDownloadOf(big, dls), null);
+  assert.equal(L.simgDownloadLine({state: 'verifying'}), 'Checking the files…');
+  assert.equal(L.simgDownloadLine({state: 'failed', error: {code: 'DISK_SPACE', message: 'Needs 19.7 GB, 12.1 GB free on this disk.'}}), 'Needs 19.7 GB, 12.1 GB free on this disk.');
+  assert.match(L.simgDownloadLine({state: 'failed', error: {code: 'GATED', message: 'x'}}), /HF_TOKEN/);
+  assert.equal(L.simgLocalUnsupported({local: {engine: {state: 'unsupported'}}}), true);
+  assert.equal(L.simgLocalUnsupported(catalog()), false);
+
+  // The page: a Download button with its size, Generate off; the empty local model field offers one.
+  const V = req('../renderer/studio/images-view.js');
+  globalThis.esc = (x) => String(x).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+  globalThis.ic = () => '';
+  const lent = Object.keys(L).filter((k) => !(k in globalThis));
+  for (const k of lent) globalThis[k] = L[k];
+  try {
+    const cat = catalog([cloudModel()], [cold]);
+    const foot = V.simgvFoot({model: L.simgFindModel(cat, 'flux'), catalog: cat, dl: {}, form: form()});
+    assert.match(foot, /data-act="studio:images:download:flux"/);
+    assert.match(foot, /Download · 12 GB/);
+    assert.match(foot, /class="st-go"[^>]* disabled/);
+    const running = V.simgvFoot({model: L.simgFindModel(cat, 'flux'), catalog: cat, dl: dls, form: form()});
+    assert.match(running, /Downloading 42%/);
+    assert.match(running, /studio:images:dlstop:flux:q8/);
+    const empty = V.simgvModelField({model: null, place: 'local', catalog: catalog([cloudModel()], [small]), dl: {}}, null);
+    assert.match(empty, /No image model on this Mac yet/);
+    assert.match(empty, /studio:images:download:small/);
+    const off = V.simgvModelField({model: null, place: 'local', catalog: {cloud: {models: []}, local: {models: [small], engine: {state: 'unsupported'}}}, dl: {}}, null);
+    assert.match(off, /cannot make pictures locally\. Switch the chat to the cloud/);
+    assert.doesNotMatch(off, /download:/);
+  } finally { delete globalThis.esc; delete globalThis.ic; for (const k of lent) delete globalThis[k]; }
+});
+
+test('the Images page downloads for the mode in use, and re-reads the catalog after a cancel or an engine change (ATO-1395)', async () => {
+  const q = {id: 'flux:q8', quant: 'q8', label: 'Q8', bytes: 12e9, downloadBytes: 12e9, installed: false, recommended: true, fit: {verdict: 'ok'}};
+  const cold = localModel({id: 'flux', name: 'FLUX', local: {family: 'flux', loaded: false, installed: false, defaultQuant: 'flux:q8', quants: [q]}});
+  const asked = [];
+  const P = loadImagesPage(catalog([cloudModel()], [cold]), {studio: {
+    localDownload: (id, opts) => { asked.push([id, opts]); return Promise.resolve({ok: true, data: {id, state: 'downloading', transferred: 0, total: 12e9, percent: 0}}); },
+    localState: () => Promise.resolve({ok: true, data: {downloads: [], engine: null}}),
+  }});
+  P.page.onShow();
+  await settle();
+  P.page.act('download:flux');
+  P.page.act('mode:transform');
+  P.page.act('download:flux');
+  await settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [['flux:q8', undefined], ['flux:q8', {workflow: 'transform'}]], 'create sends no workflow, another mode sends its own');
+  const before = P.reads();
+  P.page.onLocal({type: 'download', download: {id: 'flux:q8', state: 'cancelled'}});
+  P.flush();
+  await settle();
+  assert.equal(P.reads(), before + 1, 'a cancel re-reads the catalog: part files change the size on the button');
+  P.page.onLocal({type: 'engine', engine: {state: 'installing'}});
+  P.flush();
+  await settle();
+  assert.equal(P.reads(), before + 1, 'an install in progress reads nothing');
+  P.page.onLocal({type: 'engine', engine: {state: 'unsupported', message: 'This computer cannot run local image models.'}});
+  P.flush();
+  await settle();
+  assert.equal(P.reads(), before + 2, 'the engine turning out unsupported re-reads the catalog');
 });

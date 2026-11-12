@@ -27,6 +27,7 @@
     sel: null, recipe: false, delArmed: null, picking: null,
     price: null, priceKey: '', pop: null, modelQ: '', adv: false, modeWhy: null,
     dir: '', focusPath: null,
+    dl: {},   // ATO-1395: local downloads this window knows of, artifact id → LocalDownload (CONTRACT.md)
     chatItem: null,   // a picture opened from a chat that Studio did not make ("From chat")
     recent: typeof studioRecentLoad === 'function' ? studioRecentLoad('image') : [], recentOpen: false,   // ATO-809: prompts sent before
     improve: typeof studioImproveBlank === 'function' ? studioImproveBlank() : null,   // ATO-809: Improve prompt (improve-prompt.js)
@@ -249,16 +250,82 @@
         IM.catalog = r.data;
         const m = simgFindModel(IM.catalog, IM.form.modelId, IM.form.provider);
         if (m) IM.model = m;
+        /* ATO-1308: nothing was there and a download just landed: take it (never the other place). */
+        else if (!IM.model && IM.place && !isLive(IM.job)) { const d = simgDefaultModel(IM.catalog, IM.place); if (d) { chooseModel(d); save(); refreshPrice(); } }
         if (IM.shown) { paintForm(); paintPop(); }
       }, () => undefined);
     }, 300);
   }
-  const LOCAL_CHANGE = new Set(['load', 'download', 'removed']);
+  /* `engine`: an install finished or failed, or the engine turned out not to run here
+     (the catalog's `local.engine` decides whether Download and local generation are offered). */
+  const LOCAL_CHANGE = new Set(['load', 'download', 'removed', 'engine']);
   function onLocal(ev) {
     if (!ev || !LOCAL_CHANGE.has(ev.type)) return;
+    if (ev.type === 'download' && ev.download && ev.download.id) {
+      const d = ev.download;
+      if (d.state === 'done' || d.state === 'cancelled') delete IM.dl[d.id]; else IM.dl[d.id] = d;
+      paintDl();
+    }
     if (ev.type === 'load' && ev.state === 'loading') return;
-    if (ev.type === 'download' && !(ev.download && ev.download.state === 'done')) return;
+    if (ev.type === 'engine' && ev.engine && ev.engine.state === 'installing') return;
+    // A cancelled download leaves part files: the size on the button changes.
+    if (ev.type === 'download' && !(ev.download && (ev.download.state === 'done' || ev.download.state === 'cancelled'))) return;
     refreshCatalog();
+  }
+
+  /* ---------- local downloads (ATO-1395, ATO-1308) ---------- */
+
+  /** Repaint what shows a download: the footer, and the offer under an empty model field. */
+  function paintDl() {
+    if (!IM.shown || !IM.root) return;
+    paintFoot();
+    IM.root.querySelectorAll('[data-part="form"] [data-dl]').forEach((el) => {
+      const m = simgFindModel(IM.catalog, el.dataset.dl, 'local');
+      if (m) el.outerHTML = simgvDownload(IM, m);
+    });
+  }
+
+  /** Download a local model's quant (CONTRACT.md localDownload); `workflow` when a mode needs one more file. */
+  /** The mode a download is for: edit and reference may need a family's vision projector too. */
+  const dlWorkflow = () => (IM.form.mode && IM.form.mode !== 'create' ? IM.form.mode : undefined);
+  function download(m, workflow) {
+    const s = br();
+    const q = simgQuantToGet(m);
+    if (!m || !q) return;
+    if (!s || !s.localDownload) { toast('Could not download it', 'Studio needs a newer app build.', 'bad'); return; }
+    if (!IM.model && !isLive(IM.job)) { chooseModel(m); save(); paintForm(); }
+    IM.dl[q.id] = {id: q.id, state: 'downloading', transferred: 0, total: Number(q.downloadBytes) || 0, percent: 0, file: null, error: null};
+    paintDl();
+    Promise.resolve(s.localDownload(q.id, workflow ? {workflow} : undefined)).then((r) => {
+      if (!r || !r.ok) {
+        IM.dl[q.id] = Object.assign({}, IM.dl[q.id], {state: 'failed', error: (r && r.error) || {code: 'DOWNLOAD_FAILED', message: 'The download did not start.'}});
+      } else if (r.data && r.data.state === 'done') {
+        delete IM.dl[q.id];
+        refreshCatalog();
+      } else if (r.data && IM.dl[q.id] && IM.dl[q.id].state === 'downloading' && !(IM.dl[q.id].percent > 0)) {
+        IM.dl[q.id] = r.data;   // its first state, unless progress already came in on onLocal
+      }
+      paintDl();
+    }, () => { IM.dl[q.id] = Object.assign({}, IM.dl[q.id], {state: 'failed', error: {code: 'DOWNLOAD_FAILED', message: 'The download did not start.'}}); paintDl(); });
+  }
+
+  function stopDownload(id) {
+    const s = br();
+    if (!s || !s.localCancel || !id) return;
+    Promise.resolve(s.localCancel(id)).then((r) => {
+      if (r && r.ok && r.data && r.data.cancelled) { delete IM.dl[id]; paintDl(); }
+    }, () => undefined);
+  }
+
+  /** Downloads still running after a window reload. */
+  function loadDownloads() {
+    const s = br();
+    if (!s || !s.localState) return;
+    Promise.resolve(s.localState()).then((r) => {
+      const list = r && r.ok && r.data && Array.isArray(r.data.downloads) ? r.data.downloads : [];
+      for (const d of list) if (d && d.id && (d.state === 'downloading' || d.state === 'verifying')) IM.dl[d.id] = d;
+      if (list.length) paintDl();
+    }, () => undefined);
   }
 
   let priceT = 0;
@@ -601,6 +668,9 @@
       case 'trymodel': { const bar = a.indexOf('|'); const m = simgFindModel(IM.catalog, a.slice(bar + 1), a.slice(0, bar)); IM.jobErr = null; if (m) { chooseModel(m); save(); paintForm(); refreshPrice(); generate(); } else paintStage(); return; }
       case 'dismiss': IM.jobErr = null; paintStage(); return;
       case 'settings': STUDIO.openSettings('openrouter'); return;
+      case 'download': download(simgFindModel(IM.catalog, a, 'local'), dlWorkflow()); return;
+      case 'download-err': IM.jobErr = null; paintStage(); download(IM.model, dlWorkflow()); return;
+      case 'dlstop': stopDownload(a); return;
       case 'mode': IM.modeWhy = null; switchMode(a); save(); paintForm(); refreshPrice(); return;
       case 'modewhy': IM.modeWhy = a; paintForm(); return;
       case 'aspect': IM.form.aspect = a; save(); paintForm(); return;
@@ -816,6 +886,7 @@
       loadCatalog();
       loadGallery(false);
       loadDir();
+      loadDownloads();
       checkImprove();
     },
     onShow() {

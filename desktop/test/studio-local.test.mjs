@@ -316,3 +316,53 @@ test("a server that sends more than the catalog says is cut off", async () => {
     downloadModelFile({ url: "https://h/x", savePath: join(root, "f", "big.gguf"), bytes: 100, sha256: null }, { root, request: fakeServer().request, retries: 0 }),
     (err) => err.code === "SIZE_MISMATCH");
 });
+
+/* ------------------------------------------- engine unsupported (ATO-1395) */
+
+const unsupportedCore = () => ({
+  call: async (path) => {
+    if (path === "/diffusion/status") return { install: { state: "missing" }, model: { loaded: null } };
+    if (path.startsWith("/engine-builds/sd-cpp/catalog")) return { manifest: {}, host_backend_id: null, host_reason: "no supported GPU." };
+    throw new Error(`unexpected ${path}`);
+  },
+});
+
+test("a download is refused before any byte moves on a computer the image engine does not run on", async () => {
+  const { StudioLocalModels } = require("../out/main/studio-local-models.js");
+  const dataDir = join(base, "unsupported");
+  const events = [];
+  const lm = new StudioLocalModels({
+    dataDir: () => dataDir, ready: async () => unsupportedCore(), running: async () => null,
+    emit: (e) => events.push(e), request: async () => { throw new Error("offline"); },
+  });
+  await assert.rejects(lm.download("z-image:q4_k_m"), (e) => e.code === "ENGINE_UNSUPPORTED" && /cannot run local image models \(no supported GPU\)/.test(e.message));
+  assert.equal(events.filter((e) => e.type === "download").length, 0);
+  assert.equal(lm.state().downloads.length, 0);
+});
+
+test("the local catalog section asks for the engine when nothing has yet, so the page can say it is unsupported", async () => {
+  const { StudioMedia } = require("../out/main/studio-media.js");
+  const dataDir = join(base, "section");
+  const make = () => {
+    const studio = new StudioMedia({
+      dataDir: () => dataDir, stateDir: base, coreVersion: "0.0.0", openRouterKey: async () => null,
+      emitJob: () => {}, emitLocal: () => {},
+      request: async () => { throw new Error("offline"); },
+      coreRequest: () => { throw new Error("no Core download in this test"); },
+    });
+    studio.ready = async () => { throw new Error("no Core in this test"); };
+    return studio;
+  };
+  const studio = make();
+  let asked = 0;
+  studio.local.engineStatus = async () => { asked++; return { state: "unsupported", message: "This computer cannot run local image models. Use a cloud model instead.", backend: null, tag: null, progress: null, error: null }; };
+  const local = await studio["localSection"]("image");
+  assert.equal(asked, 1);
+  assert.equal(local.engine.state, "unsupported");
+  // Core unreachable: no engine, the families still listed.
+  const down = make();
+  down.local.engineStatus = async () => { throw new Error("Core is down"); };
+  const section = await down["localSection"]("image");
+  assert.equal(section.engine, null);
+  assert.ok(section.models.length > 0);
+});

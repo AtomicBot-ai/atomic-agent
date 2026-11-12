@@ -267,7 +267,10 @@ export class StudioMedia {
       const m = status.model?.loaded;
       if (m && m.modality === kind && typeof m.modelId === "string") loaded = m.modelId;
     } catch { /* Core down: families are still listed */ }
-    const extra: LocalSectionExtra = { machine: this.local.profile(), modelsDir: this.local.modelsDir(), engine: this.local.state().engine };
+    /* The engine as last seen, else asked now: the page offers Download and local generation
+       by `engine.state`, and a cached null would hide "this computer cannot run them". */
+    const engine = this.local.state().engine ?? (await this.local.engineStatus().catch(() => null));
+    const extra: LocalSectionExtra = { machine: this.local.profile(), modelsDir: this.local.modelsDir(), engine };
     try {
       const { doc, catalog, error } = await this.local.catalog();
       const views = await this.local.views(catalog, loaded);

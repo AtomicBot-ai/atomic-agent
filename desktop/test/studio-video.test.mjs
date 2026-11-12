@@ -504,3 +504,75 @@ test('the Video picker lists only the place the chat runs in, and Restore keeps 
   assert.equal(V.followLine('local'), 'Studio follows your chat. To use a cloud model, switch the chat to the cloud.');
   assert.equal(V.followLine(null), '');
 });
+
+test('a local video model that is not on disk is downloaded from Studio, then Generate works (ATO-1395, ATO-1308)', async () => {
+  let installed = false;
+  const q = { id: 'ltx-2:q8', quant: 'q8', label: 'Q8', bytes: 8e9, downloadBytes: 8e9, installed: false, recommended: true, fit: { verdict: 'ok' } };
+  const ltx = () => ({ ...wan, id: 'ltx-2', name: 'LTX 2', local: { family: 'ltx-2', loaded: false, installed, defaultQuant: 'ltx-2:q8', quants: [{ ...q, installed }] } });
+  const calls = [];
+  const studio = {
+    catalog: async () => ({ ok: true, data: { cloud: { models: [veo], keyMissing: false }, local: { models: [ltx()] } } }),
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+    localDownload: async (id) => { calls.push(id); return { ok: true, data: { id, state: 'downloading', percent: 0 } }; },
+    job: async () => ({ ok: false }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; }, chatPlace: () => 'local' } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(readFileSync(new URL('../renderer/studio/images-logic.js', import.meta.url), 'utf8'), ctx, { filename: 'images-logic.js' });
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const form = { innerHTML: '' }, foot = { innerHTML: '' };
+  const on = {};
+  const root = { innerHTML: '', addEventListener: (t, fn) => { on[t] = fn; }, contains: () => true,
+    querySelector: (sel) => (sel === '[data-vregion="form"]' ? form : sel === '[data-vregion="foot"]' ? foot : null) };
+  const click = (act, v) => on.click({ target: { closest: (s) => (s === '[data-vact]' ? { disabled: false, getAttribute: (n) => (n === 'data-vact' ? act : n === 'data-v' ? v : null) } : null) }, preventDefault() {} });
+  page.render(root);
+  await new Promise((r) => setTimeout(r, 20));
+  const S = page._state;
+  assert.equal(S.form.modelId, null, 'nothing downloaded: no model, and no cloud one either');
+  assert.match(root.innerHTML, /No video model on this Mac yet/);
+  assert.match(root.innerHTML, /data-vact="download" data-v="ltx-2"/);
+  assert.match(root.innerHTML, /Download · 8\.0 GB/);
+  click('download', 'ltx-2');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(calls, ['ltx-2:q8']);
+  assert.equal(S.form.modelId, 'ltx-2');
+  assert.equal(V.blockReason({ mode: 'text', prompt: 'x' }, ltx()), 'Download this model first.');
+  page.onLocal({ type: 'download', download: { id: 'ltx-2:q8', state: 'downloading', percent: 42, file: null } });
+  assert.match(foot.innerHTML, /Downloading 42%/);
+  installed = true;
+  page.onLocal({ type: 'download', download: { id: 'ltx-2:q8', state: 'done', percent: 100 } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(S.catalog.local.models[0].local.installed, true);
+  assert.equal(V.blockReason({ mode: 'text', prompt: 'x' }, S.catalog.local.models[0]), '');
+  assert.doesNotMatch(foot.innerHTML, /data-vact="download"/);
+});
+
+test('the Video page re-reads the catalog after a cancelled download and an engine change, not during an install (ATO-1395)', async () => {
+  let reads = 0;
+  const studio = {
+    catalog: async () => { reads++; return { ok: true, data: { cloud: { models: [veo], keyMissing: false }, local: { models: [wan] } } }; },
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; } } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const root = { innerHTML: '', addEventListener() {}, contains: () => true, querySelector: () => null };
+  page.render(root);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(reads, 1);
+  page.onLocal({ type: 'download', download: { id: 'wan2.2-5b:q4', state: 'cancelled' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 2, 'a cancel changes what is left to download');
+  page.onLocal({ type: 'engine', engine: { state: 'installing' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 2);
+  page.onLocal({ type: 'engine', engine: { state: 'ready' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 3);
+});

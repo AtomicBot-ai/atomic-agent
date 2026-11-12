@@ -227,6 +227,7 @@ const simgSource = (s) => (s && s.path ? {path: s.path} : s && s.base64 ? {base6
 /** The form as BR.studio.generateImage's request, or why it cannot go yet. */
 function simgBuildRequest(form, model) {
   if (!model) return {ok: false, message: 'Pick a model first.'};
+  if (simgNotDownloaded(model)) return {ok: false, message: 'Download this model first.'};
   const mode = form.mode || 'create';
   if (!(model.modes || []).includes(mode)) return {ok: false, message: model.name + ' cannot do this mode.'};
   const prompt = String(form.prompt || '').trim();
@@ -380,6 +381,71 @@ function simgMaker(slug) {
   return SIMG_MAKERS[slug] || slug.split(/[-_]/).filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 }
 
+/* ---------- local downloads (ATO-1395, ATO-1308) ---------- */
+
+/** The quant Download fetches for a local model (CONTRACT.md LocalQuant): the one the picker
+    opens on, else the one recommended for this machine, else the smallest; null for none. */
+function simgQuantToGet(model) {
+  const l = model && model.local;
+  const qs = l && Array.isArray(l.quants) ? l.quants.filter((q) => q && q.id) : [];
+  if (!qs.length) return null;
+  return qs.find((q) => q.id === l.defaultQuant) || qs.find((q) => q.recommended)
+    || qs.slice().sort((a, b) => (Number(a.bytes) || 0) - (Number(b.bytes) || 0))[0];
+}
+
+/** True when a local model is known not to be on disk yet (an older catalog without `installed` is not). */
+function simgNotDownloaded(model) {
+  return !!(model && model.local && model.local.installed === false);
+}
+
+/** The model to offer when the chat is local and no image model is downloaded: the catalog's
+    default, else one that runs here without a Hugging Face token, smallest download first. */
+function simgSuggestDownload(catalog) {
+  const fits = (m) => { const q = simgQuantToGet(m); return !!q && !(q.fit && q.fit.verdict === 'no'); };
+  const local = simgModels(catalog).filter((m) => m.group === 'local' && simgQuantToGet(m));
+  const size = (m) => Number(simgQuantToGet(m).downloadBytes || simgQuantToGet(m).bytes) || 0;
+  return local.find((m) => m.default && fits(m))
+    || local.filter((m) => fits(m) && !(m.local && m.local.gated)).sort((a, b) => size(a) - size(b))[0]
+    || local.find(fits) || local[0] || null;
+}
+
+/** The download of one of a model's quants this window knows of (`dls`: artifact id → LocalDownload), running first. */
+function simgDownloadOf(model, dls) {
+  const l = model && model.local;
+  if (!l || !dls) return null;
+  const ids = (l.quants || []).map((q) => q && q.id).filter(Boolean);
+  const got = ids.map((id) => dls[id]).filter(Boolean);
+  return got.find((d) => d.state === 'downloading' || d.state === 'verifying') || got.find((d) => d.state === 'failed') || null;
+}
+
+const simgGb = (b) => { const n = Number(b); return n > 0 ? (n / 1e9).toFixed(n >= 1e10 ? 0 : 1) + ' GB' : ''; };
+
+/** The Download button's words: "Download · 6.2 GB" (what is still missing). */
+function simgDownloadLabel(quant) {
+  const gb = simgGb(quant && (quant.downloadBytes || quant.bytes));
+  return 'Download' + (gb ? ' · ' + gb : '');
+}
+
+/** A download in words: "Downloading 42% · file 2 of 3", "Checking the files…", or why it failed. */
+function simgDownloadLine(dl) {
+  if (!dl) return '';
+  if (dl.state === 'verifying') return 'Checking the files…';
+  if (dl.state === 'failed') {
+    const e = dl.error || {};
+    if (e.code === 'GATED') return 'This model needs a Hugging Face token (HF_TOKEN) and its licence accepted on Hugging Face.';
+    return e.message || 'The download did not finish.';
+  }
+  const pct = Math.max(0, Math.min(100, Math.round(Number(dl.percent) || 0)));
+  const file = dl.file && dl.file.count > 1 ? ' · file ' + dl.file.index + ' of ' + dl.file.count : '';
+  return 'Downloading ' + pct + '%' + file;
+}
+
+/** True when this computer cannot make pictures or clips locally (Core names no engine build for it). */
+function simgLocalUnsupported(catalog) {
+  const e = catalog && catalog.local && catalog.local.engine;
+  return !!(e && e.state === 'unsupported');
+}
+
 /** The labels a model carries: Non-commercial and 18+ are shown, never hidden. */
 function simgModelTags(model) {
   const out = [];
@@ -446,7 +512,7 @@ function simgPinnedList(items, more) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgModels, simgFindModel, simgPlaceOf, simgDefaultModel, simgPickModel, simgFollowLine, simgRestoreNote, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
+  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgModels, simgFindModel, simgPlaceOf, simgDefaultModel, simgPickModel, simgFollowLine, simgRestoreNote, simgQuantToGet, simgNotDownloaded, simgSuggestDownload, simgDownloadOf, simgDownloadLabel, simgDownloadLine, simgLocalUnsupported, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
     simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgMaker, simgModelTags,
     simgLocalChips, simgModesLine, SIMG_PHASE_ORDER, simgFindPinned, simgPinnedList};
