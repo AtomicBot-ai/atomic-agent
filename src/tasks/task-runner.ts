@@ -237,6 +237,8 @@ export class TaskRunner {
   private readonly runs = new Map<string, InFlightRun>();
   /** Set by `stop`: nothing is claimed after it. */
   private stopping = false;
+  /** Set by `stop({ crashed: true })`: interrupted runs are put back as crashes (ATO-1419). */
+  private stoppingCrashed = false;
   /** Summary collectors of the runs in progress, for `liveStatus`. */
   private readonly live = new Map<
     string,
@@ -782,8 +784,20 @@ export class TaskRunner {
    * sweep takes them back once it is gone (`recoverInterrupted`). The
    * timer is not `unref`'d, for the reason `TurnsInFlight` gives.
    */
-  async stop(graceMs: number): Promise<number> {
+  async stop(
+    graceMs: number,
+    options: {
+      /**
+       * ATO-1419: the agent is ending itself as unhealthy (the memory
+       * guard), not stopping cleanly. A one-shot task this interrupts is
+       * put back as `TASK_OWNER_GONE_ERROR`, a crash, so its resume is
+       * counted against `agent.task.maxResumes` rather than run for free.
+       */
+      crashed?: boolean;
+    } = {},
+  ): Promise<number> {
     this.stopping = true;
+    if (options.crashed) this.stoppingCrashed = true;
     const runs = [...this.runs.values()];
     if (runs.length === 0) return 0;
     for (const run of runs) run.controller.abort();
@@ -1039,11 +1053,12 @@ export class TaskRunner {
       return requeued;
     }
     if (interrupted) {
+      const lastError =
+        interruptedError ??
+        (this.stoppingCrashed ? TASK_OWNER_GONE_ERROR : undefined);
       const pending = this.options.store.markInterrupted(task.id, {
         nextScheduledFor: null,
-        ...(interruptedError !== undefined
-          ? { lastError: interruptedError }
-          : {}),
+        ...(lastError !== undefined ? { lastError } : {}),
       });
       if (!pending) return this.options.store.get(task.id);
       this.options.logger?.info("task run interrupted; left pending", {

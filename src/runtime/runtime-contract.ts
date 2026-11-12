@@ -717,7 +717,19 @@ export interface AgentRuntime {
   getPlanMode(): boolean;
   setPlanMode(on: boolean): void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
-  shutdown(): Promise<void>;
+  shutdown(options?: RuntimeShutdownOptions): Promise<void>;
+}
+
+/** Why the runtime is being shut down, where it matters to what it leaves behind. */
+export interface RuntimeShutdownOptions {
+  /**
+   * The process is ending itself because it is unhealthy (the serve
+   * memory guard, exit code 86), not because it was asked to stop. Task
+   * runs it interrupts are left as crashed, so a task that brings the
+   * agent down every time is resumed at most `agent.task.maxResumes`
+   * times (ATO-1419).
+   */
+  crashed?: boolean;
 }
 
 /** One unfinished fusion run, as `AgentRuntime.fusionRuns` lists it. */
