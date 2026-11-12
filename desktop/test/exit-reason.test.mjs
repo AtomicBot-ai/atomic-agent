@@ -120,17 +120,34 @@ test("error facts are code, class and our file only, never message text or folde
   const lines = [
     "!my private prompt about my bank account",
     "!TypeError: Cannot read properties of undefined (reading 'secretThing')",
-    "!    at loadConfig (/Users/jane/Secret Project/app/out/config-loader.js:88:13)",
-    "!    at main (/Users/jane/Secret Project/app/out/serve-command.js:162:7)",
-    "!code: 'ERR_INVALID_ARG_TYPE'",
+    "!    at parse (/Users/jane/Secret Project/bank-export-parser.js:3:1)",
+    "!    at loadConfig (/Applications/Atomic Agent.app/Contents/Resources/agent/atomic-agent:88:13)",
+    "!    at main (/Applications/Atomic Agent.app/Contents/Resources/agent/atomic-agent:162:7)",
+    "!code: 'ERR_INVALID_ARG_TYPE' for EMPLOYEE EXAMPLE",
   ];
   const f = R.lastErrorFacts(lines);
-  assert.deepEqual(f, { err_code: "ERR_INVALID_ARG_TYPE", err_type: "TypeError", err_file: "config-loader.js:88" });
+  // The person's own file is skipped; the first frame in our bundle is named.
+  assert.deepEqual(f, { err_code: "ERR_INVALID_ARG_TYPE", err_type: "TypeError", err_file: "atomic-agent:88" });
   const all = JSON.stringify(f);
-  for (const leak of ["jane", "Secret", "bank", "secretThing", "Users"]) assert.ok(!all.includes(leak), leak);
+  for (const leak of ["jane", "Secret", "bank", "secretThing", "Users", "EMPLOYEE", "EXAMPLE"]) assert.ok(!all.includes(leak), leak);
   assert.deepEqual(R.lastErrorFacts([]), { err_code: null, err_type: null, err_file: null });
   // Every value fits the report's tag shape (sentry/scrub.ts safeTag).
   for (const v of Object.values(f)) assert.match(v, /^[\w.:-]{1,64}$/);
+});
+
+test("a frame's file is named only for our bundle, Node and packages; a person's own file never", () => {
+  const file = (frame) => R.lastErrorFacts(["!Error: x", frame]).err_file;
+  assert.equal(file("!    at run (/Users/jane/bank-export-parser.js:3:1)"), "outside_app");
+  assert.equal(file("!    at C:\\Users\\jane\\my-skill\\index.mjs:9:2"), "outside_app");
+  assert.equal(file("!    at x (C:\\Program Files\\Atomic Agent\\resources\\agent\\atomic-agent.exe:12:3)"), "atomic-agent.exe:12");
+  assert.equal(file("!    at x (file:///tmp/build/cli.mjs:4410:9)"), "cli.mjs:4410");
+  assert.equal(file("!    at Server.setupListenHandle [as _listen2] (node:net:1872:16)"), "node:net:1872");
+  assert.equal(file("!    at open (/Users/jane/proj/node_modules/better-sqlite3/lib/database.js:65:9)"), "database.js:65");
+  // Only a frame line is a frame: a message that says "at host:port" is not one.
+  assert.equal(file("!connect ECONNREFUSED at 127.0.0.1:4317"), null);
+  // The errno family is a fixed list.
+  assert.equal(R.lastErrorFacts(["!EXAMPLE and EMPLOYEE are words"]).err_code, null);
+  assert.equal(R.lastErrorFacts(["!getaddrinfo EAI_AGAIN api.example.com"]).err_code, "EAI_AGAIN");
 });
 
 test("lines written are a bucket; each category has plain words or none", () => {

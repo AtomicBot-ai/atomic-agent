@@ -49,12 +49,43 @@ function looksLikeCrash(line: string): boolean {
   return /uncaught|unhandled (promise )?rejection|serve failed:|^\S*\s*at .+:\d+(:\d+)?\)?\s*$/i.test(line);
 }
 
-/** A Node / system error code in a line: `ENOENT`, `ERR_DLOPEN_FAILED`, `SQLITE_BUSY`. Codes only, never text around them. */
-const ERR_CODE_RE = /\b(E[A-Z]{3,15}|ERR_[A-Z0-9_]{3,48}|SQLITE_[A-Z_]{2,32})\b/g;
+/**
+ * A Node / system error code in a line: `ENOENT`, `ERR_DLOPEN_FAILED`, `SQLITE_BUSY`. Codes only, never text around them.
+ * The errno family is a fixed list: any upper-case word starting with E (EXAMPLE, EMPLOYEE) is not a code.
+ */
+const ERRNO_CODES = [
+  "E2BIG", "EACCES", "EADDRINUSE", "EADDRNOTAVAIL", "EAGAIN", "EAI_AGAIN", "EAI_FAIL", "EAI_NODATA", "EAI_NONAME",
+  "EBADF", "EBUSY", "ECANCELED", "ECHILD", "ECONNABORTED", "ECONNREFUSED", "ECONNRESET", "EDQUOT", "EEXIST",
+  "EFBIG", "EHOSTDOWN", "EHOSTUNREACH", "EILSEQ", "EINTR", "EINVAL", "EIO", "EISDIR", "ELOOP", "EMFILE",
+  "ENAMETOOLONG", "ENETDOWN", "ENETRESET", "ENETUNREACH", "ENFILE", "ENOBUFS", "ENODEV", "ENOENT", "ENOEXEC",
+  "ENOMEM", "ENOSPC", "ENOSYS", "ENOTCONN", "ENOTDIR", "ENOTEMPTY", "ENOTFOUND", "ENOTSOCK", "ENOTSUP", "ENXIO",
+  "EPERM", "EPIPE", "EPROTO", "ERANGE", "EROFS", "ESHUTDOWN", "ESPIPE", "ESRCH", "ETIMEDOUT", "ETXTBSY", "EXDEV",
+];
+const ERR_CODE_RE = new RegExp(`\\b(${ERRNO_CODES.join("|")}|ERR_[A-Z0-9_]{3,48}|SQLITE_[A-Z_]{2,32})\\b`, "g");
 /** An error class name: `TypeError`, `SqliteError`, `ZodError`. */
 const ERR_TYPE_RE = /\b([A-Z][A-Za-z0-9]{1,48}(?:Error|Exception))\b/g;
-/** A stack frame's file: the last path segment of `at fn (…/serve-command.js:162:7)`, kept only when it is a code file. */
-const FRAME_FILE_RE = /\bat\b.*?([\w.@-]{1,80}\.(?:m?js|cjs|ts|node)):(\d{1,6})(?::\d+)?\)?\s*$/;
+/** A stack frame's location: `at fn (<where>:162:7)` or `at <where>:162:7`. */
+const FRAME_RE = /^\W*at\s+(?:.*?\()?(.+?):(\d{1,6})(?::\d+)?\)?\s*$/;
+/**
+ * The agent the app runs is one bundle (scripts/bundle-sea.ts: cli.mjs in a
+ * Node single-executable named atomic-agent), so its frames name that file.
+ * Only these, Node's own modules and packages under node_modules get a name
+ * in a report: a frame in a person's own code (a skill, an MCP server, a
+ * script of theirs) is skipped, its file name never read out.
+ */
+const OUR_FILES = new Set(["cli.mjs", "cli.js", "atomic-agent", "atomic-agent.exe", "atag", "atag.exe"]);
+function frameFile(line: string): { file: string | null; frame: boolean } {
+  const m = FRAME_RE.exec(line);
+  if (!m) return { file: null, frame: false };
+  const where = m[1]!.replace(/^file:\/\//, "");
+  const at = m[2]!;
+  const node = /^node:([\w/]{1,40})$/.exec(where);
+  if (node) return { file: `node:${node[1]!.replace(/\//g, ".")}:${at}`, frame: true };
+  const base = where.split(/[\\/]/).pop() ?? "";
+  if (!/^[\w.@-]{1,80}$/.test(base)) return { file: null, frame: true };
+  if (OUR_FILES.has(base) || /[\\/]node_modules[\\/]/.test(where)) return { file: `${base}:${at}`, frame: true };
+  return { file: null, frame: true };
+}
 
 /** The newest match of `re` across `lines`, newest line first. */
 function newestMatch(lines: readonly string[], re: RegExp, pick: (m: RegExpExecArray) => string): string | null {
@@ -76,22 +107,26 @@ function newestMatch(lines: readonly string[], re: RegExp, pick: (m: RegExpExecA
 
 /**
  * ATO-1285 — what the agent's last lines say went wrong, as tag-shaped words
- * only: an error code, an error class name and the code file of the first
- * stack frame it printed. No message text, no path, no number other than a
- * line in our own code, so nothing a person typed or a folder name can get
+ * only: an error code from a fixed list, an error class name and the file
+ * of the first stack frame in our own bundle (or Node, or a package). No
+ * message text, no path, no file of a person's own, no number other than a
+ * line in that file, so nothing a person typed or a folder name can get
  * into a report. Null fields are left out of the report.
  */
 export function lastErrorFacts(lines: readonly string[]): { err_code: string | null; err_type: string | null; err_file: string | null } {
   const recent = lines.slice(Math.max(0, lines.length - LAST_LINES)).filter((l) => typeof l === "string" && l.trim());
   const code = newestMatch(recent, ERR_CODE_RE, (m) => m[1]!);
   const type = newestMatch(recent, ERR_TYPE_RE, (m) => m[1]!);
-  // The first frame printed is where it was thrown: read oldest first.
+  // The first frame of ours printed is nearest where it was thrown: read oldest first.
+  // A trace with frames only in someone else's code says so, without a name.
   let file: string | null = null;
+  let frames = false;
   for (const line of recent) {
-    const m = FRAME_FILE_RE.exec(line);
-    if (m) { file = `${m[1]}:${m[2]}`; break; }
+    const f = frameFile(line);
+    frames ||= f.frame;
+    if (f.file) { file = f.file; break; }
   }
-  return { err_code: code, err_type: type, err_file: file };
+  return { err_code: code, err_type: type, err_file: file ?? (frames ? "outside_app" : null) };
 }
 
 /** ATO-1285: how many lines the agent wrote before it exited, as a bucket. "0" tells a silent death from a filtered one. */
