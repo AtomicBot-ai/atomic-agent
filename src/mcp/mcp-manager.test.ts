@@ -19,7 +19,7 @@ import type {
 // `FAKE` shared object.
 interface FakeBehaviour {
   connect: () => Promise<void>;
-  close: () => Promise<void>;
+  close: (reason?: string) => Promise<void>;
   catalog: McpServerCatalog;
 }
 
@@ -46,10 +46,10 @@ vi.mock("./mcp-client.js", () => {
       await b.connect();
       this.connected = true;
     }
-    async close(): Promise<void> {
+    async close(reason?: string): Promise<void> {
       const b = FAKE_BY_NAME.get(this.config.name);
       this.connected = false;
-      if (b) await b.close();
+      if (b) await b.close(reason);
     }
     getCatalog(): McpServerCatalog {
       const b = FAKE_BY_NAME.get(this.config.name);
@@ -567,6 +567,21 @@ describe("McpManager", () => {
       expect(tools.has("mcp.docs.lookup")).toBe(false);
       expect(closeSpy).toHaveBeenCalledTimes(1);
       expect(mgr.listServerNames()).not.toContain("docs");
+    });
+
+    it("removeServerLive hands its reason to the client close (ATO-1407)", async () => {
+      const tools = new ToolRegistry();
+      const closeSpy = vi.fn(async (_reason?: string) => {});
+      FAKE_BY_NAME.set("docs", {
+        connect: async () => {},
+        close: closeSpy,
+        catalog: { server: "docs", tools: [metaOf("docs", "search")], resources: [], prompts: [] },
+      });
+      const mgr = new McpManager([stdioConfig("docs")], { toolRegistry: tools });
+      await mgr.start();
+      await mgr.removeServerLive("docs", "plugin docs no longer allows this server");
+      expect(closeSpy).toHaveBeenCalledWith("plugin docs no longer allows this server");
+      expect(tools.has("mcp.docs.search")).toBe(false);
     });
 
     it("removeServerLive on an absent name short-circuits", async () => {

@@ -28,6 +28,7 @@ A plugin runs code when it ships hooks, a local MCP server or skill scripts, or 
 - In a terminal the CLI lists exactly what would run (`describePluginCode`: each local MCP command, each hook command, each script file, each server and the keys it gets) and asks.
 - `--accept-code` agrees up front. Without a terminal and without the flag the plugin installs with code off; `plugin allow-code <name>` turns it on later.
 - On update an earlier yes is kept only when `codeChanged` is false; otherwise the record is reset and the question comes back.
+- `plugin deny-code <name>` (desktop "Stop its code", the `/plugins` panel) takes it back. Hooks and scripts re-read the record on every run; a running agent watches `plugins.json` and stops that plugin's local MCP servers and servers that receive keys at once, so none keeps running, or keeps a key, until the next start.
 - A desktop answer echoes `consentId` (`codeConsentIdOf`), a hash of exactly that list, so code that changed after the question was shown is never allowed unseen.
 
 Consent never comes from the plugin, from prompt text or from a headless default.
