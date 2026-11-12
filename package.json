@@ -96,6 +96,10 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@mozilla/readability": "^0.6.0",
+    "@shikijs/core": "^4.6.0",
+    "@shikijs/engine-javascript": "^4.6.0",
+    "@shikijs/langs": "^4.6.0",
+    "@shikijs/themes": "^4.6.0",
     "@types/marked": "^5.0.2",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",
