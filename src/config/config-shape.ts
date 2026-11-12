@@ -15,11 +15,12 @@ import type { UserLlmFusionConfig, UserLlmRunModeConfig } from "./llm-run-mode-c
  * `carryUnknownConfigKeys`.
  *
  * - `fixed`: the block's field names are the schema's. Every object node
- *   of `USER_CONFIG_DEFAULTS` except `webhooks` is one, and so are the
+ *   of `USER_CONFIG_DEFAULTS` except `webhooks` and `fileTriggers` is
+ *   one, and so are the
  *   root (path `""`) and the `llm` blocks below, which the defaults do
  *   not have.
- * - `dictionary`: names or entries are user data — `webhooks` (keyed by
- *   binding name), `mcp.servers` and `llm.providers` (lists of named
+ * - `dictionary`: names or entries are user data — `webhooks` and
+ *   `fileTriggers` (keyed by binding name), `mcp.servers` and `llm.providers` (lists of named
  *   entries). Arrays are always whole values, and so is everything
  *   inside a list entry (`providerPreferences`, `extraBody`, `params`).
  *
@@ -103,6 +104,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
 
 export const DICTIONARY_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "webhooks",
+  "fileTriggers",
   "mcp.servers",
   "llm.providers",
 ]);

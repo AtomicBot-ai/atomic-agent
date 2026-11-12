@@ -39,7 +39,13 @@ export type TaskOrigin =
  * the task enters `runTurn`. `origin` captures the API surface (e.g.
  * `http`), `triggerSource` captures the semantic reason (`webhook`).
  */
-export type TriggerSource = "user" | "scheduler" | "webhook" | "agent";
+export type TriggerSource =
+  | "user"
+  | "scheduler"
+  | "webhook"
+  | "agent"
+  /** A watched file or log line (`fileTriggers`, ATO-441). */
+  | "file";
 
 /**
  * Scheduling primitive for deferred / recurring execution. Three shapes:
