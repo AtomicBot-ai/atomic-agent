@@ -495,16 +495,16 @@ describe("reduceUiAction clearedQuestions (ATO-1420)", () => {
     const state = {
       ...createInitialTuiState(SESSION),
       messages: [
-        { id: "u1", role: "user" as const, text: "q1" },
-        { id: "s1", role: "user" as const, text: "also", steered: true },
-        { id: "a1", role: "assistant" as const, text: "r1" },
-        { id: "u2", role: "user" as const, text: "q2" },
+        { id: "u1", role: "user" as const, text: "q1", timestamp: 0 },
+        { id: "s1", role: "user" as const, text: "also", steered: true, timestamp: 0 },
+        { id: "a1", role: "assistant" as const, text: "r1", timestamp: 0 },
+        { id: "u2", role: "user" as const, text: "q2", timestamp: 0 },
       ],
     };
     const once = reduceUiAction(state, { type: "chat_cleared" });
     expect(once?.clearedQuestions).toBe(2);
     const twice = reduceUiAction(
-      { ...once!, messages: [{ id: "u3", role: "user" as const, text: "q3" }] },
+      { ...once!, messages: [{ id: "u3", role: "user" as const, text: "q3", timestamp: 0 }] },
       { type: "chat_cleared" },
     );
     expect(twice?.clearedQuestions).toBe(3);
@@ -522,10 +522,10 @@ describe("reduceUiAction chat_messages_truncated (ATO-1302)", () => {
   const withPairs = () => ({
     ...createInitialTuiState(SESSION),
     messages: [
-      { id: "u1", role: "user" as const, text: "q1" },
-      { id: "a1", role: "assistant" as const, text: "r1" },
-      { id: "u2", role: "user" as const, text: "q2" },
-      { id: "a2", role: "assistant" as const, text: "r2" },
+      { id: "u1", role: "user" as const, text: "q1", timestamp: 0 },
+      { id: "a1", role: "assistant" as const, text: "r1", timestamp: 0 },
+      { id: "u2", role: "user" as const, text: "q2", timestamp: 0 },
+      { id: "a2", role: "assistant" as const, text: "r2", timestamp: 0 },
     ],
   });
 

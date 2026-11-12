@@ -532,7 +532,10 @@ describe("skill tools", () => {
         { skill: "loud", script: "loud.js" },
         makeCtx(base),
       );
-      expect(result.summary).toContain("key=unset pass=ato877-tool-token");
+      // The passed-through value reached the script ("unset" otherwise);
+      // the summary masks it like any env-known secret (ATO-1176).
+      expect(result.summary).toContain("key=unset pass=[redacted:ATO877_TOOL_TOKEN]");
+      expect(result.summary).not.toContain("ato877-tool-token");
       expect(result.summary).not.toContain("ato877-tool-key");
     } finally {
       if (saved.key === undefined) delete process.env.OPENROUTER_API_KEY;
