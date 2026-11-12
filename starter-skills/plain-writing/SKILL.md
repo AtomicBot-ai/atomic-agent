@@ -1,6 +1,6 @@
 ---
 name: plain-writing
-description: Rewrite text so it reads like a person wrote it, not a model. Removes long dashes, stock phrases, filler, empty hype and template page layouts while keeping the meaning and every fact. Use when writing or editing a landing page, post, README, email, release note or any text meant for other people, and when the user asks to remove AI slop or make text sound human.
+description: Make a landing page, post or any text read human: no long dashes or stock phrases. Use to remove AI slop.
 version: 1.0.0
 requires_tools:
   - os.fs.read
