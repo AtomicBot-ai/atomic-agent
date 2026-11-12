@@ -223,7 +223,7 @@ function triggerCloudEmbeddingModel(
   callbacks.onLocalModelsEmbeddingDisableRequested?.();
 }
 
-function openProviderConfigFor(
+export function openProviderConfigFor(
   provider: ProviderRow,
   dispatch: (action: TuiAction) => void,
 ): void {
