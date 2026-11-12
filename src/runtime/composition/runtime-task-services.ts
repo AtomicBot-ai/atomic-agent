@@ -63,6 +63,8 @@ export function createRuntimeTaskRunner(args: {
   resolveTelegram: () => TelegramChannel | null;
   logger: StructuredLogger;
   metrics: AgentMetrics;
+  /** The live approval level, so a task started under another is left alone (ATO-1324). */
+  approvalLevel?: () => number;
 }): TaskRunner {
   const { config, taskStore, runTurn, sessionStore, createSession, toolRegistry, resolveTelegram, logger, metrics } = args;
   const taskRunner = new TaskRunner({
@@ -105,6 +107,7 @@ export function createRuntimeTaskRunner(args: {
     snapshotCadence: config.statusSnapshot ?? null,
     logger,
     metrics,
+    ...(args.approvalLevel ? { approvalLevel: args.approvalLevel } : {}),
     // Continue a run a crash, a kill or a restart cut off from its
     // session's checkpoint (ATO-1109).
     resume: {

@@ -160,6 +160,12 @@ export interface TaskRecord {
    * `null` when the agent finished on its own.
    */
   stopCause: string | null;
+  /**
+   * The approval level (1..5) the task was started under, for a task
+   * that must not be resumed under another one (ATO-1324): `overnight`
+   * records it. `null`/absent: any process may run it at its own level.
+   */
+  approvalLevel?: number | null;
 }
 
 /**
@@ -193,7 +199,8 @@ export class TaskValidationError extends Error {
       | "schedule"
       | "notify"
       | "maxCostUsd"
-      | "maxDurationMs",
+      | "maxDurationMs"
+      | "approvalLevel",
     message: string,
   ) {
     super(message);

@@ -767,6 +767,7 @@ export async function createAgentRuntime(
   const taskRunner = createRuntimeTaskRunner({
     config, taskStore, runTurn, sessionStore, createSession, toolRegistry,
     resolveTelegram: () => telegramChannelForShutdown, logger, metrics,
+    approvalLevel: () => approvals.getLevel(),
   });
 
   registerRuntimeFusionAndReadScope({
