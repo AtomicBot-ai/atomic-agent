@@ -62,6 +62,7 @@ export {
   type LocalServerErrorCode,
 } from "./local-server-error.js";
 export { isRequestSizeRejection } from "./request-size-rejection.js";
+export { isExpectedProviderLimit } from "./expected-provider-limit.js";
 export {
   readProviderErrorVerdict,
   type ProviderErrorVerdict,

@@ -18,6 +18,7 @@ import {
   type TraceSink,
 } from "../../tracing/trace/index.js";
 import { captureError, type SentryClient } from "../../error-reporting/index.js";
+import { isExpectedProviderLimit } from "../../llm/index.js";
 import { describeLlmFailure } from "./llm-failure-context.js";
 
 export function createRuntimeTraces(
@@ -233,7 +234,9 @@ export function createRuntimeTraces(
           }
         }
       }
-      if (event.type === "loop_failed") {
+      // A provider plan's own limit (Groq's TPM 413 with its numbers) is explained to
+      // the user in chat and is not a defect to report (ATO-1283).
+      if (event.type === "loop_failed" && !isExpectedProviderLimit(event.error)) {
         const reporter = getErrorReporter();
         captureError(reporter, event.error, {
           source: "llm_failure",

@@ -1,6 +1,10 @@
 import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
 import { readErrnoCode } from "../../errno-code.js";
+import {
+  groqRequestTooLargeSentence,
+  isGroqRequestTooLarge,
+} from "./groq-plan-limit.js";
 import { providerServiceName } from "../provider-service-name.js";
 import { isLocalProviderUrl } from "../presets/is-local-provider-url.js";
 import {
@@ -211,6 +215,11 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   }
   if (err.keyProblem === "missing") {
     return `${who} needs an API key and none is set. Add the key in the Providers panel.`;
+  }
+  if (isGroqRequestTooLarge(err)) {
+    // The plan's tokens-per-minute allowance, not a malformed request
+    // (ATO-1283): say which limit it is and what helps.
+    return groqRequestTooLargeSentence(err);
   }
   if ((err.status === 403 || err.status === 429) && isCreditExhausted(err)) {
     return billingRefusalSentence(err);
