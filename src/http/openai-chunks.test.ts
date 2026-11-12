@@ -8,7 +8,7 @@ import {
   toolResultTurn,
   userTurn,
 } from "../session/conversation-turn.js";
-import { buildFinalAssistantPayload, buildUsageChunk, buildUsagePayload } from "./openai-chunks.js";
+import { buildFinalAssistantPayload, buildGenerationPayload, buildUsageChunk, buildUsagePayload } from "./openai-chunks.js";
 
 function result(
   turns: ReturnType<typeof userTurn>[],
@@ -88,5 +88,29 @@ describe("buildUsagePayload (ATO-276)", () => {
     expect(buildUsageChunk({ completionId: "c", created: 1, model: "m", usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 } })).toEqual({
       id: "c", object: "chat.completion.chunk", created: 1, model: "m", choices: [], usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
     });
+  });
+});
+
+describe("buildGenerationPayload (ATO-1186)", () => {
+  const withUsage = (usage: RunTurnResult["usage"]): RunTurnResult =>
+    ({ ...result([userTurn("hi", 1)]), usage }) as RunTurnResult;
+
+  it("reports the timed output tokens and their generation time", () => {
+    expect(
+      buildGenerationPayload(withUsage({ promptTokens: 5, completionTokens: 40, generation: { completionTokens: 30, durationMs: 1500 } })),
+    ).toEqual({ completion_tokens: 30, duration_ms: 1500 });
+  });
+
+  it("is absent when nothing was timed, so a client shows no speed", () => {
+    expect(buildGenerationPayload(result([userTurn("hi", 1)]))).toBeUndefined();
+    expect(buildGenerationPayload(withUsage({ promptTokens: 5, completionTokens: 40 }))).toBeUndefined();
+    expect(
+      buildGenerationPayload(withUsage({ promptTokens: 5, completionTokens: 40, generation: { completionTokens: 0, durationMs: 900 } })),
+    ).toBeUndefined();
+  });
+
+  it("never touches the OpenAI usage block", () => {
+    const r = withUsage({ promptTokens: 5, completionTokens: 40, generation: { completionTokens: 30, durationMs: 1500 } });
+    expect(buildUsagePayload(r)).toEqual({ prompt_tokens: 5, completion_tokens: 40, total_tokens: 45 });
   });
 });

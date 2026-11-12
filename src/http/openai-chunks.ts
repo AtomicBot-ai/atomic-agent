@@ -92,6 +92,27 @@ export function buildUsagePayload(result: RunTurnResult): UsagePayload {
   };
 }
 
+/**
+ * The turn's reply speed inputs for the extension `usage` frame
+ * (ATO-1186): output tokens of the streamed completions that were timed,
+ * and how long they spent generating. `completion_tokens / duration_ms`
+ * is tokens per millisecond. `undefined` when nothing was timed (a turn
+ * with no streamed completion, an older provider), so a client shows no
+ * speed rather than a wrong one. Never put on the OpenAI `usage` block:
+ * that one stays schema-exact.
+ */
+export function buildGenerationPayload(
+  result: RunTurnResult,
+): { completion_tokens: number; duration_ms: number } | undefined {
+  const generation = result.usage?.generation;
+  if (!generation) return undefined;
+  if (!(generation.durationMs > 0) || !(generation.completionTokens > 0)) return undefined;
+  return {
+    completion_tokens: generation.completionTokens,
+    duration_ms: generation.durationMs,
+  };
+}
+
 export interface UsageChunk {
   id: string;
   object: "chat.completion.chunk";
