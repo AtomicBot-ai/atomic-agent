@@ -123,6 +123,10 @@ export function menuTemplate(
         sep,
         // ATO-1046: each new reply read aloud with the system's voices (renderer tts.js).
         item("Read Replies Aloud", "tts:auto"),
+        // ATO-494: the voice per reply language and the speed (renderer tts-settings.js).
+        item("Reading Voice and Speed…", "tts:settings"),
+        // ATO-1047: listen, send, read the reply, listen again (renderer converse.js; macOS only for now).
+        item("Conversation Mode", "conv:toggle", "Shift+CommandOrControl+J"),
         sep,
         { label: "Appearance", submenu: [
           item("System", "theme:system"),
