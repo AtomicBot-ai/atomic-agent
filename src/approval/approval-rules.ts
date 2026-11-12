@@ -46,7 +46,8 @@ export interface ApprovalRule {
    * basename (case-insensitively), the rest exactly. An allow rule needs
    * the request's `commandArgv`; a deny or ask rule also matches any
    * command in `commandSegments`, so a compound line, a binary named by
-   * path or a dangerous command cannot step round it.
+   * path or a dangerous command cannot step round it, and any request
+   * marked `commandUnreadable` (a script piped into a shell).
    */
   commandPrefix?: string[];
   /** Every path the request names must be inside this directory. */
@@ -258,6 +259,7 @@ type MatchableRequest = Pick<
   | "category"
   | "commandArgv"
   | "commandSegments"
+  | "commandUnreadable"
   | "targetPaths"
   | "affectedResources"
 >;
@@ -330,10 +332,10 @@ function commandMatches(
   request: MatchableRequest,
 ): boolean {
   if (argvHasPrefix(request.commandArgv, prefix)) return true;
-  return (
-    rule.decision !== "allow" &&
-    (request.commandSegments ?? []).some((words) => argvHasPrefix(words, prefix))
-  );
+  if (rule.decision === "allow") return false;
+  // A script piped into `sh` could be the very command the rule names.
+  if (request.commandUnreadable === true) return true;
+  return (request.commandSegments ?? []).some((words) => argvHasPrefix(words, prefix));
 }
 
 function argvHasPrefix(

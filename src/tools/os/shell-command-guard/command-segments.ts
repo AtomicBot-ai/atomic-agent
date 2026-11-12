@@ -126,3 +126,123 @@ export function isLongOption(
   if (word === name || word.startsWith(`${name}=`)) return true;
   return word.length >= minLength && name.startsWith(word);
 }
+
+/**
+ * Shells whose `-c` runs the next word as a command line. The guard's
+ * browser-bypass layer and saved deny rules both look inside them.
+ */
+export const NESTED_SHELL_PROGRAMS: readonly string[] = [
+  "sh",
+  "bash",
+  "zsh",
+  "dash",
+  "ksh",
+  "fish",
+  "csh",
+  "tcsh",
+];
+
+/**
+ * Commands that run the command after them, and the flags of each that
+ * take the next word as their value (`sudo -u root`, `nice -n 5`).
+ */
+export const PREFIX_COMMANDS: Readonly<Record<string, readonly string[]>> = {
+  sudo: ["-u", "-g", "-h", "-p", "-c", "-r", "-t", "-C", "-D", "-U"],
+  doas: ["-u", "-C"],
+  env: ["-u", "-C", "-P", "--unset", "--chdir"],
+  command: [],
+  builtin: [],
+  exec: ["-a"],
+  nohup: [],
+  nice: ["-n", "--adjustment"],
+  time: ["-f", "-o", "--format", "--output"],
+  caffeinate: ["-t", "-w"],
+  arch: [],
+  timeout: ["-s", "-k", "--signal", "--kill-after"],
+  gtimeout: ["-s", "-k", "--signal", "--kill-after"],
+  stdbuf: ["-i", "-o", "-e"],
+  unbuffer: [],
+  noglob: [],
+  xargs: ["-I", "-i", "-n", "-L", "-l", "-P", "-d", "-E", "-e", "-s", "-a", "--max-args", "--max-procs", "--delimiter", "--arg-file", "--replace"],
+  watch: ["-n", "-d", "--interval"],
+};
+
+export interface NestedShellOptions {
+  /** `-c` (alone or bundled, `-lc`, `-ec`) or `--command` was given. */
+  runsCommand: boolean;
+  /**
+   * The command lines it runs: the first word after the options (or the
+   * value of `--command=…`), and for fish an `-C` / `--init-command`.
+   */
+  scripts: string[];
+  /** No `-c` and no script file: the shell reads its commands from stdin. */
+  readsStdin: boolean;
+}
+
+/**
+ * Read the options of a nested shell, `args` being the words after the
+ * program (`bash -lc 'cd x && rm y'` → `-lc`, `cd x && rm y`). Only the
+ * options before the first operand count: `bash run.sh -c` passes `-c`
+ * to the script. `+x` / `+o pipefail` are options too.
+ */
+export function scanNestedShellOptions(
+  args: readonly string[],
+  program = "",
+): NestedShellOptions {
+  let runsCommand = false;
+  let explicitStdin = false;
+  const scripts: string[] = [];
+  let inline = false;
+  let i = 0;
+  for (; i < args.length; i += 1) {
+    const word = args[i] ?? "";
+    if (word === "--") {
+      i += 1;
+      break;
+    }
+    if (word === "-") {
+      explicitStdin = true;
+      i += 1;
+      break;
+    }
+    if (word.startsWith("+")) {
+      if (!/^\+[A-Za-z]+$/.test(word)) break;
+      // `+o pipefail`: the value is the next word.
+      if (word.endsWith("o") || word.endsWith("O")) i += 1;
+      continue;
+    }
+    if (!word.startsWith("-")) break;
+    if (isLongOption(word, "--command")) {
+      runsCommand = true;
+      if (word.startsWith("--command=")) {
+        scripts.push(word.slice("--command=".length));
+        inline = true;
+      }
+      continue;
+    }
+    if (program === "fish" && isLongOption(word, "--init-command")) {
+      if (word.startsWith("--init-command=")) scripts.push(word.slice("--init-command=".length));
+      else if (args[i + 1] !== undefined) scripts.push(args[(i += 1)]!);
+      continue;
+    }
+    if (word === "--rcfile" || word === "--init-file") {
+      i += 1;
+      continue;
+    }
+    if (word.startsWith("--")) continue;
+    const letters = shortOptionLetters(word, program === "fish" ? "oOC" : "oO");
+    if (letters === null) continue;
+    if (letters.includes("c")) runsCommand = true;
+    if (letters.includes("s")) explicitStdin = true;
+    const last = letters.at(-1);
+    if (program === "fish" && last === "C") {
+      if (args[i + 1] !== undefined) scripts.push(args[(i += 1)]!);
+      continue;
+    }
+    // `-o pipefail`: the value is the next word.
+    if (last === "o" || last === "O") i += 1;
+  }
+  if (runsCommand && !inline && args[i] !== undefined) scripts.push(args[i]!);
+  const readsStdin = !runsCommand && (explicitStdin || args[i] === undefined);
+  return { runsCommand, scripts, readsStdin };
+}
