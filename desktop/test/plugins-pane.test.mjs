@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
-const { plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct, plgStopCodeNeedsRestart, plgStopCodeNotice } = require("../renderer/plugins-pane.js");
+const { plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct } = require("../renderer/plugins-pane.js");
 const {
   parsePluginSetRequest, pluginCliArgs, parsePluginListOutput, isUnsupportedPluginCli,
 } = require("../out/main/plugins-cli.js");
@@ -39,23 +39,18 @@ test("a part says why it is not in use", () => {
   assert.deepEqual(plgPartNotes(plugin({ enabled: false }), part).map((n) => n.text), ["Runs code", "Needs T"]);
 });
 
-test("Stop its code asks for a restart only while a code-running MCP server is in use", () => {
-  const mcp = { id: "mcp:gh", kind: "mcp", name: "gh", enabled: true, active: true, runsCode: true, missingKeys: [] };
-  assert.equal(plgStopCodeNeedsRestart(plugin({ trust: "code-allowed", parts: [mcp] })), true);
-  // A remote server with no key is not governed by the code switch, and an inactive one is not running.
-  assert.equal(plgStopCodeNeedsRestart(plugin({ trust: "code-allowed", parts: [{ ...mcp, runsCode: false }] })), false);
-  assert.equal(plgStopCodeNeedsRestart(plugin({ trust: "code-allowed", parts: [{ ...mcp, active: false }] })), false);
-  // Hooks and skill scripts stop at once, so they need no restart.
-  assert.equal(plgStopCodeNeedsRestart(plugin({ trust: "code-allowed", parts: [{ ...mcp, kind: "hook" }] })), false);
-  assert.equal(plgStopCodeNeedsRestart(plugin({ parts: undefined })), false);
-  assert.equal(plgStopCodeNeedsRestart(null), false);
-  assert.match(plgStopCodeNotice("demo"), /^demo's hooks and scripts are off\. Its MCP servers keep running until you restart the agent\.$/);
+test("Stop its code asks for no restart and shows no caveat: the agent stops the servers itself (ATO-1407)", () => {
+  const pane = readFileSync(new URL("../renderer/plugins-pane.js", import.meta.url), "utf8");
+  assert.match(pane, /plgWrite\(p\.name, \(\) => BR\.pluginSet\(p\.name, 'deny-code'\), false\)/);
+  assert.doesNotMatch(pane, /until you restart the agent/);
+  assert.doesNotMatch(pane, /next agent start/);
+  assert.doesNotMatch(pane, /plgStopCodeNotice|plgStopCodeNeedsRestart/);
 });
 
-test("Stop its code passes the restart flag and the honest notice to the write", () => {
+test("turning a plugin or an MCP server off asks for no restart, turning it on still does", () => {
   const pane = readFileSync(new URL("../renderer/plugins-pane.js", import.meta.url), "utf8");
-  assert.match(pane, /BR\.pluginSet\(p\.name, 'deny-code'\), restart, restart \? plgStopCodeNotice\(p\.name\) : undefined\)/);
-  assert.doesNotMatch(pane, /'deny-code'\), false\)/);
+  assert.match(pane, /p\.enabled \? 'disable' : 'enable'\), !p\.enabled && p\.counts && p\.counts\.mcpServers > 0\)/);
+  assert.match(pane, /pt\.enabled \? 'disable' : 'enable', pt\.id\), !pt\.enabled && pt\.kind === 'mcp'\)/);
 });
 
 test("act strings carry the plugin and the whole part id", () => {
