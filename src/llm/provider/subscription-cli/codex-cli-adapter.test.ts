@@ -89,8 +89,12 @@ describe("codexCliAdapter argv", () => {
     expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(
       /read-only sandbox you see applies only to your own tools/,
     );
-    expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(/workspace is writable/);
-    expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(/never tell the user to change permissions/i);
+    expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(/sandbox is never a reason to refuse/);
+    expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(/never tell the user to change Codex permissions/i);
+    // Writes go out through the protocol, not codex's own tools, and the
+    // protocol's results (plan mode, a denied approval) still decide.
+    expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(/never through your own apply_patch or shell/);
+    expect(CODEX_CLI_SYSTEM_PROMPT).toMatch(/follow what the protocol's tool results say/);
     expect(codexCliAdapter.systemPrompt).toBe(CODEX_CLI_SYSTEM_PROMPT);
     // The wording changed, the sandbox did not.
     const args = codexCliAdapter.completeArgs(input);

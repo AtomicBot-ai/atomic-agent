@@ -33,11 +33,14 @@ export const CODEX_CLI_SYSTEM_PROMPT =
   // ("this session is read-only, reopen with write access") instead of
   // emitting the write call atomic-agent would have run (#1177).
   "The read-only sandbox you see applies only to your own tools. The " +
-  "user's workspace is writable through the protocol's tool calls, " +
-  "which the other program runs under its own permission rules. Never " +
-  "reply that the session or workspace is read-only and never tell the " +
-  "user to change permissions or sandbox settings; when the request " +
-  "needs a file written, edited or deleted, emit that tool call.";
+  "user's workspace is reached only through the protocol's tool calls, " +
+  "which the other program runs under its own permission rules, so " +
+  "that sandbox is never a reason to refuse. Never cite your own " +
+  "sandbox to the user and never tell the user to change Codex " +
+  "permissions or sandbox settings. When the request needs a file " +
+  "written, edited or deleted, emit that write as a tool call in the " +
+  "prompt's protocol, never through your own apply_patch or shell, and " +
+  "follow what the protocol's tool results say about whether it ran.";
 
 function baseArgs(input: CliArgsInput): string[] {
   return [
