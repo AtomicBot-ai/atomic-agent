@@ -112,6 +112,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `browser.connect` (default `"agent"`): `"agent"` uses the agent's own Chrome profile; `"user-chrome"` (opt-in) works in the user's own signed-in Chrome ([browser tools](../../tools/browser/README.md#your-own-chrome)).
 - `browser.cdpUrl` (default `null`): a DevTools address to attach to instead; loopback only. Env `ATOMIC_AGENT_BROWSER_CDP_URL` wins.
 - `browser.userDataDir` (default `null`): the user's Chrome data folder for `"user-chrome"` when it is not in a standard place.
+- `browser.headless` (default `"auto"`): `"auto"` runs the agent's own Chrome without a window for scheduled tasks, Telegram, Discord and webhooks, and with one for the TUI and the desktop app; `true` / `false` always / never. Env `ATOMIC_AGENT_BROWSER_HEADLESS` wins when set ([browser tools](../../tools/browser/README.md#background-runs-and-throwaway-profiles)).
+- `browser.profile` (default `"agent"`): `"temp"` gives each chat its own throwaway, logged-out profile instead of the agent's.
 
 ## sessions
 

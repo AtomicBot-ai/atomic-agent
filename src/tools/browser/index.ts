@@ -32,6 +32,15 @@ export type {
   TypeInput,
 } from "./browser-backend.js";
 export { PlaywrightBackend } from "./playwright-backend.js";
+export {
+  currentBrowserScope,
+  isAttendedTurn,
+  resolveLaunchHeadless,
+  runInBrowserScope,
+} from "./browser-run-scope.js";
+export type { BrowserHeadlessSetting, BrowserRunScope } from "./browser-run-scope.js";
+export { BROWSER_PROFILE_CHOICES, MAX_TEMP_PROFILES, TempProfiles } from "./temp-profiles.js";
+export type { BrowserProfileChoice } from "./temp-profiles.js";
 export type { PlaywrightBackendOptions } from "./playwright-backend.js";
 export { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
 export type { BuildChromeLaunchArgsInput } from "./build-chrome-launch-args.js";

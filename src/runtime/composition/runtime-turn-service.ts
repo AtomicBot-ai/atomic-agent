@@ -15,6 +15,7 @@ import { renderRouteChangeNote } from "../../prompt/route-change-note.js";
 import { previousReplyText, workerRequestRecord } from "../../prompt/request-section.js";
 import { pickOriginalRequest } from "../../tools/fusion/index.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
+import { currentBrowserScope, isAttendedTurn, runInBrowserScope } from "../../tools/browser/browser-run-scope.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
 import { captureMessageSent, type AnalyticsStateStore, type LocalEngine, type TurnUsageMeter } from "../../analytics/index.js";
 import type { SessionUsageLedger } from "../../session/usage-meter.js";
@@ -390,12 +391,15 @@ export function createRuntimeTurnService(
           if (parentReply !== undefined) {
             turnPreviousReplies?.set(session.id, parentReply);
           }
-          return await loop.runTurn(session, {
+          // The browser treats a worker like the turn that fanned it out:
+          // a window when someone watches that chat (ATO-959).
+          const browserScope = { sessionId: session.id, attended: currentBrowserScope()?.attended ?? false };
+          return await runInBrowserScope(browserScope, () => loop.runTurn(session, {
             userMessage,
             modelModePolicy,
             ephemeral: true,
             ...buildLoopTurnBudget(runOptions),
-          });
+          }));
         } finally {
           turnRequests.delete(session.id);
           turnPreviousReplies?.delete(session.id);
@@ -500,7 +504,13 @@ export function createRuntimeTurnService(
         // Carry on from what the session persisted, so a reopened thread
         // keeps adding to its own total (ATO-569).
         sessionUsage?.seed(session.id, session.sessionUsage);
-        const result = await loop.runTurn(session, {
+        // Who the browser works for: a cron task or a bridge gets no
+        // window under `browser.headless: "auto"` (ATO-959).
+        const browserScope = {
+          sessionId: session.id,
+          attended: isAttendedTurn(runOptions.origin, runOptions.interactive),
+        };
+        const result = await runInBrowserScope(browserScope, () => loop.runTurn(session, {
           userMessage,
           modelModePolicy,
           // The same record the workers' briefs quote, pinned into the
@@ -516,7 +526,7 @@ export function createRuntimeTurnService(
           ...buildLoopTurnBudget(runOptions),
           onStepCheckpoint: (state, step) =>
             checkpointStep(state, progress.atStep(step)),
-        });
+        }));
         // Stamp the turn's window occupancy so the stored session can
         // restore the TUI's context gauge when it is reopened. A turn
         // that built no prompt (failed before step 1) leaves whatever

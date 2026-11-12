@@ -47,7 +47,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.tabs",
     summary: "List, switch, close, or open browser tabs.",
-    argsSchema: `{ action: "list" | "switch" | "close" | "new", index?: number, url?: string }`,
+    argsSchema: `{ action: "list" | "switch" | "close" | "new", index?: number, url?: string, profile?: "agent" | "temp" }`,
   },
   {
     name: "browser.scroll",
