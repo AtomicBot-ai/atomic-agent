@@ -5,7 +5,7 @@ import { instructionTrust, projectTrustHint, skillTrust } from "../skills/projec
 import { loadWorkspaceSkills } from "../skills/workspace-skills.js";
 import { listEnabledPluginSkills } from "../plugins/plugin-runtime.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
-import { createProjectInstructionsCache } from "./project-instructions.js";
+import { createProjectInstructionsCache } from "./project-instructions-cache.js";
 
 /** Workspace preparation never fails a step except on cancellation; loaders degrade to diagnostics. */
 export function createWorkspaceLoader(config: AtomicAgentConfig, logger?: Pick<StructuredLogger, "warn">) {

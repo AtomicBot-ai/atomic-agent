@@ -3,6 +3,8 @@ import { describe, it, expect } from "vitest";
 import {
   buildSkillCatalog,
   buildSkillCatalogSection,
+  cloudSkillCatalogBudget,
+  MAX_SKILL_CATALOG_TOKEN_BUDGET,
   formatSkillCatalogLine,
   formatSkillCatalogOmittedLine,
   DEFAULT_CATALOG_MAX_CHARS,
@@ -261,5 +263,18 @@ describe("buildSkillCatalog", () => {
     });
     expect(catalog).toHaveLength(1);
     expect(catalog[0]?.name).toBe("first");
+  });
+
+  it("caps a cloud workspace catalog by a share of the window instead of leaving it unbounded (ATO-312)", () => {
+    // 2.5% of the window, never below the local budget, never above the config ceiling.
+    expect(cloudSkillCatalogBudget(512, 200_000)).toBe(5_000);
+    expect(cloudSkillCatalogBudget(512, null)).toBe(3_200);
+    expect(cloudSkillCatalogBudget(8_000, 200_000)).toBe(8_000);
+    expect(cloudSkillCatalogBudget(512, 100_000_000)).toBe(MAX_SKILL_CATALOG_TOKEN_BUDGET);
+    const records = Array.from({ length: 5_000 }, (_, i) => record(`skill-${i}`, "x".repeat(60), "project"));
+    const section = buildSkillCatalogSection(records, { tokenBudget: cloudSkillCatalogBudget(512, 200_000) });
+    expect(section.dropped).toBeGreaterThan(0);
+    expect(section.entries.length + section.dropped).toBe(5_000);
+    expect(section.entries.map(formatSkillCatalogLine).join("\n").length).toBeLessThanOrEqual(5_000 * SKILL_CATALOG_CHARS_PER_TOKEN);
   });
 });

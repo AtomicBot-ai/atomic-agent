@@ -8,7 +8,7 @@ import type { SkillRecord } from "./skill-loader.js";
 import { isSkillEligibleForPlatform } from "./skill-loader.js";
 import { parseSkillFile } from "./skill-manifest.js";
 import { findProjectTrust, skillTrust, untrustedSkillReason } from "./project-trust.js";
-import { readWorkspaceFile, isWithinWorkspace } from "./workspace-files.js";
+import { readWorkspaceFile, isWithinWorkspace, statSnapshot, type StatSnapshot } from "./workspace-files.js";
 
 export interface WorkspaceSkill {
   record: SkillRecord;
@@ -44,9 +44,21 @@ export function workspaceSkillBody(entry: WorkspaceSkill): string {
   return `Skill directory: ${entry.record.rootDir}\nResolve this skill's relative scripts/references against that directory.\n${entry.body}`;
 }
 
+/**
+ * A scan plus what decides whether it is still current: every path it looked
+ * at (config file, skill folders, manifests, present or missing) and the
+ * plugin skill list it saw.
+ */
+type SkillScan = Omit<WorkspaceSkills, "assertAvailable"> & { watched: string[]; pluginKey: string; startedAt: number };
+/**
+ * A file changed this close to the scan may share its timestamp with an
+ * earlier version (coarse file-system clocks), so such a scan is never reused.
+ */
+const RACY_MS = 2_000;
+
 /** Skill discovery problems never fail a step: they degrade to diagnostics. */
 export function loadWorkspaceSkills(workingDir: string, options: WorkspaceSkillsOptions, compatibility = true): WorkspaceSkills {
-  try { return loadSkills(workingDir, options, compatibility); }
+  try { return withLiveCheck(scanSkills(workingDir, options, compatibility), options, compatibility); }
   catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return { workingDir: resolve(workingDir), projectSkillsEnabled: false, entries: [], diagnostics: [`Workspace skills unavailable: ${reason}`], projectTrust: undefined,
@@ -54,8 +66,40 @@ export function loadWorkspaceSkills(workingDir: string, options: WorkspaceSkills
   }
 }
 
-function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compatibility: boolean): WorkspaceSkills {
+/**
+ * Each skill call checks live policy and the chosen source. A rescan reads
+ * every manifest, so it runs only when a watched path's stat signature or the
+ * plugin skill list changed since the last scan (ATO-312).
+ */
+function withLiveCheck(scan: SkillScan, options: WorkspaceSkillsOptions, compatibility: boolean): WorkspaceSkills {
+  let latest: { scan: SkillScan; snapshot: StatSnapshot } | null = { scan, snapshot: statSnapshot(scan.watched) };
+  const current = (): SkillScan | null => {
+    if (latest && latest.snapshot.newest < latest.scan.startedAt - RACY_MS && pluginKeyOf(options) === latest.scan.pluginKey
+      && statSnapshot(latest.scan.watched).signature === latest.snapshot.signature) return latest.scan;
+    try { const next = scanSkills(scan.workingDir, options, compatibility); latest = { scan: next, snapshot: statSnapshot(next.watched) }; }
+    catch { latest = null; }
+    return latest?.scan ?? null;
+  };
+  return { workingDir: scan.workingDir, projectSkillsEnabled: scan.projectSkillsEnabled, entries: scan.entries, diagnostics: scan.diagnostics, projectTrust: scan.projectTrust,
+    assertAvailable(name: string) {
+      const original = scan.entries.find(e => e.record.manifest.name === name);
+      const now = current()?.entries.find(e => e.record.manifest.name === name);
+      if (!now || now.disabledReasons.length) throw new Error(`Skill ${name} unavailable: ${now?.disabledReasons.join(", ") ?? "not installed"}`);
+      if (!original || now.record.manifestPath !== original.record.manifestPath || now.fingerprint !== original.fingerprint) throw new Error(`Skill ${name} changed since this request; refresh context before using it.`);
+      return original;
+    } };
+}
+
+function pluginKeyOf(options: WorkspaceSkillsOptions): string {
+  if (!options.pluginSkills) return "";
+  try { return JSON.stringify(options.pluginSkills()); } catch { return "!"; }
+}
+
+function scanSkills(workingDir: string, options: WorkspaceSkillsOptions, compatibility: boolean): SkillScan {
+  const startedAt = Date.now();
   const root = realpathSync(workingDir);
+  const watched: string[] = [options.configFile];
+  const pluginKey = pluginKeyOf(options);
   const diagnostics: string[] = [];
   let config: RuntimeSkillsConfig;
   try { config = readUserConfigFileSync(options.configFile)?.skills ?? options.defaults; }
@@ -81,6 +125,7 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
   let bytesCapHit = false;
   for (const source of sources) {
     if (entryCapHit) break;
+    watched.push(source.dir);
     let dir: string;
     try { dir = realpathSync(source.dir); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") diagnostics.push(`${source.dir}: ${String(error)}`); continue; }
@@ -89,6 +134,7 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
     if (source.source === "project" && dir === globalRoot) continue;
     if (visited.has(dir)) continue;
     visited.add(dir);
+    watched.push(dir);
     let names: string[];
     try { names = readdirSync(dir).sort(); } catch (error) { diagnostics.push(`${dir}: ${String(error)}`); continue; }
     for (const name of names) {
@@ -98,6 +144,8 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
         break;
       }
       const manifestPath = join(dir, name, "SKILL.md");
+      // The folder catches a retargeted symlink; the manifest catches edits.
+      watched.push(join(dir, name), manifestPath);
       try {
         if (bytesCapHit) continue;
         // Project skills stay confined to the workspace. A global skill may be a symlink
@@ -138,6 +186,7 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
   }
   for (const plugin of options.pluginSkills ? safePluginSkills(options.pluginSkills, diagnostics) : []) {
     const manifestPath = join(plugin.dir, "SKILL.md");
+    watched.push(manifestPath);
     try {
       const pluginRoot = realpathSync(plugin.dir);
       const file = readWorkspaceFile(pluginRoot, manifestPath);
@@ -172,14 +221,7 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
     if (copies.some(e => e.fingerprint !== chosen.fingerprint)) diagnostics.push(`Skill ${chosen.record.manifest.name}: using ${chosen.record.manifestPath}; shadowed ${sources.filter(p => p !== chosen.record.manifestPath).join(", ")}`);
     return { ...chosen, sources };
   }).sort((a, b) => a.record.manifest.name.localeCompare(b.record.manifest.name));
-  return { workingDir: root, projectSkillsEnabled: enabled, entries, diagnostics, projectTrust: trust,
-    assertAvailable(name: string) {
-      const original = entries.find(e => e.record.manifest.name === name);
-      const current = loadWorkspaceSkills(root, options, compatibility).entries.find(e => e.record.manifest.name === name);
-      if (!current || current.disabledReasons.length) throw new Error(`Skill ${name} unavailable: ${current?.disabledReasons.join(", ") ?? "not installed"}`);
-      if (!original || current.record.manifestPath !== original.record.manifestPath || current.fingerprint !== original.fingerprint) throw new Error(`Skill ${name} changed since this request; refresh context before using it.`);
-      return original;
-    } };
+  return { workingDir: root, projectSkillsEnabled: enabled, entries, diagnostics, projectTrust: trust, watched, pluginKey, startedAt };
 }
 
 function safePluginSkills(list: () => readonly PluginSkillDir[], diagnostics: string[]): readonly PluginSkillDir[] {
