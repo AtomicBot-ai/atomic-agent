@@ -43,6 +43,7 @@ import {
   KEY_FILE,
   PACKAGE_NAME,
   PACKAGE_TARGETS,
+  packagesIndexForArch,
   parseProductId,
   parseSha256File,
   parseSha256Sums,
@@ -243,8 +244,19 @@ function buildDeb(site: string, sign: Sign): void {
   const deb = join(site, "deb");
   const dist = join(deb, "dists", "stable");
   const arches = PACKAGE_TARGETS.map((t) => t.deb);
+  // The whole pool once, then each architecture's stanzas: `--arch` would only find files named
+  // `*_<arch>.deb` and skip the desktop's `Atomic-Agent-<version>-<arch>.deb` (ATO-1403).
+  const all = run("dpkg-scanpackages", ["--multiversion", "pool"], { cwd: deb });
+  for (const product of Object.values(PRODUCTS)) {
+    const debs = walk(join(deb, "pool")).filter(
+      (f) => f.endsWith(".deb") && product.file.test(f.split("/").pop() ?? ""),
+    );
+    if (debs.length > 0 && !new RegExp(`^Package: ${product.name}$`, "m").test(all)) {
+      fail(`the pool has ${product.name} debs but dpkg-scanpackages listed none of them`);
+    }
+  }
   for (const arch of arches) {
-    const index = run("dpkg-scanpackages", ["--multiversion", "--arch", arch, "pool"], { cwd: deb });
+    const index = packagesIndexForArch(all, arch);
     const dir = join(dist, "main", `binary-${arch}`);
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, "Packages"), index);
