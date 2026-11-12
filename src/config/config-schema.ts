@@ -1104,6 +1104,10 @@ export interface UserConfigFile {
 // Unversioned, additive: `llm.runMode.fusion.taskTree` (`enabled` default
 // false, `maxDepth` 1..3 default 2, `maxNodes` 1..64 default 24),
 // ATO-940. An older file has no field and keeps the flat fan-out.
+// Unversioned, additive: `localModels.requestTimeoutMs` (default
+// 300 000 ms, ATO-922). It used to be env-only
+// (`ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS`, which still wins over the
+// file). An older file has no field and reads the default, as before.
 export const USER_CONFIG_VERSION = 79;
 
 /**

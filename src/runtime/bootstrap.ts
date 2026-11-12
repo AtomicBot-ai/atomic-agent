@@ -24,6 +24,7 @@ import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
 import { join, resolve } from "node:path";
 
 import { getConfig } from "../config/index.js";
+import { describeLocalModelsValueSources } from "../config/load-config.js";
 import type { SessionState } from "../session/session-state.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { estimateTokens } from "../prompt/token-budget.js";
@@ -111,6 +112,10 @@ export async function createAgentRuntime(
 
   const observability = createRuntimeObservability(config, options);
   const { logger, metrics, analyticsStateStore } = observability;
+  // ATO-922: an env override used to beat `config.json` without a trace.
+  for (const line of describeLocalModelsValueSources(config.localModels)) {
+    logger.info(line);
+  }
 
   // Read the current reporter lazily so a hot-toggle is reflected without
   // re-installing the process-global handlers.
