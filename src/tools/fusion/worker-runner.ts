@@ -744,7 +744,7 @@ async function runOneTask(
   // answers (ATO-1357): an answered check is exactly the case where the
   // server is fine and the agent's own connections are the suspect.
   const cutBeforeDispatch =
-    options.localLeg === true && deps.localLegHealth?.isSuspect() === true;
+    options.localLeg === true && deps.localLegHealth?.isSuspect(options.providerId) === true;
 
   // A local leg that went silent after a worker on it was cut off is not
   // sent another worker to wait out its queue budget on (ATO-917): the
