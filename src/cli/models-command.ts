@@ -25,6 +25,7 @@ import { runModelsSearch } from "./models-search-command.js";
 import { runLocalModelsCheck } from "./models-check.js";
 import { runModelsRecommend, runModelsUpgrade } from "./models-recommend.js";
 import { runLocalModelsPullAndRun } from "./models-pull-run.js";
+import { runModelsTasks } from "./models-tasks-command.js";
 
 const HELP =
   [
@@ -63,6 +64,10 @@ const HELP =
     "  update                        Install the supported engine and inference backend",
     "                                (stops daemon first; does not auto-restart)",
     "  remove <id>                   Delete a downloaded model (refuses if active + daemon running)",
+    "",
+    "Fit-test subcommands:",
+    "  tasks collect [--last <n>]    Write your last n tasks (default 10) as a test set;",
+    "        [--out <file>] [--json] tasks that sent mail, pushed or posted are left out",
     "",
     "Cloud subcommands (no local runtime needed):",
     "  search <query>                Search configured cloud providers' models by id,",
@@ -134,6 +139,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await modelsStopEmbedding();
       case "search":
         return await runModelsSearch(args.slice(1));
+      case "tasks":
+        return await runModelsTasks(args.slice(1));
       case "list":
         return runLocalModelsList();
       case "pull":
