@@ -5213,6 +5213,7 @@ function overlaysHTML() {
   if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
   if (S.overlay === 'handoff') html += handoffSheetHTML();   // ATO-1156 (handoff.js)
+  if (S.overlay === 'deeplink') html += deeplinkSheetHTML();   // ATO-556 (deeplink.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -7026,6 +7027,8 @@ function act(a) {
   // ATO-1156: Continue from Claude Code / Codex (handoff.js). Opening it takes every other overlay
   // and the settings window down first, so Escape and the scrim close the sheet itself.
   if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
+  // ATO-556: the atomicagent:// link card's Install (deeplink.js); Cancel is `close`.
+  if (k === 'dlink') { deeplinkAct(v || ''); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
@@ -11986,6 +11989,7 @@ if (BR) {
   if (BR.onAutoRestart) BR.onAutoRestart(autoRestartApply);
   BR.onChat(onChatEvent);
   BR.onApproval(onApprovalEvent);
+  deeplinkWire();   // ATO-556: a link that came in before this page loaded, and every later one (deeplink.js)
   /* B01 QA, ATO-198: the turns main is streaming are this page's from here
      (adoptLiveTurns), and only then does the agent replay the approvals still
      pending: a request then finds its chat, and is kept for it instead of
