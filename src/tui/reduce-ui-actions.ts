@@ -333,6 +333,19 @@ export function reduceUiAction(
         // no longer exist.
         contextUsage: EMPTY_CONTEXT_USAGE,
       };
+    case "chat_messages_truncated": {
+      const cut = state.messages.findIndex(
+        (message) => message.id === action.fromMessageId,
+      );
+      if (cut < 0) return state;
+      // The removed turn's gauge reading went with it, like `/clear`.
+      return {
+        ...state,
+        messages: state.messages.slice(0, cut),
+        lastRunStatus: null,
+        contextUsage: EMPTY_CONTEXT_USAGE,
+      };
+    }
     case "session_picker_opened":
       return {
         ...state,
