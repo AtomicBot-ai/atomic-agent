@@ -54,6 +54,7 @@ const completion = (content: string, dropped = true): CompletionResult => ({
   cacheHitTokens: 0,
   slotId: 0,
   modelId: "mock",
+  timing: { promptMs: 1, predictedMs: 1, promptTokens: 10, predictedTokens: 5 },
   ...(dropped ? { droppedTools: DROPPED } : {}),
 });
 const REPLY = JSON.stringify({ tool: "reply", args: { text: "ok" } });
