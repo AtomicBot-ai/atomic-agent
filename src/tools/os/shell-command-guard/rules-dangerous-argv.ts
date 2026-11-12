@@ -6,7 +6,7 @@ import {
   shortOptionLetters,
   splitCommandSegments,
 } from "./command-segments.js";
-import { isComputedWord } from "./command-substitution.js";
+import { isComputedOption, isComputedWord } from "./command-substitution.js";
 import { findGitSubcommand } from "./rules-policy.js";
 
 /**
@@ -71,22 +71,108 @@ export function matchDangerousArgv(
 }
 
 function matchGit(segments: readonly (readonly string[])[]): ArgvCheck | null {
-  for (const args of invocationsOf(segments, "git")) {
+  for (const { args, named } of gitInvocations(segments)) {
     const sub = findGitSubcommand(args);
     if (!sub) continue;
+    const globals = args.slice(0, sub.index);
     const rest = args.slice(sub.index + 1);
     const hit =
-      checkGitVerb(sub.verb, rest, args.slice(0, sub.index)) ??
+      (named ? (gitCommandOnTheLine(globals) ?? computedGitVerb(sub.verb)) : null) ??
+      checkGitVerb(sub.verb, rest, globals) ??
       computedGitArgs(sub.verb, rest);
     if (hit !== null) return hit;
+  }
+  return matchGitConfigEnv(segments);
+}
+
+const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+
+/**
+ * Every `git` of the line (`named`), plus the words after a program
+ * word that is only known when the line runs (`g=git; $g push -f`,
+ * `"$GIT" reset --hard`): that program may be git, so the git rules
+ * read what follows it. Only the rules that name a destructive verb or
+ * flag apply there, so `$EDITOR notes.md` is not affected.
+ */
+function gitInvocations(
+  segments: readonly (readonly string[])[],
+): { args: readonly string[]; named: boolean }[] {
+  const found = invocationsOf(segments, "git").map((args) => ({ args, named: true }));
+  for (const words of segments) {
+    const at = words.findIndex((word) => !ENV_ASSIGNMENT.test(word));
+    const program = at === -1 ? undefined : words[at];
+    if (program !== undefined && isComputedWord(program)) {
+      found.push({ args: words.slice(at + 1), named: false });
+    }
+  }
+  return found;
+}
+
+/** `git $S --force`: the subcommand itself is only known when it runs. */
+function computedGitVerb(verb: string): ArgvCheck | null {
+  return isComputedWord(verb)
+    ? {
+        id: "dangerous.git_computed_args",
+        reason: "git subcommand only known when the command runs",
+      }
+    : null;
+}
+
+/** Config keys whose value is a command git runs, or a new subcommand. */
+const COMMAND_CONFIG_KEY = /^(?:alias\.|core\.(?:sshcommand|pager|editor|fsmonitor|hookspath)\b)/i;
+
+/**
+ * `git -c alias.p='push --force' p`, `git -c core.sshCommand=… fetch`,
+ * `git --config-env=alias.p=VAR p`: the line defines what runs, so none
+ * of the rules below can read it.
+ */
+function gitCommandOnTheLine(globals: readonly string[]): ArgvCheck | null {
+  for (let i = 0; i < globals.length; i += 1) {
+    const word = globals[i] ?? "";
+    const value =
+      word === "-c" ? (globals[i + 1] ?? "") : word.startsWith("-c") ? word.slice(2) : null;
+    if (
+      (value !== null && COMMAND_CONFIG_KEY.test(value)) ||
+      isLongOption(word, "--config-env")
+    ) {
+      return {
+        id: "dangerous.git_config_command",
+        reason: "git alias or command defined on the line",
+      };
+    }
+  }
+  return null;
+}
+
+/**
+ * `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0='push
+ * -f' git p`: the same, through the environment of the command.
+ */
+function matchGitConfigEnv(
+  segments: readonly (readonly string[])[],
+): ArgvCheck | null {
+  for (const words of segments) {
+    const git = words.findIndex((word) => programName(word) === "git");
+    if (git === -1) continue;
+    if (
+      words
+        .slice(0, git)
+        .some((word) => /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)=/.test(word))
+    ) {
+      return {
+        id: "dangerous.git_config_command",
+        reason: "git configuration set for this command",
+      };
+    }
   }
   return null;
 }
 
 /**
  * Git verbs with a rule below: a flag that only appears when the line
- * runs (`git push $(echo -f)`, `git reset $MODE`) could turn any of
- * them destructive, so a computed word among their options asks too.
+ * runs (`git push $(echo -f)`, `git reset --$m`) could turn any of them
+ * destructive, so a computed option among their words asks too. A plain
+ * `$BRANCH` in an argument slot does not (`isComputedOption`).
  */
 const GIT_VERBS_WITH_RULES: ReadonlySet<string> = new Set([
   "push",
@@ -101,7 +187,7 @@ const GIT_VERBS_WITH_RULES: ReadonlySet<string> = new Set([
 
 function computedGitArgs(verb: string, rest: readonly string[]): ArgvCheck | null {
   if (!GIT_VERBS_WITH_RULES.has(verb)) return null;
-  return optionsBeforeDashDash(rest).some(isComputedWord)
+  return optionsBeforeDashDash(rest).some(isComputedOption)
     ? {
         id: "dangerous.git_computed_args",
         reason: "git arguments only known when the command runs",
@@ -463,13 +549,13 @@ function matchFind(segments: readonly (readonly string[])[]): ArgvCheck | null {
 
 /**
  * Options of `xargs` whose value is the next word when it is not
- * attached (`-n 1`, `-I {}`). `-i`, `-e`, `-l` only take an attached
- * one and are left out.
+ * attached (`-n 1`, `-I {}`). `-i`, `-e`, `-l` and the GNU long forms
+ * `--replace`, `--eof`, `--max-lines` only take an attached one
+ * (`--replace={}`) and are left out.
  */
 const XARGS_VALUE_OPTIONS: ReadonlySet<string> = new Set([
   "-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a",
-  "--max-args", "--max-lines", "--max-procs", "--delimiter",
-  "--arg-file", "--max-chars", "--replace", "--eof",
+  "--max-args", "--max-procs", "--delimiter", "--arg-file", "--max-chars",
 ]);
 
 /**

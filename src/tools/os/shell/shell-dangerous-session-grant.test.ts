@@ -101,6 +101,9 @@ describe.skipIf(process.platform === "win32")(
     it.each([
       "find . -name '*.log' | xargs rm",
       "git push $(echo -f) origin main",
+      "m=hard; git reset --$m HEAD~1",
+      "g=git; $g push -f",
+      "ls | xargs --replace rm {}",
       'cd . && bash -c "$(echo ls)"',
     ])("subshell line %s asks as shell_dangerous after a shell grant", async (line) => {
       await tool().run({ cmd: "ls", args: ["./"] }, ctx());

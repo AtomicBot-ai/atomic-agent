@@ -6,6 +6,16 @@
  */
 export const SUBSTITUTION_PLACEHOLDER = "$__computed__";
 
+/**
+ * The placeholder for a substitution whose body only prints text it
+ * spells out (`$(echo -f)`, `$(printf -- --hard)`): its value can be
+ * any flag the line chose, so it counts as a computed option wherever
+ * it stands. Starts with the generic placeholder's text.
+ */
+export const PRINTED_PLACEHOLDER = "$__computed__printed__";
+
+const PRINTS_LITERAL = /^\s*(?:echo|printf|print)\b/;
+
 export interface LiftedLine {
   /** The line with every substitution replaced by the placeholder. */
   outer: string;
@@ -63,18 +73,27 @@ export function liftSubstitutions(line: string): LiftedLine | null {
     if (c === "$" && line[i + 1] === "(") {
       const end = matchingClose(line, i + 2, "(", ")");
       if (end === -1) return null;
-      // `$((1 + 2))` is arithmetic, not a command; its body is dropped.
       const body = line.slice(i + 2, end);
-      if (!(body.startsWith("(") && body.endsWith(")"))) inner.push(body);
-      outer += SUBSTITUTION_PLACEHOLDER;
+      if (body.startsWith("(") && body.endsWith(")")) {
+        // `$((1 + 2))` is arithmetic, not a command, but a substitution
+        // inside it still runs: `$(( $(git push -f; echo 1) ))`.
+        const nested = liftSubstitutions(body.slice(1, -1));
+        if (nested === null) return null;
+        inner.push(...nested.inner);
+        outer += SUBSTITUTION_PLACEHOLDER;
+      } else {
+        inner.push(body);
+        outer += PRINTS_LITERAL.test(body) ? PRINTED_PLACEHOLDER : SUBSTITUTION_PLACEHOLDER;
+      }
       i = end + 1;
       continue;
     }
     if (c === "`") {
       const end = closingBacktick(line, i + 1);
       if (end === -1) return null;
-      inner.push(line.slice(i + 1, end).replace(/\\`/g, "`"));
-      outer += SUBSTITUTION_PLACEHOLDER;
+      const body = line.slice(i + 1, end).replace(/\\`/g, "`");
+      inner.push(body);
+      outer += PRINTS_LITERAL.test(body) ? PRINTED_PLACEHOLDER : SUBSTITUTION_PLACEHOLDER;
       i = end + 1;
       continue;
     }
@@ -138,9 +157,23 @@ function closingBacktick(line: string, from: number): number {
 }
 
 /**
- * Whether a word's value is only known when the line runs: a lifted
- * substitution or a variable (`$F`, `$1`). A lone `$` is a literal.
+ * Whether any part of a word is only known when the line runs: a lifted
+ * substitution or a variable anywhere in it (`$F`, `--$m`, `-${f}`,
+ * `$1`). A `$` with nothing it could expand after it is a literal.
  */
 export function isComputedWord(word: string): boolean {
-  return /^\$[A-Za-z_0-9@*#?!{(-]/.test(word) || word.includes(SUBSTITUTION_PLACEHOLDER);
+  return /\$[A-Za-z_0-9@*#?!{(-]/.test(word);
+}
+
+/**
+ * Whether a word may turn into an option when the line runs, so a git
+ * rule cannot read what it does: a dash followed by something computed
+ * (`--$m`, `-$f`), or a substitution that only prints the text the line
+ * spelled out (`$(echo -f)`). A plain `$BRANCH` or `$(git rev-parse …)`
+ * in an argument slot is left to the ordinary approval path: a variable
+ * that holds a flag is not seen (ATO-1263 review).
+ */
+export function isComputedOption(word: string): boolean {
+  if (word.includes(PRINTED_PLACEHOLDER)) return true;
+  return word.startsWith("-") && isComputedWord(word);
 }

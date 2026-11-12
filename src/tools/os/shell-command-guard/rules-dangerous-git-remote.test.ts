@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { checkShellCommandGuard } from "./index.js";
 import { splitCommandSegments } from "./command-segments.js";
 import {
+  isComputedOption,
   isComputedWord,
   liftSubstitutions,
+  PRINTED_PLACEHOLDER,
   SUBSTITUTION_PLACEHOLDER,
 } from "./command-substitution.js";
 import { findGitSubcommand } from "./rules-policy.js";
@@ -118,10 +120,21 @@ describe("ATO-1263: flags only known when the line runs", () => {
   it.each([
     "git push $(echo -f)",
     "git push origin `echo -f` main",
-    "git push $FLAG origin main",
     "git reset $(printf -- --hard)",
     "git -C $(pwd) push --force",
     "git branch $(echo -D) old",
+    // A variable inside an option word, or in the verb or program slot.
+    "m=hard; git reset --$m HEAD~3",
+    "git reset --${m} HEAD~3",
+    "git push -$f origin main",
+    "S=push; git $S --force origin main",
+    "git $(echo push) -f",
+    "g=git; $g push -f",
+    '"$GIT" reset --hard',
+    "GIT=/usr/bin/git ${GIT} stash drop",
+    // A substitution nested inside arithmetic still runs.
+    "echo $(( $(git push -f; echo 1) ))",
+    "echo $(( `git push --force` + 0 ))",
   ])("%s asks as dangerous", (line) => {
     expectDangerous(line);
   });
@@ -140,9 +153,41 @@ describe("ATO-1263: flags only known when the line runs", () => {
     "git -C $(pwd) status",
     "git push -- $BRANCH",
     "echo '$(git push -f)'",
+    // A computed argument that is not an option stays on the ordinary
+    // path (ATO-1263 review): a variable holding a flag is not seen.
+    "git push origin $BRANCH",
+    'git switch "$B"',
+    "git checkout $(git rev-parse --abbrev-ref HEAD)",
+    "git push $REMOTE $BRANCH",
+    "echo $((1 + 2))",
+    // A computed program with no destructive git words after it.
+    "$EDITOR notes.md",
+    "$g status",
   ])("%s is not dangerous", (line) => {
     expectNotDangerous(line);
   });
+});
+
+describe("ATO-1263 review: git commands defined on the line", () => {
+  it.each([
+    "git -c alias.p='push --force' p origin main",
+    "git -c alias.x=!rm x",
+    "git -calias.p=push p",
+    "git -c core.sshCommand=./evil.sh fetch",
+    "git --config-env=alias.p=CMD p",
+    "git --config-env alias.p=CMD p",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p -f",
+    "env GIT_CONFIG_PARAMETERS=x git p",
+  ])("%s asks as dangerous.git_config_command", (line) => {
+    expectDangerous(line, "dangerous.git_config_command");
+  });
+
+  it.each(["git -c user.name=me commit -m x", "git -c color.ui=never log", "GIT_PAGER=cat git log"])(
+    "%s is not dangerous",
+    (line) => {
+      expectNotDangerous(line);
+    },
+  );
 });
 
 describe("ATO-1263: nested shell in the middle of a line", () => {
@@ -168,6 +213,12 @@ describe("ATO-1263: find | xargs rm", () => {
     "cat list.txt | xargs -I {} unlink {}",
     "find . | xargs -- rm",
     "find . | xargs /bin/rm",
+    // GNU long forms that only take an attached value.
+    "ls | xargs --replace rm {}",
+    "ls | xargs --eof rm",
+    "ls | xargs --max-lines rm",
+    "ls | xargs --replace={} rm {}",
+    "ls | xargs --max-args 1 rm",
   ])("%s asks as dangerous.xargs_rm", (line) => {
     expectDangerous(line, "dangerous.xargs_rm");
   });
@@ -213,7 +264,7 @@ describe("ATO-1263: --exec-path takes no separate value", () => {
 describe("liftSubstitutions", () => {
   it("replaces $(…) and backticks and keeps the inner lines", () => {
     expect(liftSubstitutions("git push $(echo -f) `id -u`")).toEqual({
-      outer: `git push ${SUBSTITUTION_PLACEHOLDER} ${SUBSTITUTION_PLACEHOLDER}`,
+      outer: `git push ${PRINTED_PLACEHOLDER} ${SUBSTITUTION_PLACEHOLDER}`,
       inner: ["echo -f", "id -u"],
     });
   });
@@ -231,8 +282,18 @@ describe("liftSubstitutions", () => {
     });
   });
 
-  it("drops arithmetic bodies", () => {
+  it("drops arithmetic bodies but keeps substitutions nested in them", () => {
     expect(liftSubstitutions("echo $((1 + 2))")?.inner).toEqual([]);
+    expect(liftSubstitutions("echo $(( $(git push -f; echo 1) ))")?.inner).toEqual([
+      "git push -f; echo 1",
+    ]);
+  });
+
+  it("marks a substitution that only prints text", () => {
+    expect(liftSubstitutions("git push $(echo -f)")?.outer).toBe(`git push ${PRINTED_PLACEHOLDER}`);
+    expect(liftSubstitutions("git push $(git rev-parse x)")?.outer).toBe(
+      `git push ${SUBSTITUTION_PLACEHOLDER}`,
+    );
   });
 
   it("returns null for an unclosed substitution", () => {
@@ -251,7 +312,19 @@ describe("liftSubstitutions", () => {
     expect(isComputedWord("$1")).toBe(true);
     expect(isComputedWord(SUBSTITUTION_PLACEHOLDER)).toBe(true);
     expect(isComputedWord("--force=" + SUBSTITUTION_PLACEHOLDER)).toBe(true);
+    expect(isComputedWord("--$m")).toBe(true);
+    expect(isComputedWord("-${f}")).toBe(true);
     expect(isComputedWord("$")).toBe(false);
+    expect(isComputedWord("costs $ 5")).toBe(false);
     expect(isComputedWord("main")).toBe(false);
+  });
+
+  it("isComputedOption", () => {
+    expect(isComputedOption("--$m")).toBe(true);
+    expect(isComputedOption("-$f")).toBe(true);
+    expect(isComputedOption(PRINTED_PLACEHOLDER)).toBe(true);
+    expect(isComputedOption("$BRANCH")).toBe(false);
+    expect(isComputedOption(SUBSTITUTION_PLACEHOLDER)).toBe(false);
+    expect(isComputedOption("--force")).toBe(false);
   });
 });
