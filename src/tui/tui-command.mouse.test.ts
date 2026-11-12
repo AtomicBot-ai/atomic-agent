@@ -26,6 +26,7 @@ import {
   resetConfigCache,
   writeUserConfigFileSync,
 } from "../config/index.js";
+import { INCREMENTAL_RENDERING } from "./ink-render-options.js";
 import type { TuiMouseEvent } from "./mouse/mouse-event.js";
 import type { MouseSource } from "./mouse/mouse-source.js";
 import { DEFAULT_SELECTION_WINDOW_MS } from "./mouse/selection-passthrough.js";
@@ -276,7 +277,7 @@ describe("tuiCommand mouse wiring", () => {
     writeMouseConfig(false);
     const app = await bootTui();
     expect(app.renderOptions).toMatchObject({
-      incrementalRendering: false,
+      incrementalRendering: INCREMENTAL_RENDERING,
       exitOnCtrlC: false,
     });
     await app.stop();

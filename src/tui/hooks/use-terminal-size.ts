@@ -29,7 +29,11 @@ const DEFAULT_ROWS = 24;
  * "shaking" / duplicated-last-row report. See `legacy-conhost.ts`.
  */
 export function useTerminalSize(): TerminalSize {
-  const { stdout } = useStdout();
+  // Ink 8 types `useStdout().stdout` as a plain writable stream, since
+  // `render()` accepts any stream now. The TTY fields are still there on
+  // the real terminal and on the test fakes; `readTerminalSize` already
+  // falls back when they are not, so the narrowing is safe.
+  const stdout = useStdout().stdout as NodeJS.WriteStream;
   const [size, setSize] = useState<TerminalSize>(() => readSize(stdout));
   useEffect(() => {
     if (!stdout) return;
