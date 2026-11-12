@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-const {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace} = createRequire(import.meta.url)('../renderer/chat-list.js');
+const {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace,
+  projectPathKey, projectNameFromDir, projectsCoerce, projectForFolder, projectOf, projectGroups} = createRequire(import.meta.url)('../renderer/chat-list.js');
 
 const ses = (id, updatedAt = 1) => ({id, t: id, updatedAt});
 const ids = (rows) => rows.map((r) => r.id);
@@ -82,4 +83,70 @@ test('the menu stays inside the window', () => {
   assert.deepEqual(chatMenuPlace(1200, 100, 220, 120, 1280, 820), {left: 1052, top: 100});
   assert.deepEqual(chatMenuPlace(100, 780, 220, 120, 1280, 820), {left: 100, top: 660});
   assert.deepEqual(chatMenuPlace(-20, 10, 220, 120, 1280, 820), {left: 8, top: 10});
+});
+
+// ATO-1146: chats grouped by project (a project = a work folder + a name, ATO-42's store).
+// Ids are main's shape: "p" + 6..24 of [a-z0-9].
+const proj = (id, folder, name) => ({id, folder, name: name || id, instructions: '', createdAt: 1});
+const wses = (id, workingDir) => ({id, t: id, updatedAt: 1, workingDir});
+
+test('a folder path key ignores the slash kind, a trailing slash and a Windows drive\'s case', () => {
+  assert.equal(projectPathKey('/Users/me/app/'), '/Users/me/app');
+  assert.equal(projectPathKey('C:\\Users\\Me\\App\\'), 'c:/users/me/app');
+  assert.equal(projectPathKey('/'), '/');
+  assert.equal(projectPathKey(null), '');
+  assert.notEqual(projectPathKey('/Users/me/App'), projectPathKey('/Users/me/app'), 'a POSIX path keeps its case');
+});
+
+test('a new project is named after the folder it was made from', () => {
+  assert.equal(projectNameFromDir('/Users/me/src/site/'), 'site');
+  assert.equal(projectNameFromDir('D:\\work\\api'), 'api');
+});
+
+test('the store answer is coerced: bad ids, folderless projects and dangling chat links dropped', () => {
+  const st = projectsCoerce({
+    version: 1,
+    projects: [proj('paaaaaa1', '/a'), proj('paaaaaa1', '/dup'), proj('p1', '/short'), proj('pbad"id00', '/b'),
+      {id: 'pbbbbbb2', folder: ''}, {id: 'pcccccc3', folder: '/c', name: '  ', instructions: 'Be brief.'}],
+    chats: {s1: 'paaaaaa1', s2: 'pgone000', s3: 7},
+  });
+  assert.deepEqual(st.projects.map((p) => p.id), ['paaaaaa1', 'pcccccc3'], 'the store order (newest first) is kept');
+  assert.equal(st.projects[1].name, 'c', 'a blank name falls back to the folder name');
+  assert.equal(st.projects[1].instructions, 'Be brief.');
+  assert.equal(st.projects[0].instructions, '');
+  assert.deepEqual(st.chats, {s1: 'paaaaaa1'});
+  assert.equal(projectsCoerce([proj('paaaaaa1', '/a')]).projects.length, 1, 'a bare list is taken as the projects');
+  assert.deepEqual(projectsCoerce(null), {projects: [], chats: {}});
+});
+
+test('a chat belongs to the project it was put in, else to the deepest project folder it ran in', () => {
+  const st = projectsCoerce({projects: [proj('pouter00', '/w'), proj('pinner00', '/w/app'), proj('pother00', '/x')], chats: {put: 'pother00'}});
+  assert.equal(projectOf(st, wses('put', '/w/app')).id, 'pother00');
+  assert.equal(projectOf(st, wses('a', '/w/app/src')).id, 'pinner00');
+  assert.equal(projectOf(st, wses('b', '/w/notes')).id, 'pouter00');
+  assert.equal(projectOf(st, wses('c', '/w/apple')).id, 'pouter00', 'a sibling with the same prefix is not inside /w/app');
+  assert.equal(projectOf(st, wses('d', '/elsewhere')), null);
+  assert.equal(projectOf(st, wses('e', null)), null);
+});
+
+test('the project kept for a folder is found by its key, so picking it again makes no second one', () => {
+  const st = projectsCoerce({projects: [proj('paaaaaa1', '/w/app/')]});
+  assert.equal(projectForFolder(st, '/w/app').id, 'paaaaaa1');
+  assert.equal(projectForFolder(st, '/w'), null);
+});
+
+test('projects gather their chats in list order; a chat filed in a chat folder stays in that folder', () => {
+  const st = projectsCoerce({projects: [proj('paaaaaa1', '/w'), proj('pbbbbbb2', '/empty')]});
+  const folders = {folders: [{id: 'f1', name: 'Mine', collapsed: false}], chats: {b: 'f1', c: 'fgone', d: null}};
+  const rows = [wses('a', '/w'), wses('b', '/w'), wses('c', '/w/x'), wses('d', '/w'), wses('e', '/home')];
+  const out = projectGroups(st, rows, folders);
+  assert.deepEqual(out.groups.map((g) => [g.project.id, ids(g.rows)]), [['paaaaaa1', ['a', 'c', 'd']], ['pbbbbbb2', []]]);
+  assert.deepEqual(ids(out.rest), ['b', 'e']);
+});
+
+test('no projects: every row is left as it was, for the folders and Chats', () => {
+  const rows = [wses('a', '/w'), wses('b', null)];
+  const out = projectGroups({projects: [], chats: {}}, rows, {folders: [], chats: {}});
+  assert.deepEqual(out.groups, []);
+  assert.deepEqual(ids(out.rest), ['a', 'b']);
 });

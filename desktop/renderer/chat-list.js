@@ -69,4 +69,88 @@ function chatMenuPlace(x, y, w, h, winW, winH) {
   return {left, top};
 }
 
-if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace};
+/* ATO-1146: chats grouped by project (ATO-42's projects store, main side).
+   A project is a work folder plus a name. A chat belongs to the project it was
+   put in (the store's chat → project map), else to the project whose folder it
+   ran in (the session's `workingDir`; the deepest project folder that holds
+   it). Coexistence with ATO-1034's chat folders: a chat filed in a chat folder
+   stays in that folder, so folders keep every chat they hold and projects only
+   gather the chats no folder has. */
+
+/** A folder path as a comparable key: either slash, no trailing one, a
+    Windows drive path compared without case. '' for nothing usable. */
+function projectPathKey(dir) {
+  let s = String(dir == null ? '' : dir).trim().replace(/[\\/]+/g, '/');
+  if (s.length > 1) s = s.replace(/\/+$/, '');
+  return /^[a-z]:(\/|$)/i.test(s) ? s.toLowerCase() : s;
+}
+
+/** The last segment of a folder path, the name a new project gets. */
+function projectNameFromDir(dir) {
+  const parts = String(dir == null ? '' : dir).split(/[\\/]+/).filter(Boolean);
+  return (parts[parts.length - 1] || String(dir || '').trim() || 'Project').slice(0, 80);
+}
+
+/** Whatever the store sent, as {projects: [{id, name, folder, instructions}], chats: {sessionId: projectId}},
+    in the store's order (newest first). Ids are main's (`p` + 6..24 of [a-z0-9]). */
+function projectsCoerce(raw) {
+  const out = {projects: [], chats: {}};
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const list = Array.isArray(raw) ? raw : Array.isArray(r.projects) ? r.projects : [];
+  const ids = new Set();
+  for (const p of list) {
+    // Ids go into data-act attributes (and the remove question's button): main's shape only.
+    if (!p || typeof p.id !== 'string' || !/^p[a-z0-9]{6,24}$/.test(p.id) || ids.has(p.id)) continue;
+    const folder = typeof p.folder === 'string' ? p.folder : '';
+    if (!projectPathKey(folder)) continue;
+    const name = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : projectNameFromDir(folder);
+    ids.add(p.id);
+    out.projects.push({id: p.id, name, folder, instructions: typeof p.instructions === 'string' ? p.instructions : ''});
+  }
+  const chats = r.chats && typeof r.chats === 'object' && !Array.isArray(r.chats) ? r.chats : {};
+  for (const sid of Object.keys(chats)) if (typeof chats[sid] === 'string' && ids.has(chats[sid])) out.chats[sid] = chats[sid];
+  return out;
+}
+
+/** The project kept for this exact folder, or null. */
+function projectForFolder(state, dir) {
+  const key = projectPathKey(dir);
+  if (!key) return null;
+  return ((state && state.projects) || []).find((p) => projectPathKey(p.folder) === key) || null;
+}
+
+/** The project a chat row belongs to, or null (see above). */
+function projectOf(state, row) {
+  if (!state || !row || !row.id) return null;
+  const projects = state.projects || [];
+  const put = state.chats && state.chats[row.id];
+  if (put) { const p = projects.find((x) => x.id === put); if (p) return p; }
+  const key = projectPathKey(row.workingDir);
+  if (!key) return null;
+  let best = null, bestLen = -1;
+  for (const p of projects) {
+    const pk = projectPathKey(p.folder);
+    const inside = key === pk || key.startsWith(pk === '/' ? '/' : pk + '/');
+    if (inside && pk.length > bestLen) { best = p; bestLen = pk.length; }
+  }
+  return best;
+}
+
+/** Each project with its rows (in `rows` order), and the rows left for the
+    folders and Chats. `folders` is ATO-1034's state: a chat it files stays there. */
+function projectGroups(state, rows, folders) {
+  const projects = (state && state.projects) || [];
+  const by = new Map(projects.map((p) => [p.id, []]));
+  const folderIds = new Set(((folders && folders.folders) || []).map((f) => f.id));
+  const filed = (folders && folders.chats) || {};
+  const rest = [];
+  for (const r of rows || []) {
+    const fid = r && filed[r.id];
+    const p = fid && folderIds.has(fid) ? null : projectOf(state, r);
+    if (p && by.has(p.id)) by.get(p.id).push(r); else rest.push(r);
+  }
+  return {groups: projects.map((p) => ({project: p, rows: by.get(p.id)})), rest};
+}
+
+if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace,
+  projectPathKey, projectNameFromDir, projectsCoerce, projectForFolder, projectOf, projectGroups};
