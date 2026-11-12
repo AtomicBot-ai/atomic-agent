@@ -121,7 +121,7 @@ export type LastTurnRollbackRefusal =
   | "turn_unrecognized"
   /**
    * The last question is not the one the caller meant (`expectText`,
-   * `expectPriorQuestions`).
+   * `expectPriorQuestions`, `expectUnanswered`).
    */
   | "turn_mismatch";
 
@@ -154,6 +154,18 @@ export interface LastTurnRollbackOptions {
    * `turn_mismatch`.
    */
   expectPriorQuestions?: number;
+  /**
+   * The caller saw no answer to the question it means (its turn failed
+   * on screen). A stored last question that has a reply is then not that
+   * question, whatever its text and position say, and it refuses with
+   * `turn_mismatch` (ATO-1420). The position is counted by the client
+   * from what it shows, and a client whose transcript was cleared, or
+   * that counts wrong for any other reason, could otherwise line a failed
+   * "continue" up with an earlier "continue" and remove its real answer.
+   * Taking back a question that has no answer loses no answer, so the
+   * opposite case (a reply on screen, none stored) is not checked.
+   */
+  expectUnanswered?: boolean;
 }
 
 /**
@@ -201,6 +213,17 @@ export function planLastTurnRollback(
   }
 
   const after = turns.slice(start + 1);
+  if (
+    options.expectUnanswered === true &&
+    after.some(
+      (turn) =>
+        turn.kind === "assistant_reply" &&
+        turn.progressNote !== true &&
+        turn.stopped !== true,
+    )
+  ) {
+    return { ok: false, code: "turn_mismatch" };
+  }
   if (
     after.some(
       (turn) =>

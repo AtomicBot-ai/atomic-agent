@@ -98,6 +98,23 @@ describe("POST /api/sessions/{id}/rollback-last-turn (ATO-1298)", () => {
     expect((await post("rb-6", { expectText: "continue", expectPriorQuestions: 0 })).status).toBe(200);
   });
 
+  it("keeps a real answer when the failed question on screen lines up with it after a clear (ATO-1420)", async () => {
+    // "first" (cleared from the window), "continue" answered, a second
+    // "continue" failed and never stored: the window counts 1 question before it.
+    seed("rb-8", [
+      { kind: "user", text: "first", at: 1 },
+      { kind: "assistant_reply", text: "one", at: 2 },
+      { kind: "user", text: "continue", at: 3 },
+      { kind: "assistant_reply", text: "real answer", at: 4 },
+    ], [2, 4]);
+    const res = await post("rb-8", { expectText: "continue", expectPriorQuestions: 1, expectUnanswered: true });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("turn_mismatch");
+    expect(harness.runtime.sessionStore.load("rb-8")?.turns).toHaveLength(4);
+    expect((await post("rb-8", { expectUnanswered: "yes" })).status).toBe(400);
+    expect(harness.runtime.sessionStore.load("rb-8")?.turns).toHaveLength(4);
+  });
+
   it("refuses a stopped turn", async () => {
     seed("rb-7", [
       { kind: "user", text: "delete the build folder", at: 1 },

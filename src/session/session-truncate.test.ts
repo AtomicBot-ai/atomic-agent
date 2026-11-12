@@ -306,6 +306,40 @@ describe("planLastTurnRollback", () => {
     expect(planLastTurnRollback(state, { expectPriorQuestions: 1 }).ok).toBe(true);
   });
 
+  it("never removes a real answer for a failed question on screen, after a cleared transcript (ATO-1420)", () => {
+    // "first" answered, then the window was cleared (the agent keeps it);
+    // "continue" answered; a second "continue" failed and was never stored.
+    let state = turn(fresh(), user("first", 1), reply("one", 2));
+    state = turn(state, user("continue", 3), reply("real answer", 4));
+    // The window counts one question before the failed one (the cleared
+    // "first" is not on screen), which is the stored "continue"'s position.
+    const counted = { expectText: "continue", expectPriorQuestions: 1 };
+    expect(planLastTurnRollback(state, counted).ok).toBe(true);
+    // The window saw no answer to the failed one: the stored "continue" is not it.
+    expect(planLastTurnRollback(state, { ...counted, expectUnanswered: true }))
+      .toEqual({ ok: false, code: "turn_mismatch" });
+    expect(state.turns.map((t) => t.kind === "assistant_reply" && t.text)).toContain("real answer");
+  });
+
+  it("still takes back a failed question that has no answer when expectUnanswered is set", () => {
+    let state = turn(fresh(), user("first", 1), reply("one", 2));
+    state = { ...turn(state, user("continue", 3)), status: "failed" as const, lastError: "402" };
+    const plan = planLastTurnRollback(state, {
+      expectText: "continue",
+      expectPriorQuestions: 1,
+      expectUnanswered: true,
+    });
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.state.turns).toHaveLength(2);
+  });
+
+  it("keeps the stop refusal for a stopped turn when expectUnanswered is set", () => {
+    const state = turn(fresh(), user("delete the build folder", 1), stoppedTurnMarker(2));
+    expect(planLastTurnRollback(state, { expectUnanswered: true }))
+      .toEqual({ ok: false, code: "turn_stopped" });
+  });
+
   it("refuses two answers after one prompt", () => {
     const state = turn(fresh(), user("a", 1), reply("b", 2), reply("c", 3));
     expect(planLastTurnRollback(state)).toEqual({ ok: false, code: "turn_unrecognized" });
