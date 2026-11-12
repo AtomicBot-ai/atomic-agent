@@ -4198,7 +4198,7 @@ function composer() {
         + (running ? 'Send to steer this turn…'
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask Atomic Agent\u2026') + '"></textarea>'
-      + attButtonHTML() + (typeof wsnapButtonHTML === 'function' ? wsnapButtonHTML() : '') + micButton() + sendButton() + '</div>'
+      + attButtonHTML() + (typeof wsnapButtonHTML === 'function' ? wsnapButtonHTML() : '') + micButton() + (typeof convButtonHTML === 'function' ? convButtonHTML() : '') + sendButton() + '</div>'
       /* B.7, Soft Tactile: Backend · Provider · Model, a
          spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
          so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
@@ -7281,6 +7281,9 @@ function act(a) {
   if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); LLMP.logsBack = null; render(); settingsPaneEntered(opened); return; }
   // ATO-1046: View › Read Replies Aloud (tts.js).
   if (a === 'tts:auto' && typeof ttsSetAuto === 'function') { ttsSetAuto(!TTS.auto); return; }
+  // ATO-494 / ATO-1047: View › Reading Voice and Speed… (tts-settings.js), conversation mode (converse.js).
+  if (a === 'tts:settings' && typeof ttsSettingsOpen === 'function') { ttsSettingsOpen(); return; }
+  if (a === 'conv:toggle' && typeof convToggle === 'function') { convToggle(); return; }
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
@@ -11099,6 +11102,8 @@ function onChatEvent(ev) {
        the bar could honestly attach to. */
     // ATO-1046: View › Read Replies Aloud reads a finished reply of the chat on screen.
     if (ev.kind === 'done' && item && typeof ttsTurnEnded === 'function') ttsTurnEnded(item);
+    // ATO-1047: a stopped or failed turn has no reply to read; conversation mode stops.
+    if ((ev.kind === 'aborted' || ev.kind === 'error') && item && typeof convTurnFailed === 'function') convTurnFailed();
     if (ev.kind === 'done' && PLAN.startedMode === 'plan' && item && String(item.text || '').trim()) {
       PLAN.on = true; PLAN.itemId = item.id; PLAN.sessionId = S.agentSession;
     }
