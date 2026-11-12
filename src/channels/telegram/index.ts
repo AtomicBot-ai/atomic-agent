@@ -55,6 +55,7 @@ export type {
   PairingModeOptions,
 } from "./pairing-mode.js";
 export {
+  pairingDeepLink,
   pairingInstruction,
   pairedOwnerLine,
   replaceOwnerPrompt,
