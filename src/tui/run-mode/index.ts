@@ -1,5 +1,8 @@
 export { describeFusionIntro } from "./fusion-intro.js";
-export { describeFusionBlocker } from "./fusion-preflight.js";
+export {
+  describeFusionBlocker,
+  describeFusionWorkerLeg,
+} from "./fusion-preflight.js";
 export {
   RunModeOrchestrator,
   type RunModeOrchestratorDeps,

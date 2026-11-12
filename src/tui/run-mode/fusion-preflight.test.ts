@@ -4,8 +4,12 @@ import {
   cloudState,
   fusionState,
   localState,
+  providerRow,
 } from "../composer-switch/composer-switch-fixtures.js";
-import { describeFusionBlocker } from "./fusion-preflight.js";
+import {
+  describeFusionBlocker,
+  describeFusionWorkerLeg,
+} from "./fusion-preflight.js";
 
 describe("describeFusionBlocker", () => {
   it("passes when a keyed cloud provider and a downloaded model exist", () => {
@@ -63,5 +67,52 @@ describe("describeFusionBlocker", () => {
       },
     };
     expect(describeFusionBlocker(state)).toBeNull();
+  });
+});
+
+describe("describeFusionWorkerLeg", () => {
+  /** Fusion with a signed-in Codex CLI as the resolved worker leg. */
+  function codexWorkerState() {
+    const base = fusionState({ workerProviderId: "codex" });
+    return {
+      ...base,
+      providersPanel: {
+        ...base.providersPanel,
+        rows: [
+          ...base.providersPanel.rows,
+          providerRow({
+            id: "codex",
+            kind: "subscription-cli",
+            subscriptionCli: { cli: "codex" },
+            chatModel: null,
+            chatModelOptions: [],
+          }),
+        ],
+      },
+    };
+  }
+
+  it("warns when the worker leg is a Codex subscription CLI, without blocking", () => {
+    const state = codexWorkerState();
+    expect(describeFusionWorkerLeg(state)?.line).toMatch(
+      /subscription limit, and there is no live progress/,
+    );
+    // Warn, not refuse: the switch still goes through.
+    expect(describeFusionBlocker(state)).toBeNull();
+  });
+
+  it("says nothing for a local worker leg", () => {
+    expect(describeFusionWorkerLeg(fusionState())).toBeNull();
+  });
+
+  it("says nothing for an API-key worker leg", () => {
+    // `aimlapi` is an API-key kind in the cloud fixture.
+    expect(
+      describeFusionWorkerLeg(fusionState({ workerProviderId: "aimlapi" })),
+    ).toBeNull();
+  });
+
+  it("abstains before the first run-mode mirror lands", () => {
+    expect(describeFusionWorkerLeg(cloudState())).toBeNull();
   });
 });
