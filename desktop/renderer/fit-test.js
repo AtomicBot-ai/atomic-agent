@@ -26,6 +26,7 @@ const FIT = {
   phase: 'idle',       // idle | running | cancelling
   progress: null, result: null, error: null, note: null,
   open: false, switching: null, unsub: null,
+  judges: [], judge: null,   // who grades: the person picks one (the judge reads their tasks)
 };
 
 /* ---------- pure helpers ---------- */
@@ -90,6 +91,7 @@ function fitSummary(result, nameOf, currentId) {
 /** What the run is doing now. */
 function fitProgressLine(p, nameOf) {
   if (!p) return 'Starting the test…';
+  if (p.phase === 'collecting') return 'Collecting your recent tasks…';
   const name = p.model ? nameOf({id: p.model}) : 'the next model';
   const which = typeof p.modelIndex === 'number' && typeof p.models === 'number' ? ' (model ' + p.modelIndex + ' of ' + p.models + ')' : '';
   if (p.phase === 'loading') return 'Loading ' + name + which + '…';
@@ -111,6 +113,27 @@ function fitPickModels(local, currentId) {
   return ordered.slice(0, FIT_MAX_MODELS);
 }
 
+/** The line under the judge picker: where the tasks go. */
+function fitJudgeNote(judge, word) {
+  if (!judge) return 'The judge reads your tasks and the replies to grade them, so you choose who it is.';
+  return judge.local
+    ? 'Your tasks and the replies stay on this computer: ' + word + ' grades them.'
+    : 'Your recent tasks and the models\u2019 replies are sent to ' + word + ' to be graded.';
+}
+function fitJudgeHTML(st, ctx, h) {
+  const esc = h.esc;
+  const judges = Array.isArray(st.judges) ? st.judges : [];
+  if (!judges.length) return '<p class="llm-note">To grade the answers, add a cloud provider, or an app like Ollama or LM Studio under Custom.</p>';
+  const picked = judges.find((j) => j.id === st.judge) || null;
+  return '<label class="fit-judge"><span class="tk-lbl">Who grades the answers</span>'
+    + '<select class="tk-inp" data-fit-judge aria-label="Who grades the answers">'
+    + '<option value=""' + (picked ? '' : ' selected') + '>Choose…</option>'
+    + judges.map((j) => '<option value="' + esc(j.id) + '"' + (picked && picked.id === j.id ? ' selected' : '') + '>'
+      + esc(ctx.judgeWord(j.id) + ' \u00b7 ' + j.model + (j.local ? ' (on this computer)' : '')) + '</option>').join('')
+    + '</select></label>'
+    + '<p class="llm-note">' + esc(fitJudgeNote(picked, picked ? ctx.judgeWord(picked.id) : '')) + '</p>';
+}
+
 function fitEntryHTML(st, downloaded, ctx, h) {
   if (st.supported !== true) return '';
   const esc = h.esc;
@@ -123,16 +146,18 @@ function fitEntryHTML(st, downloaded, ctx, h) {
       + (st.phase === 'cancelling' ? 'Stopping…' : 'Cancel') + '</button></div>';
   } else {
     const few = downloaded < 2;
+    const noJudge = !(Array.isArray(st.judges) && st.judges.some((j) => j.id === st.judge));
     body = (st.result ? '<p class="fit-line">' + esc(fitSummary(st.result, ctx.nameOf, ctx.currentId)) + '</p>' : '')
+      + fitJudgeHTML(st, ctx, h)
       + '<div class="fit-acts">'
       + (st.result ? '<button class="btn btn-s sm" type="button" data-fit="open">Show results</button>' : '')
-      + '<button class="btn ' + (st.result ? 'sm' : 'btn-p sm') + '" type="button" data-fit="start"' + (few ? ' disabled' : '') + '>'
+      + '<button class="btn ' + (st.result ? 'sm' : 'btn-p sm') + '" type="button" data-fit="start"' + (few || noJudge ? ' disabled' : '') + '>'
       + (st.result ? 'Run again' : 'Find the best model') + '</button></div>'
       + (few ? '<p class="llm-note">Download at least two local models to compare them.</p>' : '');
   }
   return '<section class="llm-section fit-entry"><div class="tk-sh llm-sh"><span class="llm-sh-t">Find the best model for my tasks</span></div>'
     + '<div class="fit-card">'
-    + '<p class="llm-note">Runs your last few tasks on up to ' + FIT_MAX_MODELS + ' of your downloaded models and shows which one gets the most right, how fast it is and how much memory it needs. Local chats pause while it runs.</p>'
+    + '<p class="llm-note">Runs your last 10 tasks on up to ' + FIT_MAX_MODELS + ' of your downloaded models, one at a time, and shows which one gets the most right, how fast it is and how much memory it needs. Local chats pause while it runs, and anything a task would change outside is refused.</p>'
     + body
     + (st.error ? '<p class="llm-note fit-err" role="alert">' + esc(st.error) + '</p>' : '')
     + (st.note ? '<p class="llm-note">' + esc(st.note) + '</p>' : '')
@@ -176,7 +201,7 @@ function fitDialogHTML(st, ctx, h) {
       + '<th scope="col">Speed</th><th scope="col">Memory</th><th scope="col" aria-label="Switch"></th></tr></thead><tbody>'
       + fitRank(st.result.models).map((m) => fitRowHTML(m, ctx, winner, st.switching, h)).join('')
       + '</tbody></table></div>'
-      + '<p class="tk-help">Right answers: a judge model checked each reply against what the task asked for. Speed: how long one task took on average. Memory: the most the model used while it ran.</p>'
+      + '<p class="tk-help">Right answers: tasks the judge scored 4 or 5 out of 5. Speed: how long one task took on average. Memory: the most the model used while it ran.</p>'
       + (st.error ? '<p class="tk-help tk-help--err" role="alert">' + esc(st.error) + '</p>' : '');
     foot = '<button class="btn sm" type="button" data-fit="close">Close</button>'
       + '<button class="btn sm" type="button" data-fit="start">Run again</button>';
@@ -210,6 +235,7 @@ function fitCtx() {
   const local = typeof LLMP !== 'undefined' && Array.isArray(LLMP.local) ? LLMP.local : [];
   return {
     currentId: fitCurrentId(),
+    judgeWord: (id) => (typeof providerWord === 'function' ? providerWord(id) : String(id)),
     nameOf: (m) => {
       if (m && m.name) return m.name;
       const row = local.find((x) => x && x.id === (m && m.id));
@@ -238,6 +264,13 @@ async function fitProbe() {
   const was = FIT.supported;
   // A run started on an agent that had it stays visible until it ends.
   FIT.supported = yes === true || FIT.phase !== 'idle';
+  if (FIT.supported && br.fitTestJudges) {
+    const judges = await br.fitTestJudges().catch(() => []);
+    const before = JSON.stringify(FIT.judges);
+    FIT.judges = Array.isArray(judges) ? judges : [];
+    if (FIT.judge && !FIT.judges.some((j) => j.id === FIT.judge)) FIT.judge = null;
+    if (before !== JSON.stringify(FIT.judges)) { fitRepaintPane(); return; }
+  }
   if (was !== FIT.supported) fitRepaintPane();
 }
 
@@ -262,7 +295,7 @@ async function fitStart() {
   FIT.phase = 'running'; FIT.progress = null; FIT.open = true; FIT.switching = null;
   if (!FIT.unsub && br.onFitTestProgress) FIT.unsub = br.onFitTestProgress((p) => { FIT.progress = p; fitPaintAll(); });
   fitPaintAll();
-  const res = await br.fitTestStart({models}).catch((e) => ({ok: false, error: e && e.message ? e.message : String(e)}));
+  const res = await br.fitTestStart({models, judge: FIT.judge}).catch((e) => ({ok: false, error: e && e.message ? e.message : String(e)}));
   FIT.phase = 'idle'; FIT.progress = null;
   if (res && res.ok && res.result) FIT.result = res.result;
   else if (res && res.cancelled) FIT.note = 'Test stopped. Your chats use the same model as before.';
@@ -307,6 +340,12 @@ if (typeof document !== 'undefined') {
     else if (act === 'cancel') void fitCancel();
     else if (act.startsWith('use:')) void fitUse(act.slice(4));
   });
+  document.addEventListener('change', (e) => {
+    const t = e.target;
+    if (!t || !t.hasAttribute || !t.hasAttribute('data-fit-judge')) return;
+    FIT.judge = t.value || null;
+    fitRepaintPane();
+  });
   document.addEventListener('keydown', (e) => {
     if (!FIT.open || e.key !== 'Escape') return;
     e.preventDefault(); e.stopImmediatePropagation();
@@ -316,5 +355,5 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {FIT_MAX_MODELS, fitPercent, fitRightWords, fitSpeedWords, fitMemoryWords, fitFinished, fitRank, fitWinnerId,
-    fitSummary, fitProgressLine, fitProgressFraction, fitPickModels, fitEntryHTML, fitDialogHTML};
+    fitSummary, fitProgressLine, fitJudgeNote, fitJudgeHTML, fitProgressFraction, fitPickModels, fitEntryHTML, fitDialogHTML};
 }

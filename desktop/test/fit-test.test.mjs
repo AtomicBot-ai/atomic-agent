@@ -1,5 +1,5 @@
 // ATO-1091: Settings › Models › "Find the best model for my tasks".
-// main/fit-test.ts reads what `atag models fit-test --json` (ATO-1090) prints
+// main/fit-test.ts reads what `atag models fit-test --json` (ATO-1090, PR #1367) prints
 // (against the built output: npm run build && npm run test:unit);
 // renderer/fit-test.js turns it into plain words and the results table.
 import { test } from "node:test";
@@ -12,6 +12,7 @@ const R = require("../renderer/fit-test.js");
 
 const GB = 1024 ** 3;
 const h = { esc: (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]), ic: () => "" };
+const judgeWord = (id) => ({ ollama: "Ollama", openrouter: "OpenRouter" })[id] || id;
 const nameOf = (m) => ({ "qwen3-8b": "Qwen 3 8B", "gemma4-4b": "Gemma 4 4B", "llama-3b": "Llama 3B" })[m && m.id] || String(m && m.id);
 const result = {
   tasks: 10,
@@ -23,59 +24,116 @@ const result = {
   ],
 };
 
-/* ---------- main: the contract ---------- */
+/* ---------- main: aligned with the agent's PR #1367 ---------- */
+
+// What `atag models fit-test --json` prints at the end (src/fit-test/fit-test-types.ts FitTestRun).
+const run = {
+  kind: "atomic-agent.fit-test-run",
+  version: 1,
+  createdAt: "2026-11-12T10:00:00.000Z",
+  taskSetCreatedAt: "2026-11-12T09:59:00.000Z",
+  taskIds: ["t1", "t2", "t3", "t4"],
+  gpuBudgetGb: 12,
+  models: [
+    { modelId: "qwen3-8b", loadError: null, loadMs: 4000, peakMemoryBytes: 5.2 * GB, tasks: [
+      { taskId: "t1", score: 5, reason: "ok", durationMs: 10000, tokens: 900, timedOut: false },
+      { taskId: "t2", score: 4, reason: "ok", durationMs: 14000, tokens: 800, timedOut: false },
+      { taskId: "t3", score: 2, reason: "missed", durationMs: 12000, tokens: 700, timedOut: false },
+      { taskId: "t4", score: null, reason: "judge failed: 500", durationMs: 12000, tokens: null, timedOut: false },
+    ] },
+    { modelId: "gemma4-4b", loadError: "the model did not start (is it downloaded?)", loadMs: 900, peakMemoryBytes: null, tasks: [] },
+    { modelId: "llama-3b", loadError: null, loadMs: 2000, peakMemoryBytes: 2 * GB, tasks: [
+      { taskId: "t1", score: null, reason: "run failed: exit 1", durationMs: 0, tokens: null, timedOut: false },
+    ] },
+  ],
+};
 
 test("the entry shows only when `atag models --help` lists fit-test", () => {
-  assert.equal(M.fitTestListed("Subcommands:\n  list   Show\n  fit-test [--json]   Which local model is best on your tasks\n"), true);
+  const help = "Fit-test subcommands:\n  tasks collect [--last <n>]    Write your last n tasks\n  fit-test --tasks <file>       Run the set on up to 3 models\n";
+  assert.equal(M.fitTestListed(help), true);
   assert.equal(M.fitTestListed("Subcommands:\n  list   Show\n  recommend [--json]  what fits\n"), false);
   assert.equal(M.fitTestListed(""), false);
 });
 
-test("progress lines are read, other lines ignored", () => {
-  const p = M.parseFitLine('{"type":"progress","model":"qwen3-8b","modelIndex":2,"models":3,"task":4,"tasks":10,"phase":"running"}');
-  assert.equal(p.kind, "progress");
-  assert.deepEqual(p.progress, { model: "qwen3-8b", modelIndex: 2, models: 3, task: 4, tasks: 10, phase: "running" });
-  assert.equal(M.parseFitLine("Loading model… 45%"), null);
-  assert.equal(M.parseFitLine("{not json"), null);
-  assert.equal(M.parseFitLine('{"type":"log","text":"x"}'), null);
-  assert.equal(M.parseFitLine('{"type":"progress","phase":"warming"}').progress.phase, null);
+test("a run becomes the window's result: passed of the set, average task time, peak memory, no winner from the agent", () => {
+  const r = M.fitResultFromStdout(JSON.stringify(run, null, 2) + "\n");
+  assert.equal(r.tasks, 4);
+  assert.equal(r.winner, null);
+  const [qwen, gemma, llama] = r.models;
+  assert.equal(qwen.id, "qwen3-8b");
+  assert.equal(qwen.passed, 2, "score 4 or more passes");
+  assert.equal(qwen.total, 4, "out of the whole set, an ungraded task counts as not passed");
+  assert.equal(qwen.accuracy, 0.5);
+  assert.equal(qwen.meanScore, 11 / 3);
+  assert.equal(qwen.avgSeconds, 12);
+  assert.equal(qwen.peakMemoryBytes, 5.2 * GB);
+  assert.equal(qwen.error, null);
+  assert.equal(gemma.error, "the model did not start (is it downloaded?)");
+  assert.equal(gemma.accuracy, null);
+  assert.match(llama.error, /^no answer could be graded \(run failed: exit 1\)$/);
+  assert.equal(llama.passed, null);
 });
 
-test("the result line becomes the result, with the winner kept only when it is a tested model", () => {
-  const line = JSON.stringify({ type: "result", tasks: 10, winner: "qwen3-8b", models: [
-    { id: "qwen3-8b", name: "Qwen 3 8B", accuracy: 80, passed: 8, total: 10, avgSeconds: 12.4, peakMemoryBytes: 5e9 },
-    { id: "gemma4-4b", passed: 6, total: 10 },
-    { name: "no id" },
-  ] });
-  const r = M.parseFitLine(line).result;
-  assert.equal(r.models.length, 2);
-  assert.equal(r.winner, "qwen3-8b");
-  assert.equal(r.models[0].accuracy, 0.8, "80 means 80%");
-  assert.equal(r.models[1].accuracy, 0.6, "from passed / total");
-  assert.equal(r.models[1].avgSeconds, null);
-  assert.equal(M.readFitResult({ winner: "other", models: [{ id: "a" }] }).winner, null);
-  assert.equal(M.readFitResult({ models: [] }), null);
+test("anything that is not a fit-test run reads as no result", () => {
+  assert.equal(M.fitResultFromStdout(""), null);
+  assert.equal(M.fitResultFromStdout("the task set is empty"), null);
+  assert.equal(M.fitResultFromStdout(JSON.stringify({ kind: "something-else", models: run.models })), null);
+  assert.equal(M.fitResultFromStdout(JSON.stringify({ ...run, models: [] })), null);
+  assert.equal(M.fitResultFromStdout("{broken"), null);
 });
 
-test("the result is found in a whole stdout: the last result line, or one JSON document", () => {
-  const out = [
-    '{"type":"progress","model":"a","modelIndex":1,"models":2}',
-    "some log line",
-    '{"type":"result","winner":"a","models":[{"id":"a","accuracy":0.5}]}',
-    "",
-  ].join("\n");
-  assert.equal(M.fitResultFromStdout(out).winner, "a");
-  const doc = JSON.stringify({ winner: "b", models: [{ id: "b", accuracy: 1 }] }, null, 2);
-  assert.equal(M.fitResultFromStdout(doc).winner, "b");
-  assert.equal(M.fitResultFromStdout("Error: no tasks yet"), null);
+test("progress is read from the run's stderr lines", () => {
+  const ids = ["qwen3-8b", "gemma4-4b"];
+  assert.deepEqual(M.parseFitProgressLine("gemma4-4b: task 3/10 Fix the failing test", ids),
+    { model: "gemma4-4b", modelIndex: 2, models: 2, task: 3, tasks: 10, phase: "running" });
+  assert.equal(M.parseFitProgressLine("qwen3-8b: unload failed: boom", ids), null);
+  assert.equal(M.parseFitProgressLine("--judge-url is required", ids), null);
+  assert.equal(M.parseFitProgressLine("other: task 1/2", ids).modelIndex, null);
 });
 
-test("--models goes with 2 or 3 clean ids, never with one or with junk", () => {
-  assert.deepEqual(M.fitModelArgs(["a", "b"]), ["--models", "a,b"]);
-  assert.deepEqual(M.fitModelArgs(["a", "b", "c", "d"]), ["--models", "a,b,c"]);
-  assert.deepEqual(M.fitModelArgs(["a", "a"]), []);
-  assert.deepEqual(M.fitModelArgs(["a", "b;rm -rf"]), []);
-  assert.deepEqual(M.fitModelArgs(null), []);
+test("`models tasks collect --json` gives the set's path and size", () => {
+  assert.deepEqual(M.readCollected('{"ok":true,"path":"/tmp/x/tasks.json","tasks":7,"skipped":{"sent outside":1}}\n'), { path: "/tmp/x/tasks.json", tasks: 7 });
+  assert.equal(M.readCollected("wrote 7 task(s) to /tmp/x"), null);
+  assert.equal(M.readCollected('{"ok":false}'), null);
+});
+
+test("--models goes with 2 or 3 ids `models use` takes, never one or junk", () => {
+  assert.deepEqual(M.fitModelIds(["a", "b"]), ["a", "b"]);
+  assert.deepEqual(M.fitModelIds(["a", "b", "c", "d"]), ["a", "b", "c"]);
+  assert.equal(M.fitModelIds(["a", "a"]), null);
+  assert.equal(M.fitModelIds(["a", "b;rm -rf"]), null);
+  assert.equal(M.fitModelIds(null), null);
+});
+
+const config = { llm: { providers: [
+  { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19191" },
+  { id: "openrouter", kind: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1", defaultChatModel: "openai/gpt-5-mini" },
+  { id: "ollama", kind: "openai-compatible", baseUrl: "http://localhost:11434/v1", defaultChatModel: "qwen3:8b" },
+  { id: "mine", kind: "openai-compatible", baseUrl: "https://llm.example.com", model: "big", apiKey: "sk-inline" },
+  { id: "named", kind: "openai-compatible", baseUrl: "https://x.example.com/v1", defaultChatModel: "m", apiKeyEnvVar: "MY_KEY" },
+  { id: "nomodel", kind: "openai-compatible", baseUrl: "https://y.example.com" },
+  { id: "claude-cli", kind: "subscription-cli", subscriptionCli: { cli: "claude" } },
+] } };
+
+test("the judges: OpenAI-compatible providers with an address and a model, local ones marked", () => {
+  const j = M.fitJudges(config);
+  assert.deepEqual(j.map((x) => x.id), ["openrouter", "ollama", "mine", "named"]);
+  assert.equal(j.find((x) => x.id === "ollama").local, true);
+  assert.equal(j.find((x) => x.id === "openrouter").local, false);
+  assert.deepEqual(M.fitJudges(null), []);
+});
+
+test("the judge flags: the key travels by env var name, never on the command line", () => {
+  const keyEnvOf = (id) => ({ openrouter: "OPENROUTER_API_KEY" })[id];
+  assert.deepEqual(M.fitJudgeArgs(config, "openrouter", keyEnvOf), {
+    args: ["--judge-url", "https://openrouter.ai/api/v1", "--judge-model", "openai/gpt-5-mini", "--judge-key-env", "OPENROUTER_API_KEY"], env: {} });
+  assert.deepEqual(M.fitJudgeArgs(config, "named", keyEnvOf).args.slice(-2), ["--judge-key-env", "MY_KEY"]);
+  const inline = M.fitJudgeArgs(config, "mine", keyEnvOf);
+  assert.deepEqual(inline.env, { FIT_JUDGE_API_KEY: "sk-inline" });
+  assert.ok(!inline.args.includes("sk-inline"));
+  assert.deepEqual(M.fitJudgeArgs(config, "ollama", keyEnvOf).args, ["--judge-url", "http://localhost:11434/v1", "--judge-model", "qwen3:8b"]);
+  assert.ok("error" in M.fitJudgeArgs(config, "nomodel", keyEnvOf));
+  assert.ok("error" in M.fitJudgeArgs(config, null, keyEnvOf));
 });
 
 /* ---------- renderer: plain words ---------- */
@@ -114,6 +172,7 @@ test("the summary names the winner in plain words", () => {
 
 test("progress says what runs now, and how far", () => {
   assert.equal(R.fitProgressLine(null, nameOf), "Starting the test…");
+  assert.equal(R.fitProgressLine({ phase: "collecting" }, nameOf), "Collecting your recent tasks…");
   assert.equal(R.fitProgressLine({ model: "qwen3-8b", modelIndex: 2, models: 3, phase: "loading" }, nameOf), "Loading Qwen 3 8B (model 2 of 3)…");
   assert.equal(R.fitProgressLine({ model: "qwen3-8b", modelIndex: 2, models: 3, task: 4, tasks: 10, phase: "running" }, nameOf),
     "Testing Qwen 3 8B (model 2 of 3): task 4 of 10…");
@@ -133,28 +192,39 @@ test("the models to test: the one in use first, downloaded only, at most 3", () 
 /* ---------- renderer: what is drawn ---------- */
 
 test("no card at all while the agent has no fit-test", () => {
-  for (const supported of [null, false]) assert.equal(R.fitEntryHTML({ supported, phase: "idle" }, 3, { nameOf, currentId: null }, h), "");
+  for (const supported of [null, false]) assert.equal(R.fitEntryHTML({ supported, phase: "idle" }, 3, { nameOf, judgeWord, currentId: null }, h), "");
 });
 
 test("the card: start, disabled under two downloaded models, progress with Cancel while running", () => {
-  const idle = R.fitEntryHTML({ supported: true, phase: "idle" }, 3, { nameOf, currentId: null }, h);
+  const judges = [{ id: "ollama", model: "qwen3:8b", local: true }, { id: "openrouter", model: "gpt", local: false }];
+  const idle = R.fitEntryHTML({ supported: true, phase: "idle", judges, judge: "ollama" }, 3, { nameOf, judgeWord, currentId: null }, h);
   assert.match(idle, /Find the best model for my tasks/);
   assert.match(idle, /data-fit="start">Find the best model</);
-  const few = R.fitEntryHTML({ supported: true, phase: "idle" }, 1, { nameOf, currentId: null }, h);
+  assert.match(idle, /stay on this computer: Ollama grades them/);
+  // Nothing is picked for the person: no judge, no start.
+  const unpicked = R.fitEntryHTML({ supported: true, phase: "idle", judges, judge: null }, 3, { nameOf, judgeWord, currentId: null }, h);
+  assert.match(unpicked, /<option value="" selected>Choose…<\/option>/);
+  assert.match(unpicked, /data-fit="start" disabled/);
+  const cloud = R.fitEntryHTML({ supported: true, phase: "idle", judges, judge: "openrouter" }, 3, { nameOf, judgeWord, currentId: null }, h);
+  assert.match(cloud, /sent to OpenRouter to be graded/);
+  const none = R.fitEntryHTML({ supported: true, phase: "idle", judges: [], judge: null }, 3, { nameOf, judgeWord, currentId: null }, h);
+  assert.match(none, /add a cloud provider, or an app like Ollama or LM Studio/);
+  assert.match(none, /data-fit="start" disabled/);
+  const few = R.fitEntryHTML({ supported: true, phase: "idle", judges, judge: "ollama" }, 1, { nameOf, judgeWord, currentId: null }, h);
   assert.match(few, /data-fit="start" disabled/);
   assert.match(few, /Download at least two local models/);
-  const running = R.fitEntryHTML({ supported: true, phase: "running", progress: { model: "qwen3-8b", phase: "loading" } }, 3, { nameOf, currentId: null }, h);
+  const running = R.fitEntryHTML({ supported: true, phase: "running", progress: { model: "qwen3-8b", phase: "loading" } }, 3, { nameOf, judgeWord, currentId: null }, h);
   assert.match(running, /Loading Qwen 3 8B…/);
   assert.match(running, /data-fit="cancel">Cancel</);
   assert.doesNotMatch(running, /data-fit="start"/);
-  const done = R.fitEntryHTML({ supported: true, phase: "idle", result }, 3, { nameOf, currentId: null }, h);
+  const done = R.fitEntryHTML({ supported: true, phase: "idle", result, judges, judge: "ollama" }, 3, { nameOf, judgeWord, currentId: null }, h);
   assert.match(done, /data-fit="open">Show results</);
   assert.match(done, />Run again</);
-  assert.doesNotMatch(idle + few + running + done, /—/, "no long dashes in UI text");
+  assert.doesNotMatch(idle + few + running + done + unpicked + cloud + none, /—/, "no long dashes in UI text");
 });
 
 test("the results table: one row per model, Switch on the others, In use on the current, the reason on a failed one", () => {
-  const html = R.fitDialogHTML({ open: true, phase: "idle", result, switching: null }, { nameOf, currentId: "gemma4-4b" }, h);
+  const html = R.fitDialogHTML({ open: true, phase: "idle", result, switching: null }, { nameOf, judgeWord, currentId: "gemma4-4b" }, h);
   assert.match(html, /Right answers/);
   assert.match(html, /Speed/);
   assert.match(html, /Memory/);
@@ -167,16 +237,16 @@ test("the results table: one row per model, Switch on the others, In use on the 
   // The best model is the first row.
   assert.ok(html.indexOf("Qwen 3 8B</span>") < html.indexOf("Gemma 4 4B</span>"));
   assert.doesNotMatch(html, /—/);
-  const switching = R.fitDialogHTML({ open: true, phase: "idle", result, switching: "qwen3-8b" }, { nameOf, currentId: "gemma4-4b" }, h);
+  const switching = R.fitDialogHTML({ open: true, phase: "idle", result, switching: "qwen3-8b" }, { nameOf, judgeWord, currentId: "gemma4-4b" }, h);
   assert.match(switching, /Switching…/);
-  assert.equal(R.fitDialogHTML({ open: false, phase: "idle", result }, { nameOf, currentId: null }, h), "");
+  assert.equal(R.fitDialogHTML({ open: false, phase: "idle", result }, { nameOf, judgeWord, currentId: null }, h), "");
 });
 
 test("the sheet while running has a bar and Cancel test", () => {
   const html = R.fitDialogHTML({ open: true, phase: "running", progress: { model: "qwen3-8b", modelIndex: 1, models: 2, task: 6, tasks: 10, phase: "running" } },
-    { nameOf, currentId: null }, h);
+    { nameOf, judgeWord, currentId: null }, h);
   assert.match(html, /aria-valuenow="25"/);
   assert.match(html, /data-fit="cancel">Cancel test</);
-  const stopping = R.fitDialogHTML({ open: true, phase: "cancelling", progress: null }, { nameOf, currentId: null }, h);
+  const stopping = R.fitDialogHTML({ open: true, phase: "cancelling", progress: null }, { nameOf, judgeWord, currentId: null }, h);
   assert.match(stopping, /Stopping…/);
 });

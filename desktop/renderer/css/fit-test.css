@@ -9,6 +9,7 @@
 .fit-line{display:flex;align-items:center;gap:8px;margin:0;font-size:var(--fs-ui);color:var(--ink);line-height:1.45}
 .fit-acts{display:flex;flex-wrap:wrap;gap:8px}
 .llm-pane .fit-err{color:var(--critical)}
+.fit-judge{display:flex;flex-direction:column;gap:6px;max-width:420px}
 
 #fittest .fit-wrap{z-index:27}
 .fit-sheet{width:min(640px,calc(100vw - 32px))}

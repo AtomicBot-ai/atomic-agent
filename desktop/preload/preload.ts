@@ -309,7 +309,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("overnight:start", input),
   /** ATO-1091: `atag models fit-test` from Settings › Models (fit-test-ipc.ts). */
   fitTestSupported: () => ipcRenderer.invoke("fitTest:supported"),
-  fitTestStart: (opts?: { models?: string[] }) => ipcRenderer.invoke("fitTest:start", opts ?? {}),
+  fitTestJudges: () => ipcRenderer.invoke("fitTest:judges"),
+  fitTestStart: (opts?: { models?: string[]; judge?: string | null }) => ipcRenderer.invoke("fitTest:start", opts ?? {}),
   fitTestCancel: () => ipcRenderer.invoke("fitTest:cancel"),
   onFitTestProgress: (cb: (payload: unknown) => void) => on("fitTest:progress", cb),
   quit: () => ipcRenderer.invoke("app:quit"),
