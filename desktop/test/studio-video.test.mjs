@@ -445,7 +445,7 @@ test('the model kept for a place is the latest one used there, a restored one in
   vm.runInContext(SRC, ctx, { filename: 'video.js' });
   const on = {};
   const root = { innerHTML: '', addEventListener: (t, fn) => { on[t] = fn; }, contains: () => true, querySelector: () => null };
-  const click = (vact) => on.click({ target: { closest: (q) => (q === '[data-vact]' ? { getAttribute: (k) => (k === 'data-vact' ? vact : null), disabled: false } : null) } });
+  const click = (vact) => on.click({ target: { closest: (q) => (q === '[data-vact]' ? { getAttribute: (k) => (k === 'data-vact' ? vact : null), disabled: false } : null) }, preventDefault() {} });
   const settle = () => new Promise((r) => setTimeout(r, 20));
   const move = async (to) => { page.onHide(); place = to; page.onShow(); await settle(); };
   page.render(root);
