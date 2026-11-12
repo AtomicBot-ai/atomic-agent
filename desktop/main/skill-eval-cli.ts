@@ -6,18 +6,29 @@
  * This file is pure: the probe, the argv and the output parsing.
  * skill-eval-ipc.ts runs the commands.
  *
+ * Aligned with #1307 (src/cli/skill-eval-command.ts, src/skills/eval/README.md).
+ * `--json` prints the whole result document to stdout; the CLI also saves it to
+ * `<stateDir>/skill-evals/<skill>/<runId>.json` and writes `saved: <path>` to stderr.
+ * It exits 0 when every planned run finished, 1 when it was stopped (SIGTERM
+ * included: it still prints and saves what ran). Approval requests are refused
+ * by default; the app never passes `--no-approval`.
+ *
  * The button only appears when both hold:
  *  - the agent's `skill --help` lists an `eval` subcommand (an older agent
  *    answers `unknown subcommand: eval`, so no button instead of an error);
- *  - the skill has a task set next to its SKILL.md (`tasks.yaml` / `tasks.yml`).
+ *  - the skill has a task set next to its SKILL.md (`tasks.yaml`, `tasks.yml` or `tasks.json`).
  */
 import { dirname, join } from "node:path";
 
 /** `SKILL_NAME_RE` in agent-cli.ts. */
 export const SKILL_EVAL_NAME_RE = /^[\w.-]{1,64}$/;
 
-/** Task-set file names looked for beside SKILL.md, in this order. */
-export const SKILL_EVAL_TASK_FILES = ["tasks.yaml", "tasks.yml"] as const;
+/**
+ * Task-set file names looked for beside SKILL.md, in this order. `skill eval`
+ * takes any path (YAML, or JSON, which also parses); beside SKILL.md is where the
+ * app looks, so a skill carries its own task set.
+ */
+export const SKILL_EVAL_TASK_FILES = ["tasks.yaml", "tasks.yml", "tasks.json"] as const;
 
 /** True when `atag skill --help` lists an `eval` subcommand. */
 export function skillEvalSupported(helpText: string): boolean {
@@ -40,81 +51,144 @@ export function skillEvalArgs(name: string, tasksFile: string): string[] {
   return ["skill", "eval", name, "--tasks", tasksFile, "--json"];
 }
 
+/**
+ * One variant of the run, read from the result document's `summary.with` /
+ * `summary.without` (`SkillEvalVariantSummary` in src/skills/eval/eval-result.ts).
+ */
 export interface SkillEvalSide {
+  runs: number;
   passed: number;
-  total: number;
-  seconds: number | null;
+  /** passed / runs, 0..1. */
+  accuracy: number;
+  /** Mean wall time of one run, seconds. */
+  secondsMean: number;
+  /** Null when the provider reported no usage. */
   tokens: number | null;
+  /** 0 on a local model, null when nothing priced the run. */
+  costUsd: number | null;
+  /** Runs that ended in an error, a timeout or a failure. */
+  errors: number;
 }
 
-export interface SkillEvalTask {
-  id: string;
-  withSkill: boolean | null;
-  withoutSkill: boolean | null;
+/** `summary.delta`: with minus without. */
+export interface SkillEvalDelta {
+  accuracy: number;
+  secondsMean: number;
+  tokens: number | null;
+  costUsd: number | null;
 }
 
+export interface SkillEvalTaskRow {
+  taskId: string;
+  with: { passed: number; runs: number } | null;
+  without: { passed: number; runs: number } | null;
+}
+
+/** What the window gets: the part of the result document the card shows. */
 export interface SkillEvalResult {
   skill: string;
-  withSkill: SkillEvalSide;
-  withoutSkill: SkillEvalSide;
-  tasks: SkillEvalTask[];
+  runId: string | null;
+  /** False when the eval stopped before every planned run finished. */
+  complete: boolean;
+  repeat: number;
+  with: SkillEvalSide;
+  without: SkillEvalSide;
+  delta: SkillEvalDelta | null;
+  perTask: SkillEvalTaskRow[];
+  /** Approval requests the eval refused (approvals are denied by default). */
+  approvalsDenied: number;
 }
 
-export type SkillEvalAnswer = { ok: true; result: SkillEvalResult } | { ok: false; error: string };
+export type SkillEvalAnswer = { ok: true; result: SkillEvalResult; savedPath: string | null } | { ok: false; error: string };
 
 const count = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null);
 const amount = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+const signedAmount = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const obj = (v: unknown): Record<string, unknown> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
 
 function side(raw: unknown): SkillEvalSide | null {
-  if (!raw || typeof raw !== "object") return null;
-  const r = raw as Record<string, unknown>;
-  const passed = count(r.passed), total = count(r.total);
-  if (passed === null || total === null || passed > total) return null;
-  return { passed, total, seconds: amount(r.seconds), tokens: amount(r.tokens) };
+  const r = obj(raw);
+  if (!r) return null;
+  const runs = count(r.runs), passed = count(r.passed);
+  if (runs === null || passed === null || passed > runs) return null;
+  const accuracy = amount(r.accuracy);
+  return {
+    runs,
+    passed,
+    accuracy: accuracy !== null && accuracy <= 1 ? accuracy : runs ? passed / runs : 0,
+    secondsMean: (amount(r.wallMsMean) ?? 0) / 1000,
+    tokens: amount(r.totalTokens),
+    costUsd: amount(r.costUsd),
+    errors: count(r.errors) ?? 0,
+  };
 }
 
-function taskPassed(raw: unknown): boolean | null {
-  if (typeof raw === "boolean") return raw;
-  if (raw && typeof raw === "object" && typeof (raw as { passed?: unknown }).passed === "boolean") {
-    return (raw as { passed: boolean }).passed;
-  }
-  return null;
+function taskSide(raw: unknown): { passed: number; runs: number } | null {
+  const r = obj(raw);
+  if (!r) return null;
+  const runs = count(r.runs), passed = count(r.passed);
+  return runs === null || passed === null || passed > runs ? null : { passed, runs };
 }
 
-/** The JSON document in stdout: the whole of it, else the last line that starts with `{`. */
+/** The JSON document in stdout. `--json` prints it pretty-printed as the whole of stdout. */
 function jsonDoc(stdout: string): unknown {
   const whole = stdout.trim();
-  if (whole.startsWith("{")) {
-    try {
-      return JSON.parse(whole);
-    } catch {
-      /* a log line before or after it: fall through to the line scan */
-    }
-  }
-  const line = stdout.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.startsWith("{")).pop();
-  if (!line) return undefined;
+  const at = whole.indexOf("{");
+  if (at < 0) return undefined;
   try {
-    return JSON.parse(line);
+    return JSON.parse(at === 0 ? whole : whole.slice(at));
   } catch {
     return undefined;
   }
 }
 
-/** Parse `atag skill eval … --json`. */
-export function parseSkillEvalOutput(stdout: string, name: string): SkillEvalAnswer {
-  const doc = jsonDoc(stdout);
-  if (!doc || typeof doc !== "object") return { ok: false, error: "The agent did not report a test result." };
-  const d = doc as Record<string, unknown>;
-  const withSkill = side(d.withSkill), withoutSkill = side(d.withoutSkill);
-  if (!withSkill || !withoutSkill) return { ok: false, error: "The test result could not be read." };
-  const tasks = Array.isArray(d.tasks)
-    ? d.tasks
-        .filter((t): t is Record<string, unknown> => !!t && typeof t === "object")
-        .map((t, i) => ({
-          id: typeof t.id === "string" && t.id ? t.id : String(i + 1),
-          withSkill: taskPassed(t.withSkill),
-          withoutSkill: taskPassed(t.withoutSkill),
-        }))
+/** `saved: <path>`, the line `skill eval` writes to stderr after saving the result file. */
+export function skillEvalSavedPath(stderr: string): string | null {
+  const m = /^saved: (.+)$/m.exec(stderr);
+  return m ? m[1]!.trim() : null;
+}
+
+/** Parse `atag skill eval … --json` (the `atomic-agent.skill-eval/1` result document). */
+export function parseSkillEvalOutput(stdout: string, name: string, stderr = ""): SkillEvalAnswer {
+  const d = obj(jsonDoc(stdout));
+  const summary = d && obj(d.summary);
+  if (!d || !summary) return { ok: false, error: "The agent did not report a test result." };
+  if (typeof d.schema === "string" && !d.schema.startsWith("atomic-agent.skill-eval/")) {
+    return { ok: false, error: "The test result could not be read." };
+  }
+  const withSide = side(summary.with), withoutSide = side(summary.without);
+  if (!withSide || !withoutSide) return { ok: false, error: "The test did not run both with and without the skill." };
+  const rd = obj(summary.delta);
+  const delta: SkillEvalDelta | null = rd && signedAmount(rd.accuracy) !== null
+    ? {
+        accuracy: signedAmount(rd.accuracy)!,
+        secondsMean: (signedAmount(rd.wallMsMean) ?? 0) / 1000,
+        tokens: signedAmount(rd.totalTokens),
+        costUsd: signedAmount(rd.costUsd),
+      }
+    : null;
+  const perTask = Array.isArray(summary.perTask)
+    ? summary.perTask
+        .map(obj)
+        .filter((t): t is Record<string, unknown> => !!t && typeof t.taskId === "string")
+        .map((t) => ({ taskId: t.taskId as string, with: taskSide(t.with), without: taskSide(t.without) }))
     : [];
-  return { ok: true, result: { skill: typeof d.skill === "string" && d.skill ? d.skill : name, withSkill, withoutSkill, tasks } };
+  const skill = obj(d.skill);
+  const options = obj(d.options);
+  const runs = Array.isArray(d.runs) ? d.runs.map(obj) : [];
+  return {
+    ok: true,
+    savedPath: skillEvalSavedPath(stderr),
+    result: {
+      skill: skill && typeof skill.name === "string" && skill.name ? skill.name : name,
+      runId: typeof d.runId === "string" ? d.runId : null,
+      complete: d.complete !== false,
+      repeat: (options && count(options.repeat)) || 1,
+      with: withSide,
+      without: withoutSide,
+      delta,
+      perTask,
+      approvalsDenied: runs.reduce((sum, r) => sum + ((r && count(r.approvalsDenied)) || 0), 0),
+    },
+  };
 }

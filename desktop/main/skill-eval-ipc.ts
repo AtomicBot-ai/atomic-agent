@@ -65,13 +65,13 @@ export function wireSkillEvalIpc(deps: { cwd: () => string | undefined }): void 
       const cwd = deps.cwd();
       const found = await probe(name, cwd);
       if (!found.available) {
-        return { ok: false, error: found.reason === "agent" ? "This agent cannot test skills yet. Update Atomic Agent." : "This skill has no tasks.yaml to test with." };
+        return { ok: false, error: found.reason === "agent" ? "This agent cannot test skills yet. Update Atomic Agent." : "This skill has no tasks.yaml next to its SKILL.md." };
       }
       if (controller.signal.aborted) return { ok: false, cancelled: true, error: "Test stopped." };
       const res = await atagRun(skillEvalArgs(name, found.tasksFile), RUN_TIMEOUT_MS, cwd, controller.signal);
       if (controller.signal.aborted) return { ok: false, cancelled: true, error: "Test stopped." };
-      // A run that finished prints its JSON even when the CLI exits non-zero; show it when it is there.
-      const parsed = parseSkillEvalOutput(res.stdout, name);
+      // `skill eval` exits 1 when it stopped before the plan finished but still prints what ran; show it then.
+      const parsed = parseSkillEvalOutput(res.stdout, name, res.stderr);
       if (parsed.ok || res.ok) return parsed;
       return { ok: false, error: plainCliError(res.stderr) || res.error || "The test did not finish." };
     } catch (err) {

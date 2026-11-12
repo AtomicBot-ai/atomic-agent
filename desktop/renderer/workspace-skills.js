@@ -40,39 +40,52 @@ function skillEvalTokens(tokens) {
   const k = tokens / 1000;
   return (k < 100 ? k.toFixed(1).replace(/\.0$/, '') : String(Math.round(k))) + 'k tokens';
 }
-function skillEvalLine(label, side) {
-  const pct = side.total ? Math.round(side.passed / side.total * 100) : 0;
-  const parts = [side.passed + ' of ' + side.total + ' tasks passed' + (side.total ? ' (' + pct + '%)' : '')];
-  const time = skillEvalDuration(side.seconds), tokens = skillEvalTokens(side.tokens);
-  if (time) parts.push(time);
+function skillEvalCost(usd) {
+  if (typeof usd !== 'number' || !isFinite(usd) || usd <= 0) return null; // 0 is a local model: nothing to say
+  return '$' + (usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2));
+}
+function skillEvalLine(label, side, unit) {
+  const pct = side.runs ? Math.round(side.accuracy * 100) : 0;
+  const parts = [side.passed + ' of ' + side.runs + ' ' + unit + ' passed' + (side.runs ? ' (' + pct + '%)' : '')];
+  const time = skillEvalDuration(side.secondsMean), tokens = skillEvalTokens(side.tokens), cost = skillEvalCost(side.costUsd);
+  if (time && side.runs && side.secondsMean > 0) parts.push(time + ' per task');
   if (tokens) parts.push(tokens);
+  if (cost) parts.push(cost);
   return {label, text: parts.join(', ')};
 }
-/* The result in plain words: one line per run, then what the skill changed. */
+/* The result in plain words (main/skill-eval-cli.ts reads #1307's `summary`):
+   one line per variant, then what the skill changed, then anything to know. */
 function skillEvalSummary(result) {
-  const w = result.withSkill, wo = result.withoutSkill;
-  const lines = [skillEvalLine('With the skill', w), skillEvalLine('Without it', wo)];
-  const tasks = (n, word) => n + ' ' + word + ' task' + (n === 1 ? '' : 's');
-  const diff = w.passed - wo.passed;
+  const w = result.with, wo = result.without, d = result.delta;
+  const unit = result.repeat > 1 ? 'runs' : 'tasks';
+  const lines = [skillEvalLine('With the skill', w, unit), skillEvalLine('Without it', wo, unit)];
+  const n = (k, word) => k + ' ' + word + ' ' + (k === 1 ? unit.slice(0, -1) : unit);
   let verdict;
-  if (!w.total && !wo.total) verdict = 'The task set has no tasks.';
-  else if (w.total !== wo.total) verdict = 'The two runs did not finish the same tasks, so they cannot be compared.';
-  else if (diff > 0) verdict = 'The skill helped: ' + tasks(diff, 'more') + ' passed.';
-  else if (diff < 0) verdict = 'The skill made it worse: ' + tasks(-diff, 'fewer') + ' passed.';
-  else verdict = 'No difference in passed tasks.';
-  const extra = [];
-  if (typeof w.seconds === 'number' && typeof wo.seconds === 'number') {
-    const d = w.seconds - wo.seconds, t = skillEvalDuration(Math.abs(d));
-    if (t && Math.round(Math.abs(d)) >= 1) extra.push(t + (d > 0 ? ' slower' : ' faster'));
+  if (!w.runs && !wo.runs) verdict = 'The task set has no tasks.';
+  else if (!d) verdict = 'The two runs cannot be compared.';
+  else {
+    const diff = w.passed - wo.passed, pts = Math.round(d.accuracy * 100);
+    if (w.runs === wo.runs && diff > 0) verdict = 'The skill helped: ' + n(diff, 'more') + ' passed.';
+    else if (w.runs === wo.runs && diff < 0) verdict = 'The skill made it worse: ' + n(-diff, 'fewer') + ' passed.';
+    else if (pts > 0) verdict = 'The skill helped: the pass rate is ' + pts + ' points higher.';
+    else if (pts < 0) verdict = 'The skill made it worse: the pass rate is ' + (-pts) + ' points lower.';
+    else verdict = 'No difference in passed ' + unit + '.';
+    const extra = [], t = skillEvalDuration(Math.abs(d.secondsMean));
+    if (t && Math.round(Math.abs(d.secondsMean)) >= 1) extra.push(t + (d.secondsMean > 0 ? ' slower' : ' faster') + ' per task');
+    if (typeof d.tokens === 'number' && d.tokens !== 0) {
+      extra.push(skillEvalTokens(Math.abs(d.tokens)).replace(/ tokens$/, '') + (d.tokens > 0 ? ' more tokens' : ' fewer tokens'));
+    }
+    if (extra.length) verdict += ' With the skill: ' + extra.join(', ') + '.';
   }
-  if (typeof w.tokens === 'number' && typeof wo.tokens === 'number' && w.tokens !== wo.tokens) {
-    extra.push(skillEvalTokens(Math.abs(w.tokens - wo.tokens)).replace(/ tokens$/, '') + (w.tokens > wo.tokens ? ' more tokens' : ' fewer tokens'));
-  }
-  if (extra.length) verdict += ' With the skill: ' + extra.join(', ') + '.';
-  return {lines, verdict};
+  const notes = [];
+  if (!result.complete) notes.push('Stopped early: not every run finished.');
+  const errors = w.errors + wo.errors;
+  if (errors) notes.push(errors + (errors === 1 ? ' run' : ' runs') + ' ended in an error or ran out of time.');
+  if (result.approvalsDenied) notes.push(result.approvalsDenied + (result.approvalsDenied === 1 ? ' action needed' : ' actions needed') + ' your approval and ' + (result.approvalsDenied === 1 ? 'was' : 'were') + ' refused, since nobody can answer during a test.');
+  return {lines, verdict, notes};
 }
 /* The card's block. Nothing at all unless main said this skill can be tested here
-   (the agent has `skill eval` and the skill has a tasks.yaml): no button that cannot work. */
+   (the agent has `skill eval` and the skill has a task set beside its SKILL.md): no button that cannot work. */
 function skillEvalHTML(st, esc) {
   const probe = st.probe;
   if (!probe || !probe.available) return '';
@@ -83,17 +96,19 @@ function skillEvalHTML(st, esc) {
       + '<button class="btn btn-s sm" data-act="skills:testCancel"' + (st.cancelling ? ' disabled' : '') + '>Cancel</button>';
   } else {
     out += '<button class="btn btn-s sm" data-act="skills:test:' + esc(name) + '"' + (other ? ' disabled title="Another skill test is running"' : '') + '>Test skill</button>'
-      + '<span class="set-cap grow">' + (other ? 'Another skill test is running.' : 'Runs the tasks in tasks.yaml with and without this skill.') + '</span>';
+      + '<span class="set-cap grow">' + (other ? 'Another skill test is running.' : 'Runs the tasks in ' + esc(probe.tasksFile ? probe.tasksFile.split(/[\\/]/).pop() : 'tasks.yaml') + ' with and without this skill.') + '</span>';
   }
   out += '</div>';
   const o = !mine && st.outcome;
   if (o && o.ok && o.result) {
     const sum = skillEvalSummary(o.result);
     out += sum.lines.map(l => '<p class="set-cap"><b>' + esc(l.label) + ':</b> ' + esc(l.text) + '</p>').join('')
-      + '<p class="set-desc">' + esc(sum.verdict) + '</p>';
+      + '<p class="set-desc">' + esc(sum.verdict) + '</p>'
+      + sum.notes.map(t => '<p class="set-cap">' + esc(t) + '</p>').join('')
+      + (o.savedPath ? '<p class="set-cap">Saved to <span class="mono">' + esc(o.savedPath) + '</span></p>' : '');
   } else if (o && o.cancelled) out += '<p class="set-cap">Test stopped.</p>';
   else if (o) out += '<div class="tuierr tk-help tk-help--err">' + esc(o.error || 'The test did not finish.') + '</div>';
   return out + '</div>';
 }
 if (typeof module !== 'undefined') module.exports = {workspaceSkillCommands, workspaceSkillMessage, createSkillCatalogLoader,
-  skillEvalDuration, skillEvalTokens, skillEvalSummary, skillEvalHTML};
+  skillEvalDuration, skillEvalTokens, skillEvalCost, skillEvalSummary, skillEvalHTML};
