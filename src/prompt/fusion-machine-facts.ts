@@ -83,6 +83,13 @@ export interface FusionMachineFacts {
    * only, like every other field here: stable for the prefix.
    */
   roleModels?: readonly { role: FusionRole; model: string }[];
+  /**
+   * What past runs on this machine showed (ATO-949), from the outcome
+   * log: one short fact per (leg, model, size) group with enough
+   * samples. Absent when nothing qualifies, so the block reads as
+   * before. Read once per process, so stable for the prefix.
+   */
+  pastRuns?: readonly string[];
 }
 
 /** Nothing known — the block renders its behavioural lines only. */
@@ -121,6 +128,8 @@ function nonEmpty(value: string | null | undefined): string | null {
 export interface FusionLiveFacts {
   workerSlots?: number | null;
   tokensPerSecond?: number | null;
+  /** The outcome log's summary (ATO-949); see `FusionMachineFacts.pastRuns`. */
+  pastRuns?: readonly string[] | null;
 }
 
 /**
@@ -323,6 +332,11 @@ export function resolveFusionMachineFacts(
     workerModel,
     tokensPerSecond,
     ...(roleModels.length === 0 ? {} : { roleModels }),
+    ...(live.pastRuns === undefined ||
+    live.pastRuns === null ||
+    live.pastRuns.length === 0
+      ? {}
+      : { pastRuns: live.pastRuns }),
   };
 }
 

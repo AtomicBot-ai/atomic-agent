@@ -108,6 +108,9 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     } : {}),
     ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
     fusionTokensPerSecond: deps.fusionTokensPerSecond?.() ?? null,
+    ...(deps.fusionPastRuns !== undefined
+      ? { fusionPastRuns: deps.fusionPastRuns() }
+      : {}),
     // The prefix must match the request shape: a native-tools link gets
     // native function-calling guidance instead of the text-JSON array
     // mandate (issue #285). Configured transport, not `servedTransport`:

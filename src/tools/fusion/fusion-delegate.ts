@@ -53,6 +53,7 @@ import {
   renderSplitInstructions,
 } from "./task-tree.js";
 import type { FusionRunRecorder, FusionRunStore } from "./run-checkpoint.js";
+import { outcomeRowFor, type FusionOutcomeLog } from "./outcome-log.js";
 import {
   planResume,
   readResumeRequest,
@@ -159,6 +160,12 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * written and `resume` is refused.
    */
   runCheckpoints?: FusionRunStore;
+  /**
+   * Where every finished worker task leaves one line of counts and
+   * labels (ATO-949), the planner's memory of what works on this
+   * machine. Absent: nothing is logged.
+   */
+  outcomeLog?: Pick<FusionOutcomeLog, "append">;
   /**
    * The agent's own state directory (`config.paths.stateDir`, usually
    * `~/.atomic-agent`). A fan-out whose write scope lies inside it is
@@ -822,6 +829,8 @@ export function buildFusionDelegateTool(
       const guardOptionsFor = (
         providerId: string,
         pricing: WorkerPricing | undefined,
+        model: string,
+        tasks: readonly DelegateTask[],
       ): Pick<
         Parameters<typeof runWorkerTasks>[1],
         | "shouldStart"
@@ -836,6 +845,28 @@ export function buildFusionDelegateTool(
         > = budgetOptionsFor(pricing);
         const checkpoint = checkpointOptionsFor(pricing);
         const breaker = breakerFor(providerId);
+        // The outcome log (ATO-949): one row per finished task, counts
+        // and labels only. A split's proposal is not an outcome.
+        const briefs = new Map(tasks.map((t) => [t.id, t]));
+        const leg = deps.workerSupportsSlotAffinity(providerId)
+          ? "local"
+          : "cloud";
+        const logOutcome = (result: WorkerTaskResult): void => {
+          if (deps.outcomeLog === undefined || awaitsExpansion(result)) return;
+          deps.outcomeLog.append(
+            outcomeRowFor({
+              result,
+              task: briefs.get(result.id),
+              leg,
+              model,
+              costUsd:
+                pricing !== undefined && result.usage !== undefined
+                  ? estimateUsageCostUsd(result.usage, pricing)
+                  : null,
+              at: Date.now(),
+            }),
+          );
+        };
         return {
           ...budget,
           ...checkpoint,
@@ -845,6 +876,7 @@ export function buildFusionDelegateTool(
           onTaskFinished: (result: WorkerTaskResult): void => {
             breaker.observe(result);
             checkpoint.onTaskFinished?.(result);
+            logOutcome(result);
           },
         };
       };
@@ -944,7 +976,7 @@ export function buildFusionDelegateTool(
               : { workerMaxOutputTokens }),
             writeScope,
             signal: runSignal,
-            ...guardOptionsFor(workerProviderId, workerPricing),
+            ...guardOptionsFor(workerProviderId, workerPricing, workerModel, tasks),
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
@@ -1013,7 +1045,7 @@ export function buildFusionDelegateTool(
               : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
             writeScope,
             signal: runSignal,
-            ...guardOptionsFor(leg.providerId, pricing),
+            ...guardOptionsFor(leg.providerId, pricing, leg.model, tasks),
             ...(escalationTarget?.providerId === leg.providerId
               ? {}
               : escalationOptions),

@@ -161,6 +161,11 @@ export interface AgentLoopDependencies {
    */
   liveWorkerSlots?: () => number | null;
   /**
+   * What past fusion runs on this machine showed (ATO-949): the outcome
+   * log's summary, read once per process, for the `### fusion` facts.
+   */
+  fusionPastRuns?: () => readonly string[];
+  /**
    * The model server just revealed its real context window: a reply
    * stopped `context_window`-truncated after this many prompt + reply
    * tokens. Bootstrap records it per provider/model so the next prompt
