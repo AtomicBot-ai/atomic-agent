@@ -22,6 +22,8 @@ Model profiles connect prompt framing, grammar and streamed parsing. Provider ad
 
 Read docs/profiles.md for framing/grammar and docs/fallback.md for reliability; provider/openai tests for wire/schema changes.
 
+Read [subscription OAuth primitives](provider/subscription-oauth/README.md) before wiring any subscription sign-in; they are not used by a provider yet.
+
 Read [model behavior mode](docs/model-mode.md) for the explicit local/cloud policy flag, configuration precedence, per-turn lifetime and full cloud context. Native message IDs remain stable across checkpoints; the final OpenAI body checks messages, schemas and output reserve against a known cloud window before sending.
 
 ## Validation
