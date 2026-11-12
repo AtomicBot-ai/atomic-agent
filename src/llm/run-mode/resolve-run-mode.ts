@@ -12,6 +12,8 @@ import {
   DEFAULT_FUSION_WORKERS,
   DEFAULT_FUSION_TASK_TREE_DEPTH,
   DEFAULT_FUSION_TASK_TREE_MAX_NODES,
+  DEFAULT_FUSION_MAX_ROUNDS_PER_TURN,
+  DEFAULT_FUSION_MAX_TASKS_PER_TURN,
   FUSION_TASK_TREE_MAX_DEPTH,
   LOCAL_PROVIDER_KIND,
 } from "../../config/llm-run-mode-config.js";
@@ -102,6 +104,12 @@ export type ResolvedRunMode = {
   turnBudgetUsd?: number;
   /** `llm.runMode.fusion.turnTimeBudgetMs`, present only when set above 0. */
   turnTimeBudgetMs?: number;
+  /**
+   * The turn's count caps (ATO-1406): the configured value, else the
+   * default; absent when set to `0` (off). Optional for fixtures.
+   */
+  maxRoundsPerTurn?: number;
+  maxTasksPerTurn?: number;
   /**
    * The provider that must be `llm.activeTextProvider` for `effective`
    * to hold. Never empty — falls back to the configured active provider
@@ -362,6 +370,8 @@ export function resolveRunMode(
     ...(fusion?.turnTimeBudgetMs !== undefined && fusion.turnTimeBudgetMs > 0
       ? { turnTimeBudgetMs: fusion.turnTimeBudgetMs }
       : {}),
+    ...countCap("maxRoundsPerTurn", fusion?.maxRoundsPerTurn, DEFAULT_FUSION_MAX_ROUNDS_PER_TURN),
+    ...countCap("maxTasksPerTurn", fusion?.maxTasksPerTurn, DEFAULT_FUSION_MAX_TASKS_PER_TURN),
     primaryProviderId,
     degraded,
   };
@@ -383,4 +393,14 @@ function resolveTaskTree(
       maxNodes: Math.max(1, tree.maxNodes ?? DEFAULT_FUSION_TASK_TREE_MAX_NODES),
     },
   };
+}
+
+/** A count cap as resolved: the configured value, else the default; `0` is off. */
+function countCap<K extends "maxRoundsPerTurn" | "maxTasksPerTurn">(
+  key: K,
+  configured: number | undefined,
+  fallback: number,
+): Partial<Record<K, number>> {
+  const value = configured ?? fallback;
+  return value > 0 ? ({ [key]: value } as Partial<Record<K, number>>) : {};
 }

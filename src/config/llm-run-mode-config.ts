@@ -112,6 +112,18 @@ export type UserLlmFusionConfig = {
    */
   turnTimeBudgetMs?: number;
   /**
+   * Most delegations (`fusion.delegate` calls, "rounds") one fusion turn
+   * may start (ATO-1406). Counted rather than priced, because a
+   * subscription leg's limit is requests, not dollars. Unset: the
+   * default (`DEFAULT_FUSION_MAX_ROUNDS_PER_TURN`); `0`: no cap.
+   */
+  maxRoundsPerTurn?: number;
+  /**
+   * Most worker tasks one fusion turn may start across its delegations
+   * (ATO-1406). Unset: `DEFAULT_FUSION_MAX_TASKS_PER_TURN`; `0`: no cap.
+   */
+  maxTasksPerTurn?: number;
+  /**
    * Automatic escalation of a stuck worker (ATO-942). `"advisor"`: when a
    * worker stalls (same result 3x, read-only for 6 steps) or its first
    * answer is cut by its time limit, the escalation model reads a
@@ -296,6 +308,17 @@ export const DEFAULT_FUSION_REVIEW_STALL_STEPS = 6;
 export const FUSION_REVIEW_STALL_STEPS_MAX = 1000;
 /** Upper bound on `autoReplan`: replans per task in one turn. */
 export const FUSION_AUTO_REPLAN_MAX = 5;
+/**
+ * Default count caps for one fusion turn (ATO-1406). Generous on
+ * purpose: an orchestrator that reviews and re-delegates runs four or
+ * five fan-outs for one honest job, and the failure breaker is what
+ * stops a loop on one error. These stop the rest: a plan that keeps
+ * growing without converging.
+ */
+export const DEFAULT_FUSION_MAX_ROUNDS_PER_TURN = 6;
+export const DEFAULT_FUSION_MAX_TASKS_PER_TURN = 24;
+export const FUSION_MAX_ROUNDS_PER_TURN_MAX = 100;
+export const FUSION_MAX_TASKS_PER_TURN_MAX = 1000;
 /** Upper bound on `turnBudgetUsd`; anything larger is a typo. */
 export const FUSION_TURN_BUDGET_USD_MAX = 10_000;
 
@@ -553,6 +576,22 @@ function parseFusion(
       );
     }
     out.isolation = obj.isolation;
+  }
+  if (obj.maxRoundsPerTurn !== undefined) {
+    out.maxRoundsPerTurn = parseBoundedInt(
+      obj.maxRoundsPerTurn,
+      `${field}.maxRoundsPerTurn`,
+      0,
+      FUSION_MAX_ROUNDS_PER_TURN_MAX,
+    );
+  }
+  if (obj.maxTasksPerTurn !== undefined) {
+    out.maxTasksPerTurn = parseBoundedInt(
+      obj.maxTasksPerTurn,
+      `${field}.maxTasksPerTurn`,
+      0,
+      FUSION_MAX_TASKS_PER_TURN_MAX,
+    );
   }
   if (obj.turnTimeBudgetMs !== undefined) {
     out.turnTimeBudgetMs = parseBoundedInt(
