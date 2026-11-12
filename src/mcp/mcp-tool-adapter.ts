@@ -121,6 +121,17 @@ export function trustsReadOnlyHintFor(
   return config.trustedReadOnlyTools?.includes(rawName) ?? false;
 }
 
+/**
+ * The `grantKey` of an MCP tool's approval request: one key per server,
+ * so a session grant ("Allow in this chat") made on one server's prompt
+ * never answers another server's tools (ATO-1473). Per server rather
+ * than per tool because the grant is offered as "this kind, in this
+ * chat" and the server is the unit the operator installed and trusts.
+ */
+export function mcpGrantKey(server: string): string {
+  return `MCP server ${server}`;
+}
+
 export function createMcpToolDefinition(
   meta: McpToolMeta,
   client: McpClient,
@@ -139,7 +150,7 @@ export function createMcpToolDefinition(
   // claim counts only where `trustReadOnlyHint` says so (stdio servers
   // and the agent's own named exceptions): other remote read-only tools
   // ask like everything else (ATO-1178). The prompt still offers "Allow
-  // in this chat", so trusting one is one click.
+  // in this chat", so trusting one server is one click.
   const dangerous = gate?.dangerous;
   const trustsReadOnlyHint =
     gate?.trustReadOnlyHint === true && meta.annotations?.readOnlyHint === true;
@@ -172,6 +183,11 @@ export function createMcpToolDefinition(
               reason: `call MCP tool ${meta.rawName} on server ${meta.server}`,
               preview: buildApprovalPreview(args),
               affectedResources: [meta.server],
+              // "Allow in this chat" covers this server's tools only.
+              // Every MCP tool shares category `other`, so a key-less
+              // grant silenced every plugin's tools for the rest of the
+              // chat (ATO-1473).
+              grantKey: mcpGrantKey(meta.server),
             },
             ctx.signal,
           );
