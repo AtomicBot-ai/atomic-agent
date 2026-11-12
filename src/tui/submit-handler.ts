@@ -332,7 +332,7 @@ export function runSlashCommand(
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
-  if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb);
+  if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb, result.compactionInstructions);
   if (result.goalCommand) callbacks.onGoalCommand?.(result.goalCommand);
   if (result.enhancePromptText !== undefined) {
     callbacks.onPromptEnhanceRequested?.(result.enhancePromptText);

@@ -1070,7 +1070,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       return state;
     case "compaction_completed":
       return appendChatMessage({ ...state, ...(event.contextUsage ? { contextUsage: event.contextUsage } : {}) }, {
-        role: "system", text: `Context compacted: ~${event.result.tokensBefore} → ~${event.result.tokensAfter} tokens. Summary usage: ${event.usage.totalTokens} tokens (${event.calls} calls)${event.result.costUsd !== undefined ? `, ~$${event.result.costUsd.toFixed(4)}` : ""}.`,
+        role: "system", text: `Context compacted: ~${event.result.tokensBefore} → ~${event.result.tokensAfter} tokens. Summary usage: ${event.usage.totalTokens} tokens (${event.calls} calls)${event.result.costUsd !== undefined ? `, ~$${event.result.costUsd.toFixed(4)}` : ""}.${event.result.message ? ` ${event.result.message}` : ""}`,
       });
     case "compaction_failed":
       return appendChatMessage(state, { role: "system", text: event.result.status === "cancelled"

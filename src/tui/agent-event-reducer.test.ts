@@ -2590,6 +2590,15 @@ it("keeps compaction notices scoped to the visible session after switching chats
   expect(JSON.stringify(visible.messages)).toContain("1000 → ~400");
 });
 
+it("shows a completed compaction's note, such as instructions that were not applied (ATO-661)", () => {
+  const state = createInitialTuiState(fakeSession({ sessionId: "visible" }));
+  const note = "Your compaction instructions were not applied: the checkpoint was extracted without a model call.";
+  const next = reduceTuiState(state, { type: "agent_event", sessionId: "visible", event: { type: "compaction_completed", sessionId: "visible",
+    result: { status: "compacted", reason: "manual", tokensBefore: 1000, tokensAfter: 400, message: note },
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0 } });
+  expect(JSON.stringify(next.messages)).toContain(note);
+});
+
 describe("context compaction activity", () => {
   const started = (sessionId: string): TuiAction => ({ type: "agent_event", sessionId,
     event: { type: "compaction_started", sessionId, reason: "manual", tokensBefore: 10100 },

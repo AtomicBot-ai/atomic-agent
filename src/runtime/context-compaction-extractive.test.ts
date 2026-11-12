@@ -16,6 +16,8 @@ import type { CompletionResult } from "../llm/provider/completion-types.js";
 import type { LlmStreamParams } from "../agent/step/step-contract.js";
 import type { CompactionEvent } from "../agent/compaction-control.js";
 import { createContextCompaction } from "./context-compaction.js";
+import { NOT_APPLIED } from "./context-compaction-runner.js";
+import { MAX_COMPACTION_INSTRUCTIONS_CHARS } from "./compaction-instructions.js";
 import type { CompactionRouteFacts } from "./compaction-mode.js";
 import { TurnController } from "./turn-controller.js";
 
@@ -161,5 +163,41 @@ describe("auto compaction mode", () => {
     expect(await f.compactSession("chat")).toMatchObject({ status: "compacted" });
     expect(performance.now() - started).toBeLessThan(1_000);
     expect(f.complete).toHaveBeenCalledTimes(calls);
+  });
+});
+
+describe("compaction instructions (ATO-661)", () => {
+  it("puts the user's instructions into the model summary prompt as data", async () => {
+    const f = fixture("model");
+    expect(await f.compactSession("chat", { instructions: "  keep the names of failing tests  " })).toMatchObject({ status: "compacted" });
+    const params = f.complete.mock.calls[0]![0];
+    expect(params.chat!.user).toContain("User's instructions for this compaction");
+    expect(params.chat!.user).toContain("<<<\nkeep the names of failing tests\n>>>");
+    expect(params.chat!.system).toContain("mandatory item");
+    expect(f.stored().compaction).not.toHaveProperty("kind");
+  });
+
+  it("caps instructions from a direct caller at the limit", async () => {
+    const f = fixture("model");
+    await f.compactSession("chat", { instructions: "k".repeat(MAX_COMPACTION_INSTRUCTIONS_CHARS + 500) });
+    const user = f.complete.mock.calls[0]![0].chat!.user;
+    expect(user).toContain("k".repeat(MAX_COMPACTION_INSTRUCTIONS_CHARS));
+    expect(user).not.toContain("k".repeat(MAX_COMPACTION_INSTRUCTIONS_CHARS + 1));
+  });
+
+  it("says the instructions were not applied when the checkpoint is extractive", async () => {
+    const f = fixture("extractive");
+    expect(await f.compactSession("chat", { instructions: "keep the failing tests" })).toMatchObject({ status: "compacted", message: NOT_APPLIED });
+    expect(f.complete).not.toHaveBeenCalled();
+  });
+
+  it("adds nothing to the prompt or the result without instructions", async () => {
+    const f = fixture("model");
+    const result = await f.compactSession("chat", { instructions: "   " });
+    expect(result).toMatchObject({ status: "compacted" });
+    expect(result).not.toHaveProperty("message");
+    const params = f.complete.mock.calls[0]![0];
+    expect(params.chat!.user).not.toContain("User's instructions for this compaction");
+    expect(params.chat!.system).not.toContain("mandatory item");
   });
 });

@@ -313,7 +313,8 @@ export interface TuiAppCallbacks {
   onSessionPinToggled?(sessionId: string): void;
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
-  onCompactionRequested?(verb: "run" | "show"): void;
+  /** `instructions`: what the summary must keep (`/compact <text>`, ATO-661). */
+  onCompactionRequested?(verb: "run" | "show", instructions?: string): void;
   /** `/goal …`: act on the open chat's goal (ATO-451). */
   onGoalCommand?(command: import("./commands/goal-command.js").GoalCommand): void;
   /** `/enhance <text>`: rewrite the draft once and hand it back to the composer. */

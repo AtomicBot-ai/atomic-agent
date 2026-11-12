@@ -9,6 +9,7 @@ import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { activeTextProviderIsLlamaServer } from "../llm/provider/registry/active-text-provider.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-registry.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
+import { compactionInstructionsError } from "../runtime/compaction-instructions.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
@@ -16,6 +17,7 @@ import type {
   ApprovalResponsePayload,
   CancelPayload,
   GetSessionPayload,
+  CompactSessionPayload,
   SendMessagePayload,
   SteerMessagePayload,
   SkillInstallPayload,
@@ -406,11 +408,14 @@ export async function bootstrapSidecar(): Promise<{
     },
   );
 
-  router.register<GetSessionPayload, Awaited<ReturnType<AgentRuntime["compactSession"]>>>("compact_session", async (request) => {
+  router.register<CompactSessionPayload, Awaited<ReturnType<AgentRuntime["compactSession"]>>>("compact_session", async (request) => {
     if (!active) throw new Error("no active runtime — call start_session first");
     const id = request.payload.sessionId;
     if (typeof id !== "string" || !id) throw new Error("sessionId is required");
-    return active.runtime.compactSession(id);
+    const { instructions } = request.payload;
+    const invalid = compactionInstructionsError(instructions);
+    if (invalid) throw new Error(invalid);
+    return active.runtime.compactSession(id, typeof instructions === "string" ? { instructions } : {});
   });
   router.register<GetSessionPayload, ReturnType<AgentRuntime["getSessionCompaction"]>>("get_compaction", (request) => {
     if (!active) throw new Error("no active runtime — call start_session first");

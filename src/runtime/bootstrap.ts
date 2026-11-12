@@ -516,7 +516,7 @@ export async function createAgentRuntime(
     emit: (event) => {
       logCompactionOutcome(logger, event);
       if (event.type === "compaction_completed" && event.result.message) {
-        logger.warn("context compaction fell back to an extractive summary", { sessionId: event.sessionId, reason: event.result.message });
+        logger.warn("context compaction completed with a warning", { sessionId: event.sessionId, reason: event.result.message });
       }
       emitAgentLoopEventFor(event.sessionId, event);
     },

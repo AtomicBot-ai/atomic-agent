@@ -513,7 +513,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.moveSession(id, toIndex),
         onSessionsEndReached: () => orchestrator.loadMoreSessions(),
         onSessionNewRequested: () => orchestrator.newSession(),
-        onCompactionRequested: (verb) => { void orchestrator.compactContext(verb); },
+        onCompactionRequested: (verb, instructions) => { void orchestrator.compactContext(verb, instructions); },
         onGoalCommand: (command) => orchestrator.goalCommand(command),
         onPromptEnhanceRequested: (draft) => { void orchestrator.enhancePrompt(draft); },
         onPromptEnhanceCancel: () => orchestrator.cancelPromptEnhance(),
