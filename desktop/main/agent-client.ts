@@ -248,6 +248,16 @@ export interface ApprovalRulesList {
   projectRules: ApprovalRule[];
 }
 
+/**
+ * ATO-1087: the agent's offline mode (network kill switch, ATO-1084) as
+ * `GET/POST /api/offline-mode` reports it. `egress` counts traffic to
+ * anything but this computer since `since` (reset when the mode turns on).
+ */
+export interface OfflineModeStatus {
+  enabled: boolean;
+  egress: { bytesOut: number; requestsOut: number; requestsBlocked: number; since: string } | null;
+}
+
 /** The `error.message` of an agent's JSON error body, else the HTTP status. */
 function errorMessage(text: string, status: number): string {
   try {
@@ -1580,6 +1590,31 @@ export class AgentClient extends EventEmitter {
       return { ok: false, error: errorMessage(text, res.status) };
     } catch (err) {
       return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1087: `GET /api/offline-mode`, or with `enabled` a `POST` that
+   * switches it (the agent persists `network.offline` and applies it live).
+   * An agent from before the route (ATO-1084) answers "No route for",
+   * reported as unsupported so Settings can say so. Never throws.
+   */
+  async offlineMode(enabled?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: OfflineModeStatus } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/offline-mode`, {
+        method: enabled === undefined ? "GET" : "POST",
+        headers: this.headers(),
+        ...(enabled === undefined ? {} : { body: JSON.stringify({ enabled }) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      const body = JSON.parse(text) as { enabled?: unknown; egress?: unknown };
+      if (typeof body.enabled !== "boolean") return { supported: true, ok: false, error: "the agent sent no offline mode state" };
+      return { supported: true, ok: true, data: { enabled: body.enabled, egress: (body.egress ?? null) as OfflineModeStatus["egress"] } };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
     }
   }
 

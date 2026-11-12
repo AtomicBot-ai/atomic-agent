@@ -1399,6 +1399,14 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:approvalRules", async (_event, sessionId: unknown) => {
     try { return await client.approvalRules(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
+  // ATO-1087: Settings › Privacy › Offline mode (renderer/offline-mode.js).
+  ipcMain.handle("agent:offlineMode", async () => {
+    try { return await client.offlineMode(); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:offlineModeSet", async (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
+    try { return await client.offlineMode(enabled); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
   ipcMain.handle("agent:approvalRuleDelete", async (_event, id: unknown) => {
     if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return { ok: false, error: "invalid rule id" };
     return client.deleteApprovalRule(id);
