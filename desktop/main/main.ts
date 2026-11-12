@@ -9,6 +9,7 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKT
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
+import { registerSettingsReferenceIpc } from "./settings-reference.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
@@ -2283,6 +2284,8 @@ function wireIpc(client: AgentClient): void {
     isRemote: () => client.isRemote,
     relaunch: () => { app.relaunch(); app.exit(0); },
   });
+  // ATO-41: Settings › Diagnostics' All settings list (main/settings-reference.ts).
+  registerSettingsReferenceIpc({ ipcMain, run: (args, timeoutMs) => atagRun(args, timeoutMs), isRemote: () => client.isRemote });
   // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
   ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));
   ipcMain.handle("app:gpuSet", (_event, on: unknown) => {

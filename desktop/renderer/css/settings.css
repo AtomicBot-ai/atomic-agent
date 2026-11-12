@@ -411,6 +411,15 @@ button.set-search:hover{border-color:var(--bd)}
 .set-docmark--warn{color:var(--warn, #b7791f)}
 .set-docmark--err{color:var(--critical)}
 .set-diag .set-err{color:var(--critical)}
+/* ATO-41: Diagnostics' All settings (all-settings.js). */
+.allset-list{max-height:520px;overflow:auto}
+.allset-row .t{word-break:break-all}
+.allset-row .allset-type{font-size:var(--fs-label);color:var(--ink-3);font-weight:400}
+.allset-row.is-changed .t{font-weight:600}
+.allset-row .set-diagv{display:flex;flex-direction:column;gap:2px;min-width:0}
+.allset-editrow{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:4px}
+.allset-edit{min-width:160px;max-width:100%;font-size:var(--fs-cap)}
+.allset-editbtn{align-self:flex-start;margin-top:4px}
 
 /* ---------------- Plugins (ATO-954, renderer/plugins-pane.js) ----------------
    A row: switch · name, version, description and chips (the whole middle
