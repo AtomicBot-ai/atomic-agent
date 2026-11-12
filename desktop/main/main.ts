@@ -39,6 +39,7 @@ import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
+import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
@@ -2808,6 +2809,8 @@ function wireIpc(client: AgentClient): void {
   wireWindowSnapshotIpc();
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
   wireOvernightIpc({ window: () => win, client });
+  // ATO-590: the Tasks tab's Pause / Resume and a task's past runs.
+  wireTaskControlsIpc({ client });
   /* Studio (Images + Video): Core's media API for the Studio pages
      (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
      OpenRouter key goes to Core over loopback only, never to the window. */

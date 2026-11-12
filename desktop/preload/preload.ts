@@ -288,6 +288,10 @@ contextBridge.exposeInMainWorld("atomic", {
   task: (id: string) => ipcRenderer.invoke("agent:task", id),
   cancelTask: (id: string) => ipcRenderer.invoke("agent:cancelTask", id),
   runTask: (id: string) => ipcRenderer.invoke("agent:runTask", id),
+  /** ATO-590: pause / resume a waiting task and its past runs (main/task-controls-ipc.ts). */
+  pauseTask: (id: string) => ipcRenderer.invoke("agent:pauseTask", id),
+  resumeTask: (id: string) => ipcRenderer.invoke("agent:resumeTask", id),
+  taskRuns: (id: string) => ipcRenderer.invoke("agent:taskRuns", id),
   health: () => ipcRenderer.invoke("agent:health"),
   /** ATO-134: whether the agent runs a turn this window does not stream (a scheduled task, Telegram), for a switch to wait on. */
   agentBusyAnywhere: () => ipcRenderer.invoke("agent:busyAnywhere"),

@@ -1,0 +1,24 @@
+/* ============================================================
+   ATO-590 — the Tasks tab's time picker and a task's past runs
+   (renderer/task-schedule-picker.js). Colours come from tokens only.
+   ============================================================ */
+
+.tsp{display:flex;flex-direction:column;gap:10px}
+.tsp-row{align-items:flex-start}
+.tsp-freq{flex-wrap:wrap}
+.tsp-grid{display:flex;flex-wrap:wrap;gap:4px}
+.tsp-b{min-width:38px;height:28px;padding:0 9px;border:1px solid var(--bd);border-radius:8px;background:transparent;
+  color:var(--ink-2);font:500 var(--fs-label)/1 var(--font-mono);
+  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.tsp-b:hover{background:var(--hover);color:var(--ink)}
+.tsp-b.on,.tsp-b[aria-pressed="true"]{background:var(--lift);color:var(--ink);border-color:var(--ink-3);box-shadow:var(--sh-soft)}
+.tsp-freq .tsp-b{border:0;font-family:var(--font-ui)}
+.tsp-hours .tsp-b{min-width:34px;padding:0 6px}
+.tsp-dom{align-items:center}
+.tsp-v{min-width:28px;text-align:center;color:var(--ink)}
+.tsp-note{margin:0}
+
+.tsp-runs{margin-top:12px}
+.tsp-runlist{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+.tsp-run{display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0}
+.tsp-err{flex:1 1 100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);font-size:var(--fs-label)}
