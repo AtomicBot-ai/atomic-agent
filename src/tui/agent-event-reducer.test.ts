@@ -488,6 +488,37 @@ describe("reduceTuiState", () => {
       expect(next.contextUsage.tokens).toBe(12_000);
     });
 
+    it("records the step's speed for the composer bar (ATO-631)", () => {
+      const next = apply(createInitialTuiState(fakeSession()), [
+        promptBuilt(),
+        {
+          type: "agent_event",
+          event: {
+            type: "llm_event",
+            event: {
+              type: "llm_completed",
+              completion: {
+                timing: {
+                  promptMs: 41_000,
+                  predictedMs: 2_000,
+                  promptTokens: 32_000,
+                  predictedTokens: 24,
+                  predictedPerSecond: 12,
+                },
+                cacheHitTokens: 2_000,
+              } as never,
+            },
+          },
+        },
+      ]);
+      expect(next.metrics.stepSpeedLast).toMatchObject({
+        decodeTokensPerSecond: 12,
+        promptTokens: 32_000,
+        cachedTokens: 2_000,
+        prefillMs: 41_000,
+      });
+    });
+
     /**
      * The regression this slice exists to avoid: `startNewRun` wipes
      * every per-turn metric, and the window is emphatically not a

@@ -303,6 +303,32 @@ describe("LlamaServerClient.complete", () => {
     expect(next.value.cacheHitTokens).toBe(95);
   });
 
+  it("carries the decode rate and the draft counts from timings (ATO-631)", async () => {
+    const result = await completeWith({
+      timings: {
+        prompt_n: 100,
+        cache_n: 900,
+        predicted_n: 60,
+        predicted_ms: 5_000,
+        predicted_per_second: 12.5,
+        draft_n: 40,
+        draft_n_accepted: 30,
+      },
+    });
+    expect(result.timing.predictedPerSecond).toBe(12.5);
+    expect(result.timing.draftTokens).toBe(40);
+    expect(result.timing.draftAcceptedTokens).toBe(30);
+  });
+
+  it("reports no rate and no draft when the server did not send them", async () => {
+    const result = await completeWith({
+      timings: { prompt_n: 10, cache_n: 0, predicted_n: 5, draft_n: 0 },
+    });
+    expect(result.timing.predictedPerSecond).toBeUndefined();
+    expect(result.timing.draftTokens).toBeUndefined();
+    expect(result.timing.draftAcceptedTokens).toBeUndefined();
+  });
+
   it("forwards explicit repeatPenalty / repeatLastN overrides", async () => {
     let captured: Record<string, unknown> | null = null;
     const client = new LlamaServerClient({

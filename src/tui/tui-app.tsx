@@ -1,5 +1,9 @@
 import { ContextChip } from "./context/context-chip.js";
 import { UsageReadout, usageReadoutLabel } from "./context/usage-readout.js";
+import {
+  StepSpeedReadout,
+  stepSpeedReadoutLabel,
+} from "./context/step-speed-readout.js";
 import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type {
@@ -2157,8 +2161,18 @@ export function TuiApp({
         fusion={promptBackend.kind === "fusion"}
       />
     ) : null;
+  // ATO-631: the last step's speed and KV-cache share, so a slow reply
+  // says whether the prompt was being re-read or the reply written
+  // slowly. Measured by `selectMetaBarFit` with the same label function.
+  const stepSpeedReadout =
+    stepSpeedReadoutLabel(state.metrics.stepSpeedLast) !== null ? (
+      <StepSpeedReadout
+        speed={state.metrics.stepSpeedLast}
+        fusion={promptBackend.kind === "fusion"}
+      />
+    ) : null;
   const promptContextSlot =
-    composerContextUsage || usageReadout ? (
+    composerContextUsage || usageReadout || stepSpeedReadout ? (
       <Box flexDirection="row" flexShrink={0}>
         {composerContextUsage ? (
           <ContextChip
@@ -2167,6 +2181,7 @@ export function TuiApp({
             fusion={promptBackend.kind === "fusion"}
           />
         ) : null}
+        {stepSpeedReadout}
         {usageReadout}
       </Box>
     ) : null;

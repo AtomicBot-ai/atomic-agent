@@ -466,6 +466,49 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records the decode rate and draft counts on llm_completion (ATO-631)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-speed", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "llm_raw_completion",
+        stepIndex: 0,
+        attempt: 1,
+        completion: {
+          content: "[]",
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 900,
+            predictedMs: 2_000,
+            promptTokens: 80,
+            predictedTokens: 24,
+            predictedPerSecond: 12,
+            draftTokens: 30,
+            draftAcceptedTokens: 21,
+          },
+          cacheHitTokens: 60,
+          slotId: 0,
+          modelId: "demo",
+        },
+      },
+    });
+    const completion = events.find((e) => e.type === "llm_completion");
+    expect(completion).toMatchObject({
+      timing: {
+        promptMs: 900,
+        predictedMs: 2_000,
+        predictedPerSecond: 12,
+        draftTokens: 30,
+        draftAcceptedTokens: 21,
+      },
+    });
+  });
+
   it("records llama-server's stop_type on llm_completion (ATO-329)", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-stop", emit, now });
