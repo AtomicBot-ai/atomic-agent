@@ -32,12 +32,14 @@ import {
  *   PATCH  /api/memory/profile/{key} {value} → { fact: FactJson }
  *   DELETE /api/memory/profile/{key}       → { removed: true, key }
  *   GET    /api/memory/profile/{key}/history → { key, versions: FactJson[] }
- * `400` for a bad id or body, `404` for an unknown id or key.
+ * `400` for a bad id or body, `404` for an unknown id or key. Edits
+ * and deletions made here are journaled as the person's (ATO-1059) and
+ * can be undone through route-memory-history.ts.
  */
 
 type NoteJson = MemoryEntry;
 
-interface FactJson {
+export interface FactJson {
   id: number;
   key: string;
   value: string;
@@ -49,7 +51,7 @@ interface FactJson {
   supersededBy: number | null;
 }
 
-function factJson(fact: ProfileFact): FactJson {
+export function factJson(fact: ProfileFact): FactJson {
   return {
     id: fact.id,
     key: fact.key,
@@ -133,7 +135,7 @@ export function createEditMemoryNoteHandler(): HttpHandler {
     }
     let note: NoteJson | null;
     try {
-      note = ctx.runtime.notesStore.updateContent(id, body.text);
+      note = ctx.runtime.notesStore.updateContent(id, body.text, undefined, "user");
     } catch (err) {
       const message = validationMessage(err);
       if (message === null) throw err;
@@ -156,7 +158,7 @@ export function createDeleteMemoryNoteHandler(): HttpHandler {
       sendError(res, 400, openaiError("note id must be a positive integer"));
       return;
     }
-    if (!ctx.runtime.notesStore.remove(id)) {
+    if (!ctx.runtime.notesStore.remove(id, "user")) {
       sendError(res, 404, openaiError(`note not found: ${id}`));
       return;
     }
@@ -224,7 +226,7 @@ export function createDeleteProfileFactHandler(): HttpHandler {
     }
     let removed: boolean;
     try {
-      removed = ctx.runtime.profileStore.remove(key);
+      removed = ctx.runtime.profileStore.remove(key, "user");
     } catch (err) {
       const message = validationMessage(err);
       if (message === null) throw err;
