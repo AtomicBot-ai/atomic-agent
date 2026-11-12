@@ -81,3 +81,8 @@
 .attchip.is-gone .attsub{color:var(--ink-3)}
 
 @media (prefers-reduced-motion: reduce){.attspin{animation:none}}
+
+/* ---- ATO-1074: an audio chip with its Transcribe button ----------------- */
+.trxbtn{align-self:flex-start;padding:1px 8px;border-radius:999px;background:var(--paper);color:var(--ink);
+  font:500 var(--fs-label)/1.4 var(--font-ui);transition:background var(--t-state) var(--ease)}
+.trxbtn:hover{background:var(--hover)}
