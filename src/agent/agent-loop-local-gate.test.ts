@@ -101,7 +101,7 @@ describe("AgentLoop — local profile probes are gated on the active route", () 
     localBackend: ConstructorParameters<typeof AgentLoop>[0]["localBackend"],
   ) => {
     const grammar = await buildGrammar(QWEN_THINK_PROFILE);
-    const fetchProps = vi.fn<[], Promise<Record<string, unknown>>>();
+    const fetchProps = vi.fn<() => Promise<Record<string, unknown>>>();
     fetchProps.mockResolvedValue(GEMMA4_PROPS);
     const profileManager = new ModelProfileManager({
       llama: { fetchProps } as unknown as LlamaServerClient,
