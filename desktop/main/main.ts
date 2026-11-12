@@ -164,6 +164,7 @@ import {
   type UpdateHold,
 } from "./daemon-watch.js";
 import { fusionSmokeTest } from "./fusion-smoke.js";
+import { isHubUnreachable } from "./hub-unreachable.js";
 import {
   RELEASE_FIX_TASKS,
   releaseFixesSmokeTest,
@@ -6571,10 +6572,11 @@ async function settingsTestPartB(
      party is down is a check that cries wolf; the same rule as the GitHub
      rate-limit branch above. Skip with the reason, and keep asserting the
      fallback the window is responsible for. */
-  const hubDown = /request failed \((?:5\d\d|429)\)|ENOTFOUND|ETIMEDOUT|fetch failed/i.test(found.hubError ?? "");
+  // ATO-915: the no-VPN case reads `aborted due to timeout`; hub-unreachable.ts has the full list.
+  const hubDown = isHubUnreachable(found.hubError);
   if (hubDown) {
     process.stdout.write(
-      `SKIP the two ClawHub search checks — the service answered ${JSON.stringify(found.hubError)}. `
+      `SKIP the two ClawHub search checks — ClawHub could not be reached: ${JSON.stringify(found.hubError)}. `
       + `The window fell back to the GitHub taps, which is what it owes here.\n`,
     );
     check(
