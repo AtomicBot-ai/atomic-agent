@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { LinkifiedText } from "../render/linkify-text.js";
+import { collapseMentionedFiles } from "../file-mentions/mention-block.js";
 import { fusionInk } from "../theme/fusion-tint.js";
 import { theme } from "../theme/theme.js";
 
@@ -75,7 +76,7 @@ export function UserBubble({
         paddingRight={1}
         flexDirection="column"
       >
-        {splitLines(text).map((line, idx) => (
+        {splitLines(collapseMentionedFiles(text)).map((line, idx) => (
           <Text key={idx}>
             <LinkifiedText text={line} />
           </Text>

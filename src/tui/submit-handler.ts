@@ -138,7 +138,11 @@ export function handleEditorSubmit(
     return;
   }
   dispatch({ type: "message_submitted" });
-  callbacks.onMessageSubmitted(trimmed);
+  // `@path` mentions of files in the working directory are inlined here
+  // (file-mentions/). Only on this idle path: a steer or a queued
+  // message is matched back to its pending strip entry by its text, so
+  // those keep their `@path` as words the model can read itself.
+  callbacks.onMessageSubmitted(callbacks.expandFileMentions?.(trimmed) ?? trimmed);
 }
 
 /**

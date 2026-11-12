@@ -766,3 +766,30 @@ describe("bare /enhance", () => {
     expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
   });
 });
+
+describe("@ file mentions on submit (ATO-665)", () => {
+  it("sends the expanded message on an idle submit", () => {
+    const onMessageSubmitted = vi.fn();
+    const expandFileMentions = vi.fn((text: string) => `${text}\n\n[expanded]`);
+    handleEditorSubmit(
+      "  explain @src/app.ts  ",
+      createInitialTuiState(fakeSession()),
+      () => {},
+      stubCallbacks({ onMessageSubmitted, expandFileMentions }),
+    );
+    expect(expandFileMentions).toHaveBeenCalledWith("explain @src/app.ts");
+    expect(onMessageSubmitted).toHaveBeenCalledWith("explain @src/app.ts\n\n[expanded]");
+  });
+
+  it("sends the text as typed when expansion is not wired", () => {
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit("explain @src/app.ts", createInitialTuiState(fakeSession()), () => {}, stubCallbacks({ onMessageSubmitted }));
+    expect(onMessageSubmitted).toHaveBeenCalledWith("explain @src/app.ts");
+  });
+
+  it("does not expand a slash command", () => {
+    const expandFileMentions = vi.fn((text: string) => text);
+    handleEditorSubmit("/help", createInitialTuiState(fakeSession()), () => {}, stubCallbacks({ expandFileMentions }));
+    expect(expandFileMentions).not.toHaveBeenCalled();
+  });
+});

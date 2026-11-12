@@ -1,5 +1,6 @@
 import type { MetricSample } from "../tracing/metrics-collector.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
+import { typedTextOf } from "./file-mentions/mention-block.js";
 import type {
   ChatMessage,
   FeedEntry,
@@ -136,7 +137,10 @@ export function appendUserMessage(
     text,
     ...(options.steered ? { steered: true } : {}),
   });
-  const history = pushRing(state.inputHistory, text, state.ringBufferSize);
+  // Up-arrow recalls what was typed, not the files `@` inlined into it
+  // (file-mentions/); the message itself keeps them, since retry and
+  // rollback match it against the stored prompt.
+  const history = pushRing(state.inputHistory, typedTextOf(text), state.ringBufferSize);
   // History-navigation state is deliberately left alone: this event also
   // fires in the BACKGROUND when a parked queue message drains into a
   // turn, possibly while the operator is walking history in the live

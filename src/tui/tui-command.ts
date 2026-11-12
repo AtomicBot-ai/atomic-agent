@@ -75,6 +75,7 @@ import {
 } from "./theme/detect-terminal-background.js";
 import { resolveThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
 import { formatStartupFusionNotice } from "./fusion-resume-notice.js";
+import { createMentionFileIndex, expandFileMentions } from "./file-mentions/index.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 import {
   loadUninstallPreview,
@@ -287,6 +288,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     localBackendConfigured: isLocalBackendConfigured(),
   };
 
+  // One file list per working directory for the session (file-mentions/).
+  const mentionFiles = createMentionFileIndex();
   const orchestrator = new ChatOrchestrator(runtime, bus, {
     maxSteps,
     llamaUrl: config.localModels.url,
@@ -491,6 +494,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.steerMessage(message);
         },
         onMessageSubmitted: (text) => orchestrator.sendMessage(text),
+        // The `@` palette and its expansion (ATO-665) read the same folder
+        // the agent's own tools are rooted at.
+        listMentionFiles: () => mentionFiles.list(runtime.capabilities.workingDir),
+        expandFileMentions: (text) => expandFileMentions(text, runtime.capabilities.workingDir),
         onLastTurnRollbackRequested: (expect) => orchestrator.rollbackLastTurn(expect),
         onQueueClearRequested: () => orchestrator.clearQueue(),
         onMessageSteered: (text) => orchestrator.steerMessage(text),
