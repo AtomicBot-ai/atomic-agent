@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import type { AtomicAgentConfig } from "../../config/index.js";
+import { createPushDefaults, type AtomicAgentConfig } from "../../config/index.js";
 import {
   parseQuietHours,
   SqliteHeldReportStore,
@@ -18,6 +18,7 @@ import { TelegramChannel } from "../../channels/telegram/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { AgentRuntime } from "../runtime-contract.js";
+import { createPushTaskReportSink } from "../../notifications/index.js";
 
 export function createRuntimeTaskStores(args: {
   config: Pick<AtomicAgentConfig, "paths" | "tasks">;
@@ -54,7 +55,8 @@ export function createRuntimeTaskStores(args: {
 }
 
 export function createRuntimeTaskRunner(args: {
-  config: Pick<AtomicAgentConfig, "agent" | "tasks" | "paths" | "statusSnapshot">;
+  config: Pick<AtomicAgentConfig, "agent" | "tasks" | "paths" | "statusSnapshot"> &
+    Partial<Pick<AtomicAgentConfig, "notifications">>;
   taskStore: TaskStore;
   runTurn: TaskRunnerRuntime["runTurn"];
   sessionStore: Pick<SessionStore, "load" | "save" | "readTurnProgress" | "clearTurnProgress">;
@@ -84,9 +86,9 @@ export function createRuntimeTaskRunner(args: {
     enabled: config.tasks.enabled,
     runOnCreate: config.tasks.runOnCreate,
     minIntervalMs: config.tasks.minIntervalMs,
-    // Telegram is the only `TaskNotifyTarget` today, so the runner's
-    // single sink IS the Telegram route (a second target would turn
-    // this into a per-target dispatch). The channel is constructed
+    // One sink, routed per `TaskReport.notify`: phone push (ATO-1129)
+    // goes straight to ntfy, everything else is the Telegram route. The
+    // Telegram channel is constructed
     // after the runner — it needs the finished runtime object — so the
     // sink resolves the same live reference the shutdown path uses,
     // assigned further below, at delivery time. A report that fires in
@@ -96,7 +98,13 @@ export function createRuntimeTaskRunner(args: {
     // never affect the task's own status, and the runner isolates sink
     // rejections. Skip-path logging is pinned by the sink's own unit
     // tests in telegram-channel.test.ts.
-    reportSink: createTaskReportSink({ config, resolveTelegram, logger }),
+    reportSink: routeTaskReports({
+      telegram: createTaskReportSink({ config, resolveTelegram, logger }),
+      push: createPushTaskReportSink({
+        readPush: () => config.notifications?.push ?? createPushDefaults(),
+        logger,
+      }),
+    }),
     // Auto status snapshots of long reporting runs (ATO-965): one edited
     // Telegram message per task, silent inside quiet hours. Same late
     // channel resolution as the report sink.
@@ -130,6 +138,15 @@ export function createRuntimeTaskRunner(args: {
   });
 
   return taskRunner;
+}
+
+/** Send each report to its own target; unmarked reports are Telegram's. */
+function routeTaskReports(sinks: {
+  telegram: TaskReportSink;
+  push: TaskReportSink;
+}): TaskReportSink {
+  return (report) =>
+    report.notify === "push" ? sinks.push(report) : sinks.telegram(report);
 }
 
 /**

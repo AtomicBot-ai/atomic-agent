@@ -459,8 +459,10 @@ export class TaskRunner {
       userMessage: claimed.userMessage,
       startedAt: claimed.startedAt ?? Date.now(),
     };
+    // Live snapshots are one edited Telegram message (ATO-965); a push
+    // task gets its one ping at the end and nothing in between.
     const snapshots =
-      collector && this.options.snapshotSink
+      collector && this.options.snapshotSink && claimed.notify === "telegram"
         ? startTaskSnapshots({
             sink: this.options.snapshotSink,
             cadence: this.options.snapshotCadence,

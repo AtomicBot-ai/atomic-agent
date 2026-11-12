@@ -97,6 +97,22 @@ describe("runtime task service phases", () => {
     expect(fixture.toolRegistry.list().map((tool) => tool.name)).toEqual(["tasks.schedule", "tasks.cron", "tasks.list", "tasks.cancel", "tasks.show"]);
   });
 
+  it("routes a notify: push task's report to ntfy, not to Telegram (ATO-1129)", async () => {
+    config.notifications.push = { enabled: true, server: "https://ntfy.example.com", topic: "atag-task", tokenEnv: "NTFY_TOKEN" };
+    const bodies: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response("{}", { status: 200 });
+    });
+    const fixture = runnerFixture(async (session) => ({ session, reason: "reply", stepCount: 1 }));
+    const task = fixture.runner.create({ userMessage: "nightly build", origin: "cli", maxAttempts: 1, notify: "push" });
+    expect((await fixture.runner.runOne(task.id))?.status).toBe("completed");
+    await vi.waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({ topic: "atag-task" });
+    expect(String(bodies[0]!.title)).toContain("nightly build");
+    expect(fixture.resolveTelegram).not.toHaveBeenCalled();
+  });
+
   it.each([{ enabled: false, agentToolsEnabled: true }, { enabled: true, agentToolsEnabled: false }])("gates registration with both task switches: %j", (flags) => {
     Object.assign(config.tasks, flags);
     expect(runnerFixture().toolRegistry.list()).toEqual([]);

@@ -26,7 +26,7 @@ const HELP =
     "  create [--session <id>] --message <text>",
     "         [--max-attempts N] [--max-steps N]",
     "         [--at <unix-ms|iso-8601> | --cron <expr> | --every <seconds>] [--tz <iana>]",
-    "         [--notify telegram] [--max-cost-usd <n>] [--max-duration <dur>]",
+    "         [--notify telegram|push] [--max-cost-usd <n>] [--max-duration <dur>]",
     "                            Persist a new task (origin=cli). Omit --session for a",
     "                            lazy one-shot (fresh ephemeral session at run time) or",
     "                            for a recurring task (persistent session allocated on",
@@ -34,7 +34,9 @@ const HELP =
     "                            --notify telegram reports the task's final result to",
     "                            the paired Telegram chat (the result text is sent to",
     "                            Telegram's servers; skipped with a warning when the",
-    "                            channel is down or unpaired).",
+    "                            channel is down or unpaired). --notify push sends a",
+    "                            short phone push through ntfy instead (set it up",
+    "                            with `atomic-agent push on`).",
     "                            --max-cost-usd stops a run once its estimated spend",
     "                            reaches that many dollars, with a closing summary;",
     "                            local (unpriced) models count as $0. Fusion workers",
@@ -162,15 +164,16 @@ async function handleCreate(args: string[]): Promise<number> {
 
   if (!message) {
     process.stderr.write(
-      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms|iso> | --cron <expr> | --every <seconds>] [--tz <iana>] [--notify telegram] [--max-attempts N] [--max-steps N] [--max-cost-usd <n>] [--max-duration <dur>]\n",
+      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms|iso> | --cron <expr> | --every <seconds>] [--tz <iana>] [--notify telegram|push] [--max-attempts N] [--max-steps N] [--max-cost-usd <n>] [--max-duration <dur>]\n",
     );
     return 1;
   }
-  if (notifyRaw !== undefined && notifyRaw !== "telegram") {
-    process.stderr.write("--notify only supports: telegram\n");
+  if (notifyRaw !== undefined && notifyRaw !== "telegram" && notifyRaw !== "push") {
+    process.stderr.write("--notify only supports: telegram, push\n");
     return 1;
   }
-  const notify = notifyRaw === "telegram" ? ("telegram" as const) : undefined;
+  const notify =
+    notifyRaw === "telegram" || notifyRaw === "push" ? notifyRaw : undefined;
 
   const scheduleFlags = [atRaw, cronRaw, everyRaw].filter(
     (v) => v !== undefined,

@@ -24,6 +24,7 @@ import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
 import { dataCommand } from "./data-command.js";
+import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
@@ -153,6 +154,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "data",
     summary: "Back up, restore, move or reset the data folder (shared with the desktop app)",
     run: dataCommand,
+  },
+  {
+    name: "push",
+    summary: "Phone notifications through ntfy, no bot needed (on|off|status|test)",
+    run: pushCommand,
   },
   {
     name: "providers",

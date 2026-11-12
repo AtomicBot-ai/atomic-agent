@@ -729,6 +729,7 @@ export function loadConfig(): AtomicAgentConfig {
       downloads: {
         channel: user.notifications.downloads.channel,
       },
+      push: { ...user.notifications.push },
     },
     atomicMail: {
       address: user.atomicMail.address,

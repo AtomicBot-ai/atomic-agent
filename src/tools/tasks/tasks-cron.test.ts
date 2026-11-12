@@ -99,6 +99,17 @@ describe("tasks.cron", () => {
     expect(result.details.notify).toBe("telegram");
   });
 
+  it('passes notify: "push" through as well (ATO-1129)', async () => {
+    const runner = makeTaskRunner();
+    const tool = buildTasksCronTool({ taskRunner: runner as never });
+    const result = await tool.run(
+      { userMessage: "digest", expression: "0 9 * * *", notify: "push" },
+      makeCtx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(runner.create.mock.calls[0]![0].notify).toBe("push");
+  });
+
   it("omits notify by default (task stays silent)", async () => {
     const runner = makeTaskRunner();
     const tool = buildTasksCronTool({ taskRunner: runner as never });

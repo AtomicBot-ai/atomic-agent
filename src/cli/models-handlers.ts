@@ -364,7 +364,7 @@ export function positionalArgs(args: readonly string[]): string[] {
 }
 
 /**
- * `--notify telegram|discord|email` (or `--notify=…`): where the worker
+ * `--notify telegram|discord|email|push` (or `--notify=…`): where the worker
  * reports when the job ends. Absent leaves whatever is already armed.
  */
 function parseNotifyFlag(
@@ -375,9 +375,16 @@ function parseNotifyFlag(
   if (!joined && i < 0) return undefined;
   const raw = joined ? joined.slice("--notify=".length) : args[i + 1];
   if (raw === "off" || raw === "none") return null;
-  if (raw === "telegram" || raw === "discord" || raw === "email") return raw;
+  if (
+    raw === "telegram" ||
+    raw === "discord" ||
+    raw === "email" ||
+    raw === "push"
+  ) {
+    return raw;
+  }
   throw new Error(
-    `--notify expects telegram, discord, email or off; got ${raw === undefined ? "nothing" : JSON.stringify(raw)}`,
+    `--notify expects telegram, discord, email, push or off; got ${raw === undefined ? "nothing" : JSON.stringify(raw)}`,
   );
 }
 
