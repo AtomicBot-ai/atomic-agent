@@ -1261,7 +1261,7 @@ if (typeof document !== 'undefined') {
     const t = e.target instanceof Element ? e.target : null;
     if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
     const inside = !!t.closest('#sidebar');
-    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-more], input, textarea')) return;
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-more], input, textarea')) return;
     if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -2392,7 +2392,8 @@ function renderSidebar() {
           + ch.rows.slice(0, ch.pinned).map(chatRow).join('')
         + '</div>'
         : '')
-      // ATO-1034: the folders (chat-folders.js), then the chats in none of them.
+      // ATO-1146: the projects (chat-projects.js), ATO-1034: the folders (chat-folders.js), then the chats in none of them.
+      + projectsSidebarHTML(ch.projects)
       + foldersSidebarHTML(ch.groups)
       + '<div class="sb-list" data-list="chats">'
         + '<div class="sb-list-head micro" data-fdrop=""><span>Chats</span>'
@@ -2436,8 +2437,8 @@ function renderSidebar() {
 function sidebarNavHTML() {
   const pane = S.settings ? settingsPaneId(S.settingsPane) : null;
   return '<div class="sb-nav" role="group" aria-label="Sections">'
-    + sidebarNavItems(pane).map((n) => {
-      const title = kbdText(n.label + ' (' + n.chord + ')');
+    + sidebarNavItems(pane, {projects: projectsSupported()}).map((n) => {   // ATO-1146: New project, when the store is there
+      const title = n.chord ? kbdText(n.label + ' (' + n.chord + ')') : esc(n.label);
       return '<button class="sb-new sb-nav-row' + (n.on ? ' on' : '') + '" data-act="' + n.act + '" data-nav="' + n.id + '"'
         + (n.on ? ' aria-current="page"' : '')
         + ' title="' + title + '" aria-label="' + esc(n.label) + '">'
@@ -2496,12 +2497,17 @@ function sidebarChats() {
   /* ATO-1034: a chat in a folder is drawn under that folder (all of them, a
      folder is short), a pinned one stays in Pinned; Load more pages the rest.
      `visible` is every row on screen, for nameVisibleSessions. */
-  const fg = folderGroups(FOLDERS.state, order.rest);
+  /* ATO-1146: chats in a project are drawn under it (chat-projects.js); a chat
+     a chat folder holds stays in that folder (chat-list.js projectGroups). */
+  projectsNoteNewChat();
+  const pg = projectGroups(PROJECTS.state, order.rest, FOLDERS.state);
+  const fg = folderGroups(FOLDERS.state, pg.rest);
   const all = order.pinned.concat(fg.loose);
   const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
-  const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0);
-  const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows));
-  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, visible, filed};
+  const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0) + pg.groups.reduce((n, g) => n + g.rows.length, 0);
+  const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows),
+    ...pg.groups.filter((g) => !projectCollapsed(g.project.id)).map((g) => g.rows));
+  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, projects: pg.groups, visible, filed};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -7348,6 +7354,8 @@ function act(a) {
   if (k === 'ftoggle')   { const f = folderById(FOLDERS.state, v); if (!f) return;
                            f.collapsed = !f.collapsed; saveFolders(); render(); nameVisibleSessions(); return; }
   if (k === 'fnew')      { close(); folderCreate(v || null); return; }
+  // ATO-1146: projects (chat-projects.js): New project, fold, remove.
+  if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel') { close(); projectAct(k, v); return; }
   if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }
   if (k === 'frename')   { close(); render(); renameStart(v, 'folder'); return; }
   if (k === 'fdel')      { close(); const f = folderById(FOLDERS.state, v);
@@ -11982,6 +11990,7 @@ if (BR) {
   S.sessionId = '';
   loadPrefs();
   loadFolders();   // ATO-1034 (chat-folders.js)
+  loadProjects();   // ATO-1146 (chat-projects.js)
   BR.onStatus(applyStatus);
   if (BR.onAutoRestart) BR.onAutoRestart(autoRestartApply);
   BR.onChat(onChatEvent);

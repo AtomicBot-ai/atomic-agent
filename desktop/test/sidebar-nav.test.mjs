@@ -97,3 +97,25 @@ test('the rail shows no Studio header word and draws every row as one 32px cell'
   assert.match(narrow, /#sidebar:not\(\.drawer\) \.sb-studio-head\{display:none\}/, 'Studio follows the 1000px breakpoint shell.css uses');
   assert.doesNotMatch(studio, /max-width:999px/);
 });
+
+// ATO-1146: "New project" leads the section rows only when the projects store is there.
+test('New project comes first with the projects store, and is absent without it', () => {
+  const items = sidebarNavItems(null, {projects: true});
+  assert.deepEqual(items.map((n) => n.label), ['New project', 'Tasks', 'Skills']);
+  assert.equal(items[0].act, 'pnew:');
+  assert.equal(items[0].chord, '', 'no chord, so the row title is the label alone');
+  assert.deepEqual(sidebarNavItems(null, {projects: false}).map((n) => n.label), ['Tasks', 'Skills']);
+  assert.deepEqual(sidebarNavItems('tasks', {projects: true}).map((n) => n.on), [false, true, false]);
+});
+
+test('the sidebar wires the projects module: loaded before renderer.js, drawn above the folders', () => {
+  const html = readFileSync(new URL('../renderer/index.html', import.meta.url), 'utf8');
+  const at = (s) => html.indexOf('<script src="' + s + '"></script>');
+  assert.ok(at('chat-projects.js') > at('chat-list.js') && at('chat-projects.js') < at('renderer.js'));
+  const r = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  assert.match(r, /projectsSidebarHTML\(ch\.projects\)\s*\n\s*\+ foldersSidebarHTML\(ch\.groups\)/);
+  assert.match(r, /projectGroups\(PROJECTS\.state, order\.rest, FOLDERS\.state\)/);
+  assert.match(r, /folderGroups\(FOLDERS\.state, pg\.rest\)/);
+  assert.match(r, /sidebarNavItems\(pane, \{projects: projectsSupported\(\)\}\)/);
+  assert.match(r, /k === 'pnew' \|\| k === 'ptoggle' \|\| k === 'pdelask' \|\| k === 'pdel'/);
+});

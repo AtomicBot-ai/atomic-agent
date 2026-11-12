@@ -15,9 +15,15 @@
  * drawer over the content instead of refusing. */
 
 /** The standing section rows, top to bottom. `pane` is the open Settings tab
-    (null while Settings is closed). */
-function sidebarNavItems(pane) {
+    (null while Settings is closed).
+
+    ATO-1146: with `opts.projects` (the projects store is there, ATO-42) a
+    "New project" row comes first. It picks a folder and opens a new chat in
+    it (chat-projects.js); it has no chord, so `chord` is ''. */
+function sidebarNavItems(pane, opts) {
+  const o = opts || {};
   return [
+    ...(o.projects ? [{id: 'project', label: 'New project', icon: 'folder', act: 'pnew:', chord: '', on: false}] : []),
     {id: 'tasks', label: 'Tasks', icon: 'tasks', act: 'room:tasks', chord: '⌘ 2', on: pane === 'tasks'},
     {id: 'skills', label: 'Skills', icon: 'skills', act: 'room:skills', chord: '⌘ 3', on: pane === 'skills'},
   ];
