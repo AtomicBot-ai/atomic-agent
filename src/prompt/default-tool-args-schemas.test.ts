@@ -112,7 +112,22 @@ describe("default tool argsJsonSchema map", () => {
     ).properties;
     expect(properties.format).toEqual({
       type: "string",
-      enum: ["pdf", "docx", "doc", "xlsx", "rtf", "odt", "pptx", "plain"],
+      enum: [
+        "pdf",
+        "docx",
+        "doc",
+        "xlsx",
+        "rtf",
+        "odt",
+        "pptx",
+        "ods",
+        "odp",
+        "epub",
+        "html",
+        "eml",
+        "mbox",
+        "plain",
+      ],
     });
     // Verbatim against the runtime validator, not a second hand-written
     // copy of it — that is the drift this module's header promises to avoid.
@@ -127,7 +142,7 @@ describe("default tool argsJsonSchema map", () => {
     );
     expect(descriptor).toBeDefined();
     expect(descriptor!.argsSchema).toContain(
-      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain'",
+      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'ods' | 'odp' | 'epub' | 'html' | 'eml' | 'mbox' | 'plain'",
     );
     expect(descriptor!.argsSchema).not.toContain("format?: string");
   });
