@@ -17,6 +17,12 @@ export interface SessionPickerProps {
    * claim to be a total.
    */
   morePages?: boolean;
+  /**
+   * ATO-1153: the composer's text while the picker is open. `sessions`
+   * is already narrowed to its matches (`visiblePickerSessions`); the
+   * picker only says what it is filtered by.
+   */
+  query?: string;
 }
 
 const MAX_ROWS = 10;
@@ -28,10 +34,15 @@ const MAX_ROWS = 10;
  */
 export function SessionPicker(props: SessionPickerProps): ReactElement {
   const { sessions, cursor, currentSessionId, morePages = false } = props;
+  const query = (props.query ?? "").replace(/\s+/g, " ").trim();
   if (sessions.length === 0) {
     return (
       <Box borderStyle="round" borderColor={theme.colors.warn} paddingX={1}>
-        <Text color={theme.colors.warn}>no persisted sessions yet</Text>
+        <Text color={theme.colors.warn}>
+          {query.length > 0
+            ? `no loaded session matches "${truncate(query, 40)}" — Esc to dismiss`
+            : "no persisted sessions yet"}
+        </Text>
       </Box>
     );
   }
@@ -52,8 +63,11 @@ export function SessionPicker(props: SessionPickerProps): ReactElement {
       flexDirection="column"
     >
       <Text color={theme.colors.muted}>
-        sessions ({sessions.length}
-        {morePages ? "+" : ""}) — Enter to load, Esc to dismiss
+        {query.length > 0
+          ? `sessions matching "${truncate(query, 40)}" (${sessions.length})`
+          : `sessions (${sessions.length}${morePages ? "+" : ""})`}{" "}
+        — Enter to load, Esc to dismiss
+        {query.length > 0 ? "" : ", type to search"}
       </Text>
       {hiddenBefore > 0 ? (
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>

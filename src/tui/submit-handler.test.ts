@@ -692,6 +692,8 @@ describe("Enter in the session picker", () => {
       inputValue: "draft for s1",
       sessionPickerOpen: true,
       sessionPickerCursor: 0,
+      // The reducer keeps the composer's text when the picker opens.
+      sessionPickerDraft: "draft for s1",
       sessionPickerList: [
         {
           sessionId: "s2",
@@ -719,6 +721,41 @@ describe("Enter in the session picker", () => {
     );
     expect(onSessionSwitchRequested).toHaveBeenCalledWith("s2");
     expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
+  });
+
+  it("switches to the searched row and puts the draft back first (ATO-1153)", () => {
+    const onSessionSwitchRequested = vi.fn();
+    const dispatched: Array<{ type: string; value?: string }> = [];
+    const state = pickerState();
+    handleEditorSubmit(
+      "draft for s1third",
+      {
+        ...state,
+        inputValue: "draft for s1third",
+        sessionPickerList: [
+          ...state.sessionPickerList,
+          { ...state.sessionPickerList[0]!, sessionId: "s3", preview: "third thread" },
+        ],
+      },
+      (a) => dispatched.push(a as { type: string; value?: string }),
+      stubCallbacks({ onSessionSwitchRequested }),
+    );
+    // Cursor 0 of the narrowed list is s3, not the list's first row.
+    expect(onSessionSwitchRequested).toHaveBeenCalledWith("s3");
+    expect(dispatched).toEqual([{ type: "input_changed", value: "draft for s1" }]);
+  });
+
+  it("keeps the picker open when the search matches no row", () => {
+    const onSessionSwitchRequested = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "draft for s1zzz",
+      { ...pickerState(), inputValue: "draft for s1zzz" },
+      (a) => dispatched.push(a),
+      stubCallbacks({ onSessionSwitchRequested }),
+    );
+    expect(onSessionSwitchRequested).not.toHaveBeenCalled();
+    expect(dispatched).toEqual([]);
   });
 
   it("still closes and clears when there is nothing to switch to", () => {

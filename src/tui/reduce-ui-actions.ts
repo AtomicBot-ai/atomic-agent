@@ -359,8 +359,18 @@ export function reduceUiAction(
         sessionPickerOpen: true,
         sessionPickerList: action.sessions,
         sessionPickerCursor: 0,
+        sessionPickerDraft: state.inputValue,
       };
     case "session_picker_closed":
+      // ATO-1153: Esc or a click outside drops the picker's search and
+      // leaves the composer with the draft it opened over.
+      if (state.sessionPickerOpen && state.inputValue !== state.sessionPickerDraft) {
+        return {
+          ...state,
+          sessionPickerOpen: false,
+          inputValue: state.sessionPickerDraft,
+        };
+      }
       return { ...state, sessionPickerOpen: false };
     case "session_picker_cursor_moved": {
       const max = Math.max(0, state.sessionPickerList.length - 1);

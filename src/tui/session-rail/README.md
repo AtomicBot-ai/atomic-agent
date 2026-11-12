@@ -13,6 +13,8 @@ Read the inherited [TUI instructions](../AGENTS.md) and [interface contract](../
 
 Preserve anchored deletion target, pinned sessions missing from recent results, displayed-order move semantics, cancellation and reattachment. Rail layout does not become owner of session-store resources.
 
+[session-search.ts](session-search.ts) is the picker's history search (ATO-1153): with the picker open, text typed after the draft it opened over (`sessionPickerDraft`) narrows the list by title or message text (`SessionStore.listChatLines`, capped and cached per session). The picker, ↓ and Enter all read `visiblePickerSessions`, so the cursor indexes the same rows; Esc and a switch put the draft back. The matcher sits behind one `SessionPickerSearch` function so the store's FTS5 index can replace it.
+
 ## Checks and limits
 
 `npx vitest run src/tui/session-rail/ src/tui/chat-orchestrator-switch.test.ts src/tui/chat-orchestrator-rail-refresh.test.ts src/tui/components/sidebar.test.tsx`. Picker rendering tests moved here; global switching/focus/composition tests remain at their owners. Run `npm run lint`, `npm run typecheck:tests` and `npm run imports:check` after changing interfaces; `npm run docs:check` for navigation.
