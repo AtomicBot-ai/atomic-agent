@@ -918,3 +918,93 @@ jobs:
             !desktop/release/builder-*.yml
           if-no-files-found: error
           retention-days: 14
+
+  # ---- Checksums, signature, attestations (ATO-1035) -------------------------
+  # The release's SHA256SUMS.txt for the installers every job above built (the
+  # dmg and mac zip, both Windows setups, the AppImages, debs and rpms, and
+  # their blockmaps), signed with the packages key into SHA256SUMS.txt.asc: the
+  # key in packaging/atomic-chat.asc that already signs the apt/dnf repository.
+  # The update ymls are left out: stable.yml is merged from the two Windows
+  # jobs only when the feed goes up (desktop/README.md "App updates"). Without
+  # the key secret the sums are written unsigned, with a warning. A run started
+  # by hand also gets a GitHub build-provenance attestation for each installer,
+  # which `gh attestation verify <file> -R AtomicBot-ai/atomic-agent` checks.
+  # Upload desktop-checksums' two files to the desktop-vX.Y.Z release with the
+  # installers, in place of a SHA256SUMS.txt made by hand.
+  checksums:
+    name: checksums, signature, attestations
+    needs: [package, package-win32-arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: packaging
+
+      # One folder per artifact: the two Windows jobs each write a stable.yml,
+      # and a merged download would keep only one of them.
+      - name: Download the packages
+        uses: actions/download-artifact@v4
+        with:
+          path: packages
+          pattern: desktop-*
+
+      - name: Write SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          mkdir -p sums installers
+          find packages -mindepth 2 -maxdepth 2 -type f ! -name '*.yml' | while IFS= read -r f; do
+            name="$(basename "$f")"
+            if [ -e "installers/$name" ]; then echo "::error::two artifacts carry $name"; exit 1; fi
+            cp "$f" "installers/$name"
+          done
+          cd installers
+          if [ -z "$(ls -A)" ]; then echo "::error::no installers to sum"; exit 1; fi
+          ls -1 | LC_ALL=C sort | xargs -d '\n' sha256sum -- > ../sums/SHA256SUMS.txt
+          cat ../sums/SHA256SUMS.txt
+
+      - name: Sign SHA256SUMS.txt with the packages key
+        env:
+          KEY: ${{ secrets.LINUX_PACKAGES_GPG_KEY }}
+          PASSPHRASE: ${{ secrets.LINUX_PACKAGES_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEY" ]; then
+            echo "::warning::LINUX_PACKAGES_GPG_KEY is not set: SHA256SUMS.txt is not signed"
+            exit 0
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          (umask 077; mkdir -p "$GNUPGHOME")
+          expected="$(gpg --show-keys --with-colons packaging/atomic-chat.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+          printf '%s\n' "$KEY" | gpg --batch --import
+          if ! gpg --list-secret-keys "$expected" >/dev/null 2>&1; then
+            echo "::error::LINUX_PACKAGES_GPG_KEY is not the key in packaging/atomic-chat.asc"; exit 1
+          fi
+          sign=(gpg --batch --yes --pinentry-mode loopback --local-user "$expected" --armor --detach-sign)
+          if [ -n "$PASSPHRASE" ]; then
+            printf '%s' "$PASSPHRASE" | "${sign[@]}" --passphrase-fd 0 --output sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          else
+            "${sign[@]}" --output sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          fi
+          gpg --dearmor --output "$RUNNER_TEMP/atomic-chat.gpg" < packaging/atomic-chat.asc
+          gpgv --keyring "$RUNNER_TEMP/atomic-chat.gpg" sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          rm -rf "$GNUPGHOME"
+
+      - name: Attest build provenance
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: installers/*
+
+      - name: Upload the sums
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-checksums
+          path: sums/SHA256SUMS.txt*
+          if-no-files-found: error
+          retention-days: 14
