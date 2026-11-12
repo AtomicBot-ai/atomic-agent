@@ -8,6 +8,17 @@ import {
   type LocalBadRequestKind,
 } from "../provider/openai/local-bad-request.js";
 import { isLocalProviderUrl } from "../provider/presets/is-local-provider-url.js";
+import {
+  ATOMIC_CHAT_KEY_ADVICE,
+  atomicChatKeyMessage,
+  isAtomicChatKeyRefusal,
+} from "../provider/openai/atomic-chat-key.js";
+import {
+  LOCAL_PORT_TAKEN_ADVICE,
+  LOCAL_PORT_TAKEN_CODE,
+  LOCAL_PORT_TAKEN_MESSAGE,
+  LocalPortTakenError,
+} from "./local-port-taken.js";
 
 /**
  * Machine-readable reasons a turn on a local model server failed with an
@@ -23,6 +34,13 @@ import { isLocalProviderUrl } from "../provider/presets/is-local-provider-url.js
  *    conversation outgrew the model's context window.
  *  - `local_request_invalid`: a local server answered 400 with
  *    `invalid_request_error` for anything else.
+ *  - `atomic_chat_key_required`: the `atomic-chat` provider answered
+ *    401/403: its API key protection is on and the agent sent no key or
+ *    another one (ATO-1274). Expected and the person's to fix, so it is
+ *    not reported to Sentry (`isUnreportedLocalServerFailure`).
+ *  - `local_port_taken`: the managed engine's address answered 401 while
+ *    our engine's process is not there: another program holds the port
+ *    (ATO-1277, `local-port-taken.ts`).
  */
 export const LOCAL_SERVER_NOT_FOUND_CODE = "local_server_not_found";
 /**
@@ -34,12 +52,15 @@ export const LOCAL_SERVER_NOT_FOUND_CODE = "local_server_not_found";
 export const LOCAL_PROVIDER_NOT_FOUND_CODE = "local_provider_not_found";
 export const LOCAL_CONTEXT_EXCEEDED_CODE = "local_context_exceeded";
 export const LOCAL_REQUEST_INVALID_CODE = "local_request_invalid";
+export const ATOMIC_CHAT_KEY_REQUIRED_CODE = "atomic_chat_key_required";
 
 export type LocalServerErrorCode =
   | typeof LOCAL_SERVER_NOT_FOUND_CODE
   | typeof LOCAL_PROVIDER_NOT_FOUND_CODE
   | typeof LOCAL_CONTEXT_EXCEEDED_CODE
-  | typeof LOCAL_REQUEST_INVALID_CODE;
+  | typeof LOCAL_REQUEST_INVALID_CODE
+  | typeof ATOMIC_CHAT_KEY_REQUIRED_CODE
+  | typeof LOCAL_PORT_TAKEN_CODE;
 
 /** The sentence every surface shows for `local_server_not_found` (ATO-708). */
 export const LOCAL_SERVER_NOT_FOUND_MESSAGE =
@@ -58,7 +79,7 @@ export const LOCAL_SERVER_RECHECK_HINT = `Recheck the address with: ${LOCAL_SERV
 /** A failed turn's local-server reason, with the words for it. */
 export interface LocalServerError {
   readonly code: LocalServerErrorCode;
-  readonly status: 400 | 404 | 405;
+  readonly status: 400 | 401 | 403 | 404 | 405;
   /** The URL the failed request went to. Never sent off the machine. */
   readonly url: string;
   /** What happened, one plain sentence. */
@@ -113,6 +134,8 @@ export function classifyLocalServerError(
 ): LocalServerError | null {
   let current: unknown = err;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH && current instanceof Error; depth += 1) {
+    // Before the 401 it wraps, which alone has no code here.
+    if (current instanceof LocalPortTakenError) return fromPortTaken(current);
     if (current instanceof LlamaServerError) return fromLlamaError(current, options);
     if (current instanceof OpenAiHttpError) return fromOpenAiError(current);
     current = (current as { cause?: unknown }).cause;
@@ -149,8 +172,29 @@ function sameOrigin(a: string, b: string | null): boolean {
   }
 }
 
+function fromPortTaken(err: LocalPortTakenError): LocalServerError {
+  return {
+    code: LOCAL_PORT_TAKEN_CODE,
+    status: 401,
+    url: err.url,
+    message: LOCAL_PORT_TAKEN_MESSAGE,
+    advice: LOCAL_PORT_TAKEN_ADVICE,
+  };
+}
+
 function fromOpenAiError(err: OpenAiHttpError): LocalServerError | null {
   if (err.timedOut || err.streamError !== undefined) return null;
+  // Read by provider id, before the address check: an Atomic Chat on
+  // another machine of the network has the same key protection.
+  if (isAtomicChatKeyRefusal(err)) {
+    return {
+      code: ATOMIC_CHAT_KEY_REQUIRED_CODE,
+      status: err.status === 403 ? 403 : 401,
+      url: err.url,
+      message: atomicChatKeyMessage(err),
+      advice: ATOMIC_CHAT_KEY_ADVICE,
+    };
+  }
   if (!isLocalProviderUrl(err.url)) return null;
   return badRequest(err.status, err.body?.type, err.body?.text ?? err.message, err.url);
 }
@@ -181,4 +225,13 @@ export function localServerErrorLines(error: LocalServerError): string[] {
   const lines = [`${error.message} ${error.advice}`];
   if (error.code === LOCAL_SERVER_NOT_FOUND_CODE) lines.push(LOCAL_SERVER_RECHECK_HINT);
   return lines;
+}
+
+/**
+ * A failed turn that is the person's to fix and already told in plain
+ * words, so it is not sent to Sentry as an error: Atomic Chat's key
+ * protection (ATO-1274). Every other local-server code still reports.
+ */
+export function isUnreportedLocalServerFailure(err: unknown): boolean {
+  return classifyLocalServerError(err)?.code === ATOMIC_CHAT_KEY_REQUIRED_CODE;
 }

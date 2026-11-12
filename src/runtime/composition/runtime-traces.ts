@@ -19,6 +19,7 @@ import {
 } from "../../tracing/trace/index.js";
 import { captureError, type SentryClient } from "../../error-reporting/index.js";
 import { describeLlmFailure } from "./llm-failure-context.js";
+import { isUnreportedLocalServerFailure } from "../../llm/reliability/local-server-error.js";
 
 export function createRuntimeTraces(
   config: AtomicAgentConfig,
@@ -233,7 +234,9 @@ export function createRuntimeTraces(
           }
         }
       }
-      if (event.type === "loop_failed") {
+      // Atomic Chat's key protection (ATO-1274) is the person's to fix
+      // and already told in plain words: not a defect, so not a report.
+      if (event.type === "loop_failed" && !isUnreportedLocalServerFailure(event.error)) {
         const reporter = getErrorReporter();
         captureError(reporter, event.error, {
           source: "llm_failure",

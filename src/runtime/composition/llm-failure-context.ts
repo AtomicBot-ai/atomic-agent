@@ -3,6 +3,7 @@ import type { LlmFailureContext } from "../../error-reporting/index.js";
 import { managedPortsOf } from "../../llm/describe-llama-health-failure.js";
 import { readErrnoCode } from "../../llm/errno-code.js";
 import { readFailingLink } from "../../llm/fallback/index.js";
+import { findLocalPortTaken } from "../../llm/reliability/local-port-taken.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import {
   readChatDaemonPidState,
@@ -54,6 +55,8 @@ export function describeLlmFailure(
   // turn ended (`LocalEngineDownError`) keeps the refusal on its cause.
   const connectionRefused = readErrnoCode(event.error) === "ECONNREFUSED";
   if (connectionRefused) context.connectionRefused = true;
+  // ATO-1277: the managed port answered 401 with our engine not running.
+  if (findLocalPortTaken(event.error) !== null) context.portHeldByOther = true;
   const requestUrl = readRequestUrl(event.error);
   if (requestUrl !== undefined) context.requestUrl = requestUrl;
   let config: AtomicAgentConfig;

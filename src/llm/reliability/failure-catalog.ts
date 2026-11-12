@@ -69,6 +69,13 @@ export const FAILURE_CATALOG = {
     phrase: "This address isn't a model server, or the model isn't loaded there.",
     action: "none",
   },
+  // ATO-1277: our engine is not running and another program answers on
+  // its port. The words that say which setting to change ride the
+  // frame's `advice` (`local-port-taken.ts`).
+  local_port_taken: {
+    phrase: "Another program is using the local model's port.",
+    action: "none",
+  },
   model_loading: {
     phrase: "The model is still loading. Try again in a moment.",
     action: "retry",

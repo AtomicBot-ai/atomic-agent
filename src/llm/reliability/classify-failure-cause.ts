@@ -15,10 +15,12 @@ import { GrammarError, ModelError, ToolExecutionError } from "./llm-failures.js"
 import { isLocalEngineDown } from "./local-engine-down.js";
 import { RequestTooLargeError } from "./request-too-large.js";
 import {
+  ATOMIC_CHAT_KEY_REQUIRED_CODE,
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_REQUEST_INVALID_CODE,
   classifyLocalServerError,
 } from "./local-server-error.js";
+import { LOCAL_PORT_TAKEN_CODE } from "./local-port-taken.js";
 import {
   classifyProviderWaitCause,
   type ProviderWaitCause,
@@ -96,6 +98,9 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
   if (local !== null) {
     if (local.code === LOCAL_CONTEXT_EXCEEDED_CODE) return "context_too_long";
     if (local.code === LOCAL_REQUEST_INVALID_CODE) return "request_rejected";
+    // ATO-1274: a key to paste, the same button as any refused key.
+    if (local.code === ATOMIC_CHAT_KEY_REQUIRED_CODE) return "auth_rejected";
+    if (local.code === LOCAL_PORT_TAKEN_CODE) return "local_port_taken";
     return "local_server_not_found";
   }
 

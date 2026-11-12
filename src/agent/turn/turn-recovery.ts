@@ -2,7 +2,7 @@ import { isSubscriptionCliSetupError } from "../../llm/provider/subscription-cli
 import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
-import { CancelledError, LlamaServerError, LlmFailure, LocalEngineDownError, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
+import { CancelledError, LlamaServerError, LlmFailure, LocalEngineDownError, LocalPortTakenError, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
 import type { LlmFailureCategory, TruncationDetail } from "../../llm/index.js";
 import { readFailingLink } from "../../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../../llm/fallback/failed-links.js";
@@ -629,6 +629,28 @@ export function recoverTurnStep(
     });
     return { kind: "wait", nextRetryMs };
   }
+  // The managed local model's address refused the key while our engine's
+  // process is certainly not there (no pid recorded, or a dead one, and
+  // nothing starting): the server that answered is another program on the
+  // port, a second Core or Atomic Chat's own (ATO-1277). "Refused the
+  // agent's key, restart the model" sent people to restart a model that
+  // was not running. Judged by the same engine reading as the refusal
+  // above, so only the built-in managed link qualifies; a live or unknown
+  // engine keeps the key wording.
+  if (!cancelled && deps.localEngineState !== undefined) {
+    const refusal = findLlamaUnauthorized(err);
+    if (refusal !== null) {
+      const failingLink = readFailingLink(err);
+      if (deps.localEngineState(failingLink) === "dead") {
+        deps.logger?.warn("managed model port answered 401 with our engine not running; another program holds it", {
+          sessionId: state.id,
+          stepIndex: i,
+          ...(failingLink !== undefined ? { providerId: failingLink } : {}),
+        });
+        runError = new LocalPortTakenError(failingLink ?? "local-llama", refusal.url, err);
+      }
+    }
+  }
   // A raised cap the provider refused — a 400 naming `max_tokens`
   // or the context length — is not a new failure. The turn fails
   // with the truncation that started it, which names the knob.
@@ -740,6 +762,16 @@ function isWaitableOutage(err: unknown): boolean {
   }
   if (err.status === null) return true;
   return err.status >= 500 || err.status === 408 || err.status === 429;
+}
+
+/** A llama-server 401 on the error or one of its causes. */
+function findLlamaUnauthorized(err: unknown): LlamaServerError | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 6 && current instanceof Error; depth += 1) {
+    if (current instanceof LlamaServerError) return current.status === 401 ? current : null;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 /**
