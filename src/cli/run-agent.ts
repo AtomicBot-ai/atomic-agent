@@ -26,6 +26,7 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import {
   canGrantCategory,
+  describeCategoryGrant,
   canGrantShape,
   type ApprovalGrantScope,
   type ApprovalRequest,
@@ -34,6 +35,7 @@ import {
   canGrantAlways,
   describeAlwaysRule,
 } from "../approval/approval-rules.js";
+import { siteGrantHost } from "../approval/site-grants.js";
 import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
 import {
@@ -149,7 +151,13 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
     lines.push(`  affects: ${request.affectedResources.join(", ")}`);
   }
   const options = ["y = approve once"];
-  if (grantCategory) options.push("s = allow this kind this session");
+  if (grantCategory) {
+    options.push(
+      siteGrantHost(request) !== null
+        ? `s = allow ${describeCategoryGrant(request)} this session`
+        : "s = allow this kind this session",
+    );
+  }
   if (grantShape) {
     options.push(`a = allow all ${request.commandShape} this session`);
   }
