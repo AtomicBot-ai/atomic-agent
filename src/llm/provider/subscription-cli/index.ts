@@ -49,6 +49,7 @@ export {
   SubscriptionCliInvocationError,
   SubscriptionCliNotInstalledError,
   SubscriptionCliSpawnError,
+  type SubscriptionCliFailureKind,
 } from "./subscription-cli-errors.js";
 export {
   MAX_CMD_COMMAND_LINE,
