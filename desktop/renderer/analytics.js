@@ -214,7 +214,11 @@ const ANX = (() => {
      read per provider (Ollama, LM Studio, DeepSeek…) as provider_setup_started is. */
   function providerFailed(reason, inOnboarding, row) {
     const props = {step: inOnboarding ? 'onboarding' : 'settings', reason};
-    if (row) props.provider_preset = presetId(row);
+    if (row) {
+      props.provider_preset = presetId(row);
+      // ATO-1195: the provider's type, as model_configured says it.
+      props.kind = row.custom ? 'custom' : row.local ? 'local' : 'cloud';
+    }
     track('provider_setup_failed', props);
   }
 

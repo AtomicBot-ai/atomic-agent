@@ -71,3 +71,41 @@ test("the catalogue accepts the new reasons and the preset", () => {
   const custom = V.validateEvent("provider_setup_failed", { step: "settings", reason: "list_failed", provider_preset: "my-proxy" }, "ui");
   assert.equal(custom.props.provider_preset, "custom");
 });
+
+// ATO-1195: list_failed split by what went wrong on our side, and the
+// provider's type on the event.
+test("our own failures have their own reasons", () => {
+  assert.equal(reason({ ok: false, failure: "agent_crashed", error: "Assertion failed: x" }), "agent_crashed");
+  assert.equal(reason({ ok: false, failure: "not_json", error: 'models search did not return JSON: "oops"' }), "not_json");
+  assert.equal(reason({ ok: false, failure: "no_binary", error: "no atomic-agent binary found" }), "no_binary");
+  // the provider's own answer still comes first
+  assert.equal(reason({ ok: false, status: 401, failure: "agent_crashed" }), "key_rejected");
+  assert.equal(reason({ ok: false, unreachable: true, failure: "agent_crashed" }), "server_unreachable");
+});
+
+test("providerModels says which of our failures it was", async () => {
+  const require = createRequire(import.meta.url);
+  const { providerModels, withCliStandIn } = require("../out/main/agent-cli.js");
+  const run = (answer) => withCliStandIn(async () => answer, () => providerModels("deepseek", "deepseek"));
+  const crashed = await run({ ok: false, stdout: "", exitCode: 134,
+    stderr: "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\\win\\async.c, line 76",
+    error: "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\\win\\async.c, line 76" });
+  assert.equal(crashed.failure, "agent_crashed");
+  assert.equal((await run({ ok: true, stdout: "not a list", stderr: "" })).failure, "not_json");
+  assert.equal((await run({ ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" })).failure, "no_binary");
+  const refused = await run({ ok: false, stdout: "", stderr: "", exitCode: 1, error: 'could not list models from "deepseek": http 401' });
+  assert.equal(refused.status, 401);
+  assert.equal(refused.failure, undefined);
+  const empty = await run({ ok: true, stdout: "[]", stderr: "" });
+  assert.equal(empty.ok, true);
+  assert.deepEqual(empty.models, []);
+});
+
+test("the catalogue takes the split reasons and the provider type", () => {
+  const require = createRequire(import.meta.url);
+  const V = require("../out/main/analytics/validate.js");
+  for (const r of ["agent_crashed", "not_json", "no_binary"]) {
+    const v = V.validateEvent("provider_setup_failed", { step: "onboarding", reason: r, provider_preset: "deepseek", kind: "cloud" }, "ui");
+    assert.deepEqual(v.props, { step: "onboarding", reason: r, provider_preset: "deepseek", kind: "cloud" });
+  }
+});

@@ -21024,6 +21024,11 @@ function wizSetupFailReason(listed) {
   const status = listed && typeof listed.status === 'number' ? listed.status : 0;
   if (status === 401 || status === 403) return 'key_rejected';
   if (status === 429 || status >= 500) return 'provider_error';
+  /* ATO-1195: list_failed split further by what happened on our side
+     (agent-cli.ts ownListFailure): the agent crashed before printing a list,
+     printed something that is not one, or there was no agent to run. */
+  const own = listed && listed.failure;
+  if (own === 'agent_crashed' || own === 'not_json' || own === 'no_binary') return own;
   const said = String((listed && listed.error) || '');
   if ((listed && listed.ok) || (said && wizSaidNoModels(said))) return 'catalog_empty';
   return 'list_failed';
