@@ -85,6 +85,7 @@ import {
   reduceIssueReport,
 } from "./issue-report/index.js";
 import { withReportHint } from "./chat/format-agent-error-for-chat.js";
+import { rejectedKeyProviderId } from "./chat/rejected-key-provider.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -705,6 +706,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
               role: "system",
               variant: "warn",
               action: "configure-fallback",
+              ...(event.failure === "auth_rejected" ||
+              (event.failure === undefined && event.cause === "auth")
+                ? { fixKeyProviderId: event.from }
+                : {}),
               text: formatProviderFalloverNotice(
                 event.from,
                 event.to,
@@ -838,6 +843,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             text: withReportHint(failureText),
             variant: "warn",
             retryText: failedPrompt.length > 0 ? failedPrompt : undefined,
+            // ATO-1457: a refused key gets a `[check key]` button.
+            ...(event.failure?.cause === "auth_rejected"
+              ? fixKeyFields(rejectedKeyProviderId(event.error))
+              : {}),
           },
         ),
         { outcome: "failed", reason: event.error.message, lastRunStatus },
@@ -1416,4 +1425,14 @@ function reduceStepEvent(
       return state;
     }
   }
+}
+
+/** The `[check key]` fields for a turn that failed on a refused key. */
+function fixKeyFields(providerId: string | undefined): {
+  action: "fix-key";
+  fixKeyProviderId?: string;
+} {
+  return providerId !== undefined
+    ? { action: "fix-key", fixKeyProviderId: providerId }
+    : { action: "fix-key" };
 }

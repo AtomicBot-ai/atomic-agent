@@ -8,6 +8,7 @@ import { ChatLinkButtons } from "./chat-link-buttons.js";
 import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import { PlanHandoff } from "../coding-mode/plan-handoff.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
+import { ChatCheckKeyButton } from "./chat-check-key-button.js";
 import { ChatConfigureFallbackButton } from "./chat-configure-fallback-button.js";
 import { ChatSwitchBackButton } from "./chat-switch-back-button.js";
 import { SystemBubble } from "./system-bubble.js";
@@ -150,6 +151,10 @@ export function FinalisedMessage({
         ) : null}
         {message.action === "configure-fallback" ? (
           <ChatConfigureFallbackButton />
+        ) : null}
+        {/* A refused key (ATO-1457): the failed turn, or a fallover away from it. */}
+        {message.action === "fix-key" || message.fixKeyProviderId !== undefined ? (
+          <ChatCheckKeyButton providerId={message.fixKeyProviderId} />
         ) : null}
         {/*
           The notices a mid-turn switch leaves behind name the thread

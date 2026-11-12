@@ -179,8 +179,18 @@ export interface ChatMessage {
    * `configure-fallback` is set on the notice a provider fallover
    * leaves in the chat: the switch changed which model answers, and the
    * pane that changes it back is one most operators have never opened.
+   * `fix-key` is set on the "Turn failed" notice when the provider
+   * refused the API key (`auth_rejected`, ATO-1457): a refused key never
+   * fixes itself, and the button opens that provider's key field.
    */
-  action?: "configure-fallback";
+  action?: "configure-fallback" | "fix-key";
+  /**
+   * The provider whose API key was refused, for the `[check key]`
+   * button. Set with `action: "fix-key"` when the error names it, and
+   * on a fallover notice whose cause was a refused key (that notice
+   * keeps `configure-fallback` and shows both buttons).
+   */
+  fixKeyProviderId?: string;
   /**
    * A session this notice offers to open, rendered as a `[switch back]`
    * button beside `[copy]`. Set on the notices that name a thread the
