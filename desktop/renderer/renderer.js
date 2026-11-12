@@ -25569,14 +25569,25 @@ function llmProviders() { return (llmBlock().providers || []).filter((p) => p &&
 function llmCloudProviders() { return llmProviders().filter((p) => p.kind !== 'llama-server'); }
 /* ATO-1418 (Nadya's ATO-816 decision, 12.11): Settings › Models groups like
    the first-run wizard, Local / Cloud / Custom. Custom is what you already
-   run yourself: Atomic Chat, Ollama, LM Studio and any server on this
-   computer (llmKeylessLocal), plus your own llama.cpp server. Cloud
-   providers is the rest: keys and subscriptions, and an address on another
-   machine (it is reached like a cloud provider, usually with a key). The
-   Cloud and Custom tabs share the provider-and-models machinery below; each
-   lists only its own providers, and `tab` says which. */
+   run yourself: Atomic Chat, Ollama, LM Studio, your own llama.cpp server,
+   and any OpenAI-compatible address you typed in, on this computer or on
+   another machine (the onboarding wizard's "custom base URL" row lands
+   here too). Cloud providers is the rest: keys and subscriptions, and the
+   cloud presets (Groq, DeepSeek, Anthropic...), which are openai-compatible
+   entries too, so they are told apart by their id or their preset's host.
+   The Cloud and Custom tabs share the provider-and-models machinery below;
+   each lists only its own providers, and `tab` says which. */
+function llmIsCloudPreset(p) {
+  const cloud = PRESETS.filter((x) => !x.local);
+  if (cloud.some((x) => x.id === p.id)) return true;
+  let host = '';
+  try { host = new URL(p.baseUrl).hostname.toLowerCase(); } catch (err) { return true; }   // no address to run yourself: left on Cloud, as before
+  return cloud.some((x) => { try { return new URL(x.baseUrl).hostname.toLowerCase() === host; } catch (err) { return false; } });
+}
 function llmIsCustomEntry(p) {
-  return !!p && p.kind !== 'llama-server' && llmKeylessLocal(p);
+  if (!p || p.kind === 'llama-server') return false;
+  if (llmKeylessLocal(p)) return true;
+  return p.kind === 'openai-compatible' && !llmIsCloudPreset(p);
 }
 function llmProviderTab(p) { return llmIsCustomEntry(p) ? 'external' : 'cloud'; }
 function llmTabProviders(tab) {
@@ -26260,7 +26271,7 @@ function llmRunModeHTML(status, tone) {
  * @returns {{local: {line:string, title:string}|null, cloud: {line:string, title:string}|null, fusion: {line:string, title:string}|null}}
  */
 function llmRouteNeeds() {
-  const cloud = llmCloudProviders();
+  const cloud = llmTabProviders('cloud');   // an app or your own server is not a cloud provider (ATO-1418)
   const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
   const out = {local:null, cloud:null, fusion:null};
   if (!cloud.length) out.cloud = {line:'Add a cloud provider first', title:'Cloud needs a cloud provider. Click to add one.'};
@@ -26278,7 +26289,7 @@ function llmRouteNeeds() {
 }
 /** What a blocked choice opens (llm:needs:local | llm:needs:cloud | llm:needs:fusion). */
 function llmRouteNeedsOpen(id) {
-  const cloud = llmCloudProviders();
+  const cloud = llmTabProviders('cloud');
   const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
   if (id === 'local') {
     LLMP.msg = {text:'Local models needs a model on ' + THIS_MACHINE + '. Download one below, then choose Local models again.'};
@@ -28023,7 +28034,14 @@ function llmAct(what) {
   // ATO-504: an empty list's preset button, Add provider opened on that provider.
   // It skips the wizard's kind list, so it reports the setup start that list's pick would have (provider_setup_started).
   if (verb === 'preset') { const row = KIND_ROWS.find((k) => k.id === arg && !k.custom) || null; llmSetMode(row && row.local ? 'external' : 'cloud'); llmOpenWizard(row); if (row) ANX.providerStarted(row); return; }
-  if (verb === 'configure') { llmSetMode('cloud'); const cloud = llmCloudProviders(); const p = cloud.find((x) => x.id === llmActiveTextId()) || cloud[0]; llmOpenWizard(p || null); return; }
+  if (verb === 'configure') {
+    // ATO-1418: open the active provider on its own tab (an app on Custom), else the first cloud provider on Cloud.
+    const active = llmProvider(llmActiveTextId());
+    const tab = active && active.kind !== 'llama-server' ? llmProviderTab(active) : 'cloud';
+    const list = llmTabProviders(tab);
+    const p = list.find((x) => x.id === llmActiveTextId()) || list[0];
+    llmSetMode(tab); llmOpenWizard(p || null); return;
+  }
   if (verb === 'embedding') { llmActivateProviderEmbedding(); return; }
   if (verb === 'embToggle') { llmEmbToggle(); return; }
   // The server up though the route does not count it (a Custom server since) is stopped too, not started again.
@@ -28124,7 +28142,7 @@ function llmAct(what) {
       // openai-compat-steer.ts wizardForOpenAiCompatUrl: Ollama's and Atomic Chat's ports land on their presets, anything else on the manual compat row, the probed URL prefilled.
       const presetId = llmSteerPresetId(url);
       const preset = presetId ? KIND_ROWS.find((k) => k.id === presetId) : null;
-      llmSetMode(preset && preset.local ? 'external' : 'cloud');
+      llmSetMode(preset && !preset.local ? 'cloud' : 'external');   // ATO-1418: a typed-in address is Custom, like the onboarding wizard's
       llmOpenWizard(preset ? {id:preset.id, kind:preset.kind, baseUrl:url} : {id:'', kind:'openai-compatible', baseUrl:url, custom:true}, url);
       if (!preset) WIZ.row = KIND_ROWS.find((k) => k.custom);
       render();
