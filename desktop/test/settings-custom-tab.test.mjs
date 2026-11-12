@@ -62,5 +62,7 @@ test('the tabs read Local models, Cloud providers, Custom; the Custom pane names
   assert.match(ext, /'Apps you already run'/);
   assert.match(ext, /Atomic Chat, Ollama, LM Studio or any server you run yourself/);
   assert.match(ext, /'Your own llama\.cpp server'/);
-  assert.doesNotMatch(ext, /[Cc]loud/);
+  // No word "cloud" in what the Custom pane says; its code may name the shared llmCloud* helpers and row kinds.
+  const words = (ext.match(/'[^']*'/g) || []).filter((w) => !/^'cloud[A-Z]/.test(w)).join(' ');
+  assert.doesNotMatch(words, /cloud/i);
 });
