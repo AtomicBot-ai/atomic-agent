@@ -441,7 +441,7 @@ export interface WorkerRunnerDeps {
     },
   ) => Promise<RunTurnResult>;
   /** `runtime.createEphemeralSession` — in-memory, never persisted. */
-  createEphemeralSession: (meta: FusionWorkerMeta, workingDir?: string) => SessionState;
+  createEphemeralSession: (meta: FusionWorkerMeta, workingDir?: string, inheritWorkspace?: boolean) => SessionState;
   inheritWorkspace?: boolean;
   approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy"> &
     Partial<
@@ -690,12 +690,13 @@ async function runOneTask(
   // the working directory everywhere below. Without it, nothing changes.
   const isolated = options.taskWorkspace?.(task.id);
   const workingDir = isolated?.workingDir ?? deps.workingDir;
-  const sessionDir =
-    isolated !== undefined || deps.inheritWorkspace ? workingDir : undefined;
+  // The worker always runs in this folder (the parent's, in every model
+  // mode, #1121); only an isolated or cloud worker inherits a workspace.
+  const inheritWorkspace = isolated !== undefined || deps.inheritWorkspace === true;
   const session = deps.createEphemeralSession({
     parentSessionId: options.parentSessionId,
     taskId: task.id,
-  }, sessionDir);
+  }, workingDir, inheritWorkspace);
   // A worker that queued on the parent id would wait behind the
   // orchestrator's own turn — which is the turn calling this — and the
   // fan-out would deadlock rather than run. `createEphemeralSession`
@@ -1483,7 +1484,8 @@ async function runOneTask(
   ) {
     const replaceSession = deps.createEphemeralSession(
       { parentSessionId: options.parentSessionId, taskId: task.id },
-      sessionDir,
+      workingDir,
+      inheritWorkspace,
     );
     armWorkerSession(replaceSession.id);
     const replaceCollector = new WorkerRunCollector();

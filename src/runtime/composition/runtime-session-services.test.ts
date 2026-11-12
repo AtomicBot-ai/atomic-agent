@@ -113,6 +113,9 @@ describe("runtime session phases", () => {
     expect(inherited.workingDir).toBe(join(dir, "other"));
     expect(inherited.inheritedWorkspace).toBe(true);
     expect(worker.inheritedWorkspace).toBeUndefined();
+    const local = factories.createEphemeralSession({ parentSessionId: deferred.id, taskId: "local" }, join(dir, "other"), false);
+    expect(local.workingDir).toBe(join(dir, "other"));
+    expect(local.inheritedWorkspace).toBeUndefined();
     expect(calls).toEqual([]);
     const persistent = factories.createSession();
     expect(calls).toEqual([`save:${persistent.id}`, `trace:${persistent.id}`]);
