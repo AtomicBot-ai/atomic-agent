@@ -802,6 +802,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "help.settings",
+    label: "Find a setting",
+    group: "help",
+    slash: {
+      name: "settings",
+      description:
+        "find a config setting with its default and description: `/settings` | `/settings <words>`",
+      rank: 2.5,
+    },
+  },
+  {
+    kind: "action",
     id: "help.dump",
     label: "Write debug bundle",
     group: "help",

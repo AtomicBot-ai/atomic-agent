@@ -798,6 +798,48 @@ describe("configCommand", () => {
       ).toContain("= 3000");
     });
 
+    // ATO-41: the settings reference.
+    it("list --describe adds type and description and filters by words", async () => {
+      seedSparseConfig({ agent: { maxSteps: 42 } });
+      expect(await configCommand(["list", "--describe", "maxSteps"])).toBe(0);
+      expect(stdout).toContain("agent.maxSteps = 42  (default 25)  [number]");
+      expect(stdout).toContain("Steps in one leg of a task");
+      expect(stdout).not.toContain("log.level");
+    });
+
+    it("list --describe says so when nothing matches", async () => {
+      expect(await configCommand(["list", "--describe", "no-such-setting-anywhere"])).toBe(0);
+      expect(stdout).toContain('no setting matches "no-such-setting-anywhere"');
+    });
+
+    it("list --json gives key, type, default, value, description, envVar and settable", async () => {
+      seedSparseConfig({ agent: { maxSteps: 42 } });
+      expect(await configCommand(["list", "--json"])).toBe(0);
+      const rows = JSON.parse(stdout) as Array<Record<string, unknown>>;
+      const maxSteps = rows.find((row) => row.key === "agent.maxSteps");
+      expect(maxSteps).toMatchObject({ type: "number", default: 25, value: 42, envVar: null, settable: true });
+      expect(String(maxSteps?.description)).toContain("Steps in one leg");
+      const cap = rows.find((row) => row.key === "localModels.completionMaxTokens");
+      expect(cap?.envVar).toBe("ATOMIC_AGENT_LLAMA_MAX_TOKENS");
+      expect(rows.find((row) => row.key === "projects.roots")?.settable).toBe(false);
+      // Credential-shaped values are masked here too.
+      expect(rows.find((row) => row.key === "web.search.exa.apiKeyEnv")?.value).toBe("***");
+    });
+
+    it("env lists the env-only settings without printing values", async () => {
+      process.env.ATOMIC_AGENT_LLAMA_API_KEY = "sk-secret-value";
+      try {
+        expect(await configCommand(["env"])).toBe(0);
+      } finally {
+        delete process.env.ATOMIC_AGENT_LLAMA_API_KEY;
+      }
+      expect(stdout).toContain("ATOMIC_AGENT_STATE_DIR");
+      expect(stdout).toContain("overrides config localModels.completionMaxTokens");
+      const setLine = stdout.split("\n").find((line) => line.startsWith("set in this environment: "));
+      expect(setLine).toContain("ATOMIC_AGENT_LLAMA_API_KEY");
+      expect(stdout).not.toContain("sk-secret-value");
+    });
+
     it("path prints the config file location", async () => {
       expect(await configCommand(["path"])).toBe(0);
       expect(stdout.trim()).toBe(join(stateDir, "config.json"));
