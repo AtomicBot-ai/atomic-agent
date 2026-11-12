@@ -5,11 +5,15 @@ import { CORE_VERSION, activeCoreVersion, readCoreBackend } from "../local-llm/c
 import { checkCoreUpdate } from "../local-llm/core/core-install.js";
 import { isCoreBackendInstalled } from "../local-llm/core/core-backend.js";
 
-/** Write `localModels.managed.engine` to the user config file and drop the cache. */
+/**
+ * Write `localModels.managed.engine` to the user config file and drop the cache.
+ * The engine is named as chosen (ATO-1265): picking `atomic-core` over a newer
+ * build's engine, which reads here as `atomic-core`, still writes the pick.
+ */
 export function persistManagedEngine(userConfigFile: string, engine: "atomic-core" | "llama-server"): void {
   const file = ensureUserConfigFileSync(userConfigFile);
   file.localModels.managed.engine = engine;
-  writeUserConfigFileSync(userConfigFile, parseUserConfigFile(file));
+  writeUserConfigFileSync(userConfigFile, parseUserConfigFile(file), { chosen: ["localModels.managed.engine"] });
   resetConfigCache();
 }
 
