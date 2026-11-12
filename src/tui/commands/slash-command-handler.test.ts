@@ -601,4 +601,21 @@ describe("/enhance", () => {
     expect(bad.systemMessage).toMatch(/usage: \/steps/);
     expect(dispatchSlashCommand("/steps").forwardAsMessage).toBe(false);
   });
+
+  it("/verbose toggles the step notes, on and off set them (ATO-34)", () => {
+    expect(dispatchSlashCommand("/verbose").verboseStepsVerb).toBe("toggle");
+    expect(dispatchSlashCommand("/verbose on").verboseStepsVerb).toBe("on");
+    expect(dispatchSlashCommand("/verbose OFF").verboseStepsVerb).toBe("off");
+    const bad = dispatchSlashCommand("/verbose loud");
+    expect(bad.verboseStepsVerb).toBeUndefined();
+    expect(bad.systemMessage).toMatch(/usage: \/verbose/);
+    expect(dispatchSlashCommand("/verbose").forwardAsMessage).toBe(false);
+  });
+
+  it("/why asks the caller for an explanation of the last step (ATO-34)", () => {
+    const result = dispatchSlashCommand("/why");
+    expect(result.triggerWhySnapshot).toBe(true);
+    expect(result.forwardAsMessage).toBe(false);
+    expect(result.systemMessage).toBeUndefined();
+  });
 });

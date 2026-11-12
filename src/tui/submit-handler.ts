@@ -16,6 +16,7 @@ import {
 } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
 import { formatTuiStatus } from "./status-snapshot-tui.js";
+import { formatWhy } from "./why-snapshot-tui.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import {
   isThemeName,
@@ -307,6 +308,9 @@ export function runSlashCommand(
     dispatch({ type: "runtime_info", line: text.split("\n")[0] ?? text });
     dispatch({ type: "system_message", text });
   }
+  if (result.triggerWhySnapshot) {
+    dispatch({ type: "system_message", text: formatWhy(state) });
+  }
   if (result.runModeVerb)
     runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
   if (result.modelModeCommand) {
@@ -411,6 +415,20 @@ export function runSlashCommand(
         : result.showStepsVerb === "on";
     dispatch({ type: "show_steps_set", on });
     callbacks.onShowStepsPersistRequested?.(on);
+  }
+  // `/verbose`: session-only, so nothing is written to the config.
+  if (result.verboseStepsVerb) {
+    const on =
+      result.verboseStepsVerb === "toggle"
+        ? !state.verboseSteps
+        : result.verboseStepsVerb === "on";
+    dispatch({ type: "verbose_steps_set", on });
+    dispatch({
+      type: "system_message",
+      text: on
+        ? "verbose steps on: each finished step gets a plain note under its tool card (/verbose off to hide)"
+        : "verbose steps off",
+    });
   }
 }
 

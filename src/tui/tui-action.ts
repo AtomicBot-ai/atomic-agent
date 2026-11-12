@@ -224,6 +224,8 @@ export type TuiAction =
   | { type: "turn_expand_set"; scope: "last" | "all"; expanded: boolean }
   /** `/steps on|off`: always show steps (`tui.showSteps`). */
   | { type: "show_steps_set"; on: boolean }
+  /** `/verbose on|off`: one plain note per finished step (ATO-34). */
+  | { type: "verbose_steps_set"; on: boolean }
   /** Open the slash palette with a leading-slash query. */
   | { type: "slash_palette_opened"; query: string }
   /** Update the filter query while the palette is open. */

@@ -45,6 +45,8 @@ export interface FinalisedMessageProps {
   fold?: TurnFold | null;
   /** The operator opened the folded turn: its steps show under the line. */
   turnOpen?: boolean;
+  /** `/verbose` (ATO-34): a plain note under each tool card. */
+  verbose?: boolean;
 }
 
 /** One finalised chat message with its footer row, by role. */
@@ -55,6 +57,7 @@ export function FinalisedMessage({
   fusion = false,
   fold = null,
   turnOpen = false,
+  verbose = false,
 }: FinalisedMessageProps): ReactElement {
   if (message.role === "user") {
     const steered = message.steered === true;
@@ -102,6 +105,7 @@ export function FinalisedMessage({
                       // An opened fold keeps large output out of sight:
                       // only a failure shows its result line.
                       preview={fold ? "errors" : "always"}
+                      verbose={verbose}
                     />
                   ))}
                   <ToolCardsAnnotationLine cards={visible} />
