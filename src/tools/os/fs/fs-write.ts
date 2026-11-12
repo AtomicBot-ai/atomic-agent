@@ -5,6 +5,7 @@ import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import { categorizeFsMutation } from "./fs-approval-scope.js";
 import { checkChangedFile } from "./fs-content-check.js";
+import { writeDiffStat } from "./fs-diffstat.js";
 import {
   checkInputReplacement,
   refuseInputReplacement,
@@ -189,6 +190,14 @@ export function buildOsFsWriteTool(
         ctx.workingDir,
       );
       const linesAfter = countLines(content);
+      // Lines added/removed for a host's "Changed files" card (ATO-1187).
+      // In `details` only, which the prompt never renders.
+      const diffstat = writeDiffStat({
+        mode,
+        existed: prior !== null,
+        priorText: prior?.content?.toString("utf8") ?? null,
+        content,
+      });
       // The path is echoed in `output` (not just `details`) so a model
       // that had its target moved reads where the file actually landed
       // and keeps working against the right path.
@@ -214,6 +223,7 @@ export function buildOsFsWriteTool(
                 ? {}
                 : { previousLines: prior.lines }),
               ...(target === absolute ? {} : { requestedPath: absolute }),
+              ...(diffstat === null ? {} : { diffstat }),
             },
           }),
           parseWarning,
