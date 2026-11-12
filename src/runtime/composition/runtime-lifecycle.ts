@@ -18,6 +18,7 @@ import type { McpManager } from "../../mcp/mcp-manager.js";
 import type { TelegramChannel } from "../../channels/telegram/telegram-channel.js";
 import type { DiscordChannel } from "../../channels/discord/discord-channel.js";
 import type { SwarmRegistry } from "../../channels/swarm/swarm-registry.js";
+import type { ChannelRegistry } from "../../channels/channel-registry.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
 import type { SentryClient } from "../../error-reporting/sentry-client.js";
 
@@ -47,6 +48,8 @@ export interface RuntimeLifecycleResources {
   readonly telegramChannelForShutdown: Pick<TelegramChannel, "stop"> | null;
   readonly discordChannelForShutdown: Pick<DiscordChannel, "stop"> | null;
   readonly swarmForShutdown: Pick<SwarmRegistry, "stopAll"> | null;
+  /** Catalog adapters (ATO-1169); the primaries above are skipped here. */
+  readonly channelsForShutdown?: Pick<ChannelRegistry, "stopAll"> | null;
   /** Unwatch of the plugin MCP live stop (ATO-1407); cleared before the manager shuts down. */
   readonly pluginMcpWatch?: (() => void) | null;
   readonly consolidatorJob: Pick<ConsolidatorJob, "stop"> | null;
@@ -161,6 +164,10 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
         });
       }
     }
+    // Slack, Signal and the other catalog adapters (ATO-1169). Telegram
+    // and Discord were stopped above in their own order; `stopAll` logs
+    // and swallows each adapter's failure itself.
+    await resources.channelsForShutdown?.stopAll(new Set(["telegram", "discord"]));
     try {
       resources.pluginMcpWatch?.();
     } catch {
