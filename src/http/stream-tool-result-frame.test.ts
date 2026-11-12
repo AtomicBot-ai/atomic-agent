@@ -212,6 +212,24 @@ describe("tool_result over SSE", () => {
     for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("screen_marks");
   });
 
+  it("carries an ok write/edit's diffstat with its path, and nothing otherwise (ATO-1187)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "os.fs.write", details: { path: "/w/a.txt", diffstat: { added: 3, removed: 0 } } }), 0));
+    hook(executed(result({ tool: "os.fs.edit", details: { path: "/w/b.ts", diffstat: { added: 2, removed: 1 } } }), 1));
+    hook(executed(result({ tool: "os.fs.edit", status: "error", details: { path: "/w/b.ts", diffstat: { added: 2, removed: 1 } } }), 2));
+    hook(executed(result({ tool: "os.fs.write", details: { path: "/w/c.txt" } }), 3));
+    hook(executed(result({ tool: "os.fs.write", details: { path: "/w/d.txt", diffstat: { added: -1, removed: 0 } } }), 4));
+    hook(executed(result({ tool: "os.shell.run", details: { path: "/w/e.txt", diffstat: { added: 1, removed: 0 } } }), 5));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.diffstat).toEqual({ path: "/w/a.txt", added: 3, removed: 0 });
+    expect(sent[1]!.diffstat).toEqual({ path: "/w/b.ts", added: 2, removed: 1 });
+    for (const frame of sent.slice(2)) expect(frame).not.toHaveProperty("diffstat");
+  });
+
   it("carries the call's approval records, auto-approvals included, and nothing when there are none (ATO-1145)", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));
