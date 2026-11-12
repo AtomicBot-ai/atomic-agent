@@ -12,7 +12,7 @@ import type { TelegramChannel } from "../channels/telegram/index.js";
 import type { DiscordChannel } from "../channels/discord/index.js";
 import type { SwarmRegistry } from "../channels/swarm/index.js";
 import type { BotFactory } from "../channels/telegram/index.js";
-import type { McpManager } from "../mcp/index.js";
+import type { McpElicitationPort, McpManager } from "../mcp/index.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
 import type { ApprovalGate } from "../approval/approval-gate.js";
@@ -78,6 +78,15 @@ export interface RuntimeEventHandlers {
    * this handler keep working — the runtime never blocks on it.
    */
   onChannelStatus?: (status: ChannelStatus) => void;
+  /**
+   * How an MCP server's `elicitation/create` (pick an account, confirm,
+   * fill a small form) reaches a person (ATO-704). Only when set do MCP
+   * clients advertise the `elicitation` capability. The port is called
+   * outside any turn frame, so it must itself answer `unavailable` when
+   * nobody can answer (unattended task, no surface); that and every
+   * failure is sent to the server as `decline` / `cancel`, never accept.
+   */
+  onMcpElicitation?: McpElicitationPort;
   logSinks?: LogSink[];
   metricSinks?: MetricSink[];
   /**

@@ -5,6 +5,7 @@ import type { ApprovalGate } from "../approval/approval-gate.js";
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 import { ToolRegistry, type ToolContext } from "../tools/tool-registry.js";
 
+import type { McpElicitationPort } from "./mcp-elicitation-handler.js";
 import type {
   McpServerCatalog,
   McpServerConfig,
@@ -25,14 +26,17 @@ interface FakeBehaviour {
 
 const FAKE_BY_NAME = new Map<string, FakeBehaviour>();
 const CONSTRUCTED: string[] = [];
+/** Deps each fake client was constructed with, by server name. */
+const CONSTRUCTED_DEPS = new Map<string, Record<string, unknown>>();
 
 vi.mock("./mcp-client.js", () => {
   class FakeMcpClient {
     private config: McpServerConfig;
     private connected = false;
-    constructor(config: McpServerConfig) {
+    constructor(config: McpServerConfig, deps: Record<string, unknown> = {}) {
       this.config = config;
       CONSTRUCTED.push(config.name);
+      CONSTRUCTED_DEPS.set(config.name, deps);
     }
     get name() {
       return this.config.name;
@@ -104,6 +108,7 @@ describe("McpManager", () => {
   beforeEach(() => {
     FAKE_BY_NAME.clear();
     CONSTRUCTED.length = 0;
+    CONSTRUCTED_DEPS.clear();
   });
 
   afterEach(() => {
@@ -123,6 +128,27 @@ describe("McpManager", () => {
       toolRegistry: tools,
     });
     expect(CONSTRUCTED).toEqual(["a", "b"]);
+  });
+
+  it("gives each client its own elicitation handler only when a port is wired (ATO-704)", async () => {
+    new McpManager([stdioConfig("plain")], { toolRegistry: new ToolRegistry() });
+    expect(CONSTRUCTED_DEPS.get("plain")?.elicitationHandler).toBeUndefined();
+
+    const ask = vi.fn<McpElicitationPort["ask"]>(async () => ({ action: "decline" }));
+    new McpManager([stdioConfig("a"), stdioConfig("b")], {
+      toolRegistry: new ToolRegistry(),
+      elicitationPort: { ask },
+    });
+    const handlerA = CONSTRUCTED_DEPS.get("a")?.elicitationHandler as
+      | ((params: unknown, signal: AbortSignal) => Promise<unknown>)
+      | undefined;
+    expect(typeof handlerA).toBe("function");
+    expect(CONSTRUCTED_DEPS.get("b")?.elicitationHandler).not.toBe(handlerA);
+    await handlerA!(
+      { message: "ok?", requestedSchema: { type: "object", properties: {} } },
+      new AbortController().signal,
+    );
+    expect(ask.mock.calls[0]?.[0]).toMatchObject({ server: "a" });
   });
 
   it("warns and drops duplicate server names", () => {

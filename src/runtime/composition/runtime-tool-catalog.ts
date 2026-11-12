@@ -410,6 +410,11 @@ export async function connectRuntimeMcpCatalog(input: {
           server: "*",
         })
       : undefined,
+    // ATO-704: no host wires a port yet, so servers see no elicitation
+    // capability until one does (see docs/client.md).
+    ...(options.handlers?.onMcpElicitation
+      ? { elicitationPort: options.handlers.onMcpElicitation }
+      : {}),
     ...(options.handlers?.onChannelStatus
       ? {
           onStatus: (status) =>

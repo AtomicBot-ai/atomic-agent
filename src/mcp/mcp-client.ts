@@ -14,6 +14,8 @@ import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {
   CreateMessageRequestSchema,
+  ElicitRequestSchema,
+  type ClientCapabilities,
   type CreateMessageRequest,
   type CreateMessageResult,
 } from "@modelcontextprotocol/sdk/types.js";
@@ -29,6 +31,7 @@ import {
   formatStderrTail,
   type StderrTail,
 } from "./mcp-stderr-tail.js";
+import type { McpElicitationHandler } from "./mcp-elicitation-handler.js";
 import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
 import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
 import {
@@ -60,6 +63,13 @@ export interface McpClientDeps {
    * `sampling/createMessage` request fails at the protocol layer.
    */
   samplingHandler?: McpSamplingHandler;
+  /**
+   * Elicitation handler (`mcp-elicitation-handler.ts`). Optional: only
+   * when a way to ask a person is wired does the client advertise
+   * `elicitation` (form mode only); without it a server sees no such
+   * capability and must not send `elicitation/create`.
+   */
+  elicitationHandler?: McpElicitationHandler;
   /**
    * Wall-clock for connect deadlines / debounce timers. Override in
    * tests; production uses `() => Date.now()`.
@@ -147,13 +157,14 @@ export class McpClient {
       );
       const client = new Client(
         { name: CLIENT_NAME, version: CLIENT_VERSION },
-        {
-          capabilities: this.deps.samplingHandler ? { sampling: {} } : {},
-        },
+        { capabilities: clientCapabilities(this.deps) },
       );
 
       if (this.deps.samplingHandler) {
         this.installSamplingHandler(client);
+      }
+      if (this.deps.elicitationHandler) {
+        this.installElicitationHandler(client);
       }
 
       await withTimeout(
@@ -478,6 +489,27 @@ export class McpClient {
       return handler(req.params, signal);
     });
   }
+
+  private installElicitationHandler(client: Client): void {
+    const handler = this.deps.elicitationHandler!;
+    client.setRequestHandler(ElicitRequestSchema, async (req, extra) => {
+      const signal = extra.signal ?? new AbortController().signal;
+      return handler(req.params, signal);
+    });
+  }
+}
+
+/**
+ * Capabilities advertised in `initialize`. Each one only when its
+ * handler is wired: `elicitation: {}` means form mode only.
+ */
+export function clientCapabilities(
+  deps: Pick<McpClientDeps, "samplingHandler" | "elicitationHandler">,
+): ClientCapabilities {
+  return {
+    ...(deps.samplingHandler ? { sampling: {} } : {}),
+    ...(deps.elicitationHandler ? { elicitation: {} } : {}),
+  };
 }
 
 /**
