@@ -663,7 +663,13 @@ export async function runWorkerTasks(
   const width = Math.max(1, Math.min(options.maxWorkers, options.tasks.length));
   const runners = Array.from({ length: width }, async () => {
     for (let i = claim(); i < options.tasks.length; i = claim()) {
-      const stop = options.shouldStart?.();
+      // A stopped turn starts nothing more, capped or not (ATO-1334):
+      // `shouldStart` is only wired when a budget cap is set. The cap is
+      // asked first: a cap reached aborts the same signal, and its row
+      // must say the cap, not the person, stopped it.
+      const stop =
+        options.shouldStart?.() ??
+        (options.signal.aborted ? "the turn was stopped" : undefined);
       results[i] =
         stop === undefined
           ? await runOneTask(deps, options, options.tasks[i]!)
@@ -1470,6 +1476,30 @@ async function runOneTask(
     disarmWorkerSession(session.id);
   }
 
+  // How the LOCAL turn ended, read before the re-run below resets these
+  // flags (ATO-1317). A turn cut by the person's stop or by the swap to
+  // the escalation model was cut as surely as one cut by its clock, and
+  // may have left the server just as wedged; without these two the next
+  // local worker waited out a whole queue budget before anyone asked.
+  const localCut =
+    replaceRequested ||
+    stopByPerson.signal.aborted ||
+    timedOutOutcome ||
+    queuedOutcome ||
+    stoppedByHandBack ||
+    options.signal.aborted;
+  const localCutCause = timedOutOutcome
+    ? "timed out"
+    : queuedOutcome
+      ? "never served"
+      : stoppedByHandBack
+        ? "handed back"
+        : replaceRequested
+          ? "replaced by the escalation model"
+          : stopByPerson.signal.aborted
+            ? "stopped by the person"
+            : "cancelled";
+
   // The advisor's hint did not help and the operator allowed the
   // replacement path (`escalationReplace`): the task runs again on the
   // escalation model, with what the local worker found, under the
@@ -1534,6 +1564,20 @@ async function runOneTask(
           eventHook: (event) => {
             markNoteRead(replaceSession.id, event);
             replaceCollector.observe(event);
+            // The re-run's side effects reach the checkpoint as they
+            // start, like the local worker's do (ATO-1316): a crash in
+            // the middle of the re-run must not offer the task as safe
+            // to repeat.
+            if (
+              event.type === "llm_event" &&
+              event.event.type === "tool_call_parsed"
+            ) {
+              try {
+                options.onWorkerTool?.(task.id, event.event.call.tool);
+              } catch {
+                // An observer never takes the worker down.
+              }
+            }
             if (
               event.type === "llm_event" &&
               event.event.type === "llm_completed" &&
@@ -1617,16 +1661,8 @@ async function runOneTask(
   // A local worker that ended by an abort — its clock, its queue wait,
   // its hand-back or the operator — may have left the server wedged
   // (ATO-917); the next local dispatch asks the server first.
-  if (
-    options.localLeg === true &&
-    (timedOutOutcome ||
-      queuedOutcome ||
-      stoppedByHandBack ||
-      options.signal.aborted)
-  ) {
-    deps.localLegHealth?.noteCut(
-      `task ${task.id} was ${timedOutOutcome ? "timed out" : queuedOutcome ? "never served" : stoppedByHandBack ? "handed back" : "cancelled"}`,
-    );
+  if (options.localLeg === true && localCut) {
+    deps.localLegHealth?.noteCut(`task ${task.id} was ${localCutCause}`);
   }
 
   // How long the server took to say anything. The one number that tells

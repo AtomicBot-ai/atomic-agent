@@ -93,6 +93,24 @@ const BASE = {
 };
 
 describe("runWorkerTasks", () => {
+  it("starts no further task after the turn is stopped, with no budget cap set (ATO-1334)", async () => {
+    const stop = new AbortController();
+    const { deps, calls } = harness(async () => {
+      stop.abort(new Error("stopped"));
+      return turnResult({ reason: "cancelled" });
+    });
+    const results = await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(3),
+      maxWorkers: 1,
+      signal: stop.signal,
+    });
+    expect(calls).toHaveLength(1);
+    expect(results.map((r) => r.status)).toEqual(["cancelled", "cancelled", "cancelled"]);
+    expect(results[1]!.error).toBe("not started: the turn was stopped");
+    expect(results[2]!.error).toBe("not started: the turn was stopped");
+  });
+
   it("pins each worker turn to the local leg with the fusion origin and the worker filter", async () => {
     const { deps, calls } = harness(async ({ options }) => {
       options.eventHook?.({
