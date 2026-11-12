@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Two-pass security audit: find vulnerabilities and leaked secrets, then refute each. Use for /audit.
+description: "Two-pass security audit: find vulnerabilities and leaked secrets, then refute each. Use for /audit."
 version: 1.0.0
 requires_tools:
   - os.fs.code_map
