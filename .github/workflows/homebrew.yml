@@ -1,0 +1,120 @@
+name: homebrew
+
+# Keeps the Homebrew tap (AtomicBot-ai/homebrew-tap) on the newest stable releases:
+# the formula `atag` follows the CLI (vX.Y.Z), the cask `atomic-agent` follows the
+# desktop app (desktop-vX.Y.Z). Publishing either release on GitHub fires
+# `release: published`, the same event the desktop's update feed goes out on, so
+# brew and the in-app updater move together. Drafts, pre-releases and tags of
+# neither product change nothing; a re-run for an older tag never downgrades the
+# tap. Rendering: scripts/homebrew.ts, scripts/homebrew-packaging.ts; setup and
+# usage: scripts/docs/homebrew.md. It also runs by hand:
+#
+#   gh workflow run homebrew.yml -f tag=v0.7.1
+#   gh workflow run homebrew.yml -f tag=desktop-v0.0.9
+#
+# Secret: HOMEBREW_TAP_TOKEN, a fine-grained token with Contents read and write on
+# AtomicBot-ai/homebrew-tap only. Without it the run logs a notice and stops.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The published release (vX.Y.Z or desktop-vX.Y.Z)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-tap
+  cancel-in-progress: false
+
+jobs:
+  tap:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+    steps:
+      - name: Is this a published stable release
+        id: release
+        run: |
+          set -euo pipefail
+          go=false
+          if [[ "$TAG" =~ ^(desktop-)?v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            read -r draft pre < <(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json isDraft,isPrerelease --jq '"\(.isDraft) \(.isPrerelease)"')
+            if [ "$draft" = "true" ] || [ "$pre" = "true" ]; then
+              echo "$TAG is a draft or a pre-release; the tap carries stable releases only"
+            elif [ -z "$TAP_TOKEN" ]; then
+              echo "::notice::HOMEBREW_TAP_TOKEN is not set; the tap was not updated for $TAG (scripts/docs/homebrew.md)"
+            else
+              go=true
+            fi
+          else
+            echo "$TAG is not a stable CLI or desktop release; nothing to do"
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.go == 'true'
+
+      - name: Check out the tap
+        if: steps.release.outputs.go == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: AtomicBot-ai/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - uses: actions/setup-node@v4
+        if: steps.release.outputs.go == 'true'
+        with:
+          node-version: "25.7"
+          check-latest: true
+
+      - name: Install dependencies (tsx only; no native builds)
+        if: steps.release.outputs.go == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Download the release's checksums
+        if: steps.release.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          if [[ "$TAG" == desktop-v* ]]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dl -p SHA256SUMS.txt
+          else
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dl -p 'atomic-agent-darwin-*.tar.gz.sha256'
+          fi
+          ls -la dl
+
+      - name: Render the formula or cask into the tap
+        id: render
+        if: steps.release.outputs.go == 'true'
+        run: npx tsx scripts/homebrew.ts render --tag "$TAG" --assets dl --tap tap | tee -a "$GITHUB_OUTPUT"
+
+      - name: Check the Ruby parses
+        if: steps.release.outputs.go == 'true' && steps.render.outputs.written == 'true'
+        run: ruby -c "tap/${{ steps.render.outputs.path }}"
+
+      - name: Commit and push to the tap
+        if: steps.release.outputs.go == 'true' && steps.render.outputs.written == 'true'
+        working-directory: tap
+        env:
+          FILE: ${{ steps.render.outputs.path }}
+        run: |
+          set -euo pipefail
+          git add "$FILE"
+          if git diff --cached --quiet; then
+            echo "$FILE already matches $TAG"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          name="$(basename "$FILE" .rb)"
+          git commit -m "$name ${TAG#desktop-}"
+          git push origin HEAD
