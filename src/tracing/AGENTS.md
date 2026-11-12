@@ -6,6 +6,7 @@ Scope: `src/tracing/`. Inherit the root instructions; read [README.md](README.md
 
 - Keep per-session sequence, batch attribution and truthful provider/model/timing fields. One inference reasoning block is not duplicated across sibling calls.
 - Traces retain sensitive prompt/completion data locally; do not claim complete redaction. Cap rotation retains whole tail lines and a truncation marker.
+- OpenTelemetry export (`otel/`) stays off without an OTLP endpoint, sends text only under `tracing.otel.captureContent` and masks it first, and must never throw into or slow a turn. No OpenTelemetry SDK or auto-instrumentation (breaks SEA).
 - Replay checks prompt drift; it is not a simulation of external world state or LLM determinism.
 
 ## Read when relevant
