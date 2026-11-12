@@ -29,13 +29,17 @@ export function resetConfigCache(): void {
 }
 
 /**
- * Run `fn` with `getConfig()` answering a config loaded from disk now, for
+ * Run `fn` with `getConfig()` answering a config read from disk now, for
  * `fn` and everything it awaits only. Everyone else keeps the cached one.
+ * The read changes nothing: see `LoadConfigOptions.readOnly`.
  */
 export function withFreshConfig<T>(fn: () => Promise<T>): Promise<T> {
   let fresh: AtomicAgentConfig;
   try {
-    fresh = loadConfig();
+    // A pure read (review round on #1250): the process keeps its own .env
+    // merge, config.json is not written, and the process-wide registries
+    // (custom models, backend variants) keep what serve booted with.
+    fresh = loadConfig({ readOnly: { dotenv: getConfig().dotenv } });
   } catch {
     // A file that does not load now (mid-write, broken): answer from the cached one, as before.
     return fn();

@@ -455,6 +455,8 @@ export interface LocalLlamaApiKeyInputs {
   managedPorts: readonly number[];
   /** Where the managed daemons keep their pid files (and the key). */
   dataDir: string;
+  /** ATO-1213: read the persisted key, never create one (a read-only config load). */
+  readOnly?: boolean;
 }
 
 /**
@@ -475,7 +477,8 @@ export function resolveLocalLlamaApiKey(inputs: LocalLlamaApiKeyInputs): string 
   const talksToManagedDaemon =
     inputs.mode === "managed" ||
     isLoopbackUrlOnPort(inputs.chatUrl, inputs.managedPorts);
-  return talksToManagedDaemon ? ensureManagedApiKey(inputs.dataDir) : null;
+  if (!talksToManagedDaemon) return null;
+  return inputs.readOnly ? readManagedApiKey(inputs.dataDir) : ensureManagedApiKey(inputs.dataDir);
 }
 
 /**

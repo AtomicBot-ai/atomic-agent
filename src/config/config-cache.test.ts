@@ -6,11 +6,12 @@ let onDisk = { tag: "boot" };
 vi.mock("./load-config.js", () => ({
   loadConfig: vi.fn(() => {
     if (onDisk.tag === "broken") throw new Error("config.json does not parse");
-    return { ...onDisk };
+    return { ...onDisk, dotenv: { from: onDisk.tag } };
   }),
 }));
 
 const { getConfig, resetConfigCache, withFreshConfig } = await import("./config-cache.js");
+const { loadConfig } = await import("./load-config.js");
 
 describe("withFreshConfig (ATO-1213)", () => {
   beforeEach(() => {
@@ -45,5 +46,15 @@ describe("withFreshConfig (ATO-1213)", () => {
     onDisk = { tag: "broken" };
     const inside = await withFreshConfig(async () => (getConfig() as unknown as { tag: string }).tag);
     expect(inside).toBe("boot");
+  });
+
+  // Review round: the fresh read is the pure one (no .env merge, no config.json write, no registry push),
+  // and it reports the .env serve booted with.
+  it("reads read-only, with the dotenv of the cached config", async () => {
+    const boot = getConfig() as unknown as { dotenv: unknown };
+    vi.mocked(loadConfig).mockClear();
+    onDisk = { tag: "now" };
+    await withFreshConfig(async () => {});
+    expect(vi.mocked(loadConfig).mock.calls).toEqual([[{ readOnly: { dotenv: boot.dotenv } }]]);
   });
 });
