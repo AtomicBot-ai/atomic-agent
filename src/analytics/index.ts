@@ -40,15 +40,21 @@ export {
   INSTALL_CHANNEL_ENV,
   INSTALL_CHANNEL_FILE,
   INSTALL_CHANNELS,
+  INSTALL_SOURCE_ENV,
+  INSTALL_SOURCE_FILE,
+  INSTALL_SOURCE_TAGS,
   otherSurfaceAnalyticsExists,
   parseInstallChannel,
+  parseInstallSourceTag,
   resolveAnalyticsDimensions,
   resolveDesktopVersion,
   resolveInstallChannel,
+  resolveInstallSource,
 } from "./resolve-analytics-dimensions.js";
 export type {
   AnalyticsDimensions,
   InstallChannel,
+  InstallSourceTag,
 } from "./resolve-analytics-dimensions.js";
 export {
   INSTALL_ID_FILE_ENV,
