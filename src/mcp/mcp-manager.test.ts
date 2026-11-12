@@ -220,6 +220,73 @@ describe("McpManager", () => {
     expect(ok.status).toBe("ok");
   });
 
+  it("trusts readOnlyHint for stdio servers, not remote ones (ATO-1178)", async () => {
+    const tools = new ToolRegistry();
+    const readOnly = (server: string, rawName: string): McpToolMeta => ({
+      ...metaOf(server, rawName),
+      annotations: { readOnlyHint: true },
+    });
+    for (const server of ["local", "remote", "composio-like"]) {
+      FAKE_BY_NAME.set(server, {
+        connect: async () => {},
+        close: async () => {},
+        catalog: {
+          server,
+          tools: [readOnly(server, "search"), readOnly(server, "other")],
+          resources: [],
+          prompts: [],
+        },
+      });
+    }
+    const requestedTools: string[] = [];
+    const dangerous: DangerousToolOptions = {
+      approvals: {
+        request: async (req: { tool: string }) => {
+          requestedTools.push(req.tool);
+          return { approvalId: "a", approved: true };
+        },
+      } as unknown as ApprovalGate,
+      approvalRequired: true,
+    };
+    const mgr = new McpManager(
+      [
+        stdioConfig("local"),
+        {
+          name: "remote",
+          enabled: true,
+          transport: { kind: "sse", url: "https://mcp.example/sse" },
+        },
+        {
+          name: "composio-like",
+          enabled: true,
+          transport: { kind: "streamable_http", url: "https://mcp.example/mcp" },
+          trustedReadOnlyTools: ["search"],
+        },
+      ],
+      { toolRegistry: tools, dangerous },
+    );
+    await mgr.start();
+    const ctx: ToolContext = {
+      workingDir: "/tmp",
+      sessionId: "s",
+      stepIndex: 0,
+      signal: new AbortController().signal,
+    };
+    for (const name of [
+      "mcp.local.search",
+      "mcp.remote.search",
+      "mcp.composio-like.search",
+      "mcp.composio-like.other",
+    ]) {
+      await tools.get(name).run({}, ctx);
+    }
+    // stdio and the named remote tool run silently; the rest ask.
+    expect(requestedTools).toEqual([
+      "mcp.remote.search",
+      "mcp.composio-like.other",
+    ]);
+  });
+
   it("start() isolates per-server failures", async () => {
     const tools = new ToolRegistry();
     FAKE_BY_NAME.set("good", {

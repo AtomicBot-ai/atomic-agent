@@ -5,9 +5,10 @@
  *   1. Routes the call through `requireApproval` when the owning
  *      server's resolved trust is `approval_gated` — unless the tool
  *      advertised `annotations.readOnlyHint === true` at discovery
- *      time AND the server runs on this machine (stdio). Anything else
- *      (missing, malformed, non-boolean, or a remote HTTP / SSE server)
- *      fails closed to gated.
+ *      time AND that hint is trusted for the tool (`trustReadOnlyHint`:
+ *      stdio servers, plus remote tools the agent's own integrations
+ *      name). Anything else (missing, malformed, non-boolean, or another
+ *      remote HTTP / SSE server) fails closed to gated.
  *   2. Forwards `args` verbatim to the MCP server (the server is the
  *      source of truth for input-schema validation).
  *   3. Projects the heterogenous MCP response shape (a list of
@@ -35,7 +36,12 @@ import type { ToolDefinition } from "../tools/tool-registry.js";
 
 import type { McpClient } from "./mcp-client.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
-import type { McpToolMeta, McpTransport, McpTrustLevel } from "./mcp-types.js";
+import type {
+  McpServerConfig,
+  McpToolMeta,
+  McpTransport,
+  McpTrustLevel,
+} from "./mcp-types.js";
 
 /** Hard cap on the synthetic `output` string projected from an MCP response. */
 const MAX_PROJECTED_OUTPUT_CHARS = 8_000;
@@ -81,20 +87,38 @@ export interface McpToolGateOptions {
    */
   dangerous?: DangerousToolOptions;
   /**
-   * True when the server runs on this machine as a stdio subprocess.
-   * Only then is a tool's `readOnlyHint` taken as a reason to skip the
-   * prompt. A remote HTTP / SSE server is someone else's code on
-   * someone else's machine: whatever its tools say about themselves,
-   * arguments sent there have left this computer, and a prompt
-   * injection can talk the model into putting a key or a password into
-   * a "search query" (ATO-1178). Absent counts as remote: fail closed.
+   * True when this tool's own `readOnlyHint` may skip the prompt. The
+   * manager sets it for tools of a stdio server, the transport where the
+   * agent launches the server itself, and for the few remote tools the
+   * agent's own integrations name (`McpServerConfig.trustedReadOnlyTools`,
+   * Composio's discovery tools). Any other remote HTTP / SSE server is
+   * someone else's code on someone else's machine: arguments sent there
+   * have left this computer, and a prompt injection can talk the model
+   * into putting a key into a "search query" (ATO-1178). Absent: fail
+   * closed. Note that stdio is not a promise that nothing leaves the
+   * machine (a stdio wrapper may call a cloud API); it is the operator's
+   * own install, which is the line ATO-1178 draws.
    */
-  local?: boolean;
+  trustReadOnlyHint?: boolean;
 }
 
-/** Whether a server's tools may skip the prompt on their own `readOnlyHint`. */
+/** Whether a transport counts as local for the `readOnlyHint` rule (stdio only). */
 export function isLocalMcpTransport(transport: McpTransport): boolean {
   return transport.kind === "stdio";
+}
+
+/**
+ * Whether `rawName`'s `readOnlyHint` from `config`'s server may skip the
+ * prompt: every tool of a stdio server, and on a remote server only the
+ * tools the agent itself listed in `trustedReadOnlyTools`. The hint must
+ * still be present and exactly `true` (checked by the adapter).
+ */
+export function trustsReadOnlyHintFor(
+  config: Pick<McpServerConfig, "transport" | "trustedReadOnlyTools">,
+  rawName: string,
+): boolean {
+  if (isLocalMcpTransport(config.transport)) return true;
+  return config.trustedReadOnlyTools?.includes(rawName) ?? false;
 }
 
 export function createMcpToolDefinition(
@@ -112,12 +136,13 @@ export function createMcpToolDefinition(
   // `destructiveHint === false`): `readonly` feeds descriptor
   // rendering, while skipping consent demands the server's strongest
   // claim, exactly as the MCP spec defines `readOnlyHint`. And the
-  // claim counts only from a server on this machine: a remote server's
-  // read-only tools ask like everything else (ATO-1178). The prompt
-  // still offers "Allow in this chat", so trusting one is one click.
+  // claim counts only where `trustReadOnlyHint` says so (stdio servers
+  // and the agent's own named exceptions): other remote read-only tools
+  // ask like everything else (ATO-1178). The prompt still offers "Allow
+  // in this chat", so trusting one is one click.
   const dangerous = gate?.dangerous;
   const trustsReadOnlyHint =
-    gate?.local === true && meta.annotations?.readOnlyHint === true;
+    gate?.trustReadOnlyHint === true && meta.annotations?.readOnlyHint === true;
   const gated = gate?.trust === "approval_gated" && !trustsReadOnlyHint;
   return {
     name: meta.qualifiedName,

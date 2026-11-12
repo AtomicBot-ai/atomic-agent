@@ -63,6 +63,15 @@ export interface McpServerConfig {
    * drop the rest without listing every tool they keep.
    */
   disabledTools?: string[];
+  /**
+   * Raw tool names on a remote (HTTP / SSE) server whose own
+   * `readOnlyHint: true` may still skip the approval prompt (ATO-1178).
+   * Set in code by the agent's own integrations only (Composio's two
+   * discovery tools); not read from `config.json`, so a server entry a
+   * person or a page pasted cannot opt itself out. stdio servers do not
+   * need it.
+   */
+  trustedReadOnlyTools?: readonly string[];
 }
 
 /**

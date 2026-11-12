@@ -13,6 +13,7 @@ import {
   createMcpToolDefinition,
   extractStructuredDetails,
   isLocalMcpTransport,
+  trustsReadOnlyHintFor,
   projectMcpResponseToText,
 } from "./mcp-tool-adapter.js";
 import type { McpToolMeta } from "./mcp-types.js";
@@ -466,7 +467,7 @@ describe("approval gating", () => {
     const def = createMcpToolDefinition(
       metaOf("docs", "search", { annotations: { readOnlyHint: true } }),
       fakeClient(async () => ({ content: [{ type: "text", text: "hit" }] })),
-      { trust: "approval_gated", dangerous, local: true },
+      { trust: "approval_gated", dangerous, trustReadOnlyHint: true },
     );
     const result = await def.run({}, ctx);
     expect(result.status).toBe("ok");
@@ -481,7 +482,7 @@ describe("approval gating", () => {
     const def = createMcpToolDefinition(
       metaOf("docs", "search", { annotations: { readOnlyHint: true } }),
       fakeClient(async () => ({ content: [{ type: "text", text: "hit" }] })),
-      { trust: "approval_gated", dangerous, local: false },
+      { trust: "approval_gated", dangerous, trustReadOnlyHint: false },
     );
     const result = await def.run({ query: "x" }, ctx);
     expect(result.status).toBe("ok");
@@ -489,7 +490,7 @@ describe("approval gating", () => {
     expect(requests[0]?.category).toBe("other");
   });
 
-  it("treats a server with no `local` flag as remote (fail closed)", async () => {
+  it("does not trust readOnlyHint when the flag is absent (fail closed)", async () => {
     const { dangerous, requests } = fakeDangerous(true);
     const def = createMcpToolDefinition(
       metaOf("docs", "search", { annotations: { readOnlyHint: true } }),
@@ -498,6 +499,20 @@ describe("approval gating", () => {
     );
     await def.run({}, ctx);
     expect(requests).toHaveLength(1);
+  });
+
+  it("trusts readOnlyHint for stdio servers and named remote tools only", () => {
+    const remote = { kind: "streamable_http" as const, url: "https://x/mcp" };
+    expect(
+      trustsReadOnlyHintFor({ transport: { kind: "stdio", command: "npx" } }, "t"),
+    ).toBe(true);
+    expect(trustsReadOnlyHintFor({ transport: remote }, "t")).toBe(false);
+    expect(
+      trustsReadOnlyHintFor({ transport: remote, trustedReadOnlyTools: ["t"] }, "t"),
+    ).toBe(true);
+    expect(
+      trustsReadOnlyHintFor({ transport: remote, trustedReadOnlyTools: ["t"] }, "u"),
+    ).toBe(false);
   });
 
   it("only stdio counts as a local transport", () => {
