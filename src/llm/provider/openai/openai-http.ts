@@ -216,7 +216,7 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
     return `${who} needs an API key and none is set. Add the key in the Providers panel.`;
   }
   if (isGroqRequestTooLarge(err)) {
-    // The free tier's tokens-per-minute allowance, not a malformed request
+    // The plan's tokens-per-minute allowance, not a malformed request
     // (ATO-1283): say which limit it is and what helps.
     return groqRequestTooLargeSentence(err);
   }

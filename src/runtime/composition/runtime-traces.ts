@@ -234,7 +234,7 @@ export function createRuntimeTraces(
           }
         }
       }
-      // A provider plan's own limit (Groq's free-tier 413) is explained to
+      // A provider plan's own limit (Groq's TPM 413 with its numbers) is explained to
       // the user in chat and is not a defect to report (ATO-1283).
       if (event.type === "loop_failed" && !isExpectedProviderLimit(event.error)) {
         const reporter = getErrorReporter();

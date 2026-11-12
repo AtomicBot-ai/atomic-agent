@@ -162,7 +162,7 @@ describe("runtime trace ownership and deferred event routing", () => {
     expect(host).toHaveBeenCalledWith(event, undefined);
   });
 
-  it("does not report Groq's free-tier 413, and still reports other failures (ATO-1283)", () => {
+  it("does not report Groq's plan-limit 413, and still reports other failures (ATO-1283)", () => {
     const { traces } = fixture();
     const capture = vi.fn();
     const reporter = { capture } as unknown as SentryClient;

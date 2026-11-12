@@ -5,7 +5,7 @@ import { isGroqRequestTooLarge } from "./groq-plan-limit.js";
 import { TransportError } from "../../reliability/llm-failures.js";
 import { isExpectedProviderLimit } from "../../reliability/expected-provider-limit.js";
 
-/** Groq's 413 for a request over the free tier's tokens per minute (ATO-1283). */
+/** Groq's 413 for a request over the plan's tokens per minute (ATO-1283). */
 const GROQ_413_BODY = JSON.stringify({
   error: {
     message:
@@ -31,14 +31,16 @@ async function failWith(status: number, body: string, baseUrl?: string, label?: 
   return err as OpenAiHttpError;
 }
 
-describe("Groq 413 over the free tier limit (ATO-1283)", () => {
+describe("Groq 413 over the plan limit (ATO-1283)", () => {
   it("tells the user which limit it is and what helps, with Groq's numbers", async () => {
     const err = await failWith(413, GROQ_413_BODY);
     expect(isGroqRequestTooLarge(err)).toBe(true);
     const said = humanizeOpenAiHttpError(err);
-    expect(said).toContain("larger than the Groq free tier limit");
+    expect(said).toContain("larger than your Groq plan's limit");
     expect(said).toContain("limit 12000 tokens per minute, this request 15639");
-    expect(said).toContain("Pick a model with a higher limit or upgrade the Groq plan.");
+    expect(said).toContain("Pick a model with a higher limit or a larger Groq plan.");
+    // `on_demand` is both the free and the paid Dev Tier: no tier is claimed.
+    expect(said).not.toContain("free tier");
     expect(said).toContain("(413)");
     expect(said).not.toContain("org_01abc");
   });
@@ -46,8 +48,10 @@ describe("Groq 413 over the free tier limit (ATO-1283)", () => {
   it("still explains a Groq 413 whose body names no numbers", async () => {
     const err = await failWith(413, "Request Entity Too Large");
     const said = humanizeOpenAiHttpError(err);
-    expect(said).toContain("larger than the Groq free tier limit.");
-    expect(said).not.toContain("limit 12000");
+    expect(said).toBe("Groq refused the request (413): it is too large for Groq. Start a new chat or pick a model with a higher limit.");
+    expect(said).not.toContain("plan");
+    // No TPM numbers: not proven to be the plan limit, so it is still reported.
+    expect(isExpectedProviderLimit(new TransportError(said, 413, err.url, { cause: err }))).toBe(false);
   });
 
   it("knows a second Groq entry by its id when the host is a proxy", async () => {

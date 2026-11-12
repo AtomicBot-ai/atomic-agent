@@ -9,9 +9,12 @@ import type { OpenAiHttpError } from "./openai-http.js";
  *   (TPM): Limit 12000, Requested 15639, please reduce your message size and
  *   try again. …","type":"tokens","code":"rate_limit_exceeded"}}
  *
- * The free tier's allowance is smaller than one agent turn with its tools,
- * so this is the plan's limit, not a fault of ours: the user is told what
- * it is and what helps, and it is not sent to error reporting.
+ * A small plan's allowance can be smaller than one agent turn with its
+ * tools. The tier is not known from the answer (`on_demand` is both the
+ * free and the paid Dev Tier), so the user is told "your Groq plan". Only
+ * a 413 that carries Groq's TPM numbers is known to be that limit and is
+ * kept out of error reporting (`isGroqPlanTpmLimit`); a bare 413 ("Request
+ * Entity Too Large") may be a payload refusal and is still reported.
  */
 
 /** Groq's API host (the `groq` preset's base URL). */
@@ -37,19 +40,37 @@ export function isGroqRequestTooLarge(err: OpenAiHttpError): boolean {
   return err.status === 413 && err.streamError === undefined && isGroqTarget(err);
 }
 
+/** Groq's TPM numbers ("Limit 12000, Requested 15639") in the answer, or null. */
+function limitAndRequested(err: OpenAiHttpError): { limit: string; requested: string } | null {
+  const text = `${err.body?.message ?? ""}\n${err.body?.text ?? ""}\n${err.message}`;
+  const match = LIMIT_AND_REQUESTED.exec(text);
+  return match ? { limit: match[1]!.replace(/,/g, ""), requested: match[2]!.replace(/,/g, "") } : null;
+}
+
+/**
+ * The 413 is Groq's tokens-per-minute plan limit, proven by its own
+ * numbers: an expected limit, not a defect, so not reported.
+ */
+export function isGroqPlanTpmLimit(err: OpenAiHttpError): boolean {
+  return isGroqRequestTooLarge(err) && limitAndRequested(err) !== null;
+}
+
 /**
  * What the user reads in chat. Keeps "(413)" so the desktop still reads it
  * as the provider having replied; the numbers are Groq's own when it gave
- * them.
+ * them. Without them the plan limit is not claimed.
  */
 export function groqRequestTooLargeSentence(err: OpenAiHttpError): string {
-  const text = `${err.body?.message ?? ""}\n${err.body?.text ?? ""}\n${err.message}`;
-  const match = LIMIT_AND_REQUESTED.exec(text);
-  const numbers = match
-    ? ` (limit ${match[1]!.replace(/,/g, "")} tokens per minute, this request ${match[2]!.replace(/,/g, "")})`
-    : "";
+  const n = limitAndRequested(err);
+  if (n === null) {
+    return (
+      "Groq refused the request (413): it is too large for Groq. " +
+      "Start a new chat or pick a model with a higher limit."
+    );
+  }
   return (
-    `Groq refused the request (413): it is larger than the Groq free tier limit${numbers}. ` +
-    `Pick a model with a higher limit or upgrade the Groq plan.`
+    `Groq refused the request (413): it is larger than your Groq plan's limit ` +
+    `(limit ${n.limit} tokens per minute, this request ${n.requested}). ` +
+    `Pick a model with a higher limit or a larger Groq plan.`
   );
 }

@@ -124,7 +124,7 @@ describe("toLlmFailure: the tool a catch-all failure names (ATO-710)", () => {
   });
 });
 
-describe("toLlmFailure: Groq's 413 over the free tier limit (ATO-1283)", () => {
+describe("toLlmFailure: Groq's 413 over the plan limit (ATO-1283)", () => {
   it("reads the plan-limit sentence alone, without Groq's raw body after it", () => {
     const text = JSON.stringify({ error: {
       message: "Request too large for model `llama-3.3-70b-versatile` in organization `org_01abc` service tier `on_demand` on tokens per minute (TPM): Limit 6000, Requested 9531, please reduce your message size and try again.",
@@ -138,8 +138,8 @@ describe("toLlmFailure: Groq's 413 over the free tier limit (ATO-1283)", () => {
     const failure = toLlmFailure(raw, ctx);
     expect(failure).toBeInstanceOf(TransportError);
     expect(failure.message).toBe(
-      "Groq refused the request (413): it is larger than the Groq free tier limit (limit 6000 tokens per minute, this request 9531). " +
-      "Pick a model with a higher limit or upgrade the Groq plan.",
+      "Groq refused the request (413): it is larger than your Groq plan's limit (limit 6000 tokens per minute, this request 9531). " +
+      "Pick a model with a higher limit or a larger Groq plan.",
     );
     expect(failure.cause).toBe(raw);
   });
