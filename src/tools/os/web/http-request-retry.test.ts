@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -39,13 +40,35 @@ function makeResult(overrides: Partial<CommandResult>): CommandResult {
 }
 
 /** Replays the given results in order, one per curl invocation. */
+/**
+ * Headers can reach curl as `-H @<owner-only file>` (ATO-1177), a file
+ * that only exists while curl runs: expand it into the `-H "Name: value"`
+ * pairs curl reads from it, so a test sees what each hop sends. Inline
+ * `-H` pairs pass through unchanged.
+ */
+function expandHeaderFiles(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const next = args[i + 1];
+    if (args[i] === "-H" && next?.startsWith("@") && next !== "@-") {
+      for (const line of readFileSync(next.slice(1), "utf8").split("\n")) {
+        if (line.length > 0) out.push("-H", line);
+      }
+      i++;
+      continue;
+    }
+    out.push(args[i]!);
+  }
+  return out;
+}
+
 function scriptedRunCommand(
   results: CommandResult[],
   calls: string[][],
 ): typeof RunCommandType {
   return (async (_command: string, args: string[]) => {
     const result = results[calls.length] ?? results.at(-1)!;
-    calls.push(args);
+    calls.push(expandHeaderFiles(args));
     return result;
   }) as unknown as typeof RunCommandType;
 }
