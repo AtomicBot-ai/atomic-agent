@@ -25,3 +25,5 @@ Read docs/client.md before lifecycle, trust, sampling or dynamic schema changes;
 ## Validation
 
 `npx vitest run src/mcp`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
+
+Approval: tools from an `approval_gated` server ask before every call. A tool's own `readOnlyHint: true` skips the prompt only when the server runs on this machine over stdio; tools from remote HTTP / SSE servers ask like everything else, whatever they say about themselves, because their arguments leave the computer (ATO-1178). "Allow in this chat" on the prompt silences MCP tool prompts for the rest of the session.

@@ -5,8 +5,9 @@
  *   1. Routes the call through `requireApproval` when the owning
  *      server's resolved trust is `approval_gated` — unless the tool
  *      advertised `annotations.readOnlyHint === true` at discovery
- *      time. Anything else (missing, malformed, non-boolean) fails
- *      closed to gated.
+ *      time AND the server runs on this machine (stdio). Anything else
+ *      (missing, malformed, non-boolean, or a remote HTTP / SSE server)
+ *      fails closed to gated.
  *   2. Forwards `args` verbatim to the MCP server (the server is the
  *      source of truth for input-schema validation).
  *   3. Projects the heterogenous MCP response shape (a list of
@@ -34,7 +35,7 @@ import type { ToolDefinition } from "../tools/tool-registry.js";
 
 import type { McpClient } from "./mcp-client.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
-import type { McpToolMeta, McpTrustLevel } from "./mcp-types.js";
+import type { McpToolMeta, McpTransport, McpTrustLevel } from "./mcp-types.js";
 
 /** Hard cap on the synthetic `output` string projected from an MCP response. */
 const MAX_PROJECTED_OUTPUT_CHARS = 8_000;
@@ -79,6 +80,21 @@ export interface McpToolGateOptions {
    * being `false`.
    */
   dangerous?: DangerousToolOptions;
+  /**
+   * True when the server runs on this machine as a stdio subprocess.
+   * Only then is a tool's `readOnlyHint` taken as a reason to skip the
+   * prompt. A remote HTTP / SSE server is someone else's code on
+   * someone else's machine: whatever its tools say about themselves,
+   * arguments sent there have left this computer, and a prompt
+   * injection can talk the model into putting a key or a password into
+   * a "search query" (ATO-1178). Absent counts as remote: fail closed.
+   */
+  local?: boolean;
+}
+
+/** Whether a server's tools may skip the prompt on their own `readOnlyHint`. */
+export function isLocalMcpTransport(transport: McpTransport): boolean {
+  return transport.kind === "stdio";
 }
 
 export function createMcpToolDefinition(
@@ -95,10 +111,14 @@ export function createMcpToolDefinition(
   // than the `readonly` field below (which also accepts
   // `destructiveHint === false`): `readonly` feeds descriptor
   // rendering, while skipping consent demands the server's strongest
-  // claim, exactly as the MCP spec defines `readOnlyHint`.
+  // claim, exactly as the MCP spec defines `readOnlyHint`. And the
+  // claim counts only from a server on this machine: a remote server's
+  // read-only tools ask like everything else (ATO-1178). The prompt
+  // still offers "Allow in this chat", so trusting one is one click.
   const dangerous = gate?.dangerous;
-  const gated =
-    gate?.trust === "approval_gated" && meta.annotations?.readOnlyHint !== true;
+  const trustsReadOnlyHint =
+    gate?.local === true && meta.annotations?.readOnlyHint === true;
+  const gated = gate?.trust === "approval_gated" && !trustsReadOnlyHint;
   return {
     name: meta.qualifiedName,
     description:

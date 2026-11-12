@@ -12,6 +12,7 @@ import { McpRequestError } from "./mcp-errors.js";
 import {
   createMcpToolDefinition,
   extractStructuredDetails,
+  isLocalMcpTransport,
   projectMcpResponseToText,
 } from "./mcp-tool-adapter.js";
 import type { McpToolMeta } from "./mcp-types.js";
@@ -460,16 +461,53 @@ describe("approval gating", () => {
     expect(callTool).not.toHaveBeenCalled();
   });
 
-  it("exempts a discovery-time readOnlyHint === true", async () => {
+  it("exempts a discovery-time readOnlyHint === true on a local (stdio) server", async () => {
     const { dangerous, requests } = fakeDangerous(true);
     const def = createMcpToolDefinition(
       metaOf("docs", "search", { annotations: { readOnlyHint: true } }),
       fakeClient(async () => ({ content: [{ type: "text", text: "hit" }] })),
-      { trust: "approval_gated", dangerous },
+      { trust: "approval_gated", dangerous, local: true },
     );
     const result = await def.run({}, ctx);
     expect(result.status).toBe("ok");
     expect(requests).toHaveLength(0);
+  });
+
+  it("asks for a remote server's readOnlyHint tool like any other (ATO-1178)", async () => {
+    // A remote server's own "I only read" label does not skip consent:
+    // the arguments leave this machine, and an injected page can steer
+    // a key into a "search query".
+    const { dangerous, requests } = fakeDangerous(true);
+    const def = createMcpToolDefinition(
+      metaOf("docs", "search", { annotations: { readOnlyHint: true } }),
+      fakeClient(async () => ({ content: [{ type: "text", text: "hit" }] })),
+      { trust: "approval_gated", dangerous, local: false },
+    );
+    const result = await def.run({ query: "x" }, ctx);
+    expect(result.status).toBe("ok");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.category).toBe("other");
+  });
+
+  it("treats a server with no `local` flag as remote (fail closed)", async () => {
+    const { dangerous, requests } = fakeDangerous(true);
+    const def = createMcpToolDefinition(
+      metaOf("docs", "search", { annotations: { readOnlyHint: true } }),
+      fakeClient(async () => ({ content: [] })),
+      { trust: "approval_gated", dangerous },
+    );
+    await def.run({}, ctx);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("only stdio counts as a local transport", () => {
+    expect(isLocalMcpTransport({ kind: "stdio", command: "npx" })).toBe(true);
+    expect(
+      isLocalMcpTransport({ kind: "streamable_http", url: "https://x/mcp" }),
+    ).toBe(false);
+    expect(isLocalMcpTransport({ kind: "sse", url: "https://x/sse" })).toBe(
+      false,
+    );
   });
 
   it('fails closed on a malformed readOnlyHint (string "true")', async () => {
