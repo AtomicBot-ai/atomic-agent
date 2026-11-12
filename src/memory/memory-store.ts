@@ -727,6 +727,28 @@ export class MemoryStore {
   }
 
   /**
+   * ATO-1124. Replace a note's text: the person's own edit from the
+   * desktop's Memory tab, through `PATCH /api/memory/notes/{id}`. The
+   * FTS row follows through the `memories_au` trigger; the note's old
+   * vectors are dropped and one for the new text is written in the
+   * background (non-throwing, like `store`), so recall never matches the
+   * old wording. `source`, `session_id` and the counters are kept: they
+   * say where the note came from, which an edit does not change.
+   * Returns `null` when the id is not stored.
+   */
+  updateContent(id: number, content: string, now: number = this.now()): MemoryEntry | null {
+    const normalizedId = validateId(id);
+    const text = validateContent(content);
+    const result = this.db
+      .prepare(`UPDATE memories SET content = ?, updated_at = ? WHERE id = ?`)
+      .run(text, now, normalizedId) as { changes: number };
+    if (result.changes === 0) return null;
+    this.embeddingStore?.deleteAllForMemory(normalizedId);
+    void this.writeEmbeddingFor(normalizedId, text);
+    return this.get(normalizedId);
+  }
+
+  /**
    * Return entries ordered by `updated_at DESC`. `scope: "project"`
    * filters by `working_dir`. `limit` defaults to 50 and is hard-capped
    * by `MEMORY_LIST_MAX_LIMIT`.
