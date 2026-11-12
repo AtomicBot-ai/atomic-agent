@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { toGeminiToolSchema, toGeminiTools } from "./gemini-tool-schema.js";
+import { toGeminiResponseFormat, toGeminiToolSchema, toGeminiTools } from "./gemini-tool-schema.js";
 
 /** What an MCP server built on the official TypeScript SDK sends. */
 const MCP_SCHEMA = {
@@ -94,5 +94,30 @@ describe("toGeminiTools (ATO-1282)", () => {
   it("returns the same array when no tool changed", () => {
     const tools = [{ type: "function", function: { name: "ok", parameters: { type: "object" } } }];
     expect(toGeminiTools(tools)).toBe(tools);
+  });
+});
+
+describe("toGeminiResponseFormat (ATO-1444)", () => {
+  it("cleans json_schema.schema and keeps name, strict and the rest", () => {
+    const rf = { type: "json_schema", json_schema: { name: "vote", strict: true, schema: MCP_SCHEMA } };
+    const out = toGeminiResponseFormat(rf) as { type: string; json_schema: { name: string; strict: boolean; schema: Record<string, unknown> } };
+    expect(out.type).toBe("json_schema");
+    expect(out.json_schema.name).toBe("vote");
+    expect(out.json_schema.strict).toBe(true);
+    expect(out.json_schema.schema).not.toHaveProperty("$schema");
+    expect(out.json_schema.schema).not.toHaveProperty("additionalProperties");
+    // The caller's envelope is untouched.
+    expect(rf.json_schema.schema).toBe(MCP_SCHEMA);
+  });
+
+  it("returns the same object when the schema needs no change", () => {
+    const rf = { type: "json_schema", json_schema: { name: "ok", schema: { type: "object", properties: {} } } };
+    expect(toGeminiResponseFormat(rf)).toBe(rf);
+  });
+
+  it("leaves other response_format shapes alone", () => {
+    const jsonObject = { type: "json_object" };
+    expect(toGeminiResponseFormat(jsonObject)).toBe(jsonObject);
+    expect(toGeminiResponseFormat(undefined)).toBeUndefined();
   });
 });

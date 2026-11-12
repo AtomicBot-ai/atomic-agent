@@ -147,3 +147,21 @@ export function toGeminiTools(tools: unknown): unknown {
   });
   return changed ? next : tools;
 }
+
+/**
+ * The `response_format` of an OpenAI chat body, with its
+ * `json_schema.schema` cleaned the same way (ATO-1444). The memory
+ * helper calls (query rewriter, link generator, vote, distill) send a
+ * schema there, and the strict ones carry `additionalProperties: false`,
+ * which the same endpoint refuses with the same 400. Anything that is
+ * not a `json_schema` envelope, and a schema that needs no change, is
+ * returned as the same object.
+ */
+export function toGeminiResponseFormat(responseFormat: unknown): unknown {
+  if (!isRecord(responseFormat) || responseFormat.type !== "json_schema") return responseFormat;
+  const jsonSchema = responseFormat.json_schema;
+  if (!isRecord(jsonSchema) || !("schema" in jsonSchema)) return responseFormat;
+  const schema = toGeminiToolSchema(jsonSchema.schema);
+  if (schema === jsonSchema.schema) return responseFormat;
+  return { ...responseFormat, json_schema: { ...jsonSchema, schema } };
+}

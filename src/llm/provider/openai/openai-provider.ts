@@ -8,7 +8,7 @@ import {
   type VisionResult,
 } from "../llm-provider.js";
 import { isGeminiOpenAiCompatUrl } from "../gemini/gemini-openai-compat.js";
-import { toGeminiTools } from "../gemini/gemini-tool-schema.js";
+import { toGeminiResponseFormat, toGeminiTools } from "../gemini/gemini-tool-schema.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -409,6 +409,16 @@ export class OpenAiProvider implements LlmProvider {
     // get the tools exactly as built.
     if (body.tools !== undefined && isGeminiOpenAiCompatUrl(this.http.baseUrl)) {
       body.tools = toGeminiTools(body.tools);
+    }
+    // The helper calls' structured-output schema gets the same cleaning
+    // (ATO-1444). Only one we attached from `responseFormat`: a
+    // `response_format` set through `extraBody` is the operator's.
+    if (
+      request.responseFormat !== undefined &&
+      body.response_format !== undefined &&
+      isGeminiOpenAiCompatUrl(this.http.baseUrl)
+    ) {
+      body.response_format = toGeminiResponseFormat(body.response_format);
     }
     return body;
   }
