@@ -104,6 +104,10 @@ export const EVENTS: Record<string, EventSpec> = {
   app_closed: { owner: "main", props: { session_minutes: num({ decimals: 1 }), turns_in_session: int() } },
   debug_report_saved: { owner: "main", props: { kind: en(["dump", "report"]) } },
   analytics_disabled: { owner: "main", props: { via: en(["settings", "slash", "config"]), days_since_install: int() } },
+  /* ATO-1467: the "Talk to the team" interview invite (main/interview-invite-ipc.ts). */
+  interview_invite_shown: { owner: "main", props: { via: en(["card"]) } },
+  interview_invite_clicked: { owner: "main", props: { via: en(["menu", "card", "slash"]) } },
+  interview_invite_dismissed: { owner: "main", props: { reason: en(["later", "never"]) } },
 
   /* ---- onboarding and setup ---- */
   onboarding_step: {

@@ -304,6 +304,11 @@ contextBridge.exposeInMainWorld("atomic", {
   taskPreview: (form: Record<string, string>, now?: number) =>
     ipcRenderer.invoke("app:taskPreview", { form, now }),
   /** ATO-1113: "Run overnight": pick its folder (the chat's own does not change), then start the task. */
+  /** ATO-1467: the interview invite (main/interview-invite-ipc.ts). */
+  interviewCheck: (input: { busy: boolean; onboarding: boolean; error: boolean }) => ipcRenderer.invoke("interview:check", input),
+  interviewShown: (input: { busy: boolean; onboarding: boolean; error: boolean }) => ipcRenderer.invoke("interview:shown", input),
+  interviewOpen: (via: "menu" | "card" | "slash") => ipcRenderer.invoke("interview:open", via),
+  interviewDismiss: (reason: "later" | "never") => ipcRenderer.invoke("interview:dismiss", reason),
   overnightPickFolder: (current?: string) => ipcRenderer.invoke("overnight:pickFolder", current),
   overnightStart: (input: { message: string; folder: string; maxCostUsd: number | null; hours: number; notifyTelegram: boolean }) =>
     ipcRenderer.invoke("overnight:start", input),

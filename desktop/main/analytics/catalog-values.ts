@@ -64,7 +64,7 @@ export const SLASH_COMMANDS = [
   "dump", "report", "help", "tools", "theme", "onboarding", "setup", "clear", "abort", "quit", "debug", "chat",
   "runmode", "observe", "manage", "feed", "logs", "reasoning", "world", "expand", "collapse", "session",
   "sessions", "new", "skills", "skill", "memory", "llm", "mcp", "model", "tasks", "task", "telegram",
-  "import", "privacy", "analytics", "compact", "unknown",
+  "import", "privacy", "analytics", "compact", "feedback", "unknown",
 ] as const;
 /** Every approval category the agent can send (src/approval/approval-level.ts
     APPROVAL_CATEGORY_LABELS), not only the renderer's CATS (the ones the
