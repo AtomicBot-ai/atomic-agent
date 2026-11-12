@@ -458,7 +458,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "goal",
       description:
-        "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal status` | `/goal pause|resume|clear`",
+        "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal tokens <n>|off` | `/goal status` | `/goal pause|resume|clear`",
       // After /plugins and before /worker, the order the registry gives them.
       rank: 46.25,
     },

@@ -5,6 +5,7 @@ import {
   goalSpecOf,
   goalStatusReport,
   goalSummaryLine,
+  isInterruptedGoal,
   readGoalState,
   resumeGoalState,
   setGoalStatus,
@@ -83,6 +84,21 @@ export function runGoalCommand(command: GoalCommand, ctx: GoalCommandContext): v
       ctx.say(command.kind === "check_clear" ? "goal checks cleared" : `goal check added: ${command.command}`);
       return;
     }
+    case "tokens": {
+      if (!stored) {
+        ctx.say("set a goal first with /goal <criteria>");
+        return;
+      }
+      if (ctx.turnRunning && stored.status === "active") {
+        ctx.say("the goal is running: /goal pause, change the budget, then /goal resume");
+        return;
+      }
+      store({ ...stored, maxTokens: command.maxTokens, updatedAt: ctx.now() });
+      ctx.say(command.maxTokens === 0
+        ? "goal token budget removed"
+        : `goal token budget: ${command.maxTokens} tokens (${stored.tokensUsed} used so far)`);
+      return;
+    }
     case "pause": {
       if (!stored || stored.status !== "active") {
         ctx.say(stored ? `the goal is not running (${statusLabel(stored.status)})` : "no goal to pause");
@@ -133,11 +149,14 @@ export function runGoalCommand(command: GoalCommand, ctx: GoalCommandContext): v
 
 /**
  * The goal options for the next turn: only an active goal drives rounds;
- * a paused, blocked or finished one leaves ordinary turns alone.
+ * a paused, blocked or finished one leaves ordinary turns alone. So does
+ * an active goal a restart cut off (ATO-1038): after a restart the goal
+ * goes on only on an explicit `/goal resume`, never on whatever message
+ * the person types first.
  */
 export function activeGoalSpec(session: SessionState): GoalSpec | undefined {
   const goal = readGoalState(session.metadata);
-  return goal?.status === "active" ? goalSpecOf(goal) : undefined;
+  return goal?.status === "active" && !isInterruptedGoal(goal) ? goalSpecOf(goal) : undefined;
 }
 
 /**

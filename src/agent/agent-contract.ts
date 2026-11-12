@@ -636,7 +636,8 @@ export interface RunTurnOptions {
    * acceptance list is green. Not read by the loop itself: the runtime
    * wraps the loop's turns in the goal controller (`./goal/`), which runs
    * `checks` after each round, asks a judge about `criteria`, and starts
-   * the next round with what is still open, up to `maxRounds`.
+   * the next round with what is still open, up to `maxRounds` rounds and
+   * `maxTokens` tokens (ATO-1036; `0` or absent, no token cap).
    */
   goal?: import("./goal/goal-types.js").GoalSpec;
 }

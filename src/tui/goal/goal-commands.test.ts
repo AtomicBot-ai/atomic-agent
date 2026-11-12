@@ -113,6 +113,45 @@ describe("activeGoalSpec", () => {
     expect(activeGoalSpec(withGoal(setGoalStatus(goal, "paused", 1)))).toBeUndefined();
     expect(activeGoalSpec(empty)).toBeUndefined();
   });
+
+  it("does not let a goal a restart cut off drive the next message (ATO-1038)", () => {
+    const goal = createGoalState({ criteria: ["a"] }, 0);
+    // An active goal as the old process left it in the store.
+    const cutOff = withGoal({ ...goal, owner: "a-process-that-is-gone" });
+    expect(activeGoalSpec(cutOff)).toBeUndefined();
+
+    // `/goal resume` is the explicit go-on: it claims the goal and sends.
+    const t = context(cutOff);
+    runGoalCommand({ kind: "resume" }, t.ctx);
+    const resumed = { ...cutOff, metadata: t.saved[0]!.metadata };
+    expect(activeGoalSpec(resumed)).toEqual({ criteria: ["a"], checks: [], maxRounds: 10 });
+    expect(t.sent).toHaveLength(1);
+  });
+});
+
+describe("/goal tokens", () => {
+  it("sets and removes the token budget of a stored goal", () => {
+    const paused = setGoalStatus(createGoalState({ criteria: ["a"] }, 0), "paused", 1);
+    const t = context(withGoal(paused));
+    runGoalCommand({ kind: "tokens", maxTokens: 500_000 }, t.ctx);
+    expect(readGoalState(t.saved[0]!.metadata)?.maxTokens).toBe(500_000);
+    expect(t.said[0]).toContain("500000 tokens");
+
+    const off = context(withGoal({ ...paused, maxTokens: 10 }));
+    runGoalCommand({ kind: "tokens", maxTokens: 0 }, off.ctx);
+    expect(readGoalState(off.saved[0]!.metadata)?.maxTokens).toBe(0);
+  });
+
+  it("needs a goal and refuses while the goal is running", () => {
+    const none = context(empty);
+    runGoalCommand({ kind: "tokens", maxTokens: 10 }, none.ctx);
+    expect(none.saved).toHaveLength(0);
+
+    const running = context(withGoal(createGoalState({ criteria: ["a"] }, 0)), { turnRunning: true });
+    runGoalCommand({ kind: "tokens", maxTokens: 10 }, running.ctx);
+    expect(running.saved).toHaveLength(0);
+    expect(running.said[0]).toMatch(/goal pause/);
+  });
 });
 
 describe("createGoalProgressReporter", () => {

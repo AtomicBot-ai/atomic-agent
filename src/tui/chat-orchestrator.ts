@@ -82,7 +82,7 @@ import {
 } from "./session-rail/index.js";
 import type { LastTurnRollbackOutcome, TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
-import { readGoalState, type GoalState } from "../agent/goal/index.js";
+import { isInterruptedGoal, readGoalState, type GoalState } from "../agent/goal/index.js";
 import type { GoalCommand } from "./commands/goal-command.js";
 import { activeGoalSpec, createGoalProgressReporter, runGoalCommand } from "./goal/goal-commands.js";
 import {
@@ -1044,7 +1044,15 @@ export class ChatOrchestrator {
     // Each thread keeps the model it ran on: entering one whose stamp
     // differs from the active provider/model re-applies it.
     this.restoreSessionModel(loaded);
-    this.showGoal(readGoalState(loaded.metadata));
+    const storedGoal = readGoalState(loaded.metadata);
+    this.showGoal(storedGoal);
+    // A goal a restart cut off waits for the person (ATO-1038).
+    if (storedGoal !== null && isInterruptedGoal(storedGoal) && !running) {
+      this.bus.emit({
+        type: "system_message",
+        text: "this chat's goal was running when the agent stopped. It will not continue on its own: /goal resume continues it, /goal clear drops it",
+      });
+    }
     // After `session_switched`, so they land in the new transcript
     // rather than the one that was just replaced.
     for (const notice of notices) this.notify(notice);

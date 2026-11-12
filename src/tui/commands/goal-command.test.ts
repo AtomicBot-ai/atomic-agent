@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseGoalCommand, splitGoalItems } from "./goal-command.js";
+import { parseGoalCommand, parseTokenBudget, splitGoalItems } from "./goal-command.js";
 import { dispatchSlashCommand } from "./slash-command-handler.js";
 
 describe("parseGoalCommand", () => {
@@ -35,6 +35,20 @@ describe("parseGoalCommand", () => {
     expect(parseGoalCommand("clear the build warnings")).toEqual({
       kind: "set", criteria: ["clear the build warnings"], checks: [],
     });
+  });
+
+  it("reads a token budget, and keeps a criterion that starts with 'tokens' (ATO-1036)", () => {
+    expect(parseGoalCommand("tokens 500k")).toEqual({ kind: "tokens", maxTokens: 500_000 });
+    expect(parseGoalCommand("TOKENS 1_000_000")).toEqual({ kind: "tokens", maxTokens: 1_000_000 });
+    expect(parseGoalCommand("tokens off")).toEqual({ kind: "tokens", maxTokens: 0 });
+    expect(parseGoalCommand("tokens").kind).toBe("error");
+    expect(parseGoalCommand("tokens refresh on expiry")).toEqual({
+      kind: "set", criteria: ["tokens refresh on expiry"], checks: [],
+    });
+    expect(parseTokenBudget("1.5m")).toBe(1_500_000);
+    expect(parseTokenBudget("12")).toBe(12);
+    expect(parseTokenBudget("lots")).toBeNull();
+    expect(parseTokenBudget("0.2")).toBeNull();
   });
 
   it("drops list markers", () => {
