@@ -42,3 +42,17 @@ test('a saved mask comes back as the layer: white painted, black clear', () => {
   assert.equal(px[3], 255, 'white → fully painted');
   assert.equal(px[7], 0, 'black → not painted');
 });
+
+test('Enter on a focused button does what the button says, not "Use mask"', () => {
+  const button = {tagName: 'BUTTON', closest: (sel) => (sel === 'button' ? button : null)};
+  const inButton = {tagName: 'svg', closest: (sel) => (sel === 'button' ? button : null)};
+  const range = {tagName: 'INPUT', type: 'range', closest: () => null};
+  const text = {tagName: 'INPUT', type: 'text', closest: () => null};
+  const canvas = {tagName: 'CANVAS', closest: () => null};
+  assert.equal(M.smaskEnterAction(button), 'button', 'Cancel or Clear focused');
+  assert.equal(M.smaskEnterAction(inButton), 'button', 'the icon inside a button');
+  assert.equal(M.smaskEnterAction(text), 'typing');
+  assert.equal(M.smaskEnterAction(range), 'done', 'the size slider is not a text field');
+  assert.equal(M.smaskEnterAction(canvas), 'done');
+  assert.equal(M.smaskEnterAction(null), 'done');
+});

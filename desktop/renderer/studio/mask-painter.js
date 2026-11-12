@@ -38,6 +38,17 @@ function smaskStep(size, dir) {
   return Math.min(SMASK_MAX, Math.max(SMASK_MIN, next));
 }
 
+/**
+ * What Enter does in the dialog, by what has focus: a button does what it
+ * says ('button': Cancel cancels, Clear clears), a text field keeps it
+ * ('typing'), anywhere else it is "Use mask" ('done').
+ */
+function smaskEnterAction(target) {
+  if (target && typeof target.closest === 'function' && target.closest('button')) return 'button';
+  if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName || '') && target.type !== 'range') return 'typing';
+  return 'done';
+}
+
 /** True when any pixel of RGBA `data` is painted (alpha above a hair). */
 function smaskAnyPainted(data) {
   for (let i = 3; i < data.length; i += 4) if (data[i] > 8) return true;
@@ -212,9 +223,12 @@ function smaskOpen(opts) {
   function onKey(e) {
     if (!document.body.contains(wrap)) return;
     const typing = e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.target.type !== 'range';
+    const enter = smaskEnterAction(e.target);
     let handled = true;
     if (e.key === 'Escape') close(false);
-    else if (e.key === 'Enter' && !typing) doneBtn.click();
+    // A focused button (Cancel, Clear, a tool) does what it says: the browser clicks it; the page under the dialog never sees the key.
+    else if (e.key === 'Enter' && enter === 'button') { handled = false; e.stopImmediatePropagation(); }
+    else if (e.key === 'Enter' && enter === 'done') doneBtn.click();
     else if (typing) handled = false;
     else if (e.key === 'b' || e.key === 'B') setTool('brush');
     else if (e.key === 'e' || e.key === 'E') setTool('eraser');
@@ -253,4 +267,4 @@ function smaskOpen(opts) {
   return () => close(false);
 }
 
-if (typeof module !== 'undefined') module.exports = {smaskPoint, smaskBrushPx, smaskStep, smaskAnyPainted, smaskMaskToLayer, SMASK_MIN, SMASK_MAX, SMASK_DEFAULT};
+if (typeof module !== 'undefined') module.exports = {smaskEnterAction, smaskPoint, smaskBrushPx, smaskStep, smaskAnyPainted, smaskMaskToLayer, SMASK_MIN, SMASK_MAX, SMASK_DEFAULT};
