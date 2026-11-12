@@ -24,6 +24,9 @@
                                   attachment, anything else as its path in the message box
      STUDIO.openSettings(section) Settings › Models on the cloud providers, so an
                                   OpenRouter key can be added ('openrouter' starts that setup)
+     STUDIO.chatPlace()           'local' | 'cloud' | null: where the chat runs now, so the
+                                  pages pick their model there (ATO-902, ATO-1304); null
+                                  while the settings are not read yet
    Atomic Core being put in place before the first call (a cloud-route install never
    started it): main pushes `core` events on onLocal; the shell shows "Preparing the
    engine… 42%" with a bar at the top of the page on screen while it installs, and hands
@@ -101,6 +104,21 @@
     }
     return null;
   }
+  /**
+   * ATO-1304: where Studio works for a chat route. Studio always works where the chat
+   * does (owner decision 25.10, ATO-902): `backend` is renderer.js selBackend()
+   * ('cloud' | 'local' | 'custom' | 'fusion'); a custom server counts as local (it is
+   * the chat's own server, usually on this computer); Fusion goes where its
+   * orchestrator runs (`orchestratorKind`: the provider kind, 'llama-server' = local),
+   * as Improve prompt does (main/studio-improve-prompt.ts). Anything else: null.
+   */
+  function placeOf(backend, orchestratorKind) {
+    if (backend === 'cloud') return 'cloud';
+    if (backend === 'local' || backend === 'custom') return 'local';
+    if (backend === 'fusion') return orchestratorKind === 'llama-server' ? 'local' : 'cloud';
+    return null;
+  }
+
   /** The status line for a `core` event: "Preparing the engine… 42%", or null when there is nothing to show. */
   function coreLine(core) {
     if (!core || core.state !== 'installing') return null;
@@ -333,6 +351,25 @@
       act(section === 'openrouter' && !known ? 'llm:preset:openrouter' : 'llm:mode:cloud');
     },
 
+    /** 'local' | 'cloud' | null: where the chat runs now (renderer.js selBackend and rmNow).
+        null until the settings are read: selBackend() answers 'cloud' for an empty config. */
+    chatPlace() {
+      try {
+        if (typeof LIVE_CONFIG === 'undefined' || !LIVE_CONFIG || typeof selBackend !== 'function') return null;
+        const backend = selBackend();
+        let kind = null;
+        if (backend === 'fusion' && typeof rmNow === 'function') {
+          const id = rmNow().orchestratorProviderId;
+          const list = LIVE_CONFIG.llm && Array.isArray(LIVE_CONFIG.llm.providers) ? LIVE_CONFIG.llm.providers : [{id: 'local-llama', kind: 'llama-server'}];
+          const p = list.find((x) => x && x.id === id);
+          kind = p ? p.kind : null;
+        }
+        return placeOf(backend, kind);
+      } catch (e) {
+        return null;
+      }
+    },
+
     /** A data: URL as {type, bytes}; null when it is not one. */
     dataUrlToBytes,
 
@@ -355,7 +392,7 @@
         + icon('open') + 'Open in Studio</button></div>';
     },
 
-    _pure: {fileUrl, mediaKindOf, dataUrlToBytes, draftWithPath, coreLine},
+    _pure: {fileUrl, mediaKindOf, dataUrlToBytes, draftWithPath, coreLine, placeOf},
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = STUDIO;

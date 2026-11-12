@@ -393,3 +393,24 @@ test('the Images page re-reads the catalog once after a model loads, and not whi
   await settle();
   assert.equal(P.reads(), 2, 'several events in a row make one read');
 });
+
+test('the default and the remembered model come from where the chat runs (ATO-1305)', () => {
+  const flux = localModel({id: 'flux', name: 'FLUX', local: {loaded: false, installed: true}});
+  const cold = localModel({id: 'cold', name: 'Cold', local: {loaded: false, installed: false}});
+  const cat = catalog([cloudModel({default: false, id: 'a/one'}), cloudModel()], [cold, flux, localModel()]);
+  assert.equal(L.simgPlaceOf(model(cat, 'flux')), 'local');
+  assert.equal(L.simgPlaceOf(model(cat, 'google/nano-banana')), 'cloud');
+  assert.equal(L.simgPlaceOf(null), null);
+  assert.equal(L.simgDefaultModel(cat, 'cloud').id, 'google/nano-banana');
+  assert.equal(L.simgDefaultModel(cat, 'local').id, 'z-image:q8', 'a loaded model first');
+  assert.equal(L.simgDefaultModel(catalog([cloudModel()], [cold, flux]), 'local').id, 'flux', 'else a downloaded one');
+  assert.equal(L.simgDefaultModel(catalog([cloudModel()], [cold]), 'local'), null, 'never the cloud');
+  assert.equal(L.simgDefaultModel(catalog([], [localModel()]), 'cloud'), null, 'never a local one');
+  // The chat is in the cloud, FLUX was picked before (ATO-902): a cloud model.
+  assert.equal(L.simgPickModel(cat, 'cloud', [{modelId: 'flux', provider: 'local'}]).id, 'google/nano-banana');
+  assert.equal(L.simgPickModel(cat, 'cloud', [{modelId: 'flux', provider: 'local'}, {modelId: 'a/one', provider: 'openrouter'}]).id, 'a/one');
+  assert.equal(L.simgPickModel(cat, 'local', [{modelId: 'a/one', provider: 'openrouter'}, {modelId: 'cold', provider: 'local'}]).id, 'cold');
+  // Settings not read yet: the remembered one wherever it runs.
+  assert.equal(L.simgPickModel(cat, null, [{modelId: 'flux', provider: 'local'}]).id, 'flux');
+  assert.equal(L.simgPickModel(cat, null, [null]).id, 'google/nano-banana');
+});
