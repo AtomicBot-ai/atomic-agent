@@ -103,6 +103,8 @@ describe.skipIf(process.platform === "win32")(
       "git push $(echo -f) origin main",
       "m=hard; git reset --$m HEAD~1",
       "g=git; $g push -f",
+      "g=git; command $g push --force origin main",
+      "git config alias.p 'push -f'; git p origin main",
       "ls | xargs --replace rm {}",
       'cd . && bash -c "$(echo ls)"',
     ])("subshell line %s asks as shell_dangerous after a shell grant", async (line) => {

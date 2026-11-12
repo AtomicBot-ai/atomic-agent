@@ -88,22 +88,23 @@ function matchGit(segments: readonly (readonly string[])[]): ArgvCheck | null {
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /**
- * Every `git` of the line (`named`), plus the words after a program
- * word that is only known when the line runs (`g=git; $g push -f`,
- * `"$GIT" reset --hard`): that program may be git, so the git rules
- * read what follows it. Only the rules that name a destructive verb or
- * flag apply there, so `$EDITOR notes.md` is not affected.
+ * Every `git` of the line (`named`), plus the words after any word that
+ * is only known when the line runs (`g=git; $g push -f`, `"$GIT" reset
+ * --hard`, `command $g push --force`, `env $g …`, `time $g …`): that
+ * word may be git, wherever a front command puts it, the same way
+ * `invocationsOf` finds a literal `git` behind one. Only the rules that
+ * name a destructive verb or flag apply there, so `$EDITOR notes.md` or
+ * `cp $A $B` are not affected. Options and assignments are skipped.
  */
 function gitInvocations(
   segments: readonly (readonly string[])[],
 ): { args: readonly string[]; named: boolean }[] {
   const found = invocationsOf(segments, "git").map((args) => ({ args, named: true }));
   for (const words of segments) {
-    const at = words.findIndex((word) => !ENV_ASSIGNMENT.test(word));
-    const program = at === -1 ? undefined : words[at];
-    if (program !== undefined && isComputedWord(program)) {
-      found.push({ args: words.slice(at + 1), named: false });
-    }
+    words.forEach((word, index) => {
+      if (word.startsWith("-") || ENV_ASSIGNMENT.test(word)) return;
+      if (isComputedWord(word)) found.push({ args: words.slice(index + 1), named: false });
+    });
   }
   return found;
 }
@@ -118,13 +119,23 @@ function computedGitVerb(verb: string): ArgvCheck | null {
     : null;
 }
 
-/** Config keys whose value is a command git runs, or a new subcommand. */
-const COMMAND_CONFIG_KEY = /^(?:alias\.|core\.(?:sshcommand|pager|editor|fsmonitor|hookspath)\b)/i;
+/**
+ * Config keys that make a later git command run something the line
+ * chose: `alias.*` (a new subcommand, or a shell command with `!`),
+ * `core.sshCommand` and `core.gitProxy` (run on every fetch and push),
+ * `core.fsmonitor` (a program run on every status), `core.hooksPath`
+ * (hooks from any folder). `core.pager` and `core.editor` are left out:
+ * `-c core.pager=cat log` and `-c core.editor=true rebase --continue`
+ * are how a non-interactive agent runs git, and asking every time would
+ * be a question with no session grant (ATO-1263 review).
+ */
+const COMMAND_CONFIG_KEY = /^(?:alias\.|core\.(?:sshcommand|gitproxy|fsmonitor|hookspath)\b)/i;
 
 /**
  * `git -c alias.p='push --force' p`, `git -c core.sshCommand=… fetch`,
  * `git --config-env=alias.p=VAR p`: the line defines what runs, so none
- * of the rules below can read it.
+ * of the rules below can read it. A `-c` key only known when the line
+ * runs (`-c "$X"`, `-c "$(echo alias.p=…)"`) may be an alias too.
  */
 function gitCommandOnTheLine(globals: readonly string[]): ArgvCheck | null {
   for (let i = 0; i < globals.length; i += 1) {
@@ -132,7 +143,9 @@ function gitCommandOnTheLine(globals: readonly string[]): ArgvCheck | null {
     const value =
       word === "-c" ? (globals[i + 1] ?? "") : word.startsWith("-c") ? word.slice(2) : null;
     if (
-      (value !== null && COMMAND_CONFIG_KEY.test(value)) ||
+      // Only a computed key matters: `-c user.name=$N` sets a known key.
+      (value !== null &&
+        (COMMAND_CONFIG_KEY.test(value) || isComputedWord(value.split("=")[0] ?? ""))) ||
       isLongOption(word, "--config-env")
     ) {
       return {
@@ -144,21 +157,22 @@ function gitCommandOnTheLine(globals: readonly string[]): ArgvCheck | null {
   return null;
 }
 
+const GIT_CONFIG_ENV = /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)=/;
+
 /**
  * `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0='push
- * -f' git p`: the same, through the environment of the command.
+ * -f' git p`: the same, through the environment. Read anywhere on the
+ * line, not only in front of git: `export GIT_CONFIG_PARAMETERS=…; git
+ * p` sets it for every later command. An export in an earlier call of
+ * the session is not seen.
  */
 function matchGitConfigEnv(
   segments: readonly (readonly string[])[],
 ): ArgvCheck | null {
+  const runsGit = segments.some((words) => words.some((word) => programName(word) === "git"));
+  if (!runsGit) return null;
   for (const words of segments) {
-    const git = words.findIndex((word) => programName(word) === "git");
-    if (git === -1) continue;
-    if (
-      words
-        .slice(0, git)
-        .some((word) => /^GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)=/.test(word))
-    ) {
+    if (words.some((word) => GIT_CONFIG_ENV.test(word))) {
       return {
         id: "dangerous.git_config_command",
         reason: "git configuration set for this command",
@@ -262,6 +276,12 @@ function checkGitVerb(
         ? { id: "dangerous.git_stash_drop", reason: "delete stashed changes" }
         : null;
     case "config":
+      if (configSetsCommandKey(rest)) {
+        return {
+          id: "dangerous.git_config_command",
+          reason: "define a git alias or a command git runs",
+        };
+      }
       return configTurnsOffCleanForce(rest)
         ? {
             id: "dangerous.git_clean_force",
@@ -362,6 +382,23 @@ function cleanForceOffInGlobals(globals: readonly string[]): boolean {
     if (word.startsWith("-c") && CLEAN_FORCE_OFF.test(word.slice(2))) return true;
   }
   return false;
+}
+
+/**
+ * `git config alias.p 'push -f'` (or `git config set …`, `--add`): every
+ * later `git p` runs a force push the rules cannot read, on this line
+ * (`git config alias.p …; git p`) or any later one. Reading a key
+ * (`git config alias.p`, `--get`, `--unset`) is not a set.
+ */
+function configSetsCommandKey(rest: readonly string[]): boolean {
+  const words = rest.filter((w) => !w.startsWith("-"));
+  const start = words[0] === "set" ? 1 : 0;
+  const key = words[start];
+  if (key === undefined || !COMMAND_CONFIG_KEY.test(key)) return false;
+  if (rest.some((w) => isLongOption(w, "--unset") || isLongOption(w, "--unset-all") || w === "--get" || w.startsWith("--get-"))) {
+    return false;
+  }
+  return words.length > start + 1;
 }
 
 /**
