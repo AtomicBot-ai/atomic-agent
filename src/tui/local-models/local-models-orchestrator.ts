@@ -99,6 +99,7 @@ import {
   fetchServedModelIds,
   describeServerFault,
   readRunningPid,
+  loraAdapterForModel,
 } from "../../local-llm/index.js";
 import {
   classifyVramFit,
@@ -2279,6 +2280,9 @@ export class LocalModelsOrchestrator {
           parallel: cfg.localModels.managed.parallel,
           localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
+          ...(loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid)
+            ? { loraAdapter: loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid) }
+            : {}),
           ...(device ? { device } : {}),
           // No multi-GPU split on the CPU-build retry.
           ...(multiGpu && device !== "cpu" ? { tensorSplit } : {}),
