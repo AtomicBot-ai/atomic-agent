@@ -1554,7 +1554,7 @@ function wireIpc(client: AgentClient): void {
       return { ok: false, error: client.status.error ?? "the agent did not come back after the switch restarted it" };
     }
     turnNotifier.begin(turnId);
-    chatTurns.begin(turnId, Date.now() - queuedAt);
+    chatTurns.begin(turnId, Date.now() - queuedAt, A.turnRoute());   // ATO-1026: the route, read as the turn goes out
     const known = typeof sessionId === "string" && sessionId ? sessionId : null;
     if (!listed) {
       liveTurns.set(turnId, {

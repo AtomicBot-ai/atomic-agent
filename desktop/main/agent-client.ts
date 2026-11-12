@@ -583,6 +583,8 @@ export class AgentClient extends EventEmitter {
   private turns = new Map<string, AbortController>();
   /** turnId → the agent's `X-Atomic-Completion-Id`, once the stream opens. */
   private completions = new Map<string, string>();
+  /** ATO-1026: turns stopped by their own cancel(), not by stopNow (analytics' cancel_by). */
+  private readonly cancelledByUser = new Set<string>();
   /** Set by stop(), cleared as the next start begins: the turns stop() drops end no `idle`. */
   private stopping = false;
 
@@ -1915,10 +1917,14 @@ export class AgentClient extends EventEmitter {
         error: aborted ? null : err instanceof Error ? err.message : String(err),
         // ATO-275: the stream broke under the turn (analytics only, see above).
         ...(aborted ? {} : { transport: true }),
+        /* ATO-1026 (analytics only): the turn's own Stop (cancel), or the
+           app ending every turn (stopNow: a restart, a quit). */
+        ...(aborted ? { by: this.cancelledByUser.has(turnId) ? "user" : "app" } : {}),
       });
     } finally {
       const ended = this.turns.delete(turnId);
       this.completions.delete(turnId);
+      this.cancelledByUser.delete(turnId);
       /* The last turn has ended on its own (finished, failed, or stopped from
          the window) — not by stop(), which drops them all and is a restart
          already. A restart a switch held back for the turns runs now. */
@@ -1945,6 +1951,7 @@ export class AgentClient extends EventEmitter {
     if (!controller) return false;
     const completionId = this.completions.get(turnId);
     if (completionId) void this.cancelCompletion(completionId);
+    this.cancelledByUser.add(turnId);   // ATO-1026: chat_turn_ui's cancel_by
     controller.abort();
     return true;
   }

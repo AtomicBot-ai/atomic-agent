@@ -7,6 +7,7 @@
 import { curatedMeta } from "../model-catalog.js";
 import { backendFailReason, daemonEffect, keyCheckResult, presetOf, supervisedProps, switchOutcome } from "./classify.js";
 import { LOCAL_APP_PRESETS } from "./catalog-values.js";
+import type { TurnRoute } from "./chat-turns.js";
 import { localEngineOf, readConfigFile } from "./environment.js";
 import { analyticsEnabled, currentRunMode, flagsStore, refreshRunMode, track } from "./core.js";
 
@@ -66,6 +67,43 @@ export function configuredRoute(): { provider: string; kind: "local" | "cloud" |
   // ATO-1195: an app the user runs (Ollama, LM Studio, Atomic Chat) is Custom, as in provider_setup_failed.
   const custom = preset === "custom" || (LOCAL_APP_PRESETS as readonly string[]).includes(preset);
   return { provider: preset, kind: custom ? "custom" : "cloud" };
+}
+
+/**
+ * ATO-1026: the route a chat turn goes on, for `chat_turn_ui`: the provider
+ * as model_configured spells it, the kind of route (TURN_PROVIDER_KINDS:
+ * a real cloud apart from LM Studio, Ollama or Atomic Chat, which run_mode
+ * cloud lumped together), and the managed model's catalogue id. A model the
+ * catalogue does not know is `hf_custom` (managed) or `custom` (any other
+ * route): the exact cloud model name is the agent's own message_sent's.
+ * Null with no config or while analytics is off (nothing is read then).
+ */
+export function turnRoute(): TurnRoute | null {
+  try {
+    if (!analyticsEnabled()) return null;
+    const route = configuredRoute();
+    if (!route) return null;
+    const cfg = readConfigFile(stateDir);
+    const managed = (cfg?.["localModels"] as { managed?: { modelId?: unknown } } | undefined)?.managed;
+    return turnRouteOf(route, managed?.modelId);
+  } catch {
+    return null;
+  }
+}
+
+/** turnRoute's mapping, pure (exported for the unit tests). */
+export function turnRouteOf(route: { provider: string; kind: "local" | "cloud" | "custom" }, managedModelId: unknown): TurnRoute {
+  const kind = route.kind === "local" ? "managed_local"
+    : route.kind === "cloud" ? "cloud"
+    : route.provider === "lmstudio" ? "lmstudio"
+    : route.provider === "ollama" ? "ollama"
+    : route.provider === "atomic-chat" ? "atomic_chat"
+    : "custom_server";
+  return {
+    provider: route.provider,
+    provider_kind: kind,
+    model_id: kind === "managed_local" ? modelIdProp(managedModelId) : "custom",
+  };
 }
 
 /** A switch / activation / custom-endpoint write landed with a usable provider: `model_configured`, once. */

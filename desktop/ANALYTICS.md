@@ -80,11 +80,24 @@ send `ui` events.
 | Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / setup_finished / workspace_change / import / telegram / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
 | Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out / key_rejected / provider_error / agent_crashed / not_json / no_binary / list_failed; `provider_preset`, `kind` cloud / custom, as in `model_configured`), `custom_endpoint_tested`, `subscription_login_clicked`, `subscription_terminal_opened` (opened; terminal or reason), `subscription_login_succeeded` (seconds_to_sign_in) |
 | Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `local_backend_crashed`, `engine_recovery_shown`, `backend_switched`, `model_switched`, `fusion_configured` | |
-| Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |
+| Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure; `ms_to_first_activity`; `cancel_phase` waiting_first / provider_wait / approval / tool / generating / waiting_next and `cancel_by` user / app on a cancel; `prompt_tokens`, `completion_tokens`, `gen_tokens_per_s` (no-tool turns only); `provider`, `provider_kind` cloud / managed_local / lmstudio / ollama / atomic_chat / custom_server, `model_id`) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |
 | Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `overnight_started` (has_budget, hours, notify_telegram), `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `composio_setup` (key_saved / key_removed / key_checked / enable / disable; ok / unverified / rejected / error), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
 | App updates | `update_available` (auto / manual), `update_accepted`, `update_dismissed` (not_now / cancel / later), `update_skipped`, `update_installed` | |
 
 Notes on specific properties:
+
+- `chat_turn_ui` (ATO-1026): `ms_to_first_activity` is the first sign of
+  work of any kind (reasoning, a tool call, a progress note, a token), so a
+  turn that thinks reads apart from one that hangs. The wait before it holds
+  both the model loading and the prefill: this stream does not tell them
+  apart. `prompt_tokens` / `completion_tokens` are the agent's `usage` frame
+  (the whole turn, every step; absent on a failed or cancelled turn).
+  `gen_tokens_per_s` is completion tokens over first activity to the end,
+  for a turn with no tool call only. `provider_kind` splits what `run_mode`
+  cloud lumps together; `model_id` is a catalogue id for the managed engine
+  and `custom` otherwise (the agent's own `message_sent` carries the cloud
+  model). `cancel_by` is `user` for the turn's own Stop and `app` when the
+  app ended every turn (a restart, a quit).
 
 - `ui_action.action`: the act's verb plus allowlisted tails only
   (`renderer/analytics-acts.js`); main accepts camelCase segments, at most
