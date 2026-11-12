@@ -1115,8 +1115,15 @@ describe("--swa-full (F12)", () => {
         launchedAt: 1,
       });
       expect(readLaunchRecord(dataDir, 7)?.swaFull).toBe(true);
+      expect(readLaunchRecord(dataDir, 7)?.promptCacheFingerprint).toBeNull();
       expect(readLaunchRecord(dataDir, 8)).toBeNull();
       expect(readLaunchRecord(dataDir, null)).toBeNull();
+      // ATO-456: the prompt-cache fingerprint a stop stamps its saves with.
+      writeLaunchRecord(dataDir, {
+        pid: 7, modelId: "gemma-4-31b", contextSize: 131_072, swaFull: true,
+        prefixReuse: "partial", launchedAt: 1, promptCacheFingerprint: "abc",
+      });
+      expect(readLaunchRecord(dataDir, 7)?.promptCacheFingerprint).toBe("abc");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

@@ -115,6 +115,17 @@ export function resolveLaunchFilePath(dataDir: string): string {
 }
 
 /**
+ * The chat daemon's saved prompt caches (`--slot-save-path`, ATO-456):
+ * one llama.cpp slot state file per conversation the server held when it
+ * was stopped, each beside a JSON fingerprint of the launch it came from
+ * (`prompt-disk-cache.ts`). Only used while
+ * `localModels.managed.promptDiskCache` is on.
+ */
+export function resolvePromptCacheDir(dataDir: string): string {
+  return join(dataDir, "prompt-cache");
+}
+
+/**
  * Memory-v2 phase 1B. Pid file for the secondary `llama-server` instance
  * dedicated to `/embedding` requests. Lives next to the chat daemon's
  * pid file so a single `models stop` invocation can find and kill both.

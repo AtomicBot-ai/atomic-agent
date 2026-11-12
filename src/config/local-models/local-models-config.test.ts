@@ -40,6 +40,13 @@ describe("local model configuration domain seams", () => {
       .toMatchObject({ field: "synthetic.cap", reason: "expected integer in [64, 131072], got 63" });
   });
 
+  it("keeps the prompt disk cache off unless the file turns it on (ATO-456)", () => {
+    expect(createLocalModelsDefaults().managed.promptDiskCache).toBe(false);
+    expect(parseLocal({}).managed.promptDiskCache).toBe(false);
+    expect(parseLocal({ managed: { promptDiskCache: true } }).managed.promptDiskCache).toBe(true);
+    expect(() => parseLocal({ managed: { promptDiskCache: 7 } })).toThrow();
+  });
+
   it("looks for an External llama.cpp on llama-server's own default port 9931 when no url is stored", () => {
     expect(createLocalModelsDefaults().url).toBe("http://127.0.0.1:9931");
     expect(parseLocal({}).url).toBe("http://127.0.0.1:9931");
@@ -54,7 +61,7 @@ describe("local model configuration domain seams", () => {
     expect(parsed).toStrictEqual(defaults);
     expect(root).toStrictEqual(defaults);
     expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "requestTimeoutMs", "useServerTemplate", "thinking", "reasoningBudgetTokens", "drySampler", "managed", "embeddings", "download", "customModels"]);
-    expect(Object.keys(defaults.managed)).toEqual(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "device", "backendVariant", "coreBackendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
+    expect(Object.keys(defaults.managed)).toEqual(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "promptDiskCache", "device", "backendVariant", "coreBackendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
     expect(defaults.managed).not.toBe(other.managed);
     expect(defaults.embeddings).not.toBe(other.embeddings);
     expect(defaults.download).not.toBe(other.download);
