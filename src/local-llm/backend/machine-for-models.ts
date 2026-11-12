@@ -14,11 +14,12 @@
 import { statfs } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
-import { totalmem } from "node:os";
+import { cpus, totalmem } from "node:os";
 
 import type { MachineForModels } from "../catalog/model-upgrade.js";
 import type { ManagedEngine } from "../core/core-state.js";
 import { resolveGpuBudgetGb } from "./gpu-memory-budget.js";
+import { estimateMemoryBandwidth } from "./memory-bandwidth.js";
 import { pickBestDevice, type GpuDevice } from "./gpu-devices.js";
 import { probeManagedDevices } from "./managed-devices.js";
 import { probeNvidiaVramMiB } from "./nvidia-smi-vram.js";
@@ -36,6 +37,8 @@ export interface ProbeMachineInput {
   listDevices?: () => Promise<{ devices: GpuDevice[]; error: string | null }>;
   nvidiaVramMiB?: () => Promise<number | null>;
   freeDiskBytes?: (path: string) => Promise<number | null>;
+  /** `os.cpus()[0].model`, which names the Apple chip (ATO-450). */
+  cpuModel?: string;
 }
 
 export async function probeMachineForModels(
@@ -60,11 +63,22 @@ export async function probeMachineForModels(
       }),
       freeDiskGb,
       cpuOnly: false,
+      bandwidth: estimateMemoryBandwidth({
+        platform,
+        cpuModel: input.cpuModel ?? cpus()[0]?.model,
+        hasGpu: true,
+      }),
     };
   }
 
   if (input.configuredDevice === "cpu") {
-    return { ramGb, gpuBudgetGb: null, freeDiskGb, cpuOnly: true };
+    return {
+      ramGb,
+      gpuBudgetGb: null,
+      freeDiskGb,
+      cpuOnly: true,
+      bandwidth: estimateMemoryBandwidth({ platform, hasGpu: false }),
+    };
   }
 
   const probe = await (input.listDevices ??
@@ -82,8 +96,23 @@ export async function probeMachineForModels(
       configuredDevice: input.configuredDevice,
     });
     // The engine answered: no real GPU in its list means the CPU runs it.
-    const cpuOnly = pickBestDevice(probe.devices) === null;
-    return { ramGb, gpuBudgetGb: budget, freeDiskGb, cpuOnly };
+    const bestId = pickBestDevice(probe.devices);
+    const cpuOnly = bestId === null;
+    const target =
+      input.configuredDevice && input.configuredDevice !== "auto"
+        ? input.configuredDevice
+        : bestId;
+    return {
+      ramGb,
+      gpuBudgetGb: budget,
+      freeDiskGb,
+      cpuOnly,
+      bandwidth: estimateMemoryBandwidth({
+        platform,
+        gpuDescription: probe.devices.find((d) => d.id === target)?.description,
+        hasGpu: !cpuOnly && budget !== null,
+      }),
+    };
   }
 
   // The engine is not installed yet (a first launch): ask the NVIDIA
@@ -92,12 +121,18 @@ export async function probeMachineForModels(
   const vramMiB = await (input.nvidiaVramMiB ?? probeNvidiaVramMiB)().catch(
     () => null,
   );
+  const hasVram = vramMiB !== null && vramMiB > 0;
   return {
     ramGb,
-    gpuBudgetGb:
-      vramMiB !== null && vramMiB > 0 ? (vramMiB * 1024 * 1024) / BYTES_PER_GB : null,
+    gpuBudgetGb: hasVram ? (vramMiB * 1024 * 1024) / BYTES_PER_GB : null,
     freeDiskGb,
     cpuOnly: false,
+    // nvidia-smi gives no name here: an NVIDIA card of unknown model.
+    bandwidth: estimateMemoryBandwidth({
+      platform,
+      gpuDescription: hasVram ? "NVIDIA" : undefined,
+      hasGpu: hasVram,
+    }),
   };
 }
 

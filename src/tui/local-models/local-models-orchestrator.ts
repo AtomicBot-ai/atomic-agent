@@ -67,6 +67,7 @@ import {
   checkForBackendUpdateForPanel,
   maybeAutoUpdateBackend,
   probeNvidiaVramMiB,
+  probeConfiguredMachine,
   readBackendVersion,
   readLogTail,
   removeEmbeddingModel as removeEmbeddingModelFiles,
@@ -1534,6 +1535,8 @@ export class LocalModelsOrchestrator {
     try {
       const repo = await resolveHuggingFaceGgufChoices(raw, {
         signal: controller.signal,
+        // ATO-450: badge each quant for this machine, best one first.
+        machine: () => probeConfiguredMachine(),
       });
       if (this.hfLookup !== controller) return;
       this.hfLookup = null;
