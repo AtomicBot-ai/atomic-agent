@@ -81,6 +81,7 @@ describe("handleMatrixEvent", () => {
     const prompt = runTurn.mock.calls[0]?.[1] as string;
     expect(prompt.split("\n")[0]).toBe(`[from] platform=matrix user=${OWNER} chat=${ROOM}`);
     expect(prompt).toContain("list files");
+    expect(runTurn.mock.calls[0]?.[2]).toMatchObject({ origin: "matrix" });
     expect(ctx.runtime.createSession).toHaveBeenCalledWith({
       metadata: { matrixChannel: true, matrixChat: { roomId: ROOM } },
     });

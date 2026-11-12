@@ -155,9 +155,11 @@ async function dispatchToRuntime(
   };
 
   try {
-    // No `origin`: the runtime's origin list has no "matrix" entry yet,
-    // and borrowing "discord" would give the reply Discord's style rules.
-    await ctx.runtime.runTurn(session, prompt, { signal: controller.signal, eventHook });
+    await ctx.runtime.runTurn(session, prompt, {
+      origin: "matrix",
+      signal: controller.signal,
+      eventHook,
+    });
   } catch (err) {
     failure = { error: err instanceof Error ? err : new Error(String(err)), category: "tool" };
   } finally {
