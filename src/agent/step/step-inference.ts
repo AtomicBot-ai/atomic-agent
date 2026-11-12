@@ -13,6 +13,7 @@ import { checkProfilePromptAligned } from "../../llm/profile-invariants.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
 import type { CompletionResult, StreamChunk } from "../../llm/llama-server-client.js";
 import { estimateReasoningTokens } from "../../llm/reasoning-budget.js";
+import { LOCAL_REASONING_BUDGET_TOKENS, withReasoningBudget } from "../../llm/reasoning-levels.js";
 import { localReplyCapEnvSet, thinkingReplyCap } from "./thinking-reply-cap.js";
 import { parseDepsFor } from "./step-parsing.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
@@ -324,6 +325,9 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
     ...(ctx.reasoningEffort !== undefined
       ? { reasoningEffort: ctx.reasoningEffort }
       : {}),
+    ...(ctx.reasoningOverride !== undefined
+      ? { reasoningOverride: ctx.reasoningOverride }
+      : {}),
   };
   if (deps.modelModePolicy) {
     llmParams.prepareForLink = (link) => {
@@ -505,14 +509,15 @@ export function stepGrammarToolNames(
  * marker, so the completion starts on the call); unbounded on the forced
  * final step — a `reply` / `finish` is never cut mid-thought; the base
  * grammar's configured bound (`localModels.reasoningBudgetTokens`)
- * otherwise. Then the tool names (`stepGrammarToolNames`). An
+ * otherwise, or the chat's level's budget when a person picked one
+ * (ATO-490, `LOCAL_REASONING_BUDGET_TOKENS`). Then the tool names (`stepGrammarToolNames`). An
  * unrestricted, non-final step under `thinking: on|auto` sends the base
  * grammar byte-identical.
  */
 export function resolveStepGrammar(
   ctx: Pick<
     StepContext,
-    "terminalOnly" | "toolSet" | "toolFilter" | "toolRole"
+    "terminalOnly" | "toolSet" | "toolFilter" | "toolRole" | "reasoningOverride"
   >,
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator" | "grammar">,
   descriptors: readonly ToolDescriptor[],
@@ -522,7 +527,9 @@ export function resolveStepGrammar(
     ? withoutReasoningPrelude(deps.grammar)
     : ctx.terminalOnly
       ? withUnboundedReasoningPrelude(deps.grammar)
-      : deps.grammar;
+      : ctx.reasoningOverride !== undefined
+        ? withReasoningBudget(deps.grammar, LOCAL_REASONING_BUDGET_TOKENS[ctx.reasoningOverride])
+        : deps.grammar;
   const names = stepGrammarToolNames(ctx, deps, descriptors);
   return names === null ? base : buildGrammarForTools(base, names);
 }

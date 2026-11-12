@@ -113,6 +113,9 @@ function turnRequestFields(params: LlmStreamParams) {
     ...(params.reasoningEffort !== undefined
       ? { reasoningEffort: params.reasoningEffort }
       : {}),
+    ...(params.reasoningOverride !== undefined
+      ? { reasoningOverride: params.reasoningOverride }
+      : {}),
     ...(params.requestTimeoutMs !== undefined
       ? { requestTimeoutMs: params.requestTimeoutMs }
       : {}),
