@@ -74,6 +74,8 @@ const HELP =
     "    <url> [--judge-model <id>]  Stops the local model while it runs and puts the",
     "    [--judge-key-env <NAME>]    active one back after. Tasks run in temp folders",
     "    [--timeout <s>] [--out <f>] with approvals refused.",
+    "  fit-test --compare <before>   Score, time and token change per task between two",
+    "    <after> [--json]            --out files of the same set (e.g. base vs base+LoRA)",
     "",
     "Cloud subcommands (no local runtime needed):",
     "  search <query>                Search configured cloud providers' models by id,",

@@ -31,6 +31,7 @@ import {
   runLocalModelsStop,
   runLocalModelsUse,
 } from "./models-handlers.js";
+import { runModelsFitCompare } from "./models-fit-compare-command.js";
 
 const MAX_MODELS = 3;
 const DEFAULT_TIMEOUT_S = 300;
@@ -104,6 +105,7 @@ async function restoreModel(previous: string | null, wasRunning: boolean): Promi
 }
 
 export async function runModelsFitTest(args: string[]): Promise<number> {
+  if (args.includes("--compare")) return runModelsFitCompare(args);
   const parsed = parseFitTestArgs(args);
   if ("error" in parsed) {
     process.stderr.write(`${parsed.error}\n${FIT_TEST_USAGE}`);

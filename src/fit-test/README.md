@@ -28,4 +28,10 @@ Each task carries the JSON fields of an eval case (`eval/harness/case-schema.ts`
 - Peak memory is the model server's resident memory from `ps` every 2 s ([process-memory.ts](process-memory.ts)); `n/a` on Windows. The table also prints the machine's GPU memory budget (`readRecommendSnapshot`, `gpu-memory-budget.ts`).
 - The judge ([fit-judge.ts](fit-judge.ts)) is a copy of the eval harness's prompt and parsing: the shipped `src/` tree cannot import `eval/`. There is no default endpoint, because the judge reads the user's prompts; the key is read from the environment variable `--judge-key-env` names, never from the command line.
 
-Checks: `npx vitest run src/fit-test src/cli/models-tasks-command.test.ts src/cli/models-fit-test-command.test.ts`.
+## Before/after (ATO-1105)
+
+`atomic-agent models fit-test --compare <before.json> <after.json> [--before-model <id>] [--after-model <id>] [--json]` reads two `--out` files of the same task set (say, a base model and the same model with a LoRA adapter) and prints the score, time and token change per task and in total ([compare-runs.ts](compare-runs.ts)). Without `--before-model` / `--after-model` it takes the first model that loaded in each run. Tasks only one run has are listed but kept out of the totals, and a note says when the two runs came from different task sets. It reads files only.
+
+Hooking this into Skill Lab (ATO-1098, ATO-1099), so a skill or adapter change is scored on the user's set automatically, waits for Skill Lab to land.
+
+Checks: `npx vitest run src/fit-test src/cli/models-tasks-command.test.ts src/cli/models-fit-test-command.test.ts src/cli/models-fit-compare-command.test.ts`.
