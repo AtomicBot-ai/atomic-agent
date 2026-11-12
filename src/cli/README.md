@@ -41,4 +41,4 @@ Before saving, the carried history is fitted into a local model's window (ATO-11
 
 ## Model fit-test
 
-`models tasks collect [--last <n>] [--out <file>] [--json]` writes the user's last tasks as a fit-test set (ATO-1089, [models-tasks-command.ts](models-tasks-command.ts)); the rules for what is kept live in [the fit-test guide](../fit-test/README.md).
+`models tasks collect [--last <n>] [--out <file>] [--json]` writes the user's last tasks as a fit-test set (ATO-1089, [models-tasks-command.ts](models-tasks-command.ts)); the rules for what is kept live in [the fit-test guide](../fit-test/README.md). `models fit-test --tasks <file> --models <a,b> --judge-url <url>` runs that set on up to three local models and prints score, time and peak memory per model (ATO-1090, [models-fit-test-command.ts](models-fit-test-command.ts)).
