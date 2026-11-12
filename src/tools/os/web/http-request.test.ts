@@ -864,6 +864,43 @@ describe("os.http.request", () => {
     }
   });
 
+  it("masks query keys and body secrets in the prompt (ATO-1471)", async () => {
+    const asked: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      emit: (req) => {
+        asked.push(req);
+        gate.reject(req.approvalId, "no");
+      },
+    });
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: gate,
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "writes" }),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run(
+        {
+          url: "https://api.example.com/v1?api_key=qk-123456&page=2",
+          method: "POST",
+          body: { user: "n", password: "hunter2hunter2" },
+        },
+        makeCtx(),
+      ),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    const request = asked[0]!;
+    expect(request.reason).toBe("POST https://api.example.com/v1?api_key=****&page=2");
+    expect(request.affectedResources).toEqual(["https://api.example.com/v1?api_key=****&page=2"]);
+    expect(request.grantKey).toBe("https://api.example.com");
+    const preview = request.preview ?? "";
+    expect(preview).toContain('"user":"n"');
+    for (const text of [request.reason, preview, ...(request.affectedResources ?? [])]) {
+      expect(text).not.toContain("qk-123456");
+      expect(text).not.toContain("hunter2hunter2");
+    }
+  });
+
   it("maskHeaderValue keeps a known scheme word only", () => {
     expect(maskHeaderValue("Bearer abc.def")).toBe("Bearer ****");
     expect(maskHeaderValue("token abc")).toBe("token ****");

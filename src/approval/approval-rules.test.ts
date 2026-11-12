@@ -233,19 +233,85 @@ describe("Allow always", () => {
     const request: ApprovalRequest = {
       approvalId: "a",
       sessionId: "s",
-      tool: "os.http.request",
-      category: "http",
+      tool: "os.proc.kill",
+      category: "proc_kill",
       reason: "r",
       workdir: "/w",
     };
     expect(buildAlwaysRule(request)).toEqual({
       decision: "allow",
-      tool: "os.http.request",
-      category: "http",
+      tool: "os.proc.kill",
+      category: "proc_kill",
       project: "/w",
       source: "prompt",
     });
-    expect(describeAlwaysRule(request)).toBe("Always allow os.http.request (HTTP request) in this project");
+    expect(describeAlwaysRule(request)).toBe("Always allow os.proc.kill (process kill) in this project");
+  });
+
+  describe("HTTP requests are saved for one origin (ATO-1471)", () => {
+    const http = (grantKey?: string): ApprovalRequest => ({
+      approvalId: "a",
+      sessionId: "s",
+      tool: "os.http.request",
+      category: "http",
+      reason: "POST https://api.example.com/x",
+      workdir: "/w",
+      ...(grantKey !== undefined ? { grantKey } : {}),
+    });
+
+    it("saves the origin the prompt was about and names it in the label", () => {
+      const request = http("https://api.example.com");
+      expect(canGrantAlways(request)).toBe(true);
+      expect(buildAlwaysRule(request)).toEqual({
+        decision: "allow",
+        tool: "os.http.request",
+        category: "http",
+        origin: "https://api.example.com",
+        project: "/w",
+        source: "prompt",
+      });
+      expect(describeAlwaysRule(request)).toBe(
+        "Always allow os.http.request (HTTP request) to https://api.example.com in this project",
+      );
+    });
+
+    it("is not offered when the request names no origin", () => {
+      expect(canGrantAlways(http())).toBe(false);
+      expect(buildAlwaysRule(http())).toBeNull();
+      expect(canGrantAlways(http("not a url"))).toBe(false);
+    });
+
+    it("the saved rule matches that origin only", () => {
+      const saved = parseApprovalRule({ ...buildAlwaysRule(http("https://api.example.com"))! });
+      if (typeof saved === "string") throw new Error(saved);
+      const ctx = { workdir: "/w" };
+      expect(matchRules([saved], http("https://api.example.com"), ctx)?.decision).toBe("allow");
+      expect(matchRules([saved], http("https://evil.example"), ctx)).toBeNull();
+      expect(matchRules([saved], http("https://api.example.com:8443"), ctx)).toBeNull();
+      expect(matchRules([saved], http("http://api.example.com"), ctx)).toBeNull();
+      expect(matchRules([saved], http(), ctx)).toBeNull();
+    });
+
+    it("parses an origin field to its normal form and rejects a bad one", () => {
+      const ok = parseApprovalRule({
+        decision: "deny",
+        tool: "os.http.request",
+        origin: "https://API.Example.com/some/path",
+      });
+      expect(typeof ok === "string" ? ok : ok.origin).toBe("https://api.example.com");
+      expect(parseApprovalRule({ decision: "deny", origin: "api.example.com" })).toMatch(/origin/);
+      expect(parseApprovalRule({ decision: "deny", origin: "ftp://x.example" })).toMatch(/origin/);
+      expect(parseApprovalRule({ decision: "deny", origin: 5 })).toMatch(/origin/);
+    });
+
+    it("gives rules that differ only by origin different ids", () => {
+      const a = parseApprovalRule({ decision: "deny", tool: "os.http.request", origin: "https://a.example" });
+      const b = parseApprovalRule({ decision: "deny", tool: "os.http.request", origin: "https://b.example" });
+      const none = parseApprovalRule({ decision: "deny", tool: "os.http.request" });
+      if (typeof a === "string" || typeof b === "string" || typeof none === "string") throw new Error("parse");
+      expect(a.id).not.toBe(b.id);
+      expect(a.id).not.toBe(none.id);
+    });
   });
 
   describe("path-wide categories", () => {
