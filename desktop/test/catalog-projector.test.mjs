@@ -106,6 +106,8 @@ function renderer(names, extra) {
     function llmRepaint() {}
     function dlFail(job, error, retry) { fails.push({ job, error, retry }); }
     function xpullRetry(owner) { return 'retry:' + owner.id; }
+    function visionFetchable() { return false; }
+    function projectorDiskFit() { return { ok: true }; }
   `, c);
   for (const name of ["projectorSkippedText", ...names]) vm.runInContext(fn(name), c);
   return c;
