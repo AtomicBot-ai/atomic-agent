@@ -460,6 +460,15 @@ let HOST_RAM_GB = 0;
    provider missing here shows its host, as before. */
 const OB_WIZ_TOP = new Set(['openrouter', 'aimlapi']);
 const OB_WIZ_LOCAL = ['atomic-chat', 'ollama', 'lmstudio'];
+/* ATO-816: which of the two lists the provider step is showing. 'keys' is
+   the Cloud card (API keys and subscriptions); 'custom' is the Custom card
+   (the apps on this Mac, a llama.cpp server, any URL). Set each time the
+   step opens; everything that opens it without saying (the download
+   screen's "set up a cloud model meanwhile") gets the keys list. */
+let OB_WIZ_ROUTE = 'keys';
+/* The Custom list's own row for a llama.cpp server: not a provider, so it
+   is not in KIND_ROWS. Picking it opens the URL step (custom_chat_url). */
+const OB_WIZ_LLAMA_ROW = {id:'llamacpp-server', label:'llama.cpp server', kind:'llama-server', llamaServer:true};
 const OB_WIZ_BLURB = {
   openrouter: 'Hundreds of models with one key',
   aimlapi: 'Many models with one key',
@@ -476,6 +485,7 @@ const OB_WIZ_BLURB = {
   perplexity: 'Sonar models',
   nous: 'Hermes models',
   novita: 'Open models in the cloud',
+  'llamacpp-server': 'A llama-server you started yourself',
   'atomic-chat': 'Models you already have in Atomic Chat',
   ollama: 'Models you run with Ollama',
   lmstudio: 'Models you run in LM Studio',
@@ -489,15 +499,19 @@ const OB_ATOMIC_CHAT = { running: null, asking: false };
    the choose screen made three paragraphs the eye had to read before it could
    choose — too much to peer at. A route is picked on what it
    costs you, so that is the line. */
-/* Calm (S6): short declaratives. The second card also covers the model apps
-   on this Mac (Atomic Chat, Ollama, LM Studio), which live in its list. */
+/* Calm (S6): short declaratives. ATO-816 (Nadya, 12.11): three positions
+   that do not mix. Local downloads a model, Cloud is API keys only, and
+   Custom is everything you already run yourself: the model apps on this Mac
+   (Atomic Chat, Ollama, LM Studio), your own llama.cpp server, or any URL.
+   The apps used to sit in the Cloud list, so an Ollama owner looked for
+   Ollama under Local models and did not find it. */
 const OB_CHOICES = [
   {id:'local', label:'Local models', detail:[
     'Private and free on ' + THIS_MACHINE + ', after one download.', '']},
   {id:'cloud', label:'Cloud models', detail:[
-    'An API key, or a model app already on ' + THIS_MACHINE + '.', '']},
-  {id:'custom', label:'Custom endpoint', detail:[
-    'A llama.cpp server you already run. Nothing to download.', '']},
+    'Use an API key from a cloud provider.', '']},
+  {id:'custom', label:'Custom', detail:[
+    'An app or server you already run. Nothing to download.', '']},
 ];
 
 /* The flow has two phases, and the header says which one you are in as a
@@ -12407,7 +12421,8 @@ function obHeadHTML() {
      cloud step's key and model screens title themselves with the provider
      (the wizard's `.ob-h`), so the step title is left off there rather than
      saying "Connect a cloud provider" over a screen that is no longer that. */
-  const title = OB_TITLES[OB.step] || OB_SUBTITLES[OB.step] || '';
+  const title = (OB.step === 'cloud' && OB_WIZ_ROUTE === 'custom' ? 'Choose what you already run'
+    : OB_TITLES[OB.step]) || OB_SUBTITLES[OB.step] || '';
   const wizTitled = OB.step === 'cloud' && WIZ.phase !== 'pick_kind' && !!WIZ.row;
   return '<div class="ob-head">'
     + (title && !wizTitled ? '<h2 class="ob-title">' + esc(title) + '</h2>' : '')
@@ -13968,13 +13983,18 @@ function obModelLabel() {
  *  model ready" only once the model really started (OB.localStart). A pick
  *  whose start was not seen says it is selected; a start that failed says so
  *  (the reason is in the transcript, bswReport). */
+/* ATO-816: a model set up from the Custom list (Ollama, LM Studio, Atomic
+   Chat, a URL) is not a cloud model, so it does not say so. */
+function obCloudReadyLabel() {
+  return OB_WIZ_ROUTE === 'custom' ? 'Model ready' : OB_COPY.cloudReadyLabel;
+}
 function obConfiguredLabel() {
   if (OB.outcome === 'local') {
     if (OB.localStart === 'started') return 'Local model ready';
     if (OB.localStart === 'failed') return 'Local model selected, but it did not start';
     return 'Local model selected';
   }
-  if (OB.outcome === 'cloud') return OB_COPY.cloudReadyLabel;
+  if (OB.outcome === 'cloud') return obCloudReadyLabel();
   return 'Backend ready';
 }
 
@@ -14049,13 +14069,10 @@ function obChooseHTML() {
       '<span class="tk-ico tk-ico--lg' + l[1] + '">' + ic(l[0]) + '</span>',
       OB.cursor === i ? obTickHTML() : '');
   }).join('');
+  /* ATO-816: the ATO-442 hint ("Already run Ollama or LM Studio? Use it
+     instead") is gone. Those apps are under Custom now, named on its card. */
   return '<div class="ob-explain">' + esc(OB_COPY.chooseExplainer.join(' ')) + '</div>'
-    + '<div class="ob-list ob-routes">' + rows + '</div>'
-    /* ATO-442: an Ollama or LM Studio owner reads "Local models" as theirs and
-       lands on a 20 GB download. Their apps live in the Cloud models list
-       ("Local on this Mac"), so say so here and open that list. */
-    + '<button class="ob-offer ob-offer-inline ob-routehint" data-obact="route:apps">'
-    + esc('Already run Ollama or LM Studio? Use it instead') + '</button>';
+    + '<div class="ob-list ob-routes">' + rows + '</div>';
 }
 
 function obLocalPickHTML() {
@@ -14438,7 +14455,7 @@ function obWaitOrJumpHTML() {
     '<span class="tk-ico">' + ic('retry') + '</span>',
   ];
   const cursor = OB.cursor % rows.length;
-  return obReadyHTML(OB_COPY.cloudReadyLabel)
+  return obReadyHTML(obCloudReadyLabel())
     + (status === 'running'
         ? '<div class="ob-explain">' + esc('Still downloading ' + label + ' — it keeps running whichever row you pick.') + '</div>' : '')
     + (status === 'ready' ? obReadyHTML(label + ' downloaded — the local model is ready too') : '')
@@ -14632,8 +14649,13 @@ function obWizRows() {
   /* Calm (S6): in the order they are drawn, so the arrows walk the screen
      top to bottom — the two one-key services, the model apps on this Mac,
      then every other cloud provider (the custom URL row last). */
-  const all = KIND_ROWS.map((k, i) => ({k, i}));
-  const group = ({k}) => OB_WIZ_TOP.has(k.id) ? 0 : k.local ? 1 : k.custom ? 3 : 2;
+  /* ATO-816: the Cloud card lists keys only; the Custom card lists the apps
+     on this Mac, then a llama.cpp server, then any URL. */
+  const custom = OB_WIZ_ROUTE === 'custom';
+  const all = KIND_ROWS.map((k, i) => ({k, i}))
+    .filter(({k}) => custom ? (k.local || k.custom) : !(k.local || k.custom));
+  if (custom) all.push({k: OB_WIZ_LLAMA_ROW, i: KIND_ROWS.length});
+  const group = ({k}) => OB_WIZ_TOP.has(k.id) ? 0 : k.local ? 1 : k.llamaServer ? 2 : k.custom ? 3 : 2;
   const ordered = all.slice().sort((a, b) => (group(a) - group(b))
     || (group(a) === 1 ? OB_WIZ_LOCAL.indexOf(a.k.id) - OB_WIZ_LOCAL.indexOf(b.k.id) : a.i - b.i));
   const q = (WIZ.q || '').trim().toLowerCase();
@@ -14779,6 +14801,9 @@ function obWizardHTML() {
     const top = rows.filter(({k}) => OB_WIZ_TOP.has(k.id));
     const local = rows.filter(({k}) => k.local);
     const rest = rows.filter(({k}) => !OB_WIZ_TOP.has(k.id) && !k.local);
+    /* ATO-816: on the Custom list the second group is a server you run
+       yourself (llama.cpp, any URL), not "more providers". */
+    const restTitle = OB_WIZ_ROUTE === 'custom' ? 'A server you run' : 'More providers';
     const at = (r) => rows.indexOf(r);
     const group = (title, list) => !list.length ? ''
       : (title ? '<div class="prow-more">' + esc(title) + '</div>' : '')
@@ -14787,11 +14812,11 @@ function obWizardHTML() {
     return '<div class="ob-wiz">'
       + (WIZ.q === null ? ''
           : '<div class="ob-field ob-search">' + ic('search')
-            + '<input class="ob-inp" id="wiz-q" placeholder="Search providers" value="' + esc(WIZ.q) + '"></div>')
+            + '<input class="ob-inp" id="wiz-q" placeholder="' + (OB_WIZ_ROUTE === 'custom' ? 'Search' : 'Search providers') + '" value="' + esc(WIZ.q) + '"></div>')
       + '<div class="ob-wizlist">'
         + group('', top)
-        + group('Local on ' + THIS_MACHINE, local)
-        + group(top.length || local.length ? 'More providers' : '', rest)
+        + group('Apps on ' + THIS_MACHINE, local)
+        + group(top.length || local.length ? restTitle : '', rest)
       + '</div>'
       // Esc is the TUI's way out of the list; the desktop needs a control
       // for it too, and it routes through the same action. Continue presses
@@ -15123,7 +15148,8 @@ function obChooseKey(input, key) {
 /** pickBackend (onboarding-step-keys.ts:95-115). */
 function obPickBackend(choice) {
   if (choice === 'cloud') { obOpenCloudWizard(); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
-  if (choice === 'custom') { obDispatch({type:'onboarding_step_set', step:'custom_chat_url'}); return; }
+  // ATO-816: Custom opens its own list (apps on this Mac, llama.cpp, any URL).
+  if (choice === 'custom') { obOpenCloudWizard('custom'); obDispatch({type:'onboarding_step_set', step:'cloud'}); return; }
   // Managed mode is recorded NOW so a quit mid-download does not lose
   // the choice; the model id follows when the pull completes. The promise
   // is kept because `models update` refuses outside managed mode.
@@ -15398,6 +15424,12 @@ function obCloudKey(input, key) {
     if (key.return) {
       const picked = rows[rows.length ? WIZ.cur % rows.length : 0];
       if (!picked) return true;
+      // ATO-816: the llama.cpp row is the old Custom endpoint screen.
+      if (picked.k.llamaServer) {
+        WIZ.phase = null; WIZ.q = null;
+        obDispatch({type:'onboarding_step_set', step:'custom_chat_url'});
+        return true;
+      }
       // Same rule as the popover's row: a new provider starts with an empty field.
       WIZ.row = picked.k; WIZ.phase = 'configure'; WIZ.error = null; ANX.providerStarted(WIZ.row);
       WIZ.apiKey = ''; WIZ.baseUrl = picked.k.custom ? WIZ.baseUrl : '';
@@ -15413,7 +15445,8 @@ function obCloudKey(input, key) {
 
 /* ---------------- effects ---------------- */
 
-function obOpenCloudWizard() {
+function obOpenCloudWizard(route) {
+  OB_WIZ_ROUTE = route === 'custom' ? 'custom' : 'keys';
   OB_ATOMIC_CHAT.running = null;   // re-asked on this visit to the list
   WIZ.phase = 'pick_kind'; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.forId = null;
   WIZ.cur = 0; WIZ.q = null;
@@ -16688,7 +16721,9 @@ function obOwnEscape() {
        had its own busy branch (it cancels the lookup); this one has no
        socket to drop — llamaProbe carries its own AbortSignal timeout. */
     if (OB.busy) return;
-    obDispatch({type:'onboarding_step_set', step: OB.step === 'custom_chat_url' ? 'choose' : 'custom_chat_url'});
+    // ATO-816: back from the URL step is the Custom list it was picked from.
+    if (OB.step === 'custom_chat_url') { obPickBackend('custom'); return; }
+    obDispatch({type:'onboarding_step_set', step:'custom_chat_url'});
     return;
   }
 }
@@ -16907,7 +16942,7 @@ function obRowClick(index, clicks) {
 function obControlClick(spec) {
   if (spec === 'key:c') { obKey('c', {}); return; }
   if (spec === 'key:s') { obKey('s', {}); return; }
-  if (spec === 'route:apps') { obPickBackend('cloud'); return; }
+  if (spec === 'route:apps') { obPickBackend('custom'); return; }
   /* r6 cloud item 1: the hint strip's `esc` chord, clickable. The split is
      obKeydown's own — a step that owns its keyboard answers Escape through
      obOwnEscape, everything else through the key table — so the button and

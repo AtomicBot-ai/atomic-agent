@@ -422,6 +422,14 @@ Real, driven by the running agent:
   `setActiveText` — its route lands on `local-llama` only because a fresh
   install has no `llm` block — so on the TUI the same choice on such an
   install leaves the cloud route active until the composer chip is used.
+- the choose screen has three cards that do not mix (ATO-816): **Local
+  models** downloads a model, **Cloud models** lists API keys and
+  subscriptions only, and **Custom** lists what you already run: the apps on
+  this Mac (Atomic Chat, Ollama, LM Studio), a **llama.cpp server** (the URL
+  step, `custom_chat_url`) and any OpenAI-compatible URL. Both lists are the
+  same provider step (`cloud`); Back from the URL step returns to the Custom
+  list. A click scenario that wants Ollama clicks **Custom**, not
+  **Cloud models**. The terminal's own wizard is unchanged.
 - the add-provider wizard: the TUI's kind list (nothing preselected) → key /
   base URL → verification by listing the provider's models under that key →
   saved, activated, and a default model picked
