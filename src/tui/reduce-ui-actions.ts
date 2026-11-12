@@ -8,6 +8,7 @@ import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands, skillSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { THEME_NAMES } from "./theme/theme.js";
+import { reduceRewindPicker } from "./rewind/rewind-picker-state.js";
 import { goalSummaryLine } from "../agent/goal/goal-state.js";
 import { lastTurnFoldId, turnFoldsOf } from "./render/turn-collapse.js";
 import type { TuiAction } from "./tui-action.js";
@@ -353,6 +354,14 @@ export function reduceUiAction(
         contextUsage: EMPTY_CONTEXT_USAGE,
       };
     }
+    case "rewind_picker_opened":
+    case "rewind_picker_closed":
+    case "rewind_picker_cursor_moved":
+    case "rewind_picker_cursor_set":
+      return {
+        ...state,
+        rewindPicker: reduceRewindPicker(state.rewindPicker ?? null, action),
+      };
     case "session_picker_opened":
       return {
         ...state,
@@ -549,6 +558,8 @@ export function reduceUiAction(
         runHistory: [],
         sessionPickerOpen: false,
         sessionPickerCursor: 0,
+        // The rows it lists belong to the thread being replaced.
+        rewindPicker: null,
         chatScrollOffset: 0,
         chatFocus: "editor",
         sidebarSection: "sessions",

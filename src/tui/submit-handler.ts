@@ -56,6 +56,11 @@ export function handleEditorSubmit(
     return;
   }
 
+  if (state.rewindPicker) {
+    handleRewindPickerSubmit(state, dispatch, callbacks);
+    return;
+  }
+
   const trimmed = buffer.trim();
   if (trimmed.length === 0) return;
 
@@ -177,6 +182,25 @@ function handleSessionPickerSubmit(
   }
   dispatch({ type: "session_picker_closed" });
   dispatch({ type: "input_changed", value: "" });
+}
+
+/**
+ * Enter on the `/rewind` picker (ATO-1057). The orchestrator does the
+ * cut, rebuilds the transcript and puts the question back in the
+ * composer, or says in the chat why it could not; either way the picker
+ * closes here.
+ */
+function handleRewindPickerSubmit(
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  const picker = state.rewindPicker;
+  const point = picker ? picker.points[picker.cursor] : undefined;
+  dispatch({ type: "rewind_picker_closed" });
+  if (point && callbacks.onRewindRequested) {
+    callbacks.onRewindRequested(point.turnIndex, point.text);
+  }
 }
 
 /**
@@ -346,6 +370,7 @@ export function runSlashCommand(
   }
   if (result.triggerSessionPicker) callbacks.onSessionPickerRequested?.();
   if (result.triggerSessionNew) callbacks.onSessionNewRequested?.();
+  if (result.triggerRewindPicker) callbacks.onRewindPickerRequested?.();
   if (result.triggerMemoryDump) callbacks.onMemoryDumpRequested?.();
   if (result.triggerSkillCatalogDump) callbacks.onSkillCatalogRequested?.();
   if (result.persistLlamaUrl) {

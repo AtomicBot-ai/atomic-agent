@@ -92,6 +92,7 @@ import { answerDesktopQuestion } from "./uninstall/uninstall-key-bindings.js";
 import type { UninstallChoice } from "./uninstall/uninstall-state.js";
 import { SessionPicker } from "./session-rail/session-picker.js";
 import { ThemePicker } from "./theme-picker/theme-picker.js";
+import { RewindPicker } from "./rewind/rewind-picker.js";
 import {
   isThemeName,
   setActiveTheme,
@@ -291,6 +292,20 @@ export interface TuiAppCallbacks {
   ): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
+  /**
+   * `/rewind` (ATO-1057): open the picker of the chat's earlier
+   * questions, or say in the chat why it cannot (a turn is running,
+   * nothing to go back to).
+   */
+  onRewindPickerRequested?(): void;
+  /**
+   * Take the chat back to just before the question at `turnIndex` of
+   * the session's turns: the session (held and saved) keeps only what
+   * came before it, the transcript is rebuilt and the question goes back
+   * in the composer. `expectText` is the question the picker showed; a
+   * different row there is refused.
+   */
+  onRewindRequested?(turnIndex: number, expectText: string): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
   onSessionSwitchRequested?(sessionId: string): void;
   /**
@@ -1272,7 +1287,8 @@ export function TuiApp({
     state.uiMode === "chat" ||
     state.slashPaletteOpen ||
     state.themePickerOpen ||
-    state.sessionPickerOpen;
+    state.sessionPickerOpen ||
+    Boolean(state.rewindPicker);
 
   /**
    * Live mirror of {@link composerVisible}. The unmounting editor keeps
@@ -1436,6 +1452,7 @@ export function TuiApp({
     Boolean(state.updatePrompt) ||
     state.updateStatus === "done" ||
     state.sessionPickerOpen ||
+    Boolean(state.rewindPicker) ||
     state.themePickerOpen ||
     state.slashPaletteOpen ||
     isPanelModalOpen(state);
@@ -1508,6 +1525,7 @@ export function TuiApp({
       Boolean(state.sessionDelete) ||
       state.themePickerOpen ||
       state.sessionPickerOpen ||
+      Boolean(state.rewindPicker) ||
       state.slashPaletteOpen;
     if (!open) return false;
     if (hit.event.kind === "wheel") return true;
@@ -1555,6 +1573,7 @@ export function TuiApp({
     Boolean(state.sessionDelete) ||
     state.themePickerOpen ||
     state.sessionPickerOpen ||
+    Boolean(state.rewindPicker) ||
     state.slashPaletteOpen;
   useEffect(() => {
     if (backdropOwner) modalOpenedAtRef.current = Date.now();
@@ -1738,6 +1757,10 @@ export function TuiApp({
       dispatch({ type: "session_picker_closed" });
       return;
     }
+    if (state.rewindPicker) {
+      dispatch({ type: "rewind_picker_closed" });
+      return;
+    }
     if (state.slashPaletteOpen) {
       dispatch({ type: "slash_palette_closed" });
       return;
@@ -1880,6 +1903,10 @@ export function TuiApp({
       dispatch({ type: "session_picker_cursor_moved", delta: -1 });
       return;
     }
+    if (state.rewindPicker) {
+      dispatch({ type: "rewind_picker_cursor_moved", delta: -1 });
+      return;
+    }
     if (state.slashPaletteOpen) {
       dispatch({ type: "slash_palette_cursor_moved", delta: -1 });
       return;
@@ -1888,6 +1915,7 @@ export function TuiApp({
   }, [
     state.slashPaletteOpen,
     state.sessionPickerOpen,
+    state.rewindPicker,
     state.themePickerOpen,
     state.themePickerCursor,
   ]);
@@ -1914,6 +1942,10 @@ export function TuiApp({
       }
       return;
     }
+    if (state.rewindPicker) {
+      dispatch({ type: "rewind_picker_cursor_moved", delta: 1 });
+      return;
+    }
     if (state.slashPaletteOpen) {
       dispatch({ type: "slash_palette_cursor_moved", delta: 1 });
       return;
@@ -1924,6 +1956,7 @@ export function TuiApp({
     state.sessionPickerOpen,
     state.sessionPickerCursor,
     state.sessionPickerList,
+    state.rewindPicker,
     state.themePickerOpen,
     state.themePickerCursor,
     callbacks,
@@ -2505,6 +2538,14 @@ export function TuiApp({
                       cursor={state.sessionPickerCursor}
                       currentSessionId={state.session.sessionId}
                       morePages={state.recentSessionsMorePages}
+                    />
+                  </Box>
+                ) : null}
+                {state.rewindPicker ? (
+                  <Box flexShrink={0}>
+                    <RewindPicker
+                      points={state.rewindPicker.points}
+                      cursor={state.rewindPicker.cursor}
                     />
                   </Box>
                 ) : null}

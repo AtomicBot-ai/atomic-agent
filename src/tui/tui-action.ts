@@ -35,6 +35,7 @@ import type {
 } from "./tui-state.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { SessionUsageState } from "../session/usage-meter.js";
+import type { RewindPoint } from "../session/session-rewind.js";
 
 /**
  * Every action the reducer knows how to fold into `TuiState`. All side
@@ -167,6 +168,12 @@ export type TuiAction =
   /** Open the mode menu, seeded on the mode currently in force. */
   /** Put the drafted plan away without running it or leaving plan mode. */
   | { type: "plan_handoff_dismissed" }
+  /** `/rewind` (ATO-1057): show the chat's earlier questions, newest first. */
+  | { type: "rewind_picker_opened"; points: readonly RewindPoint[] }
+  | { type: "rewind_picker_closed" }
+  | { type: "rewind_picker_cursor_moved"; delta: 1 | -1 }
+  /** Put the rewind picker highlight on an absolute row (mouse click). */
+  | { type: "rewind_picker_cursor_set"; row: number }
   | { type: "coding_mode_menu_opened" }
   | { type: "coding_mode_menu_closed" }
   | { type: "coding_mode_menu_cursor_moved"; delta: number }
