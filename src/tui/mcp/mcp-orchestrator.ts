@@ -10,6 +10,7 @@
 
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import { getConfig } from "../../config/index.js";
+import { describeUnfilledPlaceholders } from "../../mcp/mcp-catalog.js";
 import type { McpServerConfig } from "../../mcp/mcp-types.js";
 import type { TuiEventBusEmitter } from "../make-event-bus.js";
 import {
@@ -140,6 +141,13 @@ export class McpOrchestrator {
 
   private async addServerFromJsonAsync(json: string): Promise<void> {
     this.bus.emit({ type: "mcp_add_submitting_started" });
+    // ATO-1131: a catalog pick leaves `<your ...>` placeholders for keys
+    // and paths; never write one to config as if it were the value.
+    const unfilled = describeUnfilledPlaceholders(json);
+    if (unfilled !== null) {
+      this.bus.emit({ type: "mcp_add_validation_failed", error: unfilled });
+      return;
+    }
     let parsed;
     try {
       parsed = parseAddServerJson(json);
