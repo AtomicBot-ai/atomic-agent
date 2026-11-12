@@ -4,6 +4,10 @@ description: Manage Apple Notes via the `memo` CLI on macOS — create, view, se
 version: 1.2.2
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "memo"
+install:
+  darwin: "brew install antoniorodr/memo/memo"
 dangerous: false
 platforms:
   - darwin

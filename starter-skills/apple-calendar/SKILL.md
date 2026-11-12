@@ -4,6 +4,10 @@ description: Read macOS Calendar events via the `icalBuddy` CLI and create event
 version: 1.1.2
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "icalBuddy"
+install:
+  darwin: "brew install ical-buddy"
 dangerous: false
 platforms:
   - darwin

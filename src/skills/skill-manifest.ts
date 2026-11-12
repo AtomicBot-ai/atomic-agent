@@ -1,4 +1,5 @@
 import { parse as parseYaml } from "yaml";
+import { parseSkillBins, type SkillInstallHints } from "./skill-bins.js";
 
 export type SkillPlatform = "darwin" | "linux" | "win32";
 
@@ -32,6 +33,14 @@ export interface SkillManifest {
   compatibility?: string;
   metadata?: Record<string, string>;
   allowedTools?: string[];
+  /**
+   * ATO-526: external programs the skill runs (`requires_bins`, or an
+   * OpenClaw `metadata.openclaw.requires.bins`) and the install line per
+   * platform to show when one is missing. Display only: the desktop looks
+   * the names up on PATH, nothing is installed or run from here.
+   */
+  requiresBins?: string[];
+  installHints?: SkillInstallHints;
 }
 
 export interface ParsedSkillFile {
@@ -184,6 +193,7 @@ function validateManifest(raw: unknown, compatible = false): SkillManifest {
   if (metadata) manifest.metadata = metadata;
   const allowed = allowedToolsList(obj["allowed-tools"] ?? obj.allowed_tools);
   if (allowed) manifest.allowedTools = allowed;
+  Object.assign(manifest, parseSkillBins(obj));
   return manifest;
 }
 

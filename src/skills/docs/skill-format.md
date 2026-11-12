@@ -30,6 +30,10 @@ requires_tools:                  # informational list of tools the skill expects
   - browser.read_aria
 requires_scripts:                # only these names may be invoked via skill.run_script
   - fetch-headers.sh
+requires_bins:                   # optional: external programs the skill runs ("a|b" = either one)
+  - gh
+install:                         # optional: install line shown when one is missing (or one string)
+  darwin: "brew install gh"
 dangerous: true                  # if true, marks the skill as dangerous (for human readers)
 ---
 ```
@@ -39,6 +43,7 @@ Validation:
 - `name` matches `^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$`.
 - All fields are strictly typed; lists must contain non-empty strings.
 - Unknown keys are ignored (forward-compat), but invalid types are an error.
+- `requires_bins` and `install` are display-only and never fail a manifest: names that are not bare program names (no `/`, no spaces) and hints over 200 characters are dropped. The desktop's Settings > Skills looks each name up on the app's PATH and shows "needs program gh, not found" with the `install` line for the current platform (`darwin`, `linux`, `win32`, or `any`). A ClawHub/OpenClaw skill's `metadata.openclaw.requires.bins` and `install` (`kind: brew` formula, `kind: node` package) are read when these keys are absent.
 
 ## Install locations
 

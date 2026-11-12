@@ -5,6 +5,12 @@ version: 1.0.1
 requires_tools:
   - os.shell.run
   - os.fs.read_document
+requires_bins:
+  - "pdfinfo"
+  - "qpdf"
+install:
+  darwin: "brew install qpdf poppler"
+  linux: "apt-get install qpdf poppler-utils"
 dangerous: false
 ---
 

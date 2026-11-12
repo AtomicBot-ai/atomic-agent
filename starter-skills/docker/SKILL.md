@@ -4,6 +4,10 @@ description: Manage Docker containers, images, volumes, and Compose stacks via t
 version: 1.0.1
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "docker"
+install:
+  darwin: "brew install --cask docker"
 dangerous: true
 ---
 

@@ -4,6 +4,10 @@ description: Manage Apple Reminders via the `remindctl` CLI on macOS — list, a
 version: 1.2.2
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "remindctl"
+install:
+  darwin: "brew install steipete/tap/remindctl"
 dangerous: false
 platforms:
   - darwin
