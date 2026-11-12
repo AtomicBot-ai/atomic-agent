@@ -182,6 +182,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // The live plan (ATO-486): writes only the session's own record, so it
   // batches with anything; the step commit applies results in order.
   "plan.update": "pure_read",
+  // ATO-1137: writes one new file in the working folder and asks
+  // nothing; serialised with the other file writes of a batch.
+  "canvas.render": "fs_write",
   "tool.search": "pure_read",
   "skill.run_script": "approval_gated",
 

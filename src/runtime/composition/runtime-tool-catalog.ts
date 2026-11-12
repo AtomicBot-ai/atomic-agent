@@ -30,6 +30,7 @@ import { resolveGithubToken } from "../../github/index.js";
 import { registerSkillTools } from "../../tools/skill/index.js";
 import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { planUpdateTool } from "../../tools/plan/index.js";
+import { buildCanvasRenderTool } from "../../tools/canvas/index.js";
 import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
 import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
@@ -214,6 +215,9 @@ export function registerRuntimeCoreTools(input: {
   // it reads the same live descriptor list.
   // The live checklist (ATO-486): pure, always on, no approval.
   toolRegistry.register(planUpdateTool);
+  // ATO-1137: a chart or HTML page saved as a new file in the working
+  // folder and shown in the chat as a canvas. Always on, asks nothing.
+  toolRegistry.register(buildCanvasRenderTool());
   // Older stored names stay out of the prompt until checked against actual
   // user messages. The background walk never deletes facts or blocks boot.
   const nameGroundingSource = sessionGroundingSource(sessionStore);
