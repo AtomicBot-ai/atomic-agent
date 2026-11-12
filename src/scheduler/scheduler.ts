@@ -2,6 +2,7 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { DrainOutcome } from "../tasks/task-runner.js";
 import type { SchedulerLeadership } from "./scheduler-leadership.js";
+import type { KeepAwake } from "./keep-awake.js";
 
 /**
  * Minimal clock surface the scheduler depends on. Production wiring
@@ -54,6 +55,12 @@ export interface SchedulerOptions {
    * `tickOnce()` is never gated — it is an operator asking for a drain.
    */
   leadership?: SchedulerLeadership;
+  /**
+   * Sleep inhibitor (ATO-592). Only its `always` mode acts here: held
+   * from `start()` to `stop()`. `while-working` holds come from the task
+   * runner's drains.
+   */
+  keepAwake?: Pick<KeepAwake, "start" | "stop">;
 }
 
 const DEFAULT_CLOCK: SchedulerClock = {
@@ -108,6 +115,22 @@ export class Scheduler {
       void this.tickOnce();
     };
     this.timer = this.clock.setInterval(handler, this.options.tickMs);
+    this.options.keepAwake?.start();
+  }
+
+  /**
+   * Run a tick now instead of at the next interval: the computer just
+   * woke up (the desktop's `powerMonitor` "resume", ATO-592), so tasks
+   * that fell due while it slept start at once. Unlike `tickOnce` this
+   * respects leadership and does nothing before `start()` or after
+   * `stop()`. Returns whether a tick was started.
+   */
+  poke(): boolean {
+    if (this.timer === null || this.stopping) return false;
+    if (this.running) return false;
+    if (!this.leads()) return false;
+    void this.tickOnce();
+    return true;
   }
 
   /**
@@ -130,6 +153,7 @@ export class Scheduler {
       this.timer = null;
     }
     this.stopController.abort();
+    this.options.keepAwake?.stop();
     try {
       await this.settleInFlight(graceMs);
     } finally {

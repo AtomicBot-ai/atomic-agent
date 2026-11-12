@@ -14,3 +14,15 @@ export type {
   SchedulerLeadership,
   SchedulerLeadershipOptions,
 } from "./scheduler-leadership.js";
+export {
+  createKeepAwake,
+  inhibitorCommand,
+  KEEP_AWAKE_MODES,
+  parseKeepAwakeMode,
+} from "./keep-awake.js";
+export type {
+  InhibitorCommand,
+  KeepAwake,
+  KeepAwakeMode,
+  KeepAwakeOptions,
+} from "./keep-awake.js";

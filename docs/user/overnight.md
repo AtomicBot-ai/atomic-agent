@@ -44,6 +44,18 @@ With `--notify telegram`, the report for a finished task lists **Done**, **Faile
 
 A report is sent when the task ends, even at 3 a.m. To hold reports at night, set `ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS=23:00-08:00` in the agent's environment. Held reports are sent together when the window ends: one held report goes out as a normal report, several come as a morning summary.
 
+## Sleep
+
+If the computer sleeps, a scheduled task that fell due meanwhile runs once when it wakes up (not once for every missed time). To keep the computer from sleeping in the first place, set `ATOMIC_AGENT_TASKS_KEEP_AWAKE` in the agent's environment:
+
+| Value | What it does |
+|---|---|
+| `off` | Default. The computer may sleep; missed tasks catch up on wake. |
+| `while-working` | Keep the computer awake while a background task runs. The screen can still turn off. |
+| `always` | Keep the computer awake for as long as the agent runs. Uses more battery. |
+
+It uses `caffeinate` on macOS and `systemd-inhibit` on Linux (when installed); on Windows it does nothing. Closing a MacBook's lid still puts it to sleep: keep the lid open, or use an external display, for overnight runs.
+
 ## After a crash
 
 Background tasks save a checkpoint after every step. If the agent crashes or is restarted, the task continues from the last finished step instead of starting over. This is on by default (`agent.task.resumeInterrupted`), up to `agent.task.maxResumes` times (default 3); after that the task is marked as given up. Interactive chats are not resumed this way. Resuming a terminal `overnight` run after a crash has not been tested yet, so do not count on it.

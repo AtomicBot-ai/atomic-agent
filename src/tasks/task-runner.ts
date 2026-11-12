@@ -155,6 +155,12 @@ export interface TaskRunnerOptions {
    * instead of run. Omitted (tests, hosts without a gate): no check.
    */
   approvalLevel?: () => number;
+  /**
+   * Sleep inhibitor held while a drain runs (ATO-592,
+   * `tasks.keepAwake`, `src/scheduler/keep-awake.ts`). Absent or `off`:
+   * the computer may sleep mid-task, as before.
+   */
+  keepAwake?: { hold(): () => void };
   metrics?: AgentMetrics;
   /**
    * Test seam for the inter-attempt sleep. Production uses the real
@@ -901,11 +907,16 @@ export class TaskRunner {
     const outcome = emptyOutcome();
     if (tasks.length === 0) return outcome;
     const grouped = groupBySession(tasks);
-    await Promise.all(
-      [...grouped.values()].map((group) =>
-        this.drainSessionGroup(group, signal, outcome),
-      ),
-    );
+    const release = this.options.keepAwake?.hold();
+    try {
+      await Promise.all(
+        [...grouped.values()].map((group) =>
+          this.drainSessionGroup(group, signal, outcome),
+        ),
+      );
+    } finally {
+      release?.();
+    }
     return outcome;
   }
 

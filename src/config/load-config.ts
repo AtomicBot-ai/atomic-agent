@@ -535,6 +535,7 @@ export function loadConfig(): AtomicAgentConfig {
       report: {
         quietHours: readEnv("ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS") ?? null,
       },
+      keepAwake: readEnv("ATOMIC_AGENT_TASKS_KEEP_AWAKE") ?? null,
     },
     statusSnapshot: {
       everySteps: Math.max(

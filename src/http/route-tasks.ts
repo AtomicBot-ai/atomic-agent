@@ -297,6 +297,26 @@ export function createDrainTasksHandler(): HttpHandler {
   };
 }
 
+/**
+ * `POST /api/tasks/wake` — the computer just woke up (ATO-592): run the
+ * scheduler's tick now so tasks that fell due during sleep start at once
+ * instead of at the next interval. The desktop calls it from Electron's
+ * `powerMonitor` "resume". Answers 202 straight away; `started` is false
+ * when another process runs due tasks, a tick is already running, or
+ * this agent has no scheduler.
+ */
+export function createWakeTasksHandler(): HttpHandler {
+  return async (_req, res, ctx) => {
+    if (!ctx.runtime.config.tasks.enabled) {
+      sendError(res, 404, openaiError("tasks subsystem disabled"));
+      return;
+    }
+    const scheduler = ctx.runtime.scheduler;
+    const started = scheduler ? scheduler.poke() : false;
+    sendJson(res, 202, { started, scheduler: scheduler !== null });
+  };
+}
+
 function parseStatusParam(
   raw: string | null,
 ): TaskStatus[] | undefined | "invalid" {
