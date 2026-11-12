@@ -66,6 +66,7 @@ import {
   type DelegateContract,
 } from "./contract.js";
 import { readContractInputs } from "./contract-inputs.js";
+import { parseProvideExample } from "./contract-example.js";
 import {
   FUSION_ROLES,
   type FusionRole,
@@ -385,7 +386,7 @@ function readContract(
   if (value.provides !== undefined && value.provides !== null) {
     if (!Array.isArray(value.provides)) {
       problems.push(
-        "contract.provides must be an array of { task, kind, name, in?, shape? }",
+        "contract.provides must be an array of { task, kind, name, in?, shape?, example? }",
       );
     } else if (value.provides.length > MAX_CONTRACT_PROVIDES) {
       problems.push(
@@ -443,6 +444,8 @@ function readContract(
             : rawShape.length > MAX_PROVIDE_SHAPE_CHARS
               ? `${rawShape.slice(0, MAX_PROVIDE_SHAPE_CHARS - 1)}…`
               : rawShape;
+        const example = parseProvideExample(entry.example, label);
+        if (example.problem !== undefined) problems.push(example.problem);
         if (problems.length > before || kind === null || name === null) {
           continue;
         }
@@ -452,6 +455,7 @@ function readContract(
           name,
           ...(inPath === null ? {} : { in: inPath }),
           ...(shape === null ? {} : { shape }),
+          ...(example.example === undefined ? {} : { example: example.example }),
         });
       }
       if (provides.length > 0) contract.provides = provides;

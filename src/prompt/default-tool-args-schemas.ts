@@ -715,6 +715,12 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
                 // Names match without meanings matching; this is the
                 // only part of a provide that carries semantics.
                 shape: stringSchema,
+                // One small call and a condition over its result `r`,
+                // run after the fan-out (ATO-1362). `page` for browser code.
+                example: obj(
+                  { call: stringSchema, expect: stringSchema, page: stringSchema },
+                  ["call", "expect"],
+                ),
               },
               ["task", "kind", "name"],
             ),
