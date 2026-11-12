@@ -62,6 +62,12 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     argsSchema: "{ ref?: string, fullPage?: boolean }",
   },
   {
+    name: "browser.annotate",
+    summary:
+      "Let the user mark up the open page: start shows an overlay where they click elements and type what to change; read returns each pin's comment, selector, box and styles (crops adds element pictures), grouped by page area; stop removes it.",
+    argsSchema: `{ action: "start" | "read" | "stop", crops?: boolean }`,
+  },
+  {
     name: "os.shell.run",
     summary:
       "Run a shell command in the working directory (may require approval). Not for deleting user files (use os.fs.trash when the user wants paths removed) or for moving, renaming or sorting them into folders (use os.fs.move), or for controlling a web browser (AppleScript, `open -a <browser> <url>`: use the browser tools). To run a command, `cmd` is required: the program, with its arguments in `args`, or a full command line. Run task steps (installs, clones, builds) yourself rather than telling the user to type them; hand over only a step the result says needs the user. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs; `background: true` starts a server or watcher as a kept job at once.",

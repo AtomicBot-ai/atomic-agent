@@ -151,6 +151,42 @@ export interface ScreenshotResult {
   clipped: boolean;
 }
 
+export interface AnnotateStartResult {
+  /** Page the overlay is on. */
+  url: string;
+  /** False when the overlay was already on the page (picking resumed). */
+  started: boolean;
+  /** Pins already placed. */
+  pins: number;
+}
+
+export interface AnnotateReadInput {
+  /** Take a JPEG of each pinned element as well. */
+  crops: boolean;
+  maxCrops: number;
+  /** A crop over this many bytes is dropped. */
+  maxCropBytes: number;
+}
+
+export interface AnnotationCrop {
+  pinId: number;
+  buffer?: Buffer;
+  /** Why there is no picture: `too_large`, `not_visible`, `failed`. */
+  skipped?: string;
+}
+
+export interface AnnotateReadResult {
+  url: string;
+  frameUrls: string[];
+  /** An overlay was started in this document (a navigation drops it). */
+  active: boolean;
+  /** The user can still add pins (they have not pressed Done). */
+  picking: boolean;
+  /** Raw pins as the overlay gave them; `annotate-pins.ts` checks them. */
+  pins: unknown[];
+  crops: AnnotationCrop[];
+}
+
 export interface BrowserBackend {
   /** Lazy init; must be safe to call multiple times. */
   ensureReady(): Promise<void>;
@@ -193,4 +229,13 @@ export interface BrowserBackend {
    * for the capture (passwords already are). Never written to disk here.
    */
   screenshot(input: ScreenshotInput): Promise<ScreenshotResult>;
+  /**
+   * Annotate mode (ATO-518): put the pin overlay on the active page so the
+   * user can click elements and comment on them, read the pins back, or
+   * take the overlay off. Optional: a backend without it cannot annotate.
+   */
+  startAnnotate?(): Promise<AnnotateStartResult>;
+  readAnnotations?(input: AnnotateReadInput): Promise<AnnotateReadResult>;
+  /** Resolves the number of pins dropped. */
+  stopAnnotate?(): Promise<{ url: string; removed: number }>;
 }

@@ -442,6 +442,7 @@ describe("browser tools on a fake backend", () => {
         .map((t) => t.name)
         .sort(),
     ).toEqual([
+      "browser.annotate",
       "browser.click",
       "browser.navigate",
       "browser.read_aria",

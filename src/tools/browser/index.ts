@@ -9,6 +9,7 @@ import { buildBrowserSearchTool } from "./search.js";
 import { buildBrowserTabsTool } from "./tabs.js";
 import { buildBrowserScrollTool } from "./scroll.js";
 import { buildBrowserScreenshotTool } from "./screenshot.js";
+import { buildBrowserAnnotateTool } from "./annotate.js";
 import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
@@ -16,6 +17,10 @@ import {
 import { AriaSnapshotStore } from "./aria-view.js";
 
 export type {
+  AnnotateReadInput,
+  AnnotateReadResult,
+  AnnotateStartResult,
+  AnnotationCrop,
   AriaSnapshot,
   BrowserBackend,
   ClickInput,
@@ -111,6 +116,8 @@ export {
   buildBrowserScreenshotTool,
 } from "./screenshot.js";
 export type { BrowserScreenshotDeps } from "./screenshot.js";
+export { BROWSER_ANNOTATE_TOOL, buildBrowserAnnotateTool } from "./annotate.js";
+export type { BrowserAnnotateDeps } from "./annotate.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
@@ -135,5 +142,6 @@ export function buildBrowserTools(
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
     buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
+    buildBrowserAnnotateTool(backend, policy, dangerous),
   ];
 }
