@@ -76,4 +76,4 @@ Items are split by `;` or one per line, and an item starting with `check:` is a 
 
 ## In the desktop app
 
-Choose **Run overnight** in the composer's + menu, then give a task, a folder and a time limit (8 hours by default, up to 24). A small card in the corner shows the elapsed time and lets you open or stop the run. With Telegram paired, the report goes there. Keep the app open while it runs; closing the chat is fine. For night runs, turn on **Agent > Keep Computer Awake > While Working** so the computer does not sleep mid-run.
+Choose **Run overnight** from the mode chip under the composer's input (it shows **Chat** by default), then give a task, a folder and a time limit (8 hours by default, up to 24). A small card in the corner shows the elapsed time and lets you open or stop the run. With Telegram paired, the report goes there. Keep the app open while it runs; closing the chat is fine. For night runs, turn on **Agent > Keep Computer Awake > While Working** so the computer does not sleep mid-run.
