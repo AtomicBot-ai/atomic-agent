@@ -28354,11 +28354,11 @@ function llmLocalHTML() {
    discoverLocalModels when this build has it, and hidden when it has none
    or found nothing. Use adds the file (useLocalModel), then the lists are
    read again. */
-const LLM_FOUND_FROM = {atomic:'from Atomic Chat', lmstudio:'from LM Studio', huggingface:'from Hugging Face cache', jan:'from Jan', llamacpp:'from llama.cpp', other:'found on disk'};
-function llmFoundLoad() {
+const LLM_FOUND_FROM = {atomic:'from Atomic Agent', lmstudio:'from LM Studio', huggingface:'from Hugging Face cache', jan:'from Jan', llamacpp:'from llama.cpp', other:'found on disk'};
+function llmFoundLoad(fresh) {
   if (!BR || typeof BR.discoverLocalModels !== 'function' || LLMP.foundBusy) return;
   LLMP.foundBusy = true;
-  Promise.resolve().then(() => BR.discoverLocalModels())
+  Promise.resolve().then(() => BR.discoverLocalModels({fresh: fresh === true}))
     .then((r) => { LLMP.found = r && Array.isArray(r.models) ? r.models : []; }, () => { LLMP.found = []; })
     .finally(() => { LLMP.foundBusy = false; llmRepaint(); });
 }
@@ -28383,15 +28383,31 @@ function llmFoundHTML() {
           + (busy ? '<span class="tk-spin"></span>Adding\u2026' : 'Use') + '</button></div>';
       }).join('') + '</div></section>';
 }
+/* Use registers the file and switches to it, so it goes through the switch
+   funnel like every other model pick (SWXBR, swxRun): the composer locks
+   for the restart, and a running turn is refused, not cut off. */
 async function llmFoundUse(i) {
   const m = llmFoundRows()[i];
-  if (!m || !BR || typeof BR.useLocalModel !== 'function' || (LLMP.foundAct && LLMP.foundAct.busy)) return;
-  LLMP.foundAct = {path:m.path, busy:true, error:null}; llmRepaint();
+  if (!m || !BR || typeof BR.useLocalModel !== 'function' || (LLMP.foundAct && LLMP.foundAct.busy) || LLMP.busy) return;
+  const name = m.name || m.path.split(/[\\/]/).pop();
+  LLMP.foundAct = {path:m.path, busy:true, error:null}; LLMP.busy = true; llmRepaint();
   let res = null;
-  try { res = await BR.useLocalModel(m.path); } catch (err) { res = {ok:false, error:String((err && err.message) || err)}; }
-  LLMP.foundAct = res && res.ok ? null : {path:m.path, busy:false, error:(res && res.error) || 'Could not add this model.'};
+  try {
+    res = await swxRun('starting ' + name + '\u2026', {backend:'local'},
+      () => SWXBR.useLocalModel(m.path),
+      (held) => { LLMP.msg = {text:'! ' + llmRestartRefusal(held)}; llmRepaint(); });
+  } catch (err) { res = {ok:false, error:String((err && err.message) || err)}; }
+  LLMP.busy = false;
+  // Refused before anything was written (a turn running, the wait cancelled): nothing changed, nothing to read again.
+  const refused = !!(res && !res.superseded && res.error === 'a turn is running');
+  LLMP.foundAct = (res && (res.ok || res.superseded)) || refused ? null : {path:m.path, busy:false, error:(res && res.error) || 'Could not add this model.'};
+  if (res && res.ok) {
+    bswReport(res);
+    LLMP.msg = {text:name + ' answers chats now.' + (res.daemonLine ? ' ' + res.daemonLine : '')};
+  }
   llmRepaint();
-  if (res && res.ok) { llmRefresh(); llmFoundLoad(); }
+  // Registered now (even when the start failed), or gone from disk: the list is read again, so it drops the row.
+  if (!refused) { llmRefresh(); llmFoundLoad(!(res && (res.ok || res.superseded))); }
 }
 /* The apps you already run (ATO-1418, folded into Local on 13.11): Atomic
    Chat, Ollama, LM Studio and your own llama.cpp server. One place adds

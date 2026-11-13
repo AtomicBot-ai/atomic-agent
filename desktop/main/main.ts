@@ -9962,6 +9962,12 @@ async function isolationAndSwitchTest(
     // call site and this check would never go green.
     .map((n) => [n, (rendererSrc.match(new RegExp(`(?<![\\w$])BR\\.${n}\\(`, "g")) ?? []).length] as const)
     .filter(([, n]) => n !== 1);
+  /* BR.useLocalModel (a model found on this computer) registers and switches,
+     so it is a switch too: named once in the funnel. The setup's
+     `registerOnly` call only adds the entry (its own pull starts the model)
+     and is the one exception. */
+  const useLocal = [...rendererSrc.matchAll(/(?<![\w$])BR\.useLocalModel\(([^)]*)\)/g)].filter((m) => !/registerOnly:\s*true/.test(m[1] ?? "")).length;
+  if (useLocal !== 1) onceOnly.push(["useLocalModel", useLocal]);
   check(
     "switch coverage: every switch goes through the wrapper",
     stray.length === 0 && onceOnly.length === 0 && swxRanges.length >= 12,
