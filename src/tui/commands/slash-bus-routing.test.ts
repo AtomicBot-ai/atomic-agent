@@ -79,6 +79,14 @@ const CALLBACK_ONLY_TYPES: readonly string[] = [
 ];
 
 /**
+ * Types a bus listener only watches without acting on them: the
+ * reducer renders them, so dispatching one is not dead. The interview
+ * invite (ATO-1467) watches `system_message` warnings on the bus to
+ * keep its startup line away after an error.
+ */
+const OBSERVED_ONLY_TYPES: ReadonlySet<string> = new Set(["system_message"]);
+
+/**
  * Every registered command bare, plus the argument shapes the handler
  * branches on. Add a line here when a command grows a new verb.
  */
@@ -127,16 +135,22 @@ const SLASH_INPUTS: readonly string[] = [
 function allCallbacks(): TuiAppCallbacks {
   // Every callback exists and does nothing: the guard is about what
   // reaches `dispatch`, not about what the callbacks do.
+  // `/edit` (ATO-655) reads the editor's result, so that one callback
+  // answers with a closed-unchanged editor.
   return new Proxy({} as TuiAppCallbacks, {
-    get: () => vi.fn(),
+    get: (_target, key) =>
+      key === "onExternalEditorRequested"
+        ? vi.fn(() => ({ kind: "unchanged", editor: "vi" }))
+        : vi.fn(),
   });
 }
 
 describe("slash commands never dispatch a bus-only action", () => {
-  const busTypes = new Set([
-    ...busHandledActionTypes(),
-    ...CALLBACK_ONLY_TYPES,
-  ]);
+  const busTypes = new Set(
+    [...busHandledActionTypes(), ...CALLBACK_ONLY_TYPES].filter(
+      (type) => !OBSERVED_ONLY_TYPES.has(type),
+    ),
+  );
 
   it("finds the orchestrator bus handlers it is guarding", () => {
     // If the scan stops matching, the guard below passes vacuously.
