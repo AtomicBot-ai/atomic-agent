@@ -139,6 +139,14 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionNew).toBe(false);
   });
 
+  it("signals triggerRewindPicker for /rewind (ATO-1057)", () => {
+    const result = dispatchSlashCommand("/rewind");
+    expect(result.triggerRewindPicker).toBe(true);
+    expect(result.triggerSessionPicker).toBe(false);
+    expect(result.clearBuffer).toBe(true);
+    expect(result.systemMessage).toBeUndefined();
+  });
+
   it("signals triggerSessionNew for /new", () => {
     const result = dispatchSlashCommand("/new");
     expect(result.triggerSessionNew).toBe(true);

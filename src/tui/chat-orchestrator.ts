@@ -26,6 +26,11 @@ import {
   planLastTurnRollback,
   type LastTurnRollbackOptions,
 } from "../session/session-truncate.js";
+import {
+  listRewindPoints,
+  planRewind,
+  type RewindRefusal,
+} from "../session/session-rewind.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
 import {
@@ -1552,6 +1557,85 @@ export class ChatOrchestrator {
   }
 
   /**
+   * `/rewind` (ATO-1057): open the picker of the chat's earlier
+   * questions. Refused while anything could still write the session,
+   * under the same rule as {@link rollbackLastTurn}.
+   */
+  openRewindPicker(): void {
+    const session = this.session;
+    if (this.quitting) return;
+    if (this.rewindBusy()) {
+      this.bus.emit({ type: "system_message", text: rewindRefusalText("turn_in_progress") });
+      return;
+    }
+    const points = session ? listRewindPoints(session) : [];
+    if (points.length === 0) {
+      this.bus.emit({ type: "system_message", text: rewindRefusalText("nothing_to_rewind") });
+      return;
+    }
+    this.bus.emit({ type: "rewind_picker_opened", points });
+  }
+
+  /**
+   * Take the chat back to just before the question at `turnIndex`
+   * (ATO-1057): that question and everything after it leave the session
+   * this orchestrator holds and the store, the transcript is rebuilt
+   * from what is left, and the question goes back in the composer to be
+   * edited and sent again. Only the conversation moves: files the agent
+   * changed stay as they are, and the note says so.
+   */
+  rewindTo(turnIndex: number, expectText: string): void {
+    const session = this.session;
+    if (this.quitting || !session) return;
+    if (this.rewindBusy()) {
+      this.bus.emit({ type: "system_message", text: rewindRefusalText("turn_in_progress") });
+      return;
+    }
+    const plan = planRewind(session, turnIndex, expectText);
+    if (!plan.ok) {
+      this.bus.emit({ type: "system_message", text: rewindRefusalText(plan.code) });
+      return;
+    }
+    // A compaction started on this chat would summarise the rows removed.
+    this.runtime.cancelSessionCompaction?.(session.id);
+    this.session = plan.state;
+    // Saved, not only held: `/resume` and the rail read the store, and a
+    // restart must not bring the removed turns back.
+    this.runtime.sessionStore.save(plan.state);
+    this.runtime.sessionStore.clearTurnProgress(session.id);
+    // Same re-emit a re-attach uses: the reducer rebuilds the transcript
+    // from the turns that are left.
+    this.bus.emit({
+      type: "session_switched",
+      sessionId: plan.state.id,
+      workingDir: plan.state.workingDir,
+      messages: turnsToMessages(plan.state.turns),
+      ...(plan.state.plan ? { plan: plan.state.plan } : {}),
+      ...(plan.state.sessionUsage ? { sessionUsage: plan.state.sessionUsage } : {}),
+    });
+    this.bus.emit({ type: "input_changed", value: plan.text });
+    this.bus.emit({
+      type: "system_message",
+      text: "Rewound: that message and everything after it were removed from this chat. It is back in the composer to edit and send. Files the agent changed were not restored.",
+    });
+    this.refreshRecentSessions();
+  }
+
+  /** Anything that could still write this chat's session or its tail. */
+  private rewindBusy(): boolean {
+    const session = this.session;
+    if (!session) return false;
+    return (
+      this.currentController !== null ||
+      this.queue.length > 0 ||
+      this.composerRoutePending ||
+      this.pendingCompactions.has(session.id) ||
+      this.waitingModelMessages.has(session.id) ||
+      this.runtime.turnController.isBusy(session.id)
+    );
+  }
+
+  /**
    * Re-publish the pending-message queue to the TUI. The orchestrator is
    * the source of truth — the reducer mirrors this list rather than
    * tracking pushes and drains on its own, so an optimistic UI insert can
@@ -2163,4 +2247,18 @@ function toPickerEntry(row: SessionSummary): SessionPickerEntry {
     preview: preview.length > 0 ? preview : "(empty)",
     pinned: false,
   };
+}
+
+/** The chat line for a `/rewind` that did not happen (ATO-1057). */
+export function rewindRefusalText(code: RewindRefusal): string {
+  switch (code) {
+    case "turn_in_progress":
+      return "Can't rewind while the agent is working or messages are waiting. Stop it or let it finish, then try /rewind again.";
+    case "nothing_to_rewind":
+      return "Nothing to rewind: this chat has no earlier messages of yours.";
+    case "point_compacted":
+      return "Can't rewind to that message: it is inside the part of the chat that was already compacted into a summary.";
+    case "point_mismatch":
+      return "The chat changed since the list was opened. Run /rewind again.";
+  }
 }
