@@ -58,6 +58,8 @@ import type {
   PageActionInput,
   PageActionResult,
   RefDescription,
+  RenderHtmlInput,
+  RenderHtmlResult,
   ScreenshotInput,
   ScreenshotResult,
   ScrollInput,
@@ -156,6 +158,8 @@ export class PlaywrightBackend implements BrowserBackend {
   private ready: Promise<void> | null = null;
   /** `"user-chrome"`: the tabs the agent opened, oldest first, active last. */
   private readonly ownedPages = new Set<Page>();
+  /** Throwaway tabs `renderHtml` has open; never the model's active page. */
+  private readonly renderPages = new Set<Page>();
   private userProfile = false;
   private openedRemoteDebugging = false;
   /**
@@ -423,6 +427,46 @@ export class PlaywrightBackend implements BrowserBackend {
     return callSiteToolOnPage(await this.requireActivePage(), input);
   }
 
+  async renderHtml(input: RenderHtmlInput): Promise<RenderHtmlResult> {
+    // The user's own Chrome holds their signed-in sessions: a background
+    // read there is reading their account, which only the browser.*
+    // tools (with their per-site prompts) may do.
+    if (this.options.connect === "user-chrome") {
+      throw new Error("renderHtml is not available in the user's own Chrome");
+    }
+    const context = await this.requireContext();
+    const page = await context.newPage();
+    this.renderPages.add(page);
+    const deadline = Date.now() + Math.max(1_000, input.timeoutMs);
+    try {
+      await page.goto(input.url, {
+        waitUntil: "domcontentloaded",
+        timeout: Math.max(1_000, input.timeoutMs),
+      });
+      await page
+        .waitForLoadState("networkidle", {
+          timeout: Math.max(0, Math.min(5_000, deadline - Date.now())),
+        })
+        .catch(() => undefined);
+      let html = await page.content();
+      // A JavaScript challenge solves itself and reloads the page a few
+      // seconds in; poll for that rather than sleeping a fixed time.
+      while (input.isStillWalled?.(html) && Date.now() + 1_000 < deadline) {
+        await page.waitForTimeout(1_000);
+        html = await page.content().catch(() => html);
+      }
+      return {
+        url: page.url(),
+        title: await page.title().catch(() => ""),
+        html,
+        frameUrls: page.frames().map((frame) => frame.url()),
+      };
+    } finally {
+      this.renderPages.delete(page);
+      await page.close().catch(() => undefined);
+    }
+  }
+
   async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {
     const scope = currentBrowserScope();
     if (input.action === "new" && input.profile !== undefined && scope) {
@@ -574,7 +618,7 @@ export class PlaywrightBackend implements BrowserBackend {
     if (context !== this.context) return context.pages();
     const pages = this.userProfile
       ? [...this.ownedPages].filter((page) => !page.isClosed())
-      : context.pages();
+      : context.pages().filter((page) => !this.renderPages.has(page));
     const owner = callerWorkerId();
     return pages.filter((page) => this.pageOwners.get(page) === owner);
   }

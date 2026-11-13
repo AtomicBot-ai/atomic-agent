@@ -22,7 +22,7 @@ import { resolveExtraApiKeys } from "../../config/resolve-llm-api-key.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
-import { buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
+import { buildBrowserPageRenderer, buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
 import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
@@ -156,6 +156,25 @@ export function createRuntimeToolRegistry(
   return toolRegistry;
 }
 
+/**
+ * The `os.web.fetch` browser step (ATO-968): only the agent's own
+ * browser, only when the browser tools are on, under the same domain
+ * lists. The user's own Chrome is never read in the background.
+ */
+function webFetchRenderer(
+  config: AtomicAgentConfig,
+  backend: BrowserBackend | undefined,
+): { webFetchRenderPage?: ReturnType<typeof buildBrowserPageRenderer> } {
+  if (backend === undefined || !config.browser.enabled) return {};
+  if (config.browser.connect === "user-chrome") return {};
+  return {
+    webFetchRenderPage: buildBrowserPageRenderer(backend, {
+      blockedDomains: config.browser.blockedDomains,
+      allowedDomains: config.browser.allowedDomains,
+    }),
+  };
+}
+
 export function registerRuntimeCoreTools(input: {
   config: AtomicAgentConfig;
   toolRegistry: ToolRegistry;
@@ -169,6 +188,8 @@ export function registerRuntimeCoreTools(input: {
   skillRegistry: SkillRegistry;
   /** Where the user adds an Exa key, for the web-search error (ATO-345). */
   webSearchKeyHelp?: WebSearchKeyHelp;
+  /** The agent's browser, for the `os.web.fetch` bot-wall step (ATO-968). */
+  browserBackend?: BrowserBackend;
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
   const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, resolvePreviousReply, declaredInputs,
     shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger,
@@ -205,6 +226,7 @@ export function registerRuntimeCoreTools(input: {
     },
     shellJobs,
     ...(webSearchKeyHelp === undefined ? {} : { webSearchKeyHelp }),
+    ...webFetchRenderer(config, input.browserBackend),
   });
   // Computer use (ATO-525): screenshot, click, type, key — macOS only and
   // opt-in (`tools.screen.enabled`, default off). A screenshot asks as

@@ -28,6 +28,8 @@ export type {
   PageActionName,
   PageActionResult,
   RefDescription,
+  RenderHtmlInput,
+  RenderHtmlResult,
   ScreenshotInput,
   ScreenshotResult,
   ScrollDirection,
@@ -134,6 +136,8 @@ export { requireUserSite, userSiteCleared, UserSiteApprovals } from "./user-prof
 export { buildBrowserSearchTool } from "./search.js";
 export { buildBrowserTabsTool } from "./tabs.js";
 export { buildBrowserScrollTool } from "./scroll.js";
+export { buildBrowserPageRenderer } from "./render-page.js";
+export type { BrowserPageRenderer, RenderedPage } from "./render-page.js";
 export {
   BROWSER_SCREENSHOT_TOOL,
   BROWSER_SHOT_DIR,

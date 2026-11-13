@@ -807,6 +807,7 @@ describe("os.web.fetch against a bot wall", () => {
       lookup: publicLookup,
       config: USER_CONFIG_DEFAULTS as never,
       sleep: fakeSleep().sleep,
+      env: {},
     });
   }
 
@@ -832,6 +833,58 @@ describe("os.web.fetch against a bot wall", () => {
     expect(result.status).toBe("error");
     expect(result.details.retryWith).toBe("browser.navigate");
     expect(result.summary).toContain("do not re-fetch");
+  });
+
+  it("renders a walled page in the agent's browser and says so (ATO-968)", async () => {
+    const rendered: string[] = [];
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({ body: CHALLENGE, status: 403, contentType: "text/html" }),
+      })),
+      lookup: publicLookup,
+      config: USER_CONFIG_DEFAULTS as never,
+      sleep: fakeSleep().sleep,
+      env: {},
+      renderPage: async ({ url }) => {
+        rendered.push(url);
+        return { finalUrl: url, title: "Doc", html: ARTICLE };
+      },
+    });
+    const result = await tool.run({ url: "https://example.com/a" }, ctx());
+    expect(rendered).toEqual(["https://example.com/a"]);
+    expect(result.status).toBe("ok");
+    expect(result.details.readVia).toBe("browser");
+    expect(result.details.status).toBe(200);
+    expect(result.summary).toContain("agent's own browser");
+    expect(result.summary).toContain("first paragraph");
+    expect(result.summary).not.toContain("Just a moment");
+  });
+
+  it("keeps the wall error, listing what it tried, when no step gets through", async () => {
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({ body: CHALLENGE, status: 403, contentType: "text/html" }),
+      })),
+      lookup: publicLookup,
+      config: USER_CONFIG_DEFAULTS as never,
+      sleep: fakeSleep().sleep,
+      env: {},
+      renderPage: async ({ url }) => ({ finalUrl: url, title: "", html: CHALLENGE }),
+    });
+    const result = await tool.run({ url: "https://example.com/a" }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.details.retryWith).toBe("browser.navigate");
+    expect(result.details.ladderAttempts).toEqual(["browser: still a challenge page"]);
+    expect(result.summary).toContain("Also tried: browser: still a challenge page");
+  });
+
+  it("reports readVia curl for a page read on the first step", async () => {
+    const result = await toolReturning(200, ARTICLE).run(
+      { url: "https://example.com/a" },
+      ctx(),
+    );
+    expect(result.details.readVia).toBe("curl");
+    expect(result.summary).not.toContain("[os.web.fetch:");
   });
 
   it("leaves an ordinary page alone", async () => {

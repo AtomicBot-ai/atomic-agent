@@ -106,6 +106,11 @@ One honest, fixed identity for the browser the agent launches and for the curl t
 - `browser.workerIsolation`: `"tabs"` (default) keeps the workers in the agent's profile, with its logins; `"context"` gives each worker its own throwaway browser context (no cookies or logins shared). In your own Chrome workers always use tabs.
 - `browser.maxTabs` (default 8, 1 to 50) caps the tabs the agent has open at once, throwaway profiles and workers included. One more fails with a plain error naming the setting, until a tab closes. Pop-ups a page opens are not refused.
 
+
+## Rendering for os.web.fetch
+
+`renderHtml` (`playwright-backend.ts`) and `render-page.ts` serve the `os.web.fetch` page-read ladder (ATO-968): a page that answered curl with a bot wall is loaded in a throwaway tab of the agent's own browser, its rendered HTML read once the challenge has cleared (polled, at most the fetch timeout) and the tab closed. The tab is left out of the tab list and is never the active page. It is not available with `browser.connect: "user-chrome"`, and the domain lists apply as for `browser.navigate` (a host outside a non-empty allow-list is skipped, not asked about).
+
 ## Your own Chrome
 
 `browser.connect: "user-chrome"` in config.json (opt-in; default `"agent"`, the agent's own profile). The agent then works in the user's signed-in Chrome (`attach-user-chrome.ts`, `user-chrome-endpoint.ts`):

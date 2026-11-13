@@ -229,6 +229,28 @@ export interface SiteToolCallResult {
   message?: string;
 }
 
+export interface RenderHtmlInput {
+  url: string;
+  /** Overall budget for loading the page and waiting out a wall. */
+  timeoutMs: number;
+  /**
+   * Polled with the page HTML once it has loaded: `true` means the page
+   * is still a bot-protection interstitial, so the backend waits a second
+   * and reads again until `timeoutMs` runs out.
+   */
+  isStillWalled?: (html: string) => boolean;
+}
+
+export interface RenderHtmlResult {
+  /** Where the page ended up after redirects and challenge reloads. */
+  url: string;
+  title: string;
+  /** Serialised DOM after JavaScript ran (`page.content()`). */
+  html: string;
+  /** URL of every frame, so the caller can apply the domain lists. */
+  frameUrls: string[];
+}
+
 export interface BrowserBackend {
   /** Lazy init; must be safe to call multiple times. */
   ensureReady(): Promise<void>;
@@ -285,4 +307,12 @@ export interface BrowserBackend {
   listSiteTools?(input: SiteToolsListInput): Promise<SiteToolsListing>;
   /** Run one of those tools in the page. Never asks; the tool gates it. */
   callSiteTool?(input: SiteToolCallInput): Promise<SiteToolCallResult>;
+  /**
+   * Load `url` in a throwaway tab of the agent's own browser, return the
+   * rendered HTML and close the tab (ATO-968, `os.web.fetch` past a bot
+   * wall). The tab never becomes the model's active page. Optional: a
+   * backend without it (or the user's own Chrome) is skipped by the
+   * fetch ladder.
+   */
+  renderHtml?(input: RenderHtmlInput): Promise<RenderHtmlResult>;
 }
