@@ -1,4 +1,5 @@
 import { Menu, shell, type MenuItemConstructorOptions } from "electron";
+import { KEEP_AWAKE_LABELS, KEEP_AWAKE_LID_NOTE, KEEP_AWAKE_MODES, type KeepAwakeMode } from "./keep-awake.js";
 
 /**
  * The native menu bar.
@@ -16,6 +17,8 @@ export function buildMenu(send: (command: string) => void, toggles: MenuToggles 
 export interface MenuToggles {
   keepRunning: boolean;
   startAtLogin: boolean;
+  /** ATO-592: Keep Computer Awake; absent reads as off. */
+  keepAwake?: KeepAwakeMode;
 }
 const NO_TOGGLES: MenuToggles = { keepRunning: false, startAtLogin: false };
 
@@ -173,6 +176,20 @@ export function menuTemplate(
            the menu bar icon there. */
         { label: "Keep Running After the Window Closes", type: "checkbox", checked: toggles.keepRunning, click: () => send("bg:keepRunning") },
         { label: "Start at Login", type: "checkbox", checked: toggles.startAtLogin, click: () => send("bg:startAtLogin") },
+        /* ATO-592: main's own (`awake:*`, keep-awake.ts); off by default. */
+        {
+          label: "Keep Computer Awake",
+          submenu: [
+            ...KEEP_AWAKE_MODES.map((mode): MenuItemConstructorOptions => ({
+              label: KEEP_AWAKE_LABELS[mode],
+              type: "radio",
+              checked: (toggles.keepAwake ?? "off") === mode,
+              click: () => send(`awake:${mode}`),
+            })),
+            sep,
+            { label: KEEP_AWAKE_LID_NOTE, enabled: false },
+          ],
+        },
       ],
     },
     mac

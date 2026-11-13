@@ -1462,6 +1462,41 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-592: how many tasks the agent is running now (`GET /api/tasks?status=running`),
+   * for Keep Computer Awake. Null when the agent did not answer.
+   */
+  async runningTaskCount(): Promise<number | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/tasks?status=running`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { tasks?: unknown };
+      return Array.isArray(body.tasks) ? body.tasks.length : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ATO-592: the computer just woke up; ask the agent to run tasks that fell
+   * due during sleep now (`POST /api/tasks/wake`). An agent without the route
+   * answers 404 and simply runs them at its next tick.
+   */
+  async wakeTasks(): Promise<void> {
+    try {
+      await fetch(`${this.base()}/api/tasks/wake`, {
+        method: "POST",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch {
+      /* not running yet, or gone: its own scheduler catches up */
+    }
+  }
+
+  /**
    * ATO-731: move one chat to another folder (`POST /api/sessions/{id}/working-dir`),
    * no restart. `supported: false` on an agent without the route; `busy` while
    * that chat runs a turn. With no stored chat yet (`id` null or unknown) only
