@@ -287,6 +287,7 @@ import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
+import { discoverLocalModels, registerDiscoveredModel } from "./local-models-found.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { AgentMemoryTracker } from "./agent-memory-sample.js";
@@ -2666,6 +2667,31 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:selectLocalModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
     return switched(() => selectLocalModel(id));
+  });
+  /* "If some model was downloaded before, it should just get picked up."
+     The GGUF models already on this computer (local-models-found.ts): our
+     own store and the default ~/.atomic-agent one, LM Studio, the Hugging
+     Face cache, Jan, llama.cpp's cache. Use registers the file where it lies
+     (no copy) and switches to it the way a finished starter download does.
+     `registerOnly`: the setup's Use, which hands the id to its own pull (that
+     pull fetches the llama.cpp runtime first when there is none yet). */
+  ipcMain.handle("cli:discoverLocalModels", (_event, opts: unknown) =>
+    discoverLocalModels({ fresh: !!opts && typeof opts === "object" && (opts as { fresh?: unknown }).fresh === true }));
+  ipcMain.handle("cli:useLocalModel", async (_event, path: unknown, opts: unknown) => {
+    const registerOnly = !!opts && typeof opts === "object" && (opts as { registerOnly?: unknown }).registerOnly === true;
+    const reg = await registerDiscoveredModel(path);
+    if (!reg.ok) return reg;
+    if (registerOnly) return { ok: true, id: reg.id };
+    let id = reg.id;
+    let sw = await switched(() => selectLocalModel(id));
+    // A catalogue folder holding a file the catalogue no longer names: run that file in place.
+    if (!sw.ok && (sw as { needsDownload?: boolean }).needsDownload && reg.wasRegistered && !reg.added) {
+      const again = await registerDiscoveredModel(path, { inPlace: true });
+      if (!again.ok) return again;
+      id = again.id;
+      sw = await switched(() => selectLocalModel(id));
+    }
+    return { ...sw, id };
   });
   ipcMain.handle("cli:useManagedMode", () => useManagedMode());
   // Review fix (item 5): Settings › LLM › External writes mode + url + the

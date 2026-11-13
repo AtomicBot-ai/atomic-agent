@@ -119,6 +119,10 @@ let remoteModels: RemoteModels | null = null;
 export function useRemoteModels(route: RemoteModels | null): void {
   remoteModels = route;
 }
+/** True while the app runs chats on another computer (its models are managed there). */
+export function remoteModelsActive(): boolean {
+  return remoteModels !== null;
+}
 /** Said for a models command while the app runs chats on another computer. */
 export const REMOTE_MODELS_HERE =
   "This app is connected to an agent on another computer: its models are managed there (atag models … on that computer).";
