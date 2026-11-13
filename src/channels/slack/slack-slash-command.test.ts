@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { SlackApiError } from "./slack-api.js";
 import { handleSlackEvent } from "./slack-inbound-handler.js";
 import { handleSlackSlashCommand, type SlackSlashContext } from "./slack-slash-command.js";
 import type { SlackTarget } from "./slack-types.js";
@@ -94,6 +95,29 @@ describe("handleSlackSlashCommand", () => {
       "https://hooks.slack.com/commands/T1/1/x",
       expect.stringMatching(/Only a paired operator/),
     );
+  });
+
+  it("falls back to response_url when the bot is not in the channel", async () => {
+    for (const code of ["not_in_channel", "channel_not_found"]) {
+      const { ctx } = makeCtx();
+      ctx.api.postText = vi.fn(async () => {
+        throw new SlackApiError(code);
+      });
+      await handleSlackSlashCommand(slash("status", { channel_id: "C9" }), ctx);
+      expect(ctx.api.respond).toHaveBeenCalledWith(
+        "https://hooks.slack.com/commands/T1/1/x",
+        expect.stringMatching(/No session here yet\.\n.*Invite <@UBOT> to this channel to get replies here/),
+      );
+    }
+  });
+
+  it("does not use response_url for other posting errors", async () => {
+    const { ctx } = makeCtx();
+    ctx.api.postText = vi.fn(async () => {
+      throw new SlackApiError("ratelimited");
+    });
+    await handleSlackSlashCommand(slash("status", { channel_id: "C9" }), ctx);
+    expect(ctx.api.respond).not.toHaveBeenCalled();
   });
 
   it("refuses everyone when no owner is configured", async () => {
