@@ -1,6 +1,7 @@
 import type { UserSubscriptionCliOptions } from "../../config/llm-config.js";
 import { usesExternalCliAuth } from "../../config/provider-auth-mode.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
+import { isOtherComputerOnNetworkUrl } from "./openai/network-server-address.js";
 import { isLocalProviderUrl } from "./presets/is-local-provider-url.js";
 import { presetForEntryId } from "./presets/provider-presets.js";
 
@@ -22,7 +23,9 @@ import { presetForEntryId } from "./presets/provider-presets.js";
  *     `apiKeyHeader`).
  *  2. `not-needed`: the entry signs in through a vendor CLI, or it is a
  *     local server: made from a `local` preset (LM Studio, Ollama, even on
- *     a LAN address) or pointed at this machine.
+ *     a LAN address), pointed at this machine, or (ATO-1066) a hand-made
+ *     `openai-compatible` entry for a server on another computer on this
+ *     network that declares no key variable of its own.
  *  3. `missing`: it talks to a service that always wants a key and has
  *     none. That is a cloud kind (`openrouter`, `aimlapi`, `gemini`) on
  *     the vendor's own endpoint, an entry that declares its own
@@ -30,7 +33,7 @@ import { presetForEntryId } from "./presets/provider-presets.js";
  *     wizard saves declares one), or an entry made from a cloud preset
  *     that still points at that preset's host.
  *  4. `unverified`: no key, and nothing says whether one is needed. A
- *     hand-made entry for a server on the LAN, a cloud kind behind an
+ *     hand-made entry for a server on a public host, a cloud kind behind an
  *     overridden endpoint (a proxy may hold the key itself), a
  *     `llama-server` entry. Callers that act on a missing key leave these
  *     alone; a check for "ready to serve" does not count them.
@@ -106,6 +109,18 @@ export function providerKeyStatus(
     return { state: "not-needed" };
   }
   const envVar = declaredEnvVar(entry);
+  // ATO-1066: a home server (llama-server, LM Studio, Ollama on the GPU
+  // box) usually has no key. One started with a key answers 401 on the
+  // first request, which names the problem; counting it as unready kept
+  // a working keyless one out of every "ready to serve" check.
+  if (
+    entry.kind === "openai-compatible" &&
+    envVar === null &&
+    preset === undefined &&
+    isOtherComputerOnNetworkUrl(entry.baseUrl)
+  ) {
+    return { state: "not-needed" };
+  }
   const needsKey =
     (KEYED_CLOUD_KINDS.has(entry.kind) && !entry.baseUrl) ||
     envVar !== null ||
