@@ -33,7 +33,7 @@ export interface SlackSocketDeps {
   /** Fresh wss URL; called again on every reconnect (URLs are single-use). */
   openUrl: () => Promise<string>;
   logger: SlackSocketLogger;
-  /** One `events_api` or `interactive` envelope, already acknowledged. */
+  /** One `events_api`, `interactive` or `slash_commands` envelope, already acknowledged. */
   onEnvelope: (envelope: SlackEnvelope) => void;
   /** `hello` received: the connection is live. */
   onReady?: () => void;
@@ -182,6 +182,7 @@ export class SlackSocket {
         return { reason: `Slack asked to reconnect (${envelope.reason ?? "unknown"})`, fatal: false };
       case "events_api":
       case "interactive":
+      case "slash_commands":
         try {
           this.deps.onEnvelope(envelope);
         } catch (err) {
@@ -189,7 +190,7 @@ export class SlackSocket {
         }
         return null;
       default:
-        // `slash_commands` and anything newer: acknowledged, ignored.
+        // Anything newer: acknowledged, ignored.
         return null;
     }
   }

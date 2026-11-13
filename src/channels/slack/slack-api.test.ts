@@ -87,6 +87,24 @@ describe("SlackApi", () => {
   });
 });
 
+describe("SlackApi.respond", () => {
+  it("posts an ephemeral reply to the hooks URL", async () => {
+    const fetchImpl = vi.fn(async () => new Response("ok", { status: 200 }));
+    const { api } = makeApi(fetchImpl);
+    await api.respond("https://hooks.slack.com/commands/T1/1/x", "no");
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://hooks.slack.com/commands/T1/1/x");
+    expect(JSON.parse(String(init.body))).toEqual({ response_type: "ephemeral", text: "no" });
+  });
+
+  it("refuses a response_url that is not Slack's", async () => {
+    const fetchImpl = vi.fn();
+    const { api } = makeApi(fetchImpl);
+    await expect(api.respond("https://evil.example/hook", "x")).rejects.toThrow(/hooks.slack.com/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+});
+
 describe("retryAfterMs", () => {
   it("reads seconds and falls back to one second", () => {
     expect(retryAfterMs("3")).toBe(3000);

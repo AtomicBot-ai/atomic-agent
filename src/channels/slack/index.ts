@@ -17,6 +17,8 @@ export type { SlackSocketDeps } from "./slack-socket.js";
 export { SlackApprovalBridge, approvalBlocks, ACTION_ID_PREFIX } from "./slack-approval-bridge.js";
 export { handleSlackEvent, refOf, stripMention } from "./slack-inbound-handler.js";
 export type { SlackInboundContext, SlackRef } from "./slack-inbound-handler.js";
+export { handleSlackSlashCommand } from "./slack-slash-command.js";
+export type { SlackSlashCommandPayload, SlackSlashContext } from "./slack-slash-command.js";
 export { escapeSlackText, markdownToSlack } from "./slack-format.js";
 export {
   SLACK_APP_TOKEN_KEY,

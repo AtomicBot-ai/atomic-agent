@@ -67,6 +67,16 @@ describe("SlackSocket", () => {
     await socket.stop();
   });
 
+  it("hands slash_commands envelopes on after acking them", async () => {
+    const { socket, sockets, envelopes } = makeSocket();
+    socket.start();
+    await flush();
+    sockets[0]!.frame({ type: "slash_commands", envelope_id: "e3", payload: { command: "/atomic", text: "help" } });
+    expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({ envelope_id: "e3" });
+    expect(envelopes[0]?.type).toBe("slash_commands");
+    await socket.stop();
+  });
+
   it("reports ready on hello", async () => {
     const { socket, sockets, onReady } = makeSocket();
     socket.start();

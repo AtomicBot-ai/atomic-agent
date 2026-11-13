@@ -49,7 +49,7 @@ const SEEN_CAP = 500;
 const HELP_TEXT = [
   "*Atomic Agent on Slack*",
   "DM me, or @mention me in a channel, and I'll act on it. Every DM and every thread is its own conversation.",
-  "Slack keeps `/` for its own commands, so type them with `!` (or after an @mention):",
+  "Commands: `/atomic <command>`, or type them with `!` in a message or thread:",
   "• `!status`: this conversation's session id",
   "• `!new`: start a fresh session here (the current one is archived)",
   "• `!model`: show the provider and model; `!model <provider> [model-id]` switches",
@@ -129,7 +129,7 @@ export function stripMention(text: string, botUserId: string): string {
 }
 
 /** Returns false for an unknown verb, so it goes to the agent as text. */
-async function handleCommand(
+export async function handleCommand(
   verb: string,
   args: string,
   ref: SlackRef,
@@ -181,7 +181,7 @@ async function handleCommand(
   }
 }
 
-async function dispatchToRuntime(text: string, ref: SlackRef, ctx: SlackInboundContext): Promise<void> {
+export async function dispatchToRuntime(text: string, ref: SlackRef, ctx: SlackInboundContext): Promise<void> {
   const session = acquireOrCreateSession(ref, ctx);
   // Bound before any step can ask, so a prompt lands in this thread
   // rather than on a TUI the requester cannot see.

@@ -17,7 +17,8 @@ import { ChatSessionMap } from "../chat-session-map.js";
 import type { WebSocketLike } from "../discord/discord-gateway-transport.js";
 import { SlackApi, SlackApiError } from "./slack-api.js";
 import { SlackApprovalBridge } from "./slack-approval-bridge.js";
-import { handleSlackEvent } from "./slack-inbound-handler.js";
+import { handleSlackEvent, type SlackInboundContext } from "./slack-inbound-handler.js";
+import { handleSlackSlashCommand, type SlackSlashCommandPayload } from "./slack-slash-command.js";
 import { SlackSocket } from "./slack-socket.js";
 import {
   FATAL_SLACK_ERRORS,
@@ -156,10 +157,19 @@ export class SlackChannel implements Channel {
       if (interactive?.type === "block_actions") void this.bridge?.handleBlockActions(interactive);
       return;
     }
+    if (envelope.type === "slash_commands") {
+      const command = envelope.payload as SlackSlashCommandPayload | undefined;
+      if (command) void handleSlackSlashCommand(command, this.inboundContext(api, botUserId));
+      return;
+    }
     const payload = envelope.payload as { event?: SlackMessageEvent } | undefined;
     const event = payload?.event;
     if (!event || typeof event.type !== "string") return;
-    void handleSlackEvent(event, {
+    void handleSlackEvent(event, this.inboundContext(api, botUserId));
+  }
+
+  private inboundContext(api: SlackApi, botUserId: string): SlackInboundContext & { api: SlackApi } {
+    return {
       runtime: this.deps.runtime,
       api,
       sessions: this.sessions,
@@ -171,7 +181,7 @@ export class SlackChannel implements Channel {
       seen: this.seen,
       ensureApprovalSession: (sessionId, target) => this.bindApprovals(sessionId, target),
       releaseApprovalSession: (sessionId) => this.releaseApprovals(sessionId),
-    });
+    };
   }
 
   /** Point approval prompts for `sessionId` at `target`. Idempotent. */

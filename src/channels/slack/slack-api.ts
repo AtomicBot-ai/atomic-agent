@@ -1,7 +1,7 @@
 /**
  * The Slack Web API methods this channel calls, over `fetch`:
  * `auth.test`, `apps.connections.open`, `chat.postMessage`,
- * `chat.update`, `chat.postEphemeral`.
+ * `chat.update`, `chat.postEphemeral`, plus slash-command `response_url` replies.
  *
  * Slack answers HTTP 200 with `{ ok: false, error }` for most failures,
  * so every call checks `ok` and throws a `SlackApiError` carrying the
@@ -119,6 +119,26 @@ export class SlackApi {
       text,
       ...(target.threadTs ? { thread_ts: target.threadTs } : {}),
     });
+  }
+
+  /**
+   * Ephemeral reply to a slash command through its `response_url`.
+   * Only Slack's own hooks host is accepted: the URL comes from the
+   * payload, and the channel must never POST to an arbitrary address.
+   */
+  async respond(responseUrl: string, text: string): Promise<void> {
+    if (!/^https:\/\/hooks\.slack\.com\//.test(responseUrl)) {
+      throw new SlackApiError("bad_response_url", "Slack response_url is not on hooks.slack.com.");
+    }
+    const res = await (this.opts.fetchImpl ?? fetch)(responseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ response_type: "ephemeral", text }),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (!res.ok) {
+      throw new SlackApiError(`http_${res.status}`, `Slack response_url returned HTTP ${res.status}.`);
+    }
   }
 
   private async call(
