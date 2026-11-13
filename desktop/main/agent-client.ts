@@ -1781,6 +1781,47 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-448: continue a chat whose last turn a restart cut off, through the
+   * agent's `POST /api/sessions/{id}/resume`. On success the agent hands back
+   * the continuing message (a note to check before repeating side effects,
+   * then the cut-off request), which the window sends as a normal turn; it is
+   * offered once. `release` gives it back when the window could not send it.
+   * A 409 carries the agent's `code` (`nothing_to_resume`, `turn_in_progress`).
+   * The route's own 404 is an unknown chat; an agent without the route answers
+   * its unknown-route 404 with no code and is reported as unsupported.
+   */
+  async resumeInterruptedTurn(sessionId: string, release = false): Promise<{
+    ok: boolean; supported: boolean; text?: string; code?: string; error?: string;
+  }> {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/resume`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(release ? { release: true } : {}),
+        signal: AbortSignal.timeout(30_000),
+      });
+      let body: { text?: unknown; released?: unknown; error?: { message?: unknown; code?: unknown } } | null = null;
+      try {
+        const raw = await res.text();
+        body = raw ? JSON.parse(raw) : null;
+      } catch {
+        /* not JSON */
+      }
+      const message = typeof body?.error?.message === "string" ? body.error.message : "";
+      const code = typeof body?.error?.code === "string" && body.error.code ? body.error.code : undefined;
+      if (res.status === 404) {
+        if (code === "session_not_found") return { ok: false, supported: true, code, error: "This chat is not saved yet" };
+        return { ok: false, supported: false, error: "This agent cannot continue a reply a restart cut off" };
+      }
+      if (res.ok && release) return { ok: true, supported: true };
+      if (res.ok && typeof body?.text === "string") return { ok: true, supported: true, text: body.text };
+      return { ok: false, supported: true, ...(code ? { code } : {}), error: message || `HTTP ${res.status}` };
+    } catch (err) {
+      return { ok: false, supported: true, error: requestErrorText(err) };
+    }
+  }
+
+  /**
    * Run one turn. Deltas are emitted as `chat` events rather than
    * returned, so the renderer can paint tokens as they arrive.
    */

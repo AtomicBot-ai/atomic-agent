@@ -2489,6 +2489,13 @@ function wireIpc(client: AgentClient): void {
     );
   });
 
+  // ATO-448: "Continue" on a chat a restart cut off; only ever on the person's click.
+  ipcMain.handle("agent:resumeInterruptedTurn", (_event, payload: unknown) => {
+    const { sessionId, release } = (payload ?? {}) as { sessionId?: unknown; release?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
+    return client.resumeInterruptedTurn(sessionId, release === true);
+  });
+
   // Files the agent produced: open, reveal, copy, save elsewhere.
   const safePath = (p: unknown): string | null => {
     // Absolute by this platform's rules: `/x` here, `C:\x` on Windows.
