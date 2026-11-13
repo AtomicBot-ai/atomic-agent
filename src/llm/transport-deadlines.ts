@@ -128,6 +128,13 @@ export function transportDeadlinesFor(config?: AtomicAgentConfig): {
 let installed: { headersTimeout: number; bodyTimeout: number } | null = null;
 
 /**
+ * The loopback pool beside the installed proxy-aware one, if any. A
+ * composed dispatcher closes only its own base, so `renewTransportPool`
+ * closes this one itself.
+ */
+let directPool: Agent | null = null;
+
+/**
  * Install the deadlines for this process. Idempotent and monotone: a
  * later call with smaller numbers is ignored, so a second runtime built
  * in the same process (the HTTP test harness does this) cannot narrow
@@ -219,6 +226,7 @@ export function proxyConfigured(env: NodeJS.ProcessEnv): boolean {
 export function renewTransportPool(): boolean {
   try {
     const previous = getGlobalDispatcher();
+    const previousDirect = directPool;
     const deadlines = installed ?? transportDeadlinesFor();
     setGlobalDispatcher(buildPool(deadlines));
     installed = deadlines;
@@ -227,6 +235,9 @@ export function renewTransportPool(): boolean {
     // it, which is what every live request has.
     if (typeof previous.close === "function") {
       void previous.close().catch(() => undefined);
+    }
+    if (previousDirect !== null) {
+      void previousDirect.close().catch(() => undefined);
     }
     return true;
   } catch {
@@ -237,17 +248,25 @@ export function renewTransportPool(): boolean {
 /**
  * The pool every `fetch` goes through: undici's `Agent` (or the
  * proxy-aware one) with the deadlines above, behind the offline-mode
- * guard (ATO-1084). The guard passes loopback requests untouched and
+ * guard (ATO-1084). The guard passes loopback requests uncounted and
  * only counts the rest while offline mode is off.
  */
 function buildPool(deadlines: {
   headersTimeout: number;
   bodyTimeout: number;
 }): Dispatcher {
-  const base = proxyConfigured(process.env)
-    ? new EnvHttpProxyAgent(deadlines)
-    : new Agent(deadlines);
-  return base.compose(offlineNetworkInterceptor());
+  if (!proxyConfigured(process.env)) {
+    directPool = null;
+    return new Agent(deadlines).compose(offlineNetworkInterceptor());
+  }
+  // With a proxy in the environment, loopback requests made while
+  // offline go on a plain Agent: `EnvHttpProxyAgent` would hand them to
+  // the (remote) proxy unless `no_proxy` names them. See
+  // `offlineNetworkInterceptor`.
+  directPool = new Agent(deadlines);
+  return new EnvHttpProxyAgent(deadlines).compose(
+    offlineNetworkInterceptor(directPool),
+  );
 }
 
 /** Test seam: forget what this process installed. */

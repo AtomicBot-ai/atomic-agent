@@ -195,6 +195,11 @@ export interface MemoryEmbeddingReconnect {
  */
 export interface OfflineModeControl {
   isEnabled(): boolean;
+  /**
+   * Turning on applies before it saves, so it rejects with
+   * `OfflineModePersistError` when only the save failed and the process
+   * is offline anyway. Turning off saves first.
+   */
   setEnabled(enabled: boolean): Promise<void>;
   egress(): EgressSnapshot;
 }

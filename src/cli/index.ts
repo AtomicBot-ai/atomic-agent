@@ -27,6 +27,7 @@ import { dataCommand } from "./data-command.js";
 import { providersCommand } from "./providers-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
+import { applyOfflineModeFromConfigFile } from "./offline-from-config.js";
 import { getAppVersion } from "../version.js";
 import { USER_CONFIG_DEFAULTS } from "../config/index.js";
 
@@ -233,6 +234,10 @@ function userArgsFromArgv(): string[] {
 // config when a command actually builds a runtime. See
 // `installTransportDeadlines`.
 installTransportDeadlines();
+// Offline mode (ATO-1084) for every command, not only those that build a
+// runtime: `update` and the hub commands never do. Read-only, and a
+// missing or broken config.json leaves it off.
+applyOfflineModeFromConfigFile();
 
 async function main(): Promise<number> {
   // Windows only: UTF-8 console code page for this run, restored on exit.

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import { getGlobalDispatcher, setGlobalDispatcher, type Dispatcher } from "undici";
 
 import {
@@ -160,6 +160,45 @@ describe("the installed pool in offline mode", () => {
       expect(egressSnapshot().requestsBlocked).toBe(1);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("never sends loopback traffic to an env proxy while offline", async () => {
+    // Stands in for a remote proxy: it must see nothing. It answers 502
+    // so a regression fails on the assertion instead of hanging.
+    const proxyConnections: string[] = [];
+    const proxy = net.createServer((socket) => {
+      proxyConnections.push(socket.remoteAddress ?? "?");
+      socket.end("HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\n\r\n");
+    });
+    const target = http.createServer((_req, res) => res.end("local"));
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
+    const proxyPort = (proxy.address() as AddressInfo).port;
+    const targetPort = (target.address() as AddressInfo).port;
+    const keys = [
+      "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
+      "NO_PROXY", "no_proxy", "NODE_USE_ENV_PROXY",
+    ] as const;
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    for (const k of keys) delete process.env[k];
+    process.env.HTTP_PROXY = `http://127.0.0.1:${proxyPort}`;
+    try {
+      setOfflineNetwork(true);
+      installTransportDeadlines();
+      const res = await fetch(`http://127.0.0.1:${targetPort}/`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("local");
+      expect(proxyConnections).toEqual([]);
+      expect(egressSnapshot().requestsOut).toBe(0);
+    } finally {
+      for (const k of keys) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+      target.closeAllConnections();
+      await new Promise<void>((resolve) => target.close(() => resolve()));
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
     }
   });
 });

@@ -6,10 +6,12 @@ import { readJsonBody, sendError, sendJson, type HttpHandler } from "./request-c
  * contract the desktop's Settings › Privacy row reads, ATO-1087).
  *
  * GET answers `{ enabled, egress }`; POST takes `{ enabled: boolean }`,
- * persists `network.offline`, applies it at once and answers the same
- * shape. `egress` is the process's outbound counter: bytes and requests
- * sent to hosts other than this machine, and attempts offline mode
- * refused, since `egress.since`.
+ * applies it at once, persists `network.offline` and answers the same
+ * shape. A failed save while turning it on answers 500 with the process
+ * already offline (GET then reports `enabled: true`). `egress` is the
+ * process's outbound counter: bytes and requests sent to hosts other
+ * than this machine, and attempts offline mode refused, since
+ * `egress.since`.
  */
 export function createGetOfflineModeHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -45,7 +47,14 @@ export function createSetOfflineModeHandler(): HttpHandler {
       await control.setEnabled(body.enabled);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      sendError(res, 500, openaiError(`could not switch offline mode: ${message}`, "server_error"));
+      // Turning it on applies before it saves: a failed save
+      // (OfflineModePersistError) leaves the process offline and says so.
+      const persistOnly = err instanceof Error && err.name === "OfflineModePersistError";
+      sendError(
+        res,
+        500,
+        openaiError(persistOnly ? message : `could not switch offline mode: ${message}`, "server_error"),
+      );
       return;
     }
     sendJson(res, 200, { enabled: control.isEnabled(), egress: control.egress() });

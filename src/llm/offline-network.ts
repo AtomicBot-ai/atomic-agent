@@ -191,14 +191,28 @@ function originHost(origin: Dispatcher.DispatchOptions["origin"]): string | null
 
 /**
  * undici interceptor for the global dispatcher. Loopback requests pass
- * untouched. Others are refused through the handler while offline, and
+ * uncounted. Others are refused through the handler while offline, and
  * counted (`requestsOut`, `bytesOut`) when they are let through.
+ *
+ * `direct` is a plain connection pool that takes loopback requests
+ * while offline. The pool this guards may be `EnvHttpProxyAgent`
+ * (`HTTP_PROXY` / `HTTPS_PROXY` set), which would send a request for
+ * `127.0.0.1` to the proxy: a prompt for the local model would leave
+ * the machine, through a host the guard never sees. So while offline a
+ * loopback request never goes through the proxy-aware pool.
  */
-export function offlineNetworkInterceptor(): Dispatcher.DispatcherComposeInterceptor {
+export function offlineNetworkInterceptor(
+  direct?: Dispatcher,
+): Dispatcher.DispatcherComposeInterceptor {
   return (dispatch) =>
     function offlineNetworkGuard(opts, handler) {
       const host = originHost(opts.origin);
-      if (host !== null && isLoopbackHost(host)) return dispatch(opts, handler);
+      if (host !== null && isLoopbackHost(host)) {
+        if (direct !== undefined && isOfflineNetwork()) {
+          return direct.dispatch(opts, handler);
+        }
+        return dispatch(opts, handler);
+      }
       if (isOfflineNetwork()) {
         requestsBlocked += 1;
         const err = new OfflineNetworkError(host ?? "unknown host");
