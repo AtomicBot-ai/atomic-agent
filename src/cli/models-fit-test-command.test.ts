@@ -112,6 +112,20 @@ describe("runRestoringOnStop (ATO-1498)", () => {
   });
 });
 
+describe("runRestoringOnStop after the run settled (ATO-1498)", () => {
+  it("a signal during the normal restore does not leave a timer that exits later", async () => {
+    const target = new EventEmitter();
+    const exit = vi.fn();
+    const restore = vi.fn(async (_stopped: boolean) => void target.emit("SIGTERM"));
+    const outcome = await runRestoringOnStop(async () => "done", restore, { target, exit, write: () => {}, graceMs: 5 });
+    expect(outcome).toEqual({ stoppedBy: null, result: "done" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(exit).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledTimes(1);
+    expect(target.listenerCount("SIGINT") + target.listenerCount("SIGTERM")).toBe(0);
+  });
+});
+
 describe("callOnce", () => {
   it("runs the function once and hands later calls the same promise", async () => {
     const fn = vi.fn(async (_x: number) => {});

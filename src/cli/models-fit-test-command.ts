@@ -209,6 +209,8 @@ export async function runRestoringOnStop<T>(
     }
     return { stoppedBy: stopped, exitCode: STOP_EXIT_CODE[stopped] };
   } finally {
+    // A signal during the normal path's restore arms a grace timer too; it must not exit later.
+    if (state.graceTimer !== null) clearTimeout(state.graceTimer);
     for (const [signal, listener] of listeners) target.off(signal, listener);
   }
 }
