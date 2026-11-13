@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -124,6 +125,62 @@ describe("POST /api/webhooks/:name", () => {
       expect(res.status).toBe(401);
     }
     expect(harness.runtime.taskStore.list().length).toBe(0);
+  });
+
+  it("verify=stripe accepts Stripe's signature and refuses a tampered body (ATO-625)", async () => {
+    const secret = "whsec_synthetic-stripe-secret";
+    harness = await startTestHarness({
+      webhooks: {
+        pay: { userMessageTemplate: "stripe {{event}} {{delivery}}", secret, verify: "stripe" },
+      },
+    });
+    const body = JSON.stringify({ id: "evt_synthetic", type: "invoice.paid" });
+    const t = Math.floor(Date.now() / 1000);
+    const sig = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
+    const headers = { "content-type": "application/json", "stripe-signature": `t=${t},v1=${sig}` };
+
+    const ok = await fetch(`${harness.baseUrl}/api/webhooks/pay`, { method: "POST", headers, body });
+    expect(ok.status).toBe(202);
+    const { taskId } = (await ok.json()) as { taskId: string };
+    expect(harness.runtime.taskStore.get(taskId)?.userMessage).toBe("stripe invoice.paid evt_synthetic");
+
+    const tampered = await fetch(`${harness.baseUrl}/api/webhooks/pay`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ id: "evt_synthetic", type: "invoice.voided" }),
+    });
+    expect(tampered.status).toBe(401);
+    const unsigned = await fetch(`${harness.baseUrl}/api/webhooks/pay`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    });
+    expect(unsigned.status).toBe(401);
+    expect(harness.runtime.taskStore.list().length).toBe(1);
+  });
+
+  it("GET /api/webhooks lists bindings without their secrets (ATO-625)", async () => {
+    harness = await startTestHarness({
+      webhooks: {
+        secure: { userMessageTemplate: "x", secret: "never-shown-0123" },
+        open: { userMessageTemplate: "y", sessionMode: "persistent" },
+      },
+    });
+    const res = await fetch(`${harness.baseUrl}/api/webhooks`);
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("never-shown-0123");
+    const payload = JSON.parse(text) as {
+      tunnel: { state: string };
+      webhooks: Array<Record<string, unknown>>;
+    };
+    expect(payload.tunnel.state).toBe("off");
+    expect(payload.webhooks).toEqual(
+      expect.arrayContaining([
+        { name: "secure", path: "/api/webhooks/secure", hasSecret: true, sessionMode: "ephemeral", publicUrl: null },
+        { name: "open", path: "/api/webhooks/open", hasSecret: false, sessionMode: "persistent", publicUrl: null },
+      ]),
+    );
   });
 
   it("returns 404 for unknown webhook names", async () => {

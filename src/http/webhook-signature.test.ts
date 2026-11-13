@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   STANDARD_WEBHOOKS_TOLERANCE_MS,
+  STRIPE_TOLERANCE_MS,
   standardWebhooksKey,
   verifyGithubSignature,
   verifyStandardWebhook,
+  verifyStripeSignature,
 } from "./webhook-signature.js";
 
 const BODY = Buffer.from(JSON.stringify({ action: "opened", number: 7 }));
@@ -106,5 +108,40 @@ describe("verifyStandardWebhook", () => {
     const ts = String(NOW_MS / 1000 - STANDARD_WEBHOOKS_TOLERANCE_MS / 1000);
     const signature = standardSig(id, ts, BODY);
     expect(verifyStandardWebhook(BODY, { id, timestamp: ts, signature }, STANDARD_SECRET, NOW_MS).ok).toBe(true);
+  });
+});
+
+describe("verifyStripeSignature (ATO-625)", () => {
+  const STRIPE_SECRET = "whsec_synthetic-stripe-secret";
+  const stripeV1 = (t: string, body: Buffer, secret = STRIPE_SECRET): string =>
+    createHmac("sha256", secret).update(`${t}.${body.toString("utf8")}`).digest("hex");
+
+  it("accepts the HMAC of `<t>.<body>` keyed with the secret as text", () => {
+    const header = `t=${NOW_S},v1=${stripeV1(NOW_S, BODY)}`;
+    expect(verifyStripeSignature(BODY, header, STRIPE_SECRET, NOW_MS)).toEqual({ ok: true });
+  });
+
+  it("accepts any one of several v1 entries (secret roll)", () => {
+    const header = `t=${NOW_S},v1=${stripeV1(NOW_S, BODY, "whsec_old")},v1=${stripeV1(NOW_S, BODY)}`;
+    expect(verifyStripeSignature(BODY, header, STRIPE_SECRET, NOW_MS).ok).toBe(true);
+  });
+
+  it("rejects a missing header, a missing or malformed t", () => {
+    expect(verifyStripeSignature(BODY, null, STRIPE_SECRET, NOW_MS)).toEqual({ ok: false, reason: "missing_signature" });
+    expect(verifyStripeSignature(BODY, `v1=${stripeV1(NOW_S, BODY)}`, STRIPE_SECRET, NOW_MS)).toEqual({ ok: false, reason: "missing_headers" });
+    expect(verifyStripeSignature(BODY, "t=soon,v1=00", STRIPE_SECRET, NOW_MS)).toEqual({ ok: false, reason: "bad_timestamp" });
+  });
+
+  it("rejects a timestamp more than 5 minutes off, even when correctly signed", () => {
+    const old = String((NOW_MS - STRIPE_TOLERANCE_MS - 60_000) / 1000);
+    const header = `t=${old},v1=${stripeV1(old, BODY)}`;
+    expect(verifyStripeSignature(BODY, header, STRIPE_SECRET, NOW_MS)).toEqual({ ok: false, reason: "stale_timestamp" });
+  });
+
+  it("rejects a changed body, a wrong secret and a v0-only header", () => {
+    const header = `t=${NOW_S},v1=${stripeV1(NOW_S, BODY)}`;
+    expect(verifyStripeSignature(Buffer.from("{}"), header, STRIPE_SECRET, NOW_MS)).toEqual({ ok: false, reason: "bad_signature" });
+    expect(verifyStripeSignature(BODY, header, "whsec_other", NOW_MS)).toEqual({ ok: false, reason: "bad_signature" });
+    expect(verifyStripeSignature(BODY, `t=${NOW_S},v0=${stripeV1(NOW_S, BODY)}`, STRIPE_SECRET, NOW_MS)).toEqual({ ok: false, reason: "bad_signature" });
   });
 });

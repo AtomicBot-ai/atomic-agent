@@ -18,6 +18,13 @@ export type {
 } from "./http-server.js";
 
 export { buildRouteTable } from "./route-table.js";
+export { buildTunnelRouteTable } from "./tunnel-route-table.js";
+export {
+  getWebhookTunnelStatus,
+  resetWebhookTunnelStatus,
+  setWebhookTunnelStatus,
+} from "./webhook-tunnel-status.js";
+export type { WebhookTunnelStatus } from "./webhook-tunnel-status.js";
 
 export { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 export type {

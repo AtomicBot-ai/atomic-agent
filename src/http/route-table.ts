@@ -68,6 +68,7 @@ import {
   createResumeTaskHandler,
 } from "./route-task-controls.js";
 import { createWebhookHandler } from "./route-webhooks.js";
+import { createListWebhooksHandler } from "./route-webhooks-list.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
 import { createContextPreviewHandler } from "./route-context-preview.js";
 import {
@@ -296,6 +297,11 @@ export function buildRouteTable(): RouteDefinition[] {
       method: "POST",
       path: "/api/tasks/drain",
       handler: createDrainTasksHandler(),
+    },
+    {
+      method: "GET",
+      path: "/api/webhooks",
+      handler: createListWebhooksHandler(),
     },
     {
       method: "POST",

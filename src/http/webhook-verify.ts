@@ -5,6 +5,7 @@ import { secretEquals } from "./secret-equal.js";
 import {
   verifyGithubSignature,
   verifyStandardWebhook,
+  verifyStripeSignature,
   type SignatureFailure,
 } from "./webhook-signature.js";
 import type { WebhookConfig } from "../config/index.js";
@@ -38,7 +39,9 @@ export function checkSharedSecret(
  * The signed schemes, over the exact body bytes. `messageId` is the
  * Standard Webhooks `webhook-id`, which the route uses to drop repeats;
  * GitHub's delivery id is not used for that, because "Redeliver" in
- * GitHub's UI sends the same id again on purpose.
+ * GitHub's UI sends the same id again on purpose. The tunnel gateway
+ * (ATO-625) dedupes every signed delivery id anyway, from
+ * `describeWebhookEvent` (`dedupeDeliveries` in the route).
  */
 export function verifySignedWebhook(
   webhook: WebhookConfig,
@@ -69,6 +72,15 @@ export function verifySignedWebhook(
     );
     return check.ok ? { ok: true, messageId: id } : check;
   }
+  if (webhook.verify === "stripe") {
+    const check = verifyStripeSignature(
+      rawBody,
+      getHeader(req, "stripe-signature"),
+      secret,
+      nowMs,
+    );
+    return check.ok ? { ok: true, messageId: null } : check;
+  }
   return checkSharedSecret(webhook, req)
     ? { ok: true, messageId: null }
     : { ok: false, reason: "invalid_secret" };
@@ -76,11 +88,11 @@ export function verifySignedWebhook(
 
 /** What a hit is, for template variables and the `events` filter. */
 export interface WebhookEvent {
-  /** GitHub `X-GitHub-Event`, or the Standard Webhooks payload `type`. */
+  /** GitHub `X-GitHub-Event`, or the Standard Webhooks / Stripe payload `type`. */
   event: string;
   /** GitHub payload `action` (`opened`, `closed`, ...), else empty. */
   action: string;
-  /** `X-GitHub-Delivery` or `webhook-id`, else empty. */
+  /** `X-GitHub-Delivery`, `webhook-id` or the Stripe event `id`, else empty. */
   delivery: string;
 }
 
@@ -105,6 +117,14 @@ export function describeWebhookEvent(
       event: typeof record.type === "string" ? record.type : "",
       action: "",
       delivery: getHeader(req, "webhook-id") ?? "",
+    };
+  }
+  if (webhook.verify === "stripe") {
+    /* Stripe signs no id header; the event id (`evt_...`) is in the body. */
+    return {
+      event: typeof record.type === "string" ? record.type : "",
+      action: "",
+      delivery: typeof record.id === "string" ? record.id : "",
     };
   }
   return { event: "", action: "", delivery: "" };
