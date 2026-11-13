@@ -59,6 +59,46 @@ export interface AgentTaskConfig {
   maxCostUsd: number;
 }
 
+/**
+ * Goal mode settings (`agent.goal`, ATO-1036). Separate from
+ * `agent.task`: a task's ceilings end one run, these bound a goal across
+ * all its rounds and restarts.
+ */
+export interface AgentGoalConfig {
+  /**
+   * Token budget a new goal starts with: prompt plus completion tokens
+   * of all its rounds, as the provider reports them. `0` means no cap
+   * (rounds, time and money still bound a goal). `/goal tokens` changes
+   * it for one goal. Default `0`.
+   */
+  maxTokens: number;
+}
+
+export function createAgentGoalDefaults(): AgentGoalConfig {
+  return { maxTokens: 0 };
+}
+
+/** Parse `agent.goal`. Absent block means the defaults. */
+export function parseAgentGoal(
+  raw: unknown,
+  defaults: AgentGoalConfig,
+): AgentGoalConfig {
+  if (raw === undefined || raw === null) return defaults;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "agent.goal",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const goal = raw as Record<string, unknown>;
+  return {
+    maxTokens: parseNonNegativeInt(
+      goal.maxTokens ?? defaults.maxTokens,
+      "agent.goal.maxTokens",
+    ),
+  };
+}
+
 export function createProviderWaitDefaults(): ProviderWaitConfig {
   return {
     enabled: true,

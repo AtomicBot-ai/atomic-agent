@@ -37,6 +37,8 @@ export interface GoalCommandContext {
   say(text: string): void;
   /** Update the goal line under the chat. */
   show(goal: GoalState | null): void;
+  /** Token budget a new goal starts with (`agent.goal.maxTokens`, `0` = none). */
+  defaultMaxTokens?: number;
   now(): number;
 }
 
@@ -59,7 +61,11 @@ export function runGoalCommand(command: GoalCommand, ctx: GoalCommandContext): v
         return;
       }
       const goal = createGoalState(
-        { criteria: command.criteria, checks: [...command.checks, ...(stored?.checks ?? [])] },
+        {
+          criteria: command.criteria,
+          checks: [...command.checks, ...(stored?.checks ?? [])],
+          maxTokens: ctx.defaultMaxTokens ?? 0,
+        },
         ctx.now(),
       );
       store(goal);

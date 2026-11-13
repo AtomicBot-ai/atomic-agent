@@ -12,7 +12,7 @@ import {
   parseHalfOpenUnitInterval,
   isSetAsideString,
 } from "../config-primitives.js";
-import { parseProviderWait, parseAgentTask } from "../agent-execution-config.js";
+import { createAgentGoalDefaults, parseAgentGoal, parseProviderWait, parseAgentTask } from "../agent-execution-config.js";
 
 export const READ_SCOPES: readonly ReadScope[] = [
   "working-dir",
@@ -135,6 +135,10 @@ export function parseAgentConfig(
     task: parseAgentTask(
       agent.task,
       readDefaults().task,
+    ),
+    goal: parseAgentGoal(
+      agent.goal,
+      readDefaults().goal ?? createAgentGoalDefaults(),
     ),
     toolTimeoutMs: parsePositiveInt(
       agent.toolTimeoutMs ?? readDefaults().toolTimeoutMs,

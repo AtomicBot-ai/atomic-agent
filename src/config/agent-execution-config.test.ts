@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  createAgentGoalDefaults,
   createAgentTaskDefaults,
   createProviderWaitDefaults,
+  parseAgentGoal,
   parseAgentTask,
   parseProviderWait,
 } from "./agent-execution-config.js";
@@ -219,5 +221,28 @@ describe("agent execution policy configuration", () => {
       originalAgent.providerWait = originalWait;
       USER_CONFIG_DEFAULTS.agent = originalAgent;
     }
+  });
+
+  it("reads agent.goal.maxTokens: default 0 (no cap), a set budget, junk rejected (ATO-1036)", () => {
+    expect(createAgentGoalDefaults()).toStrictEqual({ maxTokens: 0 });
+    expect(parseAgentGoal(undefined, createAgentGoalDefaults())).toStrictEqual({ maxTokens: 0 });
+    expect(parseAgentGoal({}, createAgentGoalDefaults()).maxTokens).toBe(0);
+    expect(parseAgentGoal({ maxTokens: 5000 }, createAgentGoalDefaults()).maxTokens).toBe(5000);
+    expect(parseAgentGoal({ maxTokens: "5000" }, createAgentGoalDefaults()).maxTokens).toBe(5000);
+    expect(thrownError(() => parseAgentGoal({ maxTokens: -1 }, createAgentGoalDefaults())))
+      .toBeInstanceOf(OwnedValidationError);
+    expect(thrownError(() => parseAgentGoal("lots", createAgentGoalDefaults())))
+      .toBeInstanceOf(OwnedValidationError);
+    // The goal key sits in its own block: agent.task keeps its key list.
+    expect(Object.keys(createAgentTaskDefaults())).toEqual(["maxSteps", "maxDurationMs", "autoContinue", "resumeInterrupted", "maxResumes", "maxCostUsd"]);
+  });
+
+  it("reads agent.goal through the whole-file parser", () => {
+    expect(USER_CONFIG_DEFAULTS.agent.goal).toStrictEqual({ maxTokens: 0 });
+    const parsed = parseUserConfigFile({
+      ...USER_CONFIG_DEFAULTS,
+      agent: { ...USER_CONFIG_DEFAULTS.agent, goal: { maxTokens: 5000 } },
+    });
+    expect(parsed.agent.goal?.maxTokens).toBe(5000);
   });
 });

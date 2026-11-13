@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createGoalState, setGoalStatus, withGoalState } from "../agent/goal/index.js";
+import { createGoalState, resumeGoalState, setGoalStatus, withGoalState } from "../agent/goal/index.js";
 import { createEmptySessionState } from "../session/index.js";
 
 import { chatGoalSpec, goalProgressFrame } from "./chat-goal.js";
@@ -22,6 +22,21 @@ describe("chatGoalSpec", () => {
     for (const status of ["paused", "blocked", "complete", "budget_limited"] as const) {
       expect(chatGoalSpec(sessionWith(setGoalStatus(goal, status, 2)), true)).toBeUndefined();
     }
+  });
+});
+
+describe("chatGoalSpec after a restart (ATO-1038)", () => {
+  it("does not run an active goal another agent process left behind", () => {
+    // What the store holds after a restart: active, stamped by the old process.
+    const leftBehind = { ...goal, status: "active" as const, owner: "other-process" };
+    expect(chatGoalSpec(sessionWith(leftBehind), true)).toBeUndefined();
+  });
+
+  it("runs it again once resumed, which claims it for this process", () => {
+    const leftBehind = { ...goal, owner: "other-process" };
+    expect(chatGoalSpec(sessionWith(resumeGoalState(leftBehind, 3)), true)).toEqual({
+      criteria: ["tests pass"], checks: ["npm test"], maxRounds: 4,
+    });
   });
 });
 

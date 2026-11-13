@@ -9,6 +9,7 @@ import {
   withGoalState,
   type GoalState,
 } from "../agent/goal/index.js";
+import { getConfig } from "../config/index.js";
 import { createEmptySessionState, type SessionState } from "../session/index.js";
 import { openaiError } from "./openai-errors.js";
 import {
@@ -51,6 +52,8 @@ export interface GoalActionContext {
   /** `runtime.controlGoal` for this chat: `false` when no goal runs there. */
   controlGoal: (verb: "pause" | "clear") => boolean;
   now: number;
+  /** Token budget a new goal starts with (`agent.goal.maxTokens`, `0` = none). */
+  defaultMaxTokens?: number;
 }
 
 export type GoalActionOutcome =
@@ -77,6 +80,7 @@ export function decideGoalAction(action: GoalAction, ctx: GoalActionContext): Go
           criteria: action.criteria,
           checks: stored?.checks ?? [],
           ...(action.maxRounds === undefined ? {} : { maxRounds: action.maxRounds }),
+          maxTokens: ctx.defaultMaxTokens ?? 0,
         },
         ctx.now,
       );
@@ -195,6 +199,7 @@ export function createSessionGoalActionHandler(): HttpHandler {
       turnRunning: turnRunningOn(ctx, current),
       controlGoal: (verb) => ctx.runtime.controlGoal?.(current.id, verb) ?? false,
       now: Date.now(),
+      defaultMaxTokens: getConfig().agent.goal?.maxTokens ?? 0,
     });
     if (!outcome.ok) {
       sendError(res, 409, openaiError(outcome.error, "invalid_request_error", null, outcome.code));

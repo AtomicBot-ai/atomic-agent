@@ -2064,6 +2064,7 @@ export class ChatOrchestrator {
       send: (text) => this.sendMessage(text),
       say: (text) => this.bus.emit({ type: "system_message", text }),
       show: (goal) => this.showGoal(goal),
+      defaultMaxTokens: getConfig().agent.goal?.maxTokens ?? 0,
       now: () => Date.now(),
     });
   }

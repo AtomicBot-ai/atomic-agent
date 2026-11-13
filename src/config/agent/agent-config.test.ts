@@ -81,7 +81,7 @@ describe("agent configuration ownership", () => {
     const second = createAgentDefaults();
     expect(first).toEqual(USER_CONFIG_DEFAULTS.agent);
     expect(Object.keys(first)).toEqual([
-      "tokenBudget", "maxSteps", "providerWait", "task", "toolTimeoutMs",
+      "tokenBudget", "maxSteps", "providerWait", "task", "goal", "toolTimeoutMs",
       "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
       "nameSessions", "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
       "smartApproval", "smartApprovalModel",

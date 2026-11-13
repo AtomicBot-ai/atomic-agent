@@ -145,10 +145,19 @@ export function createRuntimeGoalRunner(deps: RuntimeGoalDeps) {
     const stored = readGoalState((sessionStore.load(session.id) ?? session).metadata);
     const resumed = stored !== null && sameGoalSpec(stored, options.goal) && stored.status !== "complete";
     // The caller's limits win on resume: the spec is what it asked for now.
+    // A spec without a token budget keeps the stored one; a new goal
+    // without one starts with `agent.goal.maxTokens` (ATO-1036).
     const limits = normalizeGoalSpec(options.goal);
     const goal: GoalState = resumed
-      ? resumeGoalState({ ...stored, maxRounds: limits.maxRounds, maxTokens: limits.maxTokens }, Date.now())
-      : createGoalState(options.goal, Date.now());
+      ? resumeGoalState({
+          ...stored,
+          maxRounds: limits.maxRounds,
+          ...(options.goal.maxTokens === undefined ? {} : { maxTokens: limits.maxTokens }),
+        }, Date.now())
+      : createGoalState({
+          ...options.goal,
+          maxTokens: options.goal.maxTokens ?? getConfig().agent.goal?.maxTokens ?? 0,
+        }, Date.now());
     const message = userMessage.trim().length > 0
       ? userMessage
       : resumed && stored.roundsUsed > 0

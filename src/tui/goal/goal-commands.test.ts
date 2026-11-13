@@ -50,6 +50,15 @@ describe("runGoalCommand", () => {
     expect(t.shown[0]?.status).toBe("active");
   });
 
+  it("gives a new goal the configured token budget (agent.goal.maxTokens, ATO-1036)", () => {
+    const t = context(empty, { defaultMaxTokens: 5000 });
+    runGoalCommand({ kind: "set", criteria: ["a"], checks: [] }, t.ctx);
+    expect(readGoalState(t.saved[0]!.metadata)?.maxTokens).toBe(5000);
+    const off = context(empty);
+    runGoalCommand({ kind: "set", criteria: ["a"], checks: [] }, off.ctx);
+    expect(readGoalState(off.saved[0]!.metadata)?.maxTokens).toBe(0);
+  });
+
   it("refuses to set a goal while a turn runs", () => {
     const t = context(empty, { turnRunning: true });
     runGoalCommand({ kind: "set", criteria: ["a"], checks: [] }, t.ctx);
