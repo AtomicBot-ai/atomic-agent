@@ -269,6 +269,8 @@ import { lastErrorCategory, lastErrorSentence, reportAgentExit, reportRendererEr
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
+// ATO-556: atomicagent:// links (Add to Atomic Agent buttons): a card, then an install only on a click.
+import { shouldRegisterProtocol, wireDeeplinks } from "./deeplink.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -359,6 +361,30 @@ const buildStamp = (): BuildStamp => (BUILD_STAMP ??= readBuildStamp(app.getAppP
 let win: BrowserWindow | null = null;
 /** When the window last went on screen — the probe's line between a frame painted and a frame seen. */
 let windowShownAt: number | null = null;
+/* ATO-556: at the top level, because macOS sends a cold start's link
+   (open-url) before `ready`. Only a packaged, ordinary launch takes the
+   handler (deeplink.ts shouldRegisterProtocol); a link waits in main until
+   the window takes it (app:deeplinkTake). `--deeplink-test=<link>` feeds
+   one link to any run, for checking the card without the OS. */
+const deeplinks = wireDeeplinks({
+  setAsDefaultProtocolClient: (p) => app.setAsDefaultProtocolClient(p),
+  requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
+  exit: (code) => app.exit(code),
+  onOpenUrl: (fn) => { app.on("open-url", (event, url) => { event.preventDefault(); fn(url); }); },
+  onSecondInstance: (fn) => { app.on("second-instance", (_event, argv) => fn(argv)); },
+}, {
+  enabled: shouldRegisterProtocol({ packaged: app.isPackaged, argv: process.argv, env: process.env, stateDirFromEnv: STATE_DIR_FROM_ENV }),
+  argv: process.argv,
+  ready: () => app.isReady() && win !== null,
+  showWindow: () => openWindowAgain(),
+  notify: () => send("deeplink:new"),
+  log: (line) => console.error(line),
+});
+{
+  const testLink = process.argv.find((a) => a.startsWith("--deeplink-test="));
+  if (testLink) deeplinks.handle(testLink.slice("--deeplink-test=".length));
+}
+ipcMain.handle("app:deeplinkTake", () => deeplinks.take());
 let agent: AgentClient | null = null;
 /* A download in the one single-flight slot (`pull`, `pullUpdate`): its child,
    which job it is, and its last progress frame. Backlog 18 (review S5): every
