@@ -142,7 +142,15 @@ function bodyLines(report: IssueReportState, inner: number): Line[] {
           "Zip:",
           `${p.zipPath} (${formatBytes(p.zipBytes)}) — open it to see exactly what is included`,
         ),
-        muted("enter/y send · esc/n cancel"),
+        // ATO-1466: the support id lets us find this install in our
+        // crash and usage logs; the log tail is the inline log section.
+        plain(
+          `[${p.includeSupportId ? "x" : " "}] i  Include support ID${
+            p.supportId ? ` (${p.supportId})` : " (none on this machine)"
+          }`,
+        ),
+        plain(`[${(p.includeLogs ?? true) ? "x" : " "}] l  Include log tail`),
+        muted("i/l toggle · enter/y send · esc/n cancel"),
       ];
     }
     case "sending":

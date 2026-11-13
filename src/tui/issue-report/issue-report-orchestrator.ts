@@ -19,6 +19,11 @@ import { join } from "node:path";
 
 import { getAppVersion } from "../../version.js";
 import {
+  isAnalyticsKilledByEnv,
+  readSupportId,
+  resolveInstallChannel,
+} from "../../analytics/index.js";
+import {
   GITHUB_NOT_CONNECTED,
   GithubApi,
   resolveGithubToken,
@@ -30,8 +35,15 @@ import { buildDebugBundleSnapshot } from "../debug-bundle/build-snapshot.js";
 import { selectLlmActiveRouteSummary } from "../llm-panel/llm-panel-selectors.js";
 import type { TuiState } from "../tui-state.js";
 import { buildIssueReport, type IssueReport } from "./build-issue-report.js";
-import { packIssue, type PackedIssue } from "./issue-body.js";
-import type { IssueReportAction } from "./issue-report-state.js";
+import {
+  packIssue,
+  type PackedIssue,
+  type ReportSection,
+} from "./issue-body.js";
+import type {
+  IssueReportAction,
+  IssueReportToggle,
+} from "./issue-report-state.js";
 import type { RedactionContext } from "./redact.js";
 import { ISSUE_REPORT_LEVELS, type IssueReportLevel } from "./report-levels.js";
 import { writeReportZip } from "./write-report-zip.js";
@@ -55,7 +67,13 @@ export interface IssueReportBus {
 }
 
 export interface IssueReportRuntime {
-  config: Pick<AtomicAgentConfig, "tracing">;
+  config: Pick<AtomicAgentConfig, "tracing"> & {
+    /** Holds `analytics.json` (support id) and the install-channel marker. */
+    paths: Pick<AtomicAgentConfig["paths"], "stateDir">;
+    analytics?: AtomicAgentConfig["analytics"];
+    /** `external` means the operator runs llama-server; no managed engine. */
+    localModels?: Pick<AtomicAgentConfig["localModels"], "mode">;
+  };
   sessionStore: Pick<SessionStore, "listRecent">;
 }
 
@@ -69,12 +87,26 @@ export interface IssueReportDeps {
   now?: () => Date;
   /** The session on screen, so its trace is first in the zip. */
   currentSessionId?: () => string | null;
+  /** Support id (ATO-1466); defaults to `readSupportId` over the state dir. */
+  readSupportId?: () => string | null;
+  /** Whether analytics is on; off unticks the support id by default. */
+  analyticsEnabled?: () => boolean;
+  /** Install channel; defaults to `resolveInstallChannel`. */
+  installChannel?: () => string;
 }
 
 interface PreparedReport {
   report: IssueReport;
   packed: PackedIssue;
   zipPath: string;
+  zipBytes: number;
+  /** Everything `buildIssueReport` needs again when a toggle flips. */
+  build: Omit<Parameters<typeof buildIssueReport>[0], "supportId" | "includeLogs">;
+  /** Extra inline sections (the zipped traces) packed after the report's. */
+  extraSections: readonly ReportSection[];
+  supportId: string | null;
+  includeSupportId: boolean;
+  includeLogs: boolean;
 }
 
 export class IssueReportOrchestrator {
@@ -121,7 +153,11 @@ export class IssueReportOrchestrator {
         homeDir: this.deps.homeDir ?? homedir(),
         workingDir: state.session.workingDir,
       };
-      const report = buildIssueReport({
+      const localActive = route.activeTextProvider?.kind === "llama-server";
+      const backend = state.localModelsPanel.backend;
+      const supportId = this.supportId();
+      const includeSupportId = supportId !== null && this.analyticsEnabled();
+      const build = {
         snapshot,
         level,
         redaction,
@@ -136,10 +172,22 @@ export class IssueReportOrchestrator {
           approvalLevel: state.session.approvalLevel,
           codingMode: state.codingMode,
           capturedAt: now.toISOString(),
+          surface: "terminal",
+          installChannel: this.installChannel(),
+          engine: !localActive
+            ? "cloud"
+            : this.runtime.config.localModels?.mode === "external"
+              ? // The panel may still remember a managed engine from
+                // before the switch; it is not what serves this model.
+                "external llama-server"
+              : `${backend.engine ?? "local"}${backend.currentTag ? ` ${backend.currentTag}` : ""}`,
         },
-      });
+      };
+      // The zip on disk is built without the id: the checkbox decides
+      // only what goes into the issue.
+      const zipReport = buildIssueReport(build);
       const zip = await writeReportZip({
-        report,
+        report: zipReport,
         traceDir: this.runtime.config.tracing.trace.dir,
         sessionIds: this.collectSessionIds(state),
         outDir:
@@ -152,24 +200,26 @@ export class IssueReportOrchestrator {
         redaction,
         now,
       });
+      const report = includeSupportId
+        ? buildIssueReport({ ...build, supportId })
+        : zipReport;
       const packed = packIssue(report.header, [
         ...report.sections,
         ...zip.traceSections,
       ]);
       if (generation !== this.generation) return;
-      this.prepared = { report, packed, zipPath: zip.path };
-      this.bus.emit({
-        type: "issue_report_previewed",
-        preview: {
-          level,
-          zipPath: zip.path,
-          zipBytes: zip.bytes,
-          title: report.title,
-          bodyChars: packed.body.length,
-          comments: packed.comments.length,
-          overflow: packed.overflow,
-        },
-      });
+      this.prepared = {
+        report,
+        packed,
+        zipPath: zip.path,
+        zipBytes: zip.bytes,
+        build,
+        extraSections: zip.traceSections,
+        supportId,
+        includeSupportId,
+        includeLogs: true,
+      };
+      this.emitPreview(this.prepared);
     } catch (err) {
       if (generation === this.generation) {
         this.bus.emit({ type: "issue_report_failed", error: describe(err) });
@@ -177,6 +227,33 @@ export class IssueReportOrchestrator {
     } finally {
       this.busy = false;
     }
+  }
+
+  /**
+   * Flip "include support ID" or "include log tail" on the confirm
+   * screen (ATO-1466): rebuild the body from the same inputs (pure, the
+   * zip on disk is unchanged) and show the new preview.
+   */
+  toggle(option: IssueReportToggle): void {
+    const prepared = this.prepared;
+    if (this.busy || !prepared) return;
+    if (option === "supportId") {
+      // Nothing to include without an id; the row says why.
+      if (prepared.supportId === null) return;
+      prepared.includeSupportId = !prepared.includeSupportId;
+    } else {
+      prepared.includeLogs = !prepared.includeLogs;
+    }
+    prepared.report = buildIssueReport({
+      ...prepared.build,
+      supportId: prepared.includeSupportId ? prepared.supportId : null,
+      includeLogs: prepared.includeLogs,
+    });
+    prepared.packed = packIssue(prepared.report.header, [
+      ...prepared.report.sections,
+      ...prepared.extraSections,
+    ]);
+    this.emitPreview(prepared);
   }
 
   /** File the prepared report as a GitHub issue. */
@@ -238,6 +315,51 @@ export class IssueReportOrchestrator {
       this.bus.emit({ type: "issue_report_failed", error: describe(err) });
     } finally {
       this.busy = false;
+    }
+  }
+
+  private emitPreview(prepared: PreparedReport): void {
+    this.bus.emit({
+      type: "issue_report_previewed",
+      preview: {
+        level: prepared.report.level,
+        zipPath: prepared.zipPath,
+        zipBytes: prepared.zipBytes,
+        title: prepared.report.title,
+        bodyChars: prepared.packed.body.length,
+        comments: prepared.packed.comments.length,
+        overflow: prepared.packed.overflow,
+        supportId: prepared.supportId,
+        includeSupportId: prepared.includeSupportId,
+        includeLogs: prepared.includeLogs,
+      },
+    });
+  }
+
+  private supportId(): string | null {
+    try {
+      if (this.deps.readSupportId) return this.deps.readSupportId();
+      return readSupportId({
+        stateDir: this.runtime.config.paths.stateDir,
+        home: this.deps.homeDir ?? homedir(),
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  private analyticsEnabled(): boolean {
+    if (this.deps.analyticsEnabled) return this.deps.analyticsEnabled();
+    if (isAnalyticsKilledByEnv()) return false;
+    return this.runtime.config.analytics?.enabled ?? true;
+  }
+
+  private installChannel(): string {
+    if (this.deps.installChannel) return this.deps.installChannel();
+    try {
+      return resolveInstallChannel(this.runtime.config.paths.stateDir);
+    } catch {
+      return "unknown";
     }
   }
 

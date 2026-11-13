@@ -43,6 +43,7 @@ export {
   type IssueReportPreview,
   type IssueReportState,
   type IssueReportStep,
+  type IssueReportToggle,
 } from "./issue-report-state.js";
 export {
   ISSUE_REPORT_DIR_NAME,

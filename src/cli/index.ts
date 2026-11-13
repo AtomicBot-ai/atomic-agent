@@ -24,6 +24,7 @@ import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
 import { dataCommand } from "./data-command.js";
+import { idCommand } from "./id-command.js";
 import { providersCommand } from "./providers-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
@@ -148,6 +149,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "doctor",
     summary: "Check config, its file mode and MCP commands; --fix repairs (with backup), --undo",
     run: doctorCommand,
+  },
+  {
+    name: "id",
+    summary: "Print this install's support ID for bug reports (works with analytics off)",
+    run: idCommand,
   },
   {
     name: "data",
