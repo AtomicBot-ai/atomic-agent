@@ -1,13 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { runCommand } from "../../../sandbox/command-runner.js";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import type { CommandResult } from "../../../sandbox/command-runner.js";
 import type { ToolContext } from "../../tool-registry.js";
 import { parseAstGrepJson } from "./ast-grep-json.js";
-import { AST_GREP_MISSING_HINT, resolveAstGrepPath } from "./ast-grep-resolver.js";
-import { buildAstGrepArgs, parseAstGrepQuery, type AstGrepDependencies } from "./ast-grep-run.js";
+import { AST_GREP_MISSING_HINT, npmNativeCandidates, resolveAstGrepPath } from "./ast-grep-resolver.js";
+import {
+  buildAstGrepArgs,
+  neutralAstGrepConfig,
+  parseAstGrepQuery,
+  type AstGrepDependencies,
+} from "./ast-grep-run.js";
 import { buildOsCodeRewriteTool, planRewrite } from "./code-rewrite.js";
 import { buildOsCodeSearchTool } from "./code-search.js";
 
@@ -78,14 +84,19 @@ function commandResult(partial: Partial<CommandResult>): CommandResult {
   };
 }
 
+const NEUTRAL = "/tmp/atomic-ast-grep-test/sgconfig.yml";
+
 function fakeDeps(
   respond: (args: string[]) => Partial<CommandResult>,
   calls: string[][] = [],
+  cwds: string[] = [],
 ): Partial<AstGrepDependencies> {
   return {
     resolveAstGrepPath: () => "/usr/local/bin/ast-grep",
-    runCommand: async (_cmd, args) => {
+    neutralConfig: async () => NEUTRAL,
+    runCommand: async (_cmd, args, options) => {
       calls.push(args);
+      cwds.push(options.cwd);
       return commandResult(respond(args));
     },
   };
@@ -115,12 +126,60 @@ describe("resolveAstGrepPath", () => {
     ).toBeNull();
     expect(
       resolveAstGrepPath({
-        env: { Path: "C:\\tools;C:\\npm" },
+        env: { Path: "C:\\tools;C:\\scoop" },
         platform: "win32",
-        fileExists: exists([join("C:\\npm", "ast-grep.cmd")]),
+        fileExists: exists([join("C:\\scoop", "ast-grep.exe")]),
       }),
-    ).toBe(join("C:\\npm", "ast-grep.cmd"));
+    ).toBe(join("C:\\scoop", "ast-grep.exe"));
     expect(resolveAstGrepPath({ env: {}, platform: "linux", fileExists: () => true })).toBeNull();
+  });
+});
+
+describe("resolveAstGrepPath on Windows with npm's .cmd shim", () => {
+  const shimDir = "C:\\Users\\me\\AppData\\Roaming\\npm";
+  const exists = (set: string[]) => (p: string) => set.includes(p);
+
+  it("never returns the .cmd shim: spawning it without a shell fails with EINVAL", () => {
+    expect(
+      resolveAstGrepPath({
+        env: { Path: shimDir },
+        platform: "win32",
+        fileExists: exists([join(shimDir, "ast-grep.cmd"), join(shimDir, "ast-grep")]),
+      }),
+    ).toBeNull();
+  });
+
+  it("follows the shim to the native exe npm installed beside it", () => {
+    const nested = join(
+      shimDir, "node_modules", "@ast-grep", "cli", "node_modules", "@ast-grep", "cli-win32-x64-msvc", "ast-grep.exe",
+    );
+    const resolved = resolveAstGrepPath({
+      env: { Path: shimDir },
+      platform: "win32",
+      fileExists: exists([join(shimDir, "ast-grep.cmd"), nested]),
+    });
+    expect(resolved).toBe(nested);
+    expect(resolved!.endsWith(".exe")).toBe(true);
+    const hoisted = join(shimDir, "node_modules", "@ast-grep", "cli-win32-arm64-msvc", "ast-grep.exe");
+    expect(
+      resolveAstGrepPath({
+        env: { Path: shimDir },
+        platform: "win32",
+        fileExists: exists([join(shimDir, "ast-grep.cmd"), hoisted]),
+      }),
+    ).toBe(hoisted);
+  });
+
+  it("keeps looking down PATH past a shim with no native binary", () => {
+    const later = join("C:\\tools", "ast-grep.exe");
+    expect(
+      resolveAstGrepPath({
+        env: { Path: `${shimDir};C:\\tools` },
+        platform: "win32",
+        fileExists: exists([join(shimDir, "ast-grep.cmd"), later]),
+      }),
+    ).toBe(later);
+    expect(npmNativeCandidates(shimDir).every((c) => c.endsWith("ast-grep.exe"))).toBe(true);
   });
 });
 
@@ -132,8 +191,8 @@ describe("ast-grep arguments and output", () => {
       true,
     );
     expect(query).toEqual({ pattern: "foo($A)", rewrite: "", lang: "ts", globs: ["src/**"], timeoutMs: 300_000 });
-    expect(buildAstGrepArgs(query, "/repo")).toEqual([
-      "run", "--pattern", "foo($A)", "--rewrite", "", "--lang", "ts", "--globs", "src/**", "--json=stream", "--", "/repo",
+    expect(buildAstGrepArgs(query, "/repo", NEUTRAL)).toEqual([
+      "run", "--config", NEUTRAL, "--pattern", "foo($A)", "--rewrite", "", "--lang", "ts", "--globs", "src/**", "--json=stream", "--", "/repo",
     ]);
     expect(() => parseAstGrepQuery({ pattern: " " }, "t", false)).toThrow("t: `pattern` must be a non-empty string");
     expect(() => parseAstGrepQuery({ pattern: "a" }, "t", true)).toThrow("`rewrite` must be a string");
@@ -177,15 +236,20 @@ describe("os.code.search", () => {
     const content = "// foo(1) in a comment\nfoo(2);\nfoo(3);\n";
     await writeFile(file, content);
     const calls: string[][] = [];
+    const cwds: string[] = [];
     const tool = buildOsCodeSearchTool(
-      fakeDeps(() => ({ stdout: stream([matchJson(file, content, "foo(2)"), matchJson(file, content, "foo(3)")]) }), calls),
+      fakeDeps(() => ({ stdout: stream([matchJson(file, content, "foo(2)"), matchJson(file, content, "foo(3)")]) }), calls, cwds),
     );
     const result = await tool.run({ pattern: "foo($A)", lang: "typescript" }, ctxFor(dir));
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("2 matches in 1 file");
     expect(result.summary).toContain("a.ts:2:1: foo(2);");
     expect(result.details.totals).toEqual({ files: 1, matches: 2 });
-    expect(calls[0]).toEqual(["run", "--pattern", "foo($A)", "--lang", "typescript", "--json=stream", "--", dir]);
+    expect(calls[0]).toEqual([
+      "run", "--config", NEUTRAL, "--pattern", "foo($A)", "--lang", "typescript", "--json=stream", "--", dir,
+    ]);
+    // Never the project: ast-grep looks for sgconfig.yml from its cwd up.
+    expect(cwds).toEqual([dirname(NEUTRAL)]);
   });
 
   it("caps the listed matches at maxResults", async () => {
@@ -344,4 +408,69 @@ describe("planRewrite", () => {
     expect(refused!.after).toBeNull();
     expect(refused!.reason).toMatch(/overlap/);
   });
+});
+
+describe("the project's own sgconfig.yml is never read", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await realpath(await mkdtemp(join(tmpdir(), "atomic-sgconfig-")));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("pins every run, search and rewrite, to an empty config outside the project", async () => {
+    const config = await neutralAstGrepConfig();
+    expect(await readFile(config, "utf8")).toBe("ruleDirs: []\n");
+    expect(config.startsWith(dir)).toBe(false);
+    expect(await neutralAstGrepConfig()).toBe(config);
+
+    const calls: string[][] = [];
+    const cwds: string[] = [];
+    const deps = { ...fakeDeps(() => ({ exitCode: 1 }), calls, cwds), neutralConfig: neutralAstGrepConfig };
+    await buildOsCodeSearchTool(deps).run({ pattern: "foo()" }, ctxFor(dir));
+    await buildOsCodeRewriteTool({ approvals: denyAll(), approvalRequired: true }, deps).run(
+      { pattern: "foo()", rewrite: "bar()" },
+      ctxFor(dir),
+    );
+    for (const argv of calls) expect(argv.slice(0, 3)).toEqual(["run", "--config", config]);
+    expect(cwds).toEqual([dirname(config), dirname(config)]);
+  });
+
+  // NEEDS_RUN (combined MBP run, ast-grep installed): skipped where no
+  // ast-grep binary is found. A repository's sgconfig.yml declares a
+  // custom language whose native library does not exist; ast-grep run
+  // from the project root with its own config must fail on it, and
+  // os.code.search in the same repository must not read it at all.
+  it.skipIf(resolveAstGrepPath() === null)(
+    "a cloned repo's customLanguages.libraryPath is not loaded by os.code.search",
+    async () => {
+      await writeFile(
+        join(dir, "sgconfig.yml"),
+        [
+          "ruleDirs: []",
+          "customLanguages:",
+          "  planted:",
+          "    libraryPath: ./planted/libplanted.so",
+          "    extensions: [planted]",
+          "",
+        ].join("\n"),
+      );
+      await mkdir(join(dir, "planted"));
+      await writeFile(join(dir, "a.ts"), "foo();\n");
+      await writeFile(join(dir, "b.planted"), "foo\n");
+      const binary = resolveAstGrepPath()!;
+
+      // Ablation: the project config is live when ast-grep runs inside the repo.
+      const direct = await runCommand(binary, ["run", "--pattern", "foo()", "--json=stream", "--", "."], {
+        cwd: dir,
+        timeoutMs: 30_000,
+      });
+      expect((direct.exitCode !== 0 && direct.exitCode !== 1) || direct.stderr.trim().length > 0).toBe(true);
+
+      const result = await buildOsCodeSearchTool().run({ pattern: "foo()", lang: "typescript" }, ctxFor(dir));
+      expect(result.status).toBe("ok");
+      expect(result.details.totals).toEqual({ files: 1, matches: 1 });
+    },
+  );
 });

@@ -1,4 +1,6 @@
-import { stat } from "node:fs/promises";
+import { mkdtemp, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { runCommand as defaultRunCommand, type CommandResult } from "../../../sandbox/command-runner.js";
 import { resolveUserPath } from "../expand-home.js";
 import { parseAstGrepJson, type AstGrepMatch } from "./ast-grep-json.js";
@@ -8,6 +10,8 @@ import { resolveAstGrepPath } from "./ast-grep-resolver.js";
 export interface AstGrepDependencies {
   resolveAstGrepPath: () => string | null;
   runCommand: typeof defaultRunCommand;
+  /** The empty `sgconfig.yml` every run is pinned to (see `neutralAstGrepConfig`). */
+  neutralConfig: () => Promise<string>;
 }
 
 export function astGrepDependencies(
@@ -16,7 +20,31 @@ export function astGrepDependencies(
   return {
     resolveAstGrepPath: deps.resolveAstGrepPath ?? (() => resolveAstGrepPath()),
     runCommand: deps.runCommand ?? defaultRunCommand,
+    neutralConfig: deps.neutralConfig ?? neutralAstGrepConfig,
   };
+}
+
+/**
+ * ast-grep reads `sgconfig.yml` from the folder it runs in and the ones
+ * above it, and that file can name `customLanguages.*.libraryPath`, a
+ * native library ast-grep then loads. A cloned repository must not get
+ * code run by an unapproved `os.code.search`, so every run gets
+ * `--config` pointing at this empty config and a cwd outside the
+ * project: the project's own sgconfig is never read. Created once per
+ * process in the system temp folder.
+ */
+let neutralConfigPath: Promise<string> | undefined;
+export function neutralAstGrepConfig(): Promise<string> {
+  neutralConfigPath ??= (async () => {
+    const dir = await mkdtemp(join(tmpdir(), "atomic-ast-grep-"));
+    const file = join(dir, "sgconfig.yml");
+    await writeFile(file, "ruleDirs: []\n", "utf8");
+    return file;
+  })().catch((err: unknown) => {
+    neutralConfigPath = undefined;
+    throw err;
+  });
+  return neutralConfigPath;
 }
 
 export const AST_GREP_DEFAULT_TIMEOUT_MS = 30_000;
@@ -90,9 +118,12 @@ function optionalString(value: unknown, field: string, tool: string): string | u
   return value.trim();
 }
 
-/** The argv after the binary. The target is absolute, so every printed `file` is too. */
-export function buildAstGrepArgs(query: AstGrepQuery, target: string): string[] {
-  const args = ["run", "--pattern", query.pattern];
+/**
+ * The argv after the binary. The target is absolute, so every printed
+ * `file` is too. `config` is the neutral sgconfig: never the project's.
+ */
+export function buildAstGrepArgs(query: AstGrepQuery, target: string, config: string): string[] {
+  const args = ["run", "--config", config, "--pattern", query.pattern];
   if (query.rewrite !== undefined) args.push("--rewrite", query.rewrite);
   if (query.lang !== undefined) args.push("--lang", query.lang);
   for (const glob of query.globs) args.push("--globs", glob);
@@ -136,10 +167,12 @@ export async function runAstGrep(
       details: { path: query.path ?? target, missing: true },
     };
   }
-  const argv = buildAstGrepArgs(query, target);
+  const config = await deps.neutralConfig();
+  const argv = buildAstGrepArgs(query, target, config);
   ctx.signal.throwIfAborted();
   const result = await deps.runCommand(binary, argv, {
-    cwd: ctx.workingDir,
+    // Not the project: ast-grep looks for sgconfig.yml from its cwd up.
+    cwd: dirname(config),
     timeoutMs: query.timeoutMs,
     signal: ctx.signal,
     maxOutputBytes,
