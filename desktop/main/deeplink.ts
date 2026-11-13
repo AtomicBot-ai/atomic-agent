@@ -201,7 +201,9 @@ const RUNNER_FLAGS: Record<"npx" | "bunx" | "uvx", Readonly<Record<string, { val
 };
 
 /** docker run flags a link may never pass: they hand the container the host's powers. */
-const DOCKER_BLOCKED_FLAGS: readonly string[] = ["--privileged", "--pid", "--ipc", "--uts", "--userns", "--cgroupns", "--cap-add", "--security-opt", "--device"];
+const DOCKER_BLOCKED_FLAGS: readonly string[] = ["--privileged", "--pid", "--ipc", "--uts", "--userns", "--cgroupns", "--cap-add", "--security-opt", "--device",
+  // Inherits another container's mounts, which can be the host root or the socket (review follow-up to F08-8).
+  "--volumes-from"];
 
 /** Environment names a link may not set: they change what runs, or where packages come from. */
 const BLOCKED_ENV = new Set([
@@ -223,7 +225,7 @@ export function envNameBlocked(name: string): boolean {
 
 /* docker run flags that take the next argument as their value. */
 const DOCKER_VALUE_FLAGS = new Set(["-v", "--volume", "--mount", "-e", "--env", "--env-file", "--name", "-p", "--publish", "--network", "--net",
-  "-w", "--workdir", "-u", "--user", "--entrypoint", "-l", "--label", "--platform", "-m", "--memory", "--cpus", "--add-host", "--tmpfs"]);
+  "-w", "--workdir", "-u", "--user", "--entrypoint", "-l", "--label", "--platform", "-m", "--memory", "--cpus", "--add-host", "--tmpfs", "--volumes-from"]);
 
 /** The image of `docker run …`: the first argument that is neither a flag nor a flag's value. */
 export function dockerImage(args: readonly string[]): string | null {

@@ -222,6 +222,21 @@ test("mcp: the docker mount guard reads every spelling of a mount (review F08-8)
   assert.match(M.checkMcpCommand("docker", ["run", "-v/:/host", "alpine:3.20"]).error, /whole disk or the Docker socket/);
 });
 
+test("mcp: --volumes-from is refused in every spelling (it inherits another container's mounts)", () => {
+  for (const args of [
+    ["run", "--volumes-from", "box", "img:1"],
+    ["run", "--volumes-from=box", "img:1"],
+    ["run", "--volumes-from=box:ro", "img:1"],
+    ["run", "-i", "--rm", "--volumes-from", "box:rw", "img:1"],
+    ["run", "img:1", "--volumes-from", "box"],
+  ]) {
+    const r = M.checkMcpCommand("docker", args);
+    assert.equal(r.ok, false, args.join(" "));
+    assert.match(r.error, /--volumes-from/);
+  }
+  assert.equal(M.dockerImage(["run", "--volumes-from", "box", "img:1"]), "img:1");
+});
+
 test("mcp: Windows drive roots and the Docker pipe are refused as mounts (review F08-8)", () => {
   const refused = [
     ["run", "-v", "C:\\:/host", "img:1"],
