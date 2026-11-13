@@ -263,6 +263,21 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "broad open-weight catalog",
   },
   {
+    id: "wandb",
+    label: "W&B Inference (CoreWeave)",
+    // CoreWeave Serverless Inference, still served from the W&B hostname.
+    // Bearer key; the `OpenAI-Project: <team>/<project>` header is
+    // optional (usage lands in the account's default `inference` project
+    // without it), so the operator adds it under `headers` in config.json
+    // only to bill another project. Probed 2026-11-12 with a bogus key:
+    // `/v1/models` and `/v1/chat/completions` answer 401 `invalid_api_key`.
+    // This host rejects a bad key before routing, so a bogus sibling path
+    // is 401 too, not 404; the routes are the documented ones.
+    baseUrl: "https://api.inference.wandb.ai",
+    envVar: "WANDB_API_KEY",
+    note: "CoreWeave Serverless Inference: open-weight models, W&B API key",
+  },
+  {
     id: "xai",
     label: "xAI (Grok)",
     baseUrl: "https://api.x.ai",
