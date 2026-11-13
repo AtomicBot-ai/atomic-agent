@@ -1802,6 +1802,45 @@ uses the default state (`~/.atomic-agent` since ATO-416, the terminal agent's ow
 `ATOMIC_AGENT_STATE_DIR` passed to A. Back both up before the test, or quit B
 as soon as it is up and open it again with the test state.
 
+## Flatpak
+
+`flatpak/io.atomicagent.desktop.yml` (ATO-687) packs the desktop app as a
+Flatpak with the app id `io.atomicagent.desktop`. It builds nothing from
+source: it takes the published `.deb` of a `desktop-v<version>` release
+(x86_64 and aarch64), moves `/opt/Atomic Agent` to `/app/atomic-agent` and
+starts Electron through zypak (`org.electronjs.Electron2.BaseApp`), which is
+how Chromium gets its sandbox inside Flatpak; the `.deb`'s setuid
+`chrome-sandbox` is removed.
+
+- Permissions: network, X11, sound, GPU (`--device=dri`, for local models),
+  notifications, the Secret Service (safeStorage keeps API keys there) and
+  `--filesystem=home`: the agent works on the user's files and shares
+  `~/.atomic-agent` with the terminal app. Narrowing that is a product call
+  and Flathub reviewers will ask about it.
+- Updates: the in-app updater only updates an AppImage, so inside Flatpak
+  Settings says the install is updated by the package manager; Flatpak
+  (`flatpak update`) does it.
+- Not working inside the sandbox as it is: "Open in Terminal" cannot start a
+  terminal on the host (that needs `flatpak-spawn --host` and the
+  `org.freedesktop.Flatpak` talk name, which Flathub does not grant lightly).
+- A new release: `node flatpak/bump.mjs <version>` (from `desktop/`) rewrites
+  the two `.deb` urls and sha256 from the release's `SHA256SUMS.txt` and adds
+  a `<release>` to the metainfo. `test/flatpak-manifest.test.mjs` pins the
+  manifest's shape.
+- Build locally: the commands in the manifest's header. In CI: the manual
+  "Desktop Flatpak" workflow (`.github/workflows/desktop-flatpak.yml`) lints
+  the manifest and metainfo and uploads a `.flatpak` bundle per arch as an
+  artifact. Nothing is published.
+
+**Flathub is a separate, manual step** (a public listing; only after a
+separate "yes"): fork `flathub/flathub`, open a PR on its `new-pr` branch
+with this manifest and its two files, answer the review, after which Flathub
+creates the `flathub/io.atomicagent.desktop` repository and the manifest
+lives there. Before submitting: screenshots in the metainfo
+(`<screenshots>`, Flathub requires them), a decision on `--filesystem=home`,
+and proof of the `atomicagent.io` domain for the verified badge (a token
+file under `https://atomicagent.io/.well-known/org.flathub.VerifiedApps.txt`).
+
 ## Layout
 
 ```
