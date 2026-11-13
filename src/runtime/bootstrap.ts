@@ -569,6 +569,12 @@ export async function createAgentRuntime(
     sideCallSlotId: compactionSideSlot,
     costOf: compactionCost,
     tokenCounter: createCompactionTokenCounter({ config: () => getConfig(), route: compactionRoute }),
+    // ATO-676: used only when `agent.compaction.memoryFlush` is on.
+    memoryNotes: {
+      enabled: () => getConfig().memory.notes.enabled,
+      store: (note) => notesStore.store(note),
+      log: (level, message, fields) => logger[level](message, fields),
+    },
     background: createBackgroundCompaction({
       config: () => getConfig().agent.compaction,
       sessionStore, complete: llmComplete, promptInput: compactionPromptInput,

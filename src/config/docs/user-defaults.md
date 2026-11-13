@@ -73,6 +73,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.smartApprovalModel` (default `null`).
 - `agent.taintReview` (default `false`): after a turn reads outside content, risky actions the level or a grant would run silently go to the smart-approval reviewer and then to you.
 - `agent.prompt.compact` (default `"auto"`): `auto` uses the compact prompt scaffold when the model's known context window is at most 64K tokens, `on` always, `off` never.
+- `agent.compaction.memoryFlush` (default `false`): before a compaction, ask the model for short dated observations (`YYYY-MM-DD: ...`) about the records being compacted and store them as one memory note tagged `observations` and `date-YYYY-MM-DD`. A private side call (at most 60 s): the visible chat does not change, and a failed flush never stops the compaction. Needs `memory.notes.enabled`.
 - `agent.tools.search` (default `"auto"`): `"auto"` describes only the core tools in full on a window of 32K or less, or when the catalog holds more than 100 tools, and lists the rest behind `tool.search`; `"on"` always, `"off"` never.
 
 ## http
