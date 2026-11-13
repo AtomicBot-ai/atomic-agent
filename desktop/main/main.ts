@@ -44,6 +44,8 @@ import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
 import { machineProfile } from "./studio-local.js";
 import { pickOpenRouterKey } from "./studio-key.js";
+import { removeProviderForgettingMedia } from "./studio-forget-key.js";
+import { isStudioCoreInstalled } from "./studio-core-install.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
 import { spellcheckEnabled, wireEditContextMenu } from "./edit-context-menu.js";
@@ -2188,7 +2190,19 @@ function wireIpc(client: AgentClient): void {
   });
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
-    return removeProvider(id);
+    // ATO-1441: OpenRouter's key leaves Core too once none is left (studio-forget-key.ts), in the background.
+    return removeProviderForgettingMedia(id, {
+      remove: removeProvider,
+      installed: () => isStudioCoreInstalled(managedDataDirNow(), BUNDLED_CORE_VERSION),
+      keyLeft: async () => {
+        const read = await readWholeConfig();
+        // A config that could not be read is not "no key": Core keeps it (logged, never shown).
+        if (!read.ok) throw new Error(read.error ?? "could not read the config");
+        return pickOpenRouterKey(read.config?.llm?.providers ?? [], (entry) => resolveKeyValue(entry as ProviderEntry));
+      },
+      forget: () => studio.forgetOpenRouterKey(),
+      log: (line) => console.error(line),
+    });
   });
   /* Item 11: in its turn behind any start on its way, and not a second
      `models start` for a daemon that is already up (alreadyRunning). */
