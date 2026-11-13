@@ -39,15 +39,14 @@ an installed skill's own tasks file has to be named with `--tasks`.
 | `apple-reminders/` | Manage Apple Reminders via the `remindctl` CLI | macOS + `brew install steipete/tap/remindctl` + Reminders permission |
 | `notion/` | Notion REST API (pages, databases, blocks) | `NOTION_API_KEY` in `~/.atomic-agent/.env` + page sharing |
 | `gog-workspace/` | Google Workspace access through the `gog` CLI | `gog` installed + OAuth client JSON added with `gog auth credentials` / `gog auth add` |
-| `xurl/` | X (Twitter) API via the official `xurl` CLI | `xurl` installed + OAuth 2.0 set up by user out-of-band |
 | `pdf/` | Merge / split / extract / render / OCR PDFs | `brew install qpdf poppler` (`ocrmypdf` for OCR) |
 | `xlsx/` | Create / edit Excel workbooks (reads via `os.fs.read_document`) | `python3` + `openpyxl` |
-| `exa-web-search/` | Key-less web search via the hosted Exa MCP endpoint over HTTP (browser fallback) | none |
 | `pandoc/` | Convert documents between formats (md/docx/html/pdf/epub) | `brew install pandoc` (+ TeX engine for PDF) |
 | `plain-writing/` | Rewrite text and landing pages without AI tells (long dashes, stock phrases, template layouts), meaning kept | none |
 | `post-drafts/` | Draft a Reddit / LinkedIn / X / Hacker News post within the platform's limits, the subreddit's rules and your `brand-context.md` voice; draft only, never publishes | none (bundled Node scripts fetch subreddit rules and lint the draft) |
 | `ffmpeg/` | Audio / video transform: convert, trim, extract, resize, GIF | `brew install ffmpeg` |
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
+| `audio-transcribe/` | Transcribe speech in audio files (mp3, m4a, wav, ogg, flac, webm) to text with the local `whisper` CLI | `brew install openai-whisper ffmpeg` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
 | `seo-rank-report/` | Weekly Telegram report of Google positions for a keyword list, with week-over-week moves; history in local SQLite (`scripts/rank_history.py`) | `python3`; data from Google Search Console (Composio or signed-in browser), or the user's own DataForSEO key / Ahrefs or SE Ranking MCP |
 | `seo-audit/` | "Check my site": polite read-only crawl from the sitemap (robots.txt obeyed, 20-page cap, delay between requests) plus PageSpeed Core Web Vitals, reported as quick wins vs strategic with affected URLs | none (`PAGESPEED_API_KEY` optional, see the skill) |
