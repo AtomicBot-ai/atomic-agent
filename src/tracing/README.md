@@ -8,6 +8,7 @@ This area owns traces and observability. Read [AGENTS.md](AGENTS.md) before chan
 ## Entry points
 
 - [agent-metrics.ts](agent-metrics.ts)
+- [prometheus-registry.ts](prometheus-registry.ts) and [prometheus-format.ts](prometheus-format.ts): the in-memory fold and text exposition behind `GET /metrics` (ATO-646)
 - [structured-logger.ts](structured-logger.ts)
 - [trace-recorder.ts](trace/trace-recorder.ts)
 - [trace-event.ts](trace/trace-event.ts)

@@ -25,6 +25,7 @@ export {
   setWebhookTunnelStatus,
 } from "./webhook-tunnel-status.js";
 export type { WebhookTunnelStatus } from "./webhook-tunnel-status.js";
+export type { RouteTableOptions } from "./route-table.js";
 
 export { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 export type {
