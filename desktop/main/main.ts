@@ -42,6 +42,7 @@ import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
+import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -2871,6 +2872,8 @@ function wireIpc(client: AgentClient): void {
   wireOvernightIpc({ window: () => win, client });
   // ATO-1424: a code block's command typed (not run) into a new Terminal window (macOS).
   wireTerminalOpenIpc();
+  // ATO-590: the Tasks tab's Pause / Resume and a task's past runs.
+  wireTaskControlsIpc({ client });
   /* Studio (Images + Video): Core's media API for the Studio pages
      (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
      OpenRouter key goes to Core over loopback only, never to the window. */

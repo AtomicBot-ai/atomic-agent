@@ -1253,6 +1253,13 @@ export class AgentClient extends EventEmitter {
   /** Runs one attempt synchronously — an agent turn — so it waits longer than a read. */
   runTask = (id: string) =>
     this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/run`, undefined, 180_000);
+  /* ATO-590 — schedule controls. An agent from before these routes answers
+     404 "no route"; task-controls-ipc.ts reports that as unsupported. */
+  pauseTask = (id: string) => this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/pause`, {});
+  resumeTask = (id: string) => this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/resume`, {});
+  /** `{runs:[{id, attempt, sessionId, startedAt, endedAt, outcome, error, errorCategory}], available}`, newest first. */
+  taskRuns = (id: string, limit = 50) =>
+    this.request<unknown>("GET", `/api/tasks/${encodeURIComponent(id)}/runs?limit=${encodeURIComponent(String(limit))}`);
   health = () => this.json<unknown>("/health");
   /** ATO-134: /health without its llama probe (agent `?llama=0`; an older one ignores it and probes) — for busyTurns before a switch. */
   turnsHealth = () => this.json<unknown>("/health?llama=0");
