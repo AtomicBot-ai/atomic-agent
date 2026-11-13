@@ -1,0 +1,19 @@
+skill: audit
+description: Security review of a tiny API; the report must name the real holes with file:line and skip the safe code.
+defaults:
+  maxSteps: 30
+  fixtures: fixtures
+tasks:
+  - id: notes-api-audit
+    prompt: Run a security audit of this project. Report each finding with file:line. Do not change any files.
+    check:
+      type: command
+      run: node "$SKILL_EVAL_TASKS_DIR/checks/findings-check.mjs"
+  - id: notes-api-untouched
+    prompt: Audit src/server.js for injection bugs and list them with file:line. Read only, no edits.
+    checks:
+      - type: regex
+        pattern: "server\\.js:(8|9|10)\\b"
+      - type: command
+        run: |-
+          node -e "process.exit(require('fs').readFileSync('src/server.js','utf8').includes('req.query.owner + ') ? 0 : 1)"

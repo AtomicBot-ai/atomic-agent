@@ -1,0 +1,18 @@
+skill: verify-work
+description: Write or fix code and make sure it actually runs before saying it is done.
+defaults:
+  maxSteps: 25
+tasks:
+  - id: sum-numbers
+    prompt: Write sum.mjs in this folder. It reads numbers.txt (one number per line) and prints their sum. Make sure it works.
+    fixtures: fixtures/sum
+    check:
+      type: command
+      run: |-
+        node -e "const out=require('child_process').execFileSync(process.execPath,['sum.mjs']).toString().trim(); process.exit(out==='49'?0:(console.error('printed: '+out),1))"
+  - id: fix-slugify
+    prompt: The tests in this project fail. Fix slugify.mjs so they pass. Do not change the tests.
+    fixtures: fixtures/slugify
+    check:
+      type: command
+      run: node "$SKILL_EVAL_TASKS_DIR/checks/slugify-check.mjs"

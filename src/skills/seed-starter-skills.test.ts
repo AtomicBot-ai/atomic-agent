@@ -92,4 +92,14 @@ describe("seedStarterSkillsIfMissing", () => {
     expect(second.removed).not.toContain("ddgr-web-search");
     expect(second.removed).not.toContain("exa-web-search");
   });
+
+  it("leaves a starter's evals/ folder (Skill Lab tasks and answers) out of the seeded copy", async () => {
+    const source = resolveStarterSkillsSourceDir();
+    expect(source).not.toBeNull();
+    // The packaged plain-writing starter ships evals/tasks.yaml (ATO-1163).
+    expect(existsSync(join(source!, "plain-writing", "evals", "tasks.yaml"))).toBe(true);
+    await seedStarterSkillsIfMissing({ globalSkillsDir: globalDir });
+    expect(existsSync(join(globalDir, "plain-writing", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(globalDir, "plain-writing", "evals"))).toBe(false);
+  });
 });
