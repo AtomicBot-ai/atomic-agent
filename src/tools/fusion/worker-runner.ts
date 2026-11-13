@@ -6,6 +6,10 @@ import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
 import type { DelegateTask } from "./delegate-args.js";
 import type { DelegateContract } from "./contract.js";
+import {
+  readWorkerQuestion,
+  WORKER_NEEDS_INPUT_NOTE,
+} from "./worker-question.js";
 import type { CompletionUsage } from "../../llm/provider/completion-types.js";
 import type { FusionEscalationTarget } from "../../llm/run-mode/index.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
@@ -1875,6 +1879,21 @@ async function runOneTask(
   // its files are its children's, and the delegate checks them on the
   // parent once they ran.
   const proposedSplit = mayPropose && hasSplitProposal(result.reply);
+  // A worker that ended its own turn on a question (ATO-945) stopped by
+  // design: it is `needs_input`, not `ok`, and its declared files are not
+  // checked, because it was told to stop before writing them.
+  const question =
+    !proposedSplit && result.status === "ok"
+      ? readWorkerQuestion(result.reply)
+      : undefined;
+  if (question !== undefined) {
+    result = {
+      ...result,
+      status: "needs_input",
+      question,
+      notes: [...(result.notes ?? []), WORKER_NEEDS_INPUT_NOTE],
+    };
+  }
   if (
     !proposedSplit &&
     task.files !== undefined &&
@@ -1923,6 +1942,11 @@ function workerPhase(
 /** One line for the operator's feed — never the whole reply. */
 function summarise(result: WorkerTaskResult): string {
   if (result.status === "needs_orchestrator") return "needs the orchestrator";
+  if (result.status === "needs_input" && result.question !== undefined) {
+    const cap = Math.min(120, WORKER_REPLY_CHAR_BUDGET);
+    const q = result.question;
+    return `asks: ${q.length > cap ? `${q.slice(0, cap)}…` : q}`;
+  }
   const text = (result.error ?? result.reply).replace(/\s+/g, " ").trim();
   if (text.length === 0) return result.status;
   const cap = Math.min(120, WORKER_REPLY_CHAR_BUDGET);
