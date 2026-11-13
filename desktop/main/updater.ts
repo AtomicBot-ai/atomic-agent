@@ -40,6 +40,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { app } from "electron";
 
 import * as A from "./analytics/index.js";
+import { parseUpdatePolicy, requiredUpdate, type RequiredUpdate } from "./update-policy.js";
 
 type UpdaterModule = typeof import("electron-updater");
 type AppUpdater = import("electron-updater").AppUpdater;
@@ -112,6 +113,12 @@ export interface UpdateState {
   manualChecking: boolean;
   /** `--fake-update` / the smoke's fake. */
   fake: boolean;
+  /**
+   * ATO-1125: the feed's policy lists this version (update-policy.ts).
+   * `below-minimum` warns; `broken` also refuses to start a new chat.
+   * Null when nothing is listed, or the feed was not read.
+   */
+  required: RequiredUpdate | null;
 }
 
 /** userData/updates.json. */
@@ -429,6 +436,7 @@ export class AppUpdateController {
   private phase: UpdatePhase = "idle";
   private version: string | null = null;
   private notes: string | null = null;
+  private required: RequiredUpdate | null = null;
   private percent: number | null = null;
   private toast = false;
   /** The version Not now / Cancel / Later put away for this session. */
@@ -519,6 +527,7 @@ export class AppUpdateController {
       manualCheck: this.manualCheck,
       manualChecking: this.manualChecking,
       fake: this.fake,
+      required: this.required,
     };
   }
 
@@ -655,17 +664,20 @@ export class AppUpdateController {
         if (!found || compareVersions(found.version, this.currentVersion) <= 0) {
           this.phase = "idle";
           this.toast = false;
+          this.required = null;
           return { kind: "up-to-date", version: this.currentVersion };
         }
         const isNew = found.version !== this.version;
         this.version = found.version;
         this.notes = firstNotesLine(found.releaseNotes);
+        this.required = requiredUpdate(this.currentVersion, found.version, parseUpdatePolicy(found.releaseNotes), compareVersions);
         this.phase = "available";
         this.downloadError = null;
         if (isNew) A.track("update_available", { version: found.version, trigger });
         const skipped = this.prefs.skippedVersion === found.version;
         const putAway = this.dismissedThisSession === found.version;
-        if (!skipped && !putAway) this.toast = true;
+        // A required update is offered even after Skip this version; Not now still puts it away for the session.
+        if ((!skipped || this.required) && !putAway) this.toast = true;
         return { kind: "available", version: found.version };
       } catch (err) {
         if (this.phase === "checking") this.phase = before === "checking" ? "idle" : before;

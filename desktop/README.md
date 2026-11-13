@@ -1648,6 +1648,17 @@ without a click.
   skipped version, last Not now, and the install in flight, which the new
   version reads once to send `update_installed`). Never in the agent's
   config.json.
+- Required updates (ATO-1125, `main/update-policy.ts`): the feed's update files
+  (`stable-mac.yml`, `stable.yml`, `stable-linux*.yml`, and the `beta*` copies)
+  may carry one hidden line in `releaseNotes`, the same one the terminal reads
+  from its GitHub release:
+  `<!-- atomic-agent-update-policy: {"minimum":"0.0.7","broken":["0.0.6"]} -->`.
+  Below `minimum` the toast and the empty chat warn, and a chat still starts.
+  A `broken` version shows "Update required" on the empty chat and starts no
+  new chat until it updates; an open chat and a running turn go on. Skip this
+  version does not hide a required update. No line, a bad line, or a failed
+  check: nothing changes. The line is added to the yml files by hand (or by
+  the release job) when a version is listed; no release carries one yet.
 
 ### What a build and a release need
 
