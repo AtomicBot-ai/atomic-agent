@@ -15,13 +15,20 @@ describe("probeMachineForModels", () => {
     const m = await probeMachineForModels({
       ...seams,
       platform: "darwin",
+      cpuModel: "Apple M2 Pro",
       listDevices: async () => {
         asked = true;
         return { devices: [], error: null };
       },
     });
     expect(asked).toBe(false);
-    expect(m).toEqual({ ramGb: 30, gpuBudgetGb: 24, freeDiskGb: 200, cpuOnly: false });
+    expect(m).toEqual({
+      ramGb: 30,
+      gpuBudgetGb: 24,
+      freeDiskGb: 200,
+      cpuOnly: false,
+      bandwidth: { gpuGbPerSec: 200, ramGbPerSec: 200, unified: true },
+    });
   });
 
   it("reports RAM as the machine is sold: a 16 GB Mac is 16, not 17 (ATO-1442)", async () => {
@@ -44,6 +51,8 @@ describe("probeMachineForModels", () => {
     });
     expect(m.cpuOnly).toBe(false);
     expect(m.gpuBudgetGb).toBeCloseTo((12_282 * 1024 * 1024) / GB, 3);
+    // ATO-450: the card's name sets the bandwidth the speed forecast uses.
+    expect(m.bandwidth).toEqual({ gpuGbPerSec: 504, ramGbPerSec: 50, unified: false });
   });
 
   it("calls a machine with no device CPU-only", async () => {
@@ -53,6 +62,7 @@ describe("probeMachineForModels", () => {
       listDevices: async () => ({ devices: [], error: null }),
     });
     expect(m).toMatchObject({ gpuBudgetGb: null, cpuOnly: true });
+    expect(m.bandwidth).toEqual({ gpuGbPerSec: null, ramGbPerSec: 50, unified: false });
   });
 
   it("asks nvidia-smi when the engine is not installed yet", async () => {
@@ -62,6 +72,7 @@ describe("probeMachineForModels", () => {
       listDevices: async () => ({ devices: [], error: "not installed" }),
       nvidiaVramMiB: async () => 8192,
     });
+    expect(m.bandwidth?.gpuGbPerSec).toBe(250);
     expect(m.cpuOnly).toBe(false);
     expect(m.gpuBudgetGb).toBeCloseTo((8192 * 1024 * 1024) / GB, 3);
   });

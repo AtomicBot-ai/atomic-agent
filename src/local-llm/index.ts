@@ -40,6 +40,23 @@ export {
 } from "./backend/machine-for-models.js";
 export { hostRamGb, marketedRamGb } from "./backend/host-ram.js";
 export {
+  estimateMemoryBandwidth,
+  type MemoryBandwidth,
+} from "./backend/memory-bandwidth.js";
+export {
+  forecastDecodeSpeed,
+  formatSpeedEstimate,
+  pickBestQuant,
+  quantBitsFromName,
+  quantFitFor,
+  rateQuant,
+  type QuantFit,
+  type QuantFitTier,
+  type QuantRating,
+  type SpeedForecast,
+} from "./catalog/quant-fit.js";
+export {
+  probeConfiguredMachine,
   readRecommendSnapshot,
   startModelUpgrade,
   type RecommendSnapshot,

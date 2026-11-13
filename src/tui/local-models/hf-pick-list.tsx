@@ -114,7 +114,25 @@ export function hfChoiceLine(
   choice: HuggingFaceRepoChoices["choices"][number],
   active: boolean,
 ): string {
-  return `${active ? "›  " : "   "}${choice.filename.padEnd(44)}${choice.sizeLabel.padStart(9)}`;
+  return `${active ? "›  " : "   "}${choice.filename.padEnd(44)}${choice.sizeLabel.padStart(9)}${hfChoiceRating(choice)}`;
+}
+
+/**
+ * ATO-450: the per-quant badge after the size, when the lookup rated the
+ * choices for this machine: `  Recommended · Fits well · ~25 tok/s,
+ * estimate`. Empty for an unrated list. "Recommended" comes first so a
+ * narrow terminal truncates the forecast, not the pick.
+ */
+export function hfChoiceRating(
+  choice: HuggingFaceRepoChoices["choices"][number],
+): string {
+  if (!choice.fit) return "";
+  const parts = [
+    ...(choice.recommended ? ["Recommended"] : []),
+    choice.fit.label,
+    ...(choice.speed ? [choice.speed.label] : []),
+  ];
+  return `  ${parts.join(" · ")}`;
 }
 
 /** The rows actually on screen, shared between the render and the measure. */
