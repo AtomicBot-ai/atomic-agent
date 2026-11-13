@@ -3194,14 +3194,15 @@ export async function skillProjectEnabled(enabled: boolean, workspace: string): 
 
 export interface HubSkillRow {
   identifier: string;
-  source: "clawhub" | "github";
+  /** ATO-608 (#1419): `skills.sh` rows, the `[sh]` badge, sit between ClawHub's and the taps'. */
+  source: "clawhub" | "skills.sh" | "github";
   downloads: number | null;
   description: string;
 }
 
 /**
  * `atag skill browse` / `atag skill search <q>`: one row per hub entry,
- * `[claw]|[gh]\t<identifier>\t↓N|-\t<description>` (src/cli/skill.ts
+ * `[claw]|[sh]|[gh]\t<identifier>\t↓N|-\t<description>` (src/cli/skill.ts
  * printHubEntries), "(no skills found)" when empty; every `WARN: <repo>:
  * <err>` on stderr becomes the TUI's hubError note. A browse whose every
  * source failed exits 1 with nothing found — reported, not swallowed.
@@ -3223,7 +3224,7 @@ export async function skillBrowse(
   for (const line of res.stdout.split("\n")) {
     if (!line.trim() || line.startsWith("(no skills found)")) continue;
     const cells = line.split("\t");
-    if (cells.length < 3 || (cells[0] !== "[claw]" && cells[0] !== "[gh]")) {
+    if (cells.length < 3 || (cells[0] !== "[claw]" && cells[0] !== "[sh]" && cells[0] !== "[gh]")) {
       // A description is printed raw, newlines included (ClawHub summaries carry them): the line continues the previous row.
       const prev = rows[rows.length - 1];
       if (prev && cells.length === 1) { prev.description += "\n" + line; continue; }
@@ -3232,7 +3233,7 @@ export async function skillBrowse(
     const dl = cells[2] ?? "-";
     rows.push({
       identifier: cells[1]!,
-      source: cells[0] === "[claw]" ? "clawhub" : "github",
+      source: cells[0] === "[claw]" ? "clawhub" : cells[0] === "[sh]" ? "skills.sh" : "github",
       downloads: dl.startsWith("↓") && /^\d+$/.test(dl.slice(1)) ? Number(dl.slice(1)) : null,
       description: cells.slice(3).join("\t"),
     });
