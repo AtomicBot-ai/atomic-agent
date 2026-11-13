@@ -37,7 +37,7 @@ describe("parseElicitationSchema", () => {
       ["sure", "boolean", true],
       ["tags", "multi_enum", false],
     ]);
-    const account = fields[0];
+    const account = fields[0]!;
     expect(account.kind === "enum" && account.options).toEqual([
       { value: "a1", label: "Work" },
       { value: "a2", label: "Home" },
@@ -49,10 +49,10 @@ describe("parseElicitationSchema", () => {
   });
 
   it("reads legacy enumNames as labels", () => {
-    const [f] = fieldsOf({
+    const f = fieldsOf({
       type: "object",
       properties: { p: { type: "string", enum: ["a", "b"], enumNames: ["A", "B"] } },
-    });
+    })[0]!;
     expect(f.kind === "enum" && f.options[1]).toEqual({ value: "b", label: "B" });
   });
 

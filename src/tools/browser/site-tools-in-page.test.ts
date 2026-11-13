@@ -106,7 +106,7 @@ describe("WebMCP page scripts", () => {
   });
 
   it("asks the browser's own getTools / executeTool when nothing was recorded", async () => {
-    const executeTool = vi.fn(async () => "native answer");
+    const executeTool = vi.fn(async (_name: string, _args: unknown) => "native answer");
     const page = fakePage({
       document: {
         modelContext: {

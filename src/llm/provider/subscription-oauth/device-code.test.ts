@@ -97,7 +97,12 @@ describe("device code grant", () => {
   it("never puts the device code in error messages", async () => {
     const { options } = harness([[200, DEVICE], [400, { error: "server_error", error_description: "device-secret" }]]);
     const authorization = await requestDeviceAuthorization(options);
-    const error = await pollDeviceToken(options, authorization).catch((e: unknown) => e as Error);
+    const error = await pollDeviceToken(options, authorization).then(
+      () => {
+        throw new Error("expected a rejection");
+      },
+      (e: unknown) => e as Error,
+    );
     expect(error).toMatchObject({ code: "token_request_failed", oauthError: "server_error" });
     expect(error.message).not.toContain("device-secret");
   });

@@ -54,7 +54,7 @@ describe("browser.act: actions that do not ask", () => {
     backend.actResult = { done: false, note: '"Saved" was not visible within 10000 ms' };
     const result = await buildBrowserActTool(backend, recordingGate(true).options).run({ action: "wait", text: "Saved" }, ctx);
     expect(result.status).toBe("error");
-    expect(result.output).toContain("not visible");
+    expect(result.summary).toContain("not visible");
   });
 });
 
