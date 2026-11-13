@@ -233,7 +233,9 @@ describe("runtime turn ownership recipes", () => {
   it("the model router never moves a pinned turn, and an unrouted turn resets the chain head (ATO-483)", async () => {
     const setTurnPrimary = vi.spyOn(fixture.deps.inference.fallbackChain, "setTurnPrimary");
     const active = resolveLlmConfig(fixture.config).activeTextProvider;
-    fixture.config.llm.router = { enabled: true, rules: [{ provider: active }] };
+    // No llm.json in this state dir, so `config.llm` is unset: give it the
+    // resolved defaults plus the router.
+    fixture.config.llm = { ...resolveLlmConfig(fixture.config), router: { enabled: true, rules: [{ provider: active }] } } as never;
     await fixture.service.executeTurn(session(), "request", { providerId: active });
     expect(setTurnPrimary).not.toHaveBeenCalled();
     // A rule naming the active provider routes nothing: the head is put
