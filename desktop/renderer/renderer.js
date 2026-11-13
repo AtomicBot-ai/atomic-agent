@@ -1203,7 +1203,7 @@ const SETTINGS_SECTIONS = [
   ['connections','Connections','plug',['mcp','telegram','discord','push','composio']],   // ATO-516: discord-settings.js
   ['memory','Memory','memory',['memory']],
   // ATO-445: the agent's webhook routes sit beside Tasks, since each event becomes one (renderer/webhooks.js).
-  ['tasks','Tasks','tasks',['tasks','webhooks']],
+  ['tasks','Cron jobs','tasks',['tasks','webhooks']],   // W2: visible name only, the id stays
   ['skills','Skills','skills',['skills']],
   // ATO-954: installed plugins (renderer/plugins-pane.js).
   ['plugins','Plugins','puzzle',['plugins']],
@@ -1213,7 +1213,7 @@ const SETTINGS_SECTIONS = [
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
 const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['discord','Discord'],['push','Phone push'],['composio','Composio'],['memory','Memory'],
-                       ['tasks','Tasks'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
+                       ['tasks','Cron jobs'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -1274,7 +1274,7 @@ if (typeof document !== 'undefined') {
     const t = e.target instanceof Element ? e.target : null;
     if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
     const inside = !!t.closest('#sidebar');
-    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-act^="pedit:"], [data-more], input, textarea')) return;
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-act^="pedit:"], [data-act="studio:menu"], [data-more], input, textarea')) return;
     if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -1286,7 +1286,11 @@ if (typeof document !== 'undefined') {
 /* 13.10 (owner's review): Search is a magnifier button beside the sidebar
    toggle, not a pill at the right of the toolbar. Same verb, same chord in the
    tooltip, same 32px icon button as the toggle. */
-function searchBtnHTML() {
+function searchBtnHTML(chats) {
+  /* W2: the sidebar's own magnifier (expanded) opens the chat search over the
+     lists, as Claude desktop's does; ⌘ K is still the palette. */
+  if (chats) return '<button class="iconbtn chromesearch" data-act="chatsearch:open" title="Search chats" aria-label="Search chats"'
+    + ' aria-expanded="' + !!(CHATSEARCH.open || CHATSEARCH.q) + '">' + ic('search') + '</button>';
   const title = kbdText('Search and commands (⌘ K)');
   return '<button class="iconbtn chromesearch" data-act="palette" title="' + title + '" aria-label="' + title + '">' + ic('search') + '</button>';
 }
@@ -1995,7 +1999,7 @@ const PAL = [
     ['bell','Phone push','Settings · Connections','','settings:push'],
     ['link','Composio','Settings · Connections','','settings:composio'],
     ['memory','Memory','Settings','⌘ 4','settings:memory'],
-    ['tasks','Tasks','Settings','','settings:tasks'],
+    ['tasks','Cron jobs','Settings','','settings:tasks'],
     ['skills','Skills','Settings','','settings:skills'],
     ['puzzle','Plugins','Settings','','settings:plugins'],
     ['lock','Privacy','Settings','⇧ ⌘ ,','settings:privacy'],
@@ -2330,7 +2334,7 @@ function roomTitle() {
     const ses = S.sessionId ? chatById(S.sessionId) : null;
     return ses && ses.t ? ses.t : '';
   }
-  if (S.room === 'tasks')  return 'Tasks';
+  if (S.room === 'tasks')  return 'Cron jobs';   // W2: the Tasks feature's visible name
   if (S.room === 'skills') return 'Skills';
   return '';
 }
@@ -2417,18 +2421,17 @@ function renderSidebar() {
   $('#sidebar').innerHTML =
     // 13.10: the expanded sidebar's top row sits in the window's title band —
     // the traffic lights on its left, Search and the toggle on its right.
-    (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML() + sidebarToggleHTML() + '</div>' : '')
+    // W2: here the magnifier opens the chat search over the lists (chat-search.js); the toolbar's, in the rail, is still ⌘ K.
+    (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML(true) + sidebarToggleHTML() + '</div>' : '')
     + '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button>'
       // ATO-1185: the downloads icon (renderDlcard paints it between renders).
       + '<span class="sb-dl" data-k="' + esc(DLC.indKey) + '">' + DLC.ind + '</span></div>'
     // ATO-1032: the chord is shown on the row (drawn by CSS from data-kbd, so the row's text stays "New chat").
     + '<button class="sb-new" data-act="session:new" data-kbd="' + esc(IS_MAC ? '⌘N' : kbd('⌘ N')) + '" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
-      + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
-    + sidebarNavHTML()
-    // Studio: the Images and Video rows, between New chat and the chats (studio/shell.js).
-    + (window.STUDIO ? STUDIO.sidebarHTML(S.room) : '')
-    + chatSearchFieldHTML()   // ATO-1150: filters the chats below by title (chat-search.js)
+      + '<span class="sb-new-ic">' + lucideIcon('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
+    + sidebarNavHTML()   // W2: Studio, Cron jobs, Skills, Plugins
+    + chatSearchFieldHTML()   // ATO-1150: filters the chats below by title (chat-search.js); W2: only once the magnifier opened it
     + '<div class="sb-lists">'
       + (chatSearchOn() ? chatSearchListsHTML() : (''
       /* ATO-165: a "Pinned" section above Chats, only while something is
@@ -2453,11 +2456,11 @@ function renderSidebar() {
       + archivedSidebarHTML(ch.archived)))
       + (showTasks
         ? '<div class="sb-list" data-list="tasks">'
-          + '<div class="sb-list-head micro"><span>Tasks</span>'
+          + '<div class="sb-list-head micro"><span>Cron jobs</span>'
             // countRunningTasks (sidebar-tasks-selector.ts) counts the FULL snapshot, not the page.
             + (tk.running > 0 ? '<span class="ct tnum">' + tk.running + ' running</span>' : '')
             // `tasks:new` reaches tasksAct('new'): Settings › Tasks with the create form up.
-            + '<button class="iconbtn sb-add" data-act="tasks:new" title="New task" aria-label="New task">' + ic('plus') + '</button></div>'
+            + '<button class="iconbtn sb-add" data-act="tasks:new" title="New cron job" aria-label="New cron job">' + ic('plus') + '</button></div>'
           + tk.rows.map(taskRow).join('')
           + (tk.hidden > 0 ? '<button class="loadmore" data-more="tasks">Load more · ' + tk.hidden + ' more</button>' : '')
         + '</div>'
@@ -2530,19 +2533,22 @@ function interviewSlash(rest) {
   });
 }
 
-/* ATO-457: the Tasks and Skills section rows. They reuse the New chat row's
-   shape (.sb-new: icon and word, the icon alone in the rail) and open their
-   Settings tab through act('room:…'), the same verb as ⌘ 2 / ⌘ 3; the row
-   whose tab is on screen is lit. */
+/* ATO-457: the section rows. They reuse the New chat row's shape (.sb-new:
+   icon and word, the icon alone in the rail) and open their Settings tab
+   through act('room:…'), the same verb as ⌘ 2 / ⌘ 3; the row whose tab is on
+   screen is lit. W2 (like Claude desktop): Studio's one row comes first (its
+   popover opens Image or Video, studio/shell.js), then Cron jobs (the Tasks
+   tab), Skills and Plugins (Settings › Plugins), all in thin Lucide glyphs. */
 function sidebarNavHTML() {
   const pane = S.settings ? settingsPaneId(S.settingsPane) : null;
   return '<div class="sb-nav" role="group" aria-label="Sections">'
-    + sidebarNavItems(pane, {projects: projectsSupported()}).map((n) => {   // ATO-1146: New project, when the store is there
+    + (window.STUDIO ? STUDIO.sidebarHTML(S.room) : '')
+    + sidebarNavItems(pane).map((n) => {
       const title = n.chord ? kbdText(n.label + ' (' + n.chord + ')') : esc(n.label);
       return '<button class="sb-new sb-nav-row' + (n.on ? ' on' : '') + '" data-act="' + n.act + '" data-nav="' + n.id + '"'
         + (n.on ? ' aria-current="page"' : '')
         + ' title="' + title + '" aria-label="' + esc(n.label) + '">'
-        + '<span class="sb-new-ic">' + ic(n.icon) + '</span><span class="sb-new-lb">' + esc(n.label) + '</span></button>';
+        + '<span class="sb-new-ic">' + (lucideIcon(n.icon) || ic(n.icon)) + '</span><span class="sb-new-lb">' + esc(n.label) + '</span></button>';
     }).join('')
     + '</div>';
 }
@@ -5230,7 +5236,7 @@ function palRows() {
     hits.push({ic:'chevD', t:more + ' more chats', cx:'Show every chat that matches', sc:'', act:'palette:morechats', badge:'session', more:true});
   }
   fuzzyFilter(q, TASKS, (t) => t.t).slice(0, 3)
-    .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
+    .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Cron job · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   fuzzyFilter(q, SKILLS, (s) => s.t).slice(0, 3)
     .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:SK.workingDir ? 'skill:compose:' + s.t : 'room:skills', badge:'skill'}));
   return hits;
@@ -5282,7 +5288,7 @@ function paletteHTML() {
   } else {
     // Ranked commands first, then a header before the chats, tasks and skills that
     // match. Headers sit between rows only; data-palrow indexes stay the flat order.
-    const heads = {session:'Chats', task:'Tasks', skill:'Skills'};
+    const heads = {session:'Chats', task:'Cron jobs', skill:'Skills'};
     let last = '';
     flat.forEach((r, i) => {
       if (r.badge && r.badge !== last) list += '<div class="palgroup">' + heads[r.badge] + '</div>';

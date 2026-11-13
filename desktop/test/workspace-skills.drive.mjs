@@ -6,7 +6,7 @@ import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { launch, REPO_DIR, sleep } from './drive.mjs';
+import { launch, MOD_KEY, REPO_DIR, sleep } from './drive.mjs';
 
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'atag-workspace-skills-')));
 const stateDir = join(root, 'state'), workspace = join(root, 'project-A'), other = join(root, 'project-B');
@@ -96,7 +96,8 @@ try {
   console.log('PASS discovery, detail and all scope controls');
   await app.screenshot(join(root,'skills.png'));
   await app.press('Escape');
-  await app.clickSel('[data-act="palette"]'); await app.clickSel('#palq'); await app.type('openspec');
+  // W2: the expanded sidebar's magnifier is chat search now; ⌘ K is still the palette.
+  await app.press('k', [MOD_KEY]); await app.clickSel('#palq'); await app.type('openspec');
   await app.waitFor(`document.querySelector('#pallist')?.textContent.includes('openspec-explore')`, 'skill in command palette');
   await app.clickText('openspec-explore', {scope:'#pallist'});
   await app.waitFor(`document.querySelector('#entry')?.value === '/openspec-explore '`, 'palette prepares skill command');

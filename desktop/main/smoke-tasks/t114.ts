@@ -13,8 +13,8 @@ import { BrowserWindow } from "electron";
  *     narrowest window the app allows (940px).
  * (c) The Atomic Chat layout. Expanded, the sidebar reaches up into the 52px
  *     band: its top row holds the traffic lights on the left and two icon
- *     buttons on the right — Search (the palette, ⌘ K) and the sidebar
- *     toggle. The "Search" pill at the top right of the main area is gone.
+ *     buttons on the right — Search (W2: the chat search; ⌘ K is still the
+ *     palette) and the sidebar toggle. The "Search" pill at the top right of the main area is gone.
  *     Collapsed, both buttons stand in the toolbar next to the lights.
  *     The row is the drag handle; the buttons are not.
  * (d) The inspector toggle at the top right wore the sidebar's panel glyph
@@ -162,9 +162,10 @@ export async function checks114(js: Js, check: Check): Promise<void> {
     const open = await chromeWhen(js, (c) => c.expanded && !!c.top && c.toolbar.open);
     const [s, t] = open.top ? open.top.buttons : [];
     check(
-      "T114c: expanded, the sidebar's top row carries Search then the sidebar toggle, and the toolbar carries neither",
-      open.expanded && !!open.top && open.top.buttons.length === 2 && s?.act === "palette" && t?.act === "toggle:sidebar"
-        && open.toolbar.buttons.length === 0 && open.toolbar.open && open.pill === 0 && open.palettes === 1 && open.toggles === 1,
+      // W2: the sidebar's magnifier is chat search (like Claude desktop); ⌘ K is still the palette.
+      "T114c: expanded, the sidebar's top row carries Search chats then the sidebar toggle, and the toolbar carries neither",
+      open.expanded && !!open.top && open.top.buttons.length === 2 && s?.act === "chatsearch:open" && t?.act === "toggle:sidebar"
+        && open.toolbar.buttons.length === 0 && open.toolbar.open && open.pill === 0 && open.palettes === 0 && open.toggles === 1,
       show({ top: open.top?.buttons.map((b) => b.act), toolbar: open.toolbar, pill: open.pill, palettes: open.palettes, toggles: open.toggles }),
     );
     check(
@@ -179,7 +180,7 @@ export async function checks114(js: Js, check: Check): Promise<void> {
       "T114c: both are 32px icon buttons a person can reach — named, titled, focusable, on top where they are drawn",
       [s, t].every((b) => !!b && b.box.width === 32 && b.box.height === 32 && b.svg && !!b.aria && b.aria === b.title
         && !b.disabled && b.tab >= 0 && b.hit)
-        && /^Search and commands \(/.test(s!.title ?? "") && /^Hide sidebar \(/.test(t!.title ?? ""),
+        && s!.title === "Search chats" && /^Hide sidebar \(/.test(t!.title ?? ""),
       show([s, t]),
     );
     check(
@@ -210,18 +211,25 @@ export async function checks114(js: Js, check: Check): Promise<void> {
         && typeof insp["aria"] === "string" && insp["aria"] === insp["title"] && /steps and reasoning/.test(String(insp["aria"])),
       show(insp),
     );
-    // A real click on the magnifier opens the same palette the pill did; so does the chord.
-    const clicked = await js<{ overlay: string | null; chord: string | null }>(`(() => {
-      const b = document.querySelector('#sidebar .sb-top [data-act="palette"]');
+    /* W2: a real click on the magnifier brings up the chat search field over the
+       lists, focused; a second click puts the empty field away; ⌘ K still opens
+       Search and commands. There is no standing "Search chats" field. */
+    const clicked = await js<{ before: boolean; field: boolean; focused: boolean; after: boolean; overlay: string | null; chord: string | null }>(`(() => {
+      const before = !!document.getElementById('chat-search');
+      const b = document.querySelector('#sidebar .sb-top [data-act="chatsearch:open"]');
       if (b) b.click();
-      const overlay = S.overlay; act('close');
+      const f = document.getElementById('chat-search');
+      const field = !!f, focused = !!f && document.activeElement === f, overlay = S.overlay;
+      const b2 = document.querySelector('#sidebar .sb-top [data-act="chatsearch:open"]');
+      if (b2) b2.click();
+      const after = !!document.getElementById('chat-search');
       document.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', code: 'KeyK', metaKey: IS_MAC, ctrlKey: !IS_MAC, bubbles: true, cancelable: true}));
       const chord = S.overlay; act('close');
-      return {overlay, chord};
+      return {before, field, focused, after, overlay, chord};
     })()`);
     check(
-      "T114c: the magnifier opens Search and commands, and ⌘ K still does",
-      clicked.overlay === "palette" && clicked.chord === "palette",
+      "T114c: the magnifier opens the chat search, a second click puts it away, and ⌘ K still opens Search and commands",
+      !clicked.before && clicked.field && clicked.focused && clicked.overlay === null && !clicked.after && clicked.chord === "palette",
       show(clicked),
     );
 

@@ -3853,14 +3853,16 @@ function wireIpc(client: AgentClient): void {
 
 /** Item 6 (sidebar): what `window.__sidebar()` hands back. */
 /* ATO-165: the sidebar's section headers — "Pinned" first while a pinned
-   chat is on the list, then Chats, then Tasks when the agent holds any. */
+   chat is on the list, then Chats, then Tasks (W2: "Cron jobs") when the agent holds any.
+   W2: "Projects" follows Pinned whenever the projects store is there (its header carries
+   New project now), which the app's bridge always is. */
 function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tasks: unknown[] }): string {
   // ATO-1034: "Folders" sits between Pinned and Chats while there is a folder.
-  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Projects", ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Cron jobs"] : [])]);
 }
-/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js).
-    ATO-1146 (#1350): "New project" comes first while the projects store is there, which the app's bridge always is. */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["New project", "Tasks", "Skills"]);
+/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js, studio/shell.js).
+    W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header. */
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Skills", "Plugins"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
@@ -6174,7 +6176,7 @@ async function sidebarTest(
     );
     if (apiTasks.length === 0) {
       // Calm (S1): no tasks, no Tasks section — the list's absence is the empty state.
-      check("an empty tasks list is not drawn", !sb.headers.includes("Tasks") && sb.tasksEmpty === "", JSON.stringify(sb.headers));
+      check("an empty tasks list is not drawn", !sb.headers.includes("Cron jobs") && sb.tasksEmpty === "", JSON.stringify(sb.headers));
     } else {
       const first = sb.tasks[0];
       const src = apiTasks.find((t) => t.id === first.id);
@@ -6332,7 +6334,7 @@ async function settingsTest(
   // Calm (S5): the window's own panes and nav sections, in nav order.
   // ATO-1129 (#1533): Phone push sits in Connections, after Discord.
   const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "memory", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];
+  const LABELS = ["General", "Models", "Connections", "Memory", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
   const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", memory: "memory",
     tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
