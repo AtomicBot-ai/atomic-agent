@@ -120,7 +120,9 @@ async function route(event: GoogleChatEvent, ctx: GoogleChatInboundContext): Pro
       inflight: ctx.inflight,
       pendingApprovals: (id) => ctx.bridge.pendingIn(id),
       releaseApprovalSession: ctx.releaseApprovalSession,
-      reply: (t) => say(ctx, space, t, thread),
+      reply: async (t) => {
+        await say(ctx, space, t, thread);
+      },
     });
     return;
   }
