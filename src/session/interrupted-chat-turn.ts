@@ -74,6 +74,11 @@ export function interruptedTurnResumeMessage(turn: InterruptedChatTurn): string 
   return `[Resumed] ${INTERRUPTED_TURN_RESUME_NOTE}${where} Continue the request; do not redo finished work.${REQUEST_HEADER}${turn.request}`;
 }
 
+/** Whether `text` is a message `interruptedTurnResumeMessage` built. */
+export function isInterruptedTurnResumeMessage(text: string): boolean {
+  return text.startsWith(`[Resumed] ${INTERRUPTED_TURN_RESUME_NOTE}`);
+}
+
 /**
  * A request as the person wrote it: a resumed turn that a second
  * restart cut off recorded the whole resume message, so the earlier

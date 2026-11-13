@@ -21,6 +21,7 @@ export {
   INTERRUPTED_TURN_RESUME_NOTE,
   interruptedChatTurn,
   interruptedTurnResumeMessage,
+  isInterruptedTurnResumeMessage,
 } from "./interrupted-chat-turn.js";
 export type { InterruptedChatTurn } from "./interrupted-chat-turn.js";
 export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";

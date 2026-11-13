@@ -86,10 +86,35 @@ describe("createInterruptedTurns", () => {
     cutOffByRestart("s2");
     const turns = createInterruptedTurns(store);
     expect(turns.resumeMessage("s2")).not.toBeNull();
-    // Recorded as resumed: nothing is offered any more.
+    // Queued: nothing is offered any more.
     expect(turns.pending("s2")).toBeNull();
     expect(turns.resumeMessage("s2")).toBeNull();
-    expect(store.readTurnProgress("s2")).toBeNull();
+    // The marker stays until the continuing turn really starts.
+    expect(store.readTurnProgress("s2")).not.toBeNull();
+    // It starts: its own marker replaces the old one, and it ends on its own.
+    store.beginTurn("s2", 5_000, marker({ request: "continue", startedAt: 5_000 }));
+    expect(turns.pending("s2")).toBeNull();
+    const state = store.load("s2")!;
+    store.finishTurn({ ...recordTurn(state, userTurn("continue")), status: "pending" });
+    expect(turns.pending("s2")).toBeNull();
+    expect(turns.resumeMessage("s2")).toBeNull();
+  });
+
+  it("offers the turn again when the queued resume is dropped before it starts", () => {
+    cutOffByRestart("s3");
+    const turns = createInterruptedTurns(store);
+    const first = turns.resumeMessage("s3");
+    expect(turns.resumeMessage("s3")).toBeNull();
+    turns.release("s3");
+    expect(turns.pending("s3")).not.toBeNull();
+    expect(turns.resumeMessage("s3")).toBe(first);
+  });
+
+  it("offers the turn again after a restart if the queued resume never ran", () => {
+    cutOffByRestart("s4");
+    expect(createInterruptedTurns(store).resumeMessage("s4")).not.toBeNull();
+    // A new process: the queued mark lived only in memory.
+    expect(createInterruptedTurns(store).pending("s4")).not.toBeNull();
   });
 
   it("offers nothing when the last turn ended on its own or a person stopped it", () => {
