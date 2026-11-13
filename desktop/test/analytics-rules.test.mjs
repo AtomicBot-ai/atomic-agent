@@ -203,7 +203,18 @@ test("DO_NOT_TRACK=1 turns analytics off; 0, false and empty do not (ATO-1189)",
   for (const v of ["0", "false", "", "no"]) assert.equal(E.doNotTrackIn({ DO_NOT_TRACK: v }), false, JSON.stringify(v));
   assert.equal(E.doNotTrackIn({}), false);
   const core = readFileSync(new URL("../main/analytics/core.ts", import.meta.url), "utf8");
-  assert.match(core, /if \(doNotTrackIn\(\)\) return false;/);
+  assert.match(core, /if \(analyticsOffByEnv\(\)\) return false;/);
+});
+
+test("ATOMIC_AGENT_ANALYTICS=off turns the desktop's own analytics off too (ATO-760)", () => {
+  for (const v of ["off", "OFF", "0", "false", "no", "disabled", " off "]) {
+    assert.equal(E.analyticsOffByEnv({ ATOMIC_AGENT_ANALYTICS: v }), true, v);
+  }
+  for (const v of ["on", "1", "", "yes"]) {
+    assert.equal(E.analyticsOffByEnv({ ATOMIC_AGENT_ANALYTICS: v }), false, JSON.stringify(v));
+  }
+  assert.equal(E.analyticsOffByEnv({ DO_NOT_TRACK: "1" }), true);
+  assert.equal(E.analyticsOffByEnv({}), false);
 });
 
 test("test and dev runs: --dev, NODE_ENV=development and unpackaged builds send nothing", () => {

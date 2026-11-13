@@ -78,6 +78,21 @@ export function doNotTrackIn(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 /**
+ * The environment turns the desktop's analytics and crash reports off:
+ * `DO_NOT_TRACK` (above), or the agent's own kill switch
+ * `ATOMIC_AGENT_ANALYTICS=off` (also 0 / false / no / disabled, the values
+ * src/analytics/read-analytics-kill-switch.ts accepts). A user who set the
+ * agent's switch got nothing from the agent but still got desktop events
+ * (ATO-760); one switch now covers both.
+ */
+export function analyticsOffByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (doNotTrackIn(env)) return true;
+  const raw = env.ATOMIC_AGENT_ANALYTICS;
+  if (typeof raw !== "string") return false;
+  return ["off", "0", "false", "no", "disabled"].includes(raw.trim().toLowerCase());
+}
+
+/**
  * ATO-1247: our own machine or test run, the same rule as the agent's
  * src/analytics/read-team-run-marker.ts (the desktop build cannot import
  * from src/): `ATOMIC_AGENT_TEAM=1` (true / yes / on) in the environment, or
@@ -126,7 +141,7 @@ export function agentAnalyticsEnv(stateDir: string): Record<string, string> {
     if (g.testRun) {
       out.ATOMIC_AGENT_ANALYTICS = "off";
       out.ATOMIC_AGENT_INSTALL_ID_FILE = join(stateDir, "install-id");
-    } else if (g.inheritedOff || doNotTrackIn()) {
+    } else if (g.inheritedOff || analyticsOffByEnv()) {
       out.ATOMIC_AGENT_ANALYTICS = "off";
     }
   } catch {
