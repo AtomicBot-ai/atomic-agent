@@ -1,4 +1,4 @@
-import type { AgentLoopReason, TaskStopCause } from "../agent-contract.js";
+import type { AgentLoopReason, EngineWaitVerdicts, TaskStopCause } from "../agent-contract.js";
 
 /** One turn's mutable control and recovery state, shared by its orchestrator and recovery recipe. */
 export interface TurnLoopState {
@@ -37,6 +37,13 @@ export interface TurnLoopState {
   legMadeProgress: boolean;
   outageWaitedMs: number;
   outageAttempts: number;
+  /**
+   * The local engine readings the outage wait decided "wait or not" on in
+   * the current outage, first and latest (ATO-1432). Taken at decision
+   * time, so the error report says what the turn saw, not what the disk
+   * says after it ended. Cleared with the outage.
+   */
+  engineWaitVerdicts: EngineWaitVerdicts | null;
   /** Retried a step after an outage and have not yet seen it succeed. */
   awaitingRecovery: boolean;
   /**
@@ -124,6 +131,7 @@ export function createTurnLoopState(): TurnLoopState {
     localStreamCutRetry: null,
     outageWaitedMs: 0,
     outageAttempts: 0,
+    engineWaitVerdicts: null,
     awaitingRecovery: false,
     oomRestarts: 0,
     truncationRetry: null,

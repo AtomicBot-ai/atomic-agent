@@ -1,8 +1,11 @@
 import type { AtomicAgentConfig } from "../config/index.js";
-import type { LocalEngineState } from "../agent/agent-contract.js";
+import type { LocalEngineState, LocalEngineVerdict } from "../agent/agent-contract.js";
 import {
+  explainManagedEngineLiveness,
   readManagedEngineLiveness,
   type ManagedEngineLiveness,
+  type ManagedEngineLivenessReason,
+  type ManagedEngineLivenessReport,
 } from "../local-llm/index.js";
 
 /** The built-in managed local link (`LlamaServerProvider`'s default id). */
@@ -56,6 +59,59 @@ export function readLocalEngineState(
   } catch {
     return "unknown";
   }
+  if (state === "dead" || state === "no_pid") return "dead";
+  return state === "alive" ? "alive" : "unknown";
+}
+
+/**
+ * Why `explainLocalEngineState` reads what it reads (ATO-1432), as a fixed
+ * word for error reports: the managed liveness branch
+ * (`ManagedEngineLivenessReason`), or why the engine was not looked at.
+ *
+ *   - `not_local_link`        the link is neither `local-llama` nor
+ *                             `atomic-chat` (a cloud or custom link).
+ *   - `not_active_provider`   a local link that is a fallback tail behind
+ *                             another active provider.
+ *   - `not_managed`           `local-llama` in external mode.
+ *   - `atomic_chat_app`       the Atomic Chat app's server, active.
+ *   - `liveness_probe_failed` the liveness read threw.
+ */
+export type LocalEngineStateReason =
+  | ManagedEngineLivenessReason
+  | "not_local_link"
+  | "not_active_provider"
+  | "not_managed"
+  | "atomic_chat_app"
+  | "liveness_probe_failed";
+
+/**
+ * `readLocalEngineState` with the reason as a fixed word (ATO-1432), for
+ * the outage wait to report what it decided on. Same rules, same states.
+ */
+export function explainLocalEngineState(
+  providerId: string | undefined,
+  cfg: Pick<AtomicAgentConfig, "localModels" | "paths">,
+  activeTextProvider: string,
+  explain: (dataDir: string) => ManagedEngineLivenessReport = explainManagedEngineLiveness,
+): LocalEngineVerdict & { reason: LocalEngineStateReason } {
+  if (providerId === ATOMIC_CHAT_LINK) {
+    return activeTextProvider === ATOMIC_CHAT_LINK
+      ? { state: "atomic_chat_app", reason: "atomic_chat_app" }
+      : { state: "unknown", reason: "not_active_provider" };
+  }
+  if (providerId !== MANAGED_LOCAL_LINK) return { state: "unknown", reason: "not_local_link" };
+  if (activeTextProvider !== MANAGED_LOCAL_LINK) return { state: "unknown", reason: "not_active_provider" };
+  if (cfg.localModels.mode !== "managed") return { state: "unknown", reason: "not_managed" };
+  let report: ManagedEngineLivenessReport;
+  try {
+    report = explain(cfg.paths.localModelsDataDir);
+  } catch {
+    return { state: "unknown", reason: "liveness_probe_failed" };
+  }
+  return { state: localEngineStateOf(report.state), reason: report.reason };
+}
+
+function localEngineStateOf(state: ManagedEngineLiveness): LocalEngineState {
   if (state === "dead" || state === "no_pid") return "dead";
   return state === "alive" ? "alive" : "unknown";
 }

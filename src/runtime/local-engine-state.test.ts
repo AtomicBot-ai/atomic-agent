@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ManagedEngineLiveness } from "../local-llm/index.js";
-import { readLocalEngineState } from "./local-engine-state.js";
+import { explainLocalEngineState, readLocalEngineState } from "./local-engine-state.js";
 
 const cfg = (mode: "managed" | "external") =>
   ({
@@ -51,5 +51,50 @@ describe("readLocalEngineState (ATO-772)", () => {
 
   it("the Atomic Chat link as a fallback behind another provider stays unknown", () => {
     expect(readLocalEngineState("atomic-chat", cfg("managed"), "openrouter")).toBe("unknown");
+  });
+});
+
+describe("explainLocalEngineState (ATO-1432)", () => {
+  const report = (state: "alive" | "dead" | "no_pid" | "unknown", reason: string) =>
+    vi.fn(() => ({ state, reason, lock: "free" }) as never);
+
+  it("passes the liveness branch through as the reason", () => {
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report("unknown", "lock_held")))
+      .toEqual({ state: "unknown", reason: "lock_held" });
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report("no_pid", "no_pid_file")))
+      .toEqual({ state: "dead", reason: "no_pid_file" });
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report("unknown", "pid_unreadable")))
+      .toEqual({ state: "unknown", reason: "pid_unreadable" });
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report("alive", "pid_alive")))
+      .toEqual({ state: "alive", reason: "pid_alive" });
+  });
+
+  it("names why the engine was not looked at", () => {
+    const probe = report("dead", "pid_dead");
+    expect(explainLocalEngineState("openrouter", cfg("managed"), "local-llama", probe))
+      .toEqual({ state: "unknown", reason: "not_local_link" });
+    expect(explainLocalEngineState(undefined, cfg("managed"), "local-llama", probe))
+      .toEqual({ state: "unknown", reason: "not_local_link" });
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "openrouter", probe))
+      .toEqual({ state: "unknown", reason: "not_active_provider" });
+    expect(explainLocalEngineState("local-llama", cfg("external"), "local-llama", probe))
+      .toEqual({ state: "unknown", reason: "not_managed" });
+    expect(explainLocalEngineState("atomic-chat", cfg("managed"), "openrouter", probe))
+      .toEqual({ state: "unknown", reason: "not_active_provider" });
+    expect(explainLocalEngineState("atomic-chat", cfg("managed"), "atomic-chat", probe))
+      .toEqual({ state: "atomic_chat_app", reason: "atomic_chat_app" });
+    expect(probe).not.toHaveBeenCalled();
+  });
+
+  it("a probe that throws is unknown, never dead", () => {
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", () => { throw new Error("EACCES"); }))
+      .toEqual({ state: "unknown", reason: "liveness_probe_failed" });
+  });
+
+  it("agrees with readLocalEngineState on the state", () => {
+    for (const state of ["alive", "dead", "no_pid", "unknown"] as const) {
+      expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report(state, "pid_alive")).state)
+        .toBe(readLocalEngineState("local-llama", cfg("managed"), "local-llama", () => state));
+    }
   });
 });

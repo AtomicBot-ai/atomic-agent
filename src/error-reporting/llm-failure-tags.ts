@@ -56,6 +56,24 @@ export interface LlmFailureContext {
    * `decode_failed` / `none` / `unknown`. Sent as `local_fault`.
    */
   localFault?: string;
+  /**
+   * The local engine reading the outage wait decided "wait or not" on,
+   * taken at decision time (ATO-1432): the latest one and the first one
+   * in the outage. `LocalEngineState` (`alive` / `dead` / `unknown` /
+   * `atomic_chat_app`) and its reason (`LocalEngineStateReason`:
+   * `lock_held`, `pid_unreadable`, `not_local_link`, `not_managed`, ...).
+   * Sent as `engine_wait_verdict`, `engine_wait_reason`,
+   * `engine_wait_first_verdict`, `engine_wait_first_reason`.
+   */
+  engineWaitVerdict?: string;
+  engineWaitReason?: string;
+  engineWaitFirstVerdict?: string;
+  engineWaitFirstReason?: string;
+  /**
+   * Why the managed engine's process is gone, read from its log by fixed
+   * patterns (ATO-1435, `EngineExitReason`). Sent as `engine_exit_reason`.
+   */
+  engineExitReason?: string;
 }
 
 /**
@@ -84,6 +102,24 @@ const ENGINE_LIVENESS_REASONS: ReadonlySet<string> = new Set([
   "lock_unreadable",
   "lock_probe_failed",
   "pid_unreadable",
+]);
+const ENGINE_WAIT_VERDICTS: ReadonlySet<string> = new Set(["alive", "dead", "unknown", "atomic_chat_app"]);
+const ENGINE_WAIT_REASONS: ReadonlySet<string> = new Set([
+  ...ENGINE_LIVENESS_REASONS,
+  "not_local_link",
+  "not_active_provider",
+  "not_managed",
+  "atomic_chat_app",
+  "liveness_probe_failed",
+]);
+const ENGINE_EXIT_REASONS: ReadonlySet<string> = new Set([
+  "out_of_memory",
+  "model_file_missing",
+  "model_file_corrupt",
+  "gpu_driver",
+  "port_in_use",
+  "crashed_unknown",
+  "no_log",
 ]);
 const ENGINE_LOCK_STATES: ReadonlySet<string> = new Set([
   "free",
@@ -222,6 +258,11 @@ function safeCount(value: number): string {
  * `port_holder: other_process` (ATO-1277).
  * A managed engine's failure adds `local_fault`, a fixed word read from
  * its log (ATO-1279).
+ * A turn whose outage wait read the local engine adds `engine_wait_verdict`,
+ * `engine_wait_reason` and their `_first_` pair: what the wait decided on,
+ * when it decided (ATO-1432). A refusal with no model process adds
+ * `engine_exit_reason`, why it is gone, read from its log (ATO-1435).
+ * None of these for an `external` engine.
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -246,6 +287,16 @@ export function sanitizeLlmFailureTags(
   if (context.localFault !== undefined && tags.local_engine !== "external") {
     tags.local_fault = fromVocabulary(context.localFault, LOCAL_FAULTS);
   }
+  if (tags.local_engine !== "external") {
+    if (context.engineWaitVerdict !== undefined) {
+      tags.engine_wait_verdict = fromVocabulary(context.engineWaitVerdict, ENGINE_WAIT_VERDICTS);
+      tags.engine_wait_reason = fromVocabulary(context.engineWaitReason ?? UNKNOWN, ENGINE_WAIT_REASONS);
+    }
+    if (context.engineWaitFirstVerdict !== undefined) {
+      tags.engine_wait_first_verdict = fromVocabulary(context.engineWaitFirstVerdict, ENGINE_WAIT_VERDICTS);
+      tags.engine_wait_first_reason = fromVocabulary(context.engineWaitFirstReason ?? UNKNOWN, ENGINE_WAIT_REASONS);
+    }
+  }
   if (context.requestUrl !== undefined) {
     tags.request_route = classifyRequestRoute(context.requestUrl);
     tags.port_class = classifyPortClass(context.requestUrl, context.managedPorts);
@@ -266,6 +317,9 @@ export function sanitizeLlmFailureTags(
       }
       if (context.engineLock !== undefined) {
         tags.engine_lock = fromVocabulary(context.engineLock, ENGINE_LOCK_STATES);
+      }
+      if (context.engineExitReason !== undefined) {
+        tags.engine_exit_reason = fromVocabulary(context.engineExitReason, ENGINE_EXIT_REASONS);
       }
     }
   }
