@@ -276,8 +276,8 @@ export function LocalModelDetail({
       : null;
   const enterHint = rowPull
     ? rowPull.totalBytes > 0
-      ? `downloading… ${rowPull.percent}% · x cancel`
-      : "downloading… · x cancel"
+      ? `downloading… ${rowPull.percent}% · p pause · x cancel`
+      : "downloading… · p pause · x cancel"
     : !row.downloaded
       ? row.def.localPath
         ? "local file missing — add it again by its path"
@@ -498,7 +498,7 @@ export function LocalModelsPanel({
           ) : null}
           <Text color={theme.colors.muted}>
             j/k move · Enter pull/activate (embedding: *row + Enter starts
-            server) · a add from hugging face · g gguf · x cancel download · i
+            server) · a add from hugging face · g gguf · p pause / x cancel download · i
             info · d remove · s chat+embedding · E embeddings on/off · G gpu · U
             auto-update · B · r · L
           </Text>

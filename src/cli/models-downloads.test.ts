@@ -1,6 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +29,9 @@ import {
 import {
   downloadJobId,
   getEmbeddingModelDef,
+  getLocalModelDef,
+  resolveModelFilePath,
+  resolvePartialPath,
   readDownloadJob,
   readDownloadNotify,
   writeDownloadJob,
@@ -306,21 +315,90 @@ describe("background model downloads (CLI)", () => {
     });
   });
 
-  it("models downloads cancel on a job that is not running says so and succeeds", async () => {
-    writeDownloadJob(dataDir, job({ status: "failed", error: "boom" }));
+  // A `.part` + sidecar for the job's GGUF, as an unfinished pull leaves them.
+  function writeGgufPartial(): string {
+    const def = getLocalModelDef("qwen-3.5-4b");
+    const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(resolvePartialPath(dest), Buffer.alloc(16));
+    writeFileSync(`${resolvePartialPath(dest)}.json`, "{}");
+    return dest;
+  }
+
+  it("models downloads cancel on a finished job leaves it alone", async () => {
+    writeDownloadJob(dataDir, job({ status: "done", percent: 100 }));
     const code = await modelsCommand(["downloads", "cancel", "qwen-3.5-4b"]);
     expect(code).toBe(0);
-    expect(stdoutChunks.join("")).toMatch(/not running \(failed\)/);
+    expect(stdoutChunks.join("")).toMatch(/already finished \(done\)/);
+    expect(readDownloadJob(dataDir, "chat-qwen-3.5-4b")?.status).toBe("done");
+  });
+
+  it("models downloads pause keeps the partial and marks the job paused", async () => {
+    // Dead pid: the record reads as interrupted, so no signal is sent.
+    writeDownloadJob(dataDir, job({ pid: DEAD_PID }));
+    const dest = writeGgufPartial();
+    const code = await modelsCommand(["downloads", "pause", "qwen-3.5-4b"]);
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/paused at 40%/);
+    expect(stdoutChunks.join("")).toMatch(/models downloads resume qwen-3.5-4b/);
+    expect(readDownloadJob(dataDir, "chat-qwen-3.5-4b")?.status).toBe("paused");
+    expect(existsSync(resolvePartialPath(dest))).toBe(true);
+  });
+
+  it("models downloads cancel on a paused job deletes the partial", async () => {
+    writeDownloadJob(dataDir, job({ pid: DEAD_PID, status: "paused" }));
+    const dest = writeGgufPartial();
+    const code = await modelsCommand(["downloads", "cancel", "qwen-3.5-4b"]);
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/cancelled; the partial download was deleted/);
+    expect(existsSync(resolvePartialPath(dest))).toBe(false);
+    expect(existsSync(`${resolvePartialPath(dest)}.json`)).toBe(false);
+    expect(readDownloadJob(dataDir, "chat-qwen-3.5-4b")).toMatchObject({
+      status: "cancelled",
+      transferredBytes: 0,
+    });
+  });
+
+  it("models downloads resume relaunches a paused job's worker", async () => {
+    vi.spyOn(process, "execPath", "get").mockReturnValue("/opt/node/bin/node");
+    vi.spyOn(process, "argv", "get").mockReturnValue([
+      "/opt/node/bin/node",
+      "/repo/dist/cli/index.js",
+      "models",
+      "downloads",
+    ]);
+    spawnMock.mockReset();
+    spawnMock.mockReturnValue({
+      pid: DEAD_PID,
+      unref: vi.fn(),
+    } as unknown as ChildProcess);
+    writeDownloadJob(dataDir, job({ pid: DEAD_PID, status: "paused" }));
+    const code = await modelsCommand(["downloads", "resume", "qwen-3.5-4b"]);
+    expect(code).toBe(0);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock.mock.calls[0]?.[1]).toEqual(
+      expect.arrayContaining(["pull-worker", "chat", "qwen-3.5-4b", "gguf-only"]),
+    );
+    expect(stdoutChunks.join("")).toMatch(/resumed in the background/);
+  });
+
+  it("models downloads lists a paused job as paused", async () => {
+    writeDownloadJob(dataDir, job({ pid: DEAD_PID, status: "paused" }));
+    const code = await modelsCommand(["downloads"]);
+    expect(code).toBe(0);
+    expect(stdoutChunks.join("")).toMatch(/paused 40%/);
   });
 
   it("models downloads clear forgets finished records only", async () => {
     writeDownloadJob(dataDir, job({ id: "chat-a", status: "done" }));
     writeDownloadJob(dataDir, job({ id: "chat-b", pid: process.pid }));
+    writeDownloadJob(dataDir, job({ id: "chat-c", status: "paused" }));
     const code = await modelsCommand(["downloads", "clear"]);
     expect(code).toBe(0);
     expect(stdoutChunks.join("")).toMatch(/cleared 1/);
     expect(readDownloadJob(dataDir, "chat-a")).toBeNull();
     expect(readDownloadJob(dataDir, "chat-b")?.status).toBe("running");
+    expect(readDownloadJob(dataDir, "chat-c")?.status).toBe("paused");
   });
 
   it("followDownloadJob returns 0 once the record says done, 1 on failed", async () => {

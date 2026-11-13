@@ -32,9 +32,11 @@ import type { DownloadNotifyChannel } from "./download-notify-file.js";
  */
 
 /**
- * Still 1: `waiting` and `resumable` (0.5.7) are additive, and a reader
- * that does not know them — an older binary sharing the state dir, or
- * a downgrade — must keep seeing the record, or it would spawn a second
+ * Still 1: `waiting` and `resumable` (0.5.7) and the `paused` status are
+ * additive. An older reader adopts only the statuses it knows, so it
+ * leaves a paused job alone. And a reader that does not know them (an
+ * older binary sharing the state dir, or a downgrade) must keep seeing
+ * the record, or it would spawn a second
  * worker onto a partial that is being written.
  */
 export const DOWNLOAD_JOB_VERSION = 1;
@@ -50,7 +52,12 @@ export type DownloadJobStatus =
   | "failed"
   | "cancelled"
   /** Recorded `running`, but the worker pid is gone. Resumable. */
-  | "interrupted";
+  | "interrupted"
+  /**
+   * Stopped by the operator with the partial file kept
+   * (`download-job-control.ts`). Nothing resumes it but the operator.
+   */
+  | "paused";
 
 /**
  * The worker is between attempts, waiting out a transport failure. The
@@ -145,6 +152,11 @@ export function resolveDownloadNotifyPath(
   jobId: string,
 ): string {
   return join(resolveDownloadsDir(dataDir), `${jobId}.notify`);
+}
+
+/** `<jobId>.pause` — see `download-pause-request.ts`. */
+export function resolveDownloadPausePath(dataDir: string, jobId: string): string {
+  return join(resolveDownloadsDir(dataDir), `${jobId}.pause`);
 }
 
 /**
@@ -271,12 +283,13 @@ export function listDownloadJobs(dataDir: string): DownloadJob[] {
   return jobs.sort((a, b) => (a.startedAt < b.startedAt ? 1 : -1));
 }
 
-/** Forget a job: its record, its log and its notify request. The partial file is not touched. */
+/** Forget a job: its record, its log, its notify and pause requests. The partial file is not touched. */
 export function removeDownloadJob(dataDir: string, jobId: string): void {
   for (const path of [
     resolveDownloadJobPath(dataDir, jobId),
     resolveDownloadLogPath(dataDir, jobId),
     resolveDownloadNotifyPath(dataDir, jobId),
+    resolveDownloadPausePath(dataDir, jobId),
   ]) {
     try {
       rmSync(path, { force: true });
