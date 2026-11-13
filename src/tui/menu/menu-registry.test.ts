@@ -35,6 +35,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "list built-in tools (fs, shell, browser, memory, vision): `/tools` | `/tools <query>`",
   },
+  // ATO-41: find any config.json setting from the TUI.
+  {
+    name: "settings",
+    description:
+      "find a config setting with its default and description: `/settings` | `/settings <words>`",
+  },
   {
     name: "theme",
     description:

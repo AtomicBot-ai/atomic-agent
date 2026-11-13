@@ -14,6 +14,7 @@ import { reportAnalyticsOptOut, resolveSurface } from "../analytics/index.js";
 import { getAppVersion } from "../version.js";
 import { HELP } from "./config-help.js";
 import { handleSecrets } from "./config-secrets-command.js";
+import { handleEnv, handleListReference, wantsSettingsReference } from "./config-reference-command.js";
 import {
   CONFIG_CHANGED_EXIT_CODE,
   CONFIG_CHANGED_MESSAGE,
@@ -57,7 +58,11 @@ export async function configCommand(
       case "unset":
         return handleUnset(args.slice(1));
       case "list":
-        return handleList();
+        return wantsSettingsReference(args.slice(1))
+          ? handleListReference(args.slice(1))
+          : handleList();
+      case "env":
+        return handleEnv();
       case "path":
         process.stdout.write(`${getConfig().paths.userConfigFile}\n`);
         return 0;
