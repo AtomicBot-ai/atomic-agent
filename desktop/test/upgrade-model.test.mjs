@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
-const { parseRecommendJson, upgradeVerdict, upgradeStillWanted, localPickTakenLive } = require('../out/main/upgrade-model.js');
+const { parseRecommendJson, upgradeVerdict, upgradeStillWanted, localPickTakenLive, parseUpgradeDeclined, upgradeDownloadLabel } = require('../out/main/upgrade-model.js');
 const { STARTER_MODEL_ID } = require('../out/main/starter-model.js');
 
 /** ATO-1044: after the starter, the best model for this computer, downloaded in the background and switched to on a click. */
@@ -23,9 +23,24 @@ test('parses the agent answer, and nothing from an agent without the subcommand'
   assert.equal(parseRecommendJson(JSON.stringify({ upgrade: { action: 'download', model: null } })), null);
 });
 
-test('on the starter with nothing running: download the big model', () => {
+test('ATO-1475: on the starter with nothing running, ask first, never download unasked', () => {
   const v = upgradeVerdict({ ...base, recommend: parseRecommendJson(answer('download')) });
-  assert.deepEqual(v, { act: 'download', model: BIG });
+  assert.deepEqual(v, { act: 'ask', model: BIG });
+  assert.notEqual(v.act, 'download');
+});
+
+test('ATO-1475: a Not now kept on disk is not asked again, a different model is', () => {
+  const recommend = parseRecommendJson(answer('download'));
+  assert.equal(upgradeVerdict({ ...base, recommend, declinedId: BIG.id }).why, 'declined');
+  assert.equal(upgradeVerdict({ ...base, recommend, declinedId: 'other-model' }).act, 'ask');
+  assert.equal(parseUpgradeDeclined(JSON.stringify({ id: BIG.id, at: 1 })), BIG.id);
+  assert.equal(parseUpgradeDeclined('not json'), null);
+  assert.equal(parseUpgradeDeclined('{}'), null);
+});
+
+test('ATO-1475: the Download button names what goes over the wire', () => {
+  assert.equal(upgradeDownloadLabel(BIG), '15.1 GB');
+  assert.equal(upgradeDownloadLabel({ ...BIG, downloadGb: 0 }), '14.3 GB');
 });
 
 test('already on disk: ask right away', () => {
@@ -43,7 +58,7 @@ test('left alone: a model picked by hand, a cloud route, an external server, a b
 });
 
 test('a cloud key alone does not stop it while the route stays local', () => {
-  assert.equal(upgradeVerdict({ ...base, recommend: parseRecommendJson(answer('download')), cloudReady: true }).act, 'download');
+  assert.equal(upgradeVerdict({ ...base, recommend: parseRecommendJson(answer('download')), cloudReady: true }).act, 'ask');
 });
 
 test('a choice made during the download stands', () => {
@@ -101,4 +116,27 @@ test('ATO-1331: an upgrade that lost its projector still offers the switch, and 
   assert.equal(U.UPGRADE.textOnly, false);
   const html = readFileSync(new URL('../renderer/upgrade-chat.js', import.meta.url), 'utf8');
   assert.ok(html.includes('so it will read text only'));
+});
+
+test('ATO-1475: the ask strip shows the size; Download starts it, Not now is said once', () => {
+  globalThis.render = () => {};
+  globalThis.ic = () => '';
+  globalThis.esc = (s) => String(s);
+  const calls = [];
+  globalThis.BR = {
+    upgradeDownload: async () => { calls.push('download'); return { ok: true }; },
+    upgradeNotNow: async () => { calls.push('notnow'); return true; },
+  };
+  const U = require('../renderer/upgrade-chat.js');
+  U.upgradeOnEvent({ id: BIG.id, name: BIG.name, sizeLabel: '15.1 GB', phase: 'ask' });
+  assert.equal(U.upgradeShown(), true);
+  assert.equal(calls.length, 0);
+  const src = readFileSync(new URL('../renderer/upgrade-chat.js', import.meta.url), 'utf8');
+  assert.ok(src.includes('data-act="upg:download"') && src.includes('Not now'));
+  assert.equal(U.upgradeAct('upg:notnow'), true);
+  assert.equal(U.upgradeShown(), false);
+  assert.deepEqual(calls, ['notnow']);
+  U.upgradeOnEvent({ id: BIG.id, name: BIG.name, sizeLabel: '15.1 GB', phase: 'ask' });
+  assert.equal(U.upgradeAct('upg:download'), true);
+  assert.deepEqual(calls, ['notnow', 'download']);
 });

@@ -3,8 +3,10 @@
  *
  * The first chat answers on the 1.3 GB starter model (ATO-1041/1042). Once
  * it is in place the app asks the agent which model this machine can really
- * carry (`atag models recommend --json`, ATO-1043) and downloads it in the
- * background. The chat shows "Getting the best model for this computer, 42%",
+ * carry (`atag models recommend --json`, ATO-1043) and asks first:
+ * "Download (15.1 GB)" / "Not now" (ATO-1475: never a multi-GB download
+ * nobody asked for; Not now is remembered across launches). After the click
+ * the chat shows "Getting the best model for this computer, 42%",
  * and when the weights are on disk it asks: Switch now / Later. Nadya's
  * ATO-1044 note: the switch is asked, not silent. The switch itself goes
  * through the usual local-model pick and, for this move only, the running
@@ -71,6 +73,8 @@ export interface UpgradeInputs {
   downloadBusy: boolean;
   /** The person said Later to this model in this run of the app. */
   laterId: string | null;
+  /** The person said Not now to downloading this model (remembered on disk, ATO-1475). */
+  declinedId?: string | null;
   /** `localModels.managed.modelId`. */
   activeModelId: string | null;
   /** The starter model's id (starter-model.ts). */
@@ -78,9 +82,9 @@ export interface UpgradeInputs {
 }
 
 export type UpgradeVerdict =
-  | { act: "download"; model: UpgradeModel }
+  | { act: "ask"; model: UpgradeModel }
   | { act: "offer"; model: UpgradeModel }
-  | { act: "none"; why: "no_answer" | "agent_says_none" | "has_cloud" | "external" | "busy" | "later" | "not_on_starter" };
+  | { act: "none"; why: "no_answer" | "agent_says_none" | "has_cloud" | "external" | "busy" | "later" | "declined" | "not_on_starter" };
 
 /**
  * What the app does about the big model now. Only an install still on the
@@ -101,8 +105,26 @@ export function upgradeVerdict(i: UpgradeInputs): UpgradeVerdict {
   if (r.action === "none" || !r.model) return { act: "none", why: "agent_says_none" };
   if (i.laterId === r.model.id) return { act: "none", why: "later" };
   if (r.action === "switch") return { act: "offer", model: r.model };
+  if (i.declinedId === r.model.id) return { act: "none", why: "declined" };
   if (i.downloadBusy) return { act: "none", why: "busy" };
-  return { act: "download", model: r.model };
+  /* ATO-1475: the download is the person's call. The app only asks, with
+     the size; nothing is fetched until they click Download. */
+  return { act: "ask", model: r.model };
+}
+
+/** The size on the Download button: what goes over the wire, else the catalogue's label. */
+export function upgradeDownloadLabel(m: UpgradeModel): string {
+  return m.downloadGb > 0 ? `${m.downloadGb.toFixed(1)} GB` : m.sizeLabel;
+}
+
+/** The model id a saved Not now names (`{ id, at }`), or null for a missing or broken file. */
+export function parseUpgradeDeclined(text: string): string | null {
+  try {
+    const id = (JSON.parse(text) as { id?: unknown } | null)?.id;
+    return typeof id === "string" && id ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -123,7 +145,7 @@ export function upgradeStillWanted(i: {
 }
 
 /** The one line the chat shows, by phase. */
-export type UpgradePhase = "downloading" | "ready" | "switching" | "switched" | "failed";
+export type UpgradePhase = "ask" | "downloading" | "ready" | "switching" | "switched" | "failed";
 
 /**
  * Whether a local pick can be taken live by the running agent. Only the
