@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="motion:duration" content="4">
+<meta name="motion:fps" content="30">
+<title>Logo reveal</title>
+<!--
+  Logo reveal, 4 s. Frame contract: see ../SKILL.md.
+  Params (URL query): logo (image URL or file path next to the template;
+  without it a simple drawn mark is used), name, tagline, accent, ink,
+  bg (2 or 3 hex colours separated by commas, no #), w, h, t.
+-->
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; }
+  body { background: #fff4e8; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+  #stage { position: relative; overflow: hidden; }
+  .burst { position: absolute; left: 50%; top: 42%; border-radius: 50%; }
+  .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .mark { width: 30rem; height: 30rem; display: flex; align-items: center; justify-content: center; }
+  .mark img, .mark svg { max-width: 100%; max-height: 100%; }
+  .name { font-size: 11rem; font-weight: 800; letter-spacing: -.03em; margin-top: 3.4rem; white-space: nowrap; }
+  .name span { display: inline-block; white-space: pre; }
+  .tagline { font-size: 4.4rem; font-weight: 500; margin-top: 1.6rem; opacity: .75; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="burst" id="burst0"></div><div class="burst" id="burst1"></div><div class="burst" id="burst2"></div>
+  <div class="center">
+    <div class="mark" id="mark"></div>
+    <div class="name" id="name"></div>
+    <div class="tagline" id="tagline"></div>
+  </div>
+</div>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  function P(k, d) { var v = q.get(k); return v === null ? d : v; }
+  function hex(v, d) { v = String(v || "").replace(/^#/, ""); return /^[0-9a-fA-F]{3,8}$/.test(v) ? "#" + v : d; }
+  var W = +P("w", 1920) || 1920, H = +P("h", 1080) || 1080;
+  var DURATION = 4;
+  var accent = hex(P("accent", ""), "#ff7a3d");
+  var ink = hex(P("ink", ""), "#1f2547");
+  var bg = P("bg", "fff1e0,ffe1ef,e3f0ff").split(",").map(function (c, i) { return hex(c, ["#fff1e0", "#ffe1ef", "#e3f0ff"][i % 3]); });
+  while (bg.length < 3) bg.push(bg[bg.length - 1]);
+
+  var stage = document.getElementById("stage");
+  stage.style.width = W + "px"; stage.style.height = H + "px";
+  document.documentElement.style.fontSize = (Math.min(W, H) / 108) + "px";
+  document.body.style.background = bg[0];
+  stage.style.background = "radial-gradient(circle at 50% 42%," + bg[0] + " 0%," + bg[1] + " 55%," + bg[2] + " 100%)";
+  stage.style.color = ink;
+
+  var mark = document.getElementById("mark");
+  var logo = P("logo", "");
+  var pending = Promise.resolve();
+  if (logo) {
+    var img = new Image();
+    pending = new Promise(function (res) { img.onload = img.onerror = res; });
+    img.alt = "";
+    img.src = logo;
+    mark.appendChild(img);
+  } else {
+    var ns = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "-50 -50 100 100");
+    svg.setAttribute("width", "100%"); svg.setAttribute("height", "100%");
+    [0, 60, 120].forEach(function (deg, i) {
+      var e = document.createElementNS(ns, "ellipse");
+      e.setAttribute("rx", "44"); e.setAttribute("ry", "16");
+      e.setAttribute("fill", "none"); e.setAttribute("stroke-width", "5");
+      e.setAttribute("stroke", [accent, "#4f8cff", "#ffb020"][i]);
+      e.setAttribute("transform", "rotate(" + deg + ")");
+      e.setAttribute("pathLength", "100");
+      e.setAttribute("stroke-dasharray", "102");
+      e.setAttribute("class", "orbit");
+      svg.appendChild(e);
+    });
+    var core = document.createElementNS(ns, "circle");
+    core.setAttribute("r", "9"); core.setAttribute("fill", accent); core.setAttribute("id", "core");
+    svg.appendChild(core);
+    mark.appendChild(svg);
+  }
+  var orbits = Array.prototype.slice.call(mark.querySelectorAll(".orbit"));
+  var coreEl = mark.querySelector("#core");
+
+  var nameEl = document.getElementById("name");
+  var letters = Array.from(P("name", "Atomic Agent")).map(function (ch) {
+    var s = document.createElement("span"); s.textContent = ch; nameEl.appendChild(s); return s;
+  });
+  var taglineEl = document.getElementById("tagline");
+  taglineEl.textContent = P("tagline", "");
+
+  var bursts = [0, 1, 2].map(function (i) {
+    var b = document.getElementById("burst" + i);
+    b.style.background = [accent, "#ffd36e", "#8fb6ff"][i];
+    return b;
+  });
+
+  function clamp(x) { return Math.min(1, Math.max(0, x)); }
+  function prog(t, s, e) { return clamp((t - s) / (e - s)); }
+  function easeOut(p) { return 1 - Math.pow(1 - p, 3); }
+  function back(p) { var c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); }
+
+  function render(t) {
+    t = Math.max(0, Math.min(DURATION, +t || 0));
+    bursts.forEach(function (b, i) {
+      var p = easeOut(prog(t, 0.15 + i * 0.12, 1.3 + i * 0.12));
+      var size = Math.hypot(W, H) * 1.6 * p;
+      b.style.width = b.style.height = size + "px";
+      b.style.marginLeft = b.style.marginTop = (-size / 2) + "px";
+      b.style.opacity = (0.28 - i * 0.06) * (1 - 0.6 * p);
+    });
+    var m = prog(t, 0.2, 1.0);
+    mark.style.opacity = clamp(m * 3);
+    mark.style.transform = "scale(" + (0.4 + 0.6 * back(m)) + ") rotate(" + (-30 * (1 - easeOut(m)) + Math.sin(t * 1.5) * 2) + "deg)";
+    orbits.forEach(function (o, i) {
+      o.setAttribute("stroke-dashoffset", String(102 * (1 - easeOut(prog(t, 0.3 + i * 0.15, 1.2 + i * 0.15)))));
+    });
+    if (coreEl) coreEl.setAttribute("r", String(9 * back(prog(t, 0.9, 1.4)) + 0.6 * Math.sin(t * 3)));
+    letters.forEach(function (s, i) {
+      var p = prog(t, 1.1 + i * 0.04, 1.6 + i * 0.04);
+      s.style.opacity = easeOut(p);
+      s.style.transform = "translateY(" + (4 * (1 - back(p))) + "rem)";
+    });
+    var tg = easeOut(prog(t, 1.9 + letters.length * 0.02, 2.5 + letters.length * 0.02));
+    taglineEl.style.opacity = 0.75 * tg;
+    taglineEl.style.transform = "translateY(" + (2 * (1 - tg)) + "rem)";
+  }
+
+  window.__duration = DURATION;
+  window.__fps = 30;
+  window.__setTime = render;
+  render(0);
+  function ready() { window.__ready = true; document.documentElement.setAttribute("data-ready", "1"); }
+  var fonts = document.fonts ? document.fonts.ready : Promise.resolve();
+  if (q.has("t")) { render(+q.get("t")); }
+  Promise.all([fonts, pending]).then(ready);
+  if (q.has("t") || q.get("autoplay") === "0") return;
+  var start = null;
+  function loop(now) {
+    if (window.__frozen) return;
+    if (start === null) start = now;
+    render(((now - start) / 1000) % (DURATION + 1));
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  window.__setTime = function (t) { window.__frozen = true; render(t); };
+})();
+</script>
+</body>
+</html>

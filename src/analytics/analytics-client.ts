@@ -5,6 +5,7 @@ import {
   POSTHOG_PLACEHOLDER_KEY,
   POSTHOG_PROJECT_KEY,
 } from "./posthog-config.js";
+import { isCiEnvironment } from "./read-ci-environment.js";
 import { isTeamRun } from "./read-team-run-marker.js";
 import { isAnalyticsKilledByEnv } from "./read-analytics-kill-switch.js";
 import type { AnalyticsDimensions } from "./resolve-analytics-dimensions.js";
@@ -38,7 +39,7 @@ export interface AnalyticsClientOptions {
   version: string;
   /**
    * Process-wide dimensions (`surface`, `arch`, `install_channel`,
-   * `desktop_version`) stamped on every event. `arch` falls back to
+   * `install_source`, `desktop_version`) stamped on every event. `arch` falls back to
    * `process.arch` when omitted.
    */
   dimensions?: AnalyticsDimensions;
@@ -49,6 +50,12 @@ export interface AnalyticsClientOptions {
    * `atomic_team: true`, so PostHog can leave it out of the metrics.
    */
   team?: boolean;
+  /**
+   * ATO-272: this process runs on a CI server (see isCiEnvironment). Every
+   * event then carries `automation: true` and sets the person property
+   * `automation: true`. Events are still sent: CI use counts as use.
+   */
+  automation?: boolean;
   /** Test seam — inject a fake PostHog implementation. */
   posthog?: PostHogLike;
 }
@@ -65,7 +72,8 @@ export interface AnalyticsClientOptions {
  *   - stamped with the `platform` OS tag (`darwin` / `linux` / `win32`);
  *   - stamped with the `app_version` tag (the running app version);
  *   - stamped with `arch`, and — when dimensions are given — `surface`,
- *     `install_channel` and `desktop_version` (desktop only).
+ *     `install_channel`, `install_source` and `desktop_version` (desktop
+ *     only).
  *
  * The client is fire-safe: capture failures are swallowed so an
  * analytics outage never disturbs the agent runtime.
@@ -77,6 +85,7 @@ export class AnalyticsClient {
   private readonly version: string;
   private readonly globals: Record<string, string>;
   private readonly team: boolean;
+  private readonly automation: boolean;
   private readonly logger?: AnalyticsLogger;
 
   constructor(options: AnalyticsClientOptions) {
@@ -85,6 +94,7 @@ export class AnalyticsClient {
     this.version = options.version;
     this.globals = globalProperties(options.dimensions);
     this.team = options.team === true;
+    this.automation = options.automation === true;
     if (options.logger) this.logger = options.logger;
     this.posthog =
       options.posthog ??
@@ -170,7 +180,10 @@ export class AnalyticsClient {
         // request IP is used instead, so the sentinel MUST be a real string.
         $ip: IP_PLACEHOLDER,
         // ATO-1247: our own runs, tagged on the event and on the person.
-        ...(this.team ? { test_run: true, $set: { atomic_team: true } } : {}),
+        ...(this.team ? { test_run: true } : {}),
+        // ATO-272: CI runs, tagged the same way (still counted as use).
+        ...(this.automation ? { automation: true } : {}),
+        ...personTags(this.team, this.automation),
       },
       disableGeoip: true,
     };
@@ -206,6 +219,8 @@ export function createAnalyticsClient(options: {
   env?: NodeJS.ProcessEnv;
   /** Test seam for the team marker (defaults to isTeamRun()). */
   team?: boolean;
+  /** Test seam for the CI tag (defaults to isCiEnvironment()). */
+  automation?: boolean;
 }): AnalyticsClient | null {
   if (!options.enabled) return null;
   if (isAnalyticsKilledByEnv(options.env)) return null;
@@ -221,10 +236,23 @@ export function createAnalyticsClient(options: {
     platform: options.platform,
     version: options.version,
     team: options.team ?? isTeamRun(options.env),
+    automation: options.automation ?? isCiEnvironment(options.env),
     ...(options.dimensions ? { dimensions: options.dimensions } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.posthog ? { posthog: options.posthog } : {}),
   });
+}
+
+/** The `$set` person properties for team and CI runs, or nothing. */
+function personTags(
+  team: boolean,
+  automation: boolean,
+): { $set?: Record<string, true> } {
+  if (!team && !automation) return {};
+  const set: Record<string, true> = {};
+  if (team) set.atomic_team = true;
+  if (automation) set.automation = true;
+  return { $set: set };
 }
 
 /** Event properties derived from the process-wide dimensions. */
@@ -237,6 +265,9 @@ function globalProperties(
   if (!dimensions) return props;
   props.surface = dimensions.surface;
   props.install_channel = dimensions.installChannel;
+  if (dimensions.installSource !== undefined) {
+    props.install_source = dimensions.installSource;
+  }
   if (dimensions.desktopVersion !== undefined) {
     props.desktop_version = dimensions.desktopVersion;
   }

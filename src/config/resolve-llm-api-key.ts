@@ -1,3 +1,4 @@
+import { isOtherComputerOnNetworkUrl } from "../llm/provider/openai/network-server-address.js";
 import type { UserLlmProviderEntry } from "./llm-config.js";
 
 /**
@@ -36,6 +37,11 @@ export function resolveLlmProviderApiKey(
     entry.kind === "openai-compatible" ||
     entry.kind === "qwen-openai-compatible"
   ) {
+    // ATO-1066: a server on another computer on this network gets only
+    // its own stored key. The shared variables usually hold the
+    // operator's real OpenAI key, and sending that as a Bearer over
+    // plain http:// to a box on the LAN would leak it.
+    if (isOtherComputerOnNetworkUrl(entry.baseUrl)) return undefined;
     const key =
       process.env.OPENAI_COMPAT_API_KEY ??
       process.env.OPENAI_API_KEY ??
@@ -43,4 +49,26 @@ export function resolveLlmProviderApiKey(
     return key && key.length > 0 ? key : undefined;
   }
   return undefined;
+}
+
+/**
+ * The values of an entry's `extraApiKeyEnvVars` (ATO-471), read the way
+ * `apiKeyEnvVar` is: from `process.env`, which bootstrap fills from
+ * `<stateDir>/.env`. config.json holds only the names. Unset or blank
+ * variables are skipped; order is kept, repeats are dropped.
+ */
+export function resolveExtraApiKeys(
+  entry: { readonly extraApiKeyEnvVars?: readonly string[] },
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const out: string[] = [];
+  const names = entry.extraApiKeyEnvVars;
+  // Defensive: a hand-edited runtime entry may carry a non-array here.
+  if (!Array.isArray(names)) return out;
+  for (const name of names) {
+    if (typeof name !== "string" || name.length === 0) continue;
+    const key = env[name]?.trim();
+    if (key && key.length > 0 && !out.includes(key)) out.push(key);
+  }
+  return out;
 }

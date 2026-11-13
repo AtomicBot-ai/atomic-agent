@@ -101,6 +101,22 @@ describe("MCP orchestrator persistence and lifecycle", () => {
     expect(getConfig().mcp.servers).toHaveLength(1);
   });
 
+  it("refuses a catalog pick that still holds a <your ...> placeholder", async () => {
+    const f = mount();
+    const json = JSON.stringify({
+      mcpServers: { firecrawl: { command: "npx", args: ["-y", "firecrawl-mcp"], env: { FIRECRAWL_API_KEY: "<your Firecrawl API key>" } } },
+    });
+    f.orchestrator.addServerFromJson(json);
+    await vi.waitFor(() => {
+      expect(f.actions).toContainEqual({
+        type: "mcp_add_validation_failed",
+        error: "replace <your Firecrawl API key> with your own value before adding",
+      });
+    });
+    expect(getConfig().mcp.servers).toEqual([]);
+    expect(f.manager.addServerLive).not.toHaveBeenCalled();
+  });
+
   it("removes configuration and closes its detail even if live disconnect fails", async () => {
     persistMcpServer(server());
     const f = mount();

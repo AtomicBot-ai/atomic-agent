@@ -15,6 +15,7 @@ import { GrammarError, ModelError, ToolExecutionError } from "./llm-failures.js"
 import { isLocalEngineDown } from "./local-engine-down.js";
 import { isAtomicChatNotRunning } from "./atomic-chat-not-running.js";
 import { RequestTooLargeError } from "./request-too-large.js";
+import { DailySpendLimitError } from "./spend-limit-error.js";
 import {
   ATOMIC_CHAT_KEY_REQUIRED_CODE,
   LOCAL_CONTEXT_EXCEEDED_CODE,
@@ -148,6 +149,11 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
     )
   ) {
     return "provider_setup";
+  }
+
+  // ATO-649: our daily ceiling refused the paid link before sending.
+  if (chain.some((l) => l instanceof DailySpendLimitError)) {
+    return "daily_limit_reached";
   }
 
   if (category === "transport") {

@@ -120,6 +120,23 @@ describe("formatTurnFailedRecord", () => {
     expect(row).toContain("Nothing from it took effect");
   });
 
+  it("names tools that already ran instead of saying nothing took effect (ATO-1476)", () => {
+    const row = formatTurnFailedRecord("transport", "socket hang up", [
+      "os.fs.delete",
+      "http.request",
+      "os.fs.delete",
+    ]);
+    expect(row).toContain("these tools had already run: os.fs.delete, http.request.");
+    expect(row).toContain("Their effects stay.");
+    expect(row).not.toContain("Nothing from it took effect");
+    const many = formatTurnFailedRecord(
+      "transport",
+      "x",
+      Array.from({ length: 10 }, (_, i) => `t${i}`),
+    );
+    expect(many).toContain("t7 and 2 more.");
+  });
+
   it("clips a runaway message", () => {
     expect(
       formatTurnFailedRecord("grammar", "z".repeat(5_000)).length,

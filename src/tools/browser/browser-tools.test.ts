@@ -442,12 +442,17 @@ describe("browser tools on a fake backend", () => {
         .map((t) => t.name)
         .sort(),
     ).toEqual([
+      "browser.act",
+      "browser.annotate",
       "browser.click",
+      "browser.extract",
+      "browser.debug",
       "browser.navigate",
       "browser.read_aria",
       "browser.screenshot",
       "browser.scroll",
       "browser.search",
+      "browser.site_tools",
       "browser.tabs",
       "browser.type",
     ]);

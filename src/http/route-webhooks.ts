@@ -1,21 +1,33 @@
+import type { ServerResponse } from "node:http";
+
 import { openaiError } from "./openai-errors.js";
 import {
-  getHeader,
-  readJsonBody,
+  parseJsonBody,
+  readRawBody,
   sendError,
   sendJson,
+  type HandlerContext,
   type HttpHandler,
 } from "./request-context.js";
-import { secretEquals } from "./secret-equal.js";
+import { WebhookReplayCache } from "./webhook-replay-cache.js";
 import { renderWebhookTemplate } from "./webhook-template.js";
+import {
+  checkSharedSecret,
+  describeWebhookEvent,
+  verifySignedWebhook,
+  webhookEventAllowed,
+} from "./webhook-verify.js";
 import type { WebhookConfig } from "../config/index.js";
 import { TaskValidationError } from "../tasks/index.js";
 
 /**
  * `POST /api/webhooks/:name` — generic inbound webhook route. Resolves
- * the named binding from `config.webhooks`, authenticates via the
- * optional `x-webhook-secret` header (in addition to the global API
- * key), renders `userMessageTemplate` against the JSON body, and
+ * the named binding from `config.webhooks`, authenticates it by the
+ * binding's `verify` scheme (in addition to the global API key): the
+ * optional `x-webhook-secret` header by default, or a GitHub /
+ * Standard Webhooks (ATO-438) / Stripe (ATO-625) HMAC signature over the
+ * raw body, renders
+ * `userMessageTemplate` against the JSON body, and
  * materialises the result as a task via `TaskRunner.create`. The
  * handler NEVER calls `runTurn` directly — that invariant is what
  * keeps per-session FIFO intact under external triggers.
@@ -28,12 +40,40 @@ import { TaskValidationError } from "../tasks/index.js";
  *
  * Responses:
  *  - 202 `{ taskId }` on success
+ *  - 200 `{ taskId: null, ignored | duplicate }` for a genuine hit that
+ *    starts nothing (filtered event, GitHub `ping`, repeated `webhook-id`;
+ *    with `dedupeDeliveries`, any repeated delivery id)
  *  - 404 when the webhook name is unknown or `tasks.enabled` is false
  *  - 401 on bad/missing secret header (only when the config declares one;
- *    compared in constant time, see `secretEquals`)
+ *    compared in constant time, see `secretEquals`), or on a missing,
+ *    wrong or stale signature for the signed schemes
+ *  - 403 `webhook_secret_required` when `requireSecret` is set and the
+ *    binding has no secret (the tunnel gateway, ATO-625)
  *  - 400 on invalid JSON body, unknown template fields, or schedule validation
  */
-export function createWebhookHandler(): HttpHandler {
+export interface WebhookHandlerOptions {
+  replayCache?: WebhookReplayCache;
+  now?: () => number;
+  /**
+   * Refuse bindings without a `secret` (the tunnel gateway, ATO-625:
+   * there is no API key in front of it, so such a binding is never
+   * reachable from the internet).
+   */
+  requireSecret?: boolean;
+  /**
+   * Start at most one task per delivery id on every signed scheme, not
+   * only Standard Webhooks: `X-GitHub-Delivery`, `webhook-id` or the
+   * Stripe event `id` (the tunnel gateway, ATO-625). A repeat answers
+   * `200 { taskId: null, duplicate: true }`.
+   */
+  dedupeDeliveries?: boolean;
+}
+
+export function createWebhookHandler(
+  options: WebhookHandlerOptions = {},
+): HttpHandler {
+  const replayCache = options.replayCache ?? new WebhookReplayCache();
+  const now = options.now ?? Date.now;
   return async (req, res, ctx) => {
     if (!ctx.runtime.config.tasks.enabled) {
       sendError(res, 404, openaiError("tasks subsystem disabled"));
@@ -48,8 +88,13 @@ export function createWebhookHandler(): HttpHandler {
       sendError(res, 400, openaiError("webhook name is required"));
       return;
     }
-    const webhook = ctx.runtime.config.webhooks[name];
-    if (!webhook) {
+    // Own keys only: `constructor` or `__proto__` must not resolve to
+    // something off Object.prototype.
+    const webhooks = ctx.runtime.config.webhooks;
+    const webhook = Object.hasOwn(webhooks, name) ? webhooks[name] : undefined;
+    // A mail binding (ATO-601) is fired by the inbox only: over HTTP it
+    // does not exist, so nobody can post a forged "mail" into it.
+    if (!webhook || webhook.source === "atomic-mail") {
       sendError(res, 404, openaiError(`webhook not found: ${name}`));
       ctx.runtime.metrics.recordWebhookReceived({
         webhookName: name,
@@ -57,40 +102,67 @@ export function createWebhookHandler(): HttpHandler {
       });
       return;
     }
-    if (webhook.secret) {
-      const provided = getHeader(req, "x-webhook-secret");
-      if (!secretEquals(provided, webhook.secret)) {
-        sendError(
-          res,
-          401,
-          openaiError("invalid webhook secret", "invalid_request_error"),
-        );
-        ctx.runtime.metrics.recordWebhookReceived({
-          webhookName: name,
-          status: "rejected",
-        });
-        return;
-      }
-    }
-    let body: unknown = {};
-    try {
-      body = await readJsonBody<unknown>(req);
-    } catch (err) {
-      sendError(
-        res,
-        400,
-        openaiError(err instanceof Error ? err.message : "invalid body"),
-      );
+    const reject = (status: number, message: string, code?: string): void => {
+      sendError(res, status, openaiError(message, "invalid_request_error", null, code ?? null));
       ctx.runtime.metrics.recordWebhookReceived({
         webhookName: name,
         status: "rejected",
       });
+    };
+    if (options.requireSecret && !webhook.secret) {
+      reject(
+        403,
+        `webhook ${name} has no secret, so it is not reachable through the tunnel`,
+        "webhook_secret_required",
+      );
       return;
     }
-    const userMessage = renderWebhookTemplate(
-      webhook.userMessageTemplate,
-      body,
-    );
+    const signed =
+      webhook.verify === "github" ||
+      webhook.verify === "standard-webhooks" ||
+      webhook.verify === "stripe";
+    if (!signed && !checkSharedSecret(webhook, req)) {
+      reject(401, "invalid webhook secret");
+      return;
+    }
+    let body: unknown = {};
+    let replayKey: string | null = null;
+    try {
+      const raw = await readRawBody(req);
+      if (signed) {
+        const auth = verifySignedWebhook(webhook, req, raw, now());
+        if (!auth.ok) {
+          reject(401, `invalid webhook signature: ${auth.reason}`);
+          return;
+        }
+        if (auth.messageId) replayKey = `${name}\n${auth.messageId}`;
+      }
+      body = parseJsonBody<unknown>(raw);
+    } catch (err) {
+      reject(400, err instanceof Error ? err.message : "invalid body");
+      return;
+    }
+    const hit = describeWebhookEvent(webhook, req, body);
+    if (signed && options.dedupeDeliveries && hit.delivery) {
+      replayKey = `${name}\n${hit.delivery}`;
+    }
+    if (replayKey && replayCache.has(replayKey)) {
+      ignore(res, ctx, name, { duplicate: true, delivery: hit.delivery });
+      return;
+    }
+    /* GitHub sends `ping` when a hook is created; it is not work to do. */
+    if (
+      (webhook.verify === "github" && hit.event === "ping") ||
+      !webhookEventAllowed(webhook.events, hit)
+    ) {
+      ignore(res, ctx, name, { ignored: true, event: hit.event, action: hit.action });
+      return;
+    }
+    const userMessage = renderWebhookTemplate(webhook.userMessageTemplate, body, {
+      event: hit.event,
+      action: hit.action,
+      delivery: hit.delivery,
+    });
     const sessionId = resolveWebhookSessionId(webhook, name, ctx.runtime);
     try {
       const created = ctx.runtime.taskRunner.create({
@@ -102,6 +174,7 @@ export function createWebhookHandler(): HttpHandler {
         maxSteps: null,
         ...(webhook.schedule ? { schedule: webhook.schedule } : {}),
       });
+      if (replayKey) replayCache.remember(replayKey);
       ctx.runtime.metrics.recordWebhookReceived({
         webhookName: name,
         status: "accepted",
@@ -126,13 +199,30 @@ export function createWebhookHandler(): HttpHandler {
 }
 
 /**
+ * A genuine hit that starts no task: a repeat of a message already
+ * accepted, GitHub's `ping`, or an event the binding's `events` filter
+ * leaves out. Answered 200 so the sender records a delivery and does
+ * not retry.
+ */
+function ignore(
+  res: ServerResponse,
+  ctx: HandlerContext,
+  name: string,
+  payload: Record<string, unknown>,
+): void {
+  ctx.runtime.metrics.recordWebhookReceived({ webhookName: name, status: "ignored" });
+  sendJson(res, 200, { taskId: null, ...payload });
+}
+
+/**
  * Resolve `sessionId` for a webhook hit based on the binding's
  * `sessionMode`. The lookup side-effects only for `persistent`
  * mode — the first hit creates a fresh session via
  * `runtime.createSession` and persists the mapping so subsequent hits
- * (and process restarts) reuse the same id.
+ * (and process restarts) reuse the same id. Shared with the mail
+ * trigger (ATO-601), whose bindings live in the same block.
  */
-function resolveWebhookSessionId(
+export function resolveWebhookSessionId(
   webhook: WebhookConfig,
   name: string,
   runtime: {

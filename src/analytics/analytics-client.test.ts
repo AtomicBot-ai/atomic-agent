@@ -102,6 +102,27 @@ describe("AnalyticsClient", () => {
     expect(props.surface).toBe("tui");
     expect(props.install_channel).toBe("curl_sh");
     expect(props).not.toHaveProperty("desktop_version");
+    expect(props).not.toHaveProperty("install_source");
+  });
+
+  it("stamps install_source next to install_channel, over caller props", () => {
+    const posthog = fakePosthog();
+    const client = new AnalyticsClient({
+      installId: "x",
+      platform: "linux",
+      version: "1.0.0",
+      dimensions: {
+        surface: "tui",
+        arch: "x64",
+        installChannel: "curl_sh",
+        installSource: "reddit",
+      },
+      posthog,
+    });
+    client.capture("app_installed", { install_source: "spoofed" });
+    const props = posthog.capture.mock.calls[0][0].properties;
+    expect(props.install_channel).toBe("curl_sh");
+    expect(props.install_source).toBe("reddit");
   });
 
   it("is fire-safe: swallows capture errors", () => {

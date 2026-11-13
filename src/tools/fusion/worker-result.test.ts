@@ -325,6 +325,35 @@ describe("WorkerRunCollector — replaced inputs (F43)", () => {
   });
 });
 
+describe("formatDelegateOutput — an out-of-credit row (ATO-309)", () => {
+  const credit =
+    '"openrouter" is out of credit: This request would exceed your available credits given your current balance. To increase, visit https://openrouter.ai/settings/credits and add more credits.';
+
+  it("keeps the provider's whole sentence on the table row, with the action beside it", () => {
+    const out = formatDelegateOutput(
+      [row({ id: "t1", title: "Build", status: "failed", error: credit, hint: WORKER_HINT_QUOTA })],
+      8000,
+    );
+    const line = out.split("\n")[1]!;
+    expect(line).toContain(`error: ${credit}`);
+    expect(line).not.toContain("…");
+    expect(line).toContain(`hint: ${WORKER_HINT_QUOTA}`);
+    expect(WORKER_HINT_QUOTA).toMatch(/top up/);
+    expect(WORKER_HINT_QUOTA).toMatch(/another provider or a local model/);
+  });
+
+  it("still clips an ordinary failure on the table row", () => {
+    const long = `tests failed: ${"x".repeat(300)}`;
+    const out = formatDelegateOutput(
+      [row({ id: "t1", title: "Build", status: "failed", error: long })],
+      8000,
+    );
+    const line = out.split("\n")[1]!;
+    expect(line).toContain("…");
+    expect(line.length).toBeLessThan(long.length);
+  });
+});
+
 describe("formatDelegateOutput — a replaced input (F43)", () => {
   it("counts it on the head line and puts it first on the task's row, ahead of the error and the notes", () => {
     const out = formatDelegateOutput(

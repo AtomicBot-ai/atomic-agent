@@ -140,6 +140,19 @@ describe("turn preparation ownership", () => {
     } finally { config.agent.task = original; }
   });
 
+  it("reads the re-plan cadence from config, an explicit option winning (ATO-609)", () => {
+    const config = getConfig();
+    const original = config.agent.task;
+    try {
+      config.agent.task = { ...original, replanEveryNSteps: 0 };
+      expect(prepareTurnBudgets(options()).replanEveryNSteps).toBe(0);
+      config.agent.task = { ...original, replanEveryNSteps: 12 };
+      expect(prepareTurnBudgets(options()).replanEveryNSteps).toBe(12);
+      expect(prepareTurnBudgets({ ...options(), replanEveryNSteps: 3 }).replanEveryNSteps).toBe(3);
+      expect(prepareTurnBudgets({ ...options(), replanEveryNSteps: 0 }).replanEveryNSteps).toBe(0);
+    } finally { config.agent.task = original; }
+  });
+
 
   it("keeps policy callbacks and the next budget read in one synchronous phase", async () => {
     const config = getConfig();

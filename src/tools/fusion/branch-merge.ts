@@ -49,6 +49,8 @@ export const MERGED_STATUSES: ReadonlySet<WorkerTaskStatus> = new Set([
   "ok",
   "no_changes",
   "needs_orchestrator",
+  // Like a hand-back: whatever it wrote before it stopped to ask is kept.
+  "needs_input",
   "max_steps",
 ]);
 

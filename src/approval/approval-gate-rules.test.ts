@@ -222,6 +222,34 @@ describe("ApprovalGate with saved rules (ATO-1141)", () => {
     expect(emitted).toHaveLength(1);
   });
 
+  it('grant "always" on an HTTP request covers that origin only (ATO-1471)', async () => {
+    const g = gate();
+    const http = (origin: string, sessionId = "s") => ({
+      sessionId,
+      tool: "os.http.request",
+      category: "http" as const,
+      reason: `POST ${origin}/x`,
+      grantKey: origin,
+      workdir: project,
+    });
+    const pending = g.request(http("https://api.example.com"));
+    const request = emitted[0]!;
+    expect(g.canGrantAlways(request)).toBe(true);
+    g.resolve({ approvalId: request.approvalId, approved: true, grant: "always" });
+    expect((await pending).approved).toBe(true);
+    expect(store.list()[0]).toMatchObject({
+      decision: "allow",
+      category: "http",
+      origin: "https://api.example.com",
+    });
+    // Same origin, another session: the rule answers.
+    expect((await g.request(http("https://api.example.com", "other"))).approved).toBe(true);
+    expect(emitted).toHaveLength(1);
+    // Another host still asks.
+    void g.request(http("https://evil.example"));
+    expect(emitted).toHaveLength(2);
+  });
+
   it('grant "always" on a denial or a non-grantable request saves nothing', async () => {
     const g = gate();
     void g.request(git("status"));

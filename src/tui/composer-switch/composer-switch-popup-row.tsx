@@ -46,7 +46,7 @@ export function SwitchRow({
         painted panel a colour swap either fights the ground or is too
         faint to see, and the marker is the part that survives NO_COLOR.
       */}
-      {row.emphasis === "fusion" ? (
+      {row.emphasis === "fusion" && !row.disabled ? (
         <FusionLabel
           prefix={prefix}
           word={row.label}
@@ -54,7 +54,14 @@ export function SwitchRow({
           selected={selected}
         />
       ) : (
-        <Text color={chromeTheme.colors.railForeground} bold={selected}>
+        <Text
+          color={
+            row.disabled
+              ? chromeTheme.colors.railMuted
+              : chromeTheme.colors.railForeground
+          }
+          bold={selected}
+        >
           {label}
         </Text>
       )}

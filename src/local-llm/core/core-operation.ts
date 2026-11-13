@@ -168,6 +168,71 @@ export function lockMeansOperationInProgress(state: CoreOperationLockState): boo
 }
 
 /**
+ * How old a held engine operation lock may get before a turn stops reading
+ * it as a start or load under way (ATO-1433). Longer than any honest Core
+ * or llama.cpp install, model start or stop.
+ */
+export const CORE_OPERATION_STALE_MS = 15 * 60_000;
+
+/**
+ * The engine operation lock as a turn's outage wait reads it: the
+ * `readCoreOperationLock` reading, with `stale_too_old` for a lock that
+ * reads held (or mid-write) but was taken longer ago than
+ * `CORE_OPERATION_STALE_MS`.
+ */
+export type CoreOperationTurnLockState = CoreOperationLockState | "stale_too_old";
+
+/**
+ * `readCoreOperationLock` for a turn deciding whether to keep waiting for
+ * the managed engine (ATO-1433). On Windows a pid freed by a crashed owner
+ * can go to another program, and an owner stuck forever looks just as
+ * alive; either way every turn would wait the full outage budget. So a
+ * held lock older than `CORE_OPERATION_STALE_MS` reads `stale_too_old`.
+ *
+ * The lock's age is its file's mtime: the owner writes its pid once,
+ * right after the exclusive create, and never touches the file again. The
+ * content stays a bare pid, so an older agent sharing the data folder
+ * still reads it.
+ *
+ * Read only: never acquires, waits on, reclaims or removes the lock.
+ * `withCoreOperation` keeps its own rule and is not affected.
+ */
+export function readCoreOperationLockForTurn(
+  dataDir: string,
+  probes: CoreOperationLockProbes = {},
+): CoreOperationTurnLockState {
+  const lock = readCoreOperationLock(dataDir, probes);
+  if (lock !== "held" && lock !== "held_self" && lock !== "writing") return lock;
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(join(coreRoot(dataDir), "operation.lock")).mtimeMs;
+  } catch (err) {
+    // Released between the two reads.
+    return (err as NodeJS.ErrnoException).code === "ENOENT" ? "free" : lock;
+  }
+  const now = (probes.now ?? Date.now)();
+  return now - mtimeMs > CORE_OPERATION_STALE_MS ? "stale_too_old" : lock;
+}
+
+/**
+ * Whether a turn's lock reading means a start or load may be under way:
+ * a live owner's lock younger than `CORE_OPERATION_STALE_MS`, or one being
+ * written. Unlike `lockMeansOperationInProgress`, an unreadable lock does
+ * not count: it would keep every turn waiting without telling anyone why.
+ */
+export function turnLockMeansOperationInProgress(state: CoreOperationTurnLockState): boolean {
+  return state === "held" || state === "held_self" || state === "writing";
+}
+
+/**
+ * The engine operation lock looks like a real operation under way, for a
+ * turn (ATO-1433): see `readCoreOperationLockForTurn`. Read only.
+ */
+export function coreOperationLooksActive(dataDir: string, now: number = Date.now()): boolean {
+  return turnLockMeansOperationInProgress(readCoreOperationLockForTurn(dataDir, { now: () => now }));
+}
+
+/**
  * A live process holds the engine operation lock right now: a model start or
  * load, a stop, an engine switch or a Core/llama.cpp install is under way, so
  * a model process that is missing at this moment may be about to appear.

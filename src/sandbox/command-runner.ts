@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 
+import { buildCommandEnv } from "./command-env.js";
 import { killProcessTree } from "./kill-process-tree.js";
 
 const IS_WINDOWS = process.platform === "win32";
@@ -26,6 +27,12 @@ export function isBrokenPipe(err: unknown): boolean {
 export interface CommandOptions {
   cwd: string;
   timeoutMs?: number;
+  /**
+   * The child's whole environment. Omitted, it is the agent's own
+   * environment minus provider keys, bot tokens and other secret-looking
+   * names (`buildCommandEnv`, ATO-175). A caller whose child really needs
+   * a key builds and passes its env explicitly.
+   */
   env?: NodeJS.ProcessEnv;
   shell?: boolean;
   input?: string;
@@ -94,7 +101,7 @@ export async function runCommand(
   return new Promise<CommandResult>((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: options.env ?? process.env,
+      env: options.env ?? buildCommandEnv(process.env),
       shell: options.shell ?? false,
       stdio: ["pipe", "pipe", "pipe"],
       // Prevent a console window flashing when the runtime is launched

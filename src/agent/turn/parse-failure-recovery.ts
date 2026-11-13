@@ -101,9 +101,24 @@ export function composeParseFailureNotice(
 export function formatTurnFailedRecord(
   category: string,
   message: string,
+  toolsRan: readonly string[] = [],
 ): string {
-  return `(this turn failed before it could answer — ${category}: ${clip(message)}. Nothing from it took effect.)`;
+  const head = `(this turn failed before it could answer — ${category}: ${clip(message)}.`;
+  if (toolsRan.length === 0) return `${head} Nothing from it took effect.)`;
+  // ATO-1476: a tool that ran before the failure is not undone, and the
+  // step that ran it may never have reached the transcript. Saying
+  // "nothing took effect" would invite a retry to run it again.
+  const names = [...new Set(toolsRan)];
+  const shown = names.slice(0, MAX_LISTED_TOOLS).join(", ");
+  const more = names.length > MAX_LISTED_TOOLS ? ` and ${names.length - MAX_LISTED_TOOLS} more` : "";
+  return (
+    `${head} Before it failed, these tools had already run: ${shown}${more}. ` +
+    "Their effects stay. Check what they changed before running any of them again, and ask before repeating one that deletes, sends or pays.)"
+  );
 }
+
+/** How many tool names a failed turn's record lists (ATO-1476). */
+const MAX_LISTED_TOOLS = 8;
 
 function clip(text: string): string {
   const flat = text.trim().replace(/\s+/g, " ");

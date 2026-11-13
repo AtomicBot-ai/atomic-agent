@@ -9,6 +9,7 @@ import { ToolRegistry, type ToolDefinition } from "../tools/tool-registry.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { READ_TOOL_TARGETS } from "../tools/read-scope/read-scope-targets.js";
 import * as readProtection from "../tools/read-scope/confine-reads.js";
+import { SKILL_EDIT_TOOLS } from "../tools/skill/skill-edit-tracker.js";
 
 const externalOperation = (): never => { throw new Error("Composition test must not perform external work"); };
 const backend: BrowserBackend = {
@@ -73,11 +74,18 @@ describe("runtime tool contract composition", () => {
       if (protectionStart === undefined) throw new Error("Bootstrap did not install read protection");
       const native = registrations.slice(0, protectionStart);
       const replacements = registrations.slice(protectionStart);
-      expect(new Set(native.map((definition) => definition.name)).size).toBe(native.length);
+      // Skill history (ATO-580) registers the file tools a second time, with the same metadata.
+      const trackedAgain = native.filter((definition, index) => native.findIndex((candidate) => candidate.name === definition.name) !== index);
+      expect(trackedAgain.map((definition) => definition.name).every((name) => (SKILL_EDIT_TOOLS as readonly string[]).includes(name))).toBe(true);
+      for (const definition of trackedAgain) {
+        const first = native.find((candidate) => candidate.name === definition.name)!;
+        expect({ ...definition, run: first.run }).toEqual(first);
+      }
+      expect(new Set(native.map((definition) => definition.name)).size).toBe(native.length - trackedAgain.length);
       const expectedReplacements = [...READ_TOOL_TARGETS.keys(), "os.shell.run", "verify.run"].filter((name) => runtime?.toolRegistry.has(name));
       expect(replacements.map((definition) => definition.name)).toEqual(expectedReplacements);
       for (const definition of replacements) {
-        const original = native.find((candidate) => candidate.name === definition.name);
+        const original = [...native].reverse().find((candidate) => candidate.name === definition.name);
         if (!original) throw new Error(`Protection replaced an unregistered tool: ${definition.name}`);
         expect(definition.run).not.toBe(original.run);
         expect({ ...definition, run: original.run }).toEqual(original);
@@ -94,6 +102,8 @@ describe("runtime tool contract composition", () => {
         expect(runtime.toolDescriptors.some((descriptor) => descriptor.name === name), name).toBe(enabled && tasksEnabled);
       }
       for (const name of GATED_TOOL_NAMES.vision) expect(runtime.toolRegistry.has(name)).toBe(false);
+      // ATO-497: audio input is opt-in, so a default config registers no audio.listen.
+      for (const name of GATED_TOOL_NAMES.audio) expect(runtime.toolRegistry.has(name)).toBe(false);
       // These gates hide availability, while calls keep their live credential/mode checks.
       for (const name of [...GATED_TOOL_NAMES.email, ...GATED_TOOL_NAMES.github, ...GATED_TOOL_NAMES.fusion]) {
         expect(runtime.toolRegistry.has(name), name).toBe(true);

@@ -64,12 +64,12 @@ export function isFusionActive(
 export const FUSION_GUIDANCE = [
   "You orchestrate: read enough to decide, plan, delegate the doing, review what comes back.",
   "Plan in the open, then delegate in the same turn — never stop at the plan: list the independent parts, a big one per worker, small ones shared.",
-  "One task per part, in one `fusion.delegate` call; its `files` name the paths it will produce (approved once by the operator, so the workers can write). Each `instructions` must stand alone: workers see the operator's request, not this chat, and cannot ask.",
+  "One task per part, in one `fusion.delegate` call; its `files` name the paths it will produce (approved once by the operator, so the workers can write). Each `instructions` must stand alone: workers see the operator's request, not this chat.",
   "You choose `maxWorkers` per call; prefer sending more parts over doing any yourself.",
   "Tools that change things are refused for you: the workers build, you do not — the mode working, not a fault.",
   "Keep the design and the judgement: read every reply against its brief.",
   "Before accepting a fan-out: `verify.syntax` on the declared files and `verify.run` on what the request must do.",
-  "Rework goes back out: `failed`, `cancelled`, `needs_orchestrator` or not good enough is another `fusion.delegate` saying what was wrong and what good looks like.",
+  "Rework goes back out: `failed`, `cancelled`, `needs_orchestrator` or not good enough is another `fusion.delegate` saying what was wrong and what good looks like; `needs_input`: answer its question, re-send.",
   // F43: the status table now says `replaced the user's file sales.csv
   // (2,401 → 9 lines)` on the row; this is what to do about it.
   "A task that replaced a pre-existing file is not done until the file is restored (`os.fs.restore` in a worker) or the replacement was asked for.",
@@ -144,7 +144,35 @@ export function formatFusionMachineLine(
       `Set \`etaSeconds\`: tokens out / ${tokensPerSecond} tok/s × parallel workers + queue.`,
     );
   }
+  // The two limits the late guards enforce (ATO-1363): a worker with no
+  // write by half its steps is handed back, and the timeout ends it.
+  // Stated so a plan is sized against them instead of discovering them.
+  const limits = formatWorkerLimitsLine(facts);
+  if (limits !== null) lines.push(limits);
   return lines.join("\n");
+}
+
+/**
+ * A local worker's step budget and time limit, and the ask for an output
+ * estimate checked against them (ATO-1363); `null` when neither limit
+ * is known, so a facts object without them renders as before.
+ */
+export function formatWorkerLimitsLine(
+  facts: FusionMachineFacts,
+): string | null {
+  const { workerMaxSteps, workerTimeoutMs } = facts;
+  const parts = [
+    workerMaxSteps === undefined ? null : `${workerMaxSteps} steps`,
+    workerTimeoutMs === undefined
+      ? null
+      : `${Math.max(1, Math.round(workerTimeoutMs / 60_000))} min`,
+  ].filter((p): p is string => p !== null);
+  if (parts.length === 0) return null;
+  const estimate =
+    facts.tokensPerSecond === null
+      ? ""
+      : " Set `outputTokens` (or `outputLines`): a task that cannot write that in its limit at this speed is flagged on its row.";
+  return `Each local worker gets ${parts.join(" and ")} (more via \`maxSteps\` / \`timeoutMs\`): a task with \`files\` and no write by half its steps is handed back, one out of time comes back to split, so split big files first.${estimate}`;
 }
 
 /**
@@ -159,7 +187,8 @@ export function buildFusionGuidance(
 ): string {
   const machine = formatFusionMachineLine(facts);
   const roles = formatFusionRolesLine(facts);
-  return [FUSION_GUIDANCE, machine, roles]
+  const past = formatFusionPastRunsLine(facts);
+  return [FUSION_GUIDANCE, machine, roles, past]
     .filter((line): line is string => line !== null)
     .join("\n");
 }
@@ -175,4 +204,16 @@ export function formatFusionRolesLine(
   if (roles.length === 0) return null;
   const list = roles.map((r) => `${r.role} \`${r.model}\``).join(", ");
   return `Models by role: ${list}. Give a task \`role\` to run it on that model, or \`model\` naming one of them (or the workers' model); a task with neither runs on the workers' model.`;
+}
+
+/**
+ * What past runs on this machine showed (ATO-949), one line, or `null`
+ * when the outcome log has nothing with enough samples.
+ */
+export function formatFusionPastRunsLine(
+  facts: FusionMachineFacts,
+): string | null {
+  const past = facts.pastRuns ?? [];
+  if (past.length === 0) return null;
+  return `Past runs here: ${past.join("; ")}. Plan the split and pick models by these.`;
 }

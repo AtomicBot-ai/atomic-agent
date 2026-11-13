@@ -67,6 +67,15 @@ describe("agent configuration ownership", () => {
     expect(parseSmartApprovalModel("cloud-x", "f")).toBe("cloud-x");
   });
 
+  it("parses the review after outside content: off by default (ATO-618)", () => {
+    const defaults = createAgentDefaults();
+    expect(defaults.taintReview).toBe(false);
+    expect(parseAgentConfig({}, () => defaults).taintReview).toBe(false);
+    expect(parseAgentConfig({ taintReview: true }, () => defaults).taintReview).toBe(true);
+    expect(thrownError(() => parseAgentConfig({ taintReview: "maybe" }, () => defaults)))
+      .toBeInstanceOf(ConfigValidationError);
+  });
+
   it("reads smart approval through the whole-file parser", () => {
     const parsed = parseUserConfigFile({
       ...USER_CONFIG_DEFAULTS,
@@ -81,7 +90,7 @@ describe("agent configuration ownership", () => {
     const second = createAgentDefaults();
     expect(first).toEqual(USER_CONFIG_DEFAULTS.agent);
     expect(Object.keys(first)).toEqual([
-      "tokenBudget", "maxSteps", "providerWait", "task", "toolTimeoutMs",
+      "tokenBudget", "maxSteps", "providerWait", "task", "goal", "toolTimeoutMs",
       "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
       "nameSessions", "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
       "smartApproval", "smartApprovalModel",
@@ -137,7 +146,7 @@ describe("agent configuration ownership", () => {
       "read-defaults", "read-defaults", "read-defaults",
     ]);
     expect(parsed.providerWait).toEqual({ enabled: false, maxWaitMs: 1 });
-    expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0 });
+    expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0, replanEveryNSteps: 0 });
     expect(parsed.task).not.toBe(defaults.task);
   });
 

@@ -121,6 +121,21 @@ describe("turn finalization seam", () => {
     expect(finished.stopCause).toBeUndefined();
   });
 
+  it.each(["reply", "finish"] as const)("a memoryReadOnly (skill eval) %s turn neither reflects nor bumps lessons", (reason) => {
+    const lesson = vi.fn();
+    const reflect = vi.fn(async () => {});
+    const deps: TurnFinalizationDependencies = { lessonLifecycle: { recordTurnOutcome: lesson }, reflectionRunner: { reflect, abortPending() {} } };
+    const run = context(reason);
+    run.options.memoryReadOnly = true;
+    finalizeAgentTurn(run, deps, () => []);
+    expect(lesson).not.toHaveBeenCalled();
+    expect(reflect).not.toHaveBeenCalled();
+    const failed = context("failed");
+    failed.options.memoryReadOnly = true;
+    finalizeFailedAgentTurn({ ...failed, cancelled: false, creditRefused: false, category: "model", runError: new Error("empty") }, deps, () => []);
+    expect(lesson).not.toHaveBeenCalled();
+  });
+
   it.each([
     { cancelled: true, creditRefused: false, ephemeral: false, hookCalls: 0, status: "cancelled" },
     { cancelled: false, creditRefused: true, ephemeral: false, hookCalls: 0, status: "failed" },

@@ -49,6 +49,11 @@ export function activateComposerSwitchRow(
   dispatch: (action: TuiAction) => void,
   callbacks: TuiAppCallbacks,
 ): void {
+  // ATO-1088: a greyed-out row (offline mode) only says why.
+  if (row.disabled) {
+    dispatch({ type: "composer_notice", text: row.disabled });
+    return;
+  }
   if (row.intent.kind === "localEngine") {
     callbacks.onComposerEngineRequested?.(row.intent.engine, row.intent.leg);
     return;

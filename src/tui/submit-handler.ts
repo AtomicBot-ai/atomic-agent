@@ -5,6 +5,7 @@ import {
 } from "./commands/slash-command-handler.js";
 import { runRunModeVerb } from "./commands/run-mode-verb.js";
 import { runModelModeCommand } from "./commands/model-mode-command.js";
+import { runPersonaCommand } from "./commands/persona-command.js";
 import {
   parseSlashCommand,
   slashPrefix,
@@ -16,7 +17,9 @@ import {
 } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
 import { formatTuiStatus } from "./status-snapshot-tui.js";
+import { formatWhy } from "./why-snapshot-tui.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
+import { NOTHING_TO_RESUME } from "./interrupted-turn-notice.js";
 import {
   isThemeName,
   setActiveTheme,
@@ -24,12 +27,18 @@ import {
   THEMES,
 } from "./theme/theme.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
+import { runExternalEdit } from "./editor/index.js";
+import {
+  describeUserQuestionAnswer,
+  parseTypedUserQuestionAnswer,
+} from "../approval/user-question.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import {
   canAcceptMessage,
   canTypeMessage,
   type TuiState,
 } from "./tui-state.js";
+import { pickerQuery, visiblePickerSessions } from "./session-rail/session-search.js";
 
 type Dispatch = (action: TuiAction) => void;
 
@@ -53,6 +62,11 @@ export function handleEditorSubmit(
 
   if (state.sessionPickerOpen) {
     handleSessionPickerSubmit(state, dispatch, callbacks);
+    return;
+  }
+
+  if (state.rewindPicker) {
+    handleRewindPickerSubmit(state, dispatch, callbacks);
     return;
   }
 
@@ -89,12 +103,34 @@ export function handleEditorSubmit(
     const safeCursor = Math.min(state.slashPaletteCursor, maxRow);
     const chosen = completions[safeCursor];
     if (chosen) {
-      runSlashCommand(`/${chosen.name}`, state, dispatch, callbacks);
+      runSlashCommand(`/${chosen.name}`, state, dispatch, callbacks, "palette");
       return;
     }
   }
 
   if (trimmed.startsWith("/")) {
+    return;
+  }
+
+  // An `ask_user` question (ATO-489): what was typed is the answer, a
+  // number, several, or the person's own words. One that does not fit
+  // keeps the question open and says why.
+  const question = state.pendingApproval?.question;
+  if (
+    question &&
+    state.pendingApproval &&
+    state.pendingApproval.sessionId === state.session.sessionId &&
+    callbacks.onQuestionAnswer
+  ) {
+    const { approvalId } = state.pendingApproval;
+    const answer = parseTypedUserQuestionAnswer(question, trimmed);
+    if (typeof answer === "string") {
+      dispatch({ type: "system_message", text: `Not an answer to the question: ${answer}.` });
+      return;
+    }
+    callbacks.onQuestionAnswer(approvalId, answer);
+    dispatch({ type: "approval_resolved", approvalId, approved: true });
+    dispatch({ type: "system_message", text: `You answered. ${describeUserQuestionAnswer(answer)}` });
     return;
   }
 
@@ -138,7 +174,11 @@ export function handleEditorSubmit(
     return;
   }
   dispatch({ type: "message_submitted" });
-  callbacks.onMessageSubmitted(trimmed);
+  // `@path` mentions of files in the working directory are inlined here
+  // (file-mentions/). Only on this idle path: a steer or a queued
+  // message is matched back to its pending strip entry by its text, so
+  // those keep their `@path` as words the model can read itself.
+  callbacks.onMessageSubmitted(callbacks.expandFileMentions?.(trimmed) ?? trimmed);
 }
 
 /**
@@ -167,16 +207,44 @@ function handleSessionPickerSubmit(
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
 ): void {
-  const entry = state.sessionPickerList[state.sessionPickerCursor];
+  // ATO-1153: the rows on screen, narrowed by the typed search if any.
+  const rows = visiblePickerSessions(state, callbacks.searchSessions);
+  const entry = rows[Math.min(state.sessionPickerCursor, rows.length - 1)];
   if (entry && callbacks.onSessionSwitchRequested) {
+    // The search is not a draft: put the draft back before the switch
+    // parks the buffer with the thread being left (ATO-37).
+    if (state.inputValue !== state.sessionPickerDraft) {
+      dispatch({ type: "input_changed", value: state.sessionPickerDraft });
+    }
     // No clear after this one: the switch has already parked the buffer
     // with the thread being left and put the target's own draft in it
     // (`session_switched`), and clearing now would throw that away.
     callbacks.onSessionSwitchRequested(entry.sessionId);
     return;
   }
+  // A search that matches nothing: Enter waits for a better one.
+  if (!entry && pickerQuery(state).trim().length > 0) return;
   dispatch({ type: "session_picker_closed" });
   dispatch({ type: "input_changed", value: "" });
+}
+
+/**
+ * Enter on the `/rewind` picker (ATO-1057). The orchestrator does the
+ * cut, rebuilds the transcript and puts the question back in the
+ * composer, or says in the chat why it could not; either way the picker
+ * closes here.
+ */
+function handleRewindPickerSubmit(
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  const picker = state.rewindPicker;
+  const point = picker ? picker.points[picker.cursor] : undefined;
+  dispatch({ type: "rewind_picker_closed" });
+  if (point && callbacks.onRewindRequested) {
+    callbacks.onRewindRequested(point.turnIndex, point.text);
+  }
 }
 
 /**
@@ -221,12 +289,39 @@ function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCal
   return text;
 }
 
+/**
+ * Count a built-in slash command as `ui_action` (ATO-1465): only the
+ * registry's canonical name (`/report`, an alias counts as its command),
+ * never the arguments. Skills, plugin commands and unknown input are not
+ * reported, since their names are the operator's own. The runtime drops
+ * the event while analytics is off.
+ */
+export function reportBuiltInSlashCommand(
+  raw: string,
+  via: "slash" | "palette" | "menu",
+  callbacks: Pick<TuiAppCallbacks, "onUiAction">,
+): void {
+  if (!callbacks.onUiAction) return;
+  const parsed = parseSlashCommand(raw);
+  if (parsed === null) return;
+  const builtIn = resolveSlashCommand(parsed.name);
+  if (builtIn === null) return;
+  try {
+    callbacks.onUiAction(`/${builtIn.name}`, via);
+  } catch {
+    // Analytics must never get in the way of the command.
+  }
+}
+
 export function runSlashCommand(
   raw: string,
   state: TuiState,
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
+  /** How the command was run; `menu` is also what `/feedback` reads (ATO-1467). */
+  via: "slash" | "palette" | "menu" = "slash",
 ): void {
+  reportBuiltInSlashCommand(raw, via, callbacks);
   const result: SlashDispatchResult = dispatchSlashCommand(raw, skillSlashCommands(state.skillsPanel));
   if (result.skillInvocation || result.pluginCommandInvocation) {
     if (!canTypeMessage(state)) return;
@@ -251,6 +346,15 @@ export function runSlashCommand(
   }
   if (result.triggerIssueReport) {
     callbacks.onIssueReportRequested?.();
+  }
+  if (result.openUrl) {
+    callbacks.onOpenUrlRequested?.(result.openUrl);
+  }
+  if (result.feedbackVerb) {
+    callbacks.onFeedbackRequested?.(
+      result.feedbackVerb,
+      via === "menu" ? "menu" : undefined,
+    );
   }
   if (result.triggerUninstallPlan) {
     callbacks.onUninstallPlanRequested?.();
@@ -307,12 +411,16 @@ export function runSlashCommand(
     dispatch({ type: "runtime_info", line: text.split("\n")[0] ?? text });
     dispatch({ type: "system_message", text });
   }
+  if (result.triggerWhySnapshot) {
+    dispatch({ type: "system_message", text: formatWhy(state) });
+  }
   if (result.runModeVerb)
     runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
   if (result.modelModeCommand) {
     runModelModeCommand(result.modelModeCommand, dispatch);
     callbacks.onSkillsRefreshRequested?.();
   }
+  if (result.personaCommand) runPersonaCommand(result.personaCommand, dispatch);
   if (result.fusionWorkerAction !== undefined) {
     const worker = result.fusionWorkerAction;
     if (state.session.sessionId === null || callbacks.onFusionWorkerAction === undefined) {
@@ -329,15 +437,22 @@ export function runSlashCommand(
   if (result.fusionRunAction !== undefined) {
     runFusionRunAction(result.fusionRunAction, state, dispatch, callbacks);
   }
+  if (result.resumeInterruptedTurn) {
+    runResumeInterruptedTurn(state, dispatch, callbacks);
+  }
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
-  if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb);
+  if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb, result.compactionInstructions);
   if (result.goalCommand) callbacks.onGoalCommand?.(result.goalCommand);
   if (result.enhancePromptText !== undefined) {
     callbacks.onPromptEnhanceRequested?.(result.enhancePromptText);
   }
   if (result.enhanceCurrentDraft) runEnhanceCurrentDraft(state, dispatch, callbacks);
+  if (result.sideQuestionText !== undefined) {
+    callbacks.onSideQuestionRequested?.(result.sideQuestionText);
+  }
+  if (result.externalEdit) runExternalEdit(result.externalEdit, state, dispatch, callbacks);
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {
@@ -345,7 +460,12 @@ export function runSlashCommand(
     callbacks.onQuit();
   }
   if (result.triggerSessionPicker) callbacks.onSessionPickerRequested?.();
-  if (result.triggerSessionNew) callbacks.onSessionNewRequested?.();
+  if (result.triggerSessionNew) {
+    if (result.sessionNewWorktree) callbacks.onSessionNewRequested?.({ worktree: true });
+    else callbacks.onSessionNewRequested?.();
+  }
+  if (result.triggerRewindPicker) callbacks.onRewindPickerRequested?.();
+  if (result.triggerIncognitoSession === true) callbacks.onIncognitoSessionRequested?.();
   if (result.triggerMemoryDump) callbacks.onMemoryDumpRequested?.();
   if (result.triggerSkillCatalogDump) callbacks.onSkillCatalogRequested?.();
   if (result.persistLlamaUrl) {
@@ -411,6 +531,27 @@ export function runSlashCommand(
         : result.showStepsVerb === "on";
     dispatch({ type: "show_steps_set", on });
     callbacks.onShowStepsPersistRequested?.(on);
+  }
+  // `/verbose`: session-only, so nothing is written to the config.
+  if (result.verboseStepsVerb) {
+    const on =
+      result.verboseStepsVerb === "toggle"
+        ? !state.verboseSteps
+        : result.verboseStepsVerb === "on";
+    dispatch({ type: "verbose_steps_set", on });
+    dispatch({
+      type: "system_message",
+      text: on
+        ? "verbose steps on: each finished step gets a plain note under its tool card (/verbose off to hide)"
+        : "verbose steps off",
+    });
+  }
+  // `/vim`: same shape as `/steps`, written to `tui.vimMode` (ATO-662).
+  if (result.vimVerb) {
+    const on =
+      result.vimVerb === "toggle" ? !state.vimMode : result.vimVerb === "on";
+    dispatch({ type: "vim_mode_set", on });
+    callbacks.onVimModePersistRequested?.(on);
   }
 }
 
@@ -570,6 +711,36 @@ function runFusionRunAction(
           ? "no unfinished fusion run in this session"
           : `no unfinished fusion run ${request.runId} in this session`,
     });
+    return;
+  }
+  dispatch({ type: "slash_palette_closed" });
+  if (canAcceptMessage(state)) {
+    dispatch({ type: "message_submitted" });
+    callbacks.onMessageSubmitted(text);
+  } else {
+    submitWhileBusy(text, "queue", dispatch, callbacks);
+  }
+}
+
+/**
+ * `/resume` (ATO-448): continue the last turn of this session when a
+ * restart cut it off. Sent as the person's own turn, like a fusion
+ * resume; the runtime records it as resumed, so a second `/resume` says
+ * there is nothing to resume.
+ */
+function runResumeInterruptedTurn(
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  const sessionId = state.session.sessionId;
+  if (!canTypeMessage(state)) return;
+  const text =
+    sessionId === null
+      ? null
+      : (callbacks.prepareInterruptedTurnResume?.(sessionId) ?? null);
+  if (text === null) {
+    dispatch({ type: "system_message", text: NOTHING_TO_RESUME });
     return;
   }
   dispatch({ type: "slash_palette_closed" });

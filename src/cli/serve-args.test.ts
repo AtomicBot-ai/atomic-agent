@@ -154,3 +154,27 @@ describe("lanUrls (ATO-1126)", () => {
     expect(lanUrls("192.168.1.20", 8787, nics)).toEqual([]);
   });
 });
+
+describe("serve --tunnel flags (ATO-625)", () => {
+  it("is off unless asked for", () => {
+    expect(parsedOk([]).tunnel).toBeNull();
+  });
+
+  it("--tunnel asks for a quick tunnel", () => {
+    expect(parsedOk(["--tunnel"]).tunnel).toEqual({ mode: "quick" });
+  });
+
+  it("--tunnel-name with --tunnel-hostname asks for a named tunnel", () => {
+    expect(
+      parsedOk(["--tunnel-name", "hooks", "--tunnel-hostname", "https://Hooks.Example.com/"]).tunnel,
+    ).toEqual({ mode: "named", name: "hooks", hostname: "hooks.example.com" });
+  });
+
+  it("a named tunnel needs both flags, and a real hostname", () => {
+    expect(parseError(["--tunnel-name", "hooks"])).toContain("--tunnel-hostname");
+    expect(parseError(["--tunnel-hostname", "hooks.example.com"])).toContain("--tunnel-name");
+    expect(parseError(["--tunnel-name", "hooks", "--tunnel-hostname", "hooks.example.com/x"])).toContain("hostname");
+    expect(parseError(["--tunnel-name"])).toContain("requires a value");
+    expect(parseError(["--tunnel-name", "--tunnel"])).toContain("requires a value");
+  });
+});

@@ -137,6 +137,20 @@ describe("taskCommand", () => {
     expect(JSON.parse(stdout()).notify).toBeNull();
   });
 
+  it("create --notify push persists the phone-push opt-in (ATO-1129)", async () => {
+    const code = await taskCommand([
+      "create",
+      "--session",
+      "s-cli-push",
+      "--message",
+      "nightly build",
+      "--notify",
+      "push",
+    ]);
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout()).notify).toBe("push");
+  });
+
   it("create --max-cost-usd / --max-duration persist the task's budget; default stays null", async () => {
     const code = await taskCommand([
       "create",
@@ -367,6 +381,44 @@ describe("taskCommand", () => {
     expect(code).toBe(0);
     expect(stdout()).toContain("beta");
     expect(stdout()).not.toContain("alpha");
+  });
+
+  it("pause / resume / runs round-trip through the store (ATO-590)", async () => {
+    await taskCommand([
+      "create",
+      "--session",
+      "s-cli-pause",
+      "--message",
+      "pause me",
+    ]);
+    const created = JSON.parse(stdout());
+
+    stdoutChunks.length = 0;
+    expect(await taskCommand(["pause", created.id])).toBe(0);
+    expect(JSON.parse(stdout()).status).toBe("paused");
+
+    stdoutChunks.length = 0;
+    expect(await taskCommand(["list", "--status", "paused"])).toBe(0);
+    expect(stdout()).toContain(created.id);
+
+    stdoutChunks.length = 0;
+    expect(await taskCommand(["resume", created.id])).toBe(0);
+    expect(JSON.parse(stdout()).status).toBe("pending");
+
+    stdoutChunks.length = 0;
+    expect(await taskCommand(["runs", created.id])).toBe(0);
+    expect(JSON.parse(stdout())).toEqual([]);
+
+    expect(await taskCommand(["pause", "t-missing"])).toBe(1);
+    expect(stderr()).toMatch(/task not found: t-missing/);
+  });
+
+  it("pause refuses a task that has ended", async () => {
+    await taskCommand(["create", "--session", "s-cli-end", "--message", "x"]);
+    const created = JSON.parse(stdout());
+    await taskCommand(["cancel", created.id]);
+    expect(await taskCommand(["pause", created.id])).toBe(1);
+    expect(stderr()).toMatch(/cannot pause a cancelled task/);
   });
 
   it("list rejects unknown --status values", async () => {

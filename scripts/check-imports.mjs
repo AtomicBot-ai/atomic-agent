@@ -36,15 +36,19 @@ const sharedViews = new Set([
   'multi-line-editor-clipboard.ts', 'multi-line-editor-cursor.ts',
   'multi-line-editor-edits.ts', 'multi-line-editor-input.ts',
   'multi-line-editor-keys.ts', 'multi-line-editor-pointer.ts',
+  'vim/index.ts', 'vim/use-vim-keys.ts', 'vim/vim-insert.ts', 'vim/vim-keys.ts',
+  'vim/vim-mode-indicator.tsx', 'vim/vim-motions.ts', 'vim/vim-normal.ts',
+  'vim/vim-operators.ts', 'vim/vim-text.ts', 'vim/vim-types.ts', 'vim/vim-esc-claim.ts',
 ].map((name) => `src/tui/components/${name}`));
 sharedViews.add('src/tui/row-window.ts');
 
 const resourceConfigOwners = {
-  'src/config/agent/agent-types.ts': ['src/approval/approval-level.ts', 'src/config/agent-execution-config.ts', 'src/config/agent/compaction-config.ts', 'src/config/agent/prompt-config.ts'],
+  'src/config/agent/agent-types.ts': ['src/approval/approval-level.ts', 'src/config/agent-execution-config.ts', 'src/config/agent/compaction-config.ts', 'src/config/agent/prompt-config.ts', 'src/config/agent/persona-config.ts'],
   'src/config/agent/agent-defaults.ts': ['src/config/agent/agent-types.ts', 'src/config/agent-execution-config.ts', 'src/config/agent/compaction-config.ts', 'src/config/agent/prompt-config.ts'],
   'src/config/agent/compaction-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
   'src/config/agent/prompt-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
-  'src/config/agent/agent-parser.ts': ['src/config/agent/compaction-config.ts', 'src/config/agent/prompt-config.ts', 'src/config/agent/agent-types.ts', 'src/approval/approval-level.ts', 'src/config/agent-execution-config.ts', 'src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
+  'src/config/agent/persona-config.ts': ['src/config/config-validation-error.ts'],
+  'src/config/agent/agent-parser.ts': ['src/config/agent/compaction-config.ts', 'src/config/agent/prompt-config.ts', 'src/config/agent/persona-config.ts', 'src/config/agent/agent-types.ts', 'src/approval/approval-level.ts', 'src/config/agent-execution-config.ts', 'src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
   ...Object.fromEntries(['http-config', 'tool-config', 'skills-config'].map(owner => [`src/config/${owner}.ts`, ['src/config/config-primitives.ts', 'src/config/config-values.ts', 'src/config/config-validation-error.ts']])),
   ...Object.fromEntries(['session-retention-config', 'tracing-config'].map(owner => [`src/config/${owner}.ts`, ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts']])),
 };
@@ -73,7 +77,8 @@ export function violation(edge) {
   const frontendConfigOwners = {
     'src/config/tui-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/session-rail-config.ts'],
     'src/config/channel-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts'],
-    'src/config/integration-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts'],
+    'src/config/integration-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts', 'src/config/push-config.ts'],
+    'src/config/push-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
   };
   if (frontendConfigOwners[source] && target.startsWith('src/') && !frontendConfigOwners[source].includes(target)) return 'frontend config depends outside concrete value owners';
   const resourceTypes = source === 'src/config/agent/agent-types.ts' || target === 'src/config/agent/agent-types.ts' || target === 'src/approval/approval-level.ts';

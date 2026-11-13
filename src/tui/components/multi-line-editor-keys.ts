@@ -45,6 +45,7 @@ export interface KeyContext {
   onAutocomplete?: () => void;
   onHistoryPrev?: () => void;
   onHistoryNext?: () => void;
+  vim?: (ctx: KeyContext) => boolean; // ATO-662 `vim/`, asked first; true = took it
 }
 
 /**
@@ -73,6 +74,7 @@ function isPasteChord(input: string, key: Key): boolean {
 }
 
 export function handleKey(ctx: KeyContext): void {
+  if (ctx.vim?.(ctx)) return;
   const { input, key, value, cursor, setBuffer, selection } = ctx;
   if (isCopyChord(input, key)) {
     // Selected text turns Ctrl+C into copy, the way it behaves in every

@@ -75,7 +75,9 @@ function Header({ panel }: { panel: McpPanelState }): ReactElement {
     .join(" · ");
   const hint =
     panel.addModal !== null
-      ? "Enter submit · Esc cancel · paste JSON of one MCP server"
+      ? panel.addModal.picker !== null
+        ? "j/k move · Enter pick · p paste your own · Esc cancel"
+        : "Enter submit · Esc cancel · paste JSON of one MCP server"
       : panel.removeConfirm !== null
         ? "y / Enter confirm · n / Esc cancel"
         : panel.mode === "list"

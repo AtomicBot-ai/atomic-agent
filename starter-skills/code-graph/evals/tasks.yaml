@@ -1,0 +1,16 @@
+skill: code-graph
+description: Find callers and features in a small project, with path:line for each.
+defaults:
+  maxSteps: 25
+  fixtures: fixtures
+tasks:
+  - id: who-calls-chargecard
+    prompt: Who calls chargeCard in this project, not counting tests? List each caller as path:line.
+    check:
+      type: command
+      run: node "$SKILL_EVAL_TASKS_DIR/checks/callers-check.mjs"
+  - id: where-is-login
+    prompt: Which file handles the login request on the server? Answer with its path.
+    check:
+      type: regex
+      pattern: "src/routes/session\\.js"

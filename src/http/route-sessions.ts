@@ -1,6 +1,19 @@
+import { readGoalState } from "../agent/goal/index.js";
 import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
 import type { SessionState } from "../session/session-state.js";
+import { readSessionArchived } from "../session/session-archived.js";
 import { readSessionTitle } from "../session/session-title.js";
+import {
+  SESSION_SEARCH_MAX_LIMIT,
+  SESSION_SEARCH_MAX_QUERY_CHARS,
+  SessionSearchUnavailableError,
+} from "../session/session-search.js";
+import { getConfig } from "../config/index.js";
+import {
+  SESSION_NEXT_STEP_METADATA_KEY,
+  nextStepSuggestionsEnabled,
+  readSessionNextStep,
+} from "../session/session-next-step.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { openaiError } from "./openai-errors.js";
 import {
@@ -17,6 +30,11 @@ import {
  * transcript by default — callers fetch the full state via
  * `/api/sessions/{id}` when they need it. `title` is the generated
  * session name (`agent.nameSessions`), `null` until one is stored.
+ * `goal` is the chat's stored goal (ATO-1040, `metadata.goal` read the
+ * way the runtime reads it), `null` when it has none.
+ * `nextStep` is the suggested next message after the last answered turn
+ * (`tui.nextStepSuggestions`, ATO-1093): `null` when none is stored, the
+ * setting is off, a turn is running, or a later turn made it stale.
  */
 export function createListSessionsHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -33,6 +51,7 @@ export function createListSessionsHandler(): HttpHandler {
     }
     const workingDir = ctx.runtime.capabilities.workingDir;
     // ATO-731: chats keep their own folders, so `scope=all` lists them from every folder.
+    const suggestionsOn = nextStepSuggestionsEnabled(getConfig());
     const sessions = url.searchParams.get("scope") === "all"
       ? ctx.runtime.sessionStore.listRecent(limit)
       : ctx.runtime.sessionStore.listByWorkingDir(workingDir, limit);
@@ -51,8 +70,70 @@ export function createListSessionsHandler(): HttpHandler {
         updatedAt: s.updatedAt,
         lastError: s.lastError,
         title: readSessionTitle(s.metadata),
+        goal: readGoalState(s.metadata),
+        nextStep: suggestionsOn ? readSessionNextStep(s) : null,
+        // ATO-1150: the operator archived this chat (POST /api/sessions/{id}/archived).
+        archived: readSessionArchived(s.metadata),
       })),
     });
+  };
+}
+
+/**
+ * `GET /api/sessions/search?q=...` — full-text search over the user
+ * messages and closing replies of stored sessions (ATO-1149). Like the
+ * list, it covers the current working directory unless `scope=all`.
+ * `limit` caps the hits (default 10, max 25; at most 3 per session).
+ *
+ * Each hit names the session (`sessionId`, `title`, `workingDir`,
+ * `updatedAt`), the line it was found on (`line`, an index into the
+ * session's chat lines, and `kind`) and a `snippet` with the matching
+ * words wrapped in `«` and `»`. `pending` counts sessions changed since
+ * they were last indexed that this search did not get to (the index
+ * catches up a batch per search); `0` means the results cover everything.
+ * `503` when the index cannot be created on this database.
+ */
+export function createSearchSessionsHandler(): HttpHandler {
+  return async (req, res, ctx) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const query = (url.searchParams.get("q") ?? "").trim();
+    if (query.length === 0) {
+      sendError(res, 400, openaiError("q must be a non-empty string"));
+      return;
+    }
+    if (query.length > SESSION_SEARCH_MAX_QUERY_CHARS) {
+      sendError(
+        res,
+        400,
+        openaiError(`q must be at most ${SESSION_SEARCH_MAX_QUERY_CHARS} characters`),
+      );
+      return;
+    }
+    const rawLimit = url.searchParams.get("limit");
+    let limit: number | undefined;
+    if (rawLimit !== null) {
+      const parsed = Number.parseInt(rawLimit, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        sendError(res, 400, openaiError("limit must be a positive integer"));
+        return;
+      }
+      limit = Math.min(parsed, SESSION_SEARCH_MAX_LIMIT);
+    }
+    const all = url.searchParams.get("scope") === "all";
+    try {
+      const result = ctx.runtime.sessionStore.searchTranscripts({
+        query,
+        ...(limit === undefined ? {} : { limit }),
+        ...(all ? {} : { workingDir: ctx.runtime.capabilities.workingDir }),
+      });
+      sendJson(res, 200, { query, hits: result.hits, pending: result.pending });
+    } catch (err) {
+      if (err instanceof SessionSearchUnavailableError) {
+        sendError(res, 503, openaiError(err.message));
+        return;
+      }
+      throw err;
+    }
   };
 }
 
@@ -65,6 +146,9 @@ export function createListSessionsHandler(): HttpHandler {
  * once done ("Used github: create issue"). Built here from the stored
  * name and args, never stored, so a reopened chat labels its steps the
  * way they read while the turn ran.
+ *
+ * `goal` (ATO-1040) is `metadata.goal` read the way the runtime reads it:
+ * a malformed value is `null` there, as it is for the runtime. `nextStep` is as on the list rows.
  */
 export function createGetSessionHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -78,8 +162,56 @@ export function createGetSessionHandler(): HttpHandler {
       sendError(res, 404, openaiError(`session not found: ${id}`));
       return;
     }
-    sendJson(res, 200, withToolCallDoneLines(state));
+    // `nextStep`: the same fresh-only read the list rows carry (ATO-1093).
+    sendJson(res, 200, {
+      ...withNextStep(withToolCallDoneLines(state)),
+      goal: readGoalState(state.metadata),
+    });
   };
+}
+
+/**
+ * `GET /api/sessions/{id}/next-step` (ATO-1093, for the desktop composer)
+ * — `200 { sessionId, suggestion }`: the suggested next message for the
+ * session's last finished turn, or `null` until the call has landed, while
+ * a new turn runs (and after it, until its own suggestion lands), and when
+ * `tui.nextStepSuggestions` is off (also for one stored while it was on)
+ * or the call produced nothing. Nothing
+ * is written to clear it: `readSessionNextStep` ties it to `turnCount`.
+ * 404 for an unknown id.
+ */
+export function createGetSessionNextStepHandler(): HttpHandler {
+  return async (_req, res, ctx) => {
+    const id = ctx.params.id;
+    if (!id) {
+      sendError(res, 400, openaiError("session id is required"));
+      return;
+    }
+    const state = ctx.runtime.sessionStore.load(id);
+    if (!state) {
+      sendError(res, 404, openaiError(`session not found: ${id}`));
+      return;
+    }
+    const suggestion = nextStepSuggestionsEnabled(getConfig())
+      ? readSessionNextStep(state)
+      : null;
+    sendJson(res, 200, { sessionId: id, suggestion });
+  };
+}
+
+/**
+ * The state with its `nextStep` read (ATO-1093). With
+ * `tui.nextStepSuggestions` off, `nextStep` is `null` and the stored
+ * `metadata.nextStep` is left out too, so a suggestion written before the
+ * switch was turned off is not served by any route.
+ */
+function withNextStep(state: SessionState): SessionState & { nextStep: string | null } {
+  if (nextStepSuggestionsEnabled(getConfig())) {
+    return { ...state, nextStep: readSessionNextStep(state) };
+  }
+  const { [SESSION_NEXT_STEP_METADATA_KEY]: _hidden, ...metadata } = state.metadata ?? {};
+  void _hidden;
+  return { ...state, metadata, nextStep: null };
 }
 
 /** The state with `done_line` on every tool call row, for the history view. */
@@ -333,7 +465,12 @@ export function createDeleteSessionHandler(): HttpHandler {
       sendError(res, 400, openaiError("session id is required"));
       return;
     }
-    ctx.runtime.sessionStore.delete(id);
+    // An incognito chat (ATO-586) goes with its trace file, and not from
+    // under a running turn — that turn's end would write the row back.
+    const incognito = ctx.runtime.discardIncognitoSession?.(id);
+    if (incognito === undefined || incognito === "not_incognito") {
+      ctx.runtime.sessionStore.delete(id);
+    }
     // Purging the session takes its parked steers with it: they are
     // messages for a conversation the caller just said it is done with,
     // and leaving them would strand rows nobody will ever ack.

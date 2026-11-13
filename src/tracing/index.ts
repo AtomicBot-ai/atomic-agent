@@ -8,16 +8,29 @@ export type {
 } from "./structured-logger.js";
 export { MetricsCollector } from "./metrics-collector.js";
 export type {
+  MetricKind,
   MetricSample,
   MetricSink,
   MetricsCollectorOptions,
 } from "./metrics-collector.js";
+export { PrometheusRegistry, prometheusNameFor } from "./prometheus-registry.js";
+export {
+  formatPrometheus,
+  PROMETHEUS_CONTENT_TYPE,
+} from "./prometheus-format.js";
+export type {
+  PrometheusFamily,
+  PrometheusSeries,
+  PrometheusSummarySeries,
+  PrometheusType,
+} from "./prometheus-format.js";
 export { AgentMetrics, METRIC_NAMES } from "./agent-metrics.js";
 export type {
   MetricName,
   StepMetricSample,
   LlmMetricSample,
   ToolMetricSample,
+  TurnMetricSample,
 } from "./agent-metrics.js";
 export {
   createLogNdjsonSink,
@@ -42,3 +55,13 @@ export {
   serializeTraceEvent,
   traceFilePath,
 } from "./trace/index.js";
+export {
+  createOtlpTraceSink,
+  parseOtelKeyValueList,
+  resolveOtlpExportSettings,
+} from "./otel/index.js";
+export type {
+  OtelExportConfig,
+  OtlpExportSettings,
+  OtlpTraceSink,
+} from "./otel/index.js";

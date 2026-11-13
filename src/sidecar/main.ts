@@ -9,6 +9,7 @@ import { checkLlamaServer } from "../llm/llama-server-health.js";
 import { activeTextProviderIsLlamaServer } from "../llm/provider/registry/active-text-provider.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-registry.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
+import { compactionInstructionsError } from "../runtime/compaction-instructions.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
@@ -16,6 +17,7 @@ import type {
   ApprovalResponsePayload,
   CancelPayload,
   GetSessionPayload,
+  CompactSessionPayload,
   SendMessagePayload,
   SteerMessagePayload,
   SkillInstallPayload,
@@ -25,6 +27,8 @@ import type {
 import type { SessionState } from "../session/index.js";
 import { installLocalSkill, scanApprovalFromIds, uninstallSkill } from "../skills/index.js";
 import { getAppVersion } from "../version.js";
+import type { CompressedToolResult } from "../compressor/result-compressor.js";
+import { canvasRecordOf } from "../tools/canvas/index.js";
 
 interface ActiveSession {
   session: SessionState;
@@ -117,6 +121,8 @@ export async function bootstrapSidecar(): Promise<{
               status: inner.result.status,
               summary: inner.result.summary,
               truncated: inner.result.truncated,
+              // ATO-1137: the canvas an ok `canvas.render` wrote.
+              ...canvasPayload(inner.result),
               // ATO-1145: approval records, auto-approvals included.
               ...(inner.result.approvals !== undefined &&
               inner.result.approvals.length > 0
@@ -352,6 +358,10 @@ export async function bootstrapSidecar(): Promise<{
           signal: active.controller.signal,
           // The desktop app: picks the reply's `### answer-style`.
           origin: "sidecar",
+          // A person reads this chat and answers `approval_request`s, so
+          // a local model that runs out of memory is restarted with a
+          // smaller window only after they say yes (ATO-334, ATO-1290).
+          interactive: true,
         });
       },
     });
@@ -406,11 +416,14 @@ export async function bootstrapSidecar(): Promise<{
     },
   );
 
-  router.register<GetSessionPayload, Awaited<ReturnType<AgentRuntime["compactSession"]>>>("compact_session", async (request) => {
+  router.register<CompactSessionPayload, Awaited<ReturnType<AgentRuntime["compactSession"]>>>("compact_session", async (request) => {
     if (!active) throw new Error("no active runtime — call start_session first");
     const id = request.payload.sessionId;
     if (typeof id !== "string" || !id) throw new Error("sessionId is required");
-    return active.runtime.compactSession(id);
+    const { instructions } = request.payload;
+    const invalid = compactionInstructionsError(instructions);
+    if (invalid) throw new Error(invalid);
+    return active.runtime.compactSession(id, typeof instructions === "string" ? { instructions } : {});
   });
   router.register<GetSessionPayload, ReturnType<AgentRuntime["getSessionCompaction"]>>("get_compaction", (request) => {
     if (!active) throw new Error("no active runtime — call start_session first");
@@ -509,4 +522,10 @@ if (invokedDirectly) {
   // monotone, so `createAgentRuntime` widening it later is free.
   installTransportDeadlines();
   void bootstrapSidecar();
+}
+
+/** `canvas` on a `tool_call_result` (ATO-1137): the file an ok `canvas.render` wrote. */
+function canvasPayload(result: CompressedToolResult): { canvas?: NonNullable<ReturnType<typeof canvasRecordOf>> } {
+  const canvas = canvasRecordOf(result);
+  return canvas === undefined ? {} : { canvas };
 }

@@ -6,6 +6,11 @@ import { dirname } from "node:path";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 
 import { applyMigrations } from "./memory-schema.js";
+import {
+  MemoryChangeLog,
+  type MemoryChangeActor,
+  type NoteSnapshot,
+} from "./evolution/memory-change-log.js";
 import type { EmbeddingStore } from "./embeddings/embedding-store.js";
 import type { EmbeddingWriter } from "./embeddings/embedding-writer.js";
 import {
@@ -147,6 +152,12 @@ export interface MemoryListOptions {
    * rows with the young ones filtered out afterwards.
    */
   updatedBefore?: number;
+  /**
+   * ATO-672. Leave out rows carrying any of these tags (e.g. the
+   * `superseded` tag note reconciliation sets). Applied in SQL before
+   * `LIMIT`, like `excludeArchived`.
+   */
+  excludeTags?: readonly string[];
 }
 
 /**
@@ -268,6 +279,9 @@ export class MemoryStore {
   private embeddingVectorWeight: number;
   private embeddingBruteForceCeiling: number;
   private embeddingMinCosine: number | undefined;
+  // `false` while the attached model's vectors are still being rebuilt:
+  // recall stays keyword-only until then (see `attachEmbeddings`).
+  private vectorRecallReady: (() => boolean) | undefined;
   private readonly now: () => number;
   private readonly insertStmt: Database.Statement;
   private readonly deleteStmt: Database.Statement;
@@ -279,6 +293,8 @@ export class MemoryStore {
   private readonly touchOnDedupStmt: Database.Statement;
   private readonly recallTouchStmt: Database.Statement;
   private readonly dedupCandidateStmt: Database.Statement;
+  private readonly restoreStmt: Database.Statement;
+  private readonly changeLog: MemoryChangeLog;
 
   constructor(options: MemoryStoreOptions) {
     if (!Number.isInteger(options.maxEntries) || options.maxEntries <= 0) {
@@ -324,6 +340,16 @@ export class MemoryStore {
     this.embeddingBruteForceCeiling =
       options.embeddings?.bruteForceCeiling ?? DEFAULT_BRUTE_FORCE_CEILING;
     this.now = options.now ?? Date.now;
+    // ATO-1059: the journal of edits and deletions, in this same file.
+    this.changeLog = new MemoryChangeLog(this.db, this.now());
+    this.restoreStmt = this.db.prepare(
+      `INSERT INTO memories
+         (id, content, created_at, updated_at, source, session_id, working_dir, tags,
+          recall_count, last_recalled_at, consolidating_at)
+       VALUES
+         (@id, @content, @created_at, @updated_at, @source, @session_id, @working_dir, @tags,
+          0, NULL, NULL)`,
+    );
     this.insertStmt = this.db.prepare(
       `INSERT INTO memories
          (content, created_at, updated_at, source, session_id, working_dir, tags,
@@ -668,6 +694,36 @@ export class MemoryStore {
   }
 
   /**
+   * ATO-672. Notes that share words with `content`, best BM25 first,
+   * WITHOUT the recall side effects (`recall_count` / `last_recalled_at`
+   * stay as they are): a background comparison is not a use of the
+   * note. Archived rows are left out. A query FTS5 cannot parse yields
+   * no rows instead of throwing.
+   */
+  findSimilar(content: string, k: number): MemoryEntry[] {
+    const ftsQuery = buildFtsQuery(content.slice(0, MEMORY_QUERY_MAX_LENGTH));
+    if (ftsQuery.length === 0) return [];
+    const limit = clampPositiveInt(k, 1, MEMORY_RECALL_MAX_K, "k");
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT m.id, m.content, m.created_at, m.updated_at,
+                  m.source, m.session_id, m.working_dir, m.tags,
+                  m.recall_count, m.last_recalled_at
+             FROM memories_fts
+             JOIN memories m ON m.id = memories_fts.rowid
+            WHERE memories_fts MATCH ? AND m.consolidated_into IS NULL
+            ORDER BY bm25(memories_fts) ASC
+            LIMIT ?`,
+        )
+        .all(ftsQuery, limit) as MemoryRow[];
+      return rows.map(rowToEntry);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Memory-v2 phase 1A: bump `recall_count` + stamp `last_recalled_at`
    * on every row returned by the most recent `recall()` call. Wrapped
    * in a transaction so all touches commit together; the in-memory
@@ -720,10 +776,94 @@ export class MemoryStore {
     return row ? rowToEntry(row) : null;
   }
 
-  remove(id: number): boolean {
+  /**
+   * Delete a note. The note as it was goes into the change journal
+   * first (ATO-1059), so the deletion can be undone; `by` says who asked.
+   */
+  remove(id: number, by: MemoryChangeActor = "agent"): boolean {
     const normalizedId = validateId(id);
-    const result = this.deleteStmt.run(normalizedId) as { changes: number };
-    return result.changes > 0;
+    return this.db.transaction((): boolean => {
+      const before = this.get(normalizedId);
+      if (before === null) return false;
+      const result = this.deleteStmt.run(normalizedId) as { changes: number };
+      if (result.changes === 0) return false;
+      this.changeLog.record(
+        { kind: "note", target: String(normalizedId), op: "remove", by, before: noteSnapshot(before) },
+        this.now(),
+      );
+      return true;
+    })();
+  }
+
+  /** ATO-1059. The journal of note and profile edits and deletions. */
+  getChangeLog(): MemoryChangeLog {
+    return this.changeLog;
+  }
+
+  /**
+   * ATO-1059. Put a deleted note back, under its old id when that is
+   * still free (a later note never reuses it: the id column is
+   * AUTOINCREMENT), otherwise under a new one. Counters start from zero;
+   * a vector is written in the background.
+   */
+  restoreNote(snapshot: NoteSnapshot, now: number = this.now()): MemoryEntry {
+    const content = validateContent(snapshot.content);
+    const tags = validateTags(snapshot.tags);
+    const source = validateSource(snapshot.source === "user" ? "user" : "agent");
+    const free = this.get(validateId(snapshot.id)) === null;
+    const result = this.restoreStmt.run({
+      id: free ? snapshot.id : null,
+      content,
+      created_at: snapshot.createdAt,
+      updated_at: now,
+      source,
+      session_id: snapshot.sessionId,
+      working_dir: snapshot.workingDir,
+      tags: tags.length > 0 ? JSON.stringify(tags) : null,
+    }) as { lastInsertRowid: number | bigint };
+    const id = Number(result.lastInsertRowid);
+    this.evictOverflow();
+    void this.writeEmbeddingFor(id, content);
+    const entry = this.get(id);
+    if (entry === null) throw new Error(`MemoryStore.restoreNote: row ${id} missing after insert`);
+    return entry;
+  }
+
+  /**
+   * ATO-1124. Replace a note's text: the person's own edit from the
+   * desktop's Memory tab, through `PATCH /api/memory/notes/{id}`. The
+   * FTS row follows through the `memories_au` trigger; the note's old
+   * vectors are dropped and one for the new text is written in the
+   * background (non-throwing, like `store`), so recall never matches the
+   * old wording. `source`, `session_id` and the counters are kept: they
+   * say where the note came from, which an edit does not change.
+   * Returns `null` when the id is not stored.
+   */
+  updateContent(
+    id: number,
+    content: string,
+    now: number = this.now(),
+    by: MemoryChangeActor = "agent",
+  ): MemoryEntry | null {
+    const normalizedId = validateId(id);
+    const text = validateContent(content);
+    const updated = this.db.transaction((): boolean => {
+      const before = this.get(normalizedId);
+      if (before === null) return false;
+      this.db
+        .prepare(`UPDATE memories SET content = ?, updated_at = ? WHERE id = ?`)
+        .run(text, now, normalizedId);
+      // ATO-1059: the old text goes into the journal, for an undo.
+      this.changeLog.record(
+        { kind: "note", target: String(normalizedId), op: "update", by, before: noteSnapshot(before), after: text },
+        now,
+      );
+      return true;
+    })();
+    if (!updated) return null;
+    this.embeddingStore?.deleteAllForMemory(normalizedId);
+    void this.writeEmbeddingFor(normalizedId, text);
+    return this.get(normalizedId);
   }
 
   /**
@@ -749,6 +889,12 @@ export class MemoryStore {
     }
     if (opts.excludeArchived) {
       where.push(`consolidated_into IS NULL`);
+    }
+    for (const tag of opts.excludeTags ?? []) {
+      where.push(
+        `(tags IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE json_each.value = ?))`,
+      );
+      params.push(tag);
     }
     if (opts.updatedBefore !== undefined) {
       if (!Number.isFinite(opts.updatedBefore)) {
@@ -943,13 +1089,18 @@ export class MemoryStore {
    *  - Validation errors (empty `addTags`, invalid tag tokens) throw
    *    `MemoryValidationError` — same surface as `store()`.
    *
+   *  - `evictable` (optional): when the row is already at
+   *    `MEMORY_MAX_TAGS`, existing tags this predicate accepts are
+   *    dropped (newest first) to make room for the new ones. Without
+   *    it, new tags past the cap are silently dropped (old behaviour).
+   *
    * The `now` parameter is exposed for tests; production callers pass
    * the runner's injected clock.
    */
   evolveTags(
     id: number,
     addTags: readonly string[],
-    opts: { leaseMs: number; now?: number } = { leaseMs: 0 },
+    opts: { leaseMs: number; now?: number; evictable?: (tag: string) => boolean } = { leaseMs: 0 },
   ): EvolveTagsResult {
     const normalizedId = validateId(id);
     const cleanTags = normalizeTagsInput(addTags);
@@ -972,7 +1123,7 @@ export class MemoryStore {
       }
     }
     const existing = parseTags(row.tags);
-    const merged = applyEvolveTags(existing, cleanTags);
+    const merged = applyEvolveTags(existing, cleanTags, opts.evictable);
     if (merged.addedTags.length === 0) {
       return {
         outcome: "skipped_no_change",
@@ -1042,8 +1193,19 @@ export class MemoryStore {
     bruteForceCeiling?: number;
     /** The model's floor for meaning-only recall; omitted ⇒ the default. */
     minCosine?: number;
+    /**
+     * Whether recall may use the vectors yet. The runtime passes one that
+     * is `false` while the background reindex of this model runs (a model
+     * switch, or embeddings turned on over older notes): a half-indexed
+     * corpus would rank the notes that already have a vector above the
+     * ones that do not, so recall stays keyword-only (BM25) until the
+     * reindex ends. New notes are still embedded meanwhile. Omitted ⇒
+     * always ready.
+     */
+    vectorRecallReady?: () => boolean;
   }): void {
     this.embeddingMinCosine = args.minCosine;
+    this.vectorRecallReady = args.vectorRecallReady;
     this.embeddingWriter = args.writer;
     this.embeddingStore = args.store;
     if (args.fts5Weight !== undefined) this.embeddingFts5Weight = args.fts5Weight;
@@ -1054,6 +1216,7 @@ export class MemoryStore {
   detachEmbeddings(): void {
     this.embeddingWriter = undefined;
     this.embeddingStore = undefined;
+    this.vectorRecallReady = undefined;
   }
 
   /**
@@ -1108,9 +1271,10 @@ export class MemoryStore {
       requiredTags,
       k * 4,
     );
-    if (!this.embeddingWriter || !this.embeddingStore) {
-      // No hybrid wiring — return BM25 top-K and bump recall_count
-      // the same way `recall()` does.
+    if (!this.embeddingWriter || !this.embeddingStore || this.vectorRecallReady?.() === false) {
+      // No hybrid wiring, or the model's vectors are still being
+      // rebuilt — return BM25 top-K and bump recall_count the same way
+      // `recall()` does.
       const sliced = bm25Hits.slice(0, k);
       if (sliced.length > 0) this.touchOnRecall(sliced);
       return sliced;
@@ -1309,12 +1473,28 @@ function normalizeTagsInput(raw: readonly string[]): string[] {
 function applyEvolveTags(
   existing: readonly string[],
   addTags: readonly string[],
+  evictable?: (tag: string) => boolean,
 ): { tags: string[]; addedTags: string[] } {
   const merged: string[] = [...existing];
   const addedTags: string[] = [];
   for (const tag of addTags) {
-    if (merged.length >= MEMORY_MAX_TAGS) break;
     if (merged.includes(tag)) continue;
+    if (merged.length >= MEMORY_MAX_TAGS) {
+      // Make room only by dropping an older tag the caller allows,
+      // never one of the tags this call is adding.
+      let victim = -1;
+      if (evictable) {
+        for (let i = merged.length - 1; i >= 0; i -= 1) {
+          const candidate = merged[i]!;
+          if (!addTags.includes(candidate) && evictable(candidate)) {
+            victim = i;
+            break;
+          }
+        }
+      }
+      if (victim < 0) break;
+      merged.splice(victim, 1);
+    }
     merged.push(tag);
     addedTags.push(tag);
   }
@@ -1525,4 +1705,17 @@ function buildFtsQuery(query: string): string {
     .filter((t) => t.length > 0);
   if (tokens.length === 0) return "";
   return tokens.map((t) => `"${t}"*`).join(" OR ");
+}
+
+function noteSnapshot(entry: MemoryEntry): NoteSnapshot {
+  return {
+    id: entry.id,
+    content: entry.content,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    source: entry.source,
+    sessionId: entry.sessionId,
+    workingDir: entry.workingDir,
+    tags: entry.tags,
+  };
 }

@@ -33,6 +33,7 @@ import {
   writeFieldValue,
 } from "../../integrations/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
+import { offlineIntegrationStatus } from "./integration-offline-status.js";
 import type { TuiEventBus } from "../tui-app.js";
 import type {
   IntegrationRow,
@@ -136,6 +137,8 @@ export class IntegrationsOrchestrator {
       channelStates.set("atomic-mail", "verified");
     else if (config.atomicMail.pendingVerification)
       channelStates.set("atomic-mail", "pending");
+    // ATO-1088: channels are paused while offline mode is on.
+    const offline = this.runtime.offlineMode?.isEnabled() ?? false;
     return listIntegrations().map((descriptor) => {
       const present = presentFieldKeys(
         descriptor,
@@ -154,7 +157,11 @@ export class IntegrationsOrchestrator {
         verifyErrors,
         config: config as unknown as Record<string, unknown>,
       };
-      const status = descriptor.status(statusCtx);
+      const status = offlineIntegrationStatus(
+        descriptor.id,
+        descriptor.status(statusCtx),
+        offline,
+      );
       const fields: IntegrationFieldRow[] = descriptor.fields.map((field) => ({
         key: field.key,
         label: field.label,

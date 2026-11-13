@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { dispatchSlashCommand } from "./slash-command-handler.js";
 import { SLASH_COMMANDS } from "./slash-commands.js";
+import { MAX_COMPACTION_INSTRUCTIONS_CHARS } from "../../runtime/compaction-instructions.js";
+import { DISCORD_INVITE_URL } from "../community-links.js";
 
 describe("dispatchSlashCommand", () => {
   it("lists slash commands with descriptions for /help", () => {
@@ -12,6 +14,23 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("clear chat transcript");
     expect(result.systemMessage).toContain("/quit");
     expect(result.systemMessage).toContain("aliases: /exit");
+  });
+
+  it("/discord opens the live invite and prints it for SSH sessions (ATO-1465)", () => {
+    expect(DISCORD_INVITE_URL).toBe("https://discord.gg/DCqtG8WZX8");
+    const result = dispatchSlashCommand("/discord");
+    expect(result.openUrl).toBe(DISCORD_INVITE_URL);
+    expect(result.systemMessage).toContain(DISCORD_INVITE_URL);
+    expect(result.actions).toEqual([]);
+    expect(result.clearBuffer).toBe(true);
+    expect(result.forwardAsMessage).toBe(false);
+  });
+
+  it("registers /discord and lists it in /help (ATO-1465)", () => {
+    expect(SLASH_COMMANDS.some((c) => c.name === "discord")).toBe(true);
+    expect(dispatchSlashCommand("/help").systemMessage).toContain(
+      "/discord — open our Discord server",
+    );
   });
 
   it("opens the Integrations tab for /integrations", () => {
@@ -44,6 +63,13 @@ describe("dispatchSlashCommand", () => {
         `/${command.name} is listed but not dispatched`,
       ).not.toContain("not yet implemented");
     }
+  });
+
+  it("/settings answers with the settings overview as text (ATO-41)", () => {
+    const result = dispatchSlashCommand("/settings");
+    expect(result.actions).toEqual([]);
+    expect(result.systemMessage).toContain("settings in config.json");
+    expect(result.systemMessage).toContain("/settings <words>");
   });
 
   it("forwards non-slash input as a regular message", () => {
@@ -139,10 +165,36 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionNew).toBe(false);
   });
 
+  it("signals triggerRewindPicker for /rewind (ATO-1057)", () => {
+    const result = dispatchSlashCommand("/rewind");
+    expect(result.triggerRewindPicker).toBe(true);
+    expect(result.triggerSessionPicker).toBe(false);
+    expect(result.clearBuffer).toBe(true);
+    expect(result.systemMessage).toBeUndefined();
+  });
+
   it("signals triggerSessionNew for /new", () => {
     const result = dispatchSlashCommand("/new");
     expect(result.triggerSessionNew).toBe(true);
     expect(result.triggerSessionPicker).toBe(false);
+  });
+
+  it("asks for a worktree session for /new worktree only", () => {
+    for (const buffer of ["/new worktree", "/new --worktree", "/new WORKTREE"]) {
+      const result = dispatchSlashCommand(buffer);
+      expect(result.triggerSessionNew).toBe(true);
+      expect(result.sessionNewWorktree).toBe(true);
+    }
+    expect(dispatchSlashCommand("/new").sessionNewWorktree).toBeUndefined();
+    expect(dispatchSlashCommand("/new something").sessionNewWorktree).toBeUndefined();
+  });
+
+  it("signals triggerIncognitoSession for /incognito, and /new does not (ATO-586)", () => {
+    const result = dispatchSlashCommand("/incognito");
+    expect(result.triggerIncognitoSession).toBe(true);
+    expect(result.triggerSessionNew).toBe(false);
+    expect(result.forwardAsMessage).toBe(false);
+    expect(dispatchSlashCommand("/new").triggerIncognitoSession).not.toBe(true);
   });
 
   it("signals triggerNewWindow for /window and its alias", () => {
@@ -217,10 +269,26 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toMatch(/usage: \/skill enable/);
   });
 
+  it("/feedback opens the interview form; /feedback never hides the invite (ATO-1467)", () => {
+    expect(dispatchSlashCommand("/feedback").feedbackVerb).toBe("open");
+    expect(dispatchSlashCommand("/feedback never").feedbackVerb).toBe("never");
+    expect(dispatchSlashCommand("/feedback  NEVER ").feedbackVerb).toBe("never");
+    const odd = dispatchSlashCommand("/feedback maybe");
+    expect(odd.feedbackVerb).toBeUndefined();
+    expect(odd.systemMessage).toMatch(/usage: `\/feedback`/);
+    expect(dispatchSlashCommand("/help").systemMessage).toContain("/feedback");
+  });
+
   it("signals triggerIssueReport for /report without a chat line", () => {
     const result = dispatchSlashCommand("/report");
     expect(result.triggerIssueReport).toBe(true);
     expect(result.clearBuffer).toBe(true);
+    expect(result.systemMessage).toBeUndefined();
+  });
+
+  it("treats /bug as an alias of /report (ATO-1466)", () => {
+    const result = dispatchSlashCommand("/bug");
+    expect(result.triggerIssueReport).toBe(true);
     expect(result.systemMessage).toBeUndefined();
   });
 
@@ -541,10 +609,56 @@ describe("context compaction commands", () => {
   it("routes compact and show without forwarding a user message", () => {
     expect(dispatchSlashCommand("/compact")).toMatchObject({ compactionVerb: "run", forwardAsMessage: false });
     expect(dispatchSlashCommand("/compact show")).toMatchObject({ compactionVerb: "show", forwardAsMessage: false });
-    expect(dispatchSlashCommand("/compact anything").systemMessage).toBe("Usage: /compact [show]");
+    expect(dispatchSlashCommand("/compact").compactionInstructions).toBeUndefined();
     expect(dispatchSlashCommand("/compound").compactionVerb).toBeUndefined();
     expect(dispatchSlashCommand("/help").systemMessage).toContain("/compact —");
     expect(dispatchSlashCommand("/help").systemMessage).not.toContain("/compound");
+  });
+
+  it("passes any other text as what the summary must keep (ATO-661)", () => {
+    expect(dispatchSlashCommand("/compact keep the names of failing tests")).toMatchObject({
+      compactionVerb: "run", compactionInstructions: "keep the names of failing tests", forwardAsMessage: false,
+    });
+    expect(dispatchSlashCommand("/compact show me the paths").compactionInstructions).toBe("show me the paths");
+    const tooLong = dispatchSlashCommand(`/compact ${"x".repeat(MAX_COMPACTION_INSTRUCTIONS_CHARS + 1)}`);
+    expect(tooLong.compactionVerb).toBeUndefined();
+    expect(tooLong.systemMessage).toContain("Usage: /compact [show | what to keep]");
+    expect(tooLong.systemMessage).toContain(`at most ${MAX_COMPACTION_INSTRUCTIONS_CHARS} characters`);
+  });
+});
+
+describe("/btw (ATO-1152)", () => {
+  it("hands the side question to the caller and sends nothing as a message", () => {
+    const result = dispatchSlashCommand("/btw what file were we editing?");
+    expect(result).toMatchObject({
+      sideQuestionText: "what file were we editing?",
+      forwardAsMessage: false,
+    });
+    expect(result.actions).toEqual([]);
+  });
+
+  it("keeps a multi-line question whole", () => {
+    expect(dispatchSlashCommand("/btw first\nsecond").sideQuestionText).toBe("first\nsecond");
+  });
+
+  it("prints usage for a bare /btw instead of asking an empty question", () => {
+    const result = dispatchSlashCommand("/btw   ");
+    expect(result.sideQuestionText).toBeUndefined();
+    expect(result.systemMessage).toContain("/btw <question>");
+  });
+});
+
+describe("/edit (ATO-655)", () => {
+  it("leaves bare /edit to the caller and keeps the buffer", () => {
+    const result = dispatchSlashCommand("/edit");
+    expect(result).toMatchObject({ externalEdit: {}, clearBuffer: false, forwardAsMessage: false });
+    expect(result.actions).toEqual([]);
+  });
+
+  it("passes /edit <text> through as the starting text", () => {
+    expect(dispatchSlashCommand("/edit draft a release note").externalEdit).toEqual({
+      text: "draft a release note",
+    });
   });
 });
 
@@ -600,5 +714,32 @@ describe("/enhance", () => {
     expect(bad.showStepsVerb).toBeUndefined();
     expect(bad.systemMessage).toMatch(/usage: \/steps/);
     expect(dispatchSlashCommand("/steps").forwardAsMessage).toBe(false);
+  });
+
+  it("/verbose toggles the step notes, on and off set them (ATO-34)", () => {
+    expect(dispatchSlashCommand("/verbose").verboseStepsVerb).toBe("toggle");
+    expect(dispatchSlashCommand("/verbose on").verboseStepsVerb).toBe("on");
+    expect(dispatchSlashCommand("/verbose OFF").verboseStepsVerb).toBe("off");
+    const bad = dispatchSlashCommand("/verbose loud");
+    expect(bad.verboseStepsVerb).toBeUndefined();
+    expect(bad.systemMessage).toMatch(/usage: \/verbose/);
+    expect(dispatchSlashCommand("/verbose").forwardAsMessage).toBe(false);
+  });
+
+  it("/why asks the caller for an explanation of the last step (ATO-34)", () => {
+    const result = dispatchSlashCommand("/why");
+    expect(result.triggerWhySnapshot).toBe(true);
+    expect(result.forwardAsMessage).toBe(false);
+    expect(result.systemMessage).toBeUndefined();
+  });
+
+  it("/vim toggles the composer's vim keys, on and off set them (ATO-662)", () => {
+    expect(dispatchSlashCommand("/vim").vimVerb).toBe("toggle");
+    expect(dispatchSlashCommand("/vim on").vimVerb).toBe("on");
+    expect(dispatchSlashCommand("/vim OFF").vimVerb).toBe("off");
+    const bad = dispatchSlashCommand("/vim emacs");
+    expect(bad.vimVerb).toBeUndefined();
+    expect(bad.systemMessage).toMatch(/usage: \/vim/);
+    expect(dispatchSlashCommand("/vim").forwardAsMessage).toBe(false);
   });
 });

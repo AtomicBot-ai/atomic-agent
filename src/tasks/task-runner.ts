@@ -26,10 +26,18 @@ import {
   type TaskRunSummaryCollector,
 } from "./task-run-summary.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
+import {
+  finishHeartbeatRun,
+  planHeartbeatRun,
+  recordHeartbeatOutcome,
+  type HeartbeatPlan,
+  type TaskHeartbeatOptions,
+} from "./task-heartbeat-run.js";
 import { approvalLevelAllows, formatRunTime, remainingCostUsd, remainingDurationMs } from "./task-budget.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
 import { startTaskSnapshots, type TaskSnapshotSink } from "./task-snapshot.js";
 import {
+  TaskStateError,
   TaskValidationError,
   type TaskRecord,
   type TaskSchedule,
@@ -148,6 +156,12 @@ export interface TaskRunnerOptions {
    */
   snapshotSink?: TaskSnapshotSink;
   snapshotCadence?: { everySteps: number; everyMs: number } | null;
+  /**
+   * Heartbeats (ATO-454): recurring `interval` tasks with a checklist
+   * whose runs stay silent when the model answers `NO_REPLY`
+   * (`task-heartbeat-run.ts`). Absent: every task runs as an ordinary one.
+   */
+  heartbeat?: TaskHeartbeatOptions;
   logger?: StructuredLogger;
   /**
    * This process's live approval level (ATO-1324). A task that recorded
@@ -155,6 +169,12 @@ export interface TaskRunnerOptions {
    * instead of run. Omitted (tests, hosts without a gate): no check.
    */
   approvalLevel?: () => number;
+  /**
+   * Sleep inhibitor held while a drain runs (ATO-592,
+   * `tasks.keepAwake`, `src/scheduler/keep-awake.ts`). Absent or `off`:
+   * the computer may sleep mid-task, as before.
+   */
+  keepAwake?: { hold(): () => void };
   metrics?: AgentMetrics;
   /**
    * Test seam for the inter-attempt sleep. Production uses the real
@@ -232,7 +252,8 @@ export class TaskRunner {
   private readonly sleep: (ms: number) => Promise<void>;
   /**
    * The runs in progress, by task id. A task is claimed by one run at a
-   * time (`markRunning` only claims a `pending` row), so the id is enough.
+   * time (`markRunning` only claims a `pending` row, or a `paused` one
+   * for "Run now"), so the id is enough.
    */
   private readonly runs = new Map<string, InFlightRun>();
   /** Set by `stop`: nothing is claimed after it. */
@@ -347,23 +368,65 @@ export class TaskRunner {
    * regardless of outcome. Returns `null` when the task vanished or was
    * already claimed by a concurrent runner — callers must treat this as
    * "skipped, try the next one".
+   *
+   * A `paused` task is left alone (returned as is) unless `evenIfPaused`
+   * is set: the operator's "Run now" (ATO-590). Then it runs this one
+   * attempt and stays paused: when the run would leave the row `pending`
+   * (a recurring task armed for its next firing, a retry, an
+   * interrupted run) it goes back to `paused`, so nothing fires again
+   * until it is resumed. An end that closes the task for good
+   * (a one-shot completed, failed, blocked or cancelled) stays as it is.
+   * The run is logged in the history like any other.
    */
   async runOne(
     taskId: string,
     runtimeSignal?: AbortSignal,
+    options: { evenIfPaused?: boolean } = {},
+  ): Promise<TaskRecord | null> {
+    if (!options.evenIfPaused) return this.runAttempt(taskId, runtimeSignal);
+    const claim: { fromPaused: boolean } = { fromPaused: false };
+    const result = await this.runAttempt(taskId, runtimeSignal, claim);
+    // Not claimed from `paused` by this call (it was pending, or another
+    // run got it): nothing to put back.
+    if (!claim.fromPaused) return result;
+    if (!result || result.status !== "pending") return result;
+    try {
+      return this.options.store.pause(taskId) ?? result;
+    } catch (err) {
+      // Claimed or cancelled in between: that newer state wins.
+      if (err instanceof TaskStateError) return this.options.store.get(taskId);
+      throw err;
+    }
+  }
+
+  /**
+   * One attempt, as `runOne` describes. With `pausedClaim` a `paused`
+   * row may be claimed too, and `pausedClaim.fromPaused` says whether
+   * this call did so.
+   */
+  private async runAttempt(
+    taskId: string,
+    runtimeSignal?: AbortSignal,
+    pausedClaim?: { fromPaused: boolean },
   ): Promise<TaskRecord | null> {
     if (this.stopping) return null;
     const task = this.options.store.get(taskId);
     if (!task) return null;
-    if (task.status !== "pending") return task;
+    const fromPaused = pausedClaim !== undefined && task.status === "paused";
+    if (task.status !== "pending" && !fromPaused) return task;
 
     const resolvedTask = this.ensureSessionBeforeClaim(task);
     if (!resolvedTask) {
       return this.options.store.get(task.id);
     }
 
-    const claimed = this.options.store.markRunning(resolvedTask.id);
+    const claimed = this.options.store.markRunning(
+      resolvedTask.id,
+      undefined,
+      { fromPaused },
+    );
     if (!claimed) return this.options.store.get(resolvedTask.id);
+    if (pausedClaim) pausedClaim.fromPaused = fromPaused;
 
     this.options.metrics?.recordTaskStarted({
       taskId: claimed.id,
@@ -435,6 +498,17 @@ export class TaskRunner {
       return blocked;
     }
 
+    // A heartbeat outside its active hours, or with an empty checklist,
+    // has nothing to do this time: no turn, no report, next firing as usual.
+    const heartbeat = planHeartbeatRun(
+      claimed,
+      this.options.heartbeat,
+      this.options.logger,
+    );
+    if (heartbeat.kind === "skip") {
+      return this.skipHeartbeat(claimed, heartbeat);
+    }
+
     this.stampWakeReason(session, claimed);
 
     // `task` is the row as it was before the claim, which cleared the
@@ -452,8 +526,10 @@ export class TaskRunner {
     // a sink is wired — every other task pays zero per-event cost (no
     // hook is passed at all), and only reporting tasks show in
     // `liveStatus`.
+    // A heartbeat always collects: its reply decides whether it is news.
     const collector =
-      claimed.notify !== null && this.options.reportSink
+      (claimed.notify !== null && this.options.reportSink) ||
+      heartbeat.kind === "run"
         ? createTaskRunSummaryCollector()
         : null;
     const liveInfo = {
@@ -461,8 +537,14 @@ export class TaskRunner {
       userMessage: claimed.userMessage,
       startedAt: claimed.startedAt ?? Date.now(),
     };
+    // No live status for a heartbeat: most of its runs say nothing.
+    // Live snapshots are one edited Telegram message (ATO-965); a push
+    // task gets its one ping at the end and nothing in between.
     const snapshots =
-      collector && this.options.snapshotSink
+      collector &&
+      this.options.snapshotSink &&
+      heartbeat.kind !== "run" &&
+      claimed.notify === "telegram"
         ? startTaskSnapshots({
             sink: this.options.snapshotSink,
             cadence: this.options.snapshotCadence,
@@ -553,7 +635,11 @@ export class TaskRunner {
         runStartedAt = Date.now();
         result = await this.options.runtime.runTurn(
           session,
-          plan.kind === "resume" ? plan.message : claimed.userMessage,
+          plan.kind === "resume"
+            ? plan.message
+            : heartbeat.kind === "run"
+              ? heartbeat.message
+              : claimed.userMessage,
           {
             maxSteps,
             origin: "scheduler",
@@ -646,7 +732,21 @@ export class TaskRunner {
       // the requeued row is `pending` again and would fail the
       // terminal-status guard inside `maybeReport`.
       const facts = runFacts(result);
-      this.maybeReport(completed, facts.summary?.replyText ?? null, facts);
+      const replyText = facts.summary?.replyText ?? null;
+      if (heartbeat.kind === "run" && this.options.heartbeat) {
+        // A heartbeat that found nothing new is not delivered anywhere.
+        finishHeartbeatRun({
+          task: completed,
+          config: heartbeat.config,
+          replyText,
+          options: this.options.heartbeat,
+          report: () => this.maybeReport(completed, replyText, facts),
+          at: Date.now(),
+          ...(this.options.logger ? { logger: this.options.logger } : {}),
+        });
+      } else {
+        this.maybeReport(completed, replyText, facts);
+      }
       return this.maybeRequeueRecurring(completed);
     } finally {
       snapshots?.stop();
@@ -915,11 +1015,16 @@ export class TaskRunner {
     const outcome = emptyOutcome();
     if (tasks.length === 0) return outcome;
     const grouped = groupBySession(tasks);
-    await Promise.all(
-      [...grouped.values()].map((group) =>
-        this.drainSessionGroup(group, signal, outcome),
-      ),
-    );
+    const release = this.options.keepAwake?.hold();
+    try {
+      await Promise.all(
+        [...grouped.values()].map((group) =>
+          this.drainSessionGroup(group, signal, outcome),
+        ),
+      );
+    } finally {
+      release?.();
+    }
     return outcome;
   }
 
@@ -1218,6 +1323,33 @@ export class TaskRunner {
    * `scheduled_for`. `session_id` is preserved so the next firing
    * lands on the same persistent session.
    */
+  /**
+   * End a heartbeat firing that had nothing to do (outside its active
+   * hours, or an empty checklist) without a turn: completed, unreported,
+   * requeued for its next firing.
+   */
+  private skipHeartbeat(
+    claimed: TaskRecord,
+    plan: Extract<HeartbeatPlan, { kind: "skip" }>,
+  ): TaskRecord {
+    const completed = this.options.store.markCompleted(claimed.id);
+    this.recordTerminal(completed);
+    if (this.options.heartbeat) {
+      recordHeartbeatOutcome(
+        this.options.heartbeat,
+        claimed.id,
+        plan.outcome,
+        Date.now(),
+        this.options.logger,
+      );
+    }
+    this.options.logger?.info("heartbeat skipped", {
+      taskId: claimed.id,
+      reason: plan.outcome,
+    });
+    return this.maybeRequeueRecurring(completed);
+  }
+
   private maybeRequeueRecurring(completed: TaskRecord): TaskRecord {
     if (!completed.recurring || !completed.schedule) return completed;
     const next = resolveNextRecurring(

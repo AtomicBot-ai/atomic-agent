@@ -252,3 +252,29 @@ describe("PromptShell", () => {
     unmount();
   });
 });
+
+describe("PromptShell vim mode (ATO-662)", () => {
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 80));
+
+  it("shows no mode while vim is off", () => {
+    const { lastFrame, unmount } = render(
+      <PromptShell value="" focus onChange={() => {}} onSubmit={() => {}} />,
+    );
+    const frame = strip(lastFrame() ?? "");
+    expect(frame).not.toContain("INSERT");
+    expect(frame).not.toContain("NORMAL");
+    unmount();
+  });
+
+  it("starts in INSERT and shows NORMAL after Esc", async () => {
+    const { lastFrame, stdin, unmount } = render(
+      <PromptShell value="hi" vim focus onChange={() => {}} onSubmit={() => {}} />,
+    );
+    await tick();
+    expect(strip(lastFrame() ?? "")).toContain("INSERT");
+    stdin.write("\u001b");
+    await tick();
+    expect(strip(lastFrame() ?? "")).toContain("NORMAL");
+    unmount();
+  });
+});

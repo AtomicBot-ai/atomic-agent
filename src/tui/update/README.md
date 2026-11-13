@@ -7,6 +7,8 @@ This feature owns update presentation and offer input. Read [TUI instructions](.
 
 [Offer](update-modal.tsx), [running indicator](update-indicator.tsx) and [restart prompt](update-restart-prompt.tsx) are composed by TuiApp. [Banner and width planner](update-banner.tsx) share the StatusBar row with DownloadChip. Dismissing the offer keeps the banner; running/done/failed state comes from TuiState/TuiAction and agent-event-reducer. Budget degradation and modal-layer click behavior remain unchanged.
 
+[Required update](required-update.tsx) (ATO-1125): when the latest release's policy lists the running version, the banner offer reads as a warning; a `broken` version also swaps the empty chat's splash for an "Update required" screen naming `atomic-agent update`, and ChatOrchestrator refuses a turn on a session with no turns yet. Running turns, queued messages and sessions with turns are never gated; no policy means no gate.
+
 [Local keys](update-key-bindings.ts) accept y, dismiss n/Escape and pass modified/other input through. They receive only dispatch/callback context via a type-only AppKeyContext dependency. [Global router](../app-key-bindings.ts) retains approval priority and the separate done/restart branch. The banner calls the same confirmation callback as the offer.
 
 [ChatOrchestrator](../chat-orchestrator.ts) retains startup gates, silent version-check failure, active foreground/background-turn refusal and installer output/settlement. The [domain updater](../../update/run-app-update.ts) executes installation; [tui-command](../tui-command.ts) retains callbacks, fake-update simulation and post-exit restart. Shared spinner, mouse and palette resources retain their owners. Relocation changes no installer/cancellation/lifecycle policy.

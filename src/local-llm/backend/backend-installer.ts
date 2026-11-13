@@ -14,7 +14,10 @@ import {
   type BackendVersionInfo,
 } from "./backend-version.js";
 import {
+  acceptableAssetNames,
+  backendReleaseSource,
   isWindowsArm64,
+  pickReleaseAssetName,
   resolvePlatformAsset,
   UnsupportedPlatformError,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
@@ -26,12 +29,14 @@ import {
   resolveDownloadAsset,
   WINDOWS_BACKEND_ASSETS,
 } from "./windows-backend-variant.js";
+import {
+  isLinuxX64AcceleratedAsset,
+  LINUX_X64_BACKEND_ASSETS,
+} from "./linux-x64-backend-variant.js";
 
 import { isCoreBackendInstalled, installCoreBackend } from "../core/core-backend.js";
 import { checkCoreUpdate } from "../core/core-install.js";
 import type { ManagedEngine } from "../core/core-state.js";
-
-const GITHUB_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant-nightly";
 
 /**
  * Anonymous GitHub API allows ~60 req/h per IP. The Models tab polls
@@ -98,14 +103,25 @@ export function resetLatestReleaseCache(): void {
 }
 
 /**
- * Resolve the newest release that ships this platform's asset, or
- * `null` when none of the scanned releases carries it.
+ * Resolve the newest release that ships `assetName` (default: this
+ * machine's asset), or `null` when none of the scanned releases carries
+ * it. The repo, and whether prereleases count, follow the asset
+ * (`backendReleaseSource`, ATO-619).
  */
 export async function fetchLatestRelease(opts?: {
   force?: boolean;
+  assetName?: string;
 }): Promise<LatestReleaseInfo | null> {
-  const { assetName } = resolveDownloadAsset();
-  const cached = releaseCache.get(assetName);
+  // An explicit `assetName` (the Linux x64 fallback, ATO-619) asks for that
+  // one archive; otherwise every archive this machine can run, best first
+  // (Windows arm64 accepts either of its two builds, ATO-253).
+  const acceptable =
+    opts?.assetName !== undefined
+      ? [opts.assetName]
+      : acceptableAssetNames(resolveDownloadAsset());
+  const { repo, stableOnly } = backendReleaseSource(acceptable[0]!);
+  const cacheKey = acceptable.join("|");
+  const cached = releaseCache.get(cacheKey);
   if (
     !opts?.force &&
     cached &&
@@ -113,7 +129,7 @@ export async function fetchLatestRelease(opts?: {
   ) {
     return cached.release;
   }
-  const url = `https://api.github.com/repos/${GITHUB_REPO}/releases?per_page=${RELEASES_PER_PAGE}`;
+  const url = `https://api.github.com/repos/${repo}/releases?per_page=${RELEASES_PER_PAGE}`;
   const headers: Record<string, string> = {
     "User-Agent": "atomic-agent/local-llm-backend",
     Accept: "application/vnd.github+json",
@@ -134,6 +150,7 @@ export async function fetchLatestRelease(opts?: {
   const data = (await res.json()) as Array<{
     tag_name: string;
     draft?: boolean;
+    prerelease?: boolean;
     published_at?: string | null;
     created_at?: string | null;
     assets: Array<{ name: string; browser_download_url: string }>;
@@ -144,7 +161,10 @@ export async function fetchLatestRelease(opts?: {
   // asset and pick the one with the newest release timestamp, falling
   // back to GitHub's own order when timestamps are missing.
   const candidates = (Array.isArray(data) ? data : []).filter(
-    (r) => !r.draft && (r.assets ?? []).some((a) => a.name === assetName),
+    (r) =>
+      !r.draft &&
+      !(stableOnly && r.prerelease === true) &&
+      (r.assets ?? []).some((a) => acceptable.includes(a.name)),
   );
   if (candidates.length === 0) {
     // A rarely-built platform's newest asset can fall off page 1 of the
@@ -152,7 +172,7 @@ export async function fetchLatestRelease(opts?: {
     // here would fail the check on every single start and, with the
     // pre-staging installer, was the only thing standing between the
     // user and a working binary already on disk.
-    releaseCache.set(assetName, { fetchedAt: Date.now(), release: null });
+    releaseCache.set(cacheKey, { fetchedAt: Date.now(), release: null });
     return null;
   }
   const match = candidates.reduce((best, cur) =>
@@ -163,7 +183,7 @@ export async function fetchLatestRelease(opts?: {
     assets: match.assets ?? [],
     releasedAt: match.published_at ?? match.created_at ?? null,
   };
-  releaseCache.set(assetName, { fetchedAt: Date.now(), release });
+  releaseCache.set(cacheKey, { fetchedAt: Date.now(), release });
   return release;
 }
 
@@ -181,6 +201,39 @@ function releaseTime(r: {
   if (!raw) return -Infinity;
   const t = Date.parse(raw);
   return Number.isNaN(t) ? -Infinity : t;
+}
+
+/**
+ * The asset to install and the release that carries it. ATO-619: a Linux
+ * x64 CUDA, ROCm or CPU build that no scanned release carries falls back
+ * to the Vulkan build, which every release has (and which carries the same
+ * dispatched CPU backends), rather than leaving the machine without an
+ * engine or without updates.
+ */
+async function resolveInstallTarget(force: boolean): Promise<{
+  assetName: string;
+  release: LatestReleaseInfo | null;
+}> {
+  const wantedAsset = resolveDownloadAsset();
+  const wanted = wantedAsset.assetName;
+  const release = await fetchLatestRelease({ force });
+  if (release !== null) {
+    // On Windows arm64 the best of its two builds this release carries
+    // (ATO-253), so a release with only one of them is not flagged as an
+    // update forever; elsewhere the one platform asset.
+    return {
+      assetName:
+        pickReleaseAssetName(release.assets.map((a) => a.name), wantedAsset) ??
+        wanted,
+      release,
+    };
+  }
+  if (!isLinuxX64AcceleratedAsset(wanted)) return { assetName: wanted, release };
+  const fallback = LINUX_X64_BACKEND_ASSETS.vulkan;
+  return {
+    assetName: fallback,
+    release: await fetchLatestRelease({ force, assetName: fallback }),
+  };
 }
 
 export class GithubRateLimitedError extends Error {
@@ -202,7 +255,7 @@ export async function checkForBackendUpdate(dataDir: string, engine?: ManagedEng
     return { updateAvailable: core.updateAvailable || !isCoreBackendInstalled(dataDir), latestTag: core.requiresAgentUpdate ? `Atomic Core ${core.compatibleVersion}; ${core.latestVersion} needs a newer Agent build` : `Atomic Core ${core.compatibleVersion}`, currentTag: core.currentVersion ? `Atomic Core ${core.currentVersion}` : null };
   }
   const current = readBackendVersion(dataDir);
-  const release = await fetchLatestRelease();
+  const { assetName: target, release } = await resolveInstallTarget(false);
   if (release === null) {
     // Nothing resolvable to update *to* — keep whatever is installed.
     return {
@@ -220,7 +273,7 @@ export async function checkForBackendUpdate(dataDir: string, engine?: ManagedEng
   const variantStale = isInstalledVariantStale(
     dataDir,
     current,
-    resolveDownloadAsset().assetName,
+    target,
     release.tag,
   );
   return {
@@ -342,10 +395,10 @@ export async function downloadBackend(
   activated?: boolean;
 }> {
   if (opts?.engine === "atomic-core") return installCoreBackend(dataDir, opts);
-  const { assetName, binaryName } = resolveDownloadAsset();
+  const { binaryName } = resolveDownloadAsset();
   // Always hit GitHub for an actual install so we don't grab a stale
   // tag from the snapshot cache.
-  const release = await fetchLatestRelease({ force: true });
+  const { assetName, release } = await resolveInstallTarget(true);
   if (release === null) {
     // ATO-252: the Windows on ARM app ships before (or without) an arm64
     // engine build. Say that in words instead of an asset name.

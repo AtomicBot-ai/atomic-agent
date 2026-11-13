@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SkillScanResult } from "../hub/skill-security-scanner.js";
-import { mergeRegistryVerdict } from "./install-from-clawhub.js";
+import { mergeRegistryVerdict, resolveLatestVersion } from "./install-from-clawhub.js";
 
 const clean: SkillScanResult = { verdict: "ok", findings: [] };
 const caution: SkillScanResult = {
@@ -88,5 +88,25 @@ describe("mergeRegistryVerdict", () => {
     // Registry finding is prepended, heuristic finding retained.
     expect(merged.findings).toHaveLength(2);
     expect(merged.findings[0]?.rule).toBe("clawhub-suspicious");
+  });
+});
+
+describe("resolveLatestVersion", () => {
+  const ref = { owner: "acme", slug: "pptx" };
+
+  it("returns the registry version", async () => {
+    const client = { getSkillDetail: async () => ({ version: "1.4.0" }) };
+    expect(await resolveLatestVersion(client as never, ref)).toBe("1.4.0");
+  });
+
+  it("returns null for the client's 0.0.0 fallback or a failed lookup", async () => {
+    const fallback = { getSkillDetail: async () => ({ version: "0.0.0" }) };
+    const failing = {
+      getSkillDetail: async () => {
+        throw new Error("ambiguous");
+      },
+    };
+    expect(await resolveLatestVersion(fallback as never, ref)).toBeNull();
+    expect(await resolveLatestVersion(failing as never, ref)).toBeNull();
   });
 });

@@ -30,6 +30,13 @@ requires_tools:                  # informational list of tools the skill expects
   - browser.read_aria
 requires_scripts:                # only these names may be invoked via skill.run_script
   - fetch-headers.sh
+env_keys:                        # optional: secret-looking env names this skill's scripts receive
+  - SOME_SERVICE_API_KEY
+
+requires_bins:                   # optional: external programs the skill runs ("a|b" = either one)
+  - gh
+install:                         # optional: install line shown when one is missing (or one string)
+  darwin: "brew install gh"
 dangerous: true                  # if true, marks the skill as dangerous (for human readers)
 ---
 ```
@@ -39,6 +46,13 @@ Validation:
 - `name` matches `^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$`.
 - All fields are strictly typed; lists must contain non-empty strings.
 - Unknown keys are ignored (forward-compat), but invalid types are an error.
+- `env_keys` entries must be environment variable names (`A-Z`, `0-9`, `_`).
+
+### Script environment and `env_keys`
+
+`skill.run_script` gives a script the same filtered environment as `os.shell.run`: secret-looking variables (API keys, tokens, passwords) loaded from `<stateDir>/.env` are removed, except names listed in `tools.shell.envPassthrough`. A skill that needs its own service key declares it in `env_keys`, and then only that skill's scripts receive it, read from the agent's environment (which includes `.env`) for that run. Another skill's scripts and `os.shell.run` still get it filtered out, so the user only has to put the key in `.env`. The agent's own provider keys and bot tokens (`KNOWN_SECRET_ENV_VARS` in `src/sandbox/command-env.ts`) are never passed this way, whatever a skill declares. The approval preview lists the declared names (never the values), and the script's output is masked for known secrets like any tool result.
+
+- `requires_bins` and `install` are display-only and never fail a manifest: names that are not bare program names (no `/`, no spaces) and hints over 200 characters are dropped. The desktop's Settings > Skills looks each name up on the app's PATH and shows "needs program gh, not found" with the `install` line for the current platform (`darwin`, `linux`, `win32`, or `any`). A ClawHub/OpenClaw skill's `metadata.openclaw.requires.bins` and `install` (`kind: brew` formula, `kind: node` package) are read when these keys are absent.
 
 ## Install locations
 
@@ -46,8 +60,9 @@ Validation:
 | ---------- | ---------------------------------------- | ------------------------- |
 | `global`   | `$ATOMIC_AGENT_STATE_DIR/skills/<name>/` | always, if present        |
 | `project`  | `./.atomic-agent/skills/<name>/`         | when no global skill has that name |
+| `global` (shared) | `~/.agents/skills/<name>/` (or `$ATOMIC_AGENT_SHARED_SKILLS_DIR`) | when no global, plugin or project skill has that name |
 
-A project-local skill cannot replace a global skill with the same `name`: the global copy is used and the project copy is skipped with a warning in the log. A checked-out repository therefore cannot swap out a skill the user installed, or inherit what that skill is trusted to do. Project skills with new names load normally. The `gog-workspace` setup check (`check-gog.sh` with no arguments) runs without an approval prompt only from the global copy; every other skill script, including any project copy, asks first.
+A project-local skill cannot replace a global skill with the same `name`: the global copy is used and the project copy is skipped with a warning in the log. A checked-out repository therefore cannot swap out a skill the user installed, or inherit what that skill is trusted to do. Project skills with new names load normally. The shared `~/.agents/skills` folder is where `npx skills` (vercel-labs/skills), Codex, Cline, Pi and Zed put skills installed "for all agents"; those skills are user-level (no folder trust) but have the lowest priority, follow global bans, and a skill folder linked there is confined to its own resolved folder. The `gog-workspace` setup check (`check-gog.sh` with no arguments) runs without an approval prompt only from the global copy (not a project or shared copy); every other skill script, including any project copy, asks first.
 
 ## Starter skills
 
@@ -57,18 +72,24 @@ Atomic Agent ships with 17 starter skills that are auto-installed into the globa
 
 ```sh
 atomic-agent skill install <path|owner/repo[/path]|@owner/slug> [--force] [--yes] [--acknowledge-risk]
-                                        # install from a local folder, a GitHub tap, or ClawHub (@owner/slug)
+                                        # install from a local folder, a GitHub tap, ClawHub (@owner/slug)
+atomic-agent skill update [<name>...] [--check] [--yes] [--acknowledge-risk]
+                                        # update skills installed from a GitHub tap or ClawHub
+atomic-agent skill update --rollback <name>   # restore the copy the last update replaced or skills.sh (skills.sh/owner/repo/skill)
 atomic-agent skill uninstall <name>     # remove an installed global skill
 atomic-agent skill list                 # list installed skills (project + global) with enabled/disabled state
 atomic-agent skill show <name>          # print SKILL.md for an installed skill
 atomic-agent skill enable <name>        # re-enable a previously disabled skill
 atomic-agent skill disable <name>       # hide a skill without removing its files
 atomic-agent skill browse [--source owner/repo]   # browse installable skills (ClawHub + configured taps)
-atomic-agent skill search <query>       # search ClawHub + configured taps
+atomic-agent skill search <query>       # search ClawHub + skills.sh + configured taps
 atomic-agent skill tap list|add <owner/repo>|remove <owner/repo>   # manage hub taps
+atomic-agent skill history [name]       # change log, saved versions, use count
+atomic-agent skill restore <name> [--version <id>|archive]   # undo: put back an archived copy or a saved version
+atomic-agent skill curate [--dry-run]   # archive unused agent-learned skills now
 ```
 
-Local installation is a security scan, `SKILL.md` validation and `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`).
+Local installation is a security scan, `SKILL.md` validation and `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`). Search also asks [skills.sh](https://skills.sh) and shows its install counts; a skills.sh row (`skills.sh/owner/repo/skill`) is looked up in its GitHub repository and then installed like a tap skill, with the same download limits, scan and gate. skills.sh's search API is undocumented: any network or response-shape problem is a warning and the other sources still answer.
 
 ### Install security scan
 
@@ -82,12 +103,26 @@ The verdict gates the install (`enforceScanGate`):
 
 The scan is a tripwire, not a sandbox: a clean verdict does not prove a skill is safe.
 
+### Hub skill lock and updates
+
+A skill installed from a GitHub tap or ClawHub gets a `.atomic-skill-lock.json` file in its folder: the source, the identifier, the exact version that was downloaded and scanned (GitHub: the commit the download was pinned to, plus the git tree sha of the skill folder; ClawHub: the registry version, also pinned for the download and the registry verdict), the scan id and verdict, and a sha256 digest of every file in the folder (the lock file itself excluded). A lock file shipped inside a download or a local folder is dropped; local installs never get one, so `skill update` leaves them and the starter skills alone.
+
+`skill update --check` asks each source for its latest version and prints what is outdated. `skill update` stages each outdated skill in a temp folder and runs the same scan and gate as `skill install`; a refused scan keeps the installed version, and a `dangerous` verdict still needs `--acknowledge-risk`. A third-party skill is never replaced without the person agreeing: in a terminal, `skill update` prints the version change (current -> new) and the scan verdict with its findings and asks `[y/N]` before the installed copy is touched; `--yes` is the explicit opt-in that skips the question; without a terminal and without `--yes` it only reports what has an update and replaces nothing. A skill whose files no longer match the digest was changed by hand: it is reported and never overwritten (reinstall with `--force` to discard the changes). Before the swap the previous copy is moved to `skill-backups/<name>/` next to the skills folder (never inside it, where it would load as a second skill) and put back if the swap fails; `skill update --rollback <name>` swaps it back later. Nothing checks for or installs updates in the background.
+
 ## Agent tools
 
 - `skill.view({ name })` reads `SKILL.md`, strips the frontmatter, and stores the skill body in `session.loadedSkills`. A repeated `skill.view` for the same skill does not grow the prompt (cached for the session). Read-only, no approval required.
-- `skill.run_script({ skill, script, args?, timeoutMs? })` executes `scripts/<script>`. Only scripts listed in `requires_scripts` are allowed; any path outside `scripts/` is rejected. Always **dangerous**: routed through the approval gate, with a preview that includes the skill name, script path and arguments.
+- `skill.run_script({ skill, script, args?, timeoutMs? })` executes `scripts/<script>`. Only scripts listed in `requires_scripts` are allowed; any path outside `scripts/` is rejected. Always **dangerous**: routed through the approval gate, with a preview that includes the skill name, script path, arguments and the names in `env_keys`.
 
 Extensions (`.ts`, `.js`, `.mjs`, `.cjs`) are executed via `node`, `.sh` via `bash`, everything else is run directly (shebang/executable file).
+
+## History, usage and the curator
+
+Global skills (`<stateDir>/skills/`) keep a history (ATO-580, [curator](../curator/index.ts)):
+
+- `skill.view` and `skill.run_script` count a use in `<stateDir>/skills-usage.json` (use count, last use).
+- Before the agent changes a skill folder with `os.fs.write`, `edit`, `patch`, `move`, `trash` or `restore`, the folder is copied to `<stateDir>/skills-history/<name>/<version>/` (10 versions kept per skill) and the change is appended to `<stateDir>/skills-history/changes.jsonl` (who, what, when). A folder the agent created is recorded as agent-learned. `skill uninstall` is saved the same way. Shell commands are not tracked.
+- The curator only considers agent-learned skills: never starters, hub, plugin or hand-written ones, and never one a recurring task names. Unused for 14 days it is marked stale; for 30 days it is moved to `<stateDir>/skills-archive/` (never deleted). The automatic pass is off by default (`ATOMIC_AGENT_SKILL_CURATOR=1` turns it on at boot, at most once a week); `skill curate` runs it by hand and `skill restore` undoes it.
 
 ## Prompt and KV-cache
 

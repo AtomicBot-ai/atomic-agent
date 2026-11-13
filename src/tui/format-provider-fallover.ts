@@ -33,14 +33,16 @@ export function formatProviderFalloverNotice(
       ? `${headline} (${reason})`
       : `Switched from ${from} to ${to}: ${reason}`,
     cause === "billing"
-      ? `${from} is refusing requests over credit or quota, which will not clear by itself — top it up, or lower that provider's maxOutputTokens so a request fits. Until then every answer comes from ${to}.`
+      ? `${from} is out of credit. Top it up, until then answers come from ${to}.`
       : cause === "auth"
-        ? `${from} refused the credentials, which will not clear by itself — check the API key in <stateDir>/.env. Until then every answer comes from ${to}.`
-        : `Answers come from ${to} until ${from} recovers.`,
+        ? `${from} did not accept the API key. Until you fix it, answers come from ${to}.`
+        : cause === "spend-limit"
+          ? `Cloud calls are paused until tomorrow (llm.costTracking.onDailyLimit is "local"). Until then every answer comes from ${to}.`
+          : `Answers come from ${to} until ${from} recovers.`,
   ].join("\n");
 }
 
-export type FalloverCause = "billing" | "auth" | "other";
+export type FalloverCause = "billing" | "auth" | "spend-limit" | "other";
 
 /**
  * What kind of failure this was, from the reason text the chain carries.

@@ -31,6 +31,8 @@
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
 import {
+  DEFAULT_FUSION_WORKER_MAX_STEPS,
+  DEFAULT_FUSION_WORKER_TIMEOUT_MS,
   FUSION_ROLES,
   LOCAL_PROVIDER_KIND,
   type FusionRole,
@@ -77,12 +79,29 @@ export interface FusionMachineFacts {
    */
   tokensPerSecond: number | null;
   /**
+   * A local worker's step budget and time limit (ATO-1363), from
+   * `llm.runMode.fusion.workerMaxSteps` / `workerTimeoutMs` or their
+   * defaults: with the slots, the context and the speed, the limits a
+   * planner must size a task's output against. Local leg only (absent
+   * for a cloud leg and in `NO_FUSION_MACHINE_FACTS`), config only, so
+   * stable for the prefix.
+   */
+  workerMaxSteps?: number;
+  workerTimeoutMs?: number;
+  /**
    * Models by role (ATO-943), from `llm.runMode.fusion.roles`, in role
    * order; absent when no role names a configured provider, so a config
    * without roles renders the block byte for byte as before. Config
    * only, like every other field here: stable for the prefix.
    */
   roleModels?: readonly { role: FusionRole; model: string }[];
+  /**
+   * What past runs on this machine showed (ATO-949), from the outcome
+   * log: one short fact per (leg, model, size) group with enough
+   * samples. Absent when nothing qualifies, so the block reads as
+   * before. Held per session, so stable for that session's prefix.
+   */
+  pastRuns?: readonly string[];
 }
 
 /** Nothing known — the block renders its behavioural lines only. */
@@ -121,6 +140,8 @@ function nonEmpty(value: string | null | undefined): string | null {
 export interface FusionLiveFacts {
   workerSlots?: number | null;
   tokensPerSecond?: number | null;
+  /** The outcome log's summary (ATO-949); see `FusionMachineFacts.pastRuns`. */
+  pastRuns?: readonly string[] | null;
 }
 
 /**
@@ -322,7 +343,20 @@ export function resolveFusionMachineFacts(
     workerTokenBudget,
     workerModel,
     tokensPerSecond,
+    ...(workersAreLocal
+      ? {
+          workerMaxSteps:
+            fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
+          workerTimeoutMs:
+            fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+        }
+      : {}),
     ...(roleModels.length === 0 ? {} : { roleModels }),
+    ...(live.pastRuns === undefined ||
+    live.pastRuns === null ||
+    live.pastRuns.length === 0
+      ? {}
+      : { pastRuns: live.pastRuns }),
   };
 }
 

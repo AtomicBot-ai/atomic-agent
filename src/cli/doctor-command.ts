@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { getUserConfigPath, loadConfig, resolveStateDir, type AtomicAgentConfig } from "../config/index.js";
 import { readRawConfigTree, writeRawUserConfigFileSync } from "../config/config-paths.js";
+import { readSupportId } from "../analytics/index.js";
 import { runEngineChecks, type EngineProbes } from "./doctor-engine-checks.js";
 import { findOnPath, runDoctorChecks, type DoctorContext, type DoctorFinding } from "./doctor-checks.js";
 
@@ -37,6 +38,8 @@ export interface DoctorCommandDeps {
   /** null skips the engine and key checks (tests of the config checks). */
   engine?: EngineProbes | null;
   loadConfig?: () => AtomicAgentConfig;
+  /** The support id line (ATO-1466); defaults to `readSupportId` over `stateDir`. */
+  supportId?: () => string | null;
 }
 
 const MARK = { ok: "ok  ", warn: "warn", fail: "FAIL" } as const;
@@ -145,6 +148,9 @@ export async function doctorCommand(args: string[], deps: DoctorCommandDeps = {}
     write(JSON.stringify(findings.map(({ fix, ...f }) => ({ ...f, ...(fix ? { fix: fix.describe } : {}) })), null, 2) + "\n");
   } else {
     print(findings, write);
+    // Not a finding: the id support asks for, so one `atag doctor` paste carries it.
+    const supportId = (deps.supportId ?? (() => readSupportId({ stateDir })))();
+    write(`\nsupport id: ${supportId ?? "none yet"} (\`atag id\` prints it alone)\n`);
     const left = findings.filter((f) => f.fix).length;
     if (left && !args.includes("--fix")) write(`\n${left} fixable; run \`atag doctor --fix\`\n`);
   }

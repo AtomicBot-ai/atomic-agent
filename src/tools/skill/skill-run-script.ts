@@ -1,7 +1,8 @@
 import { compressToolResult, retainToolOutput } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
-import { runSkillScript } from "../../skills/skill-script-runner.js";
+import type { SkillRecord } from "../../skills/skill-loader.js";
+import { runSkillScript, skillEnvKeys } from "../../skills/skill-script-runner.js";
 import { realpathSync } from "node:fs";
 import { isWithinWorkspace } from "../../skills/workspace-files.js";
 import { DEFAULT_MAX_OUTPUT_BYTES } from "../../sandbox/command-runner.js";
@@ -152,6 +153,8 @@ export interface SkillRunScriptToolOptions extends DangerousToolOptions {
    * (`runsCodeAccepted`), the same consent its local MCP servers need.
    */
   pluginsStateDir?: string;
+  /** Called once the script is about to run, for the skill usage ledger (ATO-580). */
+  onSkillUsed?: (record: SkillRecord) => void;
 }
 
 export function buildSkillRunScriptTool(
@@ -192,21 +195,28 @@ export function buildSkillRunScriptTool(
           );
         }
       }
+      // Names only: the user sees which keys the script will get, never
+      // their values.
+      const envKeys = skillEnvKeys(record);
       const preview = [
         `skill: ${record.manifest.name} (v${record.manifest.version})`,
+        // A project skill is repository content, possibly from a cloned stranger's repo (ATO-312).
+        ...(record.source === "project" ? [`source: project skill from ${ctx.workspaceSkills?.workingDir ?? ctx.workingDir}`] : []),
         `script: ${scriptName}`,
         `cwd: ${record.rootDir}`,
         `args: ${scriptArgs.join(" ")}`,
+        ...(envKeys.length > 0 ? [`env keys: ${envKeys.join(", ")}`] : []),
       ].join("\n");
 
       // Only the copy installed in the global skills directory is trusted
-      // for this exemption. A same-named skill from a project folder is
-      // ordinary repository content and goes through approval like any
-      // other script.
+      // for this exemption. A same-named skill from a project folder, or
+      // from the shared ~/.agents/skills folder other tools write into, goes
+      // through approval like any other script.
       const autoApprovedGogCheck =
         !ctx.workspaceSkills &&
         record.source === "global" &&
         record.plugin === undefined &&
+        record.shared !== true &&
         record.manifest.name === "gog-workspace" &&
         scriptName === "check-gog.sh" &&
         scriptArgs.length === 0;
@@ -226,6 +236,7 @@ export function buildSkillRunScriptTool(
       }
 
       ctx.workspaceSkills?.assertAvailable(skillName);
+      options.onSkillUsed?.(record);
       const outcome = await runSkillScript(record, {
         script: scriptName,
         args: scriptArgs,

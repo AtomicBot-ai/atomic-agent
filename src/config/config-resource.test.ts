@@ -72,6 +72,14 @@ describe("resource configuration ownership", () => {
     expect(parseSkillsConfig({ disabled: ["x"] }, createSkillsDefaults).disabled).toEqual(["x"]);
   });
 
+  it("reads skills.eval.judgeProvider and leaves the key out when unset (ATO-1101)", () => {
+    expect(parseSkillsConfig({ eval: { judgeProvider: " openrouter " } }, createSkillsDefaults).eval).toEqual({ judgeProvider: "openrouter" });
+    expect(parseSkillsConfig({}, createSkillsDefaults)).not.toHaveProperty("eval");
+    expect(parseSkillsConfig({ eval: {} }, createSkillsDefaults)).not.toHaveProperty("eval");
+    expect(validation(() => parseSkillsConfig({ eval: { judgeProvider: 3 } }, createSkillsDefaults)).field).toBe("skills.eval.judgeProvider");
+    expect(validation(() => parseSkillsConfig({ eval: [] }, createSkillsDefaults)).field).toBe("skills.eval");
+  });
+
   it("keeps skill normalization order and validates disabled source settings", () => {
     expect(validation(() => parseSkillsConfig({
       catalogTokenBudget: 0, disabled: ["bad name"], taps: ["bad"],
@@ -219,8 +227,8 @@ describe("resource configuration ownership", () => {
   });
 
   it("keeps tracing null fallback, explicit booleans and cap validation separate", () => {
-    expect(parseTracingConfig({ enabled: null }, () => ({ trace: { enabled: true, maxBytesPerSession: 1024 } })))
-      .toEqual({ trace: { enabled: true, maxBytesPerSession: 1024 } });
+    expect(parseTracingConfig({ enabled: null }, () => ({ ...createTracingDefaults(), trace: { enabled: true, maxBytesPerSession: 1024 } })))
+      .toEqual({ ...createTracingDefaults(), trace: { enabled: true, maxBytesPerSession: 1024 } });
     expect(parseTracingConfig({ enabled: false }, createTracingDefaults).trace.enabled).toBe(false);
     expect(parseTracingConfig({}, createTracingDefaults).trace.enabled).toBeNull();
     expect(validation(() => parseTracingConfig({ enabled: false, maxBytesPerSession: 0 }, createTracingDefaults)).field)
@@ -236,7 +244,7 @@ describe("resource configuration ownership", () => {
       get enabled() { events.push("raw.enabled"); return undefined; },
       get maxBytesPerSession() {
         events.push("raw.cap");
-        defaults = { trace: { enabled: false, maxBytesPerSession: 1024 } };
+        defaults = { ...createTracingDefaults(), trace: { enabled: false, maxBytesPerSession: 1024 } };
         return undefined;
       },
     }, () => { events.push("defaults"); return defaults; });

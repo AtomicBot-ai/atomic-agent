@@ -1,5 +1,6 @@
 import type { ApprovalCategory } from "../../approval/approval-level.js";
 import type { ToolRole } from "../tool-roles.js";
+import { compileToolAllowlist } from "../../agent-profiles/profile-tools.js";
 
 /**
  * What a fusion worker may and may not do.
@@ -47,11 +48,32 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   // The live checklist is the operator's view of the orchestrator's
   // work (ATO-486); a worker's own list would reach nobody.
   "plan.update",
+  // Same for a canvas (ATO-1137): only the orchestrator's stream reaches
+  // the chat, so a worker's chart would be a file nobody is shown.
+  "canvas.render",
+  // Nobody watches a worker's session, so its question would reach nobody
+  // (ATO-489); the gate would refuse it anyway.
+  "ask_user",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */
 export function isWorkerVisibleTool(name: string): boolean {
   return !WORKER_EXCLUDED_TOOLS.has(name);
+}
+
+/**
+ * The worker's `toolFilter` with a subagent profile's allowlist (ATO-566)
+ * on top: a tool must pass both, so a profile can only narrow what a
+ * worker sees, never bring back an excluded tool. No allowlist: exactly
+ * `isWorkerVisibleTool`.
+ */
+export function workerToolFilterFor(
+  allowlist: readonly string[] | undefined,
+): (name: string) => boolean {
+  const allows = compileToolAllowlist(allowlist).allows;
+  return allows === undefined
+    ? isWorkerVisibleTool
+    : (name) => isWorkerVisibleTool(name) && allows(name);
 }
 
 /**

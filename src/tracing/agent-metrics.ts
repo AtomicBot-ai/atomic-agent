@@ -6,6 +6,8 @@ import type { MetricsCollector } from "./metrics-collector.js";
  * sync with the dashboard/UI consumers so names never drift silently.
  */
 export const METRIC_NAMES = {
+  turnCompleted: "agent.turn.completed",
+  turnDuration: "agent.turn.duration_ms",
   stepTokens: "agent.step.tokens",
   stepDuration: "agent.step.duration_ms",
   stepOutcome: "agent.step.outcome",
@@ -133,6 +135,20 @@ export interface ToolMetricSample {
 export interface LlmFailureMetricSample {
   sessionId: string;
   category: LlmFailureCategory;
+  /** The provider link that threw, when the error carries it (ATO-646). */
+  provider?: string;
+}
+
+/**
+ * One whole turn, from the moment the queue handed it the session to
+ * its end (ATO-646). `outcome` is the loop's terminal reason, or
+ * `error` when the turn threw instead of returning one.
+ */
+export interface TurnMetricSample {
+  sessionId: string;
+  origin: string;
+  outcome: string;
+  durationMs: number;
 }
 
 /**
@@ -553,7 +569,7 @@ export type TaskTerminalStatus =
 
 /** Origin tag used by every task-level metric for downstream slicing. */
 export type TaskOriginTag =
-  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent";
+  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent" | "telegram";
 
 export interface TaskCreatedSample {
   taskId: string;
@@ -617,7 +633,8 @@ export interface SchedulerTickSample {
 
 export interface WebhookReceivedSample {
   webhookName: string;
-  status: "accepted" | "rejected";
+  /** `ignored`: genuine but starts no task (filtered event, ping, repeat). */
+  status: "accepted" | "rejected" | "ignored";
 }
 
 /**
@@ -655,6 +672,16 @@ export interface TelegramApprovalSample {
  */
 export class AgentMetrics {
   constructor(private readonly collector: MetricsCollector) {}
+
+  recordTurn(sample: TurnMetricSample): void {
+    const tags = {
+      sessionId: sample.sessionId,
+      origin: sample.origin,
+      outcome: sample.outcome,
+    };
+    this.collector.counter(METRIC_NAMES.turnCompleted, 1, tags);
+    this.collector.histogram(METRIC_NAMES.turnDuration, sample.durationMs, tags);
+  }
 
   recordStep(sample: StepMetricSample): void {
     const tags = { sessionId: sample.sessionId, outcome: sample.outcome };
@@ -709,6 +736,7 @@ export class AgentMetrics {
     this.collector.counter(METRIC_NAMES.llmFailure, 1, {
       sessionId: sample.sessionId,
       category: sample.category,
+      ...(sample.provider !== undefined ? { provider: sample.provider } : {}),
     });
   }
 

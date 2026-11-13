@@ -2,6 +2,8 @@ import type { getConfig } from "../../config/index.js";
 import {
   describeReclaim,
   EMBEDDING_MODELS_CATALOG,
+  loraAdapterForModel,
+  loraAdapterKey,
   reclaimManagedPort,
   type EmbeddingDaemonStartOptions,
   type ReclaimOutcome,
@@ -44,6 +46,8 @@ export async function clearChatPort(
     ownDataDir: cfg.paths.localModelsDataDir,
     alias: modelId,
     avoidPorts: [cfg.localModels.embeddings.port],
+    // A server launched with another LoRA adapter is restarted, not adopted.
+    loraAdapter: loraAdapterKey(loraAdapterForModel(cfg.localModels.managed.loraAdapters, modelId)),
   });
   const line = describeReclaim(outcome, "chat server", port);
   if (line) deps.say(line);

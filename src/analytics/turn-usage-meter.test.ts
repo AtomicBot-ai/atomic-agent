@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { CompletionUsage } from "../llm/provider/completion-types.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
-import { TurnUsageMeter, completionUsageForTurn } from "./turn-usage-meter.js";
+import { TurnUsageMeter, completionUsageForTurn, generationMsFor } from "./turn-usage-meter.js";
 
 const S = "session-a";
 
@@ -303,5 +303,99 @@ describe("TurnUsageMeter — served provider", () => {
     meter.recordServed(S, "cloud");
     meter.begin(S, "cloud");
     expect(meter.snapshot(S)).toEqual({});
+  });
+});
+
+describe("TurnUsageMeter — generation time (ATO-1186)", () => {
+  it("sums the timed completions' output tokens and generation time", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.record({ sessionId: S, usage: usage(100, 40), generationMs: 1000 });
+    meter.record({ sessionId: S, usage: usage(120, 20), generationMs: 500.4 });
+    expect(meter.snapshot(S).generation).toEqual({ completionTokens: 60, durationMs: 1500 });
+  });
+
+  it("leaves an untimed completion out of the speed but in the totals", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.record({ sessionId: S, usage: usage(100, 40), generationMs: 1000 });
+    meter.record({ sessionId: S, usage: usage(50, 25) });
+    meter.record({ sessionId: S, usage: usage(50, 0), generationMs: 300 });
+    const snap = meter.snapshot(S);
+    expect(snap.completionTokens).toBe(65);
+    expect(snap.generation).toEqual({ completionTokens: 40, durationMs: 1000 });
+  });
+
+  it("reports no generation when nothing was timed", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.record({ sessionId: S, usage: usage(100, 40) });
+    meter.record({ sessionId: S, usage: usage(100, 40), generationMs: 0 });
+    meter.record({ sessionId: S, usage: usage(100, 40), generationMs: Number.NaN });
+    expect(meter.snapshot(S)).not.toHaveProperty("generation");
+  });
+});
+
+describe("generationMsFor (ATO-1186)", () => {
+  const timing = (predictedMs: number) => ({ promptMs: 900, predictedMs, promptTokens: 10, predictedTokens: 5 });
+
+  it("prefers the server's own decode time, which leaves out prompt processing", () => {
+    expect(generationMsFor({ timing: timing(420) }, 2000)).toBe(420);
+  });
+
+  it("falls back to the stream's own time when the provider measures none", () => {
+    expect(generationMsFor({ timing: timing(0) }, 2000)).toBe(2000);
+    expect(generationMsFor({}, 750)).toBe(750);
+  });
+
+  it("is undefined when neither is known", () => {
+    expect(generationMsFor({ timing: timing(0) }, undefined)).toBeUndefined();
+    expect(generationMsFor({ timing: timing(0) }, 0)).toBeUndefined();
+  });
+});
+
+describe("TurnUsageMeter — local prefill and generation time (ATO-1026)", () => {
+  const S = "s-timing";
+  const local = (promptMs: number, predictedMs: number, predictedTokens: number) => ({
+    timing: { promptMs, predictedMs, promptTokens: 100, predictedTokens },
+  });
+
+  it("sums a local llama-server's timings over the turn and reports the speed", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.recordTiming(S, local(1200.4, 2000, 40));
+    meter.recordTiming(S, local(300, 3000, 60));
+    expect(meter.snapshot(S)).toEqual({ prefillMs: 1500, genMs: 5000, genTokensPerS: 20 });
+  });
+
+  it("leaves cloud and subscription completions out: a usage block or zero times", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.recordTiming(S, local(0, 0, 50));
+    meter.recordTiming(S, {
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      timing: { promptMs: 0, predictedMs: 9000, promptTokens: 10, predictedTokens: 5 },
+    });
+    expect(meter.snapshot(S)).toEqual({});
+  });
+
+  it("reports times without a speed when nothing was generated, and ignores a session with no turn", () => {
+    const meter = new TurnUsageMeter();
+    meter.recordTiming("no-turn", local(100, 100, 10));
+    expect(meter.snapshot("no-turn")).toEqual({});
+    meter.begin(S);
+    meter.recordTiming(S, local(800, 0, 0));
+    expect(meter.snapshot(S)).toEqual({ prefillMs: 800, genMs: 0 });
+  });
+
+  it("keeps the timing figures beside the token counts", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    const result = local(500, 1000, 25);
+    meter.recordTiming(S, result);
+    meter.record({ sessionId: S, usage: completionUsageForTurn(result)! });
+    expect(meter.snapshot(S)).toMatchObject({
+      promptTokens: 100, completionTokens: 25, prefillMs: 500, genMs: 1000, genTokensPerS: 25,
+    });
   });
 });

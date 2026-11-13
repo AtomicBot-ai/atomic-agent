@@ -13,6 +13,24 @@ export {
   type RunAppUpdateResult,
 } from "./run-app-update.js";
 export {
+  parseUpdatePolicy,
+  requiredUpdateReason,
+  requiredUpdateText,
+  EMPTY_UPDATE_POLICY,
+  type UpdatePolicy,
+  type RequiredUpdateReason,
+} from "./update-policy.js";
+export {
+  verifySha256Sums,
+  parseSha256Sums,
+  resolveSignedArchiveSha256,
+  ReleaseSignatureError,
+  RELEASE_SIGNING_PUBLIC_KEY,
+  FIRST_SIGNED_VERSION,
+  signatureRequired,
+  type SumsVerification,
+} from "./release-signature.js";
+export {
   compareSemver,
   isNewerVersion,
   parseSemver,
@@ -29,6 +47,9 @@ export {
   packageRemoveHint,
   packagedUpdateRefusal,
   INSTALL_SOURCES,
+  LINUX_PACKAGE_SOURCES,
+  MANAGER_SOURCES,
+  managerForPath,
   PACKAGE_DIR,
   PACKAGE_MARKER,
   PACKAGED_BINARY,

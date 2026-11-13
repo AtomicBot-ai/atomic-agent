@@ -27,6 +27,8 @@ vi.mock("../skills/hub/index.js", async (importOriginal) => ({
     entries: [],
     errors: [{ repo: "owner/repo", error: "boom" }],
   })),
+  // Never reach the real skills.sh from tests.
+  searchSkillsSh: vi.fn(async () => []),
 }));
 
 function writeSkill(globalDir: string, name: string): void {
@@ -83,6 +85,21 @@ describe("skillCommand", () => {
     delete process.env.ATOMIC_AGENT_STATE_DIR;
     resetConfigCache();
     vi.restoreAllMocks();
+  });
+
+  it("update skips skills that were not installed from a hub", async () => {
+    writeSkill(globalSkillsDir, "alpha");
+    expect(await skillCommand(["update", "--check"])).toBe(0);
+    expect(stdout).toContain("no skills installed from a skill hub");
+    stdout = "";
+    expect(await skillCommand(["update", "alpha"])).toBe(0);
+    expect(stderr).toContain("alpha: not installed from a skill hub; skipped");
+  });
+
+  it("update --rollback needs a name and a previous copy", async () => {
+    expect(await skillCommand(["update", "--rollback"])).toBe(2);
+    expect(await skillCommand(["update", "--rollback", "alpha"])).toBe(1);
+    expect(stderr).toContain("no previous copy of alpha to roll back to");
   });
 
   it("list shows enabled state for installed skills", async () => {

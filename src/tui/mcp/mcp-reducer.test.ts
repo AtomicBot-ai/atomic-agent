@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { createInitialTuiState } from "../tui-state.js";
 import type { TuiAction } from "../tui-action.js";
+import {
+  buildMcpCatalogJson,
+  findMcpCatalogEntry,
+  listMcpCatalog,
+} from "../../mcp/mcp-catalog.js";
 import { reduceMcpAction } from "./mcp-reducer.js";
 import type { McpServerDetail, McpServerRow } from "./mcp-panel-state.js";
 
@@ -200,7 +205,56 @@ describe("reduceMcpAction", () => {
         json: "",
         error: null,
         submitting: false,
+        picker: { cursor: 0 },
+        catalogId: null,
       });
+    });
+
+    it("catalog cursor moves inside the list and stops at both ends", () => {
+      let s = dispatch(createInitialTuiState(), { type: "mcp_add_modal_opened" });
+      s = dispatch(s, { type: "mcp_add_catalog_moved", delta: -1 });
+      expect(s.mcpPanel.addModal?.picker).toEqual({ cursor: 0 });
+      s = dispatch(s, { type: "mcp_add_catalog_moved", delta: 2 });
+      expect(s.mcpPanel.addModal?.picker).toEqual({ cursor: 2 });
+      const total = listMcpCatalog().length;
+      s = dispatch(s, { type: "mcp_add_catalog_moved", delta: total + 5 });
+      expect(s.mcpPanel.addModal?.picker).toEqual({ cursor: total - 1 });
+    });
+
+    it("picking a catalog entry fills the editor with its JSON and closes the list", () => {
+      let s = dispatch(createInitialTuiState(), { type: "mcp_add_modal_opened" });
+      s = dispatch(s, { type: "mcp_add_validation_failed", error: "old" });
+      s = dispatch(s, { type: "mcp_add_catalog_picked", id: "firecrawl" });
+      const entry = findMcpCatalogEntry("firecrawl")!;
+      expect(s.mcpPanel.addModal).toEqual({
+        json: buildMcpCatalogJson(entry),
+        error: null,
+        submitting: false,
+        picker: null,
+        catalogId: "firecrawl",
+      });
+    });
+
+    it("an unknown catalog id changes nothing", () => {
+      const s = dispatch(createInitialTuiState(), { type: "mcp_add_modal_opened" });
+      const next = dispatch(s, { type: "mcp_add_catalog_picked", id: "no-such-server" });
+      expect(next).toBe(s);
+    });
+
+    it("skipping the catalog keeps an empty buffer for a pasted config", () => {
+      let s = dispatch(createInitialTuiState(), { type: "mcp_add_modal_opened" });
+      s = dispatch(s, { type: "mcp_add_catalog_skipped" });
+      expect(s.mcpPanel.addModal).toEqual({
+        json: "",
+        error: null,
+        submitting: false,
+        picker: null,
+        catalogId: null,
+      });
+      const again = dispatch(s, { type: "mcp_add_catalog_skipped" });
+      expect(again).toBe(s);
+      const moved = dispatch(s, { type: "mcp_add_catalog_moved", delta: 1 });
+      expect(moved).toBe(s);
     });
 
     it("mcp_add_modal_opened is idempotent when the modal is already open", () => {

@@ -28,10 +28,15 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 
 import { McpClient, type McpClientDeps } from "./mcp-client.js";
+import {
+  createMcpElicitationHandler,
+  type McpElicitationPort,
+} from "./mcp-elicitation-handler.js";
 import { McpConnectError, scrubErrorMessage } from "./mcp-errors.js";
 import { createMcpResourceClassResolver } from "./mcp-resource-class.js";
 import {
   createMcpToolDefinition,
+  isLocalMcpTransport,
   trustsReadOnlyHintFor,
 } from "./mcp-tool-adapter.js";
 import type {
@@ -66,6 +71,12 @@ export interface McpManagerDeps extends McpClientDeps {
    * test seam — production bootstrap always passes it.
    */
   dangerous?: DangerousToolOptions;
+  /**
+   * How a server's `elicitation/create` reaches a person (ATO-704). When
+   * set, every client gets its own handler naming its server and
+   * advertises `elicitation`; when absent, no client does.
+   */
+  elicitationPort?: McpElicitationPort;
 }
 
 /**
@@ -284,13 +295,27 @@ export class McpManager {
       });
       return;
     }
-    const client = new McpClient(config, this.deps);
+    const client = new McpClient(config, this.clientDeps(config));
     this.servers.set(config.name, {
       config,
       client,
       registeredToolNames: [],
       state: config.enabled ? "starting" : "disabled",
     });
+  }
+
+  /** Shared deps plus this server's own elicitation handler, if a port is wired. */
+  private clientDeps(config: McpServerConfig): McpClientDeps {
+    const port = this.deps.elicitationPort;
+    if (!port) return this.deps;
+    return {
+      ...this.deps,
+      elicitationHandler: createMcpElicitationHandler({
+        port,
+        server: config.name,
+        ...(this.deps.logger ? { logger: this.deps.logger } : {}),
+      }),
+    };
   }
 
   private async startOne(s: ManagedServer): Promise<void> {
@@ -340,6 +365,8 @@ export class McpManager {
         trust,
         dangerous: this.deps.dangerous,
         trustReadOnlyHint: trustsReadOnlyHintFor(s.config, meta.rawName),
+        localTransport: isLocalMcpTransport(s.config.transport),
+        ...(s.config.approval !== undefined ? { approval: s.config.approval } : {}),
       });
       // ToolRegistry.register is last-writer-wins. Two servers
       // cannot collide because the qualified name carries the

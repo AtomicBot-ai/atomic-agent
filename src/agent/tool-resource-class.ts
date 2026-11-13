@@ -10,6 +10,8 @@ import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
 import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
+import { OS_FS_WRITE_PPTX_CONTRACT } from "../tools/os/pptx/pptx-contract.js";
+import { OS_FS_DOCX_CONTRACT, OS_FS_XLSX_CONTRACT } from "../tools/os/office/office-contracts.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 /**
  * Resource class taxonomy for parallel batched tool calls.
@@ -84,6 +86,11 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "browser.tabs": "browser",
   "browser.scroll": "browser",
   "browser.screenshot": "browser",
+  "browser.act": "browser",
+  "browser.extract": "browser",
+  "browser.site_tools": "browser",
+  "browser.debug": "browser",
+  "browser.annotate": "browser",
 
   // os.shell.* — always approval-gated when approvals are on
   "os.shell.run": "approval_gated",
@@ -109,7 +116,14 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   [OS_FS_PATCH_CONTRACT.name]: OS_FS_PATCH_CONTRACT.resourceClass,
   [OS_FS_RESTORE_CONTRACT.name]: OS_FS_RESTORE_CONTRACT.resourceClass,
   [OS_FS_MOVE_CONTRACT.name]: OS_FS_MOVE_CONTRACT.resourceClass,
+  [OS_FS_WRITE_PPTX_CONTRACT.name]: OS_FS_WRITE_PPTX_CONTRACT.resourceClass,
+  [OS_FS_DOCX_CONTRACT.name]: OS_FS_DOCX_CONTRACT.resourceClass,
+  [OS_FS_XLSX_CONTRACT.name]: OS_FS_XLSX_CONTRACT.resourceClass,
   "os.fs.archive.extract": "approval_gated",
+
+  // os.code.* — structural search (read) and rewrite (fs write funnel)
+  "os.code.search": "pure_read",
+  "os.code.rewrite": "approval_gated",
 
   // os.git.* — read-only shell-outs
   "os.git.status": "pure_read",
@@ -151,6 +165,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // os.web.* — read-only search/fetch + extract; SSRF-guarded, no mutation
   "os.web.search": "pure_read",
   "os.web.fetch": "pure_read",
+  // Paces itself per host (ATO-970); still a GET-only read.
+  "os.web.crawl": "pure_read",
 
   // os.clipboard / window / notify — small mutating side effects on
   // shared OS resources; safest to serialise.
@@ -182,6 +198,11 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // The live plan (ATO-486): writes only the session's own record, so it
   // batches with anything; the step commit applies results in order.
   "plan.update": "pure_read",
+  // ATO-1137: writes one new file in the working folder through the fs
+  // approval funnel, so it is gated like `os.fs.write`.
+  "canvas.render": "approval_gated",
+  // ATO-489: waits for the person like an approval, so it runs alone.
+  ask_user: "approval_gated",
   "tool.search": "pure_read",
   "skill.run_script": "approval_gated",
 
@@ -191,6 +212,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "memory.lessons.recall": "pure_read",
   "memory.procedures.recall": "pure_read",
   "memory.notes.recall": "pure_read",
+  "memory.sessions.search": "pure_read",
   "memory.profile.set": "memory_write",
   "memory.profile.remove": "memory_write",
   "memory.notes.store": "memory_write",
@@ -203,8 +225,18 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "tasks.cron": "tasks_write",
   "tasks.cancel": "tasks_write",
 
+  // sessions.* (ATO-570) — a listing of chat names and the status of a
+  // message this chat sent are plain reads; reading another chat or
+  // sending into one asks first (`session_cross`), so those are solo.
+  "sessions.list": "pure_read",
+  "sessions.check": "pure_read",
+  "sessions.read": "approval_gated",
+  "sessions.send": "approval_gated",
+
   // vision
   "vision.describe": "vision",
+  // A model call on the same provider, like vision: one at a time.
+  "audio.listen": "vision",
 
   // image — a cloud generation asks before it bills the account, and a
   // local one holds the GPU for minutes: solo either way.
@@ -212,6 +244,12 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
 
   // video — always a paid cloud clip that runs for minutes: solo.
   "video.generate": "approval_gated",
+  // A headless browser held for the whole recording, then a file write: solo.
+  "video.render_html": "approval_gated",
+
+  // audio — whisper.cpp holds the CPU/GPU for as long as the recording
+  // lasts, and the first call may ask before a model download: solo.
+  "audio.transcribe": "approval_gated",
 
   // fusion — `approval_gated` is the "must be solo" class, and that is
   // what this needs: one call runs several worker turns concurrently
@@ -323,6 +361,17 @@ export function isBookkeepingTool(toolName: string): boolean {
 }
 
 /**
+ * `RunTurnOptions.toolFilter` for a `memoryReadOnly` turn: hides every
+ * memory write tool (`isBookkeepingTool`: a note stored or forgotten, a
+ * profile fact set or removed) on top of `base`. Memory reads stay.
+ */
+export function memoryReadOnlyToolFilter(
+  base?: (name: string) => boolean,
+): (name: string) => boolean {
+  return (name) => !isBookkeepingTool(name) && (base ? base(name) : true);
+}
+
+/**
  * Read-only snapshot of the registry — useful for tests and debugging.
  */
 export function listKnownToolResourceClasses(): Readonly<
@@ -364,12 +413,22 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // dangerous one asks as `shell_dangerous` too (ATO-1266).
     "verify.run": ["shell", "shell_dangerous"],
     "os.fs.write": FS_WRITE_CATEGORIES,
+    // ATO-1137: the same funnel (`requireFsApproval`, kind `write`).
+    "canvas.render": FS_WRITE_CATEGORIES,
     "os.fs.edit": FS_WRITE_CATEGORIES,
-    "os.fs.patch": FS_WRITE_CATEGORIES,
+    // A patch that deletes a file asks as `fs_trash` (`fs-patch.ts`).
+    "os.fs.patch": [...FS_WRITE_CATEGORIES, "fs_trash"],
     // Puts a saved copy back: a write in every sense.
     "os.fs.restore": FS_WRITE_CATEGORIES,
     // Both ends ride the write funnel (`fs-move.ts`).
     "os.fs.move": FS_WRITE_CATEGORIES,
+    // Writes the files ast-grep rewrote, through the same funnel.
+    "os.code.rewrite": FS_WRITE_CATEGORIES,
+    // One new file through the same funnel as os.fs.write (`write-pptx-tool.ts`).
+    "os.fs.write_pptx": FS_WRITE_CATEGORIES,
+    // Office files ride the write funnel (`office-write.ts`).
+    "os.fs.docx": FS_WRITE_CATEGORIES,
+    "os.fs.xlsx": FS_WRITE_CATEGORIES,
     "os.fs.trash": ["fs_trash", "trust_config", "other"],
     "os.fs.archive.extract": ["fs_write_home", "other"],
     // Local git writes ride the fs funnel against the repository root.
@@ -386,7 +445,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "github.issue.create": ["publish"],
     "github.issue.comment": ["publish"],
     "os.proc.kill": ["proc_kill"],
-    "os.http.request": ["http"],
+    // A GET asks as `http`, a POST as `http_write` (level 4, ATO-1462).
+    "os.http.request": ["http", "http_write"],
     "os.email.send": ["email"],
     // A screenshot asks below level 3 (`screen_capture`).
     "os.screen.capture": ["screen_capture"],
@@ -398,6 +458,13 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "image.generate": ["paid_generation"],
     // Always cloud, always billed per second.
     "video.generate": ["paid_generation"],
+    // Asks only before downloading a speech model (ATO-702).
+    "audio.transcribe": ["http"],
+    // Another chat's messages, read or written (ATO-570).
+    "sessions.read": ["session_cross"],
+    "sessions.send": ["session_cross"],
+    // Asks like a file write onto its output (`categorizeFsMutation`).
+    "video.render_html": FS_WRITE_CATEGORIES,
   };
 
 /**

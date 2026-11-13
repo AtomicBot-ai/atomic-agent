@@ -9,6 +9,7 @@ import {
 } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import { checkChangedFile } from "./fs-content-check.js";
+import { computeDiffStat } from "./fs-diffstat.js";
 import {
   clampDiffPreview,
   DIFF_SUMMARY_MAX_CHARS,
@@ -23,7 +24,8 @@ import {
   type TolerantEdit,
 } from "./fs-edit-tolerant.js";
 import { refuseMaskedSecretWrite } from "./fs-masked-secret-guard.js";
-import { withParseWarning } from "./fs-parse-check.js";
+import { displayPath, withParseWarning } from "./fs-parse-check.js";
+import { joinWarnings } from "./lsp/index.js";
 import {
   guardReplacedFile,
   priorFromText,
@@ -153,6 +155,16 @@ async function editFile(
     after: updated,
     replacedOccurrences,
   });
+  const lspWarning =
+    (await options.lspDiagnostics?.diagnoseChange({
+      absolute,
+      display: displayPath(absolute, ctx.workingDir),
+      change: "edit",
+      before: original,
+      after: updated,
+      sessionId: ctx.sessionId,
+      signal: ctx.signal,
+    })) ?? null;
 
   return withReplaceNotes(
     withParseWarning(
@@ -174,6 +186,9 @@ async function editFile(
               replaceAll: args.replaceAll,
               sizeBefore: Buffer.byteLength(original, "utf8"),
               sizeAfter: Buffer.byteLength(updated, "utf8"),
+              // Lines added/removed for a host's "Changed files" card
+              // (ATO-1187). `details` is not rendered into the prompt.
+              diffstat: computeDiffStat(original, updated),
             },
           },
           {
@@ -183,7 +198,7 @@ async function editFile(
         ),
         loose,
       ),
-      parseWarning,
+      joinWarnings(parseWarning, lspWarning),
     ),
     [guard],
   );

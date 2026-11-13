@@ -1,7 +1,10 @@
 import { useInput } from "ink";
 import { useCallback, useEffect, useRef } from "react";
 
-import { resolveHuggingFaceGgufChoices } from "../../local-llm/index.js";
+import {
+  probeConfiguredMachine,
+  resolveHuggingFaceGgufChoices,
+} from "../../local-llm/index.js";
 import type { OnboardingUiState } from "./onboarding-state.js";
 import type { TuiAction } from "../tui-action.js";
 
@@ -53,7 +56,11 @@ export function useOnboardingHuggingFace(args: {
       lookup.current = controller;
       dispatch({ type: "onboarding_busy_set", busy: true });
       dispatch({ type: "onboarding_error_set", error: null });
-      void resolveHuggingFaceGgufChoices(raw, { signal: controller.signal })
+      // ATO-450: the machine rates each quant and puts the best one first.
+      void resolveHuggingFaceGgufChoices(raw, {
+        signal: controller.signal,
+        machine: () => probeConfiguredMachine(),
+      })
         .then((repo) => {
           if (lookup.current !== controller) return;
           lookup.current = null;

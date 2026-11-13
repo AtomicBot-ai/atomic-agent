@@ -44,9 +44,9 @@ export const ISSUE_REPORT_LEVELS: readonly IssueReportLevelInfo[] = [
     level: "full",
     label: "Everything",
     detail:
-      "the full debug bundle: conversation, reasoning, tool arguments and results, traces. Secrets masked.",
+      "the full debug bundle: conversation, reasoning, tool arguments and results, traces, in the zip only. Paths, emails, URLs and secrets redacted; the issue text never carries the conversation.",
     disclosure:
-      "full debug bundle including the conversation; only secrets are masked",
+      "full debug bundle in the attached zip, redacted like the other levels; the conversation is not in this text",
   },
 ];
 

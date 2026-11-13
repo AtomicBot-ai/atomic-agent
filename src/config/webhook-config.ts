@@ -1,5 +1,9 @@
 import { ConfigValidationError } from "./config-validation-error.js";
 import { parseNonEmptyString } from "./config-primitives.js";
+import {
+  parseEmailTriggerConfig,
+  type EmailTriggerConfig,
+} from "./email-trigger-config.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
 
 /**
@@ -18,13 +22,55 @@ import type { TaskSchedule } from "../tasks/task-types.js";
  *    persistence file, no auto-creation
  *
  * `userMessageTemplate` supports `{{body.<json.path>}}` placeholders
- * against the parsed JSON request body. `secret`, when set, is
- * matched against the `x-webhook-secret` request header in addition
- * to the global API-key check.
+ * against the parsed JSON request body, plus `{{event}}`, `{{action}}`
+ * and `{{delivery}}` for the signed service schemes.
+ *
+ * `verify` picks how `secret` authenticates a hit, always in addition to
+ * the global API-key check:
+ *  - `secret` (default) — `secret`, when set, must equal the
+ *    `x-webhook-secret` request header
+ *  - `github` — `X-Hub-Signature-256: sha256=<hex HMAC of the raw body>`
+ *  - `standard-webhooks` — the Standard Webhooks headers (`webhook-id`,
+ *    `webhook-timestamp`, `webhook-signature`) with a `whsec_` secret
+ *  - `stripe` — `Stripe-Signature: t=<unix>,v1=<hex HMAC of "<t>.<body>">`
+ *    with the endpoint's `whsec_` secret used as-is (ATO-625)
+ * The signed schemes require `secret`. `events`, allowed only with a
+ * signed scheme, limits which events start a task: a GitHub event name
+ * (`pull_request`) or event plus action (`pull_request.opened`), or a
+ * Standard Webhooks or Stripe payload `type`.
+ *
+ * `source` picks what fires the binding (ATO-601): `"http"` (the
+ * default) is `POST /api/webhooks/<name>`; `"atomic-mail"` is a new
+ * message in the agent's own inbox from a sender in
+ * `email.allowedSenders` (see `email-trigger-config.ts`). A mail
+ * binding is never reachable over HTTP, and its template only sees
+ * `{{body.from}}` and `{{body.receivedAt}}`: the subject and text are
+ * appended below it as fenced, untrusted data.
  */
+export type WebhookVerifyScheme = "secret" | "github" | "standard-webhooks" | "stripe";
+
+/** Every `verify` value, in the order the desktop offers them (ATO-445). */
+export const WEBHOOK_VERIFY_SCHEMES: readonly WebhookVerifyScheme[] = [
+  "secret",
+  "github",
+  "standard-webhooks",
+  "stripe",
+];
+
+export function isWebhookVerifyScheme(value: unknown): value is WebhookVerifyScheme {
+  return (
+    typeof value === "string" &&
+    (WEBHOOK_VERIFY_SCHEMES as readonly string[]).includes(value)
+  );
+}
+
 export interface WebhookConfig {
   userMessageTemplate: string;
+  source?: "http" | "atomic-mail";
+  email?: EmailTriggerConfig;
   secret?: string;
+  verify?: WebhookVerifyScheme;
+  events?: string[];
   schedule?: TaskSchedule;
   sessionMode?: "ephemeral" | "persistent" | "named";
   sessionId?: string;
@@ -99,6 +145,23 @@ export function parseWebhookMap(
     if (cfg.secret !== undefined && cfg.secret !== null) {
       secret = parseNonEmptyString(cfg.secret, `${field}.${name}.secret`);
     }
+    const verify = parseVerifyScheme(cfg.verify, `${field}.${name}.verify`);
+    if (verify !== "secret" && !secret) {
+      throw new ConfigValidationError(
+        `${field}.${name}.secret`,
+        `verify=${verify} requires a non-empty secret`,
+      );
+    }
+    if (verify === "standard-webhooks" && secret) {
+      assertStandardWebhooksSecret(secret, `${field}.${name}.secret`);
+    }
+    const events = parseEventFilter(cfg.events, `${field}.${name}.events`);
+    if (events && verify === "secret") {
+      throw new ConfigValidationError(
+        `${field}.${name}.events`,
+        "events requires verify=github, verify=standard-webhooks or verify=stripe",
+      );
+    }
     let schedule: TaskSchedule | undefined;
     if (cfg.schedule !== undefined && cfg.schedule !== null) {
       schedule = parseWebhookSchedule(
@@ -106,15 +169,78 @@ export function parseWebhookMap(
         `${field}.${name}.schedule`,
       );
     }
+    const source = cfg.source ?? "http";
+    if (source !== "http" && source !== "atomic-mail") {
+      throw new ConfigValidationError(
+        `${field}.${name}.source`,
+        `expected http|atomic-mail, got ${JSON.stringify(source)}`,
+      );
+    }
+    let email: EmailTriggerConfig | undefined;
+    if (source === "atomic-mail") {
+      email = parseEmailTriggerConfig(cfg.email, `${field}.${name}.email`);
+    } else if (cfg.email !== undefined && cfg.email !== null) {
+      throw new ConfigValidationError(
+        `${field}.${name}.email`,
+        'only allowed with source "atomic-mail"',
+      );
+    }
+    if (source === "atomic-mail" && schedule) {
+      throw new ConfigValidationError(
+        `${field}.${name}.schedule`,
+        'not allowed with source "atomic-mail": each mail is one task',
+      );
+    }
     out[name] = {
       userMessageTemplate,
+      ...(source === "atomic-mail" ? { source, email } : {}),
       sessionMode,
       ...(sessionId ? { sessionId } : {}),
       ...(secret ? { secret } : {}),
+      ...(verify !== "secret" ? { verify } : {}),
+      ...(events ? { events } : {}),
       ...(schedule ? { schedule } : {}),
     };
   }
   return out;
+}
+
+function parseVerifyScheme(raw: unknown, field: string): WebhookVerifyScheme {
+  if (raw === undefined || raw === null) return "secret";
+  if (
+    raw === "secret" ||
+    raw === "github" ||
+    raw === "standard-webhooks" ||
+    raw === "stripe"
+  ) {
+    return raw;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected secret|github|standard-webhooks|stripe, got ${JSON.stringify(raw)}`,
+  );
+}
+
+/** A `whsec_` prefix is optional; what follows must be non-empty base64. */
+function assertStandardWebhooksSecret(secret: string, field: string): void {
+  const body = secret.startsWith("whsec_") ? secret.slice(6) : secret;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body) || Buffer.from(body, "base64").length === 0) {
+    throw new ConfigValidationError(
+      field,
+      "verify=standard-webhooks expects a base64 secret such as whsec_<base64>",
+    );
+  }
+}
+
+function parseEventFilter(raw: unknown, field: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new ConfigValidationError(
+      field,
+      "expected a non-empty array of event names",
+    );
+  }
+  return raw.map((entry, i) => parseNonEmptyString(entry, `${field}[${i}]`));
 }
 
 function parseWebhookSchedule(raw: unknown, field: string): TaskSchedule {

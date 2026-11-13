@@ -30,6 +30,22 @@ export interface RecommendSnapshot {
   activeModelId: string | null;
 }
 
+/**
+ * This machine, read with the configured engine and device. Also what
+ * the Hugging Face pickers pass to `resolveHuggingFaceGgufChoices`
+ * (ATO-450) to badge each quant.
+ */
+export function probeConfiguredMachine(
+  probe: typeof probeMachineForModels = probeMachineForModels,
+): Promise<MachineForModels> {
+  const cfg = getConfig();
+  return probe({
+    dataDir: cfg.paths.localModelsDataDir,
+    engine: cfg.localModels.managed.engine,
+    configuredDevice: cfg.localModels.managed.device,
+  });
+}
+
 /** Everything both subcommands print, read once from config and the machine. */
 export async function readRecommendSnapshot(
   probe: typeof probeMachineForModels = probeMachineForModels,
@@ -37,11 +53,7 @@ export async function readRecommendSnapshot(
   const cfg = getConfig();
   const dataDir = cfg.paths.localModelsDataDir;
   const managed = cfg.localModels.mode === "managed";
-  const machine = await probe({
-    dataDir,
-    engine: cfg.localModels.managed.engine,
-    configuredDevice: cfg.localModels.managed.device,
-  });
+  const machine = await probeConfiguredMachine(probe);
   const activeModelId = managed ? cfg.localModels.managed.modelId : null;
   const active = cfg.llm?.activeTextProvider;
   const downloadedIds = listLocalModels()

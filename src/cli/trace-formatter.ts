@@ -1,4 +1,5 @@
 import type { TraceEvent } from "../tracing/index.js";
+import type { TraceLlmTiming } from "../tracing/trace/index.js";
 
 export interface FormatShowOptions {
   step?: number;
@@ -67,9 +68,7 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
         raw ? `\n  tail: ${event.tail}` : ""
       }`;
     case "llm_completion": {
-      const timing = event.timing
-        ? ` promptMs=${event.timing.promptMs} predictedMs=${event.timing.predictedMs} tokens(p=${event.timing.promptTokens},c=${event.timing.predictedTokens})`
-        : "";
+      const timing = event.timing ? formatLlmTiming(event.timing) : "";
       const reasoningTokens =
         event.reasoningTokens !== undefined
           ? ` reasoningTokens=${event.reasoningTokens}`
@@ -167,6 +166,24 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
 }
 
 /** ` code=ECONNREFUSED`, or nothing when the row carries no cause code. */
+/**
+ * Prefill vs decode for one completion (GitHub #493, ATO-631): where the
+ * step's time went, readable without llama-server.log. The raw ms and
+ * token fields keep their old spelling so greps over old output still
+ * match; the rate and the draft counts follow when the trace has them.
+ */
+function formatLlmTiming(timing: TraceLlmTiming): string {
+  const rate =
+    timing.predictedPerSecond !== undefined
+      ? ` decodeTps=${Math.round(timing.predictedPerSecond * 10) / 10}`
+      : "";
+  const draft =
+    timing.draftTokens !== undefined
+      ? ` draft=${timing.draftAcceptedTokens ?? 0}/${timing.draftTokens}`
+      : "";
+  return ` promptMs=${timing.promptMs} predictedMs=${timing.predictedMs} tokens(p=${timing.promptTokens},c=${timing.predictedTokens})${rate}${draft}`;
+}
+
 function causeCodeSuffix(causeCode: string | undefined): string {
   return causeCode !== undefined ? ` code=${causeCode}` : "";
 }

@@ -10,7 +10,17 @@
 #   ATOMIC_AGENT_INSTALL_DIR=path         (default: $HOME/.local/bin)
 #   ATOMIC_AGENT_NO_PATH=1                 (optional: skip rc-file PATH update)
 #   ATOMIC_AGENT_VERIFY_TIMEOUT=20         (optional: seconds to allow the macOS
-#                                           signature check; 0 skips it)
+#                                           `codesign --verify`; 0 skips it, the
+#                                           Team ID pin below still runs)
+#   ATOMIC_AGENT_TEAM_ID=XXXXXXXXXX        (optional: Apple Team ID the macOS
+#                                           binary must be signed by; default:
+#                                           ours for the default repo, none for a
+#                                           fork; set it empty to turn the pin off)
+#   ATOMIC_AGENT_EXPECTED_SHA256=<hex>     (set by `atomic-agent update` from the
+#                                           release's signed SHA256SUMS; the
+#                                           archive must hash to it)
+#   ATOMIC_AGENT_INSTALL_FROM=reddit       (optional: where the install link was
+#                                           found, for anonymous analytics)
 
 set -eu
 
@@ -18,9 +28,39 @@ set -eu
 # POSIX sh: local may not exist; we avoid local for dash compatibility.
 
 REPO_DEFAULT="AtomicBot-ai/atomic-agent"
+
+# Public half of the release signing key (SPKI PEM), the same value as
+# RELEASE_SIGNING_PUBLIC_KEY in src/update/release-signature.ts. Empty until the
+# key exists; then the installer checks the release's SHA256SUMS.sig with openssl
+# when it can. See scripts/docs/bundling.md, "Release signature".
+RELEASE_SIGNING_PUBLIC_KEY=""
+# First release tag signed with RELEASE_SIGNING_KEY (e.g. v0.8.0), the same value
+# as FIRST_SIGNED_VERSION in src/update/release-signature.ts; set it together with
+# the key. From this tag on (and for "latest") a release without SHA256SUMS.sig is
+# refused instead of trusting the .sha256 beside the archive. Left empty while a
+# key is set, every release must be signed.
+FIRST_SIGNED_VERSION=""
 REPO="${ATOMIC_AGENT_REPO:-$REPO_DEFAULT}"
+# The Apple Team ID the release workflow signs the macOS binary with
+# (Developer ID Application: AtomicMail Systems OU). A fork signs with its
+# own certificate, so the pin applies to the default repo only unless
+# ATOMIC_AGENT_TEAM_ID names one. `-` (not `:-`) on purpose: an explicitly
+# empty ATOMIC_AGENT_TEAM_ID turns the pin off instead of falling back to ours.
+TEAM_ID_DEFAULT="MU9G7XKJUL"
+if [ "$REPO" = "$REPO_DEFAULT" ]; then
+  EXPECTED_TEAM_ID="${ATOMIC_AGENT_TEAM_ID-$TEAM_ID_DEFAULT}"
+else
+  EXPECTED_TEAM_ID="${ATOMIC_AGENT_TEAM_ID:-}"
+fi
 VERSION="${ATOMIC_AGENT_VERSION:-}"
 INSTALL_DIR="${ATOMIC_AGENT_INSTALL_DIR:-$HOME/.local/bin}"
+
+# Where the install link was found, for anonymous analytics
+# (`install_source`). `curl ... | sh` cannot see its own URL, so
+# atomicagent.io/install?from=<tag> fills in the empty value on the next line
+# before serving this script. Keep that line exactly as it is.
+INSTALL_FROM_TAG=""
+INSTALL_FROM="${ATOMIC_AGENT_INSTALL_FROM:-$INSTALL_FROM_TAG}"
 
 if command -v uname >/dev/null 2>&1; then
   OS_NAME="$(uname -s)"
@@ -268,6 +308,10 @@ download() {
 # codesign that actually returns non-zero still aborts -- a binary whose pages
 # do not match its signature is SIGKILLed by the kernel on launch, and saying
 # so here beats letting the user discover it.
+#
+# The Team ID pin (verify_team_id) is not part of that budget: it reads the
+# signature with `codesign -dv`, which does not wait for the scan, so it runs
+# after a pass, after a timeout and with the check switched off alike.
 VERIFY_TIMEOUT="${ATOMIC_AGENT_VERIFY_TIMEOUT:-20}"
 case "$VERIFY_TIMEOUT" in
   '' | *[!0-9]*) VERIFY_TIMEOUT=20 ;;
@@ -303,6 +347,7 @@ verify_signature() {
     return 0
   fi
   if [ "$VERIFY_TIMEOUT" -le 0 ]; then
+    verify_team_id "$_vs_file"
     return 0
   fi
 
@@ -339,6 +384,7 @@ verify_signature() {
       echo "signature check exceeded ${VERIFY_TIMEOUT}s and was skipped."
       echo "  (macOS scans a newly written 140 MB executable the first time it is asked;"
       echo "   the sha256 checksum above already verified this download.)"
+      verify_team_id "$_vs_file"
       return 0
     fi
     if [ "$UI_TTY" = "1" ]; then
@@ -361,6 +407,34 @@ verify_signature() {
     echo "error: downloaded binary failed 'codesign --verify --strict'; aborting" >&2
     exit 1
   fi
+  verify_team_id "$_vs_file"
+  return 0
+}
+
+verify_team_id() {
+  # $1 path to the extracted binary. A valid signature only proves the
+  # bytes match SOME certificate: pin the Team ID too, so a binary re-signed
+  # with someone else's Developer ID is refused (ATO-760). A binary with no
+  # Team ID at all -- ad hoc ("Signature=adhoc", "TeamIdentifier=not set")
+  # or unsigned -- is refused as well: anyone can produce one, and every
+  # release is signed with our Developer ID. `codesign -dv` only reads the
+  # embedded signature, so it does not wait for the first-sight scan.
+  if [ -z "$EXPECTED_TEAM_ID" ]; then
+    return 0
+  fi
+  _vt_team="$(codesign -dv "$1" 2>&1 | awk -F= '/^TeamIdentifier=/ { print $2; exit }' || true)"
+  case "$_vt_team" in
+    '' | 'not set')
+      echo "error: downloaded binary has no Apple Team ID (ad-hoc signed or unsigned), expected ${EXPECTED_TEAM_ID}; aborting" >&2
+      echo "  (a fork that ships ad-hoc builds can set ATOMIC_AGENT_TEAM_ID='' to skip this check)" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$_vt_team" != "$EXPECTED_TEAM_ID" ]; then
+    echo "error: downloaded binary is signed by Apple Team ID ${_vt_team}, expected ${EXPECTED_TEAM_ID}; aborting" >&2
+    echo "  (set ATOMIC_AGENT_TEAM_ID to the Team ID your fork signs with)" >&2
+    exit 1
+  fi
   return 0
 }
 
@@ -377,11 +451,12 @@ fi
 
 # Preflight: is there a build for this platform at all?
 #
-# Not every slug the installer can *name* is one the release matrix
-# *publishes* — darwin-x64 is commented out of .github/workflows/release.yml,
-# so an Intel Mac used to reach `download` and die on a bare
-# "download failed: <url>" with a 404 behind it and no hint that the binary
-# had never existed. Say so instead, and say what to do about it.
+# Not every release carries every slug the installer can *name*: releases up
+# to v0.7.0 have no darwin-x64 build (ATO-682 added it to the release
+# matrix), so an Intel Mac pinning one of them with --version used to reach
+# `download` and die on a bare "download failed: <url>" with a 404 behind it
+# and no hint that the binary had never existed. Say so instead, and say what
+# to do about it.
 #
 # Only a literal 404 counts as "not published". Everything else — offline
 # (000), a proxy, a 5xx, no curl at all — falls through to the real
@@ -398,9 +473,10 @@ no_build_published() {
   echo "no published build for ${SLUG}." >&2
   echo >&2
   if [ "$SLUG" = "darwin-x64" ]; then
-    echo "atomic-agent does not publish a macOS Intel binary yet, and the Apple" >&2
-    echo "Silicon build will not run on this machine. Tracking:" >&2
-    echo "  https://github.com/${REPO}/issues/300" >&2
+    echo "this release has no macOS Intel binary (older releases were Apple Silicon only)," >&2
+    echo "and the Apple Silicon build will not run on this machine. Install the" >&2
+    echo "latest release instead (run the installer without --version), or see:" >&2
+    echo "  https://github.com/${REPO}/releases" >&2
   else
     echo "${TAR_NAME} is not attached to this release. See what is published:" >&2
     echo "  https://github.com/${REPO}/releases" >&2
@@ -460,6 +536,91 @@ else
   echo "error: cannot verify the download: none of shasum, sha256sum or openssl is installed." >&2
   echo "install one of them (for example coreutils, which provides sha256sum) and run the installer again." >&2
   exit 1
+fi
+
+sha256_of() {
+  if have shasum; then
+    shasum -a 256 "$1" | awk '{ print tolower($1) }'
+  elif have sha256sum; then
+    sha256sum "$1" | awk '{ print tolower($1) }'
+  else
+    openssl dgst -sha256 -r "$1" | awk '{ print tolower($1) }'
+  fi
+}
+
+require_sha() {
+  # $1 expected digest, $2 where it came from
+  _rs_actual="$(sha256_of "$WORK/${TAR_NAME}")"
+  _rs_expected="$(printf '%s' "$1" | tr 'A-F' 'a-f')"
+  if [ "$_rs_actual" != "$_rs_expected" ]; then
+    echo "checksum mismatch for ${TAR_NAME} against $2" >&2
+    echo "  expected: ${_rs_expected}" >&2
+    echo "  actual:   ${_rs_actual}" >&2
+    exit 1
+  fi
+}
+
+# The .sha256 above lives in the same release as the archive, so whoever can
+# replace one can replace both. `atomic-agent update` checks the release's
+# signed SHA256SUMS first and passes the archive's digest down here.
+if [ -n "${ATOMIC_AGENT_EXPECTED_SHA256:-}" ]; then
+  require_sha "$ATOMIC_AGENT_EXPECTED_SHA256" "the signed SHA256SUMS"
+  echo "${TAR_NAME}: matches the signed SHA256SUMS"
+fi
+
+# Exit 0 when tag $1 (empty = latest) must ship SHA256SUMS.sig: no cutoff set,
+# latest, a tag that does not parse, or one at or after FIRST_SIGNED_VERSION.
+signature_required() {
+  [ -n "$1" ] && [ -n "$FIRST_SIGNED_VERSION" ] || return 0
+  printf '%s %s\n' "$1" "$FIRST_SIGNED_VERSION" | awk '
+    function core(v, out,   n, p, i) {
+      sub(/^[vV]/, "", v); sub(/[-+].*/, "", v)
+      n = split(v, p, ".")
+      if (n < 3) return 0
+      for (i = 1; i <= 3; i++) { if (p[i] !~ /^[0-9]+$/) return 0; out[i] = p[i] + 0 }
+      return 1
+    }
+    {
+      if (!core($1, t) || !core($2, f)) exit 0
+      for (i = 1; i <= 3; i++) { if (t[i] > f[i]) exit 0; if (t[i] < f[i]) exit 1 }
+      exit 0
+    }'
+}
+
+# Signed SHA256SUMS on a fresh install. Needs an embedded key, a release that
+# ships SHA256SUMS.sig, and an openssl with Ed25519 (`pkeyutl -rawin`, OpenSSL
+# 3; the LibreSSL in macOS has neither, and is skipped with a note). A missing
+# signature is refused from FIRST_SIGNED_VERSION on, so stripping the .sig does
+# not fall back to the forgeable .sha256.
+if [ -n "$RELEASE_SIGNING_PUBLIC_KEY" ]; then
+  SIG_BASE="${TAR_URL%/*}"
+  if ! have curl; then
+    echo "note: release signature is checked only with curl; sha256 was checked."
+  elif ! have openssl || ! openssl pkeyutl -help 2>&1 | grep -q -- '-rawin'; then
+    echo "note: openssl with Ed25519 not found; release signature not checked (sha256 was)."
+  elif asset_missing "${SIG_BASE}/SHA256SUMS.sig"; then
+    if signature_required "$VERSION"; then
+      echo "error: release ${VERSION:-latest} ships no SHA256SUMS.sig, but releases from ${FIRST_SIGNED_VERSION:-the embedded key} on must be signed; aborting" >&2
+      exit 1
+    fi
+    echo "note: ${VERSION} predates the first signed release (${FIRST_SIGNED_VERSION}) and ships no SHA256SUMS.sig; release signature not checked."
+  else
+    download "${SIG_BASE}/SHA256SUMS.sig" "$WORK/SHA256SUMS.sig"
+    download "${SIG_BASE}/SHA256SUMS" "$WORK/SHA256SUMS"
+    printf '%s\n' "$RELEASE_SIGNING_PUBLIC_KEY" > "$WORK/release-signing.pub.pem"
+    if ! openssl pkeyutl -verify -pubin -inkey "$WORK/release-signing.pub.pem" -rawin \
+      -in "$WORK/SHA256SUMS" -sigfile "$WORK/SHA256SUMS.sig" >/dev/null 2>&1; then
+      echo "error: SHA256SUMS.sig does not verify against the release signing key; aborting" >&2
+      exit 1
+    fi
+    SIGNED_SHA="$(awk -v n="$TAR_NAME" '{ f = $2; sub(/^[*]/, "", f); sub(/^[.][/]/, "", f); if (f == n) { print $1; exit } }' "$WORK/SHA256SUMS")"
+    if [ -z "$SIGNED_SHA" ]; then
+      echo "error: the signed SHA256SUMS does not list ${TAR_NAME}; aborting" >&2
+      exit 1
+    fi
+    require_sha "$SIGNED_SHA" "the signed SHA256SUMS"
+    echo "${TAR_NAME}: release signature OK"
+  fi
 fi
 
 (cd "$WORK" && tar -xzf "${TAR_NAME}")
@@ -646,6 +807,30 @@ record_install_channel() {
 }
 
 record_install_channel
+
+# Install source marker for anonymous analytics (`install_source`). The file
+# holds one word from the fixed list below and nothing else; any other value
+# is never written. The first recorded source is kept, so an update or a
+# reinstall from another link does not move the install to a new source.
+record_install_source() {
+  _from="$(printf '%s' "$INSTALL_FROM" | tr '[:upper:]' '[:lower:]')"
+  case "$_from" in
+    x|reddit|github|email|site|discord|hn|youtube|other) ;;
+    *) return 0 ;;
+  esac
+  _state_dir="${ATOMIC_AGENT_STATE_DIR:-$HOME/.atomic-agent}"
+  _source_file="$_state_dir/install-source"
+  if [ -f "$_source_file" ]; then
+    _existing="$(head -n 1 "$_source_file" 2>/dev/null || true)"
+    case "$_existing" in
+      x|reddit|github|email|site|discord|hn|youtube|other) return 0 ;;
+    esac
+  fi
+  mkdir -p "$_state_dir" 2>/dev/null || return 0
+  printf '%s\n' "$_from" > "$_source_file" 2>/dev/null || true
+}
+
+record_install_source
 
 add_to_path "$INSTALL_DIR"
 

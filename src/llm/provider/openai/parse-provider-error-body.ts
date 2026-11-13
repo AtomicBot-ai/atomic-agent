@@ -84,9 +84,13 @@ const BILLING_WORDING =
  * billing wording below, which a 403 that also talks about its key or
  * authentication ("Authentication failed. Please check your billing
  * details.") is not read for.
+ *
+ * Bedrock (AWS) refuses a dead key as "Bearer Token has expired" or "The
+ * security token included in the request is invalid", Azure as "invalid
+ * subscription key" (ATO-468).
  */
 export const CREDENTIAL_WORDING =
-  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|authenticat\w*|access[ _-]?token|invalid[ _-]?token)\b/i;
+  /\b(?:api[ _-]?key|credentials?|unauthori[sz]ed|unauthenticated|authenticat\w*|access[ _-]?token|invalid[ _-]?token|(?:bearer|security)[ _-]?token|subscription[ _-]?key)\b/i;
 
 /**
  * A provider's words for input its moderation refused: OpenRouter's 403

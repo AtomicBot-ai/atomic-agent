@@ -3,6 +3,7 @@ import { parseLlmProviderEntry, type UserLlmProviderEntry } from "./llm-config.j
 import { parseUserConfigFile, USER_CONFIG_VERSION } from "./config-schema.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 import { PROVIDER_PRESETS } from "../llm/provider/presets/provider-presets.js";
+import { defaultProviderModelMode } from "./model-mode.js";
 
 describe("model mode configuration", () => {
   const provider = { id: "remote", kind: "openrouter", defaultChatModel: "large" };
@@ -62,6 +63,25 @@ describe("model mode configuration", () => {
     expect(resolveModelMode(policy, "remote", "small")).toMatchObject({ mode: "local", source: "model" });
     expect(resolveModelMode(policy, "remote", "other").mode).toBe("cloud");
     expect(resolveModelMode(policy, "manual", "other").mode).toBe("local");
+  });
+  it("reads a per-account Azure or Bedrock endpoint as cloud, and a lookalike as local", () => {
+    // ATO-468: these presets' baseUrl is only a template, so the saved
+    // entry's host is the operator's resource or Region, not the preset's.
+    for (const baseUrl of [
+      "https://my-team.openai.azure.com/openai",
+      "https://my-team.services.ai.azure.com/openai",
+      "https://bedrock-mantle.eu-central-1.api.aws",
+      "https://bedrock-runtime.us-west-2.amazonaws.com/openai",
+    ]) {
+      expect(defaultProviderModelMode({ kind: "openai-compatible", baseUrl }), baseUrl).toBe("cloud");
+    }
+    for (const baseUrl of [
+      "http://my-team.openai.azure.com/openai",
+      "https://openai.azure.com.example.com",
+      "https://ec2-1-2-3-4.compute-1.amazonaws.com",
+    ]) {
+      expect(defaultProviderModelMode({ kind: "openai-compatible", baseUrl }), baseUrl).toBe("local");
+    }
   });
   it("treats null as absent but rejects invalid policies before migration", () => {
     const raw = (modelMode: unknown) => ({ version: 74, llm: {

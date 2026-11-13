@@ -20,8 +20,8 @@ interface MatrixEntry {
 }
 
 const RUNNER_OS: Record<string, string> = {
-  "darwin-arm64": "macos-14",
-  "darwin-x64": "macos-13",
+  "darwin-arm64": "macos-15",
+  "darwin-x64": "macos-15-intel",
   "linux-x64": "ubuntu-22.04",
   "linux-arm64": "ubuntu-24.04-arm",
   "win32-x64": "windows-2022",

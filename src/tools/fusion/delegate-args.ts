@@ -66,6 +66,8 @@ import {
   type DelegateContract,
 } from "./contract.js";
 import { readContractInputs } from "./contract-inputs.js";
+import { parseProvideExample } from "./contract-example.js";
+import { readOutputEstimate } from "./worker-fit.js";
 import {
   FUSION_ROLES,
   type FusionRole,
@@ -104,6 +106,15 @@ export interface DelegateTask {
    * elapsed time, exactly as before.
    */
   etaSeconds?: number;
+  /**
+   * The planner's estimate of what the worker will WRITE (ATO-1363), in
+   * tokens or in lines (`outputTokens` wins when both are given). On a
+   * measured local leg it sizes the worker's time limit and is checked
+   * against it before the fan-out (`worker-fit.ts`); the result then
+   * reports it beside the actual tokens out. Absent: as before.
+   */
+  outputTokens?: number;
+  outputLines?: number;
   /** Paths the worker should start from. */
   files?: string[];
   /**
@@ -132,6 +143,26 @@ export interface DelegateTask {
    * run mode); a name outside it refuses the call.
    */
   model?: string;
+  /**
+   * A subagent profile by name (ATO-566): `explore`, `review`,
+   * `research`, or one the user or a trusted project defined. Checked by
+   * the tool against the loaded profiles, not here; an unknown name
+   * refuses the call.
+   */
+  profile?: string;
+  /**
+   * The profile as applied by the tool, never read from the wire: its
+   * instructions for the brief and its tool allowlist (compiled
+   * patterns; absent = the worker's usual tools).
+   */
+  agentProfile?: AppliedAgentProfile;
+}
+
+/** What `fusion.delegate` resolved a task's `profile` to. */
+export interface AppliedAgentProfile {
+  name: string;
+  prompt: string;
+  tools?: readonly string[];
 }
 
 export type ParsedDelegateArgs =
@@ -385,7 +416,7 @@ function readContract(
   if (value.provides !== undefined && value.provides !== null) {
     if (!Array.isArray(value.provides)) {
       problems.push(
-        "contract.provides must be an array of { task, kind, name, in?, shape? }",
+        "contract.provides must be an array of { task, kind, name, in?, shape?, example? }",
       );
     } else if (value.provides.length > MAX_CONTRACT_PROVIDES) {
       problems.push(
@@ -443,6 +474,8 @@ function readContract(
             : rawShape.length > MAX_PROVIDE_SHAPE_CHARS
               ? `${rawShape.slice(0, MAX_PROVIDE_SHAPE_CHARS - 1)}…`
               : rawShape;
+        const example = parseProvideExample(entry.example, label);
+        if (example.problem !== undefined) problems.push(example.problem);
         if (problems.length > before || kind === null || name === null) {
           continue;
         }
@@ -452,6 +485,7 @@ function readContract(
           name,
           ...(inPath === null ? {} : { in: inPath }),
           ...(shape === null ? {} : { shape }),
+          ...(example.example === undefined ? {} : { example: example.example }),
         });
       }
       if (provides.length > 0) contract.provides = provides;
@@ -595,6 +629,7 @@ export function parseDelegateArgs(
     const files = readFiles(entry.files, label, problems);
     const deliverable = readString(entry.deliverable);
     const etaSeconds = readEtaSeconds(entry.etaSeconds);
+    const outputEstimate = readOutputEstimate(entry, label, problems);
     const maxSteps = readBudget(entry.maxSteps, `${label}.maxSteps`, problems);
     const taskTimeoutMs = readBudget(
       entry.timeoutMs,
@@ -609,6 +644,13 @@ export function parseDelegateArgs(
     if (model === null && entry.model !== undefined && entry.model !== null) {
       problems.push(`${label}.model must be a non-empty string`);
     }
+    const profile =
+      entry.profile === undefined || entry.profile === null
+        ? null
+        : readString(entry.profile);
+    if (profile === null && entry.profile !== undefined && entry.profile !== null) {
+      problems.push(`${label}.profile must be a non-empty string`);
+    }
     if (id !== null && !seen.has(id)) {
       seen.add(id);
       bindable.push({ id, ...(files.length === 0 ? {} : { files }) });
@@ -622,11 +664,13 @@ export function parseDelegateArgs(
       instructions,
       ...(deliverable === null ? {} : { deliverable }),
       ...(etaSeconds === null ? {} : { etaSeconds }),
+      ...outputEstimate,
       ...(files.length === 0 ? {} : { files }),
       ...(maxSteps === null ? {} : { maxSteps }),
       ...(taskTimeoutMs === null ? {} : { timeoutMs: taskTimeoutMs }),
       ...(role === null ? {} : { role }),
       ...(model === null ? {} : { model }),
+      ...(profile === null ? {} : { profile }),
     });
   }
 

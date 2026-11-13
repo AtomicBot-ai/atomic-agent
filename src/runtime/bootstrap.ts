@@ -1,25 +1,36 @@
+import { PrefixInvalidationLedger, notePrefixInvalidation } from "../agent/prefix-drift-warning.js";
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
 import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
+import { askSideQuestion, sideQuestionPartition } from "./side-question.js";
+import { completePlain, PLAIN_COMPLETE_PARTITION, type PlainCompleteInput } from "./plain-complete.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
+import { createCompactionTokenCounter } from "./compaction-token-counter.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
-import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
+import { prepareRuntimeSkills, recurringTaskTexts, startRuntimeSkillCurator } from "./composition/runtime-skills.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, registerRuntimeAudioTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
+import { createInterruptedTurns } from "./interrupted-turns.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
-import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
+import { createIncognitoSessions } from "./incognito-sessions.js";
+import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
+import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
+import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
+import { holdWhileRunning } from "../scheduler/index.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
 export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
 export { managedLocalLlmHealthFailureHint } from "./composition/runtime-local-profile.js";
 import { createRuntimeObservability } from "./composition/runtime-observability.js";
 import { createRuntimeTraces } from "./composition/runtime-traces.js";
 import { prepareRuntimeLocalProfile, connectRuntimeLocalProfile } from "./composition/runtime-local-profile.js";
-import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallback, createRuntimeProviderReloads } from "./composition/runtime-inference.js";
+import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallback, createRuntimeProviderReloads, catalogWindowOf } from "./composition/runtime-inference.js";
+import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
+import { sessionGroundingSource } from "../memory/name-grounding.js";
 import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
 import { join, resolve } from "node:path";
 
@@ -35,6 +46,7 @@ import { SteeringInbox } from "./steering-inbox.js";
 import { TelegramChannel } from "../channels/telegram/index.js";
 import { DiscordChannel } from "../channels/discord/index.js";
 import { SwarmRegistry } from "../channels/swarm/index.js";
+import type { ChannelRegistry } from "../channels/channel-registry.js";
 
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 
@@ -48,11 +60,15 @@ import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
+import type { BrowserExtractModelRef } from "../tools/browser/extract-request.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
+import { registerSessionTools } from "../tools/sessions/index.js";
 import {
+  FUSION_OUTCOMES_FILE_NAME,
   FUSION_RUNS_DIR_NAME,
   FusionLiveWorkers,
+  FusionOutcomeLog,
   FusionRunStore,
   FusionTurnBudget,
   describeResumableRun,
@@ -63,11 +79,13 @@ import { resolveLlmConfig } from "../llm/provider/index.js";
 
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { SessionUsageLedger, forwardWorkerUsage } from "../session/usage-meter.js";
+import { DAILY_SPEND_FILE_NAME, DailySpendStore, dailySpendViewFor } from "../session/daily-spend.js";
+import { hasPricedCloudLink } from "./resolve-model-pricing.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
-import { readLocalEngineState } from "./local-engine-state.js";
+import { explainLocalEngineState, readLocalEngineState } from "./local-engine-state.js";
 import { createLocalOutOfMemoryPort, type LocalModelRestarter } from "./local-out-of-memory.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
@@ -123,8 +141,15 @@ export async function createAgentRuntime(
     brokenPipe: options.brokenPipe,
   });
 
-  const { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed } =
-    observability.createControls();
+  const {
+    setAnalyticsEnabled,
+    reportOnboardingStep,
+    reportModelConfigured,
+    reportLocalEngineFailed,
+    reportUiAction,
+    interviewInviteIdentity,
+    reportInterviewInvite,
+  } = observability.createControls();
 
   const traces = createRuntimeTraces(config, options, logger);
   const { traceBus, turnContext, touchRecorder, dropRecorder, ensureRecorder } = traces;
@@ -235,7 +260,10 @@ export async function createAgentRuntime(
       userDataDir: config.paths.browserProfileDir,
       channel: config.browser.channel,
       executablePath: config.browser.executablePath,
-      headless: config.browser.headless,
+      headless: config.browser.headlessSetting ?? config.browser.headless,
+      profile: config.browser.profile ?? "agent",
+      ...(config.browser.maxTabs !== undefined ? { maxTabs: config.browser.maxTabs } : {}),
+      workerIsolation: config.browser.workerIsolation ?? "tabs",
       noSandbox: config.browser.noSandbox,
       launchTimeoutMs: config.browser.launchTimeoutMs,
       cdpUrl: config.browser.cdpUrl,
@@ -332,7 +360,10 @@ export async function createAgentRuntime(
   toolOutputSpill.sweepStale();
   installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs, toolOutputSpill);
 
-  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill);
+  // `browser.extract` calls the model (ATO-699); the completer is built
+  // further down, so the tool reads it through this ref per call.
+  const browserExtract: BrowserExtractModelRef = {};
+  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill, browserExtract);
 
   // What the operator asked for, per session, for the turn now running
   // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)
@@ -348,6 +379,11 @@ export async function createAgentRuntime(
   // "Replace sales.csv?" replaces that file (ATO-860). Kept beside
   // `turnRequests`, set and cleared with it.
   const turnPreviousReplies = new Map<string, string>();
+  // Sessions whose running turn is on a surface with no question card
+  // (the desktop until ATO-1502): `ask_user` answers there at once
+  // instead of raising a question nobody can answer (ATO-489). Set and
+  // cleared by `executeTurn` with the two maps above.
+  const turnsWithoutQuestions = new Set<string>();
   // The files a fan-out's contract declared as inputs, per worker
   // session: the worker runner declares them, `os.fs.write` refuses to
   // replace them (`fs-declared-inputs.ts`).
@@ -355,7 +391,8 @@ export async function createAgentRuntime(
   registerRuntimeCoreTools({
     config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
     resolvePreviousReply: (id) => turnPreviousReplies.get(id),
-    declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore,
+    canAskUser: (id) => !turnsWithoutQuestions.has(id),
+    declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, browserBackend,
     // Only the terminal UI has an `/integrations` screen that saves an Exa
     // key into this process; every other entry point keeps the desktop /
     // `.env` advice (ATO-345).
@@ -399,27 +436,53 @@ export async function createAgentRuntime(
   const fusionRuns = new FusionRunStore({
     dir: join(config.paths.stateDir, FUSION_RUNS_DIR_NAME),
   });
+  // What past fan-outs showed on this machine (ATO-949): one line per
+  // finished worker task, summarized into the `### fusion` facts once
+  // per session start. `llm.runMode.fusion.outcomeJournal: false` turns
+  // both off; read live, like every run-mode setting. See `outcome-log.ts`.
+  const fusionOutcomes = new FusionOutcomeLog({
+    path: join(config.paths.stateDir, FUSION_OUTCOMES_FILE_NAME),
+    enabled: () => getConfig().llm?.runMode?.fusion?.outcomeJournal !== false,
+  });
 
   // ATO-569: what each session has spent and the account limits last
   // seen, for the composer readout. Every change goes out as a
   // session-scoped `usage_updated` event (TUI, HTTP stream frame).
+  // ATO-649: today's spend over every session, persisted so it survives
+  // a restart, for the readout and the `dailyLimitUsd` ceiling. Stamped
+  // on the live event only when the operator asked for it.
+  const dailySpend = new DailySpendStore({
+    path: join(config.paths.stateDir, DAILY_SPEND_FILE_NAME),
+    resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
+  });
   const sessionUsage = new SessionUsageLedger({
-    onChange: (sessionId, usage) =>
-      emitAgentLoopEventFor(sessionId, { type: "usage_updated", sessionId, usage }),
+    onChange: (sessionId, usage) => {
+      // Only when a configured cloud link has a known price: with none,
+      // "today $0.00" could never move.
+      const today = dailySpendViewFor(dailySpend, getConfig().llm?.costTracking, () =>
+        hasPricedCloudLink(resolveLlmConfig(getConfig())),
+      );
+      emitAgentLoopEventFor(sessionId, {
+        type: "usage_updated",
+        sessionId,
+        usage: today ? { ...usage, today } : usage,
+      });
+    },
   });
 
   const modelContext = createRuntimeModelContext(config, providers);
-  const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
+  const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute, audioOnLiveRoute } = modelContext;
   // ATO-1276: an Ollama route learns its real window (`/api/show`) now,
   // before the first turn sizes a prompt. Silent and non-blocking.
   void modelContext.primeLocalContextWindow();
   registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
   registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
   registerRuntimeVideoTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
+  registerRuntimeAudioTools({ toolRegistry, dangerous, emitAgentLoopEventFor });
 
   const mcpCatalog = await connectRuntimeMcpCatalog({
     config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
-    visionOnLiveRoute, resolveCurrentRunMode,
+    visionOnLiveRoute, audioOnLiveRoute, resolveCurrentRunMode,
     ...mcpGrammarHookFor(profileManager),
     // `agent.tools.search: "auto"` reads the live route's window (ATO-558):
     // a local link's served window once `/props` has answered, else the catalogue's.
@@ -440,7 +503,8 @@ export async function createAgentRuntime(
 
   const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
     fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
-    costAccumulator, turnUsageMeter, sessionUsage, resolveModelPricing, resolveCatalogContextWindow,
+    costAccumulator, turnUsageMeter, sessionUsage, dailySpend, resolveModelPricing, resolveCatalogContextWindow,
+    providerRegistry,
   });
   // Smart approval (ATO-465): off unless `agent.smartApproval`, read live.
   installRiskReviewer({
@@ -449,10 +513,19 @@ export async function createAgentRuntime(
     sideCallSlotId: () => slotManager.sideCallSlotId(),
     userRequest: (sessionId) => turnRequests.get(sessionId), logger,
   });
+  // Review after outside content (ATO-618): off unless `agent.taintReview`, read live.
+  approvals.setTaintReview(() => getConfig().agent.taintReview);
+  browserExtract.current = {
+    complete: (params) => llmComplete(params),
+    transport: (providerId) => resolveActiveLlmSlice(providerId).transport,
+    slotId: () => slotManager.sideCallSlotId(),
+    serverTemplate: () => getConfig().localModels.useServerTemplate !== "off",
+  };
   const { taskStore, webhookSessionStore } = createRuntimeTaskStores({ config, logger });
   const { reflectionRunner, memoryContextProvider } = createRuntimeMemoryServices({
     config, profileStore, notesStore, linkStore, lessonStore, procedureStore, voteStore, embeddingClient,
     slotManager, llmComplete, toolTransport: bootstrapLlmSlice.transport, logger, metrics, touchRecorder, memoryHealth,
+    nameGroundingSource: sessionGroundingSource(sessionStore),
   });
 
   const promptPreviewDeps = {
@@ -498,6 +571,13 @@ export async function createAgentRuntime(
     route: compactionRoute,
     sideCallSlotId: compactionSideSlot,
     costOf: compactionCost,
+    tokenCounter: createCompactionTokenCounter({ config: () => getConfig(), route: compactionRoute }),
+    // ATO-676: used only when `agent.compaction.memoryFlush` is on.
+    memoryNotes: {
+      enabled: () => getConfig().memory.notes.enabled,
+      store: (note) => notesStore.store(note),
+      log: (level, message, fields) => logger[level](message, fields),
+    },
     background: createBackgroundCompaction({
       config: () => getConfig().agent.compaction,
       sessionStore, complete: llmComplete, promptInput: compactionPromptInput,
@@ -516,7 +596,7 @@ export async function createAgentRuntime(
     emit: (event) => {
       logCompactionOutcome(logger, event);
       if (event.type === "compaction_completed" && event.result.message) {
-        logger.warn("context compaction fell back to an extractive summary", { sessionId: event.sessionId, reason: event.result.message });
+        logger.warn("context compaction completed with a warning", { sessionId: event.sessionId, reason: event.result.message });
       }
       emitAgentLoopEventFor(event.sessionId, event);
     },
@@ -532,6 +612,10 @@ export async function createAgentRuntime(
   // that survived a restart would be a mystery rather than a memory.
   let planMode = false;
 
+  // What this runtime rebuilt on purpose, so the loop can label the
+  // stable-prefix change that follows as expected (ATO-316).
+  const prefixInvalidations = new PrefixInvalidationLedger();
+
   // The `skillCatalog` is a getter so that `agent-loop` reads the current
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
@@ -544,6 +628,7 @@ export async function createAgentRuntime(
     // gate is the single live switch rather than a boolean copied into
     // each tool registration.
     isPlanMode: () => planMode,
+    prefixInvalidations,
     // The gate itself, not a copied level: a batch of approval-gated calls
     // runs in order when nothing in it would ask (`--no-approval`), and the
     // step must see the level the operator has now, not at boot.
@@ -566,6 +651,7 @@ export async function createAgentRuntime(
       );
     },
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
+    clearUntrustedContent: (sessionId: string) => approvals.clearUntrustedContent(sessionId),
     denyPendingApprovals: (sessionId: string, reason: string) => {
       approvals.denyPendingForSession(sessionId, reason);
     },
@@ -587,6 +673,7 @@ export async function createAgentRuntime(
     // The local leg's slot count once `/props` has answered — what the
     // `### fusion` facts state for an external server.
     liveWorkerSlots: () => slotManager.observedPoolSize(),
+    fusionPastRuns: (sessionId) => fusionOutcomes.summaryLines(sessionId),
     onContextWindowObserved: observeContextWindow,
     onContextWindowExceeded: raiseContextWindowTo,
     // A refused connection to a managed local model whose process is gone
@@ -595,6 +682,12 @@ export async function createAgentRuntime(
     localEngineState: (providerId: string | undefined) => {
       const config = getConfig();
       return readLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
+    },
+    // The same reading with why, so the turn's error report says what the
+    // wait decided on (ATO-1432).
+    explainLocalEngineState: (providerId: string | undefined) => {
+      const config = getConfig();
+      return explainLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
     },
     // A managed local model that ran out of memory is restarted with a
     // smaller window instead of waited on (ATO-334). Read live, like the
@@ -613,15 +706,22 @@ export async function createAgentRuntime(
     // way compaction prices its own: cache-aware, unpriced (local) = $0.
     priceCompletion: (result: CompletionResult, providerId: string | undefined) =>
       compactionCost(result, providerId ?? providerRegistry.activeText.id),
-    resolveLlmSlice: (providerId: string) => {
+    resolveLlmSlice: (providerId: string, model?: string) => {
       const slice = resolveActiveLlmSlice(providerId);
+      // A per-turn cloud model (ATO-1148) is sized and flagged as that
+      // model, not the entry's default one.
+      const turnModel = model !== undefined && !slice.isLlamaServer ? model : undefined;
       return {
-        contextWindow: resolveCatalogContextWindow(providerId),
+        contextWindow: turnModel === undefined
+          ? resolveCatalogContextWindow(providerId)
+          : catalogWindowOf(resolveModelPricing(turnModel, providerId)),
         toolTransport: slice.transport,
         toolCallAdapter: slice.adapter,
         supportsSlotAffinity: slice.slotAffinity,
         supportsParallelTools: slice.parallelTools,
-        strictTools: slice.strictTools,
+        strictTools: turnModel === undefined
+          ? slice.strictTools
+          : modelWantsStrictTools(resolveLlmConfig(getConfig()), providerId, turnModel),
         isLlamaServer: slice.isLlamaServer,
       };
     },
@@ -734,13 +834,16 @@ export async function createAgentRuntime(
   let telegramChannelForShutdown: TelegramChannel | null = null;
   let discordChannelForShutdown: DiscordChannel | null = null;
   let swarmForShutdown: SwarmRegistry | null = null;
+  let channelsForShutdown: ChannelRegistry | null = null;
   let stopPluginMcpWatch: (() => void) | null = null;
   const turnState = prepareRuntimeTurnState();
   const { pendingSessionNamings, turnsInFlight } = turnState;
   // In-flight `/enhance` passes; shutdown aborts them beside naming.
   const pendingPromptEnhances = new Set<AbortController>();
+  // In-flight `/btw` side questions; shutdown aborts them the same way.
+  const pendingSideQuestions = new Set<AbortController>();
   const lifecycle = createRuntimeLifecycle({
-    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, pendingPromptEnhances, turnsInFlight, compaction,
+    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, pendingPromptEnhances, pendingSideQuestions, turnsInFlight, compaction,
     browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
     embeddingBackfill: memoryEmbeddings,
     get scheduler() { return scheduler; },
@@ -748,16 +851,31 @@ export async function createAgentRuntime(
     get telegramChannelForShutdown() { return telegramChannelForShutdown; },
     get discordChannelForShutdown() { return discordChannelForShutdown; },
     get swarmForShutdown() { return swarmForShutdown; },
+    get channelsForShutdown() { return channelsForShutdown; },
     get pluginMcpWatch() { return stopPluginMcpWatch; },
     get consolidatorJob() { return consolidatorJob; },
     get taskStore() { return taskStore; },
     get analytics() { return observability.getAnalytics(); },
     get errorReporter() { return observability.getErrorReporter(); },
+    traceExport: { shutdown: traces.shutdownTraceExport },
   });
   const { shutdown } = lifecycle;
-  const refreshSkills = skillCatalogState.createRefreshSkills(options);
+  const refreshSkills = notePrefixInvalidation(
+    skillCatalogState.createRefreshSkills(options),
+    prefixInvalidations,
+    "skills refreshed",
+    ["skills"],
+  );
 
-  const refreshMcp = mcpCatalog.createRefreshMcp();
+  // MCP rebuilds the tool catalog; a GitHub token save lands here too
+  // (`### integrations`), and a catalog that crosses the tool-search
+  // threshold rewords the persona and rules.
+  const refreshMcp = notePrefixInvalidation(
+    mcpCatalog.createRefreshMcp(),
+    prefixInvalidations,
+    "tool catalog rebuilt",
+    ["system", "rules", "tools", "integrations"],
+  );
   // "Stop its code" (and plugin off / removed) stops that plugin's live
   // MCP servers now, not at the next start (ATO-1407).
   stopPluginMcpWatch = mcpCatalog.watchPluginMcp(refreshMcp);
@@ -772,18 +890,39 @@ export async function createAgentRuntime(
   const createEphemeralSession: typeof createWorkerSession = forwardWorkerUsage(createWorkerSession, sessionUsage);
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
-  const { executeTurn, steer, runTurn, controlGoal } = createRuntimeTurnService(config, {
-    sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
+  // ATO-592: `while-working` holds a sleep inhibitor while any turn runs
+  // (chat, Telegram, a task); off by default.
+  const keepAwake = createRuntimeKeepAwake({ config, logger });
+  const turnService = createRuntimeTurnService(config, {
+    sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies, turnsWithoutQuestions },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
-    traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage },
+    traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage, metrics },
     state: turnState, lifecycle, logger,
+    emitEvent: emitAgentLoopEventFor,
   });
+  const { steer, controlGoal } = turnService;
+  const runQueuedTurn = holdWhileRunning(keepAwake, turnService.runTurn);
+  const executeTurn = holdWhileRunning(keepAwake, turnService.executeTurn);
+  // ATO-586: an incognito chat closed mid-turn is deleted once the turn
+  // has left the queue (`isBusy` is still true inside `executeTurn`).
+  const incognitoSessions = createIncognitoSessions({
+    sessionStore, tracesDir: config.paths.tracesDir, isBusy: (id) => turnController.isBusy(id), logger, taskStore,
+  });
+  const runTurn: typeof runQueuedTurn = (session, ...rest) =>
+    runQueuedTurn(session, ...rest).finally(() => incognitoSessions.settle(session.id));
 
   const taskRunner = createRuntimeTaskRunner({
     config, taskStore, runTurn, sessionStore, createSession, toolRegistry,
     resolveTelegram: () => telegramChannelForShutdown, logger, metrics,
     approvalLevel: () => approvals.getLevel(),
+    keepAwake,
+  });
+  // Cross-chat tools (ATO-570), off unless `tasks.sessionToolsEnabled`: a send is a queued task.
+  registerSessionTools(toolRegistry, {
+    ...dangerous, sessionStore, taskStore, taskRunner, createSession,
+    defaultMaxAttempts: config.tasks.maxAttempts,
+    enabled: config.tasks.enabled && config.tasks.sessionToolsEnabled === true,
   });
 
   registerRuntimeFusionAndReadScope({
@@ -794,25 +933,32 @@ export async function createAgentRuntime(
     sessionUsage,
     liveWorkers: fusionLiveWorkers,
     runCheckpoints: fusionRuns,
+    outcomeLog: fusionOutcomes,
     steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),
     orchestratorTurnSpendUsd: (sessionId) => turnUsageMeter.peekCostUsd(sessionId),
   });
 
+  const mailTrigger = createRuntimeMailTrigger({
+    config, taskRunner, taskStore, sessionStore, createSession, webhookSessionStore, logger,
+  });
   const scheduler = createRuntimeScheduler({
     config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
+    ...(mailTrigger ? { sidecars: [mailTrigger] } : {}),
   });
   const consolidatorJob = createRuntimeMemoryConsolidator({
     config, notesStore, linkStore, lessonStore, procedureStore, voteStore,
     slotManager, llmComplete, logger, metrics, traceBus,
   });
   consolidatorJob?.start();
+  // Weekly archive of unused agent-learned skills (ATO-580); off by default.
+  void startRuntimeSkillCurator({ config, logger, cronTexts: () => recurringTaskTexts(taskStore), onArchived: refreshSkills });
 
   const runtime = {
     getSessionWorkspace(input: SessionState | string) {
       const session = typeof input === "string" ? sessionStore.load(input) : input;
       if (!session) throw new SessionNotFoundError(String(input));
       const mode = promptPreviewDeps.resolveModelMode(session.id);
-      return mode.mode === "cloud" ? promptPreviewDeps.prepareWorkspace(session, true) : null;
+      return mode.mode === "cloud" ? promptPreviewDeps.prepareWorkspace(session, true, undefined, { contextWindow: promptPreviewDeps.resolveCatalogContextWindow(session.id) }) : null;
     },
     config,
     loop,
@@ -858,6 +1004,8 @@ export async function createAgentRuntime(
           : null;
       },
     },
+    // A chat turn a restart cut off: offered, never continued on its own (ATO-448).
+    interruptedTurns: createInterruptedTurns(sessionStore),
     profileStore,
     notesStore,
     lessonStore,
@@ -871,6 +1019,18 @@ export async function createAgentRuntime(
     telegramChannel: null,
     discordChannel: null,
     swarm: null,
+    channels: null,
+    // ATO-1084: the channels are attached below; read at call time.
+    offlineMode: createOfflineModeControl({
+      channels: () => ({
+        registry: channelsForShutdown,
+        swarm: swarmForShutdown,
+      }),
+      warn: (message, err) =>
+        logger.warn(message, {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+    }),
     mcpManager,
     providerRegistry,
     capabilities,
@@ -879,6 +1039,7 @@ export async function createAgentRuntime(
     logger,
     metrics,
     createSession,
+    discardIncognitoSession: incognitoSessions.discard,
     createEphemeralSession,
     runTurn,
     controlGoal,
@@ -907,6 +1068,47 @@ export async function createAgentRuntime(
           }),
       });
     },
+    askSideQuestion: (question: string, sideOptions?: { sessionId?: string; signal?: AbortSignal }) => {
+      if (lifecycle.isShutdown()) return Promise.resolve({ ok: false as const, reason: "shutting down" });
+      const partition = sideQuestionPartition(sideOptions?.sessionId);
+      // Read once, never written back: the side question leaves no trace
+      // in the session. A failed read just means no context.
+      let turns: SessionState["turns"] = [];
+      if (sideOptions?.sessionId) {
+        try {
+          turns = sessionStore.load(sideOptions.sessionId)?.turns ?? [];
+        } catch {
+          turns = [];
+        }
+      }
+      return askSideQuestion(question, {
+        complete: (params) => llmComplete(params),
+        slotId: () => slotManager.sideCallSlotId(),
+        turns,
+        toolTransport: resolveActiveLlmSlice(fallbackChain.standingOverrideFor(partition) ?? undefined).transport,
+        pending: pendingSideQuestions,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
+        ...(sideOptions?.sessionId ? { sessionId: sideOptions.sessionId } : {}),
+        ...(sideOptions?.signal ? { signal: sideOptions.signal } : {}),
+        onError: (err: unknown) =>
+          logger.debug("side question failed", {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+      });
+    },
+    // ATO-875: `POST /api/complete`, routed like `/enhance` above.
+    completePlain: (input: PlainCompleteInput) => {
+      if (lifecycle.isShutdown()) return Promise.resolve({ ok: false as const, reason: "shutting down", kind: "failed" as const });
+      return completePlain(input, {
+        complete: (params) => llmComplete(params),
+        slotId: () => slotManager.sideCallSlotId(),
+        toolTransport: resolveActiveLlmSlice(fallbackChain.standingOverrideFor(PLAIN_COMPLETE_PARTITION) ?? undefined).transport,
+        pending: pendingPromptEnhances,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
+        onError: (err: unknown) =>
+          logger.debug("plain completion failed", { error: err instanceof Error ? err.message : String(err) }),
+      });
+    },
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,
@@ -921,6 +1123,9 @@ export async function createAgentRuntime(
     reportOnboardingStep,
     reportModelConfigured,
     reportLocalEngineFailed,
+    reportUiAction,
+    interviewInviteIdentity,
+    reportInterviewInvite,
     setLocalModelRestarter: (restarter: LocalModelRestarter | null) => {
       localModelRestarter = restarter;
     },
@@ -935,6 +1140,7 @@ export async function createAgentRuntime(
     telegramChannel: TelegramChannel | null;
     discordChannel: DiscordChannel | null;
     swarm: SwarmRegistry | null;
+    channels: ChannelRegistry | null;
   };
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
@@ -960,6 +1166,7 @@ export async function createAgentRuntime(
     connectTelegram: (channel) => { telegramChannelForShutdown = channel; },
     connectDiscord: (channel) => { discordChannelForShutdown = channel; },
     connectSwarm: (swarm) => { swarmForShutdown = swarm; },
+    connectChannels: (channels) => { channelsForShutdown = channels; },
   });
 
   // Deferred from the Scheduler construction site above: the first

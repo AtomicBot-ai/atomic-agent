@@ -1,10 +1,11 @@
 import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import { Fragment, type ReactElement } from "react";
 import type { SessionPickerEntry } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
 import { MouseListRow } from "../mouse/mouse-list-row.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { handleEditorSubmit } from "../submit-handler.js";
+import { folderHeaderAt } from "./chat-folders.js";
 
 export interface SessionPickerProps {
   sessions: readonly SessionPickerEntry[];
@@ -17,6 +18,12 @@ export interface SessionPickerProps {
    * claim to be a total.
    */
   morePages?: boolean;
+  /**
+   * ATO-1153: the composer's text while the picker is open. `sessions`
+   * is already narrowed to its matches (`visiblePickerSessions`); the
+   * picker only says what it is filtered by.
+   */
+  query?: string;
 }
 
 const MAX_ROWS = 10;
@@ -28,10 +35,15 @@ const MAX_ROWS = 10;
  */
 export function SessionPicker(props: SessionPickerProps): ReactElement {
   const { sessions, cursor, currentSessionId, morePages = false } = props;
+  const query = (props.query ?? "").replace(/\s+/g, " ").trim();
   if (sessions.length === 0) {
     return (
       <Box borderStyle="round" borderColor={theme.colors.warn} paddingX={1}>
-        <Text color={theme.colors.warn}>no persisted sessions yet</Text>
+        <Text color={theme.colors.warn}>
+          {query.length > 0
+            ? `no loaded session matches "${truncate(query, 40)}" — Esc to dismiss`
+            : "no persisted sessions yet"}
+        </Text>
       </Box>
     );
   }
@@ -52,43 +64,59 @@ export function SessionPicker(props: SessionPickerProps): ReactElement {
       flexDirection="column"
     >
       <Text color={theme.colors.muted}>
-        sessions ({sessions.length}
-        {morePages ? "+" : ""}) — Enter to load, Esc to dismiss
+        {query.length > 0
+          ? `sessions matching "${truncate(query, 40)}" (${sessions.length})`
+          : `sessions (${sessions.length}${morePages ? "+" : ""})`}{" "}
+        — Enter to load, Esc to dismiss
+        {query.length > 0 ? "" : ", type to search"}
       </Text>
       {hiddenBefore > 0 ? (
         <Text color={theme.colors.muted}>↑ {hiddenBefore} above</Text>
       ) : null}
       {visible.map((entry, idx) => (
-        <MouseListRow
-          key={entry.sessionId}
-          layer={MOUSE_LAYER_MODAL}
-          selected={idx === visibleCursor}
-          onSelect={(mouse) =>
-            mouse.dispatch({
-              type: "session_picker_cursor_set",
-              row: windowStart + idx,
-            })
-          }
-          onActivate={(mouse) =>
-            handleEditorSubmit(
-              "",
-              mouse.getState(),
-              mouse.dispatch,
-              mouse.callbacks,
-            )
-          }
-        >
-          <PickerRow
-            entry={entry}
+        <Fragment key={entry.sessionId}>
+          {/* ATO-1180: the desktop's chat folders, as group headers. */}
+          <FolderHeader name={folderHeaderAt(visible, idx)} />
+          <MouseListRow
+            layer={MOUSE_LAYER_MODAL}
             selected={idx === visibleCursor}
-            current={entry.sessionId === currentSessionId}
-          />
-        </MouseListRow>
+            onSelect={(mouse) =>
+              mouse.dispatch({
+                type: "session_picker_cursor_set",
+                row: windowStart + idx,
+              })
+            }
+            onActivate={(mouse) =>
+              handleEditorSubmit(
+                "",
+                mouse.getState(),
+                mouse.dispatch,
+                mouse.callbacks,
+              )
+            }
+          >
+            <PickerRow
+              entry={entry}
+              selected={idx === visibleCursor}
+              current={entry.sessionId === currentSessionId}
+            />
+          </MouseListRow>
+        </Fragment>
       ))}
       {hiddenAfter > 0 ? (
         <Text color={theme.colors.muted}>↓ {hiddenAfter} below</Text>
       ) : null}
     </Box>
+  );
+}
+
+function FolderHeader({ name }: { name: string | null }): ReactElement | null {
+  if (name === null) return null;
+  return (
+    <Text color={theme.colors.accent} bold>
+      {"▾ "}
+      {truncate(name, 48)}
+    </Text>
   );
 }
 
@@ -135,6 +163,7 @@ function PickerRow({
         {"  "}
         {when} · {entry.turnCount} turn{entry.turnCount === 1 ? "" : "s"} ·{" "}
         {cwd}
+        {entry.folder !== undefined ? ` · ${truncate(entry.folder, 20)}` : ""}
       </Text>
       {preview.length > 0 ? (
         <Text color={theme.colors.muted}>

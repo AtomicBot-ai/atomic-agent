@@ -313,3 +313,25 @@ describe("cliReportedError", () => {
     ).toBeNull();
   });
 });
+
+describe("SubscriptionCliInvocationError.failureKind (ATO-1446)", () => {
+  it("defaults to exited and keeps an explicit kind", () => {
+    expect(new SubscriptionCliInvocationError("boom", 1).failureKind).toBe("exited");
+    expect(new SubscriptionCliInvocationError("x timed out", null, "timeout").failureKind).toBe("timeout");
+  });
+
+  it("reads a usage limit out of the CLI's own words", () => {
+    expect(
+      new SubscriptionCliInvocationError("claude reported error_during_execution (api status 429): limit", null, "reported_error").failureKind,
+    ).toBe("limit_reached");
+    expect(
+      new SubscriptionCliInvocationError("codex turn failed: You've hit your usage limit.", null, "turn_failed").failureKind,
+    ).toBe("limit_reached");
+  });
+
+  it("does not relabel our own messages as a limit", () => {
+    expect(
+      new SubscriptionCliInvocationError('"claude" produced more than 1024 bytes (rate limit)', 0, "output_too_large").failureKind,
+    ).toBe("output_too_large");
+  });
+});

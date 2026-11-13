@@ -71,6 +71,19 @@ describe("POST /v1/chat/completions (non-stream)", () => {
     expect(body.error.message).toMatch(/messages/i);
   });
 
+  it("refuses a per-turn model on the local model, which every project shares (ATO-1148)", async () => {
+    const response = await postChat(harness.baseUrl, {
+      model: "atomic-agent",
+      messages: [{ role: "user", content: "hello" }],
+      provider_id: "local-llama",
+      provider_model: "other.gguf",
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { message: string; param: string | null } };
+    expect(body.error.message).toMatch(/shared by all projects/);
+    expect(body.error.param).toBe("provider_model");
+  });
+
   it("returns the assistant reply as an OpenAI chat.completion", async () => {
     const response = await postChat(harness.baseUrl, {
       model: "atomic-agent",
@@ -118,6 +131,29 @@ describe("POST /v1/chat/completions (non-stream)", () => {
     expect(body.session_id).toBe(session.id);
     const reloaded = harness.runtime.sessionStore.load(session.id);
     expect(reloaded?.turns.length).toBeGreaterThan(0);
+  });
+
+  it("stamps the project's instructions on the session, keeps them when absent, clears them on null (ATO-42)", async () => {
+    const session = harness.runtime.createSession({ metadata: { source: "test-preload" } });
+    const send = (extra: Record<string, unknown>) =>
+      postChat(harness.baseUrl, { model: "atomic-agent", session_id: session.id, messages: [{ role: "user", content: "hello" }], ...extra });
+    expect((await send({ project_instructions: "Answer in French.", project_name: "Docs" })).status).toBe(200);
+    expect(harness.runtime.sessionStore.load(session.id)?.metadata.project).toEqual({ name: "Docs", instructions: "Answer in French." });
+    expect((await send({})).status).toBe(200);
+    expect(harness.runtime.sessionStore.load(session.id)?.metadata.project).toEqual({ name: "Docs", instructions: "Answer in French." });
+    expect((await send({ project_instructions: null })).status).toBe(200);
+    expect(harness.runtime.sessionStore.load(session.id)?.metadata.project).toBeUndefined();
+  });
+
+  it("refuses project_instructions that is not a string (ATO-42)", async () => {
+    const response = await postChat(harness.baseUrl, {
+      model: "atomic-agent",
+      messages: [{ role: "user", content: "hello" }],
+      project_instructions: { text: "x" },
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { param?: string } };
+    expect(body.error.param).toBe("project_instructions");
   });
 });
 
@@ -373,6 +409,42 @@ describe("POST /v1/chat/completions (streaming)", () => {
     } finally {
       await harness.cleanup();
     }
+  });
+
+  it("puts the turn's timed generation on the usage frame, and leaves it off when nothing was timed (ATO-1186)", async () => {
+    const usageFrame = async (usage: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const harness = await startTestHarness({ llamaComplete: scriptedToolThenReply() });
+      // As in the include_usage test below: the injected completer bypasses
+      // the meter, so the turn result carries the usage runTurn would set.
+      const runTurn = harness.runtime.runTurn.bind(harness.runtime);
+      vi.spyOn(harness.runtime, "runTurn").mockImplementation(async (...args: Parameters<typeof runTurn>) => ({
+        ...(await runTurn(...args)),
+        usage: usage as { promptTokens: number; completionTokens: number },
+      }));
+      try {
+        const response = await postChat(
+          harness.baseUrl,
+          { model: "atomic-agent", stream: true, messages: [{ role: "user", content: "inspect the page" }] },
+          { [EXTENSIONS_HEADER]: "1" },
+        );
+        const text = await readAllText(response);
+        const line = /event: usage\ndata: ([^\n]+)/.exec(text)?.[1];
+        expect(line).toBeDefined();
+        return JSON.parse(line!) as Record<string, unknown>;
+      } finally {
+        await harness.cleanup();
+      }
+    };
+    const timed = await usageFrame({
+      promptTokens: 150,
+      completionTokens: 12,
+      generation: { completionTokens: 10, durationMs: 500 },
+    });
+    expect(timed.generation).toEqual({ completion_tokens: 10, duration_ms: 500 });
+    // The OpenAI-shaped block stays exact.
+    expect(timed.usage).toEqual({ prompt_tokens: 150, completion_tokens: 12, total_tokens: 162 });
+    const untimed = await usageFrame({ promptTokens: 150, completionTokens: 12 });
+    expect(untimed).not.toHaveProperty("generation");
   });
 
   it("omits atomic-agent SSE extensions by default so OpenAI clients validate cleanly", async () => {
@@ -1019,5 +1091,42 @@ describe("POST /v1/chat/completions with reply attachments", () => {
     } finally {
       await harness.cleanup();
     }
+  });
+});
+
+describe("POST /v1/chat/completions reasoning_effort (ATO-490)", () => {
+  let harness: Harness | null = null;
+
+  afterEach(async () => {
+    if (harness) await harness.cleanup();
+    harness = null;
+  });
+
+  it("passes low/medium/high to the turn as its reasoning level, and nothing for auto, absent or unknown", async () => {
+    harness = await startTestHarness({ llamaComplete: scriptedLlama(["a", "b", "c", "d", "e", "f"]) });
+    const runTurn = harness.runtime.runTurn.bind(harness.runtime);
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    vi.spyOn(harness.runtime, "runTurn").mockImplementation(async (...args: Parameters<typeof runTurn>) => {
+      seen.push(args[2] as Record<string, unknown> | undefined);
+      return runTurn(...args);
+    });
+    const send = async (extra: Record<string, unknown>, stream = false) => {
+      const response = await postChat(harness!.baseUrl, {
+        ...extra,
+        ...(stream ? { stream: true } : {}),
+        messages: [{ role: "user", content: `hello ${seen.length}` }],
+      });
+      expect(response.status).toBe(200);
+      await response.text();
+    };
+    await send({ reasoning_effort: "high" });
+    await send({ reasoning_effort: "Low" }, true);
+    await send({ reasoning_effort: "auto" });
+    await send({});
+    await send({ reasoning_effort: "xhigh" });
+    await send({ reasoning_effort: 3 });
+    expect(seen.map((o) => o?.reasoningOverride)).toEqual(["high", "low", undefined, undefined, undefined, undefined]);
+    // Absent, the key itself is absent: the turn is built as before.
+    for (const options of seen.slice(2)) expect(options).not.toHaveProperty("reasoningOverride");
   });
 });

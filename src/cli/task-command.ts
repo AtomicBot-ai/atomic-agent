@@ -9,6 +9,13 @@ import {
 } from "../tasks/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { parseDurationFlag, parseUsdFlag } from "./task-budget-flags.js";
+import {
+  TASK_PAUSE_HELP,
+  handlePause,
+  handleResume,
+  handleRuns,
+} from "./task-pause-command.js";
+import { taskHeartbeatCommand } from "./task-heartbeat-command.js";
 
 const HELP =
   [
@@ -26,7 +33,7 @@ const HELP =
     "  create [--session <id>] --message <text>",
     "         [--max-attempts N] [--max-steps N]",
     "         [--at <unix-ms|iso-8601> | --cron <expr> | --every <seconds>] [--tz <iana>]",
-    "         [--notify telegram] [--max-cost-usd <n>] [--max-duration <dur>]",
+    "         [--notify telegram|push] [--max-cost-usd <n>] [--max-duration <dur>]",
     "                            Persist a new task (origin=cli). Omit --session for a",
     "                            lazy one-shot (fresh ephemeral session at run time) or",
     "                            for a recurring task (persistent session allocated on",
@@ -34,7 +41,9 @@ const HELP =
     "                            --notify telegram reports the task's final result to",
     "                            the paired Telegram chat (the result text is sent to",
     "                            Telegram's servers; skipped with a warning when the",
-    "                            channel is down or unpaired).",
+    "                            channel is down or unpaired). --notify push sends a",
+    "                            short phone push through ntfy instead (set it up",
+    "                            with `atomic-agent push on`).",
     "                            --max-cost-usd stops a run once its estimated spend",
     "                            reaches that many dollars, with a closing summary;",
     "                            local (unpriced) models count as $0. Fusion workers",
@@ -47,11 +56,14 @@ const HELP =
     "                            without Z or an offset is the machine's local time; a",
     "                            date alone (YYYY-MM-DD) is midnight UTC.",
     "  cancel <id>               Move a task to 'cancelled' (idempotent on terminal rows)",
+    ...TASK_PAUSE_HELP,
     "  run [<id>|--all-pending] [--session <id>]",
     "                            Manually drain — single task by id, or every pending row",
     "                            (optionally scoped to one session)",
     "  tick [--limit N]          One-shot scheduler pump: drain every due task (based on",
     "                            scheduled_for) without starting the long-lived ticker",
+    "  heartbeat create|list     A recurring check of a checklist file that writes only",
+    "                            when there is news (see `task heartbeat --help`)",
     "",
     "Examples:",
     "  atomic-agent task list --status pending",
@@ -77,10 +89,18 @@ export async function taskCommand(args: string[]): Promise<number> {
         return await handleCreate(args.slice(1));
       case "cancel":
         return handleCancel(args.slice(1));
+      case "pause":
+        return handlePause(args.slice(1), openTaskStore);
+      case "resume":
+        return handleResume(args.slice(1), openTaskStore);
+      case "runs":
+        return handleRuns(args.slice(1), openTaskStore);
       case "run":
         return await handleRun(args.slice(1));
       case "tick":
         return await handleTick(args.slice(1));
+      case "heartbeat":
+        return await taskHeartbeatCommand(args.slice(1));
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);
@@ -162,15 +182,16 @@ async function handleCreate(args: string[]): Promise<number> {
 
   if (!message) {
     process.stderr.write(
-      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms|iso> | --cron <expr> | --every <seconds>] [--tz <iana>] [--notify telegram] [--max-attempts N] [--max-steps N] [--max-cost-usd <n>] [--max-duration <dur>]\n",
+      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms|iso> | --cron <expr> | --every <seconds>] [--tz <iana>] [--notify telegram|push] [--max-attempts N] [--max-steps N] [--max-cost-usd <n>] [--max-duration <dur>]\n",
     );
     return 1;
   }
-  if (notifyRaw !== undefined && notifyRaw !== "telegram") {
-    process.stderr.write("--notify only supports: telegram\n");
+  if (notifyRaw !== undefined && notifyRaw !== "telegram" && notifyRaw !== "push") {
+    process.stderr.write("--notify only supports: telegram, push\n");
     return 1;
   }
-  const notify = notifyRaw === "telegram" ? ("telegram" as const) : undefined;
+  const notify =
+    notifyRaw === "telegram" || notifyRaw === "push" ? notifyRaw : undefined;
 
   const scheduleFlags = [atRaw, cronRaw, everyRaw].filter(
     (v) => v !== undefined,
@@ -407,7 +428,10 @@ async function handleRun(args: string[]): Promise<number> {
   });
   try {
     if (explicitId) {
-      const result = await runtime.taskRunner.runOne(explicitId);
+      // A paused task runs this once and stays paused (ATO-590).
+      const result = await runtime.taskRunner.runOne(explicitId, undefined, {
+        evenIfPaused: true,
+      });
       if (!result) {
         process.stderr.write(
           `task not found or already claimed: ${explicitId}\n`,
@@ -484,6 +508,7 @@ function parseStatuses(
   const allowed: TaskStatus[] = [
     "pending",
     "running",
+    "paused",
     "completed",
     "failed",
     "blocked",

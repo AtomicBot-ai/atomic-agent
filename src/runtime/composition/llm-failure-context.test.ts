@@ -215,3 +215,68 @@ describe("describeLlmFailure: a taken managed port (ATO-1277)", () => {
     expect(context.portHeldByOther).toBeUndefined();
   });
 });
+
+describe("describeLlmFailure: what the outage wait decided on (ATO-1432)", () => {
+  it("carries the first and last verdict from the outage, as the turn read them", () => {
+    const context = describeLlmFailure({
+      error: new Error("fetch failed"),
+      outage: {
+        waitedMs: 300_000,
+        attempts: 13,
+        engineVerdicts: {
+          first: { state: "unknown", reason: "lock_held" },
+          last: { state: "unknown", reason: "lock_held" },
+        },
+      },
+    }, deps(config({})));
+    expect(context).toMatchObject({
+      engineWaitVerdict: "unknown",
+      engineWaitReason: "lock_held",
+      engineWaitFirstVerdict: "unknown",
+      engineWaitFirstReason: "lock_held",
+    });
+  });
+
+  it("an outage with no verdict carries none", () => {
+    const context = describeLlmFailure({ error: new Error("x"), outage }, deps(config({})));
+    expect(context.engineWaitVerdict).toBeUndefined();
+    expect(context.engineWaitReason).toBeUndefined();
+  });
+});
+
+describe("describeLlmFailure: why the engine's process is gone (ATO-1435)", () => {
+  function refusedError(): Error {
+    const errno = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:19091"), { code: "ECONNREFUSED" });
+    return new TransportError("fetch failed", null, "http://127.0.0.1:19091/v1/chat/completions", { cause: errno });
+  }
+  const explain = (state: "dead" | "no_pid" | "alive" | "unknown") =>
+    vi.fn(() => ({ state, reason: "pid_dead" as const, lock: "free" as const }));
+
+  it.each(["dead", "no_pid"] as const)("reads it for a refusal with the engine %s", (state) => {
+    const readEngineExitReason = vi.fn(() => "model_file_missing" as const);
+    const d = { ...deps(config({})), explainEngineLiveness: explain(state), readEngineExitReason };
+    expect(describeLlmFailure({ error: refusedError() }, d).engineExitReason).toBe("model_file_missing");
+    expect(readEngineExitReason).toHaveBeenCalledWith("/state/models");
+  });
+
+  it.each(["alive", "unknown"] as const)("never reads it with the engine %s", (state) => {
+    const readEngineExitReason = vi.fn(() => "out_of_memory" as const);
+    const d = { ...deps(config({})), explainEngineLiveness: explain(state), readEngineExitReason };
+    expect(describeLlmFailure({ error: refusedError() }, d).engineExitReason).toBeUndefined();
+    expect(readEngineExitReason).not.toHaveBeenCalled();
+  });
+
+  it("never reads it for an external server or a failure that was not a refusal", () => {
+    const readEngineExitReason = vi.fn(() => "out_of_memory" as const);
+    const external = { ...deps(config({ mode: "external" })), explainEngineLiveness: explain("dead"), readEngineExitReason };
+    expect(describeLlmFailure({ error: refusedError() }, external).engineExitReason).toBeUndefined();
+    const managed = { ...deps(config({})), explainEngineLiveness: explain("dead"), readEngineExitReason };
+    expect(describeLlmFailure({ error: new Error("fetch failed") }, managed).engineExitReason).toBeUndefined();
+    expect(readEngineExitReason).not.toHaveBeenCalled();
+  });
+
+  it("a log read that throws reports unknown", () => {
+    const d = { ...deps(config({})), explainEngineLiveness: explain("dead"), readEngineExitReason: () => { throw new Error("EACCES"); } };
+    expect(describeLlmFailure({ error: refusedError() }, d).engineExitReason).toBe("unknown");
+  });
+});

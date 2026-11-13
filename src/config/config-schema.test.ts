@@ -548,7 +548,19 @@ describe("parseUserConfigFile", () => {
       autoDetect: false,
       maxImageBytes: 2_097_152,
       maxImagesPerCall: 1,
+      // ATO-497 decision 62: audioInput is left unset (auto).
+      maxAudioBytes: 16 * 1024 * 1024,
     });
+  });
+
+  it("keeps vision.audioInput tri-state: unset stays unset, booleans pass through (ATO-497)", () => {
+    const unset = parseUserConfigFile({ version: USER_CONFIG_VERSION, vision: {} });
+    expect(unset.vision.audioInput).toBeUndefined();
+    expect("audioInput" in unset.vision).toBe(false);
+    const on = parseUserConfigFile({ version: USER_CONFIG_VERSION, vision: { audioInput: true } });
+    expect(on.vision.audioInput).toBe(true);
+    const off = parseUserConfigFile({ version: USER_CONFIG_VERSION, vision: { audioInput: false } });
+    expect(off.vision.audioInput).toBe(false);
   });
 
   it("rejects vision.maxImageBytes <= 0", () => {
@@ -582,6 +594,7 @@ describe("parseUserConfigFile", () => {
       maxEntries: 50,
       maxContentChars: 1_000,
       recallDefaultK: 3,
+      reconcile: false,
     });
   });
 
@@ -881,6 +894,57 @@ describe("parseUserConfigFile", () => {
         tracing: { trace: { maxBytesPerSession: 0 } },
       }),
     ).toThrow(/tracing.trace.maxBytesPerSession/);
+  });
+
+  it("leaves tracing.otel export off by default", () => {
+    const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
+    expect(parsed.tracing.otel).toEqual({
+      enabled: null,
+      endpoint: null,
+      headers: {},
+      captureContent: false,
+    });
+  });
+
+  it("parses tracing.otel endpoint, headers and captureContent", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tracing: {
+        otel: {
+          endpoint: " http://localhost:4318 ",
+          headers: { Authorization: "Basic abc" },
+          captureContent: true,
+        },
+      },
+    });
+    expect(parsed.tracing.otel).toEqual({
+      enabled: null,
+      endpoint: "http://localhost:4318",
+      headers: { Authorization: "Basic abc" },
+      captureContent: true,
+    });
+    expect(parsed.tracing.trace.enabled).toBeNull();
+  });
+
+  it("rejects malformed tracing.otel values", () => {
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tracing: { otel: { endpoint: 4318 } },
+      }),
+    ).toThrow(/tracing.otel.endpoint/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tracing: { otel: { headers: { a: 1 } } },
+      }),
+    ).toThrow(/tracing.otel.headers.a/);
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tracing: { otel: { captureContent: "sometimes" } },
+      }),
+    ).toThrow(/tracing.otel.captureContent/);
   });
 
   it("reads legacy telemetry.* as an alias of tracing.* (tracing wins on overlap)", () => {
@@ -1641,6 +1705,7 @@ describe("parseUserConfigFile", () => {
         envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
       },
       screen: { enabled: false, point: true },
+      lsp: { enabled: false },
     });
   });
 

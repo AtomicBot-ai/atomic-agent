@@ -18,6 +18,14 @@ export type {
 } from "./http-server.js";
 
 export { buildRouteTable } from "./route-table.js";
+export { buildTunnelRouteTable } from "./tunnel-route-table.js";
+export {
+  getWebhookTunnelStatus,
+  resetWebhookTunnelStatus,
+  setWebhookTunnelStatus,
+} from "./webhook-tunnel-status.js";
+export type { WebhookTunnelStatus } from "./webhook-tunnel-status.js";
+export type { RouteTableOptions } from "./route-table.js";
 
 export { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 export type {
@@ -35,6 +43,7 @@ export {
   COMPLETION_ID_HEADER,
   EXTENSIONS_HEADER,
   SCREEN_OVERLAY_HEADER,
+  QUESTIONS_HEADER,
   createChatCompletionsHandler,
 } from "./openai-chat-completions.js";
 

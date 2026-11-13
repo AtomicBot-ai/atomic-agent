@@ -5,11 +5,17 @@ import {
   assertLinuxArm64Glibc,
   detectGlibcVersion,
 } from "./linux-arm64-backend-variant.js";
+import { detectLinuxX64BackendAsset } from "./linux-x64-backend-variant.js";
 import {
   resolvePlatformAsset,
   WINDOWS_ARM64_BACKEND_ASSET,
+  WINDOWS_ARM64_COMPAT_BACKEND_ASSET,
   type PlatformAsset,
 } from "./platform-assets.js";
+import {
+  detectWindowsArm64FastBuildSupport,
+  windowsArm64AssetPreference,
+} from "./windows-arm64-backend-variant.js";
 
 /**
  * The turboquant repo ships four Windows x64 backend builds. The binary
@@ -32,10 +38,11 @@ export const WINDOWS_BACKEND_ASSETS = {
 /**
  * Operator-facing values for `localModels.managed.backendVariant`.
  * `"auto"` keeps the nvidia-smi driven detection; the rest pin one of
- * the Windows zips outright (no probe). Meaningful on win32 x64 only —
- * macOS, Linux x64, Linux arm64 and Windows arm64 each publish a single
- * asset, so the preference has nothing to choose between and is ignored
- * there.
+ * the Windows zips outright (no probe). Meaningful on win32 x64 only.
+ * macOS, Linux arm64 and Windows arm64 each publish a single asset, so the
+ * preference has nothing to choose between and is ignored there; Linux x64
+ * (ATO-619) picks its build by detection alone
+ * (`linux-x64-backend-variant.ts`), so the preference is ignored there too.
  */
 export const BACKEND_VARIANT_PREFERENCES = [
   "auto",
@@ -121,8 +128,13 @@ export function getConfiguredCoreBackendVariant(): CoreBackendVariant {
 export function isWindowsGpuBackendAsset(
   assetName: string | undefined,
 ): boolean {
-  // ATO-252: the arm64 build is CPU only; there is nothing to fall back from.
-  if (assetName === WINDOWS_ARM64_BACKEND_ASSET) return false;
+  // ATO-252: the arm64 builds are CPU only; there is nothing to fall back from.
+  if (
+    assetName === WINDOWS_ARM64_BACKEND_ASSET ||
+    assetName === WINDOWS_ARM64_COMPAT_BACKEND_ASSET
+  ) {
+    return false;
+  }
   if (assetName === undefined) return true;
   return (
     assetName === WINDOWS_BACKEND_ASSETS.vulkan ||
@@ -352,15 +364,19 @@ export function resetWindowsBackendAssetCache(): void {
 
 /**
  * Resolve the platform asset for an actual download. Identical to
- * `resolvePlatformAsset` everywhere but Windows, where it swaps the
- * default Vulkan `assetName` for the CUDA build when a compatible
- * NVIDIA driver is present (see `selectWindowsBackendAsset`).
+ * `resolvePlatformAsset` everywhere but Windows x64 and Linux x64, where
+ * it swaps the default Vulkan `assetName` for the CUDA build when a
+ * compatible NVIDIA driver is present (see `selectWindowsBackendAsset`;
+ * on Linux also ROCm, see `selectLinuxX64BackendAsset`).
  * `binaryName` is unchanged within a platform, so install paths and
  * `isBackendDownloaded` stay stable.
  *
- * Windows arm64 (ATO-252) keeps `resolvePlatformAsset`'s single CPU
- * asset too: the x64 zips the probe chooses between cannot run there,
- * so neither detection nor a configured `backendVariant` applies.
+ * Windows arm64 (ATO-252) never gets an x64 zip: neither the nvidia-smi
+ * probe nor a configured `backendVariant` applies. It chooses between its
+ * own two CPU builds instead (ATO-253): the armv8.7 one only when the CPU
+ * register shows I8MM and BF16, the compat one otherwise, with the other
+ * in `alternateAssetNames` for a release that carries only one of them
+ * (`windowsArm64AssetPreference`).
  *
  * Linux arm64 keeps `resolvePlatformAsset`'s single asset — there is
  * only one published arm64 build — but refuses a host whose glibc
@@ -380,7 +396,16 @@ export function resolveDownloadAsset(
     );
     return base;
   }
-  if (base.platform === "win32" && base.arch === "arm64") return base;
+  if (base.platform === "win32" && base.arch === "arm64") {
+    const [assetName, ...alternateAssetNames] = windowsArm64AssetPreference(
+      detectWindowsArm64FastBuildSupport(),
+    );
+    return { ...base, assetName, alternateAssetNames };
+  }
+  // ATO-619: CUDA or ROCm when the machine can run it, as Atomic Core picks.
+  if (base.platform === "linux" && base.arch === "x64") {
+    return { ...base, assetName: detectLinuxX64BackendAsset() };
+  }
   if (base.platform !== "win32") return base;
   return { ...base, assetName: detectWindowsBackendAsset() };
 }

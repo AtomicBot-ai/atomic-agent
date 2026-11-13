@@ -5,11 +5,18 @@ import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-
 import { getProviderFactory } from "../../llm/provider/registry/provider-types.js";
 import { registerBuiltInProviderKinds } from "../../llm/provider/registry/register-built-in-providers.js";
 import {
+  cloudPresetForUrl,
   findProviderPreset,
   presetForEntryId,
   PROVIDER_PRESETS,
   suggestPresetEntryId,
+  vertexOpenAiBaseUrl,
+  vertexTokenCommand,
 } from "./provider-presets.js";
+import { openAiChatPathPrefix } from "../../llm/provider/openai/openai-chat-path.js";
+import { resetCommandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
+import { providerKeyStatus } from "../../llm/provider/provider-key.js";
+import { presetNeedsKeyScreen } from "./providers-wizard-phases.js";
 import { buildProviderEntryFromWizard } from "./providers-wizard-build-entry.js";
 
 describe("PROVIDER_PRESETS", () => {
@@ -93,6 +100,72 @@ describe("PROVIDER_PRESETS", () => {
     for (const [id, baseUrl] of Object.entries(expected)) {
       expect(findProviderPreset(id)?.baseUrl, id).toBe(baseUrl);
     }
+  });
+
+  it("offers W&B Inference on its documented root with its own key", () => {
+    // CoreWeave Serverless Inference keeps the W&B hostname. Bearer key,
+    // no mandatory header: the team/project header is optional.
+    const preset = findProviderPreset("wandb");
+    expect(preset?.baseUrl).toBe("https://api.inference.wandb.ai");
+    expect(preset?.envVar).toBe("WANDB_API_KEY");
+    expect(preset?.local).toBeUndefined();
+    expect(preset?.listsModelsWithoutKey).toBeUndefined();
+    expect(presetForEntryId("wandb-2")?.id).toBe("wandb");
+  });
+
+  it("offers Azure OpenAI and Amazon Bedrock as per-account endpoints on Bearer", () => {
+    // ATO-468. Azure's v1 API needs no `api-version` and takes the key as
+    // Bearer; Bedrock's Mantle endpoint takes a Bedrock API key as Bearer
+    // and is the one that lists models. Both endpoints are the operator's
+    // own (resource, Region), so the wizard asks for the URL.
+    const azure = findProviderPreset("azure-openai");
+    expect(azure?.baseUrl).toBe("https://your-resource.openai.azure.com/openai");
+    expect(azure?.envVar).toBe("AZURE_OPENAI_API_KEY");
+    expect(azure?.perAccountEndpoint?.placeholder).toBe("your-resource");
+    const bedrock = findProviderPreset("bedrock");
+    expect(bedrock?.baseUrl).toBe("https://bedrock-mantle.us-east-1.api.aws");
+    expect(bedrock?.envVar).toBe("AWS_BEARER_TOKEN_BEDROCK");
+    expect(bedrock?.perAccountEndpoint?.placeholder).toBeUndefined();
+    for (const preset of [azure, bedrock]) {
+      expect(preset?.apiKeyHeader).toBeUndefined();
+      expect(preset?.local).toBeUndefined();
+      // The template's own host must match its pattern, or a saved entry
+      // that kept the default (Bedrock's us-east-1) would lose its class.
+      expect(
+        preset?.perAccountEndpoint?.hostPattern?.test(new URL(preset!.baseUrl).hostname),
+      ).toBe(true);
+    }
+  });
+
+  it("matches a saved per-account endpoint back to its cloud preset", () => {
+    expect(cloudPresetForUrl("https://my-team.openai.azure.com/openai")?.id).toBe("azure-openai");
+    expect(cloudPresetForUrl("https://my-team.services.ai.azure.com/openai")?.id).toBe("azure-openai");
+    expect(cloudPresetForUrl("https://bedrock-mantle.ap-south-1.api.aws")?.id).toBe("bedrock");
+    expect(cloudPresetForUrl("https://api.groq.com/openai/v1")?.id).toBe("groq");
+    // Plain http, lookalikes, local servers and junk match nothing.
+    expect(cloudPresetForUrl("http://my-team.openai.azure.com/openai")).toBeUndefined();
+    expect(cloudPresetForUrl("https://openai.azure.com.evil.example")).toBeUndefined();
+    expect(cloudPresetForUrl("http://localhost:11434")).toBeUndefined();
+    expect(cloudPresetForUrl("not a url")).toBeUndefined();
+  });
+
+  it("offers Lemonade and Foundry Local as keyless local servers", () => {
+    // ATO-626. Lemonade (AMD) listens on a fixed default port; Foundry
+    // Local picks its port at start, so it asks for the URL and has no
+    // cloud host pattern to match.
+    const lemonade = findProviderPreset("lemonade");
+    expect(lemonade?.local).toBe(true);
+    expect(lemonade?.baseUrl).toBe("http://localhost:13305");
+    expect(lemonade?.envVar).toBe("LEMONADE_API_KEY");
+    expect(lemonade?.perAccountEndpoint).toBeUndefined();
+    const foundry = findProviderPreset("foundry-local");
+    expect(foundry?.local).toBe(true);
+    expect(foundry?.baseUrl).toBe("http://localhost:5273");
+    expect(foundry?.perAccountEndpoint?.hint).toMatch(/foundry server status/);
+    expect(foundry?.perAccountEndpoint?.hostPattern).toBeUndefined();
+    // Local presets never classify a URL as a cloud service.
+    expect(cloudPresetForUrl("http://localhost:13305")).toBeUndefined();
+    expect(cloudPresetForUrl("http://localhost:5273")).toBeUndefined();
   });
 
   it("marks LM Studio as local", () => {
@@ -312,5 +385,127 @@ describe("Anthropic preset — outgoing request headers", () => {
     expect(sent.get("x-api-key")).toBe(KEY);
     expect(sent.get("anthropic-version")).toBe("2023-06-01");
     expect(sent.get("authorization")).toBeNull();
+  });
+});
+
+describe("Google Vertex AI preset (ATO-468)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetCommandIssuedSecrets();
+  });
+
+  it("builds the OpenAI-compatible root from region and project", () => {
+    expect(vertexOpenAiBaseUrl({ region: "europe-west4", project: "acme-prod" })).toBe(
+      "https://europe-west4-aiplatform.googleapis.com/v1/projects/acme-prod/locations/europe-west4/endpoints/openapi",
+    );
+    // The global location has no regional host.
+    expect(vertexOpenAiBaseUrl({ region: "global", project: "acme-prod" })).toBe(
+      "https://aiplatform.googleapis.com/v1/projects/acme-prod/locations/global/endpoints/openapi",
+    );
+    // Stray spaces and casing from a paste do not reach the URL.
+    expect(vertexOpenAiBaseUrl({ region: " US-Central1 ", project: " acme " })).toBe(
+      "https://us-central1-aiplatform.googleapis.com/v1/projects/acme/locations/us-central1/endpoints/openapi",
+    );
+  });
+
+  it("is a per-account template keyed by a gcloud token command, on Bearer", () => {
+    const vertex = findProviderPreset("google-vertex");
+    expect(vertex?.label).toBe("Google Vertex AI");
+    expect(vertex?.baseUrl).toBe(
+      vertexOpenAiBaseUrl({ region: "us-central1", project: "your-project" }),
+    );
+    expect(vertex?.perAccountEndpoint?.placeholder).toBe("your-project");
+    expect(vertex?.apiKeyHeader).toBeUndefined();
+    expect(vertex?.apiKeyCommand).toEqual(vertexTokenCommand());
+    expect(
+      vertex?.perAccountEndpoint?.hostPattern?.test(new URL(vertex!.baseUrl).hostname),
+    ).toBe(true);
+    // The key is printed, not pasted: no key screen.
+    expect(presetNeedsKeyScreen("google-vertex")).toBe(false);
+  });
+
+  it("runs gcloud without a shell, except through cmd on Windows", () => {
+    expect(vertexTokenCommand("darwin")).toEqual(["gcloud", "auth", "print-access-token"]);
+    expect(vertexTokenCommand("linux")).toEqual(["gcloud", "auth", "print-access-token"]);
+    expect(vertexTokenCommand("win32")).toEqual([
+      "cmd.exe", "/d", "/c", "gcloud", "auth", "print-access-token",
+    ]);
+  });
+
+  it("matches saved Vertex roots back to the cloud preset and sends chat to <root>/chat/completions", () => {
+    const root = vertexOpenAiBaseUrl({ region: "asia-northeast1", project: "acme" });
+    expect(cloudPresetForUrl(root)?.id).toBe("google-vertex");
+    expect(cloudPresetForUrl(vertexOpenAiBaseUrl({ region: "global", project: "acme" }))?.id)
+      .toBe("google-vertex");
+    expect(cloudPresetForUrl("https://aiplatform.googleapis.com.evil.example/x")).toBeUndefined();
+    expect(openAiChatPathPrefix(root)).toBe("");
+    // Another Google API on the same host family keeps the convention.
+    expect(openAiChatPathPrefix("https://us-central1-aiplatform.googleapis.com/v1/other")).toBe("/v1");
+  });
+
+  it("saves the command on the entry, survives config.json, and counts as a key", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "openai-compatible",
+      presetId: "google-vertex",
+      chatModelId: "",
+      embeddingChoiceId: "local",
+      customChatModel: "google/gemini-2.5-flash",
+      baseUrl: vertexOpenAiBaseUrl({ region: "us-central1", project: "acme" }),
+    });
+    const entry = parseLlmProviderEntry(
+      JSON.parse(JSON.stringify(built.entry)) as unknown,
+      "llm.providers[0]",
+    );
+    expect(entry.apiKeyCommand).toEqual([...vertexTokenCommand()]);
+    expect(entry.apiKey).toBeUndefined();
+    expect(providerKeyStatus(entry).state).toBe("present");
+  });
+
+  it("refuses a malformed apiKeyCommand in config.json", () => {
+    const base = { id: "v", kind: "openai-compatible", baseUrl: "https://x.example" };
+    expect(() => parseLlmProviderEntry({ ...base, apiKeyCommand: "gcloud auth" }, "p")).toThrow(
+      /apiKeyCommand/,
+    );
+    expect(() => parseLlmProviderEntry({ ...base, apiKeyCommand: [] }, "p")).toThrow(/apiKeyCommand/);
+    expect(() => parseLlmProviderEntry({ ...base, apiKeyCommand: ["gcloud", ""] }, "p")).toThrow(
+      /apiKeyCommand\[1\]/,
+    );
+  });
+
+  it("sends the command output as Bearer on a chat turn through the registry", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    registerBuiltInProviderKinds();
+    const root = vertexOpenAiBaseUrl({ region: "us-central1", project: "acme" });
+    const provider = await getProviderFactory("openai-compatible")!({
+      entry: {
+        id: "google-vertex-registry-test",
+        kind: "openai-compatible",
+        baseUrl: root,
+        defaultChatModel: "google/gemini-2.5-flash",
+        // Stands in for gcloud: prints a token, no shell involved.
+        apiKeyCommand: [process.execPath, "-e", "process.stdout.write('ya29.registry-test')"],
+      },
+      config: {} as never,
+      logger: {} as never,
+    });
+
+    await provider.complete({ prompt: "hi" });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${root}/chat/completions`);
+    expect(new Headers(init.headers as HeadersInit).get("authorization")).toBe(
+      "Bearer ya29.registry-test",
+    );
   });
 });

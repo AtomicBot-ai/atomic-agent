@@ -36,16 +36,14 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = toSlashCommands().map(
 );
 
 /**
- * Everything the palette offers beyond the built-ins: cloud workspace
- * skills (cloud only), then plugin commands (any mode). Built-in names
- * and aliases always keep their meaning.
+ * Everything the palette offers beyond the built-ins: enabled skills (the
+ * cloud workspace catalog or the local registry, ATO-1469), then plugin
+ * commands. Built-in names and aliases always keep their meaning.
  */
 export function skillSlashCommands(panel: SkillsPanelState): readonly SlashCommandDef[] {
-  const skills: SlashCommandDef[] = panel.workspace
-    ? panel.rows
-      .filter(row => !row.disabled && resolveSlashCommand(row.name) === null)
-      .map(row => ({ name: row.name, description: row.description, skillName: row.name }))
-    : [];
+  const skills: SlashCommandDef[] = panel.rows
+    .filter(row => !row.disabled && resolveSlashCommand(row.name) === null)
+    .map(row => ({ name: row.name, description: row.description, skillName: row.name }));
   const plugins = pluginSlashCommands(panel.pluginCommands ?? [], skills);
   return plugins.length ? [...skills, ...plugins] : skills;
 }

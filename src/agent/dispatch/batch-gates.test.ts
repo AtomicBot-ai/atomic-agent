@@ -4,7 +4,7 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import { executeBatch, toBatchInputs, FINAL_STEP_REFUSAL as publicFinalRefusal } from "../batch-executor.js";
 import { ToolLoopTracker } from "../loop-detector.js";
 import type { BatchExecutionContext, BatchLoopSignal } from "./batch-contract.js";
-import { FINAL_STEP_REFUSAL, refuseBeforeDispatch, runSyncLoopGate, skillAlreadyLoadedResult } from "./batch-gates.js";
+import { FINAL_STEP_REFUSAL, TOOL_FILTER_REFUSAL, refuseBeforeDispatch, runSyncLoopGate, skillAlreadyLoadedResult } from "./batch-gates.js";
 
 const context = (extra: Partial<BatchExecutionContext> = {}): BatchExecutionContext => ({ workingDir: "/tmp", sessionId: "gates-session", stepIndex: 0, signal: new AbortController().signal, ...extra });
 const result = (tool: string, text = "same") => compressToolResult({ tool, status: "ok", output: text });
@@ -23,6 +23,21 @@ describe("dispatch gate owner seams", () => {
     const held = await executeBatch(calls, registry, context({ tracker, isPlanMode: plan, isFusionOrchestrator: fusion }));
     expect(held.results[0]?.compressed?.status).toBe("error"); expect(plan).toHaveBeenCalledTimes(1);
     expect(fusion).not.toHaveBeenCalled(); expect(check).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled();
+  });
+
+  it("refuses a call the turn's toolFilter hides, and runs everything without a filter (ATO-566)", async () => {
+    const run = vi.fn(async () => result("os.fs.write"));
+    const read = vi.fn(async () => result("os.fs.read"));
+    const registry = new ToolRegistry();
+    registry.register({ name: "os.fs.write", description: "fixture", readonly: false, run });
+    registry.register({ name: "os.fs.read", description: "fixture", readonly: true, run: read });
+    const calls = toBatchInputs([{ tool: "os.fs.write", args: { path: "f", content: "x" } }, { tool: "os.fs.read", args: { path: "f" } }]);
+    const filtered = await executeBatch(calls, registry, context({ toolFilter: (name) => name !== "os.fs.write" }));
+    expect(filtered.results[0]?.compressed).toMatchObject({ status: "error", details: { tool_filter: true, tool: "os.fs.write" } });
+    expect(filtered.results[0]?.compressed?.summary).toContain(TOOL_FILTER_REFUSAL);
+    expect(run).not.toHaveBeenCalled(); expect(read).toHaveBeenCalledTimes(1);
+    await executeBatch(calls, registry, context());
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it("retains synchronous check→record visibility across sibling calls using one real tracker", () => {

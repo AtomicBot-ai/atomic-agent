@@ -82,6 +82,7 @@ export function buildEnvelope(
   }
   // Context tags never re-group issues: they stay out of the fingerprint.
   if (ev.llmFailureTags) Object.assign(tags, ev.llmFailureTags);
+  if (ev.cliFailureTags) Object.assign(tags, ev.cliFailureTags);
 
   const event = {
     event_id: eventId,

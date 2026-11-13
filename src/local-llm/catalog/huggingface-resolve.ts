@@ -17,6 +17,13 @@ import {
 } from "./huggingface-fit.js";
 import { formatGgufSize, ggufSizeGb } from "./huggingface-model-def.js";
 import { parseHuggingFaceModelRef } from "./huggingface-ref.js";
+import type { MachineForModels } from "./model-upgrade.js";
+import {
+  pickBestQuant,
+  rateQuant,
+  type QuantFit,
+  type SpeedForecast,
+} from "./quant-fit.js";
 
 /** One servable GGUF, in the shape the picker draws. */
 export interface HuggingFaceGgufChoice {
@@ -25,6 +32,16 @@ export interface HuggingFaceGgufChoice {
   sizeBytes: number;
   fileSizeGb: number;
   sizeLabel: string;
+  /**
+   * ATO-450, set only when the lookup was given the machine: the
+   * nominal bit level, whether it fits, a rough speed forecast, and
+   * whether it is the one picked for this machine (that one leads the
+   * list).
+   */
+  bits?: number | null;
+  fit?: QuantFit;
+  speed?: SpeedForecast | null;
+  recommended?: boolean;
 }
 
 export interface HuggingFaceRepoChoices {
@@ -83,10 +100,25 @@ function pickMmproj(files: readonly HuggingFaceFile[]): HuggingFaceFile | null {
  */
 export async function resolveHuggingFaceGgufChoices(
   reference: string,
-  opts?: { signal?: AbortSignal },
+  opts?: {
+    signal?: AbortSignal;
+    /**
+     * ATO-450: what this machine has (`probeMachineForModels`). Read in
+     * parallel with the listing; when it answers, every choice is rated
+     * for this machine and the best one moves to the front. A probe that
+     * fails or answers `null` leaves the list as it was.
+     */
+    machine?: () => Promise<MachineForModels | null>;
+  },
 ): Promise<HuggingFaceRepoChoices> {
   const ref = parseHuggingFaceModelRef(reference);
-  const files = await listHuggingFaceGgufFiles(ref.repoId, ref.revision, opts);
+  const machineProbe = opts?.machine
+    ? opts.machine().catch(() => null)
+    : Promise.resolve(null);
+  const files = await listHuggingFaceGgufFiles(ref.repoId, ref.revision, {
+    signal: opts?.signal,
+  });
+  const machine = await machineProbe;
   if (files.length === 0) {
     throw new Error(
       `No .gguf files in ${ref.repoId} — that is the original model, not a ` +
@@ -109,7 +141,7 @@ export async function resolveHuggingFaceGgufChoices(
     return {
       repoId: ref.repoId,
       revision: ref.revision,
-      choices: [toChoice(named)],
+      choices: rateChoices([toChoice(named)], machine, ref.repoId, false),
       mmproj,
       hidden: null,
     };
@@ -137,8 +169,31 @@ export async function resolveHuggingFaceGgufChoices(
   return {
     repoId: ref.repoId,
     revision: ref.revision,
-    choices,
+    choices: rateChoices(choices, machine, ref.repoId, true),
     mmproj,
     hidden: describeRejectedGgufFiles(rejected),
   };
+}
+
+/**
+ * ATO-450: rate each choice for this machine and, when `pick`, move the
+ * best one (`pickBestQuant`) to the front so every picker opens on it.
+ * The rest keep their order. No machine, no change.
+ */
+export function rateChoices(
+  choices: readonly HuggingFaceGgufChoice[],
+  machine: MachineForModels | null,
+  modelName: string,
+  pick: boolean,
+): HuggingFaceGgufChoice[] {
+  if (!machine) return [...choices];
+  const rated = choices.map((choice) => ({
+    ...choice,
+    ...rateQuant(choice, machine, modelName),
+    recommended: false,
+  }));
+  const best = pick ? pickBestQuant(rated) : null;
+  if (best === null) return rated;
+  const lead = { ...rated[best]!, recommended: true };
+  return [lead, ...rated.filter((_, index) => index !== best)];
 }

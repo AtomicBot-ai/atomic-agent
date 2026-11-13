@@ -83,7 +83,9 @@ export function enforceAuth(
     );
     return false;
   }
-  if (secretEquals(getBearerToken(req), apiKey)) {
+  /* ATO-1080: Anthropic clients (Claude Code with ANTHROPIC_API_KEY) send
+     the key as `x-api-key` instead of a bearer token. Same key, same check. */
+  if (secretEquals(getBearerToken(req) ?? getHeader(req, "x-api-key"), apiKey)) {
     throttle?.succeeded(address);
     return true;
   }
@@ -132,6 +134,15 @@ export function sendError(
 export async function readJsonBody<T = unknown>(
   req: IncomingMessage,
 ): Promise<T> {
+  return parseJsonBody<T>(await readRawBody(req));
+}
+
+/**
+ * Read the exact request bytes, capped at `MAX_JSON_BODY_BYTES`. Routes
+ * that verify a signature over the body (signed webhooks) read it this
+ * way first and parse it with `parseJsonBody` afterwards.
+ */
+export async function readRawBody(req: IncomingMessage): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of req) {
@@ -142,10 +153,14 @@ export async function readJsonBody<T = unknown>(
     }
     chunks.push(buf);
   }
-  if (total === 0) return {} as T;
-  const raw = Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+/** Parse bytes from `readRawBody`; an empty body is `{}`. */
+export function parseJsonBody<T = unknown>(raw: Buffer): T {
+  if (raw.length === 0) return {} as T;
   try {
-    return JSON.parse(raw) as T;
+    return JSON.parse(raw.toString("utf8")) as T;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new BodyParseError(`invalid JSON: ${message}`);

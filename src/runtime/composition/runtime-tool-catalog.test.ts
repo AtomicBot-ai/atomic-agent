@@ -26,6 +26,7 @@ import * as composio from "../../composio/index.js";
 import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 import { ModelProfileManager } from "../../llm/model-profile-manager.js";
+import { createApiKeyCommandSource, resetCommandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../../llm/model-profile.js";
 import { buildGrammar } from "../../llm/grammar/build-grammar.js";
 
@@ -98,7 +99,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       const requests = new Map<string, string>(); const recent = vi.fn(() => []);
       const registration = vi.spyOn(osTools, "registerOsTools");
       const skillRegistration = vi.spyOn(skillTools, "registerSkillTools");
-      registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, logger, sessionStore: { listRecentWorkingDirs: recent, listSummaryPage: () => [], listChatLines: () => [] },
+      registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, logger, sessionStore: { listRecentWorkingDirs: recent, listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [] },
         resolveOriginalRequest: id => requests.get(id), declaredInputs, shellJobs, skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore });
       const wired = registration.mock.calls[0]?.[1]; if (!wired) throw new Error("OS tools not registered");
       expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);
@@ -106,6 +107,8 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       expect(wired.trustConfigPaths).toEqual(getTrustConfigPaths(config.paths)); expect(wired.stateDir).toBe(config.paths.stateDir);
       // Skill scripts share the shell's passthrough list (ATO-877).
       expect(skillRegistration.mock.calls[0]?.[3]).toBe(config.tools.shell.envPassthrough);
+      // Skill history (ATO-580): skill uses reach the usage ledger.
+      expect(typeof skillRegistration.mock.calls[0]?.[5]).toBe("function");
       requests.set("session", "new request"); expect(wired.resolveOriginalRequest?.("session")).toBe("new request");
       wired.listRecentSessionDirs(7); expect(recent).toHaveBeenCalledWith(7);
       config.git.remoteSync = false; expect(wired.shellPolicy?.isGitRemoteSyncEnabled()).toBe(false);
@@ -133,7 +136,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       const dangerous = { approvals: new ApprovalGate({ emit: () => {}, level: 5 }), approvalRequired: true };
       const registration = vi.spyOn(osTools, "registerOsTools");
       registerRuntimeCoreTools({ config, toolRegistry: createRuntimeToolRegistry(config, backend, dangerous), dangerous, logger,
-        sessionStore: { listRecentWorkingDirs: () => [], listSummaryPage: () => [], listChatLines: () => [] },
+        sessionStore: { listRecentWorkingDirs: () => [], listSummaryPage: () => [], listChatLines: () => [], searchTranscripts: () => ({ hits: [], pending: 0 }), listSearchableChatLines: () => [] },
         resolveOriginalRequest: () => undefined, declaredInputs: new osTools.DeclaredInputsRegistry(), shellJobs,
         skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore,
         webSearchKeyHelp: "integrations-hub" });
@@ -370,5 +373,44 @@ describe("runtimeKnownSecrets (ATO-1077)", () => {
       { label: "mcp-gh-GITHUB_TOKEN", value: "Gg1Hh2Ii3Jj4" },
       { label: "mcp-remote-header", value: "Rr1Ss2Tt3Uu4" },
     ]);
+  });
+
+  it("lists the values behind a provider's extra key env vars too (ATO-471)", () => {
+    const config = {
+      llm: {
+        activeTextProvider: "groq",
+        activeEmbeddingProvider: "groq",
+        providers: [
+          {
+            id: "groq",
+            kind: "openai-compatible",
+            apiKey: "Aa1Bb2Cc3Dd4",
+            extraApiKeyEnvVars: ["XK_ONE", "XK_TWO", "XK_UNSET"],
+          },
+        ],
+      },
+    } as unknown as Parameters<typeof runtimeKnownSecrets>[0];
+    const env = { XK_ONE: "Ee5Ff6Gg7Hh8", XK_TWO: "Ii9Jj0Kk1Ll2" };
+    const groq = runtimeKnownSecrets(config, env).filter((s) => s.label === "groq-key");
+    expect(groq).toEqual([
+      { label: "groq-key", value: "Aa1Bb2Cc3Dd4" },
+      { label: "groq-key", value: "Ee5Ff6Gg7Hh8" },
+      { label: "groq-key", value: "Ii9Jj0Kk1Ll2" },
+    ]);
+  });
+
+  it("masks the token a provider key command printed (Vertex AI, ATO-468)", async () => {
+    const source = createApiKeyCommandSource(["gcloud", "auth", "print-access-token"], {
+      label: "google-vertex",
+      run: async () => "ya29.Kk1Ll2Mm3Nn4\n",
+    });
+    await source.get();
+    try {
+      expect(runtimeKnownSecrets({}, {})).toEqual([
+        { label: "google-vertex-key-command", value: "ya29.Kk1Ll2Mm3Nn4" },
+      ]);
+    } finally {
+      resetCommandIssuedSecrets();
+    }
   });
 });

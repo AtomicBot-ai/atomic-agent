@@ -411,7 +411,7 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
     );
   });
 
-  it("cancelPull stops the worker, keeps the partial and says how to resume", async () => {
+  it("cancelPull stops the worker, deletes the partial and says so", async () => {
     const gate = gatedBody();
     globalThis.fetch = vi.fn(
       async () =>
@@ -436,13 +436,79 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
       (a): a is Extract<EmittedAction, { type: "local_models_pull_failed" }> =>
         a.type === "local_models_pull_failed",
     );
-    expect(failed?.error).toMatch(/cancelled at \d+%.*Enter resumes/);
+    expect(failed?.error).toMatch(/cancelled.*partial file was deleted/);
     expect(existsSync(dest)).toBe(false);
-    expect(existsSync(resolvePartialPath(dest))).toBe(true);
+    expect(existsSync(resolvePartialPath(dest))).toBe(false);
+    expect(existsSync(resolvePartialMetaPath(dest))).toBe(false);
     expect(startDaemon).not.toHaveBeenCalled();
     expect(readDownloadJob(dataDir, "chat-qwen-3.5-4b")?.status).toBe(
       "cancelled",
     );
+  });
+
+  it("pausePull stops the worker, keeps the partial and says how to resume", async () => {
+    const gate = gatedBody();
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(gate.body, {
+          status: 200,
+          headers: { "content-length": "2" },
+        }),
+    ) as typeof fetch;
+
+    const pull = orchestrator.pullModel("qwen-3.5-4b", "gguf-only");
+    await waitFor(() => startedPulls(actions).length === 1);
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const def = getLocalModelDef("qwen-3.5-4b");
+    const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+    await waitFor(() => existsSync(resolvePartialPath(dest)));
+
+    await orchestrator.pausePull("chat");
+    gate.release();
+    await pull;
+
+    const failed = actions.find(
+      (a): a is Extract<EmittedAction, { type: "local_models_pull_failed" }> =>
+        a.type === "local_models_pull_failed",
+    );
+    expect(failed?.error).toMatch(/paused at \d+%.*Enter resumes/);
+    expect(existsSync(dest)).toBe(false);
+    expect(existsSync(resolvePartialPath(dest))).toBe(true);
+    expect(startDaemon).not.toHaveBeenCalled();
+    expect(readDownloadJob(dataDir, "chat-qwen-3.5-4b")?.status).toBe(
+      "paused",
+    );
+    // Only the one launch: a paused worker is never relaunched as dead.
+    expect(worker.spawned).toEqual(["chat-qwen-3.5-4b"]);
+  });
+
+  it("a paused job is named at launch and left paused, not resumed", () => {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    const paused: DownloadJob = {
+      ...initialDownloadJob({
+        dataDir,
+        kind: "chat",
+        modelId: "qwen-3.5-4b",
+        mode: "gguf-only",
+        pid: 2_000_000_000,
+      }),
+      status: "paused",
+      percent: 40,
+    };
+    writeDownloadJob(dataDir, paused);
+
+    orchestrator.adoptBackgroundDownloads();
+
+    expect(worker.spawned).toEqual([]);
+    expect(
+      actions.some(
+        (a) =>
+          a.type === "runtime_info" &&
+          "line" in a &&
+          /paused at 40%.*Enter on its row resumes it/.test(a.line),
+      ),
+    ).toBe(true);
+    expect(readDownloadJob(dataDir, paused.id)?.status).toBe("paused");
   });
 
   it("reports a worker failure with its own message", async () => {

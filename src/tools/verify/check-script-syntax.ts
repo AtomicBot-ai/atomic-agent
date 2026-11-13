@@ -25,6 +25,7 @@ import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 
 import { isSeaBuild } from "../../runtime/self-invocation.js";
+import { buildCommandEnv } from "../../sandbox/command-env.js";
 import { checkFileParses } from "../os/fs/fs-parse-check.js";
 import { type SyntaxFileResult, tailOfOutput } from "./syntax-check-types.js";
 
@@ -60,8 +61,10 @@ export function runChecker(
   } = {},
 ): Promise<CheckerRun> {
   return new Promise((resolve) => {
-    // Belt and braces for any interpreter that caches bytecode.
-    const env: NodeJS.ProcessEnv = { ...process.env, PYTHONDONTWRITEBYTECODE: "1" };
+    // Belt and braces for any interpreter that caches bytecode. No provider
+    // keys (ATO-175): the checked file and its folder are model-written, and
+    // an interpreter can import from there before it ever compiles anything.
+    const env: NodeJS.ProcessEnv = { ...buildCommandEnv(process.env), PYTHONDONTWRITEBYTECODE: "1" };
     for (const [key, value] of Object.entries(options.env ?? {})) {
       if (value === undefined) delete env[key];
       else env[key] = value;

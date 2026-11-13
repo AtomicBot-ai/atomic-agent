@@ -423,6 +423,18 @@ export const MENU: readonly MenuNode[] = [
     },
   },
   {
+    // ATO-586: nothing from it is saved to memory; deleted on leave.
+    kind: "action",
+    id: "session.incognito",
+    label: "New incognito chat",
+    group: "session",
+    slash: {
+      name: "incognito",
+      description: "start an incognito chat: nothing saved to memory, deleted when you leave it",
+      rank: 20.5,
+    },
+  },
+  {
     kind: "action",
     id: "session.switch",
     label: "Switch session…",
@@ -447,20 +459,46 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action", id: "session.compact", label: "Compact context", group: "session",
-    slash: { name: "compact", description: "summarize older context; show displays the saved summary", rank: 44 },
+    slash: { name: "compact", description: "summarize older context; add text to say what to keep; show displays the saved summary", rank: 44 },
+  },
+  {
+    kind: "action", id: "session.rewind", label: "Rewind to a message…", group: "session",
+    slash: { name: "rewind", description: "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are", rank: 45.5 },
   },
   {
     kind: "action", id: "session.enhance", label: "Enhance prompt", group: "session",
     slash: { name: "enhance", description: "rewrite a prompt into a clearer one in the composer; nothing is sent", rank: 45 },
   },
   {
+    kind: "action", id: "session.edit", label: "Edit prompt in $EDITOR", group: "session",
+    // Upper case like `L` / `M` / `R`: every free lower-case key is worth
+    // more to a daily verb, and `e` already opens Reasoning.
+    chord: "E",
+    slash: {
+      name: "edit",
+      description: "open the prompt in your $VISUAL / $EDITOR; save and close to put it back in the composer, nothing is sent",
+      // After /fusion and before /uninstall, which stays last.
+      rank: 47.5,
+    },
+  },
+  {
     kind: "action", id: "session.goal", label: "Goal mode…", group: "session",
     slash: {
       name: "goal",
       description:
-        "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal status` | `/goal pause|resume|clear`",
+        "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal tokens <n>|off` | `/goal status` | `/goal pause|resume|clear`",
       // After /plugins and before /worker, the order the registry gives them.
       rank: 46.25,
+    },
+  },
+  {
+    kind: "action", id: "session.persona", label: "Personas…", group: "session",
+    slash: {
+      name: "persona",
+      description:
+        "named instructions for the agent: `/persona` lists them · `/persona use <name|default>` · `/persona bind <name|default>` ties one to this folder; applies from the next session",
+      // ATO-54: right after /goal, before /worker.
+      rank: 46.3,
     },
   },
   {
@@ -596,6 +634,32 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.btw",
+    label: "Side question (not saved)",
+    group: "run",
+    slash: {
+      name: "btw",
+      description:
+        "ask a quick side question: `/btw <question>` — the model sees this chat, runs no tools, and nothing is saved to the session",
+      // Beside /steer, /queue and /status, the other run-time asides.
+      rank: 35.75,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.why",
+    label: "Why: explain the last step",
+    group: "run",
+    slash: {
+      name: "why",
+      description:
+        "the agent's last step in plain words: what it called and with what, what came back, tokens, and its reasoning when the model gave one",
+      // Right after /status (35.5), its sibling.
+      rank: 35.6,
+    },
+  },
+  {
+    kind: "action",
     id: "run.queue",
     label: "Queued messages",
     group: "run",
@@ -656,6 +720,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.resume",
+    label: "Continue a reply a restart cut off",
+    group: "run",
+    slash: {
+      name: "resume",
+      description:
+        "continue the last reply a restart cut off: starts a new turn from it, once (the model checks before repeating commands or writes)",
+      // Beside /fusion, the other restart verb (ATO-448).
+      rank: 47.25,
+    },
+  },
+  {
+    kind: "action",
     id: "run.expand",
     label: "Show the last turn's steps",
     group: "run",
@@ -689,6 +766,19 @@ export const MENU: readonly MenuNode[] = [
       // Between /collapse (17) and the next integer rank: the palette keeps
       // the three fold commands together.
       rank: 17.5,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.verbose",
+    label: "Verbose steps on/off",
+    group: "run",
+    slash: {
+      name: "verbose",
+      description:
+        "one plain note per step under its tool card: `/verbose` toggles | `/verbose on` | `/verbose off`",
+      // Beside /steps (17.5): both change how much of a turn the chat shows.
+      rank: 17.75,
     },
   },
   {
@@ -729,6 +819,19 @@ export const MENU: readonly MenuNode[] = [
       description:
         "mouse support on/off/status (off restores the terminal's drag-to-select)",
       rank: 37,
+    },
+  },
+  {
+    kind: "action",
+    id: "setup.vim",
+    label: "Vim keys in the prompt on/off",
+    group: "setup",
+    slash: {
+      name: "vim",
+      description:
+        "vim keys in the prompt (NORMAL / INSERT): `/vim` toggles | `/vim on` | `/vim off`",
+      // Right after /mouse: both are how-the-input-behaves switches.
+      rank: 37.5,
     },
   },
   {
@@ -802,6 +905,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "help.settings",
+    label: "Find a setting",
+    group: "help",
+    slash: {
+      name: "settings",
+      description:
+        "find a config setting with its default and description: `/settings` | `/settings <words>`",
+      rank: 2.5,
+    },
+  },
+  {
+    kind: "action",
     id: "help.dump",
     label: "Write debug bundle",
     group: "help",
@@ -825,7 +940,35 @@ export const MENU: readonly MenuNode[] = [
       name: "report",
       description:
         "file a GitHub issue with your logs attached — you choose how much leaves this machine",
+      // `/bug` is what Claude Code and Zed users type (ATO-1466).
+      aliases: ["bug"],
       rank: 41,
+    },
+  },
+  {
+    kind: "action",
+    id: "help.discord",
+    label: "Join Discord",
+    group: "help",
+    // ATO-1465: our server was nearly impossible to find from the app.
+    slash: {
+      name: "discord",
+      description:
+        "open our Discord server in the browser (the link is printed too, for SSH sessions)",
+      rank: 41.5,
+    },
+  },
+  {
+    kind: "action",
+    id: "help.feedback",
+    label: "Talk to the team ($50 credits)…",
+    group: "help",
+    // No chord: a rare verb, and the chord table is crowded.
+    slash: {
+      name: "feedback",
+      description:
+        "15 min call with the team, $50 in OpenRouter credits after it: `/feedback` opens the form · `/feedback never` hides the invite",
+      rank: 48,
     },
   },
   {

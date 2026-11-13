@@ -143,3 +143,91 @@ export function densePairs(): Record<string, SyntheticGgufValue> {
     "llama.attention.head_count_kv": 8,
   };
 }
+
+// ---------------------------------------------------------------------
+// The catalogue models of the 24 GB card case (ATO-848, ATO-866).
+//
+// Built from each model's published `config.json` (its `text_config`),
+// mapped to the keys llama.cpp's converter writes; not read from the
+// GGUF files themselves. Only the attention and recurrent keys the fit
+// reads are stated.
+// ---------------------------------------------------------------------
+
+/**
+ * A Qwen 3.5+ hybrid: every `interval`-th layer attends, the rest keep
+ * a gated delta-net state (`ssm.inner_size` = value heads × value dim,
+ * `ssm.group_count` = key heads, `ssm.state_size` = key dim).
+ */
+function qwenHybridPairs(shape: {
+  name: string;
+  blockCount: number;
+  embedding: number;
+  heads: number;
+  headsKv: number;
+  valueHeads: number;
+}): Record<string, SyntheticGgufValue> {
+  return {
+    "general.architecture": "qwen35",
+    "general.name": shape.name,
+    "qwen35.block_count": shape.blockCount,
+    "qwen35.context_length": 262_144,
+    "qwen35.embedding_length": shape.embedding,
+    "qwen35.attention.head_count": shape.heads,
+    "qwen35.attention.head_count_kv": shape.headsKv,
+    "qwen35.attention.key_length": 256,
+    "qwen35.attention.value_length": 256,
+    "qwen35.ssm.conv_kernel": 4,
+    "qwen35.ssm.state_size": 128,
+    "qwen35.ssm.group_count": 16,
+    "qwen35.ssm.time_step_rank": shape.valueHeads,
+    "qwen35.ssm.inner_size": shape.valueHeads * 128,
+    "qwen35.full_attention_interval": 4,
+  };
+}
+
+/** qwen-3.8-27b: 64 layers, 16 attend (4 KV heads × 256), 48 delta-net. */
+export function qwen38_27bPairs(): Record<string, SyntheticGgufValue> {
+  return qwenHybridPairs({
+    name: "Qwen3.8-27B",
+    blockCount: 64,
+    embedding: 5120,
+    heads: 24,
+    headsKv: 4,
+    valueHeads: 48,
+  });
+}
+
+/** qwen-3.6-35b-a3b: 40 layers, 10 attend (2 KV heads × 256), 30 delta-net. */
+export function qwen36_35bA3bPairs(): Record<string, SyntheticGgufValue> {
+  return qwenHybridPairs({
+    name: "Qwen3.6-35B-A3B",
+    blockCount: 40,
+    embedding: 2048,
+    heads: 16,
+    headsKv: 2,
+    valueHeads: 32,
+  });
+}
+
+/**
+ * gemma-4-12b: 48 layers, every sixth global with one KV head × 512,
+ * the other 40 sliding (1,024 tokens) with eight KV heads × 256.
+ */
+export function gemma4_12bPairs(): Record<string, SyntheticGgufValue> {
+  const pattern = Array.from({ length: 48 }, (_, i) => (i + 1) % 6 !== 0);
+  return {
+    "general.architecture": "gemma4",
+    "general.name": "Gemma-4 12B IT",
+    "gemma4.block_count": 48,
+    "gemma4.context_length": 262_144,
+    "gemma4.embedding_length": 3840,
+    "gemma4.attention.head_count": 16,
+    "gemma4.attention.head_count_kv": pattern.map((slides) => (slides ? 8 : 1)),
+    "gemma4.attention.key_length": 512,
+    "gemma4.attention.value_length": 512,
+    "gemma4.attention.sliding_window": 1024,
+    "gemma4.attention.sliding_window_pattern": pattern,
+    "gemma4.attention.key_length_swa": 256,
+    "gemma4.attention.value_length_swa": 256,
+  };
+}

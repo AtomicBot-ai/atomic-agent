@@ -21,8 +21,7 @@ export const BROWSER_CONNECT_MODES: readonly BrowserConnectMode[] = [
 
 /**
  * `browser` block of config.json (unversioned, additive). The other
- * launch settings (`channel`, `headless`, `executablePath`, …) stay
- * environment-only.
+ * launch settings (`channel`, `executablePath`, …) stay environment-only.
  *
  * - `blockedDomains` (default `[]`): hosts the browser may never open or
  *   act on, at any approval level. An entry matches the host and every
@@ -37,6 +36,19 @@ export const BROWSER_CONNECT_MODES: readonly BrowserConnectMode[] = [
  *   `ATOMIC_AGENT_BROWSER_CDP_URL` still wins.
  * - `userDataDir` (default `null`): the user's Chrome data directory for
  *   `"user-chrome"`, when it is not one of the standard locations.
+ * - `headless` (default `"auto"`, ATO-959): `true` / `false` always / never
+ *   run the agent's own Chrome without a window; `"auto"` runs it without
+ *   one for turns nobody watches (scheduled tasks, Telegram, Discord,
+ *   webhooks) and with one for the TUI and the desktop app. Env
+ *   `ATOMIC_AGENT_BROWSER_HEADLESS`, when set, wins.
+ * - `profile` (default `"agent"`, ATO-959): `"temp"` makes every chat
+ *   browse in its own throwaway, logged-out profile instead of the
+ *   agent's (`../tools/browser/temp-profiles.ts`).
+ * - `maxTabs` (default 8, 1–50, ATO-961): tabs the agent may have open at
+ *   once, fusion workers' and throwaway ones included.
+ * - `workerIsolation` (default `"tabs"`, ATO-961): fusion workers browse in
+ *   tabs of their own in the agent's profile (`"tabs"`), or each in its own
+ *   throwaway context (`"context"`) (`../tools/browser/worker-tabs.ts`).
  */
 export interface UserBrowserConfig {
   blockedDomains: string[];
@@ -44,6 +56,10 @@ export interface UserBrowserConfig {
   connect: BrowserConnectMode;
   cdpUrl: string | null;
   userDataDir: string | null;
+  headless: boolean | "auto";
+  profile: "agent" | "temp";
+  maxTabs: number;
+  workerIsolation: "tabs" | "context";
 }
 
 export function createBrowserDefaults(): UserBrowserConfig {
@@ -53,6 +69,10 @@ export function createBrowserDefaults(): UserBrowserConfig {
     connect: "agent",
     cdpUrl: null,
     userDataDir: null,
+    headless: "auto",
+    profile: "agent",
+    maxTabs: 8,
+    workerIsolation: "tabs",
   };
 }
 
@@ -95,6 +115,26 @@ function parseConnectMode(raw: unknown, field: string): BrowserConnectMode {
   );
 }
 
+function parseHeadless(raw: unknown, field: string): boolean | "auto" {
+  if (raw === true || raw === false || raw === "auto") return raw;
+  throw new ConfigValidationError(field, `expected true | false | "auto", got ${JSON.stringify(raw)}`);
+}
+
+function parseProfile(raw: unknown, field: string): "agent" | "temp" {
+  if (raw === "agent" || raw === "temp") return raw;
+  throw new ConfigValidationError(field, `expected "agent" | "temp", got ${JSON.stringify(raw)}`);
+}
+
+function parseMaxTabs(raw: unknown, field: string): number {
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 50) return raw;
+  throw new ConfigValidationError(field, `expected a whole number from 1 to 50, got ${JSON.stringify(raw)}`);
+}
+
+function parseWorkerIsolation(raw: unknown, field: string): "tabs" | "context" {
+  if (raw === "tabs" || raw === "context") return raw;
+  throw new ConfigValidationError(field, `expected "tabs" | "context", got ${JSON.stringify(raw)}`);
+}
+
 export function parseBrowserConfig(
   raw: Record<string, unknown>,
   readDefaults: () => UserBrowserConfig,
@@ -119,6 +159,13 @@ export function parseBrowserConfig(
     userDataDir: parseNullableString(
       raw.userDataDir === undefined ? defaults.userDataDir : raw.userDataDir,
       "browser.userDataDir",
+    ),
+    headless: parseHeadless(raw.headless ?? defaults.headless, "browser.headless"),
+    profile: parseProfile(raw.profile ?? defaults.profile, "browser.profile"),
+    maxTabs: parseMaxTabs(raw.maxTabs ?? defaults.maxTabs, "browser.maxTabs"),
+    workerIsolation: parseWorkerIsolation(
+      raw.workerIsolation ?? defaults.workerIsolation,
+      "browser.workerIsolation",
     ),
   };
 }

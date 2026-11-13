@@ -1,7 +1,8 @@
 import type { CompactionConfig } from "./compaction-config.js";
 import type { PromptConfig } from "./prompt-config.js";
+import type { PersonasConfig } from "./persona-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
-import type { AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-config.js";
+import type { AgentGoalConfig, AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-config.js";
 
 /**
  * Where a session's tools may READ (config v67).
@@ -56,6 +57,8 @@ export interface RuntimeAgentConfig {
   maxSteps: number;
   providerWait: ProviderWaitConfig;
   task: AgentTaskConfig;
+  /** Goal mode defaults (`agent.goal`, ATO-1036); absent reads as the defaults. */
+  goal?: AgentGoalConfig;
   toolTimeoutMs: number;
   /** Where reads may go: the working directory and user-named paths, or anywhere. */
   readScope: ReadScope;
@@ -69,6 +72,8 @@ export interface RuntimeAgentConfig {
   smartApproval: boolean;
   /** Provider id the risk review runs on; `null` = automatic. See the user type. */
   smartApprovalModel: string | null;
+  /** Review after outside content (ATO-618). See the user type. */
+  taintReview: boolean;
   stablePrefixHashSalt: string;
   /**
    * Safety-net ceiling for the `### conversation` section of the prompt.
@@ -134,6 +139,13 @@ export interface RuntimeAgentConfig {
   worldSnapshotMaxTokens: number;
   /** `agent.tools.search` (ATO-558); absent reads as `auto`. */
   tools?: AgentToolsConfig;
+  /** Mirrors `UserAgentConfig.personas`; absent when the file has none. */
+  personas?: PersonasConfig;
+  /**
+   * Persona name from `ATOMIC_AGENT_PERSONA`, above every file setting
+   * (`persona-resolve.ts`). `default` turns personas off for the run.
+   */
+  personaOverride?: string;
   /**
    * Max `### loaded-tools` rare-schema entries kept per session (LRU
    * by `loadedAt`). Env-only: `ATOMIC_AGENT_LOADED_TOOLS_CAP`.
@@ -225,6 +237,8 @@ export interface UserAgentConfig {
   providerWait: ProviderWaitConfig;
   /** Ceilings that actually end a task. See the runtime type above. */
   task: AgentTaskConfig;
+  /** Goal mode defaults (`agent.goal`, ATO-1036). */
+  goal?: AgentGoalConfig;
   toolTimeoutMs: number;
   /**
    * Where a session's reads may go (config v67). `working-dir` (the
@@ -309,6 +323,19 @@ export interface UserAgentConfig {
    */
   smartApprovalModel: string | null;
   /**
+   * Review after outside content (ATO-618, `src/approval/untrusted-taint.ts`).
+   * When on, once a turn has read outside text (a web page, an MCP answer,
+   * an HTTP body, the mail inbox), an action the approval level or a
+   * session grant would run silently and that could send data out or act
+   * outward (HTTP, shell, scripts, writes outside the workspace, git
+   * remote, publishing, mail, browser submits, screen control, MCP tools)
+   * is first checked by the smart-approval reviewer against the user's
+   * request, and put to the person unless it rates `low`. With
+   * `smartApproval` off it always goes to the person. Off by default.
+   * Read live.
+   */
+  taintReview: boolean;
+  /**
    * Stable-prefix shape. `compact` (default `"auto"`): the short
    * scaffold for small context windows; `auto` turns it on when the
    * model's known window is at most 64K tokens. See
@@ -321,4 +348,10 @@ export interface UserAgentConfig {
    * valid; the parser always fills it.
    */
   tools?: AgentToolsConfig;
+  /**
+   * Named personas and their project bindings (ATO-54,
+   * `persona-config.ts`). Optional and not in the shipped defaults: a
+   * file without it reads exactly as before.
+   */
+  personas?: PersonasConfig;
 }

@@ -1,4 +1,5 @@
 import { parse as parseYaml } from "yaml";
+import { parseSkillBins, type SkillInstallHints } from "./skill-bins.js";
 
 export type SkillPlatform = "darwin" | "linux" | "win32";
 
@@ -32,6 +33,22 @@ export interface SkillManifest {
   compatibility?: string;
   metadata?: Record<string, string>;
   allowedTools?: string[];
+  /**
+   * `env_keys`: secret-looking environment names (an API key from
+   * `<stateDir>/.env`) that this skill's own scripts receive through
+   * `skill.run_script`, for that run only. Other skills and
+   * `os.shell.run` still get them filtered out. Set only when the
+   * frontmatter has the key.
+   */
+  envKeys?: string[];
+  /**
+   * ATO-526: external programs the skill runs (`requires_bins`, or an
+   * OpenClaw `metadata.openclaw.requires.bins`) and the install line per
+   * platform to show when one is missing. Display only: the desktop looks
+   * the names up on PATH, nothing is installed or run from here.
+   */
+  requiresBins?: string[];
+  installHints?: SkillInstallHints;
 }
 
 export interface ParsedSkillFile {
@@ -76,6 +93,7 @@ export class SkillManifestError extends Error {
  *   version: 0.1.0           # optional — defaults to "0.0.0" when absent
  *   requires_tools: [browser.navigate]
  *   requires_scripts: [fetch.sh]
+ *   env_keys: [SOME_API_KEY]  # optional — passed to this skill's scripts only
  *   dangerous: true
  *   ---
  *   # markdown body
@@ -158,6 +176,9 @@ function validateManifest(raw: unknown, compatible = false): SkillManifest {
   const dangerous = typeof obj.dangerous === "boolean" ? obj.dangerous : false;
 
   const platforms = normalisePlatformList(obj.platforms, issues);
+  const envKeys = obj.env_keys === undefined || obj.env_keys === null
+    ? undefined
+    : normaliseEnvKeys(obj.env_keys, issues);
 
   if (issues.length > 0) {
     throw new SkillManifestError(
@@ -184,7 +205,25 @@ function validateManifest(raw: unknown, compatible = false): SkillManifest {
   if (metadata) manifest.metadata = metadata;
   const allowed = allowedToolsList(obj["allowed-tools"] ?? obj.allowed_tools);
   if (allowed) manifest.allowedTools = allowed;
+  if (envKeys !== undefined) manifest.envKeys = envKeys;
+  Object.assign(manifest, parseSkillBins(obj));
   return manifest;
+}
+
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** `env_keys`: a list of environment variable names, deduplicated. */
+function normaliseEnvKeys(value: unknown, issues: string[]): string[] {
+  const names = normaliseStringList(value, issues, "env_keys");
+  const out: string[] = [];
+  for (const name of names) {
+    if (!ENV_NAME_RE.test(name)) {
+      issues.push("`env_keys` entries must be environment variable names (A-Z, 0-9, '_')");
+      continue;
+    }
+    if (!out.includes(name)) out.push(name);
+  }
+  return out;
 }
 
 /** `allowed-tools` is a space-separated string in the spec; Claude files also use commas or lists. */

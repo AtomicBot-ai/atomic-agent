@@ -9,6 +9,12 @@ import { buildBrowserSearchTool } from "./search.js";
 import { buildBrowserTabsTool } from "./tabs.js";
 import { buildBrowserScrollTool } from "./scroll.js";
 import { buildBrowserScreenshotTool } from "./screenshot.js";
+import { buildBrowserActTool } from "./act.js";
+import { buildBrowserExtractTool } from "./extract.js";
+import type { BrowserExtractModelRef } from "./extract-request.js";
+import { buildBrowserSiteToolsTool } from "./site-tools.js";
+import { buildBrowserDebugTool } from "./debug.js";
+import { buildBrowserAnnotateTool } from "./annotate.js";
 import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
@@ -16,22 +22,54 @@ import {
 import { AriaSnapshotStore } from "./aria-view.js";
 
 export type {
+  AnnotateReadInput,
+  AnnotateReadResult,
+  AnnotateStartResult,
+  AnnotationCrop,
   AriaSnapshot,
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  PageActionInput,
+  PageActionName,
+  PageActionResult,
   RefDescription,
+  RenderHtmlInput,
+  RenderHtmlResult,
   ScreenshotInput,
   ScreenshotResult,
   ScrollDirection,
   ScrollInput,
   ScrollResult,
   SearchInput,
+  SiteToolCallInput,
+  SiteToolCallResult,
+  SiteToolsListInput,
+  SiteToolsListing,
   TabInfo,
   TabsInput,
   TypeInput,
 } from "./browser-backend.js";
 export { PlaywrightBackend } from "./playwright-backend.js";
+export {
+  currentBrowserScope,
+  endBrowserWorker,
+  isAttendedTurn,
+  onBrowserWorkerEnd,
+  resolveLaunchHeadless,
+  runInBrowserScope,
+} from "./browser-run-scope.js";
+export type { BrowserHeadlessSetting, BrowserRunScope } from "./browser-run-scope.js";
+export { BROWSER_PROFILE_CHOICES, MAX_TEMP_PROFILES, TempProfiles } from "./temp-profiles.js";
+export type { BrowserProfileChoice } from "./temp-profiles.js";
+export {
+  BROWSER_WORKER_ISOLATIONS,
+  BrowserTabLimitError,
+  DEFAULT_BROWSER_MAX_TABS,
+  MAX_BROWSER_MAX_TABS,
+  MIN_BROWSER_MAX_TABS,
+} from "./worker-tabs.js";
+export type { BrowserWorkerIsolation } from "./worker-tabs.js";
 export type { PlaywrightBackendOptions } from "./playwright-backend.js";
 export { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
 export type { BuildChromeLaunchArgsInput } from "./build-chrome-launch-args.js";
@@ -104,6 +142,8 @@ export { requireUserSite, userSiteCleared, UserSiteApprovals } from "./user-prof
 export { buildBrowserSearchTool } from "./search.js";
 export { buildBrowserTabsTool } from "./tabs.js";
 export { buildBrowserScrollTool } from "./scroll.js";
+export { buildBrowserPageRenderer } from "./render-page.js";
+export type { BrowserPageRenderer, RenderedPage } from "./render-page.js";
 export {
   BROWSER_SCREENSHOT_TOOL,
   BROWSER_SHOT_DIR,
@@ -111,18 +151,34 @@ export {
   buildBrowserScreenshotTool,
 } from "./screenshot.js";
 export type { BrowserScreenshotDeps } from "./screenshot.js";
+export { buildBrowserActTool } from "./act.js";
+export { keyCommits, PAGE_ACTIONS, parsePageAction } from "./page-action-args.js";
+export { BROWSER_EXTRACT_TOOL, buildBrowserExtractTool, extractPageBudget } from "./extract.js";
+export type {
+  BrowserExtractCompletionParams,
+  BrowserExtractModel,
+  BrowserExtractModelRef,
+} from "./extract-request.js";
+export { BROWSER_SITE_TOOLS_TOOL, buildBrowserSiteToolsTool } from "./site-tools.js";
+export { BROWSER_DEBUG_TOOL, buildBrowserDebugTool } from "./debug.js";
+export { PageDebugLog, redactDebugUrl } from "./page-debug-log.js";
+export type { ConsoleEntry, DebugLogKind, NetworkEntry } from "./page-debug-log.js";
+export { BROWSER_ANNOTATE_TOOL, buildBrowserAnnotateTool } from "./annotate.js";
+export type { BrowserAnnotateDeps } from "./annotate.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
  * responsible for `backend.shutdown()` on process exit. `dangerous` gates
  * non-http(s) navigation, clicks / Enter that commit something, password
  * and payment input, and hosts outside the allow-list; `policy` carries
- * `browser.blockedDomains` / `browser.allowedDomains`.
+ * `browser.blockedDomains` / `browser.allowedDomains`. `extractModel` is
+ * the model `browser.extract` calls, bound by the runtime once it exists.
  */
 export function buildBrowserTools(
   backend: BrowserBackend,
   dangerous: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  extractModel: BrowserExtractModelRef = {},
 ): ToolDefinition[] {
   // One per tool set: the last snapshot of each tab, for read_aria's diff view.
   const store = new AriaSnapshotStore();
@@ -135,5 +191,10 @@ export function buildBrowserTools(
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
     buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
+    buildBrowserActTool(backend, dangerous, policy),
+    buildBrowserExtractTool(backend, policy, extractModel, dangerous),
+    buildBrowserSiteToolsTool(backend, dangerous, policy),
+    buildBrowserDebugTool(backend, policy),
+    buildBrowserAnnotateTool(backend, policy, dangerous),
   ];
 }

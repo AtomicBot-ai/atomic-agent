@@ -2018,6 +2018,7 @@ function normaliseCompletionResponse(
       predictedTokens: toNumber(
         timings.predicted_n ?? payload.tokens_predicted,
       ),
+      ...resolveSpeedTimings(timings),
     },
     cacheHitTokens,
     slotId: toNumber(payload.slot_id ?? payload.id_slot, -1),
@@ -2070,6 +2071,33 @@ function resolvePromptUsage(
   return {
     promptTokens: (evaluated ?? 0) + (reused ?? 0),
     cacheHitTokens: reused ?? 0,
+  };
+}
+
+/**
+ * The speed half of `timings` (ATO-631): the decode rate the server
+ * states, and the speculative-decoding counts when a draft model ran.
+ * Only fields the server actually sent; nothing is defaulted to zero,
+ * because a zero rate would read as "stalled" rather than "not told".
+ */
+function resolveSpeedTimings(timings: Record<string, unknown>): {
+  predictedPerSecond?: number;
+  draftTokens?: number;
+  draftAcceptedTokens?: number;
+} {
+  const perSecond = toNumber(timings.predicted_per_second, Number.NaN);
+  const draft = toCount(timings.draft_n);
+  const accepted = toCount(timings.draft_n_accepted);
+  return {
+    ...(Number.isFinite(perSecond) && perSecond > 0
+      ? { predictedPerSecond: perSecond }
+      : {}),
+    ...(draft !== null && draft > 0
+      ? {
+          draftTokens: draft,
+          draftAcceptedTokens: Math.min(draft, accepted ?? 0),
+        }
+      : {}),
   };
 }
 

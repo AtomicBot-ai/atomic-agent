@@ -16,6 +16,7 @@ import {
   parseCurlOutput,
 } from "./http-request.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
+import { getWebIdentity } from "../../browser/web-identity.js";
 
 function makeCtx(): ToolContext {
   return {
@@ -473,6 +474,26 @@ describe("os.http.request", () => {
     expect(acceptOccurrences).toHaveLength(1);
   });
 
+  it("sends the shared web identity's User-Agent, the same as the browser's (ATO-969)", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "never" }),
+      runCommand: fakeRun(capture, {
+        stdout: "ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01",
+      }),
+    });
+    await tool.run({ url: "https://api.example.com" }, makeCtx());
+    const at = capture.args!.indexOf("-A");
+    expect(at).toBeGreaterThan(-1);
+    expect(capture.args![at + 1]).toBe(getWebIdentity().userAgent);
+    // Set once in argv, ahead of the caller's headers so theirs can replace it.
+    expect(capture.args!.filter((a) => a === "-A")).toHaveLength(1);
+  });
+
   it("rejects headers containing CR/LF to prevent injection", async () => {
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
@@ -861,6 +882,43 @@ describe("os.http.request", () => {
     expect(preview).toContain("X-Request-Id: req-1");
     for (const secret of ["sk-live-abcdef123456", "dXNlcjpwYXNz", "s3cr3t", "key-123456", "tok-987"]) {
       expect(preview).not.toContain(secret);
+    }
+  });
+
+  it("masks query keys and body secrets in the prompt (ATO-1471)", async () => {
+    const asked: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      emit: (req) => {
+        asked.push(req);
+        gate.reject(req.approvalId, "no");
+      },
+    });
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: gate,
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "writes" }),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run(
+        {
+          url: "https://api.example.com/v1?api_key=qk-123456&page=2",
+          method: "POST",
+          body: { user: "n", password: "hunter2hunter2" },
+        },
+        makeCtx(),
+      ),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    const request = asked[0]!;
+    expect(request.reason).toBe("POST https://api.example.com/v1?api_key=****&page=2");
+    expect(request.affectedResources).toEqual(["https://api.example.com/v1?api_key=****&page=2"]);
+    expect(request.grantKey).toBe("https://api.example.com");
+    const preview = request.preview ?? "";
+    expect(preview).toContain('"user":"n"');
+    for (const text of [request.reason, preview, ...(request.affectedResources ?? [])]) {
+      expect(text).not.toContain("qk-123456");
+      expect(text).not.toContain("hunter2hunter2");
     }
   });
 

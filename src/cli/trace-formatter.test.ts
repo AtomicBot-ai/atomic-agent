@@ -437,3 +437,50 @@ describe("formatTraceChronology memory_health_warning", () => {
     expect(line.length).toBeLessThan(400);
   });
 });
+
+describe("formatTraceChronology llm_completion timing (#493, ATO-631)", () => {
+  const completion = {
+    type: "llm_completion" as const,
+    seq: 3,
+    sessionId: "s-1",
+    ts: Date.parse("2026-09-01T10:00:00.000Z"),
+    turnIndex: 0,
+    stepIndex: 2,
+    attempt: 1 as const,
+    content: "ok",
+    cacheHitTokens: 900,
+    modelId: "qwen",
+    stop: true,
+    truncated: false,
+  };
+
+  it("shows prefill and decode time with the decode rate and draft counts", () => {
+    const line = render([
+      {
+        ...completion,
+        timing: {
+          promptMs: 41_200,
+          predictedMs: 2_000,
+          promptTokens: 1_000,
+          predictedTokens: 24,
+          predictedPerSecond: 12.04,
+          draftTokens: 30,
+          draftAcceptedTokens: 21,
+        },
+      },
+    ]);
+    expect(line).toContain(
+      "promptMs=41200 predictedMs=2000 tokens(p=1000,c=24) decodeTps=12 draft=21/30",
+    );
+  });
+
+  it("keeps the old line for a trace recorded before the rate existed", () => {
+    const line = render([
+      {
+        ...completion,
+        timing: { promptMs: 10, predictedMs: 20, promptTokens: 70, predictedTokens: 8 },
+      },
+    ]);
+    expect(line).toContain("promptMs=10 predictedMs=20 tokens(p=70,c=8) content=");
+  });
+});

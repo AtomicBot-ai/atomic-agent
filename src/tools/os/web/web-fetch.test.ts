@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildOsWebFetchTool, parseCurlMeta } from "./web-fetch.js";
+import { buildOsWebFetchTool, fetchRawPage, parseCurlMeta } from "./web-fetch.js";
 import type { runCommand as RunCommandType } from "../../../sandbox/command-runner.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
 import type { ToolContext } from "../../tool-registry.js";
@@ -138,6 +138,53 @@ describe("os.web.fetch tool", () => {
     expect(result.details.extractor).toBe("readability");
     expect(result.details.finalUrl).toBe("https://example.com/doc");
     expect(result.summary).toContain("first paragraph");
+  });
+
+  it("runs Defuddle first when web.fetch.extractor is defuddle (ATO-698)", async () => {
+    const seen: string[] = [];
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({
+          body: ARTICLE,
+          status: 200,
+          contentType: "text/html",
+        }),
+      })),
+      lookup: publicLookup,
+      config: {
+        web: {
+          search: USER_CONFIG_DEFAULTS.web.search,
+          fetch: { ...USER_CONFIG_DEFAULTS.web.fetch, extractor: "defuddle" },
+        },
+      },
+      runDefuddle: async ({ url }) => {
+        seen.push(url);
+        return { content: "defuddled body text", title: "Doc" };
+      },
+    });
+    const result = await tool.run({ url: "https://example.com/doc" }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.extractor).toBe("defuddle");
+    expect(result.summary).toContain("defuddled body text");
+    expect(seen).toEqual(["https://example.com/doc"]);
+  });
+
+  it("keeps Readability when the extractor is left at its default", async () => {
+    let defuddleCalls = 0;
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+      })),
+      lookup: publicLookup,
+      config: { web: USER_CONFIG_DEFAULTS.web },
+      runDefuddle: async () => {
+        defuddleCalls++;
+        return { content: "should not be used" };
+      },
+    });
+    const result = await tool.run({ url: "https://example.com/doc" }, ctx());
+    expect(result.details.extractor).toBe("readability");
+    expect(defuddleCalls).toBe(0);
   });
 
   it("follows a redirect and re-validates the next hop", async () => {
@@ -760,6 +807,7 @@ describe("os.web.fetch against a bot wall", () => {
       lookup: publicLookup,
       config: USER_CONFIG_DEFAULTS as never,
       sleep: fakeSleep().sleep,
+      env: {},
     });
   }
 
@@ -787,6 +835,58 @@ describe("os.web.fetch against a bot wall", () => {
     expect(result.summary).toContain("do not re-fetch");
   });
 
+  it("renders a walled page in the agent's browser and says so (ATO-968)", async () => {
+    const rendered: string[] = [];
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({ body: CHALLENGE, status: 403, contentType: "text/html" }),
+      })),
+      lookup: publicLookup,
+      config: USER_CONFIG_DEFAULTS as never,
+      sleep: fakeSleep().sleep,
+      env: {},
+      renderPage: async ({ url }) => {
+        rendered.push(url);
+        return { finalUrl: url, title: "Doc", html: ARTICLE };
+      },
+    });
+    const result = await tool.run({ url: "https://example.com/a" }, ctx());
+    expect(rendered).toEqual(["https://example.com/a"]);
+    expect(result.status).toBe("ok");
+    expect(result.details.readVia).toBe("browser");
+    expect(result.details.status).toBe(200);
+    expect(result.summary).toContain("agent's own browser");
+    expect(result.summary).toContain("first paragraph");
+    expect(result.summary).not.toContain("Just a moment");
+  });
+
+  it("keeps the wall error, listing what it tried, when no step gets through", async () => {
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({ body: CHALLENGE, status: 403, contentType: "text/html" }),
+      })),
+      lookup: publicLookup,
+      config: USER_CONFIG_DEFAULTS as never,
+      sleep: fakeSleep().sleep,
+      env: {},
+      renderPage: async ({ url }) => ({ finalUrl: url, title: "", html: CHALLENGE }),
+    });
+    const result = await tool.run({ url: "https://example.com/a" }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.details.retryWith).toBe("browser.navigate");
+    expect(result.details.ladderAttempts).toEqual(["browser: still a challenge page"]);
+    expect(result.summary).toContain("Also tried: browser: still a challenge page");
+  });
+
+  it("reports readVia curl for a page read on the first step", async () => {
+    const result = await toolReturning(200, ARTICLE).run(
+      { url: "https://example.com/a" },
+      ctx(),
+    );
+    expect(result.details.readVia).toBe("curl");
+    expect(result.summary).not.toContain("[os.web.fetch:");
+  });
+
   it("leaves an ordinary page alone", async () => {
     const result = await toolReturning(200, ARTICLE).run(
       { url: "https://example.com/a" },
@@ -794,5 +894,49 @@ describe("os.web.fetch against a bot wall", () => {
     );
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("Hello");
+  });
+});
+
+describe("fetchRawPage pacing hooks (ATO-970)", () => {
+  it("calls beforeRequest/afterResponse around every attempt and redirect hop", async () => {
+    const calls: string[] = [];
+    let first = true;
+    const runCommand = makeRunCommand((url) => {
+      if (url === "https://example.com/old") {
+        return { stdout: curlStdout({ body: "", status: 301, contentType: "text/html", redirectUrl: "https://example.com/new" }) };
+      }
+      if (first) {
+        first = false;
+        return { stdout: curlStdout({ body: "busy", status: 503, contentType: "text/plain", headers: { "retry-after": "1" } }) };
+      }
+      return { stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }) };
+    });
+    const { sleep } = fakeSleep();
+    const page = await fetchRawPage("https://example.com/old", {
+      cwd: "/tmp",
+      signal: new AbortController().signal,
+      runCommand,
+      lookup: publicLookup,
+      sleep,
+      hooks: {
+        beforeRequest: async (u) => {
+          calls.push(`before ${u.pathname}`);
+        },
+        afterResponse: (u, status, retryAfterMs) => {
+          calls.push(`after ${u.pathname} ${status} ${retryAfterMs ?? "-"}`);
+        },
+      },
+    });
+    expect(page.status).toBe(200);
+    expect(page.finalUrl).toBe("https://example.com/new");
+    expect(page.body).toContain("<article>");
+    expect(calls).toEqual([
+      "before /old",
+      "after /old 301 -",
+      "before /new",
+      "after /new 503 1000",
+      "before /new",
+      "after /new 200 -",
+    ]);
   });
 });

@@ -4,6 +4,7 @@ import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { theme } from "../theme/theme.js";
 import type { McpAddModalState } from "./mcp-panel-state.js";
 import { MultiLineEditor } from "../components/multi-line-editor.js";
+import { McpCatalogPicker, McpCatalogHints } from "./mcp-catalog-picker.js";
 
 export interface McpAddModalProps {
   state: McpAddModalState;
@@ -39,6 +40,7 @@ export function McpAddModal({
   onSubmit,
   onCancel,
 }: McpAddModalProps): ReactElement {
+  if (state.picker !== null) return <McpCatalogPicker picker={state.picker} />;
   // Width is pinned to 100% of the debug-pane column so the modal does
   // NOT resize itself to fit pasted content — every nested Box also
   // sets `width="100%"`. Without this Ink flexes everything to the
@@ -72,6 +74,7 @@ export function McpAddModal({
           and auto-promoted to stdio.
         </Text>
       </Box>
+      {state.catalogId ? <McpCatalogHints id={state.catalogId} /> : null}
       <Box
         marginTop={1}
         flexDirection="column"

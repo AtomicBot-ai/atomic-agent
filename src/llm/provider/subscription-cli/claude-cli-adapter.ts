@@ -131,6 +131,8 @@ function parseResult(stdout: string, fallbackModel: string): CompletionResult {
   } catch {
     throw new SubscriptionCliInvocationError(
       `claude returned output that is not JSON: ${stdout.slice(0, 500)}`,
+      null,
+      "not_json",
     );
   }
   const status = envelope.api_error_status ?? null;
@@ -151,6 +153,8 @@ function parseResult(stdout: string, fallbackModel: string): CompletionResult {
       `claude reported ${envelope.subtype ?? "an error"}${
         status ? ` (api status ${status})` : ""
       }: ${envelope.result ?? "no detail"}`,
+      null,
+      "reported_error",
     );
   }
 

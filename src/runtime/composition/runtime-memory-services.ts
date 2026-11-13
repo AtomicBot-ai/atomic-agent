@@ -15,11 +15,14 @@ import { type RewriterLlmComplete, createQueryRewriterRunner, createRewriterAwar
 import { createReflectionRunner, type ReflectionLlmComplete, type ReflectionRunner, type ReflectionTraceEvent } from "../../memory/reflection/index.js";
 import { createLinkGeneratorRunner, createLinkAwareReflectionRunner, type LinkGeneratorLlmComplete, type LinkGeneratorTraceEvent } from "../../memory/links/index.js";
 import { NeighborEvolver } from "../../memory/evolution/index.js";
+import { createNoteReconcileRunner, createReconcileAwareReflectionRunner, type NoteReconcileLlmComplete } from "../../memory/reconcile/index.js";
 import { ConsolidatorJob, DistillRunner } from "../../memory/consolidator/index.js";
 import { createVoteRunner, createVoteAwareReflectionRunner, type VoteRunnerLlmComplete } from "../../memory/voting/index.js";
 import { createVoteTraceSink, observeVoteRunnerHealth, type MemoryHealthAnnouncer } from "../announce-memory-health.js";
 import { abortableSubcall, type SubcallComplete } from "../abortable-subcall.js";
 import type { RuntimeMemoryStores } from "./runtime-memory-stores.js";
+import type { GroundingConversationSource } from "../../memory/name-grounding.js";
+import { startRecallNameGuard } from "./runtime-recall-name-guard.js";
 
 interface MemoryServiceDependencies extends Omit<RuntimeMemoryStores, "embeddingHealth" | "embeddingBackfill"> {
   config: Pick<AtomicAgentConfig, "memory">;
@@ -34,6 +37,8 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
   toolTransport?: ToolCallTransport;
   touchRecorder: (sessionId: string) => TraceRecorder | undefined;
   memoryHealth: MemoryHealthAnnouncer;
+  /** ATO-321. Stored user messages; enables the recall-time name check. */
+  nameGroundingSource?: GroundingConversationSource;
 }): { reflectionRunner: ReflectionRunner | undefined; memoryContextProvider: MemoryContextProvider | undefined } {
   const { config, slotManager, llmComplete, profileStore, notesStore, logger, metrics, linkStore, lessonStore, procedureStore, voteStore, embeddingClient, touchRecorder, memoryHealth } = args;
 
@@ -102,8 +107,34 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
   // is absent (memory.reflection disabled), link-generation is also
   // skipped — we never want to spawn an LLM call just for the graph.
   let reflectionRunner: ReflectionRunner | undefined = baseReflectionRunner;
+  // ATO-672. Off by default (`memory.notes.reconcile`): one background
+  // call per reflection that marks older notes the new one replaces.
+  if (reflectionRunner && config.memory.notes.enabled && config.memory.notes.reconcile) {
+    const reconcileLlmComplete: NoteReconcileLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<NoteReconcileLlmComplete>[0]) => ({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+        ...(params.responseFormat ? { responseFormat: params.responseFormat } : {}),
+      }),
+    );
+    reflectionRunner = createReconcileAwareReflectionRunner({
+      reflection: reflectionRunner,
+      reconciler: createNoteReconcileRunner({
+        llmComplete: reconcileLlmComplete,
+        notesStore,
+        reflectionSlotId: () => slotManager.sideCallSlotId(),
+        timeoutMs: config.memory.reflection.timeoutMs,
+        leaseMs: config.memory.evolution.leaseMs,
+        logger,
+      }),
+      notesStore,
+    });
+  }
   if (
-    baseReflectionRunner &&
+    reflectionRunner &&
     config.memory.links.enabled &&
     config.memory.links.autoGenerate
   ) {
@@ -155,7 +186,7 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
       emitTrace: emitLinkGeneratorTrace,
     });
     reflectionRunner = createLinkAwareReflectionRunner({
-      reflection: baseReflectionRunner,
+      reflection: reflectionRunner,
       linkGenerator,
       notesStore,
       minCandidates: config.memory.links.minCandidates,
@@ -232,9 +263,20 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
   // memory-index pointer rendering. Wired only when `memory.notes` is
   // enabled — otherwise the runtime has nothing to read from and the
   // prompt tail skips both sections.
+  const nameGuard =
+    config.memory.notes.enabled && args.nameGroundingSource
+      ? startRecallNameGuard({
+          source: args.nameGroundingSource,
+          notesStore,
+          lessonStore: config.memory.lessons.enabled ? lessonStore : null,
+          logger,
+        })
+      : undefined;
   const baseMemoryContextProvider = config.memory.notes.enabled
     ? createDefaultMemoryContextProvider({
         store: notesStore,
+        ...(nameGuard ? { nameGuard } : {}),
+        ...(config.memory.notes.reconcile ? { hideSuperseded: true } : {}),
         recall: {
           enabled: config.memory.recallInjection.enabled,
           k: config.memory.recallInjection.k,

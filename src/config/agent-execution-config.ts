@@ -57,6 +57,54 @@ export interface AgentTaskConfig {
    * no field and runs uncapped, as before.
    */
   maxCostUsd: number;
+  /**
+   * Ask the model to review and resend its live plan (`plan.update`)
+   * every this many steps of a long task (ATO-609). The request joins
+   * the next step's notice, so it costs no extra model call. `0` (the
+   * default) is off. Additive and unversioned: an older file has no
+   * field and never re-plans.
+   */
+  replanEveryNSteps: number;
+}
+
+/**
+ * Goal mode settings (`agent.goal`, ATO-1036). Separate from
+ * `agent.task`: a task's ceilings end one run, these bound a goal across
+ * all its rounds and restarts.
+ */
+export interface AgentGoalConfig {
+  /**
+   * Token budget a new goal starts with: prompt plus completion tokens
+   * of all its rounds, as the provider reports them. `0` means no cap
+   * (rounds, time and money still bound a goal). `/goal tokens` changes
+   * it for one goal. Default `0`.
+   */
+  maxTokens: number;
+}
+
+export function createAgentGoalDefaults(): AgentGoalConfig {
+  return { maxTokens: 0 };
+}
+
+/** Parse `agent.goal`. Absent block means the defaults. */
+export function parseAgentGoal(
+  raw: unknown,
+  defaults: AgentGoalConfig,
+): AgentGoalConfig {
+  if (raw === undefined || raw === null) return defaults;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      "agent.goal",
+      `expected object, got ${JSON.stringify(raw)}`,
+    );
+  }
+  const goal = raw as Record<string, unknown>;
+  return {
+    maxTokens: parseNonNegativeInt(
+      goal.maxTokens ?? defaults.maxTokens,
+      "agent.goal.maxTokens",
+    ),
+  };
 }
 
 export function createProviderWaitDefaults(): ProviderWaitConfig {
@@ -82,6 +130,7 @@ export function createAgentTaskDefaults(): AgentTaskConfig {
     resumeInterrupted: true,
     maxResumes: 3,
     maxCostUsd: 0,
+    replanEveryNSteps: 0,
   };
 }
 
@@ -150,6 +199,10 @@ export function parseAgentTask(
     maxCostUsd: parseNonNegativeUsd(
       task.maxCostUsd ?? defaults.maxCostUsd,
       "agent.task.maxCostUsd",
+    ),
+    replanEveryNSteps: parseNonNegativeInt(
+      task.replanEveryNSteps ?? defaults.replanEveryNSteps,
+      "agent.task.replanEveryNSteps",
     ),
   };
 }

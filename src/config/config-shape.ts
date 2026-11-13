@@ -15,11 +15,12 @@ import type { UserLlmFusionConfig, UserLlmRunModeConfig } from "./llm-run-mode-c
  * `carryUnknownConfigKeys`.
  *
  * - `fixed`: the block's field names are the schema's. Every object node
- *   of `USER_CONFIG_DEFAULTS` except `webhooks` is one, and so are the
+ *   of `USER_CONFIG_DEFAULTS` except `webhooks` and `fileTriggers` is
+ *   one, and so are the
  *   root (path `""`) and the `llm` blocks below, which the defaults do
  *   not have.
- * - `dictionary`: names or entries are user data — `webhooks` (keyed by
- *   binding name), `mcp.servers` and `llm.providers` (lists of named
+ * - `dictionary`: names or entries are user data — `webhooks` and
+ *   `fileTriggers` (keyed by binding name), `mcp.servers` and `llm.providers` (lists of named
  *   entries). Arrays are always whole values, and so is everything
  *   inside a list entry (`providerPreferences`, `extraBody`, `params`).
  *
@@ -49,15 +50,19 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "web.search.exa",
   "web.search.brave",
   "web.fetch",
+  "web.crawl",
   "projects",
   "tools",
   "tools.shell",
   "browser",
   "tools.screen",
+  "tools.lsp",
   "sessions",
   "sessions.retention",
   "tracing",
   "tracing.trace",
+  "tracing.otel",
+  "network",
   "memory",
   "memory.profile",
   "memory.reflection",
@@ -91,6 +96,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "swarm",
   "notifications",
   "notifications.downloads",
+  "notifications.push",
   "atomicMail",
   "git",
   "composio",
@@ -103,8 +109,12 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
 
 export const DICTIONARY_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "webhooks",
+  "channels",
+  "fileTriggers",
   "mcp.servers",
   "llm.providers",
+  // Header names are the operator's (`Authorization`, `x-api-key`, …).
+  "tracing.otel.headers",
 ]);
 
 /*
@@ -121,6 +131,7 @@ const LLM_KEYS: Record<keyof UserLlmFileConfig, true> = {
   fallback: true,
   runMode: true,
   openrouter: true,
+  costTracking: true,
 };
 const LLM_FALLBACK_KEYS: Record<keyof UserLlmFallbackConfig, true> = {
   chain: true,
@@ -159,6 +170,7 @@ const LLM_FUSION_KEYS: Record<keyof UserLlmFusionConfig, true> = {
   autoReplan: true,
   roles: true,
   mixLocalModels: true,
+  outcomeJournal: true,
   isolation: true,
   taskTree: true,
 };
@@ -167,13 +179,14 @@ const LLM_FUSION_KEYS: Record<keyof UserLlmFusionConfig, true> = {
  * Keys this build knows in a fixed block although they are not in
  * `USER_CONFIG_DEFAULTS`: emitted only when set (`llm` and its blocks), or retired
  * aliases the parse still reads but never writes back (`telemetry`,
- * `agent.approvalRequired`, `discord.ownerUserId`). Without this list
+ * `agent.approvalRequired`, `discord.ownerUserId`), and optional blocks
+ * like `agent.personas` that are only written when set. Without this list
  * they would look like keys from a newer build and be carried forward
  * for ever, or brought back after a caller removed them.
  */
 const KNOWN_KEYS_OUTSIDE_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
   "": ["llm", "telemetry"],
-  agent: ["approvalRequired"],
+  agent: ["approvalRequired", "personas"],
   discord: ["ownerUserId"],
   llm: Object.keys(LLM_KEYS),
   "llm.fallback": Object.keys(LLM_FALLBACK_KEYS),

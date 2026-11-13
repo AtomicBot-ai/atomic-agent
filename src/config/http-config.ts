@@ -5,10 +5,13 @@ import { parseStringArrayOrNull } from "./config-values.js";
 /**
  * When to require approval for outbound HTTP calls via `os.http.request`.
  *  - `never`:   trust the LLM blindly (not recommended outside sandboxes).
- *  - `writes`:  GET + HEAD bypass approval; anything with a body (POST…) needs it.
- *               The default since v79. A GET can still carry data out in its
- *               URL (query string, path); this mode does not look inside it.
- *  - `always`:  every call goes through the approval gate.
+ *  - `writes`:  a GET skips the gate; anything that sends data (POST) goes
+ *               to it as `http_write`, which asks below approval level 4
+ *               (ATO-1462). The default since v79. A GET can still carry
+ *               data out in its URL (query string, path); this mode does not
+ *               look inside it.
+ *  - `always`:  every call goes through the approval gate: a GET as `http`
+ *               (silent from level 3), a POST as `http_write` (from level 4).
  */
 export type HttpApprovalMode = "never" | "writes" | "always";
 

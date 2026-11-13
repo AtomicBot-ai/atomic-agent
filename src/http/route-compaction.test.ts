@@ -61,6 +61,40 @@ describe("compaction HTTP and runtime persistence", () => {
     expect((await fetch(`${f.baseUrl}/api/sessions/missing/compaction`, { headers })).status).toBe(404);
     expect((await fetch(`${f.baseUrl}/api/sessions/missing/compact`, { method: "POST", headers, body: "{" })).status).toBe(400);
   });
+  it("passes optional instructions into the summary prompt and validates them (ATO-661)", async () => {
+    const prompts: string[] = [];
+    const f = await setup({ llamaComplete: async (p) => {
+      if (!p.sessionId.startsWith("compaction:")) return reply();
+      prompts.push(p.prompt);
+      return answer(SUMMARY);
+    } });
+    const state = fill(f.runtime.createSession());
+    f.runtime.sessionStore.save(state);
+    const post = (body: string) => fetch(`${f.baseUrl}/api/sessions/${state.id}/compact`, { method: "POST", body });
+    const tooLong = await post(JSON.stringify({ instructions: "x".repeat(2001) }));
+    expect(tooLong.status).toBe(400);
+    expect(await tooLong.json()).toMatchObject({ error: { param: "instructions", message: expect.stringContaining("at most 2000") } });
+    expect((await post(JSON.stringify({ instructions: 7 }))).status).toBe(400);
+    expect(prompts).toHaveLength(0);
+    const ok = await post(JSON.stringify({ instructions: "  keep the names of failing tests " }));
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toMatchObject({ status: "compacted", reason: "manual" });
+    expect(prompts.length).toBeGreaterThan(0);
+    for (const prompt of prompts) expect(prompt).toContain("<<<\nkeep the names of failing tests\n>>>");
+  });
+  it("still accepts an empty body or one without instructions", async () => {
+    const prompts: string[] = [];
+    const f = await setup({ llamaComplete: async (p) => {
+      if (!p.sessionId.startsWith("compaction:")) return reply();
+      prompts.push(p.prompt);
+      return answer(SUMMARY);
+    } });
+    const state = fill(f.runtime.createSession());
+    f.runtime.sessionStore.save(state);
+    const response = await fetch(`${f.baseUrl}/api/sessions/${state.id}/compact`, { method: "POST", body: "{}" });
+    expect(response.status).toBe(200);
+    expect(prompts.every((prompt) => !prompt.includes("User's instructions for this compaction"))).toBe(true);
+  });
   it("persists automatic checkpoints before inference and gives a deferred first session its turn owner", async () => {
     let observed: SessionState | null = null;
     const events: AgentLoopEvent[] = [];

@@ -27,6 +27,7 @@ import {
   type ContractCheckRunner,
   type ContractReport,
 } from "./contract-checks.js";
+import { checksWithExamples } from "./contract-example.js";
 import {
   completedWaveNotes,
   contractForWave,
@@ -35,10 +36,18 @@ import {
   UNDELIVERED_STATUSES,
 } from "./contract-waves.js";
 import {
+  clampTaskBudget,
+  localTaskBudgetFloorMs,
   notStartedResult,
   runWorkerTasks,
+  WORKER_BUDGET_CEILING_FACTOR,
   type WorkerRunnerDeps,
 } from "./worker-runner.js";
+import {
+  checkWorkerFit,
+  estimateRows,
+  renderEstimateBlock,
+} from "./worker-fit.js";
 import { describeReplan, renderReplanBlock } from "./replan.js";
 import { LocalLegHealth } from "./local-leg-health.js";
 import {
@@ -53,6 +62,7 @@ import {
   renderSplitInstructions,
 } from "./task-tree.js";
 import type { FusionRunRecorder, FusionRunStore } from "./run-checkpoint.js";
+import { outcomeRowFor, type FusionOutcomeLog } from "./outcome-log.js";
 import {
   planResume,
   readResumeRequest,
@@ -68,7 +78,17 @@ import {
   type JudgeVerdict,
 } from "./judge.js";
 import type { DelegateTask } from "./delegate-args.js";
-import { resolveTaskLegs, unknownModels, type TaskLeg } from "./role-models.js";
+import {
+  allowedModels,
+  resolveTaskLegs,
+  unknownModels,
+  type TaskLeg,
+} from "./role-models.js";
+import { applyTaskProfiles, type AppliedProfileReport } from "./task-profiles.js";
+import {
+  builtinAgentProfileSet,
+  type AgentProfileSet,
+} from "../../agent-profiles/index.js";
 import type { DelegateContract } from "./contract.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
@@ -160,6 +180,12 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    */
   runCheckpoints?: FusionRunStore;
   /**
+   * Where every finished worker task leaves one line of counts and
+   * labels (ATO-949), the planner's memory of what works on this
+   * machine. Absent: nothing is logged.
+   */
+  outcomeLog?: Pick<FusionOutcomeLog, "append">;
+  /**
    * The agent's own state directory (`config.paths.stateDir`, usually
    * `~/.atomic-agent`). A fan-out whose write scope lies inside it is
    * refused before the operator is asked (ATO-1267): workers have no
@@ -167,6 +193,12 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * for itself. Absent (tests, embedders), no such check.
    */
   agentStateDir?: string;
+  /**
+   * The subagent profiles a task may name (ATO-566), loaded for the
+   * folder the fan-out runs in: built-ins, the user's, plugins' and the
+   * project's trusted ones. Absent (tests, embedders), the built-ins.
+   */
+  resolveAgentProfiles?: (workingDir: string) => AgentProfileSet;
 }
 
 /**
@@ -276,7 +308,7 @@ export function buildFusionDelegateTool(
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs? }], maxWorkers?, contract? }. To continue a run cut off by a restart: { resume: runId, confirm?: [taskId] } and nothing else.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. For a function another task calls, also give an `example`: { call, expect, page? } — one small call (`PHYS.corners({x:0,y:0,w:2,h:2,a:0})`) and a JS condition over its result `r` (`r.length === 8 && 'w' in r[0]`); it is run once after the fan-out and a result that does not match fails the providing task. Browser code: set `page` to the HTML file that loads it (the call runs in that page's global scope); otherwise the provide's `in` file is loaded under node. A task may name a subagent `profile` (built-in: explore, review, research, all read-only; or one the user defined): the worker gets that profile's instructions and tool list. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs?, profile? }], maxWorkers?, contract? }. To continue a run cut off by a restart: { resume: runId, confirm?: [taskId] } and nothing else.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -335,6 +367,37 @@ export function buildFusionDelegateTool(
       // refuses the call; without `roles` every task is on the worker
       // leg, as before.
       const workerLegRef = { providerId: workerProviderId, model: workerModel };
+      // Subagent profiles (ATO-566): applied before the legs are picked,
+      // since a profile's model can set the task's role.
+      let profileReports: AppliedProfileReport[] = [];
+      if (parsed.tasks.some((t) => t.profile !== undefined)) {
+        let profiles: AgentProfileSet;
+        try {
+          profiles =
+            deps.resolveAgentProfiles?.(ctx.workingDir) ??
+            builtinAgentProfileSet();
+        } catch (err) {
+          deps.logger.warn("fusion: loading agent profiles failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          profiles = builtinAgentProfileSet();
+        }
+        if (profiles.diagnostics.length > 0) {
+          deps.logger.warn("fusion: agent profile problems", {
+            diagnostics: profiles.diagnostics,
+          });
+        }
+        const profiled = applyTaskProfiles(
+          parsed.tasks,
+          profiles,
+          allowedModels(workerLegRef, mode.roles),
+        );
+        if (!profiled.ok) {
+          return error(profiled.error, { field: "tasks", reason: "unknown-profile" });
+        }
+        parsed.tasks.splice(0, parsed.tasks.length, ...profiled.tasks);
+        profileReports = profiled.applied;
+      }
       const modelProblem = unknownModels(parsed.tasks, workerLegRef, mode.roles);
       if (modelProblem !== undefined) {
         return error(modelProblem, { field: "tasks", reason: "unknown-model" });
@@ -532,6 +595,30 @@ export function buildFusionDelegateTool(
           { reason: "agent-state-dir", scope: intoState },
         );
       }
+      // A local worker's time limit is sized from the machine's measured
+      // speed (F19); a cloud leg has no such measurement and keeps the
+      // configured ceiling.
+      const localTokensPerSecond = Number.isFinite(poolSize)
+        ? (deps.localTokensPerSecond?.() ?? null)
+        : null;
+      // Will each task's stated output fit its time limit at that speed
+      // (ATO-1363)? Advisory only: every task is dispatched. One over its
+      // limit gets a warning on its row; one no allowed limit could hold
+      // also gets a note to the planner in the result. Without a measured
+      // speed, or without estimates, nothing happens.
+      const fit = checkWorkerFit({
+        tasks: parsed.tasks.filter(
+          (t) => taskLegs.get(t.id)?.isWorkerLeg !== false,
+        ),
+        tokensPerSecond: localTokensPerSecond,
+        concurrency: maxWorkers,
+        budgetMsFor: (t) =>
+          Math.max(
+            clampTaskBudget(t.timeoutMs, mode.workerTimeoutMs).value,
+            localTaskBudgetFloorMs(mode.workerTimeoutMs),
+          ),
+        maxBudgetMs: mode.workerTimeoutMs * WORKER_BUDGET_CEILING_FACTOR,
+      });
       // A turn is one job. An orchestrator that reviews and re-delegates
       // runs five fan-outs to build one library, and asking the same
       // question five times is attrition, not consent. The operator's
@@ -615,12 +702,6 @@ export function buildFusionDelegateTool(
       const originalRequest =
         resumedFrom?.originalRequest ??
         deps.resolveOriginalRequest?.(ctx.sessionId);
-      // A local worker's time limit is sized from the machine's measured
-      // speed (F19); a cloud leg has no such measurement and keeps the
-      // configured ceiling.
-      const localTokensPerSecond = Number.isFinite(poolSize)
-        ? (deps.localTokensPerSecond?.() ?? null)
-        : null;
       // The reply cap the local pool was divided by (`workerSlotFootprint`
       // sizes each worker's reply at `workerReplyAllowance`, not at the raw
       // `completionMaxTokens`). A cap above that allowance is sent as the
@@ -822,6 +903,8 @@ export function buildFusionDelegateTool(
       const guardOptionsFor = (
         providerId: string,
         pricing: WorkerPricing | undefined,
+        model: string,
+        tasks: readonly DelegateTask[],
       ): Pick<
         Parameters<typeof runWorkerTasks>[1],
         | "shouldStart"
@@ -836,6 +919,28 @@ export function buildFusionDelegateTool(
         > = budgetOptionsFor(pricing);
         const checkpoint = checkpointOptionsFor(pricing);
         const breaker = breakerFor(providerId);
+        // The outcome log (ATO-949): one row per finished task, counts
+        // and labels only. A split's proposal is not an outcome.
+        const briefs = new Map(tasks.map((t) => [t.id, t]));
+        const leg = deps.workerSupportsSlotAffinity(providerId)
+          ? "local"
+          : "cloud";
+        const logOutcome = (result: WorkerTaskResult): void => {
+          if (deps.outcomeLog === undefined || awaitsExpansion(result)) return;
+          deps.outcomeLog.append(
+            outcomeRowFor({
+              result,
+              task: briefs.get(result.id),
+              leg,
+              model,
+              costUsd:
+                pricing !== undefined && result.usage !== undefined
+                  ? estimateUsageCostUsd(result.usage, pricing)
+                  : null,
+              at: Date.now(),
+            }),
+          );
+        };
         return {
           ...budget,
           ...checkpoint,
@@ -845,6 +950,7 @@ export function buildFusionDelegateTool(
           onTaskFinished: (result: WorkerTaskResult): void => {
             breaker.observe(result);
             checkpoint.onTaskFinished?.(result);
+            logOutcome(result);
           },
         };
       };
@@ -944,7 +1050,7 @@ export function buildFusionDelegateTool(
               : { workerMaxOutputTokens }),
             writeScope,
             signal: runSignal,
-            ...guardOptionsFor(workerProviderId, workerPricing),
+            ...guardOptionsFor(workerProviderId, workerPricing, workerModel, tasks),
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
@@ -1013,7 +1119,7 @@ export function buildFusionDelegateTool(
               : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
             writeScope,
             signal: runSignal,
-            ...guardOptionsFor(leg.providerId, pricing),
+            ...guardOptionsFor(leg.providerId, pricing, leg.model, tasks),
             ...(escalationTarget?.providerId === leg.providerId
               ? {}
               : escalationOptions),
@@ -1100,7 +1206,7 @@ export function buildFusionDelegateTool(
                   { results: rows, signal: ctx.signal },
                 );
                 const checks = await runContractChecks(
-                  childContract.checks ?? [],
+                  checksWithExamples(childContract),
                   deps.runChecks,
                   { workingDir: ctx.workingDir, signal: ctx.signal },
                 );
@@ -1291,15 +1397,19 @@ export function buildFusionDelegateTool(
           { results: allRows, signal: ctx.signal },
         );
         let out = applyContractFindings(rows, provides.findings);
+        // The declared checks, then one call per provide `example`
+        // (ATO-1362). Examples come last so the judge's indices into
+        // `contract.checks` still land on the declared ones.
+        const allChecks = checksWithExamples(parsed.contract);
         const checks = await runContractChecks(
-          parsed.contract.checks ?? [],
+          allChecks,
           deps.runChecks,
           { workingDir: ctx.workingDir, signal: ctx.signal },
         );
         out = applyCheckOutcomes(out, checks.outcomes);
         checkOutcomes =
-          checks.outcomes.length === (parsed.contract.checks ?? []).length
-            ? checks.outcomes
+          checks.outcomes.length === allChecks.length
+            ? checks.outcomes.slice(0, (parsed.contract.checks ?? []).length)
             : [];
         // What the call was run with despite the contract — a require
         // nobody provides, a provide nothing can check, a cycle in the
@@ -1485,6 +1595,23 @@ export function buildFusionDelegateTool(
                 : `, ${resume.needsConfirmation.length} not run again until the person agrees (${resume.needsConfirmation.map((r) => r.id).join(", ")})`
             }.`;
 
+      // The fit warnings ride their task's row (ATO-1363).
+      if (fit.warnings.size > 0) {
+        results = results.map((r) => {
+          const warning = fit.warnings.get(r.id);
+          return warning === undefined
+            ? r
+            : { ...r, notes: [...(r.notes ?? []), warning] };
+        });
+      }
+      const estimates = estimateRows(
+        parsed.tasks,
+        results,
+        localTokensPerSecond,
+        maxWorkers,
+      );
+      const estimateNote = renderEstimateBlock(estimates);
+
       // Where each task ran (ATO-943): the model and role on the row, and
       // a note when it is not the worker leg or not where it asked to be.
       // Without roles and without a task naming a model, rows are as before.
@@ -1591,7 +1718,7 @@ export function buildFusionDelegateTool(
             ...(contractLine === undefined ? {} : { contractLine }),
             spend,
             ...(ordered ? { waves: plan.waves } : {}),
-          })}${hint}${
+          })}${hint}${fit.plannerNote ?? ""}${estimateNote}${
             escalationSpendUsd > 0
               ? `\n\nEscalations to ${escalationTarget?.model ?? escalationTarget?.providerId ?? "the escalation model"} cost ${formatUsd(escalationSpendUsd)} this fan-out (each worker's row says what for).`
               : ""
@@ -1618,6 +1745,11 @@ export function buildFusionDelegateTool(
             ...(escalationSpendUsd > 0 ? { escalationSpendUsd } : {}),
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
             ...(roleSpendUsd > 0 ? { roleSpendUsd } : {}),
+            ...(estimates.length === 0 ? {} : { estimates }),
+            ...(fit.oversized.length === 0
+              ? {}
+              : { oversizedTasks: fit.oversized }),
+            ...(profileReports.length === 0 ? {} : { profiles: profileReports }),
             ...(merges.length === 0 ? {} : { merges }),
             ...(replan === undefined ||
             (replan.pending.length === 0 && replan.exhausted.length === 0)

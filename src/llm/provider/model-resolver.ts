@@ -7,6 +7,12 @@ export type ResolvedModel = {
   id: string;
   kind: "chat" | "embedding";
   contextWindow: number;
+  /**
+   * The model's own output ceiling, when a catalog publishes one
+   * (models.dev, ATO-647). Informational: requests still take their cap
+   * from the provider entry's `maxOutputTokens`.
+   */
+  maxOutputTokens?: number;
   dim?: number;
   supportsVision: boolean;
   supportsTools: "none" | "basic" | "parallel" | "strict";
