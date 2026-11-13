@@ -70,7 +70,7 @@ describe("compaction HTTP and runtime persistence", () => {
     } });
     const state = fill(f.runtime.createSession());
     f.runtime.sessionStore.save(state);
-    const post = (body: string) => fetch(`${f.baseUrl}/api/sessions/${state.id}/compact`, { method: "POST", body });
+    const post = (body: string) => fetch(`${f.baseUrl}/api/sessions/${state.id}/compact`, { method: "POST", headers: { "content-type": "application/json" }, body });
     const tooLong = await post(JSON.stringify({ instructions: "x".repeat(2001) }));
     expect(tooLong.status).toBe(400);
     expect(await tooLong.json()).toMatchObject({ error: { param: "instructions", message: expect.stringContaining("at most 2000") } });
@@ -91,7 +91,7 @@ describe("compaction HTTP and runtime persistence", () => {
     } });
     const state = fill(f.runtime.createSession());
     f.runtime.sessionStore.save(state);
-    const response = await fetch(`${f.baseUrl}/api/sessions/${state.id}/compact`, { method: "POST", body: "{}" });
+    const response = await fetch(`${f.baseUrl}/api/sessions/${state.id}/compact`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     expect(response.status).toBe(200);
     expect(prompts.every((prompt) => !prompt.includes("User's instructions for this compaction"))).toBe(true);
   });
