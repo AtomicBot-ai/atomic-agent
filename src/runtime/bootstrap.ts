@@ -2,6 +2,7 @@ import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
 import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
+import { askSideQuestion, sideQuestionPartition } from "./side-question.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
@@ -739,8 +740,10 @@ export async function createAgentRuntime(
   const { pendingSessionNamings, turnsInFlight } = turnState;
   // In-flight `/enhance` passes; shutdown aborts them beside naming.
   const pendingPromptEnhances = new Set<AbortController>();
+  // In-flight `/btw` side questions; shutdown aborts them the same way.
+  const pendingSideQuestions = new Set<AbortController>();
   const lifecycle = createRuntimeLifecycle({
-    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, pendingPromptEnhances, turnsInFlight, compaction,
+    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, pendingPromptEnhances, pendingSideQuestions, turnsInFlight, compaction,
     browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
     embeddingBackfill: memoryEmbeddings,
     get scheduler() { return scheduler; },
@@ -903,6 +906,34 @@ export async function createAgentRuntime(
         ...(enhanceOptions?.signal ? { signal: enhanceOptions.signal } : {}),
         onError: (err: unknown) =>
           logger.debug("prompt enhance failed", {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+      });
+    },
+    askSideQuestion: (question: string, sideOptions?: { sessionId?: string; signal?: AbortSignal }) => {
+      if (lifecycle.isShutdown()) return Promise.resolve({ ok: false as const, reason: "shutting down" });
+      const partition = sideQuestionPartition(sideOptions?.sessionId);
+      // Read once, never written back: the side question leaves no trace
+      // in the session. A failed read just means no context.
+      let turns: SessionState["turns"] = [];
+      if (sideOptions?.sessionId) {
+        try {
+          turns = sessionStore.load(sideOptions.sessionId)?.turns ?? [];
+        } catch {
+          turns = [];
+        }
+      }
+      return askSideQuestion(question, {
+        complete: (params) => llmComplete(params),
+        slotId: () => slotManager.sideCallSlotId(),
+        turns,
+        toolTransport: resolveActiveLlmSlice(fallbackChain.standingOverrideFor(partition) ?? undefined).transport,
+        pending: pendingSideQuestions,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
+        ...(sideOptions?.sessionId ? { sessionId: sideOptions.sessionId } : {}),
+        ...(sideOptions?.signal ? { signal: sideOptions.signal } : {}),
+        onError: (err: unknown) =>
+          logger.debug("side question failed", {
             error: err instanceof Error ? err.message : String(err),
           }),
       });

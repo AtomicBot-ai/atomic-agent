@@ -338,6 +338,9 @@ export function runSlashCommand(
     callbacks.onPromptEnhanceRequested?.(result.enhancePromptText);
   }
   if (result.enhanceCurrentDraft) runEnhanceCurrentDraft(state, dispatch, callbacks);
+  if (result.sideQuestionText !== undefined) {
+    callbacks.onSideQuestionRequested?.(result.sideQuestionText);
+  }
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {

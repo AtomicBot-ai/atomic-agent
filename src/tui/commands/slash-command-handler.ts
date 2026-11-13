@@ -40,6 +40,11 @@ export interface SlashDispatchResult {
    */
   readonly enhancePromptText?: string;
   /**
+   * `/btw <question>` (ATO-1152): ask the model a side question with the
+   * chat as context. The caller runs it; nothing lands in the session.
+   */
+  readonly sideQuestionText?: string;
+  /**
    * Bare `/enhance` (typed, from the palette or from the menu): enhance
    * whatever draft the composer holds, if it holds one. Only the caller
    * can see the composer, so it decides; the buffer is never cleared.
@@ -356,6 +361,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         ? pureActions([], { systemMessage: goal.message })
         : pureActions([], { goalCommand: goal });
     }
+    case "btw": {
+      const question = parsed.args.trim();
+      return question.length === 0
+        ? pureActions([], { systemMessage: SIDE_QUESTION_USAGE })
+        : pureActions([], { sideQuestionText: question });
+    }
     case "enhance":
       // Opt-in and never sends: the draft goes back into the composer
       // right away, and the rewrite replaces it there for review.
@@ -605,6 +616,9 @@ function dispatchModeSub(args: string): SlashDispatchResult {
 
 export const ENHANCE_USAGE =
   "Usage: /enhance <your prompt>, or type a prompt and pick Enhance prompt from the menu. Rewrites it in the composer for you to review; nothing is sent.";
+
+export const SIDE_QUESTION_USAGE =
+  "Usage: /btw <question>. Asks a quick side question about this chat; the model runs no tools and nothing is saved to the session.";
 
 function pureActions(
   actions: readonly TuiAction[],

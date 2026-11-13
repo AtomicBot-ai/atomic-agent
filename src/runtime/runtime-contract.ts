@@ -565,6 +565,17 @@ export interface AgentRuntime {
     options?: { sessionId?: string; signal?: AbortSignal },
   ): Promise<import("./prompt-enhancer.js").PromptEnhanceResult>;
   /**
+   * `/btw <question>` (ATO-1152): answer a side question with the
+   * conversation as read-only context. A sub-call under its own `btw:`
+   * fallback partition, with no tools, output bound and deadline: it
+   * creates no turn and writes nothing to the session. Optional so hosts
+   * and test doubles that never offer it need not implement it.
+   */
+  askSideQuestion?(
+    question: string,
+    options?: { sessionId?: string; signal?: AbortSignal },
+  ): Promise<import("./side-question.js").SideQuestionResult>;
+  /**
    * Build — never run, never persist — the prompt the next turn would
    * open with, for a composer's context readout before any message is
    * sent (the desktop's `POST /api/context-preview`). `sessionId` null

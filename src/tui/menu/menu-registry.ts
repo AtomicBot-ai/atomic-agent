@@ -596,6 +596,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.btw",
+    label: "Side question (not saved)",
+    group: "run",
+    slash: {
+      name: "btw",
+      description:
+        "ask a quick side question: `/btw <question>` — the model sees this chat, runs no tools, and nothing is saved to the session",
+      // Beside /steer, /queue and /status, the other run-time asides.
+      rank: 35.75,
+    },
+  },
+  {
+    kind: "action",
     id: "run.queue",
     label: "Queued messages",
     group: "run",

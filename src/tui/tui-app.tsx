@@ -320,6 +320,8 @@ export interface TuiAppCallbacks {
   onPromptEnhanceRequested?(draft: string): void;
   /** Idle Esc: stop a running `/enhance` (no-op when none is running). */
   onPromptEnhanceCancel?(): void;
+  /** `/btw <question>`: answer a side question without saving it (ATO-1152). */
+  onSideQuestionRequested?(question: string): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */
