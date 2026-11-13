@@ -26,7 +26,7 @@ import {
 /**
  * `GET /api/sessions` — list recent sessions in the current working
  * directory. `limit` (query string) caps the number of rows, default
- * 25, max 200. Payload mirrors `SessionState` minus the heavy
+ * 25, max 200 (1000 with `scope=all`). Payload mirrors `SessionState` minus the heavy
  * transcript by default — callers fetch the full state via
  * `/api/sessions/{id}` when they need it. `title` is the generated
  * session name (`agent.nameSessions`), `null` until one is stored.
@@ -47,7 +47,10 @@ export function createListSessionsHandler(): HttpHandler {
         sendError(res, 400, openaiError("limit must be a positive integer"));
         return;
       }
-      limit = Math.min(parsed, 200);
+      // `scope=all` is the desktop sidebar: projects and folders draw their
+      // chats from this list, and one import can bring hundreds (W2 QA: 803
+      // Claude Code chats, the older projects read "No chats yet" at 200).
+      limit = Math.min(parsed, url.searchParams.get("scope") === "all" ? 1000 : 200);
     }
     const workingDir = ctx.runtime.capabilities.workingDir;
     // ATO-731: chats keep their own folders, so `scope=all` lists them from every folder.

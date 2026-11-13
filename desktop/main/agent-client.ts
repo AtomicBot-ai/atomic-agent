@@ -1174,7 +1174,7 @@ export class AgentClient extends EventEmitter {
   // chat could not be reached — or pinned — at all. 200 is the route's cap and
   // the TUI's own scan window (chat-orchestrator.ts RAIL_SCAN_LIMIT).
   // ATO-731: chats keep their own folders; an agent from before `scope` lists this folder's, as before.
-  sessions = () => this.json<unknown>("/api/sessions?limit=200&scope=all");
+  sessions = () => this.json<unknown>("/api/sessions?limit=1000&scope=all");
   models = () => this.json<unknown>("/v1/models");
   session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
   /** `DELETE /api/sessions/{id}` — purge one session row (idempotent on 0.5.4). Harness-only today: the smoke removes the task fixtures' empty sessions. */

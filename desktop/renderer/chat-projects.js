@@ -26,11 +26,45 @@ const PROJECTS = {state: {projects: [], chats: {}}, loaded: false, collapsed: ne
 const PROJECT_INSTRUCTIONS_MAX = 16000;
 const PROJECT_NAME_MAX = 80;
 const PROJECTS_COLLAPSED_KEY = 'atomic.projects.collapsed';
+/* Projects this window has already drawn. One that shows up from elsewhere
+   (an import brings dozens at once) starts folded, the way Claude lists its
+   projects; one made here with New project opens (projectCreate). */
+const PROJECTS_KNOWN_KEY = 'atomic.projects.known';
+const PROJECTS_KNOWN = new Set();
+let PROJECTS_KNOWN_READ = false;
 
 try {
   const raw = typeof localStorage !== 'undefined' ? JSON.parse(localStorage.getItem(PROJECTS_COLLAPSED_KEY) || '[]') : [];
   if (Array.isArray(raw)) for (const id of raw) if (typeof id === 'string') PROJECTS.collapsed.add(id);
+  const known = typeof localStorage !== 'undefined' ? localStorage.getItem(PROJECTS_KNOWN_KEY) : null;
+  if (known !== null) {
+    PROJECTS_KNOWN_READ = true;
+    const ids = JSON.parse(known);
+    if (Array.isArray(ids)) for (const id of ids) if (typeof id === 'string') PROJECTS_KNOWN.add(id);
+  }
 } catch (e) { /* a per-window convenience only */ }
+
+function projectsSaveFolds() {
+  try {
+    localStorage.setItem(PROJECTS_COLLAPSED_KEY, JSON.stringify([...PROJECTS.collapsed]));
+    localStorage.setItem(PROJECTS_KNOWN_KEY, JSON.stringify([...PROJECTS_KNOWN]));
+  } catch (e) { /* kept for this run */ }
+}
+
+/* Fold every project not seen before. The very first read of a window that
+   never stored the list (an update from a build without it) only records
+   what is there, so projects someone already had open stay open. */
+function projectsFoldNew(projects) {
+  let changed = false;
+  for (const p of projects) {
+    if (PROJECTS_KNOWN.has(p.id)) continue;
+    PROJECTS_KNOWN.add(p.id);
+    if (PROJECTS_KNOWN_READ) PROJECTS.collapsed.add(p.id);
+    changed = true;
+  }
+  PROJECTS_KNOWN_READ = true;
+  if (changed) projectsSaveFolds();
+}
 
 /** The store's calls, or null when this build has none. */
 function projectsApi() {
@@ -46,7 +80,10 @@ async function loadProjects() {
   if (!api) { PROJECTS.loaded = true; return; }
   let res = null;
   try { res = await api.projectsList(); } catch (e) { res = null; }
-  if (res && typeof res === 'object' && res.ok !== false) PROJECTS.state = projectsCoerce('data' in res ? res.data : res);
+  if (res && typeof res === 'object' && res.ok !== false) {
+    PROJECTS.state = projectsCoerce('data' in res ? res.data : res);
+    projectsFoldNew(PROJECTS.state.projects);
+  }
   PROJECTS.loaded = true;
   if (typeof render === 'function') render();
 }
@@ -63,7 +100,7 @@ function projectCollapsed(id) { return PROJECTS.collapsed.has(id); }
 
 function projectToggle(id) {
   if (PROJECTS.collapsed.has(id)) PROJECTS.collapsed.delete(id); else PROJECTS.collapsed.add(id);
-  try { localStorage.setItem(PROJECTS_COLLAPSED_KEY, JSON.stringify([...PROJECTS.collapsed])); } catch (e) { /* kept for this run */ }
+  projectsSaveFolds();
 }
 
 /* The saved project out of a projects:save answer, or null. */
@@ -105,6 +142,8 @@ function projectCreate() {
       PROJECTS.state.projects.unshift(p);   // the store lists newest first
     }
     PROJECTS.collapsed.delete(p.id);
+    PROJECTS_KNOWN.add(p.id);
+    projectsSaveFolds();
     act('session:new');
     PROJECTS.newFor = {id: p.id, log: S.log};
     render();
