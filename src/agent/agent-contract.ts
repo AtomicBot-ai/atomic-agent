@@ -230,7 +230,7 @@ export interface AgentLoopDependencies {
    * orchestrator's. Resolved once per pinned turn. Absent, a pinned turn
    * falls back to the global fields (test / legacy wiring).
    */
-  resolveLlmSlice?: (providerId: string) => ResolvedTurnLlmSlice;
+  resolveLlmSlice?: (providerId: string, model?: string) => ResolvedTurnLlmSlice;
   /** Sticky fallback expected to serve this session; an explicit turn pin wins. */
   contextProviderId?: (sessionId: string) => string | undefined;
   /**
@@ -586,6 +586,15 @@ export interface RunTurnOptions {
    * on the parent session keeps the active (cloud) provider.
    */
   providerId?: string;
+  /**
+   * With `providerId`: the chat model this turn asks that provider for,
+   * instead of the one its config entry names (ATO-1148: a project's own
+   * cloud model). Cloud links only; the runtime refuses it on a local
+   * one, whose model is one per agent. Nothing is written to the config
+   * and the active provider does not move, so chats running at the same
+   * time keep their own model. Ignored without `providerId`.
+   */
+  model?: string;
   /**
    * The turn leaves no durable trace in the memory fabric: no recall or
    * per-step memory refresh, no end-of-turn reflection, no lesson

@@ -302,6 +302,15 @@ export function createRuntimeModelContext(
 
 export type RuntimeModelContext = ReturnType<typeof createRuntimeModelContext>;
 
+/**
+ * A catalogue window, or null for none: `source === "default"` is the
+ * nominal 128k placeholder, not a fact about the model (see
+ * `resolveCatalogContextWindow`).
+ */
+export function catalogWindowOf(model: ResolvedModel | undefined): number | null {
+  return !model || model.source === "default" || model.contextWindow <= 0 ? null : model.contextWindow;
+}
+
 export function connectRuntimeFallback(
   options: RuntimeInferenceOptions,
   deps: {
@@ -315,6 +324,8 @@ export function connectRuntimeFallback(
     sessionUsage?: SessionUsageLedger;
     resolveModelPricing: RuntimeModelContext["resolveModelPricing"];
     resolveCatalogContextWindow?: RuntimeModelContext["resolveCatalogContextWindow"];
+    /** Builds a pinned provider's per-turn model copy (ATO-1148). */
+    providerRegistry?: Pick<ProviderRegistry, "modelVariant">;
   },
 ) {
   const {
@@ -447,10 +458,19 @@ export function connectRuntimeFallback(
 
   const fallbackSeamDeps: FallbackSeamDeps = {
     fallbackChain,
-    resolveSlice: (providerId) => {
+    resolveSlice: (providerId, model) => {
       const { provider, transport, isLlamaServer } = resolveActiveLlmSlice(providerId);
-      return { provider, transport, contextWindow: (isLlamaServer ? profileManager?.getProfile().contextWindow : undefined)
+      const slice = { provider, transport, contextWindow: (isLlamaServer ? profileManager?.getProfile().contextWindow : undefined)
         ?? deps.resolveCatalogContextWindow?.(providerId) ?? null };
+      if (model === undefined || isLlamaServer || !deps.providerRegistry) return slice;
+      // ATO-1148: a turn on a project's own cloud model asks the pinned
+      // provider's copy built for that model; the config and the active
+      // provider stay as they are. The window is that model's, not the
+      // entry's default model's.
+      return deps.providerRegistry.modelVariant(providerId, model).then((variant) => {
+        if (!variant) throw new Error(`cannot run llm provider "${providerId}" on model "${model}"`);
+        return { provider: variant, transport, contextWindow: catalogWindowOf(resolveModelPricing(model, providerId)) };
+      });
     },
     // Issue #112. The one place that knows a cloud→local fallover is
     // about to happen: the chain has already picked the link and the
