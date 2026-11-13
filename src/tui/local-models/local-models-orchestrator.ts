@@ -2,6 +2,7 @@ import { selectManagedEngine } from "../../local-llm/engine-selection.js";
 import { retireIdleCore } from "../../local-llm/core/core-sessions.js";
 import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../../local-llm/core/core-errors.js";
 import { ModelOperationQueue } from "./model-operation-queue.js";
+import { hostRamGb } from "../../local-llm/backend/host-ram.js";
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
@@ -3798,12 +3799,12 @@ function dataDirOf(cfg: ReturnType<typeof getConfig>): string {
 }
 
 /**
- * Host physical RAM in whole decimal GB (rounded down). Consumers use
- * this to decide which models are realistic candidates on this
- * machine — nothing fancy, just `os.totalmem() / 1e9`.
+ * Host RAM in whole GB as the machine is sold (ATO-1442: the same
+ * measure as onboarding and the desktop, so a 16 GB Mac reads 16, not 17).
+ * Consumers use this to decide which models are realistic candidates.
  */
 function detectHostRamGb(): number {
-  return Math.max(1, Math.floor(totalmem() / 1_000_000_000));
+  return hostRamGb();
 }
 
 /**
