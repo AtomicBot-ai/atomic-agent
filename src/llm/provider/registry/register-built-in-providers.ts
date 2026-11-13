@@ -12,6 +12,7 @@ import { createKeyPool, orderedUniqueKeys } from "../../fallback/key-pool.js";
 import { resolveExtraApiKeys } from "../../../config/resolve-llm-api-key.js";
 import type { StructuredLogger } from "../../../tracing/index.js";
 import { isExternalEngineEntry } from "../openai/json-schema-tool-mode.js";
+import { sharedApiKeyCommandSource } from "../openai/api-key-command.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
 import { resolveCloudModelAudio } from "../model-audio.js";
 import { resolveCloudModelVision } from "../model-vision.js";
@@ -177,6 +178,11 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
+      // A short-lived token printed by a command (Vertex AI) replaces the
+      // stored key on every request; see `openai/api-key-command.ts`.
+      ...(entry.apiKeyCommand && entry.apiKeyCommand.length > 0
+        ? { apiKeySource: sharedApiKeyCommandSource(entry.apiKeyCommand, entry.id) }
+        : {}),
       ...(chatModel ? modelVisionOptions(entry, chatModel) : {}),
       ...(chatModel ? modelAudioOptions(entry, chatModel) : {}),
       supportsParallelTools: entry.supportsTools ?? true,

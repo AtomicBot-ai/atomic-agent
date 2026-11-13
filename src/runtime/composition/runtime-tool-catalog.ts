@@ -21,6 +21,7 @@ import { ToolRegistry } from "../../tools/tool-registry.js";
 import { FileCheckpointStore, fileCheckpointsRoot } from "../../tools/os/fs/fs-checkpoint-store.js";
 import { checkpointBeforeInvoke } from "../../tools/os/fs/fs-checkpoint-targets.js";
 import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
+import { commandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
 import { isSecretEnvName } from "../../sandbox/command-env.js";
 import { resolveExtraApiKeys } from "../../config/resolve-llm-api-key.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
@@ -69,7 +70,8 @@ const SECRET_HEADER = /authorization|api[-_]?key|token|secret|password|cookie|au
  * The exact secrets masked in tool output (ATO-1077): the agent's `.env`
  * (loaded into `process.env`) and the credentials stored in the config
  * file: provider keys and secret headers, the local server's key,
- * webhook secrets, and MCP servers' secret env values and headers. Read
+ * webhook secrets, MCP servers' secret env values and headers, and the
+ * tokens provider key commands printed this process (Vertex AI). Read
  * per call, so a key added through `/providers` mid-session is covered.
  */
 export function runtimeKnownSecrets(
@@ -94,6 +96,8 @@ export function runtimeKnownSecrets(
     for (const extra of resolveExtraApiKeys(entry, env)) add(`${entry.id}-key`, extra);
     addHeaders(`${entry.id}-header`, entry.headers);
   }
+  // Tokens printed by provider key commands (Vertex AI) live only in memory.
+  for (const secret of commandIssuedSecrets()) add(secret.label, secret.value);
   add("local-models-key", config.localModels?.apiKey);
   for (const [name, hook] of Object.entries(config.webhooks ?? {})) {
     add(`webhook-${name}-secret`, hook.secret);

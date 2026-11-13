@@ -47,6 +47,11 @@ export type LlmProviderConfigEntry = {
    * (`<stateDir>/.env`) when the provider is built.
    */
   extraApiKeyEnvVars?: string[];
+  /**
+   * Command (argv) whose output is the key; see
+   * `UserLlmProviderEntry.apiKeyCommand` and `openai/api-key-command.ts`.
+   */
+  apiKeyCommand?: readonly string[];
   supportsTools?: boolean;
   supportsVision?: boolean;
   /** See `UserLlmProviderEntry.supportsAudio` (ATO-497). */
