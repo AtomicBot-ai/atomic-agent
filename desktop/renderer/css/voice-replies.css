@@ -1,0 +1,32 @@
+/* ============================================================
+   Replies by voice: View › Reading Voice and Speed… (tts-settings.js,
+   ATO-494) and the conversation-mode bar and button (converse.js,
+   ATO-1047). Colours come from tokens only.
+   ============================================================ */
+
+/* ---- Reading voice and speed ------------------------------------------- */
+.ttsdlg{border:0;padding:0;border-radius:14px;background:var(--lift);color:var(--ink);
+  box-shadow:var(--sh-pop);width:min(440px, calc(100vw - 32px))}
+.ttsdlg::backdrop{background:var(--scrim)}
+.ttsset{display:flex;flex-direction:column;gap:12px;padding:18px 20px}
+.ttsset-h{margin:0;font-size:var(--fs-lead);font-weight:600}
+.ttsset-row{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:var(--fs-cap)}
+.ttsset-pick{display:flex;align-items:center;gap:8px;min-width:0}
+.ttsset-pick select{max-width:220px;min-width:0}
+.ttsset-pick output{min-width:3ch;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.ttsset-note{margin:0;font-size:var(--fs-label);color:var(--ink-2)}
+.ttsset-foot{display:flex;justify-content:flex-end}
+
+/* ---- Conversation mode: the bar sits at the top centre, clear of the composer -- */
+.micbtn.convbtn.on{background:var(--accent-wash);color:var(--accent-text)}
+.convbar{position:fixed;left:50%;top:12px;-webkit-app-region:no-drag;transform:translateX(-50%);z-index:60;
+  display:flex;align-items:center;gap:10px;padding:6px 8px 6px 14px;border-radius:999px;
+  background:var(--lift);color:var(--ink);box-shadow:var(--sh-pop);font-size:var(--fs-cap);
+  max-width:calc(100vw - 32px)}
+.convword{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.convdot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--ink-3)}
+.convbar.is-listening .convdot{background:var(--critical);animation:conv-pulse 1.4s ease-in-out infinite}
+.convbar.is-thinking .convdot{background:var(--amber)}
+.convbar.is-speaking .convdot{background:var(--accent);animation:conv-pulse 1s ease-in-out infinite}
+@keyframes conv-pulse{50%{opacity:.35}}
+@media (prefers-reduced-motion: reduce){.convbar .convdot{animation:none}}
