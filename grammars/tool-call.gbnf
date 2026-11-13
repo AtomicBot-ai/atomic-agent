@@ -102,7 +102,7 @@ os-tool ::= "\"os." ( "fs.read_document" | "fs.trash" | "fs.locate_project" | "f
 discovery-tool ::= "\"skill.run_script\""
 memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.forget" | "lessons.recall" | "procedures.recall" ) "\""
 tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
-vision-tool ::= "\"vision.describe\""
+vision-tool ::= "\"vision.describe\"" | "\"audio.listen\""
 image-tool ::= "\"image.generate\""
 # Fusion's fan-out. Listed here for the same reason `tasks.*` is: the
 # grammar is the local model's whole vocabulary of tool names, and a

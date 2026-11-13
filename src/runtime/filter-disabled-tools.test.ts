@@ -11,6 +11,7 @@ const ALL_OPEN: ToolGateConfig = {
   browser: { enabled: true },
   web: { search: { enabled: true } },
   vision: { enabled: true, providerAvailable: true },
+  audio: { enabled: true },
   memory: {
     profile: { enabled: true },
     notes: { enabled: true },
@@ -130,6 +131,17 @@ describe("filterToolDescriptorsByConfig", () => {
     expect(nameSet(without).has("image.generate")).toBe(false);
     expect(nameSet(without).has("vision.describe")).toBe(true);
     expect(nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN)).has("image.generate")).toBe(true);
+  });
+
+  it("keeps audio.listen only while vision.audioInput is on (ATO-497)", () => {
+    expect(nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN)).has("audio.listen")).toBe(true);
+    const off = filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, { ...ALL_OPEN, audio: { enabled: false } });
+    expect(nameSet(off).has("audio.listen")).toBe(false);
+    expect(nameSet(off).has("vision.describe")).toBe(true);
+    // A caller that names no audio gate gets the default: off.
+    const { audio: _audio, ...noAudioGate } = ALL_OPEN;
+    expect(nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, noAudioGate)).has("audio.listen")).toBe(false);
+    expect(GATED_TOOL_NAMES.audio).toEqual(["audio.listen"]);
   });
 
   it("drops video.generate without an OpenRouter key and keeps it with one", () => {

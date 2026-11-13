@@ -1,6 +1,8 @@
 import {
+  AudioUnsupportedError,
   ModelCannotSeeError,
   VisionUnsupportedError,
+  type AudioRequest,
   type LlmProvider,
   type ProviderCapabilities,
   type ProviderHealthResult,
@@ -57,6 +59,7 @@ import { parseRateLimitHeaders, type RateLimitWindow } from "../rate-limits.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { openAiChatPathPrefix } from "./openai-chat-path.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
+import { describeAudioViaOpenAi } from "./openai-describe-audio.js";
 import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import { isLocalServerUrl } from "./local-server-url.js";
 import {
@@ -94,6 +97,13 @@ export interface OpenAiProviderOptions {
    */
   supportsVision?: boolean;
   visionSource?: ProviderCapabilities["visionSource"];
+  /**
+   * Whether the model takes audio input, resolved per model by the
+   * factory (`model-audio.ts`). Absent means unknown, which is `false`:
+   * audio is never sent on a guess.
+   */
+  supportsAudio?: boolean;
+  audioSource?: ProviderCapabilities["audioSource"];
   supportsParallelTools?: boolean;
   supportsPromptCache?: boolean;
   reasoningFormat?: ReasoningFormat;
@@ -219,6 +229,11 @@ export class OpenAiProvider implements LlmProvider {
       createOpenAiStreamConsumer(this.reasoningFormat);
     this.capabilities = {
       ...openAiVisionCapabilities(options),
+      audio: options.supportsAudio ?? false,
+      audioSource:
+        options.supportsAudio === undefined
+          ? "unknown"
+          : (options.audioSource ?? "config.provider"),
       toolTransport: "native_tools",
       contextWindow: 128_000,
       supportsParallelTools: options.supportsParallelTools ?? true,
@@ -929,6 +944,31 @@ export class OpenAiProvider implements LlmProvider {
       }
       throw error;
     }
+  }
+
+  async describeAudio(request: AudioRequest): Promise<VisionResult> {
+    if (!this.capabilities.audio) {
+      throw new AudioUnsupportedError(this.name);
+    }
+    const model = this.defaultChatModel;
+    if (!model) {
+      throw new Error(
+        `openai-compatible provider "${this.name}" has no defaultChatModel configured`,
+      );
+    }
+    return describeAudioViaOpenAi(
+      this.http,
+      model,
+      request,
+      this.chatPathPrefix,
+      this.providerPreferences,
+      {
+        ...(this.extraBody ? { extraBody: this.extraBody } : {}),
+        ...(this.bodyOptions.modelParams
+          ? { modelParams: this.bodyOptions.modelParams }
+          : {}),
+      },
+    );
   }
 
   async listModels(): Promise<readonly string[]> {

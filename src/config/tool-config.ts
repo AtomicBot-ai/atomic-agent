@@ -199,6 +199,17 @@ export interface RuntimeVisionConfig {
   maxImageBytes: number;
   /** Hard upper bound on the number of images per `vision.describe` call. */
   maxImagesPerCall: number;
+  /**
+   * Tri-state (ATO-497, decision 62) for `audio.listen`, which sends a
+   * wav/mp3 file straight to a chat model that takes audio input.
+   * Unset (the default) is auto: offered only while a LOCAL model that
+   * reports audio (`/props` `modalities.audio`) is loaded. `true` also
+   * offers it on cloud models (the file is uploaded); `false` never.
+   * Otherwise audio stays a file on disk for the `audio-transcribe` skill.
+   */
+  audioInput?: boolean;
+  /** Hard upper bound on one `audio.listen` file, in bytes. */
+  maxAudioBytes?: number;
 }
 
 export interface UserVisionConfig {
@@ -206,7 +217,13 @@ export interface UserVisionConfig {
   autoDetect: boolean;
   maxImageBytes: number;
   maxImagesPerCall: number;
+  /** Unset = auto (local model that reports audio only); see RuntimeVisionConfig. */
+  audioInput?: boolean;
+  maxAudioBytes?: number;
 }
+
+/** `vision.maxAudioBytes` when nothing sets it. */
+export const DEFAULT_MAX_AUDIO_BYTES = 16 * 1024 * 1024;
 
 export function createVisionDefaults(): UserVisionConfig {
   return {
@@ -214,6 +231,9 @@ export function createVisionDefaults(): UserVisionConfig {
     autoDetect: true,
     maxImageBytes: 8 * 1024 * 1024,
     maxImagesPerCall: 4,
+    // `audioInput` is left unset: auto (decision 62).
+    // OpenAI caps a request body near 25 MB and base64 adds a third.
+    maxAudioBytes: DEFAULT_MAX_AUDIO_BYTES,
   };
 }
 
@@ -237,6 +257,19 @@ export function parseVisionConfig(
     maxImagesPerCall: parsePositiveInt(
       raw.maxImagesPerCall ?? readDefaults().maxImagesPerCall,
       "vision.maxImagesPerCall",
+    ),
+    // Unset stays unset (auto); only an explicit boolean overrides it.
+    ...(raw.audioInput === undefined && readDefaults().audioInput === undefined
+      ? {}
+      : {
+          audioInput: parseBool(
+            raw.audioInput ?? readDefaults().audioInput,
+            "vision.audioInput",
+          ),
+        }),
+    maxAudioBytes: parsePositiveInt(
+      raw.maxAudioBytes ?? readDefaults().maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
+      "vision.maxAudioBytes",
     ),
   };
 }

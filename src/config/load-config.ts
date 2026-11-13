@@ -22,6 +22,7 @@ import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
 import { emitConfigNoticeOnce } from "./config-primitives.js";
+import { DEFAULT_MAX_AUDIO_BYTES } from "./tool-config.js";
 import type {
   LocalModelsValueSource,
   LocalModelsValueSources,
@@ -696,6 +697,9 @@ export function loadConfig(): AtomicAgentConfig {
       autoDetect: user.vision.autoDetect,
       maxImageBytes: user.vision.maxImageBytes,
       maxImagesPerCall: user.vision.maxImagesPerCall,
+      // Unset = auto (ATO-497 decision 62): local model that reports audio only.
+      ...(user.vision.audioInput === undefined ? {} : { audioInput: user.vision.audioInput }),
+      maxAudioBytes: user.vision.maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
     },
     tui: {
       theme: user.tui.theme,

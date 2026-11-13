@@ -1,5 +1,5 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
-import { getConfig, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
+import { DEFAULT_MAX_AUDIO_BYTES, getConfig, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
@@ -12,6 +12,8 @@ import type { ProviderRegistry } from "../../llm/provider/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { visionCapableAlternatives } from "../../llm/provider/model-vision.js";
+import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
+import { audioInputAllowedOn } from "../vision-route.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import type { SessionUsageLedger } from "../../session/usage-meter.js";
 import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
@@ -34,6 +36,7 @@ import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActi
 import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
+import { registerAudioTools } from "../../tools/audio/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
 import { registerVideoTools, VIDEO_GENERATE_TOOL } from "../../tools/video/index.js";
 import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
@@ -263,6 +266,22 @@ export function registerRuntimeVisionTools(input: {
     },
     logger,
   });
+  // `audio.listen` (ATO-497, decision 62): registered unless
+  // `vision.audioInput` is `false`; the descriptor gate
+  // (`audioOnLiveRoute`) offers it. Unset (auto) means a local model
+  // that reports audio only, so a call on a cloud link is refused
+  // unless the operator set `true`. Each call also checks the model can hear.
+  const audioInput = config.vision.audioInput;
+  registerAudioTools(toolRegistry, {
+    provider: resolveCurrentVisionProvider,
+    enabled: audioInput !== false,
+    maxAudioBytes: config.vision.maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
+    allowProvider: (provider) =>
+      audioInputAllowedOn(
+        providerIdIsLlamaServer(resolveLlmConfig(getConfig()), provider.id),
+        audioInput,
+      ),
+  });
 }
 
 /**
@@ -341,6 +360,8 @@ export async function connectRuntimeMcpCatalog(input: {
   llama: LlamaServerClient;
   initialGrammar: string;
   visionOnLiveRoute: () => boolean;
+  /** Live audio gate (`audioRouteAvailable`); absent reads as off. */
+  audioOnLiveRoute?: () => boolean;
   resolveCurrentRunMode: () => ResolvedRunMode;
   /**
    * Told every MCP tool-name rule this catalog applies, so a grammar held
@@ -358,6 +379,7 @@ export async function connectRuntimeMcpCatalog(input: {
 }) {
   const { config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
     visionOnLiveRoute, resolveCurrentRunMode, onMcpToolNameRule, resolveContextWindow } = input;
+  const audioOnLiveRoute = input.audioOnLiveRoute ?? ((): boolean => false);
   let grammar = initialGrammar;
 
   // MCP client subsystem. The manager is always constructed so the
@@ -491,6 +513,9 @@ export async function connectRuntimeMcpCatalog(input: {
         enabled: config.vision.enabled,
         providerAvailable: visionOnLiveRoute(),
       },
+      // Live, like vision: unset `vision.audioInput` offers it only on a
+      // local model that reports audio (decision 62).
+      audio: { enabled: audioOnLiveRoute() },
       memory: {
         profile: { enabled: config.memory.profile.enabled },
         notes: { enabled: config.memory.notes.enabled },
@@ -572,7 +597,7 @@ export async function connectRuntimeMcpCatalog(input: {
       resolveContextWindow?.(),
     );
   const liveDescriptorGates = (): string =>
-    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}|${toolSearchOn()}`;
+    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${audioOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}|${toolSearchOn()}`;
   let cachedDescriptorGates = liveDescriptorGates();
   let cachedToolDescriptors = applyToolSearch(fullToolDescriptors, toolSearchOn());
   const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {

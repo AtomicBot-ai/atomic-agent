@@ -53,6 +53,18 @@ interface BaseModelProfile {
    * server is text-only or the field is missing.
    */
   vision: VisionCapability;
+  /**
+   * Audio-input snapshot from `/props` (`modalities.audio`). Optional
+   * so hand-built profile constants need not carry it: absent reads as
+   * "no audio". `detectModelProfile` sets it only when `/props` says
+   * the model hears.
+   */
+  audio?: AudioCapability;
+}
+
+export interface AudioCapability {
+  supported: boolean;
+  source: "modalities.audio" | "absent";
 }
 
 export interface VisionCapability {
@@ -237,12 +249,15 @@ export function detectModelProfileWithMatch(
   );
   const contextWindow = readContextWindow(props);
   const vision = detectVisionSupport(props);
+  const audio = detectAudioSupport(props);
   const enriched = {
     ...base,
     ...(templateLower.includes("enable_thinking")
       ? { supportsThinkingSwitch: true }
       : {}),
     vision,
+    // Only when present, so a text/vision profile keeps its exact shape.
+    ...(audio.supported ? { audio } : {}),
   } as ModelProfile;
   if (contextWindow === null) return { profile: enriched, matchedBy };
   return { profile: { ...enriched, contextWindow }, matchedBy };
@@ -253,9 +268,8 @@ export function detectModelProfileWithMatch(
  * signals in priority order, newest llama.cpp surface first:
  *
  * 1. `modalities.vision: true` — current canonical surface (build
- *    `b1-*` and later). The companion `modalities.audio` flag is
- *    ignored here; vision is the only modality the runtime exposes
- *    via `vision.describe` today.
+ *    `b1-*` and later). The companion `modalities.audio` flag is read
+ *    separately by `detectAudioSupport` (for `audio.listen`).
  * 2. Top-level `has_multimodal: true` — older `mtmd` surface.
  * 3. Top-level `multimodal: true` — fork variant.
  * 4. Non-null `mmproj` object (path / n_embd / etc.) at root or
@@ -291,6 +305,23 @@ export function detectVisionSupport(
       supported: true,
       source: "default_generation_settings.has_multimodal",
     };
+  }
+  return { supported: false, source: "absent" };
+}
+
+/**
+ * Whether the loaded model takes audio input: llama-server reports
+ * `modalities.audio: true` when the projector it loaded has an audio
+ * encoder. Only that field counts — the older `has_multimodal` /
+ * `mmproj` signals do not say which modality the projector serves, so
+ * they are not read as audio.
+ */
+export function detectAudioSupport(
+  props: Record<string, unknown>,
+): AudioCapability {
+  const modalities = readObject(props.modalities);
+  if (readBoolean(modalities.audio) === true) {
+    return { supported: true, source: "modalities.audio" };
   }
   return { supported: false, source: "absent" };
 }

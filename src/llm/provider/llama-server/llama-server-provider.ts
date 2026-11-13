@@ -9,7 +9,9 @@ import type {
   StreamChunk,
 } from "../completion-types.js";
 import {
+  AudioUnsupportedError,
   VisionUnsupportedError,
+  type AudioRequest,
   type LlmProvider,
   type ProviderCapabilities,
   type ProviderHealthResult,
@@ -20,6 +22,10 @@ import {
   describeImageViaLlamaServer,
   resolveVisionCapabilities,
 } from "./llama-server-vision.js";
+import {
+  describeAudioViaLlamaServer,
+  resolveAudioCapabilities,
+} from "./llama-server-audio.js";
 import { ServerTemplateRenderer } from "./server-template-renderer.js";
 import type { StructuredLogger } from "../../../tracing/structured-logger.js";
 
@@ -46,6 +52,7 @@ export class LlamaServerProvider implements LlmProvider {
     });
     return {
       ...visionCaps,
+      ...resolveAudioCapabilities(this.getProfile()),
       toolTransport: "grammar",
       contextWindow: this.getProfile().contextWindow ?? 8192,
       supportsParallelTools: true,
@@ -167,6 +174,19 @@ export class LlamaServerProvider implements LlmProvider {
       baseUrl: base,
       maxImageBytes: this.maxImageBytes,
       maxImagesPerCall: this.maxImagesPerCall,
+      requestTimeoutMs: this.requestTimeoutMs,
+      fetchImpl: this.fetchImpl,
+    });
+  }
+
+  async describeAudio(request: AudioRequest): Promise<VisionResult> {
+    if (!this.capabilities.audio) {
+      throw new AudioUnsupportedError(this.name);
+    }
+    const base = this.baseUrlOverride ?? getConfig().localModels.url;
+    return describeAudioViaLlamaServer({
+      request,
+      baseUrl: base,
       requestTimeoutMs: this.requestTimeoutMs,
       fetchImpl: this.fetchImpl,
     });

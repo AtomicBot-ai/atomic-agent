@@ -79,6 +79,7 @@ const V = {
   extracted: ["Extracted", "Extracting", "extract"],
   checked: ["Checked", "Checking", "check"],
   watched: ["Watched", "Watching", "watch"],
+  listenedTo: ["Listened to", "Listening to", "listen to"],
   found: ["Found", "Finding", "find"],
   ran: ["Ran", "Running", "run"],
   stopped: ["Stopped", "Stopping", "stop"],
@@ -331,6 +332,8 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
     }
     case "vision.describe":
       return P(V.lookedAt, fileObject(a, "an image"));
+    case "audio.listen":
+      return P(V.listenedTo, fileObject(a, "a recording"));
     case "image.generate": {
       const n = typeof a.count === "number" && Number.isInteger(a.count) && a.count > 1 ? a.count : 1;
       const prompt = str(a.prompt);
@@ -440,7 +443,7 @@ export function describeToolCall(input: DescribeToolCallInput): ToolCallDescript
 type Bucket = "read" | "search" | "edit" | "command" | "web" | "page" | "memory" | "other";
 
 function bucketOf(name: string): Bucket {
-  if (/^os\.fs\.(read|read_document|archive\.read_entry)$/.test(name) || name === "vision.describe") return "read";
+  if (/^os\.fs\.(read|read_document|archive\.read_entry)$/.test(name) || name === "vision.describe" || name === "audio.listen") return "read";
   if (/^os\.fs\.(list|glob|grep|archive\.list)$/.test(name)) return "search";
   if (/^os\.fs\.(write|edit|patch|move|trash|restore|archive\.extract)$/.test(name)) return "edit";
   if (name === "os.shell.run" || name.startsWith("os.git.") || name === "skill.run_script" || name === "verify.run") return "command";

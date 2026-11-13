@@ -176,6 +176,10 @@ const FORMS: Record<string, CompactToolForm> = {
   "vision.describe": {
     summary: "Describe images (at most 4 per call). `prompt` is required.",
   },
+  "audio.listen": {
+    summary: "Listen to a WAV/MP3 file with an audio-capable model.",
+    tier: RARE,
+  },
   "image.generate": {
     summary: "Generate pictures (paid); show them via reply.attachments.",
     tier: RARE,

@@ -33,6 +33,13 @@ export interface ToolGateConfig {
   browser: { enabled: boolean };
   web: { search: { enabled: boolean } };
   vision: { enabled: boolean; providerAvailable: boolean };
+  /**
+   * Audio input gate (ATO-497, decision 62): the runtime passes the live
+   * `audioRouteAvailable` answer (unset `vision.audioInput` = a local
+   * model that reports audio only; `true` also cloud). Absent or `false`
+   * drops `audio.listen`.
+   */
+  audio?: { enabled: boolean };
   memory: {
     profile: { enabled: boolean };
     notes: { enabled: boolean };
@@ -114,6 +121,7 @@ const GATED_TOOLS = {
   ],
   webSearch: ["os.web.search"],
   vision: ["vision.describe"],
+  audio: ["audio.listen"],
   memoryProfile: [
     "memory.profile.set",
     "memory.profile.remove",
@@ -186,6 +194,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.vision.enabled || !gates.vision.providerAvailable) {
     for (const name of GATED_TOOLS.vision) disabled.add(name);
+  }
+  if (gates.audio?.enabled !== true) {
+    for (const name of GATED_TOOLS.audio) disabled.add(name);
   }
   if (!gates.memory.profile.enabled) {
     for (const name of GATED_TOOLS.memoryProfile) disabled.add(name);

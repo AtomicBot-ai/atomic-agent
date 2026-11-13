@@ -409,7 +409,7 @@ export async function createAgentRuntime(
   });
 
   const modelContext = createRuntimeModelContext(config, providers);
-  const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
+  const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute, audioOnLiveRoute } = modelContext;
   // ATO-1276: an Ollama route learns its real window (`/api/show`) now,
   // before the first turn sizes a prompt. Silent and non-blocking.
   void modelContext.primeLocalContextWindow();
@@ -419,7 +419,7 @@ export async function createAgentRuntime(
 
   const mcpCatalog = await connectRuntimeMcpCatalog({
     config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
-    visionOnLiveRoute, resolveCurrentRunMode,
+    visionOnLiveRoute, audioOnLiveRoute, resolveCurrentRunMode,
     ...mcpGrammarHookFor(profileManager),
     // `agent.tools.search: "auto"` reads the live route's window (ATO-558):
     // a local link's served window once `/props` has answered, else the catalogue's.

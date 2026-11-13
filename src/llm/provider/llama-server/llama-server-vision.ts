@@ -107,13 +107,7 @@ export async function describeImageViaLlamaServer(opts: {
     }
   }
 
-  const config = getConfig();
-  const url = llamaEndpointUrl(opts.baseUrl, "/v1/chat/completions");
-
-  const userContent: Array<
-    | { type: "image_url"; image_url: { url: string } }
-    | { type: "text"; text: string }
-  > = [];
+  const userContent: LlamaUserContentPart[] = [];
   for (const img of request.images) {
     const mime = detectImageMime(img.bytes);
     userContent.push({
@@ -125,11 +119,48 @@ export async function describeImageViaLlamaServer(opts: {
   }
   userContent.push({ type: "text", text: request.prompt });
 
-  const maxTokens = request.maxTokens ?? 512;
+  return postMultimodalChat({
+    label: "vision",
+    userContent,
+    baseUrl: opts.baseUrl,
+    requestTimeoutMs: opts.requestTimeoutMs,
+    fetchImpl: opts.fetchImpl,
+    maxTokens: request.maxTokens ?? 512,
+    temperature: request.temperature ?? 0.1,
+    signal: request.signal,
+  });
+}
+
+/** One part of the user message a multimodal call sends. */
+export type LlamaUserContentPart =
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "input_audio"; input_audio: { data: string; format: string } }
+  | { type: "text"; text: string };
+
+/**
+ * POST one user message of `userContent` parts to llama-server's
+ * OpenAI-compatible chat route, with no reasoning channel, under a
+ * whole-request deadline linked to the caller's signal. Shared by the
+ * image (`describeImageViaLlamaServer`) and audio
+ * (`llama-server-audio.ts`) calls; `label` names the call in errors.
+ */
+export async function postMultimodalChat(opts: {
+  label: string;
+  userContent: LlamaUserContentPart[];
+  baseUrl: string;
+  requestTimeoutMs: number;
+  fetchImpl: typeof fetch;
+  maxTokens: number;
+  temperature: number;
+  signal?: AbortSignal | undefined;
+}): Promise<VisionResult> {
+  const { label, userContent, maxTokens } = opts;
+  const config = getConfig();
+  const url = llamaEndpointUrl(opts.baseUrl, "/v1/chat/completions");
   const body = JSON.stringify({
     messages: [{ role: "user", content: userContent }],
     max_tokens: maxTokens,
-    temperature: request.temperature ?? 0.1,
+    temperature: opts.temperature,
     stream: false,
     chat_template_kwargs: { enable_thinking: false },
     reasoning_format: "none",
@@ -158,7 +189,7 @@ export async function describeImageViaLlamaServer(opts: {
   // wedged vision call holding the socket and the slot until the
   // deadline; linked the same way `LlamaServerClient.complete()` links
   // it, the abort reason reaches the caller as the failure.
-  const externalSignal = request.signal;
+  const externalSignal = opts.signal;
   // Carrying the caller's reason across is what keeps the failure
   // readable: aborting our own controller bare would report every user
   // cancel as "This operation was aborted".
@@ -190,18 +221,18 @@ export async function describeImageViaLlamaServer(opts: {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`vision request failed: ${message}`);
+    throw new Error(`${label} request failed: ${message}`);
   } finally {
     clearTimeout(timer);
     externalSignal?.removeEventListener("abort", onAbort);
   }
   if (!res.ok) {
     throw new Error(
-      `vision request returned http ${res.status}: ${rawBody.slice(0, 200)}`,
+      `${label} request returned http ${res.status}: ${rawBody.slice(0, 200)}`,
     );
   }
   if (bodyError) {
-    throw new Error(`vision request failed: ${bodyError.message}`);
+    throw new Error(`${label} request failed: ${bodyError.message}`);
   }
   let json: ChatCompletionResponse;
   try {
@@ -211,7 +242,7 @@ export async function describeImageViaLlamaServer(opts: {
     // returned as an empty description, which the tool caller reads as
     // "the model saw nothing" rather than "the server answered garbage".
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`vision request failed: ${message}`);
+    throw new Error(`${label} request failed: ${message}`);
   }
   const choice = json?.choices?.[0];
   const message = choice?.message;
@@ -230,7 +261,7 @@ export async function describeImageViaLlamaServer(opts: {
     // in the image"; failing names the cap, which is the knob to move.
     if (choice?.finish_reason === "length") {
       throw new Error(
-        `vision request produced no description: the reply hit its ${maxTokens}-token cap inside the model's reasoning channel`,
+        `${label} request produced no description: the reply hit its ${maxTokens}-token cap inside the model's reasoning channel`,
       );
     }
     text = message.reasoning_content.trim();

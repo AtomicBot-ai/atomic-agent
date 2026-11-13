@@ -548,7 +548,19 @@ describe("parseUserConfigFile", () => {
       autoDetect: false,
       maxImageBytes: 2_097_152,
       maxImagesPerCall: 1,
+      // ATO-497 decision 62: audioInput is left unset (auto).
+      maxAudioBytes: 16 * 1024 * 1024,
     });
+  });
+
+  it("keeps vision.audioInput tri-state: unset stays unset, booleans pass through (ATO-497)", () => {
+    const unset = parseUserConfigFile({ version: USER_CONFIG_VERSION, vision: {} });
+    expect(unset.vision.audioInput).toBeUndefined();
+    expect("audioInput" in unset.vision).toBe(false);
+    const on = parseUserConfigFile({ version: USER_CONFIG_VERSION, vision: { audioInput: true } });
+    expect(on.vision.audioInput).toBe(true);
+    const off = parseUserConfigFile({ version: USER_CONFIG_VERSION, vision: { audioInput: false } });
+    expect(off.vision.audioInput).toBe(false);
   });
 
   it("rejects vision.maxImageBytes <= 0", () => {
