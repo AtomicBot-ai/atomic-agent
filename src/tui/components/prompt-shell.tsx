@@ -42,8 +42,9 @@ import { PromptMetaBar, type PromptMetaBarProps } from "./prompt-meta-bar.js";
  *   - extmark "chips" inside the textarea (e.g. coloured `@file.ts`)
  *   - alpha / fade-in animations on the action bar
  *
- * The shell does **not** open the autocomplete popup — slash-palette
- * stays where it lived before, rendered by the parent above the editor.
+ * The shell does **not** open the autocomplete popups — the slash
+ * palette and the `@` file palette (file-mentions/) are rendered by the
+ * parent above the editor.
  */
 export interface PromptShellProps extends Omit<
   MultiLineEditorProps,

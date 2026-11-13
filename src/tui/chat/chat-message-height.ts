@@ -1,6 +1,7 @@
 import type { ChatMessage, ToolCardEntry, TuiState } from "../tui-state.js";
 import { estimateToolCardImageRows } from "../terminal-image/index.js";
 import { toolCardsAnnotationParts } from "./tool-cards-annotation.js";
+import { collapseMentionedFiles } from "../file-mentions/mention-block.js";
 
 /**
  * Estimated number of terminal rows occupied by a finalised chat
@@ -62,7 +63,11 @@ export function estimateMessageHeight(
   fold: MessageFoldState = "none",
   verbose = false,
 ): number {
-  const bodyRows = bodyLines(message.text);
+  // A user message is drawn with its `@` file block folded to one line
+  // per file (user-bubble.tsx); measure what is drawn.
+  const bodyRows = bodyLines(
+    message.role === "user" ? collapseMentionedFiles(message.text) : message.text,
+  );
   let total = bodyRows + BUBBLE_OVERHEAD_ROWS + MESSAGE_FOOTER_ROWS;
   if (message.role === "assistant") {
     if (fold !== "none") total += TURN_FOLD_LINE_ROWS;
