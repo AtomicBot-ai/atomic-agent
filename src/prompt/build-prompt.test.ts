@@ -329,7 +329,7 @@ describe("buildPrompt", () => {
     // The bad guess in issue #113 was `format: "text"`. The stable prefix
     // carries the closed set so the guess is never reachable.
     expect(prompt.stablePrefix).toContain(
-      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain'",
+      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'ods' | 'odp' | 'epub' | 'html' | 'eml' | 'mbox' | 'plain'",
     );
   });
 

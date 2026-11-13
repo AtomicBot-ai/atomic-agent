@@ -20,6 +20,12 @@ export const DOCUMENT_FORMATS = [
   "rtf",
   "odt",
   "pptx",
+  "ods",
+  "odp",
+  "epub",
+  "html",
+  "eml",
+  "mbox",
   "plain",
 ] as const;
 

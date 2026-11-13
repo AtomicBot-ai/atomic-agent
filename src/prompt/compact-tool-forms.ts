@@ -85,7 +85,7 @@ const FORMS: Record<string, CompactToolForm> = {
       "Replace text in a file (may require approval). oldString must match the file text exactly (copy it from os.fs.read, same indentation) and be unique unless replaceAll.",
   },
   "os.fs.read_document": {
-    summary: "Text from PDF, Office, ODF or RTF documents. Not for source code: use os.fs.read.",
+    summary: "Text from PDF, Office, ODF, RTF, EPUB, HTML or email files. Not for source code: use os.fs.read.",
   },
   "os.fs.archive.list": { summary: "List archive entries.", tier: RARE },
   "os.fs.archive.read_entry": { summary: "Read one archive entry.", tier: RARE },
