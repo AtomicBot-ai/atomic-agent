@@ -151,6 +151,51 @@ export interface ScreenshotResult {
   clipped: boolean;
 }
 
+/** What `listSiteTools` reads from the page; nothing here is trusted or capped yet. */
+export interface SiteToolsListInput {
+  /** At most this many declared tools are read from the page. */
+  maxScan: number;
+  maxSchemaChars: number;
+  maxDescriptionChars: number;
+}
+
+export interface SiteToolsListing {
+  /** The page the tools came from (its main frame), read with the list. */
+  url: string;
+  frameUrls: string[];
+  /** Raw entries as the page gave them; `site-tools-sanitize.ts` checks them. */
+  tools: unknown[];
+  /** How many tools the page declared in all, before `maxScan`. */
+  total: number;
+}
+
+export interface SiteToolCallInput {
+  name: string;
+  /** The arguments as JSON, already checked against the declared schema. */
+  argsJson: string;
+  timeoutMs: number;
+  maxResultChars: number;
+  /**
+   * The host the call was approved for (normalised, no port). The page
+   * refuses to run the tool when it is on another host by then.
+   */
+  host?: string;
+}
+
+export interface SiteToolCallResult {
+  url: string;
+  frameUrls: string[];
+  ok: boolean;
+  /** The tool's answer as text (MCP-style `content` text joined), capped. */
+  text: string;
+  /** The tool said its own call failed (`isError` in an MCP-style result). */
+  isError: boolean;
+  /** Why the call did not run or finish: `not_found`, `timeout`, `threw`, `bad_args`, `wrong_host`. */
+  error?: string;
+  /** The page's own error message, when it threw (site text, untrusted). */
+  message?: string;
+}
+
 export interface BrowserBackend {
   /** Lazy init; must be safe to call multiple times. */
   ensureReady(): Promise<void>;
@@ -193,4 +238,12 @@ export interface BrowserBackend {
    * for the capture (passwords already are). Never written to disk here.
    */
   screenshot(input: ScreenshotInput): Promise<ScreenshotResult>;
+  /**
+   * Tools the active page declared through WebMCP (`document.modelContext`
+   * / `navigator.modelContext`, ATO-521), main frame only. Optional: a
+   * backend without it has no site tools.
+   */
+  listSiteTools?(input: SiteToolsListInput): Promise<SiteToolsListing>;
+  /** Run one of those tools in the page. Never asks; the tool gates it. */
+  callSiteTool?(input: SiteToolCallInput): Promise<SiteToolCallResult>;
 }
