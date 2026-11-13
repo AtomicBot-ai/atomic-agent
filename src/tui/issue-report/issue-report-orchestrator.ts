@@ -67,8 +67,13 @@ export interface IssueReportBus {
 }
 
 export interface IssueReportRuntime {
-  config: Pick<AtomicAgentConfig, "tracing"> &
-    Partial<Pick<AtomicAgentConfig, "stateDir" | "analytics">>;
+  config: Pick<AtomicAgentConfig, "tracing"> & {
+    /** Holds `analytics.json` (support id) and the install-channel marker. */
+    paths: Pick<AtomicAgentConfig["paths"], "stateDir">;
+    analytics?: AtomicAgentConfig["analytics"];
+    /** `external` means the operator runs llama-server; no managed engine. */
+    localModels?: Pick<AtomicAgentConfig["localModels"], "mode">;
+  };
   sessionStore: Pick<SessionStore, "listRecent">;
 }
 
@@ -169,9 +174,13 @@ export class IssueReportOrchestrator {
           capturedAt: now.toISOString(),
           surface: "terminal",
           installChannel: this.installChannel(),
-          engine: localActive
-            ? `${backend.engine ?? "local"}${backend.currentTag ? ` ${backend.currentTag}` : ""}`
-            : "cloud",
+          engine: !localActive
+            ? "cloud"
+            : this.runtime.config.localModels?.mode === "external"
+              ? // The panel may still remember a managed engine from
+                // before the switch; it is not what serves this model.
+                "external llama-server"
+              : `${backend.engine ?? "local"}${backend.currentTag ? ` ${backend.currentTag}` : ""}`,
         },
       };
       // The zip on disk is built without the id: the checkbox decides
@@ -330,8 +339,10 @@ export class IssueReportOrchestrator {
   private supportId(): string | null {
     try {
       if (this.deps.readSupportId) return this.deps.readSupportId();
-      const stateDir = this.runtime.config.stateDir;
-      return stateDir ? readSupportId({ stateDir }) : null;
+      return readSupportId({
+        stateDir: this.runtime.config.paths.stateDir,
+        home: this.deps.homeDir ?? homedir(),
+      });
     } catch {
       return null;
     }
@@ -345,9 +356,8 @@ export class IssueReportOrchestrator {
 
   private installChannel(): string {
     if (this.deps.installChannel) return this.deps.installChannel();
-    const stateDir = this.runtime.config.stateDir;
     try {
-      return stateDir ? resolveInstallChannel(stateDir) : "unknown";
+      return resolveInstallChannel(this.runtime.config.paths.stateDir);
     } catch {
       return "unknown";
     }
