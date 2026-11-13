@@ -1,6 +1,7 @@
 import { createSessionCompactionHandler } from "./route-compaction.js";
 import { createRollbackLastTurnHandler } from "./route-rollback-last-turn.js";
 import { createForkSessionHandler, createListRewindPointsHandler, createRewindHandler } from "./route-session-rewind.js";
+import { createResumeInterruptedTurnHandler } from "./route-resume-interrupted-turn.js";
 import type { RouteDefinition } from "./http-server.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
@@ -266,6 +267,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/sessions/{id}/fork", handler: createForkSessionHandler() },
     // ATO-563: put back a file the agent replaced, from its saved copy (the desktop's Revert).
     { method: "POST", path: "/api/sessions/{id}/fs/restore", handler: createRestoreFileHandler() },
+    // ATO-448: continue a reply a restart cut off, on the person's click.
+    { method: "POST", path: "/api/sessions/{id}/resume", handler: createResumeInterruptedTurnHandler() },
     {
       method: "POST",
       path: "/api/sessions/{id}/steer",
