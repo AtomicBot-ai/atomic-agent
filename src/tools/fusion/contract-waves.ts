@@ -114,6 +114,8 @@ export const UNDELIVERED_STATUSES: ReadonlySet<WorkerTaskStatus> = new Set([
   "cancelled",
   "no_changes",
   "needs_orchestrator",
+  // Stopped to ask the orchestrator (ATO-945): what it was to provide is not there yet.
+  "needs_input",
 ]);
 
 /**

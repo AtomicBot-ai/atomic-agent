@@ -118,6 +118,9 @@ describe("the ### fusion prefix section", () => {
   it("says the call is solo and that results must be verified", () => {
     expect(FUSION_GUIDANCE).toMatch(/on its own, never alongside/i);
     expect(FUSION_GUIDANCE).toContain("needs_orchestrator");
+    // ATO-945: a worker's question is answered by the orchestrator and the task re-sent.
+    expect(FUSION_GUIDANCE).toContain("`needs_input`: answer its question, re-send.");
+    expect(FUSION_GUIDANCE).not.toContain("cannot ask");
   });
 
   it("says a task that replaced a user's file is not done until it is restored or the replacement was wanted (F43)", () => {
@@ -137,8 +140,9 @@ describe("the ### fusion prefix section", () => {
     // what the orchestrator needed and could not see when a four-worker
     // fan-out overflowed its server; ~100 tokens is what that costs.
     // F43's restore line was paid for by shortening the others — the
-    // budget is the budget.
-    expect(FUSION_GUIDANCE.length).toBeLessThan(1400);
+    // budget is the budget. ATO-945's `needs_input` clause paid for most
+    // of itself by dropping "and cannot ask"; the rest is 12 chars.
+    expect(FUSION_GUIDANCE.length).toBeLessThan(1425);
     expect(buildFusionGuidance(FACTS).length).toBeLessThan(1900);
     expect(
       buildFusionGuidance({ ...FACTS, tokensPerSecond: 6.4 }).length,

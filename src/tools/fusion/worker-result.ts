@@ -18,6 +18,7 @@ import {
 } from "./worker-tool-policy.js";
 import type { JudgeSummary } from "./judge.js";
 import { classifyWorkerFailure } from "./failure-breaker.js";
+import { MAX_WORKER_QUESTION_CHARS } from "./worker-question.js";
 
 /**
  * The note on a task a worker could not finish because a step needs the
@@ -45,6 +46,12 @@ export type WorkerTaskStatus =
   | "failed"
   | "cancelled"
   | "needs_orchestrator"
+  /**
+   * The worker stopped to ask the orchestrator a question it could not
+   * answer itself (`worker-question.ts`, ATO-945); `question` carries it.
+   * Not a failure: the remedy is an answer in the next brief.
+   */
+  | "needs_input"
   | "max_steps"
   /**
    * The worker ran out of WALL TIME rather than steps. Set by
@@ -75,6 +82,7 @@ export const WORKER_STATUS_ORDER: readonly WorkerTaskStatus[] = [
   "ok",
   "no_changes",
   "needs_orchestrator",
+  "needs_input",
   "max_steps",
   "timeout",
   "queued",
@@ -206,6 +214,11 @@ export interface WorkerTaskResult {
   model?: string;
   /** The role that picked `model`, when one did (ATO-943). */
   modelRole?: FusionRole;
+  /**
+   * The worker's question to the orchestrator, on a `needs_input` row
+   * (ATO-945); at most `MAX_WORKER_QUESTION_CHARS`.
+   */
+  question?: string;
 }
 
 export interface TaskCheckSummary {
@@ -961,6 +974,9 @@ function renderStatusTable(
         oneLine(describeReplacedInput(input), TABLE_DETAIL_CHARS),
       ),
       ...(r.error ? tableErrorParts(r, r.error) : []),
+      // The question in full (it is already bounded): the orchestrator
+      // answers it from this line, so a clipped one is a worse brief.
+      ...(r.question ? [`question: ${oneLine(r.question, MAX_WORKER_QUESTION_CHARS)}`] : []),
       ...(r.checks
         ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)]
         : []),
@@ -1018,6 +1034,7 @@ function renderBlock(result: WorkerTaskResult, perTaskCap: number): string {
   const diagnosis = [
     ...(result.replacedInputs ?? []).map(describeReplacedInput),
     ...(result.hint ? [`hint: ${result.hint}`] : []),
+    ...(result.question ? [`question: ${result.question}`] : []),
     ...(result.checks
       ? [describeChecks(result.checks, ERROR_HEAD_CHARS, result.error)]
       : []),
