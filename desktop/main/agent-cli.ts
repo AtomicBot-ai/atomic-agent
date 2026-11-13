@@ -4218,16 +4218,21 @@ function bodyLooksLikeLlamaLoading(text: string): boolean {
 function describeLlamaHealthFailure(kind: LlamaProbeResult["kind"], error: string | null, url: string): string {
   switch (kind) {
     case "openai-compat":
+      /* ATO-1445: since ATO-816 / ATO-1418 the apps you run yourself (Ollama,
+         LM Studio, Atomic Chat) and any OpenAI-compatible URL are added under
+         "Custom" — the first-run wizard's Custom list and Settings › Models ›
+         Custom alike — never under Cloud. The same sentence reaches both
+         screens, so it names only what both call "Custom". */
       if (looksLikeOllamaUrl(url)) {
         return isLocalProviderUrl(url)
-          ? `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › Ollama (local), base URL ${url}.`
-          : `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url} (any API key value passes — a stock Ollama has no auth).`;
+          ? `${url} answers like Ollama (its default port), not llama.cpp. Add it as Ollama under Custom instead, base URL ${url}.`
+          : `${url} answers like Ollama (its default port), not llama.cpp. Add it under Custom as an OpenAI-compatible API instead, base URL ${url} (any API key value passes, a stock Ollama has no auth).`;
       }
       // Same reasoning as Ollama: the preset row saves its own 127.0.0.1:1337, so name it only for a server on this machine.
       if (looksLikeAtomicChatUrl(url) && isLocalProviderUrl(url)) {
-        return `${url} answers like Atomic Chat's Local API Server, not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › Atomic Chat (local), base URL ${url}.`;
+        return `${url} answers like Atomic Chat's Local API Server, not llama.cpp. Add it as Atomic Chat under Custom instead, base URL ${url}.`;
       }
-      return `${url} answers like an OpenAI-compatible server, not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url}.`;
+      return `${url} answers like an OpenAI-compatible server, not llama.cpp. Add it under Custom as an OpenAI-compatible API instead, base URL ${url}.`;
     case "llama-loading":
       return `${url} is a llama.cpp server still loading its model. Give it a minute and save the URL again.`;
     case "llama-auth":
