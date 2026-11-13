@@ -55,6 +55,26 @@ describe("trigger inbox batch (ATO-601)", () => {
     expect(list[1]).toMatchObject({ text: "only preview", authResults: null, subject: "" });
   });
 
+  it("keeps headers one per line, topmost first, so a value cannot fake a new header", () => {
+    const [m] = parseTriggerInbox([
+      [
+        "Email/get",
+        {
+          list: [
+            {
+              id: "m1",
+              "header:Authentication-Results:asText:all": [
+                "mx; spf=fail",
+                "evil; x\r\nmx; dmarc=pass",
+              ],
+            },
+          ],
+        },
+      ],
+    ]);
+    expect(m!.authResults).toBe("mx; spf=fail\nevil; x mx; dmarc=pass");
+  });
+
   it("returns nothing for an answer without Email/get", () => {
     expect(parseTriggerInbox([])).toEqual([]);
   });

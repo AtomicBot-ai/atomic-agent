@@ -18,7 +18,14 @@ describe("parseEmailTriggerConfig (ATO-601)", () => {
       allowedSenders: ["boss@example.com", "@corp.io"],
       pollIntervalMs: EMAIL_TRIGGER_DEFAULT_POLL_MS,
       replyByEmail: false,
+      trustFromHeader: false,
     });
+  });
+
+  it("reads trustFromHeader (default off)", () => {
+    expect(
+      parseEmailTriggerConfig({ allowedSenders: [], trustFromHeader: true }, "f").trustFromHeader,
+    ).toBe(true);
   });
 
   it("accepts an empty allow-list (trigger off)", () => {
@@ -35,6 +42,7 @@ describe("parseEmailTriggerConfig (ATO-601)", () => {
     [{ allowedSenders: [], pollIntervalMs: 1_000 }],
     [{ allowedSenders: [], pollIntervalMs: 45_000.5 }],
     [{ allowedSenders: [], replyByEmail: "yes" }],
+    [{ allowedSenders: [], trustFromHeader: "yes" }],
   ])("rejects %j", (raw) => {
     expect(() => parseEmailTriggerConfig(raw, "f")).toThrow(ConfigValidationError);
   });
@@ -60,7 +68,12 @@ describe("parseWebhookMap with source atomic-mail", () => {
     expect(out.inbox).toEqual({
       userMessageTemplate: "Mail from {{body.from}}",
       source: "atomic-mail",
-      email: { allowedSenders: ["boss@example.com"], pollIntervalMs: 120_000, replyByEmail: true },
+      email: {
+        allowedSenders: ["boss@example.com"],
+        pollIntervalMs: 120_000,
+        replyByEmail: true,
+        trustFromHeader: false,
+      },
       sessionMode: "ephemeral",
     });
   });

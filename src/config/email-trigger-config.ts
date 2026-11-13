@@ -13,12 +13,19 @@ import { ConfigValidationError } from "./config-validation-error.js";
  *  - `pollIntervalMs` — how often the inbox is read; at least 30 s,
  *    60 s when left out.
  *  - `replyByEmail` — when `true`, the agent's final answer is mailed
- *    back to the sender once the task ends. Off when left out.
+ *    back to the sender once the task ends, with no prompt per reply:
+ *    turning it on is the operator's consent. Off when left out.
+ *  - `trustFromHeader` — when `true`, mail is accepted on the From line
+ *    alone. Off when left out: a message needs `dmarc=pass`, or an
+ *    SPF/DKIM pass aligned with the From domain, in the receiving
+ *    server's (topmost) `Authentication-Results` header, else it is
+ *    dropped and logged. Mail without that header is dropped too.
  */
 export interface EmailTriggerConfig {
   allowedSenders: string[];
   pollIntervalMs: number;
   replyByEmail: boolean;
+  trustFromHeader: boolean;
 }
 
 export const EMAIL_TRIGGER_DEFAULT_POLL_MS = 60_000;
@@ -73,5 +80,17 @@ export function parseEmailTriggerConfig(
       "expected true or false",
     );
   }
-  return { allowedSenders, pollIntervalMs: rawPoll, replyByEmail: rawReply };
+  const rawTrust = obj.trustFromHeader ?? false;
+  if (typeof rawTrust !== "boolean") {
+    throw new ConfigValidationError(
+      `${field}.trustFromHeader`,
+      "expected true or false",
+    );
+  }
+  return {
+    allowedSenders,
+    pollIntervalMs: rawPoll,
+    replyByEmail: rawReply,
+    trustFromHeader: rawTrust,
+  };
 }

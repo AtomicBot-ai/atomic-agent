@@ -142,7 +142,12 @@ describe("POST /api/webhooks/:name", () => {
         inbox: {
           source: "atomic-mail",
           userMessageTemplate: "mail from {{body.from}}",
-          email: { allowedSenders: ["boss@example.com"], pollIntervalMs: 60_000, replyByEmail: false },
+          email: {
+            allowedSenders: ["boss@example.com"],
+            pollIntervalMs: 60_000,
+            replyByEmail: false,
+            trustFromHeader: false,
+          },
         },
       },
     });

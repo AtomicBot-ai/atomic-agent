@@ -17,7 +17,10 @@ export interface TriggerMail {
   receivedAt: string;
   /** Plain-text body (capped at {@link TRIGGER_BODY_MAX_BYTES}), else the preview. */
   text: string;
-  /** Raw `Authentication-Results` header(s), `null` when the server added none. */
+  /**
+   * `Authentication-Results` header(s), one per line in message order
+   * (topmost first); `null` when the message has none.
+   */
   authResults: string | null;
 }
 
@@ -79,10 +82,15 @@ function bodyText(m: Record<string, unknown>): string {
 
 function authResults(m: Record<string, unknown>): string | null {
   const raw = m[AUTH_RESULTS_PROPERTY];
-  if (typeof raw === "string") return raw.trim() || null;
+  if (typeof raw === "string") return raw.replace(/[\r\n]+/g, " ").trim() || null;
   if (Array.isArray(raw)) {
-    const joined = raw.filter((v) => typeof v === "string").join("\n").trim();
-    return joined || null;
+    // One header per line, topmost (the receiving server's) first; a
+    // value never spans lines, so a sender cannot fake a new header.
+    // An empty value keeps its place, so a lower header never moves up.
+    const values = raw.map((v) =>
+      typeof v === "string" ? v.replace(/[\r\n]+/g, " ").trim() : "",
+    );
+    return values.some((v) => v.length > 0) ? values.join("\n") : null;
   }
   return null;
 }

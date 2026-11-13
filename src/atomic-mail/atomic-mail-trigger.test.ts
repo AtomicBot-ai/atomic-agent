@@ -18,6 +18,9 @@ import {
 import { MAIL_TRIGGER_STATE_FILENAME } from "./atomic-mail-trigger-state.js";
 
 const OWN = "atag-abc123@atomicmail.ai";
+/** What the inbox server writes for a genuine mail from example.com. */
+const PASS =
+  "mx.atomicmail.ai; spf=pass smtp.mailfrom=example.com; dkim=pass header.d=example.com; dmarc=pass header.from=example.com";
 
 function mail(id: string, over: Partial<TriggerMail> = {}): TriggerMail {
   return {
@@ -27,7 +30,7 @@ function mail(id: string, over: Partial<TriggerMail> = {}): TriggerMail {
     subject: `subject ${id}`,
     receivedAt: "2026-11-12T10:00:00Z",
     text: `text ${id}`,
-    authResults: null,
+    authResults: PASS,
     ...over,
   };
 }
@@ -37,7 +40,13 @@ function binding(over: Partial<NonNullable<WebhookConfig["email"]>> = {}): Webho
     source: "atomic-mail",
     userMessageTemplate: "Mail task from {{body.from}}",
     sessionMode: "ephemeral",
-    email: { allowedSenders: ["boss@example.com"], pollIntervalMs: 60_000, replyByEmail: false, ...over },
+    email: {
+      allowedSenders: ["boss@example.com"],
+      pollIntervalMs: 60_000,
+      replyByEmail: false,
+      trustFromHeader: false,
+      ...over,
+    },
   };
 }
 
@@ -51,6 +60,7 @@ describe("AtomicMailTrigger (ATO-601)", () => {
   let send: Mock<AtomicMailService["send"]>;
   let listInboxForTrigger: Mock<AtomicMailService["listInboxForTrigger"]>;
   let trigger: AtomicMailTrigger;
+  let logInfo: Mock<(message: string, fields?: Record<string, unknown>) => void>;
 
   beforeEach(() => {
     stateDir = mkdtempSync(join(tmpdir(), "mail-trigger-"));
@@ -61,6 +71,7 @@ describe("AtomicMailTrigger (ATO-601)", () => {
     created = [];
     send = vi.fn<AtomicMailService["send"]>().mockResolvedValue("sub-1");
     listInboxForTrigger = vi.fn<AtomicMailService["listInboxForTrigger"]>(async () => [...inbox]);
+    logInfo = vi.fn();
     trigger = new AtomicMailTrigger({
       stateDir,
       mail: { readiness: () => readiness, listInboxForTrigger, send },
@@ -74,6 +85,7 @@ describe("AtomicMailTrigger (ATO-601)", () => {
       resolveSessionId: () => null,
       getTask: (id) => tasks.get(id) ?? null,
       readReplyText: (sessionId) => `answer in ${sessionId}`,
+      logger: { info: logInfo, warn: vi.fn(), debug: vi.fn() },
     });
   });
 
@@ -148,6 +160,59 @@ describe("AtomicMailTrigger (ATO-601)", () => {
     expect(created).toHaveLength(1);
   });
 
+  describe("sender authentication (ATO-601 decision 14)", () => {
+    const ignoredReasons = (): unknown[] =>
+      logInfo.mock.calls
+        .filter(([message]) => message === "mail trigger: message ignored")
+        .map(([, fields]) => fields?.reason);
+
+    it("drops dmarc=fail and logs why", async () => {
+      await trigger.tick(0);
+      arrive(mail("bad", { authResults: "mx.atomicmail.ai; spf=pass smtp.mailfrom=example.com; dmarc=fail" }));
+      await trigger.tick(60_000);
+      expect(created).toHaveLength(0);
+      expect(ignoredReasons()).toEqual(["sender not authenticated: DMARC did not pass"]);
+    });
+
+    it("drops a forged pass written below the server's header", async () => {
+      await trigger.tick(0);
+      arrive(
+        mail("forged", {
+          authResults:
+            "mx.atomicmail.ai; spf=fail smtp.mailfrom=example.com; dkim=none; dmarc=none\nevil; spf=pass smtp.mailfrom=example.com; dmarc=pass",
+        }),
+      );
+      await trigger.tick(60_000);
+      expect(created).toHaveLength(0);
+      expect(ignoredReasons()).toHaveLength(1);
+    });
+
+    it("drops mail without Authentication-Results", async () => {
+      await trigger.tick(0);
+      arrive(mail("bare", { authResults: null }));
+      await trigger.tick(60_000);
+      expect(created).toHaveLength(0);
+      expect(ignoredReasons()).toEqual([
+        "sender not authenticated: no Authentication-Results header",
+      ]);
+    });
+
+    it("accepts the same mail with trustFromHeader: true", async () => {
+      bindings = { inbox: binding({ trustFromHeader: true }) };
+      await trigger.tick(0);
+      arrive(
+        mail("bad", { authResults: "mx.atomicmail.ai; dmarc=fail" }),
+        mail("bare", { authResults: null }),
+      );
+      await trigger.tick(60_000);
+      expect(created).toHaveLength(2);
+      // trustFromHeader does not open the allow-list.
+      arrive(mail("stranger", { fromEmail: "x@evil.com", authResults: null }));
+      await trigger.tick(120_000);
+      expect(created).toHaveLength(2);
+    });
+  });
+
   it("does not poll at all with an empty allow-list or no mail binding", async () => {
     bindings = { inbox: binding({ allowedSenders: [] }), ping: { userMessageTemplate: "x" } };
     await trigger.tick(0);
@@ -200,6 +265,22 @@ describe("AtomicMailTrigger (ATO-601)", () => {
       });
       await trigger.tick(60_000 + 2 * REPLY_CHECK_MS);
       expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    it("sends the reply with no approval step (the config opt-in is the consent)", async () => {
+      // The trigger is given no approvals service at all: the only way out
+      // is mail.send, called directly once the task completes.
+      const options = Object.keys(
+        (trigger as unknown as { options: Record<string, unknown> }).options,
+      );
+      expect(options.some((key) => /approv/i.test(key))).toBe(false);
+      await trigger.tick(0);
+      arrive(mail("q"));
+      await trigger.tick(60_000);
+      tasks.set("t-1", { status: "completed", sessionId: "s-1" });
+      await trigger.tick(60_000 + REPLY_CHECK_MS);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0]![0].to).toBe("boss@example.com");
     });
 
     it("retries a failed send and drops a cancelled task", async () => {

@@ -8,8 +8,8 @@ import type { TriggerMail } from "./atomic-mail-trigger-batches.js";
 import {
   buildMailReply,
   buildMailTaskMessage,
+  checkSenderAuth,
   isAllowedSender,
-  senderFailedAuth,
 } from "./atomic-mail-trigger-message.js";
 import {
   MAIL_TRIGGER_STATE_FILENAME,
@@ -35,12 +35,16 @@ import {
  *  - a message is marked seen before its task is created, so a crash
  *    loses at most one task and never makes two;
  *  - the agent's own address, a sender off the list and a sender the
- *    receiving server failed on SPF/DKIM/DMARC create nothing;
+ *    receiving server did not authenticate (no `dmarc=pass` or aligned
+ *    SPF/DKIM pass in the topmost `Authentication-Results`, see
+ *    `checkSenderAuth`) create nothing and are logged, unless the
+ *    binding sets `email.trustFromHeader`;
  *  - at most {@link MAX_TASKS_PER_POLL} tasks per poll — the rest wait;
  *  - the subject and body reach the task fenced as untrusted data.
  *
  * With `replyByEmail`, the agent's final answer goes back to the sender
- * when the task ends (a failed or blocked task gets a short note).
+ * when the task ends (a failed or blocked task gets a short note). No
+ * approval is asked per reply: the config opt-in is the consent.
  */
 
 export const MAX_TASKS_PER_POLL = 5;
@@ -203,7 +207,10 @@ export class AtomicMailTrigger {
     if (!isAllowedSender(mail.fromEmail, cfg.email.allowedSenders)) {
       return "sender not in allowedSenders";
     }
-    if (senderFailedAuth(mail.authResults)) return "sender failed SPF/DKIM/DMARC";
+    if (!cfg.email.trustFromHeader) {
+      const auth = checkSenderAuth(mail.authResults, mail.fromEmail);
+      if (!auth.ok) return `sender not authenticated: ${auth.reason}`;
+    }
     return null;
   }
 

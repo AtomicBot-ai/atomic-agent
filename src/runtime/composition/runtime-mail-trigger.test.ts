@@ -45,7 +45,12 @@ const mailBinding: WebhookConfig = {
   source: "atomic-mail",
   userMessageTemplate: "from {{body.from}}",
   sessionMode: "ephemeral",
-  email: { allowedSenders: ["boss@example.com"], pollIntervalMs: 60_000, replyByEmail: false },
+  email: {
+    allowedSenders: ["boss@example.com"],
+    pollIntervalMs: 60_000,
+    replyByEmail: false,
+    trustFromHeader: false,
+  },
 };
 
 describe("createRuntimeMailTrigger (ATO-601)", () => {
@@ -67,7 +72,7 @@ describe("createRuntimeMailTrigger (ATO-601)", () => {
         subject: "s",
         receivedAt: "t",
         text: "hello",
-        authResults: null,
+        authResults: "mx.atomicmail.ai; dmarc=pass header.from=example.com",
       },
     ]);
     await sidecar!.tick(60_000, signal);

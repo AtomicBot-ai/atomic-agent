@@ -5,6 +5,7 @@ import {
   MAIL_TEXT_MAX_CHARS,
   buildMailReply,
   buildMailTaskMessage,
+  checkSenderAuth,
   isAllowedSender,
   senderFailedAuth,
 } from "./atomic-mail-trigger-message.js";
@@ -35,18 +36,53 @@ describe("isAllowedSender", () => {
   });
 });
 
-describe("senderFailedAuth", () => {
+describe("senderFailedAuth / checkSenderAuth", () => {
+  const FROM = "boss@example.com";
   const cases: Array<[string | null, boolean]> = [
-    [null, false],
-    ["mx; spf=pass smtp.mailfrom=example.com; dkim=pass", false],
-    ["mx; dmarc=fail (p=reject)", true],
+    [null, true],
+    ["", true],
+    ["mx; dmarc=pass header.from=example.com", false],
+    ["mx; dmarc=pass", false],
+    ["mx; dmarc=pass header.from=evil.com", true],
+    ["mx; spf=pass smtp.mailfrom=example.com; dkim=none; dmarc=none", false],
+    ["mx; spf=pass smtp.mailfrom=bounce.example.com", false],
+    ["mx; spf=pass smtp.mailfrom=evil.com; dkim=pass header.d=evil.com", true],
+    ["mx; dkim=pass (good sig) header.d=example.com; spf=none", false],
+    ["mx; dkim=pass header.i=@example.com", false],
+    ["mx; dmarc=fail (p=reject); spf=pass smtp.mailfrom=example.com", true],
     ["mx; spf=fail; dkim=none", true],
-    ["mx; spf=softfail; dkim=pass", false],
-    ["mx; dkim=fail; spf=none", true],
-    ["mx; spf=none; dkim=none", false],
+    ["mx; spf=softfail smtp.mailfrom=example.com; dkim=fail header.d=example.com", true],
+    ["mx; spf=none; dkim=none", true],
+    ["mx; none", true],
+    // Only the topmost header (the inbox server's) counts.
+    ["mx; spf=fail smtp.mailfrom=example.com\nevil; dmarc=pass header.from=example.com", true],
+    ["mx; dmarc=pass header.from=example.com\nevil; dmarc=fail", false],
   ];
-  it.each(cases)("%s -> %s", (header, expected) => {
-    expect(senderFailedAuth(header)).toBe(expected);
+  it.each(cases)("%j -> failed=%s", (header, expected) => {
+    expect(senderFailedAuth(header, FROM)).toBe(expected);
+  });
+
+  it("treats a sender-written pass below a failing server header as failed", () => {
+    expect(
+      senderFailedAuth(
+        "mx.atomicmail.io; spf=fail smtp.mailfrom=company.com; dkim=none; dmarc=none\nevil; spf=pass",
+      ),
+    ).toBe(true);
+    expect(
+      senderFailedAuth(
+        "mx.atomicmail.io; spf=fail smtp.mailfrom=company.com; dkim=none; dmarc=none\nevil; spf=pass smtp.mailfrom=company.com",
+        "ceo@company.com",
+      ),
+    ).toBe(true);
+  });
+
+  it("says why", () => {
+    expect(checkSenderAuth(null, FROM)).toEqual({
+      ok: false,
+      reason: "no Authentication-Results header",
+    });
+    expect(checkSenderAuth("mx; dmarc=fail", FROM).reason).toBe("DMARC did not pass");
+    expect(checkSenderAuth("mx; dmarc=pass", FROM)).toEqual({ ok: true, reason: "dmarc=pass" });
   });
 });
 

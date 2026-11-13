@@ -18,15 +18,17 @@ Checks: `npx vitest run src/atomic-mail` when tests are present; `npm run lint`;
   "inbox": {
     "source": "atomic-mail",
     "userMessageTemplate": "Handle this e-mail from {{body.from}}.",
-    "email": { "allowedSenders": ["boss@example.com", "@mycompany.com"], "pollIntervalMs": 60000, "replyByEmail": false }
+    "email": { "allowedSenders": ["boss@example.com", "@mycompany.com"], "pollIntervalMs": 60000, "replyByEmail": false, "trustFromHeader": false }
   }
 }
 ```
 
-- `allowedSenders` is required; an empty list keeps the trigger off. Mail from anyone else, from the agent's own address, or failing DMARC/SPF/DKIM per the server's `Authentication-Results` is ignored. Without that header the From line is the only check.
+- `allowedSenders` is required; an empty list keeps the trigger off. Mail from anyone else or from the agent's own address is ignored.
+- The From line alone is not trusted. Only the topmost `Authentication-Results` header counts (the inbox server writes it above anything the sender wrote; the agent has no record of Atomic Mail's authserv-id, so the topmost header is taken as the server's rather than matched by name). The mail needs `dmarc=pass`, or `spf=pass` / `dkim=pass` whose domain (`smtp.mailfrom`, `header.d`) is aligned with the From domain; `dmarc=fail` always refuses. Anything else, including mail with no such header, is dropped and logged (`mail trigger: message ignored`, with the reason).
+- `trustFromHeader: true` (default `false`) turns that check off and accepts mail on the From line alone. Only for a server that adds no `Authentication-Results`; anyone can write any From line.
 - The first poll marks mail already in the inbox as seen; old mail is never replayed. State: `<stateDir>/atomic-mail-trigger.json`.
 - The template sees only `{{body.from}}` and `{{body.receivedAt}}`. Subject and body follow it inside an untrusted-content fence.
 - At most 5 tasks per poll; the binding is not reachable over `POST /api/webhooks/<name>`.
-- `replyByEmail: true` mails the agent's final answer back to the sender when the task ends.
+- `replyByEmail: true` (default `false`) mails the agent's final answer back to the sender when the task ends. There is no prompt per reply: turning it on is the operator's consent.
 
 Not covered yet: IMAP or Gmail for the operator's own mailbox (needs new dependencies), JMAP push instead of polling.

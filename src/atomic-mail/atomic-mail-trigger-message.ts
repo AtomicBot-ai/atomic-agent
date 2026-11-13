@@ -32,19 +32,131 @@ export function isAllowedSender(
   );
 }
 
+/** Outcome of {@link checkSenderAuth}: `ok`, or why the mail is refused. */
+export interface SenderAuthVerdict {
+  ok: boolean;
+  reason: string;
+}
+
+interface AuthResultEntry {
+  method: string;
+  result: string;
+  props: Map<string, string>;
+}
+
+/** Drops RFC 5322 comments `(...)`, nested ones included. */
+function stripComments(text: string): string {
+  let out = "";
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "(") depth += 1;
+    else if (ch === ")" && depth > 0) depth -= 1;
+    else if (depth === 0) out += ch;
+  }
+  return out;
+}
+
 /**
- * `true` when the receiving server says the sender is forged: DMARC
- * failed, or SPF/DKIM failed with nothing passing. A message without
- * the header is not refused (the server may not add one); the From
- * line is then the only check, which the README says plainly.
+ * One `Authentication-Results` value (RFC 8601): the authserv-id, then
+ * `method=result prop=value ...` entries split by `;`. The authserv-id
+ * is skipped (see {@link checkSenderAuth}).
  */
-export function senderFailedAuth(authResults: string | null): boolean {
-  if (!authResults) return false;
-  const text = authResults.toLowerCase();
-  if (/\bdmarc=fail\b/.test(text)) return true;
-  const passed = /\b(?:spf|dkim)=pass\b/.test(text);
-  const failed = /\b(?:spf|dkim)=(?:fail|softfail)\b/.test(text);
-  return failed && !passed;
+function parseAuthResultsHeader(value: string): AuthResultEntry[] {
+  const parts = stripComments(value).toLowerCase().split(";").slice(1);
+  const entries: AuthResultEntry[] = [];
+  for (const part of parts) {
+    const tokens = part.trim().split(/\s+/).filter(Boolean);
+    const head = tokens.shift();
+    const eq = head?.indexOf("=") ?? -1;
+    if (!head || eq <= 0) continue;
+    const props = new Map<string, string>();
+    for (const token of tokens) {
+      const i = token.indexOf("=");
+      if (i > 0) props.set(token.slice(0, i), token.slice(i + 1).replace(/^"|"$/g, ""));
+    }
+    entries.push({ method: head.slice(0, eq), result: head.slice(eq + 1), props });
+  }
+  return entries;
+}
+
+function domainOf(value: string | undefined): string {
+  if (!value) return "";
+  const at = value.lastIndexOf("@");
+  return (at >= 0 ? value.slice(at + 1) : value).trim().replace(/\.$/, "");
+}
+
+/**
+ * Relaxed alignment without the public-suffix list: the authenticated
+ * domain equals the From domain, is a subdomain of it, or is a parent
+ * of it that still has at least two labels (`mail.corp.com` signed by
+ * `corp.com`).
+ */
+function aligned(authDomain: string, fromDomain: string): boolean {
+  if (!authDomain || !fromDomain) return false;
+  if (authDomain === fromDomain) return true;
+  if (authDomain.endsWith(`.${fromDomain}`)) return true;
+  return fromDomain.endsWith(`.${authDomain}`) && authDomain.split(".").length >= 2;
+}
+
+/**
+ * Whether the receiving server authenticated the From domain (ATO-601).
+ *
+ * Only the topmost `Authentication-Results` header counts: the inbox
+ * server adds its own above everything the sender wrote, and anything
+ * lower down is the sender's to forge. The agent has no record of the
+ * server's authserv-id (the API does not return it), so it is not
+ * matched by name; the first
+ * header is taken as the server's (JMAP returns them in message order,
+ * topmost first, and `parseTriggerInbox` keeps one per line).
+ *
+ * The mail passes on `dmarc=pass` (with `header.from` matching when
+ * given), or on `spf=pass` / `dkim=pass` whose domain (`smtp.mailfrom`
+ * / `header.d`, else `header.i`) is aligned with the From domain. A
+ * `dmarc=fail` refuses whatever else passed. No header at all refuses.
+ */
+export function checkSenderAuth(
+  authResults: string | null,
+  fromEmail: string,
+): SenderAuthVerdict {
+  const topmost = authResults?.split("\n")[0]?.trim();
+  if (!topmost) return { ok: false, reason: "no Authentication-Results header" };
+  const fromDomain = domainOf(fromEmail.toLowerCase());
+  if (!fromDomain) return { ok: false, reason: "no From domain" };
+  const entries = parseAuthResultsHeader(topmost);
+  const dmarc = entries.filter((e) => e.method === "dmarc");
+  if (dmarc.some((e) => e.result !== "pass" && e.result !== "none")) {
+    return { ok: false, reason: "DMARC did not pass" };
+  }
+  if (
+    dmarc.some((e) => {
+      const hf = domainOf(e.props.get("header.from"));
+      return e.result === "pass" && (!hf || hf === fromDomain);
+    })
+  ) {
+    return { ok: true, reason: "dmarc=pass" };
+  }
+  for (const e of entries) {
+    if (e.result !== "pass") continue;
+    if (e.method === "spf" && aligned(domainOf(e.props.get("smtp.mailfrom")), fromDomain)) {
+      return { ok: true, reason: "spf=pass aligned with From" };
+    }
+    if (
+      e.method === "dkim" &&
+      aligned(domainOf(e.props.get("header.d") ?? e.props.get("header.i")), fromDomain)
+    ) {
+      return { ok: true, reason: "dkim=pass aligned with From" };
+    }
+  }
+  return { ok: false, reason: "no DMARC pass or SPF/DKIM pass aligned with From" };
+}
+
+/**
+ * `true` when the mail is refused on authentication: see
+ * {@link checkSenderAuth}. Without `fromEmail` nothing can align, so
+ * every header reads as failed.
+ */
+export function senderFailedAuth(authResults: string | null, fromEmail = ""): boolean {
+  return !checkSenderAuth(authResults, fromEmail).ok;
 }
 
 function oneLine(text: string, max: number): string {
