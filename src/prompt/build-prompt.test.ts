@@ -2127,7 +2127,8 @@ describe("buildPrompt tool roles (F18)", () => {
     expect(line).toContain("tasks.schedule");
     expect(line).toContain("browser.navigate");
     expect(line).toContain("finish");
-    expect(line).not.toContain("os.fs.write");
+    // As a whole name: `os.fs.write_pptx` is a different tool on the line.
+    expect(line).not.toMatch(/[\s,]os\.fs\.write(?:,|$)/);
     // Exactly one such line, and it sits inside `### tools`.
     expect(stablePrefix.split(ALSO_AVAILABLE_VIA_TOOL_VIEW)).toHaveLength(2);
     expect(stablePrefix.indexOf(ALSO_AVAILABLE_VIA_TOOL_VIEW)).toBeGreaterThan(

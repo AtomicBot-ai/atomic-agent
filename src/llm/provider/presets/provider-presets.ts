@@ -264,7 +264,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     // (`google/gemini-2.5-flash`). Project and region are the operator's.
     baseUrl: vertexOpenAiBaseUrl({ region: "us-central1", project: "your-project" }),
     envVar: "VERTEX_ACCESS_TOKEN",
-    note: "Gemini and partner models with your gcloud sign-in; set your project in the URL",
+    note: "Gemini and partner models with your gcloud sign-in; project goes in the URL",
     apiKeyCommand: vertexTokenCommand(),
     perAccountEndpoint: {
       hint: "Replace your-project with your Google Cloud project id (and us-central1 with your region, both places)",
@@ -305,7 +305,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: "http://localhost:13305",
     envVar: "LEMONADE_API_KEY",
     local: true,
-    note: "the server Lemonade runs on your machine (AMD GPUs and NPUs); no API key needed",
+    note: "the server Lemonade runs on your machine (AMD GPUs, NPUs); no key needed",
   },
   {
     id: "mistral",

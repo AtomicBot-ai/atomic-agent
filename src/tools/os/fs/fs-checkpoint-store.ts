@@ -155,7 +155,7 @@ export class FileCheckpointStore {
     const index = await this.readIndex(sessionId);
     return {
       entries: index.entries.filter((entry) => entry.at >= at),
-      incomplete: index.droppedThrough >= at,
+      incomplete: index.droppedThrough > 0 && index.droppedThrough >= at,
     };
   }
 

@@ -489,10 +489,12 @@ describe("strict-tool conformance over every registered tool", () => {
     // whose keys belong to that tool — closing it would leave the model
     // unable to write a check at all. `parseDelegateArgs` validates the
     // shape at run time, as it always did. `browser.extract` takes the
-    // caller's own JSON Schema as `schema`. Each is the tool's actual
-    // payload, so none can be closed.
+    // caller's own JSON Schema as `schema`; `browser.site_tools` passes
+    // `arguments` shaped by the site's own declared tool (ATO-521). Each
+    // is the tool's actual payload, so none can be closed.
     expect(refused).toEqual([
       "browser__extract",
+      "browser__site_tools",
       "os__http__request",
       "mcp__prompt__get",
       "verify__run",

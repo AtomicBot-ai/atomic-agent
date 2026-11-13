@@ -20,6 +20,7 @@ function row(id: string, overrides: Partial<SessionSummary> = {}): SessionSummar
     firstPrompt: `prompt of ${id}`,
     title: null,
     importedFrom: null,
+    archived: false,
     ...overrides,
   };
 }

@@ -90,12 +90,16 @@ export async function runCheck(
  */
 export function normalizeAnswer(text: string, caseSensitive = false): string {
   let s = text.trim();
+  // A period after the markup (`**3**.`) comes off first, so the wrapper
+  // below is seen; one inside it (`**3.**`) comes off after.
+  const outerPeriod = s.endsWith(".");
+  if (outerPeriod) s = s.slice(0, -1).trimEnd();
   for (const [open, close] of [["**", "**"], ["`", "`"], ['"', '"'], ["'", "'"]] as const) {
     if (s.length >= open.length + close.length && s.startsWith(open) && s.endsWith(close)) {
       s = s.slice(open.length, s.length - close.length).trim();
     }
   }
-  if (s.endsWith(".")) s = s.slice(0, -1).trimEnd();
+  if (!outerPeriod && s.endsWith(".")) s = s.slice(0, -1).trimEnd();
   s = s.replace(/\s+/g, " ");
   return caseSensitive ? s : s.toLowerCase();
 }

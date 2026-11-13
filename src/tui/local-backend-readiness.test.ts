@@ -267,12 +267,9 @@ describe("isCloudTextProviderReady", () => {
     expect(isCloudTextProviderReady()).toBe(false);
   });
 
-  it("does not treat a keyless LAN openai-compatible entry as ready", () => {
-    // The reachability premise for persistUserRemoteLlmUrls routing chat
-    // at local-llama: a LAN box is not loopback and has no key, so the
-    // startup gate does NOT return early — the wizard is reachable while
-    // an llm block with a non-local active provider exists. (A keyed or
-    // loopback entry short-circuits the gate and the wizard never runs.)
+  it("treats a keyless LAN openai-compatible entry as ready (ATO-1066)", () => {
+    // A home server on another computer usually has no key; ATO-1066 made
+    // such an entry count as ready, so the startup gate returns early.
     const cfg = getConfig();
     const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
     writeUserConfigFileSync(cfg.paths.userConfigFile, {
@@ -288,6 +285,39 @@ describe("isCloudTextProviderReady", () => {
             kind: "openai-compatible",
             baseUrl: "http://192.168.1.50:8080/v1",
             defaultChatModel: "some-model",
+          },
+        ],
+      },
+    });
+    resetConfigCache();
+
+    expect(isCloudTextProviderReady()).toBe(true);
+  });
+
+  it("does not treat a LAN openai-compatible entry whose declared key is unset as ready", () => {
+    // The reachability premise for persistUserRemoteLlmUrls routing chat
+    // at local-llama: a LAN box is not loopback and has no key, so the
+    // startup gate does NOT return early — the wizard is reachable while
+    // an llm block with a non-local active provider exists. (A keyed or
+    // loopback entry short-circuits the gate and the wizard never runs, and
+    // since ATO-1066 so does a LAN entry that declares no key variable; one
+    // that declares a key it cannot resolve still reaches the wizard.)
+    const cfg = getConfig();
+    const file = ensureUserConfigFileSync(cfg.paths.userConfigFile);
+    writeUserConfigFileSync(cfg.paths.userConfigFile, {
+      ...file,
+      llm: {
+        activeTextProvider: "lan-compat",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto",
+        providers: [
+          { id: "local-llama", kind: "llama-server", url: cfg.localModels.url },
+          {
+            id: "lan-compat",
+            kind: "openai-compatible",
+            baseUrl: "http://192.168.1.50:8080/v1",
+            defaultChatModel: "some-model",
+            apiKeyEnvVar: "ATOMIC_TEST_LAN_COMPAT_KEY_UNSET",
           },
         ],
       },

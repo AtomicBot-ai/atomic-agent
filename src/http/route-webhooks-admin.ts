@@ -129,7 +129,10 @@ export function createCreateWebhookHandler(): HttpHandler {
     }
     writeRawUserConfigFileSync(path, tree);
     resetConfigCache();
-    ctx.runtime.config.webhooks[name] = parsed;
+    // A new map, not a write into the old one: on a fresh state dir the
+    // running config's map is the shared defaults object, and writing
+    // into it would leak this route into every later default config.
+    ctx.runtime.config.webhooks = { ...ctx.runtime.config.webhooks, [name]: parsed };
     sendJson(res, 201, {
       webhook: webhookListItem(name, parsed, true, webhookPublicBase()),
       secret,
@@ -165,7 +168,8 @@ export function createDeleteWebhookHandler(): HttpHandler {
     }
     writeRawUserConfigFileSync(path, tree);
     resetConfigCache();
-    delete ctx.runtime.config.webhooks[name];
+    const { [name]: _removed, ...remaining } = ctx.runtime.config.webhooks;
+    ctx.runtime.config.webhooks = remaining;
     ctx.runtime.webhookSessionStore.delete(name);
     sendJson(res, 200, { deleted: name });
   };

@@ -38,9 +38,11 @@ describe("createDatasetScrubber (ATO-1104)", () => {
   it("replaces an exact value the agent knows is secret, whatever its shape", () => {
     const scrubber = createDatasetScrubber({
       homeDir: HOME,
-      known: [{ label: "MY_SERVICE_KEY", value: "plainvaluewithnoshape" }],
+      // Mixed case: the shared detector skips a known value that is a plain
+      // lowercase word, so a setting like `osxkeychain` is not masked everywhere.
+      known: [{ label: "MY_SERVICE_KEY", value: "plainValueWithNoShape" }],
     });
-    expect(scrubber.scrub("it is plainvaluewithnoshape")).toBe("it is [redacted:MY_SERVICE_KEY]");
+    expect(scrubber.scrub("it is plainValueWithNoShape")).toBe("it is [redacted:MY_SERVICE_KEY]");
     expect(scrubber.counts.secrets).toBe(1);
   });
 

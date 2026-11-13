@@ -27,6 +27,7 @@ function idleState(sessionId: string | null = "s1"): TuiState {
     maxSteps: 10,
     completionMaxTokens: 2048,
     skillCount: 0,
+    localBackendConfigured: false,
   });
 }
 

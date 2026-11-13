@@ -16,7 +16,7 @@ describe("browser tools in offline mode (ATO-1084)", () => {
       dangerous, EMPTY_DOMAIN_POLICY, "browser.navigate", "https://example.com/", ctx,
     );
     expect(refused?.status).toBe("error");
-    expect(refused?.output).toContain("offline mode: example.com blocked");
+    expect(refused?.summary).toContain("offline mode: example.com blocked");
     expect(refused?.details.reason).toBe("offline_mode");
     expect(
       await gateBrowserUrl(dangerous, EMPTY_DOMAIN_POLICY, "browser.navigate", "http://localhost:3000/", ctx),

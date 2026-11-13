@@ -1,6 +1,6 @@
 ---
 name: verify-work
-description: Prove that code, a script or a page you just produced actually runs — execute it, read the real output, and fix what breaks before reporting. Use after writing or changing anything executable, and whenever you are about to say something is done, working, or fixed.
+description: Run what you built, read the real output, fix what breaks. Use before saying it is done, working or fixed.
 version: 1.0.0
 requires_tools:
   - os.shell.run

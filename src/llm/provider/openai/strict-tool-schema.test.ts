@@ -532,7 +532,7 @@ describe("toStrictJsonSchema", () => {
    * knowingly — either the schema loses a bound it does not need, or
    * the tool joins this list.
    */
-  it("converts all but nine of the sampled built-in tool schemas", () => {
+  it("converts all but ten of the sampled built-in tool schemas", () => {
     const refused: string[] = [];
     let converted = 0;
     for (const name of DEFAULT_TOOL_NAMES) {
@@ -564,9 +564,9 @@ describe("toStrictJsonSchema", () => {
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 94 registered schemas, 85 of them strict. Pinned as a number so
+    // 95 registered schemas, 85 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
-    expect(DEFAULT_TOOL_NAMES.length).toBe(94);
+    expect(DEFAULT_TOOL_NAMES.length).toBe(95);
     expect(converted).toBe(85);
   });
 

@@ -56,7 +56,7 @@ function elicitingServer(): McpServerConfig {
 async function callText(client: McpClient, tool: string): Promise<unknown> {
   const res = await client.callTool(tool, {}, new AbortController().signal, 10_000);
   const content = res.content as Array<{ text: string }>;
-  return JSON.parse(content[0].text);
+  return JSON.parse(content[0]!.text);
 }
 
 describe("clientCapabilities", () => {
@@ -227,7 +227,7 @@ describe("McpClient tool-call deadline during elicitation (ATO-704)", () => {
       await vi.advanceTimersByTimeAsync(1_000);
       const res = await call;
       const content = res.content as Array<{ text: string }>;
-      expect(JSON.parse(content[0].text)).toMatchObject({ action: "accept", content: { account: "home" } });
+      expect(JSON.parse(content[0]!.text)).toMatchObject({ action: "accept", content: { account: "home" } });
     } finally {
       vi.useRealTimers();
       await client.close();

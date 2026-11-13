@@ -76,7 +76,7 @@ export type UserLlmProviderEntry = {
    * output instead of `apiKey` / `apiKeyEnvVar`, cached for a few minutes
    * and re-run on a 401. See `llm/provider/openai/api-key-command.ts`.
    */
-  apiKeyCommand?: string[];
+  apiKeyCommand?: readonly string[];
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;

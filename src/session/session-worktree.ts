@@ -265,7 +265,9 @@ export async function removeSessionWorktree(
   if (!preflight.ok) return preflight.reason;
   if (!preflight.missing) {
     const removed = await exec(["worktree", "remove", binding.path], binding.repoRoot);
-    if (!succeeded(removed)) return `git worktree remove refused: ${removed?.stderr.trim() || "unknown error"}`;
+    // Read before the check: `succeeded` narrows a failure to `null` (a timeout or a non-zero exit still has stderr).
+    const refusal = removed?.stderr.trim() || "unknown error";
+    if (!succeeded(removed)) return `git worktree remove refused: ${refusal}`;
   }
   await exec(["worktree", "prune"], binding.repoRoot);
   // `-d`, never `-D`: git keeps a branch that has commits nobody merged.

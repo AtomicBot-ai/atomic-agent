@@ -51,6 +51,7 @@ export function WindowedMessages({
             fusion={fusion}
             fold={folds.get(message.id) ?? null}
             turnOpen={state.turnsExpandedById[message.id] === true}
+            verbose={state.verboseSteps === true}
             // The plan's own buttons, under the plan. Only the last
             // message can carry them: the offer is about the newest
             // plan, and an older one further up the log would be an

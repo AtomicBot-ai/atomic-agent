@@ -243,7 +243,7 @@ describe("agent execution policy configuration", () => {
     expect(thrownError(() => parseAgentGoal("lots", createAgentGoalDefaults())))
       .toBeInstanceOf(OwnedValidationError);
     // The goal key sits in its own block: agent.task keeps its key list.
-    expect(Object.keys(createAgentTaskDefaults())).toEqual(["maxSteps", "maxDurationMs", "autoContinue", "resumeInterrupted", "maxResumes", "maxCostUsd"]);
+    expect(Object.keys(createAgentTaskDefaults())).toEqual(["maxSteps", "maxDurationMs", "autoContinue", "resumeInterrupted", "maxResumes", "maxCostUsd", "replanEveryNSteps"]);
   });
 
   it("reads agent.goal through the whole-file parser", () => {

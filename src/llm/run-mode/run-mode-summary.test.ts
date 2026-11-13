@@ -58,7 +58,7 @@ describe("describeRunMode", () => {
       degraded: { reason: "no-cloud-provider", requested: "fusion" },
     });
     expect(line).toContain("Local — active provider local-llama");
-    expect(line).toContain("Fusion needs a cloud orchestrator");
+    expect(line).toContain("Fusion needs a cloud model to plan the work");
     expect(line).not.toContain("stored fusion, effective");
   });
 

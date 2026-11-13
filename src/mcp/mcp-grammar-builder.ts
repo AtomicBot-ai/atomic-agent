@@ -38,7 +38,7 @@ const MCP_NATIVE_TOOL = "mcp-native-tool";
  */
 const REFERENCE_ANCHORS: Readonly<Record<string, readonly string[]>> = {
   [MCP_SERVER_TOOL]: [MCP_NATIVE_TOOL],
-  [MCP_NATIVE_TOOL]: ["verify-tool", "plan-tool"],
+  [MCP_NATIVE_TOOL]: ["verify-tool", "plan-tool", "canvas-tool"],
 };
 
 /**

@@ -323,9 +323,11 @@ function accuracyDeltaPoints(
   withSkill: SkillEvalRunStats,
 ): number | null {
   if (without.total <= 0 || withSkill.total <= 0) return null;
-  return (
-    (withSkill.passed / withSkill.total - without.passed / without.total) * 100
-  );
+  const points =
+    (withSkill.passed / withSkill.total - without.passed / without.total) * 100;
+  // Float noise (1 - 0.9 = 0.0999…) must not move a delta off the
+  // ±10 pp threshold, so compare at a millionth of a point.
+  return Math.round(points * 1e6) / 1e6;
 }
 
 /**

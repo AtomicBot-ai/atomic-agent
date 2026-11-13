@@ -139,7 +139,7 @@ describe("generateNextStep", () => {
     const request = complete.mock.calls[0]![0];
     expect(request.slotId).toBe(-1);
     expect(request.maxTokens).toBe(NEXT_STEP_MAX_TOKENS);
-    expect(request.tools?.[0]?.function.name).toBe("emit_next_step");
+    expect(request.tools?.[0]).toMatchObject({ function: { name: "emit_next_step" } });
   });
 
   it("returns null and reports, never throws, when the call fails", async () => {

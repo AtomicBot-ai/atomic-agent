@@ -79,7 +79,12 @@ describe("createTokenRefresher", () => {
       400,
       { error: "invalid_grant", error_description: "refresh-secret revoked" },
     );
-    const error = await refresher.getValidTokens().catch((e: unknown) => e as Error);
+    const error = await refresher.getValidTokens().then(
+      () => {
+        throw new Error("expected a rejection");
+      },
+      (e: unknown) => e as Error,
+    );
     expect(error).toBeInstanceOf(SignInRequiredError);
     expect(error).toMatchObject({ reason: "refresh_refused" });
     expect(error.message).not.toContain("refresh-secret");

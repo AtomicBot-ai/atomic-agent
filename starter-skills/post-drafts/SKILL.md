@@ -1,6 +1,6 @@
 ---
 name: post-drafts
-description: "Draft a Reddit, LinkedIn, X or Hacker News post that fits the platform's limits, the subreddit's rules and your brand voice. Draft only, never publishes."
+description: Draft a Reddit, LinkedIn, X or Hacker News post within platform and subreddit rules. Draft only, never publishes.
 version: 1.0.0
 requires_tools:
   - os.http.request

@@ -188,8 +188,13 @@ export class PlaywrightBackend implements BrowserBackend {
   private readonly workerContexts = new TempProfiles(MAX_BROWSER_MAX_TABS);
   /** Fusion worker that opened a tab in the shared context (ATO-961). */
   private readonly pageOwners = new WeakMap<Page, string>();
-  /** Tabs being opened right now, counted against `maxTabs`. */
-  private pendingTabs = 0;
+  /**
+   * Tab opens run one at a time, so the `maxTabs` check and the new tab
+   * are one step: parallel opens cannot slip past the limit together,
+   * and a tab already listed by the context is not counted twice while
+   * `newPage` is still settling.
+   */
+  private tabOpens: Promise<unknown> = Promise.resolve();
   private stopWorkerEnd: (() => void) | null = null;
   /** Console and network events of the agent's pages (`browser.debug`, ATO-701). */
   private readonly debug = new PageDebugLog();
@@ -667,17 +672,17 @@ export class PlaywrightBackend implements BrowserBackend {
    * Open a tab for the caller in `context`, within `browser.maxTabs`. A
    * worker's tab, and the pop-ups it opens, are named after the worker.
    */
-  private async openTab(context: PwBrowserContext): Promise<Page> {
+  private openTab(context: PwBrowserContext): Promise<Page> {
+    const opened = this.tabOpens.then(() => this.openTabNow(context));
+    this.tabOpens = opened.catch(() => undefined);
+    return opened;
+  }
+
+  private async openTabNow(context: PwBrowserContext): Promise<Page> {
     const max = this.options.maxTabs ?? DEFAULT_BROWSER_MAX_TABS;
-    const open = this.openTabCount() + this.pendingTabs;
+    const open = this.openTabCount();
     if (open >= max) throw new BrowserTabLimitError(open, max);
-    this.pendingTabs += 1;
-    let page: Page;
-    try {
-      page = await context.newPage();
-    } finally {
-      this.pendingTabs -= 1;
-    }
+    const page = await context.newPage();
     this.adopt(page);
     const owner = callerWorkerId();
     if (owner !== undefined && context === this.context) this.claim(page, owner);

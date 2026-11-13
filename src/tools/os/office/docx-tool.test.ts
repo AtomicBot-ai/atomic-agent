@@ -64,7 +64,12 @@ function tool(restore?: FileRestoreStore) {
 
 async function textOf(path: string): Promise<string> {
   const data = await readFile(path);
-  return (await docxExtractor({ data, sourcePath: path })).text;
+  // mammoth's Markdown escapes punctuation in body text (`Ship it\.`);
+  // the checks below are about the words, so read them back plain.
+  return (await docxExtractor({ data, sourcePath: path })).text.replace(
+    /\\([\\`*_{}[\]()#+\-.!])/g,
+    "$1",
+  );
 }
 
 describe("os.fs.docx", () => {

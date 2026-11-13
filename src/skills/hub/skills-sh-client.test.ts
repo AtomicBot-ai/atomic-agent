@@ -23,7 +23,7 @@ function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
-function clientWith(impl: () => Promise<Response>) {
+function clientWith(impl: (url: string) => Promise<Response>) {
   const fetchImpl = vi.fn(impl);
   return { fetchImpl, client: new SkillsShClient({ fetchImpl: fetchImpl as unknown as typeof fetch }) };
 }

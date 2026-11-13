@@ -1,6 +1,6 @@
 ---
 name: xlsx
-description: Create and edit Excel .xlsx workbooks (sheets, cells, formulas, formatting) via Python `openpyxl`. Use to generate spreadsheets or write/update cells. Reading is via os.fs.read_document.
+description: Create and edit Excel .xlsx workbooks (cells, formulas, formatting) via `openpyxl`.
 version: 1.0.1
 requires_tools:
   - os.shell.run

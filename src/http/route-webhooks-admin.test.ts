@@ -239,7 +239,7 @@ describe("webhook admin never moves the main API off loopback", () => {
     const tree = JSON.parse(after) as Record<string, unknown> & {
       webhooks: Record<string, Record<string, unknown>>;
     };
-    expect(Object.keys(tree.webhooks.gh).sort()).toEqual(["secret", "userMessageTemplate", "verify"]);
+    expect(Object.keys(tree.webhooks.gh ?? {}).sort()).toEqual(["secret", "userMessageTemplate", "verify"]);
     for (const key of ["host", "http", "bind"]) expect(tree[key]).toEqual(beforeTree[key]);
     // The agent keeps answering on the same loopback address.
     expect((await fetch(`${harness.baseUrl}/api/webhooks`)).status).toBe(200);

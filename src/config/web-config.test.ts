@@ -235,7 +235,7 @@ describe("web configuration ownership and compatibility", () => {
         get fetch() { events.push("fetch"); return fetch; },
       };
       parseUserConfigFile({});
-      expect(events).toEqual([...Array<string>(11).fill("search"), ...Array<string>(5).fill("fetch")]);
+      expect(events).toEqual([...Array<string>(11).fill("search"), ...Array<string>(10).fill("fetch")]);
     } finally {
       USER_CONFIG_DEFAULTS.web = originalWeb;
     }

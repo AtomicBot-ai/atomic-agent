@@ -110,7 +110,7 @@ describe("completePlain", () => {
     const params = complete.mock.calls[0]?.[0];
     expect(params?.slotId).toBe(-1);
     expect(params?.tools).toHaveLength(1);
-    expect(params?.tools?.[0]?.function.name).toBe("emit_answer");
+    expect(params?.tools?.[0]).toMatchObject({ function: { name: "emit_answer" } });
     expect(params?.maxTokens).toBe(PLAIN_COMPLETE_DEFAULT_MAX_TOKENS);
   });
 

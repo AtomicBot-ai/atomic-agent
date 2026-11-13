@@ -1,6 +1,6 @@
 ---
 name: pandoc
-description: Convert documents between formats (Markdown, DOCX, HTML, PDF, RST, EPUB, LaTeX) via the `pandoc` CLI. Use to transform a document from one format to another.
+description: Convert documents (Markdown, DOCX, HTML, PDF, EPUB, LaTeX) via `pandoc`.
 version: 1.0.1
 requires_tools:
   - os.shell.run

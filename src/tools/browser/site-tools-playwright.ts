@@ -26,7 +26,13 @@ const NODE_GRACE_MS = 3_000;
  * navigation; failures are ignored (the page then simply has no tools).
  */
 export async function installSiteToolCapture(target: BrowserContext | Page): Promise<void> {
-  await target.addInitScript({ content: SITE_TOOLS_INIT_SCRIPT }).catch(() => undefined);
+  // A throw before the promise exists (a closed target, a stand-in without
+  // init scripts) is a failure too: it must not stop the browser opening.
+  try {
+    await target.addInitScript({ content: SITE_TOOLS_INIT_SCRIPT });
+  } catch {
+    // ignored, see above
+  }
 }
 
 export async function listSiteToolsOnPage(

@@ -1,6 +1,6 @@
 ---
 name: gog-workspace
-description: Use the `gog` CLI for Google Workspace tasks across Gmail, Calendar, Drive, Docs, Sheets, Contacts, and related services. Use when the user asks to check email, search Gmail, inspect calendar events, find Drive files, read Docs or Sheets, or manage Google Workspace data through `gog`.
+description: Gmail, Calendar, Drive, Docs, Sheets and Contacts via the `gog` CLI.
 version: 0.1.8
 requires_tools:
   - os.shell.run

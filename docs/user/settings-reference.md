@@ -36,6 +36,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `localModels.thinking` | `'auto' \| 'on' \| 'off'` | `"auto"` | The template's thinking switch (`chat_template_kwargs: {enable_thinking}`) on server-templated prompts, for families whose template reads it. `auto` (default) leaves the template's own default; `on` / `off` set it. |
 | `localModels.reasoningBudgetTokens` | `number` | `0` | How many tokens a local reasoning model may spend thinking before a tool call, on the grammar path. The GBNF prelude bounds the think block at `reasoningBudgetTokens × 4` characters; past that the sampler admits only the close sentinel, so the model is forced to close the block and emit the call. `0` leaves the prelude unbounded. |
 | `localModels.drySampler` | `boolean` | `false` | Turn on llama.cpp's DRY ("don't repeat yourself") sampler for every `/completion` request to a llama.cpp-family engine (Atomic Core, the managed llama-server, an External llama-server). It penalises a token that would extend a sequence already in the last 256 tokens of prompt plus reply, which targets the verbatim prose loops small models fall into. |
+| `localModels.strictToolArgs` | `boolean` | `false` | Hold a local model's tool ARGUMENTS to each tool's JSON Schema on the grammar path, not only its tool names (ATO-633): a key the schema does not know, a missing required key or a value outside an `enum` cannot be sampled. |
 | `localModels.managed.engine` | `'llama-server' \| 'atomic-core'` | `"atomic-core"` | Managed process owner. Default `"atomic-core"`; files before v77 migrate to it (llama.cpp stays selectable). |
 | `localModels.managed.modelId` | `string \| null` | `null` |  |
 | `localModels.managed.port` | `number` | `19091` |  |
@@ -43,6 +44,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `localModels.managed.autoUpdate` | `boolean` | `true` | When true, managed-mode start (TUI auto-start / `s`, CLI `models start`) checks GitHub Releases and replaces the llama.cpp zip if a newer tag (or a stale Windows variant) is available. Default `true` since config v41. Older files stored an unused `false` default — those migrate to `true`. Set `false` to pin the installed backend. |
 | `localModels.managed.stopOnExit` | `boolean` | `true` | Stop the managed chat daemon when the last CLI session exits. `true` (default) — closing the terminal frees the RAM/VRAM the model was holding; a second live session keeps the daemon up (see `session-registry.ts`). `false` — keep the model warm between sessions; the operator stops it via `atomic-agent models stop`. |
 | `localModels.managed.autoRestart` | `boolean` | `true` | Bring the managed chat daemon back by itself when it dies (or, from the wedge watchdog, stops answering) while this TUI owns it. `true` (default): a crashed or killed llama-server is restarted within a few seconds and a parked turn resumes on it; three deaths within a minute of their start stop the retries and name the fault. |
+| `localModels.managed.promptDiskCache` | `boolean` | `false` | Keep the chat daemon's prompt cache on disk between runs (ATO-456). `true`: the managed server starts with `--slot-save-path`, the cache of every idle slot is saved before a managed stop and the newest saves are loaded back after the next start, so a long conversation continues without the model reading it all again. |
 | `localModels.managed.device` | `string` | `"auto"` | Compute-device preference for the managed llama.cpp daemon: - `"auto"` (default) — enumerate via `llama-server --list-devices` at start and pick the best discrete GPU; CPU fallback when none. - a concrete backend device id (e.g. `"Vulkan0"`) — pin offload to that device. - `"cpu"` — force CPU-only (`-ngl 0`). |
 | `localModels.managed.backendVariant` | `'auto' \| 'cpu' \| 'vulkan' \| 'cuda-12.4' \| 'cuda-13.3'` | `"auto"` | Which llama.cpp build (release zip) the managed backend installs. Windows-only — every other platform, Linux arm64 included, publishes a single asset, so there is nothing for the preference to choose between and it is ignored there. |
 | `localModels.managed.coreBackendVariant` | `'auto' \| 'cpu'` | `"auto"` | Which build Atomic Core installs on Windows x64 (the `atomic-core` engine; `backendVariant` above is the llama-server engine's). - `"auto"` (default) — Core's recommendation for this hardware. - `"cpu"` — Core's CPU build. |
@@ -78,6 +80,8 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `agent.task.resumeInterrupted` | `boolean` | `true` | Continue a durable task whose run a crash, a kill or a restart cut off, from its session's per-step checkpoint, with a note telling the model how far it got (ATO-1109). Off: the run starts over from the task's message, as before. A run a person stopped is never resumed. |
 | `agent.task.maxResumes` | `number` | `3` | Resumes after the agent died under a task (crash or kill) before the task is failed instead: the guard against a task that takes the agent down every time. `0` fails it at the first such interruption. |
 | `agent.task.maxCostUsd` | `number` | `0` | Spend ceiling for one task, in USD, estimated from each completion's usage and the model's prices (prompt-cache aware). Reached, the task ends the same graceful way as the time ceiling. `0` means no cap. Unpriced models (a local model) count as $0, so this never stops local work. Default `0`. |
+| `agent.task.replanEveryNSteps` | `number` | `0` | Ask the model to review and resend its live plan (`plan.update`) every this many steps of a long task (ATO-609). The request joins the next step's notice, so it costs no extra model call. `0` (the default) is off. Additive and unversioned: an older file has no field and never re-plans. |
+| `agent.goal.maxTokens` | `number` | `0` | Token budget a new goal starts with: prompt plus completion tokens of all its rounds, as the provider reports them. `0` means no cap (rounds, time and money still bound a goal). `/goal tokens` changes it for one goal. Default `0`. |
 | `agent.toolTimeoutMs` | `number` | `60000` |  |
 | `agent.readScope` | `'working-dir' \| 'unrestricted'` | `"working-dir"` | Where a session's reads may go. `working-dir` (the default) confines filesystem reads and shell path arguments to the working directory and the paths the user named in the conversation; `unrestricted` is the pre-v67 behaviour. |
 | `agent.approvalLevel` | `1 \| 2 \| 3 \| 4 \| 5` | `1` | Five-step approval ladder. Replaces the binary `approvalRequired`; the legacy key is still read once for migration (see `resolveApprovalLevel`) and never written back. |
@@ -90,6 +94,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `agent.compaction.timeoutMs` | `number` | `600000` | Timeout of one summary call; the total budget scales with chunk count. |
 | `agent.compaction.maxTotalTimeoutMs` | `number` | `600000` |  |
 | `agent.compaction.background` | `boolean` | `true` | Under `auto`, extend a rolling summary between turns so compaction can swap it in without a model call. Optional: absent means on. It still runs only where it is safe and worthwhile (see the runtime's background scheduler); `false` turns it off everywhere. |
+| `agent.compaction.memoryFlush` | `boolean` | `false` | ATO-676. Before a compaction, ask the model for short dated observations ("YYYY-MM-DD: ...") about the records being compacted and store them as one memory note tagged `observations`. A private side call: the visible chat is unchanged, and a failed flush never stops the compaction. Optional: absent means off (the default). |
 | `agent.conversationMaxTokens` | `number` | `0` |  |
 | `agent.conversationMaxPairs` | `number` | `200` | How many macro-turns of history the prompt carries — one "pair" being a task you sent plus everything the agent did answering it. |
 | `agent.nameSessions` | `boolean` | `true` | Ask the model to name each session. |
@@ -98,6 +103,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `agent.worldSnapshotMaxTokens` | `number` | `8000` | Safety-net ceiling for the `### world` section. ARIA snapshots are already compressed at the browser layer; this cap guards against edge cases where compression misses (huge SVG trees, etc.). |
 | `agent.smartApproval` | `boolean` | `false` | Smart approval (ATO-465). When on, a request that would prompt, of a category the operator could grant for the session, is first rated by a model (`src/approval/risk-review.ts`): `low` runs it without a prompt, anything else and every failure prompts as before, with the rating shown. Off by default. Read live: no restart needed. |
 | `agent.smartApprovalModel` | `string \| null` | `null` | The `llm.providers[].id` the risk review runs on. `null` (default): a local `llama-server` link that has a model, else the active provider. |
+| `agent.taintReview` | `boolean` | `false` | Review after outside content (ATO-618, `src/approval/untrusted-taint.ts`). |
 | `agent.prompt.compact` | `'auto' \| 'on' \| 'off'` | `"auto"` | Stable-prefix shape. `compact` (default `"auto"`): the short scaffold for small context windows; `auto` turns it on when the model's known window is at most 64K tokens. See `src/prompt/compact-prompt.ts`. |
 | `agent.tools.search` | `'auto' \| 'on' \| 'off'` | `"auto"` | Tool catalog on demand (ATO-558): `tools.search` is `auto`, `on` or `off`. Optional so configs and fixtures written before it stay valid; the parser always fills it. |
 
@@ -132,6 +138,17 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `web.fetch.maxRetries` | `number` | `2` | Extra attempts after the first for retryable failures (429/502/503/504 and curl exit 28 "operation timed out"). `0` disables retrying. Deliberately small: `os.web.fetch` is GET-only, so retries are always safe, but each one spends task budget. |
 | `web.fetch.retryBaseDelayMs` | `number` | `500` | Base delay in milliseconds for exponential backoff between retries (attempt N waits `retryBaseDelayMs * 2^(N-1)`). A server-sent `Retry-After` header wins over the computed delay when it is shorter than the cap. |
 | `web.fetch.retryMaxDelayMs` | `number` | `5000` | Upper bound in milliseconds on any single backoff wait, including one derived from `Retry-After`. Stops a hostile or overloaded origin from parking the agent for minutes on a header value. |
+| `web.fetch.extractor` | `'readability' \| 'defuddle'` | `"readability"` | Main-content extractor tried first on an HTML page (ATO-698). Default `"readability"` (Mozilla Readability, as before). `"defuddle"` runs Defuddle first, which keeps code blocks, math and tables in the markdown, and falls back to Readability when it finds nothing. Off by default until it has been compared on real pages. |
+| `web.fetch.renderWithBrowser` | `boolean` | `true` | Step 2 of the page-read ladder (ATO-968): when curl gets a bot-protection challenge, render the page in the agent's own browser and extract from that. Default `true`. Needs `browser.enabled`; never used with `browser.connect: "user-chrome"` (the user's signed-in Chrome), and the browser domain lists apply. |
+| `web.fetch.jinaReader` | `boolean` | `false` | Step 3: Jina Reader without a key (rate-limited by Jina) when the page is still walled. Default `false`: it sends the URL to Jina. A key in `jinaApiKeyEnv` turns Jina on by itself. |
+| `web.fetch.jinaApiKeyEnv` | `string` | `"JINA_API_KEY"` | Environment variable holding a Jina Reader key. Default `"JINA_API_KEY"`. |
+| `web.fetch.firecrawlApiKeyEnv` | `string` | `"FIRECRAWL_API_KEY"` | Environment variable holding a Firecrawl key; Firecrawl runs after Jina only when it is set. Default `"FIRECRAWL_API_KEY"`. |
+| `web.crawl.minDelayMs` | `number` | `1000` | Smallest gap between two requests to one host, in milliseconds. A robots.txt `Crawl-delay` that asks for more wins, up to 30 seconds. Default `1000` (one request a second). |
+| `web.crawl.maxPages` | `number` | `50` | Hard cap on pages one crawl reads. A call may ask for fewer. Default `50`. |
+| `web.crawl.maxDepth` | `number` | `2` | Hard cap on link depth from the start page. Default `2`. |
+| `web.crawl.respectRobots` | `boolean` | `true` | Obey robots.txt. Default `true`. Turning it off for every site is a blunt tool; `robotsExemptHosts` is the way for your own sites. |
+| `web.crawl.robotsExemptHosts` | `string[]` | `[]` | Hosts whose robots.txt is not applied (your own sites, a staging server). Exact host names, a leading `*.` matches subdomains. Default empty. The rate limit still applies to them. |
+| `web.crawl.cacheTtlMinutes` | `number` | `15` | Minutes a fetched page or robots.txt is reused by later crawls. Zero disables. Default `15`. |
 
 ## projects
 
@@ -149,6 +166,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `tools.shell.envPassthrough` | `string[]` | `["GITHUB_TOKEN","NOTION_API_KEY"]` | Variables an `os.shell.run` command inherits from the agent's environment even though they look like secrets. Without this, a command gets the agent's environment minus anything named like a KEY, TOKEN, SECRET or PASSWORD and the known provider keys (see `src/sandbox/command-env.ts`). |
 | `tools.screen.enabled` | `boolean` | `false` | Computer use on macOS (ATO-525): `os.screen.capture` takes screenshots (asking as `screen_capture` below approval level 3) and `os.screen.{click,type,key}` drive the real mouse and keyboard, each input asking as `screen_control` below level 4. Default `false`: opt-in, and read at start, so turning it on takes a restart. |
 | `tools.screen.point` | `boolean` | `true` | "Show where to click" on macOS (ATO-1018): `os.screen.point` draws arrows, boxes and labels through the desktop app's overlay and never clicks or types, and `os.screen.capture` comes with it (still asking as `screen_capture`) so the model can see what it points at. Default `true`; independent of `enabled`. Read at start. |
+| `tools.lsp.enabled` | `boolean` | `false` | After-edit diagnostics from language servers (ATO-503): after `os.fs.write` / `edit` / `patch` change a TypeScript, JavaScript or Python file inside a git repository, the result lists the compiler and type errors the change added. |
 
 ## browser
 
@@ -159,6 +177,10 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `browser.connect` | `'agent' \| 'user-chrome'` | `"agent"` | `UserConfigFile.browser.connect`: own profile or the user's Chrome. |
 | `browser.cdpUrl` | `string \| null` | `null` | Attach to this DevTools endpoint instead of launching. Env `ATOMIC_AGENT_BROWSER_CDP_URL`, else `UserConfigFile.browser.cdpUrl` (loopback only). Env `ATOMIC_AGENT_BROWSER_CDP_URL` wins when set. |
 | `browser.userDataDir` | `string \| null` | `null` |  |
+| `browser.headless` | `boolean \| 'auto'` | `"auto"` | The browser runs without a window for every turn (an explicit `true`). |
+| `browser.profile` | `'agent' \| 'temp'` | `"agent"` | `UserConfigFile.browser.profile`: the agent's profile or a throwaway one per chat. Absent: `"agent"`. |
+| `browser.maxTabs` | `number` | `8` | `UserConfigFile.browser.maxTabs`. Absent: 8. |
+| `browser.workerIsolation` | `'tabs' \| 'context'` | `"tabs"` | `UserConfigFile.browser.workerIsolation`. Absent: `"tabs"`. |
 
 ## sessions
 
@@ -174,6 +196,15 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | --- | --- | --- | --- |
 | `tracing.trace.enabled` | `boolean \| null` | `null` | Trace recording toggle. - `true` / `false`: explicit user choice (wins over the entry-point default). - `null`: defer to the entry point. `createAgentRuntime` resolves it via `traceDefault`: CLI / TUI / serve use `true`, sidecar uses `false`. This keeps local debugging observable by default while embedded hosts stay silent unless they opt in. |
 | `tracing.trace.maxBytesPerSession` | `number` | `10485760` | Hard cap on a single session's trace file. Crossing it drops the OLDEST events, not the newest: the sink trims the head back to half the cap and keeps recording. |
+| `tracing.otel.enabled` | `boolean \| null` | `null` | `null`: on when an endpoint is known. `false`: off, whatever the env says. |
+| `tracing.otel.endpoint` | `string \| null` | `null` | OTLP/HTTP base URL (`/v1/traces` is appended) or a full traces URL. |
+| `tracing.otel.captureContent` | `boolean` | `false` | Put prompt, reply, tool argument and error text into spans. |
+
+## network
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `network.offline` | `boolean` | `false` | Network kill switch (ATO-1084): `{ offline: false }` by default. Additive and unversioned: a file without the block reads the default. |
 
 ## memory
 
@@ -197,6 +228,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `memory.notes.maxEntries` | `number` | `1000` | Hard cap on stored memory rows. Oldest rows are evicted on overflow. |
 | `memory.notes.maxContentChars` | `number` | `4000` | Per-call input ceiling for `memory.notes.store.content`. |
 | `memory.notes.recallDefaultK` | `number` | `5` | Default `k` when `memory.notes.recall` omits it. |
+| `memory.notes.reconcile` | `boolean` | `false` | ATO-672. After reflection writes a note, one extra background model call compares it with similar older notes and marks the ones it replaces (or the new note, when it only repeats one) with the `superseded` tag, which keeps them out of the prompt. Default off. |
 | `memory.recallInjection.enabled` | `boolean` | `true` |  |
 | `memory.recallInjection.k` | `number` | `3` | Top-K notes to include. Applied after BM25 ranking. |
 | `memory.recallInjection.previewChars` | `number` | `160` | Per-line preview clip length (chars) in the `### recalled` block. |
@@ -264,6 +296,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `vision.autoDetect` | `boolean` | `true` | When `false`, treat any vision-capable model as supported regardless of `/props`. |
 | `vision.maxImageBytes` | `number` | `8388608` | Hard upper bound on a single image's decoded byte length. |
 | `vision.maxImagesPerCall` | `number` | `4` | Hard upper bound on the number of images per `vision.describe` call. |
+| `vision.maxAudioBytes` | `number` | `16777216` | Hard upper bound on one `audio.listen` file, in bytes. |
 
 ## skills
 
@@ -287,6 +320,8 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `tui.whileBusySubmit` | `'steer' \| 'queue'` | `"steer"` |  |
 | `tui.mouse` | `boolean` | `true` | Turns terminal mouse reporting on: clicking panels, list rows, the nav bar and the prompt, plus wheel scrolling. Turning it off restores the terminal's own drag-to-select, which mouse reporting takes over — see `/mouse` and `--no-mouse`. Older files are upgraded with `mouse: true`. |
 | `tui.showSteps` | `boolean` | `false` | Always show steps (ATO-963): keep every finished turn's tool cards and reasoning open in the chat, as before. Off by default: a finished turn folds into one "Used 6 tools · 40s" line. Additive and unversioned, a file without it reads `false`. A display preference only; the agent never reads it. |
+| `tui.nextStepSuggestions` | `boolean` | `false` | Next-step suggestions (ATO-1096, epic ATO-995): after a turn, one short model call proposes what to ask next, shown as grey text in the empty composer that Tab accepts. Off by default: the call costs a model request after every turn, so it is opt-in. Additive and unversioned, a file without it reads `false`. |
+| `tui.vimMode` | `boolean` | `false` | Vim keys in the terminal composer (ATO-662): NORMAL / INSERT modes with the core motions and operators. Off by default; `/vim` flips it. Additive and unversioned, a file without it reads `false`. A display/input preference only; the agent never reads it. |
 | `tui.notify.enabled` | `boolean` | `true` | Off means the terminal is never written to out of band. |
 | `tui.notify.minDurationMs` | `number` | `30000` | How long a turn must have run before its *successful* ending is worth a ping. A failure always pings regardless: it is the ending that needs a person, and it can happen in two seconds. |
 | `tui.sessionRail.order` | `string[]` | `[]` |  |
@@ -331,6 +366,10 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `notifications.downloads.channel` | `DownloadNotifyChannelSetting \| null` | `null` | `null` means the operator has not been asked yet: the Models tab asks once, the first time a pull starts, and remembers the answer here. `"off"` is a remembered "no". |
+| `notifications.push.enabled` | `boolean` | `false` | Master switch. `false` (the default) sends nothing. |
+| `notifications.push.server` | `string` | `"https://ntfy.sh"` | ntfy server base URL, no trailing slash. |
+| `notifications.push.topic` | `string \| null` | `null` | Topic to publish to; `null` until push is turned on. |
+| `notifications.push.tokenEnv` | `string` | `"NTFY_TOKEN"` | Name of the env var holding an optional ntfy access token. |
 
 ## atomicMail
 
@@ -357,6 +396,8 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `composio.userId` | `string \| null` | `null` | Stable anonymous install id scoping Composio connected accounts. Minted once as a random UUID and never derived from the operator's email: Composio's docs advise against emails as user ids, and an email is PII the integration has no reason to disclose. Losing it means re-authorising every connected app, so it is persisted. |
 | `composio.sessionId` | `string \| null` | `null` | Cached tool-router session id (`trs_…`), so a boot costs no API call. |
 | `composio.mcpUrl` | `string \| null` | `null` | Cached MCP endpoint for `sessionId`. |
+| `composio.accounts` | `ComposioAccount[]` | `[]` | Named connected accounts and per-toolkit defaults (ATO-548). Empty by default: nothing is pinned and Composio picks the account. |
+| `composio.sessionPins` | `string \| null` | `null` | Which pins the cached session was created with, as `<sessionId>#<pins>`; `null` for an unpinned session. Tied to the session id so a writer that replaces `sessionId` without knowing about pins (an older build, the desktop key check) invalidates it. |
 
 ## mcp
 
@@ -420,6 +461,18 @@ Read from the process environment or from `~/.atomic-agent/.env` (a variable alr
 | `ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS` | unset | env only | Hold task reports in this local-time window and send one digest after it, e.g. 23:00-08:00. |
 | `ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_STEPS` | `10` | env only | Post a status snapshot of a long run every this many steps; 0 turns it off. |
 | `ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_MS` | `300000` | env only | Post a status snapshot of a long run this often, in ms; 0 turns it off. |
+| `ATOMIC_AGENT_SESSION_TOOLS_ENABLED` | `false` | env only | Let the agent list, read and message its other sessions (the sessions.* tools). |
+| `ATOMIC_AGENT_TASKS_KEEP_AWAKE` | unset | env only | Keep the computer awake for tasks and turns: off or while-working. Unset or any other value: off. |
+| `ATOMIC_AGENT_PERSONA` | unset | env only | Persona name to use for this process, above every config.json setting. |
+| `ATOMIC_AGENT_OFFLINE` | unset | env only | Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process. |
+| `ATOMIC_AGENT_ALLOWED_ORIGINS` | unset | env only | Comma-separated web origins that may call a keyless local `serve`, besides loopback ones. |
+| `ATOMIC_AGENT_MODEL_CATALOG_URL` | unset | env only | URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io. |
+| `ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES` | unset | env only | Stream Telegram replies into the owner's DM (private) or not (off). Wins over telegram.streamReplies when set. |
+| `ATOMIC_AGENT_WHISPER_BIN` | unset | env only | Path of the whisper.cpp CLI for audio transcription. Unset: the downloaded copy, then the PATH. |
+| `ATOMIC_AGENT_WHISPER_MODEL` | unset | env only | Whisper model file or catalog id to transcribe with. Unset: the saved default (base). |
+| `ATOMIC_AGENT_FFMPEG_BIN` | unset | env only | Path of ffmpeg, used to convert audio before transcription. Unset: the PATH. |
+| `ATOMIC_AGENT_INLINE_IMAGES` | unset | env only | Set to 1 to show images inline in the terminal (kitty and iTerm2 graphics). |
+| `ATOMIC_AGENT_NO_INLINE_IMAGES` | unset | env only | Set to 1 to never show inline images in the terminal; wins over ATOMIC_AGENT_INLINE_IMAGES. |
 | `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP` | `true` | env only | Check GitHub Releases for a newer version when the TUI starts. |
 | `ATOMIC_AGENT_REPO` | `"AtomicBot-ai/atomic-agent"` | env only | GitHub owner/repo used for update checks and self-update. |
 | `ATOMIC_AGENT_ANALYTICS` | unset | env only | Set to off to turn anonymous analytics and crash reports off for this process, whatever analytics.enabled says. Not saved. |

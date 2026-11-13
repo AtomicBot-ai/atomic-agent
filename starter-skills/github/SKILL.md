@@ -1,6 +1,6 @@
 ---
 name: github
-description: Drive GitHub via the official `gh` CLI — repos, issues, pull requests, releases, gists, Actions runs, and raw REST through `gh api`. Use when the user asks to inspect or manage GitHub.
+description: Manage GitHub via the `gh` CLI (repos, issues, PRs, releases, Actions, `gh api`).
 version: 1.2.0
 requires_tools:
   - os.shell.run

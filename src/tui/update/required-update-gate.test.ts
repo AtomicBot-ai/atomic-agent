@@ -47,7 +47,12 @@ function fixture(opts: { required: "broken" | "below-minimum" | null; turns?: nu
 }
 
 describe("required-update gate in the orchestrator (ATO-1125)", () => {
-  beforeEach(() => check.impl.mockReset());
+  // A block, not an arrow returning the spy: vitest runs a function that
+  // beforeEach returns as the test's cleanup, so it would call the mock
+  // again after each test (and fail the one that makes it reject).
+  beforeEach(() => {
+    check.impl.mockReset();
+  });
 
   it("broken: a new chat is refused with the update command and the text goes back", async () => {
     const f = fixture({ required: "broken" });

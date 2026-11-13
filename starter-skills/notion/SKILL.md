@@ -1,6 +1,6 @@
 ---
 name: notion
-description: Read and write Notion pages, databases (data sources), and blocks via the Notion REST API.
+description: Read and write Notion pages, databases and blocks via the Notion API.
 version: 1.3.1
 requires_tools:
   - os.shell.run

@@ -16,12 +16,11 @@ afterEach(() => {
 
 function stubRun(outputs: string[]): RunKeyCommand & { calls: string[][] } {
   const calls: string[][] = [];
-  const run = (async (argv: readonly string[]) => {
+  const run: RunKeyCommand = async (argv) => {
     calls.push([...argv]);
     return outputs[Math.min(calls.length - 1, outputs.length - 1)]!;
-  }) as RunKeyCommand & { calls: string[][] };
-  run.calls = calls;
-  return run;
+  };
+  return Object.assign(run, { calls });
 }
 
 describe("createApiKeyCommandSource", () => {

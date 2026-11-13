@@ -105,7 +105,7 @@ describe("startFfmpegEncoder", () => {
     });
     const encoder = startFfmpegEncoder({ binary: "ffmpeg", fps: 30, outputPath: "/work/a.mp4", spawn: () => child });
     await encoder.write(Buffer.from("frame"));
-    await expect(encoder.finish()).rejects.toThrow(/exit 1: Unknown encoder 'libx264'/);
+    await expect(encoder.finish()).rejects.toThrow(/\(exit 1\): Unknown encoder 'libx264'/);
   });
 
   it("reports a missing binary as FfmpegMissingError", async () => {

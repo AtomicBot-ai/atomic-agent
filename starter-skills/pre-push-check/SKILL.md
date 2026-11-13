@@ -1,6 +1,6 @@
 ---
 name: pre-push-check
-description: Before os.git.push of your own code, ask the user three short questions about it. Use for /pre-push-check.
+description: Before os.git.push of your own code, ask the user three short questions. Use for /pre-push-check.
 version: 1.0.0
 requires_tools:
   - os.git.diff

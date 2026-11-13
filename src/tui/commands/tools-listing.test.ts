@@ -17,7 +17,7 @@ import {
 const ALL_ENABLED: ToolGateSourceConfig = {
   browser: { enabled: true },
   web: { search: { enabled: true } },
-  vision: { enabled: true },
+  vision: { enabled: true, audioInput: true },
   memory: {
     profile: { enabled: true },
     notes: { enabled: true },

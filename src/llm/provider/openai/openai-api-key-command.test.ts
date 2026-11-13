@@ -32,11 +32,8 @@ function unauthorized(): Response {
 
 function tokens(...values: string[]): RunKeyCommand & { runs: () => number } {
   let n = 0;
-  const run = (async () => values[Math.min(n++, values.length - 1)]!) as RunKeyCommand & {
-    runs: () => number;
-  };
-  run.runs = () => n;
-  return run;
+  const run: RunKeyCommand = async () => values[Math.min(n++, values.length - 1)]!;
+  return Object.assign(run, { runs: () => n });
 }
 
 function spyLogger() {
@@ -60,7 +57,7 @@ function provider(fetchImpl: typeof fetch, run: RunKeyCommand, logger = spyLogge
 }
 
 const authOf = (fetchImpl: ReturnType<typeof vi.fn>, i: number): string | null =>
-  new Headers((fetchImpl.mock.calls[i]?.[1] as RequestInit).headers as HeadersInit).get(
+  new Headers((fetchImpl.mock.calls[i]?.[1] as RequestInit).headers).get(
     "authorization",
   );
 
@@ -71,7 +68,7 @@ describe("apiKeyCommand on the request path", () => {
 
     await provider(fetchImpl as unknown as typeof fetch, run).complete({ prompt: "hi" });
 
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe(`${ROOT}/chat/completions`);
+    expect((fetchImpl.mock.calls[0] as unknown[] | undefined)?.[0]).toBe(`${ROOT}/chat/completions`);
     expect(authOf(fetchImpl, 0)).toBe("Bearer ya29.first-token");
   });
 
@@ -137,7 +134,7 @@ describe("apiKeyCommand on the request path", () => {
       logger,
     )
       .complete({ prompt: "hi" })
-      .catch((err: unknown) => err as Error);
+      .then(() => null, (err: unknown) => err as Error);
 
     const logged = JSON.stringify([
       logger.debug.mock.calls,

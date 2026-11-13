@@ -682,7 +682,7 @@ describe("the Hugging Face branch is shared with the LLM pane", () => {
 });
 
 describe("handleLocalModelsTabKey — x cancels the download in flight", () => {
-  function callbacksWith(onCancel: ReturnType<typeof vi.fn>): TuiAppCallbacks {
+  function callbacksWith(onCancel: (kind: "chat" | "embedding") => void): TuiAppCallbacks {
     return {
       onApprovalDecision: vi.fn(),
       onAbort: vi.fn(),

@@ -174,7 +174,7 @@ describe("extractMediaText: audio goes through whisper.cpp", () => {
     expect(out).toMatchObject({
       status: "skipped",
       reason: "needs-model-download",
-      download: { model: "base", sizeMb: 142 },
+      download: { model: "base", sizeMb: 148 },
     });
     if (out.status === "skipped") expect(out.download?.url).toContain("ggml-base.bin");
     expect(download).not.toHaveBeenCalled();

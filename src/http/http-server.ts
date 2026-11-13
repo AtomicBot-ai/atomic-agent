@@ -53,6 +53,13 @@ export interface HttpServerOptions {
   approvalBus?: ApprovalBus;
   completionRegistry?: CompletionRegistry;
   undeliveredSteers?: UndeliveredSteerStore;
+  /**
+   * The keyless loopback guard (ATO-1495). On by default. Only the
+   * webhook tunnel gateway (ATO-625) turns it off: cloudflared sends the
+   * public tunnel host, and webhook senders choose their own body type;
+   * that listener serves nothing but signed `POST /api/webhooks/{name}`.
+   */
+  loopbackGuard?: boolean;
 }
 
 export interface HttpServerHandle {
@@ -147,7 +154,7 @@ export function createHttpServer(
         approvalBus,
         completionRegistry,
         undeliveredSteers,
-      });
+      }, options.loopbackGuard ?? true);
     } catch (err) {
       handleRouteError(res, err);
     }
@@ -200,6 +207,7 @@ async function dispatch(
   res: ServerResponse,
   routes: CompiledRoute[],
   baseCtx: Omit<HandlerContext, "params">,
+  loopbackGuard: boolean,
 ): Promise<void> {
   const url = parseRequestUrl(req);
   if (!url) {
@@ -207,7 +215,7 @@ async function dispatch(
     return;
   }
   // ATO-1495: without a key, refuse foreign Host/Origin and non-JSON bodies before routing (preflights too).
-  if (!enforceLoopbackGuard(req, res, baseCtx.apiKey)) return;
+  if (loopbackGuard && !enforceLoopbackGuard(req, res, baseCtx.apiKey)) return;
   const method = (req.method ?? "GET").toUpperCase();
   const matched = matchRoute(routes, method, url.pathname);
   if (!matched) {

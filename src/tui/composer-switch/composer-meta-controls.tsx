@@ -1,8 +1,9 @@
-import { Box, Text } from "ink";
-import type { ReactElement } from "react";
+import { Box, Text, measureElement } from "ink";
+import { useLayoutEffect, useState, type ReactElement } from "react";
 
 import { useMouseCommands, useMouseTarget } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
+import { displayWidth, truncateToWidth } from "../render/display-width.js";
 import { theme } from "../theme/theme.js";
 import { openLocalModelsPane } from "./composer-switch-activate.js";
 import { fusionSurfaceInk, fusionSurfaceMuted } from "../theme/fusion-tint.js";
@@ -304,7 +305,6 @@ function splitLegs(label: string): readonly [string, string] | null {
 function Control({
   kind,
   label,
-  glyph,
   lead = false,
   shrink = 0,
   fusion = false,
@@ -312,7 +312,6 @@ function Control({
 }: {
   kind: ComposerSwitchKind;
   label: string;
-  glyph?: ReactElement;
   /**
    * Draw the dot separator that precedes this control. It belongs to the
    * control rather than sitting between two of them so that the pair
@@ -344,21 +343,47 @@ function Control({
     },
     mouseLayer === undefined ? {} : { layer: mouseLayer },
   );
+  const leadText = lead ? ` ${theme.glyphs.dotSeparator} ` : "";
+  const fullWidth = displayWidth(leadText) + displayWidth(label);
+  // The cut is ours, not Ink's. Yoga still decides how many columns the
+  // control gets — the basis is the full label, so the layout is exactly
+  // what it was — but the text is cut to the box's measured width in JS
+  // and ends in `…`. Left to `wrap="truncate"`, Ink 8 lays the text node
+  // out a column wider than its box and the next control draws over the
+  // ellipsis (`vendor/some-very-long- ⇄`). Measured after layout, before
+  // paint, so the frame on screen is always the cut one.
+  const [columns, setColumns] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    const width = measureElement(ref.current).width;
+    if (width !== columns) setColumns(width);
+  });
+  const shown =
+    columns === null || columns >= fullWidth
+      ? `${leadText}${label}`
+      : truncateToWidth(`${leadText}${label}`, columns);
+  // Lead and label keep their own colours: the lead is the first
+  // characters of the cut string, whatever survived of it.
+  const leadShown = shown.slice(0, Math.min(leadText.length, shown.length));
+  const labelShown = shown.slice(leadShown.length);
   return (
-    <Box ref={ref} flexShrink={shrink} minWidth={0}>
+    <Box
+      ref={ref}
+      flexShrink={shrink}
+      flexBasis={fullWidth}
+      minWidth={0}
+    >
       <Text wrap="truncate">
-        {lead ? (
+        {leadShown.length > 0 ? (
           <Text color={fusion ? fusionSurfaceMuted() : theme.colors.railMuted}>
-            {" "}
-            {theme.glyphs.dotSeparator}{" "}
+            {leadShown}
           </Text>
         ) : null}
-        {glyph ?? null}
         <Text
           color={fusion ? fusionSurfaceInk() : theme.colors.railForeground}
           bold
         >
-          {label}
+          {labelShown}
         </Text>
       </Text>
     </Box>

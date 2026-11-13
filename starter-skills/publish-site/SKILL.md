@@ -1,6 +1,6 @@
 ---
 name: publish-site
-description: "Put a static site you built online on the user's own hosting: GitHub Pages by default, or Cloudflare Pages / Netlify. Always asks first, since a published site is public. Use for /publish-site."
+description: Publish a static site to the user's hosting (GitHub Pages, Cloudflare, Netlify); asks first. Use for /publish-site.
 version: 1.0.0
 requires_tools:
   - os.shell.run

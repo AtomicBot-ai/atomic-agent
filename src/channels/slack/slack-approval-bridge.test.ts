@@ -20,7 +20,7 @@ function request(over: Partial<ApprovalRequest> = {}): ApprovalRequest {
 function makeBridge(resolveResult = true, canGrantAlways = false) {
   const api = {
     postMessage: vi.fn(async () => "100.1"),
-    updateMessage: vi.fn(async () => {}),
+    updateMessage: vi.fn(async (_channel: string, _ts: string, _text: string, _blocks?: readonly unknown[]) => {}),
     postEphemeral: vi.fn(async () => {}),
   };
   const approvals = {

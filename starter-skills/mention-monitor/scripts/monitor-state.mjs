@@ -76,7 +76,9 @@ export async function politeGet(url, { fetchImpl = fetch, accept = "application/
     return { ok: false, status: 0, reason: `network: ${err?.message ?? String(err)}` };
   }
   if (res.status === 429) {
-    const wait = Number(res.headers.get("retry-after"));
+    // No header is no request to wait: `Number(null)` would read it as 0 s.
+    const header = res.headers.get("retry-after");
+    const wait = header === null || header.trim() === "" ? Number.NaN : Number(header);
     if (retry && Number.isFinite(wait) && wait >= 0 && wait <= 10) {
       await sleep(wait * 1000);
       return politeGet(url, { fetchImpl, accept, retry: false });
