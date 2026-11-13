@@ -74,11 +74,23 @@
 .emptymeta .em-it > span{min-width:0;overflow-wrap:anywhere}
 .emptymeta .em-it > svg{width:14px;height:14px;flex:none;color:var(--ink-3)}
 .emptymeta .em-sep{color:var(--ink-3)}
-.ghost{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:560px}
-.ghostchip{display:inline-flex;align-items:center;height:32px;padding:0 14px;border-radius:var(--r-pill);
-  background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink-2);font-size:var(--fs-cap);
+/* The starter cards (renderer.js EMPTY_STARTERS): 2x2, one row of four once
+   the column has the room, as ChatGPT and Claude draw their empty state. A
+   thin outline icon, a short title and a muted hint; a hairline border and a
+   hover wash, no fill at rest. */
+.emptychat{container-type:inline-size}
+.ghost{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:min(560px,100%)}
+@container (min-width:640px){.ghost{grid-template-columns:repeat(4,minmax(0,1fr));width:100%}}
+.ghostchip{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;padding:14px 14px 13px;
+  border:0;border-radius:var(--r-well);background:transparent;box-shadow:inset 0 0 0 1px var(--bd);
+  color:var(--ink);font:inherit;text-align:left;cursor:pointer;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
-.ghostchip:hover{background:var(--hover);color:var(--ink)}
+.ghostchip:hover{background:var(--hover)}
+.ghostchip .gc-ic{display:flex;margin-bottom:8px;color:var(--ink-2)}
+.ghostchip .gc-ic svg{width:20px;height:20px}
+.ghostchip:hover .gc-ic{color:var(--ink)}
+.ghostchip .gc-t{max-width:100%;font-size:var(--fs-ui);line-height:20px;font-weight:500;color:var(--ink)}
+.ghostchip .gc-d{max-width:100%;font-size:var(--fs-label);line-height:16px;color:var(--ink-2)}
 
 /* ---------------- user bubble ----------------
    "Messages from user should be sticky to the right side of the dialogue

@@ -2886,12 +2886,31 @@ function emptyChat() {
      Build row named the desktop shell's version, not the agent's (U7). The
      suggestions stay: they are the cheapest way into a first turn. */
   return '<div class="emptychat">' + sharedSetupNoticeHTML() + (typeof updRequiredHTML === 'function' ? updRequiredHTML() : '') + (typeof starterNoticeHTML === 'function' ? starterNoticeHTML() : '') + emptyPlateHTML()
-    + '<div class="ghost">'
-      /* ATO-1032: one suggestion, as Codex, Jan and Ollama keep it: the
-         question above is the screen; three chips competed with it. */
-      + ['Summarise the files in this folder']
-          .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
-    + '</div></div>';
+    + '<div class="ghost">' + EMPTY_STARTERS.map(starterCardHTML).join('') + '</div></div>';
+}
+/* The start screen's four cards, as ChatGPT and Claude lay out their empty
+   state (2x2, one row of four on a wide column; chat.css). A card fills the
+   composer with its starter and focuses it, never sends (the [data-fill]
+   click). Images and Video open their Studio page instead when it is
+   registered: Studio picks a local or a cloud model there, while the chat's
+   image.generate / video.generate tools are offered only with an OpenRouter
+   key. Without the page the card falls back to filling the composer. */
+const EMPTY_STARTERS = [
+  {ic: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+   t: 'Summarise this folder', d: 'What is in here and what stands out',
+   fill: 'Summarise the files in this folder: what each one is for and anything that stands out.'},
+  {ic: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/>',
+   t: 'Create an image', d: 'Describe it and get a picture', studio: 'images', fill: 'Create an image of '},
+  {ic: '<path d="m16 13 5.22 3.48a.5.5 0 0 0 .78-.42V7.87a.5.5 0 0 0-.75-.43L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/>',
+   t: 'Make a video', d: 'A short clip from a few words', studio: 'video', fill: 'Make a short video of '},
+  {ic: '<path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/>',
+   t: 'Write code', d: 'Build, fix or explain a script', fill: 'Help me write code that '},
+];
+function starterCardHTML(c) {
+  const studio = c.studio && window.STUDIO && STUDIO.pages && STUDIO.pages[c.studio];
+  return '<button class="ghostchip" ' + (studio ? 'data-act="studio:open:' + esc(c.studio) + '"' : 'data-fill="' + esc(c.fill) + '"') + '>'
+    + '<span class="gc-ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + c.ic + '</svg></span>'
+    + '<span class="gc-t">' + esc(c.t) + '</span><span class="gc-d">' + esc(c.d) + '</span></button>';
 }
 /** The greeting and its quiet line (repainted alone when the catalogue lands). */
 function emptyPlateHTML() {
@@ -8467,7 +8486,7 @@ document.addEventListener('click', (e) => {
   const rg = t.closest('[data-regen]'); if (rg) { e.preventDefault(); regenerateReply(rg.dataset.regen, rg.hasAttribute('data-regen-fail')); return; }
   const es = t.closest('[data-engine-start]'); if (es) { e.preventDefault(); deadEngineStart(es.dataset.engineStart); return; }
   const fill = t.closest('[data-fill]');
-  if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); autosize(en); } return; }
+  if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); en.setSelectionRange(en.value.length, en.value.length); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
   const sl = t.closest('[data-slash]'); if (sl) { acceptSlash(sl.dataset.slash); return; }
   const sn = t.closest('[data-steernow]'); if (sn) { ANX.messageAction('steer'); steerQueuedNow(+sn.dataset.steernow); return; }

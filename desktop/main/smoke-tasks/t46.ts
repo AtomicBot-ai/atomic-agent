@@ -87,7 +87,13 @@ async function startScreen(js: Js, check: Check): Promise<void> {
     return {scHeight: Math.round(s.height), scWidth: Math.round(s.width), width: Math.round(e.width),
       offCentre: Math.round((top + bottom) / 2 - (s.top + s.bottom) / 2), clearOfComposer: Math.round(s.bottom - bottom),
       meta: meta ? meta.textContent : null, metaTitle: meta ? meta.getAttribute('title') : null,
-      wd, label: workingDirLabel(wd), title: tb ? tb.textContent : null, roomTitle: roomTitle()};
+      wd, label: workingDirLabel(wd), title: tb ? tb.textContent : null, roomTitle: roomTitle(),
+      // The starter cards: four, each with a title and a hint, none past the column.
+      cards: [...ec.querySelectorAll('.ghost .ghostchip')].map((c) => {
+        const b = c.getBoundingClientRect();
+        return {t: (c.querySelector('.gc-t') || {}).textContent || null, hint: !!c.querySelector('.gc-d'),
+          inside: b.left >= e.left - 0.5 && b.right <= e.right + 0.5};
+      })};
   })()`);
   check(
     "T46 Д13: the empty chat's greeting stands in the middle of the transcript area, not on the composer",
@@ -101,6 +107,13 @@ async function startScreen(js: Js, check: Check): Promise<void> {
     q({ meta: r.meta, title: r.metaTitle, wd: r.wd }),
   );
   check("T46 Д15: a chat not yet named has no title in the toolbar", r.title === null && r.roomTitle === "", q({ title: r.title, roomTitle: r.roomTitle }));
+  const cards = Array.isArray(r.cards) ? (r.cards as Array<Record<string, unknown>>) : [];
+  check(
+    "T46: the start screen offers four starter cards (Summarise this folder, Create an image, Make a video, Write code), each with a hint, inside the column",
+    !r.err && cards.map((c) => c["t"]).join("|") === "Summarise this folder|Create an image|Make a video|Write code"
+      && cards.every((c) => c["hint"] === true && c["inside"] === true),
+    q({ cards: r.cards }),
+  );
 }
 
 /* Д29 — one helper, one way of writing the folder, three places. */
