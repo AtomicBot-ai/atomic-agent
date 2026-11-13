@@ -184,7 +184,7 @@ export function finalizeAgentTurn(
   // `max_steps` are filtered out (neither a success nor failure
   // signal). The `failed` branch already fired the hook above
   // before its early `return`.
-  if (!options.ephemeral && (reason === "reply" || reason === "finish")) {
+  if (writesMemory(options) && (reason === "reply" || reason === "finish")) {
     invokeLessonLifecycle(deps, state.id, surfacedLessonIds, "success");
   }
 
@@ -211,7 +211,7 @@ export function finalizeAgentTurn(
   // half-context into the operator's long-term memory.
   if (
     deps.reflectionRunner &&
-    !options.ephemeral &&
+    writesMemory(options) &&
     (reason === "reply" || reason === "finish")
   ) {
     const segmentation = deps.reflectionSegmentation;
@@ -417,7 +417,7 @@ export function finalizeFailedAgentTurn(
   // carries neither success nor failure signal). Nor is an account
   // that cannot pay (item 40): it says nothing about the lessons
   // recalled at turn start, as the paused path for it says nothing.
-  if (!options.ephemeral && !creditRefused) {
+  if (writesMemory(options) && !creditRefused) {
     invokeLessonLifecycle(
       deps,
       state.id,
@@ -434,6 +434,14 @@ export function finalizeFailedAgentTurn(
   };
 }
 
+
+/**
+ * Whether the turn may write to long-term memory: not a fusion worker
+ * (`ephemeral`) and not a `memoryReadOnly` turn (a `skill eval` run).
+ */
+function writesMemory(options: Pick<RunTurnOptions, "ephemeral" | "memoryReadOnly">): boolean {
+  return options.ephemeral !== true && options.memoryReadOnly !== true;
+}
 
 /**
  * Phase 6 — fire the lesson lifecycle hook exactly once with the

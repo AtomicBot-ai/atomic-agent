@@ -233,6 +233,9 @@ export function createRuntimeSkillEvalDriver(
           signal,
           origin: "cli",
           eventHook,
+          // Memory is read, never written: a note, lesson or profile fact
+          // one variant left behind would otherwise help the other.
+          memoryReadOnly: true,
         });
         return {
           reply,

@@ -54,9 +54,9 @@ A run that timed out or crashed fails without running its checks.
 - One runtime is booted on a fresh temp folder. Before each run the folder is emptied and the task's fixtures are copied in; the agent works there and the command checks run there.
 - `with` and `without` differ only in the skill registry's disabled set, changed in memory (`SkillRegistry.setDisabledNames` + `refreshSkills`). `config.json` is never written.
 - Each run is one turn in a new session, deleted afterwards so eval runs do not fill the thread list.
-- The order of the two variants flips from task to task and from attempt to attempt (`planRuns`).
+- The order of the two variants flips from task to task and from attempt to attempt (`planRuns`), so a warm model cache or a slow first call does not always land on the same side.
 - Approval requests are refused, since nobody is there to answer; `--no-approval` runs at level 5 instead. Refusals are counted per run (`approvalsDenied`).
-- Known limit: both variants share the person's memory (notes, lessons). Something one run teaches the memory can help a later run of the other variant. The alternating order spreads that effect over both sides; it does not remove it.
+- Memory is read-only during an eval (`memoryReadOnly` on `runTurn`): recall works as in a normal chat, but no run writes to memory. No end-of-turn reflection (notes, lessons, procedures), no lesson success/failure bump, and the `memory.*` write tools (`memory.notes.store` / `forget`, `memory.profile.set` / `remove`) are hidden from the model (`memoryReadOnlyToolFilter` in `src/agent/tool-resource-class.ts`). So nothing one variant does can help or hurt the other through memory. Both still see the same memory the person already had.
 
 Options: `--repeat <n>` runs everything n times; `--only with|without` runs one variant; `--max-steps <n>` is the step limit for tasks without their own `maxSteps`; `--json` prints the result document instead of the table; `--keep-workdir` keeps the temp folder.
 

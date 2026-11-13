@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { memoryReadOnlyToolFilter } from "../agent/tool-resource-class.js";
 import { SkillRegistry } from "../skills/skill-registry.js";
 import type { SkillEvalTask } from "../skills/eval/index.js";
 import { buildSummary, SKILL_EVAL_RESULT_SCHEMA, type SkillEvalResult, type SkillEvalRunRecord } from "../skills/eval/index.js";
@@ -149,6 +150,38 @@ describe("createRuntimeSkillEvalDriver", () => {
     });
     expect(runTurn.mock.calls[0]![2]).toMatchObject({ maxSteps: 4, origin: "cli" });
     expect(deleted).toEqual(["session-1"]);
+  });
+
+  it("runs every turn with memory read-only, so a note written in one variant never reaches the other", async () => {
+    // A stand-in for the runtime: memory is one shared notes list, the
+    // model stores a note whenever memory.notes.store is on offer, and
+    // a turn's reply is what it recalled. The turn service hides the
+    // write tools for a memoryReadOnly turn (memoryReadOnlyToolFilter).
+    const notes: string[] = [];
+    const runTurn = vi.fn(
+      async (session: { id: string }, message: string, options?: { memoryReadOnly?: boolean; toolFilter?: (n: string) => boolean; eventHook?: (e: never) => void }) => {
+        const filter = options?.memoryReadOnly ? memoryReadOnlyToolFilter(options.toolFilter) : (options?.toolFilter ?? (() => true));
+        const recalled = filter("memory.notes.recall") ? notes.join(",") : "";
+        if (filter("memory.notes.store")) notes.push(`answer for ${message}`);
+        options?.eventHook?.({ type: "llm_event", event: { type: "assistant_reply", text: recalled || "nothing" } } as never);
+        return { session: { ...session, lastError: null }, reason: "reply", stepCount: 1, usage: null, spendUsd: 0 };
+      },
+    );
+    const runtime = {
+      skillRegistry: registry,
+      refreshSkills: vi.fn(async () => {}),
+      createSession: vi.fn(() => ({ id: "session-1" })),
+      runTurn,
+      sessionStore: { delete: () => {} },
+    } as unknown as SkillEvalRuntime;
+    const driver = createRuntimeSkillEvalDriver(runtime, "demo", { approvalsDenied: 0 });
+    await driver.setVariant("with");
+    await driver.runTask({ task, variant: "with", workingDir: "/tmp/x", signal: new AbortController().signal });
+    await driver.setVariant("without");
+    const b = await driver.runTask({ task, variant: "without", workingDir: "/tmp/x", signal: new AbortController().signal });
+    expect(runTurn.mock.calls.every((call) => call[2]?.memoryReadOnly === true)).toBe(true);
+    expect(notes).toEqual([]);
+    expect(b.reply).toBe("nothing");
   });
 
   it("does not count another skill's skill.view as loading this one", async () => {

@@ -3,6 +3,7 @@ import { getConfig } from "../../config/index.js";
 import type { AgentLoop } from "../../agent/agent-loop.js";
 import type { RunTurnResult } from "../../agent/agent-contract.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
+import { memoryReadOnlyToolFilter } from "../../agent/tool-resource-class.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
 import type { SlotManager } from "../../llm/slot-manager.js";
@@ -133,6 +134,7 @@ export function createRuntimeTurnService(
     taskMaxDurationMs?: number;
     taskMaxCostUsd?: number;
     toolFilter?: (name: string) => boolean;
+    memoryReadOnly?: boolean;
     toolRole?: ToolRole;
     reasoningEffort?: ReasoningEffort;
     maxOutputTokens?: number;
@@ -163,9 +165,13 @@ export function createRuntimeTurnService(
     ...(runOptions.providerId === undefined
       ? {}
       : { providerId: runOptions.providerId }),
-    ...(runOptions.toolFilter === undefined
-      ? {}
-      : { toolFilter: runOptions.toolFilter }),
+    // A read-only-memory turn (`skill eval`) also loses the memory write
+    // tools; the loop skips reflection and the lesson bump for it.
+    ...(runOptions.memoryReadOnly === true
+      ? { memoryReadOnly: true, toolFilter: memoryReadOnlyToolFilter(runOptions.toolFilter) }
+      : runOptions.toolFilter === undefined
+        ? {}
+        : { toolFilter: runOptions.toolFilter }),
     ...(runOptions.toolRole === undefined
       ? {}
       : { toolRole: runOptions.toolRole }),
@@ -350,6 +356,8 @@ export function createRuntimeTurnService(
       taskMaxDurationMs?: number;
       taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
+      /** See `RunTurnOptions.memoryReadOnly` (a `skill eval` run). */
+      memoryReadOnly?: boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
@@ -622,6 +630,8 @@ export function createRuntimeTurnService(
       taskMaxDurationMs?: number;
       taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
+      /** See `RunTurnOptions.memoryReadOnly` (a `skill eval` run). */
+      memoryReadOnly?: boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;

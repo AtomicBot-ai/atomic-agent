@@ -75,7 +75,8 @@ export interface RunSkillEvalOptions {
  * Run every task `repeat` times in each variant and return the result
  * document (not yet saved; see `saveSkillEvalResult`). The order of the
  * two variants alternates from run to run, so neither always goes first
- * on a warm cache or after the other wrote to memory.
+ * on a warm cache. Memory cannot carry anything between them: the driver
+ * runs every turn with memory read-only (`memoryReadOnly`).
  */
 export async function runSkillEval(options: RunSkillEvalOptions): Promise<SkillEvalResult> {
   const now = options.now ?? (() => new Date());
