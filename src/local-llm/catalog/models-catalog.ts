@@ -65,6 +65,11 @@ export interface LocalModelDef {
   contextLabel: string;
   minRamGb: number;
   recommendedRamGb: number;
+  /**
+   * GPU memory the model wants, decimal GB, when its source says
+   * (ATO-27 external catalogs). Only the compatibility mark reads it.
+   */
+  vramGb?: number;
   /** `custom` covers every user-added model, whatever it is underneath. */
   family: "qwen" | "gemma" | "nemotron" | "muse" | "custom";
   /**
@@ -467,9 +472,29 @@ export function setCustomLocalModels(defs: readonly LocalModelDef[]): void {
   customModels = defs;
 }
 
-/** The curated catalog followed by the operator's own additions. */
+/**
+ * ATO-27: rows from an opt-in external catalog (`external-catalog.ts`),
+ * published by `loadConfig` the same way. Empty unless the operator put a
+ * catalog file in the state directory or fetched one from a URL.
+ */
+let externalModels: readonly LocalModelDef[] = [];
+
+export function setExternalLocalModels(defs: readonly LocalModelDef[]): void {
+  externalModels = defs;
+}
+
+/**
+ * The curated catalog, then external catalog rows, then the operator's
+ * own additions. A model the operator added keeps its own definition
+ * when an external row has the same id.
+ */
 export function listLocalModels(): readonly LocalModelDef[] {
-  return [...LOCAL_MODELS_CATALOG, ...customModels];
+  const own = new Set(customModels.map((m) => m.id));
+  return [
+    ...LOCAL_MODELS_CATALOG,
+    ...externalModels.filter((m) => !own.has(m.id)),
+    ...customModels,
+  ];
 }
 
 /** ATO-1041: what the desktop downloads on its first launch, before anything is chosen. */

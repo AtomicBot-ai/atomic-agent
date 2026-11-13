@@ -10,7 +10,11 @@ import {
   type LogLevel,
 } from "./config-schema.js";
 import { ensureUserConfigFileSync, getUserConfigPath } from "./config-file.js";
-import { setCustomLocalModels } from "../local-llm/catalog/models-catalog.js";
+import {
+  setCustomLocalModels,
+  setExternalLocalModels,
+} from "../local-llm/catalog/models-catalog.js";
+import { loadExternalCatalog } from "../local-llm/catalog/external-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/downloads/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/catalog/huggingface-endpoint.js";
 import {
@@ -197,6 +201,10 @@ export function loadConfig(): AtomicAgentConfig {
   // `getLocalModelDef` and `isKnownLocalModelId` resolve them everywhere
   // a curated id already works.
   setCustomLocalModels(user.localModels.customModels);
+  // ATO-27: rows from an opt-in external catalog (a file in the state
+  // dir, or the cached answer of a URL the operator named). Bad entries
+  // are dropped; `atomic-agent models catalog` says why.
+  setExternalLocalModels(loadExternalCatalog(stateDir).entries);
   // Same push-in pattern: the backend-zip variant preference has to be
   // visible to `resolveDownloadAsset`, which runs deep inside the
   // config-free local-llm layer.
