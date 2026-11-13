@@ -129,6 +129,7 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Search the web; returns title/url/snippet. Read a result with os.web.fetch.",
   },
   "os.web.fetch": { summary: "Read a web page as markdown/text (GET, no JS)." },
+  "os.web.crawl": { summary: "Read several pages of one site, politely (links + sitemap).", tier: RARE },
   "os.clipboard.read": { summary: "Read the clipboard.", tier: RARE },
   "os.clipboard.write": { summary: "Write the clipboard.", tier: RARE },
   "os.window.list": { summary: "List windows.", tier: RARE },

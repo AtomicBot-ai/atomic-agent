@@ -411,6 +411,21 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["url"],
     ),
   ],
+  [
+    "os.web.crawl",
+    obj(
+      {
+        url: stringSchema,
+        maxPages: numberSchema,
+        maxDepth: numberSchema,
+        pathPrefix: stringSchema,
+        useSitemap: booleanSchema,
+        extractMode: { type: "string", enum: ["markdown", "text"] },
+        maxCharsPerPage: numberSchema,
+      },
+      ["url"],
+    ),
+  ],
 
   // ── os.clipboard / os.window / os.notify ─────────────────────────────────
   ["os.clipboard.read", obj({})],

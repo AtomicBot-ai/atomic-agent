@@ -151,6 +151,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // os.web.* — read-only search/fetch + extract; SSRF-guarded, no mutation
   "os.web.search": "pure_read",
   "os.web.fetch": "pure_read",
+  // Paces itself per host (ATO-970); still a GET-only read.
+  "os.web.crawl": "pure_read",
 
   // os.clipboard / window / notify — small mutating side effects on
   // shared OS resources; safest to serialise.

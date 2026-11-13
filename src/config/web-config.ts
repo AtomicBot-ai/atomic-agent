@@ -53,6 +53,37 @@ export interface WebFetchConfig {
   retryMaxDelayMs: number;
 }
 
+/**
+ * Politeness and limits for `os.web.crawl` (ATO-700, ATO-970). Defaults are
+ * deliberately conservative: an agent that hammers a site gets banned, and
+ * the site owner pays for it.
+ */
+export interface WebCrawlConfig {
+  /**
+   * Smallest gap between two requests to one host, in milliseconds. A
+   * robots.txt `Crawl-delay` that asks for more wins, up to 30 seconds.
+   * Default `1000` (one request a second).
+   */
+  minDelayMs: number;
+  /** Hard cap on pages one crawl reads. A call may ask for fewer. Default `50`. */
+  maxPages: number;
+  /** Hard cap on link depth from the start page. Default `2`. */
+  maxDepth: number;
+  /**
+   * Obey robots.txt. Default `true`. Turning it off for every site is a
+   * blunt tool; `robotsExemptHosts` is the way for your own sites.
+   */
+  respectRobots: boolean;
+  /**
+   * Hosts whose robots.txt is not applied (your own sites, a staging
+   * server). Exact host names, a leading `*.` matches subdomains. Default
+   * empty. The rate limit still applies to them.
+   */
+  robotsExemptHosts: string[];
+  /** Minutes a fetched page or robots.txt is reused by later crawls. Zero disables. Default `15`. */
+  cacheTtlMinutes: number;
+}
+
 export interface WebSearchConfig {
   enabled: boolean;
   /**
@@ -160,6 +191,17 @@ export function createWebFetchDefaults(): WebFetchConfig {
     maxRetries: 2,
     retryBaseDelayMs: 500,
     retryMaxDelayMs: 5_000,
+  };
+}
+
+export function createWebCrawlDefaults(): WebCrawlConfig {
+  return {
+    minDelayMs: 1_000,
+    maxPages: 50,
+    maxDepth: 2,
+    respectRobots: true,
+    robotsExemptHosts: [],
+    cacheTtlMinutes: 15,
   };
 }
 
@@ -329,6 +371,58 @@ export function parseWebFetchConfig(
     retryMaxDelayMs: parsePositiveInt(
       raw.retryMaxDelayMs ?? readDefaults().retryMaxDelayMs,
       "web.fetch.retryMaxDelayMs",
+    ),
+  };
+}
+
+function parseHostList(raw: unknown, field: string): string[] {
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(
+      field,
+      `expected an array of host names, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw.map((entry, i) =>
+    parseNonEmptyString(entry, `${field}[${i}]`).trim().toLowerCase(),
+  );
+}
+
+export function parseWebCrawlConfig(
+  raw: Record<string, unknown>,
+  readDefaults: () => WebCrawlConfig,
+): WebCrawlConfig {
+  return {
+    minDelayMs: parseNonNegativeBoundedInt(
+      raw.minDelayMs ?? readDefaults().minDelayMs,
+      "web.crawl.minDelayMs",
+      0,
+      60_000,
+    ),
+    maxPages: parseBoundedPositiveInt(
+      raw.maxPages ?? readDefaults().maxPages,
+      "web.crawl.maxPages",
+      1,
+      500,
+    ),
+    maxDepth: parseNonNegativeBoundedInt(
+      raw.maxDepth ?? readDefaults().maxDepth,
+      "web.crawl.maxDepth",
+      0,
+      10,
+    ),
+    respectRobots: parseBool(
+      raw.respectRobots ?? readDefaults().respectRobots,
+      "web.crawl.respectRobots",
+    ),
+    robotsExemptHosts: parseHostList(
+      raw.robotsExemptHosts ?? readDefaults().robotsExemptHosts,
+      "web.crawl.robotsExemptHosts",
+    ),
+    cacheTtlMinutes: parseNonNegativeBoundedInt(
+      raw.cacheTtlMinutes ?? readDefaults().cacheTtlMinutes,
+      "web.crawl.cacheTtlMinutes",
+      0,
+      1440,
     ),
   };
 }
