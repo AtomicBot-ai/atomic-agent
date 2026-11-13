@@ -2,7 +2,6 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { DrainOutcome } from "../tasks/task-runner.js";
 import type { SchedulerLeadership } from "./scheduler-leadership.js";
-import type { KeepAwake } from "./keep-awake.js";
 
 /**
  * Minimal clock surface the scheduler depends on. Production wiring
@@ -55,12 +54,6 @@ export interface SchedulerOptions {
    * `tickOnce()` is never gated — it is an operator asking for a drain.
    */
   leadership?: SchedulerLeadership;
-  /**
-   * Sleep inhibitor (ATO-592). Only its `always` mode acts here: held
-   * from `start()` to `stop()`. `while-working` holds come from the task
-   * runner's drains.
-   */
-  keepAwake?: Pick<KeepAwake, "start" | "stop">;
 }
 
 const DEFAULT_CLOCK: SchedulerClock = {
@@ -115,7 +108,6 @@ export class Scheduler {
       void this.tickOnce();
     };
     this.timer = this.clock.setInterval(handler, this.options.tickMs);
-    this.options.keepAwake?.start();
   }
 
   /**
@@ -153,7 +145,6 @@ export class Scheduler {
       this.timer = null;
     }
     this.stopController.abort();
-    this.options.keepAwake?.stop();
     try {
       await this.settleInFlight(graceMs);
     } finally {

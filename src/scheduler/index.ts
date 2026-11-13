@@ -16,6 +16,7 @@ export type {
 } from "./scheduler-leadership.js";
 export {
   createKeepAwake,
+  holdWhileRunning,
   inhibitorCommand,
   KEEP_AWAKE_MODES,
   parseKeepAwakeMode,

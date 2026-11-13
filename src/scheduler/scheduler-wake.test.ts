@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { DrainOutcome } from "../tasks/task-runner.js";
 import { Scheduler, type SchedulerClock, type SchedulerTaskRunner } from "./scheduler.js";
 
-/** ATO-592: `poke()` on wake, and the `always` keep-awake hold. */
+/** ATO-592: `poke()` on wake. The scheduler itself never holds the keep-awake (no `always` mode). */
 
 const EMPTY: DrainOutcome = { drained: 0, completed: 0, failed: 0, blocked: 0, cancelled: 0, retried: 0 };
 
@@ -61,17 +61,5 @@ describe("Scheduler.poke", () => {
     expect(s.poke()).toBe(false);
     await s.stop();
     expect(runDue).not.toHaveBeenCalled();
-  });
-});
-
-describe("Scheduler keep-awake", () => {
-  it("starts the keep-awake with the scheduler and stops it on stop", async () => {
-    const keepAwake = { start: vi.fn(), stop: vi.fn() };
-    const { s } = scheduler({ keepAwake });
-    s.start();
-    expect(keepAwake.start).toHaveBeenCalledTimes(1);
-    expect(keepAwake.stop).not.toHaveBeenCalled();
-    await s.stop();
-    expect(keepAwake.stop).toHaveBeenCalledTimes(1);
   });
 });

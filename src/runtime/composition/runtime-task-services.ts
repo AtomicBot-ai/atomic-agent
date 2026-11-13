@@ -188,9 +188,10 @@ function createTaskReportSink(args: {
 }
 
 /**
- * The sleep inhibitor for scheduled tasks (ATO-592), from
+ * The sleep inhibitor for tasks and turns (ATO-592), from
  * `ATOMIC_AGENT_TASKS_KEEP_AWAKE`. Default off; a value that is not
- * `off` / `while-working` / `always` is warned about and treated as off.
+ * `off` / `while-working` (the removed `always` included) is warned
+ * about and treated as off.
  */
 export function createRuntimeKeepAwake(args: {
   config: Pick<AtomicAgentConfig, "tasks">;
@@ -201,8 +202,11 @@ export function createRuntimeKeepAwake(args: {
   const raw = config.tasks.keepAwake ?? null;
   let mode = parseKeepAwakeMode(raw);
   if (raw !== null && raw.trim() !== "" && mode === null) {
-    logger.warn("keep-awake setting ignored: expected off, while-working or always", {
+    logger.warn("keep-awake setting ignored: expected off or while-working", {
       value: raw,
+      ...(raw.trim().toLowerCase() === "always"
+        ? { hint: "always was removed: while-working keeps the computer awake only while a task or turn runs" }
+        : {}),
     });
   }
   mode ??= "off";
@@ -218,8 +222,6 @@ export function createRuntimeScheduler(args: {
   taskRunner: TaskRunner;
   logger: StructuredLogger;
   metrics: AgentMetrics;
-  /** `always` holds from scheduler start to stop (ATO-592). */
-  keepAwake?: KeepAwake;
   /**
    * The live Telegram channel, resolved per tick (it is constructed
    * after the scheduler). Absent or `null`: Telegram is not wanted here.
@@ -246,6 +248,5 @@ export function createRuntimeScheduler(args: {
     logger,
     metrics,
     leadership,
-    ...(args.keepAwake ? { keepAwake: args.keepAwake } : {}),
   });
 }

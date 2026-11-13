@@ -10,6 +10,7 @@ import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeS
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
 import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
+import { holdWhileRunning } from "../scheduler/index.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
 export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
 export { managedLocalLlmHealthFailureHint } from "./composition/runtime-local-profile.js";
@@ -772,15 +773,20 @@ export async function createAgentRuntime(
   const createEphemeralSession: typeof createWorkerSession = forwardWorkerUsage(createWorkerSession, sessionUsage);
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
-  const { executeTurn, steer, runTurn, controlGoal } = createRuntimeTurnService(config, {
+  // ATO-592: `while-working` holds a sleep inhibitor while any turn runs
+  // (chat, Telegram, a task); off by default.
+  const keepAwake = createRuntimeKeepAwake({ config, logger });
+  const turnService = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage },
     state: turnState, lifecycle, logger,
   });
+  const { steer, controlGoal } = turnService;
+  const runTurn = holdWhileRunning(keepAwake, turnService.runTurn);
+  const executeTurn = holdWhileRunning(keepAwake, turnService.executeTurn);
 
-  const keepAwake = createRuntimeKeepAwake({ config, logger });
   const taskRunner = createRuntimeTaskRunner({
     config, taskStore, runTurn, sessionStore, createSession, toolRegistry,
     resolveTelegram: () => telegramChannelForShutdown, logger, metrics,
@@ -801,7 +807,7 @@ export async function createAgentRuntime(
   });
 
   const scheduler = createRuntimeScheduler({
-    config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown, keepAwake,
+    config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
   });
   const consolidatorJob = createRuntimeMemoryConsolidator({
     config, notesStore, linkStore, lessonStore, procedureStore, voteStore,

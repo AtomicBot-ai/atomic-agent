@@ -6,8 +6,12 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
  *
  *  - `off` (default): never hold anything; a task due while the computer
  *    slept still runs once on wake (`TaskStore.listDue` catch-up).
- *  - `while-working`: hold a sleep inhibitor while a task drain runs.
- *  - `always`: hold one for as long as the scheduler runs.
+ *  - `while-working`: hold a sleep inhibitor only while a task drain or a
+ *    turn (any surface: chat, Telegram, a scheduled task) runs.
+ *
+ * There is no "keep awake for as long as the agent runs" mode (decision
+ * ATO-592): an idle agent never blocks sleep. The old `always` value is
+ * rejected and treated as off, with a warning.
  *
  * The inhibitor is the operating system's own tool, started as a child
  * process tied to this process's pid, so it goes away even if the agent
@@ -17,11 +21,14 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
  * with Electron's power blocker). None of these stop a MacBook from
  * sleeping when its lid is closed.
  */
-export type KeepAwakeMode = "off" | "while-working" | "always";
+export type KeepAwakeMode = "off" | "while-working";
 
-export const KEEP_AWAKE_MODES: readonly KeepAwakeMode[] = ["off", "while-working", "always"];
+export const KEEP_AWAKE_MODES: readonly KeepAwakeMode[] = ["off", "while-working"];
 
-/** Parse `ATOMIC_AGENT_TASKS_KEEP_AWAKE`; unknown or empty is `null`. */
+/**
+ * Parse `ATOMIC_AGENT_TASKS_KEEP_AWAKE`; unknown or empty is `null`
+ * (the removed `always` is unknown too).
+ */
 export function parseKeepAwakeMode(raw: string | undefined | null): KeepAwakeMode | null {
   const value = raw?.trim().toLowerCase().replace(/_/g, "-");
   if (!value) return null;
@@ -32,12 +39,8 @@ export function parseKeepAwakeMode(raw: string | undefined | null): KeepAwakeMod
 /** What the task runner and scheduler see. */
 export interface KeepAwake {
   readonly mode: KeepAwakeMode;
-  /** Hold for one drain; call the returned function when it ends. */
+  /** Hold for one drain or turn; call the returned function when it ends. */
   hold(): () => void;
-  /** Scheduler start: `always` takes its hold here. */
-  start(): void;
-  /** Scheduler stop: drop every hold. */
-  stop(): void;
   /** Whether an inhibitor process is running now (tests, status). */
   readonly active: boolean;
 }
@@ -88,12 +91,11 @@ export function createKeepAwake(options: KeepAwakeOptions): KeepAwake {
   const cmd =
     mode === "off" ? null : inhibitorCommand(options.platform ?? process.platform, options.pid ?? process.pid);
   let holds = 0;
-  let always = false;
   let child: ChildProcess | null = null;
   /** Set once the inhibitor could not start (not installed): stop trying. */
   let unavailable = cmd === null;
 
-  const wanted = (): boolean => holds > 0 || always;
+  const wanted = (): boolean => holds > 0;
 
   const startChild = (): void => {
     if (child || unavailable || !cmd) return;
@@ -162,15 +164,25 @@ export function createKeepAwake(options: KeepAwakeOptions): KeepAwake {
         sync();
       };
     },
-    start() {
-      if (mode !== "always") return;
-      always = true;
-      sync();
-    },
-    stop() {
-      always = false;
-      holds = 0;
-      stopChild();
-    },
+  };
+}
+
+/**
+ * Wrap a turn entry point (`runTurn`, `executeTurn`) so the keep-awake is
+ * held from the call until its promise settles (ATO-592: "while a task
+ * or turn runs"). Holds nest by count, so a task turn inside a held
+ * drain keeps one inhibitor.
+ */
+export function holdWhileRunning<A extends unknown[], R>(
+  keepAwake: Pick<KeepAwake, "hold">,
+  fn: (...args: A) => Promise<R>,
+): (...args: A) => Promise<R> {
+  return async (...args: A): Promise<R> => {
+    const release = keepAwake.hold();
+    try {
+      return await fn(...args);
+    } finally {
+      release();
+    }
   };
 }

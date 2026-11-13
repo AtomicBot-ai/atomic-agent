@@ -185,16 +185,25 @@ describe("runtime task service phases", () => {
 });
 
 describe("createRuntimeKeepAwake (ATO-592)", () => {
-  it("is off by default", () => {
+  it("is off by default and holds no blocker", () => {
     config.tasks.keepAwake = null;
-    expect(createRuntimeKeepAwake({ config, logger }).mode).toBe("off");
+    const ka = createRuntimeKeepAwake({ config, logger });
+    expect(ka.mode).toBe("off");
+    ka.hold();
+    expect(ka.active).toBe(false);
   });
 
   it("reads the env value the config carries", () => {
     config.tasks.keepAwake = "while-working";
     expect(createRuntimeKeepAwake({ config, logger, platform: "win32" }).mode).toBe("while-working");
+  });
+
+  it("rejects the removed always mode: off, with a warning", () => {
     config.tasks.keepAwake = "always";
-    expect(createRuntimeKeepAwake({ config, logger, platform: "win32" }).mode).toBe("always");
+    expect(createRuntimeKeepAwake({ config, logger, platform: "win32" }).mode).toBe("off");
+    const warning = records.find((r) => r.message.startsWith("keep-awake setting ignored"));
+    expect(warning).toBeDefined();
+    expect(JSON.stringify(warning)).toContain("always was removed");
   });
 
   it("warns about a malformed value and stays off", () => {

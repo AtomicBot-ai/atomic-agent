@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   createKeepAwake,
+  holdWhileRunning,
   inhibitorCommand,
   parseKeepAwakeMode,
 } from "./keep-awake.js";
@@ -31,12 +32,16 @@ function fakeSpawn() {
 }
 
 describe("parseKeepAwakeMode", () => {
-  it("reads the three modes and a few spellings of them", () => {
+  it("reads the two modes and a few spellings of them", () => {
     expect(parseKeepAwakeMode("off")).toBe("off");
     expect(parseKeepAwakeMode("while-working")).toBe("while-working");
     expect(parseKeepAwakeMode(" While_Working ")).toBe("while-working");
     expect(parseKeepAwakeMode("on")).toBe("while-working");
-    expect(parseKeepAwakeMode("ALWAYS")).toBe("always");
+  });
+
+  it("rejects the removed always mode", () => {
+    expect(parseKeepAwakeMode("always")).toBeNull();
+    expect(parseKeepAwakeMode("ALWAYS")).toBeNull();
   });
 
   it("is null for empty or unknown values", () => {
@@ -71,17 +76,22 @@ describe("createKeepAwake", () => {
   it("off never starts an inhibitor", () => {
     const { spawn } = fakeSpawn();
     const ka = createKeepAwake({ mode: "off", platform: "darwin", pid: 1, spawn });
-    ka.start();
     const release = ka.hold();
+    expect(ka.active).toBe(false);
     release();
-    ka.stop();
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("while-working holds nothing until work starts", () => {
+    const { spawn } = fakeSpawn();
+    const ka = createKeepAwake({ mode: "while-working", platform: "darwin", pid: 1, spawn });
+    expect(spawn).not.toHaveBeenCalled();
+    expect(ka.active).toBe(false);
   });
 
   it("while-working holds one inhibitor across overlapping drains and drops it after the last", () => {
     const { spawn, children, calls } = fakeSpawn();
     const ka = createKeepAwake({ mode: "while-working", platform: "darwin", pid: 7, spawn });
-    ka.start();
     expect(spawn).not.toHaveBeenCalled();
 
     const a = ka.hold();
@@ -97,29 +107,16 @@ describe("createKeepAwake", () => {
     expect(children[0]!.killed).toBe(true);
     expect(ka.active).toBe(false);
 
-    ka.hold();
+    const c = ka.hold();
     expect(spawn).toHaveBeenCalledTimes(2);
-    ka.stop();
+    c();
     expect(children[1]!.killed).toBe(true);
-  });
-
-  it("always holds from start to stop and ignores drain holds", () => {
-    const { spawn, children } = fakeSpawn();
-    const ka = createKeepAwake({ mode: "always", platform: "linux", pid: 7, spawn });
-    ka.hold()();
-    expect(spawn).not.toHaveBeenCalled();
-    ka.start();
-    expect(spawn).toHaveBeenCalledTimes(1);
-    ka.hold()();
-    expect(children[0]!.killed).toBe(false);
-    ka.stop();
-    expect(children[0]!.killed).toBe(true);
   });
 
   it("does nothing on Windows", () => {
     const { spawn } = fakeSpawn();
-    const ka = createKeepAwake({ mode: "always", platform: "win32", pid: 7, spawn });
-    ka.start();
+    const ka = createKeepAwake({ mode: "while-working", platform: "win32", pid: 7, spawn });
+    ka.hold();
     expect(spawn).not.toHaveBeenCalled();
     expect(ka.active).toBe(false);
   });
@@ -165,5 +162,40 @@ describe("createKeepAwake", () => {
     expect(() => ka.hold()()).not.toThrow();
     ka.hold()();
     expect(spawn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("holdWhileRunning (a turn holds the keep-awake)", () => {
+  it("holds only while the turn runs and releases after it settles", async () => {
+    const { spawn, children } = fakeSpawn();
+    const ka = createKeepAwake({ mode: "while-working", platform: "darwin", pid: 7, spawn });
+    let finish: (v: string) => void = () => {};
+    const turn = holdWhileRunning(ka, (msg: string) =>
+      new Promise<string>((resolve) => { finish = (v) => resolve(`${msg}:${v}`); }),
+    );
+    expect(ka.active).toBe(false);
+    const p = turn("hi");
+    expect(ka.active).toBe(true);
+    finish("done");
+    await expect(p).resolves.toBe("hi:done");
+    expect(ka.active).toBe(false);
+    expect(children[0]!.killed).toBe(true);
+  });
+
+  it("releases when the turn throws", async () => {
+    const { spawn } = fakeSpawn();
+    const ka = createKeepAwake({ mode: "while-working", platform: "darwin", pid: 7, spawn });
+    const turn = holdWhileRunning(ka, async () => {
+      throw new Error("boom");
+    });
+    await expect(turn()).rejects.toThrow("boom");
+    expect(ka.active).toBe(false);
+  });
+
+  it("default config (off): a turn never starts a blocker", async () => {
+    const { spawn } = fakeSpawn();
+    const ka = createKeepAwake({ mode: "off", platform: "darwin", pid: 7, spawn });
+    await holdWhileRunning(ka, async () => "ok")();
+    expect(spawn).not.toHaveBeenCalled();
   });
 });
