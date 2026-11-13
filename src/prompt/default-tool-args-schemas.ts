@@ -116,6 +116,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         action: { type: "string", enum: ["list", "switch", "close", "new"] },
         index: integerSchema,
         url: stringSchema,
+        profile: { type: "string", enum: ["agent", "temp"] },
       },
       ["action"],
     ),

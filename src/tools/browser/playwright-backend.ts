@@ -20,6 +20,12 @@ import {
 } from "./attach-user-chrome.js";
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
 import {
+  currentBrowserScope,
+  resolveLaunchHeadless,
+  type BrowserHeadlessSetting,
+} from "./browser-run-scope.js";
+import { TempProfiles, type BrowserProfileChoice } from "./temp-profiles.js";
+import {
   collectSecretFieldValuesInPage,
   ONE_TIME_CODE_HINT,
   redactSecretFieldValues,
@@ -53,7 +59,19 @@ export interface PlaywrightBackendOptions {
   channel: BrowserChannel;
   /** Explicit path to a Chromium-family binary; overrides auto-detection. */
   executablePath?: string | null;
-  headless: boolean;
+  /**
+   * `true` / `false`: always / never headless. `"auto"` (ATO-959): a
+   * Chrome started for a turn nobody watches (a cron task, a Telegram or
+   * Discord message) is headless; a watched turn gets a window, and a
+   * headless Chrome the agent started is reopened with one when a watched
+   * turn needs it.
+   */
+  headless: BrowserHeadlessSetting;
+  /**
+   * `browser.profile` (default `"agent"`): the profile a session browses
+   * in until it picks another with `browser.tabs new` (`temp-profiles.ts`).
+   */
+  profile?: BrowserProfileChoice;
   /** Overall budget for "spawn + CDP becomes reachable". */
   launchTimeoutMs: number;
   /** When set, attach to a running browser via CDP instead of launching. */
@@ -72,7 +90,12 @@ export interface PlaywrightBackendOptions {
   connectOverCdp?: (url: string, timeoutMs: number) => Promise<PwBrowser>;
   /** Test seam: where the user's Chrome listens. */
   findUserChrome?: () => Promise<UserChromeCdpTarget>;
+  /** Test seam: start the agent's own Chrome and return its CDP address. */
+  launchChrome?: (input: { headless: boolean }) => Promise<string>;
 }
+
+const TEMP_PROFILE_IN_USER_CHROME =
+  'a logged-out profile ("temp") works only in the agent\'s own browser, not in your own Chrome (browser.connect "user-chrome")';
 
 /**
  * How long attaching to the user's Chrome may take: Chrome shows its own
@@ -113,6 +136,11 @@ export class PlaywrightBackend implements BrowserBackend {
    * Chrome it does not open the settings page or wait for the switch.
    */
   private lostConnection = false;
+  /** Whether the Chrome the agent started is headless; `null` when it started none. */
+  private launchedHeadless: boolean | null = null;
+  private relaunching: Promise<void> | null = null;
+  /** Per-session throwaway profiles (`browser.profile: "temp"`). */
+  private readonly tempProfiles = new TempProfiles();
 
   constructor(private readonly options: PlaywrightBackendOptions) {}
 
@@ -129,6 +157,7 @@ export class PlaywrightBackend implements BrowserBackend {
   }
 
   async shutdown(): Promise<void> {
+    await this.tempProfiles.closeAll();
     if (this.context) {
       const browser = this.context.browser();
       // The user's own Chrome: disconnect only, never close their
@@ -155,6 +184,7 @@ export class PlaywrightBackend implements BrowserBackend {
     }
     this.ownedPages.clear();
     this.userProfile = false;
+    this.launchedHeadless = null;
     this.ready = null;
   }
 
@@ -344,7 +374,14 @@ export class PlaywrightBackend implements BrowserBackend {
   }
 
   async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {
-    const context = await this.requireContext();
+    const scope = currentBrowserScope();
+    if (input.action === "new" && input.profile !== undefined && scope) {
+      if (input.profile === "temp" && this.options.connect === "user-chrome") {
+        throw new Error(`browser.tabs(new): ${TEMP_PROFILE_IN_USER_CHROME}`);
+      }
+      this.tempProfiles.choose(scope.sessionId, input.profile);
+    }
+    const context = await this.callerContext();
     const pages = this.visiblePages(context);
     switch (input.action) {
       case "list":
@@ -387,7 +424,10 @@ export class PlaywrightBackend implements BrowserBackend {
         }
         await target.close();
         this.ownedPages.delete(target);
-        return { tabs: await enumerateTabs(this.visiblePages(context)) };
+        const left = await enumerateTabs(this.visiblePages(context));
+        // The last tab of a throwaway profile takes the profile with it.
+        if (scope && left.length === 0) await this.tempProfiles.closeIfEmpty(scope.sessionId);
+        return { tabs: left };
       }
       default: {
         const exhaustive: never = input.action;
@@ -471,7 +511,7 @@ export class PlaywrightBackend implements BrowserBackend {
 
   /** Every tab, or in the user's Chrome only the agent's own. */
   private visiblePages(context: PwBrowserContext): Page[] {
-    if (!this.userProfile) return context.pages();
+    if (!this.userProfile || context !== this.context) return context.pages();
     return [...this.ownedPages].filter((page) => !page.isClosed());
   }
 
@@ -482,6 +522,12 @@ export class PlaywrightBackend implements BrowserBackend {
    * "spawn + attach" and "attach to user's browser" modes.
    */
   private async launchOwnChrome(): Promise<string> {
+    const headless = resolveLaunchHeadless(this.options.headless, currentBrowserScope());
+    if (this.options.launchChrome) {
+      const cdpUrl = await this.options.launchChrome({ headless });
+      this.launchedHeadless = headless;
+      return cdpUrl;
+    }
     const executable = findChromeExecutable({
       executablePath: this.options.executablePath ?? null,
       channel: this.options.channel,
@@ -500,7 +546,7 @@ export class PlaywrightBackend implements BrowserBackend {
     const args = buildChromeLaunchArgs({
       cdpPort,
       userDataDir: this.options.userDataDir,
-      headless: this.options.headless,
+      headless,
       noSandbox: this.options.noSandbox ?? false,
     });
     const running = await spawnChrome({
@@ -512,6 +558,7 @@ export class PlaywrightBackend implements BrowserBackend {
     });
     this.spawnedProc = running.proc;
     this.spawnedUserDataDir = this.options.userDataDir;
+    this.launchedHeadless = headless;
     return running.cdpUrl;
   }
 
@@ -525,14 +572,69 @@ export class PlaywrightBackend implements BrowserBackend {
       this.lostConnection = true;
       await this.ensureReady();
     }
+    if (this.wantsWindowNow()) await this.relaunchWithWindow();
     if (!this.context) {
       throw new Error("browser backend is not initialised");
     }
     return this.context;
   }
 
+  /**
+   * The context the calling session browses in: the agent's profile, or
+   * its own throwaway one (`browser.profile` / `browser.tabs new profile`).
+   */
+  private async callerContext(): Promise<PwBrowserContext> {
+    const main = await this.requireContext();
+    const scope = currentBrowserScope();
+    if (!scope || this.tempProfiles.choiceFor(scope.sessionId, this.options.profile ?? "agent") !== "temp") {
+      return main;
+    }
+    if (this.userProfile) throw new Error(TEMP_PROFILE_IN_USER_CHROME);
+    const browser = main.browser();
+    if (!browser) throw new Error("browser backend has no browser to open a logged-out profile in");
+    return this.tempProfiles.open(browser, scope.sessionId);
+  }
+
+  /**
+   * `headless: "auto"`: the Chrome the agent started is headless (a
+   * background turn launched it) and a watched turn now needs it.
+   */
+  private wantsWindowNow(): boolean {
+    return (
+      this.options.headless === "auto" &&
+      this.launchedHeadless === true &&
+      currentBrowserScope()?.attended === true
+    );
+  }
+
+  /**
+   * Restart the agent's own Chrome with a window, reopening the pages it
+   * had (throwaway profiles are not carried over). A background turn
+   * still using the old pages sees them gone and reads the page again.
+   */
+  private async relaunchWithWindow(): Promise<void> {
+    if (!this.relaunching) {
+      this.relaunching = (async () => {
+        const urls = (this.context?.pages() ?? [])
+          .map((page) => page.url())
+          .filter((url) => /^https?:/i.test(url));
+        await this.shutdown();
+        await this.ensureReady();
+        const context = this.context as PwBrowserContext | null;
+        if (!context) return;
+        for (const url of urls) {
+          const page = await context.newPage();
+          await page.goto(url).catch(() => undefined);
+        }
+      })().finally(() => {
+        this.relaunching = null;
+      });
+    }
+    await this.relaunching;
+  }
+
   private async requireActivePage(): Promise<Page> {
-    const context = await this.requireContext();
+    const context = await this.callerContext();
     const pages = this.visiblePages(context);
     const active = pages[pages.length - 1];
     if (active) return active;

@@ -200,7 +200,7 @@ function printHelp(): void {
     `  ATOMIC_AGENT_LLAMA_MAX_TOKENS  Max new tokens per completion (n_predict / max_tokens), default ${USER_CONFIG_DEFAULTS.localModels.completionMaxTokens}, clamped 64..131072`,
     "  ATOMIC_AGENT_BROWSER_CHANNEL           Preferred browser family: chrome | msedge | chromium (default chrome)",
     "  ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH   Explicit path to a Chromium-family binary (overrides auto-detect)",
-    "  ATOMIC_AGENT_BROWSER_HEADLESS          1 to run headless (default 0)",
+    "  ATOMIC_AGENT_BROWSER_HEADLESS          1 / 0 to always / never run headless (default: config browser.headless, \"auto\")",
     "  ATOMIC_AGENT_BROWSER_NO_SANDBOX        1 to pass --no-sandbox (containers / CI only)",
     "  ATOMIC_AGENT_BROWSER_CDP_URL           Attach to an already-running browser via CDP instead of launching",
   ];

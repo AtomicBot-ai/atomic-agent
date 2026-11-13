@@ -219,7 +219,19 @@ export interface AtomicAgentConfig {
      */
     enabled: boolean;
     channel: BrowserChannel;
+    /** The browser runs without a window for every turn (an explicit `true`). */
     headless: boolean;
+    /**
+     * `UserConfigFile.browser.headless` after env `ATOMIC_AGENT_BROWSER_HEADLESS`
+     * (which wins when set): `true` / `false`, or `"auto"` per turn (ATO-959).
+     * Absent (hand-built configs): `headless`.
+     */
+    headlessSetting?: boolean | "auto";
+    /**
+     * `UserConfigFile.browser.profile`: the agent's profile or a throwaway
+     * one per chat. Absent: `"agent"`.
+     */
+    profile?: "agent" | "temp";
     /**
      * Attach to this DevTools endpoint instead of launching. Env
      * `ATOMIC_AGENT_BROWSER_CDP_URL`, else `UserConfigFile.browser.cdpUrl`

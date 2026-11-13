@@ -421,10 +421,16 @@ export function loadConfig(): AtomicAgentConfig {
         ENV_DEFAULTS.BROWSER_ENABLED,
       ),
       channel: browserChannel,
+      // An explicit choice wins: the env var when set, else a `true` /
+      // `false` in config.json; `"auto"` picks per turn (ATO-959).
       headless: readBool(
         "ATOMIC_AGENT_BROWSER_HEADLESS",
-        ENV_DEFAULTS.BROWSER_HEADLESS,
+        user.browser.headless === true || ENV_DEFAULTS.BROWSER_HEADLESS,
       ),
+      headlessSetting: readEnv("ATOMIC_AGENT_BROWSER_HEADLESS")
+        ? readBool("ATOMIC_AGENT_BROWSER_HEADLESS", false)
+        : user.browser.headless,
+      profile: user.browser.profile,
       // Env wins over the file, as before the file key existed. Only the
       // file value is held to loopback (browser-config.ts): the env var
       // is the operator's own shell, the file can be written over HTTP.

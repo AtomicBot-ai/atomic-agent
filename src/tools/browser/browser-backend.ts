@@ -54,6 +54,11 @@ export interface TabsInput {
   action: "list" | "switch" | "close" | "new";
   index?: number;
   url?: string;
+  /**
+   * `new` only: browse from now on in the agent's profile (`"agent"`) or
+   * in this session's own throwaway, logged-out one (`"temp"`, ATO-959).
+   */
+  profile?: "agent" | "temp";
 }
 
 export interface SearchInput {
