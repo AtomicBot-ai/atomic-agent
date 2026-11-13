@@ -54,6 +54,13 @@ export interface SchedulerOptions {
    * `tickOnce()` is never gated — it is an operator asking for a drain.
    */
   leadership?: SchedulerLeadership;
+  /**
+   * Told when this process starts or stops leading (ATO-441: file
+   * triggers watch only in the leader). Called on the first interval
+   * tick (with or without a gate), on every hand-over, and with `false`
+   * from `stop()` before the lock is released. A rejection is logged.
+   */
+  onLeadershipChange?: (leading: boolean) => void | Promise<void>;
 }
 
 const DEFAULT_CLOCK: SchedulerClock = {
@@ -133,6 +140,10 @@ export class Scheduler {
     try {
       await this.settleInFlight(graceMs);
     } finally {
+      if (this.leading === true) {
+        this.leading = false;
+        await this.notifyLeadership(false);
+      }
       // After the drain, so the other process takes over only once this
       // one has stopped claiming (or the grace ran out).
       this.options.leadership?.release();
@@ -168,25 +179,41 @@ export class Scheduler {
    */
   private leads(): boolean {
     const leadership = this.options.leadership;
-    if (!leadership) return true;
-    let leader: boolean;
-    try {
-      leader = leadership.isLeader();
-    } catch (err) {
-      this.options.logger?.warn("scheduler leadership check failed; running", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      leader = true;
+    let leader = true;
+    if (leadership) {
+      try {
+        leader = leadership.isLeader();
+      } catch (err) {
+        this.options.logger?.warn("scheduler leadership check failed; running", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        leader = true;
+      }
     }
     if (leader !== this.leading) {
       this.leading = leader;
-      this.options.logger?.info(
-        leader
-          ? "scheduler: running due tasks in this process"
-          : "scheduler: another process runs due tasks; standing by",
-      );
+      if (leadership) {
+        this.options.logger?.info(
+          leader
+            ? "scheduler: running due tasks in this process"
+            : "scheduler: another process runs due tasks; standing by",
+        );
+      }
+      void this.notifyLeadership(leader);
     }
     return leader;
+  }
+
+  private async notifyLeadership(leading: boolean): Promise<void> {
+    const hook = this.options.onLeadershipChange;
+    if (!hook) return;
+    try {
+      await hook(leading);
+    } catch (err) {
+      this.options.logger?.warn("scheduler leadership listener failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /**
