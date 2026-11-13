@@ -72,6 +72,14 @@ describe("resource configuration ownership", () => {
     expect(parseSkillsConfig({ disabled: ["x"] }, createSkillsDefaults).disabled).toEqual(["x"]);
   });
 
+  it("reads skills.eval.judgeProvider and leaves the key out when unset (ATO-1101)", () => {
+    expect(parseSkillsConfig({ eval: { judgeProvider: " openrouter " } }, createSkillsDefaults).eval).toEqual({ judgeProvider: "openrouter" });
+    expect(parseSkillsConfig({}, createSkillsDefaults)).not.toHaveProperty("eval");
+    expect(parseSkillsConfig({ eval: {} }, createSkillsDefaults)).not.toHaveProperty("eval");
+    expect(validation(() => parseSkillsConfig({ eval: { judgeProvider: 3 } }, createSkillsDefaults)).field).toBe("skills.eval.judgeProvider");
+    expect(validation(() => parseSkillsConfig({ eval: [] }, createSkillsDefaults)).field).toBe("skills.eval");
+  });
+
   it("keeps skill normalization order and validates disabled source settings", () => {
     expect(validation(() => parseSkillsConfig({
       catalogTokenBudget: 0, disabled: ["bad name"], taps: ["bad"],

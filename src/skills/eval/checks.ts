@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { buildCommandEnv } from "../../sandbox/command-env.js";
+import type { SkillEvalJudge } from "./judge.js";
 import type { SkillEvalCheck, SkillEvalCheckType } from "./task-set.js";
 
 /** One check's verdict, as stored in a run result. */
@@ -12,6 +13,8 @@ export interface SkillEvalCheckOutcome {
   passed: boolean;
   /** Short reason, for a person reading why a run failed. */
   detail: string;
+  /** `judge` only: the judge's 1..5 score; absent when the judge gave none. */
+  score?: number;
 }
 
 export interface RunChecksInput {
@@ -19,6 +22,10 @@ export interface RunChecksInput {
   answer: string;
   /** The run's working folder; `command` checks run here. */
   workingDir: string;
+  /** The task's prompt, shown to the judge. */
+  prompt?: string;
+  /** Grades `judge` checks; without one a `judge` check fails as unavailable. */
+  judge?: SkillEvalJudge | null;
 }
 
 /**
@@ -54,6 +61,22 @@ export async function runCheck(
     }
     case "command":
       return runCommandCheck(check.run, check.timeoutMs, input);
+    case "judge": {
+      if (!input.judge) return { type: "judge", passed: false, detail: "no judge configured" };
+      try {
+        const verdict = await input.judge.score({
+          prompt: input.prompt ?? "",
+          reply: input.answer,
+          rubric: check.rubric,
+          reference: check.reference,
+        });
+        const passed = !verdict.parseFallback && verdict.score >= check.minScore;
+        const reason = verdict.reason ? `: ${clip(verdict.reason, 200)}` : "";
+        return { type: "judge", passed, score: verdict.score, detail: `score ${verdict.score}/5 (pass at ${check.minScore})${reason}` };
+      } catch (err) {
+        return { type: "judge", passed: false, detail: `judge failed: ${err instanceof Error ? err.message : String(err)}` };
+      }
+    }
   }
 }
 

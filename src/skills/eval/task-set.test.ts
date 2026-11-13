@@ -9,6 +9,7 @@ import {
   loadTaskSet,
   parseTaskSet,
   SkillEvalTaskSetError,
+  taskSetUsesJudge,
 } from "./task-set.js";
 
 describe("parseTaskSet", () => {
@@ -65,6 +66,16 @@ describe("parseTaskSet", () => {
     ]);
   });
 
+  it("reads a judge check with its defaults", () => {
+    const set = parseTaskSet(
+      "tasks:\n  - id: a\n    prompt: summarize\n    check: { type: judge, rubric: Mentions the date }\n  - id: b\n    prompt: x\n    check: { type: judge, rubric: r, reference: ref, minScore: 5 }\n",
+      file,
+    );
+    expect(set.tasks[0]!.checks).toEqual([{ type: "judge", rubric: "Mentions the date", reference: null, minScore: 4 }]);
+    expect(set.tasks[1]!.checks).toEqual([{ type: "judge", rubric: "r", reference: "ref", minScore: 5 }]);
+    expect(taskSetUsesJudge(set)).toBe(true);
+  });
+
   it("parses JSON too and leaves optional fields null", () => {
     const set = parseTaskSet(
       JSON.stringify({ tasks: [{ id: "t1", prompt: "say hi", check: { type: "regex", pattern: "hi" } }] }),
@@ -72,6 +83,7 @@ describe("parseTaskSet", () => {
     );
     expect(set.skill).toBeNull();
     expect(set.tasks[0]).toMatchObject({ fixturesDir: null, maxSteps: null });
+    expect(taskSetUsesJudge(set)).toBe(false);
   });
 
   it.each([
@@ -79,11 +91,13 @@ describe("parseTaskSet", () => {
     ["bad id", "tasks:\n  - id: 'a b'\n    prompt: x\n    check: { type: regex, pattern: x }", ".id must be"],
     ["duplicate id", "tasks:\n  - { id: a, prompt: x, check: { type: regex, pattern: x } }\n  - { id: a, prompt: y, check: { type: regex, pattern: y } }", "duplicate task id: a"],
     ["no check", "tasks:\n  - { id: a, prompt: x }", "needs `check:`"],
-    ["unknown check", "tasks:\n  - { id: a, prompt: x, check: { type: judge } }", "unknown check type"],
+    ["unknown check", "tasks:\n  - { id: a, prompt: x, check: { type: magic } }", "unknown check type"],
     ["bad regex", "tasks:\n  - { id: a, prompt: x, check: { type: regex, pattern: '(' } }", "invalid regex"],
     ["empty command", "tasks:\n  - { id: a, prompt: x, check: { type: command, run: '' } }", "command needs `run`"],
     ["missing fixtures", "tasks:\n  - { id: a, prompt: x, fixtures: nope, check: { type: regex, pattern: x } }", "fixtures folder not found"],
     ["escaping fixtures", "tasks:\n  - { id: a, prompt: x, fixtures: ../.., check: { type: regex, pattern: x } }", "must stay inside"],
+    ["judge without rubric", "tasks:\n  - { id: a, prompt: x, check: { type: judge } }", "judge needs `rubric`"],
+    ["judge minScore out of range", "tasks:\n  - { id: a, prompt: x, check: { type: judge, rubric: r, minScore: 6 } }", "minScore must be"],
     ["bad maxSteps", "tasks:\n  - { id: a, prompt: x, maxSteps: 0, check: { type: regex, pattern: x } }", "positive integer"],
   ])("rejects %s", (_name, text, message) => {
     expect(() => parseTaskSet(text, file)).toThrow(SkillEvalTaskSetError);
