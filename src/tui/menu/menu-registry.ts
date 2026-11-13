@@ -656,6 +656,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.resume",
+    label: "Continue a reply a restart cut off",
+    group: "run",
+    slash: {
+      name: "resume",
+      description:
+        "continue the last reply a restart cut off: starts a new turn from it, once (the model checks before repeating commands or writes)",
+      // Beside /fusion, the other restart verb (ATO-448).
+      rank: 47.25,
+    },
+  },
+  {
+    kind: "action",
     id: "run.expand",
     label: "Show the last turn's steps",
     group: "run",

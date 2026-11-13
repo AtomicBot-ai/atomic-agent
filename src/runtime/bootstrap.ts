@@ -7,6 +7,7 @@ import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
+import { createInterruptedTurns } from "./interrupted-turns.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
 import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
@@ -858,6 +859,8 @@ export async function createAgentRuntime(
           : null;
       },
     },
+    // A chat turn a restart cut off: offered, never continued on its own (ATO-448).
+    interruptedTurns: createInterruptedTurns(sessionStore),
     profileStore,
     notesStore,
     lessonStore,

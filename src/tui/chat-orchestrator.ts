@@ -93,6 +93,8 @@ import {
 } from "./local-turn-gate.js";
 import { turnsToMessages } from "./chat/turns-to-messages.js";
 import { formatSessionFusionNotice } from "./fusion-resume-notice.js";
+import { INTERRUPTED_TURN_NOTICE } from "./interrupted-turn-notice.js";
+import { isInterruptedTurnResumeMessage } from "../session/interrupted-chat-turn.js";
 import { createHeapGuard } from "../runtime/heap-guard.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 
@@ -1054,6 +1056,14 @@ export class ChatOrchestrator {
     );
     if (fusionNotice !== null) {
       this.bus.emit({ type: "system_message", text: fusionNotice });
+    } else if (
+      !running &&
+      (this.runtime.interruptedTurns?.pending(loaded.id) ?? null) !== null
+    ) {
+      // A chat turn of this thread that a restart cut off (ATO-448):
+      // offered, never continued on its own. A fusion run's own offer
+      // above already covers a cut-off fan-out.
+      this.bus.emit({ type: "system_message", text: INTERRUPTED_TURN_NOTICE });
     }
     // A turn parked on an approval in THIS thread asked its question
     // while another transcript was on screen, where it surfaced only as
@@ -1241,6 +1251,7 @@ export class ChatOrchestrator {
       this.queue.length = 0;
       this.droppedWhileFull = 0;
       this.emitQueue();
+      this.releaseDroppedResumes(previous.id, dropped);
       notices.push({ text: formatDroppedQueueOnSwitchNotice(dropped) });
     }
     this.steeredAhead = 0;
@@ -1500,8 +1511,20 @@ export class ChatOrchestrator {
     // Even an empty queue can carry a stale steer watermark.
     this.steeredAhead = 0;
     if (this.queue.length === 0) return;
+    const dropped = [...this.queue];
     this.queue.length = 0;
     this.emitQueue();
+    if (this.session) this.releaseDroppedResumes(this.session.id, dropped);
+  }
+
+  /**
+   * A `/resume` message (ATO-448) dropped before its turn started: the
+   * cut-off turn is offered again instead of being lost.
+   */
+  private releaseDroppedResumes(sessionId: string, dropped: readonly string[]): void {
+    if (dropped.some(isInterruptedTurnResumeMessage)) {
+      this.runtime.interruptedTurns?.release(sessionId);
+    }
   }
 
   /**
@@ -1642,6 +1665,7 @@ export class ChatOrchestrator {
         // A drained queue message has no editor to go back to (the
         // operator may be mid-draft), so it is dropped — announced with
         // a preview, like the abort path, never silently.
+        if (this.session) this.releaseDroppedResumes(this.session.id, [text]);
         this.bus.emit({
           type: "turn_gate_blocked",
           text: `${gate.text}\n  dropped: ${droppedPreview(text)}`,
@@ -2026,6 +2050,7 @@ export class ChatOrchestrator {
       this.queue.length = 0;
       this.droppedWhileFull = 0;
       this.emitQueue();
+      if (this.session) this.releaseDroppedResumes(this.session.id, dropped);
       // The operator typed those messages; a bare count would bin their
       // words with no way back. The transcript line carries a preview of
       // each so anything worth keeping can be copied out.

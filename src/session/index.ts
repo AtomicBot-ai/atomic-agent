@@ -17,6 +17,13 @@ export {
 export type { TurnOwner, TurnOwnerProbe } from "./turn-owner.js";
 export { parseTurnProgress, serializeTurnProgress } from "./turn-progress.js";
 export type { TurnProgress, TurnResumeOptions } from "./turn-progress.js";
+export {
+  INTERRUPTED_TURN_RESUME_NOTE,
+  interruptedChatTurn,
+  interruptedTurnResumeMessage,
+  isInterruptedTurnResumeMessage,
+} from "./interrupted-chat-turn.js";
+export type { InterruptedChatTurn } from "./interrupted-chat-turn.js";
 export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";
 export type {
   PruneSessionsOptions,

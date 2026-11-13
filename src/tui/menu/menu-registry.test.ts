@@ -283,6 +283,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
   },
+  // ATO-448: a chat reply a restart cut off, continued only by the person.
+  {
+    name: "resume",
+    description:
+      "continue the last reply a restart cut off: starts a new turn from it, once (the model checks before repeating commands or writes)",
+  },
   {
     name: "uninstall",
     description:

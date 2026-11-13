@@ -696,6 +696,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
         },
         prepareFusionResume: (sessionId, runId) =>
           runtime.fusionRuns?.resumeMessage(sessionId, runId) ?? null,
+        // `/resume` (ATO-448): a chat turn a restart cut off.
+        prepareInterruptedTurnResume: (sessionId) =>
+          runtime.interruptedTurns?.resumeMessage(sessionId) ?? null,
         onProvidersSelectChatModel: (providerId, modelId) =>
           void orchestrator.providers.selectChatModel(providerId, modelId),
         onProvidersChatModelPickerRequested: (providerId) =>
