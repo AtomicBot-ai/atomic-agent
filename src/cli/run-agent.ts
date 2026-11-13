@@ -27,6 +27,7 @@ import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import {
   canGrantCategory,
   describeCategoryGrant,
+  describeMcpToolGrant,
   canGrantShape,
   type ApprovalGrantScope,
   type ApprovalRequest,
@@ -155,6 +156,8 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
     options.push(
       siteGrantHost(request) !== null
         ? `s = allow ${describeCategoryGrant(request)} this session`
+        : describeMcpToolGrant(request) !== null
+          ? `s = allow ${describeMcpToolGrant(request)} this session`
         : request.grantKey !== undefined
           ? `s = allow this kind to ${request.grantKey} this session`
         : "s = allow this kind this session",
