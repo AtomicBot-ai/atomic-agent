@@ -35,6 +35,7 @@ import type { AgentLoop } from "../agent/agent-loop.js";
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-contract.js";
 import type { GoalSpec, GoalState } from "../agent/goal/index.js";
 import type { SessionStore, FusionWorkerMeta, SessionState } from "../session/index.js";
+import type { SessionProject } from "../session/session-project.js";
 import type { TaskRunner, TaskStore } from "../tasks/index.js";
 import type { Scheduler } from "../scheduler/index.js";
 import type { WebhookSessionStore } from "../http/webhook-session-store.js";
@@ -487,6 +488,12 @@ export interface AgentRuntime {
        * `### answer-style` and its polish (ATO-966, ATO-967).
        */
       answerChannel?: AnswerChannel;
+      /**
+       * ATO-42: the client's project for this chat, stamped on the
+       * freshly loaded session inside the turn lock before the turn runs
+       * (`session/session-project.ts`). null clears it; absent keeps it.
+       */
+      project?: SessionProject | null;
     },
   ): Promise<RunTurnResult>;
   /**

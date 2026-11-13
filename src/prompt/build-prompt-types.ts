@@ -304,4 +304,11 @@ export interface BuiltPrompt {
    * `### profile` (issue #407). Counts, never values.
    */
   profileClip?: ProfileClipStats;
+  /**
+   * ATO-42: the `### project` block of the local prompt, when the chat is
+   * in a project with instructions. `tokens` is the full text's estimate,
+   * `truncated` says the block was cut to `PROJECT_SECTION_MAX_TOKENS`.
+   * Absent on the cloud prompt, which carries the whole text.
+   */
+  project?: { name: string | null; tokens: number; truncated: boolean };
 }

@@ -26,6 +26,7 @@ import {
 import { getConfig } from "../config/index.js";
 
 import { checkWorkingDir } from "./session-working-dir.js";
+import { parseProjectFields, type SessionProject } from "../session/session-project.js";
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
@@ -41,6 +42,7 @@ import {
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
+import { PROJECT_SECTION_MAX_TOKENS } from "../prompt/build-prompt.js";
 import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
@@ -88,6 +90,13 @@ interface ChatCompletionRequest {
   session_id?: string;
   /** ATO-731: the folder a NEW session works in (absolute); an existing one keeps its own. */
   working_dir?: string;
+  /**
+   * ATO-42: the instructions of the client's project this chat belongs to,
+   * re-sent each turn; null clears them, absent keeps what the session has.
+   */
+  project_instructions?: string | null;
+  /** ATO-42: the project's name, shown to the model beside its instructions. */
+  project_name?: string | null;
 }
 
 interface ParsedRequest {
@@ -101,6 +110,8 @@ interface ParsedRequest {
   sessionIdOverride: string | null;
   /** ATO-731: `working_dir`, checked; null for the server's own folder. */
   workingDir: string | null;
+  /** ATO-42: the project fields, checked (see `parseProjectFields`). */
+  project: SessionProject | null | undefined;
   extensionsEnabled: boolean;
   /** `X-Atomic-Screen-Overlay` on an extensions request (ATO-1018). */
   screenOverlay: boolean;
@@ -169,6 +180,9 @@ async function handleNonStream(
     result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
       signal: controller.signal,
       origin: "http",
+      // ATO-42: stamped inside the session's turn lock, so a turn that
+      // is running cannot save over it.
+      ...(env.request.project !== undefined ? { project: env.request.project } : {}),
       // An extensions client (the desktop) draws approval prompts, so a
       // person can be asked before an out-of-memory restart (ATO-334); a
       // plain OpenAI client cannot answer and gets the automatic one.
@@ -323,6 +337,7 @@ async function handleStream(
       signal: controller.signal,
       origin: "http",
       eventHook: hook,
+      ...(env.request.project !== undefined ? { project: env.request.project } : {}),
       // See the non-stream path: only a client that draws approval
       // prompts is asked before an out-of-memory restart (ATO-334).
       // Desktop answer style and reply polish too, see the non-stream path.
@@ -450,6 +465,9 @@ async function handleStream(
  *    same names (extensions opt-in only, `stream-maintenance-frames.ts`)
  *  - `tool_disabled` → `event: tool_disabled` with the chat sentence
  *    (extensions opt-in only, ATO-1417)
+ *  - the first `prompt_built` whose local prompt carries a project block
+ *    → `event: project_instructions` {name, tokens, truncated, max_tokens}
+ *    (extensions opt-in only, ATO-42)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
  *    whether extensions are opted in)
  *
@@ -480,6 +498,8 @@ export function buildStreamEventHook(
      can say in words what it did ("Read config.ts"). Removed when the
      result is written. */
   const openCallArgs = new Map<string, unknown>();
+  /* ATO-42: the project block is fixed for the turn, so it is told once. */
+  let projectReported = false;
   const writeContent = (content: string): void => {
     sse.writeEvent(
       null,
@@ -605,6 +625,24 @@ export function buildStreamEventHook(
           ...(inner.result.approvals !== undefined && inner.result.approvals.length > 0
             ? { approvals: inner.result.approvals }
             : {}),
+        });
+      } else if (inner.type === "prompt_built") {
+        /* ATO-42: the local prompt carried the chat's project instructions,
+           and whether they were cut to PROJECT_SECTION_MAX_TOKENS, so a
+           host can say so in the chat. Once per turn, extensions-only. */
+        const project = inner.prompt.project;
+        if (!env.request.extensionsEnabled || projectReported || project === undefined) return;
+        projectReported = true;
+        sse.writeEvent("project_instructions", {
+          id: env.completionId,
+          object: "chat.completion.project_instructions",
+          created: env.created,
+          model: env.request.model,
+          session_id: env.session.id,
+          name: project.name,
+          tokens: project.tokens,
+          truncated: project.truncated,
+          max_tokens: PROJECT_SECTION_MAX_TOKENS,
         });
       } else if (inner.type === "plan_updated") {
         /* ATO-486: the live checklist, whole, each time it changes. A
@@ -1237,6 +1275,11 @@ async function parseRequestBody(
     }
     workingDir = check.dir;
   }
+  const project = parseProjectFields(body.project_instructions, body.project_name);
+  if (!project.ok) {
+    sendError(res, 400, openaiError(project.error, "invalid_request_error", project.param));
+    return null;
+  }
   return {
     model:
       typeof body.model === "string" && body.model.length > 0
@@ -1249,6 +1292,7 @@ async function parseRequestBody(
     firstUserMessage: firstUser?.content ?? lastUser.content,
     sessionIdOverride,
     workingDir,
+    project: project.value,
     extensionsEnabled: isExtensionsHeaderTruthy(
       getHeader(req, EXTENSIONS_HEADER),
     ),
