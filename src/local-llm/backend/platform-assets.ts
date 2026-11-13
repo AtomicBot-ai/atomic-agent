@@ -72,6 +72,32 @@ export function isWindowsArm64(
   return platform === "win32" && arch === "arm64";
 }
 
+/**
+ * ATO-619: where the direct llama-server engine downloads its build. The
+ * stable turboquant repo is the one Atomic Core installs from, so both
+ * engines run the same released build; only its stable releases (unified
+ * `b<build>-<semver>` tags, `prerelease: false`) count, as in Core
+ * (`isStableReleaseTag`), which leaves out `dev-latest` and the legacy
+ * per-platform prereleases. The stable repo publishes no Windows on ARM
+ * build, so that one asset keeps coming from the nightly repo, where every
+ * release is a prerelease.
+ */
+export const STABLE_BACKEND_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant";
+export const NIGHTLY_BACKEND_REPO = "AtomicBot-ai/atomic-llama-cpp-turboquant-nightly";
+
+export interface BackendReleaseSource {
+  repo: string;
+  /** Skip releases GitHub marks `prerelease`. */
+  stableOnly: boolean;
+}
+
+export function backendReleaseSource(assetName: string): BackendReleaseSource {
+  if (assetName === WINDOWS_ARM64_BACKEND_ASSET) {
+    return { repo: NIGHTLY_BACKEND_REPO, stableOnly: false };
+  }
+  return { repo: STABLE_BACKEND_REPO, stableOnly: true };
+}
+
 export interface PlatformAsset {
   platform: "darwin" | "linux" | "win32";
   arch: "arm64" | "x64";
