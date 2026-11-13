@@ -323,6 +323,13 @@
       const k = shown;
       shown = null;
       hide(k);
+      /* W2 QA: the chat room morphs #content in place (ATO-1023, dom-morph.js),
+         so a page root still standing there was rewritten into the chat's
+         scroller and composer, and the next visit to Studio mounted that
+         node: the chat composer on an empty page. The kept root leaves
+         #content first, and the chat builds its own nodes. */
+      const root = roots[k];
+      if (root && root.parentNode) root.parentNode.removeChild(root);
     },
 
     /** `studio:<verb>` from act(). */
