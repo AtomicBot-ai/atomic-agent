@@ -69,6 +69,21 @@ describe("chat export (ATO-1054)", () => {
     expect(renderChatMarkdown(state, { now: NOW, includeTools: false })).not.toContain("os.fs.read");
   });
 
+  it("pairs the n-th call of a tool with its n-th result in a parallel batch", () => {
+    const md = renderChatMarkdown(
+      chat([
+        { kind: "user", text: "read both", at: 1 },
+        { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a" }, at: 2 },
+        { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "b" }, at: 3 },
+        { kind: "tool_result", tool: "os.fs.read", status: "ok", summary: "a", at: 4 },
+        { kind: "tool_result", tool: "os.fs.read", status: "error", summary: "no b", at: 5 },
+        { kind: "assistant_reply", text: "done", at: 6 },
+      ]),
+      { now: NOW, describeToolCall: ({ args }) => `Read ${String(args.path)}` },
+    );
+    expect(md).toContain("- Read a\n- Read b (failed)\n");
+  });
+
   it("marks steered messages and stopped turns", () => {
     const md = renderChatMarkdown(
       chat([

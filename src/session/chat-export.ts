@@ -88,12 +88,28 @@ function stamp(ms: number): string {
 
 type ToolCallTurn = Extract<ConversationTurn, { kind: "assistant_tool_call" }>;
 
-/** Whether the call at `index` failed: the first result for its tool after it. */
+/**
+ * Whether the call at `index` failed. Calls and results pair by position
+ * within one user turn: the n-th call of a tool goes with the n-th result
+ * of that tool, so a parallel batch (call, call, ok, error) marks the
+ * second call, not the first.
+ */
 function callFailed(turns: readonly ConversationTurn[], index: number, call: ToolCallTurn): boolean {
-  for (let i = index + 1; i < turns.length; i += 1) {
+  let from = index;
+  while (from > 0 && turns[from - 1]?.kind !== "user") from -= 1;
+  let nth = 0;
+  for (let i = from; i < index; i += 1) {
     const t = turns[i];
-    if (!t || t.kind === "user") return false;
-    if (t.kind === "tool_result" && t.tool === call.tool) return t.status === "error";
+    if (t?.kind === "assistant_tool_call" && t.tool === call.tool) nth += 1;
+  }
+  let seen = 0;
+  for (let i = from; i < turns.length; i += 1) {
+    const t = turns[i];
+    if (!t || (t.kind === "user" && i > index)) return false;
+    if (t.kind === "tool_result" && t.tool === call.tool) {
+      if (seen === nth) return t.status === "error";
+      seen += 1;
+    }
   }
   return false;
 }
