@@ -46,6 +46,13 @@ describe("dispatchSlashCommand", () => {
     }
   });
 
+  it("/settings answers with the settings overview as text (ATO-41)", () => {
+    const result = dispatchSlashCommand("/settings");
+    expect(result.actions).toEqual([]);
+    expect(result.systemMessage).toContain("settings in config.json");
+    expect(result.systemMessage).toContain("/settings <words>");
+  });
+
   it("forwards non-slash input as a regular message", () => {
     const result = dispatchSlashCommand("hello world");
     expect(result.forwardAsMessage).toBe(true);

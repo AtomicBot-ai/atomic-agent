@@ -11,6 +11,7 @@ import { parseRunModeCommand } from "./dispatch-run-mode.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS, type SlashCommandDef } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
+import { renderSettingsOverview, renderSettingsSearch } from "./settings-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
 
@@ -429,6 +430,13 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([{ type: "sidebar_collapse_toggled" }]);
     case "tools":
       return dispatchToolsSub(parsed.args);
+    case "settings": {
+      // ATO-41: every config.json key with its default and description.
+      const query = parsed.args.trim();
+      return pureActions([], {
+        systemMessage: query.length === 0 ? renderSettingsOverview() : renderSettingsSearch(query),
+      });
+    }
     case "skills":
       return dispatchSkillsSub(parsed.args);
     case "skill":

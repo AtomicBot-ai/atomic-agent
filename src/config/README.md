@@ -63,7 +63,7 @@ agent/ owns the full agent runtime/user policy around the existing execution lea
 
 ## Task-specific reading
 
-Read [compatibility](docs/compatibility.md) for schema/default/migration changes; [user defaults](docs/user-defaults.md) and [operational defaults](docs/operational-defaults.md) contain checked values. Read ../approval/AGENTS.md for approval settings.
+Read [compatibility](docs/compatibility.md) for schema/default/migration changes; [user defaults](docs/user-defaults.md) and [operational defaults](docs/operational-defaults.md) contain checked values. The user-facing [settings reference](../../docs/user/settings-reference.md) is generated from the JSDoc on `UserConfigFile` and the env table in [env-settings.ts](env-settings.ts) by `npx tsx scripts/gen-settings-reference.ts`; a key or comment change needs a regeneration, which the reference tests enforce. A new environment variable goes into env-settings.ts. Read ../approval/AGENTS.md for approval settings.
 
 [Model behavior mode](../llm/docs/model-mode.md) documents provider defaults, per-model overrides and the v75 migration of existing cloud connections without a policy. [model-mode-commands.ts](model-mode-commands.ts) owns manual changes and cache invalidation for this setting. [Provider commands](llm-provider-commands.ts) assign and return an initial saved default for new connections, sharing classification with the schema migration through [model-mode.ts](model-mode.ts). After migration, updates preserve omitted policy fields without reclassifying entries.
 
