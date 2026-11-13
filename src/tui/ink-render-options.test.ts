@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildInkRenderOptions } from "./ink-render-options.js";
+import {
+  INCREMENTAL_RENDERING,
+  INCREMENTAL_RENDERING_ENV,
+  buildInkRenderOptions,
+  incrementalRenderingEnabled,
+} from "./ink-render-options.js";
 
 const streams = {
   stdin: {} as NodeJS.ReadStream,
@@ -8,15 +13,33 @@ const streams = {
 };
 
 describe("buildInkRenderOptions", () => {
-  it("repaints the whole frame", () => {
-    // Pinned as false, not merely absent. Ink's incremental renderer
-    // anchors its line diff to the bottom of the previous frame, and a
-    // session swap replaces the transcript, the rail and the meta bar
-    // in one commit — after which the rail's background stops being
-    // painted and the composer wears what the rail left behind. The
-    // measurement is in the comment beside the option.
-    const options = buildInkRenderOptions({ ...streams, kittyKeyboard: false });
+  it("repaints the full frame until the session-swap measurement passes", () => {
+    // Under Ink 7 incremental rendering lost the session rail's fill
+    // after `ctrl+g n` (33 painted rows -> 1). Ink 8 rewrote that path,
+    // but it stays off until scripts/tui-session-swap-paint.py prints
+    // 33/33 with it forced on (ATO-648). Flipping the constant is the
+    // one-line switch; this test is the reminder to update it with it.
+    const options = buildInkRenderOptions({
+      ...streams,
+      kittyKeyboard: false,
+      env: {},
+    });
+    expect(INCREMENTAL_RENDERING).toBe(false);
     expect(options.incrementalRendering).toBe(false);
+  });
+
+  it("forces incremental rendering on only for the measurement env var", () => {
+    expect(incrementalRenderingEnabled({ [INCREMENTAL_RENDERING_ENV]: "1" })).toBe(true);
+    expect(incrementalRenderingEnabled({ [INCREMENTAL_RENDERING_ENV]: "0" })).toBe(false);
+    expect(incrementalRenderingEnabled({ [INCREMENTAL_RENDERING_ENV]: "" })).toBe(false);
+    expect(incrementalRenderingEnabled({})).toBe(false);
+    expect(
+      buildInkRenderOptions({
+        ...streams,
+        kittyKeyboard: false,
+        env: { [INCREMENTAL_RENDERING_ENV]: "1" },
+      }).incrementalRendering,
+    ).toBe(true);
   });
 
   it("keeps Ctrl+C for the app", () => {
