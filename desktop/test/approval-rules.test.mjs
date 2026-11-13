@@ -36,6 +36,15 @@ test('a rule reads as one plain line', () => {
   assert.equal(arulesSentence({decision: 'allow', commandPrefix: ['ls'], path: '/repo/src'}, deps), 'Always allow "ls" in /repo/src');
 });
 
+test('an HTTP rule saved for one site names the site (ATO-1471)', () => {
+  const anyHost = {decision: 'allow', tool: 'os.http.request', category: 'http'};
+  const oneSite = arulesSentence({...anyHost, origin: 'https://a.example'}, deps);
+  assert.ok(oneSite.includes('a.example'), oneSite);
+  assert.equal(oneSite, 'Always allow the os.http.request tool to https://a.example');
+  assert.notEqual(oneSite, arulesSentence(anyHost, deps));
+  assert.equal(arulesSentence(anyHost, deps), 'Always allow the os.http.request tool to any site');
+});
+
 test('where a rule applies: this project, another project, everywhere', () => {
   assert.equal(arulesHere(list()), '/repo');
   assert.equal(arulesScope(gitRule, '/repo').text, 'this project');

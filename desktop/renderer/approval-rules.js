@@ -31,6 +31,9 @@ function arulesSentence(rule, deps) {
   else if (r.tool) what = verb + ' the ' + r.tool + ' tool';
   else if (r.category) what = verb + ': ' + ((d.categoryPlain && d.categoryPlain(r.category)) || r.category);
   else what = verb + ' every request';
+  // ATO-1471: an HTTP rule saved for one site names it; one without `origin` covers every host.
+  if (typeof r.origin === 'string' && r.origin) what += ' to ' + r.origin;
+  else if (r.category === 'http' || r.tool === 'os.http.request') what += ' to any site';
   if (r.path) what += ' in ' + (d.pathText ? d.pathText(r.path) : r.path);
   return what;
 }
