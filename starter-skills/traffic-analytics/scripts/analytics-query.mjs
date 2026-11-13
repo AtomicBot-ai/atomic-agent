@@ -10,14 +10,22 @@
 //   node analytics-query.mjs ga4 '<runReport JSON body>'
 //   node analytics-query.mjs gsc '<searchAnalytics.query JSON body>'
 //   node analytics-query.mjs posthog '<HogQL query>'
+//   node analytics-query.mjs compare <ga4|gsc> <current.json> <previous.json>
+//   node analytics-query.mjs cannibalization <query-page.json>
+//
+// Every query response is saved in full under
+// <stateDir>/traffic-analytics/results/ (mode 600) and only a compact
+// summary plus the saved path is printed; --raw prints the whole response.
 //
 // Exit codes: 0 ok, 1 API or network error, 2 missing setup, 64 bad usage.
 
 import { createSign } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+
+import { cannibalization, compare, summarize } from "./analytics-summary.mjs";
 
 export const GA4_SCOPE = "https://www.googleapis.com/auth/analytics.readonly";
 export const GSC_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly";
@@ -26,8 +34,7 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 export function configPath(env = process.env) {
   const override = env.ATOMIC_AGENT_ANALYTICS_CONFIG?.trim();
   if (override) return override;
-  const stateDir = env.ATOMIC_AGENT_STATE_DIR?.trim() || join(homedir(), ".atomic-agent");
-  return join(stateDir, "traffic-analytics.json");
+  return join(stateDir(env), "traffic-analytics.json");
 }
 
 export const TEMPLATE = {
@@ -159,19 +166,103 @@ function parseBody(raw, what) {
 
 class UsageError extends Error {}
 
-async function run(argv) {
-  const [source, raw] = argv;
+export function stateDir(env = process.env) {
+  return env.ATOMIC_AGENT_STATE_DIR?.trim() || join(homedir(), ".atomic-agent");
+}
+
+/** Where full responses go: `<stateDir>/traffic-analytics/results/`. */
+export function resultsDir(env = process.env) {
+  return join(stateDir(env), "traffic-analytics", "results");
+}
+
+/** Whether group or others can read or write the file (it should be 0600). */
+export function isModeTooOpen(path) {
+  if (process.platform === "win32") return false;
+  return (statSync(path).mode & 0o077) !== 0;
+}
+
+function writePrivate(path, text) {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, text, { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
+
+/** Save a full response and return its path. */
+export function saveResult(source, text, env = process.env, now = new Date()) {
+  const stamp = now.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  let path = join(resultsDir(env), `${source}-${stamp}.json`);
+  for (let i = 2; existsSync(path); i++) path = join(resultsDir(env), `${source}-${stamp}-${i}.json`);
+  writePrivate(path, text);
+  return path;
+}
+
+/** Split argv into positionals and `--flag value` / `--raw` options. */
+export function parseCli(argv) {
+  const positional = [];
+  const flags = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--raw") flags.raw = true;
+    else if (a.startsWith("--")) {
+      const v = argv[++i];
+      if (v === undefined) throw new UsageError(`${a} needs a value`);
+      flags[a.slice(2)] = v;
+    } else positional.push(a);
+  }
+  return { positional, flags };
+}
+
+function readJsonFile(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    throw new UsageError(`cannot read ${path}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+const USAGE =
+  "usage: analytics-query.mjs check | init | ga4 '<json>' [--raw] | gsc '<json>' [--raw] | posthog '<hogql>' [--raw]" +
+  " | compare <ga4|gsc> <current.json> <previous.json> [--metric m] [--order abs|growth|drop] [--min n]" +
+  " | cannibalization <query-page.json> [--min-share 0.1] [--min-impressions 100]";
+
+export async function run(argv, out = process.stdout) {
+  const { positional, flags } = parseCli(argv);
+  const [source, raw] = positional;
   const path = configPath();
 
   if (source === "init") {
     if (existsSync(path)) {
-      process.stdout.write(`exists: ${path}\n`);
+      const fixed = isModeTooOpen(path);
+      if (fixed) chmodSync(path, 0o600);
+      out.write(`exists: ${path}${fixed ? " (permissions tightened to 600)" : ""}\n`);
       return 0;
     }
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(TEMPLATE, null, 2)}\n`, { mode: 0o600 });
-    chmodSync(path, 0o600);
-    process.stdout.write(`created: ${path}\nThe user fills in the values in this file themselves. Do not ask them to paste keys into the chat.\n`);
+    writePrivate(path, `${JSON.stringify(TEMPLATE, null, 2)}\n`);
+    out.write(`created: ${path}\nThe user fills in the values in this file themselves. Do not ask them to paste keys into the chat.\n`);
+    return 0;
+  }
+
+  if (source === "compare") {
+    const [, kind, curPath, prevPath] = positional;
+    if (!["ga4", "gsc"].includes(kind) || !curPath || !prevPath) throw new UsageError(USAGE);
+    out.write(
+      `${compare(kind, readJsonFile(curPath), readJsonFile(prevPath), {
+        metric: flags.metric,
+        order: flags.order ?? "abs",
+        minValue: Number(flags.min ?? 0),
+      })}\n`,
+    );
+    return 0;
+  }
+
+  if (source === "cannibalization") {
+    if (!raw) throw new UsageError(USAGE);
+    out.write(
+      `${cannibalization(readJsonFile(raw), {
+        minShare: Number(flags["min-share"] ?? 0.1),
+        minImpressions: Number(flags["min-impressions"] ?? 100),
+      })}\n`,
+    );
     return 0;
   }
 
@@ -179,53 +270,71 @@ async function run(argv) {
 
   if (source === "check") {
     if (config === null) {
-      process.stdout.write(`status: no_config\nconfig: ${path}\n`);
+      out.write(`status: no_config\nconfig: ${path}\n`);
       return 2;
+    }
+    if (isModeTooOpen(path)) {
+      out.write(`warning: ${path} can be read by other users; run "init" to set it to 600\n`);
     }
     for (const s of ["ga4", "gsc", "posthog"]) {
       const missing = missingSetup(config, s);
-      process.stdout.write(missing.length === 0 ? `${s}: ready\n` : `${s}: missing ${missing.join("; ")}\n`);
+      out.write(missing.length === 0 ? `${s}: ready\n` : `${s}: missing ${missing.join("; ")}\n`);
     }
     return 0;
   }
 
   if (!["ga4", "gsc", "posthog"].includes(source) || raw === undefined) {
-    throw new UsageError("usage: analytics-query.mjs check | init | ga4 '<json>' | gsc '<json>' | posthog '<hogql>'");
+    throw new UsageError(USAGE);
   }
   if (config === null) {
-    process.stdout.write(`status: no_config\nconfig: ${path}\nRun "init" to create it.\n`);
+    out.write(`status: no_config\nconfig: ${path}\nRun "init" to create it.\n`);
     return 2;
   }
   const missing = missingSetup(config, source);
   if (missing.length > 0) {
-    process.stdout.write(`status: missing_setup\nsource: ${source}\nconfig: ${path}\nmissing: ${missing.join("; ")}\n`);
+    out.write(`status: missing_setup\nsource: ${source}\nconfig: ${path}\nmissing: ${missing.join("; ")}\n`);
     return 2;
   }
 
-  let out;
+  let text;
   if (source === "ga4") {
     const token = await googleAccessToken(config, GA4_SCOPE);
-    out = await postJson(ga4Url(config.ga4PropertyId), token, parseBody(raw, "the GA4 request"));
+    text = await postJson(ga4Url(config.ga4PropertyId), token, parseBody(raw, "the GA4 request"));
   } else if (source === "gsc") {
     const token = await googleAccessToken(config, GSC_SCOPE);
-    out = await postJson(gscUrl(config.gscSiteUrl), token, parseBody(raw, "the Search Console request"));
+    text = await postJson(gscUrl(config.gscSiteUrl), token, parseBody(raw, "the Search Console request"));
   } else {
     const ph = config.posthog;
-    out = await postJson(posthogUrl(ph.host, ph.projectId), ph.personalApiKey, {
+    text = await postJson(posthogUrl(ph.host, ph.projectId), ph.personalApiKey, {
       query: { kind: "HogQLQuery", query: raw },
     });
   }
-  process.stdout.write(`${out}\n`);
+  const saved = saveResult(source, text);
+  if (flags.raw) {
+    out.write(`${text}\n`);
+    return 0;
+  }
+  let summary;
+  try {
+    summary = summarize(source, JSON.parse(text));
+  } catch {
+    summary = `(response is not the expected JSON; first 2000 characters)\n${text.slice(0, 2000)}`;
+  }
+  out.write(`saved: ${saved}\n${summary}\n`);
   return 0;
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  // process.exitCode, never process.exit(): exiting right after a large
+  // write to a pipe cuts stdout off at the pipe buffer (64 KiB on macOS).
   run(process.argv.slice(2)).then(
-    (code) => process.exit(code),
+    (code) => {
+      process.exitCode = code;
+    },
     (err) => {
       process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-      process.exit(err instanceof UsageError ? 64 : 1);
+      process.exitCode = err instanceof UsageError ? 64 : 1;
     },
   );
 }

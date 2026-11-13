@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { spawn } from "node:child_process";
 import { createVerify, generateKeyPairSync } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -122,5 +125,170 @@ describe("the traffic-analytics starter skill", () => {
     const verifier = createVerify("RSA-SHA256");
     verifier.update(`${header}.${claims}`);
     expect(verifier.verify(publicKey, Buffer.from(signature, "base64url"))).toBe(true);
+  });
+
+  describe("running the script", () => {
+    /** A PostHog stand-in that answers every query with `body`. */
+    async function stubServer(body: string): Promise<{ server: Server; url: string }> {
+      const server = createServer((req, res) => {
+        req.resume();
+        req.on("end", () => {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(body);
+        });
+      });
+      await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("no port");
+      return { server, url: `http://127.0.0.1:${address.port}` };
+    }
+
+    function runScript(args: string[], env: Record<string, string>) {
+      return new Promise<{ code: number | null; stdout: string }>((ok, fail) => {
+        const child = spawn(process.execPath, [scriptPath, ...args], {
+          env: { ...process.env, ...env },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (d: string) => (stdout += d));
+        child.on("error", fail);
+        child.on("close", (code) => ok({ code, stdout }));
+      });
+    }
+
+    function setup(host: string, mode = 0o600) {
+      const dir = mkdtempSync(join(tmpdir(), "traffic-analytics-"));
+      const config = join(dir, "traffic-analytics.json");
+      writeFileSync(
+        config,
+        JSON.stringify({ posthog: { host, projectId: "1", personalApiKey: "phx_test" } }),
+        { mode },
+      );
+      return { dir, config, env: { ATOMIC_AGENT_STATE_DIR: dir, ATOMIC_AGENT_ANALYTICS_CONFIG: config } };
+    }
+
+    const bigBody = JSON.stringify({
+      columns: ["event", "n", "pad"],
+      results: Array.from({ length: 4000 }, (_, i) => [`event_${i}`, i, "x".repeat(30)]),
+    });
+
+    it("prints a 200 KB response whole through a pipe with --raw", async () => {
+      expect(bigBody.length).toBeGreaterThan(200_000);
+      const { server, url } = await stubServer(bigBody);
+      const { dir, env } = setup(url);
+      try {
+        const { code, stdout } = await runScript(["posthog", "SELECT 1", "--raw"], env);
+        expect(code).toBe(0);
+        expect(stdout.length).toBe(bigBody.length + 1);
+        expect(JSON.parse(stdout).results).toHaveLength(4000);
+      } finally {
+        server.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 30_000);
+
+    it("saves a large response privately and prints only a summary and the path", async () => {
+      const { server, url } = await stubServer(bigBody);
+      const { dir, env } = setup(url);
+      try {
+        const { code, stdout } = await runScript(["posthog", "SELECT 1"], env);
+        expect(code).toBe(0);
+        expect(stdout.length).toBeLessThan(8_000);
+        expect(stdout).toMatch(/rows: 4000/);
+        const saved = stdout.match(/^saved: (.+)$/m)?.[1];
+        expect(saved).toBeDefined();
+        expect(saved!.startsWith(join(dir, "traffic-analytics", "results"))).toBe(true);
+        expect(readFileSync(saved!, "utf8")).toBe(bigBody);
+        if (process.platform !== "win32") {
+          expect(statSync(saved!).mode & 0o777).toBe(0o600);
+        }
+      } finally {
+        server.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }, 30_000);
+
+    it.skipIf(process.platform === "win32")(
+      "keeps the credentials file at mode 600: init creates and tightens it, check warns",
+      async () => {
+        const { dir, config, env } = setup("http://127.0.0.1:9", 0o644);
+        try {
+          const warned = await runScript(["check"], env);
+          expect(warned.stdout).toMatch(/can be read by other users/);
+          const fixed = await runScript(["init"], env);
+          expect(fixed.stdout).toMatch(/permissions tightened to 600/);
+          expect(statSync(config).mode & 0o777).toBe(0o600);
+          const clean = await runScript(["check"], env);
+          expect(clean.stdout).not.toMatch(/can be read by other users/);
+
+          const fresh = join(dir, "fresh.json");
+          await runScript(["init"], { ...env, ATOMIC_AGENT_ANALYTICS_CONFIG: fresh });
+          expect(statSync(fresh).mode & 0o777).toBe(0o600);
+        } finally {
+          rmSync(dir, { recursive: true, force: true });
+        }
+      },
+      30_000,
+    );
+
+    it("never ends with process.exit, which cuts piped output short", () => {
+      const source = readFileSync(scriptPath, "utf8").replace(/^\s*\/\/.*$/gm, "");
+      expect(source).not.toMatch(/process\.exit\(/);
+      expect(source).toMatch(/process\.exitCode = /);
+    });
+  });
+
+  describe("aggregation on saved results", () => {
+    const summaryPath = join(root, "scripts", "analytics-summary.mjs");
+
+    it("flags queries split between several pages", async () => {
+      const mod = await import(pathToFileURL(summaryPath).href);
+      const out: string = mod.cannibalization({
+        rows: [
+          { keys: ["local ai agent", "/a"], clicks: 10, impressions: 300, position: 4.2 },
+          { keys: ["local ai agent", "/b"], clicks: 5, impressions: 200, position: 5.1 },
+          { keys: ["local ai agent", "/c"], clicks: 0, impressions: 10, position: 30 },
+          { keys: ["mac agent", "/a"], clicks: 3, impressions: 150, position: 3 },
+          { keys: ["tiny", "/a"], clicks: 0, impressions: 20, position: 9 },
+          { keys: ["tiny", "/b"], clicks: 0, impressions: 20, position: 9 },
+        ],
+      });
+      expect(out).toMatch(/queries checked: 3; flagged: 1/);
+      expect(out).toMatch(/local ai agent \(510 impressions\)/);
+      expect(out).toMatch(/\/a: impressions=300/);
+      expect(out).toMatch(/\/b: impressions=200/);
+      expect(out).not.toMatch(/\/c:/);
+      expect(out).not.toMatch(/mac agent|tiny/);
+      expect(() => mod.cannibalization({ rows: [{ keys: ["only-query"] }] })).toThrow(/query","page/);
+    });
+
+    it("compares two saved results by row", async () => {
+      const mod = await import(pathToFileURL(summaryPath).href);
+      const cur = { rows: [{ keys: ["q1"], clicks: 5, impressions: 500 }, { keys: ["q3"], clicks: 1, impressions: 80 }] };
+      const prev = { rows: [{ keys: ["q1"], clicks: 3, impressions: 100 }, { keys: ["q2"], clicks: 9, impressions: 400 }] };
+      const growth: string = mod.compare("gsc", cur, prev, { order: "growth" });
+      expect(growth.split("\n").slice(3)).toEqual([
+        "q1: 100 -> 500 (+400)",
+        "q3: 0 -> 80 (+80) [new]",
+        "q2: 400 -> 0 (-400) [gone]",
+      ]);
+      expect(growth).toMatch(/total: previous=500 current=580 change=80/);
+      const ga4 = (value: string) => ({
+        dimensionHeaders: [{ name: "sessionDefaultChannelGroup" }],
+        metricHeaders: [{ name: "sessions" }],
+        rows: [{ dimensionValues: [{ value: "Organic Search" }], metricValues: [{ value }] }],
+      });
+      expect(mod.compare("ga4", ga4("120"), ga4("200"))).toMatch(/Organic Search: 200 -> 120 \(-80\)/);
+    });
+
+    it("caps the summary at 30 rows", async () => {
+      const mod = await import(pathToFileURL(summaryPath).href);
+      const rows = Array.from({ length: 5000 }, (_, i) => ({ keys: [`q${i}`], clicks: i, impressions: i * 10 }));
+      const out: string = mod.summarize("gsc", { rows });
+      expect(out.split("\n")).toHaveLength(32);
+      expect(out).toMatch(/^rows: 5000/);
+      expect(out).toMatch(/q4999: clicks=4999/);
+    });
   });
 });

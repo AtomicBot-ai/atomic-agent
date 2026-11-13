@@ -46,13 +46,25 @@ user fills in, so they never appear in the chat and never in tool output.
 | `["ga4", "<runReport JSON>"]` | POST to `properties/<id>:runReport`. The property comes from the file. |
 | `["gsc", "<query JSON>"]` | POST to `sites/<site>/searchAnalytics/query`. The site comes from the file. |
 | `["posthog", "<HogQL>"]` | POST `{"query":{"kind":"HogQLQuery","query":...}}` to `/api/projects/<id>/query/`. |
+| `["compare", "gsc" or "ga4", "<current.json>", "<previous.json>", "--order", "abs"]` | Joins two saved results by row and lists the biggest changes. `--metric` (default `impressions` for gsc, the first metric for ga4), `--order abs`, `growth` or `drop`, `--min <n>` to skip small rows. |
+| `["cannibalization", "<query-page.json>"]` | Finds queries where 2+ pages each get at least 10% of the impressions. `--min-share 0.1`, `--min-impressions 100`. |
+
+**Output is short on purpose.** Every query saves the full response under
+`~/.atomic-agent/traffic-analytics/results/` (mode 600) and prints only
+`saved: <path>` plus a summary of at most 30 rows. You see only a few
+thousand characters of tool output, so do joins and grouping with
+`compare` and `cannibalization` on the saved files instead of asking for
+everything on screen. Pass the exact `saved:` paths. Add `--raw` only for
+small responses you need whole.
 
 Exit code 2 with `status: missing_setup` or `status: no_config` means the
 source is not connected: stop querying it and go to Setup. Exit code 1 is an
 API error; read the message (403 usually means the service account was not
 added to that property or site).
 
-Run `check` once at the start, not before every query.
+Run `check` once at the start, not before every query. If `check` warns
+that the credentials file can be read by other users, run `init`: it sets
+the file to mode 600.
 
 ## Setup (only when `check` says something is missing)
 
@@ -106,29 +118,31 @@ Do not tell the user a given toolkit works unless a call to it just did.
 
 ## Recipe 1: why did traffic drop
 
-1. **Confirm the drop and date it.** GA4 by day for both ranges:
+1. **Confirm the drop and date it.** GA4 by day, one request per range
+   (28 rows each fit in the summary):
 
    ```json
-   {"dateRanges":[{"startDate":"2026-10-15","endDate":"2026-11-11","name":"current"},{"startDate":"2026-09-17","endDate":"2026-10-14","name":"previous"}],"dimensions":[{"name":"date"}],"metrics":[{"name":"sessions"},{"name":"totalUsers"}],"orderBys":[{"dimension":{"dimensionName":"date"}}],"limit":100}
+   {"dateRanges":[{"startDate":"2026-10-15","endDate":"2026-11-11"}],"dimensions":[{"name":"date"}],"metrics":[{"name":"sessions"},{"name":"totalUsers"}],"orderBys":[{"dimension":{"dimensionName":"date"}}],"limit":100}
    ```
 
-   With two `dateRanges` GA4 adds a `dateRange` column to every row. Find
-   the day it started: a cliff on one day points to a change (release,
-   tracking, migration, outage); a slow slide points to rankings or demand.
-2. **Find where it happened.** Same two ranges, one dimension at a time,
+   Then the same for the previous range. Find the day it started: a cliff
+   on one day points to a change (release, tracking, migration, outage); a
+   slow slide points to rankings or demand.
+2. **Find where it happened.** One request per range and dimension,
    metric `sessions`: `sessionDefaultChannelGroup`, then `landingPage`,
-   `country`, `deviceCategory`, `sessionSource`. For each, list the rows
-   with the largest absolute change. The drop usually sits in one or two
-   of them.
-3. **If organic search fell, open Search Console.** Two queries per range
+   `country`, `deviceCategory`, `sessionSource`. Then run
+   `["compare", "ga4", "<current saved path>", "<previous saved path>", "--order", "drop"]`
+   for each. The drop usually sits in one or two rows.
+3. **If organic search fell, open Search Console.** One query per range
    with `"dimensions":["page"]` and then `["query"]`:
 
    ```json
    {"startDate":"2026-10-15","endDate":"2026-11-09","dimensions":["page"],"rowLimit":1000,"dataState":"final"}
    ```
 
-   Compare clicks, impressions, CTR and position per row and read the
-   pattern:
+   Run `compare gsc` on the two saved files, once with `--metric clicks`
+   and once with `--metric impressions` (add `--metric position` for the
+   pages that moved). Read the pattern:
 
    | Pattern | Likely meaning (hypothesis until checked) |
    |---|---|
@@ -154,14 +168,15 @@ Do not tell the user a given toolkit works unless a call to it just did.
 ## Recipe 2: fast-rising queries
 
 1. Search Console `"dimensions":["query"]`, `"rowLimit":5000`, for the last
-   28 days and for the 28 before.
-2. Join by query. For each query compute the change in clicks and in
-   impressions. Keep queries with at least 50 impressions in the current
-   range (say the threshold you used), or new queries with no row in the
-   previous range.
-3. Sort by impression growth. Show the top 20 with current and previous
-   impressions, clicks and position, and the page that ranks (re-query with
-   `["query","page"]` for those queries if needed).
+   28 days and for the 28 before. The full rows are saved; only the summary
+   is printed.
+2. Join and sort in the script, not by hand:
+   `["compare", "gsc", "<current saved path>", "<previous saved path>", "--metric", "impressions", "--order", "growth", "--min", "50"]`.
+   Rows marked `[new]` had no row in the previous range. Say the threshold
+   you used. Run it again with `--metric clicks` if clicks matter more.
+3. Show the top 20 with current and previous impressions and clicks, and
+   the page that ranks (re-query with `["query","page"]` and a filter on
+   those queries if needed).
 4. Point out queries with many impressions and position worse than 10:
    demand exists, the page is not yet on page one.
 
@@ -172,12 +187,13 @@ query and split the clicks.
 
 1. Search Console `"dimensions":["query","page"]`, last 28 days,
    `"rowLimit":25000` (the maximum; page with `startRow` if there are more
-   rows).
-2. Group rows by query. Flag a query when two or more pages each have at
-   least 10% of that query's impressions. Ignore queries under 100 total
-   impressions (state the thresholds).
+   rows). The full rows are saved; only the summary is printed.
+2. Run `["cannibalization", "<saved path>"]`. It flags a query when two or
+   more pages each have at least 10% of that query's impressions and skips
+   queries under 100 total impressions (change with `--min-share` and
+   `--min-impressions`, and state the thresholds you used).
 3. For each flagged query show the pages with impressions, clicks and
-   position. Strong signs: positions close together, or the pages swapping
+   position from the script output. Strong signs: positions close together, or the pages swapping
    places over time (re-query that query by `["date","page"]` to see it).
 4. Brand-name queries often match many pages and are rarely a problem;
    list them separately.
