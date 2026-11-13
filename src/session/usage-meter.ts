@@ -2,6 +2,7 @@ import type { CompletionUsage } from "../llm/provider/completion-types.js";
 import type { ResolvedModel } from "../llm/provider/model-resolver.js";
 import type { RateLimitWindow } from "../llm/provider/rate-limits.js";
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
+import type { DailySpendView } from "./daily-spend.js";
 
 /**
  * What a session has spent and how much of the account's limits is left
@@ -44,6 +45,14 @@ export interface SessionUsageState {
   /** The account rate-limit readings in force when this was recorded. */
   limits: readonly LimitReading[];
   updatedAt: number;
+  /**
+   * What every session spent today, and the daily ceiling if one is set
+   * (ATO-649). Stamped on the live `usage_updated` event only, when the
+   * operator asked to see it (`costTracking.showInStatusBar`) or set a
+   * ceiling (`costTracking.dailyLimitUsd`); never part of what a session
+   * persists, because the day is not the session's.
+   */
+  today?: DailySpendView;
 }
 
 /**
@@ -355,8 +364,25 @@ export function formatResetTime(at: number, now: number): string {
 }
 
 /**
- * The status-line parts this module owns, in order: cost, then limit.
- * Only parts with data; an empty array draws nothing.
+ * Today's part of the readout (ATO-649): `today $1.20`, `today $1.20+`
+ * (some calls unpriced), `today $1.20 of $5.00` with a ceiling set.
+ * `null` when there is no reading or nothing was priced today: an
+ * unknown price shows nothing rather than a made-up `$0.00`. With a
+ * ceiling and nothing priced yet, `today $0.00 of $5.00` is true and
+ * worth saying.
+ */
+export function formatDailySpend(today: DailySpendView | undefined): string | null {
+  if (!today) return null;
+  const limit = today.limitUsd !== undefined && today.limitUsd > 0 ? today.limitUsd : null;
+  if (today.pricedCalls === 0 && limit === null) return null;
+  const spent = `${formatUsd(today.usd)}${today.unpricedCalls > 0 ? "+" : ""}`;
+  return limit === null ? `today ${spent}` : `today ${spent} of ${formatUsd(limit)}`;
+}
+
+/**
+ * The status-line parts this module owns, in order: session cost,
+ * today's spend, then limit. Only parts with data; an empty array draws
+ * nothing.
  */
 export function usageStatusParts(
   state: SessionUsageState | undefined,
@@ -365,6 +391,8 @@ export function usageStatusParts(
   const parts: string[] = [];
   const cost = formatSessionCost(state);
   if (cost) parts.push(cost);
+  const today = formatDailySpend(state?.today);
+  if (today) parts.push(today);
   const limit = state ? pickHeadlineLimit(state.limits, now) : null;
   if (limit) parts.push(formatLimit(limit, now));
   return parts;
@@ -398,6 +426,15 @@ export function formatUsageReport(
     if (state.localCalls > 0) {
       lines.push(`  ${plural(state.localCalls, "call")} on a local model — not billed`);
     }
+  }
+  const today = formatDailySpend(state?.today);
+  if (today) {
+    lines.push(
+      `  ${today}, all sessions` +
+        (state?.today?.limitUsd !== undefined
+          ? " (paid calls stop at the limit: llm.costTracking.dailyLimitUsd)"
+          : ""),
+    );
   }
   const live = activeLimits(state?.limits ?? [], now);
   if (live.length === 0) {

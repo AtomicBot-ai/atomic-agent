@@ -68,6 +68,19 @@ export function maintenanceFrame(event: AgentLoopEvent, sessionId: string): Main
           ...(r.resetsAt !== undefined ? { resets_at: r.resetsAt } : {}),
           ...(r.status !== undefined ? { status: r.status } : {}),
         })),
+        // ATO-649: today's spend over every session, and the ceiling,
+        // when the operator turned either on.
+        ...(u.today
+          ? {
+              today: {
+                day: u.today.day,
+                cost_usd: u.today.usd,
+                priced_calls: u.today.pricedCalls,
+                unpriced_calls: u.today.unpricedCalls,
+                ...(u.today.limitUsd !== undefined ? { limit_usd: u.today.limitUsd } : {}),
+              },
+            }
+          : {}),
       });
     }
     case "history_trimmed":

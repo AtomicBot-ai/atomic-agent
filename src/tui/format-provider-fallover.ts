@@ -36,11 +36,13 @@ export function formatProviderFalloverNotice(
       ? `${from} is out of credit. Top it up, until then answers come from ${to}.`
       : cause === "auth"
         ? `${from} did not accept the API key. Until you fix it, answers come from ${to}.`
-        : `Answers come from ${to} until ${from} recovers.`,
+        : cause === "spend-limit"
+          ? `Cloud calls are paused until tomorrow (llm.costTracking.onDailyLimit is "local"). Until then every answer comes from ${to}.`
+          : `Answers come from ${to} until ${from} recovers.`,
   ].join("\n");
 }
 
-export type FalloverCause = "billing" | "auth" | "other";
+export type FalloverCause = "billing" | "auth" | "spend-limit" | "other";
 
 /**
  * What kind of failure this was, from the reason text the chain carries.

@@ -109,6 +109,23 @@ describe("context maintenance over SSE", () => {
     ]);
   });
 
+  it("adds today's spend and the ceiling to the usage frame when stamped (ATO-649)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    hook({
+      type: "usage_updated",
+      sessionId: "s1",
+      usage: {
+        costUsd: 0.31, pricedCalls: 3, unpricedCalls: 0, localCalls: 0, planCalls: 0,
+        costSources: ["catalog"], unpricedModels: [], updatedAt: 1, limits: [],
+        today: { day: "2026-11-12", usd: 1.2, pricedCalls: 7, unpricedCalls: 1, limitUsd: 5 },
+      },
+    });
+    expect(sse.written[0]?.payload).toMatchObject({
+      today: { day: "2026-11-12", cost_usd: 1.2, priced_calls: 7, unpriced_calls: 1, limit_usd: 5 },
+    });
+  });
+
   it("ignores another session's compaction", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));
