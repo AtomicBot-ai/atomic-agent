@@ -143,6 +143,18 @@ is the agent's own: the FULL model id against the provider entry's
 the chip's display label and not the basename, which would read
 `openai/gpt-4.1` and `azure/gpt-4.1` as the same model.
 
+**A project's own cloud model (ATO-1148).** A project is a chat's working
+folder. On a cloud route, a cloud model picked in the composer's switcher is
+remembered for that folder (`<userData>/project-models.json`,
+[project-model.ts](main/project-model.ts)) instead of switching the agent:
+every turn of a chat in that folder, new chats included, sends
+`provider_id` + `provider_model` and the agent runs that turn on it without
+touching its config or active model, so other chats keep theirs and nothing
+waits or restarts. The chip and the chosen row show the project's model
+([project-model.js](renderer/project-model.js)). Local, Custom and Fusion
+stay one per agent, and the local model rows say "Local model is shared by
+all projects". A remote agent keeps one model for every chat.
+
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
 desktop app has to work against what people installed. The sidecar also has no

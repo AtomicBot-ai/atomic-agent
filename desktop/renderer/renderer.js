@@ -9528,6 +9528,7 @@ function applyStatus(st) {
     AGENT_GEN++;
     appSay('Connected · ' + S.live.workingDir);
     loadResources();
+    if (typeof ProjectModels !== 'undefined') ProjectModels.load(BR).then((ok) => { if (ok) render(); });   // ATO-1148
     drainOwed();   // Backlog 26: a queue owed while the agent was down
   }
   if (S.live.state === 'missing-binary' || S.live.state === 'error') {
@@ -9786,7 +9787,7 @@ function startLiveTurn(text) {
   // Backlog 25: read once. The person can open another chat before the
   // agent answers, and the turn still runs in the session it was sent with.
   const session = S.agentSession || undefined;
-  BR.chat([{role:'user', content:text}], session).then((res) => {
+  BR.chat([{role:'user', content:text}], session, projectTurnModel(session)).then((res) => {
     if (!res || !res.ok) {
       S.busy = false; clearInterval(ticker);
       S.log.push({id:nid(), k:'system', text:'could not start the turn: ' + esc((res && res.error) || 'unknown error')});
@@ -12110,6 +12111,8 @@ function applyWorkspaceChoice(dir) {
   if (live) dir = dir.dir;
   const cloud = !!SK.workingDir;
   WORKSPACE = dir;
+  // ATO-1148: the chat on screen moved, and with it into that folder's project.
+  if (live && S.agentSession && typeof ProjectModels !== 'undefined') ProjectModels.noteChatFolder(S.agentSession, dir);
   if (cloud) act('session:new');
   S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + (live ? ' · this chat works there now' : ' · the agent is restarting there')});
   render();
@@ -12196,7 +12199,9 @@ function activeModel() {
     if (managed.modelId) return managed.modelId;
     return '';
   }
-  return liveBackend() === 'local' ? S.localModel : S.cloudModel;
+  if (liveBackend() === 'local') return S.localModel;
+  const project = projectTurnModel(S.agentSession);   // ATO-1148
+  return project ? project.model : S.cloudModel;
 }
 
 /* ============================================================
@@ -18428,7 +18433,34 @@ function selProviders() {
 function selActiveProviderId() {
   // r5 item 10: the operator's choice paints first. See swxRun.
   if (SWX.want && SWX.want.providerId) return SWX.want.providerId;
+  // ATO-1148: the chat's project has its own cloud model.
+  const project = projectTurnModel(S.agentSession);
+  if (project) return project.providerId;
   return LIVE_CONFIG && LIVE_CONFIG.llm && LIVE_CONFIG.llm.activeTextProvider;
+}
+/* ATO-1148: the project cloud model a turn of this chat runs on, or null
+   for the agent's own (renderer/project-model.js). The chat's folder is its
+   own when the window knows it, else the window's (a new chat opens there). */
+function projectTurnModel(sessionId) {
+  if (typeof ProjectModels === 'undefined' || !BR) return null;
+  return ProjectModels.turnModel(ProjectModels.folderOf(sessionId || null, workingDir()), llmProviders(), liveBackend());
+}
+/* ATO-1148: a cloud model picked in the switcher is remembered for the
+   chat's folder, and no global switch runs: other chats keep their model and
+   nothing waits for them. False when it does not apply (not a single cloud
+   route, a remote agent, a local provider), and the old global pick runs. */
+async function pickProjectModel(providerId, model) {
+  if (typeof ProjectModels === 'undefined' || !BR || !BR.setProjectModel || !ProjectModels.state.loaded || ProjectModels.state.remote) return false;
+  if (liveBackend() !== 'cloud' || !projectCloudEntry(llmProvider(providerId))) return false;
+  const folder = ProjectModels.folderOf(S.agentSession || null, workingDir());
+  if (!folder) return false;
+  closeSelector();
+  const res = await ProjectModels.set(BR, folder, {providerId, model});
+  if (!res || !res.ok) { toast('Could not select the model', (res && res.error) || ''); render(); return true; }
+  S.log.push({id:nid(), k:'system', text: esc('Model for this project (' + workingDirLabel(folder) + '): ' + stampWords(providerId, model) + '. Other projects keep theirs.')});
+  render();
+  if (typeof refreshContext === 'function') refreshContext();
+  return true;
 }
 
 function openSelector(kind) {
@@ -18665,7 +18697,8 @@ function selRows() {
   if (selBackend() === 'fusion' && !selProviders().some((p) => p.id === selActiveProviderId())) return [];
   const pid = selActiveProviderId();
   const entry = selProviders().find((p) => p.id === pid);
-  const rows = selCloudRows(pid, SEL.models, entry && entry.defaultChatModel);
+  const project = projectTurnModel(S.agentSession);   // ATO-1148: the project's own model is the chosen row
+  const rows = selCloudRows(pid, SEL.models, project && project.providerId === pid ? project.model : entry && entry.defaultChatModel);
   return selBackend() === 'cloud' ? selGroupedRows(pid, rows) : rows;
 }
 
@@ -18682,7 +18715,7 @@ function selLocalRows(custom) {
       const vision = visionFetchable(m);
       return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
         detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '',
-          vision ? modelVisionFact(m) : '']
+          vision ? modelVisionFact(m) : '', typeof ProjectModels !== 'undefined' ? ProjectModels.localNote() : '']
           .filter(Boolean).join(' · '),
         projectorMissing: vision, visionLabel: vision ? visionFetchLabel(m) : null,
         note, noRoom: disk.ok ? null : disk.text};
@@ -18864,6 +18897,8 @@ async function selActivate(row) {
        is locked until the switch is live. */
     // ATO-730: a row from another provider's group is that provider's model.
     const pid = row.provider || selActiveProviderId();
+    // ATO-1148: on a cloud route the pick is this chat's project's own, for this folder only.
+    if (await pickProjectModel(pid, row.id)) return;
     /* r5 item 10. This row was ALREADY optimistic — and wrongly so: it
        mutated the live provider entry in place (`entry.defaultChatModel =
        row.id`) and never awaited, so the operator could send a message at
@@ -21048,6 +21083,8 @@ async function openSession(id) {
   S.busy = live;
   // ATO-164: plain words, not "a turn is still running here — the reply lands when it finishes".
   if (live && !rebuilt) S.log.push({id:nid(), k:'system', text:LIVE_ELSEWHERE_LINE});
+  // ATO-1148: the chat's own folder picks its project's model.
+  if (typeof ProjectModels !== 'undefined') ProjectModels.noteChatFolder(id, data && data.workingDir);
   // Anything sent from here continues that session rather than starting a new one.
   S.agentSession = id;
   S.history = [];
@@ -21188,7 +21225,10 @@ function noteSessionModelStamp(data) {
      matched on the basename only, so `openai/gpt-4.1` and `azure/gpt-4.1`
      read as the same model and a real difference was suppressed. */
   const liveEntry = llmProvider(liveProvider);
-  const liveModel = liveEntry ? (liveEntry.defaultChatModel || liveEntry.model || '') : '';
+  // ATO-1148: a chat in a project with its own cloud model runs on that one.
+  const project = projectTurnModel(S.agentSession);
+  const liveModel = project && project.providerId === liveProvider ? project.model
+    : liveEntry ? (liveEntry.defaultChatModel || liveEntry.model || '') : '';
   // The display label stays the chip's — except the local route's "download model" prompt, which is not a model.
   const shownLabel = activeModel();
   const shownModel = (shownLabel && shownLabel !== DOWNLOAD_MODEL_LABEL ? shownLabel : '') || liveModel;

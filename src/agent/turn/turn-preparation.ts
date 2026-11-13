@@ -78,7 +78,7 @@ export function prepareAgentTurn(
   // below describe the ACTIVE provider, which is the wrong one here.
   const pinnedSlice =
     options.providerId !== undefined && deps.resolveLlmSlice
-      ? deps.resolveLlmSlice(options.providerId)
+      ? deps.resolveLlmSlice(options.providerId, options.model)
       : null;
   const visibleToolDescriptors = (): readonly ToolDescriptor[] => {
     const filter = options.toolFilter;

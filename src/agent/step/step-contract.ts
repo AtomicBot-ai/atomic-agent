@@ -145,6 +145,14 @@ export interface LlmStreamParams {
    * the chain picks the link as before.
    */
   providerId?: string;
+  /**
+   * With `providerId`: the chat model to ask that link for, instead of
+   * the model its config entry names (ATO-1148, a project's own cloud
+   * model). The request goes to a copy of the pinned provider built for
+   * this model; the config and the active provider are not touched, so
+   * other chats keep their model. Ignored without `providerId`.
+   */
+  model?: string;
 }
 
 
@@ -279,6 +287,8 @@ export interface StepDependencies {
    * `LlmStreamParams.providerId`; see that field for the contract.
    */
   providerId?: string;
+  /** The pinned link's model for this turn; `LlmStreamParams.model`. */
+  model?: string;
   /**
    * Invoked after every LLM completion (initial call and one-shot parse
    * retry alike). Used by the agent loop to feed the served `modelId`
