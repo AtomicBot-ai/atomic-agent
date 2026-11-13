@@ -439,6 +439,32 @@ test("the desktop's own HTTP and network failures are transport, with the status
   assert.equal(V.validateEvent("chat_turn_ui", { outcome: "failed", http_status: 503 }, "main").props.http_status, 503);
 });
 
+test("a Stop after an approval was answered lands on the tool, not the approval (ATO-1026)", () => {
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s));
+  const run = (id, decision, extra = []) => {
+    t.begin(id);
+    t.observe({ turnId: id, kind: "session_id", payload: { session_id: id } });
+    t.observe({ turnId: id, kind: "tool_progress", payload: { tool: "os.shell.run" } });
+    t.approval({ sessionId: id, approvalId: id + "-a" });
+    t.approvalAnswered({ approvalId: id + "-a", decision });
+    for (const f of extra) t.observe({ turnId: id, kind: f, payload: {} });
+    t.observe({ turnId: id, kind: "aborted", by: "user" });
+    return out[out.length - 1].cancel_phase;
+  };
+  assert.equal(run("p1", "allow-once"), "tool");
+  assert.equal(run("p2", "deny"), "waiting_next");
+  // A frame after the answer is not undone by it.
+  assert.equal(run("p3", "allow-once", ["delta"]), "generating");
+  // An answer to a request no open turn counted moves nothing.
+  t.begin("p4");
+  t.observe({ turnId: "p4", kind: "session_id", payload: { session_id: "p4" } });
+  t.approval({ sessionId: "p4", approvalId: "p4-a" });
+  t.approvalAnswered({ approvalId: "other", decision: "allow-once" });
+  t.observe({ turnId: "p4", kind: "aborted", by: "user" });
+  assert.equal(out[out.length - 1].cancel_phase, "approval");
+});
+
 test("a redelivered approval request is counted once (ATO-203)", () => {
   const out = [];
   const t = new T.ChatTurnTracker((s) => out.push(s));

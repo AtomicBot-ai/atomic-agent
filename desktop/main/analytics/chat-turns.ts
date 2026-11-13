@@ -157,6 +157,24 @@ export class ChatTurnTracker {
     }
   }
 
+  /**
+   * The person answered an approval (main's agent:approve, after the agent
+   * took the answer). Allowed, the approved tool runs: "tool"; denied, the
+   * model reads the refusal before its next step: "waiting_next". Matched by
+   * the request id the turn counted, or by session. Only a turn still on
+   * "approval" moves, so a frame that already came after it is not undone.
+   */
+  approvalAnswered(ev: { approvalId?: unknown; sessionId?: unknown; decision?: unknown }): void {
+    const id = typeof ev?.approvalId === "string" && ev.approvalId ? ev.approvalId : null;
+    const sid = typeof ev?.sessionId === "string" ? ev.sessionId : null;
+    for (const t of this.turns.values()) {
+      if ((id && t.approvalIds.has(id)) || (!id && sid && t.sessionId === sid)) {
+        if (t.phase === "approval") t.phase = ev.decision === "deny" ? "waiting_next" : "tool";
+        return;
+      }
+    }
+  }
+
   observe(ev: {
     turnId?: unknown; kind?: unknown; category?: unknown; payload?: unknown;
     reason?: unknown; transport?: unknown; httpStatus?: unknown; by?: unknown;
