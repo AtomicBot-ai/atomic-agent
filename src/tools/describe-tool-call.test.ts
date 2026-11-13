@@ -93,6 +93,7 @@ describe("describeToolCall (ATO-962)", () => {
     expect(line("video.generate", {}, true)).toBe("Generated a video");
     expect(line("audio.transcribe", { path: "voice.ogg" }, true)).toBe("Transcribed voice.ogg");
     expect(line("audio.transcribe", {})).toBe("Transcribing a recording");
+    expect(line("audio.listen", {}, true)).toBe("Listened to a recording");
     expect(line("fusion.delegate", { tasks: [{}, {}, {}] })).toBe("Delegating 3 tasks");
     expect(line("fusion_worker", {}, true)).toBe("Ran a worker");
   });

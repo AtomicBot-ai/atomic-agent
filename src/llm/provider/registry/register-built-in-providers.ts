@@ -13,6 +13,7 @@ import { resolveExtraApiKeys } from "../../../config/resolve-llm-api-key.js";
 import type { StructuredLogger } from "../../../tracing/index.js";
 import { isExternalEngineEntry } from "../openai/json-schema-tool-mode.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
+import { resolveCloudModelAudio } from "../model-audio.js";
 import { resolveCloudModelVision } from "../model-vision.js";
 import {
   OpenRouterProvider,
@@ -91,6 +92,20 @@ function modelVisionOptions(
   return { supportsVision: verdict.vision, visionSource: verdict.visionSource };
 }
 
+/**
+ * Whether the model this link serves takes audio input, per MODEL
+ * (`model-audio.ts`). `unknown` is left implicit: the provider reads
+ * an absent flag as "no audio".
+ */
+function modelAudioOptions(
+  entry: LlmProviderConfigEntry,
+  modelId: string,
+): { supportsAudio?: boolean; audioSource?: ProviderCapabilities["audioSource"] } {
+  const verdict = resolveCloudModelAudio(entry, modelId);
+  if (verdict.audioSource === "unknown") return {};
+  return { supportsAudio: verdict.audio, audioSource: verdict.audioSource };
+}
+
 
 /**
  * An entry that never serves chat: either every declared `userModels` row
@@ -163,6 +178,7 @@ export function registerBuiltInProviderKinds(): void {
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
       ...(chatModel ? modelVisionOptions(entry, chatModel) : {}),
+      ...(chatModel ? modelAudioOptions(entry, chatModel) : {}),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
@@ -201,6 +217,7 @@ export function registerBuiltInProviderKinds(): void {
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
       ...(chatModel ? modelVisionOptions(entry, chatModel) : {}),
+      ...(chatModel ? modelAudioOptions(entry, chatModel) : {}),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       taggedToolCompatibility: "qwen",
@@ -228,6 +245,7 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: model,
       headers: entry.headers,
       ...modelVisionOptions(entry, model),
+      ...modelAudioOptions(entry, model),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       extraBody: entry.extraBody,
@@ -268,6 +286,7 @@ export function registerBuiltInProviderKinds(): void {
       ...modelWireOptions(entry, model),
       headers: entry.headers,
       ...modelVisionOptions(entry, model),
+      ...modelAudioOptions(entry, model),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       logger: ctx.logger,
@@ -291,6 +310,7 @@ export function registerBuiltInProviderKinds(): void {
       ...modelWireOptions(entry, model),
       headers: entry.headers,
       ...modelVisionOptions(entry, model),
+      ...modelAudioOptions(entry, model),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,
       logger: ctx.logger,

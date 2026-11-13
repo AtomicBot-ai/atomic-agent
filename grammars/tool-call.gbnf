@@ -104,7 +104,7 @@ memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" 
 tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
 # Cross-chat tools (ATO-570); unconditional like `tasks.*`.
 sessions-tool ::= "\"sessions." ( "list" | "read" | "send" | "check" ) "\""
-vision-tool ::= "\"vision.describe\""
+vision-tool ::= "\"vision.describe\"" | "\"audio.listen\""
 image-tool ::= "\"image.generate\""
 # Speech to text with whisper.cpp (ATO-702): a Telegram voice message is
 # answered by a local model too, so the name must be in its vocabulary.

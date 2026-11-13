@@ -78,6 +78,8 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
         ...(Array.isArray(args.paths) ? args.paths.map(nonEmpty) : []),
       ].filter((path): path is string => path !== undefined),
   ],
+  // The clip is read from disk and sent to the model (ATO-497).
+  ["audio.listen", pathArg],
   [
     // `browser.act { action: "upload" }` reads local files and sends
     // them to a site (ATO-957): scoped like any read, and the agent's

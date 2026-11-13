@@ -82,6 +82,11 @@ export type UserLlmProviderEntry = {
   apiKeyHeader?: string;
   supportsTools?: boolean;
   supportsVision?: boolean;
+  /**
+   * The model on this link takes audio input (`input_audio` parts).
+   * Absent = not known, which reads as "no" (ATO-497).
+   */
+  supportsAudio?: boolean;
   requestTimeoutMs?: number;
   /**
    * Hard ceiling on this provider's output, in tokens. Absent means no
@@ -175,6 +180,8 @@ export type UserModelEntry = {
   contextWindow?: number;
   dim?: number;
   supportsVision?: boolean;
+  /** This model takes audio input (`input_audio` parts); see `audio.listen`. */
+  supportsAudio?: boolean;
   supportsTools?: "none" | "basic" | "parallel" | "strict";
   supportsPromptCache?: boolean;
   /**
@@ -435,6 +442,10 @@ export function parseLlmProviderEntry(
                 "expected boolean",
               );
             })(),
+    supportsAudio: parseOptionalBoolean(
+      obj.supportsAudio,
+      `${field}.supportsAudio`,
+    ),
     requestTimeoutMs:
       obj.requestTimeoutMs === undefined
         ? undefined
@@ -664,6 +675,10 @@ function parseUserModelEntry(raw: unknown, field: string): UserModelEntry {
     supportsVision: parseOptionalBoolean(
       obj.supportsVision,
       `${field}.supportsVision`,
+    ),
+    supportsAudio: parseOptionalBoolean(
+      obj.supportsAudio,
+      `${field}.supportsAudio`,
     ),
     supportsTools: parseOptionalEnum<
       NonNullable<UserModelEntry["supportsTools"]>

@@ -49,6 +49,8 @@ export type LlmProviderConfigEntry = {
   extraApiKeyEnvVars?: string[];
   supportsTools?: boolean;
   supportsVision?: boolean;
+  /** See `UserLlmProviderEntry.supportsAudio` (ATO-497). */
+  supportsAudio?: boolean;
   requestTimeoutMs?: number;
   promptCache?: "auto" | "off" | "explicit-markers";
   /** Native-tools request layout; see `UserLlmProviderEntry.messageShape`. */
@@ -97,6 +99,7 @@ export type UserModelConfigEntry = {
   contextWindow?: number;
   dim?: number;
   supportsVision?: boolean;
+  supportsAudio?: boolean;
   supportsTools?: "none" | "basic" | "parallel" | "strict";
   supportsPromptCache?: boolean;
   reasoningFormat?: LlmProvider["capabilities"]["reasoningFormat"];

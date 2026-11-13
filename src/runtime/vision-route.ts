@@ -80,3 +80,68 @@ export function visionRouteAvailable(deps: VisionRouteGateDeps): boolean {
     providerOffersVision(worker, deps.isLlamaServer(worker.id))
   );
 }
+
+/**
+ * Whether `audio.listen` is offered on a provider (ATO-497, decision 62).
+ * `vision.audioInput` is tri-state:
+ *
+ * - `false`: never.
+ * - `true`: always, cloud included (the operator agreed the file may be
+ *   uploaded); a model that cannot hear still refuses per call.
+ * - unset (auto, the default): only a LOCAL `llama-server` link whose
+ *   loaded model reports audio (`/props` `modalities.audio`, i.e. its
+ *   projector has an audio encoder). A local model without audio, and
+ *   every cloud model, leave the tool out, so audio stays a file for
+ *   the `audio-transcribe` skill. Unlike vision there is no "offered
+ *   before the probe lands": the descriptor appears once `/props` says
+ *   the model can hear.
+ */
+export function providerOffersAudio(
+  provider: LlmProvider,
+  isLlamaServer: boolean,
+  audioInput: boolean | undefined,
+): boolean {
+  if (audioInput === false) return false;
+  if (audioInput === true) return true;
+  return isLlamaServer && provider.capabilities.audio === true;
+}
+
+/**
+ * Whether audio may be sent to this provider at call time. Same rule as
+ * the descriptor gate minus the capability (the tool checks that
+ * itself, with a better refusal): in auto mode a cloud provider never
+ * receives the file, even when a model on it could hear.
+ */
+export function audioInputAllowedOn(
+  isLlamaServer: boolean,
+  audioInput: boolean | undefined,
+): boolean {
+  if (audioInput === false) return false;
+  return audioInput === true || isLlamaServer;
+}
+
+export interface AudioRouteGateDeps extends VisionRouteGateDeps {
+  /** Live `vision.audioInput`: `true`, `false` or unset (auto). */
+  audioInput: () => boolean | undefined;
+}
+
+/**
+ * The live gate behind the `audio` descriptor filter: true when the
+ * active provider, or the fusion worker leg, offers audio under
+ * `providerOffersAudio`. Re-read on every descriptor read, so a local
+ * model swap to (or away from) an audio-capable model shows or hides
+ * the tool on the next step.
+ */
+export function audioRouteAvailable(deps: AudioRouteGateDeps): boolean {
+  const setting = deps.audioInput();
+  if (setting === false) return false;
+  const active = deps.registry.activeText;
+  if (providerOffersAudio(active, deps.isLlamaServer(active.id), setting)) return true;
+  const workerId = deps.fusionWorkerProviderId();
+  if (workerId === null || workerId === active.id) return false;
+  const worker = deps.registry.getProvider(workerId);
+  return (
+    worker !== undefined &&
+    providerOffersAudio(worker, deps.isLlamaServer(worker.id), setting)
+  );
+}
