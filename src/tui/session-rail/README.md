@@ -11,6 +11,8 @@ Read the inherited [TUI instructions](../AGENTS.md) and [interface contract](../
 
 [SessionRailOrchestrator](session-rail-orchestrator.ts) remembers the emitted list and uses an injected layout store/entry loader; config persistence is in persist-session-rail.ts. [ChatOrchestrator](../chat-orchestrator.ts) owns actual session switching/deletion/replay and coordinates detached turns/approvals. [Sidebar](../components/sidebar.tsx) composes rail, navigation and tasks. Picker/delete state and submit/modal precedence remain in [TuiState](../tui-state.ts), [global keys](../app-key-bindings.ts), [submit](../submit-handler.ts) and [TuiApp](../tui-app.tsx).
 
+[chat-folders.ts](chat-folders.ts) reads the desktop's chat folders (`<stateDir>/chat-folders.json`, ATO-1034) read-only; the orchestrator groups the arranged rail by them (pinned block, folders, unfiled rest) and the picker draws folder headers (ATO-1180). Folders are edited in the desktop only.
+
 Preserve anchored deletion target, pinned sessions missing from recent results, displayed-order move semantics, cancellation and reattachment. Rail layout does not become owner of session-store resources.
 
 ## Checks and limits
