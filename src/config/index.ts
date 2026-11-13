@@ -87,6 +87,12 @@ export {
   type UserLlmFusionConfig,
   type UserLlmRunModeConfig,
 } from "./llm-run-mode-config.js";
+export {
+  parseLlmRouterConfig,
+  type UserLlmRouterConditions,
+  type UserLlmRouterConfig,
+  type UserLlmRouterRule,
+} from "./llm-router-config.js";
 export type { DotenvLoadResult, DotenvReadFailure } from "./load-dotenv.js";
 export { DotenvWriterError, setDotenvKey } from "./dotenv-writer.js";
 export type { SetDotenvKeyResult } from "./dotenv-writer.js";

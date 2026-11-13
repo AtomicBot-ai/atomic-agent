@@ -150,6 +150,7 @@ import {
   type UserLlmFileConfig,
 } from "./llm-config.js";
 import type { UserLlmRunModeConfig } from "./llm-run-mode-config.js";
+import type { UserLlmRouterConfig } from "./llm-router-config.js";
 import { defaultProviderModelMode } from "./model-mode.js";
 
 export type { ApprovalLevel } from "../approval/approval-level.js";
@@ -591,6 +592,15 @@ export interface AtomicAgentConfig {
     openrouter?: {
       preferCacheRoutes?: boolean;
     };
+    /**
+     * Opt-in rule-based model router (ATO-483): rules that put a
+     * configured provider first in a turn's fallback chain by what the
+     * request looks like. Off unless `enabled`; does nothing under the
+     * local run mode or Fusion (the cloud mode routes between cloud
+     * providers). See
+     * `src/llm/router/`.
+     */
+    router?: UserLlmRouterConfig;
   };
 }
 

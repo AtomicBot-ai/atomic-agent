@@ -86,7 +86,7 @@ describe("runtime turn ownership recipes", () => {
         shellJobs: { endSession: id => { events.push(`shell-session:${id}`); return []; }, endTurn: () => { events.push("shell-turn"); return []; } },
         slotManager: { sideCallSlotId: () => 7, release: id => { events.push(`slot-release:${id}`); } }, llmComplete: async () => completion(),
       },
-      inference: { ...providers, fallbackChain: { standingOverrideFor: () => null } },
+      inference: { ...providers, fallbackChain: { standingOverrideFor: () => null, setTurnPrimary: () => {} } },
       traces: {
         ensureRecorder: () => { events.push("recorder"); return null; },
         pinSession: () => { events.push("pin"); },
@@ -165,6 +165,19 @@ describe("runtime turn ownership recipes", () => {
     });
     const output = await fixture.service.executeTurn(session(), "request");
     expect(output.reason).toBe("reply");
+  });
+
+  it("the model router never moves a pinned turn, and an unrouted turn resets the chain head (ATO-483)", async () => {
+    const setTurnPrimary = vi.spyOn(fixture.deps.inference.fallbackChain, "setTurnPrimary");
+    const active = resolveLlmConfig(fixture.config).activeTextProvider;
+    fixture.config.llm.router = { enabled: true, rules: [{ provider: active }] };
+    await fixture.service.executeTurn(session(), "request", { providerId: active });
+    expect(setTurnPrimary).not.toHaveBeenCalled();
+    // A rule naming the active provider routes nothing: the head is put
+    // back, and the router never pins the turn itself.
+    await fixture.service.executeTurn(session("other"), "request");
+    expect(setTurnPrimary).toHaveBeenCalledWith("other", null);
+    expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("providerId");
   });
 
   it("unknown pins reject before enqueue and before recorder/all other turn work", async () => {

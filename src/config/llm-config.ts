@@ -1,4 +1,5 @@
 import { ConfigValidationError } from "./config-validation-error.js";
+import { parseLlmRouterConfig, type UserLlmRouterConfig } from "./llm-router-config.js";
 import { isSetAsideString } from "./config-primitives.js";
 import {
   setAsideActiveStandIn,
@@ -230,6 +231,8 @@ export type UserLlmFileConfig = {
   runMode?: UserLlmRunModeConfig;
   /** Settings for every `openrouter` entry at once. */
   openrouter?: UserLlmOpenRouterConfig;
+  /** Opt-in rule-based model router (ATO-483). See `llm-router-config.ts`. */
+  router?: UserLlmRouterConfig;
 };
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -837,6 +840,14 @@ export function parseUserLlmFileConfig(
       : parseLlmRunModeConfig(obj.runMode, providers, "llm.runMode");
 
   const openrouter = parseLlmOpenRouterConfig(obj.openrouter, "llm.openrouter");
+  const router =
+    obj.router === undefined || obj.router === null
+      ? undefined
+      : parseLlmRouterConfig(
+          obj.router,
+          new Set(providers.map((p) => p.id)),
+          "llm.router",
+        );
 
   return {
     activeTextProvider,
@@ -846,6 +857,7 @@ export function parseUserLlmFileConfig(
     ...(fallback ? { fallback } : {}),
     ...(runMode ? { runMode } : {}),
     ...(openrouter ? { openrouter } : {}),
+    ...(router ? { router } : {}),
   };
 }
 
