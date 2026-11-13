@@ -41,6 +41,25 @@ describe("groupHintFromCwd", () => {
     expect(groupHintFromCwd("relative/dir")).toBeUndefined();
     expect(groupHintFromCwd("/")).toBeUndefined();
   });
+
+  it("files an agent's worktree under its repository", () => {
+    expect(groupHintFromCwd("/Users/me/app/.claude/worktrees/kind-ellis-b45ecb", "/Users/me"))
+      .toEqual({ key: "/Users/me/app", name: "app", cwd: "/Users/me/app" });
+    expect(groupHintFromCwd("/Users/me/app/.codex/worktrees/x/src", "/Users/me")).toMatchObject({ name: "app" });
+  });
+
+  it("makes no project of the home folder, /tmp or the Claude app's scratch space", () => {
+    const home = "/Users/me";
+    expect(groupHintFromCwd("/Users/me", home)).toBeUndefined();
+    expect(groupHintFromCwd("/Users/me/", home)).toBeUndefined();
+    expect(groupHintFromCwd("/Users/me/.claude/worktrees/busy-wing-9701f2", home)).toBeUndefined();
+    expect(groupHintFromCwd("/private/tmp", home)).toBeUndefined();
+    expect(groupHintFromCwd("/tmp/build", home)).toBeUndefined();
+    expect(groupHintFromCwd(
+      "/Users/me/Library/Application Support/Claude/scratch-workspaces/13c6/0645/scratch-2026-09-30-29eb57", home,
+    )).toBeUndefined();
+    expect(groupHintFromCwd("/Users/me/Desktop/site", home)).toMatchObject({ name: "site" });
+  });
 });
 
 describe("planImportGrouping", () => {

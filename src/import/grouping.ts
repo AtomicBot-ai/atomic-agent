@@ -6,6 +6,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import type { ImportItemResult, ImportReport } from "./import-report.js";
@@ -60,16 +61,54 @@ export interface ImportGroupHint {
   cwd: string | null;
 }
 
-/** The hint for a session that ran in `cwd`, or undefined when it recorded none. */
+/**
+ * The hint for a session that ran in `cwd`, or undefined when it recorded
+ * none or the folder is not a project.
+ *
+ * W2 QA (803 Claude Code chats): grouping by the raw folder made 59
+ * projects, most of them throwaway. So, the way Claude itself lists
+ * projects:
+ *   - a git worktree an agent made (`<repo>/.claude/worktrees/<name>`,
+ *     `.codex/worktrees`, `.cursor/worktrees`) counts as its repository;
+ *   - the home folder, the filesystem root, /tmp and the Claude
+ *     app's scratch workspaces are no project: those chats stay under Chats.
+ */
 export function groupHintFromCwd(
   cwd: string | null | undefined,
+  home: string = homedir(),
 ): ImportGroupHint | undefined {
   if (typeof cwd !== "string") return undefined;
-  const dir = cwd.trim();
+  let dir = cwd.trim();
   if (!isAbsolutePath(dir)) return undefined;
+  const wt = /^(.*?)[\\/]\.(?:claude|codex|cursor)[\\/]worktrees[\\/][^\\/]+(?:[\\/].*)?$/.exec(dir);
+  if (wt) dir = wt[1] ?? "";
+  if (!dir || !isAbsolutePath(dir) || notAProjectFolder(dir, home)) return undefined;
   const name = lastSegment(dir);
   if (!name) return undefined;
   return { key: dir, name, cwd: dir };
+}
+
+function samePath(a: string, b: string): boolean {
+  const norm = (p: string) => p.replace(/[\\/]+$/, "").replace(/\\/g, "/");
+  return !!b && norm(a).toLowerCase() === norm(b).toLowerCase();
+}
+
+function underPath(dir: string, root: string): boolean {
+  if (!root) return false;
+  const d = dir.replace(/\\/g, "/").toLowerCase();
+  const r = root.replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
+  return d === r || d.startsWith(r + "/");
+}
+
+/* Only the shared /tmp: the per-user temp folder (os.tmpdir(), /var/folders
+   on a Mac) also holds every test fixture, so it is not ruled out here. */
+function notAProjectFolder(dir: string, home: string): boolean {
+  if (/^(?:[a-zA-Z]:)?[\\/]*$/.test(dir)) return true;
+  if (samePath(dir, home)) return true;
+  for (const t of ["/tmp", "/private/tmp"]) {
+    if (underPath(dir, t)) return true;
+  }
+  return /[\\/]Claude[\\/]scratch-workspaces(?:[\\/]|$)/i.test(dir);
 }
 
 /** A named group that is not a folder (a Claude app project, say). */
