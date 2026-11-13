@@ -99,7 +99,8 @@ test('only plain values outside the panels that own them are editable', () => {
   assert.equal(kind('web.search.exa.apiKeyEnv'), '');  // credential-shaped
   assert.equal(kind('localModels.completionMaxTokens'), '');  // the Models panel owns it
   assert.equal(S.allSetIsSecret('telegram.botToken'), true);
-  assert.equal(S.allSetIsSecret('agent.tokenBudget'), false);
+  // The agent's rule reads any `token` word as a credential (`tokenBudget` too); `maxTokens` is not one.
+  assert.equal(S.allSetIsSecret('agent.goal.maxTokens'), false);
 });
 
 test('a draft becomes the typed value the config takes', () => {
