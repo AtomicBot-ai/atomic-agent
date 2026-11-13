@@ -29,14 +29,9 @@
   -webkit-mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px);
   mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px)}
 #scroller > .col720{flex:none;width:100%;max-width:720px;margin:0 auto;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
-/* Backlog 18 review: the download card floats over the bottom-right of the
-   transcript. --dlcard-chat (renderer dlCardOverChat) is how far up it reaches
-   over this column, so the column's end — the newest reply, an approval's
-   buttons — scrolls clear of it. 0 while the card is away or beside the
-   column. A chat too short to scroll takes it too; it starts at the top
-   (06.10), so the room only counts once the chat reaches down to the card,
-   and the folded badge keeps the open card's room. The empty chat has no
-   column: its greeting stays as it is. */
+/* Backlog 18 review: room under the column's end for a card over it,
+   --dlcard-chat (renderer dlCardPublish). ATO-1185: the download card hangs
+   from the sidebar header now and covers no conversation, so it stays 0. */
 #scroller > .col720{padding-bottom:max(16px, var(--dlcard-chat, 0px))}
 #scroller > .col720 > *{min-width:0}
 

@@ -578,12 +578,16 @@ async function chatRoom(js: Js, check: Check, w: BrowserWindow | null): Promise<
     const g = r.withCard;
     const tag = `${cw}×${ch}${inspector ? " with the inspector open" : ""}`;
     const c = g.card;
-    const reach = !!c && g.abort.hit && g.allow.hit && g.deny.hit && !!g.appr && g.appr.bottom <= c.top
+    /* ATO-1185: the card hangs under the sidebar header now, so "within
+       reach" is the presses themselves: none of the three lands on the card. */
+    const meet = (a: Box | null, b: Box | null) => !!a && !!b && a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+    const reach = !!c && g.abort.hit && g.allow.hit && g.deny.hit && !!g.appr
+      && !meet(c, g.abort.box) && !meet(c, g.allow.box) && !meet(c, g.deny.box)
       && !!g.abort.box && !!g.scroller && g.abort.box.top >= g.scroller.top && g.stuck === true;
     if (!inspector) {
       const e = r.empty;
       check(
-        `T18-F6: at ${tag}, in a conversation with the card open, the approval at its end sits above the card — a press on Abort run, Allow once and Deny reaches it`,
+        `T18-F6: at ${tag}, in a conversation with the card open, the card covers none of the approval at its end — a press on Abort run, Allow once and Deny reaches it`,
         g.width === cw && reach && r.plain.abort.hit && r.gone.abort.hit && r.gone.stuck === true
           && e.length === 2 && e[0]!["greeting"] !== null && e[0]!["greeting"] === e[1]!["greeting"] && e[0]!["chips"] === e[1]!["chips"],
         JSON.stringify({ card: c, appr: g.appr, abort: g.abort, allow: g.allow.hit, deny: g.deny.hit, scroller: g.scroller,
@@ -592,8 +596,8 @@ async function chatRoom(js: Js, check: Check, w: BrowserWindow | null): Promise<
     } else {
       const i = g.inspector;
       check(
-        `T18-F6: at ${tag} the card stands clear of the inspector and above the composer, and the approval stays within reach`,
-        g.width === cw && !!i && !!c && c.right <= i.left - 8 && !!g.dock && c.bottom <= g.dock.top && reach,
+        `T18-F6: at ${tag} the card stands clear of the inspector and of the composer, and the approval stays within reach`,
+        g.width === cw && !!i && !!c && c.right <= i.left - 8 && !meet(c, g.dock) && reach,
         JSON.stringify({ card: c, inspector: i, dock: g.dock?.top, appr: g.appr, abort: g.abort, stuck: g.stuck, room: g.room }),
       );
     }

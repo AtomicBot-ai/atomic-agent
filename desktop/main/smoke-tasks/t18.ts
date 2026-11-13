@@ -14,8 +14,9 @@ import { configGet, configSetWhole } from "../agent-cli.js";
  * carried the download afterwards was a flex child between the toolbar and
  * the chat: the whole chat jumped down ~46px when it came and back up when
  * it went. Download now hands over the agent at once — the same hand-over
- * as "Start using the agent now" — and the download lives in a card floating
- * in the window's bottom-right corner (Atomic Chat's DownloadPanel).
+ * as "Start using the agent now" — and the download lives in a card
+ * (Atomic Chat's DownloadPanel). ATO-1185: the card is the popover of a
+ * downloads icon in the sidebar header (Jan's pattern), not a corner card.
  *
  * Nothing is downloaded and nothing restarts: the queue runs dry (DL.dry —
  * no child is spawned), `models status` and the activation are swapped for
@@ -57,11 +58,17 @@ const HELPERS = String.raw`
     return {top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right),
       width: Math.round(r.width), height: Math.round(r.height)}; };
   const txt = (n) => (n ? (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim() : '');
+  // ATO-1185: closed, the downloads are the icon in the sidebar header; open, the card under it.
+  const badgeEl = () => document.querySelector('#sidebar .sb-dl .dlc-badge');
   const card = () => {
     const el = document.getElementById('dlcard');
+    const b = badgeEl();
+    if ((!el || el.hidden || !el.firstElementChild) && b) {
+      return {box: box(b), title: '', count: txt(b.querySelector('.dlc-n')), folded: true, rows: [], cloud: ''};
+    }
     if (!el || el.hidden || !el.firstElementChild) return null;
     return {box: box(el.firstElementChild), title: txt(el.querySelector('.dlc-ttl > span')),
-      count: txt(el.querySelector('.dlc-count, .dlc-n')), folded: !!el.querySelector('.dlc-badge'),
+      count: txt(el.querySelector('.dlc-count')) || txt(b && b.querySelector('.dlc-n')), folded: false,
       rows: [...el.querySelectorAll('.dlc-row')].map((r) => ({name: txt(r.querySelector('.dlc-name')),
         line: txt(r.querySelector('.dlc-line')), cancel: (r.querySelector('.dlc-x') || {dataset: {}}).dataset.act || null,
         retry: !!r.querySelector('.dlc-retry'), switch: !!r.querySelector('.dlc-switch')})),
@@ -188,7 +195,7 @@ async function handOverRun(js: Js, check: Check): Promise<void> {
     JSON.stringify({ button: r["button"], open: r["open"], step: r["step"], handOver: r["handOver"], outcome: r["outcome"], composer: r["composer"] }),
   );
   check(
-    "T18a: the card in the corner shows the queued download — llama.cpp runtime, then the model by its own name",
+    "T18a: the downloads card shows the queued download — llama.cpp runtime, then the model by its own name",
     !!c && c.title === "Downloading" && c.count === "2" && c.rows.length === 2
       && c.rows[0]!.name === "Local engine" && /^Starting/.test(c.rows[0]!.line)
       && c.rows[1]!.name === "Smoke Model 9B" && c.rows[1]!.line === "Queued"
@@ -340,16 +347,17 @@ async function resumeAfterQuitRun(js: Js, check: Check): Promise<void> {
   );
 }
 
-/* (b)(c)(d) Where the card stands, at the smallest window and at the
-   default one; that the chat does not move when it comes and goes (a
-   conversation it would cover only lifts clear of it); that there is no
-   strip; that toasts stay readable above it. */
+/* (b)(c)(d) Where the card stands, at the smallest window (icon rail) and
+   at the default one (sidebar open): under the sidebar header (ATO-1185);
+   that the chat does not move when it comes and goes; that there is no
+   strip; that no toast is under it. */
 async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<void> {
   type Geo = {
     width: number; height: number; card: { box: Box } | null; folded: { box: Box } | null; strip: boolean;
     composer: Box | null; dock: Box | null; send: Box | null; chips: Box | null; toolbar: Box | null; main: Box | null;
     sendHit: boolean; chipHit: boolean; still: Record<string, number | null>[]; stillChat: Record<string, number | null>[];
-    toasts: { shown: number; hidden: number; lowest: number; newest: boolean; limit: number } | null;
+    toasts: { shown: number; hidden: number; lowest: number; newest: boolean; limit: number; overCard: boolean } | null;
+    sidebar: Box | null; head: Box | null;
   };
   const sizes: [number, number][] = [[940, 620], [1280, 820]];
   for (const [cw, ch] of sizes) {
@@ -375,7 +383,7 @@ async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<
         if (f) f.click();
         await tick(80);
         still.push(marks());
-        const b = document.querySelector('#dlcard .dlc-badge');
+        const b = document.querySelector('#sidebar .sb-dl .dlc-badge');
         if (b) b.click();
         await tick(80);
         still.push(marks());
@@ -410,17 +418,19 @@ async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<
         out.chips = box(document.querySelector('#composer .cfoot'));
         out.toolbar = box(document.getElementById('toolbar'));
         out.main = box(document.getElementById('main'));
+        out.sidebar = box(document.getElementById('sidebar'));
+        out.head = box(document.querySelector('#sidebar .sb-head'));
         // A press on the send button and on the last chip reaches them, not the card.
         const hit = (b, sel) => { if (!b) return false; const n = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
           return !!(n && n.closest(sel)); };
         out.sendHit = hit(out.send, '.sendbtn');
         const chipEls = [...document.querySelectorAll('#composer .cfoot .cchip')];
         out.chipHit = chipEls.length > 0 && chipEls.every((n) => hit(box(n), '.cchip'));
-        // Folded, the badge stands in the same corner.
+        // Folded, the list goes and the icon in the sidebar header stays.
         const fold = document.querySelector('#dlcard .dlc-fold');
         if (fold) fold.click();
         await tick(80);
-        const badge = document.querySelector('#dlcard .dlc-badge');
+        const badge = document.querySelector('#sidebar .sb-dl .dlc-badge');
         out.folded = badge ? {box: box(badge)} : null;
         if (badge) badge.click();
         await tick(80);
@@ -430,7 +440,10 @@ async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<
         const live = [...document.querySelectorAll('#toasts > .toast')].filter((n) => !n.classList.contains('out'));
         const shown = live.filter((n) => !n.hidden && n.getBoundingClientRect().height > 0);
         const cardTop = (card() || {box: {top: 0}}).box.top;
+        const cb = (card() || {box: null}).box;
+        const over = (r) => !!cb && r.right > cb.left && r.left < cb.right && r.bottom > cb.top && r.top < cb.bottom;
         out.toasts = {shown: shown.length, hidden: live.length - shown.length, limit: cardTop,
+          overCard: shown.some((n) => over(n.getBoundingClientRect())),
           lowest: Math.round(Math.max(0, ...shown.map((n) => n.getBoundingClientRect().bottom))),
           newest: shown.length > 0 && shown[shown.length - 1] === live[live.length - 1]};
         S.toasts = []; renderToasts();
@@ -443,36 +456,35 @@ async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<
     })()`);
     const tag = `${g.width}×${g.height}`;
     const c = g.card?.box ?? null;
-    const corner = !!c && Math.abs(c.right - (g.width - 16)) <= 1 && c.top >= (g.toolbar?.bottom ?? 0);
-    const clear = !!c && !!g.composer && !!g.dock && c.bottom <= g.dock.top && c.bottom <= g.composer.top
-      && !!g.send && c.bottom <= g.send.top && g.sendHit && g.chipHit;
+    /* ATO-1185: the card hangs under the sidebar header (beside the icon
+       rail when the sidebar is folded) and covers none of the composer. */
+    const meet = (a: Box | null, b: Box | null) => !!a && !!b && a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+    const rail = !!g.sidebar && g.sidebar.width < 120;
+    const under = !!c && !!g.head && !!g.sidebar && (rail
+      ? c.left >= g.sidebar.right && Math.abs(c.top - g.head.top) <= 3   // 3: the last of its 6px drop-in
+      : Math.abs(c.left - g.head.left) <= 1 && c.top >= g.head.bottom);
+    const clear = !!c && !meet(c, g.composer) && !meet(c, g.dock) && !!g.send && g.sendHit && g.chipHit;
     check(
-      `T18b: at ${tag} the card is in the bottom-right corner, above the composer — the send button and the chips are not under it`,
-      g.width === cw && corner && clear,
-      JSON.stringify({ card: c, composer: g.composer, dock: g.dock?.top, send: g.send, sendHit: g.sendHit, chipHit: g.chipHit, toolbar: g.toolbar?.bottom }),
+      `T18b: at ${tag} the card hangs under the sidebar header${rail ? " (beside the rail)" : ""}, clear of the composer — the send button and the chips are not under it`,
+      g.width === cw && under && clear,
+      JSON.stringify({ card: c, head: g.head, sidebar: g.sidebar, composer: g.composer, dock: g.dock?.top, sendHit: g.sendHit, chipHit: g.chipHit }),
     );
     const f = g.folded?.box ?? null;
     check(
-      `T18b: at ${tag} folded, the round badge holds the same corner, above the composer`,
-      !!f && f.width === 44 && f.height === 44 && Math.abs(f.right - (g.width - 16)) <= 1 && !!g.dock && f.bottom <= g.dock.top,
-      JSON.stringify({ badge: f, dock: g.dock?.top }),
+      `T18b: at ${tag} folded, the downloads icon stays in the sidebar header`,
+      !!f && (f.width === 32 || f.width === 24) && f.height === f.width && meet(f, g.head),
+      JSON.stringify({ badge: f, head: g.head }),
     );
     const steady = (s: Record<string, number | null>[], keys = ["main", "scroller", "composer", "greeting", "first"]) => s.length === 5
       && keys.every((k) => s.every((m) => m[k] === s[0]![k]));
-    /* Chat review Д19: a conversation the card would cover lifts clear of it
-       when the card comes and settles back when it goes (marks 1–3 with the
-       card, 0 and 4 without); folding and opening the card move nothing, and
-       the empty chat does not move at all. Since 06.10 the conversation
-       starts at the top, so a short one does not move either (<=). */
-    const chat = g.stillChat;
-    const first = (i: number) => chat[i]?.["first"] ?? null;
-    const lifted = chat.length === 5 && first(0) !== null && first(1) === first(2) && first(2) === first(3)
-      && first(4) === first(0) && (first(1) ?? 0) <= (first(0) ?? 0);
+    /* ATO-1185: up under the sidebar header the card covers no conversation,
+       so nothing in the chat moves — empty or not — when it comes, folds,
+       opens and goes (it took room under the last message as a corner card). */
     check(
-      `T18c: at ${tag} the empty chat does not move when the card comes, folds, opens and goes; a conversation only lifts clear of it, and folding or opening moves nothing`,
-      steady(g.still) && g.still[0]!["greeting"] !== null && steady(chat, ["main", "scroller", "composer"]) && lifted
-        && g.still[0]!["composer"] !== null,
-      JSON.stringify({ empty: g.still[0], chat: g.stillChat[0], firsts: [0, 1, 2, 3, 4].map(first), moved: [...g.still, ...g.stillChat].filter((m, i, a) =>
+      `T18c: at ${tag} neither the empty chat nor a conversation moves when the card comes, folds, opens and goes`,
+      steady(g.still) && g.still[0]!["greeting"] !== null && steady(g.stillChat, ["main", "scroller", "composer", "first"])
+        && g.still[0]!["composer"] !== null && g.stillChat[0]!["first"] !== null,
+      JSON.stringify({ empty: g.still[0], chat: g.stillChat[0], moved: [...g.still, ...g.stillChat].filter((m, i) =>
         JSON.stringify(m) !== JSON.stringify(i < g.still.length ? g.still[0] : g.stillChat[0])) }),
     );
     check(
@@ -482,8 +494,8 @@ async function geometry(js: Js, check: Check, w: BrowserWindow | null): Promise<
     );
     const t = g.toasts;
     check(
-      `T18b: at ${tag} the toasts stop above the card, and the newest one is always shown`,
-      !!t && t.shown >= 1 && t.newest && t.lowest <= t.limit,
+      `T18b: at ${tag} no toast is under the card, and the newest one is always shown`,
+      !!t && t.shown >= 1 && t.newest && !t.overCard,
       JSON.stringify(t),
     );
   }
@@ -505,8 +517,8 @@ async function controls(js: Js, check: Check): Promise<void> {
       await tick(60);
       out.open = card();
       out.folded = (await press('#dlcard .dlc-fold')) ? card() : null;
-      out.foldedLabel = (document.querySelector('#dlcard .dlc-badge') || {getAttribute: () => null}).getAttribute('aria-expanded');
-      out.unfolded = (await press('#dlcard .dlc-badge')) ? card() : null;
+      out.foldedLabel = (document.querySelector('#sidebar .sb-dl .dlc-badge') || {getAttribute: () => null}).getAttribute('aria-expanded');
+      out.unfolded = (await press('#sidebar .sb-dl .dlc-badge')) ? card() : null;
 
       // Cancel on the running row: the setup download's own cancel path.
       if (typeof window.dlCancel === 'function') {
