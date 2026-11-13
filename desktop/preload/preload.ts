@@ -117,8 +117,16 @@ contextBridge.exposeInMainWorld("atomic", {
   /** One turn of the agent loop, streamed back over `onChat`. */
   // ATO-42: `projectId` puts a NEW chat (no sessionId yet) in that project from its first turn.
   /** ATO-490: `reasoning` is the chat's level (low | medium | high); absent for Auto. */
-  chat: (messages: Array<{ role: string; content: string }>, sessionId?: string, projectId?: string, reasoning?: string) =>
-    ipcRenderer.invoke("agent:chat", { messages, sessionId, ...(projectId ? { projectId } : {}), ...(reasoning ? { reasoning } : {}) }),
+  /** ATO-1148: `turnModel` is the chat's project cloud model; absent for the agent's own. */
+  chat: (messages: Array<{ role: string; content: string }>, sessionId?: string, projectId?: string, reasoning?: string,
+    turnModel?: { providerId: string; model: string } | null) =>
+    ipcRenderer.invoke("agent:chat", {
+      messages, sessionId, ...(projectId ? { projectId } : {}), ...(reasoning ? { reasoning } : {}), ...(turnModel ? { turnModel } : {}),
+    }),
+  /** ATO-1148: each working folder's own cloud model (main/project-model.ts). */
+  projectModels: () => ipcRenderer.invoke("app:projectModels"),
+  setProjectModel: (dir: string, pick: { providerId: string; model: string } | null) =>
+    ipcRenderer.invoke("app:setProjectModel", { dir, providerId: pick ? pick.providerId : null, model: pick ? pick.model : null }),
   cancel: (turnId: string) => ipcRenderer.invoke("agent:cancel", turnId),
   onChat: (cb: (payload: unknown) => void) => on("agent:chat", cb),
 

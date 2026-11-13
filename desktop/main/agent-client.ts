@@ -2158,6 +2158,8 @@ export class AgentClient extends EventEmitter {
     project?: { name: string; text: string } | null,
     /** ATO-490: the chat's reasoning level; absent for Auto. */
     reasoning?: ReasoningLevel,
+    /** ATO-1148: this turn runs on the chat's project cloud model (main/project-model.ts). */
+    turnModel?: { providerId: string; model: string },
   ): Promise<void> {
     const controller = new AbortController();
     this.turns.set(turnId, controller);
@@ -2188,9 +2190,15 @@ export class AgentClient extends EventEmitter {
           ...(workingDir ? { working_dir: workingDir } : {}),
           ...projectFields(project),
           ...reasoningBodyField(reasoning),
+          // ATO-1148: for this turn only; the agent's config and active model stay as they are.
+          ...(turnModel ? { provider_id: turnModel.providerId, provider_model: turnModel.model } : {}),
         }),
         signal: controller.signal,
       });
+      // An agent from before ATO-1148 ignores the fields and runs its own model; say so in the log.
+      if (turnModel && res.ok && !res.headers.get("x-atomic-turn-model")) {
+        console.warn(`[desktop] project model: the agent ran this turn on its own model, not ${turnModel.providerId}/${turnModel.model} (older agent)`);
+      }
       if (!res.ok || !res.body) {
         const detail = res.ok ? "no response body" : `HTTP ${res.status}`;
         // ATO-275: `transport` / `httpStatus` are for the turn's analytics (chat-turns.ts); the window reads `error`.

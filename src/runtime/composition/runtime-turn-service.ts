@@ -952,3 +952,4 @@ export function resolveTurnLocalEngine(config: AtomicAgentConfig, providerId: st
   if (providerId !== "local-llama" || config.localModels.mode !== "managed") return "external";
   return config.localModels.managed.engine === "llama-server" ? "llama-server" : "atomic-core";
 }
+

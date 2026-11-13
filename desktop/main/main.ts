@@ -130,6 +130,7 @@ import {
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
 import { quantMachine, rateRepoChoices } from "./quant-fit.js";   // ATO-450: a badge, a speed estimate and the pick per quant
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
+import { LOCAL_MODEL_SHARED_NOTE, readProjectModels, turnModelFor, writeProjectModel, type ProjectModelPick } from "./project-model.js";
 import { probeLinuxSandbox, sandboxVerdict } from "./linux-sandbox.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
 import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
@@ -1622,12 +1623,14 @@ function wireIpc(client: AgentClient): void {
   });
 
   ipcMain.handle("agent:chat", async (_event, payload: unknown) => {
-    const { messages, sessionId, projectId, reasoning: reasoningRaw } = payload as {
+    const { messages, sessionId, projectId, reasoning: reasoningRaw, turnModel: askedModel } = payload as {
       messages?: Array<{ role: string; content: string }>;
       sessionId?: string;
       /** ATO-42: the project a NEW chat starts in (a stored chat's own project wins). */
       projectId?: string;
       reasoning?: unknown;
+      /** ATO-1148: the chat's project cloud model (renderer/project-model.js). */
+      turnModel?: unknown;
     };
     const reasoning = reasoningLevelFromWindow(reasoningRaw);
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -1642,9 +1645,13 @@ function wireIpc(client: AgentClient): void {
        with the chat model paused. A turn that needs the local model waits
        here, with its own line, until the generation ends and the model is on
        its way back; a cloud turn never asks. */
-    const held = chatRouteIsLocal() ? await gpuShare.chatTurn().catch(() => null) : null;
+    // ATO-1148: checked against the config as it is now; a pick whose provider went (or is local) runs on the agent's own model.
+    const turnModel = askedModel === undefined || askedModel === null ? null
+      : turnModelFor(askedModel, (await readWholeConfig().catch(() => null))?.config?.llm?.providers, { remote: client.isRemote });
+    // A turn on a project's cloud model never needs the local model Studio holds.
+    const held = !turnModel && chatRouteIsLocal() ? await gpuShare.chatTurn().catch(() => null) : null;
     if (held) return holdForStudio(held, clean, sessionId, queuedAt, projectId, reasoning);
-    return startTurn(randomUUID(), clean, sessionId, queuedAt, false, projectId, reasoning);
+    return startTurn(randomUUID(), clean, sessionId, queuedAt, false, projectId, reasoning, turnModel);
   });
 
   async function startTurn(
@@ -1655,6 +1662,7 @@ function wireIpc(client: AgentClient): void {
     listed: boolean,
     projectId?: unknown,
     reasoning?: ReasoningLevel,
+    turnModel: ProjectModelPick | null = null,
   ): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
     /* Backlog 18 (its second review): a restart a switch held back for the
        turns runs as the last one ends (backend-switch restartAfterSwitch), and
@@ -1693,7 +1701,7 @@ function wireIpc(client: AgentClient): void {
       const pid = proj.project.id;
       updateProjects(DESKTOP_STATE_DIR, (d) => assignChat(d, chatId, pid), () => send("projects:changed"));
     }
-    void client.chat(turnId, clean, chatId, proj.workingDir, proj.instructions, reasoning);
+    void client.chat(turnId, clean, chatId, proj.workingDir, proj.instructions, reasoning, turnModel ?? undefined);
     return { ok: true, turnId };
   }
 
@@ -1770,6 +1778,25 @@ function wireIpc(client: AgentClient): void {
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  /* ATO-1148: a project's own cloud model, per working folder
+     (main/project-model.ts). The window reads the whole map once and after
+     each write; turns carry the pick themselves (agent:chat's turnModel). */
+  ipcMain.handle("app:projectModels", () => ({
+    ok: true, remote: client.isRemote, folders: readProjectModels(app.getPath("userData")), localNote: LOCAL_MODEL_SHARED_NOTE,
+  }));
+  ipcMain.handle("app:setProjectModel", async (_event, payload: unknown) => {
+    const { dir, providerId, model } = (payload ?? {}) as { dir?: unknown; providerId?: unknown; model?: unknown };
+    if (typeof dir !== "string" || !dir.trim() || dir.length > 4096) return { ok: false, error: "a folder is required" };
+    if (client.isRemote) return { ok: false, error: "A remote agent keeps one model for every chat" };
+    let pick: ProjectModelPick | null = null;
+    if (providerId !== null && providerId !== undefined) {
+      pick = turnModelFor({ providerId, model }, (await readWholeConfig().catch(() => null))?.config?.llm?.providers);
+      if (!pick) return { ok: false, error: LOCAL_MODEL_SHARED_NOTE + "; only a cloud model can be a project's own" };
+    }
+    const folders = writeProjectModel(app.getPath("userData"), dir, pick);
+    return folders ? { ok: true, folders } : { ok: false, error: "could not save the project's model" };
   });
 
   ipcMain.handle("app:chooseWorkspace", async (_event, sessionId: unknown) => {
