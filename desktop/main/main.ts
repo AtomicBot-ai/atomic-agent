@@ -43,6 +43,7 @@ import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
+import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -2890,6 +2891,8 @@ function wireIpc(client: AgentClient): void {
   wireFusionReasoningIpc();
   // ATO-1067: "Find on my network", model servers on other PCs of this network (view-only).
   wireLanDiscoveryIpc();
+  // ATO-1040: the chat's goal (the TUI's /goal), read and controlled through the agent.
+  wireSessionGoalIpc(client);
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
   wireOvernightIpc({ window: () => win, client });
   // ATO-1424: a code block's command typed (not run) into a new Terminal window (macOS).
