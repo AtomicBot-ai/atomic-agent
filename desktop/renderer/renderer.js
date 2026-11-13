@@ -3834,7 +3834,9 @@ function toolCard(m) {
           + (failed ? '<span class="tl-bad">failed</span>' : soft ? '<span class="tl-soft">failed, the agent went on</span>' : '')
           + (m.truncated ? '<span>output shortened</span>' : '') + '</div>'
         + '<div class="micro">Arguments</div><pre class="tk-out">' + esc(argsBlock(m.args || m.arg)) + '</pre>'
-        + '<div class="micro">Output</div><pre class="tk-out">' + esc(running ? 'Still running\u2026' : (m.out || '\u2014')) + '</pre></div>' : '')
+        // ATO-563: an edit's result is its unified diff, its lines coloured (diff-lines.js).
+        + '<div class="micro">Output</div><pre class="tk-out">' + (!running && m.ok === true && m.name === 'os.fs.edit' && typeof looksLikeUnifiedDiff === 'function' && looksLikeUnifiedDiff(m.out)
+          ? diffLinesHTML(m.out, esc) : esc(running ? 'Still running\u2026' : (m.out || '\u2014'))) + '</pre></div>' : '')
     + '</div>';
 }
 
@@ -3928,7 +3930,8 @@ function apprCard(m) {
           + (isTrust ? 'never allowed for longer than one call'
             : '<span title="approval level ' + esc(m.lvl) + '">' + (m.lvl <= 2 ? 'in Auto mode this runs without asking' : 'runs without asking only in Bypass mode') + '</span>') + '</span></dd>'
         + (m.reason ? '<dt>Reason</dt><dd>' + esc(apprHomePaths(m.reason)) + '</dd>' : '')
-        + (pv && pv !== '(no preview)' ? '<dt>Preview</dt><dd><div class="previewblk">' + esc(pv) + '</div></dd>' : '')
+        // ATO-563: an edit's preview is a unified diff, its lines coloured (diff-lines.js).
+        + (pv && pv !== '(no preview)' ? '<dt>Preview</dt><dd><div class="previewblk">' + (typeof looksLikeUnifiedDiff === 'function' && looksLikeUnifiedDiff(pv) ? diffLinesHTML(pv, esc) : esc(pv)) + '</div></dd>' : '')
       + '</dl>'
       /* "Ask me less" for everything is the mode control in the composer
          (src/tui/approval-modal.tsx footerHint). For one command there is
@@ -8042,6 +8045,8 @@ document.addEventListener('click', (e) => {
     copyText(rows.length ? mdTableText(rows, aligns, mdt.dataset.mdtcopy) : '', 'Table copied', mdt.dataset.mdtcopy === 'md' ? 'as markdown' : 'paste it into a spreadsheet');
     return;
   }
+  // ATO-563: a reply's file diff (Changes) and its Revert (diff-review.js).
+  if (typeof diffReviewClick === 'function' && diffReviewClick(t)) return;
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
@@ -22907,6 +22912,7 @@ async function refreshAttachments(cwd) {
       }
     }
     m.attach = found;
+    if (typeof diffReviewAnnotate === 'function') diffReviewAnnotate(m, cwd);  // ATO-563
     changed = true;
   }
   return changed;
@@ -22919,7 +22925,9 @@ function attachStrip(m) {
   const files = (m.attach || []).filter((f) => !own.includes(f.path));
   if (!files.length) return '';
   const shown = files.slice(0, ATTACH_MAX_LINES);
-  const lines = shown.map((f) => '<div class="attach-label">Saved to <span class="mono">' + esc(f.path) + '</span></div>').join('')
+  // ATO-563: under each line, its diff and Revert when the turn has them (diff-review.js).
+  const lines = shown.map((f) => '<div class="attach-label">Saved to <span class="mono">' + esc(f.path) + '</span></div>'
+      + (typeof diffReviewRowHTML === 'function' ? diffReviewRowHTML(m, f) : '')).join('')
     + (files.length > shown.length ? '<div class="attach-label attach-more">…and ' + (files.length - shown.length) + ' more</div>' : '');
   // The chips are the existing .filechip with an absolute data-file, so the
   // existing click (BR.openPath) and contextmenu (BR.fileMenu) handlers work

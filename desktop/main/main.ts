@@ -2489,6 +2489,18 @@ function wireIpc(client: AgentClient): void {
     );
   });
 
+  // ATO-563: Revert under a reply puts a file back as it was before that reply.
+  ipcMain.handle("agent:fsRestore", (_event, payload: unknown) => {
+    const { sessionId, path, priorQuestions, expectText } = (payload ?? {}) as { sessionId?: unknown; path?: unknown; priorQuestions?: unknown; expectText?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
+    if (typeof path !== "string" || !isAbsoluteOn(process.platform, path) || path.includes("\0")) return { ok: false, supported: true, error: "Not a file path" };
+    // The reply whose starting point is put back (its question), never "the newest copy".
+    if (typeof priorQuestions !== "number" || !Number.isInteger(priorQuestions) || priorQuestions < 0 || typeof expectText !== "string") {
+      return { ok: false, supported: true, error: "This window could not tell which reply to revert" };
+    }
+    return client.restoreFile(sessionId, path, priorQuestions, expectText);
+  });
+
   // Files the agent produced: open, reveal, copy, save elsewhere.
   const safePath = (p: unknown): string | null => {
     // Absolute by this platform's rules: `/x` here, `C:\x` on Windows.
