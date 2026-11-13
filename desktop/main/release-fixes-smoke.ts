@@ -582,7 +582,7 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
         return {word: backendWord('local'), row: selRowName({type:'provider', id:'local-llama'}),
           runMode: /Local models/.test(runMode), runModeOld: /This Mac/.test(runMode),
           localTitle: /Local models/.test(local), localOld: /Models on this Mac/.test(local),
-          analytics: /never sent with analytics/.test(general), analyticsOld: /never leave/.test(general)};
+          analytics: /Never sent:/.test(general), analyticsOld: /never leave/.test(general)};
       } catch (err) { return {error: String(err && err.message || err)}; }
     })()`);
     check(
@@ -602,7 +602,7 @@ export async function releaseFixesSmokeTest(js: Js, check: Check, tasks: string[
     // 19 — "What never leaves this Mac" read as a privacy promise the app does not make.
     const r = await js<Record<string, unknown>>(`(() => {
       const html = privacyPane();
-      return {sent: /Sent with analytics/.test(html), never: /Never sent with analytics/.test(html),
+      return {sent: /When on, Atomic Agent sends:/.test(html), never: /Never sent:/.test(html),
         cloud: /With a cloud model, your messages go to that provider\\./.test(html), old: /never leaves this Mac/i.test(html)};
     })()`);
     check(

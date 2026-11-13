@@ -142,7 +142,7 @@ test("Run now stays on a paused task's page, and the line says it is still pause
   // The detail bar's Run now is not gated on the status, so a paused task keeps it.
   const r = src("../renderer/renderer.js");
   const detail = r.slice(r.indexOf("function tkDetailHTML()"), r.indexOf("function tkFormHTML()"));
-  assert.match(detail, /\+ '<button class="btn btn-s sm" data-act="tasks:run:' \+ esc\(id\) \+ '" title="R run-now">/);
+  assert.match(detail, /\+ '<button class="btn btn-s sm" data-act="tasks:run:' \+ esc\(id\) \+ '" title="Run now \(Shift\+R\)">/);
   assert.match(r, /TK\.msg = taskRunNowLine\(id, res\.data && res\.data\.task\)/);
   // After the run the list is read again, so the row shows its status (paused) from the agent.
   const runNow = r.slice(r.indexOf("async function tkRunNow(id)"), r.indexOf("function tkFocusTask(id)"));

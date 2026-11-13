@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const {WHK_OLD_AGENT, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_PRESETS, whkPreset, whkPresetsFor, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError,
+const {WHK_OLD_AGENT, WHK_INTRO, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_PRESETS, whkPreset, whkPresetsFor, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError,
   createWebhooks, webhooksHTML} = require('../renderer/webhooks.js');
 const { readFileSync } = require('node:fs');
 const { cleanWebhookCreate, webhookNameOk } = require('../out/main/webhooks-ipc.js');
@@ -73,6 +73,9 @@ test('list, add a route, the secret shows once, then it is gone', async () => {
   assert.doesNotMatch(html, /127\.0\.0\.1/);
   assert.doesNotMatch(html, /whk:copyurl:github/);
   assert.match(html, /atag serve --tunnel/);
+  // The plain intro leads; the tunnel note follows it.
+  assert.ok(html.includes(WHK_INTRO));
+  assert.ok(html.indexOf(WHK_INTRO) < html.indexOf('atag serve --tunnel'));
 
   w.openForm('github');
   assert.equal(w.state.form.name, 'github-2');

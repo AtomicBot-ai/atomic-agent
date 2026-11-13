@@ -352,7 +352,7 @@ async function run(js: Js, check: Check): Promise<void> {
 
   // Д28
   const g = await safe<Switches>(js, SWITCHES);
-  const named = ["Notify when a turn ends", "Anonymous usage analytics", "Name chats automatically"];
+  const named = ["Notify when a turn ends", "Share anonymous usage data", "Name chats automatically"];
   check(
     "T47 Д28: the General switches stand alone — no On / Off word beside them — and still say their state",
     /* ATO-523 (#1447): the Quick entry shortcut row also shows its chord and a Change… button beside its
