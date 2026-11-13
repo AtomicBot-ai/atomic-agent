@@ -153,7 +153,16 @@ export class TelegramLiveReply {
     return { delivered: true, messages };
   }
 
-  /** Stop streaming and leave what was posted as it is (cancel, failure). */
+  /**
+   * Stop streaming and delete what was posted (a cancelled turn: the
+   * half-written answer goes, the "Turn cancelled." line says why).
+   */
+  async discard(): Promise<void> {
+    await this.close();
+    await this.deleteBubbles(0);
+  }
+
+  /** Stop streaming and leave what was posted as it is (a failed turn). */
   async close(): Promise<void> {
     this.closed = true;
     this.cancelTimer?.();

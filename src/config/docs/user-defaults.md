@@ -242,7 +242,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `telegram.ownerUserId` (default `null`).
 - `telegram.parseMode` (default `"html"`).
 - `telegram.progressIndicator` (default `true`).
-- `telegram.streamReplies` (default `"private"` when absent): `"private"` streams the agent's reply into the owner's DM while it is written (one message edited about once a second, the formatted version replaces it at the end), `"all"` also streams in groups and forum topics, `"off"` sends the whole reply at the end. `ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES=off|private|all` overrides it for that process.
+- `telegram.streamReplies` (default `"private"` when absent): `"private"` streams the agent's reply into the owner's DM while it is written (one message edited about once a second, the formatted version replaces it at the end), `"off"` sends the whole reply at the end. Groups and forum topics never stream. `ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES=off|private` overrides it for that process.
 
 ## discord
 

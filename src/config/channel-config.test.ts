@@ -181,10 +181,10 @@ describe("channel configuration ownership and compatibility", () => {
   it("parses telegram.streamReplies only when present (ATO-634)", () => {
     const base = { enabled: false, ownerUserId: null, parseMode: "html", progressIndicator: true };
     expect("streamReplies" in parseTelegramConfig(base, createTelegramDefaults)).toBe(false);
-    for (const mode of ["off", "private", "all"] as const) {
+    for (const mode of ["off", "private"] as const) {
       expect(parseTelegramConfig({ ...base, streamReplies: mode }, createTelegramDefaults).streamReplies).toBe(mode);
     }
-    expect(thrownError(() => parseTelegramConfig({ ...base, streamReplies: "groups" }, createTelegramDefaults)))
+    expect(thrownError(() => parseTelegramConfig({ ...base, streamReplies: "all" }, createTelegramDefaults)))
       .toBeInstanceOf(ConfigValidationError);
   });
 });

@@ -7,10 +7,10 @@ export const TELEGRAM_STREAM_REPLIES_ENV = "ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES
 
 /**
  * Streaming is on in the owner's DM by default. Groups and forum topics
- * keep the one-message-at-the-end path unless asked: several people read
- * a group, a message that rewrites itself every second is noisier there,
- * and the shared chat's flood limit (about 20 messages a minute) is much
- * lower than a DM's.
+ * never stream (decision 75): several people read a group, a message
+ * that rewrites itself every second is noisy there, and a group's flood
+ * limit (about 20 messages a minute) is much lower than a DM's. They get
+ * the editable progress message and one final answer instead.
  */
 export const DEFAULT_TELEGRAM_STREAM_REPLIES: TelegramStreamReplies = "private";
 
@@ -29,20 +29,18 @@ export function resolveTelegramStreamReplies(
   return fromEnv ?? configured ?? DEFAULT_TELEGRAM_STREAM_REPLIES;
 }
 
-/** Whether a turn in this chat streams its reply. Absent mode = off. */
+/** Whether a turn in this chat streams its reply: DMs only. Absent mode = off. */
 export function shouldStreamReplies(
   mode: TelegramStreamReplies | undefined,
   isPrivate: boolean,
 ): boolean {
-  if (mode === "all") return true;
-  if (mode === "private") return isPrivate;
-  return false;
+  return mode === "private" && isPrivate;
 }
 
 function parseStreamWord(raw: string | undefined): TelegramStreamReplies | null {
   if (raw === undefined) return null;
   const word = raw.trim().toLowerCase();
-  if (word === "off" || word === "private" || word === "all") return word;
+  if (word === "off" || word === "private") return word;
   if (word === "0" || word === "false" || word === "no") return "off";
   if (word === "1" || word === "true" || word === "yes" || word === "on") {
     return DEFAULT_TELEGRAM_STREAM_REPLIES;

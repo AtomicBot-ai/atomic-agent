@@ -18,10 +18,32 @@ import { TelegramSessionPointer } from "./telegram-session-pointer.js";
 
 const OWNER = 42;
 const CHAT = 100;
+const GROUP = -1001;
+const BOT = { id: 7, username: "atomic_bot" };
 const FIRST = "The answer is **forty-two**, and here is why it matters a lot.";
 
 function update(text: string): InboundTextUpdate {
   return { from: { id: OWNER }, chat: { id: CHAT, type: "private" }, text, message_id: 1 };
+}
+
+function groupUpdate(text: string): InboundTextUpdate {
+  return {
+    from: { id: OWNER },
+    chat: { id: GROUP, type: "supergroup", title: "Ops" },
+    text,
+    message_id: 1,
+    message_thread_id: 9,
+    is_topic_message: true,
+  };
+}
+
+/** A promise the test resolves when it wants the turn to end. */
+function holdTurn(): { wait: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { wait, release };
 }
 
 const delta = (text: string): AgentLoopEvent =>
@@ -54,7 +76,7 @@ function makeApi(): Api {
   };
 }
 
-function makeRuntime(events: AgentLoopEvent[]): AgentRuntime {
+function makeRuntime(events: AgentLoopEvent[], hold?: Promise<void>): AgentRuntime {
   const sessions: SessionState[] = [];
   return {
     createSession: () => {
@@ -66,6 +88,7 @@ function makeRuntime(events: AgentLoopEvent[]): AgentRuntime {
     turnController: { isBusy: () => false },
     runTurn: async (session: SessionState, _m: string, opts?: { eventHook?: (e: AgentLoopEvent) => void }) => {
       for (const event of events) opts?.eventHook?.(event);
+      if (hold) await hold;
       return { session, reason: "reply" as const, stepCount: 1 };
     },
   } as unknown as AgentRuntime;
@@ -156,5 +179,58 @@ describe("Telegram streamed replies (ATO-634)", () => {
     expect(api.sent[0]!.text).toBe(FIRST);
     expect(api.sent[1]!.text).toContain("Turn failed");
     expect(api.deleteMessage).not.toHaveBeenCalled();
+  });
+
+  it("never streams in a group topic: one status message, then the answer as a normal message", async () => {
+    const api = makeApi();
+    const events = [delta(FIRST), delta(" More."), reply(`${FIRST} More.`)];
+    await handleInboundText(
+      groupUpdate("@atomic_bot question"),
+      ctx(makeRuntime(events), api, {
+        streamReplies: "private",
+        progressIndicator: true,
+        botIdentity: BOT,
+      }),
+    );
+    // The status bubble, then the final answer; no streamed text anywhere.
+    expect(api.sent.map((m) => m.text)).toEqual([
+      "🤔 Thinking…",
+      "The answer is <b>forty-two</b>, and here is why it matters a lot. More.",
+    ]);
+    expect(api.sent.every((m) => m.opts?.message_thread_id === 9)).toBe(true);
+    expect(api.edits.some((e) => e.text.includes("forty-two"))).toBe(false);
+    // The status bubble is removed before the answer stands alone.
+    expect(api.deleteMessage).toHaveBeenCalledWith(GROUP, 1);
+  });
+
+  it("removes the group status message when the turn is cancelled", async () => {
+    const api = makeApi();
+    const hold = holdTurn();
+    const c = ctx(makeRuntime([delta(FIRST)], hold.wait), api, {
+      streamReplies: "private",
+      progressIndicator: true,
+      botIdentity: BOT,
+    });
+    const turn = handleInboundText(groupUpdate("@atomic_bot question"), c);
+    await vi.waitFor(() => expect(api.sent.length).toBe(1));
+    for (const controller of c.inflight.values()) controller.abort();
+    hold.release();
+    await turn;
+    expect(api.sent.map((m) => m.text)).toEqual(["🤔 Thinking…", "Turn cancelled."]);
+    expect(api.deleteMessage).toHaveBeenCalledWith(GROUP, 1);
+  });
+
+  it("deletes the half-written answer in a DM when the turn is cancelled", async () => {
+    const api = makeApi();
+    const hold = holdTurn();
+    const c = ctx(makeRuntime([delta(FIRST)], hold.wait), api, { streamReplies: "private" });
+    const turn = handleInboundText(update("question"), c);
+    await vi.waitFor(() => expect(api.sent.map((m) => m.text)).toEqual([FIRST]));
+    for (const controller of c.inflight.values()) controller.abort();
+    hold.release();
+    await turn;
+    expect(api.deleteMessage).toHaveBeenCalledWith(CHAT, 1);
+    expect(api.sent.map((m) => m.text)).toEqual([FIRST, "Turn cancelled."]);
+    expect(api.edits).toEqual([]);
   });
 });

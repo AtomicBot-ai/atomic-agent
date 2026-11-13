@@ -1019,8 +1019,10 @@ async function dispatchToRuntime(
     await snapshotBubble.remove();
   }
 
-  // Streamed text of a turn that ends without a reply stays as it is.
-  if (controller.signal.aborted || reply === null) await live?.close();
+  // A cancelled turn's half-written answer is deleted; a failed one's
+  // stays above the failure line.
+  if (controller.signal.aborted) await live?.discard();
+  else if (reply === null) await live?.close();
 
   // Only the agent's natural-language reply gets parse-mode
   // formatting. Cancellation acks, the empty-reply marker, and

@@ -289,4 +289,15 @@ describe("TelegramLiveReply", () => {
       { kind: "send", id: 500, text: "Partial answer before cancel.", opts: undefined },
     ]);
   });
+
+  it("discard() deletes every streamed message", async () => {
+    const { api, calls } = fakeApi();
+    const c = clock();
+    const live = make(api, c, { bubbleChars: 20, minEditIntervalMs: 0, minGrowthChars: 1 });
+    live.onEvent(delta("a half-written answer that spans two"));
+    await settle();
+    await live.discard();
+    expect(calls.filter((x) => x.kind === "delete").map((x) => x.id)).toEqual([500, 501]);
+    expect(live.messageIds()).toEqual([]);
+  });
 });

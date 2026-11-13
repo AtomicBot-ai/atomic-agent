@@ -11,11 +11,12 @@ import { parseNullableString } from "./config-values.js";
 export type TelegramParseMode = "plain" | "html";
 
 /**
- * Where agent replies stream into Telegram while the model writes them
- * (ATO-634): `"private"` streams in the owner's DM only, `"all"` also in
- * groups and forum topics, `"off"` keeps the one-message-at-the-end path.
+ * Whether agent replies stream into the owner's DM while the model
+ * writes them (ATO-634): `"private"` streams there, `"off"` keeps the
+ * one-message-at-the-end path. Groups and forum topics never stream:
+ * they get the editable status message and one final answer.
  */
-export type TelegramStreamReplies = "off" | "private" | "all";
+export type TelegramStreamReplies = "off" | "private";
 
 /**
  * Telegram channel configuration. Single-operator semantics: only
@@ -271,10 +272,10 @@ export function parseTelegramStreamReplies(
   raw: unknown,
   field: string,
 ): TelegramStreamReplies {
-  if (raw === "off" || raw === "private" || raw === "all") return raw;
+  if (raw === "off" || raw === "private") return raw;
   throw new ConfigValidationError(
     field,
-    `expected one of off|private|all, got ${JSON.stringify(raw)}`,
+    `expected one of off|private, got ${JSON.stringify(raw)}`,
   );
 }
 
