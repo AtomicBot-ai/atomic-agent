@@ -11210,7 +11210,7 @@ function onChatEvent(ev) {
     if (!card) return;   // reply / finish draw no card
     toolSettle(card, p, ev.at || Date.now());
     // ATO-1136: the page an ok canvas.render wrote (`canvas` on the frame, ATO-1137) runs in the reply, sandboxed (chat-artifact.js).
-    if (p.canvas && item && typeof chatArtifactCanvas === 'function') chatArtifactCanvas(item, p, card);
+    if (p.canvas && item && typeof chatArtifactCanvas === 'function') chatArtifactCanvas(item, p, S.sessionId, S.log);
     // ATO-1187: a write/edit's lines added/removed go on the turn's "Changed files" card (changed-files.js).
     const changedFile = changedFileOfFrame(p);
     if (changedFile && item) item.changed = changedFilesAdd(item.changed, changedFile);

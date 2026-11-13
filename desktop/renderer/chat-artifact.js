@@ -94,7 +94,7 @@ function artChanged(key) {
 function artEntry(key, title) {
   let st = CHAT_ART.get(key);
   if (!st) {
-    st = {key, title: title || '', html: '', url: '', node: null, state: 'loading', h: ART_DEFAULT_H, rev: 0};
+    st = {key, title: title || '', html: '', url: '', path: '', node: null, state: 'loading', h: ART_DEFAULT_H, rev: 0};
     CHAT_ART.set(key, st);
   } else if (title) st.title = title;
   return st;
@@ -164,28 +164,51 @@ function chatArtifactSlotHTML(key, opts) {
 /** Read a page file through main's preview check and show it as `key`; a file it refuses fails (a chip is drawn). */
 function artLoadFile(key, path, title) {
   const st = artEntry(key, title);
+  st.path = path;
   const br = artBridge();
-  if (!br || typeof br.filePreview !== 'function') { st.state = 'fail'; return st; }
+  // A newer page that cannot be read leaves the one already shown (ATO-1138), else nothing is drawn.
+  const failed = () => { if (st.path !== path) return; if (!st.url) st.state = 'fail'; artChanged(key); };
+  if (!br || typeof br.filePreview !== 'function') { failed(); return st; }
   Promise.resolve(br.filePreview(path)).then((d) => {
-    if (!d || !d.ok || d.kind !== 'html' || d.truncated || typeof d.text !== 'string') { st.state = 'fail'; artChanged(key); return; }
+    if (st.path !== path) return;   // a newer page of this artifact came since
+    if (!d || !d.ok || d.kind !== 'html' || d.truncated || typeof d.text !== 'string') { failed(); return; }
     chatArtifactSet(key, d.text, {title});
-  }, () => { st.state = 'fail'; artChanged(key); });
+  }, failed);
   return st;
+}
+
+/** One canvas per title in a chat: canvas.render (ATO-1137) gives no id, and every call writes a new file. */
+function canvasKey(scope, c) {
+  return 'canvas:' + String(scope || '') + ':' + (c.title ? c.title.toLowerCase() : c.path);
 }
 
 /**
  * An ok canvas.render (`tool_result` with `canvas`) into the reply `item`:
- * its artifact list, and the page it wrote read and shown. False when the
- * frame carries no canvas.
+ * the page it wrote read and shown. False when the frame carries no canvas.
+ * `scope` is the chat; `log` its rows. ATO-1138: a canvas with the title of
+ * one already in the chat is that canvas again (the person asked for a
+ * change): the new page loads in the earlier frame, where it is, and the new
+ * reply adds no second one.
  */
-function chatArtifactCanvas(item, payload) {
+function chatArtifactCanvas(item, payload, scope, log) {
   const c = canvasFromToolResult(payload);
   if (!item || !c) return false;
-  const key = 'file:' + c.path;
+  const key = canvasKey(scope, c);
   const title = c.title || String(c.path).split(/[\\/]/).pop();
-  const list = Array.isArray(item.artifacts) ? item.artifacts : (item.artifacts = []);
-  if (!list.some((x) => x.key === key)) list.push({key, title, path: c.path});
-  if (!CHAT_ART.has(key) || CHAT_ART.get(key).state === 'fail') { CHAT_ART.delete(key); artLoadFile(key, c.path, title); }
+  const owner = (Array.isArray(log) ? log : []).find((m) => m && m !== item && Array.isArray(m.artifacts) && m.artifacts.some((a) => a.key === key));
+  const rows = owner ? owner.artifacts : (Array.isArray(item.artifacts) ? item.artifacts : (item.artifacts = []));
+  let a = rows.find((x) => x.key === key);
+  if (!a) { a = {key, title, path: c.path, paths: []}; rows.push(a); }
+  a.title = title; a.path = c.path;
+  if (!Array.isArray(a.paths)) a.paths = [];
+  if (!a.paths.includes(c.path)) a.paths.push(c.path);
+  // The reply that changed it may attach the new file: drawn above already.
+  if (owner) { const own = Array.isArray(item.canvasPaths) ? item.canvasPaths : (item.canvasPaths = []); if (!own.includes(c.path)) own.push(c.path); }
+  const st = CHAT_ART.get(key);
+  if (!st || st.path !== c.path || st.state === 'fail') {
+    if (st && st.state === 'fail') CHAT_ART.delete(key);
+    artLoadFile(key, c.path, title);
+  }
   return true;
 }
 
@@ -207,19 +230,28 @@ function chatArtifactEventSlots(m, escape) {
  */
 function chatArtifactFileSlotHTML(path, escape, m) {
   if (!isHtmlArtifactPath(path)) return null;
-  if (m && Array.isArray(m.artifacts) && m.artifacts.some((a) => a.path === path && CHAT_ART.has(a.key) && CHAT_ART.get(a.key).state !== 'fail')) return '';
+  if (m && Array.isArray(m.canvasPaths) && m.canvasPaths.includes(path)) return '';
+  if (m && Array.isArray(m.artifacts) && m.artifacts.some((a) => (a.path === path || (Array.isArray(a.paths) && a.paths.includes(path)))
+    && CHAT_ART.has(a.key) && CHAT_ART.get(a.key).state !== 'fail')) return '';
   const key = 'file:' + path;
   const name = String(path).split(/[\\/]/).pop() || path;
   if (!CHAT_ART.has(key)) artLoadFile(key, path, name);
   return chatArtifactSlotHTML(key, {title: name, path, escape});
 }
 
-/** A ```html block's key, from its drawn <pre> (the same text gives the same key on every repaint). */
-function chatArtifactCodeKey(pre) { return 'code:' + artHash(pre); }
+/* ATO-1138: a ```chart block holds a dashboard spec as JSON (dashboard-templates.js); its Preview draws it. */
+const ART_CODE_LANG = /^(?:html?|chart)$/i;
 
-/** A fenced block's Preview button: only for ```html / ```htm, and only once the fence is closed. */
+/** A ```html / ```chart block's key, from its drawn <pre> (the same text gives the same key on every repaint).
+    `code:h…` runs the block as a page, `code:c…` draws it as a chart. */
+function chatArtifactCodeKey(pre) {
+  const chart = /^<pre class="mdpre"[^>]*\sdata-lang="chart"/i.test(String(pre));
+  return 'code:' + (chart ? 'c' : 'h') + artHash(pre);
+}
+
+/** A fenced block's Preview button: only for ```html / ```htm / ```chart, and only once the fence is closed. */
 function chatArtifactCodeButton(pre, lang) {
-  if (!/^html?$/i.test(String(lang || '')) || /^<pre class="mdpre"[^>]*\sdata-open="1"/.test(String(pre))) return '';
+  if (!ART_CODE_LANG.test(String(lang || '')) || /^<pre class="mdpre"[^>]*\sdata-open="1"/.test(String(pre))) return '';
   const key = chatArtifactCodeKey(pre);
   const open = ART_CODE_OPEN.has(key);
   return '<button class="mdcopy" data-artprev="' + artEsc(key) + '" title="' + (open ? 'Hide the preview' : 'Run this page here, sandboxed, with no network') + '"'
@@ -230,7 +262,7 @@ function chatArtifactCodeButton(pre, lang) {
 function chatArtifactCodeSlot(pre) {
   const key = chatArtifactCodeKey(pre);
   if (!ART_CODE_OPEN.has(key)) return '';
-  return chatArtifactSlotHTML(key, {title: 'Preview'}) || '';
+  return chatArtifactSlotHTML(key, {title: key.startsWith('code:c') ? 'Chart' : 'Preview'}) || '';
 }
 
 /** Preview / Hide on a ```html block: `code` is the block's text as drawn. True when handled. */
@@ -239,7 +271,9 @@ function chatArtifactToggleCode(key, code) {
   if (ART_CODE_OPEN.has(key)) ART_CODE_OPEN.delete(key);
   else {
     ART_CODE_OPEN.add(key);
-    const st = chatArtifactSet(key, String(code || '').slice(0, ART_HTML_MAX), {title: 'Preview'});
+    const text = String(code || '').slice(0, ART_HTML_MAX);
+    const chart = key.startsWith('code:c') && typeof dashboardFromJson === 'function';
+    const st = chatArtifactSet(key, chart ? dashboardFromJson(text, artTheme()) : text, {title: chart ? 'Chart' : 'Preview'});
     if (st.state === 'fail') { CHAT_ART.delete(key); ART_CODE_OPEN.delete(key); }
   }
   artChanged(key);
