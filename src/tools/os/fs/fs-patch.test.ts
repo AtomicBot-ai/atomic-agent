@@ -303,6 +303,66 @@ describe("os.fs.patch with the *** Begin Patch format", () => {
     ).rejects.toThrow('os.fs.patch: `format` must be "auto", "unified" or "codex"');
   });
 
+  it("asks for a Delete File like os.fs.trash: fs_trash, not silent at level 2", async () => {
+    await writeFile(join(dir, "stale.txt"), "remove me\n", "utf8");
+    await writeFile(join(dir, "keep.txt"), "a\n", "utf8");
+    const asked: string[] = [];
+    const levelTwo = (): ApprovalGate => {
+      const gate = new ApprovalGate({
+        level: 2,
+        emit: (req) => {
+          asked.push(req.category);
+          gate.resolve({ approvalId: req.approvalId, approved: true });
+        },
+      });
+      return gate;
+    };
+
+    // A plain workspace update is silent at level 2 ...
+    const update = [
+      "*** Begin Patch",
+      "*** Update File: keep.txt",
+      "-a",
+      "+b",
+      "*** End Patch",
+    ].join("\n");
+    await buildOsFsPatchTool({ approvals: levelTwo(), approvalRequired: true }).run(
+      { patch: update, apply: true },
+      makeCtx(dir),
+    );
+    expect(asked).toEqual([]);
+    expect(await readFile(join(dir, "keep.txt"), "utf8")).toBe("b\n");
+
+    // ... a deletion in the same workspace asks, as fs_trash.
+    const remove = [
+      "*** Begin Patch",
+      "*** Update File: keep.txt",
+      "-b",
+      "+c",
+      "*** Delete File: stale.txt",
+      "*** End Patch",
+    ].join("\n");
+    await buildOsFsPatchTool({ approvals: levelTwo(), approvalRequired: true }).run(
+      { patch: remove, apply: true },
+      makeCtx(dir),
+    );
+    expect(asked).toEqual(["fs_trash"]);
+    expect(await exists(join(dir, "stale.txt"))).toBe(false);
+  });
+
+  it("a declined Delete File approval removes nothing", async () => {
+    await writeFile(join(dir, "stale.txt"), "remove me\n", "utf8");
+    const gate = new ApprovalGate({
+      level: 2,
+      emit: (req) => gate.reject(req.approvalId, "denied"),
+    });
+    const patch = ["*** Begin Patch", "*** Delete File: stale.txt", "*** End Patch"].join("\n");
+    await expect(
+      buildOsFsPatchTool({ approvals: gate, approvalRequired: true }).run({ patch, apply: true }, makeCtx(dir)),
+    ).rejects.toThrow(/The user declined/);
+    expect(await readFile(join(dir, "stale.txt"), "utf8")).toBe("remove me\n");
+  });
+
   it("refuses a masked secret marker before asking for approval", async () => {
     await writeFile(join(dir, ".env"), "TOKEN=real\n", "utf8");
     const patch = [

@@ -365,7 +365,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "verify.run": ["shell", "shell_dangerous"],
     "os.fs.write": FS_WRITE_CATEGORIES,
     "os.fs.edit": FS_WRITE_CATEGORIES,
-    "os.fs.patch": FS_WRITE_CATEGORIES,
+    // A patch that deletes a file asks as `fs_trash` (`fs-patch.ts`).
+    "os.fs.patch": [...FS_WRITE_CATEGORIES, "fs_trash"],
     // Puts a saved copy back: a write in every sense.
     "os.fs.restore": FS_WRITE_CATEGORIES,
     // Both ends ride the write funnel (`fs-move.ts`).

@@ -81,10 +81,16 @@ export function buildOsFsPatchTool(
         refuseMaskedSecretWrite("os.fs.patch", outcome.path, outcome.originalContent ?? "", after);
       }
       const preview = formatReport(previews, "applied");
+      // A patch that removes a file (`*** Delete File`, the old path of
+      // a move) asks like os.fs.trash does: `fs_trash` is never silent
+      // below level 3, where a plain workspace write is from level 2.
+      // Outside the workspace and home, and on trust config, both kinds
+      // land in the same bucket, so the trash kind is never weaker.
+      const removesFiles = planned.some((p) => p.after === null);
       await requireFsApproval(
         options,
         {
-          kind: "write",
+          kind: removesFiles ? "trash" : "write",
           paths: previews.map((p) => p.absolute),
           sessionId: ctx.sessionId,
           tool: "os.fs.patch",
