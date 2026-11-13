@@ -57,7 +57,7 @@ test('the row is a custom-address row with an optional key', () => {
 });
 
 test('the renderer loads the module first and wires the row in', () => {
-  assert.ok(html.indexOf('lan-provider.js') > -1 && html.indexOf('lan-provider.js') < html.indexOf('renderer.js'));
+  assert.ok(html.indexOf('lan-provider.js') > -1 && html.indexOf('lan-provider.js') < html.indexOf('src="renderer.js"'));
   assert.match(renderer, /KIND_ROWS\.push\(lanProviderRow\(\)\)/);
   assert.match(renderer, /lanAddressToBaseUrl\(WIZ\.baseUrl\)/);
   assert.match(renderer, /lanWizardError\(/);
