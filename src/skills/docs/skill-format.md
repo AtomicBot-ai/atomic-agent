@@ -30,6 +30,8 @@ requires_tools:                  # informational list of tools the skill expects
   - browser.read_aria
 requires_scripts:                # only these names may be invoked via skill.run_script
   - fetch-headers.sh
+env_keys:                        # optional: secret-looking env names this skill's scripts receive
+  - SOME_SERVICE_API_KEY
 dangerous: true                  # if true, marks the skill as dangerous (for human readers)
 ---
 ```
@@ -39,6 +41,11 @@ Validation:
 - `name` matches `^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$`.
 - All fields are strictly typed; lists must contain non-empty strings.
 - Unknown keys are ignored (forward-compat), but invalid types are an error.
+- `env_keys` entries must be environment variable names (`A-Z`, `0-9`, `_`).
+
+### Script environment and `env_keys`
+
+`skill.run_script` gives a script the same filtered environment as `os.shell.run`: secret-looking variables (API keys, tokens, passwords) loaded from `<stateDir>/.env` are removed, except names listed in `tools.shell.envPassthrough`. A skill that needs its own service key declares it in `env_keys`, and then only that skill's scripts receive it, read from the agent's environment (which includes `.env`) for that run. Another skill's scripts and `os.shell.run` still get it filtered out, so the user only has to put the key in `.env`. The agent's own provider keys and bot tokens (`KNOWN_SECRET_ENV_VARS` in `src/sandbox/command-env.ts`) are never passed this way, whatever a skill declares. The approval preview lists the declared names (never the values), and the script's output is masked for known secrets like any tool result.
 
 ## Install locations
 
@@ -85,7 +92,7 @@ The scan is a tripwire, not a sandbox: a clean verdict does not prove a skill is
 ## Agent tools
 
 - `skill.view({ name })` reads `SKILL.md`, strips the frontmatter, and stores the skill body in `session.loadedSkills`. A repeated `skill.view` for the same skill does not grow the prompt (cached for the session). Read-only, no approval required.
-- `skill.run_script({ skill, script, args?, timeoutMs? })` executes `scripts/<script>`. Only scripts listed in `requires_scripts` are allowed; any path outside `scripts/` is rejected. Always **dangerous**: routed through the approval gate, with a preview that includes the skill name, script path and arguments.
+- `skill.run_script({ skill, script, args?, timeoutMs? })` executes `scripts/<script>`. Only scripts listed in `requires_scripts` are allowed; any path outside `scripts/` is rejected. Always **dangerous**: routed through the approval gate, with a preview that includes the skill name, script path, arguments and the names in `env_keys`.
 
 Extensions (`.ts`, `.js`, `.mjs`, `.cjs`) are executed via `node`, `.sh` via `bash`, everything else is run directly (shebang/executable file).
 

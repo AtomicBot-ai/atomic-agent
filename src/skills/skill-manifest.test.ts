@@ -140,6 +140,19 @@ describe("parseSkillFile", () => {
     expect(() => parseSkillFile(content)).toThrow(/platforms/);
   });
 
+  it("parses `env_keys`, the keys only this skill's scripts receive (ATO-972)", () => {
+    const parsed = parseSkillFile(
+      "---\nname: speed\ndescription: d\nenv_keys: [PAGESPEED_API_KEY, PAGESPEED_API_KEY]\n---\nbody",
+    );
+    expect(parsed.manifest.envKeys).toEqual(["PAGESPEED_API_KEY"]);
+    expect("envKeys" in parseSkillFile("---\nname: plain\ndescription: d\n---\nbody").manifest).toBe(false);
+  });
+
+  it("rejects `env_keys` that are not a list of variable names", () => {
+    expect(() => parseSkillFile("---\nname: bad\ndescription: d\nenv_keys: PAGESPEED_API_KEY\n---\n")).toThrow(/env_keys/);
+    expect(() => parseSkillFile("---\nname: bad\ndescription: d\nenv_keys: [\"A KEY\"]\n---\n")).toThrow(/env_keys/);
+  });
+
   it("keeps Agent Skills spec fields and only warns about limits (ATO-610)", () => {
     const body = Array.from({ length: 501 }, (_, i) => `line ${i}`).join("\n");
     const parsed = parseSkillFile([
