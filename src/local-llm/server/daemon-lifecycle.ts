@@ -724,8 +724,11 @@ export function buildLlamaServerArgs(
  *   whether the model fits the device whole.
  * - `note`: why a unified-memory machine got less than its free figure
  *   would fit, for the daemon log.
+ *
+ * Exported for tests only (`context-24gb.test.ts` drives it with a mocked
+ * device table); `startDaemon` is the one caller.
  */
-async function resolveEffectiveContextSize(
+export async function resolveEffectiveContextSize(
   device: string | undefined,
   model: {
     fileSizeGb: number;
