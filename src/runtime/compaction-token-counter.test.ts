@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AtomicAgentConfig } from "../config/index.js";
+import { byteEstimateCounter } from "../llm/token-counter.js";
 import { createCompactionTokenCounter } from "./compaction-token-counter.js";
 
 function config(url = "http://127.0.0.1:18080"): AtomicAgentConfig {
@@ -15,9 +16,13 @@ describe("createCompactionTokenCounter (ATO-656)", () => {
   beforeEach(() => { vi.stubEnv("ATOMIC_AGENT_LLAMA_API_KEY", ""); });
   afterEach(() => { vi.unstubAllEnvs(); });
 
-  it("has no counter for a cloud route", () => {
-    const counterFor = createCompactionTokenCounter({ config: () => config(), route: () => ({ providerId: "cloud", local: false }) });
-    expect(counterFor("s")).toBeUndefined();
+  it("gives a cloud route the byte estimate and makes no request", async () => {
+    const fetch = vi.fn();
+    const counterFor = createCompactionTokenCounter({ config: () => config(), route: () => ({ providerId: "cloud", local: false }), fetch });
+    const counter = counterFor("s")!;
+    expect(counter).toBe(byteEstimateCounter);
+    expect(await counter.count("12345678")).toBe(2);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it("asks the local route's own server, with its key, and reuses one counter per URL", async () => {

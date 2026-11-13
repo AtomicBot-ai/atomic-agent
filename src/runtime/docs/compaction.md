@@ -97,7 +97,9 @@ except at the automatic token trigger on a local llama-server: when the estimate
 is within 0.8-1.25 of the trigger, the runtime asks the server's `/tokenize` for
 the history's exact size (1.5 s timeout, cached by content hash) and that size
 decides whether the trigger is reached. Any failure keeps the estimate; cut
-fitting always stays on the estimate. Cloud routes have no exact counter yet. The target is the
+fitting always stays on the estimate. On a cloud route that band check uses
+`ceil(utf8 bytes / 4)` instead; no tokenizer dependency is bundled, and the
+provider's usage counts after the call are what the session records. The target is the
 target ratio of that allowance; manual requests use the smaller of allowance and
 current volume. When the step's model profile has prefix reuse `none` (and
 applies to that step's route), the ratio is at most 0.35: every later step
