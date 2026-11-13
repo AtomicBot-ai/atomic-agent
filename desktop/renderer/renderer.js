@@ -21314,8 +21314,9 @@ if (typeof window !== 'undefined') {
           workers: selHasKind('workers') ? rows('workers') : null},
         settings: {active: on ? on.dataset.act : null,
           status: (set.content.querySelector('.llm-rm-status') || {}).textContent || '',
-          workersOn: (set.content.querySelector('.llm-workerseg .on') || {}).textContent || '',
-          workerButtons: set.content.querySelectorAll('.llm-workerseg button').length},
+          // ATO-606 (#1299): the worker reasoning segment wears .llm-workerseg too; the count is the workers' own group.
+          workersOn: (set.content.querySelector('.llm-workerseg[aria-label="Fusion workers"] .on') || {}).textContent || '',
+          workerButtons: set.content.querySelectorAll('.llm-workerseg[aria-label="Fusion workers"] button').length},
       };
     } finally {
       LIVE_CONFIG = keep.cfg; BSW.readyIds = keep.ids; BSW.readyLoaded = keep.rl; BSW.localLoaded = keep.ll;
