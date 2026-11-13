@@ -108,15 +108,14 @@ export class ProviderFallbackChain {
    * stand-in (`isStandIn`) is probed past at once, cooldown or not.
    */
   pickProvider(partitionKey: string = DEFAULT_PARTITION): ProviderPick {
-    const { chain } = this.resolve();
+    const p = this.partition(partitionKey);
+    const chain = this.chainFor(p);
     const primary = chain[0];
     if (!primary) {
       // Degenerate: no configured chain. Caller will surface its own
       // "no provider" error; return a harmless sentinel.
       return { providerId: "", isProbe: false };
     }
-
-    const p = this.partition(partitionKey);
 
     // A user hot-swap (new primary) or a chain edit that dropped the
     // override provider drops the override entirely.
@@ -159,8 +158,9 @@ export class ProviderFallbackChain {
     const decision = shouldAdvance(err);
     if (!decision.advance) return null;
 
-    const { chain, timing } = this.resolve();
+    const { timing } = this.resolve();
     const p = this.partition(partitionKey);
+    const chain = this.chainFor(p);
     registerBreakerFailure(
       this.breaker(p, fromId),
       this.now(),
@@ -208,8 +208,7 @@ export class ProviderFallbackChain {
       p.servingId = id;
     }
 
-    const { chain } = this.resolve();
-    const primary = chain[0];
+    const primary = this.chainFor(p)[0];
     if (wasProbe && id === primary && p.overrideId) {
       const from = p.overrideId;
       clearOverride(p);
@@ -237,9 +236,36 @@ export class ProviderFallbackChain {
     return this.partitions.get(partitionKey)?.overrideCause ?? null;
   }
 
-  /** Whether `id` heads the live chain: the provider the user picked. */
-  isPrimary(id: string): boolean {
-    return this.resolve().chain[0] === id;
+  /**
+   * Whether `id` heads the live chain for `partitionKey`: the provider the
+   * user picked, or the one the model router put first for this turn.
+   */
+  isPrimary(id: string, partitionKey = DEFAULT_PARTITION): boolean {
+    const p = this.partitions.get(partitionKey);
+    return (p ? this.chainFor(p) : this.resolve().chain)[0] === id;
+  }
+
+  /**
+   * Put `providerId` first in `partitionKey`'s chain for the turn about
+   * to run, ahead of the configured links (which follow in their usual
+   * order, without a repeat of it); null puts the configured chain back.
+   * The model router's seam (ATO-483): a routed turn starts on the
+   * routed provider, and when that fails the next link answers, the way
+   * a failed primary falls over. Within the turn the usual stickiness
+   * holds: after a fallover the later steps stay on the link that
+   * answered.
+   *
+   * A change of head drops the sticky override, as a new primary does:
+   * the override was a stand-in for the previous head, and keeping it
+   * would start the routed turn on a link nobody picked for it (or, on
+   * the way back, keep the next turn on the routed turn's stand-in).
+   */
+  setTurnPrimary(partitionKey: string, providerId: string | null): void {
+    if (providerId === null && !this.partitions.has(partitionKey)) return;
+    const p = this.partition(partitionKey);
+    if (p.turnPrimaryId === providerId) return;
+    p.turnPrimaryId = providerId;
+    clearOverride(p);
   }
 
   /** Whether a fallback has served `partitionKey` since it left the primary. */
@@ -256,11 +282,16 @@ export class ProviderFallbackChain {
     return servingId !== null && servingId === id;
   }
 
-  /** The override the next call starts on (no stand-in), for the route note. */
+  /**
+   * The link the next call starts on when it is not the configured
+   * primary, for the route note and the prompt seams: the override (no
+   * stand-in), else the turn's routed head (`setTurnPrimary`), else null.
+   */
   standingOverrideFor(partitionKey: string): string | null {
     const p = this.partitions.get(partitionKey);
-    if (!p?.overrideId) return null;
-    return isStandIn(p) ? null : p.overrideId;
+    if (!p) return null;
+    if (!p.overrideId || isStandIn(p)) return p.turnPrimaryId;
+    return p.overrideId;
   }
 
   private switchAwayTo(
@@ -299,6 +330,14 @@ export class ProviderFallbackChain {
         failure: classifyFailureCause(err).cause,
       });
     }
+  }
+
+  /** The live chain as `p` runs it: its turn head first, when one is set. */
+  private chainFor(p: PartitionState): readonly string[] {
+    const { chain } = this.resolve();
+    const head = p.turnPrimaryId;
+    if (head === null) return chain;
+    return [head, ...chain.filter((id) => id !== head)];
   }
 
   private partition(key: string): PartitionState {

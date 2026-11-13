@@ -68,6 +68,12 @@ export interface PartitionState {
    * failed probe moving the pointer onto the same link again.
    */
   servingId: string | null;
+  /**
+   * The link this partition's turn starts on ahead of the configured
+   * chain (`setTurnPrimary`): the provider the model router picked for
+   * the turn (ATO-483). Null = the configured chain as it is.
+   */
+  turnPrimaryId: string | null;
 }
 
 export function freshPartition(): PartitionState {
@@ -79,6 +85,7 @@ export function freshPartition(): PartitionState {
     overrideServed: false,
     fallbackServed: false,
     servingId: null,
+    turnPrimaryId: null,
   };
 }
 

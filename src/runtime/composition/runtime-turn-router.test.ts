@@ -59,10 +59,15 @@ describe("routeTurnProvider (ATO-483)", () => {
     expect(providerId).toBe("groq");
   });
 
-  it("does nothing under Fusion, a stored run mode, or a pinned turn", () => {
+  it("does nothing under Fusion, the local run mode, or a pinned turn", () => {
     const config = configWith({ enabled: true, rules: [{ provider: "groq" }] });
     expect(run(config, { runMode: { stored: "fusion", effective: "fusion" } }).providerId).toBeUndefined();
-    expect(run(config, { runMode: { stored: "cloud", effective: "cloud" } }).providerId).toBeUndefined();
+    expect(run(config, { runMode: { stored: "local", effective: "local" } }).providerId).toBeUndefined();
     expect(run(config, { pinnedProviderId: "openrouter" }).providerId).toBeUndefined();
+  });
+
+  it("still routes under the stored cloud run mode", () => {
+    const config = configWith({ enabled: true, rules: [{ provider: "groq" }] });
+    expect(run(config, { runMode: { stored: "cloud", effective: "cloud" } }).providerId).toBe("groq");
   });
 });

@@ -593,9 +593,11 @@ export interface AtomicAgentConfig {
       preferCacheRoutes?: boolean;
     };
     /**
-     * Opt-in rule-based model router (ATO-483): rules that pin a turn to
-     * a configured provider by what the request looks like. Off unless
-     * `enabled`; does nothing while a run mode or Fusion is set. See
+     * Opt-in rule-based model router (ATO-483): rules that put a
+     * configured provider first in a turn's fallback chain by what the
+     * request looks like. Off unless `enabled`; does nothing under the
+     * local run mode or Fusion (the cloud mode routes between cloud
+     * providers). See
      * `src/llm/router/`.
      */
     router?: UserLlmRouterConfig;

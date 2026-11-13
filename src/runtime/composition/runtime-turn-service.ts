@@ -90,7 +90,7 @@ export interface RuntimeTurnDependencies {
     resolveCurrentRunMode: RuntimeProviders["resolveCurrentRunMode"];
     resolveRouteVision: RuntimeProviders["resolveRouteVision"];
     resolveActiveModelName: RuntimeProviders["resolveActiveModelName"];
-    fallbackChain: Pick<ProviderFallbackChain, "standingOverrideFor">;
+    fallbackChain: Pick<ProviderFallbackChain, "standingOverrideFor" | "setTurnPrimary">;
   };
   traces: Pick<RuntimeTraces, "ensureRecorder" | "pinSession" | "readContextUsage" | "clearContextUsage" | "releaseSession">;
   telemetry: {
@@ -411,9 +411,12 @@ export function createRuntimeTurnService(
       });
     }
     // The model router (ATO-483), once per turn and before anything reads
-    // the pin: a rule's provider becomes this turn's pin, which keeps the
-    // whole turn on it. Off by default; silent under a run mode, Fusion or
-    // a turn that is already pinned.
+    // the route: a rule's provider goes first in this session's fallback
+    // chain for the turn, so every step starts on it and a failure falls
+    // over to the next `llm.fallback` link. Off by default; silent under
+    // the local run mode, Fusion or a turn that is already pinned. Set
+    // every turn (null when nothing routed), so a turn that threw before
+    // its `finally` cannot leave its head on the next one.
     const routedProviderId = routeTurnProvider({
       config: getConfig(),
       userMessage,
@@ -424,8 +427,8 @@ export function createRuntimeTurnService(
       logger,
       sessionId: session.id,
     });
-    if (routedProviderId !== undefined) {
-      runOptions = { ...runOptions, providerId: routedProviderId };
+    if (runOptions.providerId === undefined) {
+      fallbackChain.setTurnPrimary(session.id, routedProviderId ?? null);
     }
     // Resolved before the turn runs, from the live config: the model the
     // operator chose for this turn is what the session should remember,
@@ -593,6 +596,9 @@ export function createRuntimeTurnService(
         turnRequests.delete(session.id);
         turnPreviousReplies?.delete(session.id);
         traces.releaseSession(session.id);
+        if (routedProviderId !== undefined) {
+          fallbackChain.setTurnPrimary(session.id, null);
+        }
       }
     });
   };

@@ -677,3 +677,76 @@ describe("runWithFallback", () => {
     expect(describeFailedAttempts(grammar)).toBe("");
   });
 });
+
+describe("runWithFallback with a routed turn head (setTurnPrimary, ATO-483)", () => {
+  it("starts on the routed provider and, when it fails, the next link answers", async () => {
+    const notices: ProviderSwitchNotice[] = [];
+    const chain = makeChain(["active", "backup"], notices);
+    chain.setTurnPrimary("s1", "routed");
+    const seen: string[] = [];
+
+    const result = await runWithFallback(
+      chain,
+      async (id) => {
+        seen.push(id);
+        if (id === "routed") throw http(503);
+        return `answer from ${id}`;
+      },
+      "s1",
+    );
+
+    // The routed provider heads the chain; the configured links follow.
+    expect(seen).toEqual(["routed", "active"]);
+    expect(result).toBe("answer from active");
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ direction: "away", from: "routed", to: "active" });
+  });
+
+  it("stays on the link that answered for the rest of the turn", async () => {
+    const chain = makeChain(["active", "backup"]);
+    chain.setTurnPrimary("s1", "routed");
+    await runWithFallback(chain, async (id) => {
+      if (id === "routed") throw http(429);
+      return id;
+    }, "s1");
+    // The next step of the same turn does not go back to the routed one
+    // while its cooldown runs.
+    const seen: string[] = [];
+    await runWithFallback(chain, async (id) => {
+      seen.push(id);
+      return id;
+    }, "s1");
+    expect(seen).toEqual(["active"]);
+  });
+
+  it("does not repeat a routed provider that is also in the configured chain", async () => {
+    const chain = makeChain(["active", "backup"]);
+    chain.setTurnPrimary("s1", "backup");
+    const seen: string[] = [];
+    await expect(
+      runWithFallback(chain, async (id) => {
+        seen.push(id);
+        throw http(503);
+      }, "s1"),
+    ).rejects.toBeInstanceOf(OpenAiHttpError);
+    expect(seen).toEqual(["backup", "active"]);
+  });
+
+  it("only moves its own session, and clearing it puts the configured chain back", async () => {
+    const chain = makeChain(["active", "backup"]);
+    chain.setTurnPrimary("s1", "routed");
+    const other = await runWithFallback(chain, async (id) => id, "s2");
+    expect(other).toBe("active");
+    expect(chain.standingOverrideFor("s1")).toBe("routed");
+
+    // The routed turn fell over, then ended.
+    await runWithFallback(chain, async (id) => {
+      if (id === "routed") throw http(503);
+      return id;
+    }, "s1");
+    chain.setTurnPrimary("s1", null);
+    expect(chain.standingOverrideFor("s1")).toBeNull();
+    const next = await runWithFallback(chain, async (id) => id, "s1");
+    expect(next).toBe("active");
+  });
+});

@@ -12,15 +12,17 @@ import type { RunModeName } from "../../config/llm-run-mode-config.js";
  *
  * Once per turn, before it starts, the `llm.router` rules are read
  * against what the request looks like; the first rule whose conditions
- * all hold names the provider the whole turn runs on. The caller pins
- * the turn to it (`RunTurnOptions.providerId`), which is what keeps the
- * choice sticky for every step of the turn: no step re-routes.
+ * all hold names the provider the turn starts on. The caller puts it
+ * first in the turn's fallback chain (`ProviderFallbackChain.setTurnPrimary`):
+ * every step starts there, and when it fails the next link of
+ * `llm.fallback` answers, as for a failed primary. No step re-routes.
  *
  * It stays out of the way of every other way the provider is chosen:
  *  - off unless `llm.router.enabled` is true and a rule exists;
- *  - does nothing while a run mode is set (`/runmode`, `llm.runMode`) or
- *    Fusion is in effect: those own the choice of provider, and two
- *    mechanisms picking the model would fight;
+ *  - does nothing under the `local` run mode or Fusion: those own the
+ *    choice of provider, and two mechanisms picking the model would
+ *    fight. Under the `cloud` run mode it routes between cloud providers
+ *    only (a rule naming a local one is passed over);
  *  - does nothing for a turn that is already pinned (a Fusion worker, a
  *    caller's explicit `providerId`);
  *  - a rule that names the active provider, a provider that is not
@@ -44,6 +46,8 @@ export interface RouterProvider {
   id: string;
   supportsTools?: boolean;
   supportsVision?: boolean;
+  /** A `llama-server` provider: on this machine. */
+  local?: boolean;
 }
 
 export interface RouteTurnInput {
@@ -101,7 +105,8 @@ export function routeTurn(input: RouteTurnInput): RouteDecision {
     return { routed: false, reason: "disabled" };
   }
   if (input.runMode.effective === "fusion") return { routed: false, reason: "fusion" };
-  if (input.runMode.stored !== null) return { routed: false, reason: "run-mode" };
+  const stored = input.runMode.stored;
+  if (stored !== null && stored !== "cloud") return { routed: false, reason: "run-mode" };
   if (input.pinnedProviderId !== undefined) return { routed: false, reason: "pinned" };
   const features = extractRouteFeatures(input.request.message);
   const home = input.homeDir ?? homedir();
@@ -110,6 +115,8 @@ export function routeTurn(input: RouteTurnInput): RouteDecision {
     if (target === undefined) continue;
     if (!ruleMatches(rule.when, features, input.request, home)) continue;
     if (!canServe(target, features, input.request)) continue;
+    // The cloud run mode keeps every turn in the cloud.
+    if (stored === "cloud" && target.local === true) continue;
     if (target.id === input.activeProviderId) return { routed: false, reason: "active" };
     return { routed: true, providerId: target.id, rule: ruleLabel(rule, index) };
   }

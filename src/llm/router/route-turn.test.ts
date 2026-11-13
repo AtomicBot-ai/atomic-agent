@@ -70,15 +70,35 @@ describe("routeTurn: off and out of the way", () => {
     expect(decision).toEqual({ routed: false, reason: "fusion" });
   });
 
-  it("does nothing while a run mode is set with /runmode", () => {
-    for (const stored of ["local", "cloud"] as const) {
-      const decision = routeTurn(
-        input(on([{ provider: "groq" }]), "hi", {
-          runMode: { stored, effective: stored },
-        }),
-      );
-      expect(decision).toEqual({ routed: false, reason: "run-mode" });
-    }
+  it("does nothing while the local run mode is set with /runmode", () => {
+    const decision = routeTurn(
+      input(on([{ provider: "groq" }]), "hi", {
+        runMode: { stored: "local", effective: "local" },
+      }),
+    );
+    expect(decision).toEqual({ routed: false, reason: "run-mode" });
+  });
+
+  it("routes under the stored cloud run mode, between cloud providers only", () => {
+    const cloud = { runMode: { stored: "cloud" as const, effective: "cloud" as const } };
+    expect(routeTurn(input(on([{ provider: "groq" }]), "hi", cloud))).toEqual({
+      routed: true,
+      providerId: "groq",
+      rule: "rule 1",
+    });
+    const providers = [...PROVIDERS, { id: "local", local: true }];
+    // A local rule is passed over; the next rule answers.
+    expect(
+      routeTurn(
+        input(on([{ provider: "local" }, { provider: "groq" }]), "hi", { ...cloud, providers }),
+      ),
+    ).toEqual({ routed: true, providerId: "groq", rule: "rule 2" });
+    // With no run mode stored, a local target is fine.
+    expect(routeTurn(input(on([{ provider: "local" }]), "hi", { providers }))).toEqual({
+      routed: true,
+      providerId: "local",
+      rule: "rule 1",
+    });
   });
 
   it("does nothing for a turn that is already pinned", () => {

@@ -1,4 +1,4 @@
-import type { AtomicAgentConfig } from "../../config/index.js";
+import { LOCAL_PROVIDER_KIND, type AtomicAgentConfig } from "../../config/index.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import { routeTurn, type RouteDecision } from "../../llm/router/index.js";
@@ -7,8 +7,10 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 /**
  * The provider `llm.router` sends this turn to, or undefined to leave
  * the turn as it was (ATO-483). Read once, before the turn starts, from
- * the live config; the caller pins the turn to the answer, so it holds
- * for every step. See `src/llm/router/README.md`.
+ * the live config. The caller puts the answer first in the turn's
+ * fallback chain (`setTurnPrimary`): every step starts on it, and a
+ * failure falls over to the next `llm.fallback` link. See
+ * `src/llm/router/README.md`.
  *
  * `needsTools` is true: every agent turn offers tools (even its reply is
  * one), so a rule's `needsTools: false` only matches a caller that hides
@@ -45,6 +47,7 @@ export function routeTurnProvider(params: {
         id: p.id,
         ...(p.supportsTools !== undefined ? { supportsTools: p.supportsTools } : {}),
         ...(p.supportsVision !== undefined ? { supportsVision: p.supportsVision } : {}),
+        ...(p.kind === LOCAL_PROVIDER_KIND ? { local: true } : {}),
       })),
   });
   if (!decision.routed) return undefined;
