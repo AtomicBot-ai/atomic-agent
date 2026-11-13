@@ -196,12 +196,8 @@ function goalFormHTML(deps) {
     + '<button class="btn xs" data-goal-form="start"' + (GOAL_FORM.busy ? ' disabled' : '') + '>Start goal</button></div></div>';
 }
 
-/** The composer's flag button. */
-function goalButtonHTML(deps) {
-  return '<button class="attbtn goalbtn' + (GOAL_FORM.open ? ' is-open' : '') + '" data-goal-open="1"'
-    + ' title="Set a goal: the agent keeps working until its criteria are met" aria-label="Set a goal">' + deps.ic('flag') + '</button>';
-}
+/* W2: the composer's flag button is gone; Goal is a row of the mode chip (composer-mode.js). */
 
 if (typeof module !== 'undefined') {
-  module.exports = {GOALS, GOAL_FOLD, GOAL_PENDING, GOAL_FORM, goalRead, goalSame, goalSet, goalRestore, goalOf, goalStatusLabel, goalMarkWord, goalSummary, goalActions, goalParseForm, goalCardHTML, goalFormHTML, goalButtonHTML};
+  module.exports = {GOALS, GOAL_FOLD, GOAL_PENDING, GOAL_FORM, goalRead, goalSame, goalSet, goalRestore, goalOf, goalStatusLabel, goalMarkWord, goalSummary, goalActions, goalParseForm, goalCardHTML, goalFormHTML};
 }

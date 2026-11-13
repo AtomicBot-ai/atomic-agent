@@ -456,15 +456,17 @@ function attQueueLabel(text) {
 /* ---------- the composer's markup ---------- */
 
 function attButtonHTML() {
-  return '<button class="attbtn' + (ATT.menu ? ' is-open' : '') + '" data-att-menu="1" title="Attach images or files" aria-label="Attach images or files" aria-haspopup="menu" aria-expanded="' + (ATT.menu ? 'true' : 'false') + '">' + ic('plus') + '</button>';
+  return '<button class="attbtn' + (ATT.menu ? ' is-open' : '') + '" data-att-menu="1" title="Attach images, files or a window" aria-label="Attach images, files or a window" aria-haspopup="menu" aria-expanded="' + (ATT.menu ? 'true' : 'false') + '">' + ic('plus') + '</button>';
 }
 /** Hangs off `.composerwrap` (as the slash list does): `.composer` clips. */
 function attMenuHTML() {
   return '<div class="attmenu" id="attmenu" role="menu"' + (ATT.menu ? '' : ' hidden') + '>'
     + '<button class="attmenurow" role="menuitem" data-att-pick="images">' + ic('image') + '<span>Images</span></button>'
     + '<button class="attmenurow" role="menuitem" data-att-pick="files">' + ic('file') + '<span>Files</span></button>'
-    // ATO-1113: a long task with a budget and a time limit (overnight.js owns the dialog).
-    + '<button class="attmenurow" role="menuitem" data-ovn="open">' + ic('moon') + '<span>Run overnight</span></button>'
+    /* W2: attachments only. A snapshot of an app window (window-snapshot.js
+       listens for data-wsnap-open); Run overnight is a mode now, on the mode
+       chip under the input (composer-mode.js). */
+    + '<button class="attmenurow" role="menuitem" data-wsnap-open="1">' + ic('appwin') + '<span>Window</span></button>'
     + '</div>';
 }
 /** Always emitted (hidden when empty), so attRepaint can swap it without a render(). */

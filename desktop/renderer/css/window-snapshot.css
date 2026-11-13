@@ -1,6 +1,6 @@
 /* ============================================================
    ATO-532 — the window picker (renderer/window-snapshot.js).
-   The window button beside "+" reuses .attbtn; the picker is a sheet over
+   Opened from the "+" menu's Window row (W2); the picker is a sheet over
    the window, drawn into #window outside what render() redraws (z-index just
    over the sheets in overlays.css). Colours come from tokens only.
    ============================================================ */
@@ -42,3 +42,12 @@
 .wsnapnote.is-perm{color:var(--ink)}
 .wsnapline{display:flex;align-items:center;gap:8px;margin:0 2px 10px;font:400 var(--fs-label)/1.4 var(--font-ui);color:var(--ink-2)}
 .wsnapline svg{flex:none;width:14px;height:14px}
+
+/* W2: no Screen Recording yet. One sentence and the two ways forward, as Zoom and Slack ask. */
+.wsnapperm{display:flex;flex-direction:column;align-items:center;gap:12px;padding:28px 24px 24px;text-align:center}
+.wsnappermic{display:grid;place-items:center;width:40px;height:40px;border-radius:12px;background:var(--panel-2);color:var(--ink-2)}
+.wsnappermic svg{width:20px;height:20px;stroke-width:1.35}
+.wsnappermtx{max-width:420px}
+.wsnappermt{font:600 var(--fs-ui)/20px var(--font-ui);color:var(--ink)}
+.wsnappermtx p{margin:4px 0 0;font:400 var(--fs-cap)/1.45 var(--font-ui);color:var(--ink-2)}
+.wsnappermbtns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}

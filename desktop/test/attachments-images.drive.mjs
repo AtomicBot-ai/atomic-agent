@@ -127,7 +127,8 @@ try {
   // ---- 1. picker: + → Images, + → Files, remove ----
   await app.clickSel('#composer .attbtn');
   await app.waitFor(`!document.getElementById('attmenu').hidden`, 'the + menu');
-  check('picker: + opens the Images / Files / Run overnight menu', (await ev(`[...document.querySelectorAll('#attmenu .attmenurow')].map((b) => b.textContent.trim()).join(',')`)) === 'Images,Files,Run overnight');
+  // W2: "+" holds attachments only (Run overnight moved to the mode chip).
+  check('picker: + opens the Images / Files / Window menu', (await ev(`[...document.querySelectorAll('#attmenu .attmenurow')].map((b) => b.textContent.trim()).join(',')`)) === 'Images,Files,Window');
   await app.clickSel('#attmenu [data-att-pick="images"]');
   await app.waitFor(`document.querySelectorAll('#attstrip .attchip').length === 1 && ${settled}`, 'the image chip', { timeout: 15000 });
   await app.clickSel('#composer .attbtn');

@@ -1,16 +1,16 @@
 /* ============================================================
    ATO-403 — attachments (renderer/attachments.js).
-   The "+" button beside the mic and its two-row menu, the chips above the
+   The "+" button and its menu (Images, Files, Window: attachments only), the chips above the
    message box, the drop zone, and the chips under a sent message.
    Loaded after composer.css. Colours come from tokens only.
    ============================================================ */
 
 /* ---- "+" and its menu -------------------------------------------------- */
-.attbtn{width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:50%;
-  background:transparent;color:var(--ink);
+.attbtn{width:32px;height:32px;flex:none;display:grid;place-items:center;border-radius:50%;
+  background:transparent;color:var(--ink-2);
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
-.attbtn svg{width:16px;height:16px}
-.attbtn:hover,.attbtn.is-open{background:var(--hover)}
+.attbtn svg{width:18px;height:18px;stroke-width:1.35}
+.attbtn:hover,.attbtn.is-open{background:var(--hover);color:var(--ink)}
 
 .composerwrap > .attmenu{position:absolute;bottom:calc(100% - 4px);z-index:40;min-width:160px;
   display:flex;flex-direction:column;gap:1px;padding:6px;border-radius:var(--r-pop);
@@ -18,7 +18,7 @@
 .composerwrap > .attmenu[hidden]{display:none}
 .attmenurow{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:var(--r-row);
   background:transparent;color:var(--ink);font:500 var(--fs-cap)/1 var(--font-ui);text-align:left}
-.attmenurow svg{width:15px;height:15px;color:var(--ink-2)}
+.attmenurow svg{width:16px;height:16px;stroke-width:1.4;color:var(--ink-2)}
 .attmenurow:hover{background:var(--hover)}
 
 /* ---- Chips above the box ------------------------------------------------ */

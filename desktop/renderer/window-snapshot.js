@@ -1,5 +1,5 @@
 /* ---------------- ATO-532: a snapshot of an app window in the composer ----------------
-   The window button beside "+" (and File › Attach App Window…) opens a picker
+   The "+" menu's Window row (and File › Attach App Window…) opens a picker
    of the other apps' open windows: a small picture and the title of each.
    A click takes a larger snapshot of that one window in main
    (main/window-snapshot-ipc.ts) and hands its bytes to attachments.js as a
@@ -7,8 +7,10 @@
    There is no second attachment path.
 
    View-only: windows are looked at, never clicked or typed into. Only windows,
-   never the whole screen. On macOS without Screen Recording permission the
-   picker says where to turn it on instead of showing an empty list.
+   never the whole screen. On macOS the first listing makes macOS ask for
+   Screen Recording itself (main); without it the picker shows a card with
+   Open System Settings (straight to the right pane) and Try again, the way
+   Zoom and Slack do, instead of an empty list or a path to follow by hand.
 
    Loaded after attachments.js and before renderer.js; reads their globals
    (BR, ATT, attAdd, attCanDrop, toast, esc, ic, $) only when a function runs.
@@ -56,17 +58,21 @@ function wsnapCaptureView(res) {
 
 /* ---------- markup ---------- */
 
-function wsnapButtonHTML() {
-  return '<button class="attbtn wsnapbtn' + (WSNAP.state !== 'closed' ? ' is-open' : '') + '" data-wsnap-open="1"'
-    + ' title="Attach a snapshot of an app window" aria-label="Attach a snapshot of an app window" aria-haspopup="dialog">'
-    + ic('appwin') + '</button>';
+/** W2: the permission card. One sentence, then the two ways forward. */
+function wsnapPermHTML() {
+  const settings = typeof BR !== 'undefined' && BR && BR.snapshotOpenSettings;
+  return '<div class="wsnapperm" role="group" aria-labelledby="wsnappermt">'
+    + '<span class="wsnappermic">' + ic('appwin') + '</span>'
+    + '<div class="wsnappermtx"><div class="wsnappermt" id="wsnappermt">Allow screen recording to attach a window</div>'
+    + '<p>Turn on Atomic Agent under Screen &amp; System Audio Recording. If macOS asks, reopen the app, then try again.</p></div>'
+    + '<div class="wsnappermbtns">'
+    + (settings ? '<button class="btn btn-p sm" data-wsnap-settings="1">Open System Settings</button>' : '')
+    + '<button class="btn sm" data-wsnap-retry="1">Try again</button></div></div>';
 }
 function wsnapBodyHTML() {
   const s = WSNAP.state;
   if (s === 'loading') return '<div class="wsnapnote"><span class="attspin" aria-hidden="true"></span>Looking for open windows…</div>';
-  if (s === 'permission') {
-    return '<div class="wsnapnote is-perm">' + ic('lock') + '<p>' + esc(WSNAP.message) + '</p></div>';
-  }
+  if (s === 'permission') return wsnapPermHTML();
   if (s === 'error') return '<div class="wsnapnote is-err">' + ic('alert') + '<p>' + esc(WSNAP.message) + '</p></div>';
   const line = WSNAP.message ? '<div class="wsnapline">' + ic('alert') + '<span>' + esc(WSNAP.message) + '</span></div>' : '';
   if (!WSNAP.windows.length) return line + '<div class="wsnapnote">No other app windows are open.</div>';
@@ -94,8 +100,6 @@ function wsnapHTML() {
 function wsnapPaint() {
   if (typeof document === 'undefined') return;
   const old = document.getElementById('wsnap');
-  const btn = document.querySelector('#composer .wsnapbtn');
-  if (btn) btn.classList.toggle('is-open', WSNAP.state !== 'closed');
   if (WSNAP.state === 'closed') { if (old) old.remove(); return; }
   const host = document.getElementById('window') || document.body;
   const tmp = document.createElement('div');
@@ -127,7 +131,8 @@ async function wsnapList() {
   WSNAP.windows = view.windows || [];
   if (view.state !== 'list') WSNAP.message = view.message;
   wsnapPaint();
-  const first = document.querySelector('#wsnap [data-wsnap-pick]') || document.querySelector('#wsnap [data-wsnap-close]');
+  const first = document.querySelector('#wsnap [data-wsnap-pick]') || document.querySelector('#wsnap [data-wsnap-settings]')
+    || document.querySelector('#wsnap [data-wsnap-close]');
   if (first) first.focus();
 }
 function wsnapClose() {
@@ -182,6 +187,9 @@ if (typeof document !== 'undefined') {
     if (t.closest('[data-wsnap-open]')) { e.preventDefault(); if (WSNAP.state === 'closed') wsnapOpen(); else wsnapClose(); return; }
     if (WSNAP.state === 'closed') return;
     if (t.closest('[data-wsnap-close]')) { e.preventDefault(); wsnapClose(); return; }
+    // W2: the permission card. Settings opens the Screen Recording pane in main; Try again lists again.
+    if (t.closest('[data-wsnap-settings]')) { e.preventDefault(); if (BR && BR.snapshotOpenSettings) void BR.snapshotOpenSettings(); return; }
+    if (t.closest('[data-wsnap-retry]')) { e.preventDefault(); WSNAP.message = ''; void wsnapList(); return; }
     const pick = t.closest('[data-wsnap-pick]');
     if (pick) { e.preventDefault(); wsnapPick(pick.getAttribute('data-wsnap-pick')); return; }
     // A click on the dimmed window around the sheet closes it.
@@ -193,5 +201,5 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {wsnapSafeImage, wsnapListView, wsnapCaptureView};
+  module.exports = {wsnapSafeImage, wsnapListView, wsnapCaptureView, wsnapPermHTML, WSNAP};
 }

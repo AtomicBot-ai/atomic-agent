@@ -77,16 +77,21 @@ async function goalTurnEnded(sid) {
   if (GOAL_PENDING.delete(sid) && sid === S.agentSession) render();
 }
 
+/** Open (or close) the composer's goal form. W2: the mode chip's Goal row calls it (composer-mode.js). */
+function goalFormShow(open) {
+  GOAL_FORM.open = !!open;
+  GOAL_FORM.error = GOAL_FORM.open && !goalSessionId() ? 'Send a first message in this chat, then set a goal.' : '';
+  render();
+  if (GOAL_FORM.open) { const box = document.getElementById('goal-criteria'); if (box) box.focus(); }
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('click', (e) => {
     const t = e.target;
     if (!t || !t.closest) return;
     if (t.closest('[data-goal-open]')) {
       e.preventDefault();
-      GOAL_FORM.open = !GOAL_FORM.open;
-      GOAL_FORM.error = GOAL_FORM.open && !goalSessionId() ? 'Send a first message in this chat, then set a goal.' : '';
-      render();
-      if (GOAL_FORM.open) { const box = document.getElementById('goal-criteria'); if (box) box.focus(); }
+      goalFormShow(!GOAL_FORM.open);
       return;
     }
     const form = t.closest('[data-goal-form]');

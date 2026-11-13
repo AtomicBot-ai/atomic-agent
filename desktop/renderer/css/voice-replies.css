@@ -1,6 +1,6 @@
 /* ============================================================
    Replies by voice: View › Reading Voice and Speed… (tts-settings.js,
-   ATO-494) and the conversation-mode bar and button (converse.js,
+   ATO-494) and the conversation-mode bar (converse.js; W2: its button is a mode-chip row,
    ATO-1047). Colours come from tokens only.
    ============================================================ */
 
@@ -18,7 +18,6 @@
 .ttsset-foot{display:flex;justify-content:flex-end}
 
 /* ---- Conversation mode: the bar sits at the top centre, clear of the composer -- */
-.micbtn.convbtn.on{background:var(--accent-wash);color:var(--accent-text)}
 .convbar{position:fixed;left:50%;top:12px;-webkit-app-region:no-drag;transform:translateX(-50%);z-index:60;
   display:flex;align-items:center;gap:10px;padding:6px 8px 6px 14px;border-radius:999px;
   background:var(--lift);color:var(--ink);box-shadow:var(--sh-pop);font-size:var(--fs-cap);

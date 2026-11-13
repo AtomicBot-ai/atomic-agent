@@ -288,6 +288,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-532: other apps' windows for the composer's window picker, and one of them captured (main/window-snapshot-ipc.ts). */
   snapshotWindows: () => ipcRenderer.invoke("snapshot:windows"),
   snapshotCapture: (id: string) => ipcRenderer.invoke("snapshot:capture", id),
+  /** W2: the picker's permission card opens macOS's Screen Recording pane (the address is fixed in main). */
+  snapshotOpenSettings: () => ipcRenderer.invoke("snapshot:openSettings"),
   /** ATO-1067: model servers on the local network, and a check of one address (main/lan-discovery-ipc.ts). View-only. */
   lanFind: () => ipcRenderer.invoke("lan:find"),
   lanCheck: (url: string) => ipcRenderer.invoke("lan:check", url),

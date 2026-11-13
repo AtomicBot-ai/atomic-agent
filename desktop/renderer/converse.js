@@ -175,14 +175,9 @@ function convPaint() {
   if (typeof render === 'function') render();
 }
 
-/** The composer button beside the microphone (only where dictation exists). */
-function convButtonHTML() {
-  if (typeof BR === 'undefined' || !BR || BR.voiceSupported === false) return '';
-  const on = CONV.state !== 'off';
-  const label = on ? 'Stop conversation mode · Esc' : 'Conversation mode: speak, hear the reply, speak again';
-  return '<button class="micbtn convbtn' + (on ? ' on' : '') + '" data-conv="1" data-act="conv:toggle" title="' + esc(label)
-    + '" aria-label="' + esc(label) + '"' + (on ? ' aria-pressed="true"' : '') + '>' + ic('speak') + '</button>';
-}
+/* W2: no button of its own beside the microphone any more. Conversation mode
+   is the "Voice conversation" row of the composer's mode chip
+   (composer-mode.js); View › Conversation Mode (⌘⇧J) still toggles it. */
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // Capture phase: ahead of the app's own key layers, so Escape reaches the

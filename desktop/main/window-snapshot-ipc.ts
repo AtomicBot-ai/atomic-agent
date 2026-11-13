@@ -7,17 +7,20 @@
  *   snapshot:capture   one of those windows, larger (long side up to
  *                      SNAPSHOT_MAX_PX), as PNG bytes (JPEG when the PNG is
  *                      big) for the composer to attach like a pasted image
+ *   snapshot:openSettings  macOS's Screen Recording pane, for the picker's
+ *                      permission card (W2); the address is fixed here
  *
  * View-only: desktopCapturer reads pixels; nothing is ever clicked, typed or
  * sent to another window. The window can only ask for an id the last
  * listing returned, so it cannot name an arbitrary source.
  */
 
-import { BrowserWindow, desktopCapturer, ipcMain, systemPreferences, type DesktopCapturerSource } from "electron";
+import { BrowserWindow, desktopCapturer, ipcMain, shell, systemPreferences, type DesktopCapturerSource } from "electron";
 
 import {
   PICKER_THUMB_PX,
   SCREEN_PERMISSION_MESSAGE,
+  SCREEN_SETTINGS_URL,
   SNAPSHOT_MAX_PX,
   SNAPSHOT_PNG_MAX_BYTES,
   fitLongSide,
@@ -89,6 +92,18 @@ export function wireWindowSnapshotIpc(): void {
       return { id: src.id, name: src.name, thumb: src.thumbnail.toDataURL(), icon };
     });
     return { ok: true, windows };
+  });
+
+  /* W2: the permission card's "Open System Settings". The renderer names no
+     address: this one pane, macOS only. */
+  ipcMain.handle("snapshot:openSettings", async (): Promise<{ ok: boolean; error?: string }> => {
+    if (process.platform !== "darwin") return { ok: false, error: "macOS only" };
+    try {
+      await shell.openExternal(SCREEN_SETTINGS_URL);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   });
 
   ipcMain.handle("snapshot:capture", async (_event, id: unknown): Promise<CaptureAnswer> => {

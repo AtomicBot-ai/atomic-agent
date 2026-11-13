@@ -93,6 +93,9 @@ export function snapshotFileName(title: string, ext: "png" | "jpg" = "png"): str
 }
 
 /** What the picker says when macOS has not allowed screen capture. */
+/** W2: System Settings › Privacy & Security › Screen & System Audio Recording, opened by the picker's permission card. */
+export const SCREEN_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+
 export const SCREEN_PERMISSION_MESSAGE =
   "To attach a window, allow Atomic Agent to record the screen: System Settings → Privacy & Security → Screen & System Audio Recording, turn on Atomic Agent, then quit and reopen the app.";
 

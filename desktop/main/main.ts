@@ -4070,6 +4070,8 @@ async function smokeTest(): Promise<void> {
       bundledModel ? pre.window! > 0 && pre.window !== 128000 : pre.window === null || pre.window > 0,
       `window=${pre.window} (${pre.windowLabel || "unknown"}) provider=${activeForWindow?.kind ?? "none"}`,
     );
+    // W2 (owner feedback): no context ring and no status line under the composer, whatever the figure.
+    check("composer draws no context ring and no status line", (await js<boolean>("window.__ctxRingDrawn()")) === false);
     const dial = await js<boolean>("window.__ctxOpen()");
     check("panel opens with the dial before any turn", dial === true);
     const title = await js<string>("window.__ctxTitle()");
@@ -4099,7 +4101,8 @@ async function smokeTest(): Promise<void> {
     mkdirSync(noTraceDir, { recursive: true });
     try {
       const none = await js<PreCtx>(`window.__ctxEmpty(${JSON.stringify(noTraceDir)})`);
-      const noneChip = await js<boolean>("!!document.querySelector('.cfoot .ctxbtn')");
+      // W2: the ring left the composer; "chip hidden" is now "no figure to carry" (window.__ctxChip is null).
+      const noneChip = await js<boolean>("!!window.__ctxChip()");
       const noneOpen = await js<boolean>("window.__ctxOpen()");
       const noneTitle = await js<string>("window.__ctxTitle()");
       const noneLine = await js<boolean>(
@@ -5213,14 +5216,15 @@ async function voiceTest(
     // --- the button ------------------------------------------------------
     const mic = await js<Mic>("window.__voiceMic()");
     const order = mic.order.split("|");
-    // ATO-1047 (#1364): the conversation-mode button (class "micbtn convbtn") sits between the mic and send, so the
-    // dictation mic is the micbtn that is not convbtn, and the only thing between it and send is that one button.
-    const iMic = order.findIndex((c) => c.split(" ").includes("micbtn") && !c.split(" ").includes("convbtn"));
+    // W2: the row is "+", the dictation mic, send; nothing else. Conversation mode is a row of the mode chip
+    // (composer-mode.js), so the mic sits right beside send and no other button is left in the field.
+    const iMic = order.findIndex((c) => c.split(" ").includes("micbtn"));
     const iSend = order.findIndex((c) => c.split(" ").includes("sendbtn"));
-    const between = iMic >= 0 && iSend > iMic ? order.slice(iMic + 1, iSend) : [];
+    const buttons = order.filter((c) => /\b(attbtn|micbtn|sendbtn|wsnapbtn|goalbtn|convbtn)\b/.test(c));
     check(
-      "mic button sits next to send (with only the conversation-mode button between them)",
-      mic.present && iMic >= 0 && iSend > iMic && between.every((c) => c.split(" ").includes("convbtn")) && between.length <= 1,
+      "mic button sits right next to send, and the field holds only +, mic and send",
+      mic.present && iMic >= 0 && iSend === iMic + 1
+        && buttons.length === 3 && buttons[0].split(" ").includes("attbtn"),
       `field children ${JSON.stringify(mic.order)}`,
     );
 

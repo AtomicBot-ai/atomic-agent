@@ -204,10 +204,10 @@
    the secondary grey looked switched off); recording turns it red and it
    breathes. One that cannot work is greyed (`aria-disabled`, its reason in
    the tooltip), with no hover of its own. */
-.micbtn{width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:50%;
-  background:transparent;color:var(--ink);
+.micbtn{width:32px;height:32px;flex:none;display:grid;place-items:center;border-radius:50%;
+  background:transparent;color:var(--ink-2);
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
-.micbtn svg{width:16px;height:16px}
+.micbtn svg{width:18px;height:18px;stroke-width:1.35}
 .micbtn:hover:not([disabled]):not([aria-disabled="true"]){background:var(--hover);color:var(--ink)}
 .micbtn[disabled],.micbtn[aria-disabled="true"]{color:var(--ink-3);opacity:.55;cursor:default}
 .micbtn.rec,.micbtn.rec:hover:not([disabled]){background:var(--critical-wash);color:var(--critical);animation:cmp-rec 1.4s var(--ease) infinite}
@@ -216,10 +216,10 @@
 
 /* Send: 36px circle. Empty = muted · draft = ink · busy + empty = stop ·
    busy + draft = brand (steer) · switch lock = muted with a small spinner. */
-.sendbtn{width:36px;height:36px;flex:none;display:grid;place-items:center;border-radius:50%;
+.sendbtn{width:32px;height:32px;flex:none;display:grid;place-items:center;border-radius:50%;
   background:var(--ink);color:var(--paper);
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
-.sendbtn svg{width:16px;height:16px;stroke-width:2.2}
+.sendbtn svg{width:18px;height:18px;stroke-width:1.5}
 .sendbtn:hover{background:color-mix(in srgb, var(--ink) 84%, var(--paper))}
 .sendbtn.mute,.sendbtn.mute:hover{background:var(--panel-2);color:var(--ink-3);cursor:default}
 .sendbtn.stop svg{width:12px;height:12px}
@@ -320,26 +320,7 @@
 .fzlive .fznote{padding:0 0 2px 15px;font:400 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3)}
 .fzlive .fznote.bad{color:var(--critical)}
 
-/* Context gauge: the 20px ring alone; the figure is its tooltip and the
-   numbers live in its popover. */
-.cfoot .ctxbtn{width:30px;padding:0;justify-content:center;color:var(--ink-2)}
-/* ATO-711: .cfoot .cchip > svg sets every chip icon to 14px and outranks a
-   bare .ctxring, so the ring needs the same reach to be drawn at 20px. */
-.ctxring,.cfoot .cchip > svg.ctxring{width:20px;height:20px;flex:none}
-.ctxring circle{fill:none}
-/* ATO-166: a donut — a full grey track and a thick arc on it, no fill.
-   ATO-481: the track is --ink-3 (3:1 and up on both themes); at 16% ink it
-   all but vanished and the arc alone read as a spinner. */
-.ctxring .bg{fill:none;stroke:var(--ink-3);stroke-width:3}
-/* Thick and still on its track: the thin arc it once was read as a spinner. */
-.ctxring .fg{stroke:var(--brand);stroke-width:3;stroke-linecap:butt}
-.ctxring.warn .fg{stroke:var(--amber)}
-.ctxring.crit .fg{stroke:var(--critical)}
-/* ATO-481: from 50% the figure sits beside the ring. */
-.cfoot .ctxbtn.haspct{width:auto;padding:0 8px 0 5px;gap:5px}
-.ctxpct{font:500 var(--fs-label)/1 var(--font-ui);font-variant-numeric:tabular-nums;color:var(--ink-2)}
-.ctxbtn.warn .ctxpct{color:var(--amber-text)}
-.ctxbtn.crit .ctxpct{color:var(--critical)}
+/* W2: the context ring is no longer drawn in the composer row (owner feedback). */
 /* ATO-569: the chat's cost and the plan's limit, after the ring. Plain text
    in the ring's ink, not a button: the numbers are its tooltip; amber once
    the plan window is nearly spent. */
@@ -422,10 +403,38 @@
 .pl-more{font-size:var(--fs-cap);color:var(--ink-2);padding-left:22px}
 .pl-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
-/* ---- ATO-1186: the quiet status line under the control row -------------
-   Model · context tokens · time on this chat · app memory (status-line.js).
-   Grey caption text, one line, clipped rather than wrapped. */
-.cstatus{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px;padding:0 2px;
-  font-size:var(--fs-micro);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
-.cstatus > span{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.cstatus > .csep{flex:none;opacity:.7}
+/* W2: the ATO-1186 status line under the control row is gone (owner feedback). */
+
+/* ---- W2: the composer redesign -----------------------------------------
+   Thin outline glyphs, as ChatGPT and Claude draw them: an 18px glyph in a
+   32px hit area, a muted colour and a subtle hover wash. The icons are drawn
+   on a 16-unit grid, so a stroke of 1.35 there is ~1.5px at 18px. */
+.composer .field{gap:2px}
+.composer .field .attbtn,.composer .field .micbtn{color:var(--ink-2)}
+.composer .field .attbtn:hover,.composer .field .attbtn.is-open,
+.composer .field .micbtn:hover:not([disabled]):not([aria-disabled="true"]){background:var(--hover);color:var(--ink)}
+.cfoot .cchip > svg{stroke-width:1.4}
+
+/* The mode chip: the current mode's glyph and word, like the permission chip
+   beside it. A mode other than Chat takes the accent wash so it is seen. */
+.cfoot .cmodepick.is-goal,.cfoot .cmodepick.is-voice{background:var(--brand-wash);color:var(--blue)}
+.cfoot .cmodepick.is-goal:hover,.cfoot .cmodepick.is-voice:hover,
+.cfoot .cmodepick.is-goal.is-open,.cfoot .cmodepick.is-voice.is-open{background:var(--brand-wash-2)}
+.cfoot .cmodepick.is-goal > svg,.cfoot .cmodepick.is-voice > svg{color:currentColor}
+
+/* Its menu hangs off .composerwrap like the "+" menu; composer-mode.js sets
+   left and bottom so it opens over its chip. */
+.composerwrap > .cmodemenu{position:absolute;z-index:40;width:300px;max-width:calc(100% - 16px);
+  display:flex;flex-direction:column;gap:1px;padding:6px;border-radius:var(--r-pop);
+  background:var(--lift);box-shadow:var(--sh-pop)}
+.composerwrap > .cmodemenu[hidden]{display:none}
+.cmoderow{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-radius:var(--r-row);
+  background:transparent;color:var(--ink);text-align:left}
+.cmoderow:hover,.cmoderow:focus-visible{background:var(--hover);outline:none}
+.cmoderow .cmodeic{flex:none;display:grid;place-items:center;width:18px;height:18px;color:var(--ink-2)}
+.cmoderow .cmodeic svg{width:16px;height:16px;stroke-width:1.4}
+.cmoderow .col{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.cmoderow .ml{font:500 var(--fs-cap)/18px var(--font-ui)}
+.cmoderow .cap{font:400 var(--fs-label)/1.35 var(--font-ui);color:var(--ink-2)}
+.cmoderow .cmodeck{flex:none;width:16px;height:18px;display:grid;place-items:center;color:var(--ink)}
+.cmoderow .cmodeck svg{width:14px;height:14px;stroke-width:1.6}

@@ -224,7 +224,11 @@ test('the window loads the card before renderer.js and draws it under the plan',
   assert.match(r, /ev\.kind === 'goal_progress'/);
   assert.match(r, /goalRestore\(id, data\.goal, live\)/);
   assert.match(r, /goalTurnEnded\(sid\)/);
-  assert.match(r, /goalButtonHTML\(\{ic\}\)/);
+  // W2: no flag button in the composer; Goal is a row of the mode chip, which opens the same form.
+  assert.doesNotMatch(r, /goalButtonHTML/);
+  assert.match(r, /cmodePickChipHTML\(\{esc, ic\}\)/);
+  assert.match(src('../renderer/composer-mode.js'), /goalFormShow\(true\)/);
+  assert.match(src('../renderer/goal-actions.js'), /function goalFormShow\(open\)/);
 });
 
 test('preload, main and the client use the same routes', () => {

@@ -4311,6 +4311,7 @@ function composer() {
     + (slashShown() ? slashPopover() : '')
     // ATO-404: the "+" menu hangs here for the same reason (attachments.js).
     + attMenuHTML()
+    + (typeof cmodeMenuHTML === 'function' ? cmodeMenuHTML({esc, ic}) : '')
     + '<div class="composer' + (running ? ' running' : '') + loaderClass() + '" id="composer">'
       + loaderHTML()
       + attStripHTML()
@@ -4321,7 +4322,11 @@ function composer() {
         + (running ? 'Send to steer this turn…'
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask Atomic Agent\u2026') + '"></textarea>'
-      + attButtonHTML() + (typeof wsnapButtonHTML === 'function' ? wsnapButtonHTML() : '') + (typeof goalButtonHTML === 'function' ? goalButtonHTML({ic}) : '') + micButton() + (typeof convButtonHTML === 'function' ? convButtonHTML() : '') + sendButton() + '</div>'
+      /* Composer redesign (W2): "+" on the left (attachments only: images,
+         files, a window), then the dictation mic and send. Goal, Run overnight
+         and conversation mode are modes, picked from the mode chip in the row
+         below (composer-mode.js), not buttons of their own. */
+      + attButtonHTML() + micButton() + sendButton() + '</div>'
       /* B.7, Soft Tactile: Backend · Provider · Model, a
          spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
          so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
@@ -4334,22 +4339,14 @@ function composer() {
         + (composerNeedsSetup() ? setupSlotHtml() : routeChipsHtml(backend))
         + '<span class="cgrow"></span>'
         + contextChip()
+        // W2: Chat · Goal · Run overnight · Voice conversation, one chip (composer-mode.js).
+        + (typeof cmodePickChipHTML === 'function' ? cmodePickChipHTML({esc, ic}) : '')
         + codingModeChip()
       + '</div>'
-      + composerStatusLine()   // ATO-1186: quiet status line (status-line.js)
+      /* W2 (owner feedback): no status line under the composer any more. The
+         ATO-1186 line (model · tokens · time · memory) and the context ring
+         are gone; a reply's tok/s under the message stays (status-line.js). */
     + '</div></div>';
-}
-/* ATO-1186: model · context tokens · time on this chat · app memory, under the control row. */
-function composerStatusLine() {
-  if (typeof statusLineHTML !== 'function') return '';
-  const label = composerNeedsSetup() ? '' : activeModel();
-  statusMemRefresh(BR);
-  return statusLineHTML({
-    model: label && label !== DOWNLOAD_MODEL_LABEL ? modelWord(label) : '',
-    tokens: CTX.tokens, tokensText: CTX.tokens ? tokensWord(CTX.tokens) : '',
-    sessionMs: Date.now() - statusChatSince(STATUS_LINE, S.sessionId),
-    memBytes: STATUS_LINE.memBytes,
-  });
 }
 
 /* Calm (S6, U16) — no route anyone chose. Skipping setup leaves the agent's
@@ -5809,7 +5806,7 @@ function contextHTML() {
       + (held > 0 ? '<b style="width:' + held.toFixed(1) + '%"></b>' : '') + '</div>'
     : '';
   return '<div class="scrim" data-close="1" style="background:transparent">'
-    + '<div class="popover ctxpop tk-pop" style="width:380px;' + anchorStyle('.ctxbtn', 380) + '">'
+    + '<div class="popover ctxpop tk-pop" style="width:380px;' + anchorStyle('.cmodepick', 380) + '">'
     + '<div class="ctxin"><div class="hd ctxttl">' + esc(title) + '</div>' + meter + rows
     + ctxBoundLine()
     + (CTX.tokens ? '<p class="cap ctxbasis">' + esc(ctxBasisLine()) + '</p>' : '')
@@ -15105,17 +15102,7 @@ function hfDiskFit(choice) {
 DISK.onChange = () => render();
 DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
 ALLSET.onChange = () => diagRepaint();   // ATO-41
-/* ATO-1186: the status line repaints in place, never through a full render:
-   when the memory word changes and twice a minute for its clock. */
-function statusLineRepaint() {
-  const el = document.querySelector('#composer .cstatus');
-  const html = el ? composerStatusLine() : '';
-  if (el && html && el.outerHTML !== html) el.outerHTML = html;
-}
-if (typeof STATUS_LINE !== 'undefined') {
-  STATUS_LINE.onChange = statusLineRepaint;
-  setInterval(statusLineRepaint, 30 * 1000);
-}
+/* W2: the ATO-1186 status line under the composer is gone (owner feedback), and its repaint timer with it. */
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
@@ -19908,13 +19895,11 @@ function scheduleChipRepaint() {
   CTX.chipTimer = setTimeout(repaintContextChip, 150);
 }
 function repaintContextChip() {
-  // ATO-569: the usage chip rides with the ring, so it is redrawn with it.
+  // ATO-569: the usage chip, redrawn in place (W2: the ring it rode with is gone).
   document.querySelectorAll('.cfoot .usagechip').forEach((n) => n.remove());
-  const el = document.querySelector('.cfoot .ctxbtn');
   const html = contextChip();
-  if (el) { if (html) el.outerHTML = html; else el.remove(); return; }
   if (!html) return;
-  const next = document.querySelector('.cfoot .cmodechip');
+  const next = document.querySelector('.cfoot .cmodepick') || document.querySelector('.cfoot .cmodechip');
   if (next) next.insertAdjacentHTML('beforebegin', html);
 }
 
@@ -19939,38 +19924,23 @@ function usageFrame(payload) {
 }
 
 function contextChip() {
-  return ringChip() + usageChip();
+  /* W2 (owner feedback): the context ring is no longer drawn in the composer
+     row. The figures live on (CTX, the context panel, ctxChipTip below); only
+     the usage chip (cost, plan limits) stays here when the chat has figures. */
+  return usageChip();
 }
 
-function ringChip() {
-  if (!CTX.tokens) return '';
+/**
+ * What the ring's tooltip said: "7.5k of 131k", projected "~7.4k of 256k ·
+ * projected", or "… used · window size unknown"; null before anything is
+ * measured. Kept for the drivers (window.__ctxChip) and the panel.
+ */
+function ctxChipTip() {
+  if (!CTX.tokens) return null;
   const proj = CTX.source === 'projected';
-  const pct = CTX.window ? Math.min(100, (CTX.tokens / CTX.window) * 100) : 0;
-  /* Calm (S2): the chip is the ring alone; the figure is its tooltip
-     ("7.5k of 131k", projected "~7.4k of 256k · projected") and the exact
-     numbers stay in the popover. The ring fills to the same percentage:
-     amber above 70%, red above 85%. With no known window it is the empty
-     disc — the tooltip says the window is unknown. */
-  const tone = pct > 85 ? ' crit' : pct > 70 ? ' warn' : '';
-  const tip = (proj ? '~' : '') + tokensWord(CTX.tokens)
+  return {proj, label: (proj ? '~' : '') + tokensWord(CTX.tokens)
     + (CTX.window ? ' of ' + tokensWord(CTX.window) : ' used · window size unknown')
-    + (proj ? ' · projected' : '');
-  /* ATO-166: a donut, as Claude draws it (Danya: the filled pie read as a
-     clock). It was a thin arc once, and a thin blue arc at 10-25% read as a
-     spinner that never stopped — so this one is thick (3px) on a full grey
-     track, starts at 12 o'clock, and never moves. Circumference of r 7.5 is
-     47.12. */
-  const ring = '<svg class="ctxring' + tone + '" viewBox="0 0 20 20" aria-hidden="true"><circle class="bg" cx="10" cy="10" r="7.5"/>'
-    + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.12 * pct / 100).toFixed(2) + ' 47.12" transform="rotate(-90 10 10)"/>' : '')
-    + '</svg>';
-  /* ATO-481: from half full the ring carries its figure, so a filling
-     window reads as a gauge at a glance. ATO-1025: below that too — a low
-     arc alone still read as a spinner that never stops ("Ask first" with an
-     endless empty spinner, review of 25.10), so the figure is always there
-     once the window is known. */
-  const fig = CTX.window ? '<span class="ctxpct">' + Math.max(1, Math.round(pct)) + '%</span>' : '';
-  return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + (fig ? ' haspct' : '') + tone + cchipOpen('context') + '" data-act="context"'
-    + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + fig + '</button>';
+    + (proj ? ' · projected' : '')};
 }
 
 /* ============================================================
@@ -24330,7 +24300,9 @@ if (typeof window !== 'undefined') {
   };
   window.__ctxClose = () => { act('close'); render(); };
   // Calm (S2): the chip is a ring; its figure is the tooltip a person hovers.
-  window.__ctxChip = () => { const el = document.querySelector('.cfoot .ctxbtn'); return el ? {label:el.getAttribute('title') || '', proj:el.classList.contains('proj')} : null; };
+  // W2: the ring left the composer; the driver reads the figure it carried (null before anything is measured).
+  window.__ctxChip = () => ctxChipTip();
+  window.__ctxRingDrawn = () => !!document.querySelector('#composer .ctxbtn, #composer .ctxring, #composer .cstatus');
   window.__ctxNew = () => { act('session:new'); return refreshContext().then(() => window.__ctx()); };
   // The no-trace state, against a real empty directory: the caller restores with __ctxRefresh().
   window.__ctxEmpty = (dir) => refreshContext(dir).then(() => window.__ctx());

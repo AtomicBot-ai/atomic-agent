@@ -60,8 +60,9 @@ function setup({ config }) {
 }
 
 async function startOvernight(app, message) {
-  await app.clickSel('.attbtn[data-att-menu]');
-  await app.clickSel('[data-ovn="open"]');
+  // W2: Run overnight is a row of the composer's mode chip, not of the "+" menu.
+  await app.clickSel('#composer .cmodepick[data-cmode-open]');
+  await app.clickSel('#cmodemenu [data-cmode="overnight"]');
   await app.waitFor(`!!document.querySelector('#overnight [data-ovn-field="message"]')`, 'the Run overnight dialog');
   /* The dialog repaints once it has read the defaults from the agent. */
   await sleep(500);

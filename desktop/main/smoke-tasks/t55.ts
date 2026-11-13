@@ -108,12 +108,10 @@ export async function checks57(js: Js, check: Check): Promise<void> {
     const saved = {tokens: CTX.tokens, window: CTX.window, source: CTX.source};
     let ring = null;
     try {
+      // W2 (owner feedback): the composer row no longer draws the context gauge at all.
       CTX.tokens = 30000; CTX.window = 100000; CTX.source = 'built';
-      const host = document.createElement('div'); host.className = 'cfoot'; host.innerHTML = contextChip(); document.body.appendChild(host);
-      const fg = host.querySelector('.ctxring .fg'), bg = host.querySelector('.ctxring .bg');
-      ring = {sameR: !!fg && !!bg && fg.getAttribute('r') === bg.getAttribute('r'), bgFill: bg ? getComputedStyle(bg).fill : null,
-        dash: fg ? fg.getAttribute('stroke-dasharray') : null};
-      host.remove();
+      const host = document.createElement('div'); host.className = 'cfoot'; host.innerHTML = contextChip();
+      ring = {drawn: !!host.querySelector('.ctxring, .ctxbtn'), tip: ctxChipTip()};
     } finally { Object.assign(CTX, saved); }
     return {metaItems: plate.querySelectorAll('.emptymeta .em-it').length, sep: plate.querySelectorAll('.em-sep').length,
       wd: !!plate.querySelector('.em-wd'), workingDir: !!workingDir(),
@@ -127,8 +125,8 @@ export async function checks57(js: Js, check: Check): Promise<void> {
   check("T57: Settings in the sidebar wears a gear, not a house", r["gear"] === true, show(r["gear"]));
   const ring = (r["ring"] ?? {}) as Record<string, unknown>;
   check(
-    "T57: the context gauge is a donut — an arc on a full track of the same radius, no fill — 30% drawn as 30% of the ring",
-    ring["sameR"] === true && ring["bgFill"] === "none" && String(ring["dash"]).startsWith("14.14 "),
+    "T57: the composer row draws no context gauge (W2); the figure stays known (30k of 100k)",
+    ring["drawn"] === false && !!ring["tip"] && (ring["tip"] as { label?: string }).label === "30k of 100k",
     show(ring),
   );
 }
