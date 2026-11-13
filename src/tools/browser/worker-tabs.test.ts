@@ -164,6 +164,42 @@ describe("a tab of its own per fusion worker", () => {
   });
 });
 
+describe("a worker's tab when a watched turn reopens Chrome with a window", () => {
+  it("stays the worker's: the chat does not see it and the worker's end closes it", async () => {
+    const browsers: FakeBrowser[] = [];
+    const launches: boolean[] = [];
+    const { backend } = backendWith({
+      headless: "auto",
+      cdpUrl: undefined,
+      launchChrome: async ({ headless }) => {
+        launches.push(headless);
+        return `ws://127.0.0.1:${9000 + launches.length}/devtools/browser/x`;
+      },
+      connectOverCdp: async () => {
+        const browser = new FakeBrowser();
+        browsers.push(browser);
+        return browser as unknown as Browser;
+      },
+    });
+    const backgroundWorker: BrowserRunScope = { sessionId: "w1", workerOf: "p", attended: false };
+    const watchedChat: BrowserRunScope = { sessionId: "p", attended: true };
+    await inTurn(backgroundWorker, () => backend.navigate({ url: "https://w1.example" }));
+    expect(launches).toEqual([true]);
+
+    const chatTabs = await inTurn(watchedChat, () => backend.tabs({ action: "list" }));
+    expect(launches).toEqual([true, false]);
+    expect(chatTabs.tabs.map((tab) => tab.url)).not.toContain("https://w1.example");
+    const reopened = browsers[1]!.main.pages().find((page) => page.url() === "https://w1.example");
+    expect(reopened).toBeDefined();
+    const workerTabs = await inTurn(backgroundWorker, () => backend.tabs({ action: "list" }));
+    expect(workerTabs.tabs.map((tab) => tab.url)).toEqual(["https://w1.example"]);
+
+    endBrowserWorker("w1");
+    await settle();
+    expect(reopened!.closed).toBe(true);
+  });
+});
+
 describe("browser.maxTabs", () => {
   it("refuses one tab over the limit with a plain error, and frees room when a worker ends", async () => {
     const { backend } = backendWith({ maxTabs: 2 });

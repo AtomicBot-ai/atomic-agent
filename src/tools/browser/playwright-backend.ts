@@ -702,19 +702,22 @@ export class PlaywrightBackend implements BrowserBackend {
    * Restart the agent's own Chrome with a window, reopening the pages it
    * had (throwaway profiles are not carried over). A background turn
    * still using the old pages sees them gone and reads the page again.
+   * A fusion worker's tab comes back as that worker's, so the chat does
+   * not see it and the worker's end still closes it (ATO-961).
    */
   private async relaunchWithWindow(): Promise<void> {
     if (!this.relaunching) {
       this.relaunching = (async () => {
-        const urls = (this.context?.pages() ?? [])
-          .map((page) => page.url())
-          .filter((url) => /^https?:/i.test(url));
+        const reopen = (this.context?.pages() ?? [])
+          .filter((page) => /^https?:/i.test(page.url()))
+          .map((page) => ({ url: page.url(), owner: this.pageOwners.get(page) }));
         await this.shutdown();
         await this.ensureReady();
         const context = this.context as PwBrowserContext | null;
         if (!context) return;
-        for (const url of urls) {
+        for (const { url, owner } of reopen) {
           const page = await context.newPage();
+          if (owner !== undefined) this.claim(page, owner);
           await page.goto(url).catch(() => undefined);
         }
       })().finally(() => {

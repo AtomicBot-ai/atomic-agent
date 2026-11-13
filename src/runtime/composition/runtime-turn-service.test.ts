@@ -21,6 +21,7 @@ import { createRuntimeTurnService, prepareRuntimeTurnState, stoppedForMoney, typ
 import { resolveModelMode } from "../../llm/model-mode.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import type { TurnProgress } from "../../session/turn-progress.js";
+import { currentBrowserScope, onBrowserWorkerEnd, runInBrowserScope, type BrowserRunScope } from "../../tools/browser/browser-run-scope.js";
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => { throw new Error("promise not initialized"); };
@@ -223,6 +224,32 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.events).toEqual(["loop", `clear:${worker.id}`, `shell-session:${worker.id}`, `slot-release:${worker.id}`]);
     expect(fixture.rows.size).toBe(0);
     expect(fixture.turnRequests.size).toBe(0);
+  });
+
+  it("a worker browses as its parent's worker and its browser tabs end with its turn, even when it throws (ATO-961)", async () => {
+    const ended: string[] = [];
+    const stop = onBrowserWorkerEnd(id => { ended.push(id); });
+    try {
+      const scopes: Array<{ scope: BrowserRunScope | undefined; endedSoFar: string[] }> = [];
+      fixture.loop.runTurn.mockImplementation(async (value, options) => {
+        scopes.push({ scope: currentBrowserScope(), endedSoFar: [...ended] });
+        if (options.userMessage === "throws") throw new Error("worker failed");
+        return result(value, options);
+      });
+      const watched = createFusionWorkerSession({ workingDir: dir, meta: { parentSessionId: "parent", taskId: "task" } });
+      await runInBrowserScope({ sessionId: "parent", attended: true }, () => fixture.service.executeTurn(watched, "brief"));
+      expect(scopes[0]?.scope).toEqual({ sessionId: watched.id, attended: true, workerOf: "parent" });
+      // Not before the turn ran: the worker still needed its tabs then.
+      expect(scopes[0]?.endedSoFar).toEqual([]);
+      expect(ended).toEqual([watched.id]);
+
+      const failing = createFusionWorkerSession({ workingDir: dir, meta: { parentSessionId: "parent", taskId: "task-2" } });
+      await expect(fixture.service.executeTurn(failing, "throws")).rejects.toThrow("worker failed");
+      expect(scopes[1]?.scope).toEqual({ sessionId: failing.id, attended: false, workerOf: "parent" });
+      expect(ended).toEqual([watched.id, failing.id]);
+    } finally {
+      stop();
+    }
   });
 
   it("records the reply a turn answers for the input guard, hands it to workers, and clears both (ATO-860)", async () => {
