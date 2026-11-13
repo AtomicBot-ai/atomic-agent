@@ -24,7 +24,7 @@ import { assignChat, deleteProject, readProjects, saveProject, turnProject, upda
 import { newChatSessionId } from "./chat-session.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
-import { busyPorts, modelPortsOf, onSmokeStopSignal, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
+import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
@@ -39,7 +39,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS, commandOf, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
@@ -116,6 +116,7 @@ import {
   // Item 7A — add a model from Hugging Face
   addCustomModelEntry,
   normaliseLlmBlock,
+  daemonPidsIn,
 } from "./agent-cli.js";
 // Item 7A — the vendored port of the agent's huggingface-* modules; the
 // renderer's CSP forbids it from reaching huggingface.co itself.
@@ -3857,8 +3858,9 @@ function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tas
   // ATO-1034: "Folders" sits between Pinned and Chats while there is a folder.
   return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
 }
-/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js). */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Tasks", "Skills"]);
+/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js).
+    ATO-1146 (#1350): "New project" comes first while the projects store is there, which the app's bridge always is. */
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["New project", "Tasks", "Skills"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
@@ -5211,11 +5213,14 @@ async function voiceTest(
     // --- the button ------------------------------------------------------
     const mic = await js<Mic>("window.__voiceMic()");
     const order = mic.order.split("|");
-    const iMic = order.findIndex((c) => c.split(" ").includes("micbtn"));
+    // ATO-1047 (#1364): the conversation-mode button (class "micbtn convbtn") sits between the mic and send, so the
+    // dictation mic is the micbtn that is not convbtn, and the only thing between it and send is that one button.
+    const iMic = order.findIndex((c) => c.split(" ").includes("micbtn") && !c.split(" ").includes("convbtn"));
     const iSend = order.findIndex((c) => c.split(" ").includes("sendbtn"));
+    const between = iMic >= 0 && iSend > iMic ? order.slice(iMic + 1, iSend) : [];
     check(
-      "mic button sits next to send",
-      mic.present && iMic >= 0 && iSend === iMic + 1,
+      "mic button sits next to send (with only the conversation-mode button between them)",
+      mic.present && iMic >= 0 && iSend > iMic && between.every((c) => c.split(" ").includes("convbtn")) && between.length <= 1,
       `field children ${JSON.stringify(mic.order)}`,
     );
 
@@ -6325,15 +6330,16 @@ async function settingsTest(
   // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
-  const PANES = ["general", "llm", "mcp", "telegram", "discord", "composio", "memory", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  // ATO-1129 (#1533): Phone push sits in Connections, after Discord.
+  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "memory", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
   const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", composio: "connections", memory: "memory",
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", memory: "memory",
     tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
   const tabs = await js<string[]>("window.__settingsTabs()");
-  check("settings: the panes are General, Models, Connections (MCP, Telegram, Discord, Composio) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
+  check("settings: the panes are General, Models, Connections (MCP, Telegram, Discord, Phone push, Composio) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
 
   // Every node of the menu tree, verbatim label and ctrl+g chord, in registry
   // order (src/tui/menu/menu-registry.ts:107-675) — except that Go, Observe and
@@ -7288,7 +7294,7 @@ async function hfAndDeltaTest(
      Item 48 (Д34): the path is a button now, so it is walked. A click on the
      drawn button (act('llm:ollama') itself when this config already has
      Ollama and draws none) opens the provider setup on that preset with its
-     address filled in, over the Cloud pane; and the Local pane drawn over
+     address filled in, over the Custom pane (ATO-1418); and the Local pane drawn over
      this config without and with an `ollama` provider has the button only
      without one. The config object, the wizard and the pane are put back. */
   const ollamaPreset = await js<{ id: string; label: string; baseUrl: string; kind: string; local: boolean } | null>(
@@ -7316,7 +7322,8 @@ async function hfAndDeltaTest(
       && ollamaPreset.kind === "openai-compatible" && ollamaPreset.local === true
       && (ollamaAdded || (!!ollamaBtn && ollamaBtn.title.includes(ollamaPreset.baseUrl) && ollamaPath.clicked))
       && ollamaPath.open && ollamaPath.phase === "configure" && ollamaPath.row === ollamaPreset.id
-      && ollamaPath.baseUrl === ollamaPreset.baseUrl && ollamaPath.mode === "cloud"
+      // ATO-1418: Ollama's setup opens on the Custom tab (LLMP.mode "external"), as T48 (Д34) asserts.
+      && ollamaPath.baseUrl === ollamaPreset.baseUrl && ollamaPath.mode === "external"
       && ollamaPath.drawnWithout && !ollamaPath.drawnWith,
     `${JSON.stringify(ollamaPreset)} · ${JSON.stringify(ollamaPath)}`,
   );
@@ -8853,7 +8860,7 @@ async function uiTest(
   // --- item 1: the circles ---------------------------------------------------
   const probe = await js<{
     dots: Array<{ cls: string; w: number; h: number; border: number; bg: string; animation: string; shadow: string }>;
-    seat: { dotMid: number; capMid: number; xMid: number } | null;
+    seat: { dotMid: number; capMid: number; xMid: number; font?: string; fontLoaded?: boolean; rowH?: number } | null;
   } | null>("window.__dotProbe()");
   const dots = probe ? probe.dots : [];
   check(
@@ -8875,13 +8882,13 @@ async function uiTest(
   // wide) also accepted the row's plain flex centre — the misalignment the
   // whole item is about — so deleting `top:1px` from styles.css left the suite
   // green. The spec's own acceptance is the MIDPOINT of cap and x, ±0.5px,
-  // which the shipped dot hits exactly and an un-nudged one misses by 1px.
+  // which the shipped dot hits (on Figtree 14px the nudge is .5px, shell.css).
   const seatMid = seat ? (seat.capMid + seat.xMid) / 2 : 0;
   check(
     "item 1: the dot sits on the label's optical centre",
     !!seat && Math.abs(seat.dotMid - seatMid) <= 0.5,
     seat ? `dot ${seat.dotMid.toFixed(2)}, target ${seatMid.toFixed(2)}`
-      + ` (cap-mid ${seat.capMid.toFixed(2)}, x-mid ${seat.xMid.toFixed(2)})` : "no probe row",
+      + ` (cap-mid ${seat.capMid.toFixed(2)}, x-mid ${seat.xMid.toFixed(2)}; font ${seat.font ?? "?"}, loaded ${seat.fontLoaded ?? "?"}, row ${seat.rowH ?? "?"}px)` : "no probe row",
   );
   const ec = await js<{ found: boolean; display: string; strays: number }>("window.__emptyChatProbe()");
   check(
@@ -11385,7 +11392,18 @@ async function smokePortsFree(): Promise<boolean> {
   if (!smokeOwnsItsState({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV })) return true;
   try {
     const read = await settleWithin(readWholeConfig(), 8_000, null);
-    const taken = await busyPorts(modelPortsOf(read?.ok ? read.config : null));
+    const cfg = read?.ok ? read.config : null;
+    const busy = await busyPorts(modelPortsOf(cfg));
+    /* A server this run started itself (the QA stand's pre-start of the full
+       smoke's model, on this run's fresh directory) is the run's own, not a
+       leftover: its pid is in the run's own pid files (portsHeldByRun). */
+    const managed = (cfg as { localModels?: { managed?: { dataDirOverride?: string | null } } } | null)?.localModels?.managed;
+    const dataDir = managedDataDir(managed?.dataDirOverride);
+    const ours = busy.length && smokeMayStopModels({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV, dataDir })
+      ? portsHeldByRun(busy, daemonPidsIn(dataDir, true), commandOf)
+      : [];
+    if (ours.length) console.error(`[desktop] smoke: model port ${ours.join(", ")} is held by the model server this run started — using it`);
+    const taken = busy.filter((p) => !ours.includes(p));
     if (!taken.length) return true;
     process.stdout.write(
       `FAIL smoke: model port ${taken.join(", ")} is already taken by another process (a model server left by a stopped run?). Stop it and start the run again.\n`,
@@ -12364,13 +12382,16 @@ async function onboardingTest(
     await js<ObState>("window.__obKey('esc')");
     const keysList = await js<{ rows: string[] }>("(window.__obKey('2'), { rows: window.__wizList().rows })");
     await js<ObState>("window.__obKey('esc')");
-    const appRows = ["Atomic Chat (local)", "Ollama (local)", "LM Studio (local)"];
+    // ATO-626 (#1497): Lemonade is an app on this Mac too, listed first. ATO-1066 (#1488): a model on
+    // another computer on the network is the last Custom row, after any URL.
+    const appRows = ["Lemonade (local)", "Atomic Chat (local)", "Ollama (local)", "LM Studio (local)"];
+    const LAN_ROW = "Another computer on your network";
     check(
-      "wizard: Custom lists the apps on this Mac, a llama.cpp server and any URL; Cloud lists none of them",
+      "wizard: Custom lists the apps on this Mac, a llama.cpp server, any URL and another computer on the network; Cloud lists none of them",
       customList.step === "cloud" &&
-        JSON.stringify(customList.rows.slice(0, 4)) === JSON.stringify([...appRows, "llama.cpp server"]) &&
-        customList.rows.length === 5 && /custom base URL/.test(customList.rows[4] ?? "") &&
-        keysList.rows.length > 3 && !keysList.rows.some((r) => appRows.includes(r) || r === "llama.cpp server" || /custom base URL/.test(r)),
+        JSON.stringify(customList.rows.slice(0, 5)) === JSON.stringify([...appRows, "llama.cpp server"]) &&
+        customList.rows.length === 7 && /custom base URL/.test(customList.rows[5] ?? "") && customList.rows[6] === LAN_ROW &&
+        keysList.rows.length > 3 && !keysList.rows.some((r) => appRows.includes(r) || r === "llama.cpp server" || /custom base URL/.test(r) || r === LAN_ROW),
       `custom=${JSON.stringify(customList)} keys=${JSON.stringify(keysList.rows)}`,
     );
     const toCustom = await js<ObState>(
@@ -13617,7 +13638,7 @@ async function chromeTest(
     text: string; act: string; title: string; aria: string | null;
     classes: string; bg: string; fg: string;
     height: number; width: number; keycaps: number; labelVisible: boolean; iconVisible: boolean;
-    belowLists: boolean; oldRow: number;
+    belowLists: boolean; oldRow: number; rowWidth?: number; discordWidth?: number;
   };
   type Acts = {
     present: boolean; vis?: string; opacity?: string; events?: string; height?: number;
@@ -13626,6 +13647,7 @@ async function chromeTest(
     anchorRight?: number | null; insideBubble?: number;
     btnLeft?: number | null; anchorLeft?: number | null; dot?: boolean; dotLive?: boolean;
     acted?: boolean;
+    rowLeft?: number | null; rowRight?: number | null; lead?: string | null; rewind?: number;
   };
 
   /* r5 review fix — the two writes this lane makes to the WINDOW itself, put
@@ -13799,11 +13821,13 @@ async function chromeTest(
     );
     // #sidebar is 260px (8px window gutter + the 252px floating panel with 8px
     // side padding), so the button's full width is 236. Calm (S1): 34px, the
-    // height of every other sidebar row.
+    // height of every other sidebar row. ATO-1465 (#1363): the row is 236 wide and
+    // shares it with the 34px Join Discord button (4px gap), so Settings takes the rest.
+    const discordW = setBtn?.discordWidth ?? 0;
     check(
-      "item 8: it is 34px tall, full width, below the lists",
-      !!setBtn && setBtn.height === 34 && setBtn.width === 236 && setBtn.belowLists,
-      setBtn ? `${setBtn.width}×${setBtn.height}, belowLists=${setBtn.belowLists}` : "no button",
+      "item 8: it is 34px tall, full width (beside Join Discord), below the lists",
+      !!setBtn && setBtn.height === 34 && setBtn.rowWidth === 236 && discordW === 34 && setBtn.width === 236 - discordW - 4 && setBtn.belowLists,
+      setBtn ? `${setBtn.width}×${setBtn.height} in a ${setBtn.rowWidth}px row, Discord ${discordW}px, belowLists=${setBtn.belowLists}` : "no button",
     );
     const setDark = await js<SetBtn>("(() => { window.__theme('dark'); return window.__settingsBtn(); })()");
     const setLight = await js<SetBtn>("(() => { window.__theme('light'); return window.__settingsBtn(); })()");
@@ -14146,16 +14170,24 @@ async function chromeTest(
     /* ATO-168: a reply's actions moved to its LEFT, under the text they copy,
        after the dot the last reply carries (20px in); a user message keeps
        them at its bubble's right edge. */
+    /* ATO-1056/1058 (#1516): Edit and Roll back follow copy on a user message, so the row's LAST control (not copy) is
+       the one at the bubble's end, and copy stands right before them. ATO-1186 (#1434): the last reply's speed leads
+       its row, so the row's FIRST thing (the speed, else the first button) is the one after the dot. Read from the
+       row's own children, so dropping justify-content:flex-end still goes red. */
+    const userEnd = userActs?.rowRight ?? userActs?.btnRight;
+    const asstStart = asstActs?.rowLeft ?? asstActs?.btnLeft;
     check(
       "item 4: the actions sit at the user bubble's end and at the reply's start (after its dot), never inside the bubble",
       !!userActs && !!asstActs
-        && typeof userActs.btnRight === "number" && typeof asstActs.btnLeft === "number"
-        && Math.abs(userActs.btnRight - (userActs.anchorRight ?? -1)) <= 1
-        && Math.abs(asstActs.btnLeft - ((asstActs.anchorLeft ?? -100) + (asstActs.dot ? 20 : 0))) <= 1
+        && typeof userEnd === "number" && typeof asstStart === "number" && typeof userActs.btnRight === "number"
+        && Math.abs(userEnd - (userActs.anchorRight ?? -1)) <= 1
+        && (userActs.rewind ? userActs.btnRight < userEnd : userActs.btnRight === userEnd)
+        && Math.abs(asstStart - ((asstActs.anchorLeft ?? -100) + (asstActs.dot ? 20 : 0))) <= 1
+        && (asstActs.lead === "speed" || asstActs.lead === "button")
         && asstActs.dot === true && asstActs.dotLive === false
         && userActs.insideBubble === 0,
-      `user last button right ${userActs?.btnRight} vs bubble ${userActs?.anchorRight};`
-      + ` assistant first button left ${asstActs?.btnLeft} vs prose ${asstActs?.anchorLeft} (dot ${asstActs?.dot}, live ${asstActs?.dotLive});`
+      `user row right ${userEnd} (copy ${userActs?.btnRight}, ${userActs?.rewind ?? 0} rewind controls) vs bubble ${userActs?.anchorRight};`
+      + ` assistant row left ${asstStart} (${asstActs?.lead}; first button ${asstActs?.btnLeft}) vs prose ${asstActs?.anchorLeft} (dot ${asstActs?.dot}, live ${asstActs?.dotLive});`
       + ` (row boxes ${userActs?.right}/${asstActs?.right} span the whole column either way, so they are context only);`
       + ` .bubble .msgact count ${userActs?.insideBubble}`,
     );

@@ -13,7 +13,7 @@ import { EventEmitter } from "node:events";
 const require = createRequire(import.meta.url);
 const {
   smokeMayStopModels, smokeOwnsItsState, smokeScreenshot, runSmokeGuarded,
-  onSmokeStopSignal, signalExitCode, SMOKE_STOP_SIGNALS, portTaken, modelPortsOf, busyPorts,
+  onSmokeStopSignal, signalExitCode, SMOKE_STOP_SIGNALS, portTaken, modelPortsOf, busyPorts, portsHeldByRun,
 } = require("../out/main/smoke-exit.js");
 
 const TUI = "/Users/op/.atomic-agent";
@@ -125,4 +125,20 @@ test("portTaken sees a listener and a free port (ATO-825)", async () => {
     await new Promise((r) => server.close(r));
   }
   assert.equal(await portTaken(port), false);
+});
+
+test("portsHeldByRun: a port held by the llama-server in this run's pid files is the run's own; a stranger's is not (ATO-825)", () => {
+  const cmds = {
+    101: "/x/llama-server --no-webui --jinja -m /run/models/m.gguf --port 19491 --host 127.0.0.1",
+    102: "/x/llama-server -m /e.gguf --port=19092",
+    103: "/bin/zsh --port 19491",
+  };
+  const cmd = (pid) => cmds[pid] ?? null;
+  assert.deepEqual(portsHeldByRun([19491, 19092], [101, 102], cmd), [19491, 19092]);
+  // a leftover from another run is in none of this run's pid files
+  assert.deepEqual(portsHeldByRun([19491], [], cmd), []);
+  // a dead pid, or a reused one that is no llama-server, holds nothing for the run
+  assert.deepEqual(portsHeldByRun([19491], [999, 103], cmd), []);
+  // a port prefix is not the port
+  assert.deepEqual(portsHeldByRun([1949], [101], cmd), []);
 });

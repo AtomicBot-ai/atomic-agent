@@ -66,6 +66,18 @@ function rendererCss(): string {
   return sheets.map((href) => { try { return readFileSync(join(dir, href), "utf8"); } catch { return ""; } }).join("\n");
 }
 
+/** The row menu's optional rows between Rename and Delete…, in their one order (T165a). */
+const MENU_MIDDLE: ReadonlyArray<readonly [string, string]> = [["fpick", "Move to folder…"], ["archive", "Archive"], ["export", "Export…"]];
+function middleRowsInOrder(verbs: string[], labels: string[]): boolean {
+  let at = 0;
+  return verbs.every((v, i) => {
+    while (at < MENU_MIDDLE.length && MENU_MIDDLE[at]![0] !== v) at++;
+    if (at >= MENU_MIDDLE.length || MENU_MIDDLE[at]![1] !== labels[i]) return false;
+    at++;
+    return true;
+  });
+}
+
 const sel = (id: string) => `'.sesrow[data-ses="' + CSS.escape(${show(id)}) + '"]'`;
 
 export async function checks165(js: Js, check: Check): Promise<void> {
@@ -109,10 +121,10 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       check(
         "T165a: the \"…\" opens the row menu — Pin/Unpin, Mark as read/unread, Rename (ATO-455), then Delete… under a rule — without opening the chat",
         /* ATO-1034 (folders): a stored chat also has "Move to folder…" (fpick) before Delete…;
-           ATO-1054: and "Export…" (export) after it. */
+           ATO-1150 (#1384): then "Archive" (archive); ATO-1054 (#1502): then "Export…" (export).
+           Each of the three may be absent, but those drawn keep that order. */
         !!m && m.role === "menu" && m.overlay === "sesmenu" && m.id === a.id
-          && (m.verbs.length === 4 || (m.verbs.length === 5 && m.verbs[3] === "fpick" && m.labels[3] === "Move to folder…")
-            || (m.verbs.length === 6 && m.verbs[3] === "fpick" && m.verbs[4] === "export" && m.labels[4] === "Export…"))
+          && m.verbs.length >= 4 && middleRowsInOrder(m.verbs.slice(3, -1), m.labels.slice(3, -1))
           && ["pin", "unpin"].includes(m.verbs[0]) && ["read", "unread"].includes(m.verbs[1])
           && m.verbs[2] === "rename" && m.labels[2] === "Rename" && m.verbs[m.verbs.length - 1] === "delask"
           && m.labels[m.labels.length - 1] === "Delete…" && m.sepBeforeDelete && show(m.danger) === show(["delask"])

@@ -21314,8 +21314,9 @@ if (typeof window !== 'undefined') {
           workers: selHasKind('workers') ? rows('workers') : null},
         settings: {active: on ? on.dataset.act : null,
           status: (set.content.querySelector('.llm-rm-status') || {}).textContent || '',
-          workersOn: (set.content.querySelector('.llm-workerseg .on') || {}).textContent || '',
-          workerButtons: set.content.querySelectorAll('.llm-workerseg button').length},
+          // ATO-606 (#1299): the worker reasoning segment wears .llm-workerseg too; the count is the workers' own group.
+          workersOn: (set.content.querySelector('.llm-workerseg[aria-label="Fusion workers"] .on') || {}).textContent || '',
+          workerButtons: set.content.querySelectorAll('.llm-workerseg[aria-label="Fusion workers"] button').length},
       };
     } finally {
       LIVE_CONFIG = keep.cfg; BSW.readyIds = keep.ids; BSW.readyLoaded = keep.rl; BSW.localLoaded = keep.ll;
@@ -25510,6 +25511,7 @@ function skpDownloadsWords(n) {
 }
 /* Д46: the meta line a person reads — "482k downloads · by pskoett · v4.0.2", "From GitHub · anthropics/skills". */
 function skpHubMeta(c) {
+  if (c.source === 'skills.sh') return ['From skills.sh', c.repo].filter(Boolean).join(' · ');
   if (c.source !== 'clawhub') return ['From GitHub', c.repo].filter(Boolean).join(' · ');
   const parts = [];
   if (typeof c.downloads === 'number') parts.push(formatDownloads(c.downloads) + (c.downloads === 1 ? ' download' : ' downloads'));
@@ -25660,7 +25662,9 @@ function skpToHubRow(r) {
     row.owner = m ? m[1] : null; row.slug = m ? m[2] : r.identifier;
     row.name = row.slug; row.repo = row.owner || 'clawhub';
   } else {
-    const seg = r.identifier.split('/').filter((x) => x.length);
+    // ATO-608 (#1419): a skills.sh row is `skills.sh/owner/repo/skill`; its repo is owner/repo, not the prefix.
+    const id = r.source === 'skills.sh' ? r.identifier.replace(/^skills\.sh\//, '') : r.identifier;
+    const seg = id.split('/').filter((x) => x.length);
     row.name = seg[seg.length - 1] || r.identifier; row.repo = seg.slice(0, 2).join('/');
   }
   return row;
@@ -25735,8 +25739,9 @@ async function skpOpenCard(i) {
   const seq = ++SKP.cardSeq;
   if (row.source !== 'clawhub') {
     SKP.hubCardLoading = false;
-    SKP.hubCard = {identifier:row.identifier, source:'github', name:row.name, repo:row.repo, description:row.description, version:null, downloads:null,
-      body:null, bodyError:'preview unavailable for GitHub taps (SKILL.md is pulled at install)', installId:row.identifier};
+    const sh = row.source === 'skills.sh';   // ATO-608: skills.sh, like a tap, has no preview; its SKILL.md is pulled at install too
+    SKP.hubCard = {identifier:row.identifier, source:sh ? 'skills.sh' : 'github', name:row.name, repo:row.repo, description:row.description, version:null, downloads:sh ? row.downloads : null,
+      body:null, bodyError:sh ? 'preview unavailable for skills.sh skills (SKILL.md is pulled at install)' : 'preview unavailable for GitHub taps (SKILL.md is pulled at install)', installId:row.identifier};
     render(); return;
   }
   const card = {identifier:row.identifier, source:'clawhub', name:row.name, repo:row.owner || 'clawhub', description:row.description, version:null,
@@ -30984,7 +30989,9 @@ if (typeof window !== 'undefined') {
       + (lh - (mAll.fontBoundingBoxAscent + mAll.fontBoundingBoxDescent)) / 2 + mAll.fontBoundingBoxAscent;
     const dr = d.getBoundingClientRect();
     return {dotMid: dr.top + dr.height / 2, capMid: base - mH.actualBoundingBoxAscent / 2,
-            xMid: base - mx.actualBoundingBoxAscent / 2};
+            xMid: base - mx.actualBoundingBoxAscent / 2,
+            // what the canvas measured with, so a miss can be told from a font that was not loaded yet
+            font: c.font, fontLoaded: !!(document.fonts && document.fonts.check(cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily.split(',')[0], t.textContent || 'x')), rowH: row.getBoundingClientRect().height};
   }
   /* Item 1: all three states measured together, on real rows inside the real
      list, whatever the agent's own sessions happen to look like. The `empty`
@@ -32731,7 +32738,13 @@ if (typeof window !== 'undefined') {
             right: Math.round(br.right),
             btnRight: last ? Math.round(last.getBoundingClientRect().right) : null,
             anchorRight: anchor ? Math.round(anchor.getBoundingClientRect().right) : null,
-            insideBubble: document.querySelectorAll('.bubble .msgact').length};
+            insideBubble: document.querySelectorAll('.bubble .msgact').length,
+            /* The row's own ends, whatever stands there: ATO-1186 (#1434) puts the reply's speed before its
+               buttons, and ATO-1056/1058 (#1516) put Edit / Roll back / Fork after copy. */
+            rowLeft: box.firstElementChild ? Math.round(box.firstElementChild.getBoundingClientRect().left) : null,
+            rowRight: box.lastElementChild ? Math.round(box.lastElementChild.getBoundingClientRect().right) : null,
+            lead: box.firstElementChild ? (box.firstElementChild.classList.contains('msgtps') ? 'speed' : box.firstElementChild.tagName === 'BUTTON' ? 'button' : 'other') : null,
+            rewind: box.querySelectorAll('button[data-rw]').length};
   };
   /* ATO-863: the last reply's own buttons on drawn transcripts, so the smoke
      can hold "Ask again" to a turn without tools. Each case is rendered for
@@ -32978,7 +32991,8 @@ if (typeof window !== 'undefined') {
         : 0;
       if (!box) return {count: list.length, buttons: -1, reserved: -1, boxBottom: -1, endmark, colHeight};
       const r = box.getBoundingClientRect();
-      return {count: list.length, buttons: box.querySelectorAll('button').length,
+      // ATO-1056/1058 (#1516): Fork (data-rw) is not part of the copy and retry contract counted here.
+      return {count: list.length, buttons: box.querySelectorAll('button:not([data-rw])').length,
               reserved: Math.round(r.height + parseFloat(getComputedStyle(box).marginTop)),
               boxBottom: Math.round(r.bottom - colTop),
               endmark, colHeight};
@@ -33156,7 +33170,10 @@ if (typeof window !== 'undefined') {
             keycaps: b.querySelectorAll('.kc').length,
             labelVisible: !!(lb && lb.offsetParent), iconVisible: !!(gi && gi.offsetParent),
             belowLists: !!lists && Math.round(r.top) >= Math.round(lists.getBoundingClientRect().bottom) - 1,
-            oldRow: document.querySelectorAll('#sidebar .sb-foot').length};
+            oldRow: document.querySelectorAll('#sidebar .sb-foot').length,
+            // ATO-1465 (#1363): Join Discord shares the bottom row, right of Settings.
+            rowWidth: b.parentElement ? Math.round(b.parentElement.getBoundingClientRect().width) : 0,
+            discordWidth: (() => { const d = document.querySelector('#sidebar .sb-footwrap .sb-discord'); return d ? Math.round(d.getBoundingClientRect().width) : 0; })()};
   };
   window.__settingsBtnClick = () => {
     const b = document.querySelector('#sidebar .sb-settings');
