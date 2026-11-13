@@ -1,6 +1,6 @@
 ---
 name: landing-cro-review
-description: "Review a landing page from a screenshot against a conversion (CRO) checklist: headline, call to action, proof, friction, trust, mobile. Findings ranked by impact."
+description: "Review a landing page screenshot for conversion (CRO): headline, CTA, proof, friction, trust, mobile."
 version: 1.0.0
 requires_tools:
   - browser.navigate

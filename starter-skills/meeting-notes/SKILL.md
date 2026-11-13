@@ -1,6 +1,6 @@
 ---
 name: meeting-notes
-description: "Turn a meeting transcript or recording into minutes: summary, decisions, action items with owners and dates. Use for meeting notes, call notes, protocol, minutes, recap of a call."
+description: "Turn a meeting transcript or recording into minutes: decisions and action items with owners."
 version: 1.0.0
 requires_tools:
   - os.fs.read

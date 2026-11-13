@@ -1,6 +1,6 @@
 ---
 name: apple-calendar
-description: Read macOS Calendar events via the `icalBuddy` CLI and create events via AppleScript (osascript). Use to check the user's calendar, agenda, upcoming events, or add an event on macOS.
+description: Check or add macOS Calendar events via `icalBuddy` and AppleScript.
 version: 1.1.2
 requires_tools:
   - os.shell.run

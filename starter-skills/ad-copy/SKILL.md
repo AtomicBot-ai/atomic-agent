@@ -1,6 +1,6 @@
 ---
 name: ad-copy
-description: "Write ad copy variants that fit Google Ads (RSA headline 30, description 90, path 15) and Meta recommended lengths, with every length checked by a script."
+description: Google Ads and Meta ad copy within limits (headline 30, description 90, path 15), checked by a script.
 version: 1.0.0
 requires_tools:
   - skill.run_script

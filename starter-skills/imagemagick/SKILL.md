@@ -1,6 +1,6 @@
 ---
 name: imagemagick
-description: Edit and convert images with the ImageMagick `magick` CLI — resize, crop, convert format, compress, rotate, montage, annotate. Use for any still-image transformation.
+description: Resize, crop, convert or compress images with ImageMagick `magick`.
 version: 1.0.1
 requires_tools:
   - os.shell.run

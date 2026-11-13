@@ -1,6 +1,6 @@
 ---
 name: mention-monitor
-description: "Find new mentions of a product, brand or name on Reddit and Hacker News, watch competitor pages for changes, and send a daily digest to Telegram. Use when the user asks where they were mentioned, what people said about them or a competitor, or wants a daily mention digest."
+description: Find where a brand or competitor was mentioned on Reddit and Hacker News; daily Telegram digest.
 version: 1.0.0
 requires_tools:
   - skill.run_script

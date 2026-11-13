@@ -1,6 +1,6 @@
 ---
 name: seo-audit
-description: "Check a website's SEO and say what to fix first, split into quick wins and strategic work. Use for 'check my site' or /seo-audit."
+description: Check a website's SEO, split fixes into quick wins and strategic work. Use for 'check my site' or /seo-audit.
 version: 1.0.0
 requires_tools:
   - skill.run_script

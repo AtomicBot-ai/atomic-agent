@@ -1,6 +1,6 @@
 ---
 name: audio-transcribe
-description: "Transcribe speech from audio files and Telegram voice messages (ogg, mp3, m4a, wav, flac, webm) to text locally, no API key: the built-in audio.transcribe tool (whisper.cpp) first, the Python whisper CLI as a fallback. Use whenever a task hinges on the spoken content of an audio attachment."
+description: Transcribe audio files and Telegram voice messages to text locally, no API key.
 version: 1.2.0
 requires_tools:
   - os.shell.run

@@ -1,6 +1,6 @@
 ---
 name: wttr-weather
-description: Weather via wttr.in GET (no key). Use for weather/forecast; prefer os.http.request.
+description: Weather and forecast via wttr.in (no key); prefer os.http.request.
 version: 1.1.0
 requires_tools:
   - os.http.request
