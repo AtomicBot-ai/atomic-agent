@@ -23,7 +23,12 @@ import {
   validateMaxDurationMs,
   validateApprovalLevel,
 } from "./task-budget.js";
-import { parseScheduleRow, serializeScheduleValue } from "./task-schedule.js";
+import {
+  parseScheduleRow,
+  resolveScheduledFor,
+  serializeScheduleValue,
+} from "./task-schedule.js";
+import { TaskRunLog, type TaskRunRecord } from "./task-run-log.js";
 import {
   TASK_LAST_ERROR_MAX_LENGTH,
   TASK_NOTIFY_TARGETS,
@@ -180,6 +185,8 @@ export class TaskStore {
   private readonly listPendingBySessionStmt: Database.Statement;
   private readonly listDueStmt: Database.Statement;
   private readonly markRunningStmt: Database.Statement;
+  /** The same claim taken from a `paused` row, for "Run now" (ATO-590). */
+  private readonly markRunningPausedStmt: Database.Statement;
   private readonly markCompletedStmt: Database.Statement;
   private readonly markFailedStmt: Database.Statement;
   private readonly markRetryStmt: Database.Statement;
@@ -194,6 +201,10 @@ export class TaskStore {
   private readonly recordElapsedStmt: Database.Statement | null;
   private readonly recordStopCauseStmt: Database.Statement | null;
   private readonly resetSpendStmt: Database.Statement | null;
+  private readonly pauseStmt: Database.Statement;
+  private readonly resumeStmt: Database.Statement;
+  /** One row per run, for the schedule's history (ATO-590). */
+  private readonly runLog: TaskRunLog;
   /**
    * Why this database has no budget columns (see `ensureBudgetColumns`),
    * or `null`. Without them a task asking for a budget is refused.
@@ -232,6 +243,7 @@ export class TaskStore {
     const levelValue = withLevel ? ", @approval_level" : "";
     this.ownerProbe = options.ownerProbe ?? currentTurnOwnerProbe();
     this.dbIdentity = databaseIdentity(options.dbFile);
+    this.runLog = new TaskRunLog(this.db);
 
     this.insertStmt = this.db.prepare(
       `INSERT INTO tasks (
@@ -292,7 +304,7 @@ export class TaskStore {
     // while `at` equals `started_at`. An older binary sharing the file
     // claims without touching `run_owner`, so an owner left from an
     // earlier claim never matches that run's `started_at`.
-    this.markRunningStmt = this.db.prepare(
+    const claimSql = (from: "pending" | "paused"): string =>
       `UPDATE tasks
           SET status = 'running',
               attempts = attempts + 1,
@@ -300,8 +312,9 @@ export class TaskStore {
               updated_at = @now,
               last_error = NULL,
               last_error_cat = NULL${claimOwner}
-        WHERE id = @id AND status = 'pending'`,
-    );
+        WHERE id = @id AND status = '${from}'`;
+    this.markRunningStmt = this.db.prepare(claimSql("pending"));
+    this.markRunningPausedStmt = this.db.prepare(claimSql("paused"));
     this.markCompletedStmt = this.db.prepare(
       `UPDATE tasks
           SET status = 'completed',
@@ -336,14 +349,14 @@ export class TaskStore {
               updated_at = @now,
               last_error = @last_error,
               last_error_cat = @last_error_cat
-        WHERE id = @id AND status IN ('running', 'pending')`,
+        WHERE id = @id AND status IN ('running', 'pending', 'paused')`,
     );
     this.markCancelledStmt = this.db.prepare(
       `UPDATE tasks
           SET status = 'cancelled',
               completed_at = @now,
               updated_at = @now
-        WHERE id = @id AND status IN ('pending', 'running')`,
+        WHERE id = @id AND status IN ('pending', 'running', 'paused')`,
     );
     this.listRunningStmt = this.db.prepare(
       `SELECT id, started_at, ${withOwners ? "run_owner" : "NULL AS run_owner"}
@@ -387,6 +400,20 @@ export class TaskStore {
               last_scheduled_at = @now,
               updated_at = @now
         WHERE id = @id AND recurring = 1`,
+    );
+    this.pauseStmt = this.db.prepare(
+      `UPDATE tasks
+          SET status = 'paused',
+              updated_at = @now
+        WHERE id = @id AND status = 'pending'`,
+    );
+    this.resumeStmt = this.db.prepare(
+      `UPDATE tasks
+          SET status = 'pending',
+              scheduled_for = @scheduled_for,
+              last_scheduled_at = @last_scheduled_at,
+              updated_at = @now
+        WHERE id = @id AND status = 'paused'`,
     );
     this.assignSessionStmt = this.db.prepare(
       `UPDATE tasks
@@ -569,19 +596,33 @@ export class TaskStore {
    * mid-flight, or vanished). The runner uses the `null` return to skip
    * the row without raising — concurrent drains coordinate via this
    * race.
+   *
+   * `fromPaused` claims a `paused` row instead (and only a paused one):
+   * the operator's "Run now" on a paused task (ATO-590). The run then
+   * ends like any other; putting the row back to `paused` afterwards is
+   * the runner's job (`TaskRunner.runOne` with `evenIfPaused`).
    */
-  markRunning(id: string, now: number = Date.now()): TaskRecord | null {
+  markRunning(
+    id: string,
+    now: number = Date.now(),
+    options: { fromPaused?: boolean } = {},
+  ): TaskRecord | null {
     const owner =
       this.runOwnersUnavailable === null
         ? serializeTurnOwner(
             turnOwnerFor(this.ownerProbe, now, this.dbIdentity),
           )
         : null;
-    const result = this.markRunningStmt.run(
+    const stmt = options.fromPaused
+      ? this.markRunningPausedStmt
+      : this.markRunningStmt;
+    const result = stmt.run(
       owner === null ? { id, now } : { id, now, owner },
     ) as { changes: number };
     if (result.changes === 0) return null;
-    return this.get(id);
+    const claimed = this.get(id);
+    if (claimed) this.runLog.open(id, claimed.attempts, claimed.sessionId, now);
+    return claimed;
   }
 
   markCompleted(id: string, now: number = Date.now()): TaskRecord {
@@ -591,6 +632,7 @@ export class TaskStore {
     if (result.changes === 0) {
       throw this.transitionError(id, "completed");
     }
+    this.runLog.close(id, "completed", null, now);
     return this.requireRecord(id);
   }
 
@@ -608,6 +650,7 @@ export class TaskStore {
     if (result.changes === 0) {
       throw this.transitionError(id, "failed");
     }
+    this.runLog.close(id, "failed", runFailure(failure), now);
     return this.requireRecord(id);
   }
 
@@ -631,6 +674,7 @@ export class TaskStore {
     if (result.changes === 0) {
       throw this.transitionError(id, "pending");
     }
+    this.runLog.close(id, "retry", runFailure(failure), now);
     return this.requireRecord(id);
   }
 
@@ -648,6 +692,7 @@ export class TaskStore {
     if (result.changes === 0) {
       throw this.transitionError(id, "blocked");
     }
+    this.runLog.close(id, "blocked", runFailure(failure), now);
     return this.requireRecord(id);
   }
 
@@ -661,7 +706,72 @@ export class TaskStore {
     if (!existing) return null;
     if (TERMINAL_STATUSES.has(existing.status)) return existing;
     this.markCancelledStmt.run({ id, now });
+    this.runLog.close(id, "cancelled", null, now);
     return this.requireRecord(id);
+  }
+
+  /**
+   * Pause a waiting task (ATO-590): `pending` -> `paused`. The scheduler
+   * and every drain only pick `pending` rows, so a paused task does not
+   * fire until `resume`. Its `scheduled_for` is kept as it was.
+   * Idempotent on a paused row. A task in any other status — `running`
+   * (its run ends first) or terminal — throws `TaskStateError`. Returns
+   * `null` when the row is unknown.
+   */
+  pause(id: string, now: number = Date.now()): TaskRecord | null {
+    const existing = this.get(id);
+    if (!existing) return null;
+    if (existing.status === "paused") return existing;
+    if (existing.status !== "pending") {
+      throw new TaskStateError(existing.status, "paused", id);
+    }
+    const result = this.pauseStmt.run({ id, now }) as { changes: number };
+    // Claimed or cancelled between the read and the write.
+    if (result.changes === 0) throw this.transitionError(id, "paused");
+    return this.requireRecord(id);
+  }
+
+  /**
+   * Resume a paused task: `paused` -> `pending`. A recurring task is
+   * armed for its next firing after `now`, so firings missed while it
+   * was paused are skipped rather than run in a burst. A one-shot task
+   * keeps its time (already past: it runs on the next tick). Idempotent
+   * on a `pending` row; any other status throws `TaskStateError`.
+   * Returns `null` when the row is unknown.
+   */
+  resume(id: string, now: number = Date.now()): TaskRecord | null {
+    const existing = this.get(id);
+    if (!existing) return null;
+    if (existing.status === "pending") return existing;
+    if (existing.status !== "paused") {
+      throw new TaskStateError(existing.status, "pending", id);
+    }
+    const rearm = existing.recurring && existing.schedule !== null;
+    const scheduledFor = rearm
+      ? resolveScheduledFor(existing.schedule as TaskSchedule, now)
+      : existing.scheduledFor;
+    const result = this.resumeStmt.run({
+      id,
+      now,
+      scheduled_for: scheduledFor,
+      last_scheduled_at: rearm ? now : existing.lastScheduledAt,
+    }) as { changes: number };
+    if (result.changes === 0) throw this.transitionError(id, "pending");
+    return this.requireRecord(id);
+  }
+
+  /**
+   * The task's past runs, newest first (ATO-590): one per claim, with
+   * when it started and ended and how. Empty when the run log is off for
+   * this open (see `TaskRunLog`) or the task never ran.
+   */
+  listRuns(taskId: string, limit = 50): TaskRunRecord[] {
+    return this.runLog.list(taskId, limit);
+  }
+
+  /** Why this open keeps no run history, or `null` (see `TaskRunLog`). */
+  get runLogUnavailable(): string | null {
+    return this.runLog.unavailable;
   }
 
   /**
@@ -702,6 +812,15 @@ export class TaskStore {
       last_error: options.lastError ?? TASK_INTERRUPTED_ERROR,
     }) as { changes: number };
     if (result.changes === 0) return null;
+    this.runLog.close(
+      id,
+      "interrupted",
+      {
+        message: options.lastError ?? TASK_INTERRUPTED_ERROR,
+        category: "cancelled",
+      },
+      now,
+    );
     if (options.nextScheduledFor !== null) this.resetSpendStmt?.run({ id });
     return this.get(id);
   }
@@ -759,15 +878,24 @@ export class TaskStore {
           : row.started_at !== null &&
             row.started_at < now - options.staleAfterMs;
         if (!gone) continue;
+        const lastError = ownsThisRun
+          ? TASK_OWNER_GONE_ERROR
+          : "recovered from stale running";
         const result = this.recoverRunningStmt.run({
           id: row.id,
           now,
           started_at: row.started_at,
-          last_error: ownsThisRun
-            ? TASK_OWNER_GONE_ERROR
-            : "recovered from stale running",
+          last_error: lastError,
         }) as { changes: number };
-        if (result.changes > 0) recovered.push(row.id);
+        if (result.changes > 0) {
+          recovered.push(row.id);
+          this.runLog.close(
+            row.id,
+            "interrupted",
+            { message: lastError, category: "transport" },
+            now,
+          );
+        }
       }
       return recovered;
     });
@@ -1103,6 +1231,14 @@ function validateMaxSteps(raw: number | null | undefined): number | null {
     );
   }
   return raw;
+}
+
+/** A failure as the run log records it: the same truncated text as the row. */
+function runFailure(failure: TaskFailureInput): {
+  message: string;
+  category: string;
+} {
+  return { message: truncateError(failure.message), category: failure.category };
 }
 
 function truncateError(message: string): string {

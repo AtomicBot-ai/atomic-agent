@@ -553,7 +553,7 @@ export type TaskTerminalStatus =
 
 /** Origin tag used by every task-level metric for downstream slicing. */
 export type TaskOriginTag =
-  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent";
+  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent" | "telegram";
 
 export interface TaskCreatedSample {
   taskId: string;

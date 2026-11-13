@@ -565,7 +565,7 @@ TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 DISCORD_BOT_TOKEN=your-discord-bot-token
 ```
 
-Both can be set up from the Integrations tab in the TUI. Each bot answers only its owner: in a DM, or in a group or server channel when you @mention it or reply to it. Every chat, forum topic, Discord channel and thread gets its own session, and both bots understand `/status`, `/sessions`, `/switch <id>`, `/new`, `/model [provider] [model-id]` and `/cancel`. Approvals arrive as buttons in the chat the turn came from; only an owner can press them. Messages and files pass through Telegram's or Discord's servers.
+Both can be set up from the Integrations tab in the TUI. Each bot answers only its owner: in a DM, or in a group or server channel when you @mention it or reply to it. Every chat, forum topic, Discord channel and thread gets its own session, and both bots understand `/status`, `/sessions`, `/switch <id>`, `/new`, `/model [provider] [model-id]` and `/cancel`. In Telegram, `/cron` lists, adds, pauses, resumes and deletes scheduled tasks (`/cron add 0 9 * * * morning digest`); their results come back to the bot. Approvals arrive as buttons in the chat the turn came from; only an owner can press them. Messages and files pass through Telegram's or Discord's servers.
 
 Channels belong to the runtime, not to the TUI: `atomic-agent serve` boots them the same way, so the bots keep answering with no terminal UI open. Each bot is guarded by its own lockfile in the state dir; a second process that tries to start the same bot leaves it down with `already running in another atomic-agent (pid N)` and does not retry, so start bots from `serve` or from the TUI, not from both.
 

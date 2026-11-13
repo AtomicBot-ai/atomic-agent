@@ -12,16 +12,26 @@ This area owns durable task queue. Read [AGENTS.md](AGENTS.md) before changing i
 - [task-types.ts](task-types.ts)
 - [task-schedule.ts](task-schedule.ts)
 - [task-resume.ts](task-resume.ts)
+- [task-pause.ts](task-pause.ts)
 - [task-run-summary.ts](task-run-summary.ts)
 - [task-report-hold.ts](task-report-hold.ts)
+- [task-run-log.ts](task-run-log.ts)
 
 ## Ownership and dependencies
 
 TaskStore owns the durable queue, TaskRunner owns claiming/execution/retry/reporting, and schedule/backoff helpers compute eligibility. The scheduler submits work through runtime; channels and HTTP can create tasks. A queued task is durable state rather than an in-memory timeout, and stopping producers is part of runtime shutdown.
 
+## Pause, resume and run history
+
+An operator can pause a waiting task (`pending` -> `paused`) and resume it (ATO-590): `TaskStore.pause` / `resume`, `POST /api/tasks/:id/pause|resume`, `task pause|resume <id>`. Every query that finds work reads `pending` rows only, so a paused task never fires; a resumed recurring task is armed for its next firing after the resume and missed firings are skipped. A running task cannot be paused. "Run now" (`runOne` with `evenIfPaused`, which `POST /api/tasks/:id/run`, `task run <id>` and the TUI use) runs a paused task once and puts it back to `paused` afterwards; a one-shot task that the run ends for good stays ended. Each claim also writes a row to `task_runs` in the same file ([task-run-log.ts](task-run-log.ts)): start, end, outcome, error and session, newest first through `listRuns`, `GET /api/tasks/:id/runs` and `task runs <id>`, at most 200 per task. The table sits outside the numbered migrations, like `run_owner`, and the history is best effort: a write that fails never fails the transition it follows.
+
 ## Resuming an interrupted run
 
 A run cut off from outside (the boot sweep took it back from a dead process, or a shutdown left a one-shot task due) is continued from its session's checkpoint rather than started over ([task-resume.ts](task-resume.ts), ATO-1109): the turn's message starts with a note saying how far the cut-off run got, and the session's progress marker records the task id and the resumes spent. Resumes after a crash or kill count towards `agent.task.maxResumes` and back off on the retry curve; past the limit the task fails with a sentence saying why. A run a person stopped is never resumed. `agent.task.resumeInterrupted: false` restores the fresh re-run.
+
+## Pausing a recurring task
+
+A recurring task can be paused and resumed ([task-pause.ts](task-pause.ts), ATO-21; Telegram's `/cron pause|resume` uses it). It is a thin layer over the queue's own `paused` state (`TaskStore.pause` / `resume`, ATO-590) that returns a refusal reason instead of throwing and only takes recurring tasks; a run in progress is refused. Resume arms the next firing after now, so firings that fell inside the pause are skipped. Delete is the plain cancel.
 
 ## Task-specific reading
 
