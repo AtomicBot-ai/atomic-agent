@@ -68,6 +68,11 @@ export interface FusionLiveWorker {
    * `null` while it runs, and for a `finished` line with no status.
    */
   readonly outcome?: WorkerTaskStatus | null;
+  /**
+   * The turn this leg ran in is over: the row is kept, collapsed to its
+   * outcome, until the next turn or fan-out (`fusion-worker-summary.ts`).
+   */
+  readonly collapsed?: boolean;
 }
 
 /**
@@ -85,13 +90,17 @@ export interface FusionLiveWorker {
  * turn ends, so the block does not shrink under the reader mid-fan-out.
  */
 export function reduceFusionLiveWorkers(
-  current: readonly FusionLiveWorker[],
+  incoming: readonly FusionLiveWorker[],
   event: Extract<AgentLoopEvent, { type: "fusion_worker" }>,
   now: number = Date.now(),
 ): readonly FusionLiveWorker[] {
   // The orchestrator's own bracket lines are not a leg of the fan-out;
   // the composer already names the model it is running.
-  if (event.role === "orchestrator") return current;
+  if (event.role === "orchestrator") return incoming;
+  // A finished turn's collapsed rows make way for the next fan-out
+  // rather than mixing with it: a turn started from outside the composer
+  // never went through `startNewRun`, which clears them otherwise.
+  const current = incoming.some((w) => w.collapsed === true) ? [] : incoming;
   const at = current.findIndex((w) => w.taskId === event.taskId);
   const done =
     event.phase === "finished" ||

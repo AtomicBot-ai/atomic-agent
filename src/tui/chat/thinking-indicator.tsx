@@ -78,7 +78,12 @@ export function ThinkingIndicator({
       {/* One measurement for the whole readout, from the legs of this
           fan-out that have already finished. */}
       {((measured) =>
-        (compacting ? [] : state.fusionLiveWorkers).map((worker) => (
+        (compacting
+          ? []
+          : // A finished turn's collapsed rows are the chat log's, not
+            // this live readout's.
+            state.fusionLiveWorkers.filter((w) => w.collapsed !== true)
+        ).map((worker) => (
           <Box key={worker.taskId} marginLeft={2}>
             <Text
               color={worker.done ? theme.colors.muted : theme.colors.warnStrong}

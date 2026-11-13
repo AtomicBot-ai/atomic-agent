@@ -195,6 +195,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         plan: null,
         // Same for spend: a fresh thread has spent nothing.
         sessionUsage: null,
+        // The last turn's worker rows belong to the thread just left.
+        fusionLiveWorkers: [],
       };
     case "skill_count_changed":
       return {

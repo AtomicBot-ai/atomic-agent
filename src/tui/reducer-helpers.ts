@@ -10,6 +10,7 @@ import type {
   ToolCardEntry,
   TuiState,
 } from "./tui-state.js";
+import { collapseFusionLiveWorkers } from "./fusion-worker-summary.js";
 
 /** Push `next` onto `list`, dropping the oldest entry if the ring is full. */
 export function pushRing<T>(list: readonly T[], next: T, cap: number): T[] {
@@ -265,13 +266,14 @@ export function finishTurn(
         ? "failed"
         : "cancelled"
       : "completed";
-  // A fan-out cannot outlive the turn that started it, so the readout
-  // goes with it — leaving it up would claim workers are still running.
-  const cleared = {
+  // A fan-out cannot outlive the turn that started it: its rows stay,
+  // collapsed to one outcome line per worker, so why a task came back is
+  // still on screen; nothing is left marked running.
+  const collapsed = {
     ...state,
-    fusionLiveWorkers: [] as TuiState["fusionLiveWorkers"],
+    fusionLiveWorkers: collapseFusionLiveWorkers(state.fusionLiveWorkers),
   };
-  const next = withRunHistoryEntry(cleared, {
+  const next = withRunHistoryEntry(collapsed, {
     outcome,
     reason,
     stepCount,
@@ -289,7 +291,11 @@ export function finishRun(
   state: TuiState,
   params: { outcome: RunOutcome; reason: string; lastRunStatus: string },
 ): TuiState {
-  return withRunHistoryEntry(state, {
+  const collapsed = {
+    ...state,
+    fusionLiveWorkers: collapseFusionLiveWorkers(state.fusionLiveWorkers),
+  };
+  return withRunHistoryEntry(collapsed, {
     outcome: params.outcome,
     reason: params.reason,
     stepCount: state.currentStep + 1,
