@@ -12,7 +12,9 @@
 
 import type { ChannelDefinition } from "./channel.js";
 import { SIGNAL_CHANNEL } from "./signal/index.js";
+import { slackChannelDefinition } from "./slack/index.js";
 
 export const EXTRA_CHANNELS: readonly ChannelDefinition[] = [
   SIGNAL_CHANNEL,
+  slackChannelDefinition,
 ];
