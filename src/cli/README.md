@@ -52,3 +52,10 @@ Before saving, the carried history is fitted into a local model's window (ATO-11
 ## Model fit-test
 
 `models tasks collect [--last <n>] [--out <file>] [--json]` writes the user's last tasks as a fit-test set (ATO-1089, [models-tasks-command.ts](models-tasks-command.ts)); the rules for what is kept live in [the fit-test guide](../fit-test/README.md). `models fit-test --tasks <file> --models <a,b> --judge-url <url>` runs that set on up to three local models and prints score, time and peak memory per model (ATO-1090, [models-fit-test-command.ts](models-fit-test-command.ts)).
+
+
+## Share
+
+`share [--session latest|<id>] [--format html|md] [--out <file>] [--gist] [--json]` (ATO-581, [share-command.ts](share-command.ts)) writes one chat to a single file for a colleague. It reads only `SessionStore.listChatLines` (user messages and closing replies), so tool results and reasoning never enter the file, then runs each message and the title through [chat-export redaction](../session/chat-export/chat-export-redact.ts): shared secret detector plus a looser layer, absolute paths to `[path]` (paths under the chat's folder keep their tail as `<project>/...`), emails, IPv4, URL query strings and `<think>` blocks. HTML is self-contained with a `default-src 'none'` CSP and no script; text is escaped before a small Markdown subset is applied. Default file: `<stateDir>/shared-chats/chat-<id>.<ext>`, owner-only. `latest` is the newest chat in the current folder, else the newest anywhere; a unique id prefix works.
+
+`--gist` is the only path off the machine ([share-gist.ts](share-gist.ts)). After writing the file it prints a preview (title, message count, what was removed, first messages, who can read a secret gist) and asks `[y/N]` in a terminal; only a typed y/yes uploads, with `gh gist create <file> --desc <title>` (secret, `--public` never passed; the token stays in gh). Without a terminal it refuses and exits 1. With `--gist` and no `--format` the file is Markdown, since GitHub renders Markdown and shows HTML as source. `--gist` cannot be combined with `--json`.
