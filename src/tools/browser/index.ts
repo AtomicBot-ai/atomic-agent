@@ -12,6 +12,7 @@ import { buildBrowserScreenshotTool } from "./screenshot.js";
 import { buildBrowserActTool } from "./act.js";
 import { buildBrowserExtractTool } from "./extract.js";
 import type { BrowserExtractModelRef } from "./extract-request.js";
+import { buildBrowserSiteToolsTool } from "./site-tools.js";
 import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
@@ -33,6 +34,10 @@ export type {
   ScrollInput,
   ScrollResult,
   SearchInput,
+  SiteToolCallInput,
+  SiteToolCallResult,
+  SiteToolsListInput,
+  SiteToolsListing,
   TabInfo,
   TabsInput,
   TypeInput,
@@ -125,6 +130,7 @@ export type {
   BrowserExtractModel,
   BrowserExtractModelRef,
 } from "./extract-request.js";
+export { BROWSER_SITE_TOOLS_TOOL, buildBrowserSiteToolsTool } from "./site-tools.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
@@ -153,5 +159,6 @@ export function buildBrowserTools(
     buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
     buildBrowserActTool(backend, dangerous, policy),
     buildBrowserExtractTool(backend, policy, extractModel, dangerous),
+    buildBrowserSiteToolsTool(backend, dangerous, policy),
   ];
 }

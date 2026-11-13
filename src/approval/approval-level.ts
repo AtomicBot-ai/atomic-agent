@@ -55,6 +55,13 @@ export type ApprovalCategory =
    * `browser.allowedDomains`. Level 3 beside `http`.
    */
   | "browser_offsite"
+  /**
+   * A tool the open page declares for agents through WebMCP
+   * (`browser.site_tools` call, ATO-521): the site's own code runs and
+   * may send, buy or delete just as a submit would. Level 4 beside
+   * `browser_commit`; a session grant covers one site.
+   */
+  | "browser_site_tool"
   | "trust_config"
   /**
    * Publishing under the operator's name — a pull request, an issue, a
@@ -148,7 +155,8 @@ export type ApprovalCategory =
  *    plus adding a remote) — the same rung as a guarded `git push`
  *    through the shell, so the dedicated tools are never looser or
  *    stricter than the escape hatch. Browser clicks / Enter that
- *    submit, publish or delete (`browser_commit`). The remote-sync switch
+ *    submit, publish or delete (`browser_commit`), and a site's own
+ *    WebMCP tools (`browser_site_tool`). The remote-sync switch
  *    (`git.remoteSync`) is checked before this ladder is consulted.
  *  - level 5 (full trust): everything, including browser navigation to
  *    non-web URLs, browser passwords and payments, writes to the agent's
@@ -179,6 +187,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fusion_fanout: 4,
   shell_dangerous: 5,
   browser_commit: 4,
+  browser_site_tool: 4,
   screen_control: 4,
   browser_nonweb: 5,
   browser_secret: 5,
@@ -256,6 +265,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // A password or a payment is its own decision every time.
   browser_secret: false,
   browser_offsite: true,
+  // "Let this site's own tools run in this chat": per site (`site-grants.ts`).
+  browser_site_tool: true,
   trust_config: false,
   // The read-side twin of `trust_config`: "read my API keys for the
   // rest of the session" is never a standing answer, and a `shell`
@@ -309,6 +320,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   browser_commit: "browser · submit / publish / delete",
   browser_secret: "browser · password or payment",
   browser_offsite: "browser · site outside the allow-list",
+  browser_site_tool: "browser · the site's own tool",
   trust_config: "agent trust config",
   state_secret: "agent secret file",
   email: "e-mail send",

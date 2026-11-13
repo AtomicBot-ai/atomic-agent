@@ -450,6 +450,7 @@ describe("browser tools on a fake backend", () => {
       "browser.screenshot",
       "browser.scroll",
       "browser.search",
+      "browser.site_tools",
       "browser.tabs",
       "browser.type",
     ]);

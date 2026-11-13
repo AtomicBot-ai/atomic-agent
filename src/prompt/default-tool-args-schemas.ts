@@ -149,6 +149,18 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     obj({ schema: { type: "object" }, instruction: stringSchema }, ["schema"]),
   ],
   [
+    "browser.site_tools",
+    obj(
+      {
+        action: { type: "string", enum: ["list", "call"] },
+        name: stringSchema,
+        arguments: { type: "object" },
+        timeoutMs: numberSchema,
+      },
+      ["action"],
+    ),
+  ],
+  [
     "browser.scroll",
     obj(
       {

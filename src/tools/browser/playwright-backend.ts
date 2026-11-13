@@ -22,6 +22,11 @@ import {
 } from "./attach-user-chrome.js";
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
 import {
+  callSiteToolOnPage,
+  installSiteToolCapture,
+  listSiteToolsOnPage,
+} from "./site-tools-playwright.js";
+import {
   collectSecretFieldValuesInPage,
   ONE_TIME_CODE_HINT,
   redactSecretFieldValues,
@@ -45,6 +50,10 @@ import type {
   ScrollInput,
   ScrollResult,
   SearchInput,
+  SiteToolCallInput,
+  SiteToolCallResult,
+  SiteToolsListInput,
+  SiteToolsListing,
   TabInfo,
   TabsInput,
   TypeInput,
@@ -351,6 +360,14 @@ export class PlaywrightBackend implements BrowserBackend {
     return runPageAction(await this.requireActivePage(), input);
   }
 
+  async listSiteTools(input: SiteToolsListInput): Promise<SiteToolsListing> {
+    return listSiteToolsOnPage(await this.requireActivePage(), input);
+  }
+
+  async callSiteTool(input: SiteToolCallInput): Promise<SiteToolCallResult> {
+    return callSiteToolOnPage(await this.requireActivePage(), input);
+  }
+
   async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {
     const context = await this.requireContext();
     const pages = this.visiblePages(context);
@@ -415,6 +432,8 @@ export class PlaywrightBackend implements BrowserBackend {
     const browser = await this.connectOverCdp(cdpUrl, this.options.launchTimeoutMs);
     const contexts = browser.contexts();
     this.context = contexts[0] ?? (await browser.newContext());
+    // WebMCP: record the tools pages declare (ATO-521).
+    await installSiteToolCapture(this.context);
   }
 
   private async connectOverCdp(url: string, timeoutMs: number): Promise<PwBrowser> {
@@ -471,6 +490,8 @@ export class PlaywrightBackend implements BrowserBackend {
   private adopt(page: Page): void {
     if (!this.userProfile) return;
     this.ownedPages.add(page);
+    // Only the agent's own tabs record WebMCP tools, never the user's (ATO-521).
+    void installSiteToolCapture(page);
     page.on("popup", (popup) => this.adopt(popup));
     page.on("close", () => {
       this.ownedPages.delete(page);

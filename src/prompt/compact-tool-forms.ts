@@ -54,6 +54,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Page data as JSON matching a JSON Schema, in one call.",
     tier: RARE,
   },
+  "browser.site_tools": {
+    summary: "List or call the page's own WebMCP tools; a call asks first.",
+    tier: RARE,
+  },
   "os.shell.run": {
     summary:
       "Run a shell command in the working directory (may require approval). `cmd` is required and must not be empty. Not for deleting (os.fs.trash) or moving files (os.fs.move). A long command comes back as a job: wait, kill or list jobs.",
