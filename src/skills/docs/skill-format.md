@@ -51,7 +51,7 @@ A project-local skill cannot replace a global skill with the same `name`: the gl
 
 ## Starter skills
 
-Atomic Agent ships with 17 starter skills that are auto-installed into the global skills directory on first run and refreshed on upgrade (platform-gated where relevant): `docker`, `ffmpeg`, `github`, `notion`, `obsidian`, `pandoc`, `pdf`, `xlsx`, `imagemagick`, `currency`, `wttr-weather`, `audio-transcribe`, `apple-calendar`, `apple-notes`, `apple-reminders`, `gog-workspace`, and `skill-creator`. The format is open, so users and playbook authors can add their own.
+Atomic Agent ships with a set of starter skills that are auto-installed into the global skills directory on first run and refreshed on upgrade (platform-gated where relevant). The current list, with what each one does and what it needs, is the table in [`starter-skills/README.md`](../../../starter-skills/README.md#bundled-skills). The format is open, so users and playbook authors can add their own.
 
 ## CLI
 
