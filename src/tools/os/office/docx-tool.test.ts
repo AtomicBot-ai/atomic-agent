@@ -13,7 +13,9 @@ import {
 import type { ToolContext } from "../../tool-registry.js";
 import { FileRestoreStore } from "../fs/fs-restore-store.js";
 import { docxExtractor } from "../read-document/extractors/docx-extractor.js";
+import { appendToDocx } from "./docx-package.js";
 import { buildOsFsDocxTool, parseDocxArgs } from "./docx-tool.js";
+import { parseBlocks } from "./docx-xml.js";
 
 const FIXTURE = resolve(
   fileURLToPath(new URL("../test-fixtures/sample.docx", import.meta.url)),
@@ -145,6 +147,40 @@ describe("os.fs.docx", () => {
       tool().run({ path: "doc.docx", op: "append", blocks: ["nope"] }, ctx()),
     ).rejects.toThrow();
     expect((await readFile(join(dir, "doc.docx"))).equals(before)).toBe(true);
+  });
+
+  it("redoes the edit on a save made while the approval card was open", async () => {
+    const path = join(dir, "doc.docx");
+    await copyFile(FIXTURE, path);
+    // The user saves the document in Word (one more paragraph) before answering.
+    const original = gate.request.bind(gate);
+    gate.request = (async (...a: Parameters<ApprovalGate["request"]>) => {
+      const decision = await original(...a);
+      await writeFile(path, await appendToDocx(await readFile(path), parseBlocks(["Saved in Word meanwhile."])));
+      return decision;
+    }) as ApprovalGate["request"];
+    const result = await tool().run({ path: "doc.docx", op: "append", blocks: ["Ship it."] }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.rebuiltAfterApproval).toBe(true);
+    const text = await textOf(path);
+    expect(text).toContain("all systems nominal");
+    expect(text).toContain("Saved in Word meanwhile.");
+    expect(text.indexOf("Ship it.")).toBeGreaterThan(text.indexOf("Saved in Word meanwhile."));
+  });
+
+  it("refuses, writing nothing, when the file changed under the card and the edit cannot be redone", async () => {
+    const path = join(dir, "doc.docx");
+    await copyFile(FIXTURE, path);
+    const original = gate.request.bind(gate);
+    gate.request = (async (...a: Parameters<ApprovalGate["request"]>) => {
+      const decision = await original(...a);
+      await writeFile(path, "no longer a zip");
+      return decision;
+    }) as ApprovalGate["request"];
+    await expect(
+      tool().run({ path: "doc.docx", op: "append", blocks: ["Ship it."] }, ctx()),
+    ).rejects.toThrow(/changed while the approval prompt was open/);
+    expect(await readFile(path, "utf8")).toBe("no longer a zip");
   });
 
   it("reports a file that is not a Word document", async () => {

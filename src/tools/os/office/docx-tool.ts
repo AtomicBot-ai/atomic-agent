@@ -81,47 +81,52 @@ export function buildOsFsDocxTool(options: FsDangerousToolOptions): ToolDefiniti
       const existing = await readExisting(absolute, TOOL);
       const blocks = parseBlocks(args.blocks);
 
-      let data: Buffer;
-      let reason: string;
-      let done: string;
-      const details: Record<string, unknown> = { path: absolute, op: args.op };
-      if (args.op === "create") {
-        if (existing !== null && !args.overwrite) {
-          throw new Error(
-            `${TOOL}: ${absolute} already exists; use op append or replace to edit it, or overwrite: true to replace it`,
-          );
+      // Built twice when the file changes under the approval prompt: once
+      // from the bytes read now (for the card), again from the bytes on
+      // disk after the answer, so a save made meanwhile is kept.
+      const build = async (current: Buffer | null): Promise<DocxEdit> => {
+        if (args.op === "create") {
+          if (current !== null && !args.overwrite) {
+            throw new Error(
+              `${TOOL}: ${absolute} already exists; use op append or replace to edit it, or overwrite: true to replace it`,
+            );
+          }
+          return {
+            data: await createDocx(blocks),
+            reason: `${current === null ? "create" : "replace"} Word document ${absolute} (${blocks.length} paragraphs)`,
+            done: `${current === null ? "created" : "replaced"} ${absolute} with ${blocks.length} paragraphs`,
+            details: { paragraphs: blocks.length },
+          };
         }
-        data = await createDocx(blocks);
-        reason = `${existing === null ? "create" : "replace"} Word document ${absolute} (${blocks.length} paragraphs)`;
-        done = `${existing === null ? "created" : "replaced"} ${absolute} with ${blocks.length} paragraphs`;
-        details.paragraphs = blocks.length;
-      } else {
-        if (existing === null) {
+        if (current === null) {
           throw new Error(`${TOOL}: ${absolute} does not exist; use op create to make it`);
         }
         if (args.op === "append") {
-          data = await wrapDocxError(() => appendToDocx(existing, blocks), absolute);
-          reason = `append ${blocks.length} paragraphs to ${absolute}`;
-          done = `appended ${blocks.length} paragraphs to ${absolute}`;
-          details.paragraphs = blocks.length;
-        } else {
-          const find = args.find ?? "";
-          const outcome = await wrapDocxError(
-            () => replaceInDocx(existing, find, args.replaceWith, { all: args.all }),
-            absolute,
-          );
-          if (outcome.count === 0) {
-            throw new Error(
-              `${TOOL}: ${JSON.stringify(find)} was not found in ${absolute}. Matching is exact and case-sensitive within one paragraph; read the text with os.fs.read_document first`,
-            );
-          }
-          data = outcome.data;
-          reason = `replace ${outcome.count} × ${JSON.stringify(find)} in ${absolute}`;
-          done = `replaced ${outcome.count} occurrence${outcome.count === 1 ? "" : "s"} of ${JSON.stringify(find)} in ${absolute}`;
-          details.replacements = outcome.count;
-          details.parts = outcome.parts;
+          return {
+            data: await wrapDocxError(() => appendToDocx(current, blocks), absolute),
+            reason: `append ${blocks.length} paragraphs to ${absolute}`,
+            done: `appended ${blocks.length} paragraphs to ${absolute}`,
+            details: { paragraphs: blocks.length },
+          };
         }
-      }
+        const find = args.find ?? "";
+        const outcome = await wrapDocxError(
+          () => replaceInDocx(current, find, args.replaceWith, { all: args.all }),
+          absolute,
+        );
+        if (outcome.count === 0) {
+          throw new Error(
+            `${TOOL}: ${JSON.stringify(find)} was not found in ${absolute}. Matching is exact and case-sensitive within one paragraph; read the text with os.fs.read_document first`,
+          );
+        }
+        return {
+          data: outcome.data,
+          reason: `replace ${outcome.count} × ${JSON.stringify(find)} in ${absolute}`,
+          done: `replaced ${outcome.count} occurrence${outcome.count === 1 ? "" : "s"} of ${JSON.stringify(find)} in ${absolute}`,
+          details: { replacements: outcome.count, parts: outcome.parts },
+        };
+      };
+      let edit = await build(existing);
 
       const preview =
         args.op === "replace"
@@ -131,16 +136,36 @@ export function buildOsFsDocxTool(options: FsDangerousToolOptions): ToolDefiniti
         tool: TOOL,
         absolute,
         display: args.path,
-        data,
-        reason,
+        data: edit.data,
+        baseline: existing,
+        rebuild: async (fresh) => {
+          if (args.op === "create" && existing === null && fresh !== null) {
+            // The card offered a new file; replacing one is a different question.
+            throw new Error(`${TOOL}: ${absolute} appeared meanwhile; ask again to replace it`);
+          }
+          edit = await build(fresh);
+          return edit.data;
+        },
+        reason: edit.reason,
         preview,
         replacesWhole: args.op === "create" && existing !== null,
       });
+      const details: Record<string, unknown> = { path: absolute, op: args.op, ...edit.details };
+      if (result.rebuilt) details.rebuiltAfterApproval = true;
+      const done = edit.done;
+      const data = result.data;
       details.bytes = data.byteLength;
       const output = result.restoreNote === null ? done : `${done}; ${result.restoreNote}`;
       return compressToolResult({ tool: TOOL, status: "ok", output, details });
     },
   };
+}
+
+interface DocxEdit {
+  data: Buffer;
+  reason: string;
+  done: string;
+  details: Record<string, unknown>;
 }
 
 async function wrapDocxError<T>(work: () => Promise<T>, absolute: string): Promise<T> {

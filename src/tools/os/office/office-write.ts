@@ -24,6 +24,14 @@ export interface OfficeCommit {
   /** The path as the call spelled it, for the restore hint. */
   display: string;
   data: Buffer;
+  /** The file's bytes `data` was built from (null: it did not exist). */
+  baseline: Buffer | null;
+  /**
+   * Redo the edit on the file as it is after the approval prompt, when
+   * it changed while the card was open (a save in Word, another tool).
+   * Throwing refuses the write.
+   */
+  rebuild: (fresh: Buffer | null) => Promise<Buffer>;
   /** One line for the approval card: what changes. */
   reason: string;
   preview: string;
@@ -33,6 +41,10 @@ export interface OfficeCommit {
 
 export interface OfficeCommitResult {
   existed: boolean;
+  /** The bytes written: `data`, or the rebuilt edit when the file changed under the prompt. */
+  data: Buffer;
+  /** True when the file changed while the prompt was open and the edit was redone on it. */
+  rebuilt: boolean;
   /** A sentence about the previous version, or null for a new file. */
   restoreNote: string | null;
 }
@@ -71,6 +83,17 @@ export async function commitOfficeFile(
   );
   // Read after the prompt: the file may have changed while it was open.
   const prior = await readExisting(commit.absolute, commit.tool);
+  let data = commit.data;
+  const rebuilt = !sameBytes(prior, commit.baseline);
+  if (rebuilt) {
+    try {
+      data = await commit.rebuild(prior);
+    } catch (err) {
+      throw new Error(
+        `${commit.tool}: ${commit.absolute} changed while the approval prompt was open and the edit could not be redone on the new version (${(err as Error).message}); nothing was written`,
+      );
+    }
+  }
   const restoreNote =
     prior === null ? null : await savePrevious(options, ctx, commit, prior);
   await mkdir(dirname(commit.absolute), { recursive: true });
@@ -79,7 +102,7 @@ export async function commitOfficeFile(
     `.${basename(commit.absolute)}.atomic-${process.pid}-${Date.now()}.tmp`,
   );
   try {
-    await writeFile(temp, commit.data);
+    await writeFile(temp, data);
     await rename(temp, commit.absolute);
   } catch (err) {
     await unlink(temp).catch(() => undefined);
@@ -90,7 +113,12 @@ export async function commitOfficeFile(
     // Best effort: a missed record only means a later replace saves a copy it need not.
     await options.restore.recordCreated(ctx.sessionId, commit.absolute).catch(() => undefined);
   }
-  return { existed: prior !== null, restoreNote };
+  return { existed: prior !== null, data, rebuilt, restoreNote };
+}
+
+function sameBytes(a: Buffer | null, b: Buffer | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.equals(b);
 }
 
 async function savePrevious(

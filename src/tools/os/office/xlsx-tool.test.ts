@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,7 +10,7 @@ import type { ToolContext } from "../../tool-registry.js";
 import { FileRestoreStore } from "../fs/fs-restore-store.js";
 import { xlsxExtractor } from "../read-document/extractors/xlsx-extractor.js";
 import { buildOsFsXlsxTool, parseXlsxArgs } from "./xlsx-tool.js";
-import { columnLetters, openWorkbook, parseCellRef, toCellValue } from "./xlsx-ops.js";
+import { columnLetters, openWorkbook, parseCellRef, saveWorkbook, toCellValue } from "./xlsx-ops.js";
 
 const FIXTURE = resolve(
   fileURLToPath(new URL("../test-fixtures/sample.xlsx", import.meta.url)),
@@ -125,6 +125,26 @@ describe("os.fs.xlsx", () => {
     const narrow = await tool().run({ path: "t.xlsx", op: "read", range: "B2" }, ctx());
     expect(narrow.details.range).toBe("B2:B2");
     await expect(tool().run({ path: "t.xlsx", op: "read", sheet: "Nope" }, ctx())).rejects.toThrow(/no sheet named/);
+  });
+
+  it("redoes the write on a save made while the approval card was open", async () => {
+    const path = join(dir, "data.xlsx");
+    await copyFile(FIXTURE, path);
+    // The user types into the sheet in Excel and saves before answering.
+    const original = gate.request.bind(gate);
+    gate.request = (async (...a: Parameters<ApprovalGate["request"]>) => {
+      const decision = await original(...a);
+      const workbook = await openWorkbook(await readFile(path));
+      workbook.worksheets[0]!.getCell("Z50").value = "saved in Excel meanwhile";
+      await writeFile(path, await saveWorkbook(workbook));
+      return decision;
+    }) as ApprovalGate["request"];
+    const result = await tool().run({ path: "data.xlsx", op: "write", cell: "Y1", rows: [["from the agent"]] }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.rebuiltAfterApproval).toBe(true);
+    const sheet = (await openWorkbook(await readFile(path))).worksheets[0]!;
+    expect(sheet.getCell("Z50").value).toBe("saved in Excel meanwhile");
+    expect(sheet.getCell("Y1").value).toBe("from the agent");
   });
 
   it("refuses create over an existing file without overwrite, and write to a missing file", async () => {
