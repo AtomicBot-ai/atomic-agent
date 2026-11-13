@@ -34,6 +34,11 @@ A run cut off from outside (the boot sweep took it back from a dead process, or 
 
 A recurring task can be paused and resumed ([task-pause.ts](task-pause.ts), ATO-21; Telegram's `/cron pause|resume` uses it). It is a thin layer over the queue's own `paused` state (`TaskStore.pause` / `resume`, ATO-590) that returns a refusal reason instead of throwing and only takes recurring tasks; a run in progress is refused. Resume arms the next firing after now, so firings that fell inside the pause are skipped. Delete is the plain cancel.
 
+
+## Suggestions (ideas)
+
+The agent offers small cards built from its own records ([idea-rules.ts](idea-rules.ts), ATO-458): a task that failed or was blocked in the last 7 days and was never run again (no later task with the same message), and a chat goal that stopped paused or out of rounds in the last 14 days with checklist items open. Fixed rules, no model call, nothing sent anywhere; at most 5 undecided cards of each kind wait at once, counted after decided sources are set aside (dismissed cards take no slot, and a waiting card is never pushed out by newer ones). Each card has a reason, evidence (the task id or chat id with a short excerpt: the error, the open items) and a ready prompt. They live in the `ideas` table of `tasks.sqlite` ([idea-store.ts](idea-store.ts)); `source_key` is unique, so a source that has had a card, accepted or dismissed, never gets another. A refresh adds cards for new sources and removes undecided ones whose source no longer qualifies. Accepting flips the card first (compare-and-swap), then files an ordinary task with the (optionally edited) prompt and links it; a Retry card's task keeps the original's `maxSteps`, `maxCostUsd`, `maxDurationMs` and `notify` and runs in a new chat opened in the original chat's folder (the original task id is on the card as `sourceTaskId`); a refused task puts the card back ([idea-service.ts](idea-service.ts)). Surfaces: `atomic-agent ideas` and `/api/ideas`. Mail is not a source: the inbox is read live and nothing of it is stored.
+
 ## Task-specific reading
 
 Read docs/queue.md and ../scheduler/README.md for schedule/drain edits; ../http/AGENTS.md for webhooks.

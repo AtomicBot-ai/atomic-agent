@@ -69,6 +69,12 @@ import {
   createPauseTaskHandler,
   createResumeTaskHandler,
 } from "./route-task-controls.js";
+import {
+  createAcceptIdeaHandler,
+  createDismissIdeaHandler,
+  createListIdeasHandler,
+  createRefreshIdeasHandler,
+} from "./route-ideas.js";
 import { createWebhookHandler } from "./route-webhooks.js";
 import { createListWebhooksHandler } from "./route-webhooks-list.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
@@ -330,6 +336,11 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
       path: "/api/tasks/drain",
       handler: createDrainTasksHandler(),
     },
+    // ATO-458: suggestions built from local tasks and goals; accept files a task.
+    { method: "GET", path: "/api/ideas", handler: createListIdeasHandler() },
+    { method: "POST", path: "/api/ideas/refresh", handler: createRefreshIdeasHandler() },
+    { method: "POST", path: "/api/ideas/{id}/accept", handler: createAcceptIdeaHandler() },
+    { method: "POST", path: "/api/ideas/{id}/dismiss", handler: createDismissIdeaHandler() },
     {
       method: "GET",
       path: "/api/webhooks",
