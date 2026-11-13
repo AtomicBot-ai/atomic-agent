@@ -9,7 +9,7 @@ import {
   readCoreOperationLock as readCoreOperationLockForTest,
   readCoreOperationLockForTurn,
 } from "../core/core-operation.js";
-import { explainManagedEngineLiveness, readManagedEngineLiveness } from "./engine-liveness.js";
+import { explainManagedEngineLiveness, readManagedEngineLiveness, readManagedModelProcess } from "./engine-liveness.js";
 
 describe("readManagedEngineLiveness (ATO-772)", () => {
   let dataDir: string;
@@ -186,5 +186,39 @@ describe("explainManagedEngineLiveness (ATO-1275)", () => {
       reason: "no_pid_file",
       lock: "unreadable",
     });
+  });
+});
+
+describe("readManagedModelProcess (ATO-1434)", () => {
+  let dataDir: string;
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "engine-process-"));
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const longUp = { bootTimeMs: () => Date.now() - 30 * 24 * 3_600_000 };
+  const writePid = (value: string): void => writeFileSync(resolvePidFilePath(dataDir), value, "utf-8");
+
+  it("reads the pid file even while the engine lock is held", () => {
+    mkdirSync(join(dataDir, "core"), { recursive: true });
+    writeFileSync(join(dataDir, "core", "operation.lock"), String(process.ppid));
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("none");
+    writePid(String(process.pid));
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("running");
+  });
+
+  it("no pid file, an empty one or a gone pid is none", () => {
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("none");
+    writePid("");
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("none");
+    writePid(String(spawnSync(process.execPath, ["-e", ""]).pid!));
+    expect(readManagedModelProcess(dataDir, longUp)).toBe("none");
+  });
+
+  it("another user's process counts as running", () => {
+    writePid("4242");
+    expect(readManagedModelProcess(dataDir, { ...longUp, pidLiveness: () => "foreign" })).toBe("running");
   });
 });

@@ -45,6 +45,13 @@ export type LocalEngineState = "alive" | "dead" | "unknown" | "atomic_chat_app";
 export interface LocalEngineVerdict {
   state: LocalEngineState;
   reason?: string;
+  /**
+   * Whether a model process exists, read from the pid file alone, when the
+   * engine reads `unknown` because its operation lock is held (ATO-1434).
+   * `none` under a held lock for `LOCAL_ENGINE_NO_PROCESS_CEILING_MS` ends
+   * the turn. Absent: not asked.
+   */
+  modelProcess?: "none" | "running" | "unknown";
 }
 
 /**

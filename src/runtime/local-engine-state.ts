@@ -3,9 +3,11 @@ import type { LocalEngineState, LocalEngineVerdict } from "../agent/agent-contra
 import {
   explainManagedEngineLiveness,
   readManagedEngineLiveness,
+  readManagedModelProcess,
   type ManagedEngineLiveness,
   type ManagedEngineLivenessReason,
   type ManagedEngineLivenessReport,
+  type ManagedModelProcess,
 } from "../local-llm/index.js";
 
 /** The built-in managed local link (`LlamaServerProvider`'s default id). */
@@ -93,6 +95,7 @@ export function explainLocalEngineState(
   cfg: Pick<AtomicAgentConfig, "localModels" | "paths">,
   activeTextProvider: string,
   explain: (dataDir: string) => ManagedEngineLivenessReport = explainManagedEngineLiveness,
+  modelProcess: (dataDir: string) => ManagedModelProcess = readManagedModelProcess,
 ): LocalEngineVerdict & { reason: LocalEngineStateReason } {
   if (providerId === ATOMIC_CHAT_LINK) {
     return activeTextProvider === ATOMIC_CHAT_LINK
@@ -108,8 +111,27 @@ export function explainLocalEngineState(
   } catch {
     return { state: "unknown", reason: "liveness_probe_failed" };
   }
-  return { state: localEngineStateOf(report.state), reason: report.reason };
+  const verdict = { state: localEngineStateOf(report.state), reason: report.reason };
+  // A held lock hides the pid: say whether a model process exists at all,
+  // so the wait can give up on a lock with nothing behind it (ATO-1434).
+  if (report.state === "unknown" && LOCK_HELD_REASONS.has(report.reason)) {
+    let found: ManagedModelProcess;
+    try {
+      found = modelProcess(cfg.paths.localModelsDataDir);
+    } catch {
+      found = "unknown";
+    }
+    return { ...verdict, modelProcess: found };
+  }
+  return verdict;
 }
+
+/** The liveness reasons that mean "a start or load holds the engine lock". */
+const LOCK_HELD_REASONS: ReadonlySet<ManagedEngineLivenessReason> = new Set([
+  "lock_held",
+  "lock_held_self",
+  "lock_writing",
+]);
 
 function localEngineStateOf(state: ManagedEngineLiveness): LocalEngineState {
   if (state === "dead" || state === "no_pid") return "dead";
