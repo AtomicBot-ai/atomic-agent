@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  backendReleaseSource,
   isWindowsArm64,
+  NIGHTLY_BACKEND_REPO,
+  STABLE_BACKEND_REPO,
   resolvePlatformAsset,
   UnsupportedPlatformError,
   WINDOWS_ARM64_BACKEND_ASSET,
@@ -66,6 +69,27 @@ describe("platform-assets", () => {
     expect(isWindowsArm64("win32", "x64")).toBe(false);
     expect(isWindowsArm64("darwin", "arm64")).toBe(false);
     expect(isWindowsArm64("linux", "arm64")).toBe(false);
+  });
+
+  it("downloads every build from the stable repo Core uses, stable releases only (ATO-619)", () => {
+    for (const asset of [
+      "llama-turboquant-macos-arm64.zip",
+      "llama-turboquant-linux-x64-vulkan.zip",
+      "llama-turboquant-linux-x64-cuda-13.3.zip",
+      "llama-turboquant-linux-x64-rocm.zip",
+      "llama-turboquant-linux-arm64-cuda-13.3.zip",
+      "llama-turboquant-windows-x64-cuda-12.4.zip",
+    ]) {
+      expect(backendReleaseSource(asset)).toEqual({ repo: STABLE_BACKEND_REPO, stableOnly: true });
+    }
+    expect(STABLE_BACKEND_REPO).toBe("AtomicBot-ai/atomic-llama-cpp-turboquant");
+  });
+
+  it("keeps the Windows on ARM build on the nightly repo, which alone publishes it", () => {
+    expect(backendReleaseSource(WINDOWS_ARM64_BACKEND_ASSET)).toEqual({
+      repo: NIGHTLY_BACKEND_REPO,
+      stableOnly: false,
+    });
   });
 
   it("still throws on win32 ia32", () => {
