@@ -806,6 +806,7 @@ export async function createAgentRuntime(
     get taskStore() { return taskStore; },
     get analytics() { return observability.getAnalytics(); },
     get errorReporter() { return observability.getErrorReporter(); },
+    traceExport: { shutdown: traces.shutdownTraceExport },
   });
   const { shutdown } = lifecycle;
   const refreshSkills = notePrefixInvalidation(

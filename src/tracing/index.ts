@@ -55,3 +55,13 @@ export {
   serializeTraceEvent,
   traceFilePath,
 } from "./trace/index.js";
+export {
+  createOtlpTraceSink,
+  parseOtelKeyValueList,
+  resolveOtlpExportSettings,
+} from "./otel/index.js";
+export type {
+  OtelExportConfig,
+  OtlpExportSettings,
+  OtlpTraceSink,
+} from "./otel/index.js";
