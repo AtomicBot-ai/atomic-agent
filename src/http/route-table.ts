@@ -33,6 +33,7 @@ import {
   createSteerSessionHandler,
 } from "./route-sessions.js";
 import { createRenameSessionHandler } from "./route-session-title.js";
+import { createSetSessionArchivedHandler } from "./route-session-archived.js";
 import {
   createEscalateFusionWorkerHandler,
   createListFusionWorkersHandler,
@@ -182,6 +183,8 @@ export function buildRouteTable(): RouteDefinition[] {
     },
     // ATO-731: one chat's folder, changed without restarting serve.
     { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
+    // ATO-1150: archive or unarchive a chat (metadata.archived, seen by the desktop and the terminal).
+    { method: "POST", path: "/api/sessions/{id}/archived", handler: createSetSessionArchivedHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
     { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
     {

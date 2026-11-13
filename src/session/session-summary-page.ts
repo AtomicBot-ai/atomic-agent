@@ -51,7 +51,8 @@ SELECT id,
              AND json_extract(t.value, '$.kind') = 'user'
            LIMIT 1)) AS firstPrompt,
        json_extract(payload, '$.metadata.title') AS title,
-       json_extract(payload, '$.metadata.importedFrom') AS importedFrom
+       json_extract(payload, '$.metadata.importedFrom') AS importedFrom,
+       json_extract(payload, '$.metadata.archived') AS archived
   FROM sessions
  WHERE json_valid(payload) AND json_type(payload, '$.turns') = 'array'
    AND (json_type(payload, '$.${ARCHIVED_TURNS_KEY}.firstUserText') = 'text'
@@ -105,6 +106,7 @@ export interface SummaryRow {
   firstPrompt: unknown;
   title: unknown;
   importedFrom: unknown;
+  archived: unknown;
 }
 
 export function toSummary(row: SummaryRow): SessionSummary {
@@ -119,6 +121,8 @@ export function toSummary(row: SummaryRow): SessionSummary {
     firstPrompt: toText(row.firstPrompt),
     title: toText(row.title),
     importedFrom: toText(row.importedFrom),
+    // ATO-1150: only a JSON `true`, which json_extract hands back as 1.
+    archived: row.archived === 1 || row.archived === true,
   };
 }
 

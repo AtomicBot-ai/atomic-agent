@@ -1,3 +1,4 @@
+import { readSessionArchived } from "./session-archived.js";
 import { readSessionTitle } from "./session-title.js";
 import type { SessionState } from "./session-state.js";
 
@@ -31,6 +32,8 @@ export interface SessionSummary {
   title: string | null;
   /** `metadata.importedFrom` for sessions migrated from another agent. */
   importedFrom: string | null;
+  /** ATO-1150: the operator archived this chat (`metadata.archived === true`). */
+  archived: boolean;
 }
 
 export function summarizeSessionState(state: SessionState): SessionSummary {
@@ -47,5 +50,6 @@ export function summarizeSessionState(state: SessionState): SessionSummary {
     firstPrompt: firstUser?.kind === "user" ? firstUser.text : null,
     title: readSessionTitle(state.metadata),
     importedFrom: typeof importedFrom === "string" ? importedFrom : null,
+    archived: readSessionArchived(state.metadata),
   };
 }
