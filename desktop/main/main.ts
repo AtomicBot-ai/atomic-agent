@@ -5213,11 +5213,14 @@ async function voiceTest(
     // --- the button ------------------------------------------------------
     const mic = await js<Mic>("window.__voiceMic()");
     const order = mic.order.split("|");
-    const iMic = order.findIndex((c) => c.split(" ").includes("micbtn"));
+    // ATO-1047 (#1364): the conversation-mode button (class "micbtn convbtn") sits between the mic and send, so the
+    // dictation mic is the micbtn that is not convbtn, and the only thing between it and send is that one button.
+    const iMic = order.findIndex((c) => c.split(" ").includes("micbtn") && !c.split(" ").includes("convbtn"));
     const iSend = order.findIndex((c) => c.split(" ").includes("sendbtn"));
+    const between = iMic >= 0 && iSend > iMic ? order.slice(iMic + 1, iSend) : [];
     check(
-      "mic button sits next to send",
-      mic.present && iMic >= 0 && iSend === iMic + 1,
+      "mic button sits next to send (with only the conversation-mode button between them)",
+      mic.present && iMic >= 0 && iSend > iMic && between.every((c) => c.split(" ").includes("convbtn")) && between.length <= 1,
       `field children ${JSON.stringify(mic.order)}`,
     );
 
