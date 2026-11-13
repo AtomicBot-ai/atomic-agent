@@ -60,6 +60,7 @@ export function contextMenuBlockedByOverlay(state: TuiState): boolean {
     state.sessionDelete !== null ||
     state.themePickerOpen ||
     state.sessionPickerOpen ||
+    Boolean(state.rewindPicker) ||
     state.updatePrompt !== null ||
     state.updateStatus === "done"
   );

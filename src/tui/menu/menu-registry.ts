@@ -450,6 +450,10 @@ export const MENU: readonly MenuNode[] = [
     slash: { name: "compact", description: "summarize older context; show displays the saved summary", rank: 44 },
   },
   {
+    kind: "action", id: "session.rewind", label: "Rewind to a message…", group: "session",
+    slash: { name: "rewind", description: "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are", rank: 45.5 },
+  },
+  {
     kind: "action", id: "session.enhance", label: "Enhance prompt", group: "session",
     slash: { name: "enhance", description: "rewrite a prompt into a clearer one in the composer; nothing is sent", rank: 45 },
   },

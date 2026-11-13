@@ -53,6 +53,8 @@ export interface SlashDispatchResult {
   readonly triggerQuit: boolean;
   /** When true the caller should ask the orchestrator to open the session picker. */
   readonly triggerSessionPicker: boolean;
+  /** `/rewind` (ATO-1057): ask the orchestrator to open the rewind picker. */
+  readonly triggerRewindPicker?: boolean;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
   /** When true the caller should open a new OS terminal window (`/window`). */
@@ -420,6 +422,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerSessionPicker: true });
     case "new":
       return pureActions([], { triggerSessionNew: true });
+    case "rewind":
+      return pureActions([], { triggerRewindPicker: true });
     case "window":
       return pureActions([], { triggerNewWindow: true });
     case "sidebar":

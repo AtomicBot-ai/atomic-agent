@@ -1,5 +1,6 @@
 import { createSessionCompactionHandler } from "./route-compaction.js";
 import { createRollbackLastTurnHandler } from "./route-rollback-last-turn.js";
+import { createForkSessionHandler, createListRewindPointsHandler, createRewindHandler } from "./route-session-rewind.js";
 import type { RouteDefinition } from "./http-server.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
@@ -185,6 +186,11 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
     { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
+    // ATO-1056 / ATO-1058: roll a chat back to a question with its files, or fork it there.
+    { method: "GET", path: "/api/sessions/{id}/rewind-points", handler: createListRewindPointsHandler() },
+    { method: "POST", path: "/api/sessions/{id}/rewind/preview", handler: createRewindHandler(true) },
+    { method: "POST", path: "/api/sessions/{id}/rewind", handler: createRewindHandler(false) },
+    { method: "POST", path: "/api/sessions/{id}/fork", handler: createForkSessionHandler() },
     // ATO-563: put back a file the agent replaced, from its saved copy (the desktop's Revert).
     { method: "POST", path: "/api/sessions/{id}/fs/restore", handler: createRestoreFileHandler() },
     {
