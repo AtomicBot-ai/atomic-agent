@@ -1,0 +1,6 @@
+/* ATO-584: the Notes graph in the Memory tab (memory-graph.js). Colours of the dots and lines come from the theme tokens at draw time. */
+.sd-memgraph{display:flex;flex-direction:column;gap:6px;min-height:0}
+.sd-memgraph canvas{display:block;width:100%;height:clamp(320px,58vh,720px);border:1px solid var(--line);border-radius:10px;background:var(--bg-sunken,var(--well));cursor:grab;touch-action:none}
+.sd-memgraph canvas:active{cursor:grabbing}
+.sd-memgraph-cap{display:flex;align-items:center;gap:8px;font-size:var(--fs-label);color:var(--ink-2)}
+.sd-memgraph-cap .grow{flex:1}
