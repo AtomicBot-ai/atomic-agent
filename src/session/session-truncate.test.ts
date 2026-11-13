@@ -334,6 +334,22 @@ describe("planLastTurnRollback", () => {
     expect(plan.state.turns).toHaveLength(2);
   });
 
+  it("never takes back a failed turn whose tools already ran (ATO-1476)", () => {
+    // The step that ran the tool failed before it was stored: no tool row,
+    // only the failure record, marked.
+    const failedRecord: ConversationTurn = {
+      kind: "assistant_reply",
+      text: "(this turn failed before it could answer — transport: reset. Before it failed, these tools had already run: os.fs.delete. Their effects stay.)",
+      toolsRan: true,
+      at: 2,
+    };
+    const state = { ...turn(fresh(), user("delete the build folder", 1), failedRecord), status: "failed" as const };
+    expect(planLastTurnRollback(state)).toEqual({ ok: false, code: "turn_has_tools" });
+    // The same record without the mark is a plain failed answer.
+    const plain = { ...turn(fresh(), user("hi", 1), reply("(this turn failed before it could answer — transport: reset. Nothing from it took effect.)", 2)), status: "failed" as const };
+    expect(planLastTurnRollback(plain).ok).toBe(true);
+  });
+
   it("keeps the stop refusal for a stopped turn when expectUnanswered is set", () => {
     const state = turn(fresh(), user("delete the build folder", 1), stoppedTurnMarker(2));
     expect(planLastTurnRollback(state, { expectUnanswered: true }))
