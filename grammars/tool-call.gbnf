@@ -96,7 +96,7 @@ reply-pending ::= reply-hard reply-chars | reply-soft reply-pending
 reply-hard ::= [^"\\\x00-\x1f :(\[{=,] | "\\" escape
 reply-soft ::= [ :(\[{=,]
 tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
-tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | image-tool | fusion-tool | verify-tool | plan-tool | mcp-native-tool | "\"finish\""
+tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | image-tool | audio-tool | fusion-tool | verify-tool | plan-tool | mcp-native-tool | "\"finish\""
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
 os-tool ::= "\"os." ( "fs.read_document" | "fs.trash" | "fs.locate_project" | "fs.code_map" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" | "screen.point" | "screen.capture" | "screen.click" | "screen.type" | "screen.key" ) "\""
 discovery-tool ::= "\"skill.run_script\""
@@ -104,6 +104,9 @@ memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" 
 tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
 vision-tool ::= "\"vision.describe\""
 image-tool ::= "\"image.generate\""
+# Speech to text with whisper.cpp (ATO-702): a Telegram voice message is
+# answered by a local model too, so the name must be in its vocabulary.
+audio-tool ::= "\"audio.transcribe\""
 # Fusion's fan-out. Listed here for the same reason `tasks.*` is: the
 # grammar is the local model's whole vocabulary of tool names, and a
 # name missing from it cannot be emitted at all. A LOCAL orchestrator

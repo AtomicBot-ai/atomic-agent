@@ -184,6 +184,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Generate a short video clip (paid, slow); show it via reply.attachments.",
     tier: RARE,
   },
+  "audio.transcribe": {
+    summary: "Transcribe speech in an audio file (voice message) to text locally.",
+    tier: RARE,
+  },
   "mcp.resource.list": { summary: "List an MCP server's resources.", tier: RARE },
   "mcp.resource.read": { summary: "Read an MCP resource.", tier: RARE },
   "mcp.prompt.list": { summary: "List an MCP server's prompt templates.", tier: RARE },

@@ -101,6 +101,7 @@ const V = {
   commented: ["Commented", "Commenting", "comment"],
   focused: ["Focused", "Focusing", "focus"],
   used: ["Used", "Using", "use"],
+  transcribed: ["Transcribed", "Transcribing", "transcribe"],
 } as const satisfies Record<string, Verb>;
 
 // ---------------------------------------------------------------------------
@@ -331,6 +332,8 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
     }
     case "vision.describe":
       return P(V.lookedAt, fileObject(a, "an image"));
+    case "audio.transcribe":
+      return P(V.transcribed, fileObject(a, "a recording"));
     case "image.generate": {
       const n = typeof a.count === "number" && Number.isInteger(a.count) && a.count > 1 ? a.count : 1;
       const prompt = str(a.prompt);

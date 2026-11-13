@@ -36,6 +36,7 @@ import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/nam
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
 import { registerVideoTools, VIDEO_GENERATE_TOOL } from "../../tools/video/index.js";
+import { AUDIO_TRANSCRIBE_TOOL, registerAudioTools } from "../../tools/audio/index.js";
 import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
 import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } from "../../tools/fusion/index.js";
@@ -311,6 +312,28 @@ export function registerRuntimeVideoTools(input: {
     report: (event) => captureVideoGenerated(getAnalytics(), event),
     onProgress: (sessionId, update) => emitAgentLoopEventFor(sessionId, {
       type: "tool_progress", tool: VIDEO_GENERATE_TOOL, fraction: update.fraction, elapsedMs: update.elapsedMs, label: update.label,
+    }),
+  });
+}
+
+/**
+ * `audio.transcribe` (ATO-702): speech to text with whisper.cpp, always
+ * on. What it lacks on first use (the speech model; on Windows and Linux
+ * the whisper.cpp build) downloads into the models folder after an
+ * `http` approval; the download's progress reaches the session's UIs as
+ * `tool_progress` events, like `video.generate`.
+ */
+export function registerRuntimeAudioTools(input: {
+  toolRegistry: ToolRegistry;
+  dangerous: DangerousToolOptions;
+  emitAgentLoopEventFor: FusionDelegateDeps["emitEvent"];
+}): void {
+  const { toolRegistry, dangerous, emitAgentLoopEventFor } = input;
+  registerAudioTools(toolRegistry, {
+    ...dangerous,
+    dataDir: () => getConfig().paths.localModelsDataDir,
+    onProgress: (sessionId, update) => emitAgentLoopEventFor(sessionId, {
+      type: "tool_progress", tool: AUDIO_TRANSCRIBE_TOOL, fraction: update.fraction, elapsedMs: update.elapsedMs, label: update.label,
     }),
   });
 }

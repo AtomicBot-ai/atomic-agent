@@ -8,6 +8,7 @@ import {
   createAttachmentInbox,
   formatAttachmentsBlock,
   formatBytes,
+  isAudioAttachment,
   sanitizeFilename,
 } from "./inbox.js";
 
@@ -182,5 +183,23 @@ describe("attachments block + user message", () => {
     const msg = buildAttachmentUserMessage("see attached", [failed]);
     expect(msg).not.toContain("os.fs.read");
     expect(msg).toContain("big.zip: not saved (too big)");
+  });
+
+  it("points a voice message at audio.transcribe, and only then (ATO-702)", () => {
+    const voice = {
+      status: "saved" as const,
+      saved: { path: "/inbox/2026-11-12/101500-voice.ogg", name: "101500-voice.ogg", bytes: 9000, mimeType: "audio/ogg" },
+    };
+    expect(buildAttachmentUserMessage(undefined, [voice])).toContain("audio.transcribe");
+    expect(buildAttachmentUserMessage(undefined, [saved])).not.toContain("audio.transcribe");
+    expect(buildAttachmentUserMessage("x", [failed])).not.toContain("audio.transcribe");
+  });
+
+  it("tells audio from video and pictures by MIME type, by extension without one", () => {
+    expect(isAudioAttachment({ path: "/a/note.mp3", mimeType: "audio/mpeg" })).toBe(true);
+    expect(isAudioAttachment({ path: "/a/voice.oga", mimeType: null })).toBe(true);
+    expect(isAudioAttachment({ path: "/a/voice.ogg", mimeType: "application/ogg" })).toBe(true);
+    expect(isAudioAttachment({ path: "/a/clip.webm", mimeType: "video/webm" })).toBe(false);
+    expect(isAudioAttachment({ path: "/a/photo.jpg", mimeType: "image/jpeg" })).toBe(false);
   });
 });
