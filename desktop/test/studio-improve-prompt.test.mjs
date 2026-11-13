@@ -341,6 +341,20 @@ test('an agent that answers with a failure is reported, not retried directly', a
   assert.match(empty.error.message, /gave no prompt back/);
 });
 
+test('a long prompt is capped before the agent is asked, like the direct path', async () => {
+  let sentLength = 0;
+  const answer = await M.improvePrompt({
+    readConfig: async () => ({ ok: true, config: { llm: { activeTextProvider: 'openrouter', providers: [cloud] } } }),
+    request: async () => { throw new Error('must not be called'); },
+    viaAgent: async (b) => {
+      sentLength = b.prompt.length;
+      return b.prompt.length > 16000 ? { supported: true, ok: false, status: 400, error: 'prompt is too long' } : { supported: true, ok: true, text: 'x' };
+    },
+  }, 'image', 'a'.repeat(17000));
+  assert.equal(answer.ok, true);
+  assert.equal(sentLength, M.IMPROVE_PROMPT_MAX);
+});
+
 test('the paused local model still greys the call before the agent is asked', async () => {
   const local = { localModels: { mode: 'managed', managed: { modelId: 'qwen-4b' } }, llm: { activeTextProvider: 'local-llama', providers: [{ id: 'local-llama', kind: 'llama-server', url: 'http://127.0.0.1:19091' }] } };
   const paused = await M.improvePrompt({

@@ -269,7 +269,8 @@ export async function improvePrompt(deps: ImproveDeps, kind: unknown, prompt: un
   const { url, model, entry, local } = route.target;
 
   if (deps.viaAgent) {
-    const viaAgent = await improveViaAgent(deps.viaAgent, k, text, entry.maxOutputTokens);
+    // Same cap as the direct path: /api/complete refuses a prompt over 16,000 chars.
+    const viaAgent = await improveViaAgent(deps.viaAgent, k, text.slice(0, IMPROVE_PROMPT_MAX), entry.maxOutputTokens);
     if (viaAgent) return viaAgent;
   }
 
