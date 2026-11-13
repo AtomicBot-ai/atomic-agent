@@ -151,7 +151,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "data",
-    summary: "Back up, restore, move or reset the data folder (shared with the desktop app)",
+    summary: "Back up, restore, move or reset the data folder (shared with the desktop app); export chats as a dataset",
     run: dataCommand,
   },
   {

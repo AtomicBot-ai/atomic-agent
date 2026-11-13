@@ -149,3 +149,13 @@ export {
 } from "./session-title-user.js";
 
 export type { SessionCompaction, RollingCompactionSummary, CompactionResult, CompactionReason } from "./session-compaction.js";
+
+export {
+  createDatasetScrubber,
+  exportDataset,
+  totalRedactions,
+} from "./dataset-export/index.js";
+export type {
+  DatasetRedactionCounts,
+  ExportDatasetResult,
+} from "./dataset-export/index.js";
