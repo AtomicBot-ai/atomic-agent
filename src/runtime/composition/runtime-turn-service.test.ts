@@ -169,6 +169,23 @@ describe("runtime turn ownership recipes", () => {
     expect(own?.toolFilter?.("fs.read")).toBe(true);
   });
 
+  it("records a desktop turn as unable to ask for the length of the turn only (ATO-489)", async () => {
+    const turnsWithoutQuestions = new Set<string>();
+    const service = createRuntimeTurnService(fixture.config, {
+      ...fixture.deps,
+      sessions: { ...fixture.deps.sessions, turnsWithoutQuestions },
+    });
+    const seen: boolean[] = [];
+    fixture.loop.runTurn.mockImplementation(async (value: SessionState, options: RunTurnOptions) => {
+      seen.push(turnsWithoutQuestions.has(value.id));
+      return result(value, options);
+    });
+    await service.executeTurn(session("desk"), "request", { origin: "sidecar" });
+    await service.executeTurn(session("term"), "request", { origin: "tui" });
+    expect(seen).toEqual([true, false]);
+    expect(turnsWithoutQuestions.size).toBe(0);
+  });
+
   it("marks the turn's progress at its start and checkpoints every completed step (ATO-1109)", async () => {
     const begin = vi.spyOn(fixture.sessionStore, "beginTurn");
     fixture.loop.runTurn.mockImplementationOnce(async (value: SessionState, options: RunTurnOptions) => {

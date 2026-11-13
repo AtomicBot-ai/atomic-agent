@@ -76,7 +76,18 @@ const NO_ONE_TO_ASK =
  * gate's automatic refusal at once and the model is told to go on with
  * its best guess, so a question never parks an unattended turn.
  */
-export function buildAskUserTool(deps: { approvals: Pick<ApprovalGate, "request"> }): ToolDefinition {
+export function buildAskUserTool(deps: {
+  approvals: Pick<ApprovalGate, "request">;
+  /**
+   * Whether the session's running turn is on a surface that shows a
+   * question card (`surfaceShowsQuestions`). The tool is hidden from
+   * the others, but a model can still call it (copied from history):
+   * then it answers at once, the same as an unattended session, and no
+   * question is raised (ATO-489; the desktop until ATO-1502). Absent:
+   * every session can ask.
+   */
+  canAsk?: (sessionId: string) => boolean;
+}): ToolDefinition {
   return {
     name: ASK_USER_TOOL,
     description:
@@ -84,6 +95,12 @@ export function buildAskUserTool(deps: { approvals: Pick<ApprovalGate, "request"
     // Changes nothing: it may run in plan mode, where asking first is the point.
     readonly: true,
     async run(rawArgs, ctx) {
+      if (deps.canAsk !== undefined && !deps.canAsk(ctx.sessionId)) {
+        return compressToolResult(
+          { tool: ASK_USER_TOOL, status: "ok", output: NO_ONE_TO_ASK, details: {} },
+          { maxSummaryLength: 4_000 },
+        );
+      }
       const question = normalizeUserQuestion(rawArgs);
       const decision = await deps.approvals.request(
         {

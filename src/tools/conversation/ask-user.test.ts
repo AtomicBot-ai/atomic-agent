@@ -26,6 +26,25 @@ function setup(): { gate: ApprovalGate; asked: ApprovalRequest[] } {
 }
 
 describe("ask_user (ATO-489)", () => {
+  it("answers at once on a surface where it is hidden (the desktop), raising no question", async () => {
+    const { gate, asked } = setup();
+    const tool = buildAskUserTool({ approvals: gate, canAsk: (id) => id !== "s-1" });
+    const result = await tool.run(ARGS, ctx());
+    expect(asked).toHaveLength(0);
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("Nobody can answer right now");
+    expect(result.details[USER_ANSWER_DETAIL]).toBeUndefined();
+  });
+
+  it("still asks on a surface that shows the card", async () => {
+    const { gate, asked } = setup();
+    const tool = buildAskUserTool({ approvals: gate, canAsk: () => true });
+    void tool.run(ARGS, ctx());
+    await Promise.resolve();
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.category).toBe("user_question");
+  });
+
   it("waits for the person even at approval level 5 and returns their pick", async () => {
     const { gate, asked } = setup();
     const tool = buildAskUserTool({ approvals: gate });
