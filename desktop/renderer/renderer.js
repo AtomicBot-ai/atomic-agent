@@ -1298,7 +1298,7 @@ const TK = {
   form:null,
   note:null, // muted line under `msg` (the 0.5.4 one-shot caveat used it; nothing sets it since ATO-193)
 };
-const TK_FILTER_ORDER = ['all','pending','running','completed','failed','blocked','cancelled','recurring'];
+const TK_FILTER_ORDER = ['all','pending','running','paused','completed','failed','blocked','cancelled','recurring'];
 const TK_MAX_ROWS = 14; // tasks-panel.tsx:24 — the Tasks list is a 14-row window around the cursor, as in the TUI
 /* Privacy tab state — the TUI's PrivacyPanelState (message / lastError / busy).
    `effective` is what the TUI shows (getConfig().analytics.enabled, the
@@ -2537,6 +2537,7 @@ function taskDot(t) {
   if (t.status === 'running') return ['running', 'running now — wait'];
   if (t.status === 'pending') return ['empty', t.when === 'once' ? 'queued — not run yet' : 'scheduled · ' + t.when];
   if (t.status === 'cancelled') return ['empty', 'cancelled'];
+  if (t.status === 'paused') return ['empty', 'paused — will not run until resumed'];   // ATO-590
   const seen = PREFS.seen['task:' + t.id];
   const unread = !(seen >= 0) || (t.updatedAt || 0) > seen;
   if (!unread) return ['empty', 'read'];
@@ -2550,7 +2551,7 @@ function taskDot(t) {
    the row as `data-m` and is painted by CSS, so the row's children stay the
    dot and the title (the row-shape check counts them). */
 function taskMeta(t) {
-  if (t.status === 'failed' || t.status === 'blocked' || t.status === 'cancelled') return t.status;
+  if (t.status === 'failed' || t.status === 'blocked' || t.status === 'cancelled' || t.status === 'paused') return t.status;
   const when = String(t.when || '');
   if (when.indexOf('every ') === 0) return when;
   if (when.indexOf('cron:') === 0) return 'cron';
@@ -23845,7 +23846,7 @@ function tkRow(t) {
     id:t.id, status:t.status || 'pending', origin:t.origin || '—', triggerSource:t.triggerSource || null,
     sessionId:t.sessionId || null,
     userMessage: collapsed.length <= 96 ? collapsed : collapsed.slice(0, 95) + '…',
-    scheduleKind: t.schedule ? t.schedule.kind : null, scheduleLabel: formatScheduleLabel(t.schedule || null),
+    scheduleKind: t.schedule ? t.schedule.kind : null, scheduleLabel: formatScheduleLabel(t.schedule || null), schedulePhrase: schedulePhrase(t.schedule || null),
     recurring: !!t.recurring, scheduledFor: typeof t.scheduledFor === 'number' ? t.scheduledFor : null,
     createdAt:t.createdAt, updatedAt:t.updatedAt, startedAt:t.startedAt ?? null, completedAt:t.completedAt ?? null,
     attempts:t.attempts ?? 0, maxAttempts:t.maxAttempts ?? 0, lastError:t.lastError || null,
@@ -23942,7 +23943,7 @@ function tasksTab() {
    time its record still holds; its Next run is a dash in the list and is
    not on its page. */
 function tkHasNextRun(row) {
-  return !!row && row.status !== 'cancelled' && row.status !== 'completed' && row.status !== 'failed';
+  return !!row && row.status !== 'cancelled' && row.status !== 'completed' && row.status !== 'failed' && row.status !== 'paused';
 }
 function tkStatusClass(status) {
   return {running:'st-running', completed:'st-completed', failed:'st-failed', blocked:'st-blocked', cancelled:'st-cancelled'}[status] || 'st-pending';
@@ -24060,9 +24061,10 @@ function tkDetailHTML() {
   }
   const now = Date.now();
   const id = row.id;
+  const pauseAct = taskPauseAction(row, TASK_RUNS);   // ATO-590 (task-schedule-picker.js)
   const plate = [
     ['Task', id + '  ·  ' + row.origin],
-    ['Schedule', row.scheduleLabel + (row.recurring ? ' (recurring)' : '')],
+    ['Schedule', row.scheduleLabel + (row.recurring ? ' (recurring)' : '') + (row.schedulePhrase ? ' · ' + row.schedulePhrase : '')],
     tkHasNextRun(row) ? ['Next run', formatRelativeMs(row.scheduledFor, now) + ' (' + (row.scheduledFor !== null ? formatUnixMs(row.scheduledFor) : '-') + ')'] : null,
     ['Attempts', row.attempts + '/' + row.maxAttempts],
     ['Session', row.sessionId ?? '—'],
@@ -24072,6 +24074,7 @@ function tkDetailHTML() {
     + '<div class="tk-bar">' + back + '<span class="grow"></span>'
       + '<button class="btn btn-s sm" data-act="tasks:open:' + esc(id) + '" title="o open session">' + ic('chat') + 'Open session</button>'
       + '<button class="btn btn-s sm" data-act="tasks:run:' + esc(id) + '" title="R run-now">' + ic('play') + 'Run now</button>'
+      + (pauseAct ? '<button class="btn btn-s sm" data-act="tasks:' + pauseAct + ':' + esc(id) + '">' + (pauseAct === 'pause' ? 'Pause' : 'Resume') + '</button>' : '')
       + '<button class="btn btn-danger sm" data-act="tasks:cancel:' + esc(id) + '" title="c cancel">Cancel task</button></div>'
     + '<div class="set-wellcard">'
       + '<h3 class="set-dtitle">' + esc(row.userMessage || id) + '</h3>'
@@ -24080,7 +24083,8 @@ function tkDetailHTML() {
       + '<dl class="tk-plate set-plate">' + plate.filter(Boolean).map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('') + '</dl>'
     + '</div>'
     + (row.lastError ? '<div class="tuierr tk-notice tk-notice--red set-lasterr">' + ic('alert') + '<span class="grow"><b>' + (/^interrupted:/.test(row.lastError) ? 'Last run stopped:' : 'Last run failed:') + '</b> <span class="mono">' + esc(row.lastError) + '</span></span></div>' : '')
-    // No Recent firings section: the TUI builds that feed in-process by diffing records between ticks, and the HTTP API has no such surface yet.
+    // ATO-590: the task's past runs (GET /api/tasks/{id}/runs); nothing on an agent without the route.
+    + (TASK_RUNS.id === id ? taskRunsHTML(TASK_RUNS, formatUnixMs) : '')
     + tkCancelModal()
     + '</div>';
 }
@@ -24098,7 +24102,7 @@ function tkFormHTML() {
     '<label class="tk-field tkrow"><span class="tk-lbl">' + esc(l) + '</span>'
     + '<input class="tk-inp' + (mono ? ' mono' : '') + '" data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false">'
     + (help ? '<span class="tk-help">' + esc(help) + '</span>' : '') + '</label>';
-  const expr = f.kind === 'cron' ? field('Cron', 'cronExpression', f.cronExpression, '0 * * * *', 'standard 5-field cron', true)
+  const expr = f.kind === 'cron' ? field('Cron', 'cronExpression', f.cronExpression, '0 * * * *', 'standard 5-field cron; the buttons above write it', true)
     : f.kind === 'interval' ? field('Every (seconds)', 'intervalSeconds', f.intervalSeconds, '300', '', true)
     : field('At', 'atIsoOrMs', f.atIsoOrMs, '2026-05-01T09:00:00Z', 'an ISO time or Unix-ms', true);
   const canSubmit = f.preview.ok && !f.submitting;
@@ -24111,6 +24115,7 @@ function tkFormHTML() {
         + '</div></div>'
         // ATO-519: the way back to the plain-words step.
         + '<p class="set-cap">Or <button class="set-linkbtn" data-act="tasks:plain">describe it in words</button> and the agent sets the schedule.</p>'
+        + (f.kind === 'cron' ? taskPickerHTML(f) : '')   // ATO-590: buttons that write the Cron field below
         + expr
         + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
         // ATO-522: every run replies in the task's own session (task-runner.ts), reached from the detail view's Open session.
@@ -24235,18 +24240,18 @@ async function tkCancel(id) {
   TK.cancel = null;
   await tasksRefresh();
 }
-/* Run-now: POST /api/tasks/{id}/run, one attempt, synchronous on the agent. */
+/* Run-now: POST /api/tasks/{id}/run, one attempt, synchronous on the agent; a paused task runs once and stays paused. */
 async function tkRunNow(id) {
   if (!BR) return;
   TK.msg = 'task ' + id + ' running…'; TK.note = null; tkRenderKeepCaret();
   const res = await BR.runTask(id);
   if (res && res.ok) {
-    const t = res.data && res.data.task;
-    TK.msg = t ? 'task ' + id + ' run complete (status=' + t.status + ')' : 'task ' + id + ' skipped (already claimed or vanished)';
+    TK.msg = taskRunNowLine(id, res.data && res.data.task);   // ATO-590: a paused task stays paused
   } else {
     TK.msg = 'run-now ' + id + ' failed: ' + ((res && res.error) || 'unknown error');
   }
   await tasksRefresh();
+  if (TK.mode === 'detail' && TK.detailId === id) taskRunsLoad(id, () => { if (TK.mode === 'detail' && TK.detailId === id) tkRepaintKeepFocus(); });   // ATO-590: the run just made
 }
 /** item 6: a sidebar task row lands on that task in the Tasks tab. */
 function tkFocusTask(id) {
@@ -24266,7 +24271,10 @@ function tasksAct(what) {
   if (verb === 'kind') { const f = TK.form || (TK.form = tkNewForm()); f.kind = arg; f.error = null; render(); tkPreview(); return; }
   if (verb === 'submit') { tkSubmit(); return; }
   if (verb === 'back') { TK.mode = 'list'; TK.form = null; TK.cancel = null; render(); return; }
-  if (verb === 'detail') { TK.detailId = arg; const rows = tkVisibleRows(); const i = rows.findIndex((r) => r.id === arg); if (i >= 0) TK.cursor = i; TK.mode = 'detail'; render(); return; }
+  if (verb === 'detail') { TK.detailId = arg; const rows = tkVisibleRows(); const i = rows.findIndex((r) => r.id === arg); if (i >= 0) TK.cursor = i; TK.mode = 'detail'; render(); taskRunsLoad(arg, () => { if (TK.mode === 'detail' && TK.detailId === arg) tkRepaintKeepFocus(); }); return; }
+  // ATO-590: the time picker's buttons (`pick:<key>:<value>`), and Pause / Resume on a task's page.
+  if (verb === 'pick') { const f = TK.form || (TK.form = tkNewForm()); const [key, value] = arg.split(':'); taskPickerApply(f, key, value); f.error = null; render(); tkPreview(); return; }
+  if (verb === 'pause' || verb === 'resume') { const id = sel(); if (!id) return; taskPauseToggle(id, verb).then((line) => { TK.msg = line; TK.note = null; return tasksRefresh(); }); return; }
   if (verb === 'open') {
     const row = TK.rows.find((r) => r.id === sel());
     if (!row) { TK.msg = 'task ' + sel() + ' not found'; render(); return; }
