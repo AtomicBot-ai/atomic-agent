@@ -219,3 +219,10 @@ export type {
 export { markdownToDocumentXml, renderMarkdownDocx } from "./chat-export-docx.js";
 export { exportChat } from "./chat-export-render.js";
 export type { ChatExportFile } from "./chat-export-render.js";
+export {
+  SESSION_ARCHIVED_METADATA_KEY,
+  SESSION_ARCHIVED_SET_AT_KEY,
+  readSessionArchived,
+  readSessionArchivedSetAt,
+  withSessionArchived,
+} from "./session-archived.js";

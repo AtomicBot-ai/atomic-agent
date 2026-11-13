@@ -1,6 +1,7 @@
 import { readGoalState } from "../agent/goal/index.js";
 import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
 import type { SessionState } from "../session/session-state.js";
+import { readSessionArchived } from "../session/session-archived.js";
 import { readSessionTitle } from "../session/session-title.js";
 import {
   SESSION_SEARCH_MAX_LIMIT,
@@ -71,6 +72,8 @@ export function createListSessionsHandler(): HttpHandler {
         title: readSessionTitle(s.metadata),
         goal: readGoalState(s.metadata),
         nextStep: suggestionsOn ? readSessionNextStep(s) : null,
+        // ATO-1150: the operator archived this chat (POST /api/sessions/{id}/archived).
+        archived: readSessionArchived(s.metadata),
       })),
     });
   };
