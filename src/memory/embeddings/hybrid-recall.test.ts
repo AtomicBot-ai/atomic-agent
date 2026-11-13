@@ -470,6 +470,34 @@ describe("MemoryStore.recallHybridAsync with embeddings", () => {
     expect(memStore.get(cat.id)?.recallCount).toBe(1);
   });
 
+  it("stays keyword-only while the model's vectors are being rebuilt, and uses them once ready", async () => {
+    const client = makeClient(new Map([["pet", [1, 0, 0, 0]], ["кот", [1, 0, 0, 0]]]));
+    const embed = vi.spyOn(client, "embed");
+    const store = new EmbeddingStore({ db: memStore.getDatabaseHandleForEmbeddings() });
+    let ready = false;
+    memStore.attachEmbeddings({ writer: new EmbeddingWriter({ client, store }), store, vectorRecallReady: () => ready });
+    // New notes are still embedded during the reindex.
+    await memStore.storeAsync({ content: "мой кот Барсик любит огурцы" });
+    expect(store.countByModel("test-model")).toBe(1);
+    embed.mockClear();
+    expect(await memStore.recallHybridAsync("what does my pet like?")).toEqual([]);
+    expect(embed).not.toHaveBeenCalled();
+    ready = true;
+    expect((await memStore.recallHybridAsync("what does my pet like?")).map((r) => r.content)).toEqual([
+      "мой кот Барсик любит огурцы",
+    ]);
+  });
+
+  it("drops the readiness gate on a re-attach without one", async () => {
+    const client = makeClient(new Map([["pet", [1, 0, 0, 0]], ["кот", [1, 0, 0, 0]]]));
+    const store = new EmbeddingStore({ db: memStore.getDatabaseHandleForEmbeddings() });
+    const writer = new EmbeddingWriter({ client, store });
+    memStore.attachEmbeddings({ writer, store, vectorRecallReady: () => false });
+    await memStore.storeAsync({ content: "мой кот Барсик любит огурцы" });
+    memStore.attachEmbeddings({ writer, store });
+    expect(await memStore.recallHybridAsync("what does my pet like?")).toHaveLength(1);
+  });
+
   it("is unchanged without embeddings: keyword hits only", async () => {
     memStore.store({ content: "мой кот Барсик любит огурцы" });
     expect(await memStore.recallHybridAsync("what does my pet like?")).toEqual([]);
