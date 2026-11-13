@@ -77,6 +77,9 @@ atomic-agent skill disable <name>       # hide a skill without removing its file
 atomic-agent skill browse [--source owner/repo]   # browse installable skills (ClawHub + configured taps)
 atomic-agent skill search <query>       # search ClawHub + skills.sh + configured taps
 atomic-agent skill tap list|add <owner/repo>|remove <owner/repo>   # manage hub taps
+atomic-agent skill history [name]       # change log, saved versions, use count
+atomic-agent skill restore <name> [--version <id>|archive]   # undo: put back an archived copy or a saved version
+atomic-agent skill curate [--dry-run]   # archive unused agent-learned skills now
 ```
 
 Local installation is a security scan, `SKILL.md` validation and `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`). Search also asks [skills.sh](https://skills.sh) and shows its install counts; a skills.sh row (`skills.sh/owner/repo/skill`) is looked up in its GitHub repository and then installed like a tap skill, with the same download limits, scan and gate. skills.sh's search API is undocumented: any network or response-shape problem is a warning and the other sources still answer.
@@ -105,6 +108,14 @@ A skill installed from a GitHub tap or ClawHub gets a `.atomic-skill-lock.json` 
 - `skill.run_script({ skill, script, args?, timeoutMs? })` executes `scripts/<script>`. Only scripts listed in `requires_scripts` are allowed; any path outside `scripts/` is rejected. Always **dangerous**: routed through the approval gate, with a preview that includes the skill name, script path, arguments and the names in `env_keys`.
 
 Extensions (`.ts`, `.js`, `.mjs`, `.cjs`) are executed via `node`, `.sh` via `bash`, everything else is run directly (shebang/executable file).
+
+## History, usage and the curator
+
+Global skills (`<stateDir>/skills/`) keep a history (ATO-580, [curator](../curator/index.ts)):
+
+- `skill.view` and `skill.run_script` count a use in `<stateDir>/skills-usage.json` (use count, last use).
+- Before the agent changes a skill folder with `os.fs.write`, `edit`, `patch`, `move`, `trash` or `restore`, the folder is copied to `<stateDir>/skills-history/<name>/<version>/` (10 versions kept per skill) and the change is appended to `<stateDir>/skills-history/changes.jsonl` (who, what, when). A folder the agent created is recorded as agent-learned. `skill uninstall` is saved the same way. Shell commands are not tracked.
+- The curator only considers agent-learned skills: never starters, hub, plugin or hand-written ones, and never one a recurring task names. Unused for 14 days it is marked stale; for 30 days it is moved to `<stateDir>/skills-archive/` (never deleted). The automatic pass is off by default (`ATOMIC_AGENT_SKILL_CURATOR=1` turns it on at boot, at most once a week); `skill curate` runs it by hand and `skill restore` undoes it.
 
 ## Prompt and KV-cache
 

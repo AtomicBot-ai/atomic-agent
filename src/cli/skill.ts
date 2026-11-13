@@ -45,6 +45,13 @@ import {
   formatScanFindings,
 } from "./skill-install-confirm.js";
 import { handleUpdate } from "./skill-update.js";
+import {
+  handleSkillCurate,
+  handleSkillHistory,
+  handleSkillRestore,
+  recordUserSkillRemoval,
+  SKILL_HISTORY_HELP_LINES,
+} from "./skill-history-command.js";
 
 const HELP =
   [
@@ -76,6 +83,7 @@ const HELP =
     "       [--judge-url <url>] [--judge-model <id>]   judge for `judge` checks (else skills.eval.judgeProvider, else the active cloud provider)",
     "                             Run each task with the skill and without it, check the answers, and save",
     "                             accuracy, time, tokens and cost to <stateDir>/skill-evals/<name>/ (Skill Lab)",
+    ...SKILL_HISTORY_HELP_LINES,
   ].join("\n") + "\n";
 
 export async function skillCommand(args: string[]): Promise<number> {
@@ -118,6 +126,12 @@ export async function skillCommand(args: string[]): Promise<number> {
         const { skillEvalCommand } = await import("./skill-eval-command.js");
         return await skillEvalCommand(args.slice(1));
       }
+      case "history":
+        return await handleSkillHistory(args.slice(1));
+      case "restore":
+        return await handleSkillRestore(args.slice(1));
+      case "curate":
+        return await handleSkillCurate(args.slice(1));
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);
@@ -342,7 +356,8 @@ async function handleUninstall(args: string[]): Promise<number> {
     return 2;
   }
   const config = getConfig();
-  const result = await uninstallSkill(config.paths.globalSkillsDir, name);
+  // Saved to the skill history first, so `skill restore` can undo it (ATO-580).
+  const result = await recordUserSkillRemoval(name, () => uninstallSkill(config.paths.globalSkillsDir, name));
   if (!result.removed) {
     process.stderr.write(`skill not installed globally: ${name}\n`);
     return 1;
