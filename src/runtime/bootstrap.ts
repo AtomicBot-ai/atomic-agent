@@ -776,7 +776,7 @@ export async function createAgentRuntime(
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
-    traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage },
+    traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage, metrics },
     state: turnState, lifecycle, logger,
   });
 

@@ -512,6 +512,19 @@ export class TaskStore {
     return insert.immediate(records);
   }
 
+  /**
+   * How many tasks sit in each status right now, for the `/metrics`
+   * queue gauges (ATO-646). A status with no rows is absent.
+   */
+  countByStatus(): Partial<Record<TaskStatus, number>> {
+    const rows = this.db
+      .prepare(`SELECT status, COUNT(*) AS n FROM tasks GROUP BY status`)
+      .all() as Array<{ status: TaskStatus; n: number }>;
+    const counts: Partial<Record<TaskStatus, number>> = {};
+    for (const row of rows) counts[row.status] = row.n;
+    return counts;
+  }
+
   get(id: string): TaskRecord | null {
     const row = this.selectStmt.get(id) as TaskRow | undefined;
     if (!row) return null;

@@ -20,6 +20,7 @@ import { captureMessageSent, type AnalyticsStateStore, type LocalEngine, type Tu
 import type { SessionUsageLedger } from "../../session/usage-meter.js";
 import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
+import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
 import type { SteeringInbox } from "../steering-inbox.js";
 import { TurnsInFlight } from "../turns-in-flight.js";
@@ -98,6 +99,8 @@ export interface RuntimeTurnDependencies {
     turnUsageMeter: TurnUsageMeter;
     /** Session spend and account limits (ATO-569); absent in narrow test rigs. */
     sessionUsage?: SessionUsageLedger;
+    /** Turn counts and durations (ATO-646); absent in narrow test rigs. */
+    metrics?: Pick<AgentMetrics, "recordTurn">;
   };
   state: RuntimeTurnState;
   lifecycle: { isShutdown(): boolean };
@@ -610,6 +613,29 @@ export function createRuntimeTurnService(
     logger,
   });
 
+  // ATO-646: every turn, whatever its origin, counted and timed for
+  // `/metrics`. Timed from the queue's hand-over, so the wait behind
+  // another turn on the same session is not counted as this one's.
+  const timeTurn = async (
+    sessionId: string,
+    origin: TurnOrigin,
+    run: () => Promise<RunTurnResult>,
+  ): Promise<RunTurnResult> => {
+    const metrics = deps.telemetry.metrics;
+    if (!metrics) return run();
+    const startedAt = Date.now();
+    const record = (outcome: string): void =>
+      metrics.recordTurn({ sessionId, origin, outcome, durationMs: Date.now() - startedAt });
+    try {
+      const result = await run();
+      record(result.reason);
+      return result;
+    } catch (error) {
+      record("error");
+      throw error;
+    }
+  };
+
   const runTurn = async (
     session: SessionState,
     userMessage: string,
@@ -673,10 +699,12 @@ export function createRuntimeTurnService(
       // parked) falls back to the caller's copy, the pre-existing
       // behaviour.
       run: () =>
-        executeTurn(
-          sessionStore.load(session.id) ?? session,
-          userMessage,
-          runOptions,
+        timeTurn(session.id, origin, () =>
+          executeTurn(
+            sessionStore.load(session.id) ?? session,
+            userMessage,
+            runOptions,
+          ),
         ),
       ...(runOptions.eventHook ? { eventHook: runOptions.eventHook } : {}),
       ...(runOptions.signal ? { signal: runOptions.signal } : {}),

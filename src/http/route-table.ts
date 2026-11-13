@@ -68,6 +68,17 @@ import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
+import { createMetricsHandler } from "./route-metrics.js";
+import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
+
+export interface RouteTableOptions {
+  /**
+   * What the runtime counted since boot, for `GET /metrics` (ATO-646).
+   * Without it the route still answers the readings it takes at scrape
+   * time (turns running, tasks per status).
+   */
+  metricsRegistry?: PrometheusRegistry;
+}
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -76,7 +87,7 @@ import { createTelegramChannelHandler } from "./route-telegram-channel.js";
  * minimum set an OpenAI SDK probes before attempting auth: `/health`
  * and `/v1/models`.
  */
-export function buildRouteTable(): RouteDefinition[] {
+export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinition[] {
   // One closure for the GET and the POST: the coding mode is per-process
   // state, and the live switches cannot be read back as the mode that
   // set them (see route-coding-mode.ts `inferMode`).
@@ -100,6 +111,8 @@ export function buildRouteTable(): RouteDefinition[] {
     // ATO-1128: the phone panel's page; it holds no data and asks for the key (route-panel.ts).
     { method: "GET", path: "/panel", handler: createPanelPageHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/app.js", handler: createPanelScriptHandler(), requiresAuth: false },
+    // ATO-646: Prometheus scrape target. Authenticated like every /api route.
+    { method: "GET", path: "/metrics", handler: createMetricsHandler(options.metricsRegistry) },
     {
       method: "POST",
       path: "/v1/chat/completions",

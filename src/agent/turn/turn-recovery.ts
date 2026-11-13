@@ -833,9 +833,12 @@ export function reportTurnFailure(
     outage: { waitedMs: turn.outageWaitedMs, attempts: turn.outageAttempts },
     failure: classifyFailureCause(runError, category),
   });
+  // ATO-646: the link that threw, so `/metrics` can split errors by provider.
+  const failedProvider = readFailingLink(runError);
   deps.metrics?.recordLlmFailure({
     sessionId: state.id,
     category,
+    ...(failedProvider !== undefined ? { provider: failedProvider } : {}),
   });
   return { kind: "failure", cancelled, category, runError, creditRefused };
 }
