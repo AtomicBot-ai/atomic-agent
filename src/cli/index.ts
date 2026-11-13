@@ -13,6 +13,7 @@ import { skillCommand } from "./skill.js";
 import { pluginCommand } from "./plugin-command.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
+import { mcpServerCommand } from "./mcp-server-command.js";
 import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
 import { overnightCommand } from "./overnight-command.js";
@@ -105,6 +106,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "serve",
     summary: "Serve the HTTP API and run the enabled Telegram/Discord channels",
     run: serveCommand,
+  },
+  {
+    name: "mcp-server",
+    summary: "Serve memory search and skills to Claude Code, Codex, Cursor and other MCP clients (stdio, read-only by default)",
+    run: mcpServerCommand,
   },
   {
     name: "trace",
