@@ -6,6 +6,7 @@ import {
   type TuiState,
 } from "./tui-state.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
+import type { ExternalEditResult } from "./editor/index.js";
 
 function fakeSession(overrides: Partial<TuiSessionInfo> = {}): TuiSessionInfo {
   return {
@@ -921,5 +922,35 @@ describe("ui_action for built-in slash commands (ATO-1465)", () => {
       }),
     );
     expect(onIssueReportRequested).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("/edit (ATO-655)", () => {
+  type Dispatched = { type: string; value?: string; text?: string };
+
+  it("opens the composer draft when run from the menu and puts the saved text back", () => {
+    const onExternalEditorRequested = vi.fn<(draft: string) => ExternalEditResult>(() => ({
+      kind: "edited",
+      text: "a much longer prompt",
+      editor: "nano",
+    }));
+    const dispatched: Dispatched[] = [];
+    const state = { ...createInitialTuiState(fakeSession()), inputValue: "short draft" };
+    runSlashCommand("/edit", state, (a) => dispatched.push(a as Dispatched), stubCallbacks({ onExternalEditorRequested }));
+    expect(onExternalEditorRequested).toHaveBeenCalledWith("short draft");
+    expect(dispatched).toContainEqual({ type: "input_changed", value: "a much longer prompt" });
+    expect(dispatched.some((a) => a.type === "system_message")).toBe(true);
+  });
+
+  it("starts empty when the buffer holds the typed command itself", () => {
+    const onExternalEditorRequested = vi.fn<(draft: string) => ExternalEditResult>(() => ({
+      kind: "unchanged",
+      editor: "vim",
+    }));
+    const dispatched: Dispatched[] = [];
+    const state = { ...createInitialTuiState(fakeSession()), inputValue: "/edit" };
+    runSlashCommand("/edit", state, (a) => dispatched.push(a as Dispatched), stubCallbacks({ onExternalEditorRequested }));
+    expect(onExternalEditorRequested).toHaveBeenCalledWith("");
+    expect(dispatched).toContainEqual({ type: "input_changed", value: "" });
   });
 });

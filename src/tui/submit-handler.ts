@@ -24,6 +24,7 @@ import {
   THEMES,
 } from "./theme/theme.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
+import { runExternalEdit } from "./editor/index.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import {
   canAcceptMessage,
@@ -394,6 +395,7 @@ export function runSlashCommand(
   if (result.sideQuestionText !== undefined) {
     callbacks.onSideQuestionRequested?.(result.sideQuestionText);
   }
+  if (result.externalEdit) runExternalEdit(result.externalEdit, state, dispatch, callbacks);
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {

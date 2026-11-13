@@ -44,6 +44,11 @@ import {
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
 import { createMouseStdin } from "./mouse/mouse-stdin.js";
+import {
+  createTerminalPause,
+  defaultExternalEditorDeps,
+  editInExternalEditor,
+} from "./editor/index.js";
 import { makeMouseSource } from "./mouse/mouse-source.js";
 import {
   enableMouseTracking,
@@ -468,6 +473,15 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // `--onboarding`'s stamp reset, deferred to here from the decision
   // above: the runtime is up and the next line mounts the flow.
   if (parsed.onboarding) persistOnboardingState(ONBOARDING_RERUN_RESET);
+  // `/edit` (ATO-655) hands the terminal to `$EDITOR`. The getter reads
+  // the live `mouseTracking` binding for the same reason the passthrough
+  // above does: `/mouse on|off` replaces the controller.
+  const externalEditorPause = createTerminalPause({
+    stdin: process.stdin,
+    stdout: process.stdout,
+    kittyKeyboard,
+    mouse: () => mouseTracking,
+  });
   const ink = render(
     React.createElement(TuiApp, {
       session: sessionInfo,
@@ -550,6 +564,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.quit();
         },
         onNewWindowRequested: () => openNewAgentWindow(workingDir, bus),
+        onExternalEditorRequested: (draft) =>
+          editInExternalEditor(draft, defaultExternalEditorDeps(externalEditorPause)),
         onOpenUrlRequested: (url) => openUrlFromChat(url, bus),
         onOpenLocalFileRequested: (path) => openLocalFileFromChat(path, bus),
         onUiAction: (action, via) => runtime.reportUiAction?.(action, via),

@@ -343,6 +343,12 @@ export interface TuiAppCallbacks {
   onPromptEnhanceCancel?(): void;
   /** `/btw <question>`: answer a side question without saving it (ATO-1152). */
   onSideQuestionRequested?(question: string): void;
+  /**
+   * `/edit` (ATO-655): hand the terminal to `$VISUAL` / `$EDITOR` on
+   * `draft` and return what was saved. Synchronous on purpose: the editor
+   * owns the terminal until it exits, so nothing else may run meanwhile.
+   */
+  onExternalEditorRequested?(draft: string): import("./editor/index.js").ExternalEditResult;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */
@@ -870,6 +876,7 @@ export interface TuiAppCallbacks {
    * (ATO-1139): open the absolute `path` in the OS default browser.
    */
   onOpenLocalFileRequested?(path: string): void;
+  /**
    * A built-in slash command ran (ATO-1465): count it as `ui_action`.
    * `action` is the command name only (`/report`), never its arguments.
    */
