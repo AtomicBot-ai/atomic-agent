@@ -9,6 +9,7 @@ import type { Key } from "ink";
 import {
   canGrantCategory,
   canGrantShape,
+  describeMcpToolGrant,
   type ApprovalGrantScope,
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
@@ -894,6 +895,8 @@ function grantConfirmation(
   if (scope === "shape" && request.commandShape) {
     return `granted: ${request.commandShape} commands for this session`;
   }
+  const mcpTool = describeMcpToolGrant(request);
+  if (mcpTool !== null) return `granted: ${mcpTool} for this session`;
   if (request.grantKey !== undefined) {
     return `granted: ${formatApprovalCategory(request.category)} to ${request.grantKey} for this session`;
   }

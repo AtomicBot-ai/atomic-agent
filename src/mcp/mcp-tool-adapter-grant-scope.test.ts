@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ApprovalGate } from "../approval/approval-gate.js";
+import { ApprovalGate, describeMcpToolGrant } from "../approval/approval-gate.js";
 import type { ToolContext } from "../tools/tool-registry.js";
 
 import type { McpClient } from "./mcp-client.js";
@@ -10,7 +10,7 @@ import type { McpToolMeta } from "./mcp-types.js";
 // ATO-1473: "Allow in this chat" on one MCP server's prompt used to
 // record a whole-category grant for `other`, the category every MCP tool
 // shares, so every other plugin's tools stopped asking for the rest of
-// the chat. The grant is now keyed by the server.
+// the chat. The grant is now keyed by the server and the tool.
 
 function metaOf(server: string, rawName: string): McpToolMeta {
   return {
@@ -58,7 +58,7 @@ function toolOf(gate: ApprovalGate, server: string, rawName: string) {
 }
 
 describe("MCP 'Allow in this chat' scope (ATO-1473)", () => {
-  it("covers the server it was given on, not other servers' tools", async () => {
+  it("covers the one tool it was given on, not the server's other tools", async () => {
     const { gate, asked } = grantingGate();
     const ctx = ctxFor("s");
 
@@ -67,15 +67,27 @@ describe("MCP 'Allow in this chat' scope (ATO-1473)", () => {
     // Not a whole-category grant any more.
     expect(gate.sessionGrants("s").categories).toEqual([]);
 
-    // Same server, same or another tool: silent.
+    // Same tool: silent.
     await toolOf(gate, "github", "create_issue").run({}, ctx);
-    await toolOf(gate, "github", "close_issue").run({}, ctx);
     expect(asked).toHaveLength(1);
 
-    // Another server: asks.
+    // Another tool of the same server: asks.
+    await toolOf(gate, "github", "close_issue").run({}, ctx);
+    expect(asked).toEqual(["mcp.github.create_issue", "mcp.github.close_issue"]);
+  });
+
+  it("does not cover another server's tools, even one with the same name", async () => {
+    const { gate, asked } = grantingGate();
+    const ctx = ctxFor("s");
+    await toolOf(gate, "github", "create_issue").run({}, ctx);
     const other = await toolOf(gate, "linear", "save_issue").run({}, ctx);
     expect(other.status).toBe("ok");
-    expect(asked).toEqual(["mcp.github.create_issue", "mcp.linear.save_issue"]);
+    await toolOf(gate, "gitlab", "create_issue").run({}, ctx);
+    expect(asked).toEqual([
+      "mcp.github.create_issue",
+      "mcp.linear.save_issue",
+      "mcp.gitlab.create_issue",
+    ]);
   });
 
   it("does not leak into another chat", async () => {
@@ -93,8 +105,28 @@ describe("MCP 'Allow in this chat' scope (ATO-1473)", () => {
     expect(asked).toEqual(["x", "mcp.github.create_issue"]);
   });
 
-  it("keys by server name", () => {
-    expect(mcpGrantKey("github")).toBe("MCP server github");
-    expect(mcpGrantKey("github")).not.toBe(mcpGrantKey("linear"));
+  it("keys by server and tool, and the prompt names both", () => {
+    expect(mcpGrantKey("github", "create_issue")).toBe("MCP tool github/create_issue");
+    expect(
+      describeMcpToolGrant({
+        approvalId: "a",
+        sessionId: "s",
+        tool: "mcp.github.create_issue",
+        category: "other",
+        reason: "r",
+        grantKey: mcpGrantKey("github", "create_issue"),
+      }),
+    ).toBe("create_issue from MCP server github");
+    // Any other key (an HTTP origin) is not an MCP tool grant.
+    expect(
+      describeMcpToolGrant({
+        approvalId: "a",
+        sessionId: "s",
+        tool: "os.http.request",
+        category: "http",
+        reason: "r",
+        grantKey: "https://a.example",
+      }),
+    ).toBeNull();
   });
 });
