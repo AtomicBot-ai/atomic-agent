@@ -14,9 +14,25 @@
  * The desktop's own transport failures (an HTTP error from the agent's
  * server, a fetch that broke: AgentClient marks them `transport`) carry
  * `error_category: "transport"` and the HTTP status when there was one.
+ *
+ * ATO-1026: where the time of a turn went, and where a stop landed.
+ *   - `ms_to_first_activity`: the first sign of work of any kind (reasoning,
+ *     a tool call, a progress note, a token), so a turn that "thinks" for a
+ *     minute reads apart from one that hangs. Loading the weights and the
+ *     prefill are not told apart on this stream: both are the wait before it.
+ *   - `cancel_phase` on a cancelled turn: what the turn was doing when it
+ *     was stopped (CANCEL_PHASES), and `cancel_by`: the person's Stop, or
+ *     the app ending every turn (a restart, a quit).
+ *   - `prompt_tokens` / `completion_tokens` from the agent's `usage` frame
+ *     (whole turn, every step), and `gen_tokens_per_s` for a turn with no
+ *     tool call: completion tokens over the time from first activity to the
+ *     end. A turn with tools spends part of that time in the tools, so it
+ *     gets no figure rather than a wrong one.
+ *   - `provider`, `provider_kind` and `model_id`: the route the turn was
+ *     sent on, read when it began (setup.ts turnRoute): enums only.
  */
 
-import { ERROR_CATEGORIES } from "./catalog.js";
+import { CANCEL_PHASES, ERROR_CATEGORIES } from "./catalog.js";
 import { toolBucket } from "./validate.js";
 
 export interface TurnSummary {
@@ -31,6 +47,24 @@ export interface TurnSummary {
   error_category: string | null;
   http_status: number | null;
   coding_mode: string | null;
+  ms_to_first_activity: number | null;
+  cancel_phase: CancelPhase | null;
+  cancel_by: "user" | "app" | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  gen_tokens_per_s: number | null;
+  provider: string | null;
+  provider_kind: string | null;
+  model_id: string | null;
+}
+
+export type CancelPhase = (typeof CANCEL_PHASES)[number];
+
+/** The route a turn was sent on: enums only (setup.ts turnRoute). */
+export interface TurnRoute {
+  provider: string;
+  provider_kind: string;
+  model_id: string;
 }
 
 interface Turn {
@@ -49,11 +83,18 @@ interface Turn {
   category: string | null;
   httpStatus: number | null;
   stoppedEarly: boolean;
+  firstActivityAt: number | null;
+  phase: CancelPhase;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  route: TurnRoute | null;
 }
 
 // `tool_update`: a long call (video.generate) still working, so a held error was not the end.
 const WORK = new Set(["delta", "tool_progress", "tool_update", "progress_note", "reasoning_progress"]);
 const MAX_OPEN_TURNS = 64;
+/** ATO-1026: frames that are the turn working, for `ms_to_first_activity`. */
+const ACTIVITY = new Set([...WORK, "tool_result", "reply_polished", "fusion_worker"]);
 
 export class ChatTurnTracker {
   private readonly turns = new Map<string, Turn>();
@@ -69,7 +110,7 @@ export class ChatTurnTracker {
   }
 
   /** The chat IPC sent the turn, after `queueWaitMs` waiting behind a switch's restart. */
-  begin(turnId: string, queueWaitMs = 0): void {
+  begin(turnId: string, queueWaitMs = 0, route: TurnRoute | null = null): void {
     if (this.turns.size >= MAX_OPEN_TURNS) {
       const oldest = this.turns.keys().next().value;
       if (oldest !== undefined) this.turns.delete(oldest);
@@ -89,6 +130,11 @@ export class ChatTurnTracker {
       category: null,
       httpStatus: null,
       stoppedEarly: false,
+      firstActivityAt: null,
+      phase: "waiting_first",
+      promptTokens: null,
+      completionTokens: null,
+      route,
     });
   }
 
@@ -105,6 +151,25 @@ export class ChatTurnTracker {
           t.approvalIds.add(o.approvalId);
         }
         t.approvals += 1;
+        t.phase = "approval";
+        return;
+      }
+    }
+  }
+
+  /**
+   * The person answered an approval (main's agent:approve, after the agent
+   * took the answer). Allowed, the approved tool runs: "tool"; denied, the
+   * model reads the refusal before its next step: "waiting_next". Matched by
+   * the request id the turn counted, or by session. Only a turn still on
+   * "approval" moves, so a frame that already came after it is not undone.
+   */
+  approvalAnswered(ev: { approvalId?: unknown; sessionId?: unknown; decision?: unknown }): void {
+    const id = typeof ev?.approvalId === "string" && ev.approvalId ? ev.approvalId : null;
+    const sid = typeof ev?.sessionId === "string" ? ev.sessionId : null;
+    for (const t of this.turns.values()) {
+      if ((id && t.approvalIds.has(id)) || (!id && sid && t.sessionId === sid)) {
+        if (t.phase === "approval") t.phase = ev.decision === "deny" ? "waiting_next" : "tool";
         return;
       }
     }
@@ -112,7 +177,7 @@ export class ChatTurnTracker {
 
   observe(ev: {
     turnId?: unknown; kind?: unknown; category?: unknown; payload?: unknown;
-    reason?: unknown; transport?: unknown; httpStatus?: unknown;
+    reason?: unknown; transport?: unknown; httpStatus?: unknown; by?: unknown;
   }): void {
     if (typeof ev?.turnId !== "string" || typeof ev.kind !== "string") return;
     const t = this.turns.get(ev.turnId);
@@ -121,6 +186,14 @@ export class ChatTurnTracker {
     const payload = ev.payload && typeof ev.payload === "object" ? (ev.payload as Record<string, unknown>) : {};
     if (kind === "session_id" && typeof payload.session_id === "string") t.sessionId = payload.session_id;
     if (kind === "delta" && t.firstTokenAt === null) t.firstTokenAt = this.now();
+    if (ACTIVITY.has(kind) && t.firstActivityAt === null) t.firstActivityAt = this.now();
+    const phase = phaseAfter(kind, t.firstActivityAt !== null);
+    if (phase) t.phase = phase;
+    if (kind === "usage") {
+      const u = payload.usage && typeof payload.usage === "object" ? (payload.usage as Record<string, unknown>) : {};
+      t.promptTokens = tokenCount(u.prompt_tokens);
+      t.completionTokens = tokenCount(u.completion_tokens);
+    }
     if (kind === "steer_applied") t.steers += 1;
     if (kind === "finish" && ev.reason === "length") t.stoppedEarly = true;
     if (kind === "tool_progress") {
@@ -152,6 +225,7 @@ export class ChatTurnTracker {
     if (!outcome) return;
     this.turns.delete(ev.turnId);
     const end = this.now();
+    const cancelled = outcome === "cancelled";
     this.report({
       outcome,
       ms_to_first_token: t.firstTokenAt === null ? null : t.firstTokenAt - t.startedAt,
@@ -164,8 +238,43 @@ export class ChatTurnTracker {
       error_category: outcome === "failed" ? t.category : null,
       http_status: outcome === "failed" ? t.httpStatus : null,
       coding_mode: this.codingMode,
+      ms_to_first_activity: t.firstActivityAt === null ? null : t.firstActivityAt - t.startedAt,
+      cancel_phase: cancelled ? t.phase : null,
+      cancel_by: cancelled ? (ev.by === "user" ? "user" : ev.by === "app" ? "app" : null) : null,
+      prompt_tokens: t.promptTokens,
+      completion_tokens: t.completionTokens,
+      gen_tokens_per_s: tokensPerSecond(t, end),
+      provider: t.route?.provider ?? null,
+      provider_kind: t.route?.provider_kind ?? null,
+      model_id: t.route?.model_id ?? null,
     });
   }
+}
+
+/** ATO-1026: what the turn is doing after a frame of this kind, or null when the frame does not move it. */
+function phaseAfter(kind: string, worked: boolean): CancelPhase | null {
+  switch (kind) {
+    case "provider_waiting": return "provider_wait";
+    case "tool_progress": case "tool_update": return "tool";
+    // The tool answered: the model reads the result before its next step.
+    case "tool_result": return "waiting_next";
+    // The provider is back: waiting again, for the first sign of work or the next step.
+    case "provider_recovered": return worked ? "waiting_next" : "waiting_first";
+    case "delta": case "reasoning_progress": case "reply_polished": return "generating";
+    default: return null;
+  }
+}
+
+function tokenCount(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+}
+
+/** Completion tokens per second from first activity to the end, for a turn with no tool call only. */
+function tokensPerSecond(t: Turn, end: number): number | null {
+  if (t.toolCalls > 0 || t.completionTokens === null || t.completionTokens === 0 || t.firstActivityAt === null) return null;
+  const ms = end - t.firstActivityAt;
+  if (ms < 50) return null;
+  return Math.round((t.completionTokens / (ms / 1000)) * 10) / 10;
 }
 
 function categoryOf(v: unknown): string | null {

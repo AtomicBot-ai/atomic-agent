@@ -51,6 +51,21 @@ export const FIT = ["comfortable", "tight", "over"] as const;
 /** `model_picked.host_ram_gb`: ≤12 → 8, ≤24 → 16, ≤48 → 32, else 64 (renderer/analytics.js ramBucket). */
 export const RAM_BUCKETS = ["8", "16", "32", "64"] as const;
 export const ERROR_CATEGORIES = ["transport", "grammar", "model", "tool", "cancelled"] as const;
+/**
+ * ATO-1026: `chat_turn_ui.cancel_phase`, what a cancelled turn was doing
+ * (chat-turns.ts phaseAfter): waiting for its first sign of work (the
+ * model loading and the prefill are one wait on this stream), waiting on a
+ * provider that failed, on an approval, in a tool, generating, or reading a
+ * tool's result before its next step.
+ */
+export const CANCEL_PHASES = ["waiting_first", "provider_wait", "approval", "tool", "generating", "waiting_next"] as const;
+/**
+ * ATO-1026: `chat_turn_ui.provider_kind`, the kind of route a turn went on
+ * (setup.ts turnRoute): a real cloud provider, the managed local engine, an
+ * app the person runs (LM Studio, Ollama, Atomic Chat) or another server of
+ * theirs (a custom URL, an external llama-server).
+ */
+export const TURN_PROVIDER_KINDS = ["cloud", "managed_local", "lmstudio", "ollama", "atomic_chat", "custom_server"] as const;
 export const NODE_SIGNALS = [
   "SIGTERM", "SIGKILL", "SIGINT", "SIGHUP", "SIGQUIT", "SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE",
   "SIGPIPE", "SIGTRAP", "SIGSYS", "SIGUSR1", "SIGUSR2", "SIGBREAK",
