@@ -103,3 +103,12 @@ test('a server on another computer never gets the shared OpenAI key from the env
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
+
+test('the smoke driver decides "no key needed" by the app\'s rule, not a copy of the loopback-only one (ATO-1546)', () => {
+  const main = readFileSync(new URL('../main/main.ts', import.meta.url), 'utf8');
+  const at = main.indexOf('const keylessLocal = (p: Provider) =>');
+  assert.ok(at >= 0, 'the Settings smoke still has its keylessLocal');
+  const line = main.slice(at, main.indexOf('\n', at));
+  assert.match(line, /isKeylessLocalProviderEntry\(p\)/);
+  assert.doesNotMatch(line, /localhost/);
+});
