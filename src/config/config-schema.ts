@@ -1066,6 +1066,10 @@ export interface UserConfigFile {
 // `notion` skills working. An older file has no field and takes the
 // default. A DEFAULT-BEHAVIOUR CHANGE for a command that relied on any
 // other inherited key; the fix is one line in config.
+// Unversioned, additive: `notifications.push` (`enabled` false, `server`
+// "https://ntfy.sh", `topic` null, `tokenEnv` "NTFY_TOKEN", ATO-1129) and
+// `"push"` as a `notifications.downloads.channel`. An older file has no
+// block and sends no push.
 // Unversioned, additive: `localModels.drySampler` (default `false`,
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
 // every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp
@@ -1565,6 +1569,8 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (obj.notifications as Record<string, unknown> | undefined) ?? {};
   const notificationsDownloads =
     (notifications.downloads as Record<string, unknown> | undefined) ?? {};
+  const notificationsPush =
+    (notifications.push as Record<string, unknown> | undefined) ?? {};
   const atomicMail =
     (obj.atomicMail as Record<string, unknown> | undefined) ?? {};
   const git = (obj.git as Record<string, unknown> | undefined) ?? {};
@@ -1668,6 +1674,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     notifications: parseNotificationsConfig(
       notificationsDownloads,
       () => USER_CONFIG_DEFAULTS.notifications,
+      notificationsPush,
     ),
     atomicMail: parseAtomicMailConfig(atomicMail),
     git: parseGitConfig(git, () => USER_CONFIG_DEFAULTS.git),

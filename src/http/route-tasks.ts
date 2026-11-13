@@ -31,7 +31,7 @@ import {
  * (ATO-731). This is how the desktop's "Run overnight" (ATO-1113) runs a
  * task in the folder the person picked. `notify: "telegram"` reports the
  * terminal outcome to the paired owner, as `task create --notify telegram`
- * does. Fields this route does not know are ignored.
+ * does; `notify: "push"` sends a short ntfy phone push (ATO-1129). Fields this route does not know are ignored.
  *
  * `maxAttempts` defaults to `config.tasks.maxAttempts` when omitted.
  * `maxCostUsd` / `maxDurationMs` are the task's own budget (the desktop
@@ -88,11 +88,16 @@ export function createCreateTaskHandler(): HttpHandler {
       return;
     }
     const notifyRaw = body.notify;
-    if (notifyRaw !== undefined && notifyRaw !== null && notifyRaw !== "telegram") {
+    if (
+      notifyRaw !== undefined &&
+      notifyRaw !== null &&
+      notifyRaw !== "telegram" &&
+      notifyRaw !== "push"
+    ) {
       sendError(
         res,
         400,
-        openaiError("notify only supports: telegram", "invalid_request_error", "notify"),
+        openaiError("notify only supports: telegram, push", "invalid_request_error", "notify"),
       );
       return;
     }
@@ -131,7 +136,7 @@ export function createCreateTaskHandler(): HttpHandler {
         maxSteps,
         maxCostUsd,
         maxDurationMs,
-        ...(notifyRaw === "telegram" ? { notify: "telegram" as const } : {}),
+        ...(notifyRaw === "telegram" || notifyRaw === "push" ? { notify: notifyRaw } : {}),
       });
       sendJson(res, 201, recordToJson(created));
     } catch (err) {

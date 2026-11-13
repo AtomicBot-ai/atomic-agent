@@ -250,6 +250,10 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 ## notifications
 
 - `notifications.downloads.channel` (default `null`).
+- `notifications.push.enabled` (default `false`).
+- `notifications.push.server` (default `"https://ntfy.sh"`).
+- `notifications.push.topic` (default `null`).
+- `notifications.push.tokenEnv` (default `"NTFY_TOKEN"`).
 
 ## atomicMail
 

@@ -30,7 +30,7 @@ export interface OvernightArgs {
   durationMs: number;
   /** Absolute path the run works in. */
   dir: string;
-  notify: "telegram" | null;
+  notify: "telegram" | "push" | null;
   detach: boolean;
   noApproval: boolean;
   taskId: string | null;
@@ -111,10 +111,10 @@ export function parseOvernightArgs(
   }
 
   const notifyRaw = values.get("--notify");
-  if (notifyRaw !== undefined && notifyRaw !== "telegram") {
+  if (notifyRaw !== undefined && notifyRaw !== "telegram" && notifyRaw !== "push") {
     return {
       ok: false,
-      error: `--notify supports only "telegram", got ${notifyRaw}`,
+      error: `--notify supports only "telegram" or "push", got ${notifyRaw}`,
     };
   }
 
@@ -125,7 +125,7 @@ export function parseOvernightArgs(
       budgetUsd,
       durationMs: Math.round(hours * 3_600_000),
       dir,
-      notify: notifyRaw === "telegram" ? "telegram" : null,
+      notify: notifyRaw === "telegram" || notifyRaw === "push" ? notifyRaw : null,
       detach: bools.has("--detach"),
       noApproval: bools.has("--no-approval"),
       taskId: values.get(OVERNIGHT_TASK_ID_FLAG) ?? null,

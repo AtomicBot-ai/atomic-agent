@@ -6,12 +6,14 @@ import {
 } from "./download-jobs.js";
 
 /** Where the worker reports when the job ends. */
-export type DownloadNotifyChannel = "telegram" | "discord" | "email";
+/** `"push"` is the ntfy topic in `notifications.push` (ATO-1129). */
+export type DownloadNotifyChannel = "telegram" | "discord" | "email" | "push";
 
 const NOTIFY_CHANNELS: readonly DownloadNotifyChannel[] = [
   "telegram",
   "discord",
   "email",
+  "push",
 ];
 
 export function isDownloadNotifyChannel(

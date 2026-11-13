@@ -17,6 +17,7 @@ atomic-agent overnight "migrate the tests to vitest" --budget 5 --hours 8 --dir 
 | `--hours <h>` | Stop after this many hours. Default 8, from 1 minute (about `0.017`) to 24. |
 | `--dir <path>` | The folder the run works in. Default: the current folder. |
 | `--notify telegram` | Send the report to your paired Telegram chat when the run ends. |
+| `--notify push` | Ping your phone through ntfy when the run ends: a title and the start of the result. Set it up once with `atomic-agent push on`. |
 | `--detach` | Run in the background. Prints the task id, the log path (`<stateDir>/logs/overnight-<id>.log`) and the command to check on it. |
 | `--no-approval` | Allow every action for this run. Use it only in a folder you can throw away. |
 

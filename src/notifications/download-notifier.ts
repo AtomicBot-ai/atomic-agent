@@ -10,6 +10,8 @@ import {
 } from "../channels/telegram/index.js";
 import type { AtomicAgentConfig } from "../config/index.js";
 import type { DownloadJob, DownloadNotifyChannel } from "../local-llm/index.js";
+import { isPushReady, sendPush } from "./ntfy-client.js";
+import { formatDownloadPush } from "./push-messages.js";
 
 /**
  * "Tell me when it lands": the one message a background model download
@@ -37,7 +39,8 @@ export interface DownloadNotifyInput {
   config: Pick<
     AtomicAgentConfig,
     "telegram" | "discord" | "atomicMail" | "paths"
-  >;
+  > &
+    Partial<Pick<AtomicAgentConfig, "notifications">>;
   /** Test seam for the e-mail leg. */
   atomicMail?: Pick<AtomicMailService, "readiness" | "sendDownloadMail">;
   /** Defaults to `process.env` — where `loadConfig` puts `<stateDir>/.env`. */
@@ -102,6 +105,20 @@ export async function notifyDownloadOutcome(
   const text = formatDownloadNotification(input.job);
   const { channel } = input;
   try {
+    if (channel === "push") {
+      const push = input.config.notifications?.push;
+      if (!push)
+        return { outcome: "not_configured", channel, reason: "push is off" };
+      const sent = await sendPush({
+        push,
+        message: formatDownloadPush(text),
+        env,
+        ...(input.fetchImpl ? { fetchImpl: input.fetchImpl } : {}),
+      });
+      return sent.outcome === "sent"
+        ? { outcome: "sent", channel }
+        : { outcome: sent.outcome, channel, reason: sent.reason };
+    }
     if (channel === "telegram") {
       const token = (env[TELEGRAM_BOT_TOKEN_KEY] ?? "").trim();
       const chatId = input.config.telegram.ownerUserId;
@@ -181,9 +198,11 @@ export async function notifyDownloadOutcome(
 /** True when a ping on `channel` could be delivered right now. */
 export function isDownloadNotifyChannelReady(
   channel: DownloadNotifyChannel,
-  config: Pick<AtomicAgentConfig, "telegram" | "discord" | "atomicMail">,
+  config: Pick<AtomicAgentConfig, "telegram" | "discord" | "atomicMail"> &
+    Partial<Pick<AtomicAgentConfig, "notifications">>,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
+  if (channel === "push") return isPushReady(config.notifications?.push);
   if (channel === "email") {
     return (
       (env[ATOMIC_MAIL_API_KEY_KEY] ?? "").trim().length > 0 &&

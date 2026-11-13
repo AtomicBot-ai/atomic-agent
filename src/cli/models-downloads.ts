@@ -1,4 +1,4 @@
-import { getConfig } from "../config/index.js";
+import { getConfig, resetConfigCache } from "../config/index.js";
 import {
   downloadJobId,
   downloadJobSilenceMs,
@@ -90,17 +90,30 @@ async function reportDownloadOutcome(
   if (!channel) return {};
   const at = new Date().toISOString();
   // `getConfig()` already merged `<stateDir>/.env` into the environment,
-  // so the bot tokens are where the notifier looks for them.
+  // so the bot tokens are where the notifier looks for them. Re-read the
+  // file first: the worker has run for hours, and push (ATO-1129) may
+  // have been switched on from the TUI meanwhile.
   const result = await notifyDownloadOutcome({
     channel,
     job,
-    config: getConfig(),
+    config: rereadConfig(),
   });
   const reason = result.outcome === "sent" ? null : result.reason;
   process.stdout.write(
     `[${at}] notify ${channel} ${result.outcome}${reason ? `: ${reason}` : ""}\n`,
   );
   return { notified: { channel, outcome: result.outcome, reason, at } };
+}
+
+/** The config as it is on disk now, or the one this worker booted with. */
+function rereadConfig(): ReturnType<typeof getConfig> {
+  const booted = getConfig();
+  try {
+    resetConfigCache();
+    return getConfig();
+  } catch {
+    return booted;
+  }
 }
 
 function formatBytes(bytes: number): string {

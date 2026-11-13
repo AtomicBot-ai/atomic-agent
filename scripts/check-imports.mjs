@@ -73,7 +73,8 @@ export function violation(edge) {
   const frontendConfigOwners = {
     'src/config/tui-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/session-rail-config.ts'],
     'src/config/channel-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts'],
-    'src/config/integration-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts'],
+    'src/config/integration-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts', 'src/config/push-config.ts'],
+    'src/config/push-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
   };
   if (frontendConfigOwners[source] && target.startsWith('src/') && !frontendConfigOwners[source].includes(target)) return 'frontend config depends outside concrete value owners';
   const resourceTypes = source === 'src/config/agent/agent-types.ts' || target === 'src/config/agent/agent-types.ts' || target === 'src/approval/approval-level.ts';

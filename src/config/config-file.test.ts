@@ -516,7 +516,10 @@ describe("user config file IO", () => {
     expect(migrated.telegram.ownerUserId).toBe(7);
     const onDisk = JSON.parse(readFileSync(path, "utf8"));
     expect(onDisk.version).toBe(USER_CONFIG_VERSION);
-    expect(onDisk.notifications).toEqual({ downloads: { channel: null } });
+    expect(onDisk.notifications).toEqual({
+      downloads: { channel: null },
+      push: USER_CONFIG_DEFAULTS.notifications.push,
+    });
     warn.mockRestore();
   });
 

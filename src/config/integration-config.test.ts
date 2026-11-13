@@ -64,15 +64,16 @@ describe("integration configuration ownership", () => {
   it("keeps direct null clearing distinct from the composing default fallback", () => {
     const saved = USER_CONFIG_DEFAULTS.notifications;
     try {
-      USER_CONFIG_DEFAULTS.notifications = { downloads: { channel: "email" } };
+      const push = createNotificationsDefaults().push;
+      USER_CONFIG_DEFAULTS.notifications = { downloads: { channel: "email" }, push };
       expect(parseDownloadNotifyChannel(null, "channel")).toBeNull();
       expect(parseDownloadNotifyChannel(undefined, "channel")).toBeNull();
       expect(parseNotificationsConfig({ channel: null }, () => USER_CONFIG_DEFAULTS.notifications))
-        .toEqual({ downloads: { channel: "email" } });
+        .toEqual({ downloads: { channel: "email" }, push });
       expect(parseUserConfigFile({ notifications: { downloads: { channel: null } } }).notifications)
-        .toEqual({ downloads: { channel: "email" } });
+        .toEqual({ downloads: { channel: "email" }, push });
       expect(parseUserConfigFile({ notifications: { downloads: { channel: "off" } } }).notifications)
-        .toEqual({ downloads: { channel: "off" } });
+        .toEqual({ downloads: { channel: "off" }, push });
     } finally {
       USER_CONFIG_DEFAULTS.notifications = saved;
     }
@@ -84,15 +85,16 @@ describe("integration configuration ownership", () => {
     const parsed = parseNotificationsConfig({
       get channel() {
         events.push("raw.channel");
-        defaults = { downloads: { channel: "discord" } };
+        defaults = { downloads: { channel: "discord" }, push: createNotificationsDefaults().push };
         return undefined;
       },
     }, () => {
       events.push("defaults");
       return defaults;
     });
-    expect(events).toEqual(["raw.channel", "defaults"]);
-    expect(parsed).toEqual({ downloads: { channel: "discord" } });
+    // `defaults` is read again for the push block, after the downloads one.
+    expect(events).toEqual(["raw.channel", "defaults", "defaults"]);
+    expect(parsed).toEqual({ downloads: { channel: "discord" }, push: createNotificationsDefaults().push });
   });
 
   it("keeps the notifications downloads reference prepared before late TUI validation", () => {

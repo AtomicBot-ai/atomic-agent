@@ -25,7 +25,7 @@ export function buildTasksCronTool(
   return {
     name: "tasks.cron",
     description:
-      "Schedule a recurring task via a standard 5- or 6-field cron expression. Args: { userMessage, expression, tz?, notify? }. Each firing runs in its own persistent session (not the caller's). Set notify: \"telegram\" to send each firing's final result to the paired Telegram chat.",
+      "Schedule a recurring task via a standard 5- or 6-field cron expression. Args: { userMessage, expression, tz?, notify? }. Each firing runs in its own persistent session (not the caller's). Set notify: \"telegram\" to send each firing's final result to the paired Telegram chat, or notify: \"push\" for a short phone push (ntfy).",
     readonly: false,
     async run(rawArgs) {
       const userMessage = rawArgs.userMessage;
@@ -56,11 +56,11 @@ export function buildTasksCronTool(
         });
       }
       const notify = rawArgs.notify;
-      if (notify !== undefined && notify !== "telegram") {
+      if (notify !== undefined && notify !== "telegram" && notify !== "push") {
         return compressToolResult({
           tool: "tasks.cron",
           status: "error",
-          output: 'validation: notify must be "telegram" when provided',
+          output: 'validation: notify must be "telegram" or "push" when provided',
           details: { field: "notify" },
         });
       }
@@ -71,7 +71,7 @@ export function buildTasksCronTool(
           triggerSource: "agent",
           maxAttempts: 1,
           maxSteps: null,
-          ...(notify === "telegram" ? { notify } : {}),
+          ...(notify === "telegram" || notify === "push" ? { notify } : {}),
           schedule: {
             kind: "cron",
             expression,

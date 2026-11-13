@@ -196,7 +196,7 @@ describe("background model downloads (CLI)", () => {
     ).rejects.toThrow(/got nothing/);
     await expect(
       modelsCommand(["pull", "--background", "--notify=pager", "qwen-3.5-4b"]),
-    ).rejects.toThrow(/telegram, discord, email or off/);
+    ).rejects.toThrow(/telegram, discord, email, push or off/);
     expect(spawnMock).not.toHaveBeenCalled();
   });
 

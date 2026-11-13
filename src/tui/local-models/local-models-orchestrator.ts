@@ -112,7 +112,11 @@ import {
   persistMemoryEmbeddingsEnabled,
 } from "../persist-embedding-hybrid-recall.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
-import { isDownloadNotifyChannelReady } from "../../notifications/index.js";
+import {
+  enablePushNotifications,
+  isDownloadNotifyChannelReady,
+  pushPrivacyNote,
+} from "../../notifications/index.js";
 import { persistDownloadNotifyChannel } from "./persist-download-notify.js";
 import type { LocalModelsNotifyChoice } from "./local-models-panel-state.js";
 import { restartLocalDaemon } from "./local-models-daemon-restart.js";
@@ -1163,6 +1167,18 @@ export class LocalModelsOrchestrator {
           watched.length > 0
             ? `local-llm: ${channelName(choice)} ping armed for ${label}`
             : `local-llm: ${channelName(choice)} ping armed for the next download`,
+      });
+      return;
+    }
+    if (choice === "push") {
+      // Push needs no credentials (ATO-1129): picking it turns it on with
+      // a fresh random topic, and the operator subscribes the phone to it.
+      const setup = enablePushNotifications();
+      for (const w of watched) writeDownloadNotify(dataDir, w.jobId, "push");
+      this.pendingNotify = null;
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: phone push on — subscribe to ${setup.subscribeUrl} in the ntfy app. ${pushPrivacyNote(setup.push)}`,
       });
       return;
     }
@@ -3846,7 +3862,9 @@ function channelName(channel: DownloadNotifyChannel): string {
     ? "Telegram"
     : channel === "discord"
       ? "Discord"
-      : "E-mail";
+      : channel === "push"
+        ? "Phone push"
+        : "E-mail";
 }
 
 /** The hub row a channel's credentials live on. */

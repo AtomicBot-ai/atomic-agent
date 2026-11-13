@@ -26,6 +26,7 @@ import {
   raiseDesktopNotification,
   shouldNotify,
 } from "./terminal-notify.js";
+import { pushTurnEnd, readReadyPush, schedulePushForApproval } from "./phone-push.js";
 import { CodingModeChip } from "./coding-mode/coding-mode-chip.js";
 import { CodingModePopup } from "./coding-mode/coding-mode-popup.js";
 import { IssueReportPopup } from "./issue-report/issue-report-popup.js";
@@ -485,7 +486,7 @@ export interface TuiAppCallbacks {
    * yet), `off` remembers "no". Dismissed = Esc, nothing remembered.
    */
   onLocalModelsNotifyChoice?(
-    choice: "telegram" | "discord" | "email" | "off",
+    choice: "telegram" | "discord" | "email" | "push" | "off",
   ): void;
   onLocalModelsNotifyDismissed?(): void;
   /** `N` in the Models tab: reopen the prompt. */
@@ -1025,6 +1026,26 @@ export function TuiApp({
       return;
     }
     notifiedRunsRef.current = state.runHistory.length;
+    // Phone push (ATO-1129) has its own switch, `notifications.push`, and
+    // the same "long or failed" rule; it needs no TTY.
+    const push = readReadyPush();
+    if (
+      push &&
+      shouldNotify({
+        outcome: entry.outcome,
+        durationMs: entry.durationMs,
+        minDurationMs: notify.minDurationMs,
+      })
+    ) {
+      pushTurnEnd(push, {
+        outcome: entry.outcome,
+        reason: entry.reason,
+        stepCount: entry.stepCount,
+        durationMs: entry.durationMs,
+        messages: state.messages,
+        workingDirName: session.workingDir.split("/").filter(Boolean).pop(),
+      });
+    }
     if (!notify.enabled) return;
     // Escapes belong in a terminal. Piped or redirected stderr gets the
     // bytes as content, which is how a log file ends up with a bell in
@@ -1056,6 +1077,16 @@ export function TuiApp({
     // was "I have seen no notifications".
     raiseDesktopNotification(note);
   }, [state.runHistory, notify, session.workingDir]);
+
+  // An approval left waiting pings the phone (ATO-1129), after the same
+  // grace a finished turn gets; answering it first cancels the ping.
+  const waitingApprovalId = state.pendingApproval?.approvalId ?? null;
+  const waitingApprovalTool = state.pendingApproval?.tool ?? null;
+  useEffect(() => {
+    if (waitingApprovalId === null || waitingApprovalTool === null) return;
+    if (!readReadyPush()) return;
+    return schedulePushForApproval(waitingApprovalTool, notify.minDurationMs);
+  }, [waitingApprovalId, waitingApprovalTool, notify.minDurationMs]);
 
   useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "tasks") {

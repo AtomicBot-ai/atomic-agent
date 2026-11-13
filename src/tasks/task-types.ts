@@ -65,7 +65,8 @@ export type TaskSchedule =
  * runner only ever observes members of this list (or `null` = no
  * report, the default).
  */
-export const TASK_NOTIFY_TARGETS = ["telegram"] as const;
+/** `"push"`: the ntfy topic in `notifications.push` (ATO-1129). */
+export const TASK_NOTIFY_TARGETS = ["telegram", "push"] as const;
 
 export type TaskNotifyTarget = (typeof TASK_NOTIFY_TARGETS)[number];
 
