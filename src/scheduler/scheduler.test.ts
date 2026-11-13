@@ -406,3 +406,43 @@ describe("Scheduler leadership gate", () => {
     await scheduler.stop();
   });
 });
+
+describe("Scheduler sidecars (ATO-601)", () => {
+  it("ticks sidecars on interval ticks this process leads, never on tickOnce", async () => {
+    const { clock, timers, nowMs } = createFakeClock();
+    const runDue = vi.fn<SchedulerTaskRunner["runDue"]>().mockResolvedValue(emptyOutcome());
+    const tick = vi.fn<(now: number, signal: AbortSignal) => Promise<void>>().mockResolvedValue();
+    const state = { leader: false };
+    const leadership: SchedulerLeadership = { isLeader: () => state.leader, release: () => {} };
+    const scheduler = new Scheduler({
+      taskRunner: { runDue }, tickMs: 5_000, batch: 3, clock, leadership, sidecars: [{ tick }],
+    });
+    scheduler.start();
+    timers[0]!.handler();
+    expect(tick).not.toHaveBeenCalled();
+    state.leader = true;
+    timers[0]!.handler();
+    expect(tick).toHaveBeenCalledTimes(1);
+    expect(tick).toHaveBeenCalledWith(nowMs.value, expect.any(AbortSignal));
+    await scheduler.tickOnce();
+    expect(tick).toHaveBeenCalledTimes(1);
+    await scheduler.stop();
+    expect(tick.mock.calls[0]![1].aborted).toBe(true);
+  });
+
+  it("a rejecting sidecar is logged, not thrown", async () => {
+    const { clock, timers } = createFakeClock();
+    const records: LogRecord[] = [];
+    const logger = new StructuredLogger({ level: "debug", sinks: [(r) => records.push(r)] });
+    const runDue = vi.fn<SchedulerTaskRunner["runDue"]>().mockResolvedValue(emptyOutcome());
+    const scheduler = new Scheduler({
+      taskRunner: { runDue }, tickMs: 5_000, batch: 3, clock, logger,
+      sidecars: [{ tick: () => Promise.reject(new Error("boom")) }],
+    });
+    scheduler.start();
+    timers[0]!.handler();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(records.some((r) => r.message === "scheduler sidecar failed")).toBe(true);
+    await scheduler.stop();
+  });
+});

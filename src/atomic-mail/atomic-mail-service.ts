@@ -10,6 +10,7 @@ import {
   type AtomicMailSession,
   type InboxMessage,
 } from "./atomic-mail-client.js";
+import type { TriggerMail } from "./atomic-mail-trigger-batches.js";
 import {
   persistAtomicMailConfig,
   readAtomicMailApiKey,
@@ -292,6 +293,16 @@ export class AtomicMailService {
     opts?: { signal?: AbortSignal },
   ): Promise<InboxMessage[]> {
     return this.withSession((s) => this.client.listInbox(s, limit, opts));
+  }
+
+  /** Inbox messages with their text — the mail trigger's read (ATO-601). */
+  async listInboxForTrigger(
+    limit: number,
+    opts?: { signal?: AbortSignal },
+  ): Promise<TriggerMail[]> {
+    return this.withSession((s) =>
+      this.client.listInboxForTrigger(s, limit, opts),
+    );
   }
 
   /** Drop the owner address and any pending code; the inbox stays. */

@@ -136,6 +136,30 @@ describe("POST /api/webhooks/:name", () => {
     expect(res.status).toBe(404);
   });
 
+  it("returns 404 for a mail-triggered binding (ATO-601): only the inbox fires it", async () => {
+    harness = await startTestHarness({
+      webhooks: {
+        inbox: {
+          source: "atomic-mail",
+          userMessageTemplate: "mail from {{body.from}}",
+          email: {
+            allowedSenders: ["boss@example.com"],
+            pollIntervalMs: 60_000,
+            replyByEmail: false,
+            trustFromHeader: false,
+          },
+        },
+      },
+    });
+    const res = await fetch(`${harness.baseUrl}/api/webhooks/inbox`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ from: "boss@example.com" }),
+    });
+    expect(res.status).toBe(404);
+    expect(harness.runtime.taskStore.list().length).toBe(0);
+  });
+
   it("passes schedule through so the task is marked recurring", async () => {
     harness = await startTestHarness({
       webhooks: {

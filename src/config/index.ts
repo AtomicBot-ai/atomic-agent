@@ -98,3 +98,8 @@ export {
 
 /** Swarm units — extra Telegram / Discord bots (config v52). */
 export type { SwarmConfig, SwarmUnitConfig } from "./config-schema.js";
+export {
+  EMAIL_TRIGGER_DEFAULT_POLL_MS,
+  EMAIL_TRIGGER_MIN_POLL_MS,
+  type EmailTriggerConfig,
+} from "./email-trigger-config.js";
