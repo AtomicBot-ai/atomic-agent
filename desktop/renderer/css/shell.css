@@ -171,6 +171,8 @@
 [data-list="archived"]{margin-top:10px}
 .sb-archived[data-list="archived"] > .sesrow{padding-left:30px}
 #sidebar.rail .sb-search,#sidebar.rail [data-list="archived"]{display:none}
+/* ATO-900: nor in the narrow window's rail (the media query, no .rail class). */
+@media (max-width:1000px){#sidebar:not(.drawer) .sb-search,#sidebar:not(.drawer) [data-list="archived"]{display:none}}
 
 /* Rows: 34px pills — dot · title · right meta (tasks) or the hover controls
    (chats). The meta rides a data attribute so the row's children stay dot,
@@ -246,6 +248,7 @@
 .sb-invite-go,.sb-invite-later{height:26px;padding:0 10px}
 .sb-invite-never{margin-top:6px;padding:0;background:none;font-size:var(--fs-label);color:var(--ink-2);text-decoration:underline}
 #sidebar.rail .sb-invite{display:none}
+@media (max-width:1000px){#sidebar:not(.drawer) .sb-invite{display:none}}
 
 /* Footer: a quiet full-width Settings row; the ⌘ , chord is its tooltip. */
 .sb-footwrap{flex:none;padding-top:8px;display:flex;align-items:center;gap:4px}
