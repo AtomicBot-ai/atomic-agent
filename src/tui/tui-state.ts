@@ -179,8 +179,11 @@ export interface ChatMessage {
    * `configure-fallback` is set on the notice a provider fallover
    * leaves in the chat: the switch changed which model answers, and the
    * pane that changes it back is one most operators have never opened.
+   * `add-cloud-provider` is set on the notice a cloud or Fusion pick
+   * leaves when no cloud provider exists yet: the agent stays on local,
+   * and the button opens the add-provider wizard (ATO-1460).
    */
-  action?: "configure-fallback";
+  action?: "configure-fallback" | "add-cloud-provider";
   /**
    * A session this notice offers to open, rendered as a `[switch back]`
    * button beside `[copy]`. Set on the notices that name a thread the
