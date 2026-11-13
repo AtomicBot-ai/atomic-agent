@@ -153,6 +153,14 @@ export interface CompletionRequest {
    */
   reasoningEffort?: ReasoningEffort;
   /**
+   * The reasoning level a person picked for this chat (ATO-490,
+   * `reasoning-levels.ts`). Unlike `reasoningEffort` it beats the
+   * model's own `params` and `extraBody`, and it is sent only to a model
+   * that reasons (`cloudTakesReasoningOverride`); anything else gets the
+   * body it got without it. Absent, nothing changes.
+   */
+  reasoningOverride?: ReasoningEffort;
+  /**
    * Ask the server to skip the reasoning channel for this request
    * (`chat_template_kwargs: { enable_thinking: false }`). Sent only to an
    * OpenAI-compatible server on a local or private-network address, where

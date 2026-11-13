@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
 import { recordProjectTrust } from "../config/skill-policy-commands.js";
+import { activeReasoningControl } from "./route-capabilities.js";
 
 describe("GET /api/capabilities", () => {
   let harness: Harness | null = null;
@@ -201,3 +202,49 @@ async function fetchCapabilities(
     agent: { approvalLevel: number; approvalRequired: boolean };
   };
 }
+
+describe("activeReasoningControl (ATO-490)", () => {
+  const runtimeWith = (
+    providers: Array<{ id: string; kind: string }>,
+    active: { id: string; chatModelId?: string; toolTransport?: string; reasoningFormat?: string },
+  ) => ({
+    config: { llm: { activeTextProvider: active.id, activeEmbeddingProvider: "x", providers, toolTransport: "auto" } },
+    providerRegistry: {
+      activeTextProviderId: active.id,
+      activeText: {
+        chatModelId: active.chatModelId,
+        capabilities: {
+          toolTransport: active.toolTransport ?? "native_tools",
+          reasoningFormat: active.reasoningFormat ?? "none",
+        },
+      },
+    },
+  }) as unknown as Parameters<typeof activeReasoningControl>[0];
+
+  it("offers every level on a reasoning cloud model, only Auto on one that does not", () => {
+    const providers = [{ id: "or", kind: "openrouter" }];
+    expect(activeReasoningControl(runtimeWith(providers, { id: "or", chatModelId: "openai/o3" }))).toEqual({
+      control: "effort", levels: ["auto", "low", "medium", "high"],
+    });
+    expect(activeReasoningControl(runtimeWith(providers, { id: "or", chatModelId: "openai/gpt-4o" }))).toEqual({
+      control: "none", levels: ["auto"],
+    });
+  });
+
+  it("is a budget on a local model that thinks in its grammar", () => {
+    const providers = [{ id: "local-llama", kind: "llama-server" }];
+    expect(activeReasoningControl(runtimeWith(providers, {
+      id: "local-llama", toolTransport: "grammar", reasoningFormat: "delta_reasoning",
+    })).control).toBe("budget");
+    expect(activeReasoningControl(runtimeWith(providers, {
+      id: "local-llama", toolTransport: "grammar", reasoningFormat: "none",
+    })).control).toBe("none");
+  });
+
+  it("answers none rather than throwing when the route cannot be read", () => {
+    const broken = { config: {}, providerRegistry: { get activeText(): never { throw new Error("no provider"); } } };
+    expect(activeReasoningControl(broken as unknown as Parameters<typeof activeReasoningControl>[0])).toEqual({
+      control: "none", levels: ["auto"],
+    });
+  });
+});

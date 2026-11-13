@@ -29,6 +29,8 @@ import { checkWorkingDir } from "./session-working-dir.js";
 import { chatGoalSpec, goalProgressFrame } from "./chat-goal.js";
 import type { GoalState } from "../agent/goal/index.js";
 import { parseProjectFields, type SessionProject } from "../session/session-project.js";
+import type { ReasoningEffort } from "../llm/provider/completion-types.js";
+import { reasoningOverrideFromRequest } from "../llm/reasoning-levels.js";
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
@@ -101,6 +103,12 @@ interface ChatCompletionRequest {
   project_instructions?: string | null;
   /** ATO-42: the project's name, shown to the model beside its instructions. */
   project_name?: string | null;
+  /**
+   * ATO-490: OpenAI's own field, read as the chat's reasoning level.
+   * `low` / `medium` / `high` override for this turn; `auto`, absent and
+   * any other value change nothing (`reasoningOverrideFromRequest`).
+   */
+  reasoning_effort?: unknown;
 }
 
 interface ParsedRequest {
@@ -119,6 +127,8 @@ interface ParsedRequest {
   extensionsEnabled: boolean;
   /** `X-Atomic-Screen-Overlay` on an extensions request (ATO-1018). */
   screenOverlay: boolean;
+  /** ATO-490: the turn's reasoning level, when the request picked one. */
+  reasoningOverride?: ReasoningEffort;
 }
 
 /**
@@ -199,6 +209,9 @@ async function handleNonStream(
         : {}),
       // ATO-1040: a chat with an active stored goal runs it (chat-goal.ts).
       ...(nonStreamGoal === undefined ? {} : { goal: nonStreamGoal }),
+      ...(env.request.reasoningOverride !== undefined
+        ? { reasoningOverride: env.request.reasoningOverride }
+        : {}),
     });
   } catch (err) {
     // Reaches this branch only for unclassified / programming
@@ -361,6 +374,9 @@ async function handleStream(
               if (!sse.closed) sse.writeEvent("goal_progress", goalProgressFrame(env.session.id, state));
             },
           }),
+      ...(env.request.reasoningOverride !== undefined
+        ? { reasoningOverride: env.request.reasoningOverride }
+        : {}),
     });
   } catch (err) {
     // Same contract as the non-stream branch above: classified
@@ -1343,6 +1359,7 @@ async function parseRequestBody(
     sendError(res, 400, openaiError(project.error, "invalid_request_error", project.param));
     return null;
   }
+  const reasoningOverride = reasoningOverrideFromRequest(body.reasoning_effort);
   return {
     model:
       typeof body.model === "string" && body.model.length > 0
@@ -1362,6 +1379,7 @@ async function parseRequestBody(
     screenOverlay:
       isExtensionsHeaderTruthy(getHeader(req, EXTENSIONS_HEADER)) &&
       isExtensionsHeaderTruthy(getHeader(req, SCREEN_OVERLAY_HEADER)),
+    ...(reasoningOverride !== undefined ? { reasoningOverride } : {}),
   };
 }
 
