@@ -307,6 +307,12 @@ contextBridge.exposeInMainWorld("atomic", {
   overnightPickFolder: (current?: string) => ipcRenderer.invoke("overnight:pickFolder", current),
   overnightStart: (input: { message: string; folder: string; maxCostUsd: number | null; hours: number; notifyTelegram: boolean }) =>
     ipcRenderer.invoke("overnight:start", input),
+  /** ATO-1091: `atag models fit-test` from Settings › Models (fit-test-ipc.ts). */
+  fitTestSupported: () => ipcRenderer.invoke("fitTest:supported"),
+  fitTestJudges: () => ipcRenderer.invoke("fitTest:judges"),
+  fitTestStart: (opts?: { models?: string[]; judge?: string | null }) => ipcRenderer.invoke("fitTest:start", opts ?? {}),
+  fitTestCancel: () => ipcRenderer.invoke("fitTest:cancel"),
+  onFitTestProgress: (cb: (payload: unknown) => void) => on("fitTest:progress", cb),
   quit: () => ipcRenderer.invoke("app:quit"),
   skillList: (sessionId?: string | null) => ipcRenderer.invoke("cli:skillList", sessionId),
   configGetKey: (key: string) => ipcRenderer.invoke("cli:configGetKey", key),

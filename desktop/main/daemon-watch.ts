@@ -215,11 +215,12 @@ export interface UpdateHold {
  * supervisor on — in every real run, and never in a smoke run, whose checks
  * (T18) count each `models start` an update is followed by.
  */
-export function updateBegins(): UpdateHold {
+export function updateBegins(line?: string): UpdateHold {
   const st = daemonWatch.state();
   const wasOwned = st.armed && st.owned;
   daemonWatch.noteStopped();
-  if (wasOwned) host.say("[desktop] local-llm: the llama.cpp update may stop the model server to replace its binary — it is started again after a successful update");
+  // ATO-1091: the model fit-test holds the server the same way, and says so in its own words.
+  if (wasOwned) host.say(line ?? "[desktop] local-llm: the llama.cpp update may stop the model server to replace its binary — it is started again after a successful update");
   return { wasOwned, mark: stopsMark() };
 }
 

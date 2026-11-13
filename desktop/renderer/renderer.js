@@ -7569,6 +7569,8 @@ function submit(preparedSkillText, opts) {
   if (VOICE.state === 'finishing') return;
   // ATO-1042: the starter model is still on its way; the draft stays and the line above says how far it is.
   if (typeof starterHoldsSend === 'function' && starterHoldsSend()) { toast('The model is still downloading', 'Your message stays here; send it once the line above says Ready.', 'bad'); return; }
+  // ATO-1091: a model test has the local model server; the draft stays (fit-test.js fitHoldsSend).
+  if (typeof fitHoldsSend === 'function' && fitHoldsSend()) { toast(FIT_HOLD_TITLE, FIT_HOLD_TEXT, 'bad'); return; }
   const e = $('#entry');
   const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
   /* ATO-405: files in the composer ride in the message itself, as the
@@ -27446,6 +27448,8 @@ function llmLocalHTML() {
       actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'
         + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')
         + llmAppButtonsHTML(['lmstudio', 'atomic-chat'])})
+    // ATO-1091: "Find the best model for my tasks" (fit-test.js), '' while the agent has no fit-test.
+    + (typeof fitModelsPaneHTML === 'function' ? fitModelsPaneHTML() : '')
     + llmTuneHTML()
     + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false,
       {note: '<p class="llm-note">Used to search the agent\u2019s memory by meaning. Without one, it searches by keyword.</p>'});
