@@ -623,7 +623,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         language: stringSchema,
         model: stringSchema,
         translate: booleanSchema,
-        download: booleanSchema,
+        make_default: booleanSchema,
       },
       ["path"],
     ),

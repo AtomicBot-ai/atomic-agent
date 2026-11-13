@@ -1,7 +1,7 @@
 ---
 name: audio-transcribe
 description: "Transcribe speech from audio files and Telegram voice messages (ogg, mp3, m4a, wav, flac, webm) to text locally, no API key: the built-in audio.transcribe tool (whisper.cpp) first, the Python whisper CLI as a fallback. Use whenever a task hinges on the spoken content of an audio attachment."
-version: 1.1.0
+version: 1.2.0
 requires_tools:
   - os.shell.run
   - os.fs.read
@@ -22,11 +22,11 @@ on this computer, with no Python or PyTorch. It converts Telegram voice messages
 
 - Add `"language": "ru"` (or another ISO code) when you know the language; the default is `auto`.
 - The result says what is missing, and you relay it:
-  - `whisper-cli` not installed → offer `brew install whisper-cpp` (macOS/Linux with Homebrew);
-    on Windows the whisper.cpp release zip.
+  - `whisper-cli` not installed on macOS → offer `brew install whisper-cpp`. On Windows and Linux
+    the tool downloads whisper.cpp itself on first use, after the user's approval.
   - `ffmpeg` not installed → offer `brew install ffmpeg` / `sudo apt install ffmpeg` / `winget install ffmpeg`.
-  - the speech model is not downloaded → the result gives its size; ask the user, then call again
-    with `"download": true`.
+  - the first call downloads the speech model (`base`, 148 MB) after the user's approval; add
+    `"model": "small"` for better non-English accuracy, and `"make_default": true` to keep it.
 - Answer strictly from the returned text.
 
 Use the Python route below only when `audio.transcribe` is not available in this build, or the user

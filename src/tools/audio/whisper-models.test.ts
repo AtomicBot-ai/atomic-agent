@@ -1,8 +1,12 @@
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WHISPER_MODEL,
   formatModelSize,
+  readDefaultWhisperModel,
+  writeDefaultWhisperModel,
   resolveWhisperModel,
   WHISPER_MODEL_ENV,
   WHISPER_MODELS,
@@ -50,5 +54,31 @@ describe("whisper model resolution (ATO-702)", () => {
     }
     expect(formatModelSize(142)).toBe("142 MB");
     expect(formatModelSize(1620)).toBe("1.6 GB");
+  });
+
+  it("carries the size and SHA-256 Hugging Face lists for each file", () => {
+    for (const m of WHISPER_MODELS) {
+      expect(m.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(Math.round(m.sizeBytes / 1_000_000)).toBe(m.sizeMb);
+    }
+    expect(formatModelSize(whisperModelById("base")!.sizeMb)).toBe("148 MB");
+  });
+
+  it("saves and reads the default model, and falls back to base", () => {
+    const dir = mkdtempSync(join(tmpdir(), "whisper-default-"));
+    try {
+      expect(readDefaultWhisperModel(dir)).toBe("base");
+      writeDefaultWhisperModel(dir, "small");
+      expect(JSON.parse(readFileSync(join(dir, "whisper", "settings.json"), "utf8"))).toEqual({ defaultModel: "small" });
+      expect(readDefaultWhisperModel(dir)).toBe("small");
+      const r = resolveWhisperModel(dir, undefined, { env: {}, fileExists: () => false });
+      expect(r.kind === "download" ? r.model.id : "").toBe("small");
+      expect(() => writeDefaultWhisperModel(dir, "huge")).toThrow(/unknown whisper model/);
+      mkdirSync(join(dir, "whisper"), { recursive: true });
+      writeFileSync(join(dir, "whisper", "settings.json"), "{ not json");
+      expect(readDefaultWhisperModel(dir)).toBe("base");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

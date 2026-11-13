@@ -25,6 +25,7 @@ import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
 import { dataCommand } from "./data-command.js";
 import { providersCommand } from "./providers-command.js";
+import { whisperCommand } from "./whisper-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { getAppVersion } from "../version.js";
@@ -158,6 +159,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "providers",
     summary: "Check the Claude Code / Codex subscription CLIs: installed, signed in, version (status)",
     run: providersCommand,
+  },
+  {
+    name: "whisper",
+    summary: "Speech to text: status, download whisper.cpp and the speech model, set the default model",
+    run: whisperCommand,
   },
   {
     name: "update",

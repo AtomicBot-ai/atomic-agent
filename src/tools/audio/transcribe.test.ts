@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolContext } from "../tool-registry.js";
 import { buildAudioTranscribeTool, type AudioTranscribeToolOptions } from "./transcribe.js";
 import type { RunProcess } from "./run-process.js";
+import type { InstallDeps } from "./whisper-install.js";
+import { whisperModelById } from "./whisper-models.js";
+import { managedWhisperBinary, whisperAssetFor } from "./whisper-release.js";
 
 let work: string;
 let data: string;
@@ -23,30 +26,68 @@ afterEach(() => {
 const ctx = (): ToolContext => ({ workingDir: work, sessionId: "s1", stepIndex: 0, signal: new AbortController().signal });
 const MODEL = () => join(data, "whisper", "ggml-base.bin");
 
+/**
+ * A fake network: `download` writes a placeholder file and records the
+ * URL; `hashFile` answers the published digest for whatever URL wrote
+ * the file (or `badHash`); `extract` lays out the release folder.
+ */
+function fakeInstall(opts: { badHash?: boolean } = {}) {
+  const urls: string[] = [];
+  const shaByDest = new Map<string, string>();
+  const deps: InstallDeps = {
+    download: vi.fn(async (url: string, dest: string, o: { onProgress: (t: number, total: number) => void }) => {
+      urls.push(url);
+      mkdirSync(join(dest, ".."), { recursive: true });
+      writeFileSync(dest, "x");
+      const model = ["tiny", "base", "small", "medium", "large-v3-turbo"].map((id) => whisperModelById(id)!).find((m) => url.endsWith(m.file));
+      const asset = whisperAssetFor("linux", "x64")!;
+      const size = model?.sizeBytes ?? asset.sizeBytes;
+      o.onProgress(size / 2, size);
+      o.onProgress(size, size);
+      shaByDest.set(dest, model?.sha256 ?? asset.sha256);
+    }),
+    hashFile: async (path: string) => (opts.badHash ? "0".repeat(64) : shaByDest.get(path) ?? ""),
+    extract: async (_archive: string, _format: string, destDir: string) => {
+      mkdirSync(join(destDir, "whisper-bin-ubuntu-x64"), { recursive: true });
+      writeFileSync(join(destDir, "whisper-bin-ubuntu-x64", "whisper-cli"), "#!/bin/sh\n");
+      writeFileSync(join(destDir, "whisper-bin-ubuntu-x64", "libwhisper.so.1"), "");
+    },
+  };
+  return { deps, urls };
+}
+
 function tool(over: {
   binaries?: string[];
   modelOnDisk?: boolean;
   run?: RunProcess;
-  download?: AudioTranscribeToolOptions["download"];
+  platform?: NodeJS.Platform;
+  install?: InstallDeps;
 } = {}) {
   const binaries = over.binaries ?? ["/bin/whisper-cli", "/bin/ffmpeg"];
+  const platform = over.platform ?? "darwin";
   const request = vi.fn(async () => ({ approved: true }));
+  const progress: Array<{ fraction: number; label: string }> = [];
   const calls: Array<{ cmd: string; args: readonly string[] }> = [];
   const run: RunProcess = over.run ?? (async (cmd, args) => {
     calls.push({ cmd, args });
     return cmd.endsWith("whisper-cli") ? { code: 0, stdout: " Привет, это тест.\n", stderr: "" } : { code: 0, stdout: "", stderr: "" };
   });
-  const download = over.download ?? vi.fn(async () => undefined);
+  const installed = fakeInstall();
+  const install = over.install ?? installed.deps;
   const built = buildAudioTranscribeTool({
     approvals: { request } as never,
     approvalRequired: true,
     dataDir: () => data,
-    binaryLookup: { env: { PATH: "/bin" }, platform: "darwin", widenEnv: (e) => e, isExecutable: (p) => binaries.includes(p) },
-    modelLookup: { env: {}, fileExists: (p) => (over.modelOnDisk ?? true) && p === MODEL() },
+    platform,
+    arch: "x64",
+    // A downloaded binary counts as executable once it is on disk.
+    binaryLookup: { env: { PATH: "/bin" }, platform, widenEnv: (e) => e, isExecutable: (p) => binaries.includes(p) || (p.startsWith(data) && existsSync(p)) },
+    modelLookup: { env: {}, fileExists: (p) => (p === MODEL() && (over.modelOnDisk ?? true)) || (p.startsWith(data) && existsSync(p)) },
     run,
-    download,
+    install,
+    onProgress: (_sid, u) => progress.push({ fraction: u.fraction, label: u.label }),
   });
-  return { built, request, calls, download };
+  return { built, request, calls, urls: installed.urls, progress };
 }
 
 describe("audio.transcribe (ATO-702)", () => {
@@ -78,30 +119,79 @@ describe("audio.transcribe (ATO-702)", () => {
     expect(calls.map((c) => c.cmd)).toEqual(["/bin/whisper-cli"]);
   });
 
-  it("does not download the model unasked: it answers with the size first", async () => {
-    const { built, request, download } = tool({ modelOnDisk: false });
+  it("downloads a missing model on first use after one approval, with progress, then runs", async () => {
+    const { built, request, urls, progress, calls } = tool({ modelOnDisk: false });
     const result = await built.run({ path: "voice.ogg" }, ctx());
-    expect(result.status).toBe("error");
-    expect(result.summary).toContain("142 MB");
-    expect(result.summary).toContain('"download": true');
-    expect(result.details).toMatchObject({ needsDownload: true, model: "base" });
-    expect(request).not.toHaveBeenCalled();
-    expect(download).not.toHaveBeenCalled();
+    expect(result.status).toBe("ok");
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({ tool: "audio.transcribe", category: "http", affectedResources: ["huggingface.co"], reason: expect.stringContaining("148 MB") }),
+      expect.anything(),
+    );
+    expect(urls).toEqual(["https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin"]);
+    expect(existsSync(MODEL())).toBe(true);
+    expect(progress.length).toBeGreaterThan(1);
+    expect(progress.at(-1)!.fraction).toBe(1);
+    expect(calls.at(-1)!.args).toEqual(expect.arrayContaining(["-m", MODEL()]));
   });
 
-  it("asks for approval with the size and host, then downloads from Hugging Face", async () => {
-    const { built, request, download } = tool({ modelOnDisk: false });
-    const result = await built.run({ path: "voice.ogg", download: true }, ctx());
+  it("on Linux with nothing installed fetches the upstream whisper.cpp build and the model, then runs", async () => {
+    const { built, request, urls, progress, calls } = tool({ platform: "linux", binaries: ["/bin/ffmpeg"], modelOnDisk: false });
+    const result = await built.run({ path: "voice.ogg" }, ctx());
     expect(result.status).toBe("ok");
+    expect(request).toHaveBeenCalledTimes(1);
     expect(request).toHaveBeenCalledWith(
-      expect.objectContaining({ tool: "audio.transcribe", category: "http", affectedResources: ["huggingface.co"], reason: expect.stringContaining("142 MB") }),
+      expect.objectContaining({ affectedResources: ["github.com", "huggingface.co"] }),
       expect.anything(),
     );
-    expect(download).toHaveBeenCalledWith(
+    expect(urls).toEqual([
+      "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-ubuntu-x64.tar.gz",
       "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
-      MODEL(),
-      expect.anything(),
-    );
+    ]);
+    const bin = managedWhisperBinary(data, "linux");
+    expect(existsSync(bin)).toBe(true);
+    expect(calls.at(-1)!.cmd).toBe(bin);
+    const fractions = progress.map((p) => p.fraction);
+    expect(fractions).toEqual([...fractions].sort((x, y) => x - y));
+    expect(progress.some((p) => p.label.includes("whisper.cpp"))).toBe(true);
+    expect(progress.some((p) => p.label.includes("base"))).toBe(true);
+  });
+
+  it("fetches small when the saved default is small", async () => {
+    const { built, urls, calls } = tool({ modelOnDisk: false });
+    mkdirSync(join(data, "whisper"), { recursive: true });
+    writeFileSync(join(data, "whisper", "settings.json"), JSON.stringify({ defaultModel: "small" }));
+    const result = await built.run({ path: "voice.ogg" }, ctx());
+    expect(result.status).toBe("ok");
+    expect(urls).toEqual(["https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"]);
+    expect(calls.at(-1)!.args).toEqual(expect.arrayContaining(["-m", join(data, "whisper", "ggml-small.bin")]));
+  });
+
+  it("make_default saves the model for later calls", async () => {
+    const { built, urls } = tool({ modelOnDisk: false });
+    await built.run({ path: "voice.ogg", model: "small", make_default: true }, ctx());
+    expect(JSON.parse(readFileSync(join(data, "whisper", "settings.json"), "utf8"))).toEqual({ defaultModel: "small" });
+    expect(urls).toEqual(["https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"]);
+    expect((await built.run({ path: "voice.ogg", make_default: true }, ctx())).status).toBe("error");
+  });
+
+  it("throws away a download whose SHA-256 does not match", async () => {
+    const bad = fakeInstall({ badHash: true });
+    const { built } = tool({ modelOnDisk: false, install: bad.deps });
+    const result = await built.run({ path: "voice.ogg" }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("SHA-256");
+    expect(existsSync(MODEL())).toBe(false);
+    expect(existsSync(`${MODEL()}.download`)).toBe(false);
+  });
+
+  it("on macOS a missing whisper.cpp is the brew line, nothing is downloaded", async () => {
+    const { built, request, urls } = tool({ binaries: ["/bin/ffmpeg"], modelOnDisk: false });
+    const result = await built.run({ path: "voice.ogg" }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("brew install whisper-cpp");
+    expect(request).not.toHaveBeenCalled();
+    expect(urls).toEqual([]);
   });
 
   it("refuses a file that is not audio or does not exist", async () => {

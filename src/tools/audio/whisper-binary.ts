@@ -5,10 +5,11 @@ import { withToolchainEnv } from "../../sandbox/command-toolchain-env.js";
 /**
  * Where the whisper.cpp command line and ffmpeg live (ATO-702).
  *
- * Nothing is downloaded here: the agent uses a binary the user
- * installed (`brew install whisper-cpp ffmpeg`, a distro package, the
- * Windows zip from the whisper.cpp releases) or one named by an
- * environment variable. The lookup is the PATH the process has plus
+ * Lookup only; the download lives in `whisper-install.ts`. Order: the
+ * binary an environment variable names, the copy the agent downloaded
+ * into the models folder (Windows, Linux), then one the user installed
+ * (`brew install whisper-cpp`, a distro package). The PATH search is the
+ * PATH the process has plus
  * the toolchain folders a desktop-launched agent misses
  * (`withToolchainEnv`: `/opt/homebrew/bin` and friends), so a Homebrew
  * install works from the desktop app too.
@@ -37,7 +38,7 @@ export interface BinaryLookupOptions {
 }
 
 export type BinaryResolution =
-  | { found: true; path: string; source: "env" | "path" }
+  | { found: true; path: string; source: "env" | "managed" | "path" }
   | { found: false; reason: string };
 
 function defaultIsExecutable(path: string, platform: NodeJS.Platform): boolean {
@@ -85,6 +86,7 @@ function resolveBinary(
   names: readonly string[],
   missing: string,
   options: BinaryLookupOptions,
+  managed?: string,
 ): BinaryResolution {
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
@@ -99,6 +101,7 @@ function resolveBinary(
     }
     return { found: true, path: configured, source: "env" };
   }
+  if (managed !== undefined && isExecutable(managed, platform)) return { found: true, path: managed, source: "managed" };
   const onPath = findExecutable(names, options);
   return onPath === null ? { found: false, reason: missing } : { found: true, path: onPath, source: "path" };
 }
@@ -118,14 +121,18 @@ export function ffmpegInstallHint(platform: NodeJS.Platform = process.platform):
   return "Install it with your package manager, e.g. `sudo apt install ffmpeg`";
 }
 
-/** The whisper.cpp CLI: `ATOMIC_AGENT_WHISPER_BIN`, else the PATH. */
-export function resolveWhisperBinary(options: BinaryLookupOptions = {}): BinaryResolution {
+/**
+ * The whisper.cpp CLI: `ATOMIC_AGENT_WHISPER_BIN`, else the downloaded
+ * copy at `managed` (`managedWhisperBinary`), else the PATH.
+ */
+export function resolveWhisperBinary(options: BinaryLookupOptions = {}, managed?: string): BinaryResolution {
   const platform = options.platform ?? process.platform;
   return resolveBinary(
     WHISPER_BIN_ENV,
     WHISPER_BINARY_NAMES,
     `whisper.cpp (whisper-cli) is not installed. ${whisperInstallHint(platform)}, or set ${WHISPER_BIN_ENV} to its full path.`,
     options,
+    managed,
   );
 }
 

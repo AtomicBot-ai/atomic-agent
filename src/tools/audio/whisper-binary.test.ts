@@ -26,6 +26,17 @@ describe("whisper.cpp binary lookup (ATO-702)", () => {
     }).found).toBe(false);
   });
 
+  it("takes the downloaded copy before PATH, after the configured path", () => {
+    const managed = "/state/models/whisper/bin/b5454/whisper-cli";
+    const base = { env: { PATH: "/usr/bin" }, platform: "linux" as const, widenEnv: noWiden };
+    expect(resolveWhisperBinary({ ...base, isExecutable: only(managed, "/usr/bin/whisper-cli") }, managed))
+      .toEqual({ found: true, path: managed, source: "managed" });
+    expect(resolveWhisperBinary({ ...base, isExecutable: only("/usr/bin/whisper-cli") }, managed))
+      .toEqual({ found: true, path: "/usr/bin/whisper-cli", source: "path" });
+    expect(resolveWhisperBinary({ ...base, env: { ...base.env, [WHISPER_BIN_ENV]: "/opt/w/whisper-cli" }, isExecutable: only(managed, "/opt/w/whisper-cli") }, managed))
+      .toMatchObject({ source: "env" });
+  });
+
   it("prefers the configured path and refuses a relative or missing one", () => {
     expect(resolveWhisperBinary({
       env: { [WHISPER_BIN_ENV]: "/opt/w/whisper-cli", PATH: "/usr/bin" }, platform: "darwin", widenEnv: noWiden,
