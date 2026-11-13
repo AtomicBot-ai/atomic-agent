@@ -661,6 +661,11 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
               instructions: stringSchema,
               deliverable: stringSchema,
               files: { ...stringArraySchema, maxItems: 32 },
+              // The planner's time estimate (ATO-1363). Lower bound only,
+              // like the budgets: `readEtaSeconds` drops an estimate over
+              // a day silently, and a schema maximum would turn that
+              // cosmetic guess into a refused fan-out.
+              etaSeconds: { type: "integer", minimum: 1 },
               // Per-task budgets. No upper bound here: the runner
               // clamps them to a multiple of the configured default and
               // says so in the result, because a number too big is the
