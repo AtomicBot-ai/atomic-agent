@@ -37,6 +37,9 @@ const UNATTENDED_ORIGINS: ReadonlySet<string> = new Set([
   "scheduler",
   "telegram",
   "discord",
+  // The Signal (ATO-1462) and Slack (ATO-1464) bridges; harmless before they land.
+  "signal",
+  "slack",
   "http",
 ]);
 

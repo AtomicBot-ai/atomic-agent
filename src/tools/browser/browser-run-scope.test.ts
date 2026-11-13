@@ -13,6 +13,11 @@ describe("who the browser works for (ATO-959)", () => {
     }
   });
 
+  it("the Signal and Slack bridges are unattended too", () => {
+    expect(isAttendedTurn("slack", undefined)).toBe(false);
+    expect(isAttendedTurn("signal", undefined)).toBe(false);
+  });
+
   it("the TUI, the desktop and a terminal run are watched", () => {
     for (const origin of ["tui", "sidecar", "cli", undefined]) {
       expect(isAttendedTurn(origin, undefined)).toBe(true);
