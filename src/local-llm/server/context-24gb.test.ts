@@ -19,7 +19,6 @@ import {
   estimateComputeReserveMiB,
   estimateContextSize,
   estimateLaunchKvBytes,
-  fitContextForSlots,
   MIN_AUTO_CONTEXT,
   VISION_UBATCH_SIZE,
 } from "./context-size.js";
@@ -28,8 +27,8 @@ import {
   GPU_AUTO_MAX_SLOTS,
   GPU_AUTO_START_CONTEXT,
   GPU_GROWING_MAX_SLOTS,
-  resolveDedicatedGpuAutoContext,
 } from "./context-growth.js";
+import { buildLlamaServerArgs, resolveEffectiveContextSize } from "./daemon-lifecycle.js";
 import { MAX_AUTO_SLOTS, resolveWorkerSlots } from "./worker-slots.js";
 
 /**
@@ -55,66 +54,81 @@ function header(pairs: Record<string, SyntheticGgufValue>) {
   const meta = parseGgufHeader(encodeSyntheticGguf(pairs));
   const source = kvLayoutSourceFromMetadata(meta);
   if (!source) throw new Error("fixture header has no layout");
-  return { layout: buildKvLayout(source), recurrent: recurrentStateBytesPerSequence(meta) };
+  return { layout: buildKvLayout(source), source, recurrent: recurrentStateBytesPerSequence(meta) };
 }
 
+/** The card as `llama-server --list-devices` reports it, nothing else loaded. */
+const CARD_24GB = {
+  id: "CUDA0",
+  description: "NVIDIA GeForce RTX 4090",
+  totalMemMiB: 24_564,
+  freeMemMiB: CARD_24GB_FREE_MIB,
+};
+
 /**
- * The auto launch on the card the way `resolveEffectiveContextSize` and
- * `buildLlamaServerArgs` size it for `parallel: "auto"` with the
- * projector loaded: slots and reserve fitted together under the
- * dedicated-GPU slot cap, the window then held by
- * `resolveDedicatedGpuAutoContext`, and `--parallel` derived from the
- * window the server gets.
+ * The auto launch on the card through the real launch path: the window
+ * from `resolveEffectiveContextSize` (dedicated-GPU slot cap, reserve
+ * fitted with the slots, `resolveDedicatedGpuAutoContext`) with the
+ * device table mocked, and `--parallel` from `buildLlamaServerArgs` with
+ * the slot cap that launch hands it, as `startDaemon` does for
+ * `parallel: "auto"` with the projector loaded.
  */
-function autoLaunch(
+async function autoLaunch(
   model: typeof QWEN38_27B,
   pairs: Record<string, SyntheticGgufValue>,
   vocabSize: number | null,
   growable = false,
 ) {
-  const { layout, recurrent } = header(pairs);
-  const slotCap = growable ? GPU_GROWING_MAX_SLOTS : GPU_AUTO_MAX_SLOTS;
-  const reserveFor = (slots: number) =>
+  const { layout, source, recurrent } = header(pairs);
+  const resolved = await resolveEffectiveContextSize(CARD_24GB.id, model, {
+    configured: 0,
+    hasMmproj: true,
+    kvLayout: source,
+    listDevices: async () => [CARD_24GB],
+    ...(growable ? { growContext: true } : {}),
+    reserve: { vocabSize, recurrentStateBytesPerSlot: recurrent },
+    slots: { parallel: "auto" },
+  });
+  const args = buildLlamaServerArgs(
+    {
+      dataDir: "/tmp/data",
+      modelId: "qwen-3.5-4b",
+      port: 19091,
+      device: CARD_24GB.id,
+      parallel: "auto",
+      mmprojFile: "/tmp/data/mmproj.gguf",
+      ...(resolved.autoSlotsCap === null ? {} : { autoSlotsCap: resolved.autoSlotsCap }),
+    },
+    "/tmp/data/model.gguf",
+    "model",
+    resolved.contextSize,
+  );
+  const slots = Number(args[args.indexOf("--parallel") + 1]);
+  expect(args[args.indexOf("--ctx-size") + 1]).toBe(String(resolved.contextSize));
+  // Everything the launch puts on the card, against what the fit may use.
+  const usedMiB =
+    (model.fileSizeGb + model.mmprojFileSizeGb) * MIB_PER_GB +
     estimateComputeReserveMiB({
       ubatchSize: VISION_UBATCH_SIZE,
       vocabSize,
       hasVision: true,
       slots,
       recurrentStateBytesPerSlot: recurrent,
-    });
-  const sized = fitContextForSlots({
-    maxSlots: slotCap,
-    reserveFor,
-    fit: (computeReserveMiB) =>
-      estimateContextSize({
-        freeVramMiB: CARD_24GB_FREE_MIB,
-        modelSizeGb: model.fileSizeGb,
-        mmprojSizeGb: model.mmprojFileSizeGb,
-        maxContextLength: model.maxContextLength,
-        configuredContextSize: 0,
-        kvLayout: layout,
-        computeReserveMiB,
-      }),
-    slotsFor: (contextSize) =>
-      resolveWorkerSlots({ contextSize, cpuOnly: false, maxSlots: slotCap }),
-  });
-  const gpu = resolveDedicatedGpuAutoContext({ fitContext: sized.contextSize, growable });
-  const slots = resolveWorkerSlots({
-    contextSize: gpu.contextSize,
-    cpuOnly: false,
-    maxSlots: gpu.maxSlots,
-  });
-  // Everything the launch puts on the card, against what the fit may use.
-  const usedMiB =
-    (model.fileSizeGb + model.mmprojFileSizeGb) * MIB_PER_GB +
-    reserveFor(slots) +
+    }) +
     estimateLaunchKvBytes({
       kvLayout: layout,
       modelSizeGb: model.fileSizeGb,
-      contextSize: gpu.contextSize,
+      contextSize: resolved.contextSize,
     }) /
       MIB;
-  return { contextSize: gpu.contextSize, slots, usedMiB, layout, recurrent };
+  return {
+    contextSize: resolved.contextSize,
+    slots,
+    autoSlotsCap: resolved.autoSlotsCap,
+    usedMiB,
+    layout,
+    recurrent,
+  };
 }
 
 const USABLE_MIB = CARD_24GB_FREE_MIB * VRAM_SAFETY_FRACTION;
@@ -137,36 +151,38 @@ describe("the headers of the 24 GB case (ATO-866)", () => {
 });
 
 describe("the auto launch on a 24 GB card (ATO-866)", () => {
-  it("qwen-3.8-27b is no longer handed 262,144 × 8, and what it gets fits the card", () => {
-    const launch = autoLaunch(QWEN38_27B, qwen38_27bPairs(), QWEN_VOCAB);
+  it("qwen-3.8-27b is no longer handed 262,144 × 8, and what it gets fits the card", async () => {
+    const launch = await autoLaunch(QWEN38_27B, qwen38_27bPairs(), QWEN_VOCAB);
     expect(launch.contextSize === 262_144 && launch.slots === MAX_AUTO_SLOTS).toBe(false);
     expect(launch.contextSize).toBeLessThanOrEqual(GPU_AUTO_MAX_CONTEXT);
     expect(launch.slots).toBeLessThanOrEqual(GPU_AUTO_MAX_SLOTS);
+    expect(launch.autoSlotsCap).toBe(GPU_AUTO_MAX_SLOTS);
     expect(launch.usedMiB).toBeLessThanOrEqual(USABLE_MIB);
     // 1,750 MiB of turbo3 cache, 2,187 MiB of buffers and state for 3 slots.
     expect(launch).toMatchObject({ contextSize: 128_000, slots: 3 });
   });
 
-  it("gemma-4-12b gets the dedicated-GPU cap, 131,072 × 4, well inside the card", () => {
-    const launch = autoLaunch(GEMMA4_12B, gemma4_12bPairs(), null);
+  it("gemma-4-12b gets the dedicated-GPU cap, 131,072 × 4, well inside the card", async () => {
+    const launch = await autoLaunch(GEMMA4_12B, gemma4_12bPairs(), null);
     expect(launch).toMatchObject({ contextSize: GPU_AUTO_MAX_CONTEXT, slots: GPU_AUTO_MAX_SLOTS });
     // Its cache is ~0.5 GB at that window: memory does not explain its
     // slowness on the card (ATO-848), the live check (ATO-865) has to.
     expect(launch.usedMiB).toBeLessThan(USABLE_MIB - 10_000);
   });
 
-  it("qwen-3.6-35b-a3b still gets 32,768 × 1", () => {
-    const launch = autoLaunch(QWEN36_35B_A3B, qwen36_35bA3bPairs(), QWEN_VOCAB);
+  it("qwen-3.6-35b-a3b still gets 32,768 × 1", async () => {
+    const launch = await autoLaunch(QWEN36_35B_A3B, qwen36_35bA3bPairs(), QWEN_VOCAB);
     expect(launch).toMatchObject({ contextSize: MIN_AUTO_CONTEXT, slots: 1 });
   });
 
-  it("a launch that grows with the conversation starts both 27B and 12B at 32,768", () => {
+  it("a launch that grows with the conversation starts both 27B and 12B at 32,768", async () => {
     for (const [model, pairs, vocab] of [
       [QWEN38_27B, qwen38_27bPairs(), QWEN_VOCAB],
       [GEMMA4_12B, gemma4_12bPairs(), null],
     ] as const) {
-      const launch = autoLaunch(model, pairs, vocab, true);
+      const launch = await autoLaunch(model, pairs, vocab, true);
       expect(launch.contextSize).toBe(GPU_AUTO_START_CONTEXT);
+      expect(launch.autoSlotsCap).toBe(GPU_GROWING_MAX_SLOTS);
       expect(launch.slots).toBeLessThanOrEqual(GPU_GROWING_MAX_SLOTS);
     }
   });
