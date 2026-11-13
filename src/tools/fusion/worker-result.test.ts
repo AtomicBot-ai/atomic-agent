@@ -131,6 +131,24 @@ describe("WorkerRunCollector", () => {
     expect(result.tools).toMatchObject({ calls: 5, errors: 2, writes: 2 });
   });
 
+  it("does not count a dry-run patch as a write (ATO-1491)", () => {
+    const c = new WorkerRunCollector();
+    // `os.fs.patch` without `apply: true` previews and leaves the file alone.
+    c.observe(toolExecuted("os.fs.patch", "ok", "patch dry-run:", { mode: "dry-run" }));
+    expect(
+      c.finish({ id: "t", title: "T", reason: "reply", stepCount: 1, durationMs: 1 })
+        .tools,
+    ).toMatchObject({ calls: 1, errors: 0, writes: 0 });
+
+    const applied = new WorkerRunCollector();
+    applied.observe(toolExecuted("os.fs.patch", "ok", "patch dry-run:", { mode: "dry-run" }));
+    applied.observe(toolExecuted("os.fs.patch", "ok", "patch applied:", { mode: "applied" }));
+    expect(
+      applied.finish({ id: "t", title: "T", reason: "reply", stepCount: 2, durationMs: 1 })
+        .tools,
+    ).toMatchObject({ calls: 2, errors: 0, writes: 1 });
+  });
+
   it("keeps the last reply when an auto-continued turn emits several", () => {
     const c = new WorkerRunCollector();
     c.observe(reply("first leg"));

@@ -88,7 +88,7 @@ export interface WorkerToolStats {
   calls: number;
   errors: number;
   /**
-   * Successful write / edit / patch calls. A task that declared `files`
+   * Successful write / edit / patch calls (a dry-run patch is not one). A task that declared `files`
    * and made none is `no_changes` (`declared-files.ts`), whatever its
    * reply says.
    */
@@ -103,6 +103,17 @@ export const FILE_WRITING_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.patch",
   "os.fs.restore",
 ]);
+
+/**
+ * `os.fs.patch` without `apply: true` only previews: it comes back `ok`
+ * with `details.mode: "dry-run"` and the file untouched (ATO-1491).
+ */
+function isDryRunPatch(
+  tool: string,
+  details: Record<string, unknown>,
+): boolean {
+  return tool === "os.fs.patch" && details.mode === "dry-run";
+}
 
 /**
  * How the call as a whole went, for `details.outcome` and the tool
@@ -301,7 +312,12 @@ export class WorkerRunCollector {
       this.calls += 1;
       this.byTool[result.tool] = (this.byTool[result.tool] ?? 0) + 1;
       if (result.status === "error") this.errors += 1;
-      else if (FILE_WRITING_TOOLS.has(result.tool)) this.writes += 1;
+      else if (
+        FILE_WRITING_TOOLS.has(result.tool) &&
+        !isDryRunPatch(result.tool, result.details)
+      ) {
+        this.writes += 1;
+      }
       if (resultCarriesApprovalRefusal(result.summary, result.details)) {
         this.approvalRefused = true;
         if (resultCarriesOperatorOnlyRefusal(result.summary, result.details)) {
