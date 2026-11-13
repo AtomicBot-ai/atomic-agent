@@ -141,7 +141,7 @@ describe("AgentLoop task spend ceiling", () => {
     expect(result.spendUsd!).toBeLessThanOrEqual(1);
   });
 
-  it("makes no further paid call once one step reached the cap (ATO-1472)", async () => {
+  it("closes from its records once the first step used up the cap (ATO-1472)", async () => {
     // The overnight case: a $0.01 cap and a first step that costs $0.01.
     const { agent, prompts } = loop(
       (call) => (call <= 1 ? readCall : replyCall("should not run")),
@@ -151,12 +151,46 @@ describe("AgentLoop task spend ceiling", () => {
       createEmptySessionState({ id: "s-cost-one-step", workingDir }),
       options({ taskMaxCostUsd: 0.01 }),
     );
+    // The model is not called again and the spend stays at the cap.
     expect(prompts).toHaveLength(1);
     expect(result.reason).toBe("max_steps");
     expect(result.stopCause).toBe("cost_ceiling");
     expect(result.spendUsd).toBeCloseTo(0.01, 6);
+    // The closing card, built from the turn's records.
     const last = result.session.turns[result.session.turns.length - 1];
-    expect(JSON.stringify(last)).toMatch(/stopped: spent \$0\.01 of \$0\.01 budget/);
+    expect(last?.kind).toBe("assistant_reply");
+    const text = last?.kind === "assistant_reply" ? last.text : "";
+    expect(text).toMatch(/stopped: spent \$0\.01 of \$0\.01 budget/);
+    expect(text).toContain("Tool calls: 1");
+    expect(text).not.toContain("should not run");
+  });
+
+  it("closes from its records when the reserve has no room for the summary (ATO-1472)", async () => {
+    let price = 0;
+    const { agent, prompts } = loop(
+      (call) => (call <= 2 ? readCall : replyCall("should not run")),
+      () => {
+        price += 1;
+        // Step 1 is cheap, step 2 is dear: the estimate jumps past the room left.
+        return price === 1 ? 0.1 : 0.5;
+      },
+    );
+    const result = await agent.runTurn(
+      createEmptySessionState({ id: "s-cost-no-room", workingDir }),
+      options({ taskMaxCostUsd: 1 }),
+    );
+    // Step 1 $0.10 (room for $0.10 + $0.10), step 2 $0.50: spend $0.60,
+    // and a $0.50 summary would pass $1.00, so no third call is made.
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).not.toContain("The spend budget for this task");
+    expect(result.reason).toBe("max_steps");
+    expect(result.stopCause).toBe("cost_ceiling");
+    expect(result.spendUsd).toBeCloseTo(0.6, 6);
+    expect(result.spendUsd!).toBeLessThanOrEqual(1);
+    const last = result.session.turns[result.session.turns.length - 1];
+    const text = last?.kind === "assistant_reply" ? last.text : "";
+    expect(text).toMatch(/stopped: spent \$0\.60 of \$1\.00 budget/);
+    expect(text).toContain("Tool calls: 2");
   });
 
   it("closes with a plain spend line when the summary step does not reply", async () => {

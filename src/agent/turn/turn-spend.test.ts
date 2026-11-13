@@ -87,10 +87,14 @@ describe("turn spend ceiling helpers", () => {
     expect(budgetStepPlan(0.9, 0, 1)).toBe("work");
     // Room for one more step and the summary after it.
     expect(budgetStepPlan(0.2, 0.4, 1)).toBe("work");
-    // One more step would leave no room for the summary.
+    // One more step would leave no room for the summary, the summary fits.
     expect(budgetStepPlan(0.4, 0.4, 1)).toBe("summary");
     expect(budgetStepPlan(0.9, 0.04, 1)).toBe("summary");
-    // A paid step already reached the cap: no further paid call.
+    expect(budgetStepPlan(0.6, 0.4, 1)).toBe("summary");
+    // Not even the summary fits: no further model call.
+    expect(budgetStepPlan(0.7, 0.4, 1)).toBe("stop");
+    expect(budgetStepPlan(0.99, 0.02, 1)).toBe("stop");
+    // A paid step already reached the cap.
     expect(budgetStepPlan(1, 0.4, 1)).toBe("stop");
     expect(budgetStepPlan(0.02, 0.02, 0.01)).toBe("stop");
     // Reached by compaction alone with a free model: the summary is free.

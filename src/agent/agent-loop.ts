@@ -294,9 +294,9 @@ export class AgentLoop {
           await this.deps.profileManager.refreshIfStale();
         }
       }
-      // The spend ceiling's plan for this step (ATO-1472). A cap that is
-      // already reached ends the task here, before any event or paid
-      // call: one more completion would only spend past the budget.
+      // The spend ceiling's plan for this step (ATO-1472, a hard cap).
+      // When not even the summary fits, the task ends here, before any
+      // event or model call, and closes with a card from its records.
       const lastStepUsd = completionSpendUsd - completionSpendBeforeLastStep;
       completionSpendBeforeLastStep = completionSpendUsd;
       let budgetPlan = budgetStepPlan(turn.spendUsd, lastStepUsd, costCeilingUsd);

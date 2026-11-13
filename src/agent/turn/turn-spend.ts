@@ -13,13 +13,14 @@ import type { TurnLoopState } from "./turn-state.js";
  * makes that step the reserved summary step, exactly as a time ceiling
  * does, and the task ends with `stopCause: "cost_ceiling"`.
  *
- * The summary step is one more paid completion, so it is budgeted for
- * (ATO-1472): a normal step runs only while the spend leaves room for
- * it AND for the summary after it, each estimated at what the last step
- * cost (`budgetStepPlan`). Once a single paid step has already pushed
- * the spend to the cap, no further paid call is made: the task closes
- * with the plain spend line and the digest built from its own records.
- * Before that fix a $0.01 cap ended at $0.02, the summary on top.
+ * The cap is hard (ATO-1472). The summary step is one more paid
+ * completion, so it is budgeted for: a normal step runs only while the
+ * spend leaves room for it AND for the summary after it, each estimated
+ * at what the last step cost (`budgetStepPlan`). When even the summary
+ * would not fit (the reserve ran out, or one step used the whole cap),
+ * no further model call is made: the task closes with a card built from
+ * its own records (the spend line, tool calls, files changed). Before
+ * that fix a $0.01 cap ended at $0.02, the summary on top.
  *
  * Unpriced completions (a local model, a provider that reports no
  * usage) count as $0, so a budget never stops local work.
@@ -84,9 +85,10 @@ export function costCeilingReached(spendUsd: number, ceilingUsd: number): boolea
  * What the next step may be under a spend ceiling (ATO-1472):
  * - `"work"`: a normal step; the spend leaves room for one more step
  *   and the summary after it;
- * - `"summary"`: the reserved summary step, the last paid call;
- * - `"stop"`: the cap is already reached, so the task closes without
- *   another paid call.
+ * - `"summary"`: the reserved summary step, the last paid call; it still
+ *   fits under the cap;
+ * - `"stop"`: not even the summary fits (or the cap is already reached),
+ *   so the task closes from its records without another model call.
  *
  * `lastStepUsd` is what the model's completions in the previous step
  * cost (every completion it asked for; compaction is not counted). It is
@@ -103,6 +105,7 @@ export function budgetStepPlan(
   if (!(ceilingUsd > 0)) return "work";
   const estimate = Number.isFinite(lastStepUsd) && lastStepUsd > 0 ? lastStepUsd : 0;
   if (costCeilingReached(spendUsd, ceilingUsd)) return estimate > 0 ? "stop" : "summary";
+  if (spendUsd + estimate > ceilingUsd) return "stop";
   return spendUsd + 2 * estimate > ceilingUsd ? "summary" : "work";
 }
 
