@@ -268,7 +268,8 @@ describe("a local worker's limits in the ### fusion block (ATO-1363)", () => {
   it("asks for an output estimate once the speed is measured", () => {
     const block = buildFusionGuidance({ ...LIMITS, tokensPerSecond: 6.4 });
     expect(block).toContain("Set `outputTokens` (or `outputLines`)");
-    expect(block).toContain("flagged, or refused if no limit could hold it");
+    expect(block).toContain("is flagged on its row");
+    expect(block).not.toContain("refused");
   });
 
   it("renders as before when the limits are absent", () => {

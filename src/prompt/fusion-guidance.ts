@@ -171,7 +171,7 @@ export function formatWorkerLimitsLine(
   const estimate =
     facts.tokensPerSecond === null
       ? ""
-      : " Set `outputTokens` (or `outputLines`): a task that cannot write that in its limit at this speed is flagged, or refused if no limit could hold it.";
+      : " Set `outputTokens` (or `outputLines`): a task that cannot write that in its limit at this speed is flagged on its row.";
   return `Each local worker gets ${parts.join(" and ")} (more via \`maxSteps\` / \`timeoutMs\`): a task with \`files\` and no write by half its steps is handed back, one out of time comes back to split, so split big files first.${estimate}`;
 }
 

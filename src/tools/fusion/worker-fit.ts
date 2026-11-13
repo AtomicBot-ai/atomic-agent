@@ -15,10 +15,11 @@
  * - `checkWorkerFit`: per task on the local worker leg, the single-stream
  *   time (tokens / tok/s) and the shared-GPU time (× the workers running
  *   at once) against the task's time limit. Over it: a WARNING that rides
- *   the task's row; the task still runs. Refused only when even running
- *   alone it needs more than `FIT_REFUSE_FACTOR` × its limit AND more
- *   than the longest limit a task may ask for, so no `timeoutMs` could
- *   hold it and splitting is the only way. Speed unknown: nothing.
+ *   the task's row. Never a refusal: an estimate is the planner's guess,
+ *   so every task is dispatched. A task that even running alone needs
+ *   more than the longest limit a task may ask for (no `timeoutMs` could
+ *   hold it) is "oversized": its row says to split it and the result
+ *   carries a note to the planner. Speed unknown: nothing.
  * - `renderEstimateBlock`: after the fan-out, estimated vs actual size
  *   and time per task that carried an estimate, so the next plan in the
  *   same turn is sized from what this machine really did.
@@ -29,13 +30,6 @@ export const TOKENS_PER_OUTPUT_LINE = 10;
 /** Bounds on the estimate: a runaway number is a malformed call. */
 export const MAX_OUTPUT_TOKENS_ESTIMATE = 1_000_000;
 export const MAX_OUTPUT_LINES_ESTIMATE = 100_000;
-/**
- * How far over its limit a task must be, running alone, before the call
- * is refused rather than warned about. Four is the budget ceiling factor
- * (`WORKER_BUDGET_CEILING_FACTOR`): on the default limit, past this no
- * `timeoutMs` the install allows could hold the task.
- */
-export const FIT_REFUSE_FACTOR = 4;
 
 export interface OutputEstimate {
   outputTokens?: number;
@@ -140,23 +134,22 @@ export interface WorkerFitInput {
 export interface WorkerFit {
   /** A warning per task id, for its row. */
   warnings: Map<string, string>;
-  /** Set when a task cannot fit at all; the call should not run. */
-  refusal?: string;
-  /** The ids that caused the refusal. */
-  refused: string[];
+  /** Tasks no allowed limit could hold, even running alone. */
+  oversized: string[];
+  /** For the result, when any task is oversized; the tasks still ran. */
+  plannerNote?: string;
 }
 
 /**
- * Check every task with an estimate against its limit. Pure: the caller
- * decides what a warning and a refusal do.
+ * Check every task with an estimate against its limit. Pure, and only
+ * ever advisory: nothing here stops a task from running.
  */
 export function checkWorkerFit(input: WorkerFitInput): WorkerFit {
   const warnings = new Map<string, string>();
-  const refusals: string[] = [];
-  const refused: string[] = [];
+  const oversized: string[] = [];
   const tps = input.tokensPerSecond;
   if (tps === null || !Number.isFinite(tps) || tps <= 0) {
-    return { warnings, refused };
+    return { warnings, oversized };
   }
   const width = Math.max(1, Math.floor(input.concurrency));
   for (const task of input.tasks) {
@@ -166,36 +159,31 @@ export function checkWorkerFit(input: WorkerFitInput): WorkerFit {
     const aloneMs = (tokens / tps) * 1000;
     const sharedMs = aloneMs * width;
     const size = describeSize(task, tokens);
-    if (
-      aloneMs > FIT_REFUSE_FACTOR * budgetMs &&
-      aloneMs > input.maxBudgetMs
-    ) {
-      refused.push(task.id);
-      refusals.push(
-        `[${task.id}] ${size} at ${tps} tok/s is ~${formatEstimateMs(aloneMs)} even running alone, over ${FIT_REFUSE_FACTOR}x its ${formatEstimateMs(budgetMs)} limit and over the longest limit a task may ask for (${formatEstimateMs(input.maxBudgetMs)})`,
+    if (aloneMs > input.maxBudgetMs) {
+      oversized.push(task.id);
+      warnings.set(
+        task.id,
+        `fit: ${size} at ${tps} tok/s is ~${formatEstimateMs(aloneMs)} even running alone, over its ${formatEstimateMs(budgetMs)} limit and over the longest limit a task may ask for (${formatEstimateMs(input.maxBudgetMs)}); it was run anyway and will likely time out — split it into smaller tasks`,
       );
       continue;
     }
     if (sharedMs <= budgetMs) continue;
     const sharing =
       width === 1 ? "" : ` with ${width} workers sharing the GPU`;
-    const fix =
-      aloneMs <= input.maxBudgetMs
-        ? `split it, or give it timeoutMs of at least ${Math.min(Math.ceil(sharedMs * 1.2), input.maxBudgetMs)}`
-        : "split it into smaller tasks";
+    const fix = `split it, or give it timeoutMs of at least ${Math.min(Math.ceil(sharedMs * 1.2), input.maxBudgetMs)}`;
     warnings.set(
       task.id,
       `fit: ${size} at ${tps} tok/s${sharing} is ~${formatEstimateMs(sharedMs)}, over its ${formatEstimateMs(budgetMs)} limit; it was run anyway and may time out — next time ${fix}`,
     );
   }
-  if (refusals.length === 0) return { warnings, refused };
+  if (oversized.length === 0) return { warnings, oversized };
+  const list = oversized.map((id) => `[${id}]`).join(", ");
   return {
     warnings,
-    refused,
-    refusal:
-      `fusion.delegate did not run: ${refusals.join("; ")}. ` +
-      "No time limit this machine allows would let the worker write that much. " +
-      "Split each into smaller tasks (one file or one part each) and delegate again.",
+    oversized,
+    plannerNote:
+      `\n\nNote: ${list} stated more output than any time limit this machine allows could hold, even running alone; ` +
+      `${oversized.length === 1 ? "it was" : "they were"} dispatched anyway. If ${oversized.length === 1 ? "it comes" : "they come"} back unfinished, split into smaller tasks (one file or one part each) rather than re-sending as is.`,
   };
 }
 

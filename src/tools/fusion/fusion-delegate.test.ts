@@ -1981,16 +1981,21 @@ describe("fusion.delegate — output estimate vs the worker's limit (ATO-1363)",
   const measured = (over: Partial<FusionDelegateDeps> = {}) =>
     deps({ localTokensPerSecond: () => 5, ...over });
 
-  it("refuses, before any worker runs, a task no allowed limit could hold", async () => {
+  it("dispatches a task no allowed limit could hold, with a warning and a planner note, never a worker-fit refusal", async () => {
     const runTurn = vi.fn(async () => turnResult());
+    // 2,000 tokens at 5 tok/s = 6m40s even alone, over the 4 min max.
     const result = await buildFusionDelegateTool(measured({ runTurn })).run(
       { tasks: [{ id: "huge", instructions: "Write it all", outputTokens: 2_000 }] },
       ctx(),
     );
-    expect(result.status).toBe("error");
-    expect(result.details).toMatchObject({ reason: "worker-fit", tasks: ["huge"] });
-    expect(result.summary).toContain("[huge] ~2,000 tokens at 5 tok/s");
-    expect(runTurn).not.toHaveBeenCalled();
+    expect(runTurn).toHaveBeenCalledOnce();
+    expect(result.status).toBe("ok");
+    expect(result.details.reason).not.toBe("worker-fit");
+    expect(result.details.oversizedTasks).toEqual(["huge"]);
+    expect(result.summary).toContain("fit: ~2,000 tokens at 5 tok/s is ~6m40s even running alone");
+    expect(result.summary).toContain("split it into smaller tasks");
+    expect(result.summary).toContain("[huge] stated more output than any time limit");
+    expect(result.summary).toContain("it was dispatched anyway");
   });
 
   it("runs a task over its limit, warns on its row, and reports estimate vs actual", async () => {
@@ -2018,6 +2023,7 @@ describe("fusion.delegate — output estimate vs the worker's limit (ATO-1363)",
     );
     expect(unmeasured.status).toBe("ok");
     expect(unmeasured.summary).not.toContain("fit:");
+    expect(unmeasured.details).not.toHaveProperty("oversizedTasks");
     // The size is still reported back, without a time estimate.
     expect(unmeasured.summary).toContain("- [huge] estimated ~2,000 tokens; actual");
     const plain = await buildFusionDelegateTool(measured()).run(

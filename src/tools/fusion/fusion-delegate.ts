@@ -547,9 +547,10 @@ export function buildFusionDelegateTool(
         ? (deps.localTokensPerSecond?.() ?? null)
         : null;
       // Will each task's stated output fit its time limit at that speed
-      // (ATO-1363)? A task over it runs with a warning on its row; one no
-      // allowed limit could hold is refused before the operator is asked.
-      // Without a measured speed, or without estimates, nothing happens.
+      // (ATO-1363)? Advisory only: every task is dispatched. One over its
+      // limit gets a warning on its row; one no allowed limit could hold
+      // also gets a note to the planner in the result. Without a measured
+      // speed, or without estimates, nothing happens.
       const fit = checkWorkerFit({
         tasks: parsed.tasks.filter(
           (t) => taskLegs.get(t.id)?.isWorkerLeg !== false,
@@ -563,9 +564,6 @@ export function buildFusionDelegateTool(
           ),
         maxBudgetMs: mode.workerTimeoutMs * WORKER_BUDGET_CEILING_FACTOR,
       });
-      if (fit.refusal !== undefined) {
-        return error(fit.refusal, { reason: "worker-fit", tasks: fit.refused });
-      }
       // A turn is one job. An orchestrator that reviews and re-delegates
       // runs five fan-outs to build one library, and asking the same
       // question five times is attrition, not consent. The operator's
@@ -1636,7 +1634,7 @@ export function buildFusionDelegateTool(
             ...(contractLine === undefined ? {} : { contractLine }),
             spend,
             ...(ordered ? { waves: plan.waves } : {}),
-          })}${hint}${estimateNote}${
+          })}${hint}${fit.plannerNote ?? ""}${estimateNote}${
             escalationSpendUsd > 0
               ? `\n\nEscalations to ${escalationTarget?.model ?? escalationTarget?.providerId ?? "the escalation model"} cost ${formatUsd(escalationSpendUsd)} this fan-out (each worker's row says what for).`
               : ""
@@ -1664,6 +1662,9 @@ export function buildFusionDelegateTool(
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
             ...(roleSpendUsd > 0 ? { roleSpendUsd } : {}),
             ...(estimates.length === 0 ? {} : { estimates }),
+            ...(fit.oversized.length === 0
+              ? {}
+              : { oversizedTasks: fit.oversized }),
             ...(merges.length === 0 ? {} : { merges }),
             ...(replan === undefined ||
             (replan.pending.length === 0 && replan.exhausted.length === 0)

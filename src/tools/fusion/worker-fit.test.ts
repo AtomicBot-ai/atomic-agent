@@ -4,7 +4,6 @@ import {
   checkWorkerFit,
   estimatedOutputTokens,
   estimateRows,
-  FIT_REFUSE_FACTOR,
   formatEstimateMs,
   readOutputEstimate,
   renderEstimateBlock,
@@ -58,7 +57,7 @@ describe("checkWorkerFit", () => {
       tasks: [{ id: "big", outputTokens: 900_000 }],
     });
     expect(result.warnings.size).toBe(0);
-    expect(result.refusal).toBeUndefined();
+    expect(result.plannerNote).toBeUndefined();
   });
 
   it("does nothing for a task without an estimate or one that fits", () => {
@@ -67,13 +66,14 @@ describe("checkWorkerFit", () => {
       tasks: [{ id: "plain" }, { id: "small", outputTokens: 6_000 }],
     });
     expect(result.warnings.size).toBe(0);
-    expect(result.refusal).toBeUndefined();
+    expect(result.oversized).toEqual([]);
   });
 
   it("warns, without refusing, when a task runs over its limit", () => {
     // 1,500 lines ≈ 15,000 tokens at 5 tok/s = 50 min > 45 min.
     const result = fit({ tasks: [{ id: "big", outputLines: 1500 }] });
-    expect(result.refusal).toBeUndefined();
+    expect(result.oversized).toEqual([]);
+    expect(result.plannerNote).toBeUndefined();
     const warning = result.warnings.get("big");
     expect(warning).toContain("~1,500 lines (~15,000 tokens) at 5 tok/s is ~50m");
     expect(warning).toContain("over its 45m limit");
@@ -90,26 +90,34 @@ describe("checkWorkerFit", () => {
     expect(result.warnings.get("a")).toContain("with 3 workers sharing the GPU is ~1h00m");
   });
 
-  it("refuses only when no allowed limit could hold the task, even alone", () => {
-    // 4× 45 min = 3 h. 60,000 tokens at 5 tok/s = 3h20m: refused.
+  it("never refuses: a task no allowed limit could hold is a warning plus a planner note", () => {
+    // 4× 45 min = 3 h. 60,000 tokens at 5 tok/s = 3h20m even alone.
     const over = fit({ tasks: [{ id: "huge", outputTokens: 60_000 }, { id: "ok" }] });
-    expect(over.refused).toEqual(["huge"]);
-    expect(over.refusal).toContain("fusion.delegate did not run");
-    expect(over.refusal).toContain("[huge]");
-    expect(over.refusal).toContain("Split each into smaller tasks");
-    // Just under the longest limit: a warning, not a refusal.
+    expect(over).not.toHaveProperty("refusal");
+    expect(over.oversized).toEqual(["huge"]);
+    const warning = over.warnings.get("huge");
+    expect(warning).toContain("~3h20m even running alone");
+    expect(warning).toContain("over the longest limit a task may ask for (3h00m)");
+    expect(warning).toContain("run anyway");
+    expect(warning).toContain("split it into smaller tasks");
+    expect(over.plannerNote).toContain("[huge] stated more output than any time limit");
+    expect(over.plannerNote).toContain("it was dispatched anyway");
+    expect(over.warnings.has("ok")).toBe(false);
+    // Just under the longest limit: an ordinary warning, not oversized.
     const under = fit({ tasks: [{ id: "big", outputTokens: 50_000 }] });
-    expect(under.refusal).toBeUndefined();
-    expect(under.warnings.has("big")).toBe(true);
-    // Over the longest limit but within FIT_REFUSE_FACTOR × its own
-    // (raised) limit: still only a warning.
-    const raised = fit({
-      budgetMsFor: () => 120 * MIN,
-      tasks: [{ id: "big", outputTokens: 60_000 }],
+    expect(under.oversized).toEqual([]);
+    expect(under.plannerNote).toBeUndefined();
+    expect(under.warnings.get("big")).toContain("give it timeoutMs of at least");
+    // Two oversized tasks: one note naming both.
+    const two = fit({
+      tasks: [
+        { id: "a", outputTokens: 60_000 },
+        { id: "b", outputLines: 7_000 },
+      ],
     });
-    expect(FIT_REFUSE_FACTOR).toBe(4);
-    expect(raised.refusal).toBeUndefined();
-    expect(raised.warnings.get("big")).toContain("split it into smaller tasks");
+    expect(two.oversized).toEqual(["a", "b"]);
+    expect(two.plannerNote).toContain("[a], [b]");
+    expect(two.plannerNote).toContain("they were dispatched anyway");
   });
 
   it("never suggests a timeoutMs above the longest allowed", () => {
