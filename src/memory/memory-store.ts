@@ -985,13 +985,18 @@ export class MemoryStore {
    *  - Validation errors (empty `addTags`, invalid tag tokens) throw
    *    `MemoryValidationError` — same surface as `store()`.
    *
+   *  - `evictable` (optional): when the row is already at
+   *    `MEMORY_MAX_TAGS`, existing tags this predicate accepts are
+   *    dropped (newest first) to make room for the new ones. Without
+   *    it, new tags past the cap are silently dropped (old behaviour).
+   *
    * The `now` parameter is exposed for tests; production callers pass
    * the runner's injected clock.
    */
   evolveTags(
     id: number,
     addTags: readonly string[],
-    opts: { leaseMs: number; now?: number } = { leaseMs: 0 },
+    opts: { leaseMs: number; now?: number; evictable?: (tag: string) => boolean } = { leaseMs: 0 },
   ): EvolveTagsResult {
     const normalizedId = validateId(id);
     const cleanTags = normalizeTagsInput(addTags);
@@ -1014,7 +1019,7 @@ export class MemoryStore {
       }
     }
     const existing = parseTags(row.tags);
-    const merged = applyEvolveTags(existing, cleanTags);
+    const merged = applyEvolveTags(existing, cleanTags, opts.evictable);
     if (merged.addedTags.length === 0) {
       return {
         outcome: "skipped_no_change",
@@ -1351,12 +1356,28 @@ function normalizeTagsInput(raw: readonly string[]): string[] {
 function applyEvolveTags(
   existing: readonly string[],
   addTags: readonly string[],
+  evictable?: (tag: string) => boolean,
 ): { tags: string[]; addedTags: string[] } {
   const merged: string[] = [...existing];
   const addedTags: string[] = [];
   for (const tag of addTags) {
-    if (merged.length >= MEMORY_MAX_TAGS) break;
     if (merged.includes(tag)) continue;
+    if (merged.length >= MEMORY_MAX_TAGS) {
+      // Make room only by dropping an older tag the caller allows,
+      // never one of the tags this call is adding.
+      let victim = -1;
+      if (evictable) {
+        for (let i = merged.length - 1; i >= 0; i -= 1) {
+          const candidate = merged[i]!;
+          if (!addTags.includes(candidate) && evictable(candidate)) {
+            victim = i;
+            break;
+          }
+        }
+      }
+      if (victim < 0) break;
+      merged.splice(victim, 1);
+    }
     merged.push(tag);
     addedTags.push(tag);
   }

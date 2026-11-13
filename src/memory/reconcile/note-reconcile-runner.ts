@@ -79,6 +79,10 @@ export interface NoteReconcileRunner {
   abortPending(options?: { sessionId?: string }): void;
 }
 
+function isSupersedeSystemTag(tag: string): boolean {
+  return tag === SUPERSEDED_NOTE_TAG || tag.startsWith("superseded-by-");
+}
+
 export function isSupersededNote(entry: { tags: readonly string[] }): boolean {
   return entry.tags.includes(SUPERSEDED_NOTE_TAG);
 }
@@ -130,12 +134,22 @@ export function createNoteReconcileRunner(deps: NoteReconcileRunnerDeps): NoteRe
 
   const mark = (id: number, byId: number): boolean => {
     try {
+      // A note already at the tag cap would silently lose the mark,
+      // so the store may drop an ordinary tag to fit the system ones.
       const result = deps.notesStore.evolveTags(id, [SUPERSEDED_NOTE_TAG, `superseded-by-${byId}`], {
         leaseMs,
         now: now(),
+        evictable: (tag) => !isSupersedeSystemTag(tag),
       });
-      return result.outcome === "applied";
-    } catch {
+      if (result.outcome === "applied" && result.tags.includes(SUPERSEDED_NOTE_TAG)) return true;
+      const alreadyMarked =
+        result.outcome === "skipped_no_change" && result.tags.includes(SUPERSEDED_NOTE_TAG);
+      if (!alreadyMarked && result.outcome !== "skipped_lease_held" && result.outcome !== "missing") {
+        deps.logger?.warn("note_reconcile.mark_failed", { id, byId, outcome: result.outcome });
+      }
+      return false;
+    } catch (err) {
+      deps.logger?.warn("note_reconcile.mark_failed", { id, byId, reason: errorText(err) });
       return false;
     }
   };

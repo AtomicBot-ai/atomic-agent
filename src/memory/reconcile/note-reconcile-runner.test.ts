@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { CompletionResult } from "../../llm/llama-server-client.js";
-import { MemoryStore } from "../memory-store.js";
+import { createDefaultMemoryContextProvider } from "../memory-context-provider.js";
+import { MEMORY_MAX_TAGS, MemoryStore } from "../memory-store.js";
 import type { ReflectionRunner } from "../reflection/reflection-runner.js";
 
 import {
@@ -65,6 +66,35 @@ describe("note reconciliation (ATO-672)", () => {
     expect(after.tags).toContain(`superseded-by-${fresh.id}`);
     expect(after.content).toBe("The user works at Acme as a designer");
     expect(isSupersededNote(store.get(fresh.id)!)).toBe(false);
+  });
+
+  it("marks a note that already has the maximum number of tags", async () => {
+    const fullTags = Array.from({ length: MEMORY_MAX_TAGS }, (_, i) => `topic-${i}`);
+    const old = store.store({ content: "The lisbon office address is Rua Augusta 10", tags: fullTags });
+    const fresh = store.store({ content: "The lisbon office moved to the new address Rua Garrett 5" });
+    const report = await runner(async () => completion(`SUPERSEDE ${old.id}\n`)).reconcile({
+      sessionId: "s1",
+      notes: [fresh],
+    });
+    expect(report.marked).toContain(old.id);
+    const after = store.get(old.id)!;
+    expect(isSupersededNote(after)).toBe(true);
+    expect(after.tags).toContain(`superseded-by-${fresh.id}`);
+    expect(after.tags.length).toBeLessThanOrEqual(MEMORY_MAX_TAGS);
+
+    const context = (await createDefaultMemoryContextProvider({
+      store,
+      recall: { enabled: true, k: 5 },
+      index: { enabled: true, limit: 20, previewChars: 80 },
+      hideSuperseded: true,
+    }).buildMemoryContext({
+      sessionId: "s1",
+      userMessage: "lisbon office address",
+      toolResultSummaries: [],
+      signal: new AbortController().signal,
+    })) as unknown as { recalled: Array<{ id: number }>; index: Array<{ id: number }> };
+    expect(context.recalled.map((e) => e.id)).not.toContain(old.id);
+    expect(context.index.map((e) => e.id)).not.toContain(old.id);
   });
 
   it("marks the NEW note on DUPLICATE", async () => {
