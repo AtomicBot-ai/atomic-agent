@@ -563,6 +563,9 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agent:rewind", { sessionId, priorQuestions, expectText, files }),
   forkSession: (sessionId: string, priorQuestions: number, expectText: string) =>
     ipcRenderer.invoke("agent:forkSession", { sessionId, priorQuestions, expectText }),
+  /** ATO-448: continue a reply a restart cut off (POST /api/sessions/{id}/resume); `release` gives it back. */
+  resumeInterruptedTurn: (sessionId: string, release?: boolean) =>
+    ipcRenderer.invoke("agent:resumeInterruptedTurn", { sessionId, release: release === true }),
 
   /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
   hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),
