@@ -12382,13 +12382,16 @@ async function onboardingTest(
     await js<ObState>("window.__obKey('esc')");
     const keysList = await js<{ rows: string[] }>("(window.__obKey('2'), { rows: window.__wizList().rows })");
     await js<ObState>("window.__obKey('esc')");
-    const appRows = ["Atomic Chat (local)", "Ollama (local)", "LM Studio (local)"];
+    // ATO-626 (#1497): Lemonade is an app on this Mac too, listed first. ATO-1066 (#1488): a model on
+    // another computer on the network is the last Custom row, after any URL.
+    const appRows = ["Lemonade (local)", "Atomic Chat (local)", "Ollama (local)", "LM Studio (local)"];
+    const LAN_ROW = "Another computer on your network";
     check(
-      "wizard: Custom lists the apps on this Mac, a llama.cpp server and any URL; Cloud lists none of them",
+      "wizard: Custom lists the apps on this Mac, a llama.cpp server, any URL and another computer on the network; Cloud lists none of them",
       customList.step === "cloud" &&
-        JSON.stringify(customList.rows.slice(0, 4)) === JSON.stringify([...appRows, "llama.cpp server"]) &&
-        customList.rows.length === 5 && /custom base URL/.test(customList.rows[4] ?? "") &&
-        keysList.rows.length > 3 && !keysList.rows.some((r) => appRows.includes(r) || r === "llama.cpp server" || /custom base URL/.test(r)),
+        JSON.stringify(customList.rows.slice(0, 5)) === JSON.stringify([...appRows, "llama.cpp server"]) &&
+        customList.rows.length === 7 && /custom base URL/.test(customList.rows[5] ?? "") && customList.rows[6] === LAN_ROW &&
+        keysList.rows.length > 3 && !keysList.rows.some((r) => appRows.includes(r) || r === "llama.cpp server" || /custom base URL/.test(r) || r === LAN_ROW),
       `custom=${JSON.stringify(customList)} keys=${JSON.stringify(keysList.rows)}`,
     );
     const toCustom = await js<ObState>(
