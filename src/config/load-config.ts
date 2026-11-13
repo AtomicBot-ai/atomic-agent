@@ -22,6 +22,7 @@ import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
 import { emitConfigNoticeOnce } from "./config-primitives.js";
+import { cloneExtraChannelsConfig } from "./extra-channel-config.js";
 import type {
   LocalModelsValueSource,
   LocalModelsValueSources,
@@ -722,6 +723,7 @@ export function loadConfig(): AtomicAgentConfig {
       enabled: user.discord.enabled,
       ownerUserIds: user.discord.ownerUserIds,
     },
+    channels: cloneExtraChannelsConfig(user.channels),
     swarm: {
       units: user.swarm.units.map((u) => ({ ...u })),
     },

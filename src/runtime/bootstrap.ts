@@ -36,6 +36,7 @@ import { SteeringInbox } from "./steering-inbox.js";
 import { TelegramChannel } from "../channels/telegram/index.js";
 import { DiscordChannel } from "../channels/discord/index.js";
 import { SwarmRegistry } from "../channels/swarm/index.js";
+import type { ChannelRegistry } from "../channels/channel-registry.js";
 
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 
@@ -741,6 +742,7 @@ export async function createAgentRuntime(
   let telegramChannelForShutdown: TelegramChannel | null = null;
   let discordChannelForShutdown: DiscordChannel | null = null;
   let swarmForShutdown: SwarmRegistry | null = null;
+  let channelsForShutdown: ChannelRegistry | null = null;
   let stopPluginMcpWatch: (() => void) | null = null;
   const turnState = prepareRuntimeTurnState();
   const { pendingSessionNamings, turnsInFlight } = turnState;
@@ -757,6 +759,7 @@ export async function createAgentRuntime(
     get telegramChannelForShutdown() { return telegramChannelForShutdown; },
     get discordChannelForShutdown() { return discordChannelForShutdown; },
     get swarmForShutdown() { return swarmForShutdown; },
+    get channelsForShutdown() { return channelsForShutdown; },
     get pluginMcpWatch() { return stopPluginMcpWatch; },
     get consolidatorJob() { return consolidatorJob; },
     get taskStore() { return taskStore; },
@@ -880,6 +883,7 @@ export async function createAgentRuntime(
     telegramChannel: null,
     discordChannel: null,
     swarm: null,
+    channels: null,
     mcpManager,
     providerRegistry,
     capabilities,
@@ -972,6 +976,7 @@ export async function createAgentRuntime(
     telegramChannel: TelegramChannel | null;
     discordChannel: DiscordChannel | null;
     swarm: SwarmRegistry | null;
+    channels: ChannelRegistry | null;
   };
   Object.defineProperty(runtime, "skillCatalog", {
     enumerable: true,
@@ -997,6 +1002,7 @@ export async function createAgentRuntime(
     connectTelegram: (channel) => { telegramChannelForShutdown = channel; },
     connectDiscord: (channel) => { discordChannelForShutdown = channel; },
     connectSwarm: (swarm) => { swarmForShutdown = swarm; },
+    connectChannels: (channels) => { channelsForShutdown = channels; },
   });
 
   // Deferred from the Scheduler construction site above: the first

@@ -17,6 +17,7 @@ import { MetricsCollector } from "../../tracing/metrics-collector.js";
 import { connectRuntimeChannels } from "./runtime-channels.js";
 import { createRuntimeTaskRunner } from "./runtime-task-services.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
+import type { Channel, ChannelContext } from "../../channels/channel.js";
 
 const unexpected = (): never => { throw new Error("No external operation in channel composition tests"); };
 const browser: BrowserBackend = {
@@ -148,5 +149,50 @@ describe("runtime channel connection phases", () => {
     await runner.runOne(second.id); await Promise.resolve();
     expect(send).toHaveBeenCalledTimes(1); expect(send.mock.instances[0]).toBe(channel);
     expect(runtime.taskStore.get(first.id)?.status).toBe("completed"); expect(runtime.taskStore.get(second.id)?.status).toBe("completed");
+  });
+});
+
+describe("catalog channels (ATO-1169)", () => {
+  function fakeChannel(id: string, calls: string[]): Channel {
+    return {
+      id,
+      state: () => "disabled",
+      lastError: () => null,
+      start: async () => { calls.push(`${id}:start`); },
+      stop: async () => { calls.push(`${id}:stop`); },
+    };
+  }
+
+  it("registers the primaries and every catalog adapter, starting only the enabled ones", async () => {
+    const calls: string[] = [];
+    const seen: ChannelContext[] = [];
+    runtime.config.channels = { alpha: { enabled: true, ownerIds: ["u1"], options: { x: 1 } } };
+    connectRuntimeChannels({
+      ...args(),
+      extraChannels: [
+        { id: "alpha", label: "Alpha", create: (ctx) => { seen.push(ctx); return fakeChannel("alpha", calls); } },
+        { id: "beta", label: "Beta", create: () => fakeChannel("beta", calls) },
+      ],
+    });
+    await Promise.resolve();
+    const registry = runtime.channels;
+    expect(registry?.list().map((c) => c.id)).toEqual(["telegram", "discord", "alpha", "beta"]);
+    expect(registry?.get("telegram")).toBe(runtime.telegramChannel);
+    expect(calls).toEqual(["alpha:start"]);
+    expect(seen[0]?.channelConfig).toEqual({ enabled: true, ownerIds: ["u1"], options: { x: 1 } });
+    expect(seen[0]?.inboxDir).toBe(join(runtime.config.paths.stateDir, "inbox", "alpha"));
+  });
+
+  it("hands the registry to shutdown so catalog adapters stop with the runtime", async () => {
+    const calls: string[] = [];
+    let connected: { stopAll: (skip?: ReadonlySet<string>) => Promise<void> } | null = null;
+    connectRuntimeChannels({
+      ...args(),
+      connectChannels: (registry) => { connected = registry; },
+      extraChannels: [{ id: "alpha", label: "Alpha", create: () => fakeChannel("alpha", calls) }],
+    });
+    expect(connected).toBe(runtime.channels);
+    await connected!.stopAll(new Set(["telegram", "discord"]));
+    expect(calls).toEqual(["alpha:stop"]);
   });
 });

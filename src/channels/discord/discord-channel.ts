@@ -10,6 +10,7 @@
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { ApprovalRouter } from "../../approval/approval-router.js";
 import type { ChannelStatus } from "../../runtime/channel-status.js";
+import type { Channel } from "../channel.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import {
@@ -54,7 +55,9 @@ export interface DiscordChannelDeps {
   apiBaseUrl?: string;
 }
 
-export class DiscordChannel {
+export class DiscordChannel implements Channel {
+  /** `Channel.id` (ATO-1169); also the `ChannelStatus.channel` it emits. */
+  readonly id = "discord";
   private currentState: ChannelStatus["state"] = "disabled";
   private error: string | null = null;
   private gateway: DiscordGateway | null = null;
