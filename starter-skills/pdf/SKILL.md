@@ -1,7 +1,7 @@
 ---
 name: pdf
 description: Manipulate PDF files — merge, split, extract pages/text, PDF↔images, OCR, info — via the `qpdf` / `poppler` / `ocrmypdf` CLIs. Use to combine, slice, convert, or OCR PDFs.
-version: 1.0.1
+version: 1.0.2
 requires_tools:
   - os.shell.run
   - os.fs.read_document
@@ -19,6 +19,33 @@ Tooling:
 - `qpdf` — merge / split / linearize / encrypt (pure structural ops).
 - `poppler` — `pdfinfo`, `pdftotext`, `pdftoppm`, `pdfimages` (inspect + render).
 - `ocrmypdf` — add a searchable text layer to scanned PDFs (optional).
+
+## Scanned PDFs (no text layer)
+
+`os.fs.read_document` checks every page it reads. When a page has no text
+layer (a scan, a photo of a receipt, an image-only export) it does not return
+an empty result silently: `details.textLayer` says `status: "scanned"` (no page
+has text) or `"partial"` (some pages), lists `pagesWithoutText`, and the output
+starts with "This PDF looks scanned: N of M pages have no text layer". Never
+tell the user such a document is empty. Pick a route:
+
+1. **The current model accepts images** (`vision.describe` is in your tools):
+   render only the listed pages with `pdftoppm` and read them with
+   `vision.describe`, at most 4 images per call.
+   ```
+   [{ "tool": "os.shell.run", "args": { "cmd": "pdftoppm", "args": ["-png", "-r", "150", "-f", "2", "-l", "3", "in.pdf", "page"] } }]
+   ```
+2. **Otherwise** add a text layer with `ocrmypdf`, then call
+   `os.fs.read_document` again on the new file. `--skip-text` leaves pages
+   that already have text alone. Russian needs `-l rus+eng` and the Russian
+   Tesseract data (`brew install tesseract-lang`, or `apt-get install
+   tesseract-ocr-rus` on Linux); ask before installing, it is a large download.
+   ```
+   [{ "tool": "os.shell.run", "args": { "cmd": "ocrmypdf", "args": ["--skip-text", "-l", "rus+eng", "in.pdf", "in_ocr.pdf"] } }]
+   ```
+
+For a single photo (`.jpg`, `.png`) there is no PDF step: use `vision.describe`
+directly, or `ocrmypdf` after wrapping the image into a PDF with `magick`.
 
 ## Setup health check (run first, every session)
 
@@ -58,6 +85,7 @@ missing, point the user at https://brew.sh/ and stop.
 - "Merge these PDFs", "split pages 3-7", "extract text from this PDF".
 - "Convert PDF to images" / "make a PDF from these PNGs".
 - "OCR this scanned PDF so it's searchable".
+- `os.fs.read_document` reported `textLayer.status` `scanned` or `partial`.
 
 ## When NOT to use
 
@@ -80,7 +108,7 @@ working directory; the runtime approval gate surfaces each write.
 | PDF → PNG (150 dpi) | `pdftoppm` `["-png", "-r", "150", "in.pdf", "page"]` |
 | Extract embedded images | `pdfimages` `["-all", "in.pdf", "img"]` |
 | Images → PDF | `magick` `["a.png", "b.png", "out.pdf"]` *(needs imagemagick skill)* |
-| OCR a scanned PDF | `ocrmypdf` `["in.pdf", "out_ocr.pdf"]` |
+| OCR a scanned PDF | `ocrmypdf` `["--skip-text", "-l", "rus+eng", "in.pdf", "out_ocr.pdf"]` |
 | Compress / linearize | `qpdf` `["--linearize", "in.pdf", "out.pdf"]` |
 
 ## Rules

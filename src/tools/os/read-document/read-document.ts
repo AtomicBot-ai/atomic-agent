@@ -75,6 +75,7 @@ export function buildOsFsReadDocumentTool(
       if (result.pagesExtracted !== undefined) {
         details.pagesExtracted = result.pagesExtracted;
       }
+      if (result.textLayer !== undefined) details.textLayer = result.textLayer;
 
       return compressToolResult(
         {

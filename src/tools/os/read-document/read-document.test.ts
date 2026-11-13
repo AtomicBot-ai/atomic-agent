@@ -78,6 +78,30 @@ describe("os.fs.read_document dispatcher", () => {
     expect(seen).toEqual(["pdf", "docx"]);
   });
 
+  it("passes the PDF text-layer assessment through to details (ATO-681)", async () => {
+    const textLayer = {
+      status: "scanned" as const,
+      pagesChecked: 2,
+      pagesWithoutText: [1, 2],
+      ocrNeeded: true,
+    };
+    const tool = buildOsFsReadDocumentTool({
+      extractors: {
+        pdf: fakeExtractor({
+          format: "pdf",
+          text: "This PDF looks scanned: 2 of 2 pages have no text layer",
+          pageCount: 2,
+          textLayer,
+        }),
+      },
+    });
+    const pdfPath = join(dir, "scan.pdf");
+    await writeFile(pdfPath, Buffer.from("%PDF-1.4"));
+    const result = await tool.run({ path: pdfPath }, makeCtx(dir));
+    expect(result.details.textLayer).toEqual(textLayer);
+    expect(result.summary).toContain("looks scanned");
+  });
+
   it("respects an explicit `format` override", async () => {
     const tool = buildOsFsReadDocumentTool({
       extractors: {

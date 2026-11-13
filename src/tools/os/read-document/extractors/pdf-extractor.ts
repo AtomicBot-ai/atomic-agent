@@ -1,6 +1,8 @@
 import Module, { createRequire } from "node:module";
 
 import type { Extractor, ExtractResult } from "./extractor-types.js";
+import { assessAndOcr, type OcrEngine } from "./ocr-engine.js";
+import { renderPdfPages, type PageText } from "./scan-detection.js";
 
 /**
  * Text-only PDF extractor backed by pdfjs-dist (Mozilla's library).
@@ -11,68 +13,94 @@ import type { Extractor, ExtractResult } from "./extractor-types.js";
  * for native PDF support without shelling out to poppler).
  *
  * We deliberately skip font rendering and graphics — text is what the LLM
- * needs; images/figures would require an OCR pass which is far out of scope.
+ * needs. Pages without a text layer (scans, photos) are detected and
+ * reported via `textLayer` plus a plain notice with next steps (ATO-681);
+ * recognising them is the job of an optional `OcrEngine`, none ships yet.
  */
-export const pdfExtractor: Extractor = async (input) => {
-  const pdfjs = await loadPdfJs();
-  const doc = await pdfjs.getDocument({
-    data: new Uint8Array(input.data),
-    // Nobody calls disable-font-face in Node; pdfjs handles the missing
-    // DOM gracefully. We DO disable the worker to keep things single-thread.
-    disableFontFace: true,
-    useSystemFonts: false,
-    isEvalSupported: false,
-    // 0 = ERRORS only. Suppresses the cosmetic "standardFontDataUrl not
-    // provided" warning — we don't render fonts, just extract glyph runs.
-    // Note this only governs per-document warnings; import-time warnings are
-    // handled by `withQuietCanvasResolution` below.
-    verbosity: 0,
-  }).promise;
+export interface PdfExtractorOptions {
+  /** Optional OCR engine for pages without a text layer. Default: none. */
+  ocrEngine?: OcrEngine;
+  /** Languages passed to the engine. Default `["rus", "eng"]`. */
+  ocrLanguages?: readonly string[];
+}
 
-  const warnings: string[] = [];
-  const totalPages = doc.numPages;
-  const { start, end } = clampPageRange(totalPages, input);
-  const maxPages = input.maxPages ?? totalPages;
-  const separators = input.pageSeparators !== false;
+export function createPdfExtractor(
+  options: PdfExtractorOptions = {},
+): Extractor {
+  return async (input) => {
+    const pdfjs = await loadPdfJs();
+    const doc = await pdfjs.getDocument({
+      data: new Uint8Array(input.data),
+      // Nobody calls disable-font-face in Node; pdfjs handles the missing
+      // DOM gracefully. We DO disable the worker to keep things single-thread.
+      disableFontFace: true,
+      useSystemFonts: false,
+      isEvalSupported: false,
+      // 0 = ERRORS only. Suppresses the cosmetic "standardFontDataUrl not
+      // provided" warning — we don't render fonts, just extract glyph runs.
+      // Note this only governs per-document warnings; import-time warnings
+      // are handled by `withQuietCanvasResolution` below.
+      verbosity: 0,
+    }).promise;
 
-  const extracted: number[] = [];
-  const chunks: string[] = [];
+    const warnings: string[] = [];
+    const totalPages = doc.numPages;
+    const { start, end } = clampPageRange(totalPages, input);
+    const maxPages = input.maxPages ?? totalPages;
+    const separators = input.pageSeparators !== false;
 
-  for (let pageNum = start; pageNum <= end; pageNum++) {
-    if (extracted.length >= maxPages) break;
-    try {
-      const page = await doc.getPage(pageNum);
-      const content = await page.getTextContent();
-      const pageText = assembleLines(content.items as PdfTextItem[]);
-      if (separators) {
-        chunks.push(`--- page ${pageNum} ---\n${pageText}`);
-      } else if (pageText.length > 0) {
-        chunks.push(pageText);
+    const pages: PageText[] = [];
+
+    for (let pageNum = start; pageNum <= end; pageNum++) {
+      if (pages.length >= maxPages) break;
+      try {
+        const page = await doc.getPage(pageNum);
+        const content = await page.getTextContent();
+        pages.push({
+          page: pageNum,
+          text: assembleLines(content.items as PdfTextItem[]),
+        });
+      } catch (err) {
+        warnings.push(
+          `page ${pageNum}: failed to extract (${(err as Error).message})`,
+        );
       }
-      extracted.push(pageNum);
-    } catch (err) {
-      warnings.push(
-        `page ${pageNum}: failed to extract (${(err as Error).message})`,
-      );
     }
-  }
 
-  // Free worker-side state. pdfjs-dist >= 4 supports doc.destroy().
-  try {
-    await doc.destroy();
-  } catch {
-    // Best-effort cleanup; never fail the tool over a destroy error.
-  }
+    // Free worker-side state. pdfjs-dist >= 4 supports doc.destroy().
+    try {
+      await doc.destroy();
+    } catch {
+      // Best-effort cleanup; never fail the tool over a destroy error.
+    }
 
-  const result: ExtractResult = {
-    format: "pdf",
-    text: chunks.join("\n\n").trim(),
-    pageCount: totalPages,
-    pagesExtracted: extracted,
-    warnings,
+    const { assessment, ocrEngineId } = await assessAndOcr(
+      pages,
+      input,
+      warnings,
+      options.ocrEngine,
+      options.ocrLanguages,
+    );
+
+    const { text, notice } = renderPdfPages(pages, assessment, separators);
+    if (notice) warnings.push(notice);
+
+    const result: ExtractResult = {
+      format: "pdf",
+      text,
+      pageCount: totalPages,
+      pagesExtracted: pages.map((p) => p.page),
+      warnings,
+      textLayer: {
+        ...assessment,
+        ...(ocrEngineId ? { ocrEngine: ocrEngineId } : {}),
+      },
+    };
+    return result;
   };
-  return result;
-};
+}
+
+export const pdfExtractor: Extractor = createPdfExtractor();
 
 interface PdfTextItem {
   str: string;

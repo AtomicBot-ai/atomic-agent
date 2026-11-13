@@ -52,7 +52,22 @@ export interface ExtractResult {
   slideCount?: number;
   /** Which 1-indexed pages/slides/sheets actually made it into `text`. */
   pagesExtracted?: number[];
+  /**
+   * PDF only: whether the extracted pages carry a text layer. Set so the
+   * model can tell a scanned PDF from a blank one (ATO-681).
+   */
+  textLayer?: TextLayerInfo;
   warnings: string[];
+}
+
+export interface TextLayerInfo {
+  status: "ok" | "partial" | "scanned";
+  pagesChecked: number;
+  /** 1-indexed pages with no / near-no text layer. */
+  pagesWithoutText: number[];
+  ocrNeeded: boolean;
+  /** Id of the OCR engine that filled missing pages, when one ran. */
+  ocrEngine?: string;
 }
 
 export type Extractor = (input: ExtractorInput) => Promise<ExtractResult>;
