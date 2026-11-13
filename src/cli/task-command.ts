@@ -420,7 +420,10 @@ async function handleRun(args: string[]): Promise<number> {
   });
   try {
     if (explicitId) {
-      const result = await runtime.taskRunner.runOne(explicitId);
+      // A paused task runs this once and stays paused (ATO-590).
+      const result = await runtime.taskRunner.runOne(explicitId, undefined, {
+        evenIfPaused: true,
+      });
       if (!result) {
         process.stderr.write(
           `task not found or already claimed: ${explicitId}\n`,

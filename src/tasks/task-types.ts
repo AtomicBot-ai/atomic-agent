@@ -30,6 +30,9 @@ import type { LlmFailureCategory } from "../llm/reliability/index.js";
  *                          for its next firing after the resume, missed
  *                          firings are skipped)
  *   paused   -> cancelled (operator cancellation)
+ *   paused   -> running   ("Run now", `TaskRunner.runOne` with
+ *                          `evenIfPaused`; back to `paused` after the
+ *                          run unless it ended the task for good)
  *
  * A `running` task cannot be paused: its run ends first.
  */

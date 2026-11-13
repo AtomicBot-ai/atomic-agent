@@ -185,6 +185,8 @@ export class TaskStore {
   private readonly listPendingBySessionStmt: Database.Statement;
   private readonly listDueStmt: Database.Statement;
   private readonly markRunningStmt: Database.Statement;
+  /** The same claim taken from a `paused` row, for "Run now" (ATO-590). */
+  private readonly markRunningPausedStmt: Database.Statement;
   private readonly markCompletedStmt: Database.Statement;
   private readonly markFailedStmt: Database.Statement;
   private readonly markRetryStmt: Database.Statement;
@@ -302,7 +304,7 @@ export class TaskStore {
     // while `at` equals `started_at`. An older binary sharing the file
     // claims without touching `run_owner`, so an owner left from an
     // earlier claim never matches that run's `started_at`.
-    this.markRunningStmt = this.db.prepare(
+    const claimSql = (from: "pending" | "paused"): string =>
       `UPDATE tasks
           SET status = 'running',
               attempts = attempts + 1,
@@ -310,8 +312,9 @@ export class TaskStore {
               updated_at = @now,
               last_error = NULL,
               last_error_cat = NULL${claimOwner}
-        WHERE id = @id AND status = 'pending'`,
-    );
+        WHERE id = @id AND status = '${from}'`;
+    this.markRunningStmt = this.db.prepare(claimSql("pending"));
+    this.markRunningPausedStmt = this.db.prepare(claimSql("paused"));
     this.markCompletedStmt = this.db.prepare(
       `UPDATE tasks
           SET status = 'completed',
@@ -346,7 +349,7 @@ export class TaskStore {
               updated_at = @now,
               last_error = @last_error,
               last_error_cat = @last_error_cat
-        WHERE id = @id AND status IN ('running', 'pending')`,
+        WHERE id = @id AND status IN ('running', 'pending', 'paused')`,
     );
     this.markCancelledStmt = this.db.prepare(
       `UPDATE tasks
@@ -593,15 +596,27 @@ export class TaskStore {
    * mid-flight, or vanished). The runner uses the `null` return to skip
    * the row without raising — concurrent drains coordinate via this
    * race.
+   *
+   * `fromPaused` claims a `paused` row instead (and only a paused one):
+   * the operator's "Run now" on a paused task (ATO-590). The run then
+   * ends like any other; putting the row back to `paused` afterwards is
+   * the runner's job (`TaskRunner.runOne` with `evenIfPaused`).
    */
-  markRunning(id: string, now: number = Date.now()): TaskRecord | null {
+  markRunning(
+    id: string,
+    now: number = Date.now(),
+    options: { fromPaused?: boolean } = {},
+  ): TaskRecord | null {
     const owner =
       this.runOwnersUnavailable === null
         ? serializeTurnOwner(
             turnOwnerFor(this.ownerProbe, now, this.dbIdentity),
           )
         : null;
-    const result = this.markRunningStmt.run(
+    const stmt = options.fromPaused
+      ? this.markRunningPausedStmt
+      : this.markRunningStmt;
+    const result = stmt.run(
       owner === null ? { id, now } : { id, now, owner },
     ) as { changes: number };
     if (result.changes === 0) return null;

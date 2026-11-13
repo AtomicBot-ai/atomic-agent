@@ -170,7 +170,10 @@ export class TasksOrchestrator {
   runNow(taskId: string): void {
     void (async () => {
       try {
-        const result = await this.runtime.taskRunner.runOne(taskId);
+        // A paused task runs this once and stays paused (ATO-590).
+        const result = await this.runtime.taskRunner.runOne(taskId, undefined, {
+          evenIfPaused: true,
+        });
         this.bus.emit({
           type: "runtime_info",
           line: result
