@@ -76,6 +76,7 @@ import {
   chatModelsList,
   keyNamesAvailable,
   providerIsUsable,
+  isKeylessLocalProviderEntry,
   configSetWhole,
   explainConfigWriteFailure,
   managedDataDir,
@@ -8074,8 +8075,10 @@ async function settingsTestPartC(
     : p.kind === "openai-compatible" || p.kind === "qwen-openai-compatible" ? ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"] : [];
   const dotenv = stateDir ? dotenvKeys(stateDir).keys : [];
   const realKey = (p: Provider) => p.kind === "subscription-cli" || !!(p.apiKey && p.apiKey.length) || keyNames(p).some((n) => envPresent([n]).length > 0 || dotenv.includes(n));
-  // A server on this Mac (Atomic Chat, Ollama, LM Studio, a loopback endpoint) has no key at all.
-  const keylessLocal = (p: Provider) => p.kind === "openai-compatible" && (["atomic-chat", "lmstudio", "ollama"].includes(p.id) || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(p.baseUrl ?? ""));
+  // A server on this Mac (Atomic Chat, Ollama, LM Studio, a loopback endpoint) has no key at all, and (ATO-1066,
+  // ATO-1546) neither does one on another computer on this network added with no key variable of its own.
+  // The same rule the app uses (agent-cli.ts, mirroring the agent's provider-key.ts), not a copy of the old one.
+  const keylessLocal = (p: Provider) => isKeylessLocalProviderEntry(p);
   const expectKey = (p: Provider) => realKey(p) || keylessLocal(p);
   const misfiled = (cfg0.llm?.providers ?? []).filter((p) => keylessLocal(p) && !customIds.includes(p.id)).map((p) => p.id);
   // Each provider row as drawn (Calm S5): the preset's name, the id in mono only when the name differs, the key chip in words,
