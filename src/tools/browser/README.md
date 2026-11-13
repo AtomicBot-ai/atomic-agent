@@ -75,6 +75,16 @@ The answer is validated against the full schema (`validateJsonSchemaValue`); a m
 - `call` re-reads the list, checks the arguments against the declared schema (required keys, top-level types, enums, `additionalProperties: false`), then asks as `browser_site_tool` (level 4 beside `browser_commit`; "allow in this chat" covers that one site, `src/approval/site-grants.ts`; never "always"). In your own Chrome it asks as `browser_secret`, every time. The site's `readOnlyHint` is shown, never trusted: every call asks. An answer is thrown away when the page moved to a blocked site.
 - Descriptions, schemas and answers are the site's own text and are framed as outside data, like a page (`untrustedOutput`).
 
+
+## Page debugging
+
+`browser.debug { action: "console" | "network", errorsOnly?, limit?, clear? }` (`debug.ts`, ATO-701): for "why does my site not load". `console` lists console messages and uncaught page errors; `network` lists finished requests with their status and failed ones with the reason (`errorsOnly`: HTTP 4xx/5xx and failures). Newest last, at most `limit` (default 50, at most 200); `clear` empties that list after reading.
+
+- Recorded by `PlaywrightBackend` from the attach on, from the context's `console`, `weberror`, `response` and `requestfailed` events (`watch-page-debug.ts`). In the user's own Chrome only the agent's own tabs are recorded.
+- Bounded (`page-debug-log.ts`): the last 200 entries of each kind, plus the last 100 errors in a ring of their own so ordinary traffic does not push a failure out.
+- Redacted on the way in: text through the secret detector (`../../error-reporting/secret-detector.ts`) and clipped; URLs lose user info, the values of query parameters whose name says secret (`token`, `api_key`, `sig`, `code`...) and any fragment with parameters. Headers and bodies are never kept.
+- On the way out, entries from a page on a blocked host, or in the user's own Chrome from a site not opened this session, are left out (counted, not shown). The text is the site's own, so the result is framed as page content.
+
 ## Page views
 
 `browser.read_aria` takes `mode` (`aria-view.ts`, `compact-aria.ts`, ATO-956):

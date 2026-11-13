@@ -13,6 +13,7 @@ import { buildBrowserActTool } from "./act.js";
 import { buildBrowserExtractTool } from "./extract.js";
 import type { BrowserExtractModelRef } from "./extract-request.js";
 import { buildBrowserSiteToolsTool } from "./site-tools.js";
+import { buildBrowserDebugTool } from "./debug.js";
 import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
@@ -154,6 +155,9 @@ export type {
   BrowserExtractModelRef,
 } from "./extract-request.js";
 export { BROWSER_SITE_TOOLS_TOOL, buildBrowserSiteToolsTool } from "./site-tools.js";
+export { BROWSER_DEBUG_TOOL, buildBrowserDebugTool } from "./debug.js";
+export { PageDebugLog, redactDebugUrl } from "./page-debug-log.js";
+export type { ConsoleEntry, DebugLogKind, NetworkEntry } from "./page-debug-log.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
@@ -183,5 +187,6 @@ export function buildBrowserTools(
     buildBrowserActTool(backend, dangerous, policy),
     buildBrowserExtractTool(backend, policy, extractModel, dangerous),
     buildBrowserSiteToolsTool(backend, dangerous, policy),
+    buildBrowserDebugTool(backend, policy),
   ];
 }

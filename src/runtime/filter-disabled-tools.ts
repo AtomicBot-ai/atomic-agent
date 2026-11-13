@@ -114,6 +114,7 @@ const GATED_TOOLS = {
     "browser.act",
     "browser.extract",
     "browser.site_tools",
+    "browser.debug",
   ],
   webSearch: ["os.web.search"],
   vision: ["vision.describe"],

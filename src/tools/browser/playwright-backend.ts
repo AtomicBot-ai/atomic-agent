@@ -22,6 +22,8 @@ import {
   type UserChromeCdpTarget,
 } from "./attach-user-chrome.js";
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
+import { PageDebugLog } from "./page-debug-log.js";
+import { watchPageDebugEvents } from "./watch-page-debug.js";
 import {
   callSiteToolOnPage,
   installSiteToolCapture,
@@ -181,8 +183,23 @@ export class PlaywrightBackend implements BrowserBackend {
   /** Tabs being opened right now, counted against `maxTabs`. */
   private pendingTabs = 0;
   private stopWorkerEnd: (() => void) | null = null;
+  /** Console and network events of the agent's pages (`browser.debug`, ATO-701). */
+  private readonly debug = new PageDebugLog();
 
   constructor(private readonly options: PlaywrightBackendOptions) {}
+
+  debugLog(): PageDebugLog {
+    return this.debug;
+  }
+
+  /** Record the context's console / network events; in the user's Chrome, the agent's tabs only. */
+  private watchDebug(context: PwBrowserContext): void {
+    try {
+      watchPageDebugEvents(context, this.debug, (page) => !this.userProfile || this.ownedPages.has(page));
+    } catch {
+      // A debug log is a convenience: never fail the attach over it.
+    }
+  }
 
   ensureReady(): Promise<void> {
     if (!this.ready) {
@@ -546,6 +563,7 @@ export class PlaywrightBackend implements BrowserBackend {
     this.context = contexts[0] ?? (await browser.newContext());
     // WebMCP: record the tools pages declare (ATO-521).
     await installSiteToolCapture(this.context);
+    this.watchDebug(this.context);
   }
 
   private async connectOverCdp(url: string, timeoutMs: number): Promise<PwBrowser> {
@@ -596,6 +614,7 @@ export class PlaywrightBackend implements BrowserBackend {
     this.userProfile = true;
     this.context = context;
     this.lostConnection = false;
+    this.watchDebug(context);
   }
 
   /** Track a tab the agent opened in the user's Chrome, and its pop-ups. */

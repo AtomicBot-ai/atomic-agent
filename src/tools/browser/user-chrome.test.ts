@@ -398,6 +398,9 @@ class FakePage {
 class FakeContext {
   closedCalls = 0;
   constructor(public all: FakePage[]) {}
+  on() {
+    return this;
+  }
   pages() {
     return this.all.filter((p) => !p.closed);
   }

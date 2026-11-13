@@ -8,6 +8,8 @@
  * `aria-ref=<id>` locator.
  */
 
+import type { PageDebugLog } from "./page-debug-log.js";
+
 export interface AriaSnapshot {
   url: string;
   title: string;
@@ -315,4 +317,11 @@ export interface BrowserBackend {
    * fetch ladder.
    */
   renderHtml?(input: RenderHtmlInput): Promise<RenderHtmlResult>;
+  /**
+   * Recent console messages, page errors and requests of the pages the
+   * agent can see (`browser.debug`, ATO-701), recorded from the moment
+   * the browser was attached. Optional: a backend without it makes the
+   * tool say so.
+   */
+  debugLog?(): PageDebugLog;
 }
