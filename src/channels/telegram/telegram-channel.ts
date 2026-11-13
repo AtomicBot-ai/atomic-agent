@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 
 import type { ChannelStatus } from "../../runtime/channel-status.js";
+import type { Channel } from "../channel.js";
 import { getUserConfigPath } from "../../config/index.js";
 import type { TurnStatusTracker } from "../../agent/status-snapshot.js";
 import {
@@ -159,7 +160,9 @@ export class OwnerAlreadyPairedError extends Error {
  * delegates to `telegram-settings.ts`; pairing logic to
  * `pairing-mode.ts`.
  */
-export class TelegramChannel {
+export class TelegramChannel implements Channel {
+  /** `Channel.id` (ATO-1169); also the `ChannelStatus.channel` it emits. */
+  readonly id = "telegram";
   private readonly deps: TelegramChannelDeps;
   private readonly sessionPointer: TelegramSessionPointer;
   private readonly lock: ChannelLock;
