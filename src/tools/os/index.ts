@@ -34,6 +34,8 @@ import { buildOsFsPatchTool } from "./fs/fs-patch.js";
 import { buildOsFsRestoreTool } from "./fs/fs-restore.js";
 import { buildOsFsMoveTool } from "./fs/fs-move.js";
 import { FileRestoreStore } from "./fs/fs-restore-store.js";
+import { createLspDiagnostics } from "./fs/lsp/index.js";
+import { askToStartLspThroughApprovals } from "./fs/lsp/lsp-start-question.js";
 import type { DeclaredInputsRegistry } from "./fs/fs-declared-inputs.js";
 import { osFsWatchTool } from "./fs/fs-watch.js";
 import {
@@ -196,6 +198,13 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * keeps the desktop / `.env` advice.
    */
   webSearchKeyHelp?: WebSearchKeyHelp;
+  /**
+   * Whether the operator trusts a folder (project folder trust,
+   * `skills.projectTrust`), read live. A language server (ATO-503)
+   * starts without a question only in a trusted work tree; elsewhere the
+   * first start asks once. Omitted: no folder is trusted.
+   */
+  isTrustedProject?: (dir: string) => boolean;
 }
 
 export function registerOsTools(
@@ -234,6 +243,24 @@ export function registerOsTools(
     ...(options.declaredInputs === undefined
       ? {}
       : { declaredInputs: options.declaredInputs }),
+    // Opt-in (ATO-503): nothing starts until the first edit of a
+    // TypeScript/JavaScript/Python file inside a git repository.
+    ...(options.config.tools.lsp?.enabled === true
+      ? {
+          lspDiagnostics: createLspDiagnostics({
+            enabled: true,
+            // A server runs project code: outside a trusted folder the
+            // first start in a work tree asks once (trust_config).
+            askToStart: askToStartLspThroughApprovals({
+              approvals: options.approvals,
+              approvalRequired: options.approvalRequired,
+            }),
+            ...(options.isTrustedProject === undefined
+              ? {}
+              : { isTrustedProject: options.isTrustedProject }),
+          }),
+        }
+      : {}),
   };
   registry.register(osFsReadTool);
   registry.register(buildOsFsWriteTool(fsMutation));

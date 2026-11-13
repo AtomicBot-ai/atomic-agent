@@ -54,6 +54,12 @@ export interface RuntimeToolsConfig {
     /** Registers `os.screen.{capture,point}` (macOS only). Mirrors `UserToolsConfig.screen.point`. */
     point: boolean;
   };
+  /**
+   * After-edit language-server diagnostics. Mirrors `UserToolsConfig.lsp`;
+   * optional so hand-built configs (embedders, tests) need not name it,
+   * and absent reads as off.
+   */
+  lsp?: { enabled: boolean };
 }
 
 export interface UserToolsConfig {
@@ -112,6 +118,20 @@ export interface UserToolsConfig {
      */
     point: boolean;
   };
+  lsp: {
+    /**
+     * After-edit diagnostics from language servers (ATO-503): after
+     * `os.fs.write` / `edit` / `patch` change a TypeScript, JavaScript
+     * or Python file inside a git repository, the result lists the
+     * compiler and type errors the change added. Uses only
+     * `typescript-language-server` / `pyright-langserver` already on
+     * PATH (never installs one), started on the first such edit. Default
+     * `false`: each server costs memory and start-up time next to a
+     * local model, and it runs the project's own toolchain. Read at
+     * start.
+     */
+    enabled: boolean;
+  };
 }
 
 export function createToolsDefaults(): UserToolsConfig {
@@ -137,18 +157,23 @@ export function createToolsDefaults(): UserToolsConfig {
     // type anywhere is not a default.
     // Pointing only draws, so it is on; clicking and typing stay off.
     screen: { enabled: false, point: true },
+    // Off until asked for: a language server per repository is memory
+    // and start-up time a small machine running a local model may lack.
+    lsp: { enabled: false },
   };
 }
 
 /**
  * `raw` is the `tools.shell` block (the historical signature);
- * `rawScreen` the `tools.screen` block. A file without either takes the
- * defaults — `tools.screen` is unversioned and additive.
+ * `rawScreen` the `tools.screen` block, `rawLsp` the `tools.lsp` one. A
+ * file without any of them takes the defaults — `tools.screen` and
+ * `tools.lsp` are unversioned and additive.
  */
 export function parseToolsConfig(
   raw: Record<string, unknown>,
   readDefaults: () => UserToolsConfig,
   rawScreen: Record<string, unknown> = {},
+  rawLsp: Record<string, unknown> = {},
 ): UserToolsConfig {
   return {
     shell: {
@@ -185,6 +210,12 @@ export function parseToolsConfig(
       point: parseBool(
         rawScreen.point ?? readDefaults().screen.point,
         "tools.screen.point",
+      ),
+    },
+    lsp: {
+      enabled: parseBool(
+        rawLsp.enabled ?? readDefaults().lsp.enabled,
+        "tools.lsp.enabled",
       ),
     },
   };
