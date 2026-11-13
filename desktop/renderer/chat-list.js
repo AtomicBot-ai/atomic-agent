@@ -51,11 +51,14 @@ function chatFailedSinceRead(row, seenAt) {
 function chatMenuItems(opts) {
   const o = opts || {};
   return [
-    o.pinned ? {verb: 'unpin', label: 'Unpin', icon: 'pin'} : {verb: 'pin', label: 'Pin', icon: 'pin'},
+    // ATO-1150: an archived chat is out of the main list, so it offers no pin (Unarchive first).
+    ...(o.archived === true ? [] : [o.pinned ? {verb: 'unpin', label: 'Unpin', icon: 'pin'} : {verb: 'pin', label: 'Pin', icon: 'pin'}]),
     o.unread ? {verb: 'read', label: 'Mark as read', icon: 'check'} : {verb: 'unread', label: 'Mark as unread', icon: 'unread'},
     ...(o.renamable === false ? [] : [{verb: 'rename', label: 'Rename', icon: 'edit'}]),
     // ATO-1034: "Move to folder…" opens the folder list (chat-folders.js), for a stored chat.
     ...(o.folders === true ? [{verb: 'fpick', label: 'Move to folder…', icon: 'folder'}] : []),
+    // ATO-1150: Archive hides a stored chat from the lists; Unarchive brings it back.
+    ...(o.archivable === true ? [o.archived ? {verb: 'unarchive', label: 'Unarchive', icon: 'archive'} : {verb: 'archive', label: 'Archive', icon: 'archive'}] : []),
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }
@@ -69,4 +72,94 @@ function chatMenuPlace(x, y, w, h, winW, winH) {
   return {left, top};
 }
 
-if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace};
+/* ---------------- ATO-1150: archive and search in the chat list ----------------
+   The archive flag is the agent's: `archived: true` in the session's metadata
+   (POST /api/sessions/{id}/archived), listed on every GET /api/sessions row,
+   so the terminal leaves the same chats out of its rail. Against an agent
+   from before that route the window keeps a list of archived ids beside the
+   pins (userData/prefs.json `archived`), and moves them to the agent once the
+   route is there. An archived chat is left out of Pinned, the folders and
+   Chats, and drawn only under the "Archived" toggle; its transcript, folder
+   and title stay as they were. */
+
+/* The archived chat ids: the rows the agent lists as archived, and the ids
+   the window still keeps itself (an agent without the route, or ones not
+   moved to the agent yet). */
+function archivedIdsOf(sessions, prefsIds) {
+  const out = new Set();
+  for (const s of sessions || []) if (s && s.id && s.archived === true) out.add(s.id);
+  for (const id of prefsIds || []) if (typeof id === 'string' && id) out.add(id);
+  return [...out];
+}
+
+/* Whether the agent keeps the archive flag, from its list: a row with an
+   `archived` field (`archivedKnown`, set from a boolean in GET /api/sessions)
+   says yes, rows without one say no (an older agent), no rows say nothing yet. */
+function agentKeepsArchive(sessions) {
+  const rows = (sessions || []).filter((s) => s && s.id);
+  if (!rows.length) return null;
+  return rows.some((s) => s.archivedKnown === true);
+}
+
+/* What one answer of the archive route means for an id kept in prefs.json
+   while it is being moved to the agent: 'moved' (the agent holds it now, or
+   does not hold the chat at all), 'keep' (try again later), 'stop' (the
+   agent has no route after all: keep every id here). */
+function archiveMigrationStep(res) {
+  if (!res || typeof res !== 'object') return 'keep';
+  if (res.supported === false) return 'stop';
+  if (res.ok === true || res.notFound === true) return 'moved';
+  return 'keep';
+}
+
+/** The ids list with `id` in it (`on`) or out of it; a new array, newest archived first. */
+function archiveSet(list, id, on) {
+  const rest = (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && x && x !== id);
+  return on && id ? [id].concat(rest) : rest;
+}
+
+/** `rows` split into the ones on the main list and the archived ones, each in the order given. */
+function splitArchived(rows, archivedIds) {
+  const arch = new Set(archivedIds || []);
+  const live = [], archived = [];
+  for (const r of rows || []) if (r && r.id) (arch.has(r.id) ? archived : live).push(r);
+  return {live, archived};
+}
+
+/* The search field's query as the matcher takes it: trimmed, lowercased,
+   inner runs of spaces made one. '' means "no search": the lists as usual. */
+function chatSearchQuery(raw) {
+  return String(raw == null ? '' : raw).trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+const CHAT_SEARCH_MAX = 50;
+/* fuzzy-match.js loads after this file (index.html), so its matcher is looked
+   up at call time; in Node (the tests) it is required. */
+function chatFuzzyFilter() {
+  if (typeof fuzzyFilter === 'function') return fuzzyFilter;
+  if (typeof require === 'function') { try { return require('./fuzzy-match.js').fuzzyFilter; } catch (e) { /* substring below */ } }
+  return null;
+}
+
+/* The chats whose title matches the query, best first (fuzzy-match.js, the
+   ⌘K palette's ranking: exact, prefix, word, substring, then one typo), split
+   into the ones on the main list and the archived ones, at most
+   CHAT_SEARCH_MAX in all. A chat is matched once, by its stored row when it
+   has one. Only titles are searched: the agent has no route to search the
+   text of past chats yet (ATO-1013 item 1). */
+function chatSearch(rawQuery, rows, archivedIds) {
+  const q = chatSearchQuery(rawQuery);
+  if (!q) return {q, live: [], archived: [], total: 0};
+  const seen = new Set(), uniq = [];
+  for (const r of rows || []) if (r && r.id && !seen.has(r.id)) { seen.add(r.id); uniq.push(r); }
+  const title = (r) => String(r.t || '');
+  const fz = chatFuzzyFilter();
+  const hits = fz ? fz(q, uniq, title)
+    : uniq.filter((r) => title(r).toLowerCase().includes(q));
+  const top = hits.slice(0, CHAT_SEARCH_MAX);
+  const out = splitArchived(top, archivedIds);
+  return {q, live: out.live, archived: out.archived, total: hits.length};
+}
+
+if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace,
+  archiveSet, splitArchived, chatSearchQuery, chatSearch, CHAT_SEARCH_MAX, archivedIdsOf, agentKeepsArchive, archiveMigrationStep};
