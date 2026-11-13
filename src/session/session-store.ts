@@ -9,6 +9,13 @@ import {
   type SessionStatus,
 } from "./session-state.js";
 import { normalizeSessionState } from "./normalize-session-state.js";
+import {
+  SESSION_ARCHIVED_METADATA_KEY,
+  SESSION_ARCHIVED_SET_AT_KEY,
+  readSessionArchivedSetAt,
+  withArchivedMetadata,
+  withSessionArchived,
+} from "./session-archived.js";
 import { LIVE_SESSION_STATUSES } from "./session-retention.js";
 import type { SessionSummary } from "./session-summary.js";
 import {
@@ -202,6 +209,10 @@ interface StoredRow {
   turnOwner: string | null;
   /** How many leading turns the row keeps in the archive; 0 for none. */
   archivedCount: number;
+  /** ATO-1150: whether the operator archived the chat (`session-archived.ts`). */
+  chatArchived: boolean;
+  /** When the operator last archived or unarchived it, `null` when never. */
+  chatArchivedSetAt: number | null;
 }
 
 /**
@@ -438,7 +449,9 @@ export class SessionStore {
       `SELECT status, ${turnOwnerColumn} AS turnOwner,
               json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title,
               json_extract(payload, '$.metadata.${SESSION_TITLE_USER_SET_AT_KEY}') AS titleSetByUserAt,
-              json_extract(payload, '$.${ARCHIVED_TURNS_KEY}.count') AS archivedCount
+              json_extract(payload, '$.${ARCHIVED_TURNS_KEY}.count') AS archivedCount,
+              json_extract(payload, '$.metadata.${SESSION_ARCHIVED_METADATA_KEY}') AS chatArchived,
+              json_extract(payload, '$.metadata.${SESSION_ARCHIVED_SET_AT_KEY}') AS chatArchivedSetAt
        FROM sessions WHERE id = ?`,
     );
     this.selectStoredBareStmt = this.db.prepare(
@@ -632,7 +645,7 @@ export class SessionStore {
         warnArchivedWriteSkipped(state.id);
         throw ROLLBACK;
       }
-      const row = this.serialize(withStoredTitle(state, stored), archive);
+      const row = this.serialize(withStoredArchive(withStoredTitle(state, stored), stored), archive);
       const result = progressStatements.checkpoint.run({
         id: state.id,
         owner,
@@ -828,7 +841,7 @@ export class SessionStore {
         this.insertStmt.run(this.serialize(next, archive));
         return;
       }
-      next = withStoredTitle(next, stored);
+      next = withStoredArchive(withStoredTitle(next, stored), stored);
       const update = endsTurn ? this.finishTurnStmt : this.updateStmt;
       update.run(this.serialize(next, archive));
     }, undefined);
@@ -892,6 +905,8 @@ export class SessionStore {
           title?: unknown;
           titleSetByUserAt?: unknown;
           archivedCount?: unknown;
+          chatArchived?: unknown;
+          chatArchivedSetAt?: unknown;
         }
       | undefined;
     try {
@@ -918,6 +933,13 @@ export class SessionStore {
         row.archivedCount > 0
           ? row.archivedCount
           : 0,
+      // json_extract hands a JSON `true` back as 1.
+      chatArchived: row.chatArchived === 1 || row.chatArchived === true,
+      chatArchivedSetAt:
+        typeof row.chatArchivedSetAt === "number" &&
+        Number.isFinite(row.chatArchivedSetAt)
+          ? row.chatArchivedSetAt
+          : null,
     };
   }
 
@@ -971,6 +993,25 @@ export class SessionStore {
     const current = this.load(id);
     if (current === null) return null;
     const next = withUserSessionTitle(current, title, now);
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * ATO-1150: archive (`archived: true`) or unarchive a stored session,
+   * stamped so a copy read before this cannot put the old flag back (see
+   * `withStoredArchive`). Returns the saved state, or `null` when there is
+   * no such session. `updatedAt` is left as it was, as for a rename:
+   * putting a chat away is not activity in it.
+   */
+  setSessionArchived(
+    id: string,
+    archived: boolean,
+    now: number = Date.now(),
+  ): SessionState | null {
+    const current = this.load(id);
+    if (current === null) return null;
+    const next = withSessionArchived(current, archived, now);
     this.save(next);
     return next;
   }
@@ -1262,6 +1303,29 @@ function ensureTurnOwnerColumn(db: Database.Database): string | null {
     const message = err instanceof Error ? err.message : String(err);
     return /duplicate column/i.test(message) ? null : message;
   }
+}
+
+/**
+ * ATO-1150: `next` with the stored archive flag where `next` should not
+ * replace it: the stored row was archived or unarchived (it has a stamp)
+ * and `next` carries no stamp or an older one, so it is a copy read
+ * before that. Shared by every write that replaces a row's payload.
+ */
+function withStoredArchive(
+  next: SessionState,
+  stored: StoredRow | undefined,
+): SessionState {
+  if (stored === undefined || stored.chatArchivedSetAt === null) return next;
+  const nextAt = readSessionArchivedSetAt(next.metadata);
+  if (nextAt !== null && nextAt >= stored.chatArchivedSetAt) return next;
+  return {
+    ...next,
+    metadata: withArchivedMetadata(
+      next.metadata,
+      stored.chatArchived,
+      stored.chatArchivedSetAt,
+    ),
+  };
 }
 
 /**
