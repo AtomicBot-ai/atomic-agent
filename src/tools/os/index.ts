@@ -23,6 +23,7 @@ import {
 } from "./archive/index.js";
 import { buildOsHttpRequestTool } from "./web/http-request.js";
 import { buildOsWebFetchTool } from "./web/web-fetch.js";
+import { buildOsWebCrawlTool } from "./web/web-crawl.js";
 import { buildOsWebSearchTool, type WebSearchKeyHelp } from "./web-search/index.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
@@ -76,6 +77,7 @@ export {
 } from "./archive/index.js";
 export { buildOsHttpRequestTool } from "./web/http-request.js";
 export { buildOsWebFetchTool } from "./web/web-fetch.js";
+export { buildOsWebCrawlTool } from "./web/web-crawl.js";
 export { buildOsWebSearchTool } from "./web-search/index.js";
 export type { WebSearchKeyHelp } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
@@ -276,6 +278,7 @@ export function registerOsTools(
     }),
   );
   registry.register(buildOsWebFetchTool({ config: options.config }));
+  registry.register(buildOsWebCrawlTool({ config: options.config }));
   registry.register(osClipboardReadTool);
   registry.register(osClipboardWriteTool);
   registry.register(osWindowListTool);

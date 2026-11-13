@@ -473,6 +473,14 @@ export function loadConfig(): AtomicAgentConfig {
     web: {
       search: { ...user.web.search },
       fetch: { ...user.web.fetch },
+      ...(user.web.crawl
+        ? {
+            crawl: {
+              ...user.web.crawl,
+              robotsExemptHosts: [...user.web.crawl.robotsExemptHosts],
+            },
+          }
+        : {}),
     },
     projects: {
       roots: [...user.projects.roots],

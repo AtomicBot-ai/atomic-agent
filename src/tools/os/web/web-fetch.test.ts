@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { buildOsWebFetchTool, parseCurlMeta } from "./web-fetch.js";
+import { buildOsWebFetchTool, fetchRawPage, parseCurlMeta } from "./web-fetch.js";
 import type { runCommand as RunCommandType } from "../../../sandbox/command-runner.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
 import type { ToolContext } from "../../tool-registry.js";
@@ -794,5 +794,49 @@ describe("os.web.fetch against a bot wall", () => {
     );
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("Hello");
+  });
+});
+
+describe("fetchRawPage pacing hooks (ATO-970)", () => {
+  it("calls beforeRequest/afterResponse around every attempt and redirect hop", async () => {
+    const calls: string[] = [];
+    let first = true;
+    const runCommand = makeRunCommand((url) => {
+      if (url === "https://example.com/old") {
+        return { stdout: curlStdout({ body: "", status: 301, contentType: "text/html", redirectUrl: "https://example.com/new" }) };
+      }
+      if (first) {
+        first = false;
+        return { stdout: curlStdout({ body: "busy", status: 503, contentType: "text/plain", headers: { "retry-after": "1" } }) };
+      }
+      return { stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }) };
+    });
+    const { sleep } = fakeSleep();
+    const page = await fetchRawPage("https://example.com/old", {
+      cwd: "/tmp",
+      signal: new AbortController().signal,
+      runCommand,
+      lookup: publicLookup,
+      sleep,
+      hooks: {
+        beforeRequest: async (u) => {
+          calls.push(`before ${u.pathname}`);
+        },
+        afterResponse: (u, status, retryAfterMs) => {
+          calls.push(`after ${u.pathname} ${status} ${retryAfterMs ?? "-"}`);
+        },
+      },
+    });
+    expect(page.status).toBe(200);
+    expect(page.finalUrl).toBe("https://example.com/new");
+    expect(page.body).toContain("<article>");
+    expect(calls).toEqual([
+      "before /old",
+      "after /old 301 -",
+      "before /new",
+      "after /new 503 1000",
+      "before /new",
+      "after /new 200 -",
+    ]);
   });
 });

@@ -98,11 +98,14 @@ export { parseRewriterGateMode } from "./memory/memory-parser.js";
 import {
   createWebSearchDefaults,
   createWebFetchDefaults,
+  createWebCrawlDefaults,
   prepareWebSearchInputs,
   parseWebSearchConfig,
   parseWebFetchConfig,
+  parseWebCrawlConfig,
   type WebSearchConfig,
   type WebFetchConfig,
+  type WebCrawlConfig,
 } from "./web-config.js";
 
 export {
@@ -111,6 +114,7 @@ export {
   type WebSearchProviderName,
   type WebSearchConfig,
   type WebFetchConfig,
+  type WebCrawlConfig,
 } from "./web-config.js";
 export { parseStringArrayOrNull, parseUrl } from "./config-values.js";
 
@@ -247,6 +251,12 @@ export interface AtomicAgentConfig {
   web: {
     search: WebSearchConfig;
     fetch: WebFetchConfig;
+    /**
+     * `os.web.crawl` politeness (ATO-700, ATO-970). Optional only so
+     * hand-built test configs stay valid; the parser always fills it and
+     * the tool falls back to `createWebCrawlDefaults()`.
+     */
+    crawl?: WebCrawlConfig;
   };
   /**
    * User-declared project root directories consumed by
@@ -618,6 +628,12 @@ export interface UserConfigFile {
   web: {
     search: WebSearchConfig;
     fetch: WebFetchConfig;
+    /**
+     * `os.web.crawl` politeness (ATO-700, ATO-970). Optional only so
+     * hand-built test configs stay valid; the parser always fills it and
+     * the tool falls back to `createWebCrawlDefaults()`.
+     */
+    crawl?: WebCrawlConfig;
   };
   /**
    * Project path resolution (config v36). `roots` lists directories
@@ -1278,6 +1294,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   web: {
     search: createWebSearchDefaults(),
     fetch: createWebFetchDefaults(),
+    crawl: createWebCrawlDefaults(),
   },
   projects: createProjectsDefaults(),
   tools: createToolsDefaults(),
@@ -1534,6 +1551,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const toolsScreen = (tools.screen as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
   const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
+  const webCrawl = (web.crawl as Record<string, unknown> | undefined) ?? {};
   const webSearchInputs = prepareWebSearchInputs(
     webSearch,
     () => USER_CONFIG_DEFAULTS.web.search,
@@ -1640,6 +1658,10 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       fetch: parseWebFetchConfig(
         webFetch,
         () => USER_CONFIG_DEFAULTS.web.fetch,
+      ),
+      crawl: parseWebCrawlConfig(
+        webCrawl,
+        () => USER_CONFIG_DEFAULTS.web.crawl ?? createWebCrawlDefaults(),
       ),
     },
     projects: parseProjectsConfig(projects, () => USER_CONFIG_DEFAULTS.projects),

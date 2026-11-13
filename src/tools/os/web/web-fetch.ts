@@ -94,13 +94,18 @@ interface CurlResponse {
   retryAfterMs: number | null;
 }
 
-interface FetchOutcome {
+export interface FetchOutcome {
   finalUrl: string;
   status: number;
   contentType: string;
   body: string;
   truncated: boolean;
   redirectChain: string[];
+  /**
+   * Set when `hooks.allowRedirect` refused the next hop: the redirect target
+   * that was not requested. `finalUrl`/`status` are then the redirecting page.
+   */
+  refusedRedirect?: string;
 }
 
 export function buildOsWebFetchTool(
@@ -284,6 +289,52 @@ interface FetchWithGuardOptions {
   /** Effective per-attempt budget (per-call arg, else `fetchCfg.timeoutMs`). */
   timeoutMs: number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Pacing hooks for callers that limit their own traffic (`os.web.crawl`). */
+  hooks?: FetchRequestHooks;
+}
+
+/**
+ * Called around every real request, redirect hops and retries included, so a
+ * caller can hold a per-host request rate (ATO-970). `beforeRequest` runs
+ * before the SSRF check, so the address is still resolved fresh after a wait.
+ */
+export interface FetchRequestHooks {
+  beforeRequest?: (url: URL, signal: AbortSignal) => Promise<void>;
+  afterResponse?: (url: URL, status: number, retryAfterMs: number | null) => void;
+  /** Asked before a redirect hop is requested; `false` stops there (robots.txt in `os.web.crawl`). */
+  allowRedirect?: (url: URL) => boolean;
+}
+
+export interface FetchRawPageOptions {
+  cwd: string;
+  signal: AbortSignal;
+  runCommand?: typeof defaultRunCommand;
+  lookup?: HostLookup;
+  config?: Pick<AtomicAgentConfig, "web">;
+  timeoutMs?: number;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  hooks?: FetchRequestHooks;
+}
+
+/**
+ * The fetch pipeline without extraction: same SSRF guard on every hop, same
+ * redirect and retry rules, raw body back. `os.web.crawl` reads links from it.
+ */
+export function fetchRawPage(
+  rawUrl: string,
+  options: FetchRawPageOptions,
+): Promise<FetchOutcome> {
+  const fetchCfg = options.config?.web.fetch ?? DEFAULT_FETCH_CONFIG;
+  return fetchWithGuard(rawUrl, {
+    runCommand: options.runCommand ?? defaultRunCommand,
+    lookup: options.lookup,
+    cwd: options.cwd,
+    signal: options.signal,
+    fetchCfg,
+    timeoutMs: options.timeoutMs ?? fetchCfg.timeoutMs,
+    sleep: options.sleep ?? defaultSleep,
+    hooks: options.hooks,
+  });
 }
 
 /** Thrown by `curlOnce` when curl itself failed (non-zero exit). */
@@ -322,7 +373,19 @@ async function fetchWithGuard(
           `${TOOL_NAME}: too many redirects (> ${MAX_REDIRECTS})`,
         );
       }
-      currentUrl = parseHttpUrl(res.redirectUrl);
+      const nextUrl = parseHttpUrl(res.redirectUrl);
+      if (opts.hooks?.allowRedirect?.(nextUrl) === false) {
+        return {
+          finalUrl: currentUrl.toString(),
+          status: res.status,
+          contentType: res.contentType,
+          body: res.body,
+          truncated: res.truncated,
+          redirectChain: chain,
+          refusedRedirect: nextUrl.toString(),
+        };
+      }
+      currentUrl = nextUrl;
       continue;
     }
     return {
@@ -356,6 +419,7 @@ async function fetchHopWithRetry(
 ): Promise<CurlResponse> {
   const { maxRetries } = opts.fetchCfg;
   for (let attempt = 0; ; attempt++) {
+    await opts.hooks?.beforeRequest?.(url, opts.signal);
     // Re-resolve on every attempt: the guard must pin a freshly verified IP
     // rather than trusting one resolved before an arbitrary backoff wait.
     const pinnedIps = await assertHostAllowed(url, { lookup: opts.lookup });
@@ -364,6 +428,7 @@ async function fetchHopWithRetry(
     let failure: unknown = null;
     try {
       res = await curlOnce(url, pinnedIps, opts);
+      opts.hooks?.afterResponse?.(url, res.status, res.retryAfterMs);
     } catch (err) {
       // Only a curl timeout is worth another attempt; a missing curl binary or
       // an aborted run must surface immediately.
