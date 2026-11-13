@@ -375,6 +375,42 @@ describe("POST /v1/chat/completions (streaming)", () => {
     }
   });
 
+  it("puts the turn's timed generation on the usage frame, and leaves it off when nothing was timed (ATO-1186)", async () => {
+    const usageFrame = async (usage: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      const harness = await startTestHarness({ llamaComplete: scriptedToolThenReply() });
+      // As in the include_usage test below: the injected completer bypasses
+      // the meter, so the turn result carries the usage runTurn would set.
+      const runTurn = harness.runtime.runTurn.bind(harness.runtime);
+      vi.spyOn(harness.runtime, "runTurn").mockImplementation(async (...args: Parameters<typeof runTurn>) => ({
+        ...(await runTurn(...args)),
+        usage: usage as { promptTokens: number; completionTokens: number },
+      }));
+      try {
+        const response = await postChat(
+          harness.baseUrl,
+          { model: "atomic-agent", stream: true, messages: [{ role: "user", content: "inspect the page" }] },
+          { [EXTENSIONS_HEADER]: "1" },
+        );
+        const text = await readAllText(response);
+        const line = /event: usage\ndata: ([^\n]+)/.exec(text)?.[1];
+        expect(line).toBeDefined();
+        return JSON.parse(line!) as Record<string, unknown>;
+      } finally {
+        await harness.cleanup();
+      }
+    };
+    const timed = await usageFrame({
+      promptTokens: 150,
+      completionTokens: 12,
+      generation: { completionTokens: 10, durationMs: 500 },
+    });
+    expect(timed.generation).toEqual({ completion_tokens: 10, duration_ms: 500 });
+    // The OpenAI-shaped block stays exact.
+    expect(timed.usage).toEqual({ prompt_tokens: 150, completion_tokens: 12, total_tokens: 162 });
+    const untimed = await usageFrame({ promptTokens: 150, completionTokens: 12 });
+    expect(untimed).not.toHaveProperty("generation");
+  });
+
   it("omits atomic-agent SSE extensions by default so OpenAI clients validate cleanly", async () => {
     const harness = await startTestHarness({
       llamaComplete: scriptedToolThenReply(),

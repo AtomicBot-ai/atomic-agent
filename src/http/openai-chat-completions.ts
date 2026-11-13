@@ -53,6 +53,7 @@ import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
+  buildGenerationPayload,
   buildStreamChunk,
   buildUsageChunk,
   buildUsagePayload,
@@ -403,6 +404,8 @@ async function handleStream(
     });
   }
   if (env.request.extensionsEnabled) {
+    // ATO-1186: `generation` lets the desktop show the reply speed.
+    const generation = buildGenerationPayload(result!);
     sse.writeEvent("usage", {
       id: env.completionId,
       object: "chat.completion.usage",
@@ -410,6 +413,7 @@ async function handleStream(
       model: env.request.model,
       session_id: result!.session.id,
       usage,
+      ...(generation ? { generation } : {}),
     });
   }
   sse.writeEvent(

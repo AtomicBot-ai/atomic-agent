@@ -39,6 +39,14 @@ export interface TurnUsageSnapshot {
    * Present only when that provider was given and a completion landed.
    */
   fallbackCalls?: number;
+  /**
+   * How long the turn's streamed completions spent generating, and the
+   * output tokens those same completions produced (ATO-1186). Read as a
+   * pair: `completionTokens / durationMs` is the turn's reply speed. Only
+   * completions with a measured generation time count, so a sub-call that
+   * was not timed never skews the speed. Absent when none was timed.
+   */
+  generation?: { completionTokens: number; durationMs: number };
 }
 
 interface TurnBucket {
@@ -52,6 +60,8 @@ interface TurnBucket {
   intendedProviderId: string | undefined;
   servedProviderId: string | undefined;
   fallbackCalls: number;
+  generatedTokens: number;
+  generationMs: number;
 }
 
 /**
@@ -93,6 +103,8 @@ export class TurnUsageMeter {
       intendedProviderId,
       servedProviderId: undefined,
       fallbackCalls: 0,
+      generatedTokens: 0,
+      generationMs: 0,
     });
   }
 
@@ -123,6 +135,12 @@ export class TurnUsageMeter {
     sessionId: string;
     usage?: CompletionUsage;
     model?: ResolvedModel;
+    /**
+     * How long this completion spent generating (`generationMsFor`).
+     * Only a positive figure with output tokens counts toward the turn's
+     * reply speed (ATO-1186).
+     */
+    generationMs?: number;
   }): void {
     const bucket = this.buckets.get(params.sessionId);
     if (!bucket) return;
@@ -132,6 +150,15 @@ export class TurnUsageMeter {
     bucket.sawUsage = true;
     bucket.promptTokens += usage.promptTokens;
     bucket.completionTokens += usage.completionTokens;
+    if (
+      params.generationMs !== undefined &&
+      Number.isFinite(params.generationMs) &&
+      params.generationMs > 0 &&
+      usage.completionTokens > 0
+    ) {
+      bucket.generationMs += params.generationMs;
+      bucket.generatedTokens += usage.completionTokens;
+    }
     if (usage.cachedTokens !== undefined) {
       bucket.sawCachedUsage = true;
       bucket.cachedTokens += usage.cachedTokens;
@@ -191,9 +218,35 @@ export class TurnUsageMeter {
       completionTokens: bucket.completionTokens,
       ...(bucket.sawCachedUsage ? { cachedTokens: bucket.cachedTokens } : {}),
       ...(bucket.sawPricedUsage ? { costUsd: bucket.costUsd } : {}),
+      ...(bucket.generationMs > 0
+        ? {
+            generation: {
+              completionTokens: bucket.generatedTokens,
+              durationMs: Math.round(bucket.generationMs),
+            },
+          }
+        : {}),
       ...served,
     };
   }
+}
+
+/**
+ * How long one streamed completion spent generating its output
+ * (ATO-1186). A local llama-server measures its own decode time
+ * (`timing.predictedMs`), which leaves out prompt processing, so that
+ * figure wins. Every other provider reports none; the time from the
+ * stream's first chunk to its end (`streamMs`, measured by the
+ * streaming seam) stands in. `undefined` when neither is known.
+ */
+export function generationMsFor(
+  result: { timing?: CompletionTiming },
+  streamMs: number | undefined,
+): number | undefined {
+  const predicted = result.timing?.predictedMs ?? 0;
+  if (Number.isFinite(predicted) && predicted > 0) return predicted;
+  if (streamMs !== undefined && Number.isFinite(streamMs) && streamMs > 0) return streamMs;
+  return undefined;
 }
 
 /**
