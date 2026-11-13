@@ -20250,10 +20250,10 @@ function rmDegradationLine(d) {
   return 'Fusion needs two providers — one to orchestrate and one to run the workers. Only one is configured. Add another in Manage → LLM (or /llm).';
 }
 /* ATO-261 / ATO-305: the resolved run mode as Settings › Models states it
-   under the run-mode cards: the seats in words (fzSeatWord), models as their
+   under the run-mode cards: the seats in words (fzProviderWord), models as their
    ids, and no dashes. `/runmode status` keeps the TUI's body (rmDescribe). */
 function rmSettingsLine(rm) {
-  const seat = (id, model) => fzSeatWord(id) + (model ? ' (' + model + ')' : '');
+  const seat = (id, model) => fzProviderWord(id) + (model ? ' (' + model + ')' : '');
   const undash = (t) => String(t).replace(/\s+\u2014\s+/g, ': ');
   const parts = [];
   if (rm.effective === 'fusion') {
@@ -20261,7 +20261,7 @@ function rmSettingsLine(rm) {
     parts.push('Fusion. Orchestrator: ' + seat(rm.orchestratorProviderId, rm.orchestratorModel)
       + '. Workers (' + rm.workers + '): ' + seat(rm.workerProviderId, rm.workerModel));
   } else {
-    parts.push((rm.effective === 'cloud' ? 'Cloud' : 'Local') + ': ' + fzSeatWord(rm.primaryProviderId));
+    parts.push((rm.effective === 'cloud' ? 'Cloud' : 'Local') + ': ' + fzProviderWord(rm.primaryProviderId));
   }
   if (rm.degraded) parts.push(undash(rmDegradationLine(rm.degraded)));
   else if (rm.stored !== null && rm.stored !== rm.effective) {
@@ -20462,18 +20462,21 @@ function fzSeatId(label) {
   return at >= 0 && at < s.length - 1 ? s.slice(at + 1) : s;
 }
 
-/* ATO-261: a Fusion seat in words. The local seat is "Local models", as the
+/* ATO-261: a Fusion seat's provider in words. The local seat is "Local models", as the
    composer's seat chip says (composer-engines.js), never `local-llama`; a
-   cloud seat is its preset's name ("AI/ML API", "DashScope"), never its id. */
-function fzSeatWord(providerId) {
+   cloud seat is its preset's name ("AI/ML API", "DashScope"), never its id.
+   ATO-1540: this takes a provider id and is not fzSeatWord, which names a seat's
+   model on its chip. Both used to share one name, so this one silently replaced
+   the chip word and the chips showed provider names instead of models. */
+function fzProviderWord(providerId) {
   if (!providerId) return null;
   return providerId === 'local-llama' ? composerEngineName() : providerWord(providerId);
 }
 /** fusion-intro.ts describeFusionIntro — one paragraph is the desktop's (see main/run-mode.ts).
-    A seat with no model pinned is named in words (fzSeatWord). ATO-305: no dashes in the copy. */
+    A seat with no model pinned is named in words (fzProviderWord). ATO-305: no dashes in the copy. */
 function fzIntroParagraphs(rm) {
-  const orchestrator = rm.orchestratorModel ?? fzSeatWord(rm.orchestratorProviderId) ?? 'your cloud provider';
-  const worker = rm.workerModel ?? fzSeatWord(rm.workerProviderId) ?? 'the local model';
+  const orchestrator = rm.orchestratorModel ?? fzProviderWord(rm.orchestratorProviderId) ?? 'your cloud provider';
+  const worker = rm.workerModel ?? fzProviderWord(rm.workerProviderId) ?? 'the local model';
   return [
     'Fusion splits the work between two models: one decides, the other does.',
     'Right now, ' + orchestrator + ' plans. It reads enough to choose an approach, breaks the job into self-contained parts, writes the brief for each, then reads what comes back, judges it, and sends anything weak out again.'
