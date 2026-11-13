@@ -75,6 +75,16 @@ describe("FileCheckpointStore (ATO-1056)", () => {
     ]);
   });
 
+  it("copies the binary file of an Office tool", async () => {
+    const doc = join(work, "a.docx");
+    const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00]);
+    writeFileSync(doc, zip);
+    await store.capture("s-1", doc, "os.fs.docx");
+    const { entries } = await store.since("s-1", 0);
+    expect(entries[0]?.skipped).toBeUndefined();
+    expect(await store.readCopy("s-1", entries[0]!)).toEqual(zip);
+  });
+
   it("drops the oldest past the entry cap and says a point before that is incomplete", async () => {
     const a = join(work, "a.txt");
     writeFileSync(a, "x");

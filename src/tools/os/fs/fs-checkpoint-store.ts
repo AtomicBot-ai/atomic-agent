@@ -23,7 +23,8 @@ import { safeSegment, writeJsonAtomically } from "./fs-restore-manifest.js";
  *
  * Bounded: a file over {@link CHECKPOINT_MAX_FILE_BYTES} or one that looks
  * binary is recorded as changed but not copied (the rollback says it
- * cannot put it back); past {@link CHECKPOINT_MAX_ENTRIES} entries or
+ * cannot put it back), except the files of the Office tools
+ * ({@link BINARY_COPY_TOOLS}), which are binary by nature; past {@link CHECKPOINT_MAX_ENTRIES} entries or
  * {@link CHECKPOINT_MAX_SESSION_BYTES} of copies the oldest are dropped,
  * and `droppedThrough` remembers how far, so a rollback to a point
  * older than that says some changes are no longer kept. Session folders
@@ -40,6 +41,8 @@ export const CHECKPOINT_MAX_FILE_BYTES = 2 * 1024 * 1024;
 export const CHECKPOINT_MAX_SESSION_BYTES = 64 * 1024 * 1024;
 export const CHECKPOINT_MAX_ENTRIES = 400;
 export const CHECKPOINT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+/** Tools whose files are zip packages (.docx/.xlsx/.pptx): copied although binary. */
+export const BINARY_COPY_TOOLS: ReadonlySet<string> = new Set(["os.fs.docx", "os.fs.xlsx", "os.fs.write_pptx"]);
 /** Bytes scanned for a NUL to call a file binary. */
 const BINARY_SNIFF_BYTES = 8000;
 const INDEX_FILE = "index.json";
@@ -122,7 +125,7 @@ export class FileCheckpointStore {
         await this.pruneOld();
       }
       const at = this.now();
-      const before = await readBefore(absolute);
+      const before = await readBefore(absolute, BINARY_COPY_TOOLS.has(tool));
       await this.serialised(sessionId, async () => {
         const dir = this.sessionDir(sessionId);
         await mkdir(dir, { recursive: true });
@@ -252,7 +255,7 @@ interface Before {
   skipped?: CheckpointSkip;
 }
 
-async function readBefore(absolute: string): Promise<Before> {
+async function readBefore(absolute: string, binaryOk: boolean): Promise<Before> {
   let info: Stats;
   try {
     info = await stat(absolute);
@@ -270,7 +273,7 @@ async function readBefore(absolute: string): Promise<Before> {
     return { existed: true, skipped: "unreadable" };
   }
   if (content.byteLength > CHECKPOINT_MAX_FILE_BYTES) return { existed: true, skipped: "too_large" };
-  if (looksBinary(content)) return { existed: true, skipped: "binary" };
+  if (!binaryOk && looksBinary(content)) return { existed: true, skipped: "binary" };
   return { existed: true, content };
 }
 

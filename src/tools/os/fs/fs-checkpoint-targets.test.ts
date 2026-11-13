@@ -2,7 +2,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { ToolRegistry, type ToolContext } from "../../tool-registry.js";
-import { checkpointBeforeInvoke, checkpointTargets } from "./fs-checkpoint-targets.js";
+import { CHECKPOINTED_TOOLS, checkpointBeforeInvoke, checkpointTargets } from "./fs-checkpoint-targets.js";
 
 const WD = resolve("/work/project");
 const noDirs = { isDirectory: () => false };
@@ -49,6 +49,19 @@ describe("checkpointTargets (ATO-1056)", () => {
       ...noDirs,
       readText: () => patch,
     })).toEqual([join(WD, "sub", "src", "one.ts"), join(WD, "sub", "gone.txt")]);
+  });
+
+  it("reads the path of a Word, Excel or PowerPoint write, and none of an Excel read", () => {
+    for (const op of ["create", "append", "replace"]) {
+      expect(checkpointTargets("os.fs.docx", { path: "a.docx", op, blocks: ["# Hi"], find: "x", replaceWith: "y" }, WD, noDirs)).toEqual([join(WD, "a.docx")]);
+    }
+    expect(checkpointTargets("os.fs.xlsx", { path: "b.xlsx", op: "create", rows: [[1]] }, WD, noDirs)).toEqual([join(WD, "b.xlsx")]);
+    expect(checkpointTargets("os.fs.xlsx", { path: "b.xlsx", op: "write", cell: "A1", rows: [[1]] }, WD, noDirs)).toEqual([join(WD, "b.xlsx")]);
+    expect(checkpointTargets("os.fs.xlsx", { path: "b.xlsx", op: "read", range: "A1:B2" }, WD, noDirs)).toEqual([]);
+    expect(checkpointTargets("os.fs.write_pptx", { path: "c.pptx", slides: [{ title: "T" }] }, WD, noDirs)).toEqual([join(WD, "c.pptx")]);
+    // An op the tool refuses writes nothing.
+    expect(checkpointTargets("os.fs.docx", { path: "a.docx" }, WD, noDirs)).toEqual([]);
+    for (const tool of ["os.fs.docx", "os.fs.xlsx", "os.fs.write_pptx"]) expect(CHECKPOINTED_TOOLS.has(tool)).toBe(true);
   });
 
   it("covers nothing else", () => {

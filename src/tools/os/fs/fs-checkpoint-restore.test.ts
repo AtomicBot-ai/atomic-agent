@@ -111,6 +111,9 @@ describe("uncoveredToolCalls", () => {
         call("os.git.commit"),
         call("os.fs.archive.extract"),
         call("fusion.delegate"),
+        call("os.fs.docx"),
+        call("os.fs.xlsx"),
+        call("os.fs.write_pptx"),
         { kind: "tool_result", tool: "os.shell.run" },
       ]),
     ).toEqual([

@@ -29,6 +29,11 @@ export const CHECKPOINTED_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.move",
   "os.fs.trash",
   "os.fs.restore",
+  // Office files (ATO-541, ATO-537): listed by name before those tools
+  // land; an unknown name is never dispatched, so the entry is inert.
+  "os.fs.docx",
+  "os.fs.xlsx",
+  "os.fs.write_pptx",
 ]);
 
 export interface CheckpointTargetDeps {
@@ -61,6 +66,17 @@ export function checkpointTargets(
     case "os.fs.edit":
     case "os.fs.restore":
       add(at(args.path));
+      break;
+    case "os.fs.write_pptx":
+      add(at(args.path));
+      break;
+    case "os.fs.docx":
+      // Every op writes: create, append, replace.
+      if (args.op === "create" || args.op === "append" || args.op === "replace") add(at(args.path));
+      break;
+    case "os.fs.xlsx":
+      // op read only shows a range.
+      if (args.op === "create" || args.op === "write") add(at(args.path));
       break;
     case "os.fs.trash":
       if (Array.isArray(args.paths)) for (const path of args.paths) add(at(path));
