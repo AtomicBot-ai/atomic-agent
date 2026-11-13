@@ -36,6 +36,11 @@
  */
 
 import { renderContractInputs } from "./contract-inputs.js";
+import {
+  describeExample,
+  describeUnrunnableExample,
+  unrunnableExamples,
+} from "./contract-example.js";
 
 /** What a `provides` entry can name. `file` uses `name` as the path. */
 export const CONTRACT_PROVIDE_KINDS = [
@@ -77,6 +82,22 @@ export interface ContractProvide {
    * place.
    */
   shape?: string;
+  /**
+   * One small call of the provide, run after the fan-out, and what its
+   * result `r` must satisfy (`contract-example.ts`). The `shape` says
+   * what it returns; this checks it does. Optional; absent, nothing runs.
+   */
+  example?: ContractProvideExample;
+}
+
+/** A provide's example call — see `contract-example.ts`. */
+export interface ContractProvideExample {
+  /** A JS expression that calls it: `PHYS.corners({x:0,y:0,w:2,h:2,a:0})`. */
+  call: string;
+  /** A JS condition over the result `r`; truthy passes. */
+  expect: string;
+  /** Browser code: the page that loads it, where the call runs. Absent: `in` is loaded under node. */
+  page?: string;
 }
 
 /**
@@ -133,7 +154,9 @@ const CHECK_RENDER_CHARS = 300;
 export function describeProvide(provide: ContractProvide): string {
   const where = provide.in === undefined ? "" : ` in ${provide.in}`;
   const shape = provide.shape === undefined ? "" : ` — ${provide.shape}`;
-  return `${provide.kind} ${provide.name}${where}${shape}`;
+  const example =
+    provide.example === undefined ? "" : ` (${describeExample(provide.example)})`;
+  return `${provide.kind} ${provide.name}${where}${shape}${example}`;
 }
 
 /** Paths a task owns, in declaration order. */
@@ -215,8 +238,8 @@ export function describeUnprovidedRequire(require: ContractRequire): string {
  * What the contract declares that cannot be honoured, one line each,
  * without the `contract:` prefix — the result's `contract:` line and
  * `details.contract.warnings` carry them as they are; the worker's
- * block prefixes them itself. Provides first, then requires, each in
- * declaration order. Empty for a contract with nothing to warn about,
+ * block prefixes them itself. Provides first, then requires, then
+ * examples with nowhere to run, each in declaration order. Empty for a contract with nothing to warn about,
  * so a caller can test the length.
  */
 export function contractWarnings(
@@ -226,6 +249,7 @@ export function contractWarnings(
   return [
     ...uncheckableProvides(contract, tasks).map(describeUncheckableProvide),
     ...unprovidedRequires(contract).map(describeUnprovidedRequire),
+    ...unrunnableExamples(contract).map(describeUnrunnableExample),
   ];
 }
 

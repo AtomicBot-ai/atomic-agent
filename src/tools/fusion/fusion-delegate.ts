@@ -27,6 +27,7 @@ import {
   type ContractCheckRunner,
   type ContractReport,
 } from "./contract-checks.js";
+import { checksWithExamples } from "./contract-example.js";
 import {
   completedWaveNotes,
   contractForWave,
@@ -276,7 +277,7 @@ export function buildFusionDelegateTool(
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs? }], maxWorkers?, contract? }. To continue a run cut off by a restart: { resume: runId, confirm?: [taskId] } and nothing else.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. For a function another task calls, also give an `example`: { call, expect, page? } — one small call (`PHYS.corners({x:0,y:0,w:2,h:2,a:0})`) and a JS condition over its result `r` (`r.length === 8 && 'w' in r[0]`); it is run once after the fan-out and a result that does not match fails the providing task. Browser code: set `page` to the HTML file that loads it (the call runs in that page's global scope); otherwise the provide's `in` file is loaded under node. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs? }], maxWorkers?, contract? }. To continue a run cut off by a restart: { resume: runId, confirm?: [taskId] } and nothing else.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -1100,7 +1101,7 @@ export function buildFusionDelegateTool(
                   { results: rows, signal: ctx.signal },
                 );
                 const checks = await runContractChecks(
-                  childContract.checks ?? [],
+                  checksWithExamples(childContract),
                   deps.runChecks,
                   { workingDir: ctx.workingDir, signal: ctx.signal },
                 );
@@ -1291,15 +1292,19 @@ export function buildFusionDelegateTool(
           { results: allRows, signal: ctx.signal },
         );
         let out = applyContractFindings(rows, provides.findings);
+        // The declared checks, then one call per provide `example`
+        // (ATO-1362). Examples come last so the judge's indices into
+        // `contract.checks` still land on the declared ones.
+        const allChecks = checksWithExamples(parsed.contract);
         const checks = await runContractChecks(
-          parsed.contract.checks ?? [],
+          allChecks,
           deps.runChecks,
           { workingDir: ctx.workingDir, signal: ctx.signal },
         );
         out = applyCheckOutcomes(out, checks.outcomes);
         checkOutcomes =
-          checks.outcomes.length === (parsed.contract.checks ?? []).length
-            ? checks.outcomes
+          checks.outcomes.length === allChecks.length
+            ? checks.outcomes.slice(0, (parsed.contract.checks ?? []).length)
             : [];
         // What the call was run with despite the contract — a require
         // nobody provides, a provide nothing can check, a cycle in the
