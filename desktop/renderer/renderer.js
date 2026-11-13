@@ -24240,14 +24240,13 @@ async function tkCancel(id) {
   TK.cancel = null;
   await tasksRefresh();
 }
-/* Run-now: POST /api/tasks/{id}/run, one attempt, synchronous on the agent. */
+/* Run-now: POST /api/tasks/{id}/run, one attempt, synchronous on the agent; a paused task runs once and stays paused. */
 async function tkRunNow(id) {
   if (!BR) return;
   TK.msg = 'task ' + id + ' running…'; TK.note = null; tkRenderKeepCaret();
   const res = await BR.runTask(id);
   if (res && res.ok) {
-    const t = res.data && res.data.task;
-    TK.msg = t ? 'task ' + id + ' run complete (status=' + t.status + ')' : 'task ' + id + ' skipped (already claimed or vanished)';
+    TK.msg = taskRunNowLine(id, res.data && res.data.task);   // ATO-590: a paused task stays paused
   } else {
     TK.msg = 'run-now ' + id + ' failed: ' + ((res && res.error) || 'unknown error');
   }

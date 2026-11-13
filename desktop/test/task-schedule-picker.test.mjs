@@ -132,6 +132,23 @@ test("Pause shows on a waiting task, Resume on a paused one, neither on an agent
   assert.equal(P.taskPauseAction({ status: "pending" }, { unsupported: true }), null);
 });
 
+test("Run now stays on a paused task's page, and the line says it is still paused after", () => {
+  assert.equal(
+    P.taskRunNowLine("t1", { status: "paused" }),
+    "task t1 ran once and is still paused: resume it to put it back on its schedule",
+  );
+  assert.equal(P.taskRunNowLine("t1", { status: "completed" }), "task t1 run complete (status=completed)");
+  assert.equal(P.taskRunNowLine("t1", null), "task t1 skipped (already claimed or vanished)");
+  // The detail bar's Run now is not gated on the status, so a paused task keeps it.
+  const r = src("../renderer/renderer.js");
+  const detail = r.slice(r.indexOf("function tkDetailHTML()"), r.indexOf("function tkFormHTML()"));
+  assert.match(detail, /\+ '<button class="btn btn-s sm" data-act="tasks:run:' \+ esc\(id\) \+ '" title="R run-now">/);
+  assert.match(r, /TK\.msg = taskRunNowLine\(id, res\.data && res\.data\.task\)/);
+  // After the run the list is read again, so the row shows its status (paused) from the agent.
+  const runNow = r.slice(r.indexOf("async function tkRunNow(id)"), r.indexOf("function tkFocusTask(id)"));
+  assert.match(runNow, /await tasksRefresh\(\)/);
+});
+
 test("the history lists runs with their outcome, and nothing on an agent without the route", () => {
   const fmt = (ms) => "T" + ms;
   const html = P.taskRunsHTML({

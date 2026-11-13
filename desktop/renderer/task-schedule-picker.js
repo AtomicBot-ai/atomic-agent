@@ -307,7 +307,14 @@ async function taskPauseToggle(id, verb) {
   return verb + ' ' + id + ' failed: ' + ((res && res.error) || 'unknown error');
 }
 
+/* The line after Run now. It runs a paused task once and the pause stays. */
+function taskRunNowLine(id, task) {
+  if (!task) return 'task ' + id + ' skipped (already claimed or vanished)';
+  if (task.status === 'paused') return 'task ' + id + ' ran once and is still paused: resume it to put it back on its schedule';
+  return 'task ' + id + ' run complete (status=' + task.status + ')';
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {pickerToCron, cronToPicker, cronPhrase, schedulePhrase, taskPickerApply, taskPickerHTML,
-    runOutcomeLabel, taskRunsHTML, taskPauseAction};
+    runOutcomeLabel, taskRunsHTML, taskPauseAction, taskRunNowLine};
 }
