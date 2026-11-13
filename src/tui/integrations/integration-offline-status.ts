@@ -5,6 +5,8 @@ import type { IntegrationStatus } from "../../integrations/index.js";
  *
  * The messaging channels live on the internet: Telegram and Discord
  * keep a connection to their servers, Atomic Mail is a hosted inbox.
+ * GitHub, Exa web search and Composio are hosted services too; their
+ * tools refuse while offline, so the hub says they are paused as well.
  * While the network kill switch (ATO-1084) is on, the runtime does not
  * start them (or stops them when the switch goes on) and starts them
  * again when it goes off. Without this the hub would read "channel
@@ -15,11 +17,14 @@ import type { IntegrationStatus } from "../../integrations/index.js";
  */
 export const OFFLINE_PAUSED_DETAIL = "Paused: offline mode is on";
 
-/** The channel integrations offline mode pauses. */
+/** The integrations offline mode pauses: channels and hosted services. */
 export const OFFLINE_PAUSED_INTEGRATIONS: ReadonlySet<string> = new Set([
   "telegram",
   "discord",
   "atomic-mail",
+  "github",
+  "exa",
+  "composio",
 ]);
 
 /**

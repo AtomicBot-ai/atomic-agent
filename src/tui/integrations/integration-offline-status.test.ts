@@ -30,7 +30,16 @@ describe("integration status while offline", () => {
     expect(offlineIntegrationStatus("telegram", fresh, true)).toBe(fresh);
   });
 
-  it("leaves integrations that are not channels alone", () => {
-    expect(offlineIntegrationStatus("github", up, true)).toBe(up);
+  it("pauses GitHub, Exa and Composio too: their tools refuse while offline", () => {
+    for (const id of ["github", "exa", "composio"]) {
+      expect(offlineIntegrationStatus(id, up, true)).toEqual({
+        level: "configured",
+        detail: OFFLINE_PAUSED_DETAIL,
+      });
+    }
+  });
+
+  it("leaves local integrations alone", () => {
+    expect(offlineIntegrationStatus("some-local-tool", up, true)).toBe(up);
   });
 });
