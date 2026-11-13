@@ -3,6 +3,7 @@ import type {
   CommandResult,
   runCommand as RunCommand,
 } from "../../../sandbox/command-runner.js";
+import { offlineRefusal } from "../../../llm/offline-network.js";
 
 /**
  * Spawn the system `curl` for the HTTP/web tools, with the one Windows
@@ -52,6 +53,14 @@ export async function runCurl(
   options: CommandOptions,
   seams: RunCurlSeams = {},
 ): Promise<CommandResult> {
+  // ATO-1084 backstop: the tools refuse first, with a tool error of their
+  // own; this keeps a future caller that forgets from reaching the
+  // network anyway. curl takes its URL as a bare argument.
+  for (const arg of args) {
+    if (!/^(?:https?|wss?|ftp):\/\//i.test(arg)) continue;
+    const refused = offlineRefusal(arg, "curl");
+    if (refused) throw refused;
+  }
   const platform = seams.platform ?? process.platform;
   if (platform !== "win32") return runCommand("curl", args, options);
 

@@ -3,10 +3,15 @@ import {
   EnvHttpProxyAgent,
   getGlobalDispatcher,
   setGlobalDispatcher,
+  type Dispatcher,
 } from "undici";
 
 import { ENV_DEFAULTS } from "../config/config-schema.js";
 import type { AtomicAgentConfig } from "../config/index.js";
+import {
+  offlineNetworkInterceptor,
+  setOfflineNetwork,
+} from "./offline-network.js";
 
 /**
  * How far above the longest budget this process can express the
@@ -137,6 +142,10 @@ export function installTransportDeadlines(config?: AtomicAgentConfig): {
   headersTimeout: number;
   bodyTimeout: number;
 } {
+  // Offline mode (ATO-1084) is read by the pool at dispatch time, so
+  // applying the config's switch needs no new pool. Only a config can
+  // turn it on here; the bare floor install leaves it as it is.
+  if (config?.network?.offline === true) setOfflineNetwork(true);
   const wanted = transportDeadlinesFor(config);
   const next = {
     headersTimeout: Math.max(
@@ -152,11 +161,7 @@ export function installTransportDeadlines(config?: AtomicAgentConfig): {
   ) {
     return installed;
   }
-  setGlobalDispatcher(
-    proxyConfigured(process.env)
-      ? new EnvHttpProxyAgent(next)
-      : new Agent(next),
-  );
+  setGlobalDispatcher(buildPool(next));
   installed = next;
   return installed;
 }
@@ -215,11 +220,7 @@ export function renewTransportPool(): boolean {
   try {
     const previous = getGlobalDispatcher();
     const deadlines = installed ?? transportDeadlinesFor();
-    setGlobalDispatcher(
-      proxyConfigured(process.env)
-        ? new EnvHttpProxyAgent(deadlines)
-        : new Agent(deadlines),
-    );
+    setGlobalDispatcher(buildPool(deadlines));
     installed = deadlines;
     // Graceful: waits for the requests still on it. A request that is
     // itself stuck keeps the old pool alive until its own signal ends
@@ -231,6 +232,22 @@ export function renewTransportPool(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The pool every `fetch` goes through: undici's `Agent` (or the
+ * proxy-aware one) with the deadlines above, behind the offline-mode
+ * guard (ATO-1084). The guard passes loopback requests untouched and
+ * only counts the rest while offline mode is off.
+ */
+function buildPool(deadlines: {
+  headersTimeout: number;
+  bodyTimeout: number;
+}): Dispatcher {
+  const base = proxyConfigured(process.env)
+    ? new EnvHttpProxyAgent(deadlines)
+    : new Agent(deadlines);
+  return base.compose(offlineNetworkInterceptor());
 }
 
 /** Test seam: forget what this process installed. */

@@ -72,3 +72,13 @@ describe("buildChromeLaunchArgs", () => {
     expect(args.length).toBe(baseLen + 2);
   });
 });
+
+describe("buildChromeLaunchArgs offline (ATO-1084)", () => {
+  it("routes everything but loopback to a proxy that is not there", () => {
+    const base = { cdpPort: 9222, userDataDir: "/tmp/p", headless: true, platform: "darwin" as const };
+    expect(buildChromeLaunchArgs({ ...base, offline: true })).toContain(
+      "--proxy-server=http://127.0.0.1:9",
+    );
+    expect(buildChromeLaunchArgs(base).some((a) => a.startsWith("--proxy-server"))).toBe(false);
+  });
+});

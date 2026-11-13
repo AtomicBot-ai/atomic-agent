@@ -22,6 +22,7 @@ import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
 import { emitConfigNoticeOnce } from "./config-primitives.js";
+import { OFFLINE_ENV } from "./network-config.js";
 import type {
   LocalModelsValueSource,
   LocalModelsValueSources,
@@ -572,6 +573,11 @@ export function loadConfig(): AtomicAgentConfig {
         dir: resolve(stateDir, "traces"),
         maxBytesPerSession: user.tracing.trace.maxBytesPerSession,
       },
+    },
+    // ATO-1084: the env var can only turn the kill switch on, never
+    // off: a file that says offline stays offline whatever the shell has.
+    network: {
+      offline: user.network.offline || readBool(OFFLINE_ENV, false),
     },
     memory: {
       profile: {

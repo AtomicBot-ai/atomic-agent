@@ -7,6 +7,7 @@ import { describeElementInPage, toRefDescription } from "./describe-element.js";
 import { searchUrlFor } from "./search-engines.js";
 import { planShot, type CssRect } from "./screenshot-geometry.js";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
+import { isOfflineNetwork } from "../../llm/offline-network.js";
 import { clearStaleChromeLocks } from "./clear-stale-chrome-locks.js";
 import {
   decorateChromeProfile,
@@ -502,6 +503,7 @@ export class PlaywrightBackend implements BrowserBackend {
       userDataDir: this.options.userDataDir,
       headless: this.options.headless,
       noSandbox: this.options.noSandbox ?? false,
+      offline: isOfflineNetwork(),
     });
     const running = await spawnChrome({
       executablePath: executable.path,

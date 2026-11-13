@@ -23,6 +23,14 @@ export interface BuildChromeLaunchArgsInput {
   headless: boolean;
   /** Pass when running under Docker/CI without a user namespace. */
   noSandbox?: boolean;
+  /**
+   * Offline mode (ATO-1084): route every non-loopback connection to a
+   * proxy that is not there (`127.0.0.1:9`), so pages, subresources and
+   * Chrome's own background requests fail instead of leaving the
+   * machine. Chrome never proxies loopback by default, so local pages
+   * still load. Applies to the Chrome the agent starts, for its life.
+   */
+  offline?: boolean;
   /** Extra raw flags appended verbatim; caller is responsible for safety. */
   extraArgs?: readonly string[];
   /** Platform override for deterministic tests. Defaults to process.platform. */
@@ -57,6 +65,9 @@ export function buildChromeLaunchArgs(
   }
   if (platform === "linux") {
     args.push("--disable-dev-shm-usage");
+  }
+  if (input.offline) {
+    args.push("--proxy-server=http://127.0.0.1:9");
   }
   if (input.extraArgs && input.extraArgs.length > 0) {
     args.push(...input.extraArgs);
