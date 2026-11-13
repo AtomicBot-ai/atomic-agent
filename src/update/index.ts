@@ -21,6 +21,16 @@ export {
   type RequiredUpdateReason,
 } from "./update-policy.js";
 export {
+  verifySha256Sums,
+  parseSha256Sums,
+  resolveSignedArchiveSha256,
+  ReleaseSignatureError,
+  RELEASE_SIGNING_PUBLIC_KEY,
+  FIRST_SIGNED_VERSION,
+  signatureRequired,
+  type SumsVerification,
+} from "./release-signature.js";
+export {
   compareSemver,
   isNewerVersion,
   parseSemver,

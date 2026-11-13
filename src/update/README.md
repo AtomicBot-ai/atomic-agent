@@ -21,4 +21,8 @@ Entry point: [check-app-update.ts](check-app-update.ts). Read the root instructi
 
 `broken` lists exact versions with a known breakage, `minimum` the lowest version still accepted. The check then reports `updateRequired` and `requiredReason` (`broken` / `below-minimum`). It never requires an update that is not newer, nor one to a release the same comment lists. No comment means nothing is required; that is the default for every release. `atomic-agent update` and `--check` print a line for it. The TUI warns in its banner below `minimum` and, for a `broken` version, refuses to start a new chat until the update (see [update UI](../tui/update/README.md)); a running session is never stopped. The share of users on the latest version needs no new event: every analytics event carries `app_version`.
 
+## Release signature
+
+[release-signature.ts](release-signature.ts) checks the release's `SHA256SUMS.sig` (raw Ed25519 over `SHA256SUMS`) with the embedded `RELEASE_SIGNING_PUBLIC_KEY` before `runAppUpdate` starts the installer, and passes the archive's signed digest down as `ATOMIC_AGENT_EXPECTED_SHA256`, which install.sh and install.ps1 compare on top of the per-asset `.sha256`. With the key empty (as now) it is skipped and nothing is fetched. Once a key is embedded, a release without a signature is refused from `FIRST_SIGNED_VERSION` on (and for latest), so stripping the `.sig` does not fall back to the forgeable `.sha256`; only an older pinned tag still skips. A signature that does not hold fails the update. Key setup and rotation: [bundling](../../scripts/docs/bundling.md#release-provenance-and-signature).
+
 Checks: `npx vitest run src/update` when tests are present; `npm run lint`; `npm run docs:check`.

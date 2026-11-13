@@ -17,6 +17,8 @@
     ATOMIC_AGENT_VERSION      v0.1.0               (optional: pin a tag; default: latest)
     ATOMIC_AGENT_INSTALL_DIR  path                 (default: %LOCALAPPDATA%\atomic-agent)
     ATOMIC_AGENT_NO_PATH      1                    (optional: skip user PATH update)
+    ATOMIC_AGENT_EXPECTED_SHA256  hex              (set by `atomic-agent update` from the
+                                                   release's signed SHA256SUMS)
 #>
 
 $ErrorActionPreference = "Stop"
@@ -344,6 +346,18 @@ try {
     Fail "checksum mismatch for $ArchiveName`n  expected: $expected`n  actual:   $actual"
   }
   Write-Info "checksum verified"
+
+  # The .sha256 lives in the same release as the zip, so whoever can replace
+  # one can replace both. `atomic-agent update` checks the release's signed
+  # SHA256SUMS first (Node has Ed25519; Windows PowerShell 5.1 does not, so a
+  # fresh install here relies on the .sha256 alone) and passes the digest down.
+  $signedSha = $env:ATOMIC_AGENT_EXPECTED_SHA256
+  if ($signedSha) {
+    if ($actual -ne $signedSha.Trim().ToLower()) {
+      Fail "checksum mismatch for $ArchiveName against the signed SHA256SUMS`n  expected: $($signedSha.Trim().ToLower())`n  actual:   $actual"
+    }
+    Write-Info "matches the signed SHA256SUMS"
+  }
 
   # Extract into a fresh staging dir. The Windows zip stores files at its root
   # (no top-level <slug>/ wrapper), unlike the Unix tarball.
