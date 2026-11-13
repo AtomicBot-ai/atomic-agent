@@ -3,6 +3,7 @@ import {
   MIN_OVERSCAN_ROWS,
   chatOverscanRows,
   computeChatWindow,
+  widenChatWindow,
   type ChatWindowInput,
 } from "./chat-window.js";
 
@@ -210,5 +211,46 @@ describe("chatOverscanRows", () => {
   it("never drops below the floor on a short viewport", () => {
     expect(chatOverscanRows(3)).toBe(MIN_OVERSCAN_ROWS);
     expect(chatOverscanRows(Number.NaN)).toBe(MIN_OVERSCAN_ROWS);
+  });
+});
+
+describe("widenChatWindow", () => {
+  const heights = [5, 5, 5, 5, 5, 5, 5, 5, 5, 5];
+  const pinned = computeChatWindow(
+    input({ heights, offset: 0, viewportRows: 10 }),
+  );
+
+  it("leaves the window alone when nothing needs a redraw", () => {
+    expect(widenChatWindow(pinned, heights, [])).toBe(pinned);
+    expect(widenChatWindow(pinned, heights, [pinned.start])).toBe(pinned);
+  });
+
+  it("reaches back to a stale message above and shrinks the spacer to match", () => {
+    expect(pinned).toMatchObject({ start: 8, end: 10, spacerAbove: 40 });
+    const widened = widenChatWindow(pinned, heights, [3]);
+    expect(widened).toEqual({
+      start: 3,
+      end: 10,
+      spacerAbove: 15,
+      spacerBelow: 0,
+      totalRows: pinned.totalRows,
+    });
+  });
+
+  it("reaches forward to a stale message below", () => {
+    const top = computeChatWindow(
+      input({ heights, offset: 40, viewportRows: 10 }),
+    );
+    expect(top).toMatchObject({ start: 0, end: 2 });
+    expect(widenChatWindow(top, heights, [6])).toMatchObject({
+      start: 0,
+      end: 7,
+      spacerAbove: 0,
+      spacerBelow: 15,
+    });
+  });
+
+  it("ignores indices outside the history", () => {
+    expect(widenChatWindow(pinned, heights, [-1, 10, 99])).toBe(pinned);
   });
 });

@@ -120,6 +120,35 @@ export function computeChatWindow(input: ChatWindowInput): ChatWindow {
   return { start, end, spacerAbove, spacerBelow, totalRows };
 }
 
+/**
+ * `window` grown to also draw every message in `redraw` (indices into
+ * `heights`), with the spacers recomputed (ATO-650). A message whose
+ * kept height went stale off screen, after "expand all" say, has to be
+ * drawn once to be measured again; the window stays one contiguous run,
+ * so this draws everything between it and the window for that frame,
+ * and the next frame narrows back once the measurements land.
+ */
+export function widenChatWindow(
+  window: ChatWindow,
+  heights: readonly number[],
+  redraw: readonly number[],
+): ChatWindow {
+  const count = heights.length;
+  const valid = redraw.filter((i) => i >= 0 && i < count);
+  if (valid.length === 0) return window;
+  const sized = heights.map(rows);
+  const start = Math.min(window.start, ...valid);
+  const end = Math.max(window.end, ...valid.map((i) => i + 1));
+  if (start === window.start && end === window.end) return window;
+  return {
+    start,
+    end,
+    spacerAbove: sum(sized, 0, start),
+    spacerBelow: sum(sized, end, count),
+    totalRows: window.totalRows,
+  };
+}
+
 function sum(values: readonly number[], from: number, to: number): number {
   let acc = 0;
   for (let i = from; i < to; i += 1) acc += values[i]!;

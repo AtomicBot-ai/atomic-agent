@@ -21,7 +21,12 @@ import {
   estimatePendingSteerHeight,
   estimateStreamingTailHeight,
 } from "./chat-message-height.js";
-import { chatOverscanRows, computeChatWindow } from "./chat-window.js";
+import {
+  chatOverscanRows,
+  computeChatWindow,
+  widenChatWindow,
+} from "./chat-window.js";
+import { chatRowSignatures } from "./chat-row-signature.js";
 import { useMeasuredRowHeights } from "./use-measured-row-heights.js";
 import { WindowedMessages } from "./windowed-messages.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
@@ -142,18 +147,29 @@ export function ChatLog({
     terminalSize.columns,
     extraChromeRows,
   );
-  // Rows of each finalised message: measured where it has been drawn at
-  // this width, estimated otherwise. The live rows under them (tail,
-  // pending steers, spinner) are measured the same way as one block.
+  // The Fusion tint on the bubbles — the same answer the composer's
+  // backend control gives, so the two halves of the chat zone agree.
+  const fusion = selectComposerBackend(state) === "fusion";
+  // Rows of each finalised message: measured where it has been drawn
+  // under its current signature (width, fold, expanded cards), estimated
+  // otherwise. The live rows under them (tail, pending steers, spinner)
+  // are measured the same way as one block, keyed by width alone.
   const rowIds = useMemo(
     () => [...finalised.map((m) => m.id), LIVE_ROWS_ID],
     [finalised],
   );
-  const measured = useMeasuredRowHeights(
-    terminalSize.columns,
-    rowIds,
-    LIVE_ROWS_ID,
-  );
+  const signatureOf = chatRowSignatures({
+    messages: finalised,
+    columns: terminalSize.columns,
+    foldOf: foldStateOf,
+    fusion,
+    toolsExpandedById: state.toolsExpandedById,
+    planButtons:
+      state.planHandoff &&
+      onPlanExecute !== undefined &&
+      onPlanDismiss !== undefined,
+  });
+  const measured = useMeasuredRowHeights(rowIds, signatureOf, LIVE_ROWS_ID);
   const heights = finalised.map((m) =>
     measured.heightOf(m.id, () =>
       estimateMessageHeight(m, foldStateOf(m.id)),
@@ -213,16 +229,22 @@ export function ChatLog({
     );
   }
   const stickyBottom = offset === 0;
-  // The Fusion tint on the bubbles — the same answer the composer's
-  // backend control gives, so the two halves of the chat zone agree.
-  const fusion = selectComposerBackend(state) === "fusion";
-  const rowWindow = computeChatWindow({
+  // Messages whose kept height went stale off screen ("expand all", a
+  // fold) are drawn once more so they get measured under the new state.
+  const redraw = finalised.flatMap((m, idx) =>
+    measured.needsRedraw(m.id) ? [idx] : [],
+  );
+  const rowWindow = widenChatWindow(
+    computeChatWindow({
+      heights,
+      bottomRows,
+      offset,
+      viewportRows: viewport,
+      overscanRows: chatOverscanRows(viewport),
+    }),
     heights,
-    bottomRows,
-    offset,
-    viewportRows: viewport,
-    overscanRows: chatOverscanRows(viewport),
-  });
+    redraw,
+  );
   return (
     <Box
       flexDirection="column"
