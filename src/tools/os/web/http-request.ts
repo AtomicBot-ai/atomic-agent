@@ -78,7 +78,7 @@ export function buildOsHttpRequestTool(
           {
             sessionId: ctx.sessionId,
             tool: "os.http.request",
-            category: "http",
+            category: httpApprovalCategory(args.method),
             reason: `${args.method} ${args.url}`,
             preview: buildApprovalPreview(args),
             affectedResources: [args.url],
@@ -321,6 +321,19 @@ function needsApproval(mode: HttpApprovalMode, method: HttpMethod): boolean {
   if (mode === "always") return true;
   if (mode === "never") return false;
   return method !== "GET";
+}
+
+/** Methods that only read; any other one sends data out. */
+const READ_ONLY_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * The approval category a request asks under: a read stays `http`
+ * (silent from level 3), anything that sends data asks as `http_write`
+ * (silent from level 4, never answered by an `http` grant or rule).
+ * Exported for tests (ATO-1462).
+ */
+export function httpApprovalCategory(method: string): "http" | "http_write" {
+  return READ_ONLY_METHODS.has(method.toUpperCase()) ? "http" : "http_write";
 }
 
 /**

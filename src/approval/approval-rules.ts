@@ -312,7 +312,10 @@ export function ruleMatches(
   if (
     rule.category !== undefined &&
     rule.category !== request.category &&
-    !(tightens && rule.category === "shell" && request.category === "shell_dangerous")
+    !(tightens && rule.category === "shell" && request.category === "shell_dangerous") &&
+    // A deny or ask on `http` stands for a POST too; an allow does not
+    // (ATO-1462): a saved "always" for a GET never silences a POST.
+    !(rule.decision !== "allow" && rule.category === "http" && request.category === "http_write")
   ) {
     return false;
   }
