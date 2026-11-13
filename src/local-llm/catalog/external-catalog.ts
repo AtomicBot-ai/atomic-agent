@@ -1,10 +1,11 @@
 /**
  * ATO-27 — more local models than the curated list, from a source that
  * is not this file's code: a JSON catalog the operator drops in the
- * state directory, and/or one fetched from a URL they name. Both are
- * opt-in. There is NO default remote source: which catalog to offer by
- * default (Unsloth, the Atomic Chat catalog, …) is a product decision
- * that has not been made.
+ * state directory, and/or one fetched from a URL. The URL defaults to
+ * our own hosted JSON (`DEFAULT_EXTERNAL_CATALOG_URL`, this format);
+ * `ATOMIC_AGENT_MODEL_CATALOG_URL` overrides it. Until the site hosts
+ * that file the default answers 404, and a refresh then keeps what it
+ * had (the curated list) without reporting an error.
  *
  * File format (`models-catalog.json`, or what the URL returns):
  *
@@ -51,8 +52,13 @@ export const EXTERNAL_CATALOG_VERSION = 1;
 export const EXTERNAL_CATALOG_FILENAME = "models-catalog.json";
 /** Last good answer of the configured URL, in the state directory. */
 export const EXTERNAL_CATALOG_CACHE_FILENAME = "models-catalog.cache.json";
-/** Opt-in URL. An environment variable until the source is decided. */
+/** Overrides the default catalog URL. */
 export const EXTERNAL_CATALOG_URL_ENV = "ATOMIC_AGENT_MODEL_CATALOG_URL";
+/**
+ * Our own hosted catalog, in the format above (ATO-27). Hosted by the
+ * site (atomicagent.io); a 404 or 410 from it means "not published yet".
+ */
+export const DEFAULT_EXTERNAL_CATALOG_URL = "https://atomicagent.io/models/catalog.json";
 /** Ids of catalog entries; the `custom-` prefix keeps the typed id wall. */
 export const EXTERNAL_ID_PREFIX = "custom-catalog-";
 
@@ -236,10 +242,14 @@ export function loadExternalCatalog(stateDir: string): ExternalCatalog {
   };
 }
 
-/** The opt-in URL, validated: https only. `null` when unset. */
+/**
+ * The catalog URL: the override in `ATOMIC_AGENT_MODEL_CATALOG_URL`, or
+ * our own when it is unset or blank. An override that is not https is
+ * refused (`null`) rather than silently swapped for the default.
+ */
 export function externalCatalogUrl(env: NodeJS.ProcessEnv = process.env): string | null {
   const raw = env[EXTERNAL_CATALOG_URL_ENV]?.trim();
-  if (!raw) return null;
+  if (!raw) return DEFAULT_EXTERNAL_CATALOG_URL;
   try {
     const url = new URL(raw);
     return url.protocol === "https:" && !url.username && !url.password ? url.toString() : null;
@@ -253,6 +263,11 @@ export interface RefreshResult {
   catalog: ExternalCatalog;
   /** Why the fetch did not replace the cache, or `null` when it did. */
   error: string | null;
+  /**
+   * The default URL answered 404/410: our catalog is not published yet.
+   * Not an error; the previous cache (usually none) stays.
+   */
+  notPublished?: boolean;
 }
 
 /**
@@ -277,6 +292,12 @@ export async function refreshExternalCatalog(input: {
       redirect: "error",
       headers: { accept: "application/json" },
     });
+    if (
+      (res.status === 404 || res.status === 410) &&
+      input.url === DEFAULT_EXTERNAL_CATALOG_URL
+    ) {
+      return { catalog: previous(), error: null, notPublished: true };
+    }
     if (!res.ok) return { catalog: previous(), error: `the catalog URL answered ${res.status}` };
     body = await res.text();
   } catch (err) {

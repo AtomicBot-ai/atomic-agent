@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { resetConfigCache } from "../config/index.js";
-import { EXTERNAL_CATALOG_FILENAME } from "../local-llm/catalog/external-catalog.js";
+import {
+  DEFAULT_EXTERNAL_CATALOG_URL,
+  EXTERNAL_CATALOG_FILENAME,
+} from "../local-llm/catalog/external-catalog.js";
 import { setExternalLocalModels } from "../local-llm/catalog/models-catalog.js";
 
 import { runModelsCatalog } from "./models-catalog-command.js";
@@ -69,9 +72,27 @@ describe("models catalog (ATO-27)", () => {
     expect(body.models).toEqual([expect.objectContaining({ id: "custom-catalog-qwen3-14b-q4", fit: "fits" })]);
   });
 
-  it("refuses --refresh without an opted-in URL", async () => {
-    expect(await runModelsCatalog(["--refresh"], { probe: machine, write, env: {} })).toBe(1);
+  it("refuses --refresh when the override is not https", async () => {
+    const env = { ATOMIC_AGENT_MODEL_CATALOG_URL: "http://catalog.test/models.json" };
+    expect(await runModelsCatalog(["--refresh"], { probe: machine, write, env })).toBe(1);
     expect(out.join("")).toContain("ATOMIC_AGENT_MODEL_CATALOG_URL");
+  });
+
+  it("refreshes from our own catalog when no URL is set, and says nothing while it is not hosted", async () => {
+    let asked = "";
+    const code = await runModelsCatalog(["--refresh"], {
+      probe: machine,
+      write,
+      env: {},
+      refresh: async ({ url }) => {
+        asked = url;
+        return { catalog: { entries: [], rejected: [] }, error: null, notPublished: true };
+      },
+    });
+    expect(code).toBe(0);
+    expect(asked).toBe(DEFAULT_EXTERNAL_CATALOG_URL);
+    expect(out.join("")).not.toContain("refresh failed");
+    expect(out.join("")).not.toContain("skipped:");
   });
 
   it("refreshes from the opted-in URL", async () => {

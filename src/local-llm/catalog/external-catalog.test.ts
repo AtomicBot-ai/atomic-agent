@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   catalogCompatibility,
+  DEFAULT_EXTERNAL_CATALOG_URL,
   EXTERNAL_CATALOG_CACHE_FILENAME,
   EXTERNAL_CATALOG_FILENAME,
   externalCatalogUrl,
@@ -163,12 +164,54 @@ describe("loading and refreshing", () => {
 });
 
 describe("externalCatalogUrl", () => {
-  it("is opt-in and https only", () => {
-    expect(externalCatalogUrl({})).toBeNull();
-    expect(externalCatalogUrl({ ATOMIC_AGENT_MODEL_CATALOG_URL: "http://x.test/c.json" })).toBeNull();
+  it("defaults to our own hosted catalog on atomicagent.io", () => {
+    expect(DEFAULT_EXTERNAL_CATALOG_URL).toBe("https://atomicagent.io/models/catalog.json");
+    expect(externalCatalogUrl({})).toBe(DEFAULT_EXTERNAL_CATALOG_URL);
+    expect(externalCatalogUrl({ ATOMIC_AGENT_MODEL_CATALOG_URL: "  " })).toBe(DEFAULT_EXTERNAL_CATALOG_URL);
+  });
+
+  it("lets the env var override it, https only", () => {
     expect(externalCatalogUrl({ ATOMIC_AGENT_MODEL_CATALOG_URL: "https://x.test/c.json" })).toBe(
       "https://x.test/c.json",
     );
+    expect(externalCatalogUrl({ ATOMIC_AGENT_MODEL_CATALOG_URL: "http://x.test/c.json" })).toBeNull();
+  });
+});
+
+describe("the default catalog before the site hosts it", () => {
+  let stateDir: string;
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "ext-catalog-default-"));
+  });
+  afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  it("is silent on a 404 and leaves the list as it was", async () => {
+    let asked = "";
+    const out = await refreshExternalCatalog({
+      url: DEFAULT_EXTERNAL_CATALOG_URL,
+      stateDir,
+      fetchImpl: async (url) => {
+        asked = String(url);
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+    expect(asked).toBe(DEFAULT_EXTERNAL_CATALOG_URL);
+    expect(out.error).toBeNull();
+    expect(out.notPublished).toBe(true);
+    expect(out.catalog).toEqual({ entries: [], rejected: [] });
+    expect(loadExternalCatalog(stateDir)).toEqual({ entries: [], rejected: [] });
+  });
+
+  it("still reports a 404 from a URL the operator named", async () => {
+    const out = await refreshExternalCatalog({
+      url: "https://example.com/catalog.json",
+      stateDir,
+      fetchImpl: async () => new Response("", { status: 404 }),
+    });
+    expect(out.error).toContain("404");
+    expect(out.notPublished).toBeUndefined();
   });
 });
 

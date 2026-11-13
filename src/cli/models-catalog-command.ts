@@ -1,12 +1,13 @@
 /**
  * `atomic-agent models catalog [--refresh] [--json]` (ATO-27).
  *
- * Lists the rows an opt-in external catalog adds to the local model
+ * Lists the rows an external catalog adds to the local model
  * list, each with its compatibility mark for this machine, and the
  * entries that were dropped with the reason. `--refresh` fetches the
- * URL named in `ATOMIC_AGENT_MODEL_CATALOG_URL` (environment or
- * `<stateDir>/.env`) into the cache first. No URL is built in: which
- * catalog to offer by default is not decided yet.
+ * catalog URL into the cache first: our own hosted JSON by default, or
+ * the one named in `ATOMIC_AGENT_MODEL_CATALOG_URL` (environment or
+ * `<stateDir>/.env`). While our catalog is not published (404) the
+ * refresh says nothing and the list stays the curated one.
  */
 
 import { getConfig, resetConfigCache } from "../config/index.js";
@@ -60,8 +61,8 @@ export async function runModelsCatalog(
     const url = externalCatalogUrl(deps.env ?? process.env);
     if (!url) {
       write(
-        `no catalog URL: set ${EXTERNAL_CATALOG_URL_ENV} to an https URL ` +
-          `(environment or <stateDir>/.env) to use --refresh\n`,
+        `${EXTERNAL_CATALOG_URL_ENV} is not an https URL: fix it, or unset it ` +
+          `to use the default catalog (environment or <stateDir>/.env)\n`,
       );
       return 1;
     }
@@ -107,7 +108,7 @@ export async function runModelsCatalog(
   if (rows.length === 0) {
     write(
       `no external catalog models. Put a ${EXTERNAL_CATALOG_FILENAME} in ${stateDir}, ` +
-        `or set ${EXTERNAL_CATALOG_URL_ENV} and run \`models catalog --refresh\`.\n`,
+        `or run \`models catalog --refresh\` (${EXTERNAL_CATALOG_URL_ENV} picks another catalog URL).\n`,
     );
   } else {
     write(formatCatalogRows(rows));
