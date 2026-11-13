@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const M = require("../out/main/move-to-applications.js");
 
-const base = { platform: "darwin", packaged: true, smoke: false, dev: false, inApplications: false };
+const base = { platform: "darwin", packaged: true, smoke: false, dev: false, ownStateDir: false, inApplications: false };
 
 test("a packaged mac app outside Applications is asked", () => {
   assert.equal(M.shouldOfferMove(base), true);
@@ -19,6 +19,7 @@ test("never asked from Applications, on other platforms, in smoke, dev or unpack
   assert.equal(M.shouldOfferMove({ ...base, platform: "linux" }), false);
   assert.equal(M.shouldOfferMove({ ...base, smoke: true }), false);
   assert.equal(M.shouldOfferMove({ ...base, dev: true }), false);
+  assert.equal(M.shouldOfferMove({ ...base, ownStateDir: true }), false);
   assert.equal(M.shouldOfferMove({ ...base, packaged: false }), false);
 });
 

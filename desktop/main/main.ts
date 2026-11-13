@@ -11027,6 +11027,7 @@ void app.whenReady().then(async () => {
      on the next launch (move-to-applications.ts). */
   if (shouldOfferMove({
     platform: process.platform, packaged: app.isPackaged, smoke: SMOKE || FIRST_RUN_PROBE, dev: DEV,
+    ownStateDir: STATE_DIR_FROM_ENV,
     inApplications: inApplicationsFolder(),
   })) {
     const moved = offerMove({
