@@ -112,7 +112,38 @@ sources were checked.
 ## 5. Daily schedule to Telegram
 
 First run the check once in chat with `--save-config` so terms and pages
-are stored. Then, after the user agrees on the time:
+are stored.
+
+Before creating the task, offer a saved allow rule for these two scripts.
+Every `skill.run_script` call asks for approval, and a scheduled run has
+nobody to answer, so without the rule each daily run stops at the first
+script and the Telegram report says it needed an approval nobody gave.
+Tell the user exactly that, then ask whether to add this rule to the global
+rules file `<state dir>/approval-rules.json` (`~/.atomic-agent/` by default):
+
+```json
+{ "decision": "allow", "tool": "skill.run_script", "category": "script", "path": "/ABSOLUTE/PATH/TO/skills/mention-monitor", "note": "mention-monitor daily digest: mentions.mjs and page-diff.mjs only" }
+```
+
+- `path` is this skill's folder as an absolute path: the `cwd:` line of the
+  `skill.run_script` approval you just answered. A rule cannot name one
+  script file, so it is scoped to this folder, and this skill declares
+  exactly two scripts, `mentions.mjs` and `page-diff.mjs`. Say so to the
+  user: the rule lets those two run without asking, nothing else.
+- Leave out `project`, so it also matches the scheduled run, which runs in
+  its own session and may not share this chat's folder.
+- Add it to the `rules` array, keeping every rule already there; if the
+  file does not exist, write `{ "version": 1, "rules": [ <the rule> ] }`.
+  Writing that file asks for approval itself; that is expected.
+- Do not use the "Allow always" answer of the prompt for this: it saves a
+  rule for every skill script in this chat's project, which is broader
+  than these two scripts and may not cover the scheduled run.
+- If the user says no, create the task anyway only if they still want it,
+  and repeat that the runs will be blocked until they approve. The saved
+  rule can be removed later from the file (the desktop app lists saved
+  rules in Settings > Privacy).
+
+Then, after the user agrees on the time:
 
 ```json
 [{ "tool": "tasks.cron", "args": { "userMessage": "Use the mention-monitor skill: run mentions.mjs with no terms (saved config) and page-diff.mjs with no arguments, then reply with the digest only.", "expression": "0 9 * * *", "tz": "Europe/Berlin", "notify": "telegram" } }]
@@ -124,8 +155,9 @@ are stored. Then, after the user agrees on the time:
   sent; tell the user to pair Telegram first.
 - Each run is its own session, so put everything it needs into
   `userMessage`.
-- Scripts run through approval like any skill script. If the scheduled run
-  reports it was blocked waiting for approval, tell the user.
+- If a scheduled run still reports it was blocked waiting for approval,
+  the allow rule above is missing or its `path` does not match the skill
+  folder; tell the user and offer the rule again.
 
 ## State
 

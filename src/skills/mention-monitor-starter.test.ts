@@ -120,6 +120,38 @@ describe("the mention-monitor starter skill", () => {
     expect(body).toContain('"notify": "telegram"');
     expect(body).toMatch(/1200\s+characters/);
   });
+
+  it("offers a saved allow rule for exactly its two scripts before tasks.cron", () => {
+    const section = body.slice(
+      body.indexOf("## 5. Daily schedule to Telegram"),
+      body.indexOf("## State"),
+    );
+    expect(section.length).toBeGreaterThan(0);
+    const ruleAt = section.indexOf('"decision": "allow"');
+    const cronAt = section.indexOf('"tool": "tasks.cron"');
+    expect(ruleAt).toBeGreaterThan(-1);
+    expect(cronAt).toBeGreaterThan(ruleAt);
+
+    const ruleLine = section.slice(ruleAt - 2, section.indexOf("}", ruleAt) + 1);
+    const rule = JSON.parse(ruleLine) as Record<string, unknown>;
+    expect(rule).toMatchObject({
+      decision: "allow",
+      tool: "skill.run_script",
+      category: "script",
+    });
+    expect(String(rule.path)).toMatch(/\/skills\/mention-monitor$/);
+    // No project scope: the scheduled run has its own session.
+    expect(rule).not.toHaveProperty("project");
+    expect(section).toContain("approval-rules.json");
+
+    // The folder-scoped rule covers exactly the scripts the skill declares.
+    const parsed = parseSkillFile(body);
+    expect(parsed.manifest.requiresScripts).toEqual(["mentions.mjs", "page-diff.mjs"]);
+    expect(section).toContain("`mentions.mjs` and `page-diff.mjs`");
+
+    // And it warns what happens without the rule.
+    expect(section).toMatch(/needed an approval\s+nobody gave/);
+  });
 });
 
 describe("mentions.mjs", () => {
