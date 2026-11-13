@@ -14,6 +14,12 @@
    (GET /api/webhooks `tunnel.publicUrl`, or a route's `publicUrl`) that
    public address is the one shown and copied; otherwise the pane says how
    to turn the tunnel on.
+   Reply shape: GET /api/webhooks is the agent's ATO-625 list
+   ({tasksEnabled, tunnel, webhooks: [{name, path, hasSecret, sessionMode,
+   publicUrl}]}) plus what ATO-445 adds to it (each route's verify, events,
+   userMessageTemplate, live, and the reply's presets). `verify` uses the
+   agent's binding values (ATO-438/ATO-625): github, stripe,
+   standard-webhooks, secret. A route without verify is `secret`.
    Loaded before renderer.js; declares only. Shared by the renderer and the
    Node checks (test/webhooks.test.mjs). No DOM, no IPC of its own. */
 
@@ -25,12 +31,12 @@ const WHK_TUNNEL_UP = 'Outside services post to the public address through the w
 /* [preset, label, where the secret goes, the starting prompt, secret field: 'none' | 'optional' | 'required'] */
 const WHK_PRESETS = [
   ['github', 'GitHub', 'In the repository: Settings › Webhooks › Add webhook. Content type application/json, then paste the secret shown after you save here.',
-    'GitHub sent a {{body.action}} event for {{body.repository.full_name}}. Summarise it and say if anything needs doing.', 'none'],
+    'GitHub sent a {{event}} {{action}} event for {{body.repository.full_name}}. Summarise it and say if anything needs doing.', 'none'],
   ['stripe', 'Stripe', 'Stripe makes the signing secret: paste the whsec_… value it shows for the endpoint.',
-    'Stripe sent a {{body.type}} event ({{body.id}}). Summarise it and say if anything needs doing.', 'required'],
-  ['standard', 'Standard Webhooks', 'For senders that sign with Standard Webhooks (Svix uses it too). Paste the sender’s whsec_… secret, or leave it empty to make one here.',
-    'A webhook event arrived: {{body.type}}. Summarise it and say if anything needs doing.', 'optional'],
-  ['header', 'Shared secret', 'The sender puts the secret in an x-webhook-secret header.',
+    'Stripe sent a {{event}} event ({{delivery}}). Summarise it and say if anything needs doing.', 'required'],
+  ['standard-webhooks', 'Standard Webhooks', 'For senders that sign with Standard Webhooks (Svix and Composio use it too). Paste the sender’s whsec_… secret, or leave it empty to make one here.',
+    'A webhook event arrived: {{event}}. Summarise it and say if anything needs doing.', 'optional'],
+  ['secret', 'Shared secret', 'The sender puts the secret in an x-webhook-secret header.',
     'A webhook event arrived: {{body}}', 'none'],
 ];
 
@@ -43,10 +49,18 @@ function whkNameOk(name) {
   return typeof name === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(name) && name !== '__proto__';
 }
 
+/** The presets this agent takes: the reply's `presets` when it sends them, else all. */
+function whkPresetsFor(data) {
+  const ids = data && Array.isArray(data.presets) ? data.presets : null;
+  const known = ids ? WHK_PRESETS.filter((p) => ids.includes(p[0])) : [];
+  return known.length ? known : WHK_PRESETS;
+}
+
 /** A free name for a new route: `github`, then `github-2`, … */
 function whkSuggestName(preset, taken) {
   const used = new Set((taken || []).map((w) => w && w.name));
-  const base = whkPreset(preset)[0] === 'header' ? 'webhook' : whkPreset(preset)[0];
+  const id = whkPreset(preset)[0];
+  const base = id === 'secret' ? 'webhook' : id === 'standard-webhooks' ? 'standard' : id;
   if (!used.has(base)) return base;
   for (let i = 2; i < 1000; i++) if (!used.has(base + '-' + i)) return base + '-' + i;
   return base + '-' + Date.now();
@@ -115,7 +129,8 @@ function createWebhooks(api) {
       st.error = null;
       st.baseUrl = typeof res.baseUrl === 'string' ? res.baseUrl : '';
       st.remote = !!res.remote;
-      st.data = {webhooks: whkList(d.webhooks), tasksEnabled: d.tasksEnabled !== false, tunnel: whkTunnel(d.tunnel)};
+      st.data = {webhooks: whkList(d.webhooks), tasksEnabled: d.tasksEnabled !== false, tunnel: whkTunnel(d.tunnel),
+        presets: Array.isArray(d.presets) ? d.presets.filter((x) => typeof x === 'string') : null};
       return st;
     },
     /* Another agent is on the wire: start over, and forget a secret still on screen. */
@@ -230,7 +245,7 @@ function webhooksHTML(st, deps) {
     const f = st.form;
     const p = whkPreset(f.verify);
     const seg = '<div class="tk-seg set-seg" role="radiogroup" aria-label="Sender">'
-      + WHK_PRESETS.map((x) => '<button class="' + (x[0] === f.verify ? 'on' : '') + '" role="radio" aria-checked="' + (x[0] === f.verify) + '" data-act="whk:preset:' + x[0] + '">' + esc(x[1]) + '</button>').join('')
+      + whkPresetsFor(st.data).map((x) => '<button class="' + (x[0] === f.verify ? 'on' : '') + '" role="radio" aria-checked="' + (x[0] === f.verify) + '" data-act="whk:preset:' + x[0] + '">' + esc(x[1]) + '</button>').join('')
       + '</div>';
     const secret = p[4] === 'none' ? ''
       : '<label class="set-whk-field"><span>Signing secret' + (p[4] === 'optional' ? ' (optional)' : '') + '</span>'
@@ -241,7 +256,7 @@ function webhooksHTML(st, deps) {
       + '<label class="set-whk-field"><span>Name</span><input id="whk-name" data-whk-field="name" value="' + esc(f.name) + '" autocomplete="off" spellcheck="false"></label>'
       + secret
       + '<label class="set-whk-field"><span>Prompt for each event</span><textarea id="whk-template" data-whk-field="template" rows="3" spellcheck="false">' + esc(f.template) + '</textarea></label>'
-      + '<p class="set-cap">{{body.field}} puts a value from the event in, for example {{body.action}}; {{body}} puts the whole event.</p>'
+      + '<p class="set-cap">{{body.field}} puts a value from the event in, for example {{body.action}}; {{body}} puts the whole event. Signed senders also fill {{event}}, {{action}} and {{delivery}}.</p>'
       + (st.formError ? '<div class="tk-help tk-help--warn set-whk-formerr">' + esc(st.formError) + '</div>' : '')
       + '<div class="set-tbacts"><button class="btn btn-g sm" data-act="whk:cancel">Cancel</button>'
         + '<button class="btn btn-p sm" data-act="whk:create"' + (st.creating ? ' disabled' : '') + '>' + (st.creating ? 'Adding…' : 'Add webhook') + '</button></div>'
@@ -272,4 +287,4 @@ function webhooksHTML(st, deps) {
   return '<div class="set-pane set-whk">' + parts.join('') + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {WHK_OLD_AGENT, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_TUNNEL_UP, WHK_PRESETS, whkPreset, whkPresetLabel, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError, createWebhooks, webhooksHTML};
+if (typeof module !== 'undefined') module.exports = {WHK_OLD_AGENT, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_TUNNEL_UP, WHK_PRESETS, whkPreset, whkPresetLabel, whkPresetsFor, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError, createWebhooks, webhooksHTML};

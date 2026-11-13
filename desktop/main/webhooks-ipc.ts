@@ -4,9 +4,11 @@
  * request shape: only these fields, in these forms, reach
  * `POST /api/webhooks` and `DELETE /api/webhooks/:name`. The agent
  * validates again; this keeps junk and oversized values off the wire.
+ * `verify` uses the agent's binding values (ATO-438/ATO-625); a missing
+ * one is `secret`, the plain x-webhook-secret header.
  */
 
-export const WEBHOOK_PRESETS = ["github", "stripe", "standard", "header"] as const;
+export const WEBHOOK_PRESETS = ["github", "stripe", "standard-webhooks", "secret"] as const;
 export type WebhookPreset = (typeof WEBHOOK_PRESETS)[number];
 
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
@@ -25,7 +27,7 @@ export function cleanWebhookCreate(raw: unknown): CleanWebhookCreate {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "invalid webhook" };
   const r = raw as Record<string, unknown>;
   if (!webhookNameOk(r.name)) return { ok: false, error: "The name can use letters, digits, - and _ (up to 64)." };
-  const verify = r.verify ?? "header";
+  const verify = r.verify ?? "secret";
   if (typeof verify !== "string" || !(WEBHOOK_PRESETS as readonly string[]).includes(verify)) {
     return { ok: false, error: "Unknown signature preset." };
   }

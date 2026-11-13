@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const {WHK_OLD_AGENT, WHK_EMPTY, WHK_TUNNEL_HOWTO, whkPreset, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError,
+const {WHK_OLD_AGENT, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_PRESETS, whkPreset, whkPresetsFor, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError,
   createWebhooks, webhooksHTML} = require('../renderer/webhooks.js');
 const { readFileSync } = require('node:fs');
 const { cleanWebhookCreate, webhookNameOk } = require('../out/main/webhooks-ipc.js');
@@ -17,9 +17,12 @@ const { AgentClient } = require('../out/main/agent-client.js');
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
 const deps = {esc};
 
-const gh = {name: 'github', path: '/api/webhooks/github', verify: 'github', sessionMode: 'ephemeral', userMessageTemplate: 't', hasSecret: true, live: true};
+/* The agent's reply: ATO-625's GET /api/webhooks plus ATO-445's verify, userMessageTemplate, live and presets. */
+const gh = {name: 'github', path: '/api/webhooks/github', hasSecret: true, sessionMode: 'ephemeral', publicUrl: null,
+  verify: 'github', userMessageTemplate: 't', live: true};
+const OFF = {state: 'off', mode: null, publicUrl: null, error: null};
 const listAnswer = (webhooks = [gh], over = {}) => ({supported: true, ok: true, baseUrl: 'http://127.0.0.1:4100', remote: false,
-  data: {webhooks, tasksEnabled: true, presets: ['header', 'github', 'stripe', 'standard']}, ...over});
+  data: {tasksEnabled: true, tunnel: OFF, webhooks, presets: ['secret', 'github', 'standard-webhooks', 'stripe']}, ...over});
 
 function fakeApi({reads = [], creates = [], removes = []} = {}) {
   const calls = [];
@@ -36,10 +39,14 @@ test('names, suggestions and addresses', () => {
   assert.equal(whkNameOk('x'.repeat(65)), false);
   assert.equal(whkSuggestName('github', []), 'github');
   assert.equal(whkSuggestName('github', [{name: 'github'}, {name: 'github-2'}]), 'github-3');
-  assert.equal(whkSuggestName('header', []), 'webhook');
+  assert.equal(whkSuggestName('secret', []), 'webhook');
+  assert.equal(whkSuggestName('standard-webhooks', []), 'standard');
   assert.equal(whkUrl('http://127.0.0.1:4100/', '/api/webhooks/a'), 'http://127.0.0.1:4100/api/webhooks/a');
   assert.equal(whkUrl('', '/api/webhooks/a'), '/api/webhooks/a');
-  assert.equal(whkPreset('nope')[0], 'header');
+  // Unknown or missing verify is the agent's default, the shared secret.
+  assert.equal(whkPreset('nope')[0], 'secret');
+  assert.equal(whkPreset(undefined)[0], 'secret');
+  assert.deepEqual(WHK_PRESETS.map((p) => p[0]), ['github', 'stripe', 'standard-webhooks', 'secret']);
 });
 
 test('the form says what is missing', () => {
@@ -49,7 +56,7 @@ test('the form says what is missing', () => {
   assert.match(whkFormError(ok, [{name: 'pay'}]), /already exists/);
   assert.match(whkFormError({...ok, template: '  '}, []), /what the agent should do/);
   assert.match(whkFormError({...ok, secret: ''}, []), /signing secret from Stripe/);
-  assert.equal(whkFormError({...ok, verify: 'standard', secret: ''}, []), '');
+  assert.equal(whkFormError({...ok, verify: 'standard-webhooks', secret: ''}, []), '');
 });
 
 test('list, add a route, the secret shows once, then it is gone', async () => {
@@ -71,14 +78,14 @@ test('list, add a route, the secret shows once, then it is gone', async () => {
   assert.equal(w.state.form.name, 'github-2');
   w.setPreset('stripe');
   assert.equal(w.state.form.name, 'stripe');
-  assert.match(w.state.form.template, /\{\{body\.type\}\}/);
+  assert.match(w.state.form.template, /\{\{event\}\}/);
   // Stripe needs its secret pasted before anything is sent.
   assert.equal((await w.create()).ok, false);
   assert.equal(api.calls.filter((c) => c.create).length, 0);
   w.type('secret', ' whsec_from_stripe ');
   assert.equal((await w.create()).ok, true);
   assert.deepEqual(api.calls.find((c) => c.create).create,
-    {name: 'stripe', verify: 'stripe', userMessageTemplate: 'Stripe sent a {{body.type}} event ({{body.id}}). Summarise it and say if anything needs doing.', secret: 'whsec_from_stripe'});
+    {name: 'stripe', verify: 'stripe', userMessageTemplate: 'Stripe sent a {{event}} event ({{delivery}}). Summarise it and say if anything needs doing.', secret: 'whsec_from_stripe'});
   assert.equal(w.state.form, null);
   html = webhooksHTML(w.state, deps);
   assert.match(html, /whsec_from_stripe/);
@@ -94,7 +101,7 @@ test('a typed name and prompt survive a preset change; github sends no secret', 
   const api = fakeApi({reads: [listAnswer([])], creates: [{ok: true, data: {webhook: {name: 'ci', path: '/api/webhooks/ci', verify: 'github'}, secret: 'abc'}}]});
   const w = createWebhooks(api);
   await w.load();
-  w.openForm('standard');
+  w.openForm('standard-webhooks');
   w.type('name', 'ci');
   w.type('template', 'CI said {{body.status}}');
   w.type('secret', 'whsec_typed');
@@ -110,7 +117,7 @@ test('a conflict or error stays on the form', async () => {
   const api = fakeApi({reads: [listAnswer([])], creates: [{ok: false, conflict: true, error: 'webhook already exists: a'}]});
   const w = createWebhooks(api);
   await w.load();
-  w.openForm('header');
+  w.openForm('secret');
   w.type('name', 'a');
   await w.create();
   assert.notEqual(w.state.form, null);
@@ -158,7 +165,7 @@ test('an agent from before the routes, a read error, tasks off, a remote agent',
 });
 
 test('tunnel up: the public address is shown and copied; a route without a secret gets none', async () => {
-  const plain = {...gh, name: 'plain', path: '/api/webhooks/plain', verify: 'header', hasSecret: false};
+  const plain = {...gh, name: 'plain', path: '/api/webhooks/plain', verify: 'secret', hasSecret: false};
   const tunnel = {state: 'up', mode: 'quick', publicUrl: 'https://calm-words.trycloudflare.com', error: null};
   const w = createWebhooks(fakeApi({reads: [listAnswer([gh, plain], {data: {webhooks: [gh, plain], tasksEnabled: true, tunnel}})],
     creates: [{ok: true, data: {webhook: {name: 'github-2', path: '/api/webhooks/github-2', verify: 'github', hasSecret: true, live: true}, secret: 'abc'}}]}));
@@ -197,7 +204,7 @@ test('decision: no webhook text tells the user to use the API key or open the ma
   for (const answer of states) {
     const w = createWebhooks(fakeApi({reads: [answer]}));
     await w.load();
-    for (const verify of ['github', 'stripe', 'standard', 'header']) {
+    for (const verify of ['github', 'stripe', 'standard-webhooks', 'secret']) {
       w.openForm(verify);
       const html = webhooksHTML(w.state, deps);
       assert.doesNotMatch(html, /API key|0\.0\.0\.0|--host|open (a|the) port/i);
@@ -211,10 +218,28 @@ test('decision: no webhook text tells the user to use the API key or open the ma
   }
 });
 
+test('the merged reply: presets from the agent, a route without verify, one not loaded yet', async () => {
+  // An agent with only ATO-625's list sends no verify, template, live or presets.
+  const bare = {name: 'old', path: '/api/webhooks/old', hasSecret: true, sessionMode: 'ephemeral', publicUrl: null};
+  const later = {...gh, name: 'later', path: '/api/webhooks/later', live: false};
+  const w = createWebhooks(fakeApi({reads: [listAnswer([bare, later], {data: {tasksEnabled: true, tunnel: OFF, webhooks: [bare, later], presets: ['secret', 'github']}})]}));
+  await w.load();
+  assert.deepEqual(w.state.data.presets, ['secret', 'github']);
+  assert.deepEqual(whkPresetsFor(w.state.data).map((p) => p[0]), ['github', 'secret']);
+  assert.deepEqual(whkPresetsFor({presets: ['gitlab']}).map((p) => p[0]), WHK_PRESETS.map((p) => p[0]));
+  assert.deepEqual(whkPresetsFor(null).map((p) => p[0]), WHK_PRESETS.map((p) => p[0]));
+  w.openForm('github');
+  const html = webhooksHTML(w.state, deps);
+  assert.match(html, /data-act="whk:preset:secret"/);
+  assert.doesNotMatch(html, /data-act="whk:preset:stripe"/);
+  assert.match(html, /data-whk="old"><div class="body"><div class="t">old <span class="d">Shared secret</);
+  assert.match(html, /starts after the agent restarts/);
+});
+
 test('names and template text are escaped', async () => {
   const w = createWebhooks(fakeApi({reads: [listAnswer([])]}));
   await w.load();
-  w.openForm('header');
+  w.openForm('secret');
   w.type('template', '<img src=x onerror=alert(1)>');
   assert.doesNotMatch(webhooksHTML(w.state, deps), /<img/);
 });
@@ -226,7 +251,11 @@ test('ipc: only known fields in known forms reach the agent', () => {
   assert.deepEqual(Object.keys(cleanWebhookCreate({name: 'gh', userMessageTemplate: 'x', host: '0.0.0.0', http: {host: '0.0.0.0'}, port: 80}).body).sort(),
     ['name', 'userMessageTemplate', 'verify']);
   assert.deepEqual(cleanWebhookCreate({name: 'pay', verify: 'stripe', userMessageTemplate: 'x', secret: ' whsec_1 '}).body.secret, 'whsec_1');
-  assert.equal(cleanWebhookCreate({name: 'gh', userMessageTemplate: 'x'}).body.verify, 'header');
+  assert.equal(cleanWebhookCreate({name: 'gh', userMessageTemplate: 'x'}).body.verify, 'secret');
+  assert.equal(cleanWebhookCreate({name: 'std', verify: 'standard-webhooks', userMessageTemplate: 'x'}).ok, true);
+  // The earlier draft names are not the agent's values and are refused here.
+  assert.equal(cleanWebhookCreate({name: 'gh', verify: 'header', userMessageTemplate: 'x'}).ok, false);
+  assert.equal(cleanWebhookCreate({name: 'gh', verify: 'standard', userMessageTemplate: 'x'}).ok, false);
   assert.equal(cleanWebhookCreate({name: 'a b', userMessageTemplate: 'x'}).ok, false);
   assert.equal(cleanWebhookCreate({name: 'gh', verify: 'gitlab', userMessageTemplate: 'x'}).ok, false);
   assert.equal(cleanWebhookCreate({name: 'gh', userMessageTemplate: ''}).ok, false);
@@ -258,7 +287,7 @@ async function standIn(answer) {
 
 test('client: list, create, delete, a conflict, and an agent from before the routes', async () => {
   const s = await standIn((req) => {
-    if (req.method === 'GET') return [200, {webhooks: [gh], tasksEnabled: true}];
+    if (req.method === 'GET') return [200, {tasksEnabled: true, tunnel: OFF, webhooks: [gh], presets: ['secret', 'github', 'standard-webhooks', 'stripe']}];
     if (req.method === 'POST') return [201, {webhook: gh, secret: 's3cret'}];
     if (req.url.endsWith('/github')) return [200, {deleted: 'github'}];
     return [404, {error: {message: 'webhook not found: nope'}}];
