@@ -8,6 +8,7 @@ import {
   createAnthropicMessagesHandler,
 } from "./anthropic-messages.js";
 import { createResponsesHandler } from "./openai-responses.js";
+import { createAgUiRunHandler } from "./route-ag-ui.js";
 import { createCancelCompletionHandler } from "./openai-completions-cancel.js";
 import { createHealthHandler } from "./route-health.js";
 import { createLocalModelRecheckHandler } from "./route-local-model-recheck.js";
@@ -135,6 +136,8 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/v1/messages", handler: createAnthropicMessagesHandler() },
     { method: "POST", path: "/v1/messages/count_tokens", handler: createAnthropicCountTokensHandler() },
     { method: "POST", path: "/v1/responses", handler: createResponsesHandler() },
+    // ATO-694: the same turn as AG-UI events, for AG-UI web frontends (route-ag-ui.ts).
+    { method: "POST", path: "/api/ag-ui", handler: createAgUiRunHandler() },
     {
       method: "GET",
       path: "/api/capabilities",
