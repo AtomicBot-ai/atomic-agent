@@ -305,7 +305,109 @@ test("a turn's summary: first token, tools, steers, approvals, failure category"
     outcome: "failed", ms_to_first_token: 250, ms_total: 400, queue_wait_ms: 40, steer_count: 1,
     approvals_asked: 1, tool_calls: 2, tools_used: ["os.shell.run", "mcp"], error_category: "transport", http_status: null,
     coding_mode: "plan",
+    ms_to_first_activity: 100, cancel_phase: null, cancel_by: null, prompt_tokens: null, completion_tokens: null,
+    gen_tokens_per_s: null, provider: null, provider_kind: null, model_id: null,
   });
+});
+
+/* ---- ATO-1026: where a turn's time went ---- */
+
+test("first activity is the first sign of work, before the first token (ATO-1026)", () => {
+  let now = 0;
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s), () => now);
+  t.begin("a1");
+  t.observe({ turnId: "a1", kind: "session_id", payload: { session_id: "s" } });
+  now = 30;
+  t.observe({ turnId: "a1", kind: "provider_waiting", payload: {} });   // not work
+  now = 800;
+  t.observe({ turnId: "a1", kind: "reasoning_progress", payload: {} });
+  now = 2000;
+  t.observe({ turnId: "a1", kind: "delta", text: "hi" });
+  t.observe({ turnId: "a1", kind: "done" });
+  assert.equal(out[0].ms_to_first_activity, 800);
+  assert.equal(out[0].ms_to_first_token, 2000);
+  t.begin("a2");
+  t.observe({ turnId: "a2", kind: "done" });
+  assert.equal(out[1].ms_to_first_activity, null);
+});
+
+test("a cancelled turn says what it was doing and who stopped it (ATO-1026)", () => {
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s));
+  const run = (id, frames, by) => {
+    t.begin(id);
+    t.observe({ turnId: id, kind: "session_id", payload: { session_id: id } });
+    for (const f of frames) {
+      if (f === "approval") t.approval({ sessionId: id, approvalId: id + "-a" });
+      else t.observe({ turnId: id, kind: f, payload: {} });
+    }
+    t.observe({ turnId: id, kind: "aborted", by });
+    return out[out.length - 1];
+  };
+  assert.deepEqual([run("c1", [], "user").cancel_phase, out[0].cancel_by], ["waiting_first", "user"]);
+  assert.equal(run("c2", ["provider_waiting"], "app").cancel_phase, "provider_wait");
+  assert.equal(out[1].cancel_by, "app");
+  assert.equal(run("c3", ["provider_waiting", "provider_recovered"], "user").cancel_phase, "waiting_first");
+  assert.equal(run("c4", ["tool_progress"], "user").cancel_phase, "tool");
+  assert.equal(run("c5", ["tool_progress", "tool_result"], "user").cancel_phase, "waiting_next");
+  assert.equal(run("c6", ["tool_progress", "tool_result", "delta"], "user").cancel_phase, "generating");
+  assert.equal(run("c7", ["reasoning_progress", "approval"], "user").cancel_phase, "approval");
+  // An older agent client sends no `by`: unknown, not guessed.
+  assert.equal(run("c8", ["delta"], undefined).cancel_by, null);
+  // A turn that was not cancelled carries neither.
+  t.begin("c9");
+  t.observe({ turnId: "c9", kind: "tool_progress", payload: {} });
+  t.observe({ turnId: "c9", kind: "done" });
+  assert.deepEqual([out[out.length - 1].cancel_phase, out[out.length - 1].cancel_by], [null, null]);
+  const v = V.validateEvent("chat_turn_ui", { outcome: "cancelled", cancel_phase: "tool", cancel_by: "user" }, "main").props;
+  assert.deepEqual([v.cancel_phase, v.cancel_by], ["tool", "user"]);
+  assert.equal(V.validateEvent("chat_turn_ui", { outcome: "cancelled", cancel_phase: "free text" }, "main").props.cancel_phase, undefined);
+});
+
+test("tokens from the agent's usage frame, and tokens per second only for a turn with no tool (ATO-1026)", () => {
+  let now = 0;
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s), () => now);
+  t.begin("u1");
+  now = 1000;
+  t.observe({ turnId: "u1", kind: "delta", text: "a" });
+  now = 3000;
+  t.observe({ turnId: "u1", kind: "usage", payload: { usage: { prompt_tokens: 4200, completion_tokens: 100, total_tokens: 4300 } } });
+  t.observe({ turnId: "u1", kind: "done" });
+  assert.deepEqual([out[0].prompt_tokens, out[0].completion_tokens, out[0].gen_tokens_per_s], [4200, 100, 50]);
+
+  now = 0;
+  t.begin("u2");
+  t.observe({ turnId: "u2", kind: "tool_progress", payload: { tool: "os.fs.read" } });
+  now = 2000;
+  t.observe({ turnId: "u2", kind: "usage", payload: { usage: { prompt_tokens: 9000, completion_tokens: 300 } } });
+  t.observe({ turnId: "u2", kind: "done" });
+  assert.deepEqual([out[1].prompt_tokens, out[1].completion_tokens, out[1].gen_tokens_per_s], [9000, 300, null]);
+
+  t.begin("u3");
+  t.observe({ turnId: "u3", kind: "usage", payload: { usage: { prompt_tokens: "x", completion_tokens: -1 } } });
+  t.observe({ turnId: "u3", kind: "done" });
+  assert.deepEqual([out[2].prompt_tokens, out[2].completion_tokens, out[2].gen_tokens_per_s], [null, null, null]);
+  assert.equal(V.validateEvent("chat_turn_ui", { outcome: "completed", gen_tokens_per_s: 12.345 }, "main").props.gen_tokens_per_s, 12.3);
+});
+
+test("the turn's route rides on its summary, as enums (ATO-1026)", () => {
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s));
+  t.begin("r1", 0, { provider: "lmstudio", provider_kind: "lmstudio", model_id: "custom" });
+  t.observe({ turnId: "r1", kind: "done" });
+  assert.deepEqual([out[0].provider, out[0].provider_kind, out[0].model_id], ["lmstudio", "lmstudio", "custom"]);
+
+  assert.deepEqual(SU.turnRouteOf({ provider: "openrouter", kind: "cloud" }, "x"), { provider: "openrouter", provider_kind: "cloud", model_id: "custom" });
+  assert.equal(SU.turnRouteOf({ provider: "ollama", kind: "custom" }, null).provider_kind, "ollama");
+  assert.equal(SU.turnRouteOf({ provider: "atomic-chat", kind: "custom" }, null).provider_kind, "atomic_chat");
+  assert.equal(SU.turnRouteOf({ provider: "custom", kind: "custom" }, null).provider_kind, "custom_server");
+  const local = SU.turnRouteOf({ provider: "llama.cpp", kind: "local" }, "someone/their-own-model");
+  assert.deepEqual(local, { provider: "llama.cpp", provider_kind: "managed_local", model_id: "hf_custom" });
+
+  const p = V.validateEvent("chat_turn_ui", { outcome: "completed", provider: "my-server", provider_kind: "lmstudio", model_id: "anything/typed" }, "main").props;
+  assert.deepEqual([p.provider, p.provider_kind, p.model_id], ["custom", "lmstudio", "custom"]);
 });
 
 test("a turn the agent stopped early (finish reason length) is stopped_early, not completed (ATO-275)", () => {
@@ -335,6 +437,32 @@ test("the desktop's own HTTP and network failures are transport, with the status
   t.observe({ turnId: "t8", kind: "error", error: "not connected" });
   assert.deepEqual(out.map((s) => [s.error_category, s.http_status]), [["transport", 503], ["transport", null], [null, null]]);
   assert.equal(V.validateEvent("chat_turn_ui", { outcome: "failed", http_status: 503 }, "main").props.http_status, 503);
+});
+
+test("a Stop after an approval was answered lands on the tool, not the approval (ATO-1026)", () => {
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s));
+  const run = (id, decision, extra = []) => {
+    t.begin(id);
+    t.observe({ turnId: id, kind: "session_id", payload: { session_id: id } });
+    t.observe({ turnId: id, kind: "tool_progress", payload: { tool: "os.shell.run" } });
+    t.approval({ sessionId: id, approvalId: id + "-a" });
+    t.approvalAnswered({ approvalId: id + "-a", decision });
+    for (const f of extra) t.observe({ turnId: id, kind: f, payload: {} });
+    t.observe({ turnId: id, kind: "aborted", by: "user" });
+    return out[out.length - 1].cancel_phase;
+  };
+  assert.equal(run("p1", "allow-once"), "tool");
+  assert.equal(run("p2", "deny"), "waiting_next");
+  // A frame after the answer is not undone by it.
+  assert.equal(run("p3", "allow-once", ["delta"]), "generating");
+  // An answer to a request no open turn counted moves nothing.
+  t.begin("p4");
+  t.observe({ turnId: "p4", kind: "session_id", payload: { session_id: "p4" } });
+  t.approval({ sessionId: "p4", approvalId: "p4-a" });
+  t.approvalAnswered({ approvalId: "other", decision: "allow-once" });
+  t.observe({ turnId: "p4", kind: "aborted", by: "user" });
+  assert.equal(out[out.length - 1].cancel_phase, "approval");
 });
 
 test("a redelivered approval request is counted once (ATO-203)", () => {

@@ -1554,7 +1554,7 @@ function wireIpc(client: AgentClient): void {
       return { ok: false, error: client.status.error ?? "the agent did not come back after the switch restarted it" };
     }
     turnNotifier.begin(turnId);
-    chatTurns.begin(turnId, Date.now() - queuedAt);
+    chatTurns.begin(turnId, Date.now() - queuedAt, A.turnRoute());   // ATO-1026: the route, read as the turn goes out
     const known = typeof sessionId === "string" && sessionId ? sessionId : null;
     if (!listed) {
       liveTurns.set(turnId, {
@@ -1633,7 +1633,9 @@ function wireIpc(client: AgentClient): void {
       return { ok: false, error: "decision must be allow-once, allow-in-chat, allow-always or deny" };
     }
     try {
-      return { ok: true, data: await client.resolveApproval(approvalId, known, reason) };
+      const data = await client.resolveApproval(approvalId, known, reason);
+      chatTurns.approvalAnswered({ approvalId, decision: known });   // ATO-1026: the turn leaves "approval"
+      return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
