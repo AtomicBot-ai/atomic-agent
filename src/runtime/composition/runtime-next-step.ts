@@ -9,6 +9,7 @@ import {
   NEXT_STEP_TIMEOUT_MS,
   SESSION_NEXT_STEP_METADATA_KEY,
   generateNextStep,
+  nextStepSuggestionsEnabled,
   shouldSuggestNextStep,
   turnInFlight,
   type SessionNextStep,
@@ -44,15 +45,8 @@ export interface NextStepSuggesterDeps {
 /** Nobody is watching a scheduled or fusion-worker turn's reply. */
 const UNWATCHED_ORIGINS: ReadonlySet<TurnOrigin> = new Set(["scheduler", "fusion"]);
 
-/**
- * The switch both composers gate on: `tui.nextStepSuggestions`
- * (ATO-1096, default off). Read loosely so this builds before or after
- * that key's PR; anything but `true` is off, so no call runs.
- */
-export function nextStepSuggestionsEnabled(config: AtomicAgentConfig): boolean {
-  const tui = config.tui as unknown as { nextStepSuggestions?: unknown } | undefined;
-  return tui?.nextStepSuggestions === true;
-}
+/** Re-exported for callers of this recipe; the rule lives in session. */
+export { nextStepSuggestionsEnabled };
 
 export function createNextStepSuggester(deps: NextStepSuggesterDeps) {
   const store = async (state: SessionState): Promise<void> => {

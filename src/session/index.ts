@@ -144,6 +144,7 @@ export {
   NEXT_STEP_TIMEOUT_MS,
   SESSION_NEXT_STEP_METADATA_KEY,
   generateNextStep,
+  nextStepSuggestionsEnabled,
   readSessionNextStep,
   shouldSuggestNextStep,
   turnInFlight,

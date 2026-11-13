@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CompletionResult } from "../llm/llama-server-client.js";
+import { getConfig } from "../config/index.js";
 
 import { describeToolCall } from "../tools/describe-tool-call.js";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
 import { MAX_PARKED_STEERS } from "./undelivered-steers.js";
+
+/** `tui.nextStepSuggestions` (ATO-1096), set on the live config the routes read. */
+function setNextStepSuggestions(on: boolean): void {
+  (getConfig().tui as unknown as { nextStepSuggestions: boolean }).nextStepSuggestions = on;
+}
 
 describe("/api/sessions", () => {
   let harness: Harness;
@@ -47,6 +53,7 @@ describe("/api/sessions", () => {
   });
 
   it("carries a fresh next-step suggestion on list rows and the full state (ATO-1093)", async () => {
+    setNextStepSuggestions(true);
     const fresh = harness.runtime.createSession({
       metadata: { nextStep: { text: "Add tests for the parser", afterTurn: 0, at: 1 } },
     });
@@ -66,6 +73,7 @@ describe("/api/sessions", () => {
   });
 
   it("answers GET /api/sessions/{id}/next-step with the fresh suggestion or null (ATO-1093)", async () => {
+    setNextStepSuggestions(true);
     const fresh = harness.runtime.createSession({
       metadata: { nextStep: { text: "Add tests for the parser", afterTurn: 0, at: 1 } },
     });
@@ -76,6 +84,26 @@ describe("/api/sessions", () => {
     expect(await first.json()).toEqual({ sessionId: fresh.id, suggestion: "Add tests for the parser" });
     expect(await (await ask(none.id)).json()).toEqual({ sessionId: none.id, suggestion: null });
     expect((await ask("no-such-session")).status).toBe(404);
+  });
+
+  it("serves no stored next-step suggestion once tui.nextStepSuggestions is off (ATO-1093)", async () => {
+    setNextStepSuggestions(false);
+    const stored = harness.runtime.createSession({
+      metadata: { nextStep: { text: "Add tests for the parser", afterTurn: 0, at: 1 } },
+    });
+    const route = await fetch(`${harness.baseUrl}/api/sessions/${stored.id}/next-step`);
+    expect(route.status).toBe(200);
+    expect(await route.json()).toEqual({ sessionId: stored.id, suggestion: null });
+    const list = (await (await fetch(`${harness.baseUrl}/api/sessions`)).json()) as {
+      sessions: Array<{ id: string; nextStep: string | null }>;
+    };
+    expect(list.sessions.find((s) => s.id === stored.id)?.nextStep).toBeNull();
+    const full = (await (await fetch(`${harness.baseUrl}/api/sessions/${stored.id}`)).json()) as {
+      nextStep: string | null;
+      metadata: Record<string, unknown>;
+    };
+    expect(full.nextStep).toBeNull();
+    expect(full.metadata).not.toHaveProperty("nextStep");
   });
 
   it("returns the full session state for a known id", async () => {

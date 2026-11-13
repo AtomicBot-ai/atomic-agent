@@ -75,6 +75,18 @@ export function turnInFlight(status: SessionStatus): boolean {
 }
 
 /**
+ * The switch both composers gate on: `tui.nextStepSuggestions`
+ * (ATO-1096, default off). Read loosely so this builds before or after
+ * that key's PR; anything but `true` is off. Off means no call runs and
+ * no stored suggestion is served, so turning it off hides one already
+ * written.
+ */
+export function nextStepSuggestionsEnabled(config: { tui?: unknown }): boolean {
+  const tui = config.tui as { nextStepSuggestions?: unknown } | undefined;
+  return tui?.nextStepSuggestions === true;
+}
+
+/**
  * The stored suggestion, or `null` when there is none, it is malformed,
  * or it was made for an earlier turn than the one the session is at.
  * A session with a turn running has no suggestion to show either.
