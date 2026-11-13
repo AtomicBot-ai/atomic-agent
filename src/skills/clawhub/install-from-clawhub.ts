@@ -51,10 +51,14 @@ export async function stageSkillFromClawHub(
   }
 
   const client = options.client ?? new ClawHubClient();
+  // Pin one exact version: the ZIP, the registry verdict and the lock
+  // file then all describe the same release, even if `latest` moves.
+  const version = await resolveLatestVersion(client, ref);
+  const pin = version ? { version } : { tag: "latest" };
   const zip = await client.downloadZip({
     slug: ref.slug,
     owner: ref.owner,
-    tag: "latest",
+    ...pin,
   });
 
   const tmpBase = options.tmpRoot ?? tmpdir();
@@ -115,7 +119,7 @@ export async function stageSkillFromClawHub(
     const registry = await client.getScanStatus({
       slug: ref.slug,
       owner: ref.owner,
-      tag: "latest",
+      ...pin,
     });
     const scan = mergeRegistryVerdict(heuristic, registry);
 
@@ -124,10 +128,38 @@ export async function stageSkillFromClawHub(
       manifest,
       scan,
       sourceDir,
+      origin: {
+        source: "clawhub",
+        identifier: options.identifier,
+        version: version ?? "",
+      },
     };
   } catch (err) {
     await rm(sourceDir, { recursive: true, force: true }).catch(() => {});
     throw err;
+  }
+}
+
+/**
+ * Current registry version of a skill, or null when the detail lookup
+ * fails or reports no real version (the client's `0.0.0` fallback).
+ * Null keeps the old `tag: latest` download, so installs never depend on
+ * this extra call succeeding.
+ */
+export async function resolveLatestVersion(
+  client: Pick<ClawHubClient, "getSkillDetail">,
+  ref: { owner: string | null; slug: string },
+): Promise<string | null> {
+  try {
+    const detail = await client.getSkillDetail({
+      slug: ref.slug,
+      owner: ref.owner,
+    });
+    return detail.version && detail.version !== "0.0.0"
+      ? detail.version
+      : null;
+  } catch {
+    return null;
   }
 }
 

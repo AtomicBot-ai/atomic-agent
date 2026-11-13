@@ -55,3 +55,10 @@ export type {
   StagedSkillInstall,
   StageSkillOptions,
 } from "./install-from-hub.js";
+
+export {
+  computeSkillDigest,
+  readSkillLock,
+  SKILL_LOCK_FILE,
+} from "./skill-lock.js";
+export type { SkillLock, SkillLockSource, SkillOrigin } from "./skill-lock.js";

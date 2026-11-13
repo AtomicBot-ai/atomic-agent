@@ -12,6 +12,7 @@ This area owns skill installation and discovery. Read [AGENTS.md](AGENTS.md) bef
 - [seed-starter-skills.ts](seed-starter-skills.ts)
 - [workspace-skills.ts](workspace-skills.ts): cloud source selection and live policy; [cloud workspace skills](docs/cloud-workspace.md).
 - [shared-skills-dir.ts](shared-skills-dir.ts): the shared `~/.agents/skills` folder other agents and `npx skills` install into; local and cloud discovery read it with the lowest priority.
+- [clawhub/skill-updates.ts](clawhub/skill-updates.ts): `skill update` for GitHub-tap and ClawHub installs; [hub/skill-lock.ts](hub/skill-lock.ts) records each install's source, scanned version and file digest ([hub skill lock and updates](docs/skill-format.md#hub-skill-lock-and-updates)).
 - [project-trust.ts](project-trust.ts): project skills and instruction files load only after the operator trusted the folder; [project folder trust](docs/project-trust.md).
 - Plugin skills: installed plugins ([../plugins/README.md](../plugins/README.md)) contribute skill folders through the `pluginSkills` option; they load as user-installed skills named `plugin:skill`.
 - [eval/](eval/README.md): Skill Lab, `skill eval` runs tasks with and without a skill and saves the comparison under `<stateDir>/skill-evals/`.
