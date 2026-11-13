@@ -19,7 +19,10 @@ function updState() { return UPD.state; }
 /** Main's state, as pushed or answered. */
 function appUpdApply(st) {
   if (!st || typeof st !== 'object') return;
+  const wasRequired = updRequired();
   UPD.state = st;
+  // ATO-1125: the empty chat draws the required-update card (updRequiredHTML).
+  if (updRequired() !== wasRequired && typeof render === 'function') render();
   updToastSync();
   // Over Settings the column must stay clear of Done (renderer.js toastsClearCard).
   toastsClearCard();
@@ -76,6 +79,11 @@ function updToastHTML(st) {
       st.fake ? btn('btn-s', 'later', 'Close') : '');
   }
   // available
+  if (st.required) {
+    return ico('alert') + body(st.required === 'broken' ? 'Update required' : 'Please update Atomic Agent',
+      st.downloadError ? esc(st.downloadError) : esc(updRequiredText(st)),
+      btn('btn-p', 'update', st.downloadError ? 'Try again' : 'Update') + btn('btn-s', 'notnow', 'Not now'));
+  }
   return ico('download') + body('Atomic Agent ' + v + ' is available',
     st.downloadError ? esc(st.downloadError) : (st.notes ? esc(st.notes) : ''),
     btn('btn-p', 'update', st.downloadError ? 'Try again' : 'Update') + btn('btn-s', 'notnow', 'Not now'),
@@ -105,7 +113,7 @@ function updToastSync(boxIn) {
   }
   /* Not turnRunning: a turn starting or ending only renames Restart, in
      place below, so the button under the pointer is never rebuilt. */
-  const key = [st.phase, st.version, st.notes, st.downloadError, st.installNote, st.fake].join('|');
+  const key = [st.phase, st.version, st.notes, st.downloadError, st.installNote, st.fake, st.required].join('|');
   if (!n) {
     n = document.createElement('div');
     n.className = 'toast toast-upd';
@@ -138,6 +146,36 @@ function updToastSync(boxIn) {
     if (bar) bar.setAttribute('aria-valuenow', String(pct));
     if (word) word.textContent = pct + '%';
   }
+}
+
+/* ---- ATO-1125: a version the feed's policy lists ----
+   main/update-policy.ts reads it. Below the minimum the toast and the empty
+   chat warn, and a chat still starts. A broken version shows "Update
+   required" on the empty chat and starts no new chat (renderer submit asks
+   updHoldsNewChat). A chat with messages and a running turn are never held.
+   No policy, or a failed check: st.required is null and nothing changes. */
+
+function updRequired() { return UPD.state && UPD.state.required ? UPD.state.required : null; }
+
+function updRequiredText(st) {
+  const v = st.version ? 'Atomic Agent ' + st.version : 'the new version';
+  return st.required === 'broken'
+    ? 'This version has a known problem. Update to ' + v + ' to start a new chat. Chats you already have keep working.'
+    : 'This version is no longer supported. Update to ' + v + '.';
+}
+
+function updHoldsNewChat(logLength, turnRunning) {
+  return updRequired() === 'broken' && !logLength && !turnRunning;
+}
+
+function updRequiredHTML() {
+  const st = UPD.state;
+  if (!updRequired()) return '';
+  const act = st.phase === 'ready' ? ['install', updRestartLabel(st)]
+    : st.phase === 'downloading' || st.phase === 'waiting' || st.phase === 'installing' ? null : ['update', 'Update'];
+  return '<div class="tk-notice tk-notice--' + (st.required === 'broken' ? 'red' : 'amber') + ' upd-required" role="' + (st.required === 'broken' ? 'alert' : 'status') + '">' + ic('alert')
+    + '<span class="grow">' + (st.required === 'broken' ? '<b>Update required.</b> ' : '') + esc(updRequiredText(st)) + '</span>'
+    + (act ? '<button class="btn btn-p sm" data-act="appupd:' + act[0] + '">' + esc(act[1]) + '</button>' : '') + '</div>';
 }
 
 /* ---- Settings › General ---- */
