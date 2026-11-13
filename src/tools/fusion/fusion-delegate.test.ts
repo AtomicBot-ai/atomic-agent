@@ -1250,6 +1250,46 @@ describe("fusion.delegate", () => {
       }
     });
 
+    it("runs only the old name checks, with no failure and no warning, for a contract with no shape or example (ATO-1362)", async () => {
+      const dir = fixture();
+      try {
+        writeFileSync(join(dir, "js", "phys.js"), "export const PHYS = {};");
+        const runChecks = vi.fn(
+          async (specs: readonly Record<string, unknown>[]) => ({
+            ok: true,
+            results: specs.map(() => ({ ok: true, summary: "exit 0" })),
+          }),
+        );
+        const tool = buildFusionDelegateTool(deps({ workingDir: dir, runChecks }));
+        const result = await tool.run(
+          {
+            tasks: TASKS,
+            contract: {
+              provides: [{ task: "t1", kind: "symbol", name: "PHYS", in: "js/phys.js" }],
+              requires: [{ task: "t2", name: "PHYS" }],
+              checks: [{ task: "t2", kind: "command", cmd: "node", args: ["--check", "js/phys.js"] }],
+            },
+          },
+          ctx({ workingDir: dir }),
+        );
+        // Exactly the declared spec: no extra example run.
+        expect(runChecks).toHaveBeenCalledTimes(1);
+        expect(runChecks.mock.calls[0]![0]).toEqual([
+          { kind: "command", cmd: "node", args: ["--check", "js/phys.js"] },
+        ]);
+        const rows = result.details.tasks as WorkerTaskResult[];
+        expect(rows.map((r) => r.status)).toEqual(["ok", "ok"]);
+        expect(rows.every((r) => r.error === undefined)).toBe(true);
+        // The name check ran and passed; nothing about a missing shape or example.
+        const report = result.details.contract as { findings: { present: boolean }[]; warnings?: string[] };
+        expect(report.findings).toEqual([expect.objectContaining({ name: "PHYS", present: true })]);
+        expect(report.warnings ?? []).toEqual([]);
+        expect(result.summary).not.toMatch(/shape|example/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it("does not accuse cancelled tasks of missing their provides", async () => {
       // Live, run2-attempt0: a 34.5-minute fan-out ended `all_failed`
       // with every task cancelled — three of them after 0 steps — and
