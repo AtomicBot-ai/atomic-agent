@@ -901,7 +901,7 @@ const FUSION_MARK = [
   '   ○    ○    ○  workers',
 ].join('\n');
 const SWAP_NEEDS_FUSION = 'swap needs fusion — pick it first (`/runmode fusion`)';
-const RUN_MODE_USAGE = 'usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode status';
+const RUN_MODE_USAGE = 'usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode reasoning low|medium|high|default · /runmode status';
 
 /* ---- SELECTOR LANE — the custom route's model label ----
    selectPromptLlmMeta's external branch is
@@ -7060,6 +7060,7 @@ function act(a) {
     if (rest === 'swap') { fzSwap(); return; }
     if (rest === 'status') { fzStatus(); return; }
     if (rest.startsWith('workers:')) { fzSetWorkers(Number(rest.slice('workers:'.length))); return; }
+    if (rest.startsWith('reasoning:')) { fzrSet(rest.slice('reasoning:'.length)); return; }   // ATO-606 (fusion-reasoning.js)
     if (rest === 'local' || rest === 'cloud' || rest === 'fusion') { fzActivateBackend(rest); return; }
     return;
   }
@@ -20520,6 +20521,12 @@ function fzParse(rawArgs) {
     if (n < 1 || n > 8) return {openSwitch:false, error:'workers must be 1-8 — ' + RUN_MODE_USAGE};
     return {openSwitch:false, workers:n};
   }
+  // ATO-606: the workers' reasoning level (fusion-reasoning.js); desktop only, the TUI has no such verb yet.
+  const r = /^reasoning(?:\s+(.+))?$/.exec(args);
+  if (r) {
+    if (!r[1] || !['low', 'medium', 'high', 'default'].includes(r[1])) return {openSwitch:false, error:'reasoning must be low, medium, high or default — ' + RUN_MODE_USAGE};
+    return {openSwitch:false, reasoning:r[1]};
+  }
   if (['local', 'cloud', 'fusion'].includes(args)) return {openSwitch:false, mode:args};
   return {openSwitch:false, error:'unknown run mode "' + String(rawArgs || '').trim() + '" — ' + RUN_MODE_USAGE};
 }
@@ -20691,6 +20698,7 @@ function fzSlash(args) {
   if (cmd.error) { S.log.push({id:nid(), k:'system', text: esc(cmd.error)}); render(); return cmd; }
   if (cmd.openSwitch) { S.settings = null; openSelector('backend'); return cmd; }
   if (cmd.workers !== undefined) { fzSetWorkers(cmd.workers); return cmd; }
+  if (cmd.reasoning !== undefined) { fzrSet(cmd.reasoning, true); return cmd; }
   if (cmd.swap) { fzSwap(true); return cmd; }
   if (cmd.status) { fzStatus(); return cmd; }
   fzActivateBackend(cmd.mode);
@@ -26969,7 +26977,7 @@ function llmRunModeHTML(status, tone) {
     + llmNowHTML() + engfCardHTML() + cpufbCardHTML() + tpLlmFaultHTML()
     + (fusionShown ? '<p class="llm-rm-status">' + esc(rmSettingsLine(rm)) + '</p>' : '')
     // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
-    + (mode === 'fusion' ? llmWorkersHTML(rm) : '')
+    + (mode === 'fusion' ? llmWorkersHTML(rm) + fzrSettingsHTML(rm) : '')   // ATO-606: the workers' reasoning level (fusion-reasoning.js)
     + '</section>';
 }
 /**

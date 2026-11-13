@@ -135,7 +135,7 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
       && rLines.fusionLocalWorkers!.includes("Workers (") && rLines.fusionLocalWorkers!.includes("Local models")
       && !Object.values(rLines).some((t) => t.includes("\u2014") || t.includes("local-llama")),
     JSON.stringify(rLines));
-  const inputs = ["", "status", "swap", "workers 3", "workers 9", "Fusion", " cloud ", "local", "bogus"];
+  const inputs = ["", "status", "swap", "workers 3", "workers 9", "Fusion", " cloud ", "local", "bogus", "reasoning low", "Reasoning Default", "reasoning", "reasoning max"];
   const mParse = inputs.map(parseRunModeCommand);
   const rParse = await js<unknown[]>(`(${JSON.stringify(inputs)}).map((s) => window.__fzParse(s))`);
   check("fusion: /runmode parses the TUI verbs the same on both sides",

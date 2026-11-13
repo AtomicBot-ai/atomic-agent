@@ -260,7 +260,7 @@ export function describeFusionIntro(rm: ResolvedRunMode, seatWord: (providerId: 
 }
 
 export const RUN_MODE_USAGE =
-  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode status";
+  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode reasoning low|medium|high|default · /runmode status";
 
 export interface RunModeCommand {
   openSwitch: boolean;
@@ -268,6 +268,8 @@ export interface RunModeCommand {
   status?: boolean;
   swap?: boolean;
   workers?: number;
+  /** ATO-606: `/runmode reasoning <level>`, desktop only (the TUI has no such verb yet). */
+  reasoning?: "low" | "medium" | "high" | "default";
   error?: string;
 }
 
@@ -283,6 +285,14 @@ export function parseRunModeCommand(rawArgs: string): RunModeCommand {
       return { openSwitch: false, error: `workers must be ${FUSION_WORKERS_MIN}-${FUSION_WORKERS_MAX} — ${RUN_MODE_USAGE}` };
     }
     return { openSwitch: false, workers: n };
+  }
+  const reasoning = /^reasoning(?:\s+(.+))?$/.exec(args);
+  if (reasoning) {
+    const level = reasoning[1];
+    if (level !== "low" && level !== "medium" && level !== "high" && level !== "default") {
+      return { openSwitch: false, error: `reasoning must be low, medium, high or default — ${RUN_MODE_USAGE}` };
+    }
+    return { openSwitch: false, reasoning: level };
   }
   if ((RUN_MODE_NAMES as readonly string[]).includes(args)) return { openSwitch: false, mode: args as RunModeName };
   return { openSwitch: false, error: `unknown run mode "${rawArgs.trim()}" — ${RUN_MODE_USAGE}` };
