@@ -736,6 +736,56 @@ describe("Enter in the session picker", () => {
   });
 });
 
+describe("Enter in the rewind picker (ATO-1057)", () => {
+  function pickerState(): TuiState {
+    return {
+      ...createInitialTuiState(fakeSession()),
+      rewindPicker: {
+        points: [
+          { turnIndex: 4, text: "second", at: 3, ordinal: 2 },
+          { turnIndex: 0, text: "first", at: 1, ordinal: 1 },
+        ],
+        cursor: 1,
+      },
+    };
+  }
+
+  it("closes the picker and asks to rewind to the highlighted question", () => {
+    const onRewindRequested = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "",
+      pickerState(),
+      (a) => dispatched.push(a),
+      stubCallbacks({ onRewindRequested, onMessageSubmitted: vi.fn() }),
+    );
+    expect(onRewindRequested).toHaveBeenCalledWith(0, "first");
+    expect(dispatched.map((a) => a.type)).toEqual(["rewind_picker_closed"]);
+  });
+
+  it("never sends the buffer as a message while the picker is open", () => {
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "typed text",
+      pickerState(),
+      () => undefined,
+      stubCallbacks({ onMessageSubmitted, onRewindRequested: vi.fn() }),
+    );
+    expect(onMessageSubmitted).not.toHaveBeenCalled();
+  });
+
+  it("/rewind asks the host for the picker", () => {
+    const onRewindPickerRequested = vi.fn();
+    handleEditorSubmit(
+      "/rewind",
+      createInitialTuiState(fakeSession()),
+      () => undefined,
+      stubCallbacks({ onRewindPickerRequested }),
+    );
+    expect(onRewindPickerRequested).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("bare /enhance", () => {
   it("enhances the composer draft when run from the menu, keeping the buffer", () => {
     // The menu runs `/enhance` with the draft still in the composer.
