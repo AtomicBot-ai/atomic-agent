@@ -84,3 +84,22 @@ test('a keyless server on another computer is usable, one that names its key var
   assert.equal(isKeylessLocalProviderEntry({id:'custom-pub', kind:'openai-compatible', baseUrl:'https://api.example.com'}), false);
   assert.match(renderer, /lanIsOtherComputerUrl\(p\.baseUrl\)/);
 });
+
+test('a server on another computer never gets the shared OpenAI key from the environment', () => {
+  const { resolveKeyValue, providerHasKey } = require('../out/main/agent-cli.js');
+  const saved = {OPENAI_API_KEY: process.env.OPENAI_API_KEY, OPENAI_COMPAT_API_KEY: process.env.OPENAI_COMPAT_API_KEY};
+  process.env.OPENAI_API_KEY = 'sk-test';
+  delete process.env.OPENAI_COMPAT_API_KEY;
+  try {
+    // Saved with a blank key: the user's real key must not go as a Bearer over plain http:// to that box.
+    assert.equal(resolveKeyValue({id:'custom-192-168-1-20-8080', kind:'openai-compatible', baseUrl:'http://192.168.1.20:8080'}), null);
+    assert.equal(providerHasKey({id:'custom-192-168-1-20-8080', kind:'openai-compatible', baseUrl:'http://192.168.1.20:8080'},
+      {present:new Set(['OPENAI_API_KEY']), nonEmpty:new Set(['OPENAI_API_KEY']), badChars:new Set()}), false);
+    // Its own key still goes.
+    assert.equal(resolveKeyValue({id:'lan', kind:'openai-compatible', baseUrl:'http://192.168.1.20:8080', apiKey:'lan-key'}), 'lan-key');
+    // A cloud endpoint keeps the shared fallback, as before.
+    assert.equal(resolveKeyValue({id:'openai-compatible', kind:'openai-compatible', baseUrl:'https://api.openai.com'}), 'sk-test');
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
