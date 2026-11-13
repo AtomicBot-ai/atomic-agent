@@ -37,6 +37,21 @@ import type { TaskSchedule } from "../tasks/task-types.js";
  */
 export type WebhookVerifyScheme = "secret" | "github" | "standard-webhooks" | "stripe";
 
+/** Every `verify` value, in the order the desktop offers them (ATO-445). */
+export const WEBHOOK_VERIFY_SCHEMES: readonly WebhookVerifyScheme[] = [
+  "secret",
+  "github",
+  "standard-webhooks",
+  "stripe",
+];
+
+export function isWebhookVerifyScheme(value: unknown): value is WebhookVerifyScheme {
+  return (
+    typeof value === "string" &&
+    (WEBHOOK_VERIFY_SCHEMES as readonly string[]).includes(value)
+  );
+}
+
 export interface WebhookConfig {
   userMessageTemplate: string;
   secret?: string;
