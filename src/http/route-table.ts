@@ -33,6 +33,7 @@ import {
   createSteerSessionHandler,
 } from "./route-sessions.js";
 import { createRenameSessionHandler } from "./route-session-title.js";
+import { createGetSessionGoalHandler, createSessionGoalActionHandler } from "./route-session-goal.js";
 import {
   createEscalateFusionWorkerHandler,
   createListFusionWorkersHandler,
@@ -182,6 +183,9 @@ export function buildRouteTable(): RouteDefinition[] {
     },
     // ATO-731: one chat's folder, changed without restarting serve.
     { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
+    // ATO-1040: the chat's goal, and the TUI's /goal set, pause, resume and clear.
+    { method: "GET", path: "/api/sessions/{id}/goal", handler: createGetSessionGoalHandler() },
+    { method: "POST", path: "/api/sessions/{id}/goal", handler: createSessionGoalActionHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
     { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
     {

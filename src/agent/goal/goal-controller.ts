@@ -3,7 +3,7 @@ import type { SessionState } from "../../session/session-state.js";
 import { previousReplyText } from "../../prompt/request-section.js";
 import { parseGoalVerdict, type GoalJudgeInput } from "./goal-judge.js";
 import { buildGoalContinuationMessage, trimCheckOutput } from "./goal-messages.js";
-import { metCount, setGoalStatus, withGoalState } from "./goal-state.js";
+import { metCount, setGoalStatus, tokensExhausted, withGoalState } from "./goal-state.js";
 import {
   GOAL_MAX_JUDGE_FAILURES,
   type GoalCheckResult,
@@ -14,8 +14,9 @@ import {
  * The goal controller: wraps ordinary turns into rounds. After a round
  * that ended normally it runs the shell checks, then (if they pass) asks
  * the judge, then either starts the next round with what is still open,
- * or stops. Every way out is bounded: the round limit, the turn's time
- * ceiling, a stopped or failed turn, a blocked item, a broken judge.
+ * or stops. Every way out is bounded: the round limit, the token budget,
+ * the turn's time ceiling and money budget, a stopped or failed turn, a
+ * blocked item, a broken judge.
  *
  * Dependencies are injected so the loop is testable without a model or a
  * shell; the runtime supplies the real ones (`runtime-goal.ts`).
@@ -85,6 +86,8 @@ export async function runGoal(
     : undefined;
   // What the rounds spent together; `undefined` until one reports spend.
   let spentUsd: number | undefined;
+  // Tokens the rounds of this run reported, for the caller's `usage`.
+  let usage: RunTurnResult["usage"];
 
   const commit = (next: GoalState): GoalState => {
     goal = next;
@@ -94,16 +97,19 @@ export async function runGoal(
   };
   const stop = (status: GoalState["status"], reason: string): GoalRunOutcome => {
     commit(setGoalStatus(goal, status, now(), reason));
-    return finish(last, session, goal, spentUsd);
+    return finish(last, session, goal, spentUsd, usage);
   };
 
   for (;;) {
     const control = deps.pendingControl?.(session.id) ?? null;
-    if (control === "clear") return finish(last, session, null, spentUsd);
+    if (control === "clear") return finish(last, session, null, spentUsd, usage);
     if (control === "pause") return stop("paused", "paused by you");
     if (input.signal.aborted) return stop("paused", "the turn was stopped");
     if (goal.roundsUsed >= goal.maxRounds) {
       return stop("budget_limited", `used all ${goal.maxRounds} rounds`);
+    }
+    if (tokensExhausted(goal)) {
+      return stop("budget_limited", `used the token budget (${goal.tokensUsed} of ${goal.maxTokens} tokens)`);
     }
     const remaining = deadline === undefined ? undefined : deadline - now();
     if (remaining !== undefined && remaining <= 0) {
@@ -121,6 +127,19 @@ export async function runGoal(
     });
     session = last.session;
     if (last.spendUsd !== undefined) spentUsd = (spentUsd ?? 0) + last.spendUsd;
+    if (last.usage !== undefined) {
+      usage = {
+        promptTokens: (usage?.promptTokens ?? 0) + last.usage.promptTokens,
+        completionTokens: (usage?.completionTokens ?? 0) + last.usage.completionTokens,
+      };
+      // Counted against the goal's token budget (ATO-1036); checked
+      // before the next round, so a round in flight is never cut off.
+      commit({
+        ...goal,
+        tokensUsed: goal.tokensUsed + last.usage.promptTokens + last.usage.completionTokens,
+        updatedAt: now(),
+      });
+    }
 
     const abnormal = abnormalEnding(last);
     if (abnormal) return stop(abnormal.status, abnormal.reason);
@@ -242,6 +261,7 @@ function finish(
   session: SessionState,
   goal: GoalState | null,
   spentUsd: number | undefined,
+  usage: RunTurnResult["usage"],
 ): GoalRunOutcome {
   // Stopped before the first round ran: an empty result on the input session.
   const result: RunTurnResult = last ?? { session, reason: "cancelled", stepCount: 0 };
@@ -259,6 +279,8 @@ function finish(
       session: finalSession,
       ...(goal === null ? {} : { goal }),
       ...(spentUsd === undefined ? {} : { spendUsd: spentUsd }),
+      // Likewise the tokens of every round, not only the last one's.
+      ...(usage === undefined ? {} : { usage }),
     },
     goal,
   };

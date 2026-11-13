@@ -271,7 +271,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "goal",
     description:
-      "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal status` | `/goal pause|resume|clear`",
+      "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal tokens <n>|off` | `/goal status` | `/goal pause|resume|clear`",
   },
   {
     name: "worker",

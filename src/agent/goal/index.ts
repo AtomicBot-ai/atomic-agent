@@ -17,9 +17,11 @@ export {
 export {
   GOAL_METADATA_KEY,
   createGoalState,
+  goalProcessOwner,
   goalSpecOf,
   goalStatusReport,
   goalSummaryLine,
+  isInterruptedGoal,
   metCount,
   normalizeGoalSpec,
   readGoalState,
@@ -27,12 +29,14 @@ export {
   sameGoalSpec,
   setGoalStatus,
   statusLabel,
+  tokensExhausted,
   withGoalState,
 } from "./goal-state.js";
 export {
   GOAL_CHECK_OUTPUT_MAX_CHARS,
   GOAL_CHECK_TIMEOUT_MS,
   GOAL_DEFAULT_MAX_ROUNDS,
+  GOAL_DEFAULT_MAX_TOKENS,
   GOAL_MAX_CHECKS,
   GOAL_MAX_CRITERIA,
   GOAL_MAX_JUDGE_FAILURES,

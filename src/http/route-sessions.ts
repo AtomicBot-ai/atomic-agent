@@ -1,3 +1,4 @@
+import { readGoalState } from "../agent/goal/index.js";
 import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
 import type { SessionState } from "../session/session-state.js";
 import { readSessionTitle } from "../session/session-title.js";
@@ -17,6 +18,8 @@ import {
  * transcript by default — callers fetch the full state via
  * `/api/sessions/{id}` when they need it. `title` is the generated
  * session name (`agent.nameSessions`), `null` until one is stored.
+ * `goal` is the chat's stored goal (ATO-1040, `metadata.goal` read the
+ * way the runtime reads it), `null` when it has none.
  */
 export function createListSessionsHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -51,6 +54,7 @@ export function createListSessionsHandler(): HttpHandler {
         updatedAt: s.updatedAt,
         lastError: s.lastError,
         title: readSessionTitle(s.metadata),
+        goal: readGoalState(s.metadata),
       })),
     });
   };
@@ -65,6 +69,9 @@ export function createListSessionsHandler(): HttpHandler {
  * once done ("Used github: create issue"). Built here from the stored
  * name and args, never stored, so a reopened chat labels its steps the
  * way they read while the turn ran.
+ *
+ * `goal` (ATO-1040) is `metadata.goal` read the way the runtime reads it:
+ * a malformed value is `null` there, as it is for the runtime.
  */
 export function createGetSessionHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -78,7 +85,7 @@ export function createGetSessionHandler(): HttpHandler {
       sendError(res, 404, openaiError(`session not found: ${id}`));
       return;
     }
-    sendJson(res, 200, withToolCallDoneLines(state));
+    sendJson(res, 200, { ...withToolCallDoneLines(state), goal: readGoalState(state.metadata) });
   };
 }
 
