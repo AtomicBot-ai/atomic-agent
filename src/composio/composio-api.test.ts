@@ -103,7 +103,7 @@ describe("createComposioSession", () => {
     ).rejects.toMatchObject({ name: "ComposioApiError", status: 401 });
     await expect(
       createComposioSession({ apiKey: "bad", userId: "u" }),
-    ).rejects.toThrow(/rejected the API key/);
+    ).rejects.toThrow(/^Composio did not accept your API key\. Check the key in the Integrations tab\.$/);
   });
 
   it("surfaces a server-side failure with its status", async () => {
