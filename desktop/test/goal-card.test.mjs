@@ -6,6 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import vm from 'node:vm';
 
 const require = createRequire(import.meta.url);
 const G = require('../renderer/goal-card.js');
@@ -63,6 +64,65 @@ test('a pause asked of a running goal is forgotten once the goal stops', () => {
   assert.equal(G.GOAL_PENDING.get('s1'), 'pause');
   G.goalSet('s1', goal('paused', ['met']));
   assert.equal(G.GOAL_PENDING.has('s1'), false);
+});
+
+/* goal-card.js and goal-actions.js as the window loads them, with the window's pieces stubbed. */
+function windowWith(answers) {
+  const calls = {renders: 0, submits: [], toasts: []};
+  const c = vm.createContext({
+    S: {agentSession: 's1', busy: false, pending: false},
+    BR: {
+      goalAction: async () => answers.action,
+      goalGet: async () => answers.get,
+    },
+    render: () => { calls.renders++; },
+    toast: (...a) => { calls.toasts.push(a); },
+    submit: (m) => { calls.submits.push(m); },
+  });
+  vm.runInContext(src('../renderer/goal-card.js'), c);
+  vm.runInContext(src('../renderer/goal-actions.js'), c);
+  const run = (code) => vm.runInContext(code, c);
+  return {c, calls, run, card: () => run('goalCardHTML("s1", {esc: String, ic: (n) => "<i>" + n + "</i>"})')};
+}
+
+test('Clear on a running goal keeps the card until its round ends, then the stored goal replaces it', async () => {
+  const w = windowWith({action: {ok: true, data: {goal: null, pending: true}}, get: {ok: true, data: {sessionId: 's1', goal: null, running: false}}});
+  w.c.goalSet('s1', goal('active', ['pending']));
+  await w.c.goalControl('clear');
+  assert.match(w.card(), /Clearing after this round/);
+  assert.equal(w.run('GOAL_PENDING.get("s1")'), 'clear');
+  // The round's verdict frame keeps the card and its note.
+  w.c.goalSet('s1', goal('active', ['met']));
+  assert.match(w.card(), /Clearing after this round/);
+  assert.match(w.card(), /data-goal-act="clear" disabled/);
+  // The turn ends: the store has no goal any more.
+  await w.c.goalTurnEnded('s1');
+  assert.equal(w.card(), '');
+  assert.equal(w.run('GOAL_PENDING.size'), 0);
+});
+
+test('Pause on a running goal keeps the card; the turn end reads the paused goal and frees the buttons', async () => {
+  const w = windowWith({action: {ok: true, data: {goal: goal('active', ['pending']), pending: true}}, get: {ok: true, data: {sessionId: 's1', goal: goal('paused', ['met']), running: false}}});
+  w.c.goalSet('s1', goal('active', ['pending']));
+  await w.c.goalControl('pause');
+  assert.match(w.card(), /Pausing after this round/);
+  await w.c.goalTurnEnded('s1');
+  assert.match(w.card(), /Goal · Paused/);
+  assert.doesNotMatch(w.card(), /disabled/);
+  assert.equal(w.run('GOAL_PENDING.size'), 0);
+});
+
+test('a turn end the store does not answer still frees the buttons; a chat with nothing pending is not read', async () => {
+  const w = windowWith({action: {ok: true, data: {goal: null, pending: true}}, get: {ok: false, error: 'down'}});
+  w.c.goalSet('s1', goal('active', ['pending']));
+  await w.c.goalControl('clear');
+  await w.c.goalTurnEnded('s1');
+  assert.equal(w.run('GOAL_PENDING.size'), 0);
+  assert.match(w.card(), /Goal · Active/);
+  let reads = 0;
+  w.c.BR.goalGet = async () => { reads++; return {ok: false}; };
+  await w.c.goalTurnEnded('s1');
+  assert.equal(reads, 0);
 });
 
 /* ---------- the words and the buttons ---------- */
@@ -163,6 +223,7 @@ test('the window loads the card before renderer.js and draws it under the plan',
   assert.match(r, /planBarHTML\(S\.sessionId, \{esc, ic\}\) \+ goalBits \+ q/);
   assert.match(r, /ev\.kind === 'goal_progress'/);
   assert.match(r, /goalRestore\(id, data\.goal, live\)/);
+  assert.match(r, /goalTurnEnded\(sid\)/);
   assert.match(r, /goalButtonHTML\(\{ic\}\)/);
 });
 

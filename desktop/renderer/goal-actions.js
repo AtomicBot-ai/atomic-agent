@@ -57,12 +57,24 @@ async function goalControl(verb) {
     void goalRefresh(sid);
     return;
   }
-  goalSet(sid, res.data.goal);
+  /* A pause or clear asked of a running goal lands after its round: the
+     answer is the goal as it will be (null for a clear), so the card keeps
+     the goal it shows, says "after this round", and the turn's end reads
+     the stored goal (goalTurnEnded). */
   if (res.data.pending) GOAL_PENDING.set(sid, verb);
+  else goalSet(sid, res.data.goal);
   if (sid === S.agentSession) render();
   if (verb === 'resume' && sid === S.agentSession && typeof res.data.message === 'string' && res.data.message) {
     submit(res.data.message, {plain: true});
   }
+}
+
+/** A turn of chat `sid` ended: a pause or clear asked of it has landed, so the stored goal replaces the card. */
+async function goalTurnEnded(sid) {
+  if (!sid || !GOAL_PENDING.has(sid)) return;
+  await goalRefresh(sid);
+  // The goal did not stop (the turn was cut short, the store did not answer): its buttons work again.
+  if (GOAL_PENDING.delete(sid) && sid === S.agentSession) render();
 }
 
 if (typeof document !== 'undefined') {
