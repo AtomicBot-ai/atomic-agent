@@ -19,6 +19,7 @@ export {
   captureMessageSent,
   captureModelConfigured,
   captureOnboardingStep,
+  captureUiAction,
 } from "./analytics-events.js";
 export type {
   AnalyticsDisabledVia,
@@ -26,6 +27,7 @@ export type {
   LocalEngine,
   LocalEngineFailedContext,
   MessageEventContext,
+  UiActionVia,
 } from "./analytics-events.js";
 export { reportLocalEngineFailed } from "./report-local-engine-failed.js";
 export {

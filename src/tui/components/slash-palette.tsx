@@ -78,6 +78,7 @@ export function SlashPalette(props: SlashPaletteProps): ReactElement | null {
               mouse.getState(),
               mouse.dispatch,
               mouse.callbacks,
+              "palette",
             );
           }}
         >

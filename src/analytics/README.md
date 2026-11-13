@@ -25,3 +25,12 @@ Two tags mark runs that are not a person at a keyboard. Neither one stops events
 
 - `test_run: true` on the event and `atomic_team: true` on the person: our own machines and test runs, from `ATOMIC_AGENT_TEAM=1` or a `~/.atomic-agent-team` file ([read-team-run-marker.ts](read-team-run-marker.ts), ATO-1247). Left out of the metrics.
 - `automation: true` on the event and on the person: the process runs on a CI server, detected from the usual CI variables (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `JENKINS_URL`, ...; [read-ci-environment.ts](read-ci-environment.ts), ATO-272). Counted as use (decision 12.10.2026: only our own runs are left out), tagged so a dashboard can split it. Only the boolean is sent, never the CI system's name or job ids.
+
+## `ui_action` from the terminal
+
+Every built-in slash command the TUI runs sends one `ui_action` (ATO-1465), the same event name and property names the desktop uses, so a dashboard can union both and split them by the `surface` the client stamps on every event (`tui` here, `desktop` there).
+
+- `action`: the command's canonical name with its slash (`/report`, `/discord`; an alias counts as its command, so `/cost` is `/usage`). Never its arguments: `/discord foo bar` sends `/discord`.
+- `via`: `slash` (typed), `palette` (picked in the slash palette) or `menu` (a menu entry that runs a command).
+
+Only names from the built-in registry are sent. Skills, plugin commands, unknown input and plain messages send nothing. The event goes through the normal client, so it is dropped while analytics is off, under `ATOMIC_AGENT_ANALYTICS=off` and under `DO_NOT_TRACK`. Wiring: `reportBuiltInSlashCommand` in `src/tui/submit-handler.ts` → `TuiAppCallbacks.onUiAction` → `runtime.reportUiAction` → `captureUiAction`.

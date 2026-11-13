@@ -870,6 +870,10 @@ export interface TuiAppCallbacks {
    * (ATO-1139): open the absolute `path` in the OS default browser.
    */
   onOpenLocalFileRequested?(path: string): void;
+   * A built-in slash command ran (ATO-1465): count it as `ui_action`.
+   * `action` is the command name only (`/report`), never its arguments.
+   */
+  onUiAction?(action: string, via: "slash" | "palette" | "menu"): void;
 }
 
 export interface TuiAppProps {
@@ -1405,7 +1409,7 @@ export function TuiApp({
       // `command` is the same door with an argument on it.
       const line = node.command ?? (node.slash ? `/${node.slash.name}` : null);
       if (line !== null) {
-        runSlashCommand(line, state, dispatch, callbacks);
+        runSlashCommand(line, state, dispatch, callbacks, "menu");
         return;
       }
       if (node.kind === "place") {

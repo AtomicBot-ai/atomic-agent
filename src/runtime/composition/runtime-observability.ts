@@ -12,11 +12,13 @@ import {
   captureLocalEngineFailed,
   captureModelConfigured,
   captureOnboardingStep,
+  captureUiAction,
   createTelemetryToggle,
   detectOtherSurfaceInstalled,
   resolveAnalyticsDimensions,
   type AnalyticsDisabledVia,
   type LocalEngineFailedContext,
+  type UiActionVia,
 } from "../../analytics/index.js";
 import { getAppVersion } from "../../version.js";
 import { SENTRY_RATE_LIMIT_FILE } from "../../error-reporting/index.js";
@@ -153,7 +155,10 @@ export function createRuntimeObservability(
     const reportLocalEngineFailed = (context: LocalEngineFailedContext): void => {
       captureLocalEngineFailed(analytics, context);
     };
-    return { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed };
+    const reportUiAction = (action: string, via: UiActionVia): void => {
+      captureUiAction(analytics, action, via);
+    };
+    return { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed, reportUiAction };
   };
 
   return {
