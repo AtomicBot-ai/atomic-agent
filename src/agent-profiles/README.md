@@ -15,13 +15,13 @@ Markdown with YAML frontmatter, the format of Claude Code's `.claude/agents/*.md
 
 ## Sources and order
 
-[profile-loader.ts](profile-loader.ts), first match of a name wins: the user's `<stateDir>/agents/*.md`, then the project's `.atomic-agent/agents/*.md` and `.claude/agents/*.md`, then enabled plugins' `agents/*.md` (named `plugin:agent`), then the built-ins. Profiles are reread on every fan-out.
+[profile-loader.ts](profile-loader.ts), first match of a name wins: the project's trusted `.atomic-agent/agents/*.md` and `.claude/agents/*.md`, then the user's `<stateDir>/agents/*.md`, then enabled plugins' `agents/*.md` (named `plugin:agent`), then the built-ins. A trusted project file beats the user's file of the same name, as in Claude Code; an untrusted one is never read, so the user's applies. Profiles are reread on every fan-out.
 
 Project files follow [project folder trust](../skills/docs/project-trust.md): each file is an item of the folder's trust question, by its workspace-relative path like an instruction file, and is not read until the operator trusted it. A profile folder that resolves outside the workspace is not read.
 
 ## Built-ins
 
-[builtin-profiles.ts](builtin-profiles.ts): `explore` (find code, role `explore`), `review` (find bugs, role `review`, keeps `verify.*`), `research` (web and local files, role `explore`). All three are read-only: no writes, no shell, no browser clicks or typing. A user or project file of the same name replaces one.
+[builtin-profiles.ts](builtin-profiles.ts): `explore` (find code, role `explore`), `review` (find bugs, role `review`, keeps `verify.*`), `research` (web and local files, role `explore`). All three are read-only: no writes, no shell, no browser clicks or typing. A trusted project file or a user file of the same name replaces one.
 
 ## Wiring
 

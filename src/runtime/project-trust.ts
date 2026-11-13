@@ -58,7 +58,7 @@ function inventory(config: AtomicAgentConfig, workingDir: string): Inventory {
   // Discovery only: nothing is allowed, so no instruction body is read for the question.
   // Subagent profile files (ATO-566) are asked about like instruction files, by path.
   const instructions = [...loadProjectInstructions(scan.workingDir, undefined, { allow: () => false }).found,
-    ...listProjectAgentProfilePaths(scan.workingDir)];
+    ...listProjectAgentProfilePaths(scan.workingDir, config.paths.stateDir)];
   return { workingDir: trustKey(scan.workingDir) ?? scan.workingDir, skills, instructions, record: scan.projectTrust };
 }
 

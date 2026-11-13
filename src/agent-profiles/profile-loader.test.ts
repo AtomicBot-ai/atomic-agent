@@ -79,11 +79,25 @@ describe("loadAgentProfiles (ATO-566)", () => {
     expect(set.withheld).toEqual([".claude/agents/b.md"]);
   });
 
-  it("a user profile wins over a trusted project profile of the same name", () => {
+  it("a trusted project profile wins over the user's of the same name; an untrusted one leaves the user's", () => {
     put(join(state, "agents"), "deploy.md", "USER");
     put(join(repo, ".claude/agents"), "deploy.md", "PROJECT");
-    const set = load({ startupTrust: trust([".claude/agents/deploy.md"]) });
-    expect(set.get("deploy")).toMatchObject({ source: "user", prompt: "USER" });
+    const trusted = load({ startupTrust: trust([".claude/agents/deploy.md"]) });
+    expect(trusted.get("deploy")).toMatchObject({ source: "project", prompt: "PROJECT" });
+    expect(trusted.diagnostics.join("\n")).toContain("shadowed");
+    const untrusted = load();
+    expect(untrusted.get("deploy")).toMatchObject({ source: "user", prompt: "USER" });
+    expect(untrusted.withheld).toEqual([".claude/agents/deploy.md"]);
+  });
+
+  it("opened in the folder that holds the state dir, the user's profiles stay the user's, never pending", () => {
+    const home = join(base, "home");
+    const homeState = join(home, ".atomic-agent");
+    put(join(homeState, "agents"), "mine.md", "MINE");
+    const set = loadAgentProfiles({ workingDir: home, stateDir: homeState, configFile, startupTrust: [] });
+    expect(set.get("mine")).toMatchObject({ source: "user", prompt: "MINE" });
+    expect(set.withheld).toEqual([]);
+    expect(listProjectAgentProfilePaths(home, homeState)).toEqual([]);
   });
 
   it("does not follow a project profile folder out of the workspace", () => {

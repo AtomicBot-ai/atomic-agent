@@ -1,8 +1,8 @@
 import type { AgentProfile } from "./agent-profile.js";
 
 /**
- * The three profiles every install has (ATO-566). A user file of the same
- * name (`~/.atomic-agent/agents/review.md`) or a trusted project file
+ * The three profiles every install has (ATO-566). A trusted project file
+ * or a user file of the same name (`~/.atomic-agent/agents/review.md`)
  * replaces one; see `profile-loader.ts` for the order.
  *
  * `model` names a fusion role (`llm.runMode.fusion.roles`), so the task

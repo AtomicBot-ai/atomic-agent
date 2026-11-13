@@ -14,10 +14,12 @@ import { BUILTIN_AGENT_PROFILES } from "./builtin-profiles.js";
 /**
  * Where profiles come from, and which one wins a name (ATO-566):
  *
- *   user (`<stateDir>/agents/*.md`) > trusted project > plugin > built-in
+ *   trusted project > user (`<stateDir>/agents/*.md`) > plugin > built-in
  *
- * The user's own copy wins, as with skills: a checked-out repository
- * cannot replace a profile the user wrote. A project's files are read
+ * A trusted project's copy wins, as in Claude Code: the repository knows
+ * what its `review` should check. That needs the operator's yes for that
+ * file; an untrusted one is never read, so the user's copy applies. A
+ * project's files are read
  * from `.atomic-agent/agents/` and then `.claude/agents/` (Claude Code's
  * folder, so a repo set up for it works as is), and only after the
  * operator trusted that file for this folder: each file is an item of
@@ -89,22 +91,32 @@ function projectDir(root: string, rel: string, diagnostics: string[]): string | 
   return dir;
 }
 
+/** The user's profile folder, resolved; null when it does not exist. */
+function resolvedUserDir(stateDir: string): string | null {
+  try {
+    return realpathSync(join(stateDir, USER_AGENT_DIR_NAME));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Workspace-relative paths of the profile files a folder ships, for its
  * trust question. Nothing is read beyond the directory listing.
  */
-export function listProjectAgentProfilePaths(workingDir: string): string[] {
+export function listProjectAgentProfilePaths(workingDir: string, stateDir?: string): string[] {
   let root: string;
   try {
     root = realpathSync(workingDir);
   } catch {
     return [];
   }
+  const userRoot = stateDir === undefined ? null : resolvedUserDir(stateDir);
   const ignored: string[] = [];
   const out: string[] = [];
   for (const rel of PROJECT_AGENT_DIRS) {
     const dir = projectDir(root, rel, ignored);
-    if (dir === null) continue;
+    if (dir === null || dir === userRoot) continue;
     for (const file of markdownFiles(dir, ignored)) out.push(`${rel}/${file}`);
   }
   return out;
@@ -158,22 +170,10 @@ export function loadAgentProfiles(options: AgentProfileLoadOptions): AgentProfil
     }
   };
 
-  // User profiles: confined to the folder they resolve to.
-  const userDir = join(options.stateDir, USER_AGENT_DIR_NAME);
-  let userRoot: string | null = null;
-  try {
-    userRoot = realpathSync(userDir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") diagnostics.push(`${userDir}: ${String(err)}`);
-  }
-  if (userRoot !== null) {
-    for (const file of markdownFiles(userRoot, diagnostics)) {
-      const profile = readProfile(userRoot, join(userRoot, file), "user", file, diagnostics);
-      if (profile !== null) offer(profile);
-    }
-  }
-
-  // Project profiles: only files this folder's operator trusted.
+  // Project profiles: only files this folder's operator trusted. Opened
+  // in the home folder, `.atomic-agent/agents` IS the user's folder: it
+  // is read below as the user's, not asked about as a project's.
+  const userRoot = resolvedUserDir(options.stateDir);
   let root: string | null = null;
   try {
     root = realpathSync(options.workingDir);
@@ -184,7 +184,7 @@ export function loadAgentProfiles(options: AgentProfileLoadOptions): AgentProfil
     const record = readProjectTrust(options.configFile, options.startupTrust, root);
     for (const rel of PROJECT_AGENT_DIRS) {
       const dir = projectDir(root, rel, diagnostics);
-      if (dir === null) continue;
+      if (dir === null || dir === userRoot) continue;
       for (const file of markdownFiles(dir, diagnostics)) {
         const item = `${rel}/${file}`;
         if (instructionTrust(record, item) !== "trusted") {
@@ -194,6 +194,14 @@ export function loadAgentProfiles(options: AgentProfileLoadOptions): AgentProfil
         const profile = readProfile(root, join(dir, file), "project", item, diagnostics);
         if (profile !== null) offer(profile);
       }
+    }
+  }
+
+  // User profiles: confined to the folder they resolve to.
+  if (userRoot !== null) {
+    for (const file of markdownFiles(userRoot, diagnostics)) {
+      const profile = readProfile(userRoot, join(userRoot, file), "user", file, diagnostics);
+      if (profile !== null) offer(profile);
     }
   }
 

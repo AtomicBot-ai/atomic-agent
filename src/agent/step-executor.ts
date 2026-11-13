@@ -280,6 +280,7 @@ async function executeStepInner(
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
     ...(ctx.terminalOnly ? { terminalOnly: true } : {}),
     ...(ctx.toolSet !== undefined ? { toolSet: ctx.toolSet } : {}),
+    ...(ctx.toolFilter !== undefined ? { toolFilter: ctx.toolFilter } : {}),
     ...(deps.isPlanMode ? { isPlanMode: deps.isPlanMode } : {}),
     ...(deps.isFusionOrchestrator
       ? {
