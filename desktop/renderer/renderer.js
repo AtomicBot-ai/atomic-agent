@@ -20560,6 +20560,8 @@ function fzAfter(res, before) {
   }
   bswReport(res);
   if (res.runMode && res.runMode.line) appSay(res.runMode.line);
+  // ATO-1489: the subscription-CLI worker warning. The switch went ahead; this only says what it costs.
+  if (res.notice) { appSay(res.notice, 'caution'); toast(res.notice); }
   const now = rmNow();
   const entered = res.runMode ? !!res.runMode.enteredFusion : (now.effective === 'fusion' && before !== 'fusion');
   if (entered) fzIntro(now);
