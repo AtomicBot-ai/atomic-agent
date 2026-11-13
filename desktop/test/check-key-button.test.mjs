@@ -63,6 +63,12 @@ test("an older agent's sentence still gets the button", () => {
   assert.equal(c.turnFailureAct({ kind: "error", payload: { failure: { cause: "x", action: "fix-key" } } }).act, "fix-key");
 });
 
+test("the agent's new wording without a failure cause still gets the button", () => {
+  const c = load();
+  const ev = { kind: "error", category: "provider", error: '"openrouter" did not accept your API key. Check the key in the Providers panel.' };
+  assert.equal(c.turnFailureAct(ev).act, "fix-key");
+});
+
 test("a saved key the agent will not send gets the button too", () => {
   const c = load({ badSavedKey: true });
   assert.equal(c.turnFailureAct({ kind: "error", error: "fetch failed", category: "transport" }).act, "fix-key");

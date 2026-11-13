@@ -10520,7 +10520,7 @@ function turnFailureLine(ev) {
      That sentence is the reason; "not answering" would send the person to
      their network. The TUI's "Providers panel" is Settings › Models here. */
   const said = String((ev && ev.error) || '');
-  if (/can't use its API key|rejected the API key|needs an API key and none is set/i.test(said)) {
+  if (/can't use its API key|rejected the API key|did not accept your API key|needs an API key and none is set/i.test(said)) {
     return esc(said.replace(/the Providers panel/g, 'Settings › Models') + (waited ? ' The turn gave up' + waited + '.' : ''));
   }
   /* ATO-1458: the agent's own verdict (`failure`, ATO-384) says the key was
@@ -10548,7 +10548,7 @@ function turnKeyRejected(ev) {
   const id = selActiveProviderId();
   const entry = (selProviders() || []).find((p) => p.id === id);
   if (entry && savedKeyInvalid(entry)) return true;
-  return /can't use its API key|rejected the API key|needs an API key and none is set/i.test(String((ev && ev.error) || ''));
+  return /can't use its API key|rejected the API key|did not accept your API key|needs an API key and none is set/i.test(String((ev && ev.error) || ''));
 }
 /** The failed turn's button: Check key on a refused key, else Switch provider when the provider failed. */
 function turnFailureAct(ev) {
@@ -11159,7 +11159,7 @@ function onChatEvent(ev) {
     if (ev.kind === 'done' && item) tpDropWaitNotes(item.id);   // ATO-185: the answer came; its wait lines go (tui-parity.js)
     else if (item) tpDropRecoveredNote(item.id);   // ATO-204: failed or stopped, it did not "continue" (tui-parity.js)
     // ATO-721: a turn the provider failed (or refused the key on) is that provider's last error, in the agent's words.
-    if (ev.kind === 'error' && item && !LIVE_REPLAY && (providerFailure(ev) || /can't use its API key|rejected the API key/i.test(String(ev.error || '')))) {
+    if (ev.kind === 'error' && item && !LIVE_REPLAY && (providerFailure(ev) || /can't use its API key|rejected the API key|did not accept your API key/i.test(String(ev.error || '')))) {
       diagNoteProviderError(selActiveProviderId(), WAIT && WAIT.cause ? waitCauseWords(WAIT.cause, WAIT.providerId) || String(ev.error || '') : String(ev.error || ''));
     }
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
