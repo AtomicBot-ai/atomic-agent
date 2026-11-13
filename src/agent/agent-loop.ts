@@ -15,7 +15,7 @@ import { refreshMemoryContext, createSurfacedMemoryTracker } from "./turn/turn-m
 export { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn/turn-memory-context.js";
 import { finalizeAgentTurn, finalizeFailedAgentTurn } from "./turn/turn-finalization.js";
 import { armApprovalDeadline } from "./turn/approval-deadline.js";
-import { costCeilingNotice, costCeilingReached, recordCompactionSpend, recordStepSpend } from "./turn/turn-spend.js";
+import { budgetStepPlan, costCeilingNotice, recordCompactionSpend, recordStepSpend } from "./turn/turn-spend.js";
 export { formatTaskStoppedReply } from "./turn/turn-finalization.js";
 import { delegationProducedWork, recordDelegation, wouldRefuse as fusionGateWouldRefuse } from "./policies/fusion-orchestrator-mode.js";
 import { observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
@@ -226,6 +226,14 @@ export class AgentLoop {
       return !boundaryRuns || turn.legMadeProgress;
     };
     const loopTracker = createTurnLoopTracker();
+    // What the model's own completions have cost (compaction excluded),
+    // and that figure at the previous step's start, so the next step can
+    // tell what one step costs (ATO-1472, the summary step's reserve).
+    let completionSpendUsd = 0;
+    let completionSpendBeforeLastStep = 0;
+    // Once the budget asked for the summary step it stays asked for: a
+    // cheap retry of that step must not read as room for more work.
+    let budgetSummaryDue = false;
 
     const {
       surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds,
@@ -286,6 +294,19 @@ export class AgentLoop {
           await this.deps.profileManager.refreshIfStale();
         }
       }
+      // The spend ceiling's plan for this step (ATO-1472, a hard cap).
+      // When not even the summary fits, the task ends here, before any
+      // event or model call, and closes with a card from its records.
+      const lastStepUsd = completionSpendUsd - completionSpendBeforeLastStep;
+      completionSpendBeforeLastStep = completionSpendUsd;
+      let budgetPlan = budgetStepPlan(turn.spendUsd, lastStepUsd, costCeilingUsd);
+      if (budgetPlan === "work" && budgetSummaryDue) budgetPlan = "summary";
+      if (budgetPlan === "summary") budgetSummaryDue = true;
+      if (budgetPlan === "stop") {
+        turn.stopCause = "cost_ceiling";
+        turn.reason = "max_steps";
+        break;
+      }
       this.deps.onEvent?.({ type: "step_started", stepIndex: i });
       const started = Date.now();
       // Mid-turn steering: anything the user sent since the previous
@@ -329,9 +350,11 @@ export class AgentLoop {
       const outOfTime =
         turn.ceilingFiredMidRequest || elapsedMs >= durationCeilingMs;
       // The spend ceiling (ATO-1108) is read here too, after the last
-      // step's completion was priced and before this one starts.
-      const outOfBudget =
-        !outOfTime && costCeilingReached(turn.spendUsd, costCeilingUsd);
+      // step's completion was priced and before this one starts. The
+      // summary step is budgeted for (ATO-1472): it starts while the
+      // spend still has room for it, estimated at the last step's cost,
+      // and a cap already reached makes no further paid call at all.
+      const outOfBudget = !outOfTime && budgetPlan === "summary";
       if (outOfTime) turn.stopCause = "time_ceiling";
       else if (outOfBudget) turn.stopCause = "cost_ceiling";
       const finalizationStep = i === stepCeiling - 1 || outOfTime || outOfBudget;
@@ -581,7 +604,9 @@ export class AgentLoop {
               // all cost money, and they are the runaway cases the
               // spend ceiling exists for.
               if (event.type === "llm_completed") {
+                const spendBefore = turn.spendUsd;
                 recordStepSpend(turn, event.completion, contextProviderId, this.deps.priceCompletion);
+                completionSpendUsd += turn.spendUsd - spendBefore;
                 for (const disabled of toolDisabledEvents(
                   event.completion.droppedTools,
                   announcedDroppedTools,
