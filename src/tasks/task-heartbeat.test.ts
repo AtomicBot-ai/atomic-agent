@@ -26,8 +26,6 @@ describe("isHeartbeatSilent", () => {
     "**NO_REPLY**",
     "`NO_REPLY`.",
     "\"NO_REPLY\"",
-    "Checked mail and the build. Nothing new.\nNO_REPLY",
-    "Nothing changed: NO_REPLY",
     "",
     "   ",
   ])("treats %j as nothing new", (reply) => {
@@ -45,6 +43,9 @@ describe("isHeartbeatSilent", () => {
     "XNO_REPLY",
     "NO_REPLY_YET",
     "Two new issues were filed.",
+    "Build failed on main. Otherwise NO_REPLY",
+    "Checked mail and the build. Nothing new.\nNO_REPLY",
+    "Nothing changed: NO_REPLY",
   ])("delivers %j", (reply) => {
     expect(isHeartbeatSilent(reply)).toBe(false);
   });

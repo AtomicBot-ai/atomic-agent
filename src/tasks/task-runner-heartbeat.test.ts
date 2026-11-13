@@ -133,7 +133,7 @@ describe("TaskRunner heartbeats", () => {
   });
 
   it("delivers nothing for a NO_REPLY run and records nothing new", async () => {
-    const runner = runnerReplying("Checked everything.\nNO_REPLY");
+    const runner = runnerReplying("**NO_REPLY**.");
     const id = createHeartbeat();
     const final = await runner.runOne(id);
     await settle();

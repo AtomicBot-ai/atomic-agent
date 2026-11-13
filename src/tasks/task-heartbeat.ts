@@ -90,10 +90,11 @@ export function isWithinActiveHours(hours: QuietHours | null, at: Date): boolean
 }
 
 /**
- * Whether a reply means "nothing new": empty, the sentinel alone, or
- * text that ends with the sentinel as its own word. Markdown and
- * punctuation around it are ignored, and so is case, so a small local
- * model that writes `**no_reply**.` still stays silent.
+ * Whether a reply means "nothing new": empty, or the sentinel alone.
+ * Markdown and punctuation around it are ignored, and so is case, so a
+ * small local model that writes `**no_reply**.` still stays silent. Any
+ * other text next to it is delivered: "Build failed. Otherwise NO_REPLY"
+ * is news, and dropping it would hide exactly what the heartbeat is for.
  */
 export function isHeartbeatSilent(reply: string | null | undefined): boolean {
   if (reply === null || reply === undefined) return true;
@@ -101,12 +102,7 @@ export function isHeartbeatSilent(reply: string | null | undefined): boolean {
     .trim()
     .replace(/[\s`*_"'.!)\]]+$/u, "")
     .replace(/^[\s`*_"'([]+/u, "");
-  if (text.length === 0) return true;
-  const upper = text.toUpperCase();
-  if (upper === HEARTBEAT_SENTINEL) return true;
-  if (!upper.endsWith(HEARTBEAT_SENTINEL)) return false;
-  const before = text.charAt(text.length - HEARTBEAT_SENTINEL.length - 1);
-  return !/[A-Za-z0-9_]/u.test(before);
+  return text.length === 0 || text.toUpperCase() === HEARTBEAT_SENTINEL;
 }
 
 /**
