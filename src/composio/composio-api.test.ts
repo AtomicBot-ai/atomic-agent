@@ -145,4 +145,27 @@ describe("createComposioSession", () => {
       }),
     ).rejects.not.toBeInstanceOf(ComposioApiError);
   });
+
+  it("sends connected_accounts pins only when there are some", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(OK_BODY));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createComposioSession({
+      apiKey: "ak",
+      userId: "u",
+      connectedAccounts: { gmail: ["ca_work"] },
+    });
+    await createComposioSession({ apiKey: "ak", userId: "u", connectedAccounts: {} });
+
+    const bodies = fetchMock.mock.calls.map(
+      (call) => JSON.parse((call as unknown as [string, RequestInit])[1].body as string),
+    );
+    expect(bodies[0]).toEqual({
+      user_id: "u",
+      workbench: { enable: false },
+      connected_accounts: { gmail: ["ca_work"] },
+    });
+    // An empty pin map is the same request as no pins at all.
+    expect(bodies[1]).toEqual({ user_id: "u", workbench: { enable: false } });
+  });
 });

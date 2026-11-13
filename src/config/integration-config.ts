@@ -4,6 +4,11 @@ import { parseBool, parseNonEmptyString } from "./config-primitives.js";
 
 import { parseNullableString } from "./config-values.js";
 
+import {
+  parseComposioAccounts,
+  type ComposioAccount,
+} from "./composio-accounts-config.js";
+
 /**
  * Git remote-sync policy. Added in config v52.
  *
@@ -56,6 +61,18 @@ export interface ComposioConfig {
   sessionId: string | null;
   /** Cached MCP endpoint for `sessionId`. */
   mcpUrl: string | null;
+  /**
+   * Named connected accounts and per-toolkit defaults (ATO-548). Empty
+   * by default: nothing is pinned and Composio picks the account.
+   */
+  accounts: ComposioAccount[];
+  /**
+   * Which pins the cached session was created with, as
+   * `<sessionId>#<pins>`; `null` for an unpinned session. Tied to the
+   * session id so a writer that replaces `sessionId` without knowing
+   * about pins (an older build, the desktop key check) invalidates it.
+   */
+  sessionPins: string | null;
 }
 
 /** Where a finished (or failed) background model download is reported. */
@@ -181,6 +198,9 @@ export function createComposioDefaults(): ComposioConfig {
     userId: null,
     sessionId: null,
     mcpUrl: null,
+    // Unversioned, additive (ATO-548): no named accounts, nothing pinned.
+    accounts: [],
+    sessionPins: null,
   };
 }
 
@@ -251,5 +271,7 @@ export function parseComposioConfig(
       userId: parseNullableString(raw.userId, "composio.userId"),
       sessionId: parseNullableString(raw.sessionId, "composio.sessionId"),
       mcpUrl: parseNullableString(raw.mcpUrl, "composio.mcpUrl"),
+      accounts: parseComposioAccounts(raw.accounts, "composio.accounts"),
+      sessionPins: parseNullableString(raw.sessionPins, "composio.sessionPins"),
     };
 }

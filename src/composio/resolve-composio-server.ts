@@ -14,6 +14,7 @@
  */
 
 import { buildComposioServerConfig } from "./build-composio-server-config.js";
+import { composioSessionPins } from "./composio-accounts.js";
 import { ensureComposioSession } from "./ensure-composio-session.js";
 import { persistComposioSession } from "./persist-composio-session.js";
 import { resolveComposioApiKey } from "./resolve-composio-key.js";
@@ -47,6 +48,10 @@ export async function resolveComposioServerConfig(
   });
   if (apiKey === undefined) return undefined;
 
+  // Defaults become session pins. A pinned account Composio no longer
+  // has fails the session create, and that stays a failure: falling back
+  // to an unpinned session could act through the wrong account.
+  const connectedAccounts = composioSessionPins(opts.composio.accounts);
   try {
     const session = await ensureComposioSession({
       apiKey,
@@ -54,7 +59,9 @@ export async function resolveComposioServerConfig(
         userId: opts.composio.userId,
         sessionId: opts.composio.sessionId,
         mcpUrl: opts.composio.mcpUrl,
+        sessionPins: opts.composio.sessionPins,
       },
+      connectedAccounts,
       persist: (next) => {
         persistComposioSession(opts.userConfigFile, next);
       },

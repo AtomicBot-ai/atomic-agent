@@ -17,14 +17,17 @@ import {
   resetConfigCache,
   writeUserConfigFileSync,
 } from "../config/index.js";
+import type { ComposioAccount } from "../config/composio-accounts-config.js";
 
 export interface ComposioSessionRecord {
   userId: string;
   sessionId: string;
   mcpUrl: string;
+  /** Stamp of the pins the session carries; `null` or absent = unpinned. */
+  sessionPins?: string | null;
 }
 
-/** Persist the session triple. Returns the path written. */
+/** Persist the cached session and its pin stamp. Returns the path written. */
 export function persistComposioSession(
   configPath: string,
   record: ComposioSessionRecord,
@@ -37,6 +40,7 @@ export function persistComposioSession(
       userId: record.userId,
       sessionId: record.sessionId,
       mcpUrl: record.mcpUrl,
+      sessionPins: record.sessionPins ?? null,
     },
   };
   const validated = parseUserConfigFile(draft);
@@ -54,8 +58,35 @@ export function clearComposioSession(configPath: string): void {
   const prev = ensureUserConfigFileSync(configPath);
   const draft = {
     ...prev,
-    composio: { ...prev.composio, sessionId: null, mcpUrl: null },
+    composio: {
+      ...prev.composio,
+      sessionId: null,
+      mcpUrl: null,
+      sessionPins: null,
+    },
   };
   writeUserConfigFileSync(configPath, parseUserConfigFile(draft));
   resetConfigCache();
+}
+
+/**
+ * Replace `composio.accounts` (ATO-548). The list is validated by the
+ * same parser the config loader uses, so a list with a duplicate alias
+ * or two defaults for one toolkit is refused before anything is
+ * written. The cached session is left alone: its pin stamp no longer
+ * matches when a default changed, so the next mount creates a session
+ * with the new pins and an unchanged default keeps the cache.
+ */
+export function persistComposioAccounts(
+  configPath: string,
+  accounts: readonly ComposioAccount[],
+): string {
+  const prev = ensureUserConfigFileSync(configPath);
+  const draft = {
+    ...prev,
+    composio: { ...prev.composio, accounts: accounts.map((a) => ({ ...a })) },
+  };
+  writeUserConfigFileSync(configPath, parseUserConfigFile(draft));
+  resetConfigCache();
+  return configPath;
 }

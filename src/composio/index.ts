@@ -7,10 +7,33 @@ export {
   COMPOSIO_API_BASE,
   COMPOSIO_API_KEY_HEADER,
   ComposioApiError,
+  composioRequest,
   createComposioSession,
   parseSessionResponse,
 } from "./composio-api.js";
-export type { ComposioSession, CreateSessionOptions } from "./composio-api.js";
+export type {
+  ComposioRequestOptions,
+  ComposioSession,
+  CreateSessionOptions,
+} from "./composio-api.js";
+export {
+  listComposioConnectedAccounts,
+  parseConnectedAccountsPage,
+} from "./composio-accounts-api.js";
+export type {
+  ComposioConnectedAccount,
+  ListConnectedAccountsOptions,
+} from "./composio-accounts-api.js";
+export {
+  ComposioAccountError,
+  addComposioAccount,
+  composioSessionPins,
+  composioSessionStamp,
+  findComposioAccount,
+  removeComposioAccount,
+  setDefaultComposioAccount,
+} from "./composio-accounts.js";
+export type { AddComposioAccountInput } from "./composio-accounts.js";
 export {
   COMPOSIO_SERVER_NAME,
   buildComposioServerConfig,
@@ -29,6 +52,7 @@ export type {
 } from "./ensure-composio-session.js";
 export {
   persistComposioSession,
+  persistComposioAccounts,
   clearComposioSession,
 } from "./persist-composio-session.js";
 export type { ComposioSessionRecord } from "./persist-composio-session.js";
