@@ -29,7 +29,7 @@ import {
   validateAcpIcon,
   validateAcpManifest,
 } from "./acp-registry-manifest.js";
-import { BUNDLE_TARGETS } from "./bundle-targets.js";
+import { CLI_RELEASE_TARGETS } from "./bundle-targets.js";
 import { parseSha256File } from "./linux-packaging.js";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -75,7 +75,7 @@ function manifest(): void {
   const archives = resolve(option("archives", join(ROOT, "bundle")));
   const out = join(resolve(option("out", join(ROOT, "dist", "acp-registry"))), ACP_AGENT_ID);
   const sha256: Record<string, string> = {};
-  for (const target of BUNDLE_TARGETS) {
+  for (const target of CLI_RELEASE_TARGETS) {
     const name = archiveName(target);
     const digest = join(archives, `${name}.sha256`);
     if (!existsSync(digest)) {

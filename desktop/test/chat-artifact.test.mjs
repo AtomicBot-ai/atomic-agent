@@ -172,7 +172,8 @@ test("a canvas with a title already in the chat loads in the earlier frame; the 
   A.chatArtifactCanvas(second, { canvas: { path: "/w/canvas-sales-gone.html", title: "Sales" } }, "s2", log);
   await tick(); await tick();
   assert.equal(A.CHAT_ART.get("canvas:s2:sales").state, "ok");
-  assert.equal(puts.at(-1), "<p>line</p>");
+  // Its own page, not the last put: the s3 canvas above puts sales-1 again meanwhile.
+  assert.equal(A.CHAT_ART.get("canvas:s2:sales").html, "<p>line</p>");
 });
 
 test("a ```chart block's Preview draws its JSON with the window's own templates, no script", async () => {
@@ -209,7 +210,7 @@ test("only a frame of ours can set its height, and only with a size message", ()
 test("renderer.js hooks: canvas.render's tool_result, the reply's boxes, Preview on a code block", () => {
   const src = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
   const tr = src.slice(src.indexOf("if (ev.kind === 'tool_result') {"), src.indexOf("if (ev.kind === 'tool_update') {"));
-  assert.match(tr, /toolSettle\(card, p, ev\.at \|\| Date\.now\(\)\);\s*\/\/[^\n]*\n\s*if \(p\.canvas && item && typeof chatArtifactCanvas === 'function'\) chatArtifactCanvas\(item, p, S\.sessionId, S\.log\);\s*render\(\);/);
+  assert.match(tr, /toolSettle\(card, p, ev\.at \|\| Date\.now\(\)\);\s*\/\/[^\n]*\n\s*if \(p\.canvas && item && typeof chatArtifactCanvas === 'function'\) chatArtifactCanvas\(item, p, S\.sessionId, S\.log\);/);   // the Changed files card (ATO-1187) follows before render()
   const strip = src.slice(src.indexOf("\nfunction replyFilesStrip("), src.indexOf("\nfunction chatPicHTML("));
   assert.match(strip, /chatArtifactEventSlots\(m, esc\)/);
   assert.match(strip, /chatArtifactFileSlotHTML\(p, esc, m\)/);

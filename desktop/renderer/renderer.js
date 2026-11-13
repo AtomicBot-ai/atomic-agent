@@ -328,6 +328,9 @@ const CATEGORY_PLAIN = {
   browser_offsite:'open a site outside the allowed list', state_secret:'touch the agent\u2019s secret files',
   screen_control:'click and type on your screen', screen_capture:'take a screenshot of your screen',
   local_model_restart:'restart the local model', hook_ask:'take a step a hook asked about',
+  // Categories the agent added since (approval-level.ts APPROVAL_CATEGORY_LABELS).
+  http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
+  user_question:'ask you a question', session_cross:'read or write in another chat',
 };
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
 /* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
@@ -4086,6 +4089,8 @@ const APPR_FALLBACK = {
   browser_offsite:'open a site outside the allowed list', state_secret:'touch its own secret files',
   screen_control:'click and type on your screen', screen_capture:'take a screenshot of your screen',
   local_model_restart:'restart the local model', hook_ask:'take a step one of your hooks asked about',
+  http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
+  user_question:'ask you a question', session_cross:'read or write in another chat',
 };
 /** ATO-473: whether the card offers "Allow in this chat". The agent grants
     the request's command shape (the binary, `git`) for the rest of the chat;
@@ -12204,6 +12209,9 @@ const CATEGORY_LABEL = {
   browser_offsite:'browser · site outside the allow-list', state_secret:'agent secret file',
   screen_control:'screen · click / type', screen_capture:'screen · screenshot',
   local_model_restart:'local model · restart', hook_ask:'hook · confirm',
+  // Added since (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
+  http_write:'HTTP request · sends data', browser_site_tool:'browser · the site\'s own tool',
+  user_question:'question for you', session_cross:'another chat · read / send',
 };
 
 /* Calm (S7): why an answer to an approval did not land, in words. The
@@ -15096,6 +15104,7 @@ function hfDiskFit(choice) {
 // A new reading that could change a verdict repaints whatever shows one.
 DISK.onChange = () => render();
 DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
+ALLSET.onChange = () => diagRepaint();   // ATO-41
 /* ATO-1186: the status line repaints in place, never through a full render:
    when the memory word changes and twice a minute for its clock. */
 function statusLineRepaint() {
@@ -15107,7 +15116,6 @@ if (typeof STATUS_LINE !== 'undefined') {
   STATUS_LINE.onChange = statusLineRepaint;
   setInterval(statusLineRepaint, 30 * 1000);
 }
-ALLSET.onChange = () => diagRepaint();   // ATO-41
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
@@ -26938,7 +26946,7 @@ function llmKeylessLocal(p) {
   if (!p || p.kind !== 'openai-compatible') return false;
   if (['atomic-chat', 'lmstudio', 'ollama'].includes(p.id)) return true;
   // ATO-1066: so is a server on another computer on this network with no key variable of its own (lan-provider.js).
-  if (!p.apiKeyEnvVar && lanIsOtherComputerUrl(p.baseUrl)) return true;
+  if (!p.apiKeyEnvVar && typeof lanIsOtherComputerUrl === 'function' && lanIsOtherComputerUrl(p.baseUrl)) return true;
   try { return ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(new URL(p.baseUrl).hostname.toLowerCase()); } catch (err) { return false; }
 }
 function llmKeysKnown() { return LLMP.envKeys !== null && LLMP.dotenvKeys !== null; }

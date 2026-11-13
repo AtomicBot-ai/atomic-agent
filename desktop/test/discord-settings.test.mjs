@@ -212,7 +212,7 @@ test('the pane: Connect card first, then status, owners, the rows, and the resta
 test('renderer wiring: the helper loads before renderer.js; the pane, verbs, keys and the token key are wired', () => {
   const helper = index.indexOf('<script src="discord-settings.js">');
   assert.ok(helper > 0 && helper < index.indexOf('<script src="renderer.js">'));
-  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','composio'\]\]/);
+  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','composio'\]\]/);   // with Phone push (ATO-1129)
   assert.ok(source.includes("['discord','Discord']"));
   assert.ok(source.includes("['chat','Discord','Settings · Connections','','settings:discord']"));
   for (const hook of ["pane === 'discord') discordTabEntered()", "p === 'discord') return discordTab()",

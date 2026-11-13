@@ -46,6 +46,6 @@ test('the reason stays on one line; the card escapes it as text', () => {
     'the card draws the line through esc()');
   assert.match(renderer, /\.\.\.apprRiskFields\(payload\)/, 'onApprovalEvent keeps the frame\'s risk fields');
   const html = readFileSync(new URL('../renderer/index.html', import.meta.url), 'utf8');
-  assert.ok(html.indexOf('approval-risk.js') >= 0 && html.indexOf('approval-risk.js') < html.indexOf('renderer.js'),
+  assert.ok(html.indexOf('approval-risk.js') >= 0 && html.indexOf('approval-risk.js') < html.indexOf('src="renderer.js"'),
     'approval-risk.js loads before renderer.js');
 });

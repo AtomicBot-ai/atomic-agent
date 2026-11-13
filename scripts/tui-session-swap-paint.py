@@ -12,14 +12,16 @@ with incremental rendering forced on (ATOMIC_AGENT_INK_INCREMENTAL=1) and
 once with the default full-frame repaint as the control, and for each run
 counts the painted rows before and after `ctrl+g n`. It passes when every
 run paints the same rows before and after the swap, and that count is the
-expected one (33 by default).
+expected one (32 by default: the 34 rows minus the status bar row and the
+hairline under it, which sit above the rail; 33 was the Ink 7 issue's
+count, never measured with this script).
 
 Usage, from the repo root, after `npm run build`:
 
     python3 -m venv /tmp/aa-pyte && /tmp/aa-pyte/bin/pip install pyte
     /tmp/aa-pyte/bin/python scripts/tui-session-swap-paint.py
 
-Options: --mode on|off|both (default both), --expect N (default 33, or
+Options: --mode on|off|both (default both), --expect N (default 32, or
 `any` to only require before == after), --node PATH, --keep (leave the
 temporary state dir and the raw .ansi capture for inspection).
 
@@ -187,7 +189,7 @@ def run(node, incremental, keep):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--mode", choices=("on", "off", "both"), default="both")
-    parser.add_argument("--expect", default="33")
+    parser.add_argument("--expect", default="32")  # 34 rows - status bar - rule
     parser.add_argument("--node", default=shutil.which("node") or "node")
     parser.add_argument("--keep", action="store_true")
     opts = parser.parse_args()

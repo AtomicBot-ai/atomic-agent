@@ -103,12 +103,14 @@ function windowWith({ answer, busy = false, draft = "", sid = "ses-1", log = [] 
     render: () => { calls.renders++; },
     calls,
     entry,
+    // Built out here: an array made inside the vm has another realm's prototype and never deep-equals one made here.
+    recordSubmit: (draft, plain) => calls.submit.push([draft, plain]),
   });
   vm.runInContext(
     constLine("INTERRUPTED_TURN_ERROR") + constLine("RESUME")
       + block("function interruptedTurnOffer(") + block("function dropInterruptedTurnOffer(") + block("async function continueInterruptedTurn(")
       + "globalThis.interruptedTurnOffer = interruptedTurnOffer; globalThis.continueInterruptedTurn = continueInterruptedTurn;"
-      + "globalThis.submit = (t, opts) => calls.submit.push([S.draft, opts && opts.plain === true]);",
+      + "globalThis.submit = (t, opts) => recordSubmit(S.draft, opts && opts.plain === true);",
     c,
   );
   return c;

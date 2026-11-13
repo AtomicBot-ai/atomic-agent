@@ -170,7 +170,8 @@ test("a snapshot goes through the composer's one attachment path (attAdd with a 
 
 test("the window button sits beside \"+\" in the composer, and the act opens the picker", () => {
   const r = src("../renderer/renderer.js");
-  assert.match(r, /attButtonHTML\(\) \+ \(typeof wsnapButtonHTML === 'function' \? wsnapButtonHTML\(\) : ''\) \+ micButton\(\)/);
+  // The goal button (ATO-451) may sit between it and the mic.
+  assert.match(r, /attButtonHTML\(\) \+ \(typeof wsnapButtonHTML === 'function' \? wsnapButtonHTML\(\) : ''\) \+ (?:\(typeof goalButtonHTML === 'function' \? goalButtonHTML\(\{ic\}\) : ''\) \+ )?micButton\(\)/);
   assert.match(r, /if \(a === 'attach:window'\) \{ close\(\); render\(\); wsnapOpen\(\); return; \}/);
   assert.match(r, /appwin:'/);
   const html = src("../renderer/index.html");

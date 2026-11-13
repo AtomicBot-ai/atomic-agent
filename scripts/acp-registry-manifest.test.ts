@@ -9,7 +9,7 @@ import {
   validateAcpIcon,
   validateAcpManifest,
 } from "./acp-registry-manifest.js";
-import { BUNDLE_TARGETS } from "./bundle-targets.js";
+import { CLI_RELEASE_TARGETS } from "./bundle-targets.js";
 
 /** ATO-689: the ACP registry entry and the registry CI's offline checks. */
 const HASH = "a1f8d4bec9f12873c06cf8388a90cb998aab5f0c133f4c036c2fd15d41f51472";
@@ -48,7 +48,7 @@ describe("ACP registry manifest", () => {
   });
 
   it("finds the executable where package-bundle.ts puts it in each archive", () => {
-    const commands = Object.fromEntries(BUNDLE_TARGETS.map((t) => [t.slug, archiveCommand(t)]));
+    const commands = Object.fromEntries(CLI_RELEASE_TARGETS.map((t) => [t.slug, archiveCommand(t)]));
     expect(commands).toEqual({
       "darwin-arm64": "./darwin-arm64/atomic-agent",
       "darwin-x64": "./darwin-x64/atomic-agent",

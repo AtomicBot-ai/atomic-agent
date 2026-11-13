@@ -1647,8 +1647,10 @@ export class AgentClient extends EventEmitter {
       });
       const text = await res.text();
       if ((res.status === 404 && /No route for/.test(text)) || res.status === 501) return { supported: false };
-      let parsed: { text?: unknown; error?: { message?: unknown } } | null = null;
-      try { parsed = JSON.parse(text) as typeof parsed; } catch { /* not JSON */ }
+      // A named type, not `typeof parsed`: after `= null` that reads as `null` and narrows to never.
+      type CompleteReply = { text?: unknown; error?: { message?: unknown } };
+      let parsed: CompleteReply | null = null;
+      try { parsed = JSON.parse(text) as CompleteReply; } catch { /* not JSON */ }
       if (res.ok && typeof parsed?.text === "string") return { supported: true, ok: true, text: parsed.text };
       const message = typeof parsed?.error?.message === "string" ? parsed.error.message : `HTTP ${res.status}`;
       return { supported: true, ok: false, status: res.status, error: message };

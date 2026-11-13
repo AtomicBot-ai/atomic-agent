@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { BUNDLE_TARGETS } from "./bundle-targets.js";
+import { CLI_RELEASE_TARGETS } from "./bundle-targets.js";
 import {
   archiveName,
   distTag,
@@ -23,8 +23,8 @@ const LAUNCHER_DIR = fileURLToPath(new URL("../packaging/npm/atomic-agent/", imp
 
 describe("npm packages of a release", () => {
   it("one platform package per release target, named the way the launcher looks for it", () => {
-    expect([...launcher.SLUGS].sort()).toEqual(BUNDLE_TARGETS.map((t) => t.slug).sort());
-    for (const target of BUNDLE_TARGETS) {
+    expect([...launcher.SLUGS].sort()).toEqual(CLI_RELEASE_TARGETS.map((t) => t.slug).sort());
+    for (const target of CLI_RELEASE_TARGETS) {
       expect(launcher.platformPackageName(target.slug)).toBe(platformPackageName(target.slug));
       expect(launcher.slugFor(target.platform, target.arch)).toBe(target.slug);
       expect(launcher.executableName(target.platform)).toBe(target.executableName);

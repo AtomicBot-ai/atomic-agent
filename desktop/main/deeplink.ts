@@ -353,6 +353,8 @@ export function normaliseHostPath(raw: string): string {
     if (parts.length === 1 && /^[A-Za-z]$/.test(parts[0]!)) return parts[0]!.toLowerCase() + ":";
     if (parts.length >= 2 && /^[A-Za-z]$/.test(parts[parts.length - 1]!) && wsl.test(parts.slice(0, -1).join("/"))) return parts[parts.length - 1]!.toLowerCase() + ":";
   }
+  // A drive's root is the drive alone (`c:`), the same as `/c` and `/mnt/c` read above.
+  if (drive && !parts.length) return drive;
   return drive + "/" + parts.join("/");
 }
 

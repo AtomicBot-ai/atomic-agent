@@ -175,7 +175,7 @@ test("review fixes: no Folders block without folders, Chats head offers New fold
   assert.match(src, /if \(!groups\.length\) return '';/);
   const r = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
   assert.match(r, /sb-fnew" data-act="fnew:"/);
-  assert.match(r, /ch\.rows\.length \|\| ch\.filed \? '' : '<div class="sb-empty">No chats yet<\/div>'/);
+  assert.match(r, /ch\.rows\.length \|\| ch\.filed \|\| ch\.archived\.length \? '' : '<div class="sb-empty">No chats yet<\/div>'/);   // archived chats too (ATO-1150)
   assert.match(r, /if \(fid && PREFS\.pinned\.includes\(sid\)\)/);
   const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
   assert.match(main, /\(sb\.folders \?\? 0\) > 0 \? \["Folders"\]/);

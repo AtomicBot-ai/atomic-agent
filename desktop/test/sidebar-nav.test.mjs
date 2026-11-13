@@ -119,7 +119,7 @@ test('the sidebar wires the projects module: loaded before renderer.js, drawn ab
   assert.match(r, /sidebarNavItems\(pane, \{projects: projectsSupported\(\)\}\)/);
   assert.match(r, /k === 'pnew' \|\| k === 'ptoggle' \|\| k === 'pdelask' \|\| k === 'pdel' \|\| k === 'pedit' \|\| k === 'psave'/);
   // A new chat New project opened sends its project with the first turn (ATO-42: main files it before the turn).
-  assert.match(r, /BR\.chat\(\[\{role:'user', content:text\}\], session, session \? undefined : projectForNewTurn\(\)\)/);
+  assert.match(r, /BR\.chat\(\[\{role:'user', content:text\}\], session, session \? undefined : projectForNewTurn\(\), reasoningTurnLevel\(session\), projectTurnModel\(session\)\)/);
   assert.match(r, /S\.overlay === 'pedit'\) html \+= projectEditHTML\(\)/);
 });
 

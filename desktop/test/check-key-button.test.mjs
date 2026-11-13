@@ -31,7 +31,7 @@ const CONFIG = {
 
 function load(opts = {}) {
   const c = vm.createContext({
-    LIVE_CONFIG: CONFIG, S: { turnStartedAt: 0, log: [] }, SWX: {}, URL, DWATCH: null,
+    LIVE_CONFIG: CONFIG, S: { turnStartedAt: 0, log: [] }, SWX: {}, projectTurnModel: () => null, URL, DWATCH: null,
     esc: (s) => String(s), providerWord: (id) => (id === "openrouter" ? "OpenRouter" : String(id)),
     savedKeyInvalid: () => !!opts.badSavedKey, billingFailureLine: () => "",
     ic: () => "", sysGlyph: () => "", sysRetryHTML: () => "", sysDetailHTML: () => "", tpTriedHTML: () => "",
