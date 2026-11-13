@@ -453,6 +453,19 @@ export class ApprovalGate {
     this.taint.mark(sessionId, source);
   }
 
+  /**
+   * Whether a `category` call on `sessionId` would be held for outside
+   * content right now (`agent.taintReview` on, category sensitive, session
+   * tainted). For tools that skip the gate on their own for a call they
+   * deem harmless, like a GET under `http.approvalMode: "writes"`: on a
+   * tainted session such a call can carry data out in its URL, so the
+   * tool requests approval anyway and the hold decides (ATO-618).
+   */
+  holdsForOutsideContent(sessionId: string, category: ApprovalCategory): boolean {
+    if (!isTaintSensitive(category) || !this.taintReview()) return false;
+    return this.taint.sources(sessionId).length > 0;
+  }
+
   /** Forget the outside content of `sessionId`'s last turn; called when a turn starts. */
   clearUntrustedContent(sessionId: string): void {
     this.taint.clear(sessionId);
