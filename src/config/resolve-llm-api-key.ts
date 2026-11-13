@@ -1,3 +1,4 @@
+import { isOtherComputerOnNetworkUrl } from "../llm/provider/openai/network-server-address.js";
 import type { UserLlmProviderEntry } from "./llm-config.js";
 
 /**
@@ -36,6 +37,11 @@ export function resolveLlmProviderApiKey(
     entry.kind === "openai-compatible" ||
     entry.kind === "qwen-openai-compatible"
   ) {
+    // ATO-1066: a server on another computer on this network gets only
+    // its own stored key. The shared variables usually hold the
+    // operator's real OpenAI key, and sending that as a Bearer over
+    // plain http:// to a box on the LAN would leak it.
+    if (isOtherComputerOnNetworkUrl(entry.baseUrl)) return undefined;
     const key =
       process.env.OPENAI_COMPAT_API_KEY ??
       process.env.OPENAI_API_KEY ??

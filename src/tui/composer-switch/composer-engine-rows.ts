@@ -2,13 +2,24 @@ import type { TuiState } from "../tui-state.js";
 import type { ComposerSwitchRow } from "./composer-switch-row-contracts.js";
 import { selectCloudModelSection } from "../llm-panel/llm-panel-row-builders.js";
 import { LOCAL_SEAT_LABEL } from "../llm-panel/llm-panel-selectors.js";
+import { isOtherComputerOnNetworkUrl } from "../../llm/provider/openai/network-server-address.js";
+import type { ProviderRow } from "../providers/providers-panel-state.js";
+
+/** ATO-1066: a provider on another computer of this network is the operator's own hardware, not the cloud. */
+export const NETWORK_COMPUTER_LABEL = "A computer on your network";
+
+/** The detail line of a provider row in a Fusion seat picker. */
+export function seatProviderDetail(p: Pick<ProviderRow, "hasApiKey" | "baseUrl">): string {
+  if (isOtherComputerOnNetworkUrl(p.baseUrl ?? undefined)) return NETWORK_COMPUTER_LABEL;
+  return p.hasApiKey ? "Cloud provider" : "No API key";
+}
 
 export function engineRows(state: TuiState, leg?: "orchestrator" | "worker"): readonly ComposerSwitchRow[] {
   const rm = state.providersPanel.runMode;
   const selected = leg === "worker" ? rm?.workerProviderId : rm?.orchestratorProviderId;
   const other = leg === "worker" ? rm?.orchestratorProviderId : rm?.workerProviderId;
   const cloud: ComposerSwitchRow[] = leg ? state.providersPanel.rows.filter(p => p.kind !== "llama-server" && p.id !== other).map(p => ({
-    id: `engine:${leg}:${p.id}`, label: p.id, detail: p.hasApiKey ? "Cloud provider" : "No API key",
+    id: `engine:${leg}:${p.id}`, label: p.id, detail: seatProviderDetail(p),
     active: selected === p.id, intent: { kind: "fusionLeg", leg, providerId: p.id },
   })) : [];
   // One local row carrying the engine already selected (Core by default), so picking it never switches engines.
