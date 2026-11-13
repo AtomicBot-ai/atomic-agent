@@ -2775,7 +2775,7 @@ function emptyChat() {
      provider and backend are on the composer's chips right below, and the
      Build row named the desktop shell's version, not the agent's (U7). The
      suggestions stay: they are the cheapest way into a first turn. */
-  return '<div class="emptychat">' + sharedSetupNoticeHTML() + (typeof starterNoticeHTML === 'function' ? starterNoticeHTML() : '') + emptyPlateHTML()
+  return '<div class="emptychat">' + sharedSetupNoticeHTML() + (typeof updRequiredHTML === 'function' ? updRequiredHTML() : '') + (typeof starterNoticeHTML === 'function' ? starterNoticeHTML() : '') + emptyPlateHTML()
     + '<div class="ghost">'
       /* ATO-1032: one suggestion, as Codex, Jan and Ollama keep it: the
          question above is the screen; three chips competed with it. */
@@ -7598,6 +7598,8 @@ function submit(preparedSkillText, opts) {
      not sent by itself when the chat lands: the person sees the transcript
      first and presses Enter again. The toast is the refusal kind, as "A turn
      is already running" is: nothing went out. */
+  // ATO-1125: a version the update feed lists as broken starts no new chat (app-update.js); an open chat goes on.
+  if (typeof updHoldsNewChat === 'function' && updHoldsNewChat(S.log.length, S.busy || S.pending)) { toast('Update required', 'This version has a known problem. Update to start a new chat. Your message stays in the box', 'bad'); return; }
   if (openHoldsComposer()) {
     if (OPENING.failed) toast('This chat did not open', 'Your message is still in the box. Open the chat again, or start a new one', 'bad');
     else toast('This chat is still loading', 'Your message is still in the box. Send it once the chat has loaded', 'bad');
