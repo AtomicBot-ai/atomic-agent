@@ -12,6 +12,9 @@ export default defineConfig({
       // Kept here (vs the eval-memory vitest config which only runs
       // *.eval.ts under `npm run eval:memory`) because these are
       // hermetic — no llama-server, no judge, no embedding daemon.
+      // Pure parts of the eval harness (attack checks, report, model
+      // label): no agent, no llama-server.
+      "eval/harness/**/*.test.ts",
       "eval-memory/config/**/*.test.ts",
       "eval-memory/harness/**/*.test.ts",
       "eval-memory/experiments/**/*.test.ts",
