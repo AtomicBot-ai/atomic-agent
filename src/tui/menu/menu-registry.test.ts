@@ -318,6 +318,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "open the prompt in your $VISUAL / $EDITOR; save and close to put it back in the composer, nothing is sent",
   },
+  // ATO-448: a chat reply a restart cut off, continued only by the person.
+  {
+    name: "resume",
+    description:
+      "continue the last reply a restart cut off: starts a new turn from it, once (the model checks before repeating commands or writes)",
+  },
   {
     name: "uninstall",
     description:

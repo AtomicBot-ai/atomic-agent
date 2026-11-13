@@ -6,6 +6,7 @@ import { summarizeSessionState } from "../session/session-summary.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import { SWITCHED_AWAY_APPROVAL_REASON } from "./detached-turns.js";
+import { INTERRUPTED_TURN_NOTICE } from "./interrupted-turn-notice.js";
 import { makeTuiEventBus } from "./make-event-bus.js";
 import type { LocalTurnGateFacts } from "./local-turn-gate.js";
 import type { TuiAction } from "./tui-action.js";
@@ -46,6 +47,9 @@ function makeHarness(
     maintenanceSessions?: readonly string[];
     /** Real gate (or richer stub) for approval-lifecycle tests. */
     approvals?: ApprovalGate;
+    /** `/resume`'s runtime side (ATO-448). */
+    interruptedTurns?: AgentRuntime["interruptedTurns"];
+    fusionRuns?: AgentRuntime["fusionRuns"];
   } = {},
 ) {
   const turns: TurnHandle[] = [];
@@ -107,6 +111,8 @@ function makeHarness(
     },
     profileStore: { list: () => [] },
     skillCatalog: [],
+    ...(opts.interruptedTurns ? { interruptedTurns: opts.interruptedTurns } : {}),
+    ...(opts.fusionRuns ? { fusionRuns: opts.fusionRuns } : {}),
   } as unknown as AgentRuntime;
   const bus = makeTuiEventBus();
   const actions: TuiAction[] = [];
@@ -590,5 +596,58 @@ describe("ChatOrchestrator switching while the agent is answering", () => {
     await settle();
     expect(h.turns).toHaveLength(2);
     expect(h.turns[1]).toMatchObject({ text: "second", sessionId: sid });
+  });
+});
+
+describe("ChatOrchestrator offers a reply a restart cut off (ATO-448)", () => {
+  const cutOff = { request: "push the branch", stepsDone: 1, startedAt: 1 };
+
+  it("shows the one-line notice when the opened session's last turn was interrupted", () => {
+    const pending = vi.fn((id: string) => (id === "s-b" ? cutOff : null));
+    const { orchestrator, actions } = makeHarness({
+      interruptedTurns: { pending, resumeMessage: () => null },
+    });
+    orchestrator.switchSession("s-b");
+    expect(warnTexts(actionsAfterLastSwitch(actions))).toContain(
+      INTERRUPTED_TURN_NOTICE,
+    );
+    expect(pending).toHaveBeenCalledWith("s-b");
+  });
+
+  it("shows nothing when the last turn was not interrupted", () => {
+    const { orchestrator, actions } = makeHarness({
+      interruptedTurns: { pending: () => null, resumeMessage: () => null },
+    });
+    orchestrator.switchSession("s-a");
+    expect(warnTexts(actionsAfterLastSwitch(actions))).not.toContain(
+      INTERRUPTED_TURN_NOTICE,
+    );
+  });
+
+  it("never acts on it: opening the session starts no turn", () => {
+    const resumeMessage = vi.fn(() => "continue");
+    const { orchestrator, turns } = makeHarness({
+      interruptedTurns: { pending: () => cutOff, resumeMessage },
+    });
+    orchestrator.switchSession("s-b");
+    expect(turns).toHaveLength(0);
+    expect(resumeMessage).not.toHaveBeenCalled();
+  });
+
+  it("leaves a cut-off fusion run to its own offer", () => {
+    const { orchestrator, actions } = makeHarness({
+      interruptedTurns: { pending: () => cutOff, resumeMessage: () => null },
+      fusionRuns: {
+        listResumable: () => [
+          { runId: "r1", sessionId: "s-b", updatedAt: 1, summary: "fusion run r1: 2 of 3 tasks done" },
+        ],
+        resumeMessage: () => null,
+        discard: () => null,
+      },
+    });
+    orchestrator.switchSession("s-b");
+    const texts = warnTexts(actionsAfterLastSwitch(actions));
+    expect(texts.some((t) => t.includes("/fusion resume"))).toBe(true);
+    expect(texts).not.toContain(INTERRUPTED_TURN_NOTICE);
   });
 });
