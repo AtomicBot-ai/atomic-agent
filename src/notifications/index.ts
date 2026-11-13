@@ -34,6 +34,7 @@ export {
   disablePushNotifications,
   enablePushNotifications,
   pushPrivacyNote,
+  readCurrentPushConfig,
   type PushSetupOptions,
   type PushSetupResult,
 } from "./push-setup.js";

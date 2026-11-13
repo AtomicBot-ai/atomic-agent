@@ -1,5 +1,7 @@
 import {
   DEFAULT_PUSH_SERVER,
+  createPushDefaults,
+  readUserConfigSnapshotSync,
   ensureUserConfigFileSync,
   getConfig,
   parsePushServer,
@@ -61,6 +63,25 @@ export function enablePushNotifications(
   };
   persistPush(push);
   return { push, subscribeUrl: pushSubscribeUrl(push) ?? "", newTopic: mint };
+}
+
+/**
+ * `notifications.push` as it is on disk right now, not as this process
+ * booted with it: `push on` / `off` from the CLI or the desktop app must
+ * reach an agent that is already running. A pure read (no migration, no
+ * cache reset); falls back to the cached config, then to the defaults.
+ */
+export function readCurrentPushConfig(userConfigFile?: string): PushNotifyConfig {
+  try {
+    const path = userConfigFile ?? getConfig().paths.userConfigFile;
+    return readUserConfigSnapshotSync(path).config.notifications.push ?? createPushDefaults();
+  } catch {
+    try {
+      return getConfig().notifications.push;
+    } catch {
+      return createPushDefaults();
+    }
+  }
 }
 
 /** Off, topic kept: `push on` later resumes the same subscription. */

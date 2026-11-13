@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { createPushDefaults, type AtomicAgentConfig } from "../../config/index.js";
+import type { AtomicAgentConfig } from "../../config/index.js";
 import {
   parseQuietHours,
   SqliteHeldReportStore,
@@ -18,7 +18,7 @@ import { TelegramChannel } from "../../channels/telegram/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 import type { AgentRuntime } from "../runtime-contract.js";
-import { createPushTaskReportSink } from "../../notifications/index.js";
+import { createPushTaskReportSink, readCurrentPushConfig } from "../../notifications/index.js";
 
 export function createRuntimeTaskStores(args: {
   config: Pick<AtomicAgentConfig, "paths" | "tasks">;
@@ -55,8 +55,7 @@ export function createRuntimeTaskStores(args: {
 }
 
 export function createRuntimeTaskRunner(args: {
-  config: Pick<AtomicAgentConfig, "agent" | "tasks" | "paths" | "statusSnapshot"> &
-    Partial<Pick<AtomicAgentConfig, "notifications">>;
+  config: Pick<AtomicAgentConfig, "agent" | "tasks" | "paths" | "statusSnapshot">;
   taskStore: TaskStore;
   runTurn: TaskRunnerRuntime["runTurn"];
   sessionStore: Pick<SessionStore, "load" | "save" | "readTurnProgress" | "clearTurnProgress">;
@@ -101,7 +100,9 @@ export function createRuntimeTaskRunner(args: {
     reportSink: routeTaskReports({
       telegram: createTaskReportSink({ config, resolveTelegram, logger }),
       push: createPushTaskReportSink({
-        readPush: () => config.notifications?.push ?? createPushDefaults(),
+        // Read per report from disk, not the boot config: `push on` from
+        // the CLI or the desktop must reach a running agent.
+        readPush: () => readCurrentPushConfig(config.paths.userConfigFile),
         logger,
       }),
     }),

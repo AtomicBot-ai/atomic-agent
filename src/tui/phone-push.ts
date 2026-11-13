@@ -1,8 +1,9 @@
-import { getConfig, type PushNotifyConfig } from "../config/index.js";
+import type { PushNotifyConfig } from "../config/index.js";
 import {
   formatApprovalPush,
   formatTurnPush,
   isPushReady,
+  readCurrentPushConfig,
   sendPush,
   type PushMessage,
 } from "../notifications/index.js";
@@ -16,14 +17,13 @@ import type { ChatMessage, RunOutcome } from "./tui-state.js";
  * turn or the approval.
  */
 
-/** `notifications.push` when it can send now, else `null`. Never throws. */
+/**
+ * `notifications.push` when it can send now, else `null`. Read from disk,
+ * so `atomic-agent push on` in another terminal counts. Never throws.
+ */
 export function readReadyPush(): PushNotifyConfig | null {
-  try {
-    const push = getConfig().notifications.push;
-    return isPushReady(push) ? push : null;
-  } catch {
-    return null;
-  }
+  const push = readCurrentPushConfig();
+  return isPushReady(push) ? push : null;
 }
 
 /**
