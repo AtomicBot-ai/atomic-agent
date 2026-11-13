@@ -47,11 +47,19 @@ export class ImsgSendError extends Error {
   }
 }
 
-/** The argv for one `imsg send`. Exported for tests. */
+/**
+ * The argv for one `imsg send`. Exported for tests.
+ *
+ * The text rides attached (`--text=<text>`), never as the next argv
+ * entry: imsg's parser (steipete/Commander, `Tokenizer.swift`) reads a
+ * separate entry that starts with `-` as an option, so a reply opening
+ * with a Markdown list item (`- step one`) would be mangled or rejected.
+ * An attached value is taken verbatim after the first `=`.
+ */
 export function sendArgs(target: ImessageTarget, text: string): string[] {
   return target.kind === "handle"
-    ? ["send", "--to", target.handle, "--text", text]
-    : ["send", "--chat-id", String(target.chatId), "--text", text];
+    ? ["send", "--to", target.handle, `--text=${text}`]
+    : ["send", "--chat-id", String(target.chatId), `--text=${text}`];
 }
 
 export interface ImsgSender {

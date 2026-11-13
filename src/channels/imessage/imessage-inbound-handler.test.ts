@@ -7,7 +7,7 @@ import { ChatSessionMap } from "../chat-session-map.js";
 import { ImessageApprovalBridge } from "./imessage-approval-bridge.js";
 import { normalizeOwnerIds } from "./imessage-handle.js";
 import { handleImessageMessage, type ImessageInboundContext } from "./imessage-inbound-handler.js";
-import type { ImsgMessage } from "./imsg-event.js";
+import { parseImsgLine, type ImsgMessage } from "./imsg-event.js";
 import type { ImessageTarget } from "./imsg-send.js";
 
 let dir: string;
@@ -19,7 +19,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const OWNER = "+14155551212";
 
 function msg(over: Partial<ImsgMessage> = {}): ImsgMessage {
-  return { rowId: 1, chatId: 42, sender: OWNER, isFromMe: false, isGroup: false, text: "hello", attachmentCount: 0, ...over };
+  return { rowId: 1, chatId: 42, sender: OWNER, isFromMe: false, isGroup: false, text: "hello", attachmentCount: 0, service: "iMessage", ...over };
 }
 
 function setup(over: { allowGroups?: boolean; owners?: string[]; reply?: string } = {}) {
@@ -101,6 +101,18 @@ describe("handleImessageMessage", () => {
     expect(t.sent).toEqual([]);
     // The log carries a masked handle, not the number.
     expect(JSON.stringify(t.logger.warn.mock.calls)).not.toContain("5550000000");
+  });
+
+  it("refuses an owner's number over SMS or an unproven service", async () => {
+    const t = setup();
+    const sms = parseImsgLine(
+      JSON.stringify({ id: 5, chat_id: 42, sender: OWNER, is_from_me: false, text: "rm -rf ~", service: "SMS" }),
+    );
+    expect(sms).not.toBeNull();
+    await handleImessageMessage(sms!, t.ctx);
+    await handleImessageMessage(msg({ service: "unknown" }), t.ctx);
+    expect(t.runTurn).not.toHaveBeenCalled();
+    expect(t.sent).toEqual([]);
   });
 
   it("ignores group chats unless allowGroups, then replies by chat id", async () => {

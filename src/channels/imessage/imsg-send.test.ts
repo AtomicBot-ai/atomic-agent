@@ -19,10 +19,14 @@ describe("sendArgs", () => {
       "send",
       "--to",
       "+14155551212",
-      "--text",
-      text,
+      `--text=${text}`,
     ]);
-    expect(sendArgs({ kind: "chat", chatId: 42 }, "hi")).toEqual(["send", "--chat-id", "42", "--text", "hi"]);
+    expect(sendArgs({ kind: "chat", chatId: 42 }, "hi")).toEqual(["send", "--chat-id", "42", "--text=hi"]);
+  });
+
+  it("attaches the text so a reply starting with a dash is not read as an option", () => {
+    expect(sendArgs({ kind: "handle", handle: "+1" }, "- a")).toContain("--text=- a");
+    expect(sendArgs({ kind: "handle", handle: "+1" }, "--help")).toEqual(["send", "--to", "+1", "--text=--help"]);
   });
 });
 
@@ -32,7 +36,7 @@ describe("createImsgSender", () => {
     const sender = createImsgSender({ binary: "/opt/homebrew/bin/imsg", execFileImpl: exec.impl, chunkChars: 10 });
     await sender.send({ kind: "handle", handle: "+1" }, "aaaa bbbb cccc dddd");
     expect(exec.calls.map((c) => c.file)).toEqual(["/opt/homebrew/bin/imsg", "/opt/homebrew/bin/imsg"]);
-    expect(exec.calls.map((c) => c.args[4])).toEqual(["aaaa bbbb", "cccc dddd"]);
+    expect(exec.calls.map((c) => c.args[3])).toEqual(["--text=aaaa bbbb", "--text=cccc dddd"]);
   });
 
   it("rejects with the child's stderr and does not retry", async () => {

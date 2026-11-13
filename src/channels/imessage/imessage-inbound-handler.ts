@@ -78,6 +78,16 @@ async function route(message: ImsgMessage, ctx: ImessageInboundContext): Promise
     ctx.logger.info("imessage: ignoring group chat message", { chatId: message.chatId });
     return;
   }
+  // Only iMessage authenticates the sender. With Text Message
+  // Forwarding on, an SMS from a spoofed caller id would otherwise look
+  // exactly like the owner's number and drive a shell on this Mac.
+  if (message.service !== "iMessage") {
+    ctx.logger.warn("imessage: dropping message not sent over iMessage", {
+      service: message.service,
+      sender: maskHandle(message.sender),
+    });
+    return;
+  }
   if (!isOwnerHandle(message.sender, ctx.ownerIds())) {
     ctx.logger.warn("imessage: dropping message from non-owner", {
       sender: maskHandle(message.sender),

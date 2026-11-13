@@ -91,10 +91,10 @@ describe("ImessageChannel", () => {
     expect(t.channel.state()).toBe("up");
     t.children[0]!.stdout.emit(
       "data",
-      line({ id: 3, chat_id: 9, sender: "+14155551212", is_from_me: false, text: "hi", attachments: [] }),
+      line({ id: 3, chat_id: 9, chat_guid: "iMessage;-;+14155551212", sender: "+14155551212", is_from_me: false, text: "hi", attachments: [] }),
     );
     await vi.waitFor(() => expect(t.sends).toHaveLength(1));
-    expect(t.sends[0]).toEqual(["send", "--to", "+14155551212", "--text", "ok"]);
+    expect(t.sends[0]).toEqual(["send", "--to", "+14155551212", "--text=ok"]);
   });
 
   it("is disabled with an install hint when imsg is missing", async () => {
@@ -126,7 +126,7 @@ describe("ImessageChannel", () => {
     t.children[0]!.emit("spawn");
     t.children[0]!.stdout.emit(
       "data",
-      line({ id: 3, chat_id: 9, sender: "+14155551212", is_from_me: false, text: "/status", attachments: [] }),
+      line({ id: 3, chat_id: 9, chat_guid: "iMessage;-;+14155551212", sender: "+14155551212", is_from_me: false, text: "/status", attachments: [] }),
     );
     await vi.waitFor(() => expect(t.channel.state()).toBe("down"));
     expect(t.channel.lastError()).toBe(IMSG_AUTOMATION_HINT);

@@ -5,8 +5,10 @@
  * per new message. Every field name the channel depends on is read
  * here and nowhere else, so a change in the CLI's schema is a one-file
  * fix. Field names follow the imsg JSON contract (docs/json.md,
- * "Message"): `id`, `chat_id`, `sender`, `is_from_me`, `text`,
- * `is_group`, `attachments`, `type`, `is_reaction`.
+ * "Message") and its source (`RPCPayloads.swift` `messagePayload`):
+ * `id`, `chat_id`, `chat_guid`, `sender`, `is_from_me`, `text`,
+ * `is_group`, `attachments`, `type`, `is_reaction`, and `service` when
+ * a future imsg emits it per message.
  *
  * Anything that is not a well-formed new message parses to `null` and
  * is dropped: the stream also carries edits, unsends and (with
@@ -27,7 +29,15 @@ export interface ImsgMessage {
   text: string;
   /** Number of files on the message. The channel does not ingest them yet. */
   attachmentCount: number;
+  /**
+   * Which network carried the message. Only `"iMessage"` proves the
+   * sender: an SMS relayed by Text Message Forwarding carries a caller
+   * id anyone can spoof. `"unknown"` when nothing says (fail closed).
+   */
+  service: ImsgService;
 }
+
+export type ImsgService = "iMessage" | "SMS" | "RCS" | "unknown";
 
 /**
  * `null` for a blank line, a line that is not JSON, a mutation update
@@ -60,7 +70,27 @@ export function parseImsgLine(line: string): ImsgMessage | null {
     isGroup: obj.is_group === true,
     text: typeof obj.text === "string" ? obj.text : "",
     attachmentCount: Array.isArray(obj.attachments) ? obj.attachments.length : 0,
+    service: serviceOf(obj),
   };
+}
+
+/**
+ * The message's service. imsg 0.9 does not print a per-message
+ * `service` in `watch --json` (chat.db has `message.service`, the
+ * payload leaves it out), so the fallback is the chat GUID prefix
+ * (`iMessage;-;+1415...`, `SMS;-;...`). Newer Messages keeps one
+ * `any;-;<handle>` chat per contact whose prefix says nothing; that
+ * reads as `"unknown"` and the channel refuses it rather than guess.
+ */
+function serviceOf(obj: Record<string, unknown>): ImsgService {
+  const explicit = typeof obj.service === "string" ? obj.service : null;
+  const fromGuid =
+    typeof obj.chat_guid === "string" && obj.chat_guid.includes(";") ? obj.chat_guid.split(";")[0] : null;
+  const raw = (explicit ?? fromGuid ?? "").trim().toLowerCase();
+  if (raw === "imessage") return "iMessage";
+  if (raw === "sms") return "SMS";
+  if (raw === "rcs") return "RCS";
+  return "unknown";
 }
 
 function isPositiveInt(value: unknown): value is number {
