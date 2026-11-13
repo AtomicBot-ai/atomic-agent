@@ -103,6 +103,42 @@ export interface ProviderPreset {
     readonly placeholder?: string;
     readonly hostPattern?: RegExp;
   };
+  /**
+   * Command (argv, run without a shell) whose output is the key, for
+   * services whose credential is a short-lived token rather than a key
+   * to paste (Vertex AI's OAuth access token). Copied onto the saved
+   * entry as `apiKeyCommand`; the wizard then skips the key screen.
+   */
+  readonly apiKeyCommand?: readonly string[];
+}
+
+/**
+ * Google Vertex AI's OpenAI-compatible root for one project and region:
+ * `https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/endpoints/openapi`.
+ * The `global` location has no regional host (`aiplatform.googleapis.com`).
+ * Chat is `<root>/chat/completions`, no extra `/v1` (`openai-chat-path.ts`).
+ */
+export function vertexOpenAiBaseUrl(location: {
+  readonly region: string;
+  readonly project: string;
+}): string {
+  const region = location.region.trim().toLowerCase();
+  const project = encodeURIComponent(location.project.trim());
+  const host =
+    region === "global" ? "aiplatform.googleapis.com" : `${region}-aiplatform.googleapis.com`;
+  return `https://${host}/v1/projects/${project}/locations/${region}/endpoints/openapi`;
+}
+
+/**
+ * The command that prints a Vertex AI access token. Plain argv on macOS
+ * and Linux. On Windows `gcloud` is a `gcloud.cmd` script, which Node
+ * cannot start without `cmd.exe`, so it goes through `cmd /c` there.
+ */
+export function vertexTokenCommand(
+  platform: NodeJS.Platform = process.platform,
+): readonly string[] {
+  const argv = ["gcloud", "auth", "print-access-token"];
+  return platform === "win32" ? ["cmd.exe", "/d", "/c", ...argv] : argv;
 }
 
 /**
@@ -198,6 +234,27 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: "https://api.fireworks.ai/inference",
     envVar: "FIREWORKS_API_KEY",
     note: "open-weight models, function calling",
+  },
+  {
+    id: "google-vertex",
+    label: "Google Vertex AI",
+    // Vertex's OpenAI-compatible endpoint, without Google's SDK. The key
+    // is an OAuth access token (about an hour) from the operator's own
+    // `gcloud` sign-in, printed per request by `apiKeyCommand` and sent
+    // as Bearer. Probed 2026-11-13 with a bogus token:
+    // `<root>/chat/completions` answers 401 "Expected OAuth 2 access
+    // token", `<root>/v1/chat/completions` and a bogus sibling 404. There
+    // is no model list (`/models` is 404), so the model is typed by hand
+    // (`google/gemini-2.5-flash`). Project and region are the operator's.
+    baseUrl: vertexOpenAiBaseUrl({ region: "us-central1", project: "your-project" }),
+    envVar: "VERTEX_ACCESS_TOKEN",
+    note: "Gemini and partner models with your gcloud sign-in; set your project in the URL",
+    apiKeyCommand: vertexTokenCommand(),
+    perAccountEndpoint: {
+      hint: "Replace your-project with your Google Cloud project id (and us-central1 with your region, both places)",
+      placeholder: "your-project",
+      hostPattern: /^(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com$/i,
+    },
   },
   {
     id: "groq",

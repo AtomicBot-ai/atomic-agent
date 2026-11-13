@@ -8,6 +8,7 @@ import {
 } from "../gemini/gemini-provider.js";
 import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
 import { OpenAiProvider } from "../openai/openai-provider.js";
+import { sharedApiKeyCommandSource } from "../openai/api-key-command.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
 import { resolveCloudModelVision } from "../model-vision.js";
 import {
@@ -139,6 +140,11 @@ export function registerBuiltInProviderKinds(): void {
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
+      // A short-lived token printed by a command (Vertex AI) replaces the
+      // stored key on every request; see `openai/api-key-command.ts`.
+      ...(entry.apiKeyCommand && entry.apiKeyCommand.length > 0
+        ? { apiKeySource: sharedApiKeyCommandSource(entry.apiKeyCommand, entry.id) }
+        : {}),
       ...(chatModel ? modelVisionOptions(entry, chatModel) : {}),
       supportsParallelTools: entry.supportsTools ?? true,
       requestTimeoutMs: entry.requestTimeoutMs,

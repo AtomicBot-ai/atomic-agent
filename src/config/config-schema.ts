@@ -480,6 +480,8 @@ export interface AtomicAgentConfig {
        * missing from this mirror of that shape.
        */
       apiKeyEnvVar?: string;
+      /** Command whose output is the key (`UserLlmProviderEntry.apiKeyCommand`). */
+      apiKeyCommand?: string[];
       supportsTools?: boolean;
       supportsVision?: boolean;
       requestTimeoutMs?: number;

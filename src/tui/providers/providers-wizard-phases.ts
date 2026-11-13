@@ -136,6 +136,8 @@ export function presetAsksBaseUrl(presetId: string): boolean {
 export function presetNeedsKeyScreen(presetId: string): boolean {
   const preset = findProviderPreset(presetId);
   if (!preset) return true;
+  // A key command (Vertex AI's gcloud token) prints the key itself.
+  if (preset.apiKeyCommand) return false;
   return !preset.listsModelsWithoutKey && !preset.local;
 }
 

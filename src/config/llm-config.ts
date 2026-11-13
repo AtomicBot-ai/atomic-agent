@@ -1,5 +1,6 @@
 import { ConfigValidationError } from "./config-validation-error.js";
 import { isSetAsideString } from "./config-primitives.js";
+import { parseOptionalApiKeyCommand } from "./llm-api-key-command.js";
 import {
   setAsideActiveStandIn,
   setAsideUnknownProviders,
@@ -59,6 +60,14 @@ export type UserLlmProviderEntry = {
    * back to the per-kind defaults in `resolveLlmProviderApiKey`.
    */
   apiKeyEnvVar?: string;
+  /**
+   * Command (argv, run without a shell) whose output is this entry's key,
+   * for short-lived tokens: Vertex AI's
+   * `["gcloud", "auth", "print-access-token"]`. When set, requests use its
+   * output instead of `apiKey` / `apiKeyEnvVar`, cached for a few minutes
+   * and re-run on a 401. See `llm/provider/openai/api-key-command.ts`.
+   */
+  apiKeyCommand?: string[];
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;
@@ -325,6 +334,10 @@ export function parseLlmProviderEntry(
     apiKeyEnvVar: parseOptionalString(
       obj.apiKeyEnvVar,
       `${field}.apiKeyEnvVar`,
+    ),
+    apiKeyCommand: parseOptionalApiKeyCommand(
+      obj.apiKeyCommand,
+      `${field}.apiKeyCommand`,
     ),
     defaultChatModel: parseOptionalString(
       obj.defaultChatModel,

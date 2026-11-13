@@ -10,7 +10,13 @@ import {
   presetForEntryId,
   PROVIDER_PRESETS,
   suggestPresetEntryId,
+  vertexOpenAiBaseUrl,
+  vertexTokenCommand,
 } from "./provider-presets.js";
+import { openAiChatPathPrefix } from "../../llm/provider/openai/openai-chat-path.js";
+import { resetCommandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
+import { providerKeyStatus } from "../../llm/provider/provider-key.js";
+import { presetNeedsKeyScreen } from "./providers-wizard-phases.js";
 import { buildProviderEntryFromWizard } from "./providers-wizard-build-entry.js";
 
 describe("PROVIDER_PRESETS", () => {
@@ -349,5 +355,127 @@ describe("Anthropic preset — outgoing request headers", () => {
     expect(sent.get("x-api-key")).toBe(KEY);
     expect(sent.get("anthropic-version")).toBe("2023-06-01");
     expect(sent.get("authorization")).toBeNull();
+  });
+});
+
+describe("Google Vertex AI preset (ATO-468)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetCommandIssuedSecrets();
+  });
+
+  it("builds the OpenAI-compatible root from region and project", () => {
+    expect(vertexOpenAiBaseUrl({ region: "europe-west4", project: "acme-prod" })).toBe(
+      "https://europe-west4-aiplatform.googleapis.com/v1/projects/acme-prod/locations/europe-west4/endpoints/openapi",
+    );
+    // The global location has no regional host.
+    expect(vertexOpenAiBaseUrl({ region: "global", project: "acme-prod" })).toBe(
+      "https://aiplatform.googleapis.com/v1/projects/acme-prod/locations/global/endpoints/openapi",
+    );
+    // Stray spaces and casing from a paste do not reach the URL.
+    expect(vertexOpenAiBaseUrl({ region: " US-Central1 ", project: " acme " })).toBe(
+      "https://us-central1-aiplatform.googleapis.com/v1/projects/acme/locations/us-central1/endpoints/openapi",
+    );
+  });
+
+  it("is a per-account template keyed by a gcloud token command, on Bearer", () => {
+    const vertex = findProviderPreset("google-vertex");
+    expect(vertex?.label).toBe("Google Vertex AI");
+    expect(vertex?.baseUrl).toBe(
+      vertexOpenAiBaseUrl({ region: "us-central1", project: "your-project" }),
+    );
+    expect(vertex?.perAccountEndpoint?.placeholder).toBe("your-project");
+    expect(vertex?.apiKeyHeader).toBeUndefined();
+    expect(vertex?.apiKeyCommand).toEqual(vertexTokenCommand());
+    expect(
+      vertex?.perAccountEndpoint?.hostPattern?.test(new URL(vertex!.baseUrl).hostname),
+    ).toBe(true);
+    // The key is printed, not pasted: no key screen.
+    expect(presetNeedsKeyScreen("google-vertex")).toBe(false);
+  });
+
+  it("runs gcloud without a shell, except through cmd on Windows", () => {
+    expect(vertexTokenCommand("darwin")).toEqual(["gcloud", "auth", "print-access-token"]);
+    expect(vertexTokenCommand("linux")).toEqual(["gcloud", "auth", "print-access-token"]);
+    expect(vertexTokenCommand("win32")).toEqual([
+      "cmd.exe", "/d", "/c", "gcloud", "auth", "print-access-token",
+    ]);
+  });
+
+  it("matches saved Vertex roots back to the cloud preset and sends chat to <root>/chat/completions", () => {
+    const root = vertexOpenAiBaseUrl({ region: "asia-northeast1", project: "acme" });
+    expect(cloudPresetForUrl(root)?.id).toBe("google-vertex");
+    expect(cloudPresetForUrl(vertexOpenAiBaseUrl({ region: "global", project: "acme" }))?.id)
+      .toBe("google-vertex");
+    expect(cloudPresetForUrl("https://aiplatform.googleapis.com.evil.example/x")).toBeUndefined();
+    expect(openAiChatPathPrefix(root)).toBe("");
+    // Another Google API on the same host family keeps the convention.
+    expect(openAiChatPathPrefix("https://us-central1-aiplatform.googleapis.com/v1/other")).toBe("/v1");
+  });
+
+  it("saves the command on the entry, survives config.json, and counts as a key", () => {
+    const built = buildProviderEntryFromWizard({
+      kind: "openai-compatible",
+      presetId: "google-vertex",
+      chatModelId: "",
+      embeddingChoiceId: "local",
+      customChatModel: "google/gemini-2.5-flash",
+      baseUrl: vertexOpenAiBaseUrl({ region: "us-central1", project: "acme" }),
+    });
+    const entry = parseLlmProviderEntry(
+      JSON.parse(JSON.stringify(built.entry)) as unknown,
+      "llm.providers[0]",
+    );
+    expect(entry.apiKeyCommand).toEqual([...vertexTokenCommand()]);
+    expect(entry.apiKey).toBeUndefined();
+    expect(providerKeyStatus(entry).state).toBe("present");
+  });
+
+  it("refuses a malformed apiKeyCommand in config.json", () => {
+    const base = { id: "v", kind: "openai-compatible", baseUrl: "https://x.example" };
+    expect(() => parseLlmProviderEntry({ ...base, apiKeyCommand: "gcloud auth" }, "p")).toThrow(
+      /apiKeyCommand/,
+    );
+    expect(() => parseLlmProviderEntry({ ...base, apiKeyCommand: [] }, "p")).toThrow(/apiKeyCommand/);
+    expect(() => parseLlmProviderEntry({ ...base, apiKeyCommand: ["gcloud", ""] }, "p")).toThrow(
+      /apiKeyCommand\[1\]/,
+    );
+  });
+
+  it("sends the command output as Bearer on a chat turn through the registry", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "google/gemini-2.5-flash",
+            choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    registerBuiltInProviderKinds();
+    const root = vertexOpenAiBaseUrl({ region: "us-central1", project: "acme" });
+    const provider = await getProviderFactory("openai-compatible")!({
+      entry: {
+        id: "google-vertex-registry-test",
+        kind: "openai-compatible",
+        baseUrl: root,
+        defaultChatModel: "google/gemini-2.5-flash",
+        // Stands in for gcloud: prints a token, no shell involved.
+        apiKeyCommand: [process.execPath, "-e", "process.stdout.write('ya29.registry-test')"],
+      },
+      config: {} as never,
+      logger: {} as never,
+    });
+
+    await provider.complete({ prompt: "hi" });
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(`${root}/chat/completions`);
+    expect(new Headers(init.headers as HeadersInit).get("authorization")).toBe(
+      "Bearer ya29.registry-test",
+    );
   });
 });

@@ -29,7 +29,21 @@ export function openAiChatPathPrefix(baseUrl: string): "" | "/v1" {
     return "/v1";
   }
   const bareRoot = url.pathname === "" || url.pathname === "/";
-  return bareRoot && CHAT_AT_ROOT_HOSTS.has(url.hostname.toLowerCase())
-    ? ""
-    : "/v1";
+  if (bareRoot && CHAT_AT_ROOT_HOSTS.has(url.hostname.toLowerCase())) return "";
+  return isVertexOpenApiRoot(url) ? "" : "/v1";
+}
+
+/**
+ * Google Vertex AI's OpenAI-compatible root,
+ * `https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/endpoints/openapi`
+ * (the `global` location drops the region from the host). The version is
+ * already in the path, so chat is `<root>/chat/completions`: probed
+ * 2026-11-13 with a bogus token, that answers 401 asking for an OAuth
+ * access token while `<root>/v1/chat/completions` is a 404.
+ */
+function isVertexOpenApiRoot(url: URL): boolean {
+  return (
+    /^(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com$/i.test(url.hostname) &&
+    /\/endpoints\/openapi$/i.test(url.pathname)
+  );
 }

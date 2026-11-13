@@ -40,6 +40,11 @@ export type LlmProviderConfigEntry = {
    * working after a restart. See `openai/openai-auth-headers.ts`.
    */
   apiKeyHeader?: string;
+  /**
+   * Command (argv) whose output is the key; see
+   * `UserLlmProviderEntry.apiKeyCommand` and `openai/api-key-command.ts`.
+   */
+  apiKeyCommand?: readonly string[];
   supportsTools?: boolean;
   supportsVision?: boolean;
   requestTimeoutMs?: number;
