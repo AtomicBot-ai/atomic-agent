@@ -2860,6 +2860,7 @@ function renderContent() {
     const next = document.createElement('template');
     next.innerHTML = chatView();
     morphChildren(c, next.content);
+    if (typeof richBlocksHydrate === 'function') richBlocksHydrate(c);   // ATO-1140: formulas and diagrams
     afterChat(keep, hadFocus, caret); return;
   }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
@@ -4964,6 +4965,7 @@ function repaintTranscript() {
   const next = document.createElement('template');
   next.innerHTML = renderItems();
   morphChildren(col, next.content);
+  if (typeof richBlocksHydrate === 'function') richBlocksHydrate(col);   // ATO-1140: formulas and diagrams
   exaKeyRestore(exaHeld);
   if (S.stick) sc.scrollTop = sc.scrollHeight;
   return true;

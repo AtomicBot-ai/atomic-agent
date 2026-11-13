@@ -14,7 +14,7 @@
   "type": "commonjs",
   "main": "out/main/main.js",
   "scripts": {
-    "build": "node scripts/ensure-electron.mjs && tsc -p tsconfig.json && node scripts/copy-renderer.mjs && node scripts/build-speech-helper.mjs",
+    "build": "node scripts/ensure-electron.mjs && tsc -p tsconfig.json && node scripts/copy-renderer.mjs && node scripts/vendor-math.mjs && node scripts/build-speech-helper.mjs",
     "lint": "tsc -p tsconfig.json --noEmit",
     "test:unit": "node --test test/*.test.mjs",
     "start": "npm run build && electron .",
@@ -47,6 +47,8 @@
   },
   "dependencies": {
     "cron-parser": "^5.5.0",
-    "electron-updater": "6.8.10"
+    "electron-updater": "6.8.10",
+    "katex": "0.16.47",
+    "mermaid": "11.17.2"
   }
 }
