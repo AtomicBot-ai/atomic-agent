@@ -979,14 +979,20 @@ Honestly degraded, and labelled as such in the UI:
   macOS 14 (ATO-115: Electron 44 needs 13 and a 12.x Mac crashed at launch
   on `_OBJC_CLASS_$_SMAppService`, so the floor is 14, not 12). A
   build without the helper says so too.
-  **Windows and Linux (ATO-1049)** dictate through the user's own
-  [whisper.cpp](https://github.com/ggml-org/whisper.cpp): `whisper-cli` (or
-  `whisper-cpp`) on PATH, in the installer folders a GUI app misses, or named
-  by `ATOMIC_AGENT_WHISPER_BIN`, plus a ggml model in
-  `<models dir>/whisper/` (the folder the agent's `audio.transcribe` tool
-  downloads into; `base` is tried first) or `ATOMIC_AGENT_WHISPER_MODEL`.
-  Without either the button is disabled and names what is missing; nothing is
-  downloaded from the app. The renderer records exactly as on a Mac; main
+  **Windows and Linux (ATO-1049)** dictate through
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp). Binary: the path
+  `ATOMIC_AGENT_WHISPER_BIN` names, else the copy the agent downloaded into
+  `<models dir>/whisper/bin/<tag>/`, else `whisper-cli` (or `whisper-cpp`) on
+  PATH and the installer folders a GUI app misses. Model: a ggml file in
+  `<models dir>/whisper/` (the saved default from `settings.json` when there
+  is one, else `base` first) or `ATOMIC_AGENT_WHISPER_MODEL`. On first use
+  (decision 75) a press on the microphone runs the agent's
+  `atomic-agent whisper install --json`, which downloads the pinned upstream
+  whisper.cpp build (Windows and Linux, x64 and arm64) and the model, each
+  checked against its published SHA-256; the microphone's tooltip shows the
+  percentage and the next probe turns it on, no restart (a missing answer is
+  never cached). Where upstream ships no build, the tooltip names the
+  install. The renderer records exactly as on a Mac; main
   keeps the take in memory, writes it once as a 16 kHz WAV into a private
   temp folder on stop, runs whisper on it and deletes the folder
   (`main/whisper-dictation.ts`). There is no live text: the words arrive

@@ -14,8 +14,10 @@
  *
  * Windows and Linux (ATO-1049) take a different branch with the same IPC
  * contract: the take is held in memory, written once as a WAV into a private
- * temp folder on stop, transcribed by the user's whisper.cpp and the folder
- * deleted (whisper-dictation.ts). Still on this computer, no network.
+ * temp folder on stop, transcribed by whisper.cpp and the folder deleted
+ * (whisper-dictation.ts). Still on this computer. The one network step is
+ * the first-use download of whisper.cpp and the speech model (decision 75),
+ * which the agent's `whisper install` does when the user turns voice on.
  */
 import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
@@ -24,14 +26,16 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { app } from "electron";
-import { managedDataDirNow } from "./agent-cli.js";
+import { managedDataDirNow, whisperInstall, type CliResult } from "./agent-cli.js";
 import {
   cleanTranscript,
+  managedWhisperBinary,
   pcmToWav,
   resolveWhisperBinary,
   resolveWhisperModel,
   whisperArgs,
   whisperLanguage,
+  whisperDownloadable,
   WHISPER_LOCALES,
   type LookupEnv,
 } from "./whisper-dictation.js";
@@ -65,6 +69,20 @@ export interface VoiceProbe {
   offMachine: boolean;
   /** True on the whisper.cpp route: no partials, the text comes after the take ends. */
   batch?: boolean;
+  /** Whisper route, not ready yet: `install` can fetch what is missing (decision 75). */
+  canDownload?: boolean;
+}
+
+/** The whisper reasons a download or a manual install can clear while the app runs. */
+const WHISPER_RETRY_REASONS: ReadonlySet<VoiceReason | undefined> = new Set(["voice-whisper-missing", "voice-whisper-model-missing"]);
+
+/** Seams for test/speech-whisper.test.mjs; the app passes none. */
+export interface VoiceDeps {
+  platform?: NodeJS.Platform;
+  arch?: string;
+  lookup?: () => LookupEnv;
+  modelsDir?: () => string;
+  install?: (onLine: (line: string) => void) => { done: Promise<CliResult>; cancel: () => void };
 }
 
 /** 100 ms of 16 kHz mono s16le is 3200 bytes; anything near 64 KB is a fault. */
@@ -114,6 +132,13 @@ export class VoiceSession {
   private whisper: { bin: string; model: string } | null = null;
   private whisperRun: AbortController | null = null;
   private takeLocales: string[] = [];
+  private readonly platform: NodeJS.Platform;
+  private readonly arch: string;
+
+  constructor(private readonly deps: VoiceDeps = {}) {
+    this.platform = deps.platform ?? process.platform;
+    this.arch = deps.arch ?? process.arch;
+  }
 
   private empty(reason: VoiceReason, detail?: string): VoiceProbe {
     return {
@@ -129,8 +154,11 @@ export class VoiceSession {
    * "helper missing" instead of the true reason.
    */
   async probe(force = false): Promise<VoiceProbe> {
-    if (this.cached && !force) return this.cached;
-    if (process.platform !== "darwin") return (this.cached = this.probeWhisper());
+    // A missing whisper.cpp or model is not final: the first-use download,
+    // or the user's own install, clears it while the app runs, so those two
+    // answers are asked again instead of served from the cache.
+    if (this.cached && !force && !WHISPER_RETRY_REASONS.has(this.cached.reason)) return this.cached;
+    if (this.platform !== "darwin") return (this.cached = this.probeWhisper());
     const major = macosMajor();
     if (major > 0 && major < 26) return (this.cached = this.empty("voice-os-too-old", String(major)));
     const path = helperPath();
@@ -174,15 +202,19 @@ export class VoiceSession {
 
   /** Windows/Linux: whisper.cpp and a model on disk, or the case that is missing. */
   private probeWhisper(): VoiceProbe {
-    const lookup = whisperLookup();
-    const bin = resolveWhisperBinary(lookup);
-    if (!bin.found) return this.empty("voice-whisper-missing", bin.detail);
-    const model = resolveWhisperModel(managedDataDirNow(), lookup);
-    if (!model.found) return this.empty("voice-whisper-model-missing", model.detail);
+    const lookup = (this.deps.lookup ?? whisperLookup)();
+    const modelsDir = (this.deps.modelsDir ?? managedDataDirNow)();
+    const bin = resolveWhisperBinary(lookup, managedWhisperBinary(modelsDir, this.platform));
+    if (!bin.found) {
+      // No upstream build for this machine: the install line stays the route.
+      return { ...this.empty("voice-whisper-missing", bin.detail), canDownload: whisperDownloadable(this.platform, this.arch) };
+    }
+    const model = resolveWhisperModel(modelsDir, lookup);
+    if (!model.found) return { ...this.empty("voice-whisper-model-missing", model.detail), canDownload: true };
     this.whisper = { bin: bin.path, model: model.path };
     const all = [...WHISPER_LOCALES];
     return {
-      ok: true, os: process.platform, supported: all, installed: all,
+      ok: true, os: this.platform, supported: all, installed: all,
       speech: [], dictation: all, maxReserved: 0, offMachine: false, batch: true,
     };
   }
@@ -197,7 +229,7 @@ export class VoiceSession {
     this.kill();
     this.emit = emit;
     this.bytes = 0;
-    if (process.platform !== "darwin") {
+    if (this.platform !== "darwin") {
       // No child to feed: the take is kept until stop() hands it to whisper.
       this.takes = [];
       this.takeLocales = wanted;
@@ -293,6 +325,7 @@ export class VoiceSession {
 
   /** Download an on-device model. Progress is streamed on the same channel. */
   install(locale: string, emit: Emit): Promise<{ ok: boolean; error?: string }> {
+    if (this.platform !== "darwin") return this.installWhisper(emit);
     return new Promise((resolve) => {
       const path = helperPath();
       if (!existsSync(path)) { resolve({ ok: false, error: "voice-helper-missing" }); return; }
@@ -328,6 +361,38 @@ export class VoiceSession {
         resolve(ok ? { ok: true } : { ok: false, error: "install-failed" });
       });
     });
+  }
+
+  /**
+   * Windows/Linux, first use (decision 75): the agent's `whisper install`
+   * fetches whisper.cpp (where upstream ships it) and the saved default
+   * model, each checked against its SHA-256. Emits `install` with the
+   * fraction as it goes and `installed` at the end, the events the macOS
+   * language download uses; then the next probe finds both.
+   */
+  private async installWhisper(emit: Emit): Promise<{ ok: boolean; error?: string }> {
+    const outcome: { failure: string | null; message: string } = { failure: null, message: "" };
+    const run = (this.deps.install ?? whisperInstall)((line) => {
+      let obj: Record<string, unknown>;
+      try { obj = JSON.parse(line) as Record<string, unknown>; } catch { return; /* not an event */ }
+      if (obj.type === "progress" && typeof obj.fraction === "number") emit({ type: "install", fraction: obj.fraction });
+      else if (obj.type === "error") {
+        outcome.failure = typeof obj.code === "string" ? obj.code : "install-failed";
+        outcome.message = String(obj.message ?? "");
+      }
+    });
+    const res = await run.done;
+    this.cached = null;
+    if (res.ok && outcome.failure === null) {
+      const probe = await this.probe(true);
+      if (probe.ok) {
+        emit({ type: "installed", locale: "whisper" });
+        return { ok: true };
+      }
+      return { ok: false, error: probe.reason ?? "install-failed" };
+    }
+    emit({ type: "error", code: "install", message: outcome.message || res.error || "the download failed" });
+    return { ok: false, error: outcome.failure ?? "install-failed" };
   }
 
   /**

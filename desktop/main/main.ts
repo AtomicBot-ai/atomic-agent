@@ -4846,17 +4846,21 @@ async function voiceTest(
   const agentCfgBefore = JSON.stringify((await configGet()).config);
   try {
     // Windows and Linux dictate through whisper.cpp (ATO-1049): the button is
-    // there, enabled only when whisper-cli and a model are found. Every step
-    // below drives the macOS helper's flows (language installs, two
-    // analyzers), so the lane checks the button and its honesty and stops.
+    // there, enabled once whisper-cli and a model are found; until then a
+    // press downloads them (decision 75) or the tooltip says what to install.
+    // Every step below drives the macOS helper's flows (language installs,
+    // two analyzers), so the lane checks the button and its honesty and
+    // stops. It never presses it: that would start a real download.
     if (process.platform !== "darwin") {
       const mic = await js<Mic>("window.__voiceMic()");
       const v = await js<V>("window.__voice()");
       const reasons = await js<Record<string, string>>("window.__voiceReasons()");
+      const sentence = v.code === "voice-whisper-missing" && v.reason === reasons["voice-whisper-download"]
+        ? reasons["voice-whisper-download"] : reasons[v.code ?? ""];
       check(
         "the mic button is there and says why when whisper.cpp is missing",
         voiceSupported(process.platform) && mic.present
-          && (v.available !== false || (mic.disabled && mic.title === reasons[v.code ?? ""])),
+          && (v.available !== false || (mic.disabled && mic.title === sentence)),
         `platform=${process.platform} available=${v.available} code=${v.code}`,
       );
       return;
@@ -4879,13 +4883,13 @@ async function voiceTest(
     const sentences = named.map((k) => reasons[k]);
     check(
       "every disabled case has a sentence",
-      /* Nine since the AbortError case was named, eleven since the two
-         whisper.cpp cases (ATO-1049). The exact count is the
+      /* Nine since the AbortError case was named, twelve since the three
+         whisper.cpp ones (ATO-1049, decision 75). The exact count is the
          tripwire: a new disabled state must be added here deliberately,
          with a sentence a person can act on, rather than inheriting the
          generic "could not be opened" that sent the operator hunting
          through System Settings for a permission that was already on. */
-      named.length === 11 && sentences.every((s) => typeof s === "string" && s.length > 12)
+      named.length === 12 && sentences.every((s) => typeof s === "string" && s.length > 12)
         && reasons["voice-os-too-old"] === "Voice input needs macOS 26 or later"
         && reasons["voice-helper-missing"] === "Voice input needs the speech helper, which this build was packaged without"
         && reasons["voice-not-macos"] === "Voice input works only on macOS"

@@ -4,6 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -65,6 +67,46 @@ test("the model comes from the agent's whisper folder, fast models first", () =>
     W.resolveWhisperModel("/state/models", { env: { ATOMIC_AGENT_WHISPER_MODEL: "/m/custom.bin" }, platform: "linux", home: "/h", isFile: only("/m/custom.bin") }),
     { found: true, path: "/m/custom.bin" },
   );
+});
+
+test("the copy the agent downloaded is taken after the env path, before PATH (decision 75)", () => {
+  const managed = W.managedWhisperBinary("/state/models", "linux");
+  assert.equal(managed, join("/state/models", "whisper", "bin", W.WHISPER_RELEASE_TAG, "whisper-cli"));
+  assert.ok(W.managedWhisperBinary("/m", "win32").endsWith("whisper-cli.exe"));
+  const base = { env: { PATH: "/usr/bin" }, platform: "linux", home: "/home/u" };
+  assert.deepEqual(W.resolveWhisperBinary({ ...base, isExecutable: only(managed, "/usr/bin/whisper-cli") }, managed), { found: true, path: managed });
+  assert.deepEqual(W.resolveWhisperBinary({ ...base, isExecutable: only("/usr/bin/whisper-cli") }, managed), { found: true, path: "/usr/bin/whisper-cli" });
+  assert.deepEqual(
+    W.resolveWhisperBinary({ ...base, env: { ...base.env, ATOMIC_AGENT_WHISPER_BIN: "/opt/whisper-cli" }, isExecutable: only(managed, "/opt/whisper-cli") }, managed),
+    { found: true, path: "/opt/whisper-cli" },
+  );
+});
+
+test("the agent can download whisper.cpp on Windows and Linux only", () => {
+  assert.equal(W.whisperDownloadable("win32", "x64"), true);
+  assert.equal(W.whisperDownloadable("linux", "arm64"), true);
+  assert.equal(W.whisperDownloadable("darwin", "arm64"), false);
+  assert.equal(W.whisperDownloadable("linux", "ia32"), false);
+});
+
+test("a saved default model is kept to: small saved and only base on disk counts as missing", () => {
+  const data = mkdtempSync(join(tmpdir(), "dictation-default-"));
+  try {
+    const dir = join(data, "whisper");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "ggml-base.bin"), "x");
+    const o = { env: {}, platform: "linux", home: "/home/u" };
+    assert.deepEqual(W.resolveWhisperModel(data, o), { found: true, path: join(dir, "ggml-base.bin") });
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ defaultModel: "small" }));
+    assert.equal(W.savedWhisperModel(data), "small");
+    assert.deepEqual(W.resolveWhisperModel(data, o), { found: false, detail: join(dir, "ggml-small.bin") });
+    writeFileSync(join(dir, "ggml-small.bin"), "x");
+    assert.deepEqual(W.resolveWhisperModel(data, o), { found: true, path: join(dir, "ggml-small.bin") });
+    writeFileSync(join(dir, "settings.json"), JSON.stringify({ defaultModel: "huge" }));
+    assert.equal(W.savedWhisperModel(data), null);
+  } finally {
+    rmSync(data, { recursive: true, force: true });
+  }
 });
 
 test("one chosen language is passed on, two let whisper detect it", () => {
