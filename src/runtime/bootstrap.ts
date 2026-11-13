@@ -792,6 +792,7 @@ export async function createAgentRuntime(
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
     turnBudget: fusionTurnBudget,
     sessionUsage,
+    costAccumulator,
     liveWorkers: fusionLiveWorkers,
     runCheckpoints: fusionRuns,
     steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),

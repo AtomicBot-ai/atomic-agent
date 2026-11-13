@@ -14,6 +14,7 @@ import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { visionCapableAlternatives } from "../../llm/provider/model-vision.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import type { SessionUsageLedger } from "../../session/usage-meter.js";
+import type { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
 import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
@@ -674,6 +675,8 @@ export function registerRuntimeFusionAndReadScope(input: {
   turnBudget?: FusionDelegateDeps["turnBudget"];
   /** The composer's `$` readout: escalation and judge calls land here (ATO-1388). */
   sessionUsage?: Pick<SessionUsageLedger, "record">;
+  /** `llm.costTracking`'s session and day totals: escalation and judge calls count here too (ATO-1497). */
+  costAccumulator?: Pick<CostAccumulator, "recordTurn">;
   liveWorkers?: FusionDelegateDeps["liveWorkers"];
   steerWorker?: FusionDelegateDeps["steerWorker"];
   orchestratorTurnSpendUsd?: FusionDelegateDeps["orchestratorTurnSpendUsd"];
@@ -682,7 +685,7 @@ export function registerRuntimeFusionAndReadScope(input: {
   const { config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest, declaredInputs,
     prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode, providerRegistry,
     llama, approvals, dangerous, slotManager, workingDir, logger, turnBudget,
-    orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints, sessionUsage } = input;
+    orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints, sessionUsage, costAccumulator } = input;
 
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
@@ -781,6 +784,21 @@ export function registerRuntimeFusionAndReadScope(input: {
             });
           } catch {
             // The readout never takes an escalation down.
+          }
+        }
+        // The same call in `llm.costTracking`'s session and day totals
+        // (ATO-1497), gated like the fallback seam's: any call with usage,
+        // no session needed.
+        if (costAccumulator !== undefined && result.usage !== undefined) {
+          try {
+            const model = resolveModelPricingFor(resolveLlmConfig(getConfig()), result.modelId, providerId);
+            costAccumulator.recordTurn({
+              modelId: result.modelId,
+              usage: result.usage,
+              ...(model === undefined ? {} : { model }),
+            });
+          } catch {
+            // Cost tracking never takes an escalation down.
           }
         }
         return {
