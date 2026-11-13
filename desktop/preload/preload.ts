@@ -556,6 +556,13 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-563: put a file back as it was before one reply (its question: priorQuestions + expectText), POST /api/sessions/{id}/fs/restore. */
   fsRestore: (sessionId: string, path: string, priorQuestions: number, expectText: string) =>
     ipcRenderer.invoke("agent:fsRestore", { sessionId, path, priorQuestions, expectText }),
+  /** ATO-1056/1058: roll a chat back to a question (files first), preview it, or fork it there (chat-rewind-ipc.ts). */
+  rewindPreview: (sessionId: string, priorQuestions: number, expectText: string) =>
+    ipcRenderer.invoke("agent:rewindPreview", { sessionId, priorQuestions, expectText }),
+  rewind: (sessionId: string, priorQuestions: number, expectText: string, files?: boolean) =>
+    ipcRenderer.invoke("agent:rewind", { sessionId, priorQuestions, expectText, files }),
+  forkSession: (sessionId: string, priorQuestions: number, expectText: string) =>
+    ipcRenderer.invoke("agent:forkSession", { sessionId, priorQuestions, expectText }),
 
   /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
   hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),
