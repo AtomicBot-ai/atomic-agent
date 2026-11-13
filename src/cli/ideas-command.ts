@@ -1,5 +1,8 @@
+import { randomUUID } from "node:crypto";
+import { statSync } from "node:fs";
+
 import { getConfig } from "../config/index.js";
-import { SessionStore } from "../session/index.js";
+import { SessionStore, createEmptySessionState } from "../session/index.js";
 import {
   IDEA_STATUSES,
   IdeaStateError,
@@ -33,6 +36,8 @@ const HELP =
     "                            Turn the idea into a task (origin=cli); --prompt",
     "                            replaces the suggested text. The task runs on the",
     "                            next drain (`task run --all-pending` or the scheduler).",
+    "                            A Retry keeps the original task's step, $ and time",
+    "                            limits and notify, in a new chat in its folder.",
     "  dismiss <id>              Drop the idea for good",
     "",
     "Examples:",
@@ -143,20 +148,52 @@ function handleAccept(args: string[]): number {
   const prompt = readOption(args, "--prompt");
   const config = getConfig();
   const tasks = new TaskStore({ dbFile: config.paths.tasksDbFile });
+  const sessions = new SessionStore({ dbFile: config.paths.sessionsDbFile });
   try {
     return withIdeas((ideas) => {
       const accepted = acceptIdea(
         ideas,
-        ({ sessionId, userMessage }) =>
-          tasks.create({
-            ...(sessionId ? { sessionId } : {}),
-            userMessage,
-            origin: "cli",
-            triggerSource: "user",
-            maxAttempts: config.tasks.maxAttempts,
-          }),
+        ({ sessionId, userMessage, carry }) => {
+          // A Retry card reruns in a fresh chat opened in the original's folder
+          // (when that folder still exists), with the original's limits and notify.
+          let taskSessionId = sessionId;
+          let opened: string | null = null;
+          if (!taskSessionId && carry?.workingDir && isFolder(carry.workingDir)) {
+            const fresh = createEmptySessionState({
+              id: `s-${randomUUID()}`,
+              workingDir: carry.workingDir,
+              metadata: { source: "cli-task" },
+            });
+            sessions.save(fresh);
+            taskSessionId = fresh.id;
+            opened = fresh.id;
+          }
+          try {
+            return tasks.create({
+              ...(taskSessionId ? { sessionId: taskSessionId } : {}),
+              userMessage,
+              origin: "cli",
+              triggerSource: "user",
+              maxAttempts: config.tasks.maxAttempts,
+              ...(carry
+                ? {
+                    maxSteps: carry.maxSteps,
+                    maxCostUsd: carry.maxCostUsd,
+                    maxDurationMs: carry.maxDurationMs,
+                    notify: carry.notify,
+                  }
+                : {}),
+            });
+          } catch (err) {
+            if (opened) sessions.delete(opened);
+            throw err;
+          }
+        },
         id,
-        prompt === undefined ? {} : { prompt },
+        {
+          ...(prompt === undefined ? {} : { prompt }),
+          carryFrom: { tasks, sessions },
+        },
       );
       if (!accepted) {
         process.stderr.write(`idea not found: ${id}\n`);
@@ -168,7 +205,16 @@ function handleAccept(args: string[]): number {
       return 0;
     });
   } finally {
+    sessions.close();
     tasks.close();
+  }
+}
+
+function isFolder(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
   }
 }
 

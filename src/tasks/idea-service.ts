@@ -8,6 +8,7 @@ import type { TaskStore } from "./task-store.js";
 import {
   TASK_USER_MESSAGE_MAX_LENGTH,
   TaskValidationError,
+  type TaskNotifyTarget,
   type TaskRecord,
 } from "./task-types.js";
 
@@ -38,10 +39,36 @@ export function refreshIdeas(deps: IdeaRefreshDeps): IdeaSyncResult {
   return deps.ideas.sync(candidates, now);
 }
 
+/**
+ * What a "Retry" card brings over from the task it retries, so the rerun
+ * keeps the person's limits and folder instead of starting uncapped in
+ * the default one: the original's step, spend and time ceilings, its
+ * notify target, and the working folder of the chat it ran in. The rerun
+ * still opens a fresh chat (a blocked task is often blocked by its chat).
+ */
+export interface IdeaTaskCarry {
+  /** The task the idea retries. */
+  sourceTaskId: string;
+  maxSteps: number | null;
+  maxCostUsd: number | null;
+  maxDurationMs: number | null;
+  notify: TaskNotifyTarget | null;
+  /** The original chat's folder; `null` when it is unknown or gone. */
+  workingDir: string | null;
+}
+
+/** Where `acceptIdea` looks the original task and its chat up. */
+export interface IdeaCarrySource {
+  tasks: Pick<TaskStore, "get">;
+  sessions: { load(id: string): Pick<SessionState, "workingDir"> | null };
+}
+
 /** How the accepted idea becomes a task: the caller's own create path. */
 export type IdeaTaskFactory = (input: {
   sessionId: string | null;
   userMessage: string;
+  /** Set for a `retry_task` idea whose original task still exists. */
+  carry: IdeaTaskCarry | null;
 }) => TaskRecord;
 
 export interface AcceptedIdea {
@@ -49,10 +76,47 @@ export interface AcceptedIdea {
   task: TaskRecord;
 }
 
+export interface AcceptIdeaOptions {
+  /** The edited prompt; omitted keeps the card's. */
+  prompt?: string;
+  /** Lets a Retry card carry over the original task's limits and folder. */
+  carryFrom?: IdeaCarrySource;
+  now?: number;
+}
+
+/** The task a `retry_task` idea was built from, or `null` for other kinds. */
+export function ideaSourceTaskId(idea: Pick<IdeaRecord, "kind" | "sourceKey" | "evidence">): string | null {
+  if (idea.kind !== "retry_task") return null;
+  if (idea.evidence.source === "task" && idea.evidence.ref) return idea.evidence.ref;
+  return idea.sourceKey.startsWith("task:") ? idea.sourceKey.slice("task:".length) : null;
+}
+
+/** What a Retry card carries over, or `null` when the original task is gone. */
+export function ideaTaskCarry(
+  idea: Pick<IdeaRecord, "kind" | "sourceKey" | "evidence">,
+  source: IdeaCarrySource,
+): IdeaTaskCarry | null {
+  const taskId = ideaSourceTaskId(idea);
+  if (taskId === null) return null;
+  const original = source.tasks.get(taskId);
+  if (original === null) return null;
+  const session = original.sessionId ? source.sessions.load(original.sessionId) : null;
+  return {
+    sourceTaskId: original.id,
+    maxSteps: original.maxSteps,
+    maxCostUsd: original.maxCostUsd,
+    maxDurationMs: original.maxDurationMs,
+    notify: original.notify,
+    workingDir: session?.workingDir ?? null,
+  };
+}
+
 /**
  * Accept a `new` idea, optionally with an edited prompt. The status
  * flips first (compare-and-swap), so two accepts of the same card file
  * one task; if the task is refused the idea goes back to `new`.
+ * With `carryFrom`, a Retry card hands the factory the original task's
+ * limits, notify target and folder (`IdeaTaskCarry`).
  * Returns `null` for an unknown id; throws `IdeaStateError` when the
  * idea was already decided and `TaskValidationError` for a bad prompt.
  */
@@ -60,17 +124,18 @@ export function acceptIdea(
   ideas: Pick<IdeaStore, "get" | "claimForAccept" | "attachTask" | "release">,
   createTask: IdeaTaskFactory,
   id: string,
-  edits: { prompt?: string } = {},
-  now: number = Date.now(),
+  options: AcceptIdeaOptions = {},
 ): AcceptedIdea | null {
-  const prompt = edits.prompt === undefined ? null : validatePrompt(edits.prompt);
+  const now = options.now ?? Date.now();
+  const prompt = options.prompt === undefined ? null : validatePrompt(options.prompt);
   const before = ideas.get(id);
   if (before === null) return null;
+  const carry = options.carryFrom ? ideaTaskCarry(before, options.carryFrom) : null;
   const claimed = ideas.claimForAccept(id, prompt, now);
   if (claimed === null) return null;
   let task: TaskRecord;
   try {
-    task = createTask({ sessionId: claimed.sessionId, userMessage: claimed.prompt });
+    task = createTask({ sessionId: claimed.sessionId, userMessage: claimed.prompt, carry });
   } catch (err) {
     ideas.release(id, before.prompt, now);
     throw err;
@@ -104,6 +169,7 @@ export function ideaToJson(idea: IdeaRecord): Record<string, unknown> {
     evidence: idea.evidence,
     prompt: idea.prompt,
     sessionId: idea.sessionId,
+    sourceTaskId: ideaSourceTaskId(idea),
     taskId: idea.taskId,
     createdAt: idea.createdAt,
     updatedAt: idea.updatedAt,

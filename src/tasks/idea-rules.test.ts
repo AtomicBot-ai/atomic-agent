@@ -97,13 +97,13 @@ describe("retryTaskIdeas", () => {
     expect(ideas).toEqual([]);
   });
 
-  it("offers at most five, newest first", () => {
-    const tasks = Array.from({ length: 8 }, (_, i) =>
+  it("offers every qualifying task, newest first (the store applies the cap)", () => {
+    const tasks = Array.from({ length: IDEAS_PER_KIND_MAX + 3 }, (_, i) =>
       task({ id: `t${i}`, userMessage: `job ${i}`, completedAt: NOW - 1_000 * (i + 1) }),
     );
     const ideas = retryTaskIdeas(tasks, NOW);
-    expect(ideas).toHaveLength(IDEAS_PER_KIND_MAX);
-    expect(ideas[0]?.sourceKey).toBe("task:t0");
+    expect(ideas).toHaveLength(IDEAS_PER_KIND_MAX + 3);
+    expect(ideas.map((i) => i.sourceKey)).toEqual(tasks.map((t) => `task:${t.id}`));
   });
 });
 

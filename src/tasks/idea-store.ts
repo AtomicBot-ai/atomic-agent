@@ -7,6 +7,7 @@ import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
 
 import {
   IDEA_STATUSES,
+  IDEAS_PER_KIND_MAX,
   IdeaStateError,
   type IdeaCandidate,
   type IdeaEvidence,
@@ -84,11 +85,17 @@ export class IdeaStore {
   }
 
   /**
-   * Bring the undecided ideas in line with what the rules offer now:
-   * a candidate whose source has never had an idea is added; a `new`
-   * idea whose source is no longer offered (the task was run again, the
-   * goal finished) is removed. Accepted and dismissed rows are never
-   * touched, and their sources are never offered again.
+   * Bring the undecided ideas in line with what the rules offer now.
+   * `candidates` are every qualifying source, newest first within a kind.
+   *
+   *  - A source a person already decided (accepted or dismissed) is set
+   *    aside first: it is never offered again and takes no slot.
+   *  - A `new` idea whose source still qualifies stays, whatever its rank,
+   *    so a card never disappears just because newer ones arrived.
+   *  - Free slots, up to `IDEAS_PER_KIND_MAX` waiting cards per kind, go to
+   *    sources that have never had an idea, newest first.
+   *  - A `new` idea whose source no longer qualifies (the task was run
+   *    again, the goal finished) is removed.
    */
   sync(candidates: readonly IdeaCandidate[], now: number = Date.now()): IdeaSyncResult {
     const insert = this.db.prepare(
@@ -100,16 +107,33 @@ export class IdeaStore {
     const added: IdeaRecord[] = [];
     const retired: string[] = [];
     this.db.transaction(() => {
-      const offered = new Set<string>();
+      const known = new Map(
+        (this.db.prepare(`SELECT source_key, status FROM ideas`).all() as Array<{
+          source_key: string;
+          status: string;
+        }>).map((r) => [r.source_key, r.status]),
+      );
+      const qualifying = new Set<string>();
+      const waiting = new Map<string, number>();
+      const fresh: IdeaCandidate[] = [];
       for (const c of candidates) {
-        if (offered.has(c.sourceKey)) continue;
-        offered.add(c.sourceKey);
+        if (qualifying.has(c.sourceKey)) continue;
+        qualifying.add(c.sourceKey);
+        const status = known.get(c.sourceKey);
+        if (status === undefined) fresh.push(c);
+        else if (status === "new") waiting.set(c.kind, (waiting.get(c.kind) ?? 0) + 1);
+        // accepted / dismissed: decided, takes no slot
+      }
+      for (const c of fresh) {
+        const count = waiting.get(c.kind) ?? 0;
+        if (count >= IDEAS_PER_KIND_MAX) continue;
         const id = randomUUID();
         const info = insert.run(
           id, c.kind, c.sourceKey, c.title, c.reason, JSON.stringify(c.evidence),
           c.prompt, c.sessionId, now, now,
         );
         if (info.changes === 1) {
+          waiting.set(c.kind, count + 1);
           const row = this.get(id);
           if (row) added.push(row);
         }
@@ -119,7 +143,7 @@ export class IdeaStore {
         .all() as Array<{ id: string; source_key: string }>;
       const del = this.db.prepare(`DELETE FROM ideas WHERE id = ? AND status = 'new'`);
       for (const row of undecided) {
-        if (offered.has(row.source_key)) continue;
+        if (qualifying.has(row.source_key)) continue;
         if (del.run(row.id).changes === 1) retired.push(row.id);
       }
     })();

@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
@@ -10,6 +14,7 @@ interface IdeaJson {
   reason: string;
   evidence: { source: string; ref: string; excerpt: string };
   prompt: string;
+  sourceTaskId: string | null;
   taskId: string | null;
 }
 
@@ -72,6 +77,48 @@ describe("/api/ideas", () => {
     expect(again.status).toBe(409);
     const err = (await again.json()) as { error: { code: string } };
     expect(err.error.code).toBe("idea_decided");
+  });
+
+  it("accepting a Retry keeps the original's folder, limits and notify (ATO-458 review)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "idea-retry-p-"));
+    try {
+      const session = harness.runtime.createSession({ metadata: { source: "http-task" }, persist: false });
+      harness.runtime.sessionStore.save({ ...session, workingDir: dir });
+      const store = harness.runtime.taskStore;
+      const original = store.create({
+        sessionId: session.id,
+        userMessage: "run the overnight report",
+        origin: "http",
+        maxAttempts: 1,
+        maxSteps: 12,
+        maxCostUsd: 5,
+        maxDurationMs: 3_600_000,
+        notify: "telegram",
+      });
+      store.markRunning(original.id);
+      store.markBlocked(original.id, { category: "transport", message: "spend ceiling reached" });
+
+      const refreshed = (await (await post("/api/ideas/refresh")).json()) as { ideas: IdeaJson[] };
+      const idea = refreshed.ideas.find((i) => i.kind === "retry_task")!;
+      expect(idea.sourceTaskId).toBe(original.id);
+
+      const res = await post(`/api/ideas/${idea.id}/accept`);
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { task: { id: string; sessionId: string | null } };
+      const task = store.get(body.task.id)!;
+      expect(task).toMatchObject({
+        maxSteps: 12,
+        maxCostUsd: 5,
+        maxDurationMs: 3_600_000,
+        notify: "telegram",
+      });
+      // A fresh chat, not the original one, but in the original's folder.
+      expect(task.sessionId).not.toBeNull();
+      expect(task.sessionId).not.toBe(session.id);
+      expect(harness.runtime.sessionStore.load(task.sessionId!)?.workingDir).toBe(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("dismiss retires the idea for good", async () => {

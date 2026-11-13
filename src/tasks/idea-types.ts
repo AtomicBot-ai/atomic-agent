@@ -67,7 +67,10 @@ export interface IdeaRecord extends IdeaCandidate {
   decidedAt: number | null;
 }
 
-/** Cards of one kind a refresh offers at most (newest sources first). */
+/**
+ * Undecided cards of one kind waiting at once, at most (newest sources
+ * first). Applied by `IdeaStore.sync` after decided sources are set aside.
+ */
 export const IDEAS_PER_KIND_MAX = 5;
 export const IDEA_TITLE_MAX_LENGTH = 80;
 export const IDEA_EXCERPT_MAX_LENGTH = 400;

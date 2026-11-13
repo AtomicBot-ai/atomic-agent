@@ -6,6 +6,7 @@ import {
   type HttpHandler,
   type HandlerContext,
 } from "./request-context.js";
+import { checkWorkingDir } from "./session-working-dir.js";
 import {
   IDEA_STATUSES,
   IdeaStateError,
@@ -27,7 +28,9 @@ import {
  *  - `POST /api/ideas/{id}/accept` with optional `{ prompt }` (the edited
  *    text) files the task the way `POST /api/tasks` does and answers
  *    `{ idea, task }`; `409 idea_decided` when the card was already
- *    accepted or dismissed.
+ *    accepted or dismissed. A Retry card's task keeps the original's
+ *    `maxSteps`, `maxCostUsd`, `maxDurationMs` and `notify`, and runs in
+ *    a new chat opened in the original chat's folder.
  *  - `POST /api/ideas/{id}/dismiss` retires the card for good.
  *
  * All four answer 404 when `tasks.enabled` is false. The store is opened
@@ -123,16 +126,47 @@ export function createAcceptIdeaHandler(): HttpHandler {
       try {
         const accepted = acceptIdea(
           ideas,
-          ({ sessionId, userMessage }) =>
-            ctx.runtime.taskRunner.create({
-              ...(sessionId ? { sessionId } : {}),
-              userMessage,
-              origin: "http",
-              triggerSource: "user",
-              maxAttempts: ctx.runtime.config.tasks.maxAttempts,
-            }),
+          ({ sessionId, userMessage, carry }) => {
+            // A Retry card reruns in a fresh chat opened in the original's folder,
+            // the way `POST /api/tasks` with `workingDir` does; a folder that is
+            // gone falls back to the default one.
+            let taskSessionId = sessionId;
+            let opened: string | null = null;
+            if (!taskSessionId && carry?.workingDir) {
+              const dir = checkWorkingDir(carry.workingDir);
+              if (dir.ok) {
+                const fresh = ctx.runtime.createSession({ metadata: { source: "http-task" }, persist: false });
+                ctx.runtime.sessionStore.save({ ...fresh, workingDir: dir.dir });
+                taskSessionId = fresh.id;
+                opened = fresh.id;
+              }
+            }
+            try {
+              return ctx.runtime.taskRunner.create({
+                ...(taskSessionId ? { sessionId: taskSessionId } : {}),
+                userMessage,
+                origin: "http",
+                triggerSource: "user",
+                maxAttempts: ctx.runtime.config.tasks.maxAttempts,
+                ...(carry
+                  ? {
+                      maxSteps: carry.maxSteps,
+                      maxCostUsd: carry.maxCostUsd,
+                      maxDurationMs: carry.maxDurationMs,
+                      ...(carry.notify ? { notify: carry.notify } : {}),
+                    }
+                  : {}),
+              });
+            } catch (err) {
+              if (opened) ctx.runtime.sessionStore.delete(opened);
+              throw err;
+            }
+          },
           id,
-          prompt === undefined ? {} : { prompt },
+          {
+            ...(prompt === undefined ? {} : { prompt }),
+            carryFrom: { tasks: ctx.runtime.taskStore, sessions: ctx.runtime.sessionStore },
+          },
         );
         if (accepted === null) {
           sendError(res, 404, openaiError(`idea not found: ${id}`));

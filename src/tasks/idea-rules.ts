@@ -2,7 +2,6 @@ import type { TaskRecord } from "./task-types.js";
 import {
   IDEA_EXCERPT_MAX_LENGTH,
   IDEA_TITLE_MAX_LENGTH,
-  IDEAS_PER_KIND_MAX,
   type IdeaCandidate,
 } from "./idea-types.js";
 
@@ -76,6 +75,8 @@ export function retryTaskIdeas(tasks: readonly TaskRecord[], now: number): IdeaC
         },
         prompt: t.userMessage,
         // A fresh chat: a blocked task is often blocked by its session.
+        // On accept the original's limits, notify and folder come along
+        // (`ideaTaskCarry`); the task id is kept in `evidence.ref`.
         sessionId: null,
       },
     });
@@ -125,11 +126,14 @@ export function resumeGoalIdeas(goals: readonly GoalIdeaInput[], now: number): I
   return newestFirst(out);
 }
 
+/**
+ * Every qualifying source, newest first. The cap of `IDEAS_PER_KIND_MAX`
+ * cards per kind is applied by `IdeaStore.sync`, after it has set aside
+ * sources a person already decided: capping here would let dismissed
+ * cards hold the top slots and keep a newer failure from ever showing.
+ */
 function newestFirst(items: Array<{ at: number; idea: IdeaCandidate }>): IdeaCandidate[] {
-  return items
-    .sort((a, b) => b.at - a.at)
-    .slice(0, IDEAS_PER_KIND_MAX)
-    .map((i) => i.idea);
+  return items.sort((a, b) => b.at - a.at).map((i) => i.idea);
 }
 
 function messageKey(message: string): string {

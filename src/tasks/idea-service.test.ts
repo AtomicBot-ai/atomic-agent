@@ -4,9 +4,9 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { acceptIdea, refreshIdeas } from "./idea-service.js";
+import { acceptIdea, ideaTaskCarry, refreshIdeas, type IdeaTaskCarry } from "./idea-service.js";
 import { IdeaStore } from "./idea-store.js";
-import { IdeaStateError } from "./idea-types.js";
+import { IDEAS_PER_KIND_MAX, IdeaStateError } from "./idea-types.js";
 import { TaskStore } from "./task-store.js";
 import { TaskValidationError } from "./task-types.js";
 
@@ -107,6 +107,73 @@ describe("idea service", () => {
     const [idea] = refreshIdeas({ ideas, tasks, sessions: noSessions, now }).added;
     expect(() => acceptIdea(ideas, createTask, idea!.id, { prompt: "   " })).toThrow(TaskValidationError);
     expect(ideas.get(idea!.id)?.status).toBe("new");
+  });
+
+  it("a sixth failure is offered once the five shown are dismissed", () => {
+    const now = Date.now();
+    const ids = ["A", "B", "C", "D", "E", "F"].map((k, i) => failedTask(`job ${k}`, now - 60_000 + i * 1_000).id);
+    const first = refreshIdeas({ ideas, tasks, sessions: noSessions, now });
+    expect(first.added).toHaveLength(IDEAS_PER_KIND_MAX);
+    for (const idea of first.added) ideas.dismiss(idea.id, now);
+    const second = refreshIdeas({ ideas, tasks, sessions: noSessions, now });
+    // A is the oldest failure: the one the first refresh left out.
+    expect(second.added.map((i) => i.evidence.ref)).toEqual([ids[0]]);
+  });
+
+  it("hands the factory the original task's limits, notify and folder for a Retry", () => {
+    const now = Date.now();
+    const t = tasks.create(
+      {
+        sessionId: "s-orig",
+        userMessage: "nightly build",
+        origin: "http",
+        maxAttempts: 1,
+        maxSteps: 9,
+        maxCostUsd: 5,
+        maxDurationMs: 60_000,
+        notify: "telegram",
+      },
+      now - 10_000,
+    );
+    tasks.markRunning(t.id, now - 9_000);
+    tasks.markBlocked(t.id, { category: "transport", message: "spend ceiling reached" }, now - 8_000);
+    const [idea] = refreshIdeas({ ideas, tasks, sessions: noSessions, now }).added;
+    const sessions = { load: (id: string) => (id === "s-orig" ? { workingDir: "/tmp/p" } : null) };
+    let seen: IdeaTaskCarry | null = null;
+    const accepted = acceptIdea(
+      ideas,
+      (input) => {
+        seen = input.carry;
+        return createTask(input);
+      },
+      idea!.id,
+      { carryFrom: { tasks, sessions } },
+    );
+    expect(accepted).not.toBeNull();
+    expect(seen).toEqual({
+      sourceTaskId: t.id,
+      maxSteps: 9,
+      maxCostUsd: 5,
+      maxDurationMs: 60_000,
+      notify: "telegram",
+      workingDir: "/tmp/p",
+    });
+  });
+
+  it("carries nothing for a goal idea or a retried task that is gone", () => {
+    const goalIdea = {
+      kind: "resume_goal" as const,
+      sourceKey: "goal:s:1",
+      evidence: { source: "goal" as const, ref: "s", excerpt: "", at: null },
+    };
+    const lookup = { tasks, sessions: { load: () => null } };
+    expect(ideaTaskCarry(goalIdea, lookup)).toBeNull();
+    const gone = {
+      kind: "retry_task" as const,
+      sourceKey: "task:missing",
+      evidence: { source: "task" as const, ref: "missing", excerpt: "", at: null },
+    };
+    expect(ideaTaskCarry(gone, lookup)).toBeNull();
   });
 
   it("returns null for an unknown idea", () => {

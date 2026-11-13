@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { IdeaStore } from "./idea-store.js";
-import { IdeaStateError, type IdeaCandidate } from "./idea-types.js";
+import { IDEAS_PER_KIND_MAX, IdeaStateError, type IdeaCandidate } from "./idea-types.js";
 import { TaskStore } from "./task-store.js";
 
 function candidate(sourceKey: string, overrides: Partial<IdeaCandidate> = {}): IdeaCandidate {
@@ -72,6 +72,37 @@ describe("IdeaStore", () => {
     const res = store.sync([candidate("task:b")], 12);
     expect(res.retired).toHaveLength(1);
     expect(store.list().map((i) => i.sourceKey).sort()).toEqual(["task:b", "task:c"]);
+  });
+
+  it("applies the per-kind cap after decided sources are set aside", () => {
+    // Six failures, newest first: A..E fill the five slots, F waits.
+    const six = ["A", "B", "C", "D", "E", "F"].map((k) => candidate(`task:${k}`));
+    const first = store.sync(six, 10);
+    expect(first.added.map((i) => i.sourceKey)).toEqual(six.slice(0, IDEAS_PER_KIND_MAX).map((c) => c.sourceKey));
+    for (const idea of first.added) store.dismiss(idea.id, 11);
+    const second = store.sync(six, 12);
+    expect(second.added.map((i) => i.sourceKey)).toEqual(["task:F"]);
+    expect(second.retired).toEqual([]);
+  });
+
+  it("keeps a waiting card when newer sources arrive past the cap", () => {
+    const old = ["A", "B", "C", "D", "E"].map((k) => candidate(`task:${k}`));
+    store.sync(old, 10);
+    const newer = [candidate("task:N1"), candidate("task:N2"), ...old];
+    const res = store.sync(newer, 11);
+    expect(res.added).toEqual([]);
+    expect(res.retired).toEqual([]);
+    expect(store.list({ status: "new" }).map((i) => i.sourceKey).sort()).toEqual(old.map((c) => c.sourceKey).sort());
+  });
+
+  it("caps each kind on its own", () => {
+    const tasks = Array.from({ length: 6 }, (_, i) => candidate(`task:${i}`));
+    const goals = Array.from({ length: 2 }, (_, i) =>
+      candidate(`goal:s${i}:1`, { kind: "resume_goal", evidence: { source: "goal", ref: `s${i}`, excerpt: "x", at: 1 } }),
+    );
+    const res = store.sync([...tasks, ...goals], 10);
+    expect(res.added.filter((i) => i.kind === "retry_task")).toHaveLength(IDEAS_PER_KIND_MAX);
+    expect(res.added.filter((i) => i.kind === "resume_goal")).toHaveLength(2);
   });
 
   it("accepts with compare-and-swap: a second accept or a dismiss after it throws", () => {

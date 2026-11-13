@@ -111,7 +111,16 @@ export {
   IDEA_REFRESH_SESSION_SCAN,
   IDEA_REFRESH_TASK_SCAN,
   acceptIdea,
+  ideaSourceTaskId,
+  ideaTaskCarry,
   ideaToJson,
   refreshIdeas,
 } from "./idea-service.js";
-export type { AcceptedIdea, IdeaRefreshDeps, IdeaTaskFactory } from "./idea-service.js";
+export type {
+  AcceptIdeaOptions,
+  AcceptedIdea,
+  IdeaCarrySource,
+  IdeaRefreshDeps,
+  IdeaTaskCarry,
+  IdeaTaskFactory,
+} from "./idea-service.js";
