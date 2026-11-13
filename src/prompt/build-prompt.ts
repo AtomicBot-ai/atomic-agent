@@ -237,6 +237,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     fusion: resolveFusionMachineFacts(config, {
       workerSlots: input.liveWorkerSlots ?? null,
       tokensPerSecond: input.fusionTokensPerSecond ?? null,
+      pastRuns: input.fusionPastRuns ?? null,
     }),
     ...(turnFraming !== undefined
       ? { turnSystemOpen: turnFraming.systemOpen }

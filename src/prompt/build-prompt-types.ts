@@ -43,6 +43,13 @@ export interface BuildPromptInput {
    */
   fusionTokensPerSecond?: number | null;
   /**
+   * What past fusion runs on this machine showed (ATO-949), from the
+   * outcome log's summary, held per session. Rendered into the
+   * `### fusion` block as "Past runs here: …"; absent or empty says
+   * nothing.
+   */
+  fusionPastRuns?: readonly string[] | null;
+  /**
    * Transport the serving link uses for tool calls. Forwarded into
    * `buildStablePrefix`, where `"native_tools"` swaps the text-JSON
    * emission mandate for native function-calling guidance (issue #285).

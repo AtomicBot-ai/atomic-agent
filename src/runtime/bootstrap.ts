@@ -53,8 +53,10 @@ import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
 import {
+  FUSION_OUTCOMES_FILE_NAME,
   FUSION_RUNS_DIR_NAME,
   FusionLiveWorkers,
+  FusionOutcomeLog,
   FusionRunStore,
   FusionTurnBudget,
   describeResumableRun,
@@ -401,6 +403,14 @@ export async function createAgentRuntime(
   const fusionRuns = new FusionRunStore({
     dir: join(config.paths.stateDir, FUSION_RUNS_DIR_NAME),
   });
+  // What past fan-outs showed on this machine (ATO-949): one line per
+  // finished worker task, summarized into the `### fusion` facts once
+  // per session start. `llm.runMode.fusion.outcomeJournal: false` turns
+  // both off; read live, like every run-mode setting. See `outcome-log.ts`.
+  const fusionOutcomes = new FusionOutcomeLog({
+    path: join(config.paths.stateDir, FUSION_OUTCOMES_FILE_NAME),
+    enabled: () => getConfig().llm?.runMode?.fusion?.outcomeJournal !== false,
+  });
 
   // ATO-569: what each session has spent and the account limits last
   // seen, for the composer readout. Every change goes out as a
@@ -589,6 +599,7 @@ export async function createAgentRuntime(
     // The local leg's slot count once `/props` has answered — what the
     // `### fusion` facts state for an external server.
     liveWorkerSlots: () => slotManager.observedPoolSize(),
+    fusionPastRuns: (sessionId) => fusionOutcomes.summaryLines(sessionId),
     onContextWindowObserved: observeContextWindow,
     onContextWindowExceeded: raiseContextWindowTo,
     // A refused connection to a managed local model whose process is gone
@@ -806,6 +817,7 @@ export async function createAgentRuntime(
     sessionUsage,
     liveWorkers: fusionLiveWorkers,
     runCheckpoints: fusionRuns,
+    outcomeLog: fusionOutcomes,
     steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),
     orchestratorTurnSpendUsd: (sessionId) => turnUsageMeter.peekCostUsd(sessionId),
   });

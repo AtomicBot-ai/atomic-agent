@@ -159,7 +159,8 @@ export function buildFusionGuidance(
 ): string {
   const machine = formatFusionMachineLine(facts);
   const roles = formatFusionRolesLine(facts);
-  return [FUSION_GUIDANCE, machine, roles]
+  const past = formatFusionPastRunsLine(facts);
+  return [FUSION_GUIDANCE, machine, roles, past]
     .filter((line): line is string => line !== null)
     .join("\n");
 }
@@ -175,4 +176,16 @@ export function formatFusionRolesLine(
   if (roles.length === 0) return null;
   const list = roles.map((r) => `${r.role} \`${r.model}\``).join(", ");
   return `Models by role: ${list}. Give a task \`role\` to run it on that model, or \`model\` naming one of them (or the workers' model); a task with neither runs on the workers' model.`;
+}
+
+/**
+ * What past runs on this machine showed (ATO-949), one line, or `null`
+ * when the outcome log has nothing with enough samples.
+ */
+export function formatFusionPastRunsLine(
+  facts: FusionMachineFacts,
+): string | null {
+  const past = facts.pastRuns ?? [];
+  if (past.length === 0) return null;
+  return `Past runs here: ${past.join("; ")}. Plan the split and pick models by these.`;
 }
