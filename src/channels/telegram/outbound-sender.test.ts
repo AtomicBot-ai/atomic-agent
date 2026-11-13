@@ -119,26 +119,71 @@ describe("sendOutbound", () => {
     expect(calls.length).toBe(2);
   });
 
-  it("drops a chunk on a second 429 and warns", async () => {
-    const err = {
+  it("keeps the chunk through repeated 429s (ATO-634)", async () => {
+    const err = (after: number) => ({
       error_code: 429,
-      parameters: { retry_after: 1 },
+      parameters: { retry_after: after },
       message: "Too Many Requests",
-    };
-    const { api } = fakeApi([err, err]);
+    });
+    const { api, calls } = fakeApi([err(1), err(3), err(2), null]);
+    const slept: number[] = [];
     const warn = vi.fn();
     const result = await sendOutbound({
       api,
       chatId: 1,
       text: "hi",
-      sleep: async () => undefined,
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
       logger: { warn },
     });
-    expect(result).toEqual({ chunks: 1, dropped: 1, parseFallbacks: 0 });
+    expect(result).toEqual({ chunks: 1, dropped: 0, parseFallbacks: 0 });
+    expect(slept).toEqual([1000, 3000, 2000]);
+    expect(calls.map((c) => c.text)).toEqual(["hi", "hi", "hi", "hi"]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("drops a chunk only when the flood-wait budget runs out, then sends the next", async () => {
+    const err = {
+      error_code: 429,
+      parameters: { retry_after: 5 },
+      message: "Too Many Requests",
+    };
+    const text = `${"a".repeat(3990)}\n${"b".repeat(100)}`;
+    const { api, calls } = fakeApi([err, err, err, null]);
+    const warn = vi.fn();
+    const result = await sendOutbound({
+      api,
+      chatId: 1,
+      text,
+      sleep: async () => undefined,
+      floodRetryBudgetMs: 10_000,
+      logger: { warn },
+    });
+    expect(result).toEqual({ chunks: 2, dropped: 1, parseFallbacks: 0 });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]![0]).toBe(
-      "telegram: dropping chunk after second 429",
+      "telegram: dropping chunk, flood-wait budget exhausted",
     );
+    expect(calls.at(-1)!.text.startsWith("b")).toBe(true);
+  });
+
+  it("retries a 429 on the plain-text fallback too", async () => {
+    const parseErr = {
+      error_code: 400,
+      description: "Bad Request: can't parse entities",
+    };
+    const flood = { error_code: 429, parameters: { retry_after: 1 } };
+    const { api, calls } = fakeApi([parseErr, flood, null]);
+    const result = await sendOutbound({
+      api,
+      chatId: 1,
+      text: "**hi**",
+      parseMode: "html",
+      sleep: async () => undefined,
+    });
+    expect(result).toEqual({ chunks: 1, dropped: 0, parseFallbacks: 1 });
+    expect(calls.map((c) => c.text)).toEqual(["<b>hi</b>", "**hi**", "**hi**"]);
   });
 
   it("logs and drops non-429 errors without retry", async () => {
