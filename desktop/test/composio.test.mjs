@@ -121,8 +121,8 @@ test('the copy has no em dash and does not claim nothing leaves the machine', ()
 });
 
 test('Composio is the third pane of Connections, in the tab list and the palette', () => {
-  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','composio'\]\]/);
-  assert.match(source, /\['telegram','Telegram'\],\['composio','Composio'\],\['memory','Memory'\]/);
+  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','push','composio'\]\]/);
+  assert.match(source, /\['telegram','Telegram'\],\['push','Phone push'\],\['composio','Composio'\],\['memory','Memory'\]/);
   assert.match(source, /\['link','Composio','Settings · Connections','','settings:composio'\]/);
   for (const hook of ["pane === 'composio') composioTabEntered()", "p === 'composio') return composioTab()",
     "k === 'composio') { close(); composioAct(a.slice(9))", "pane === 'composio' && composioKey(e, k, inText)"]) {

@@ -322,6 +322,9 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:skillProjectEnabled", { enabled, sessionId }),
   /** ATO-954: Settings › Plugins (main/plugins-ipc.ts). */
   pluginList: () => ipcRenderer.invoke("cli:pluginList"),
+  /** ATO-1129: Settings › Connections › Phone push (main/push-ipc.ts). */
+  pushStatus: () => ipcRenderer.invoke("cli:pushStatus"),
+  pushSet: (op: "on" | "off" | "test" | "newTopic") => ipcRenderer.invoke("cli:pushSet", op),
   pluginSet: (name: string, op: "enable" | "disable" | "allow-code" | "deny-code", part?: string) =>
     ipcRenderer.invoke("cli:pluginSet", { name, op, part }),
   pluginRemove: (name: string) => ipcRenderer.invoke("cli:pluginRemove", name),
