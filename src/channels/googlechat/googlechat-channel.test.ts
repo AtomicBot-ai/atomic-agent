@@ -57,6 +57,9 @@ function fakeGoogle(pulls: unknown[][], tokenResponse: () => Response = () => js
       const next = pulls.shift();
       if (next) return json({ receivedMessages: next });
       return new Promise<Response>((_resolve, reject) => {
+        // Like fetch: a signal that is already aborted rejects at once
+        // (stop() can land while the token request is still in flight).
+        if (init?.signal?.aborted) reject(new Error("aborted"));
         init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
       });
     }
