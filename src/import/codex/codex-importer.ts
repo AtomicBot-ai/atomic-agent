@@ -14,6 +14,7 @@ import {
   type ImportItemResult,
   type ImportReport,
 } from "../import-report.js";
+import { groupHintFromCwd, withGroupHint } from "../grouping.js";
 import { reconcileImportedSession } from "../reconcile-session.js";
 import { splitMemoryNote } from "../split-note.js";
 import type { CodexSource } from "./codex-source.js";
@@ -220,6 +221,7 @@ export class CodexImporter {
     }
     for (const meta of metas) {
       let mapped: SessionState;
+      let cwd: string | null = null;
       try {
         const session = this.deps.source.readSession(meta);
         if (session.messages.length === 0) {
@@ -234,6 +236,7 @@ export class CodexImporter {
           continue;
         }
         mapped = mapCodexSession(session, this.deps.workingDirFallback);
+        cwd = session.cwd;
       } catch (err) {
         items.push({
           kind: "sessions",
@@ -243,7 +246,12 @@ export class CodexImporter {
         });
         continue;
       }
-      items.push(this.reconcileSession(mapped, meta.id, options));
+      items.push(
+        withGroupHint(
+          this.reconcileSession(mapped, meta.id, options),
+          groupHintFromCwd(cwd),
+        ),
+      );
     }
   }
 

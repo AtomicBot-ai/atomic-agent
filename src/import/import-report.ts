@@ -1,3 +1,5 @@
+import type { ImportGroupHint } from "./grouping.js";
+
 /**
  * Source-agnostic import reporting. Every import source (hermes, and any
  * future one) produces `ImportItemResult`s aggregated into an
@@ -16,6 +18,12 @@ export interface ImportItemResult<Kind extends string = string> {
   status: ImportItemStatus;
   /** Human-readable explanation (skip cause, conflict detail, error text). */
   reason?: string;
+  /**
+   * Session items only: the group (project folder, Claude app project)
+   * the session belonged to at the source. `groupImportReport` turns these
+   * into desktop Projects and chat Folders (grouping.ts); never printed.
+   */
+  group?: ImportGroupHint;
 }
 
 export interface ImportReport<Kind extends string = string> {
@@ -24,6 +32,11 @@ export interface ImportReport<Kind extends string = string> {
   items: ImportItemResult<Kind>[];
   /** Whether the import actually wrote (false in preview / dry-run). */
   executed: boolean;
+  /**
+   * Groups to keep even when no imported chat is in them (a Claude app
+   * project whose export names none of its chats). See grouping.ts.
+   */
+  groupHints?: ImportGroupHint[];
 }
 
 /** Build an empty summary counter. */
