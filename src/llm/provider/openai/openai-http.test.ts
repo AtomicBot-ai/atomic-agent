@@ -710,7 +710,7 @@ describe("humanizeOpenAiHttpError: Atomic Chat's API key protection (ATO-1274)",
       expect(text).toContain(`Atomic Chat answered ${status}: its API key protection is on and it refused the agent's key.`);
       expect(text).toContain("Local API Server settings");
       expect(text).toContain("Providers panel");
-      expect(text).not.toContain("rejected the API key");
+      expect(text).not.toContain("did not accept your API key");
     }
   });
 
@@ -725,7 +725,7 @@ describe("humanizeOpenAiHttpError: Atomic Chat's API key protection (ATO-1274)",
   });
 
   it("another provider on the same port keeps the generic words", () => {
-    expect(humanizeOpenAiHttpError(atomicChat(401, undefined, "openai-compatible"))).toContain("rejected the API key (401)");
+    expect(humanizeOpenAiHttpError(atomicChat(401, undefined, "openai-compatible"))).toContain("did not accept your API key");
   });
 });
 
@@ -740,6 +740,14 @@ describe("humanizeOpenAiHttpError", () => {
       "openrouter",
     );
 
+  it("says a refused key in plain words, with no HTTP code (ATO-1458)", () => {
+    for (const status of [401, 403]) {
+      const text = humanizeOpenAiHttpError(mk(status));
+      expect(text).toBe('"openrouter" did not accept your API key. Check the key in the Providers panel.');
+      expect(text).not.toContain(String(status));
+    }
+  });
+
   it("names the provider and the remedy per failure class", () => {
     expect(humanizeOpenAiHttpError(mk(null))).toContain(
       'Can\'t reach "openrouter"',
@@ -748,10 +756,10 @@ describe("humanizeOpenAiHttpError", () => {
       "Check the provider URL",
     );
     expect(humanizeOpenAiHttpError(mk(401))).toContain(
-      "rejected the API key (401)",
+      "did not accept your API key",
     );
     expect(humanizeOpenAiHttpError(mk(403))).toContain(
-      "rejected the API key (403)",
+      "did not accept your API key",
     );
     expect(humanizeOpenAiHttpError(mk(404))).toContain(
       "model id or the base URL",
@@ -938,7 +946,7 @@ describe("humanizeOpenAiHttpError", () => {
 
   /* Item 40: a refusal because the account cannot pay names the provider,
      quotes its own first sentence (links cut to their domain) and says
-     what helps. AI/ML API's 403 read "rejected the API key (403)", and
+     what helps. AI/ML API's 403 read "did not accept your API key", and
      OpenAI's 429 insufficient_quota read as rate limiting, "Tried 3
      times", for a request that was never retried. */
   describe("a refusal because the account cannot pay", () => {
@@ -1071,7 +1079,7 @@ describe("humanizeOpenAiHttpError", () => {
       expect(said).toContain('Your input was flagged for "harassment"');
       expect(said).not.toContain("API key");
       // A 403 with no body is still the key's.
-      expect(humanizeOpenAiHttpError(mk(403))).toContain("rejected the API key (403)");
+      expect(humanizeOpenAiHttpError(mk(403))).toContain("did not accept your API key");
     });
 
     it("does not call an account flagged for abuse a moderation refusal", () => {
@@ -1083,7 +1091,7 @@ describe("humanizeOpenAiHttpError", () => {
           body: parseProviderErrorBody(body),
         }),
       );
-      expect(said).toContain("rejected the API key (403)");
+      expect(said).toContain("did not accept your API key");
       expect(said).not.toContain("moderation");
     });
 
@@ -1110,7 +1118,7 @@ describe("humanizeOpenAiHttpError", () => {
     it("leaves a 403 about the key and a plain 429 as they were", () => {
       expect(
         humanizeOpenAiHttpError(aiml(JSON.stringify({ error: { message: "Invalid API key" } }))),
-      ).toContain("rejected the API key (403)");
+      ).toContain("did not accept your API key");
       expect(humanizeOpenAiHttpError(mk(429))).toContain("rate-limiting this key (429)");
     });
   });
@@ -1192,7 +1200,7 @@ describe("a key problem the request itself shows", () => {
       ),
     );
     expect(err.keyProblem).toBeUndefined();
-    expect(humanizeOpenAiHttpError(err)).toContain("rejected the API key (401)");
+    expect(humanizeOpenAiHttpError(err)).toContain("did not accept your API key");
   });
 
   it("a key set by hand in the entry's headers counts as sent", async () => {
