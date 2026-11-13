@@ -275,7 +275,15 @@ export function registerOsTools(
         : { keyHelp: options.webSearchKeyHelp }),
     }),
   );
-  registry.register(buildOsWebFetchTool({ config: options.config }));
+  registry.register(
+    buildOsWebFetchTool({
+      config: options.config,
+      dangerous: {
+        approvals: options.approvals,
+        approvalRequired: options.approvalRequired,
+      },
+    }),
+  );
   registry.register(osClipboardReadTool);
   registry.register(osClipboardWriteTool);
   registry.register(osWindowListTool);

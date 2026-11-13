@@ -82,6 +82,13 @@ export interface ToolDefinition {
    * data, not instructions (`untrusted-tool-output.ts`).
    */
   untrustedOutput?: string;
+  /**
+   * Set when the result carries outside text the tool already frames
+   * itself (the mail inbox): the source label. The registry does not frame
+   * it again, but reports it like `untrustedOutput` to
+   * `ToolRegistryOptions.onUntrustedOutput` (ATO-618).
+   */
+  externalSource?: string;
   run: (
     args: Record<string, unknown>,
     ctx: ToolContext,
@@ -116,6 +123,14 @@ export interface ToolRegistryOptions {
    * `.env`.
    */
   knownSecrets?: () => readonly KnownSecret[];
+  /**
+   * Told each time a tool returns outside text on a session: the tool's
+   * `untrustedOutput` or `externalSource` label, or the label of the
+   * untrusted tool whose spill file `os.fs.read` read back. The approval
+   * gate uses it to hold risky silent approvals for the rest of the turn
+   * (`approval/untrusted-taint.ts`, ATO-618). Absent ⇒ nobody is told.
+   */
+  onUntrustedOutput?: (sessionId: string, source: string) => void;
 }
 
 export class ToolRegistry {
@@ -124,10 +139,12 @@ export class ToolRegistry {
     | (Pick<ToolOutputSpill, "spill"> & Partial<Pick<ToolOutputSpill, "spilledToolStem">>)
     | undefined;
   private readonly knownSecrets: () => readonly KnownSecret[];
+  private readonly onUntrustedOutput: ToolRegistryOptions["onUntrustedOutput"];
 
   constructor(options: ToolRegistryOptions = {}) {
     this.outputSpill = options.outputSpill;
     this.knownSecrets = options.knownSecrets ?? (() => knownSecretsFromEnv());
+    this.onUntrustedOutput = options.onUntrustedOutput;
   }
 
   register(definition: ToolDefinition): void {
@@ -202,6 +219,8 @@ export class ToolRegistry {
     const untrusted =
       tool.untrustedOutput ?? this.spilledUntrustedSource(name, args, ctx);
     if (untrusted !== undefined) result = markUntrustedResult(result, untrusted);
+    const outside = untrusted ?? tool.externalSource;
+    if (outside !== undefined) this.onUntrustedOutput?.(ctx.sessionId, outside);
     return ctx.modelMode === "cloud"
       ? fullToolResult(result)
       : this.outputSpill

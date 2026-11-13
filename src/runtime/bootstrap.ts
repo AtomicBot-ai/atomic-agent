@@ -449,6 +449,8 @@ export async function createAgentRuntime(
     sideCallSlotId: () => slotManager.sideCallSlotId(),
     userRequest: (sessionId) => turnRequests.get(sessionId), logger,
   });
+  // Review after outside content (ATO-618): off unless `agent.taintReview`, read live.
+  approvals.setTaintReview(() => getConfig().agent.taintReview);
   const { taskStore, webhookSessionStore } = createRuntimeTaskStores({ config, logger });
   const { reflectionRunner, memoryContextProvider } = createRuntimeMemoryServices({
     config, profileStore, notesStore, linkStore, lessonStore, procedureStore, voteStore, embeddingClient,
@@ -566,6 +568,7 @@ export async function createAgentRuntime(
       );
     },
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
+    clearUntrustedContent: (sessionId: string) => approvals.clearUntrustedContent(sessionId),
     denyPendingApprovals: (sessionId: string, reason: string) => {
       approvals.denyPendingForSession(sessionId, reason);
     },

@@ -94,6 +94,20 @@ describe("ToolRegistry.invoke", () => {
     registry.register({ name: "local", description: "", readonly: true, run: async () => result(PAGE) });
     expect((await registry.invoke("local", {}, ctx())).summary).toBe(PAGE);
   });
+
+  it("reports outside text per session, and an externalSource tool without framing it again (ATO-618)", async () => {
+    const seen: Array<[string, string]> = [];
+    const registry = new ToolRegistry({ onUntrustedOutput: (sessionId, source) => seen.push([sessionId, source]) });
+    registry.register({ name: "page", description: "", readonly: true, untrustedOutput: "a web page", run: async () => result(PAGE) });
+    registry.register({ name: "inbox", description: "", readonly: true, externalSource: "the e-mail inbox", run: async () => result("mail") });
+    registry.register({ name: "local", description: "", readonly: true, run: async () => result(PAGE) });
+    await registry.invoke("local", {}, ctx({ sessionId: "s1" }));
+    expect(seen).toEqual([]);
+    await registry.invoke("page", {}, ctx({ sessionId: "s1" }));
+    const inbox = await registry.invoke("inbox", {}, ctx({ sessionId: "s2" }));
+    expect(inbox.summary).toBe("mail");
+    expect(seen).toEqual([["s1", "a web page"], ["s2", "the e-mail inbox"]]);
+  });
 });
 
 describe("browser tools (ATO-1378)", () => {

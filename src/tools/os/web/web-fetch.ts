@@ -3,6 +3,10 @@ import {
   runCommand as defaultRunCommand,
   type CommandResult,
 } from "../../../sandbox/command-runner.js";
+import {
+  requireApproval,
+  type DangerousToolOptions,
+} from "../../../approval/dangerous-tool.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import type { AtomicAgentConfig, WebFetchConfig } from "../../../config/index.js";
 import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
@@ -75,6 +79,12 @@ export interface OsWebFetchOptions {
   config?: Pick<AtomicAgentConfig, "web">;
   /** Injectable sleep so retry-backoff tests do not wait in real time. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /**
+   * The approval gate. A fetch never asks on its own; it is only put to
+   * the gate on a session the review after outside content holds
+   * (`ApprovalGate.holdsForOutsideContent`, ATO-618). Absent: never asks.
+   */
+  dangerous?: DangerousToolOptions;
 }
 
 interface WebFetchArgs {
@@ -128,6 +138,23 @@ export function buildOsWebFetchTool(
     untrustedOutput: "a web page",
     async run(rawArgs, ctx) {
       const args = parseArgs(rawArgs, fetchCfg.timeoutMs);
+      // After outside content a GET's URL alone can carry data out
+      // (`https://x/?d=<secret>`), so a held session asks first (ATO-618).
+      const gate = options.dangerous;
+      if (gate?.approvals.holdsForOutsideContent(ctx.sessionId, "http") === true) {
+        await requireApproval(
+          gate,
+          {
+            sessionId: ctx.sessionId,
+            tool: TOOL_NAME,
+            category: "http",
+            reason: `GET ${args.url}`,
+            affectedResources: [args.url],
+            grantKey: urlOrigin(args.url),
+          },
+          ctx.signal,
+        );
+      }
       let outcome: FetchOutcome;
       try {
         outcome = await fetchWithGuard(args.url, {
@@ -235,6 +262,15 @@ export function buildOsWebFetchTool(
       );
     },
   };
+}
+
+/** The origin a session grant on this fetch covers, as for `os.http.request`. */
+function urlOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
 }
 
 function parseArgs(

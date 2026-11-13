@@ -105,6 +105,10 @@ export function createRuntimeToolRegistry(
   const toolRegistry = new ToolRegistry({
     ...(outputSpill ? { outputSpill } : {}),
     knownSecrets: () => runtimeKnownSecrets(getConfig()),
+    // Outside text read on a session holds its risky silent approvals
+    // for the rest of the turn when `agent.taintReview` is on (ATO-618).
+    onUntrustedOutput: (sessionId, source) =>
+      dangerous.approvals.noteUntrustedContent(sessionId, source),
   });
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);

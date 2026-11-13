@@ -114,6 +114,7 @@ export class AgentLoop {
     // Like the fan-out grant: forgotten when a turn starts rather than
     // when it ends, so an aborted turn cannot carry a no into the next.
     this.deps.forgetDeclinedApprovals?.(session.id);
+    this.deps.clearUntrustedContent?.(session.id);
     try {
       return await this.runTurnInner(session, options);
     } finally {

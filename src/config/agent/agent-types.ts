@@ -69,6 +69,8 @@ export interface RuntimeAgentConfig {
   smartApproval: boolean;
   /** Provider id the risk review runs on; `null` = automatic. See the user type. */
   smartApprovalModel: string | null;
+  /** Review after outside content (ATO-618). See the user type. */
+  taintReview: boolean;
   stablePrefixHashSalt: string;
   /**
    * Safety-net ceiling for the `### conversation` section of the prompt.
@@ -308,6 +310,19 @@ export interface UserAgentConfig {
    * a local `llama-server` link that has a model, else the active provider.
    */
   smartApprovalModel: string | null;
+  /**
+   * Review after outside content (ATO-618, `src/approval/untrusted-taint.ts`).
+   * When on, once a turn has read outside text (a web page, an MCP answer,
+   * an HTTP body, the mail inbox), an action the approval level or a
+   * session grant would run silently and that could send data out or act
+   * outward (HTTP, shell, scripts, writes outside the workspace, git
+   * remote, publishing, mail, browser submits, screen control, MCP tools)
+   * is first checked by the smart-approval reviewer against the user's
+   * request, and put to the person unless it rates `low`. With
+   * `smartApproval` off it always goes to the person. Off by default.
+   * Read live.
+   */
+  taintReview: boolean;
   /**
    * Stable-prefix shape. `compact` (default `"auto"`): the short
    * scaffold for small context windows; `auto` turns it on when the
