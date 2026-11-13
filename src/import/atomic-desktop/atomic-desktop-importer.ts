@@ -541,6 +541,14 @@ function parseTags(raw: string | null): string[] {
 
 function sameDir(a: string, b: string): boolean {
   if (a === b) return true;
+  // The same inode also catches another letter case on a case-insensitive disk.
+  try {
+    const x = statSync(a);
+    const y = statSync(b);
+    if (x.ino !== 0 && x.dev === y.dev && x.ino === y.ino) return true;
+  } catch {
+    // compare the resolved paths below
+  }
   try {
     return realpathSync(a) === realpathSync(b);
   } catch {

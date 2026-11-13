@@ -65,7 +65,7 @@ describe("AtomicAgentImporter", () => {
       join(sourceDir, "config.json"),
       JSON.stringify({
         mcp: { servers: [{ name: "files", transport: { kind: "stdio", command: "mcp-files" } }] },
-        llm: { providers: [{ id: "groq", kind: "openai-compatible", baseUrl: "https://api.groq.com/openai/v1", apiKey: "inline-secret" }] },
+        llm: { providers: [{ id: "groq", kind: "openai-compatible", baseUrl: "https://api.groq.com/openai/v1", apiKey: "inline-secret", headers: { Authorization: "Bearer inline-secret", "X-Title": "atomic" } }] },
       }),
     );
     writeFileSync(join(sourceDir, ".env"), "GROQ_API_KEY=abc\n");
@@ -122,6 +122,7 @@ describe("AtomicAgentImporter", () => {
     const groq = config.llm.providers.find((p: { id: string }) => p.id === "groq");
     expect(groq).toBeDefined();
     expect(groq.apiKey).toBeUndefined();
+    expect(groq.headers).toEqual({ "X-Title": "atomic" });
     expect(config.mcp.servers.map((s: { name: string }) => s.name)).toContain("files");
     expect(readFileSync(join(targetDir, "skills", "triage", "SKILL.md"), "utf8")).toContain("triage");
     // No secrets and no scheduled jobs unless asked.

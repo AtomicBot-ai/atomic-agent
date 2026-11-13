@@ -294,8 +294,25 @@ export class AtomicAgentImporter {
         }
         have.add(id);
         // A key saved inline in the source's config is a secret: only with the secrets option.
-        const keyless = !selected.has("secrets") && "apiKey" in p;
-        if (keyless) delete p.apiKey;
+        // So is a key sent as a header (`Authorization`, the entry's `apiKeyHeader`).
+        let keyless = false;
+        if (!selected.has("secrets")) {
+          if ("apiKey" in p) {
+            delete p.apiKey;
+            keyless = true;
+          }
+          const headers = objectAt(p, "headers");
+          if (headers) {
+            const keyHeader = typeof p.apiKeyHeader === "string" ? p.apiKeyHeader.toLowerCase() : "";
+            const kept: Record<string, unknown> = {};
+            for (const [name, value] of Object.entries(headers)) {
+              if (name.toLowerCase() === keyHeader || SECRET_HEADER_RE.test(name)) keyless = true;
+              else kept[name] = value;
+            }
+            if (Object.keys(kept).length > 0) p.headers = kept;
+            else delete p.headers;
+          }
+        }
         providers.push(p);
         mine.push({
           kind: "providers",
@@ -399,6 +416,9 @@ function readSourceJson<T>(path: string, coerce: (raw: unknown) => T, empty: () 
     return empty();
   }
 }
+
+/** Header names that carry a credential (`Authorization`, `x-api-key`, `X-Auth-Token`, …). */
+const SECRET_HEADER_RE = /authorization|api[-_]?key|token|secret|password|cookie/i;
 
 function objectAt(raw: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
   const v = raw[key];
