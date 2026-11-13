@@ -78,7 +78,17 @@ import {
   type JudgeVerdict,
 } from "./judge.js";
 import type { DelegateTask } from "./delegate-args.js";
-import { resolveTaskLegs, unknownModels, type TaskLeg } from "./role-models.js";
+import {
+  allowedModels,
+  resolveTaskLegs,
+  unknownModels,
+  type TaskLeg,
+} from "./role-models.js";
+import { applyTaskProfiles, type AppliedProfileReport } from "./task-profiles.js";
+import {
+  builtinAgentProfileSet,
+  type AgentProfileSet,
+} from "../../agent-profiles/index.js";
 import type { DelegateContract } from "./contract.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
@@ -183,6 +193,12 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * for itself. Absent (tests, embedders), no such check.
    */
   agentStateDir?: string;
+  /**
+   * The subagent profiles a task may name (ATO-566), loaded for the
+   * folder the fan-out runs in: built-ins, the user's, plugins' and the
+   * project's trusted ones. Absent (tests, embedders), the built-ins.
+   */
+  resolveAgentProfiles?: (workingDir: string) => AgentProfileSet;
 }
 
 /**
@@ -292,7 +308,7 @@ export function buildFusionDelegateTool(
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. For a function another task calls, also give an `example`: { call, expect, page? } — one small call (`PHYS.corners({x:0,y:0,w:2,h:2,a:0})`) and a JS condition over its result `r` (`r.length === 8 && 'w' in r[0]`); it is run once after the fan-out and a result that does not match fails the providing task. Browser code: set `page` to the HTML file that loads it (the call runs in that page's global scope); otherwise the provide's `in` file is loaded under node. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs? }], maxWorkers?, contract? }. To continue a run cut off by a restart: { resume: runId, confirm?: [taskId] } and nothing else.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. For a function another task calls, also give an `example`: { call, expect, page? } — one small call (`PHYS.corners({x:0,y:0,w:2,h:2,a:0})`) and a JS condition over its result `r` (`r.length === 8 && 'w' in r[0]`); it is run once after the fan-out and a result that does not match fails the providing task. Browser code: set `page` to the HTML file that loads it (the call runs in that page's global scope); otherwise the provide's `in` file is loaded under node. A task may name a subagent `profile` (built-in: explore, review, research, all read-only; or one the user defined): the worker gets that profile's instructions and tool list. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs?, profile? }], maxWorkers?, contract? }. To continue a run cut off by a restart: { resume: runId, confirm?: [taskId] } and nothing else.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -351,6 +367,37 @@ export function buildFusionDelegateTool(
       // refuses the call; without `roles` every task is on the worker
       // leg, as before.
       const workerLegRef = { providerId: workerProviderId, model: workerModel };
+      // Subagent profiles (ATO-566): applied before the legs are picked,
+      // since a profile's model can set the task's role.
+      let profileReports: AppliedProfileReport[] = [];
+      if (parsed.tasks.some((t) => t.profile !== undefined)) {
+        let profiles: AgentProfileSet;
+        try {
+          profiles =
+            deps.resolveAgentProfiles?.(ctx.workingDir) ??
+            builtinAgentProfileSet();
+        } catch (err) {
+          deps.logger.warn("fusion: loading agent profiles failed", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          profiles = builtinAgentProfileSet();
+        }
+        if (profiles.diagnostics.length > 0) {
+          deps.logger.warn("fusion: agent profile problems", {
+            diagnostics: profiles.diagnostics,
+          });
+        }
+        const profiled = applyTaskProfiles(
+          parsed.tasks,
+          profiles,
+          allowedModels(workerLegRef, mode.roles),
+        );
+        if (!profiled.ok) {
+          return error(profiled.error, { field: "tasks", reason: "unknown-profile" });
+        }
+        parsed.tasks.splice(0, parsed.tasks.length, ...profiled.tasks);
+        profileReports = profiled.applied;
+      }
       const modelProblem = unknownModels(parsed.tasks, workerLegRef, mode.roles);
       if (modelProblem !== undefined) {
         return error(modelProblem, { field: "tasks", reason: "unknown-model" });
@@ -1702,6 +1749,7 @@ export function buildFusionDelegateTool(
             ...(fit.oversized.length === 0
               ? {}
               : { oversizedTasks: fit.oversized }),
+            ...(profileReports.length === 0 ? {} : { profiles: profileReports }),
             ...(merges.length === 0 ? {} : { merges }),
             ...(replan === undefined ||
             (replan.pending.length === 0 && replan.exhausted.length === 0)

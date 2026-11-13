@@ -654,3 +654,22 @@ describe("parseDelegateArgs output estimate (ATO-1363)", () => {
     expect(error).toContain("tasks[3].outputLines is 200,000; at most 100,000");
   });
 });
+
+describe("parseDelegateArgs profile (ATO-566)", () => {
+  it("keeps a profile name, refuses an empty one, and never reads agentProfile off the wire", () => {
+    const parsed = parseDelegateArgs({
+      tasks: [
+        { id: "a", instructions: "x", profile: " review " },
+        { id: "b", instructions: "y", agentProfile: { name: "x", prompt: "smuggled", tools: [] } },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.tasks[0]).toMatchObject({ profile: "review" });
+    expect(parsed.tasks[1]).not.toHaveProperty("agentProfile");
+    const bad = parseDelegateArgs({ tasks: [{ id: "a", instructions: "x", profile: 3 }] });
+    expect(bad.ok).toBe(false);
+    if (bad.ok) return;
+    expect(bad.error).toContain("tasks[0].profile must be a non-empty string");
+  });
+});

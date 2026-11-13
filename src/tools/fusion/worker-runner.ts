@@ -46,7 +46,7 @@ import { getConfig } from "../../config/index.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
   WORKER_TOOL_ROLE,
-  isWorkerVisibleTool,
+  workerToolFilterFor,
   workerRefusalFor,
 } from "./worker-tool-policy.js";
 import type { ToolRole } from "../tool-roles.js";
@@ -1394,7 +1394,7 @@ async function runOneTask(
       providerId: options.providerId,
       maxSteps: stepBudget.value,
       taskMaxDurationMs: timeoutMs + queueBudgetMs,
-      toolFilter: isWorkerVisibleTool,
+      toolFilter: workerToolFilterFor(task.agentProfile?.tools),
       toolRole: WORKER_TOOL_ROLE,
       ...(options.workerReasoning === undefined
         ? {}
@@ -1649,7 +1649,7 @@ async function runOneTask(
           providerId: target.providerId,
           maxSteps: stepBudget.value,
           taskMaxDurationMs: timeoutMs,
-          toolFilter: isWorkerVisibleTool,
+          toolFilter: workerToolFilterFor(task.agentProfile?.tools),
           toolRole: WORKER_TOOL_ROLE,
           signal: AbortSignal.any([
             options.signal,
