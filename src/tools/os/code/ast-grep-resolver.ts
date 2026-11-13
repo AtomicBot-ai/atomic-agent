@@ -9,7 +9,8 @@ import { delimiter, join } from "node:path";
  *
  * Lookup order:
  *   1. `ATOMIC_AGENT_AST_GREP_PATH` — explicit path (tests, odd layouts).
- *   2. `ast-grep` on `PATH` (`.exe` / `.cmd` / `.bat` on Windows).
+ *   2. `ast-grep` on `PATH`. On Windows only `ast-grep.exe` is taken;
+ *      an npm `.cmd` shim is followed to the native `.exe` it wraps.
  *
  * The short alias `sg` is deliberately not tried: on Linux it is also
  * the shadow-utils "switch group" command.
@@ -41,19 +42,46 @@ export function resolveAstGrepPath(
 
   const pathVar = env.PATH ?? env.Path ?? env.path ?? "";
   if (pathVar.length === 0) return null;
-  const names =
-    platform === "win32"
-      ? ["ast-grep.exe", "ast-grep.cmd", "ast-grep.bat", "ast-grep"]
-      : ["ast-grep"];
   const separator = platform === "win32" ? ";" : delimiter;
   for (const segment of pathVar.split(separator)) {
     if (segment.length === 0) continue;
-    for (const name of names) {
-      const full = join(segment, name);
+    if (platform !== "win32") {
+      const full = join(segment, "ast-grep");
       if (fileExists(full)) return full;
+      continue;
+    }
+    // Windows: only a real .exe can be spawned without a shell. npm's
+    // `ast-grep.cmd` (and the extensionless sh script beside it) is a
+    // shim; spawning it with shell:false fails with EINVAL, and running
+    // it through cmd.exe would mean re-quoting every pattern for cmd.
+    // So a shim is followed to the native binary npm installed next to
+    // it, and skipped when there is none.
+    const exe = join(segment, "ast-grep.exe");
+    if (fileExists(exe)) return exe;
+    const hasShim = ["ast-grep.cmd", "ast-grep.bat", "ast-grep"].some((name) =>
+      fileExists(join(segment, name)),
+    );
+    if (!hasShim) continue;
+    for (const candidate of npmNativeCandidates(segment)) {
+      if (fileExists(candidate)) return candidate;
     }
   }
   return null;
+}
+
+/**
+ * Where `npm install -g @ast-grep/cli` puts the native Windows binary,
+ * relative to the folder holding the `ast-grep.cmd` shim: the package's
+ * own copy, then the platform package nested under it or hoisted.
+ */
+export function npmNativeCandidates(shimDir: string): string[] {
+  const modules = join(shimDir, "node_modules", "@ast-grep");
+  const platforms = ["cli-win32-x64-msvc", "cli-win32-arm64-msvc", "cli-win32-ia32-msvc"];
+  return [
+    join(modules, "cli", "ast-grep.exe"),
+    ...platforms.map((p) => join(modules, "cli", "node_modules", "@ast-grep", p, "ast-grep.exe")),
+    ...platforms.map((p) => join(modules, p, "ast-grep.exe")),
+  ];
 }
 
 function defaultFileExists(path: string): boolean {
