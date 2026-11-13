@@ -4179,6 +4179,7 @@
     "src/tui/reducer-helpers.ts",
     "src/tui/render/ansi-color.test.ts",
     "src/tui/render/ansi-color.ts",
+    "src/tui/render/display-width.ts",
     "src/tui/render/linkify-text.test.tsx",
     "src/tui/render/linkify-text.tsx",
     "src/tui/render/markdown-inline.tsx",
@@ -5276,7 +5277,7 @@
       "code": 2532,
       "message": "Object is possibly 'undefined'.",
       "anchor": "batch.calls[0]",
-      "line": 564,
+      "line": 566,
       "count": 1
     },
     {
@@ -5286,14 +5287,6 @@
       "anchor": "prompt",
       "line": 81,
       "count": 7
-    },
-    {
-      "path": "src/llm/provider/openrouter/openrouter-provider.test.ts",
-      "code": 1354,
-      "message": "'readonly' type modifier is only permitted on array and tuple literal types.",
-      "anchor": "readonly",
-      "line": 213,
-      "count": 1
     },
     {
       "path": "src/llm/provider/registry/provider-registry.test.ts",
@@ -5540,7 +5533,7 @@
       "code": 2322,
       "message": "Type '{ key: string; value: string; updatedAt: number; pinned: boolean; keywords: never[]; voteScore: number; }[]' is not assignable to type 'readonly ProfileFact[]'.   Type '{ key: string; value: string; updatedAt: number; pinned: boolean; keywords: never[]; voteScore: number; }' is missing the following properties from type 'ProfileFact': id, validFrom, supersedes, supersededBy",
       "anchor": "profileFacts",
-      "line": 2464,
+      "line": 2465,
       "count": 1
     },
     {
@@ -6172,7 +6165,7 @@
       "code": 2345,
       "message": "Argument of type '{ sessionId: string; workingDir: string; llamaUrl: string; browserChannel: string; browserHeadless: false; approvalLevel: number; maxSteps: number; completionMaxTokens: number; skillCount: number; }' is not assignable to parameter of type 'TuiSessionInfo'.   Property 'localBackendConfigured' is missing in type '{ sessionId: string; workingDir: string; llamaUrl: string; browserChannel: string; browserHeadless: false; approvalLevel: number; maxSteps: number; completionMaxTokens: number; skillCount: number; }' but required in type 'TuiSessionInfo'.",
       "anchor": "{ sessionId: \"s1\", workingDir: \"/tmp\", llamaUrl: \"http://127.0.0.1:8080\", browserChannel: \"chrome\", browserHeadless: false, approvalLevel: 5, maxSteps: 10, completionMaxTokens: 2048, skillCount: 0, }",
-      "line": 153,
+      "line": 167,
       "count": 1
     },
     {
@@ -6441,26 +6434,10 @@
     },
     {
       "path": "src/tui/import/import-orchestrator.test.ts",
-      "code": 2300,
-      "message": "Duplicate identifier 'createInitialImportFormState'.",
-      "anchor": "createInitialImportFormState",
-      "line": 14,
-      "count": 2
-    },
-    {
-      "path": "src/tui/import/import-orchestrator.test.ts",
-      "code": 2300,
-      "message": "Duplicate identifier 'ImportFormState'.",
-      "anchor": "ImportFormState",
-      "line": 12,
-      "count": 3
-    },
-    {
-      "path": "src/tui/import/import-orchestrator.test.ts",
       "code": 2322,
       "message": "Type '{ source: ImportSourceId; sourceDir: string; skills?: boolean | undefined; memory?: boolean | undefined; mcp?: boolean | undefined; sessions: boolean; ... 4 more ...; focus: ImportFormFocus; }' is not assignable to type 'ImportFormState'.   Types of property 'skills' are incompatible.     Type 'boolean | undefined' is not assignable to type 'boolean'.       Type 'undefined' is not assignable to type 'boolean'.",
       "anchor": "return",
-      "line": 237,
+      "line": 231,
       "count": 1
     },
     {
