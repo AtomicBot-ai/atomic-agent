@@ -244,6 +244,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-532: other apps' windows for the composer's window picker, and one of them captured (main/window-snapshot-ipc.ts). */
   snapshotWindows: () => ipcRenderer.invoke("snapshot:windows"),
   snapshotCapture: (id: string) => ipcRenderer.invoke("snapshot:capture", id),
+  /** ATO-1067: model servers on the local network, and a check of one address (main/lan-discovery-ipc.ts). View-only. */
+  lanFind: () => ipcRenderer.invoke("lan:find"),
+  lanCheck: (url: string) => ipcRenderer.invoke("lan:check", url),
   /** A dropped File's path on disk ("" for one that has none); the sandboxed window cannot read it itself. */
   pathForFile: (file: File) => {
     try {

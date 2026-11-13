@@ -21340,6 +21340,7 @@ function wizardHTML() {
       ? '<label class="tk-lbl" for="wiz-url">Base URL</label>'
         + '<span class="tk-inpwrap' + (urlBad ? ' is-error' : '') + '">' + ic('globe')
         + '<input id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
+        + (typeof lanfHTML === 'function' ? lanfHTML('wiz-url') : '')   // ATO-1067: find it on the network, check it
       : '')
     + '<label class="tk-lbl" for="wiz-key">API key' + (k.local ? ' (optional)' : '') + '</label>'
     + '<span class="tk-inpwrap' + (urlBad ? '' : tone) + '">' + ic('key')
@@ -27718,6 +27719,7 @@ function llmModalHTML() {
       + '<input id="llm-url" class="tk-inp mono' + (LLMP.externalInvalid ? ' is-error' : '') + '" value="' + esc(LLMP.externalDraft) + '" autocomplete="off" spellcheck="false" placeholder="e.g. http://127.0.0.1:9931">'
       + (LLMP.externalInvalid ? '<span class="tk-help tk-help--err">invalid URL</span>' : '')
       + '<span class="tk-help">' + esc('The address of your own llama.cpp server. It is checked first, and chats move to it only when it answers. ' + OB_COPY.urlChatPortNote) + '</span></label>'
+      + (typeof lanfHTML === 'function' ? lanfHTML('llm-url') : '')   // ATO-1067: find it on the network, check it
       + '<div class="acts"><button class="btn btn-g sm" data-act="llm:external:cancel">Cancel</button>'
       + '<button class="btn btn-p sm" data-act="llm:external:save">Save</button></div></div>';
   }

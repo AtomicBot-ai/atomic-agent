@@ -1,0 +1,18 @@
+/* ============================================================
+   ATO-1067 — "Find on my network" and "Check connection" under a server
+   address field (renderer/lan-find.js). Colours come from tokens only.
+   ============================================================ */
+
+.lanf{display:flex;flex-direction:column;gap:6px;margin:8px 0 4px}
+.lanf-acts{display:flex;flex-wrap:wrap;gap:6px}
+.lanf-line{margin:0;font:400 var(--fs-label)/16px var(--font-ui);color:var(--ink-2)}
+.lanf-line.is-ok{color:var(--success)}
+.lanf-line.is-warn{color:var(--warn)}
+.lanf-line.is-bad{color:var(--critical)}
+.lanf-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;max-height:200px;overflow-y:auto}
+.lanf-item{display:flex;flex-direction:column;gap:1px;width:100%;padding:6px 8px;border-radius:var(--r-row);
+  background:transparent;color:var(--ink);text-align:left;transition:background var(--t-state) var(--ease)}
+button.lanf-item:hover{background:var(--hover)}
+.lanf-item.is-off{opacity:.7}
+.lanf-t{font:500 var(--fs-label)/16px var(--font-ui)}
+.lanf-s{font-size:var(--fs-micro);line-height:15px;color:var(--ink-2);overflow-wrap:anywhere}
