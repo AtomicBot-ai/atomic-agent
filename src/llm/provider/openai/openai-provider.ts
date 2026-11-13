@@ -56,6 +56,7 @@ import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
 import { parseRateLimitHeaders, type RateLimitWindow } from "../rate-limits.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { openAiChatPathPrefix } from "./openai-chat-path.js";
+import type { ApiKeySource } from "./api-key-command.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
 import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import { isLocalServerUrl } from "./local-server-url.js";
@@ -85,6 +86,12 @@ export interface OpenAiProviderOptions {
    * `Authorization: Bearer`. See `openai-auth-headers.ts`.
    */
   apiKeyHeader?: string;
+  /**
+   * The key as a command's output (`apiKeyCommand`), re-read per request
+   * and refreshed on a 401. Replaces `apiKey` when set. See
+   * `api-key-command.ts`.
+   */
+  apiKeySource?: ApiKeySource;
   /**
    * Whether the model this link serves can read images, as resolved per
    * model by the factory (`model-vision.ts`), with `visionSource` saying
@@ -258,6 +265,7 @@ export class OpenAiProvider implements LlmProvider {
       apiKey: options.apiKey,
       extraHeaders: options.headers ?? {},
       ...(options.apiKeyHeader ? { apiKeyHeader: options.apiKeyHeader } : {}),
+      ...(options.apiKeySource ? { apiKeySource: options.apiKeySource } : {}),
       requestTimeoutMs:
         options.requestTimeoutMs ?? OPENAI_DEFAULT_REQUEST_TIMEOUT_MS,
       fetchImpl: options.fetchImpl ?? fetch,

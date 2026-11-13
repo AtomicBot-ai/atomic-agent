@@ -26,6 +26,7 @@ import * as composio from "../../composio/index.js";
 import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 import { ModelProfileManager } from "../../llm/model-profile-manager.js";
+import { createApiKeyCommandSource, resetCommandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../../llm/model-profile.js";
 import { buildGrammar } from "../../llm/grammar/build-grammar.js";
 
@@ -370,5 +371,20 @@ describe("runtimeKnownSecrets (ATO-1077)", () => {
       { label: "mcp-gh-GITHUB_TOKEN", value: "Gg1Hh2Ii3Jj4" },
       { label: "mcp-remote-header", value: "Rr1Ss2Tt3Uu4" },
     ]);
+  });
+
+  it("masks the token a provider key command printed (Vertex AI, ATO-468)", async () => {
+    const source = createApiKeyCommandSource(["gcloud", "auth", "print-access-token"], {
+      label: "google-vertex",
+      run: async () => "ya29.Kk1Ll2Mm3Nn4\n",
+    });
+    await source.get();
+    try {
+      expect(runtimeKnownSecrets({}, {})).toEqual([
+        { label: "google-vertex-key-command", value: "ya29.Kk1Ll2Mm3Nn4" },
+      ]);
+    } finally {
+      resetCommandIssuedSecrets();
+    }
   });
 });

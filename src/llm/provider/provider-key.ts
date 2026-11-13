@@ -17,9 +17,9 @@ import { presetForEntryId } from "./presets/provider-presets.js";
  * did not need. They all read this now.
  *
  * The rule, in order:
- *  1. `present`: a key resolves, or a header named like a credential is
- *     set by hand (`Authorization`, `x-api-key`, the entry's own
- *     `apiKeyHeader`).
+ *  1. `present`: a key resolves, the entry has an `apiKeyCommand`, or a
+ *     header named like a credential is set by hand (`Authorization`,
+ *     `x-api-key`, the entry's own `apiKeyHeader`).
  *  2. `not-needed`: the entry signs in through a vendor CLI, or it is a
  *     local server: made from a `local` preset (LM Studio, Ollama, even on
  *     a LAN address) or pointed at this machine.
@@ -60,6 +60,7 @@ export interface ProviderKeySubject {
   readonly apiKey?: string;
   readonly apiKeyEnvVar?: string;
   readonly apiKeyHeader?: string;
+  readonly apiKeyCommand?: readonly string[];
   readonly headers?: Readonly<Record<string, string>>;
   readonly subscriptionCli?: UserSubscriptionCliOptions;
 }
@@ -139,6 +140,11 @@ function hasCredential(
             : {}),
         });
   if (typeof key === "string" && key.trim().length > 0) return true;
+  // A key command (Vertex AI's `gcloud auth print-access-token`) prints
+  // the key per request; whether it works shows on the first call.
+  if (Array.isArray(entry.apiKeyCommand) && entry.apiKeyCommand.length > 0) {
+    return true;
+  }
   const named = entry.apiKeyHeader?.trim().toLowerCase();
   // Read defensively: this runs on every fallback pick, and a hand-edited
   // config with a non-string header value must not stop every turn.

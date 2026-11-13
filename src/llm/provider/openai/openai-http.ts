@@ -1,5 +1,6 @@
 import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
+import type { ApiKeySource } from "./api-key-command.js";
 import { readErrnoCode } from "../../errno-code.js";
 import {
   groqRequestTooLargeSentence,
@@ -63,6 +64,13 @@ export type OpenAiHttpDeps = {
    * (ATO-569). Must not throw; a throw is swallowed.
    */
   onResponseHeaders?: (headers: Headers) => void;
+  /**
+   * Where the key comes from when it is a short-lived token printed by a
+   * command (`apiKeyCommand`, Vertex AI's `gcloud auth print-access-token`).
+   * When set it replaces `apiKey` on every request, and a 401 re-runs the
+   * command once and resends. See `api-key-command.ts`.
+   */
+  apiKeySource?: ApiKeySource;
 };
 
 /**
@@ -836,6 +844,56 @@ export async function openAiFetch(
   stream: boolean,
   method: "GET" | "POST" = "POST",
 ): Promise<Response> {
+  const source = deps.apiKeySource;
+  if (!source) return openAiFetchOnce(deps, path, body, request, stream, method);
+  const first = await openAiFetchOnce(
+    await withCommandKey(deps, source, path),
+    path, body, request, stream, method,
+  );
+  if (first.status !== 401) return first;
+  // The token printed earlier has expired or been revoked: run the
+  // command again and resend once. A second 401 is the real answer.
+  await first.body?.cancel().catch(() => undefined);
+  source.invalidate();
+  return openAiFetchOnce(
+    await withCommandKey(deps, source, path),
+    path, body, request, stream, method,
+  );
+}
+
+/**
+ * `deps` with the command's current output as `apiKey`. A command that
+ * cannot produce a key is a 401-class failure (deterministic, never
+ * retried, a fallback chain moves on); its message names the command,
+ * never its output.
+ */
+async function withCommandKey(
+  deps: OpenAiHttpDeps,
+  source: ApiKeySource,
+  path: string,
+): Promise<OpenAiHttpDeps> {
+  try {
+    return { ...deps, apiKey: await source.get() };
+  } catch (err) {
+    throw new OpenAiHttpError(
+      err instanceof Error ? err.message : "apiKeyCommand failed",
+      401,
+      `${deps.baseUrl}${path}`,
+      false,
+      null,
+      deps.label,
+    );
+  }
+}
+
+async function openAiFetchOnce(
+  deps: OpenAiHttpDeps,
+  path: string,
+  body: Record<string, unknown> | null,
+  request: { signal?: AbortSignal; requestTimeoutMs?: number },
+  stream: boolean,
+  method: "GET" | "POST",
+): Promise<Response> {
   // Built before the try below, which would wrap the throw as a
   // retryable "network error" and replace its message with a
   // connectivity hint. Classified as a 401 instead: a key that cannot
@@ -967,6 +1025,7 @@ async function httpErrorFromResponse(
  */
 function sentCredential(deps: OpenAiHttpDeps): boolean {
   if ((deps.apiKey ?? "").trim().length > 0) return true;
+  if (deps.apiKeySource) return true;
   const named = deps.apiKeyHeader?.trim().toLowerCase();
   return Object.entries(deps.extraHeaders ?? {}).some(([name, value]) => {
     const lower = name.trim().toLowerCase();

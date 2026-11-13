@@ -142,6 +142,8 @@ export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
     ? findProviderPreset(wizard.presetId)
     : undefined;
   if (preset && (preset.local || preset.listsModelsWithoutKey)) return true;
+  // The key comes from the preset's command (Vertex AI's gcloud token).
+  if (preset?.apiKeyCommand) return true;
   // A hand-added compat endpoint pointing at a loopback address is a
   // local server too, even without a matching preset. A raw
   // `llama-server` on `http://127.0.0.1:9931` needs no key, so an empty
