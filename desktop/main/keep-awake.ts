@@ -9,8 +9,12 @@
  * screen may still turn off):
  *
  *   - Off (default): nothing changes.
- *   - While a Task Runs: held while the agent reports a running task.
- *   - Always: held while the app runs.
+ *   - While Working: held only while a task or a turn runs (a chat in this
+ *     window, or one the agent runs on its own: a scheduled task, Telegram).
+ *     An idle app never blocks sleep.
+ *
+ * There is no "Always" mode (decision ATO-592); a keep-awake.json left
+ * with `"always"` by an earlier build reads as Off.
  *
  * Closing a MacBook's lid still puts it to sleep; no app can stop that.
  * The choice lives in userData (keep-awake.json): it is about this
@@ -22,19 +26,18 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export type KeepAwakeMode = "off" | "while-working" | "always";
+export type KeepAwakeMode = "off" | "while-working";
 
-export const KEEP_AWAKE_MODES: readonly KeepAwakeMode[] = ["off", "while-working", "always"];
+export const KEEP_AWAKE_MODES: readonly KeepAwakeMode[] = ["off", "while-working"];
 
 /** The menu's words for each mode, and the note under them. */
 export const KEEP_AWAKE_LABELS: Readonly<Record<KeepAwakeMode, string>> = {
   off: "Off",
-  "while-working": "While a Task Runs",
-  always: "Always",
+  "while-working": "While Working",
 };
 export const KEEP_AWAKE_LID_NOTE = "Closing a MacBook lid still puts it to sleep";
 
-/** How often main asks the agent whether a task is running, in While a Task Runs. */
+/** How often main asks the agent whether a task or turn is running, in While Working. */
 export const KEEP_AWAKE_POLL_MS = 30_000;
 
 export function readKeepAwakeMode(userData: string): KeepAwakeMode {
@@ -55,15 +58,24 @@ export function writeKeepAwakeMode(userData: string, mode: KeepAwakeMode): void 
 }
 
 /**
- * Whether the blocker should be held. `runningTasks` is null when the
- * agent could not say (not started yet, an older agent): no hold then,
- * except in Always. A remote agent's tasks run on its own computer, so
- * they never keep this one awake.
+ * How much work is running now: this window's streaming turns, the
+ * agent's running tasks and its busy turns (`/health` busyTurns, which
+ * also counts Telegram and task turns). An unknown count (the agent did
+ * not answer, an older agent) counts as none.
  */
-export function blockerWanted(mode: KeepAwakeMode, runningTasks: number | null, remote = false): boolean {
-  if (mode === "always") return true;
-  if (mode === "off" || remote) return false;
-  return (runningTasks ?? 0) > 0;
+export function workRunning(liveTurns: number, runningTasks: number | null, busyTurns: number | null): number {
+  return liveTurns + (runningTasks ?? 0) + (busyTurns ?? 0);
+}
+
+/**
+ * Whether the blocker should be held: only in While Working, and only
+ * while some work runs. `work` is null when nothing could be counted:
+ * no hold then. A remote agent's work runs on its own computer, so it
+ * never keeps this one awake.
+ */
+export function blockerWanted(mode: KeepAwakeMode, work: number | null, remote = false): boolean {
+  if (mode !== "while-working" || remote) return false;
+  return (work ?? 0) > 0;
 }
 
 /** The slice of Electron's `powerSaveBlocker` this needs. */

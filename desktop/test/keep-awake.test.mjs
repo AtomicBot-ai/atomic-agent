@@ -17,18 +17,38 @@ test('off by default, remembered once chosen, junk reads as off', () => {
   assert.equal(K.readKeepAwakeMode(dir), 'while-working');
   writeFileSync(join(dir, 'keep-awake.json'), '{"mode":"forever"}');
   assert.equal(K.readKeepAwakeMode(dir), 'off');
+  // The removed Always mode, left by an earlier build, reads as Off.
+  writeFileSync(join(dir, 'keep-awake.json'), '{"mode":"always"}');
+  assert.equal(K.readKeepAwakeMode(dir), 'off');
   writeFileSync(join(dir, 'keep-awake.json'), 'not json');
   assert.equal(K.readKeepAwakeMode(dir), 'off');
 });
 
 test('the blocker is wanted only as the mode says', () => {
   assert.equal(K.blockerWanted('off', 3), false);
-  assert.equal(K.blockerWanted('always', null), true);
+  assert.equal(K.blockerWanted('off', null), false);
+  // No Always: an unknown mode never holds, even with nothing running.
+  assert.equal(K.blockerWanted('always', null), false);
+  assert.equal(K.blockerWanted('always', 2), false);
   assert.equal(K.blockerWanted('while-working', 0), false);
   assert.equal(K.blockerWanted('while-working', null), false);
   assert.equal(K.blockerWanted('while-working', 1), true);
   // A remote agent's tasks run on its own computer.
   assert.equal(K.blockerWanted('while-working', 1, true), false);
+});
+
+test('While Working counts window turns, running tasks and the agent\'s busy turns', () => {
+  assert.equal(K.workRunning(0, 0, 0), 0);
+  assert.equal(K.workRunning(0, null, null), 0);
+  assert.equal(K.workRunning(1, null, null), 1);   // a chat streaming in this window
+  assert.equal(K.workRunning(0, 1, null), 1);      // a scheduled task
+  assert.equal(K.workRunning(0, null, 1), 1);      // a Telegram turn the window never sees
+  // Blocker only during a run: on while something runs, off after.
+  assert.equal(K.blockerWanted('while-working', K.workRunning(1, 0, 1)), true);
+  assert.equal(K.blockerWanted('while-working', K.workRunning(0, 0, 0)), false);
+  // Default (no keep-awake.json): off, no blocker even mid-turn.
+  const dir = mkdtempSync(join(tmpdir(), 'keep-awake-'));
+  assert.equal(K.blockerWanted(K.readKeepAwakeMode(dir), K.workRunning(2, 1, 2)), false);
 });
 
 test('one prevent-app-suspension blocker at most, stopped when no longer wanted', () => {
@@ -52,19 +72,19 @@ test('one prevent-app-suspension blocker at most, stopped when no longer wanted'
 });
 
 for (const platform of ['darwin', 'win32', 'linux']) {
-  test(`Agent menu has Keep Computer Awake with three choices and the lid note (${platform})`, () => {
+  test(`Agent menu has Keep Computer Awake with two choices and the lid note (${platform})`, () => {
     const sent = [];
     const agent = menuTemplate((c) => sent.push(c), platform, { keepRunning: false, startAtLogin: false, keepAwake: 'while-working' })
       .find((m) => m.label === 'Agent');
     const awake = agent.submenu.find((i) => i.label === 'Keep Computer Awake');
     const radios = awake.submenu.filter((i) => i.type === 'radio');
-    assert.deepEqual(radios.map((i) => i.label), ['Off', 'While a Task Runs', 'Always']);
-    assert.deepEqual(radios.map((i) => i.checked), [false, true, false]);
+    assert.deepEqual(radios.map((i) => i.label), ['Off', 'While Working']);
+    assert.deepEqual(radios.map((i) => i.checked), [false, true]);
     const note = awake.submenu.find((i) => i.label === K.KEEP_AWAKE_LID_NOTE);
     assert.equal(note.enabled, false);
     assert.match(note.label, /MacBook lid still puts it to sleep/);
     for (const r of radios) r.click();
-    assert.deepEqual(sent, ['awake:off', 'awake:while-working', 'awake:always']);
+    assert.deepEqual(sent, ['awake:off', 'awake:while-working']);
   });
 }
 

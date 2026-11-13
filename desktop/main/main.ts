@@ -117,7 +117,7 @@ import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-
 import { localPickTakenLive, parseRecommendJson, upgradeStillWanted, upgradeVerdict, type UpgradeModel } from "./upgrade-model.js";
 import { cleanRemoteUrl, readRemoteAgent, writeRemoteAgent, type KeyBox } from "./remote-agent.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
-import { blockerWanted, KEEP_AWAKE_MODES, KEEP_AWAKE_POLL_MS, KeepAwakeBlocker, readKeepAwakeMode, writeKeepAwakeMode, type KeepAwakeMode } from "./keep-awake.js";
+import { blockerWanted, KEEP_AWAKE_MODES, KEEP_AWAKE_POLL_MS, KeepAwakeBlocker, readKeepAwakeMode, workRunning, writeKeepAwakeMode, type KeepAwakeMode } from "./keep-awake.js";
 import {
   activateProvider,
   agentStarting,
@@ -1297,6 +1297,7 @@ function wireIpc(client: AgentClient): void {
     if (ev.kind === "done" || ev.kind === "aborted" || (ev.kind === "error" && !p)) {
       liveTurns.delete(rec.turnId);
       appUpdater()?.turnsChanged();   // ATO-229: a Restart that waits for this turn
+      void syncKeepAwake();   // ATO-592: and drops it after the last one
     }
   });
   liveTurnCount = () => liveTurns.size;
@@ -1562,6 +1563,7 @@ function wireIpc(client: AgentClient): void {
         turnId, sessionId: known, text: clean[clean.length - 1]!.content, startedAt: Date.now(), firstTurn: !known,
       });
       appUpdater()?.turnsChanged();
+      void syncKeepAwake();   // ATO-592: While Working holds from the turn's start
     }
     // ATO-731: a new chat opens in the folder the window shows; an existing one keeps its own.
     // A remote agent opens new chats in its own folder: this computer's path means nothing there.
@@ -10757,10 +10759,19 @@ function rebuildMenu(): void {
 /* ---- ATO-592: Keep Computer Awake (keep-awake.ts) ---- */
 const keepAwakeBlocker = new KeepAwakeBlocker(powerSaveBlocker);
 
-/** Hold or drop the blocker for the mode now and, in While a Task Runs, the agent's running tasks. */
+/** Hold or drop the blocker for the mode now and, in While Working, the turns and tasks running. */
 async function syncKeepAwake(): Promise<void> {
   const mode = readKeepAwakeMode(app.getPath("userData"));
-  const running = mode === "while-working" && agent && !agent.isRemote ? await agent.runningTaskCount() : null;
+  const client = agent;
+  let running: number | null = null;
+  if (mode === "while-working" && client && !client.isRemote) {
+    const [tasks, health] = await Promise.all([
+      client.runningTaskCount(),
+      client.turnsHealth().catch(() => null) as Promise<{ busyTurns?: unknown } | null>,
+    ]);
+    const busy = typeof health?.busyTurns === "number" && Number.isFinite(health.busyTurns) ? health.busyTurns : null;
+    running = workRunning(liveTurnCount(), tasks, busy);
+  }
   // Read again: the mode may have changed while the agent answered.
   const now = readKeepAwakeMode(app.getPath("userData"));
   keepAwakeBlocker.sync(blockerWanted(now, now === mode ? running : null, agent?.isRemote ?? false));
