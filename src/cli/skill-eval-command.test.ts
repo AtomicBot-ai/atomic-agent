@@ -5,12 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { memoryReadOnlyToolFilter } from "../agent/tool-resource-class.js";
 import { SkillRegistry } from "../skills/skill-registry.js";
-import type { SkillEvalTask } from "../skills/eval/index.js";
+import type { AtomicAgentConfig } from "../config/index.js";
+import type { SkillEvalJudge, SkillEvalJudgeConfig, SkillEvalTask } from "../skills/eval/index.js";
 import { buildSummary, SKILL_EVAL_RESULT_SCHEMA, type SkillEvalResult, type SkillEvalRunRecord } from "../skills/eval/index.js";
 import {
+  buildSkillEvalJudge,
   createRuntimeSkillEvalDriver,
   formatSkillEvalSummary,
   parseSkillEvalArgs,
+  resolveSkillEvalJudge,
   skillEvalCommand,
   type SkillEvalRuntime,
 } from "./skill-eval-command.js";
@@ -78,17 +81,21 @@ describe("skillEvalCommand", () => {
 
   it("exits 2 before booting when judge checks have no usable judge", async () => {
     const dir = mkdtempSync(join(tmpdir(), "skill-eval-cli-"));
-    const saved = { url: process.env.ATOMIC_AGENT_JUDGE_URL, or: process.env.OPENROUTER_API_KEY, key: process.env.ATOMIC_AGENT_JUDGE_API_KEY };
-    delete process.env.ATOMIC_AGENT_JUDGE_URL;
-    delete process.env.OPENROUTER_API_KEY;
-    delete process.env.ATOMIC_AGENT_JUDGE_API_KEY;
+    const names = ["ATOMIC_AGENT_JUDGE_URL", "ATOMIC_AGENT_JUDGE_MODEL", "OPENROUTER_API_KEY", "ATOMIC_AGENT_JUDGE_API_KEY"] as const;
+    const saved = names.map((name) => [name, process.env[name]] as const);
+    for (const name of names) delete process.env[name];
     try {
       const file = join(dir, "tasks.yaml");
       writeFileSync(file, "tasks:\n  - { id: a, prompt: x, check: { type: judge, rubric: r } }\n");
-      expect(await skillEvalCommand(["pdf", "--tasks", file, "--judge-url", "https://judge.example/v1"])).toBe(2);
-      expect(stderr).toContain("has judge checks, but the judge at https://judge.example/v1 needs an API key");
+      // No judge env, no skills.eval.judgeProvider, the local model active
+      // (the test state dir has no config): there is no judge to use.
+      expect(await skillEvalCommand(["pdf", "--tasks", file])).toBe(2);
+      expect(stderr).toContain("has judge checks, but there is no judge: the active model is local");
+      stderr = "";
+      expect(await skillEvalCommand(["pdf", "--tasks", file, "--judge-url", "https://judge.example/v1", "--judge-model", "m"])).toBe(2);
+      expect(stderr).toContain("the judge at https://judge.example/v1 needs an API key");
     } finally {
-      for (const [name, value] of [["ATOMIC_AGENT_JUDGE_URL", saved.url], ["OPENROUTER_API_KEY", saved.or], ["ATOMIC_AGENT_JUDGE_API_KEY", saved.key]] as const) {
+      for (const [name, value] of saved) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
       }
@@ -225,6 +232,43 @@ describe("createRuntimeSkillEvalDriver", () => {
   });
 });
 
+describe("judge from the person's providers", () => {
+  const config = {
+    llm: {
+      activeTextProvider: "local-llama",
+      activeEmbeddingProvider: "local-llama-embed",
+      providers: [
+        { id: "local-llama", kind: "llama-server" },
+        { id: "cloud-b", kind: "openrouter", model: "b-model" },
+      ],
+      toolTransport: "auto",
+    },
+    skills: { eval: { judgeProvider: "cloud-b" } },
+  } as unknown as AtomicAgentConfig;
+
+  it("skills.eval.judgeProvider picks that provider, and the judge calls it", async () => {
+    const picked = resolveSkillEvalJudge({ judgeUrl: null, judgeModel: null }, config, {});
+    expect(picked).toMatchObject({ kind: "provider", providerId: "cloud-b", source: "judgeProvider" });
+    const complete = vi.fn(async () => ({ content: '{"score":5,"reason":"ok"}', usage: { promptTokens: 9, completionTokens: 1, totalTokens: 10, costUsd: 0.01 }, modelId: "b-model" }));
+    const getProvider = vi.fn(() => ({ id: "cloud-b", chatModelId: "b-model", complete }));
+    const judge = buildSkillEvalJudge(picked as SkillEvalJudgeConfig, { providerRegistry: { getProvider } } as never, config);
+    expect("error" in judge).toBe(false);
+    const verdict = await (judge as SkillEvalJudge).score({ prompt: "p", reply: "r", rubric: "q", reference: null });
+    expect(getProvider).toHaveBeenCalledWith("cloud-b");
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(verdict.score).toBe(5);
+  });
+
+  it("a judge provider the runtime did not load is an error", () => {
+    const built = buildSkillEvalJudge(
+      { kind: "provider", providerId: "cloud-b", model: null, source: "judgeProvider", timeoutMs: 1000 },
+      { providerRegistry: { getProvider: () => undefined } } as never,
+      config,
+    );
+    expect(built).toEqual({ error: expect.stringContaining('"cloud-b" did not load') });
+  });
+});
+
 describe("formatSkillEvalSummary", () => {
   function rec(variant: "with" | "without", passed: boolean, wallMs: number): SkillEvalRunRecord {
     return {
@@ -239,7 +283,7 @@ describe("formatSkillEvalSummary", () => {
       schema: SKILL_EVAL_RESULT_SCHEMA, runId: "r", complete: true,
       skill: { name: "demo", version: "1", source: "global" },
       tasks: { file: "/t.yaml", sha256: "", count: 1 },
-      startedAt: "", finishedAt: "", agentVersion: "0", model: { provider: "local-llama", model: "m" }, judge: null,
+      startedAt: "", finishedAt: "", agentVersion: "0", model: { provider: "local-llama", model: "m" }, judge: null, judgeUsage: null,
       options: { repeat: 1, variants: ["with", "without"], maxSteps: null, approvalLevel: 2 },
       runs, summary: buildSummary(runs, ["t"]),
     };
@@ -248,5 +292,12 @@ describe("formatSkillEvalSummary", () => {
     expect(text).toMatch(/^with\s+1\/1 100%\s+2\.0s\s+100\s+\$0\.0000$/m);
     expect(text).toMatch(/^without\s+0\/1 0%\s+4\.0s/m);
     expect(text).toContain("difference: accuracy +100 pts, time -2s, tokens 0, cost +$0.0000");
+    expect(text).not.toContain("judge:");
+    const judged = formatSkillEvalSummary({
+      ...result,
+      judge: { provider: "cloud-b", model: "b-model", url: null },
+      judgeUsage: { calls: 2, promptTokens: 600, completionTokens: 40, totalTokens: 640, costUsd: 0.0031 },
+    });
+    expect(judged).toContain("judge: 640 tokens, $0.0031 (2 calls, cloud-b b-model)");
   });
 });

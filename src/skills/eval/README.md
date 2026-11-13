@@ -61,14 +61,15 @@ A run that timed out or crashed fails without running its checks.
 
 ### The judge
 
-The judge is an OpenAI-compatible endpoint of its own, not the agent's active model, so the model under test never grades itself and grading never touches the person's memory. It uses the same settings, prompt and 1..5 scale as the eval harness judge (`eval/harness/judge-client.ts`):
+The judge is always one of the person's own models; there is no built-in paid default. The first that applies:
 
-- `--judge-url <url>` or `ATOMIC_AGENT_JUDGE_URL` (default `https://openrouter.ai/api/v1`; a local llama-server such as `http://127.0.0.1:8080` works and needs no key),
-- `--judge-model <id>` or `ATOMIC_AGENT_JUDGE_MODEL` (default `openai/gpt-4o-mini`),
-- the key from `OPENROUTER_API_KEY` or `ATOMIC_AGENT_JUDGE_API_KEY` (the agent's `.env` is read first),
-- `ATOMIC_AGENT_JUDGE_TIMEOUT_MS` (default 60000).
+1. `--judge-url <url>` or `ATOMIC_AGENT_JUDGE_URL`, with `--judge-model <id>` or `ATOMIC_AGENT_JUDGE_MODEL` (required with a URL): an OpenAI-compatible endpoint, the same knobs as the eval harness judge (`eval/harness/judge-client.ts`). Key from `ATOMIC_AGENT_JUDGE_API_KEY` or `OPENROUTER_API_KEY` (the agent's `.env` is read first); a localhost URL needs none.
+2. `skills.eval.judgeProvider` in config.json: an id from `llm.providers`. The judge calls that provider with its own configured model.
+3. The active text provider, when it is a cloud provider. Then the model under test also grades; set `skills.eval.judgeProvider` to another provider for an independent judge.
 
-A tasks file with `judge` checks and no usable judge (a hosted URL without a key) stops before anything runs, exit 2. Judge calls are eval overhead: their tokens and cost are not counted in the runs.
+A local llama-server entry is never the judge (it is the model under test). A tasks file with `judge` checks and no usable judge (a local model active and nothing set, an unknown provider id, a hosted URL without a key) stops before anything runs, exit 2. `ATOMIC_AGENT_JUDGE_TIMEOUT_MS` (default 60000) bounds each call. The prompt and the 1..5 scale match the harness judge.
+
+Judge calls are eval overhead: their tokens and cost are not counted in the runs or the summary. They are reported apart, as `judgeUsage` in the result and a `judge: N tokens, $X` line under the table. The cost is the service's bill when it reports one, else the model's price from `userModels` or the bundled catalog; null when neither prices it.
 
 ## How a run works
 
@@ -95,7 +96,8 @@ Options: `--repeat <n>` runs everything n times; `--only with|without` runs one 
   "startedAt": "…", "finishedAt": "…",
   "agentVersion": "0.7.1",
   "model": { "provider": "local-llama", "model": "qwen3.5-9b" },
-  "judge": { "model": "openai/gpt-4o-mini", "url": "https://openrouter.ai/api/v1" },   // null when no task has a judge check
+  "judge": { "provider": "openrouter", "model": "qwen/qwen3-235b", "url": null },   // null when no task has a judge check; url set for an ATOMIC_AGENT_JUDGE_URL judge
+  "judgeUsage": { "calls": 8, "promptTokens": 4100, "completionTokens": 260, "totalTokens": 4360, "costUsd": 0.0012 },   // the judge's own calls; null without a judge
   "options": { "repeat": 1, "variants": ["with", "without"], "maxSteps": null, "approvalLevel": 2 },
   "runs": [
     {

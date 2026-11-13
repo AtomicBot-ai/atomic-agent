@@ -186,18 +186,24 @@ describe("runSkillEval", () => {
       join(dir, "tasks.yaml"),
     );
     const prompts: string[] = [];
+    // A judge already used by an earlier eval (`--all`): only this eval's calls count.
+    let calls = 3;
     const judge = {
       model: "judge-model",
-      baseUrl: "http://127.0.0.1:1",
+      baseUrl: null,
+      providerId: "cloud-b",
+      usage: () => ({ calls, promptTokens: calls * 100, completionTokens: calls * 10, totalTokens: calls * 110, costUsd: calls * 0.001 }),
       async score(input: { prompt: string; reply: string }) {
         prompts.push(input.prompt);
+        calls += 1;
         return { score: input.reply === "good" ? 5 : 2, reason: "", parseFallback: false };
       },
     };
     const driver = fakeDriver((variant) => ({ reply: variant === "with" ? "good" : "meh" }));
     const result = await runSkillEval({ ...baseOptions, repeat: 2, taskSet: judged, driver, workRoot, judge });
     expect(prompts).toEqual(["explain", "explain", "explain", "explain"]);
-    expect(result.judge).toEqual({ model: "judge-model", url: "http://127.0.0.1:1" });
+    expect(result.judge).toEqual({ provider: "cloud-b", model: "judge-model", url: null });
+    expect(result.judgeUsage).toEqual({ calls: 4, promptTokens: 400, completionTokens: 40, totalTokens: 440, costUsd: expect.closeTo(0.004, 10) });
     expect(result.summary.with).toMatchObject({ passed: 2, judgeScoreMean: 5 });
     expect(result.summary.without).toMatchObject({ passed: 0, judgeScoreMean: 2 });
     expect(result.summary.delta!.judgeScoreMean).toBe(3);
@@ -206,6 +212,7 @@ describe("runSkillEval", () => {
   it("records no judge and no judge score when no task has a judge check", async () => {
     const result = await runSkillEval({ ...baseOptions, taskSet, driver: fakeDriver(() => ({})), workRoot });
     expect(result.judge).toBeNull();
+    expect(result.judgeUsage).toBeNull();
     expect(result.summary.with!.judgeScoreMean).toBeNull();
     expect(result.summary.delta!.judgeScoreMean).toBeNull();
   });

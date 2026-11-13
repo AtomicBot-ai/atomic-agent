@@ -10,7 +10,7 @@ import {
   type SkillEvalRunRecord,
   type SkillEvalVariant,
 } from "./eval-result.js";
-import type { SkillEvalJudge } from "./judge.js";
+import type { SkillEvalJudge, SkillEvalJudgeUsage } from "./judge.js";
 import { makeRunId } from "./run-store.js";
 import type { SkillEvalTask, SkillEvalTaskSet } from "./task-set.js";
 
@@ -87,6 +87,8 @@ export async function runSkillEval(options: RunSkillEvalOptions): Promise<SkillE
   const started = now();
   const plan = planRuns(options.taskSet.tasks, options.repeat, options.variants);
   const runs: SkillEvalRunRecord[] = [];
+  // One judge can grade several evals (`--all`): count only this one's calls.
+  const judgeBefore = options.judge?.usage() ?? null;
   let current: SkillEvalVariant | null = null;
   let complete = true;
 
@@ -146,7 +148,8 @@ export async function runSkillEval(options: RunSkillEvalOptions): Promise<SkillE
     finishedAt: now().toISOString(),
     agentVersion: options.agentVersion,
     model: options.model,
-    judge: options.judge ? { model: options.judge.model, url: options.judge.baseUrl } : null,
+    judge: options.judge ? { provider: options.judge.providerId, model: options.judge.model, url: options.judge.baseUrl } : null,
+    judgeUsage: options.judge && judgeBefore ? judgeUsageSince(judgeBefore, options.judge.usage()) : null,
     options: {
       repeat: options.repeat,
       variants: [...options.variants],
@@ -227,4 +230,16 @@ async function prepareWorkRoot(workRoot: string, fixturesDir: string | null): Pr
     await rm(join(workRoot, name), { recursive: true, force: true });
   }
   if (fixturesDir !== null) await cp(fixturesDir, workRoot, { recursive: true });
+}
+
+/** The judge's usage between two of its running totals. */
+export function judgeUsageSince(before: SkillEvalJudgeUsage, after: SkillEvalJudgeUsage): SkillEvalJudgeUsage {
+  const diff = (a: number | null, b: number | null): number | null => (b === null ? null : b - (a ?? 0));
+  return {
+    calls: after.calls - before.calls,
+    promptTokens: diff(before.promptTokens, after.promptTokens),
+    completionTokens: diff(before.completionTokens, after.completionTokens),
+    totalTokens: diff(before.totalTokens, after.totalTokens),
+    costUsd: diff(before.costUsd, after.costUsd),
+  };
 }

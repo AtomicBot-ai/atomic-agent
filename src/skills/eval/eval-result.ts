@@ -1,3 +1,4 @@
+import type { SkillEvalJudgeUsage } from "./judge.js";
 import type { SkillEvalCheckOutcome } from "./checks.js";
 
 /**
@@ -97,8 +98,18 @@ export interface SkillEvalResult {
   finishedAt: string;
   agentVersion: string;
   model: { provider: string | null; model: string | null };
-  /** The judge that graded `judge` checks; null when no task has one. */
-  judge: { model: string; url: string } | null;
+  /**
+   * The judge that graded `judge` checks; null when no task has one.
+   * `provider` is set for one of the person's providers
+   * (`skills.eval.judgeProvider` or the active cloud provider), `url` for
+   * an `ATOMIC_AGENT_JUDGE_URL` endpoint.
+   */
+  judge: { provider: string | null; model: string | null; url: string | null } | null;
+  /**
+   * What the judge's own calls used in this eval: eval overhead, not
+   * counted in `runs` or `summary`. Null when no task has a judge check.
+   */
+  judgeUsage: SkillEvalJudgeUsage | null;
   options: {
     repeat: number;
     variants: SkillEvalVariant[];

@@ -12,12 +12,10 @@ export { normalizeAnswer, runCheck, runChecks } from "./checks.js";
 export {
   buildJudgeMessages,
   createSkillEvalJudge,
-  DEFAULT_JUDGE_BASE_URL,
-  DEFAULT_JUDGE_MODEL,
   parseJudgeVerdict,
   resolveJudgeConfig,
 } from "./judge.js";
-export type { SkillEvalJudge, SkillEvalJudgeConfig, SkillEvalJudgeInput, SkillEvalJudgeVerdict } from "./judge.js";
+export type { SkillEvalJudge, SkillEvalJudgeConfig, SkillEvalJudgeDeps, SkillEvalJudgeInput, SkillEvalJudgeUsage, SkillEvalJudgeVerdict } from "./judge.js";
 export type { RunChecksInput, SkillEvalCheckOutcome } from "./checks.js";
 export {
   buildSummary,

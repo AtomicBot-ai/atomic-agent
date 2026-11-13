@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig, type AtomicAgentConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
+import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
+import { resolveModelPricingFor } from "../runtime/resolve-model-pricing.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import {
@@ -18,6 +20,7 @@ import {
   SKILL_EVAL_VARIANTS,
   type SkillEvalDriver,
   type SkillEvalJudge,
+  type SkillEvalJudgeConfig,
   type SkillEvalDriverRun,
   type SkillEvalResult,
   type SkillEvalVariant,
@@ -136,14 +139,16 @@ export async function skillEvalCommand(args: string[]): Promise<number> {
   }
   const config = getConfig();
   // After getConfig: it loads <stateDir>/.env, where a judge key may live.
-  let judge: SkillEvalJudge | null = null;
+  // Picked before boot so a missing judge exits 2 before anything runs;
+  // a provider judge is built once the runtime has loaded the provider.
+  let judgeConfig: SkillEvalJudgeConfig | null = null;
   if (taskSetUsesJudge(taskSet)) {
-    const judgeConfig = resolveJudgeConfig({ url: parsed.judgeUrl, model: parsed.judgeModel });
-    if ("error" in judgeConfig) {
-      process.stderr.write(`${taskSet.sourcePath} has judge checks, but ${judgeConfig.error}\n`);
+    const picked = resolveSkillEvalJudge(parsed, config);
+    if ("error" in picked) {
+      process.stderr.write(`${taskSet.sourcePath} has judge checks, but ${picked.error}\n`);
       return 2;
     }
-    judge = createSkillEvalJudge(judgeConfig);
+    judgeConfig = picked;
   }
   const approvalLevel = resolveBootApprovalLevel(parsed.noApproval, config.agent.approvalLevel);
   const workRoot = await mkdtemp(join(tmpdir(), "atomic-skill-eval-"));
@@ -176,6 +181,15 @@ export async function skillEvalCommand(args: string[]): Promise<number> {
     // would otherwise take leadership and drain unrelated due tasks under
     // the eval's approval posture.
     await rt.scheduler?.stop();
+    let judge: SkillEvalJudge | null = null;
+    if (judgeConfig) {
+      const built = buildSkillEvalJudge(judgeConfig, rt, config);
+      if ("error" in built) {
+        process.stderr.write(`${taskSet.sourcePath} has judge checks, but ${built.error}\n`);
+        return 2;
+      }
+      judge = built;
+    }
     const entry = rt.skillRegistry.listAll().find((e) => e.record.manifest.name === parsed.skill);
     if (!entry) {
       process.stderr.write(`skill not installed: ${parsed.skill}\n`);
@@ -287,6 +301,39 @@ export function createRuntimeSkillEvalDriver(
   };
 }
 
+/** The judge's settings: flags and env first, then `skills.eval.judgeProvider`, then the active cloud provider. */
+export function resolveSkillEvalJudge(
+  parsed: Pick<SkillEvalArgs, "judgeUrl" | "judgeModel">,
+  config: AtomicAgentConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): SkillEvalJudgeConfig | { error: string } {
+  return resolveJudgeConfig(
+    { url: parsed.judgeUrl, model: parsed.judgeModel },
+    resolveLlmConfig(config),
+    config.skills.eval?.judgeProvider ?? null,
+    env,
+  );
+}
+
+/** The judge over the live runtime: a provider judge calls the provider the registry loaded and prices it like a turn. */
+export function buildSkillEvalJudge(
+  judgeConfig: SkillEvalJudgeConfig,
+  runtime: Pick<AgentRuntime, "providerRegistry">,
+  config: AtomicAgentConfig,
+): SkillEvalJudge | { error: string } {
+  if (judgeConfig.kind === "http") return createSkillEvalJudge(judgeConfig);
+  const provider = runtime.providerRegistry.getProvider(judgeConfig.providerId);
+  if (!provider) return { error: `the judge provider "${judgeConfig.providerId}" did not load` };
+  const llm = resolveLlmConfig(config);
+  return createSkillEvalJudge(judgeConfig, {
+    provider,
+    priceUsage: (usage, modelId) => {
+      const pricing = resolveModelPricingFor(llm, modelId, judgeConfig.providerId)?.pricing;
+      return pricing ? estimateUsageCostUsd(usage, pricing) : null;
+    },
+  });
+}
+
 function activeModel(config: AtomicAgentConfig): { provider: string | null; model: string | null } {
   const llm = resolveLlmConfig(config);
   const entry = llm.providers.find((p) => p.id === llm.activeTextProvider);
@@ -320,6 +367,14 @@ export function formatSkillEvalSummary(result: SkillEvalResult): string {
       `difference: accuracy ${signed(Math.round(d.accuracy * 100))} pts, time ${signed(Number((d.wallMsMean / 1000).toFixed(1)))}s, ` +
         `tokens ${d.totalTokens === null ? "-" : signed(d.totalTokens)}, cost ${d.costUsd === null ? "-" : `${d.costUsd < 0 ? "-" : "+"}$${Math.abs(d.costUsd).toFixed(4)}`}` +
         (d.judgeScoreMean === null ? "" : `, judge ${signed(Number(d.judgeScoreMean.toFixed(1)))}`),
+    );
+  }
+  const ju = result.judgeUsage;
+  if (result.judge && ju) {
+    // Eval overhead, kept off the variant rows: the judge grades both sides.
+    lines.push(
+      `judge: ${ju.totalTokens === null ? "-" : ju.totalTokens} tokens, ${ju.costUsd === null ? "-" : `$${ju.costUsd.toFixed(4)}`}` +
+        ` (${ju.calls} call${ju.calls === 1 ? "" : "s"}, ${result.judge.provider ?? result.judge.url ?? "?"}${result.judge.model ? ` ${result.judge.model}` : ""})`,
     );
   }
   if (!result.complete) lines.push("stopped early: not every planned run finished");

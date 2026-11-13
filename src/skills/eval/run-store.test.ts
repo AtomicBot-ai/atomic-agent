@@ -25,6 +25,7 @@ function result(runId: string, skill = "pdf"): SkillEvalResult {
     agentVersion: "0.0.0-test",
     model: { provider: null, model: null },
     judge: null,
+    judgeUsage: null,
     options: { repeat: 1, variants: ["with", "without"], maxSteps: null, approvalLevel: 2 },
     runs: [],
     summary: buildSummary([], []),

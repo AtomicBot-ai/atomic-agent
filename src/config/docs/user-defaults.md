@@ -217,6 +217,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `skills.clawhub.apiBase` (default `"https://clawhub.ai"`).
 - `skills.clawhub.browseLimit` (default `100`).
 - `skills.clawhub.nonSuspiciousOnly` (default `true`).
+- `skills.eval.judgeProvider`: unset. A provider id from `llm.providers` that grades `judge` checks in `atomic-agent skill eval` (ATO-1101). Unset, the active text provider grades them when it is a cloud provider; with a local model active, `skill eval` stops with exit 2 until this is set or `ATOMIC_AGENT_JUDGE_URL` is.
 
 ## tui
 

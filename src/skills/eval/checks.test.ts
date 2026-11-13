@@ -11,6 +11,8 @@ function fakeJudge(score: number | Error, parseFallback = false): SkillEvalJudge
   return {
     model: "judge-model",
     baseUrl: "http://127.0.0.1:1",
+    providerId: null,
+    usage: () => ({ calls: inputs.length, promptTokens: null, completionTokens: null, totalTokens: null, costUsd: null }),
     inputs,
     async score(input) {
       inputs.push(input);
