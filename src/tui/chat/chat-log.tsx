@@ -265,7 +265,6 @@ export function ChatLog({
       flexGrow={1}
       flexShrink={1}
       justifyContent="flex-end"
-              verbose={state.verboseSteps === true}
       overflow="hidden"
       height={viewport}
     >
@@ -378,7 +377,10 @@ function StreamingTail({
 
 function ScrollHint({ offset }: { offset: number }): ReactElement {
   return (
-    <Box marginTop={1}>
+    // Never shrunk: the column above is taller than the viewport and
+    // cannot shrink, so a shrinkable hint is the one row Yoga takes the
+    // overflow from and it vanished while scrolled (ATO-650).
+    <Box marginTop={1} flexShrink={0}>
       <Text color={theme.colors.muted} dimColor>
         ↑ scrolled up {offset} line{offset === 1 ? "" : "s"} — Esc to jump to
         latest
