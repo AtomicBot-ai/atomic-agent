@@ -93,6 +93,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1144: the saved approval rules, and removing one of the global file's. */
   approvalRules: (sessionId?: string | null) => ipcRenderer.invoke("agent:approvalRules", sessionId),
   approvalRuleDelete: (id: string) => ipcRenderer.invoke("agent:approvalRuleDelete", id),
+  /** ATO-1087: GET/POST /api/offline-mode — {supported:false} against an agent without the route. */
+  offlineMode: () => ipcRenderer.invoke("agent:offlineMode"),
+  offlineModeSet: (enabled: boolean) => ipcRenderer.invoke("agent:offlineModeSet", enabled),
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
