@@ -7142,6 +7142,7 @@ function act(a) {
   }
   if (a === 'send') { close(); submit(); return; }
   if (a === 'turn:continue') { close(); continueTurn(); return; }
+  if (a === 'turn:resume') { close(); void continueInterruptedTurn(); return; }
   /* r5 item 4: this verb used to toast "Retrying last turn" and retry nothing.
      It is an orphan — no palette row, menu node, slash entry or markup reaches
      it — but shipping a real retry button beside a fake retry verb is not
@@ -20068,6 +20069,69 @@ function continueTurn() {
   submit(undefined, {plain:true});
 }
 
+/* ATO-448: a chat whose last turn a restart cut off (a crash, a kill, an
+   update) gets one row with a Continue button. Nothing continues by itself:
+   only the click asks the agent (POST /api/sessions/{id}/resume) for the
+   continuing message, a note telling the model to check what already ran
+   before repeating anything with side effects, then the cut-off request,
+   and sends it as a normal turn. The agent offers it once. */
+const INTERRUPTED_TURN_ERROR = 'turn interrupted: the agent stopped before it finished';
+const RESUME = {pending: false};
+/** The offer row for a chat the agent recorded as cut off by a restart, or null. */
+function interruptedTurnOffer(data, live) {
+  if (live || !data || data.status !== 'cancelled' || data.lastError !== INTERRUPTED_TURN_ERROR) return null;
+  if (!(BR && BR.resumeInterruptedTurn)) return null;
+  return {id:nid(), k:'system', text:'The last reply was interrupted by a restart.', act:'resume-turn'};
+}
+function dropInterruptedTurnOffer() {
+  const at = S.log.findIndex((x) => x.k === 'system' && x.act === 'resume-turn');
+  if (at >= 0) S.log.splice(at, 1);
+}
+async function continueInterruptedTurn() {
+  if (RESUME.pending) return;   // a second click while the first is out
+  const sid = S.agentSession;
+  if (!sid || !(BR && BR.resumeInterruptedTurn)) return;
+  if (S.busy || S.pending) { toast('Not while a turn is running'); return; }
+  if (VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing') {
+    toast('The microphone is open', 'finish or cancel the dictation, then continue', 'bad');
+    return;
+  }
+  const e = $('#entry');
+  if (String((e ? e.value : S.draft) || '').trim()) {
+    toast('Your draft is in the way', 'send or clear the composer, then continue', 'bad');
+    if (e) e.focus();
+    return;
+  }
+  RESUME.pending = true;
+  let r;
+  try { r = await BR.resumeInterruptedTurn(sid); }
+  catch (err) { r = {ok: false, supported: true, error: String((err && err.message) || err)}; }
+  finally { RESUME.pending = false; }
+  if (!r || !r.ok || typeof r.text !== 'string') {
+    if (r && r.code === 'turn_in_progress') { toast('Not while a turn is running'); return; }
+    dropInterruptedTurnOffer();
+    render();
+    toast("Couldn't continue", r && r.supported === false
+      ? 'This agent cannot continue a reply a restart cut off. Send your message again instead.'
+      : r && r.code === 'nothing_to_resume' ? 'There is nothing left to continue in this chat.'
+      : (r && r.error) || 'The agent gave no reason.', 'bad');
+    return;
+  }
+  /* The person moved on while the agent answered, or something now holds the
+     composer: nothing is sent over it, and the agent offers the turn again. */
+  const e2 = $('#entry');
+  if (S.agentSession !== sid || S.busy || S.pending || String((e2 ? e2.value : S.draft) || '').trim()) {
+    void BR.resumeInterruptedTurn(sid, true);
+    if (S.agentSession === sid) toast('Not continued', 'Something else is in the composer. Click Continue again when it is free.', 'bad');
+    return;
+  }
+  ANX.messageAction('continue');
+  dropInterruptedTurnOffer();
+  S.draft = r.text;
+  if (e2) { e2.value = r.text; autosize(e2); }
+  submit(undefined, {plain:true});
+}
+
 /** Put the plan away. Stays in plan mode — src/tui/reduce-ui-actions.ts. */
 function dismissPlan() {
   if (!PLAN.on) return;
@@ -21048,6 +21112,7 @@ async function openSession(id) {
   S.busy = live;
   // ATO-164: plain words, not "a turn is still running here — the reply lands when it finishes".
   if (live && !rebuilt) S.log.push({id:nid(), k:'system', text:LIVE_ELSEWHERE_LINE});
+  { const offer = interruptedTurnOffer(data, live); if (offer) S.log.push(offer); }   // ATO-448
   // Anything sent from here continues that session rather than starting a new one.
   S.agentSession = id;
   S.history = [];
@@ -22367,6 +22432,8 @@ function sysRowHTML(m, times) {
   const acts = (m.act === 'switch-provider'
     ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '')
     + (m.act === 'start-model' ? deadEngineActHTML(m) : '')
+    // ATO-448: a chat a restart cut off; continued only on this click.
+    + (m.act === 'resume-turn' ? ' <button class="btn xs btn-t sysact" data-act="turn:resume" title="Continue the reply the restart cut off; the agent checks what already ran before repeating it">' + ic('play') + 'Continue</button>' : '')
     // ATO-772: no Try again while the model is down or coming back; it would only wait on it.
     + (m.sev === 'err' && !m.noRetry && (!engine || engine === 'back') ? sysRetryHTML(m) : '');
   const rep = times >= 2 ? ' <span class="sysrep" title="' + times + ' times in a row">\u00d7' + times + '</span>' : '';
