@@ -141,12 +141,14 @@ describe("the ### fusion prefix section", () => {
     // fan-out overflowed its server; ~100 tokens is what that costs.
     // F43's restore line was paid for by shortening the others — the
     // budget is the budget. ATO-945's `needs_input` clause paid for most
-    // of itself by dropping "and cannot ask"; the rest is 12 chars.
+    // of itself by dropping "and cannot ask"; the rest is 31 chars, which
+    // takes the measured-speed block (speed and `etaSeconds` lines) past
+    // 1,900 to about 1,925.
     expect(FUSION_GUIDANCE.length).toBeLessThan(1425);
     expect(buildFusionGuidance(FACTS).length).toBeLessThan(1900);
     expect(
       buildFusionGuidance({ ...FACTS, tokensPerSecond: 6.4 }).length,
-    ).toBeLessThan(1900);
+    ).toBeLessThan(1950);
   });
 });
 
@@ -273,7 +275,10 @@ describe("a local worker's limits in the ### fusion block (ATO-1363)", () => {
     const block = buildFusionGuidance({ ...LIMITS, tokensPerSecond: 6.4 });
     expect(block).toContain("Set `outputTokens` (or `outputLines`)");
     expect(block).toContain("is flagged on its row");
-    expect(block).not.toContain("refused");
+    // The estimate line never refuses a task (the base block's "Tools that
+    // change things are refused for you" is about the orchestrator).
+    const estimateLine = block.split("\n").find((line) => line.includes("outputTokens"));
+    expect(estimateLine).not.toContain("refused");
   });
 
   it("renders as before when the limits are absent", () => {
