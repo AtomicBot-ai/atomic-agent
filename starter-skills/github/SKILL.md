@@ -4,6 +4,10 @@ description: Drive GitHub via the official `gh` CLI — repos, issues, pull requ
 version: 1.2.0
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "gh"
+install:
+  darwin: "brew install gh"
 dangerous: true
 ---
 

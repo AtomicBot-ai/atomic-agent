@@ -5,6 +5,12 @@ version: 1.0.0
 requires_tools:
   - os.shell.run
   - os.fs.read
+requires_bins:
+  - "whisper"
+  - "ffmpeg"
+install:
+  darwin: "brew install openai-whisper ffmpeg"
+  linux: "pipx install openai-whisper; apt-get install ffmpeg"
 dangerous: false
 ---
 

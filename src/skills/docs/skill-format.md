@@ -32,6 +32,11 @@ requires_scripts:                # only these names may be invoked via skill.run
   - fetch-headers.sh
 env_keys:                        # optional: secret-looking env names this skill's scripts receive
   - SOME_SERVICE_API_KEY
+
+requires_bins:                   # optional: external programs the skill runs ("a|b" = either one)
+  - gh
+install:                         # optional: install line shown when one is missing (or one string)
+  darwin: "brew install gh"
 dangerous: true                  # if true, marks the skill as dangerous (for human readers)
 ---
 ```
@@ -46,6 +51,8 @@ Validation:
 ### Script environment and `env_keys`
 
 `skill.run_script` gives a script the same filtered environment as `os.shell.run`: secret-looking variables (API keys, tokens, passwords) loaded from `<stateDir>/.env` are removed, except names listed in `tools.shell.envPassthrough`. A skill that needs its own service key declares it in `env_keys`, and then only that skill's scripts receive it, read from the agent's environment (which includes `.env`) for that run. Another skill's scripts and `os.shell.run` still get it filtered out, so the user only has to put the key in `.env`. The agent's own provider keys and bot tokens (`KNOWN_SECRET_ENV_VARS` in `src/sandbox/command-env.ts`) are never passed this way, whatever a skill declares. The approval preview lists the declared names (never the values), and the script's output is masked for known secrets like any tool result.
+
+- `requires_bins` and `install` are display-only and never fail a manifest: names that are not bare program names (no `/`, no spaces) and hints over 200 characters are dropped. The desktop's Settings > Skills looks each name up on the app's PATH and shows "needs program gh, not found" with the `install` line for the current platform (`darwin`, `linux`, `win32`, or `any`). A ClawHub/OpenClaw skill's `metadata.openclaw.requires.bins` and `install` (`kind: brew` formula, `kind: node` package) are read when these keys are absent.
 
 ## Install locations
 

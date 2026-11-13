@@ -7,6 +7,10 @@ requires_tools:
   - skill.run_script
 requires_scripts:
   - check-gog.sh
+requires_bins:
+  - "gog"
+install:
+  darwin: "brew install openclaw/tap/gogcli"
 dangerous: true
 ---
 
