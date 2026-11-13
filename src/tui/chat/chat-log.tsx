@@ -1,5 +1,11 @@
 import { Box, Text, measureElement, type DOMElement } from "ink";
-import { useEffect, useRef, useState, type ReactElement } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 import { useTerminalSize } from "../hooks/use-terminal-size.js";
 import { computeChatViewportRows } from "../layout.js";
 import { selectExtraChromeRows } from "../select-chrome-rows.js";
@@ -8,22 +14,33 @@ import type { TuiState } from "../tui-state.js";
 import { theme } from "../theme/theme.js";
 import { AssistantBubble } from "./assistant-bubble.js";
 import { selectComposerBackend } from "../composer-switch/composer-backend-selectors.js";
-import {
-  FinalisedMessage,
-  isVisibleToolCard,
-} from "./chat-finalised-message.js";
+import { isVisibleToolCard } from "./chat-finalised-message.js";
 import type { CodingMode } from "../coding-mode/coding-mode.js";
 import {
   estimateMessageHeight,
   estimatePendingSteerHeight,
   estimateStreamingTailHeight,
 } from "./chat-message-height.js";
+import {
+  chatOverscanRows,
+  computeChatWindow,
+  widenChatWindow,
+} from "./chat-window.js";
+import { chatRowSignatures } from "./chat-row-signature.js";
+import { useMeasuredRowHeights } from "./use-measured-row-heights.js";
+import { WindowedMessages } from "./windowed-messages.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
 import { SplashBanner } from "./splash-banner.js";
 import { ThinkingIndicator } from "./thinking-indicator.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
 import { turnFoldsOf } from "../render/turn-collapse.js";
+
+/**
+ * Height-cache key for the rows that are always drawn under the
+ * finalised messages. NUL keeps it apart from any message id.
+ */
+const LIVE_ROWS_ID = "\u0000live-rows";
 
 interface ChatLogProps {
   state: TuiState;
@@ -55,14 +72,19 @@ interface ChatLogProps {
  * the **top** rows automatically; the bottom-most line is always at
  * the prompt edge, exactly like a web chat surface.
  *
- * Smooth scroll comes from a single trick: the inner column gets
- * `marginBottom={-state.chatScrollOffset}`, which Yoga interprets as
- * "this box reports its outer height as `intrinsic - offset`". With
- * `flex-end` on the parent, the column visually shifts **down** by
- * `offset` rows — its bottom edge now sits below the viewport, the
- * top edge moves into the viewport, and `overflow: hidden` clips
- * what's left of the bottom. Net effect: the visible window slides
- * up the chat by exactly N rows. One wheel notch = one row.
+ * Smooth scroll: the column is drawn `state.chatScrollOffset` rows
+ * lower than Yoga placed it (`contentOffsetY={-offset}`, Ink 8). Its
+ * bottom edge then sits below the viewport, older rows move in at the
+ * top, and `overflow: hidden` clips the rest. One wheel notch = one
+ * row. Yoga's layout does not move, which is why `absoluteRect` in the
+ * mouse registry adds the offset back for hit-testing.
+ *
+ * Only the messages near the viewport are drawn (ATO-650): the window
+ * is `computeChatWindow` over each message's height, measured once it
+ * has been drawn and estimated before that, plus a screen of overscan
+ * each side. The messages outside it are blank spacers of the same
+ * height, so the column, the scroll clamp and every drawn row's cell
+ * are what they would be with the whole history rendered.
  *
  * `state.chatScrollOffset` carries **lines** (not messages) since
  * the last refactor. The unit changed but the field name stayed for
@@ -125,23 +147,50 @@ export function ChatLog({
     terminalSize.columns,
     extraChromeRows,
   );
-  // First-frame fallback for `K` until the post-mount `measureElement`
-  // call returns the truth. Estimates are unreliable (text wraps, Yoga
-  // collapses some margins, reasoning blocks expand mid-turn) so we
-  // only trust them as a stop-gap for the first paint; after that,
-  // `measuredContentRows` is the source of truth.
-  const estimatedContentRows = isEmpty
-    ? 0
-    : finalised.reduce(
-        (acc, m) => acc + estimateMessageHeight(m, foldStateOf(m.id)),
-        0,
-      ) +
+  // The Fusion tint on the bubbles — the same answer the composer's
+  // backend control gives, so the two halves of the chat zone agree.
+  const fusion = selectComposerBackend(state) === "fusion";
+  // Rows of each finalised message: measured where it has been drawn
+  // under its current signature (width, fold, expanded cards), estimated
+  // otherwise. The live rows under them (tail, pending steers, spinner)
+  // are measured the same way as one block, keyed by width alone.
+  const rowIds = useMemo(
+    () => [...finalised.map((m) => m.id), LIVE_ROWS_ID],
+    [finalised],
+  );
+  const signatureOf = chatRowSignatures({
+    messages: finalised,
+    columns: terminalSize.columns,
+    foldOf: foldStateOf,
+    fusion,
+    toolsExpandedById: state.toolsExpandedById,
+    planButtons:
+      state.planHandoff &&
+      onPlanExecute !== undefined &&
+      onPlanDismiss !== undefined,
+  });
+  const measured = useMeasuredRowHeights(rowIds, signatureOf, LIVE_ROWS_ID);
+  const heights = finalised.map((m) =>
+    measured.heightOf(m.id, () =>
+      estimateMessageHeight(m, foldStateOf(m.id)),
+    ),
+  );
+  const bottomRows = measured.heightOf(
+    LIVE_ROWS_ID,
+    () =>
       (hasStreamingTail ? estimateStreamingTailHeight(state) : 0) +
       (showIndicator ? 2 : 0) +
       pendingSteers.reduce(
         (acc, text) => acc + estimatePendingSteerHeight(text),
         0,
-      );
+      ),
+  );
+  // First-frame fallback for `K` until the post-mount `measureElement`
+  // call returns the truth; after that, `measuredContentRows` is the
+  // source of truth.
+  const estimatedContentRows = isEmpty
+    ? 0
+    : heights.reduce((acc, h) => acc + h, 0) + bottomRows;
   const innerRef = useRef<DOMElement>(null);
   const [measuredContentRows, setMeasuredContentRows] = useState<number>(0);
   // Re-measure the inner column on every render so the clamp tracks
@@ -180,9 +229,22 @@ export function ChatLog({
     );
   }
   const stickyBottom = offset === 0;
-  // The Fusion tint on the bubbles — the same answer the composer's
-  // backend control gives, so the two halves of the chat zone agree.
-  const fusion = selectComposerBackend(state) === "fusion";
+  // Messages whose kept height went stale off screen ("expand all", a
+  // fold) are drawn once more so they get measured under the new state.
+  const redraw = finalised.flatMap((m, idx) =>
+    measured.needsRedraw(m.id) ? [idx] : [],
+  );
+  const rowWindow = widenChatWindow(
+    computeChatWindow({
+      heights,
+      bottomRows,
+      offset,
+      viewportRows: viewport,
+      overscanRows: chatOverscanRows(viewport),
+    }),
+    heights,
+    redraw,
+  );
   return (
     <Box
       flexDirection="column"
@@ -192,46 +254,46 @@ export function ChatLog({
       overflow="hidden"
       height={viewport}
     >
-      <Box flexDirection="column" flexShrink={0} marginBottom={-offset}>
+      <Box flexDirection="column" flexShrink={0} contentOffsetY={-offset}>
         <Box ref={innerRef} flexDirection="column" flexShrink={0}>
-          {finalised.map((message, idx) => (
-            <FinalisedMessage
-              key={message.id}
-              message={message}
-              toolsExpandedById={state.toolsExpandedById}
-              fusion={fusion}
-              fold={folds.get(message.id) ?? null}
-              turnOpen={state.turnsExpandedById[message.id] === true}
-              // The plan's own buttons, under the plan. Only the last
-              // message can carry them: the offer is about the newest
-              // plan, and an older one further up the log would be an
-              // offer to run something that has already been superseded.
-              planHandoff={
-                state.planHandoff &&
-                idx === finalised.length - 1 &&
-                message.role === "assistant" &&
-                onPlanExecute !== undefined &&
-                onPlanDismiss !== undefined
-                  ? { onExecute: onPlanExecute, onDismiss: onPlanDismiss }
-                  : null
-              }
-            />
-          ))}
-          {hasStreamingTail ? (
-            <StreamingTail state={state} fusion={fusion} />
+          {rowWindow.spacerAbove > 0 ? (
+            <Box height={rowWindow.spacerAbove} flexShrink={0} />
           ) : null}
-          {pendingSteers.map((text, idx) => (
-            <UserBubble
-              // Position is the only identity a pending steer has; it
-              // is removed by value the moment it resolves, and two
-              // identical steers must still render as two bubbles.
-              key={`pending-steer-${idx}`}
-              text={text}
-              fusion={fusion}
-              pending
-            />
-          ))}
-          {showIndicator ? <ThinkingIndicator state={state} /> : null}
+          <WindowedMessages
+            messages={finalised}
+            start={rowWindow.start}
+            end={rowWindow.end}
+            refFor={measured.refFor}
+            state={state}
+            fusion={fusion}
+            folds={folds}
+            onPlanExecute={onPlanExecute}
+            onPlanDismiss={onPlanDismiss}
+          />
+          {rowWindow.spacerBelow > 0 ? (
+            <Box height={rowWindow.spacerBelow} flexShrink={0} />
+          ) : null}
+          <Box
+            ref={measured.refFor(LIVE_ROWS_ID)}
+            flexDirection="column"
+            flexShrink={0}
+          >
+            {hasStreamingTail ? (
+              <StreamingTail state={state} fusion={fusion} />
+            ) : null}
+            {pendingSteers.map((text, idx) => (
+              <UserBubble
+                // Position is the only identity a pending steer has; it
+                // is removed by value the moment it resolves, and two
+                // identical steers must still render as two bubbles.
+                key={`pending-steer-${idx}`}
+                text={text}
+                fusion={fusion}
+                pending
+              />
+            ))}
+            {showIndicator ? <ThinkingIndicator state={state} /> : null}
+          </Box>
         </Box>
       </Box>
       {!stickyBottom ? <ScrollHint offset={offset} /> : null}
