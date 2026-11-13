@@ -278,6 +278,24 @@ checkpoint is never replaced later by a rolling summary. Cloud state updates are
 not in it. Its background calls are counted as they run, not in the checkpoint's
 `calls`.
 
+## Memory flush before compaction
+
+With `agent.compaction.memoryFlush` on (off by default; ATO-676) and
+`memory.notes.enabled`, a compaction that has a plan first makes one side call
+([flush](../compaction-memory-flush.ts)) for dated observations about the records
+it is about to cover: lines of `YYYY-MM-DD: one short sentence`, at most 12, or
+`NONE`. The input is the same record text the summary reads, or its extractive
+digest when that does not fit the window. The call uses the compaction route,
+provider framing, side slot and `compaction:<sessionId>` usage, with thinking off
+and at most 60 s (or `timeoutMs`, if smaller). Lines without a usable date get the
+newest record's day. The lines are stored as one note through the notes store,
+tagged `observations` and `date-<today>`, with the session and working directory.
+Nothing is added to the session, the visible chat or the transcript. A failure,
+timeout or empty reply is logged and the compaction goes on as before; only a
+cancellation of the compaction itself stops it. An ephemeral turn never flushes.
+The rolling summary (`compaction-rolling.ts`) is unchanged; the flush runs before
+the rolling, extractive or model checkpoint alike.
+
 ## Observability and validation
 
 Session-scoped `compaction_started`, `compaction_progress`, `compaction_completed` and
@@ -298,6 +316,7 @@ Contract tests: [planner/service](../context-compaction.test.ts),
 [request after the cut](../compaction-open-request.test.ts),
 [rolling summary](../context-compaction-rolling.test.ts),
 [rolling records](../compaction-rolling.test.ts),
+[memory flush](../compaction-memory-flush.test.ts),
 [rolling state](../../session/session-compaction-rolling.test.ts),
 [finished-turn cuts](../../session/session-compaction.test.ts),
 [HTTP/runtime/persistence](../../http/route-compaction.test.ts),

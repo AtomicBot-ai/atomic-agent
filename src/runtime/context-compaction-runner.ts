@@ -14,6 +14,7 @@ import { buildExtractiveSummary } from "./compaction-extractive.js";
 import { compactFromRolling } from "./compaction-rolling.js";
 import { chooseCompactionMethod, type CompactionRouteFacts } from "./compaction-mode.js";
 import { modelSummaryFailure, summarizeWithModel, type ModelSummaryRoute, type ModelSummaryTally } from "./context-compaction-model.js";
+import { flushMemoryBeforeCompaction, type MemoryFlushNotes } from "./compaction-memory-flush.js";
 
 export interface CompactionRunnerDependencies {
   complete(params: LlmStreamParams): Promise<CompletionResult>;
@@ -22,6 +23,11 @@ export interface CompactionRunnerDependencies {
   costOf?(result: CompletionResult, providerId: string): number | undefined;
   persist(state: SessionState, inTurn: boolean): void;
   emit(event: CompactionEvent): void;
+  /**
+   * Where `agent.compaction.memoryFlush` stores its dated observations
+   * (ATO-676). Absent, or the flag off, no flush call is made.
+   */
+  memoryNotes?: MemoryFlushNotes;
 }
 
 export interface CompactionRunOptions extends CompactionStepOptions {
@@ -91,6 +97,21 @@ export async function runContextCompaction(
     let rolled = config.mode === "auto" ? compactFromRolling(state, plan) : null;
     if (rolled && !reduced(checkpointed(rolled.summary, rolled.through, { model: null }))) rolled = null;
     const through = rolled?.through ?? plan.through;
+    // ATO-676: dated observations about the span go to memory before it is
+    // folded away. A private side call; it never fails or changes the checkpoint.
+    if (config.memoryFlush === true && deps.memoryNotes && !options.ephemeral) {
+      const flushed = await flushMemoryBeforeCompaction({
+        input, from: plan.from, through, route, notes: deps.memoryNotes,
+        window: Math.min(route.contextWindow ?? Infinity, prompt.contextWindow ?? prompt.conversationCapEffective),
+        reasoningReserveTokens: config.reasoningReserveTokens, timeoutMs: config.timeoutMs, signal: options.signal,
+        complete: deps.complete, sideCallSlotId: deps.sideCallSlotId, ...(deps.costOf ? { costOf: deps.costOf } : {}),
+      });
+      const flushCost = "costUsd" in flushed ? flushed.costUsd : undefined;
+      if (flushCost !== undefined && Number.isFinite(flushCost) && flushCost > 0) {
+        try { options.onSpend?.(flushCost); } catch { /* Spend accounting must not fail a compaction. */ }
+      }
+      options.signal.throwIfAborted();
+    }
     const method = rolled ? "rolling" : options.preferExtractive && config.mode === "auto"
       ? "extractive"
       : chooseCompactionMethod(config.mode, { ...route, contextWindow: prompt.contextWindow },
