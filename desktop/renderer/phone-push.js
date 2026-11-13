@@ -3,11 +3,15 @@
    (BR, render, esc, ic) is read when a function runs, never at load time.
 
    The terminal's `atag push`: ntfy phone notifications with no bot to set
-   up. The switch runs `atag push on|off` through main/push-ipc.ts, so the
-   agent mints the random topic and writes notifications.push itself, the
-   same as in a terminal; the pane shows the URL to subscribe to in the
-   ntfy app, a Send test button, and the warning that a topic on ntfy.sh
-   is public by name. No quiet hours: a ping goes out when it happens.
+   up. Off (the default) the pane is one sentence and Set up; opening the
+   tab only reads `notifications.push`, it never turns push on, mints a
+   topic or sends anything. Set up runs `atag push on` through
+   main/push-ipc.ts, so the agent mints the random topic and writes the
+   setting itself, the same as in a terminal; then three steps (install
+   ntfy, add the address, send a test), the switch, the privacy note and
+   New address. No QR code: the desktop ships no QR library, so step 2
+   shows the address with Copy. No quiet hours: a ping goes out when it
+   happens.
 
    What pings: a chat turn that ran long or failed while the window was in
    the background (main/turn-notify.ts), and tasks or downloads set to
@@ -21,62 +25,74 @@ const PUSH = {
   loading: false,
   busy: null,          // the running op: 'on' | 'off' | 'test' | 'newTopic'
   msg: null,           // a line after a write or a test
-  confirmNew: false,   // New topic takes a second click: the phone has to subscribe again
+  confirmNew: false,   // New address takes a second click: the phone has to subscribe again
 };
+
+/* The ntfy app's store pages, opened in the browser by the [data-url] click handler. */
+const PUSH_APP_IOS = 'https://apps.apple.com/app/ntfy/id1625396347';
+const PUSH_APP_ANDROID = 'https://play.google.com/store/apps/details?id=io.heckel.ntfy';
+const PUSH_TEST_SENT = 'Sent. Did it arrive on your phone?';
 
 /* ---- pure helpers (exported for test/phone-push.test.mjs) ---- */
 
 /* The ops the pane may send, from a `push:<verb>` act. */
 function pushParseAct(what) {
   const verb = String(what || '').split(':')[0];
-  return ['enable', 'test', 'newTopic', 'refresh'].includes(verb) ? verb : null;
+  return ['setup', 'enable', 'test', 'copy', 'newTopic', 'refresh'].includes(verb) ? verb : null;
 }
 
-/* The one-line status the pane leads with. */
-function pushStatusLine(st) {
-  if (!st) return {chip:'', line:''};
-  if (!st.enabled) return {chip:'Off', line:'Turn it on to get a ping on your phone when a long reply finishes or fails while the app is in the background.'};
-  if (!st.subscribeUrl) return {chip:'Off', line:'Push is on but has no topic yet. Turn it off and on again.'};
-  return {chip:'On', line:'Subscribe to this topic in the ntfy app (iPhone or Android) to get the pings.'};
+/* Set up only once push is on and has an address; until then the pane is one line and a button. */
+function pushIsSetUp(st) {
+  return !!(st && st.enabled === true && st.subscribeUrl);
 }
 
-/* Topics on the public server are readable by anyone who knows the name. */
+/* Who can read the notifications, in plain words. A server other than ntfy.sh is named. */
 function pushPrivacyText(st) {
   if (!st) return '';
+  const base = 'Anyone who knows this address can read your notifications, so keep it private. Notifications show a short title and the start of the answer, never tool output.';
+  if (/^https:\/\/ntfy\.sh$/.test(st.server)) return base;
   let host = st.server;
   try { host = new URL(st.server).host; } catch (e) { /* keep the raw value */ }
-  return /^https:\/\/ntfy\.sh$/.test(st.server)
-    ? 'Topics on ' + host + ' are public by name: anyone who learns this topic can read your pings. Keep it private. A ping carries a short title and the start of the answer, never tool output.'
-    : 'Pings go to ' + host + '. Keep the topic private. A ping carries a short title and the start of the answer, never tool output.';
+  return 'Notifications go to ' + host + '. ' + base;
 }
 
 function phonePushPaneHTML(p, h) {
   const st = p.state;
-  const row = (title, d, tail) => '<div class="tk-setrow"><div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>' + tail + '</div>';
+  const row = (title, d, tail, attr) => '<div class="tk-setrow"' + (attr || '') + '><div class="body"><div class="t">' + title + '</div><div class="d">' + d + '</div></div>' + (tail || '') + '</div>';
   const busy = !!p.busy || p.loading;
+  const dis = busy ? ' disabled' : '';
   let body;
   if (p.unsupported) {
     body = '<div class="tk-empty set-empty"><span class="tk-ico tk-ico--lg" aria-hidden="true">' + h.ic('bell') + '</span><h4>Phone push needs a newer agent</h4><p>' + h.esc(p.err || '') + '</p></div>';
   } else if (!st) {
     body = p.err ? '' : '<div class="tk-empty set-empty"><span class="tk-spin"></span><p>Loading…</p></div>';
+  } else if (!pushIsSetUp(st)) {
+    // Off: one sentence and Set up. Nothing is turned on, minted or sent until that click.
+    body = '<div class="tk-card sd-rows" data-push-off>'
+      + row('Phone push', 'Get a notification on your phone when a long task finishes or the agent needs you.',
+        '<button class="btn btn-p sm" data-act="push:setup"' + dis + '>' + (p.busy === 'on' ? 'Setting up…' : 'Set up') + '</button>')
+      + '</div>';
   } else {
-    const status = pushStatusLine(st);
-    body = '<div class="tk-card pad sd-tgcard sd-pushcard"><h3 class="sd-title">Phone push <span class="tk-chip tk-chip--sm">' + h.esc(status.chip) + '</span></h3>'
-      + '<p>' + h.esc(status.line) + '</p></div>'
+    const ext = (label, url) => '<button class="btn btn-s sm" data-url="' + h.esc(url) + '">' + label + '</button>';
+    body = '<div class="tk-card sd-rows" data-push-steps>'
+      + row('1. Install the free ntfy app', 'On your phone, from the App Store or Google Play.',
+        ext('App Store', PUSH_APP_IOS) + ext('Google Play', PUSH_APP_ANDROID), ' data-push-step="1"')
+      + row('2. Add this address in the app', 'In ntfy, tap + and subscribe to the topic <b class="sd-mono">' + h.esc(st.topic || '') + '</b>, the last part of this address.'
+        + '<div class="sd-mono sd-push-url" data-push-url>' + h.esc(st.subscribeUrl) + '</div>',
+        '<button class="btn btn-s sm" data-act="push:copy">Copy</button>', ' data-push-step="2"')
+      + row('3. Send a test notification', p.msg === PUSH_TEST_SENT ? h.esc(PUSH_TEST_SENT) : 'Sends one notification to this address now.',
+        '<button class="btn btn-s sm" data-act="push:test"' + dis + '>' + (p.busy === 'test' ? 'Sending…' : 'Send a test notification') + '</button>', ' data-push-step="3"')
+      + '</div>'
       + '<div class="tk-card sd-rows">'
-      + row('Send pings to my phone', 'Through ntfy, no bot or account needed.',
-        '<button class="tk-switch" role="switch" aria-checked="' + (st.enabled === true) + '" aria-label="Send pings to my phone" data-act="push:enable"' + (busy ? ' disabled' : '') + '></button>')
-      + (st.enabled && st.subscribeUrl
-        ? row('Topic', h.esc(pushPrivacyText(st)),
-          '<span class="tk-chip tk-chip--sm sd-mono sd-push-url" data-push-url>' + h.esc(st.subscribeUrl) + '</span>')
-          + row('Check it', 'Sends one ping now.',
-            '<button class="btn btn-s sm" data-act="push:test"' + (busy ? ' disabled' : '') + '>' + (p.busy === 'test' ? 'Sending…' : 'Send test') + '</button>')
-          + row('New topic', 'Stops pings to the old topic. Subscribe the phone again after this.',
-            '<button class="btn btn-danger sm" data-act="push:newTopic"' + (busy ? ' disabled' : '') + '>' + (p.confirmNew ? 'Click again to replace' : 'New topic') + '</button>')
-        : '')
+      + row('Phone push', 'On: a long task that finishes or fails, or the agent waiting for you, sends a notification.',
+        '<button class="tk-switch" role="switch" aria-checked="true" aria-label="Phone push" data-act="push:enable"' + dis + '></button>')
+      + row('Keep this address private', h.esc(pushPrivacyText(st)))
+      + row('New address', 'Stops notifications to the old address. Add the new one in the ntfy app after this.',
+        '<button class="btn btn-danger sm" data-act="push:newTopic"' + dis + '>' + (p.confirmNew ? 'Click again to replace' : 'New address') + '</button>')
       + '</div>';
   }
-  const msg = p.msg ? '<div class="tuimsg tk-notice tk-notice--blue">' + h.ic('info') + '<span class="grow">' + h.esc(p.msg) + '</span></div>' : '';
+  // The test's answer sits in step 3 itself; every other line is a notice over the rows.
+  const msg = p.msg && p.msg !== PUSH_TEST_SENT ? '<div class="tuimsg tk-notice tk-notice--blue">' + h.ic('info') + '<span class="grow">' + h.esc(p.msg) + '</span></div>' : '';
   const err = p.err && !p.unsupported ? '<div class="tuierr tk-notice tk-notice--red">' + h.ic('alert') + '<span class="grow">' + h.esc(p.err) + '</span></div>' : '';
   return '<div class="sd-pane sd-push">' + err + msg + body + '</div>';
 }
@@ -105,10 +121,11 @@ function phonePushRun(op) {
     PUSH.busy = null;
     if (res && res.ok) {
       if (res.push) PUSH.state = res.push;
-      PUSH.msg = op === 'test' ? 'Test ping sent. Check your phone.'
-        : op === 'off' ? 'Phone push turned off. The topic is kept for next time.'
-          : op === 'newTopic' ? 'New topic made. Subscribe to it in the ntfy app.'
-            : 'Phone push turned on. Subscribe to the topic below in the ntfy app.';
+      // Never claim the phone got it: ntfy took the message, that is all the app knows.
+      PUSH.msg = op === 'test' ? PUSH_TEST_SENT
+        : op === 'off' ? 'Phone push is off. The address is kept for next time.'
+          : op === 'newTopic' ? 'New address made. Add it in the ntfy app again.'
+            : 'Phone push is on. Follow the three steps below.';
     } else {
       PUSH.unsupported = !!(res && res.unsupported);
       PUSH.err = (res && res.error) || 'The agent did not answer.';
@@ -121,10 +138,14 @@ function phonePushAct(what) {
   const verb = pushParseAct(what);
   const armed = PUSH.confirmNew;
   PUSH.confirmNew = false;
-  if (verb === 'enable') { if (PUSH.state) phonePushRun(PUSH.state.enabled ? 'off' : 'on'); return; }
-  if (verb === 'test') { phonePushRun('test'); return; }
-  if (verb === 'newTopic') { if (armed) phonePushRun('newTopic'); else { PUSH.confirmNew = true; render(); } return; }
+  const st = PUSH.state;
+  // Only these two clicks turn push on: Set up while it is off, and the switch.
+  if (verb === 'setup') { if (st && !pushIsSetUp(st)) phonePushRun('on'); return; }
+  if (verb === 'enable') { if (st) phonePushRun(pushIsSetUp(st) ? 'off' : 'on'); return; }
+  if (verb === 'test') { if (pushIsSetUp(st)) phonePushRun('test'); return; }
+  if (verb === 'copy') { if (pushIsSetUp(st) && typeof copyText === 'function') copyText(st.subscribeUrl, 'Address copied', 'Add it in the ntfy app'); return; }
+  if (verb === 'newTopic') { if (!pushIsSetUp(st)) return; if (armed) phonePushRun('newTopic'); else { PUSH.confirmNew = true; render(); } return; }
   if (verb === 'refresh') phonePushRefresh();
 }
 
-if (typeof module !== 'undefined') module.exports = {PUSH, pushParseAct, pushStatusLine, pushPrivacyText, phonePushPaneHTML, phonePushAct};
+if (typeof module !== 'undefined') module.exports = {PUSH, PUSH_TEST_SENT, PUSH_APP_IOS, PUSH_APP_ANDROID, pushParseAct, pushIsSetUp, pushPrivacyText, phonePushPaneHTML, phonePushAct};
