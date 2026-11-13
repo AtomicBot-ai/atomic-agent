@@ -7,6 +7,7 @@ import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
 import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { describeMemoryEmbeddingReconnect } from "./local-models/describe-memory-embedding-reconnect.js";
+import { startWorktreeSession, sweepIdleWorktrees } from "./session-worktree-start.js";
 import {
   isFailedSessionStatus,
   recordPlan,
@@ -1332,7 +1333,32 @@ export class ChatOrchestrator {
     }
   }
 
-  newSession(): void {
+  /**
+   * `/new worktree` (ATO-576): a fresh session in a git worktree of its
+   * own. Outside a git repository nothing changes and the reason is
+   * shown. Each start also sweeps idle worktrees whose branches are
+   * merged and clean; the one on screen is never touched.
+   */
+  async newWorktreeSession(): Promise<void> {
+    if (this.quitting) return;
+    const started = await startWorktreeSession(this.runtime);
+    if (!started.ok) {
+      this.notify(started.message);
+      return;
+    }
+    this.newSession(started.session);
+    this.bus.emit({ type: "runtime_info", line: started.notice });
+    this.bus.emit({ type: "system_message", text: started.notice });
+    void sweepIdleWorktrees(this.runtime, new Set([started.session.id]))
+      .then((swept) => {
+        if (swept.removed.length > 0) {
+          this.bus.emit({ type: "runtime_info", line: `removed ${swept.removed.length} idle merged worktree(s)` });
+        }
+      })
+      .catch(() => undefined);
+  }
+
+  newSession(prepared?: SessionState): void {
     if (this.quitting) return;
     this.cancelPromptEnhance();
     // A running turn keeps running in its old thread — see
@@ -1343,7 +1369,7 @@ export class ChatOrchestrator {
     // Deferred like `ensureSession`'s, and for the same reason: a `+ new`
     // the operator never types into leaves no row behind. The one left
     // here is dropped as soon as the next `+ new` or switch replaces it.
-    this.session = this.runtime.createSession({ persist: false });
+    this.session = prepared ?? this.runtime.createSession({ persist: false });
     this.skills.refresh();
     this.clearQueue();
     clearTtyScreen(process.stdout);

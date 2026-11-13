@@ -311,8 +311,8 @@ export interface TuiAppCallbacks {
    * session to the top block of the rail, or release it.
    */
   onSessionPinToggled?(sessionId: string): void;
-  /** Ask the orchestrator to start a fresh session. */
-  onSessionNewRequested?(): void;
+  /** Ask the orchestrator to start a fresh session; `worktree` puts it in its own git worktree (ATO-576). */
+  onSessionNewRequested?(options?: { worktree?: boolean }): void;
   onCompactionRequested?(verb: "run" | "show"): void;
   /** `/goal …`: act on the open chat's goal (ATO-451). */
   onGoalCommand?(command: import("./commands/goal-command.js").GoalCommand): void;
