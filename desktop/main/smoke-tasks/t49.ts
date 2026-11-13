@@ -304,10 +304,10 @@ async function privacy(js: Js, check: Check): Promise<void> {
     pane.err ?? show(pane),
   );
   check(
-    "T49 (Д50): what analytics send is two plain lines under the analytics switch, not two cards, worded Sent / Never sent with analytics",
+    "T49 (Д50): what analytics send is two plain lines under the analytics switch, not two cards, worded When on / Never sent",
     !pane.err && pane.cards === 0 && pane.icons === 0 && pane.lines.length === 2
-      && pane.lines[0] === "Sent with analytics: an install id, coarse counters, crash reports, button and menu usage (action names only), download and startup timings."
-      && pane.lines[1] === "Never sent with analytics: message content, paths, tool arguments, IP address." && !pane.leaves,
+      && pane.lines[0] === "When on, Atomic Agent sends: an install id, coarse counters, crash reports, button and menu usage (action names only), download and startup timings."
+      && pane.lines[1] === "Never sent: message content, file paths, tool arguments, your IP address." && !pane.leaves,
     pane.err ?? show({ cards: pane.cards, icons: pane.icons, lines: pane.lines }),
   );
 

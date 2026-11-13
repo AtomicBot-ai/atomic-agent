@@ -6458,6 +6458,18 @@ function setSwitchHTML(o) {
     + '<button class="tk-switch' + (o.on ? ' on' : '') + '" role="switch" aria-checked="' + !!o.on + '" aria-label="' + esc(o.label) + '"'
     + ' data-act="' + esc(o.act) + '"' + (o.busy ? ' aria-busy="true"' : '') + (o.disabled ? ' disabled' : '') + ' title="' + esc(o.title) + '"></button>';
 }
+/* The analytics switch's copy, the same in General and Privacy. Checked in code:
+   off stops PostHog and Sentry in the agent (toggle-runtime-telemetry.ts) and in
+   the desktop shell (analytics/core.ts sendingAllowed, sentry/client.ts); the one
+   event that still goes is `analytics_disabled`, sent as the switch goes off. */
+const ANALYTICS_TITLE = 'Share anonymous usage data';
+const ANALYTICS_SENT = ['an install id', 'coarse counters', 'crash reports', 'button and menu usage (action names only)', 'download and startup timings'];
+const ANALYTICS_NEVER = ['message content', 'file paths', 'tool arguments', 'your IP address'];
+const ANALYTICS_OFF_LINE = 'When off, nothing is sent, apart from one last event saying it was turned off.';
+function analyticsLinesHTML() {
+  const line = (label, items) => '<p class="set-privline"><b>' + esc(label) + ':</b> ' + esc(items.join(', ')) + '.</p>';
+  return line('When on, Atomic Agent sends', ANALYTICS_SENT) + line('Never sent', ANALYTICS_NEVER);
+}
 /* Calm (S5) › General: what is general about the app today — the theme
    (the same `theme:*` act and atag.theme key as the palette and View ›
    Appearance), the working folder (the sidebar chip's picker) and the
@@ -6494,13 +6506,13 @@ function generalPane() {
         + setSwitchHTML({on: STEPS.always, act: 'steps:always', label: 'Always show steps', title: 'Turn always showing steps ' + (STEPS.always ? 'off' : 'on')})
       + '</div>'
       + '<div class="tk-setrow">'
-        + '<div class="body"><div class="t">Anonymous usage analytics</div>'
-          + '<div class="d">Crash reports and coarse usage counts (including which buttons and menus are used, by action name only, and download and startup timings), tied only to an install id. Your messages, paths and tool arguments are never sent with analytics. '
-            + '<button class="set-link" data-act="settings:privacy">What is sent</button></div>'
+        + '<div class="body"><div class="t">' + ANALYTICS_TITLE + '</div>'
+          + '<div class="d">' + analyticsLinesHTML() + '</div>'
+          + '<div class="tk-help">' + esc(ANALYTICS_OFF_LINE) + ' <button class="set-link" data-act="settings:privacy">Privacy settings</button></div>'
           + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
         + '</div>'
         + setSwitchHTML({on, busy: PRIV.busy || pending, disabled: !known || PRIV.busy, act: 'privacy:analytics',
-          label: 'Anonymous usage analytics', title: 'Turn analytics ' + (on ? 'off' : 'on')})
+          label: ANALYTICS_TITLE, title: 'Turn usage data sharing ' + (on ? 'off' : 'on')})
       + '</div>'
       + nameChatsRowHTML()
       + nextStepRowHTML()   // ATO-1096 (next-step.js)
@@ -6941,7 +6953,6 @@ function privacyPane() {
   const pending = !known && (PRIV.effectiveBusy || (BR && PRIV.effective === null && !PRIV.lastError));
   const scope = readScopeValue();
   // What is and is not sent: the analytics sentence, split into its parts.
-  const sentLine = (label, items) => '<p class="set-privline"><b>' + esc(label) + ':</b> ' + esc(items.join(', ')) + '.</p>';
   return '<div class="set-pane set-privacy">'
     + '<div class="tk-list set-setlist">'
       // ATO-1087: offline mode, drawn only from what the agent reports (offline-mode.js).
@@ -6961,18 +6972,18 @@ function privacyPane() {
       + '</div>'
       // The same switch as General's (privacy:analytics → privacyToggle), drawn from the same value.
       + '<div class="tk-setrow set-privan">'
-        + '<div class="body"><div class="t">Anonymous usage analytics</div>'
+        + '<div class="body"><div class="t">' + ANALYTICS_TITLE + '</div>'
           /* Said about analytics, not about the Mac: "never leaves this Mac" read as
              a promise the app does not make (a cloud model is sent the messages).
              The agent swaps the IP for 0.0.0.0 before an event goes out. */
-          + sentLine('Sent with analytics', ['an install id', 'coarse counters', 'crash reports', 'button and menu usage (action names only)', 'download and startup timings'])
-          + sentLine('Never sent with analytics', ['message content', 'paths', 'tool arguments', 'IP address'])
+          + analyticsLinesHTML()
+          + '<div class="tk-help">' + esc(ANALYTICS_OFF_LINE) + '</div>'
           + (!known && !pending ? '<div class="tk-help tk-help--warn">Couldn’t read this setting from the agent.</div>' : '')
         + '</div>'
         // A spinner only while the value is still being read; PRIV.busy is shared with the read-scope write.
         + (pending ? '<span class="set-state" aria-hidden="true"><span class="tk-spin"></span></span>' : '')
-        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="Anonymous usage analytics" data-act="privacy:analytics"'
-          + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
+        + '<button class="tk-switch' + (on ? ' on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="' + ANALYTICS_TITLE + '" data-act="privacy:analytics"'
+          + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn usage data sharing ' + (on ? 'off' : 'on') + '"></button>'
       + '</div>'
     + '</div>'
     + approvalRulesSection()
@@ -24494,10 +24505,10 @@ function tkFilterBar(visibleCount) {
     + '<div class="set-tbrow set-tbrow--wrap">' + seg
       + '<span class="set-tbacts">'
         + '<button class="iconbtn sm" data-act="tasks:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
-        + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
+        + '<button class="btn btn-p sm" data-act="tasks:new" title="New task (N)">' + ic('plus') + 'New task</button>'
       + '</span></div>'
     + (none ? '' : '<div class="set-tbrow">' + search
-      + (TK.search.length && !TK.searchOpen ? '<button class="btn btn-g xs" data-act="tasks:clearSearch" title="Esc clear search">' + ic('x') + 'Clear</button>' : '')
+      + (TK.search.length && !TK.searchOpen ? '<button class="btn btn-g xs" data-act="tasks:clearSearch" title="Clear the search (Esc)">' + ic('x') + 'Clear</button>' : '')
       + tkReadoutHTML(visibleCount)
     + '</div>') + '</div>';
 }
@@ -24578,7 +24589,7 @@ function tkListHTML() {
    full, and its three actions. */
 function tkDetailHTML() {
   const row = TK.rows.find((r) => r.id === TK.detailId);
-  const back = '<button class="btn btn-g sm" data-act="tasks:back" title="Esc back">' + ic('chevL') + 'All tasks</button>';
+  const back = '<button class="btn btn-g sm" data-act="tasks:back" title="Back to all tasks (Esc)">' + ic('chevL') + 'All tasks</button>';
   if (!row) {
     return '<div class="set-pane"><div class="tk-bar">' + back + '</div>'
       + '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">task ' + esc(TK.detailId || '?') + ' not found in the current snapshot. Press Esc to return to the list.</span></div>'
@@ -24597,10 +24608,10 @@ function tkDetailHTML() {
   ];
   return '<div class="set-pane set-taskdetail">' + tkMessages()
     + '<div class="tk-bar">' + back + '<span class="grow"></span>'
-      + '<button class="btn btn-s sm" data-act="tasks:open:' + esc(id) + '" title="o open session">' + ic('chat') + 'Open session</button>'
-      + '<button class="btn btn-s sm" data-act="tasks:run:' + esc(id) + '" title="R run-now">' + ic('play') + 'Run now</button>'
+      + '<button class="btn btn-s sm" data-act="tasks:open:' + esc(id) + '" title="Open the task\'s chat (O)">' + ic('chat') + 'Open session</button>'
+      + '<button class="btn btn-s sm" data-act="tasks:run:' + esc(id) + '" title="Run now (Shift+R)">' + ic('play') + 'Run now</button>'
       + (pauseAct ? '<button class="btn btn-s sm" data-act="tasks:' + pauseAct + ':' + esc(id) + '">' + (pauseAct === 'pause' ? 'Pause' : 'Resume') + '</button>' : '')
-      + '<button class="btn btn-danger sm" data-act="tasks:cancel:' + esc(id) + '" title="c cancel">Cancel task</button></div>'
+      + '<button class="btn btn-danger sm" data-act="tasks:cancel:' + esc(id) + '" title="Cancel this task (C)">Cancel task</button></div>'
     + '<div class="set-wellcard">'
       + '<h3 class="set-dtitle">' + esc(row.userMessage || id) + '</h3>'
       + '<div class="set-chips">' + tkStatusChip(row.status) + (row.recurring ? '<span class="tk-chip tk-chip--sm">recurring</span>' : '')
@@ -24632,7 +24643,7 @@ function tkFormHTML() {
     : field('At', 'atIsoOrMs', f.atIsoOrMs, '2026-05-01T09:00:00Z', 'an ISO time or Unix-ms', true);
   const canSubmit = f.preview.ok && !f.submitting;
   return '<div class="set-pane set-form">'
-    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Esc cancel">' + ic('chevL') + 'All tasks</button></div>'
+    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Back to all tasks (Esc)">' + ic('chevL') + 'All tasks</button></div>'
     + '<div class="set-formgrid">'
       + '<div class="set-formcol">'
         + '<div class="tk-field tkrow"><span class="tk-lbl">Kind</span><div class="tk-seg" role="group" aria-label="Kind">'
@@ -24663,7 +24674,7 @@ function tkFormHTML() {
 function tkAskHTML(f) {
   const can = !!taskAskMessage(f.ask);
   return '<div class="set-pane set-form set-askform">'
-    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Esc cancel">' + ic('chevL') + 'All tasks</button></div>'
+    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Back to all tasks (Esc)">' + ic('chevL') + 'All tasks</button></div>'
     + '<div class="set-formcol">'
       + '<label class="tk-field tkrow"><span class="tk-lbl">What should the agent do, and when?</span>'
         + '<input class="tk-inp" data-tk-field="ask" value="' + esc(f.ask) + '" placeholder="' + esc(TASK_ASK_PLACEHOLDER) + '" autocomplete="off" spellcheck="true">'
@@ -24676,7 +24687,7 @@ function tkAskHTML(f) {
       + '<button class="btn btn-g" data-act="tasks:manual">Set up manually</button>'
       + '<span class="grow"></span>'
       + '<button class="btn btn-g" data-act="tasks:back">Cancel</button>'
-      + '<button class="btn btn-p set-submit" data-act="tasks:ask"' + (can ? '' : ' disabled') + ' title="Enter send">Ask the agent</button>'
+      + '<button class="btn btn-p set-submit" data-act="tasks:ask"' + (can ? '' : ' disabled') + ' title="Send (Enter)">Ask the agent</button>'
     + '</div>'
     + '</div>';
 }
@@ -25170,7 +25181,7 @@ function skillsTab() {
       // Refresh and Browse Skills Hub keep to the right; where the row cannot hold them they go to a second line.
       + '<span class="set-tbend">'
         + '<button class="iconbtn sm" data-act="skills:refresh" title="Refresh (r)" aria-label="Refresh"' + (SKP.listRefreshing ? ' disabled aria-busy="true">' + '<span class="tk-spin"></span>' : '>' + ic('refresh')) + '</button>'
-        + '<button class="btn btn-blue" data-act="skills:hub" title="i Skills Hub">' + ic('search') + 'Browse Skills Hub</button>'
+        + '<button class="btn btn-blue" data-act="skills:hub" title="Browse Skills Hub (I)">' + ic('search') + 'Browse Skills Hub</button>'
       + '</span>'
       + '</div></div>';
     view = bar
@@ -25334,7 +25345,7 @@ async function skpToolsRefresh(read) {
 /* ST-07: name, state, source and version, then SKILL.md itself. */
 function skpDetailHTML() {
   const name = SKP.detailName;
-  const back = '<button class="btn btn-g sm set-flush" data-act="skills:back" title="Esc back">' + ic('chevL') + 'All skills</button>';
+  const back = '<button class="btn btn-g sm set-flush" data-act="skills:back" title="Back to all skills (Esc)">' + ic('chevL') + 'All skills</button>';
   if (!name) return '<div class="tk-bar">' + back + '</div><p class="set-cap">(no skill selected)</p>';
   const row = (SK.rows || []).find((r) => r.name === name);
   const enabled = row ? row.enabled : true;
@@ -25349,7 +25360,7 @@ function skpDetailHTML() {
   // Remove is offered where `d remove` can act: a global skill gets the confirm, a project one the line saying where it lives.
   const canRemove = row && (row.source === 'global' || row.source === 'project');
   return '<div class="tk-bar">' + back + '<span class="grow"></span>'
-      + '<button class="tk-switch' + (enabled ? ' on' : '') + '" role="switch" aria-checked="' + enabled + '" aria-label="' + (enabled ? 'Disable ' : 'Enable ') + esc(name) + '" title="e toggle" data-act="skills:toggle:' + esc(name) + '"' + (SKP.busy ? ' disabled' : '') + '></button>'
+      + '<button class="tk-switch' + (enabled ? ' on' : '') + '" role="switch" aria-checked="' + enabled + '" aria-label="' + (enabled ? 'Disable ' : 'Enable ') + esc(name) + '" title="Turn this skill on or off (E)" data-act="skills:toggle:' + esc(name) + '"' + (SKP.busy ? ' disabled' : '') + '></button>'
       + '<span class="set-state' + (enabled ? ' on' : '') + '">' + (enabled ? 'enabled' : 'disabled') + '</span>'
       + (canRemove ? '<button class="btn btn-danger sm" data-act="skills:remove:' + esc(name) + '">' + ic('trash') + 'Remove</button>' : '')
       + '<button class="iconbtn sm" data-act="skills:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
@@ -25378,8 +25389,8 @@ function skpRemoveConfirmHTML() {
     + '<p class="set-cap">(bundled-starter check unavailable)</p>'
     + (c.error ? '<div class="tuierr tk-help tk-help--err">' + esc(c.error) + '</div>' : '')
     + (c.submitting ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">removing…</span></div>'
-        : '<div class="acts"><button class="btn btn-s sm" data-act="skills:removeCancel" title="[n] cancel">Cancel</button>'
-          + '<button class="btn btn-df sm" data-act="skills:removeConfirm" title="[y] delete">Delete</button></div>')
+        : '<div class="acts"><button class="btn btn-s sm" data-act="skills:removeCancel" title="Cancel (N)">Cancel</button>'
+          + '<button class="btn btn-df sm" data-act="skills:removeConfirm" title="Delete (Y)">Delete</button></div>')
     + '</div></div>';
 }
 /* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override.
@@ -25394,10 +25405,10 @@ function skpInstallConfirmHTML() {
     + '<div class="tuierr tk-out set-scan">' + esc(c.message) + '</div>'
     + '<p class="set-cap">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</p>'
     + (SKP.installing ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">installing…</span></div>'
-        : '<div class="acts"><button class="btn btn-s sm" data-act="skills:installCancel" title="[n] cancel">Cancel</button>'
+        : '<div class="acts"><button class="btn btn-s sm" data-act="skills:installCancel" title="Cancel (N)">Cancel</button>'
           + (c.verdict === 'caution'
-            ? '<button class="btn btn-p sm" data-act="skills:installAck" title="[y] install">Install</button></div>'
-            : '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)</button></div>'))
+            ? '<button class="btn btn-p sm" data-act="skills:installAck" title="Install (Y)">Install</button></div>'
+            : '<button class="btn btn-df sm" data-act="skills:installAck" title="Install anyway (Y)">Install anyway (risk acknowledged)</button></div>'))
     + '</div></div>';
 }
 function skpHubIdLabel(identifier) {
@@ -25429,7 +25440,7 @@ function skpHubListHTML() {
   const search = SKP.hubSearchEditing
     ? '<label class="tk-inpwrap set-search set-hubsearch is-open">' + ic('search')
       + '<input id="skp-hubq" value="' + esc(q) + '" placeholder="Search ClawHub and GitHub taps" aria-label="Search the skill hub" autocomplete="off" spellcheck="false"></label>'
-    : '<button class="tk-inpwrap set-search set-hubsearch" data-act="skills:hubSearch" title="/ search">' + ic('search')
+    : '<button class="tk-inpwrap set-search set-hubsearch" data-act="skills:hubSearch" title="Search (/)">' + ic('search')
       + '<span class="' + (q.length ? 'v' : 'ph') + '">' + esc(q.length ? q : 'Search ClawHub and GitHub taps') + '</span></button>';
   let body;
   if (first) body = skpHubSkeletonHTML();
@@ -25459,10 +25470,10 @@ function skpHubListHTML() {
       + '</div>';
   }
   return '<div class="tuibar tk-bar set-toolbar"><div class="set-tbrow">'
-      + '<button class="btn btn-g sm" data-act="skills:back" title="Esc back">' + ic('chevL') + 'Installed</button>'
+      + '<button class="btn btn-g sm" data-act="skills:back" title="Back to installed skills (Esc)">' + ic('chevL') + 'Installed</button>'
       + search
       + (first ? '' : '<span class="set-counts">' + n + ' result' + (n === 1 ? '' : 's') + '</span>')
-      + '<button class="btn btn-s sm" data-act="skills:rebrowse" title="r re-browse"' + (SKP.hubLoading ? ' disabled' : '') + (refreshing ? ' aria-busy="true"' : '') + '>'
+      + '<button class="btn btn-s sm" data-act="skills:rebrowse" title="Refresh the list (R)"' + (SKP.hubLoading ? ' disabled' : '') + (refreshing ? ' aria-busy="true"' : '') + '>'
         + (refreshing ? '<span class="tk-spin"></span>' : ic('refresh')) + 'Browse again</button>'
     + '</div></div>'
     + (SKP.hubError ? '<div class="tuierr tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(SKP.hubError) + '</span></div>' : '')
@@ -25503,12 +25514,12 @@ function skpHubCardHTML() {
   const claw = c.source === 'clawhub';
   const canInstall = !!c.installId;
   const meta = skpHubMeta(c);
-  return '<div class="tk-bar"><button class="btn btn-g sm set-flush" data-act="skills:back" title="Esc back">' + ic('chevL') + 'Results</button></div>'
+  return '<div class="tk-bar"><button class="btn btn-g sm set-flush" data-act="skills:back" title="Back to results (Esc)">' + ic('chevL') + 'Results</button></div>'
     + '<div class="set-cardhead">'
       + '<div class="set-cardtitle"><h3 class="set-dtitle" title="' + esc(c.identifier) + '">' + esc(c.name) + '</h3>'
         + (meta ? '<p class="set-cardmeta">' + esc(meta) + '</p>' : '') + '</div>'
       + (SKP.installing ? '<span class="set-installing"><span class="tk-spin"></span>Installing…</span>'
-        : '<button class="btn btn-blue" data-act="skills:install"' + (canInstall ? '' : ' disabled') + ' title="i install">' + ic('download') + 'Install</button>')
+        : '<button class="btn btn-blue" data-act="skills:install"' + (canInstall ? '' : ' disabled') + ' title="Install (I)">' + ic('download') + 'Install</button>')
     + '</div>'
     + (c.description ? '<p class="set-desc">' + esc(c.description) + '</p>' : '')
     + skpCardSourceHTML(c)

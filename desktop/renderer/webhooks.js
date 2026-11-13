@@ -24,9 +24,10 @@
    Node checks (test/webhooks.test.mjs). No DOM, no IPC of its own. */
 
 const WHK_OLD_AGENT = 'Update the agent to manage webhooks.';
-const WHK_EMPTY = 'No webhooks yet. Add one and each event becomes a task for the agent.';
-const WHK_TUNNEL_HOWTO = 'Outside services (GitHub, Stripe) reach these routes only through the webhook tunnel: start the agent with atag serve --tunnel (cloudflared must be installed). The public address then shows here. Each route is checked with its own secret.';
-const WHK_TUNNEL_UP = 'Outside services post to the public address through the webhook tunnel, which serves only webhook routes. Each route is checked with its own secret.';
+const WHK_INTRO = 'Let other services hand the agent a task. When GitHub, Stripe or another service sends an event here, the agent runs your prompt on it.';
+const WHK_EMPTY = 'No webhooks yet.';
+const WHK_TUNNEL_HOWTO = 'Services on the internet reach these webhooks only through a tunnel. To turn it on, start the agent with atag serve --tunnel (cloudflared must be installed). The public address then shows here. Each webhook checks its own secret.';
+const WHK_TUNNEL_UP = 'Services send events to the public address through a tunnel that lets in webhooks only. Each webhook checks its own secret.';
 
 /* [preset, label, where the secret goes, the starting prompt, secret field: 'none' | 'optional' | 'required'] */
 const WHK_PRESETS = [
@@ -219,10 +220,10 @@ function webhooksHTML(st, deps) {
   const newBtn = st.form ? '' : '<button class="btn btn-p sm" data-act="whk:new" title="Add a webhook">New webhook</button>';
   const t = st.data.tunnel;
   const reach = t && t.state === 'up' && t.publicUrl ? WHK_TUNNEL_UP
-    : t && t.state === 'starting' ? 'The webhook tunnel is starting; the public address shows here when it is up.'
-    : t && t.state === 'failed' ? 'The webhook tunnel stopped' + (t.error ? ' (' + t.error + ')' : '') + '. ' + WHK_TUNNEL_HOWTO
+    : t && t.state === 'starting' ? 'The tunnel is starting. The public address shows here when it is up.'
+    : t && t.state === 'failed' ? 'The tunnel stopped' + (t.error ? ' (' + t.error + ')' : '') + '. ' + WHK_TUNNEL_HOWTO
     : WHK_TUNNEL_HOWTO;
-  const parts = [head(newBtn), note(esc('Each event a sender posts becomes a task with your prompt. ' + reach), 'set-whk-reach')];
+  const parts = [head(newBtn), note(esc(WHK_INTRO), 'set-whk-intro'), note(esc(reach), 'set-whk-reach tk-help')];
   if (!st.data.tasksEnabled) parts.push('<div class="tk-help tk-help--warn set-privnote set-whk-tasksoff">Tasks are off in the agent’s config, so webhooks are turned away until they are on.</div>');
 
   if (st.created) {
@@ -233,7 +234,7 @@ function webhooksHTML(st, deps) {
         ? '<div class="set-whk-kv"><span>Address</span><code>' + esc(c.url) + '</code>'
           + '<button class="btn btn-s xs" data-act="whk:copyurl:' + esc(c.name) + '">Copy</button></div>'
         : '<div class="set-whk-kv"><span>Path</span><code>' + esc(c.path) + '</code></div>'
-          + '<div class="d">The public address shows here once the webhook tunnel is up.</div>')
+          + '<div class="d">The public address shows here once the tunnel is up.</div>')
       + (c.secret ? '<div class="set-whk-kv"><span>Secret</span><code class="set-whk-secret">' + esc(c.secret) + '</code>'
         + '<button class="btn btn-s xs" data-act="whk:copysecret">Copy</button></div>' : '')
       + '<div class="d">' + esc(whkPreset(c.verify)[2]) + '</div>'
@@ -287,4 +288,4 @@ function webhooksHTML(st, deps) {
   return '<div class="set-pane set-whk">' + parts.join('') + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {WHK_OLD_AGENT, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_TUNNEL_UP, WHK_PRESETS, whkPreset, whkPresetLabel, whkPresetsFor, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError, createWebhooks, webhooksHTML};
+if (typeof module !== 'undefined') module.exports = {WHK_OLD_AGENT, WHK_INTRO, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_TUNNEL_UP, WHK_PRESETS, whkPreset, whkPresetLabel, whkPresetsFor, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError, createWebhooks, webhooksHTML};

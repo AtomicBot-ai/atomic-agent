@@ -6727,9 +6727,9 @@ async function settingsTest(
   await js<void>("window.__settingsOpen('general')");
   const gen = await js<string>("window.__settingsBody()");
   const genSwitches = await js<number>("document.querySelectorAll('#settings .setbody .tk-switch[data-act=\"privacy:analytics\"]').length");
-  const privacyCopy = ["Reading outside the working folder", "Ask first", "Read anywhere", "Anonymous usage analytics", "Never sent with analytics"]
+  const privacyCopy = ["Reading outside the working folder", "Ask first", "Read anywhere", "Share anonymous usage data", "Never sent:"]
     .every((s) => priv.includes(s)) && !priv.includes("Session grants") && !priv.includes("Open General")
-    && ["Appearance", "Working folder", "Anonymous usage analytics", "Crash reports and coarse usage counts"].every((s) => gen.includes(s));
+    && ["Appearance", "Working folder", "Share anonymous usage data", "When on, Atomic Agent sends:"].every((s) => gen.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
   check("privacy tab: TUI copy, no approval ladder; one analytics switch in General and one in Privacy", privacyCopy && noLadder && privSwitches === 1 && genSwitches === 1,
     privacyCopy ? (noLadder ? `switches privacy=${privSwitches} general=${genSwitches}` : "ladder text present") : "copy missing");
