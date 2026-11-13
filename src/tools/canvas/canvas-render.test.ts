@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ToolContext } from "../tool-registry.js";
+import { ApprovalGate, type ApprovalRequest } from "../../approval/approval-gate.js";
+import { ApprovalDeniedError } from "../../approval/dangerous-tool.js";
+import { ToolRegistry, type ToolContext } from "../tool-registry.js";
 import { buildCanvasRenderTool, canvasRecordOf, canvasSlug, CANVAS_RENDER_TOOL } from "./index.js";
 
 let work: string;
@@ -10,7 +12,13 @@ beforeEach(() => { work = mkdtempSync(join(tmpdir(), "canvas-render-")); });
 afterEach(() => { rmSync(work, { recursive: true, force: true }); });
 
 const ctx = (): ToolContext => ({ workingDir: work, sessionId: "s1", stepIndex: 0, signal: new AbortController().signal });
-const tool = () => buildCanvasRenderTool({ now: () => new Date(2026, 10, 12, 14, 22, 33) });
+const NOW = () => new Date(2026, 10, 12, 14, 22, 33);
+/** Approval off, as with the gate disabled: the drawing tests are about the page. */
+const tool = () => buildCanvasRenderTool({
+  approvals: new ApprovalGate({ emit: () => { throw new Error("no prompt expected"); } }),
+  approvalRequired: false,
+  now: NOW,
+});
 
 describe("canvas.render (ATO-1137)", () => {
   it("draws a bar chart into a new self-contained HTML file in the working folder", async () => {
@@ -116,6 +124,40 @@ describe("canvas.render (ATO-1137)", () => {
     expect(canvasSlug("Café ünïcode")).toBe("cafe-unicode");
     expect(canvasSlug("Выручка")).toBe("canvas");
     expect(canvasSlug("a".repeat(80)).length).toBe(48);
+  });
+});
+
+describe("canvas.render approval (ATO-1137 review)", () => {
+  /** A gate at level 1 (asks on every workspace write) that records and answers each prompt. */
+  function gate(approved: boolean) {
+    const asked: ApprovalRequest[] = [];
+    const approvals: ApprovalGate = new ApprovalGate({
+      emit: (req) => {
+        asked.push(req);
+        if (approved) approvals.resolve({ approvalId: req.approvalId, approved: true });
+        else approvals.reject(req.approvalId, "denied by test");
+      },
+    });
+    const registry = new ToolRegistry();
+    registry.register(buildCanvasRenderTool({ approvals, approvalRequired: true, now: NOW }));
+    return { asked, registry };
+  }
+  const args = { title: "Sales", chart: "bar", labels: ["a"], values: [1] };
+
+  it("asks through the fs-write funnel at the strictest level and writes nothing on a no", async () => {
+    const { asked, registry } = gate(false);
+    await expect(registry.invoke(CANVAS_RENDER_TOOL, args, ctx())).rejects.toBeInstanceOf(ApprovalDeniedError);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toMatchObject({ tool: CANVAS_RENDER_TOOL, category: "fs_write_workspace" });
+    expect(readdirSync(work)).toEqual([]);
+  });
+
+  it("writes the file once the write is approved", async () => {
+    const { asked, registry } = gate(true);
+    const result = await registry.invoke(CANVAS_RENDER_TOOL, args, ctx());
+    expect(result.status).toBe("ok");
+    expect(asked).toHaveLength(1);
+    expect(readdirSync(work)).toEqual(["canvas-sales-20261112-142233.html"]);
   });
 });
 

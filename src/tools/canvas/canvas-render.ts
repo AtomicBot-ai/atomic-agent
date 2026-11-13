@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { compressToolResult, type CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { requireFsApproval, type FsDangerousToolOptions } from "../os/fs/fs-require-approval.js";
 import { CHART_TYPES, renderChartPage, renderHtmlPage, type ChartSeries, type ChartSpec, type ChartType } from "./canvas-chart.js";
 
 export const CANVAS_RENDER_TOOL = "canvas.render";
@@ -24,7 +26,12 @@ export interface CanvasRecord {
   bytes: number;
 }
 
-export interface CanvasRenderToolOptions {
+/**
+ * The approval gate and trust surface, as every fs write gets them: the
+ * file the model wrote goes through `requireFsApproval` like
+ * `os.fs.write`, so the approval level and saved deny/ask rules apply.
+ */
+export interface CanvasRenderToolOptions extends Pick<FsDangerousToolOptions, "approvals" | "approvalRequired" | "trustConfigPaths"> {
   /** Test seam: the time in the file name. */
   now?: () => Date;
 }
@@ -116,19 +123,15 @@ export function canvasSlug(text: string): string {
   return slug.length > 0 ? slug : "canvas";
 }
 
-/** `canvas-<slug>-20261112-142233.html`, then `-2`, `-3`: never an existing file. */
-async function writeNewFile(workingDir: string, slug: string, now: Date, content: string): Promise<string> {
+/** `canvas-<slug>-20261112-142233.html`, then `-2`, `-3`: the first name no file has. */
+function freeCanvasPath(workingDir: string, slug: string, now: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  for (let attempt = 1; ; attempt++) {
+  for (let attempt = 1; attempt <= 50; attempt++) {
     const path = join(workingDir, `canvas-${slug}-${stamp}${attempt === 1 ? "" : `-${attempt}`}.html`);
-    try {
-      await writeFile(path, content, { encoding: "utf8", flag: "wx" });
-      return path;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST" || attempt >= 50) throw err;
-    }
+    if (!existsSync(path)) return path;
   }
+  throw new Error(`50 canvases named canvas-${slug}-${stamp} already exist; pass another \`name\``);
 }
 
 /**
@@ -139,11 +142,13 @@ async function writeNewFile(workingDir: string, slug: string, now: Date, content
  * as `canvas` on the call's `tool_result` frame, so the chat can show
  * the canvas the moment it is written.
  *
- * Always a new file (`wx`, never overwrites), only inside the working
- * folder, so it asks nothing, like `plan.update`; it is not read-only,
- * so plan mode does not run it.
+ * Always a new file (`wx`, never overwrites) in the working folder. The
+ * write goes through the fs approval funnel (`requireFsApproval`, kind
+ * `write`), so the approval level and saved deny/ask rules decide it as
+ * they decide `os.fs.write`; a denial throws before anything is written.
+ * Not read-only, so plan mode does not run it.
  */
-export function buildCanvasRenderTool(options: CanvasRenderToolOptions = {}): ToolDefinition {
+export function buildCanvasRenderTool(options: CanvasRenderToolOptions): ToolDefinition {
   const now = options.now ?? (() => new Date());
   return {
     name: CANVAS_RENDER_TOOL,
@@ -162,9 +167,28 @@ export function buildCanvasRenderTool(options: CanvasRenderToolOptions = {}): To
         : renderChartPage(args.title, args.subtitle, args.chart);
       let path: string;
       try {
-        path = await writeNewFile(ctx.workingDir, canvasSlug(args.name ?? args.title), now(), page);
+        path = freeCanvasPath(ctx.workingDir, canvasSlug(args.name ?? args.title), now());
       } catch (err) {
-        return errorResult(`could not write the canvas file: ${(err as Error).message}`);
+        return errorResult((err as Error).message);
+      }
+      // Throws `ApprovalDeniedError` on a no or a saved deny rule.
+      await requireFsApproval(options, {
+        kind: "write",
+        paths: [path],
+        sessionId: ctx.sessionId,
+        tool: CANVAS_RENDER_TOOL,
+        reason: `save the canvas "${args.title}" as a new file in the working folder`,
+        preview: path,
+        workingDir: ctx.workingDir,
+        ...(options.trustConfigPaths !== undefined ? { trustConfigPaths: options.trustConfigPaths } : {}),
+      }, ctx.signal);
+      try {
+        await writeFile(path, page, { encoding: "utf8", flag: "wx" });
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        return errorResult(code === "EEXIST"
+          ? `a file appeared at ${path} while waiting; call canvas.render again`
+          : `could not write the canvas file: ${(err as Error).message}`);
       }
       const record: CanvasRecord = {
         path,

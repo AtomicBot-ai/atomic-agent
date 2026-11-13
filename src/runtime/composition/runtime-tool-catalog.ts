@@ -216,8 +216,12 @@ export function registerRuntimeCoreTools(input: {
   // The live checklist (ATO-486): pure, always on, no approval.
   toolRegistry.register(planUpdateTool);
   // ATO-1137: a chart or HTML page saved as a new file in the working
-  // folder and shown in the chat as a canvas. Always on, asks nothing.
-  toolRegistry.register(buildCanvasRenderTool());
+  // folder and shown in the chat as a canvas. Always on; the write goes
+  // through the fs approval funnel like `os.fs.write`.
+  toolRegistry.register(buildCanvasRenderTool({
+    ...dangerous,
+    trustConfigPaths: getTrustConfigPaths(config.paths),
+  }));
   // Older stored names stay out of the prompt until checked against actual
   // user messages. The background walk never deletes facts or blocks boot.
   const nameGroundingSource = sessionGroundingSource(sessionStore);

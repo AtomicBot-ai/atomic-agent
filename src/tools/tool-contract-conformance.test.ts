@@ -296,7 +296,7 @@ beforeAll(() => {
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
   registry.register(buildToolViewTool());
   registry.register(planUpdateTool);
-  registry.register(buildCanvasRenderTool());
+  registry.register(buildCanvasRenderTool(dangerous));
   // Runtime registers it beside the live descriptor list (runtime-tool-catalog).
   registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));
   registerMemoryTools(registry, memoryOptions(true));
