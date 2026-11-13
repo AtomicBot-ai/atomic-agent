@@ -663,7 +663,16 @@ export interface TuiState {
    * The bar hides it while an update is running or finished
    * (`updateStatus`), so no reducer case ever needs to null it.
    */
-  updateBanner: { current: string; latest: string } | null;
+  updateBanner: {
+    current: string;
+    latest: string;
+    /**
+     * ATO-1125: the latest release's policy lists the running version.
+     * `below-minimum` turns the offer into a warning; `broken` also
+     * blocks starting a new chat (`required-update.ts`).
+     */
+    required?: "broken" | "below-minimum" | null;
+  } | null;
   /**
    * Lifecycle of an accepted self-update. `running` while `install.sh`
    * executes; `done` / `failed` after it settles. Purely informational —

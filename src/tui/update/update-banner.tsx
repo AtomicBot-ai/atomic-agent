@@ -42,6 +42,11 @@ export interface UpdateBannerProps {
    * terse one, then (for `offer`) the button alone, then nothing.
    */
   budget: number;
+  /**
+   * ATO-1125: the release policy lists the running version. The offer
+   * then reads as a warning instead of news; the button is the same.
+   */
+  required?: "broken" | "below-minimum" | null;
 }
 
 export type UpdateBannerPhase = "offer" | "running" | "done";
@@ -59,9 +64,17 @@ export interface UpdateBannerPlan {
 }
 
 /** Longest-first label ladder for each phase. */
-function labelLadder(phase: UpdateBannerPhase, latest: string): string[] {
+function labelLadder(
+  phase: UpdateBannerPhase,
+  latest: string,
+  required?: UpdateBannerProps["required"],
+): string[] {
   switch (phase) {
     case "offer":
+      if (required === "broken")
+        return [` this version has a known problem, update to v${latest} `, ` update required `, ` v${latest} `];
+      if (required === "below-minimum")
+        return [` this version is no longer supported, update to v${latest} `, ` please update `, ` v${latest} `];
       return [` new version v${latest} available `, ` v${latest} `];
     case "running":
       // "do not close" is the payload: the installer is mid-way through
@@ -90,10 +103,11 @@ export function planUpdateBanner(
   latest: string,
   budget: number,
   phase: UpdateBannerPhase = "offer",
+  required?: UpdateBannerProps["required"],
 ): UpdateBannerPlan | null {
   const button = phase === "offer";
   const buttonWidth = button ? BUTTON.length : 0;
-  for (const label of labelLadder(phase, latest)) {
+  for (const label of labelLadder(phase, latest, required)) {
     const width = label.length + buttonWidth;
     if (width <= budget) return { label, button, width };
   }
@@ -106,9 +120,10 @@ export function UpdateBanner({
   latest,
   phase,
   budget,
+  required,
 }: UpdateBannerProps): ReactElement | null {
   const mouse = useMouseCommands();
-  const plan = planUpdateBanner(latest, budget, phase);
+  const plan = planUpdateBanner(latest, budget, phase, required);
   if (!plan) return null;
   // Inverse accent: the palette's accent as ground, the terminal's own
   // background as ink. Louder than the inverse label beside it, so the

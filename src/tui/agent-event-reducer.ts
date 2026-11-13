@@ -498,7 +498,11 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return {
         ...state,
         updatePrompt: { current: action.current, latest: action.latest },
-        updateBanner: { current: action.current, latest: action.latest },
+        updateBanner: {
+          current: action.current,
+          latest: action.latest,
+          ...(action.required ? { required: action.required } : {}),
+        },
       };
     case "update_dismissed":
       return { ...state, updatePrompt: null };

@@ -45,6 +45,11 @@ import {
 } from "../update/index.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
 import {
+  blocksNewChat,
+  REQUIRED_UPDATE_REFUSAL,
+  type RequiredUpdate,
+} from "./update/required-update.js";
+import {
   DetachedTurns,
   droppedPreview,
   formatBackgroundTurnFailed,
@@ -232,6 +237,8 @@ export class ChatOrchestrator {
   private started = false;
   /** Latest release version captured by `checkForUpdate`, used by `runUpdate`. */
   private pendingUpdateVersion: string | null = null;
+  /** ATO-1125: what the release policy says about the running version. */
+  private requiredUpdate: RequiredUpdate = null;
   private readonly queue: string[] = [];
   private readonly pendingCompactions = new Set<string>();
   /**
@@ -570,10 +577,12 @@ export class ChatOrchestrator {
       });
       if (!result.updateAvailable) return;
       this.pendingUpdateVersion = result.latestVersion;
+      this.requiredUpdate = result.requiredReason;
       this.bus.emit({
         type: "update_available",
         current: result.currentVersion,
         latest: result.latestVersion,
+        required: result.requiredReason,
       });
     } catch {
       // Silent: a failed update check is never user-facing noise.
@@ -1624,6 +1633,15 @@ export class ChatOrchestrator {
     }
     if (this.holdComposerSubmission(text)) return;
     if (!this.session) return;
+    // ATO-1125: a version the release lists as broken starts no new
+    // chat. Only a session with no turns yet is gated; a queued message
+    // belongs to a chat that already runs, and runOneTurn is never
+    // reached while a turn is in flight here (sendMessage queues).
+    if (!fromQueue && blocksNewChat(this.requiredUpdate, this.session.turns.length)) {
+      this.bus.emit({ type: "turn_gate_blocked", text: REQUIRED_UPDATE_REFUSAL });
+      this.bus.emit({ type: "input_changed", value: text });
+      return;
+    }
     this.announceHeapPressure();
     // Pre-turn gate: a managed local model that is not on disk cannot
     // serve this turn, so fail fast with the real fix instead of
