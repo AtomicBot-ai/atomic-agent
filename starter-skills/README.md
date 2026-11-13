@@ -39,3 +39,7 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
 | `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |
+| `lead-research/` | Companies and business contacts from open sources (websites, GitHub, Apify with your key), one source per row; GDPR-safe, never scrapes LinkedIn or X | none (Apify only with your own key) |
+| `email-drafts/` | Outreach and follow-up emails as drafts only (Gmail via `gog`, or local files for Atomic Mail); never sends | `gog` signed in for Gmail drafts |
+| `landing-cro-review/` | Landing page review from a browser screenshot against a conversion checklist | a vision-capable model for the screenshot part |
+| `ad-copy/` | Google Ads RSA and Meta ad text variants, every length checked by a script | none |
