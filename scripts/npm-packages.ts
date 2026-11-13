@@ -29,7 +29,7 @@ import { argv, exit, stderr, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import { BUNDLE_TARGETS, type BundleTarget } from "./bundle-targets.js";
+import { CLI_RELEASE_TARGETS, type BundleTarget } from "./bundle-targets.js";
 import {
   LAUNCHER_PACKAGE,
   archiveName,
@@ -120,7 +120,7 @@ function stage(options: { version: string; archives: string; out: string }): num
   const out = resolve(options.out);
   mkdirSync(out, { recursive: true });
   const staged: string[] = [];
-  for (const target of BUNDLE_TARGETS) {
+  for (const target of CLI_RELEASE_TARGETS) {
     const archive = join(options.archives, archiveName(target));
     if (!existsSync(archive)) {
       stdout.write(`skip ${target.slug}: no ${archiveName(target)}\n`);
