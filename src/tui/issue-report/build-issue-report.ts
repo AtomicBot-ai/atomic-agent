@@ -75,8 +75,8 @@ export function buildIssueReport(input: {
   const includeLogs = input.includeLogs ?? true;
   // Every level masks secrets, emails, URLs and absolute paths
   // (ATO-1466): the issue is public, so even "Everything" never carries
-  // raw user data, the way VS Code's issue reporter and Claude Code's
-  // /bug work. `redactPersonal` only knows the home and working
+  // raw user data, the way VS Code's issue reporter works.
+  // `redactPersonal` only knows the home and working
   // directories, so a path into another project — or one the model
   // mistyped, which end-to-end testing turned up — needs redactPaths too.
   const scrub = (s: string): string => redactPaths(scrubText(s, redaction));
