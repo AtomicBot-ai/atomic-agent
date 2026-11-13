@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { USER_CONFIG_DEFAULTS, parseUserConfigFile } from "./config-schema.js";
 import { cdpUrlProblem } from "./browser-config.js";
 
-const CONNECT_DEFAULTS = { connect: "agent", cdpUrl: null, userDataDir: null };
+const CONNECT_DEFAULTS = { connect: "agent", cdpUrl: null, userDataDir: null, headless: "auto", profile: "agent" };
 
 describe("browser block in config.json", () => {
   it("defaults to empty domain lists, so an older file blocks and gates nothing", () => {
@@ -51,6 +51,17 @@ describe("browser block in config.json", () => {
     expect(() =>
       parseUserConfigFile({ version: USER_CONFIG_DEFAULTS.version, browser: { connect: "yes" } }),
     ).toThrow(/browser\.connect/);
+  });
+
+  it("reads headless (true / false / auto) and profile (agent / temp), rejecting others (ATO-959)", () => {
+    const parse = (browser: Record<string, unknown>) =>
+      parseUserConfigFile({ version: USER_CONFIG_DEFAULTS.version, browser }).browser;
+    expect(parse({}).headless).toBe("auto");
+    expect(parse({ headless: true }).headless).toBe(true);
+    expect(parse({ headless: false }).headless).toBe(false);
+    expect(parse({ profile: "temp" }).profile).toBe("temp");
+    expect(() => parse({ headless: "yes" })).toThrow(/browser\.headless/);
+    expect(() => parse({ profile: "incognito" })).toThrow(/browser\.profile/);
   });
 
   it("holds a file cdpUrl to this machine", () => {

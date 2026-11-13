@@ -160,6 +160,29 @@ describe("loadConfig", () => {
     expect(loadConfig().skills.catalogTokenBudget).toBe(4096);
   });
 
+  // ATO-959: "auto" by default; a file true / false or the env var is
+  // the user's explicit choice and wins.
+  it("browser.headless: auto by default, the file next, the env var over both", () => {
+    expect(loadConfig().browser.headlessSetting).toBe("auto");
+    expect(loadConfig().browser.headless).toBe(false);
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      browser: { ...USER_CONFIG_DEFAULTS.browser, headless: true, profile: "temp" },
+    });
+    resetConfigCache();
+    expect(loadConfig().browser.headlessSetting).toBe(true);
+    expect(loadConfig().browser.headless).toBe(true);
+    expect(loadConfig().browser.profile).toBe("temp");
+    process.env.ATOMIC_AGENT_BROWSER_HEADLESS = "0";
+    resetConfigCache();
+    try {
+      expect(loadConfig().browser.headlessSetting).toBe(false);
+      expect(loadConfig().browser.headless).toBe(false);
+    } finally {
+      delete process.env.ATOMIC_AGENT_BROWSER_HEADLESS;
+    }
+  });
+
   it("reads localModels.completionMaxTokens from the user config file", () => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,

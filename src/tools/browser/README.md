@@ -86,6 +86,17 @@ Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; oth
 
 One honest, fixed identity for the browser the agent launches and for the curl tools (`os.web.fetch`, `os.http.request`, web search), from `web-identity.ts` (ATO-969): Chrome's reduced User-Agent for this OS with the installed browser's major version (`chrome-version.ts`, else `FALLBACK_CHROME_MAJOR`), and Accept-Language from the system locale. The timezone is never overridden. Headless runs as `--headless=new` and gets that UA (only when the version is known), `--lang` and a 1440x900 window; a headed launch keeps Chrome's own. Fingerprints are never rotated or faked.
 
+
+## Background runs and throwaway profiles
+
+`browser.headless` in config.json (ATO-959, `browser-run-scope.ts`), default `"auto"`:
+
+- A turn nobody watches (a scheduled task, a Telegram or Discord message, a webhook or a plain HTTP client) starts the agent's own Chrome without a window. The TUI, the desktop app and a terminal `run` start it with a window, as before. The runtime sets who the turn is for around each turn (`runInBrowserScope`); a fusion worker counts as the turn that fanned it out.
+- One Chrome serves the whole process. A watched turn that finds the agent's Chrome running headless restarts it with a window and reopens its pages; a background turn that finds a window open uses it. A Chrome the agent did not start (`cdpUrl`, your own Chrome) is never restarted.
+- `true` / `false` (or env `ATOMIC_AGENT_BROWSER_HEADLESS`, which wins when set) always / never run headless.
+
+`browser.profile` (default `"agent"`, `temp-profiles.ts`): `"temp"` makes each chat browse in its own throwaway, logged-out profile: a separate browser context in the same Chrome, like an incognito window, with no cookies, storage or logins from the agent's profile and nothing written to disk. Per call, `browser.tabs { action: "new", profile: "temp" }` switches the chat to its throwaway profile and `profile: "agent"` back. A throwaway profile closes with its last tab, when more than four are open (oldest first), or with the browser. Not available in your own Chrome.
+
 ## Your own Chrome
 
 `browser.connect: "user-chrome"` in config.json (opt-in; default `"agent"`, the agent's own profile). The agent then works in the user's signed-in Chrome (`attach-user-chrome.ts`, `user-chrome-endpoint.ts`):
