@@ -33,3 +33,30 @@ describe("enforceAuth with a throttle (ATO-1126)", () => {
     expect(call("127.0.0.1", "k".repeat(16), th).ok).toBe(true);
   });
 });
+
+describe("enforceAuth with x-api-key (ATO-1080)", () => {
+  function callHeaders(headers: Record<string, string>) {
+    const req = { socket: { remoteAddress: "127.0.0.1" }, headers };
+    let status: number | undefined;
+    const res = {
+      statusCode: 200,
+      setHeader: () => undefined,
+      writeHead(s: number) { status = s; return this; },
+      end: () => undefined,
+    };
+    const ok = enforceAuth(req as never, res as never, "k".repeat(16));
+    return { ok, status };
+  }
+
+  it("accepts the key as x-api-key, the header Anthropic clients send", () => {
+    expect(callHeaders({ "x-api-key": "k".repeat(16) }).ok).toBe(true);
+  });
+
+  it("refuses a wrong x-api-key", () => {
+    expect(callHeaders({ "x-api-key": "nope" })).toEqual({ ok: false, status: 401 });
+  });
+
+  it("a bearer token still wins when both are sent", () => {
+    expect(callHeaders({ authorization: "Bearer wrong", "x-api-key": "k".repeat(16) }).ok).toBe(false);
+  });
+});

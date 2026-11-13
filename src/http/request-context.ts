@@ -83,7 +83,9 @@ export function enforceAuth(
     );
     return false;
   }
-  if (secretEquals(getBearerToken(req), apiKey)) {
+  /* ATO-1080: Anthropic clients (Claude Code with ANTHROPIC_API_KEY) send
+     the key as `x-api-key` instead of a bearer token. Same key, same check. */
+  if (secretEquals(getBearerToken(req) ?? getHeader(req, "x-api-key"), apiKey)) {
     throttle?.succeeded(address);
     return true;
   }
