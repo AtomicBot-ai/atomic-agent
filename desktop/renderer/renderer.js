@@ -2170,6 +2170,12 @@ function providerSwitchedLine(p) {
   if (typeof p.from !== 'string' || typeof p.to !== 'string' || !p.from || !p.to) return '';
   return p.from + ' failed, switched to ' + p.to + (typeof p.to_model === 'string' && p.to_model ? ' (' + p.to_model + ')' : '') + '.';
 }
+/** ATO-1459: the button on that line: Fallback settings (the terminal's [configure fallback]), or
+    ATO-1458's Check key on the provider switched away from when it refused the key (`cause`). */
+function providerSwitchedAct(p) {
+  if (p && p.cause === 'auth_rejected') return {act:'fix-key', keyFor: typeof p.from === 'string' ? p.from : ''};
+  return {act:'fallback-settings'};
+}
 /** ATO-1417: the transcript line for a `tool_disabled` frame (the server refused the tool's schema), '' when it names no tool. */
 function toolDisabledLine(p) {
   if (!p || typeof p !== 'object') return '';
@@ -10186,7 +10192,7 @@ function liveFailureRows(rec, ev, wait) {
   try {
     return (wait ? [tpWaitGaveUpEntry(wait)] : []).concat([{id:nid(), k:'system', sev:'err',
       ...turnFailure(ev), tried: tpFallbackFailures(ev.payload), open: false,
-      act: providerFailure(ev) ? 'switch-provider' : null, ...deadEngineRow(ev)}]);
+      ...turnFailureAct(ev), ...deadEngineRow(ev)}]);
   } finally {
     S.turnStartedAt = keep;
   }
@@ -10514,8 +10520,14 @@ function turnFailureLine(ev) {
      That sentence is the reason; "not answering" would send the person to
      their network. The TUI's "Providers panel" is Settings › Models here. */
   const said = String((ev && ev.error) || '');
-  if (/can't use its API key|rejected the API key|needs an API key and none is set/i.test(said)) {
+  if (/can't use its API key|rejected the API key|did not accept your API key|needs an API key and none is set/i.test(said)) {
     return esc(said.replace(/the Providers panel/g, 'Settings › Models') + (waited ? ' The turn gave up' + waited + '.' : ''));
+  }
+  /* ATO-1458: the agent's own verdict (`failure`, ATO-384) says the key was
+     refused, though its sentence is not one of the above. */
+  const verdict = (ev && ev.payload && ev.payload.failure) || {};
+  if (verdict.cause === 'auth_rejected') {
+    return esc((id ? providerWord(id) : 'The provider') + ' did not accept the API key.' + (waited ? ' The turn gave up' + waited + '.' : ''));
   }
   if (providerFailure(ev) && !providerReplied(ev)) {
     const host = providerHost(entry);
@@ -10526,6 +10538,22 @@ function turnFailureLine(ev) {
      agent's sentence is raw (codes, stack words), so the row says one short
      phrase and keeps the sentence under Details (turnFailure). */
   return null;
+}
+/** ATO-1458: the turn failed on a key: the agent's verdict (`failure.cause` /
+    `failure.action`, ATO-384), a saved key the agent would not send, or, from
+    an older agent, its sentence. */
+function turnKeyRejected(ev) {
+  const f = (ev && ev.payload && ev.payload.failure) || {};
+  if (f.cause === 'auth_rejected' || f.action === 'fix-key') return true;
+  const id = selActiveProviderId();
+  const entry = (selProviders() || []).find((p) => p.id === id);
+  if (entry && savedKeyInvalid(entry)) return true;
+  return /can't use its API key|rejected the API key|did not accept your API key|needs an API key and none is set/i.test(String((ev && ev.error) || ''));
+}
+/** The failed turn's button: Check key on a refused key, else Switch provider when the provider failed. */
+function turnFailureAct(ev) {
+  if (turnKeyRejected(ev)) return {act:'fix-key', keyFor: selActiveProviderId() || ''};
+  return {act: providerFailure(ev) ? 'switch-provider' : null};
 }
 
 /* Backlog 40: a turn that ended because a provider refused for money. The
@@ -10853,7 +10881,7 @@ function onChatEvent(ev) {
   if (ev.kind === 'provider_switched') {
     const p = ev.payload || {};
     const line = providerSwitchedLine(p);
-    if (line && item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, text: esc(line)});
+    if (line && item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, text: esc(line), ...providerSwitchedAct(p)});
     if (line && !LIVE_REPLAY) appSay(line);
     render();
     return;
@@ -11131,13 +11159,13 @@ function onChatEvent(ev) {
     if (ev.kind === 'done' && item) tpDropWaitNotes(item.id);   // ATO-185: the answer came; its wait lines go (tui-parity.js)
     else if (item) tpDropRecoveredNote(item.id);   // ATO-204: failed or stopped, it did not "continue" (tui-parity.js)
     // ATO-721: a turn the provider failed (or refused the key on) is that provider's last error, in the agent's words.
-    if (ev.kind === 'error' && item && !LIVE_REPLAY && (providerFailure(ev) || /can't use its API key|rejected the API key/i.test(String(ev.error || '')))) {
+    if (ev.kind === 'error' && item && !LIVE_REPLAY && (providerFailure(ev) || /can't use its API key|rejected the API key|did not accept your API key/i.test(String(ev.error || '')))) {
       diagNoteProviderError(selActiveProviderId(), WAIT && WAIT.cause ? waitCauseWords(WAIT.cause, WAIT.providerId) || String(ev.error || '') : String(ev.error || ''));
     }
     if (ev.kind === 'error' && item) S.log.push({id:nid(), k:'system', sev:'err',
       ...turnFailure(ev),
       tried: tpFallbackFailures(ev.payload), open: false,
-      act: providerFailure(ev) ? 'switch-provider' : null, ...deadEngineRow(ev)});
+      ...turnFailureAct(ev), ...deadEngineRow(ev)});
     // A turn ended: the steer watermark belongs to the turn that is over
     // (chat-orchestrator.ts resets steeredAhead with the queue). The
     // sent-and-not-yet-echoed list goes with it — a `steer_applied` for this
@@ -22366,6 +22394,9 @@ function sysRowHTML(m, times) {
   const engine = m.act === 'start-model' ? deadEngineOffer(m, DWATCH ? DWATCH.kind : null).kind : '';
   const acts = (m.act === 'switch-provider'
     ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '')
+    // ATO-1458 / ATO-1459: a refused key, and a fallback that answered.
+    + (m.act === 'fix-key' ? ' <button class="btn xs btn-s sysact" data-act="llm:checkKey:' + esc(m.keyFor || '') + '">Check key</button>' : '')
+    + (m.act === 'fallback-settings' ? ' <button class="btn xs btn-s sysact" data-act="llm:fbOpen">Fallback settings</button>' : '')
     + (m.act === 'start-model' ? deadEngineActHTML(m) : '')
     // ATO-772: no Try again while the model is down or coming back; it would only wait on it.
     + (m.sev === 'err' && !m.noRetry && (!engine || engine === 'back') ? sysRetryHTML(m) : '');
@@ -28882,6 +28913,16 @@ function llmAct(what) {
   // ATO-1370: the row's Get vision files.
   if (verb === 'visionAt') { LLMP.cursor[LLMP.mode] = +arg; const row = llmRowAt(); if (row && row.kind === 'localTextModel') llmVisionFetch(row.model); return; }
   if (verb === 'edit') { const p = llmProvider(arg); if (p) { llmSetMode(llmProviderTab(p)); llmOpenWizard(p); } return; }
+  // ATO-1458: a chat line's Check key: Settings › Models on the provider that refused the key, the caret in its key field.
+  if (verb === 'checkKey') {
+    act('settings:llm');
+    const p = llmProvider(arg);
+    if (!p) { llmSetMode('cloud'); return; }
+    llmSetMode(llmProviderTab(p)); llmOpenWizard(p); wizFocusKey(); setTimeout(wizFocusKey, 0);
+    return;
+  }
+  // ATO-1459: a fallback line's Fallback settings: Settings › Models › Cloud › Fallback chain.
+  if (verb === 'fbOpen') { act('settings:llm'); llmSetMode('fallback'); return; }
   if (verb === 'confirm') {
     const c = LLMP.confirm; if (!c) return;
     if (c.kind === 'removeProvider') llmRemoveProviderConfirm();
