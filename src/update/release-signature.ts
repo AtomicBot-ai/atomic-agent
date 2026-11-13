@@ -1,5 +1,7 @@
 import { createPublicKey, verify, type KeyObject } from "node:crypto";
 
+import { compareSemver, parseSemver } from "./compare-semver.js";
+
 /**
  * Public half of the release signing key, as an SPKI PEM
  * (`openssl pkey -in key.pem -pubout`). Empty until the key exists: every
@@ -9,6 +11,18 @@ import { createPublicKey, verify, type KeyObject } from "node:crypto";
  * "Release signature".
  */
 export const RELEASE_SIGNING_PUBLIC_KEY = "";
+
+/**
+ * The first release tag signed with `RELEASE_SIGNING_KEY` (e.g. `v0.8.0`).
+ * Set it together with {@link RELEASE_SIGNING_PUBLIC_KEY}, in the same commit,
+ * and keep it equal to `FIRST_SIGNED_VERSION` in scripts/install.sh. From this
+ * tag on a release without `SHA256SUMS.sig` fails the update instead of
+ * falling back to the per-asset `.sha256`, which an attacker who can strip the
+ * signature can also replace. Older tags (a pin or downgrade to a release cut
+ * before signing) still skip. Left empty while a key is embedded, every
+ * release must be signed.
+ */
+export const FIRST_SIGNED_VERSION = "";
 
 /** Digest list of every release asset, `sha256sum` format. */
 export const RELEASE_SUMS_ASSET = "SHA256SUMS";
@@ -125,6 +139,8 @@ export interface ResolveSignedSha256Options {
   arch?: string;
   /** Defaults to {@link RELEASE_SIGNING_PUBLIC_KEY}; injectable for tests. */
   publicKeyPem?: string;
+  /** Defaults to {@link FIRST_SIGNED_VERSION}; injectable for tests. */
+  firstSignedVersion?: string;
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
   onDebug?: (line: string) => void;
@@ -148,12 +164,28 @@ async function fetchAsset(
 }
 
 /**
+ * Whether a release must ship `SHA256SUMS.sig` once a key is embedded.
+ * `version` undefined means "latest", which is never older than the first
+ * signed release. An empty cutoff, or a tag that does not parse, requires
+ * the signature (fail closed).
+ */
+export function signatureRequired(
+  version: string | undefined,
+  firstSignedVersion: string,
+): boolean {
+  if (version === undefined || firstSignedVersion.trim() === "") return true;
+  if (!parseSemver(version) || !parseSemver(firstSignedVersion)) return true;
+  return compareSemver(version, firstSignedVersion) >= 0;
+}
+
+/**
  * The SHA-256 the release's signed SHA256SUMS gives for this host's archive,
  * for the installer to compare against (`ATOMIC_AGENT_EXPECTED_SHA256`).
  * `null` when the check is skipped: no embedded key (no network at all), no
- * archive for this host, or a release without a signature. Throws
- * {@link ReleaseSignatureError} when a signature is there and does not hold,
- * or the signed list does not name the archive.
+ * archive for this host, or a tag older than the first signed release that
+ * ships no signature. Throws {@link ReleaseSignatureError} when a signature is
+ * there and does not hold, the signed list does not name the archive, or a
+ * release that must be signed (see {@link signatureRequired}) has none.
  */
 export async function resolveSignedArchiveSha256(
   opts: ResolveSignedSha256Options,
@@ -180,7 +212,19 @@ export async function resolveSignedArchiveSha256(
     opts.signal,
   );
   if (signature === null) {
-    debug(`release signature: release ships no ${RELEASE_SIGNATURE_ASSET}; skipping`);
+    const firstSigned = opts.firstSignedVersion ?? FIRST_SIGNED_VERSION;
+    if (signatureRequired(opts.version, firstSigned)) {
+      throw new ReleaseSignatureError(
+        `release ${opts.version ?? "latest"} ships no ${RELEASE_SIGNATURE_ASSET}; ` +
+          (firstSigned.trim() !== ""
+            ? `releases from ${firstSigned} on must be signed`
+            : "every release must be signed while a key is embedded"),
+      );
+    }
+    debug(
+      `release signature: ${opts.version ?? ""} predates ${firstSigned} and ships no ` +
+        `${RELEASE_SIGNATURE_ASSET}; skipping`,
+    );
     return null;
   }
   const sums = await fetchAsset(`${base}/${RELEASE_SUMS_ASSET}`, fetchImpl, opts.signal);

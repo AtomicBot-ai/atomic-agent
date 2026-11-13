@@ -2,11 +2,13 @@ import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  FIRST_SIGNED_VERSION,
   RELEASE_SIGNING_PUBLIC_KEY,
   ReleaseSignatureError,
   parseSha256Sums,
   releaseArchiveName,
   resolveSignedArchiveSha256,
+  signatureRequired,
   verifySha256Sums,
 } from "./release-signature.js";
 
@@ -39,6 +41,8 @@ describe("parseSha256Sums", () => {
 describe("verifySha256Sums", () => {
   it("ships with no embedded key, so the check stays off", () => {
     expect(RELEASE_SIGNING_PUBLIC_KEY).toBe("");
+    // Set together with the key; see FIRST_SIGNED_VERSION.
+    expect(FIRST_SIGNED_VERSION).toBe("");
   });
 
   it("verifies a good signature and returns the digests", () => {
@@ -92,6 +96,18 @@ describe("verifySha256Sums", () => {
   });
 });
 
+describe("signatureRequired", () => {
+  it("compares the tag against the first signed release, failing closed", () => {
+    expect(signatureRequired("v0.7.9", "v0.8.0")).toBe(false);
+    expect(signatureRequired("0.7.12", "v0.8.0")).toBe(false);
+    expect(signatureRequired("v0.8.0", "v0.8.0")).toBe(true);
+    expect(signatureRequired("v0.10.0", "v0.8.0")).toBe(true);
+    expect(signatureRequired(undefined, "v0.8.0")).toBe(true);
+    expect(signatureRequired("v0.1.0", "")).toBe(true);
+    expect(signatureRequired("nightly", "v0.8.0")).toBe(true);
+  });
+});
+
 describe("releaseArchiveName", () => {
   it("matches the installers' slugs", () => {
     expect(releaseArchiveName("darwin", "arm64")).toBe("atomic-agent-darwin-arm64.tar.gz");
@@ -133,14 +149,52 @@ describe("resolveSignedArchiveSha256", () => {
     expect(lines.join("\n")).toContain("no public key");
   });
 
-  it("skips a release that ships no signature", async () => {
+  it("skips an unsigned tag older than the first signed release", async () => {
     const { publicKeyPem } = keypair();
     const sha = await resolveSignedArchiveSha256({
       ...base,
+      version: "v0.7.9",
       publicKeyPem,
+      firstSignedVersion: "v0.8.0",
       fetchImpl: fakeFetch({ SHA256SUMS: sums }),
     });
     expect(sha).toBeNull();
+  });
+
+  it("refuses a stripped signature from the first signed release on", async () => {
+    const { publicKeyPem } = keypair();
+    for (const version of ["v0.8.0", "v0.9.1"]) {
+      await expect(
+        resolveSignedArchiveSha256({
+          ...base,
+          version,
+          publicKeyPem,
+          firstSignedVersion: "v0.8.0",
+          fetchImpl: fakeFetch({ SHA256SUMS: sums }),
+        }),
+      ).rejects.toBeInstanceOf(ReleaseSignatureError);
+    }
+  });
+
+  it("refuses an unsigned latest, and any unsigned tag when no cutoff is set", async () => {
+    const { publicKeyPem } = keypair();
+    await expect(
+      resolveSignedArchiveSha256({
+        ...base,
+        publicKeyPem,
+        firstSignedVersion: "v0.8.0",
+        fetchImpl: fakeFetch({ SHA256SUMS: sums }),
+      }),
+    ).rejects.toThrow("releases from v0.8.0 on must be signed");
+    await expect(
+      resolveSignedArchiveSha256({
+        ...base,
+        version: "v0.1.0",
+        publicKeyPem,
+        firstSignedVersion: "",
+        fetchImpl: fakeFetch({ SHA256SUMS: sums }),
+      }),
+    ).rejects.toBeInstanceOf(ReleaseSignatureError);
   });
 
   it("returns the signed digest of this host's archive, from the pinned tag", async () => {

@@ -27,6 +27,12 @@ REPO_DEFAULT="AtomicBot-ai/atomic-agent"
 # key exists; then the installer checks the release's SHA256SUMS.sig with openssl
 # when it can. See scripts/docs/bundling.md, "Release signature".
 RELEASE_SIGNING_PUBLIC_KEY=""
+# First release tag signed with RELEASE_SIGNING_KEY (e.g. v0.8.0), the same value
+# as FIRST_SIGNED_VERSION in src/update/release-signature.ts; set it together with
+# the key. From this tag on (and for "latest") a release without SHA256SUMS.sig is
+# refused instead of trusting the .sha256 beside the archive. Left empty while a
+# key is set, every release must be signed.
+FIRST_SIGNED_VERSION=""
 REPO="${ATOMIC_AGENT_REPO:-$REPO_DEFAULT}"
 VERSION="${ATOMIC_AGENT_VERSION:-}"
 INSTALL_DIR="${ATOMIC_AGENT_INSTALL_DIR:-$HOME/.local/bin}"
@@ -501,9 +507,30 @@ if [ -n "${ATOMIC_AGENT_EXPECTED_SHA256:-}" ]; then
   echo "${TAR_NAME}: matches the signed SHA256SUMS"
 fi
 
+# Exit 0 when tag $1 (empty = latest) must ship SHA256SUMS.sig: no cutoff set,
+# latest, a tag that does not parse, or one at or after FIRST_SIGNED_VERSION.
+signature_required() {
+  [ -n "$1" ] && [ -n "$FIRST_SIGNED_VERSION" ] || return 0
+  printf '%s %s\n' "$1" "$FIRST_SIGNED_VERSION" | awk '
+    function core(v, out,   n, p, i) {
+      sub(/^[vV]/, "", v); sub(/[-+].*/, "", v)
+      n = split(v, p, ".")
+      if (n < 3) return 0
+      for (i = 1; i <= 3; i++) { if (p[i] !~ /^[0-9]+$/) return 0; out[i] = p[i] + 0 }
+      return 1
+    }
+    {
+      if (!core($1, t) || !core($2, f)) exit 0
+      for (i = 1; i <= 3; i++) { if (t[i] > f[i]) exit 0; if (t[i] < f[i]) exit 1 }
+      exit 0
+    }'
+}
+
 # Signed SHA256SUMS on a fresh install. Needs an embedded key, a release that
 # ships SHA256SUMS.sig, and an openssl with Ed25519 (`pkeyutl -rawin`, OpenSSL
-# 3; the LibreSSL in macOS has neither, and is skipped with a note).
+# 3; the LibreSSL in macOS has neither, and is skipped with a note). A missing
+# signature is refused from FIRST_SIGNED_VERSION on, so stripping the .sig does
+# not fall back to the forgeable .sha256.
 if [ -n "$RELEASE_SIGNING_PUBLIC_KEY" ]; then
   SIG_BASE="${TAR_URL%/*}"
   if ! have curl; then
@@ -511,7 +538,11 @@ if [ -n "$RELEASE_SIGNING_PUBLIC_KEY" ]; then
   elif ! have openssl || ! openssl pkeyutl -help 2>&1 | grep -q -- '-rawin'; then
     echo "note: openssl with Ed25519 not found; release signature not checked (sha256 was)."
   elif asset_missing "${SIG_BASE}/SHA256SUMS.sig"; then
-    echo "note: this release ships no SHA256SUMS.sig; release signature not checked."
+    if signature_required "$VERSION"; then
+      echo "error: release ${VERSION:-latest} ships no SHA256SUMS.sig, but releases from ${FIRST_SIGNED_VERSION:-the embedded key} on must be signed; aborting" >&2
+      exit 1
+    fi
+    echo "note: ${VERSION} predates the first signed release (${FIRST_SIGNED_VERSION}) and ships no SHA256SUMS.sig; release signature not checked."
   else
     download "${SIG_BASE}/SHA256SUMS.sig" "$WORK/SHA256SUMS.sig"
     download "${SIG_BASE}/SHA256SUMS" "$WORK/SHA256SUMS"

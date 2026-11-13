@@ -154,8 +154,11 @@ Who checks it:
 - [install.ps1](../install.ps1) only compares `ATOMIC_AGENT_EXPECTED_SHA256`:
   Windows PowerShell 5.1 has no Ed25519.
 
-All of it is skipped while no public key is embedded, and for a release that
-ships no `SHA256SUMS.sig` (every release cut before the key existed).
+All of it is skipped while no public key is embedded. Once a key is embedded,
+a release without `SHA256SUMS.sig` is refused if its tag is at or after
+`FIRST_SIGNED_VERSION` (and for "latest"), so an attacker who strips the
+signature cannot fall back to the forgeable `.sha256`. Only a pin or downgrade
+to a tag older than that (cut before the key existed) still skips the check.
 
 ### Turning the signature on
 
@@ -167,7 +170,12 @@ ships no `SHA256SUMS.sig` (every release cut before the key existed).
 3. Print the public half, `openssl pkey -in release-signing-key.pem -pubout`, and
    paste it into `RELEASE_SIGNING_PUBLIC_KEY` in both
    `src/update/release-signature.ts` and `scripts/install.sh` (the same text in
-   both). Builds from that commit on check the signature.
+   both).
+4. In the same commit, set `FIRST_SIGNED_VERSION` in both files to the first
+   release tag signed with `RELEASE_SIGNING_KEY` (the release from step 2, e.g.
+   `v0.8.0`). From that tag on a missing `SHA256SUMS.sig` fails the update and
+   the install; left empty, every release must be signed. Builds from that
+   commit on check the signature.
 
 ### Rotation
 
