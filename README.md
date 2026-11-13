@@ -512,7 +512,7 @@ atomic-agent serve \
   --api-key "$ATOMIC_AGENT_API_KEY"
 ```
 
-Without a key, anyone who reaches the port can run the agent and its tools, so `serve` refuses to start on a host other than loopback (`0.0.0.0`, a LAN address) unless `--api-key` or `ATOMIC_AGENT_API_KEY` is set. On loopback it still starts without one and prints a one-line warning.
+Without a key, anyone who reaches the port can run the agent and its tools, so `serve` refuses to start on a host other than loopback (`0.0.0.0`, a LAN address) unless `--api-key` or `ATOMIC_AGENT_API_KEY` is set. On loopback it still starts without one and prints a one-line warning. Without a key it answers only requests that name a loopback host (`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, this machine's name) and come from no web page or a page on one of those hosts, and it wants request bodies as `application/json`, so a website open in your browser cannot drive it (ATO-1495). To let a specific web origin in, list it in `ATOMIC_AGENT_ALLOWED_ORIGINS` (comma-separated, a trailing `*` matches a prefix, for example `chrome-extension://*`).
 
 `POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 

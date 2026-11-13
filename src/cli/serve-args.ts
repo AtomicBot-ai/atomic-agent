@@ -35,6 +35,8 @@ export const HELP =
     "                      (falls back to env ATOMIC_AGENT_API_KEY when flag is omitted).",
     "                      On a network host it must be at least 16 characters, and an address",
     "                      that sends 10 wrong keys in a minute waits a minute",
+    "                      Without a key only loopback Host/Origin and JSON bodies are accepted;",
+    "                      ATOMIC_AGENT_ALLOWED_ORIGINS=<a,b> lets listed web origins in",
     "  --no-approval       Force approval level 5: auto-approve every dangerous tool call (dev / trusted use only)",
     "  --parent-pid <p>    Watch this pid instead of the actual parent (for spawners that double-fork)",
     "  --no-parent-exit    Keep running after the parent exits — the way to daemonise from a shell,",
