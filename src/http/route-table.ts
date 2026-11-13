@@ -1,5 +1,6 @@
 import { createSessionCompactionHandler } from "./route-compaction.js";
 import { createRollbackLastTurnHandler } from "./route-rollback-last-turn.js";
+import { createResumeInterruptedTurnHandler } from "./route-resume-interrupted-turn.js";
 import type { RouteDefinition } from "./http-server.js";
 
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
@@ -184,6 +185,8 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
     { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
+    // ATO-448: continue a reply a restart cut off, on the person's click.
+    { method: "POST", path: "/api/sessions/{id}/resume", handler: createResumeInterruptedTurnHandler() },
     {
       method: "POST",
       path: "/api/sessions/{id}/steer",
