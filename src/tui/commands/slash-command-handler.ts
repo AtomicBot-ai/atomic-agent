@@ -15,6 +15,7 @@ import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
 import { compactionInstructionsError, normalizeCompactionInstructions } from "../../runtime/compaction-instructions.js";
+import { parsePersonaCommand, type PersonaCommand } from "./persona-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -38,6 +39,8 @@ export interface SlashDispatchResult {
   readonly compactionInstructions?: string;
   /** `/goal …` (ATO-451): the orchestrator acts on the open chat's goal. */
   readonly goalCommand?: GoalCommand;
+  /** `/persona …` (ATO-54): the submit path writes the config and reports. */
+  readonly personaCommand?: PersonaCommand;
   /**
    * `/enhance <text>`: the draft to rewrite. The buffer is left holding
    * the draft itself, and the caller hands the rewrite back to it.
@@ -423,6 +426,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         ? pureActions([], { systemMessage: SIDE_QUESTION_USAGE })
         : pureActions([], { sideQuestionText: question });
     }
+    case "persona":
+      return pureActions([], { personaCommand: parsePersonaCommand(parsed.args) });
     case "enhance":
       // Opt-in and never sends: the draft goes back into the composer
       // right away, and the rewrite replaces it there for review.

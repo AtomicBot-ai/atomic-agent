@@ -36,6 +36,11 @@ export interface BuildPromptInput {
   skillCatalogDropped?: number;
   systemPersona?: string;
   /**
+   * The session's latched user persona (ATO-54), forwarded into
+   * `buildStablePrefix` as `### persona`. Omitted: no block.
+   */
+  persona?: import("./persona-block.js").PersonaPromptInput;
+  /**
    * Single-stream decode speed of the local worker daemon (tokens per
    * second), measured once at daemon start and held on the model profile
    * manager. Rendered into the `### fusion` machine facts as "~N tok/s";
