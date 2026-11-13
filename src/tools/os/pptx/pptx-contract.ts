@@ -12,7 +12,7 @@ const NAME = "os.fs.write_pptx";
 export const OS_FS_WRITE_PPTX_CONTRACT = {
   name: NAME,
   description:
-    "Create an editable PowerPoint (.pptx) deck from a list of slides: a title, bullet points, an optional picture from disk and speaker notes per slide, with a simple colour theme. An existing file is replaced only with overwrite: true. Dangerous — always requires approval.",
+    "Create an editable PowerPoint (.pptx) deck from a list of slides: a title, bullet points, an optional picture from disk and speaker notes per slide, with a simple colour theme. An existing file is replaced only with overwrite: true, never a deck the request hands in as an input. Dangerous — always requires approval.",
   readonly: false,
   resourceClass: "approval_gated",
   descriptor: {

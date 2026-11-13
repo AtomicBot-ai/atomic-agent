@@ -252,13 +252,9 @@ export function registerOsTools(
   registry.register(buildOsFsGrepTool());
   registry.register(buildOsFsEditTool(fsMutation));
   registry.register(buildOsFsReadDocumentTool());
-  registry.register(
-    buildOsFsWritePptxTool({
-      approvals: options.approvals,
-      approvalRequired: options.approvalRequired,
-      trustConfigPaths: options.trustConfigPaths,
-    }),
-  );
+  // The same bag as os.fs.write: an input deck is refused, a replaced
+  // one keeps a restore copy.
+  registry.register(buildOsFsWritePptxTool(fsMutation));
   registry.register(buildOsFsArchiveListTool());
   registry.register(buildOsFsArchiveReadEntryTool());
   registry.register(

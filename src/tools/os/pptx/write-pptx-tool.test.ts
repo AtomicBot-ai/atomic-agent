@@ -10,6 +10,10 @@ import {
   type ApprovalRequest,
 } from "../../../approval/approval-gate.js";
 import type { ToolContext } from "../../tool-registry.js";
+import { DeclaredInputsRegistry } from "../fs/fs-declared-inputs.js";
+import { buildOsFsRestoreTool } from "../fs/fs-restore.js";
+import { FileRestoreStore } from "../fs/fs-restore-store.js";
+import { buildOsFsWriteTool } from "../fs/fs-write.js";
 import { buildOsFsReadDocumentTool } from "../read-document/index.js";
 import { buildOsFsWritePptxTool } from "./write-pptx-tool.js";
 
@@ -129,5 +133,115 @@ describe("os.fs.write_pptx", () => {
   it("refuses a folder as the target", async () => {
     await mkdir(join(dir, "folder.pptx"));
     await expect(tool().run({ path: "folder.pptx", slides: SLIDES, overwrite: true }, ctx())).rejects.toThrow(/is a folder/);
+  });
+
+  describe("replacing a deck the user handed in", () => {
+    let stateDir: string;
+    let store: FileRestoreStore;
+    let auto: ApprovalGate;
+    let autoPrompts: ApprovalRequest[];
+
+    beforeEach(async () => {
+      stateDir = await mkdtemp(join(tmpdir(), "write-pptx-state-"));
+      store = new FileRestoreStore(join(stateDir, "restore"));
+      autoPrompts = [];
+      // Auto-approve: at level 5 a workspace write approves itself, so
+      // only the input guard stands between the call and the user's deck.
+      auto = new ApprovalGate({
+        level: 5,
+        emit: (request) => {
+          autoPrompts.push(request);
+          queueMicrotask(() => auto.resolve({ approvalId: request.approvalId, approved: true }));
+        },
+      });
+    });
+
+    afterEach(async () => {
+      await rm(stateDir, { recursive: true, force: true });
+    });
+
+    const request = "Tighten talk.pptx: shorter bullets, same slides";
+
+    it("refuses overwrite: true on a deck the request names, like os.fs.write", async () => {
+      const original = Buffer.from("PK\u0003\u0004 the user's talk");
+      await writeFile(join(dir, "talk.pptx"), original);
+      const options = {
+        approvals: auto,
+        approvalRequired: true,
+        restore: store,
+        resolveOriginalRequest: () => request,
+      };
+      const result = await buildOsFsWritePptxTool(options).run(
+        { path: "talk.pptx", slides: SLIDES, overwrite: true },
+        ctx(),
+      );
+      expect(result.status).toBe("error");
+      expect(result.summary).toMatch(/^refused: talk\.pptx is an input the request names/);
+      expect(result.summary).toContain('"Replace talk.pptx?"');
+      expect(result.summary).not.toContain("overwrite");
+      expect(result.details).toMatchObject({ refused: "input", input: "request", overwrite: true });
+      expect(autoPrompts).toHaveLength(0);
+      expect((await readFile(join(dir, "talk.pptx"))).equals(original)).toBe(true);
+
+      // The same file through os.fs.write is refused with the same words.
+      const write = await buildOsFsWriteTool(options).run(
+        { path: "talk.pptx", content: "x", overwrite: true },
+        ctx(),
+      );
+      expect(write.status).toBe("error");
+      expect(write.details).toMatchObject({ refused: "input", input: "request" });
+    });
+
+    it("refuses a deck a fan-out declared as an input, without a store or a request", async () => {
+      await writeFile(join(dir, "talk.pptx"), "the user's talk");
+      const registry = new DeclaredInputsRegistry();
+      registry.declare("s-pptx", [join(dir, "talk.pptx")]);
+      const result = await buildOsFsWritePptxTool({
+        approvals: auto,
+        approvalRequired: true,
+        declaredInputs: registry,
+      }).run({ path: "talk.pptx", slides: SLIDES, overwrite: true }, ctx());
+      expect(result.status).toBe("error");
+      expect(result.details).toMatchObject({ refused: "input", input: "contract" });
+      expect(await readFile(join(dir, "talk.pptx"), "utf8")).toBe("the user's talk");
+    });
+
+    it("keeps a restore copy of a replaced deck the request does not name, and os.fs.restore brings it back", async () => {
+      const original = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0xfe, 0x10]);
+      await writeFile(join(dir, "old.pptx"), original);
+      const options = {
+        approvals: auto,
+        approvalRequired: true,
+        restore: store,
+        resolveOriginalRequest: () => "Make me a launch deck",
+      };
+      const result = await buildOsFsWritePptxTool(options).run(
+        { path: "old.pptx", slides: SLIDES, overwrite: true },
+        ctx(),
+      );
+      expect(result.status).toBe("ok");
+      expect(result.details).toMatchObject({ replaced: true, restoreCopy: true });
+      expect(result.summary).toContain("replaced the user's file `old.pptx`");
+      expect(result.summary).toContain('os.fs.restore {"path":"old.pptx"}');
+
+      const restored = await buildOsFsRestoreTool(options).run({ path: "old.pptx" }, ctx());
+      expect(restored.status).toBe("ok");
+      expect((await readFile(join(dir, "old.pptx"))).equals(original)).toBe(true);
+    });
+
+    it("replaces its own deck without a copy or a refusal", async () => {
+      const options = {
+        approvals: auto,
+        approvalRequired: true,
+        restore: store,
+        resolveOriginalRequest: () => "Make talk.pptx from my notes",
+      };
+      const tool = buildOsFsWritePptxTool(options);
+      expect((await tool.run({ path: "talk.pptx", slides: SLIDES }, ctx())).status).toBe("ok");
+      const again = await tool.run({ path: "talk.pptx", slides: SLIDES, overwrite: true }, ctx());
+      expect(again.status).toBe("ok");
+      expect(again.details.restoreCopy).toBeUndefined();
+      expect(await store.listCopies(dir)).toHaveLength(0);
+    });
   });
 });
