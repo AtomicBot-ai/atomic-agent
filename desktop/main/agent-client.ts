@@ -14,6 +14,7 @@ import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
 import { runMemoryWrite, type MemoryWriteResult } from "./memory-write.js";
 import { projectBodyFields as projectFields } from "./projects-store.js";
+import { reasoningBodyField, type ReasoningLevel } from "./reasoning-level.js";
 import {
   pairingRequest,
   readPairingReply,
@@ -2032,6 +2033,8 @@ export class AgentClient extends EventEmitter {
      * sends nothing (an agent from before the field ignores both anyway).
      */
     project?: { name: string; text: string } | null,
+    /** ATO-490: the chat's reasoning level; absent for Auto. */
+    reasoning?: ReasoningLevel,
   ): Promise<void> {
     const controller = new AbortController();
     this.turns.set(turnId, controller);
@@ -2061,6 +2064,7 @@ export class AgentClient extends EventEmitter {
           // ATO-731: the folder a NEW session works in; the agent keeps an existing session's own.
           ...(workingDir ? { working_dir: workingDir } : {}),
           ...projectFields(project),
+          ...reasoningBodyField(reasoning),
         }),
         signal: controller.signal,
       });

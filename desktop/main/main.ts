@@ -295,6 +295,7 @@ import { registerArtifactScheme, wireArtifactIpc } from "./artifact-frame-ipc.js
 registerArtifactScheme();
 // ATO-556: atomicagent:// links (Add to Atomic Agent buttons): a card, then an install only on a click.
 import { shouldRegisterProtocol, wireDeeplinks } from "./deeplink.js";
+import { reasoningLevelFromWindow, type ReasoningLevel } from "./reasoning-level.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -1601,12 +1602,14 @@ function wireIpc(client: AgentClient): void {
   });
 
   ipcMain.handle("agent:chat", async (_event, payload: unknown) => {
-    const { messages, sessionId, projectId } = payload as {
+    const { messages, sessionId, projectId, reasoning: reasoningRaw } = payload as {
       messages?: Array<{ role: string; content: string }>;
       sessionId?: string;
       /** ATO-42: the project a NEW chat starts in (a stored chat's own project wins). */
       projectId?: string;
+      reasoning?: unknown;
     };
+    const reasoning = reasoningLevelFromWindow(reasoningRaw);
     if (!Array.isArray(messages) || messages.length === 0) {
       return { ok: false, error: "messages must be a non-empty array" };
     }
@@ -1620,8 +1623,8 @@ function wireIpc(client: AgentClient): void {
        here, with its own line, until the generation ends and the model is on
        its way back; a cloud turn never asks. */
     const held = chatRouteIsLocal() ? await gpuShare.chatTurn().catch(() => null) : null;
-    if (held) return holdForStudio(held, clean, sessionId, queuedAt, projectId);
-    return startTurn(randomUUID(), clean, sessionId, queuedAt, false, projectId);
+    if (held) return holdForStudio(held, clean, sessionId, queuedAt, projectId, reasoning);
+    return startTurn(randomUUID(), clean, sessionId, queuedAt, false, projectId, reasoning);
   });
 
   async function startTurn(
@@ -1631,6 +1634,7 @@ function wireIpc(client: AgentClient): void {
     queuedAt: number,
     listed: boolean,
     projectId?: unknown,
+    reasoning?: ReasoningLevel,
   ): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
     /* Backlog 18 (its second review): a restart a switch held back for the
        turns runs as the last one ends (backend-switch restartAfterSwitch), and
@@ -1669,7 +1673,7 @@ function wireIpc(client: AgentClient): void {
       const pid = proj.project.id;
       updateProjects(DESKTOP_STATE_DIR, (d) => assignChat(d, chatId, pid), () => send("projects:changed"));
     }
-    void client.chat(turnId, clean, chatId, proj.workingDir, proj.instructions);
+    void client.chat(turnId, clean, chatId, proj.workingDir, proj.instructions, reasoning);
     return { ok: true, turnId };
   }
 
@@ -1684,6 +1688,7 @@ function wireIpc(client: AgentClient): void {
     sessionId: string | undefined,
     queuedAt: number,
     projectId?: unknown,
+    reasoning?: ReasoningLevel,
   ): { ok: true; turnId: string } {
     const turnId = randomUUID();
     const known = typeof sessionId === "string" && sessionId ? sessionId : null;
@@ -1708,7 +1713,7 @@ function wireIpc(client: AgentClient): void {
       heldForStudio.delete(turnId);
       if (dropped) return;
       client.emit("chat", { turnId, kind: "provider_recovered", payload: { waited_ms: Date.now() - queuedAt, studio: true } });
-      const res = await startTurn(turnId, clean, sessionId, queuedAt, true, projectId);
+      const res = await startTurn(turnId, clean, sessionId, queuedAt, true, projectId, reasoning);
       if (!res.ok) client.emit("chat", { turnId, kind: "error", error: res.error });
     });
     return { ok: true, turnId };
