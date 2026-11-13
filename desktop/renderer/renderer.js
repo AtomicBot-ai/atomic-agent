@@ -26946,7 +26946,7 @@ function llmKeylessLocal(p) {
   if (!p || p.kind !== 'openai-compatible') return false;
   if (['atomic-chat', 'lmstudio', 'ollama'].includes(p.id)) return true;
   // ATO-1066: so is a server on another computer on this network with no key variable of its own (lan-provider.js).
-  if (!p.apiKeyEnvVar && lanIsOtherComputerUrl(p.baseUrl)) return true;
+  if (!p.apiKeyEnvVar && typeof lanIsOtherComputerUrl === 'function' && lanIsOtherComputerUrl(p.baseUrl)) return true;
   try { return ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(new URL(p.baseUrl).hostname.toLowerCase()); } catch (err) { return false; }
 }
 function llmKeysKnown() { return LLMP.envKeys !== null && LLMP.dotenvKeys !== null; }
