@@ -455,7 +455,7 @@ describe("ClaudeCodeImporter", () => {
       });
       const report = await importOnce(true);
       expect(report.items.find((i) => i.kind === "sessions")).toMatchObject({ status: "skipped" });
-      expect(report.items.find((i) => i.kind === "projects")).toMatchObject({ status: "migrated", source: "shop" });
+      expect(report.items.find((i) => (i.kind as string) === "projects")).toMatchObject({ status: "migrated", source: "shop" });
     });
 
     it("finds the folder from the project dir's name when no row carries a cwd", async () => {
@@ -463,7 +463,7 @@ describe("ClaudeCodeImporter", () => {
       mkdirSync(shop, { recursive: true });
       seedProjectSession(shop, "s-1", "2026-08-02T10:00:00Z", false);
       const report = await importOnce(false);
-      expect(report.items.find((i) => i.kind === "projects")).toMatchObject({ source: "shop-app", destination: shop });
+      expect(report.items.find((i) => (i.kind as string) === "projects")).toMatchObject({ source: "shop-app", destination: shop });
     });
   });
 

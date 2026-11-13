@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 
 import { commandOf, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
-import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
+import { AGENT_HOME_DIRNAME, agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor, managedDataDir } from "./local-llama-key.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 
@@ -3906,7 +3906,7 @@ export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: 
 
 /** The folder an Atomic Agent source would be read from when none is typed: ~/.atomic-agent, unless that is this app's own. */
 export function defaultAtomicAgentSource(ownStateDir: string, home: string = homedir()): string | null {
-  const dir = join(home, ".atomic-agent");
+  const dir = join(home, AGENT_HOME_DIRNAME);
   return sameFolder(dir, ownStateDir) ? null : dir;
 }
 
@@ -4842,7 +4842,7 @@ export function importAgentDir(id: ImportSourceId, home = homedir(), env = proce
     case "claude-app":
       return "";
     case "atomic-agent":
-      return join(home, ".atomic-agent");
+      return join(home, AGENT_HOME_DIRNAME);
   }
 }
 

@@ -78,7 +78,9 @@ function absoluteValue(raw: string | undefined): string | null {
 
 /** The operator's terminal-agent directory, and (ATO-416) the desktop's
  *  default too: on a default install the two are the same string. */
-export const TUI_STATE_DIR = join(homedir(), ".atomic-agent");
+/** The terminal agent's folder name under the home directory. */
+export const AGENT_HOME_DIRNAME = ".atomic-agent";
+export const TUI_STATE_DIR = join(homedir(), AGENT_HOME_DIRNAME);
 
 /** ATO-416: where every desktop before this release kept its state. Read once,
  *  by the one-time migration (state-migrate.ts); nothing else opens it. */
