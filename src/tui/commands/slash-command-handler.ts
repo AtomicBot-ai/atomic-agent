@@ -78,6 +78,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionNew: boolean;
   /** With `triggerSessionNew`: start the session in its own git worktree (`/new worktree`). */
   readonly sessionNewWorktree?: boolean;
+  /** `/incognito` (ATO-586): start a fresh incognito chat. */
+  readonly triggerIncognitoSession?: boolean;
   /** When true the caller should open a new OS terminal window (`/window`). */
   readonly triggerNewWindow: boolean;
   /** When true the caller should ask the orchestrator to dump the user profile. */
@@ -517,6 +519,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerSessionNew: true });
     case "rewind":
       return pureActions([], { triggerRewindPicker: true });
+    case "incognito":
+      return pureActions([], { triggerIncognitoSession: true });
     case "window":
       return pureActions([], { triggerNewWindow: true });
     case "sidebar":

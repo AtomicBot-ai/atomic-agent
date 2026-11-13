@@ -103,6 +103,8 @@ export interface BatchExecutionContext {
    * transcript and handed to every call of the batch unchanged.
    */
   userGroundingTexts?: readonly string[];
+  /** The session is an incognito chat (`ToolContext.incognito`, ATO-586). */
+  incognito?: boolean;
   /** The step's provider pin, handed to every call (`ToolContext.providerId`). */
   providerId?: string;
   /**

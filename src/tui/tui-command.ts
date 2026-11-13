@@ -586,6 +586,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           if (options?.worktree) void orchestrator.newWorktreeSession();
           else orchestrator.newSession();
         },
+        onIncognitoSessionRequested: () => orchestrator.newSession(undefined, { incognito: true }),
         onCompactionRequested: (verb, instructions) => { void orchestrator.compactContext(verb, instructions); },
         onGoalCommand: (command) => orchestrator.goalCommand(command),
         onPromptEnhanceRequested: (draft) => { void orchestrator.enhancePrompt(draft); },

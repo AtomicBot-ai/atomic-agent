@@ -423,6 +423,18 @@ export const MENU: readonly MenuNode[] = [
     },
   },
   {
+    // ATO-586: nothing from it is saved to memory; deleted on leave.
+    kind: "action",
+    id: "session.incognito",
+    label: "New incognito chat",
+    group: "session",
+    slash: {
+      name: "incognito",
+      description: "start an incognito chat: nothing saved to memory, deleted when you leave it",
+      rank: 20.5,
+    },
+  },
+  {
     kind: "action",
     id: "session.switch",
     label: "Switch session…",

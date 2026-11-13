@@ -1,6 +1,7 @@
 export type { ApprovalBarrierReport } from "./step/step-batch-policy.js";
 export { approvalBarrierSegments, emptyApprovalBarrierReport, formatApprovalBarrierNotice } from "./step/step-batch-policy.js";
 import { chatLinesOf, groundingTextsOf } from "../memory/name-grounding.js";
+import { isIncognitoSession } from "../session/incognito.js";
 import { createStepBatchPolicy, executeCallsInOrder, emptyApprovalBarrierReport, executeWithApprovalBarriers, formatApprovalBarrierNotice } from "./step/step-batch-policy.js";
 import { parseStepBatch, finishStepBatchRepair } from "./step/step-batch-parsing.js";
 import { prepareStepDispatch } from "./step/step-evidence.js";
@@ -274,6 +275,8 @@ async function executeStepInner(
     signal: ctx.signal,
     ...(readRoots.length > 0 ? { readRoots } : {}),
     userGroundingTexts,
+    // ATO-586: memory write tools refuse in an incognito chat.
+    ...(isIncognitoSession(ctx.session) ? { incognito: true } : {}),
     // A pinned step (fusion worker) runs its model-calling tools on the
     // same provider as its completions — `vision.describe` reads this.
     ...(deps.providerId !== undefined ? { providerId: deps.providerId } : {}),

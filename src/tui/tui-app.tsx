@@ -363,6 +363,8 @@ export interface TuiAppCallbacks {
   onSessionPinToggled?(sessionId: string): void;
   /** Ask the orchestrator to start a fresh session; `worktree` puts it in its own git worktree (ATO-576). */
   onSessionNewRequested?(options?: { worktree?: boolean }): void;
+  /** `/incognito` (ATO-586): start a fresh incognito chat. */
+  onIncognitoSessionRequested?(): void;
   /** `instructions`: what the summary must keep (`/compact <text>`, ATO-661). */
   onCompactionRequested?(verb: "run" | "show", instructions?: string): void;
   /** `/goal …`: act on the open chat's goal (ATO-451). */

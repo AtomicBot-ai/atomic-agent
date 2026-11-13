@@ -9,7 +9,17 @@ export interface TasksOrchestratorDeps {
   getCurrentSessionId(): string | null;
   /** Swap the chat transcript to `sessionId` — used by "open session". */
   switchSession(sessionId: string): void;
+  /**
+   * Whether the open chat is incognito (ATO-586). A task created from it
+   * (`/task new`, the Tasks tab form) would keep its prompt in
+   * tasks.sqlite and run it later in an ordinary chat, so it is refused.
+   */
+  isCurrentSessionIncognito?(): boolean;
 }
+
+/** Shown when a task is asked for from an incognito chat (ATO-586). */
+export const INCOGNITO_TASK_CREATE_REFUSAL =
+  "not scheduled: this is an incognito chat, so it cannot leave tasks behind. Open a normal chat to schedule it.";
 
 export interface TasksOrchestratorOptions {
   /** Refresh cadence for the task list. Defaults to 5_000 ms. */
@@ -122,6 +132,14 @@ export class TasksOrchestrator {
     kind: TaskCreateKind;
   }): void {
     this.bus.emit({ type: "tasks_create_submit_started" });
+    if (this.deps.isCurrentSessionIncognito?.() === true) {
+      this.bus.emit({
+        type: "tasks_create_submit_settled",
+        error: INCOGNITO_TASK_CREATE_REFUSAL,
+      });
+      this.bus.emit({ type: "system_message", text: INCOGNITO_TASK_CREATE_REFUSAL });
+      return;
+    }
     try {
       const record = this.runtime.taskRunner.create({
         userMessage: input.message,

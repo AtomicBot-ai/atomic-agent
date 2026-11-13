@@ -33,6 +33,10 @@ import { ARCHIVED_TURNS_KEY } from "./turn-archive.js";
  * may have its opening prompt there rather than in `$.turns`; the
  * payload's marker carries that prompt, and counts as "someone has spoken
  * to it" for the `EXISTS` guard.
+ *
+ * An incognito chat (ATO-586, `incognito.ts`) is never listed, so the
+ * rail, the recents and the profile's name walk never see it. Its check
+ * comes after `json_valid`, like every other guard.
  */
 function summaryPageSql(cursored: boolean): string {
   return `
@@ -54,6 +58,7 @@ SELECT id,
        json_extract(payload, '$.metadata.importedFrom') AS importedFrom
   FROM sessions
  WHERE json_valid(payload) AND json_type(payload, '$.turns') = 'array'
+   AND json_type(payload, '$.incognito') IS NOT 'object'
    AND (json_type(payload, '$.${ARCHIVED_TURNS_KEY}.firstUserText') = 'text'
         OR EXISTS (SELECT 1
                      FROM json_each(payload, '$.turns') AS t
