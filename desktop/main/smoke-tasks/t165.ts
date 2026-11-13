@@ -246,7 +246,8 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       }))()`);
       check(
         "T165b: a Pinned section above Chats, the last pinned on top, and its chats not repeated under Chats",
-        pinnedView.headers[0] === "Pinned" && pinnedView.headers[1] === "Chats"
+        // W2: the Projects header (it carries New project) may stand between Pinned and Chats.
+        pinnedView.headers[0] === "Pinned" && pinnedView.headers.filter((h) => h !== "Projects" && h !== "Folders")[1] === "Chats"
           && pinnedView.pinned[0] === b.id && pinnedView.pinned[1] === a.id
           && !pinnedView.chats.includes(a.id) && !pinnedView.chats.includes(b.id),
         show(pinnedView),
@@ -260,7 +261,7 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       }))()`);
       check(
         "T165b: with nothing pinned the section is gone and the chat is back under Chats",
-        (keep.pinned.length > 0 || (!unpinnedView.section && unpinnedView.headers[0] === "Chats")) && unpinnedView.inChats,
+        (keep.pinned.length > 0 || (!unpinnedView.section && unpinnedView.headers.filter((h) => h !== "Projects" && h !== "Folders")[0] === "Chats")) && unpinnedView.inChats,
         show(unpinnedView) + (keep.pinned.length > 0 ? " (the operator has pins of their own; only the row's return is asserted)" : ""),
       );
     }

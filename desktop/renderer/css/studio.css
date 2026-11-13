@@ -3,31 +3,20 @@
    right (studio mockup 21.10, states 1-3). Page-only pieces live in
    studio-images.css and studio-video.css. Tokens: styles.css. */
 
-/* ---------- sidebar group (shell.js sidebarHTML) ---------- */
-.sb-studio{display:flex;flex-direction:column;gap:2px;margin-top:4px}
-/* Studio's own header: it looks like the list headers (shell.css .sb-list-head)
-   but is not one of them, so the chat lists keep their own header set. */
-.sb-studio-head{
-  height:30px;flex:none;display:flex;align-items:center;gap:6px;margin-top:8px;padding:0 4px 0 10px;
-  font:600 var(--fs-label)/16px var(--font-ui);letter-spacing:0;color:var(--ink-3);text-transform:none;
-}
-.sb-studio-head > span:first-child{flex:1;min-width:0}
+/* ---------- sidebar row (shell.js sidebarHTML) ----------
+   W2: one "Studio" row among the section rows (shell.css .sb-nav); a click
+   opens a small popover with Image and Video. The popover is fixed, so the
+   52px rail does not clip it. ATO-900 still holds: no header word in the
+   rail, the row is the same 32px icon cell as the others. */
 .sb-studio-row{position:relative}
 .sb-studio-row.on{background:var(--brand-wash)}
 .sb-studio-row.on .sb-new-ic{color:var(--accent)}
 .sb-studio-dot{width:7px;height:7px;border-radius:50%;background:var(--brand);flex:none;margin-left:auto;animation:st-pulse 1.4s infinite}
-/* ATO-900: in the 52px rail the "Studio" header word ran past the panel's
-   edge. The rail keeps the Images and Video icons (shell.css gives .sb-new
-   its 32px cell there) and trades the header for the hairline the chat lists
-   use between them. The narrow-window rail is the same, at the 1000px
-   breakpoint shell.css uses. */
-#sidebar.rail .sb-studio-head{display:none}
-#sidebar.rail .sb-studio::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 4px;background:var(--bd)}
-#sidebar.rail .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}
+.sb-studio-pop{z-index:60}
+.sb-studio-pop .tk-mi > svg{width:15px;height:15px}
+#sidebar.rail .sb-studio-row .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}
 @media (max-width:1000px){
-  #sidebar:not(.drawer) .sb-studio-head{display:none}
-  #sidebar:not(.drawer) .sb-studio::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 4px;background:var(--bd)}
-  #sidebar:not(.drawer) .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}
+  #sidebar:not(.drawer) .sb-studio-row .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}
 }
 @keyframes st-pulse{50%{opacity:.35}}
 

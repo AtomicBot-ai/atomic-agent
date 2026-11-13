@@ -5,7 +5,8 @@
    globals (PREFS, SESSIONS, PENDING_CHATS, chatRow, esc, ic, act, render,
    savePrefs, toast) at call time, as chat-folders.js does.
 
-   Search: a field at the top of the chat lists filters the chats by title
+   Search: a field at the top of the chat lists (W2: shown once the sidebar's
+   magnifier opens it, not all the time) filters the chats by title
    with the ⌘K palette's ranking (fuzzy-match.js). While it holds a query the
    lists show the matches only, archived ones under their own heading; Enter
    opens the best one, Escape clears the field. Titles only: the agent has no
@@ -28,7 +29,10 @@
 
 /* `agent`: whether the agent keeps the archive flag (null: not known yet).
    `migrating`: the prefs.json ids are being moved to the agent. */
-const CHATSEARCH = {q: '', archOpen: false, agent: null, migrating: false};
+/* W2: `open`: the field is on screen. It is not drawn by default any more;
+   the sidebar's magnifier (chatsearch:open) brings it up, Escape on an empty
+   field puts it away. A query keeps it up. */
+const CHATSEARCH = {q: '', open: false, archOpen: false, agent: null, migrating: false};
 
 /** The archived chat ids, from the agent's rows and the window's own fallback list. */
 function chatArchivedIds() {
@@ -44,6 +48,7 @@ function chatSearchOn() {
 
 function chatSearchFieldHTML() {
   const has = CHATSEARCH.q !== '';
+  if (!has && !CHATSEARCH.open) return '';
   return '<div class="sb-search' + (has ? ' has-q' : '') + '" role="search">'
     + '<span class="sb-search-ic">' + ic('search') + '</span>'
     + '<input id="chat-search" type="text" placeholder="Search chats" aria-label="Search chats"'
@@ -172,7 +177,11 @@ function chatArchiveAct(k, v, close) {
   }
   if (k === 'archtoggle') { CHATSEARCH.archOpen = !CHATSEARCH.archOpen; render(); nameVisibleSessions(); return true; }
   if (k === 'chatsearch') {
-    CHATSEARCH.q = '';
+    // W2: `open` (the sidebar's magnifier) brings the field up, or puts an empty one away; `clear` empties it.
+    if (v === 'open') {
+      if (CHATSEARCH.open && !CHATSEARCH.q) { CHATSEARCH.open = false; renderSidebar(); return true; }
+      CHATSEARCH.open = true;
+    } else CHATSEARCH.q = '';
     renderSidebar();
     const f = document.getElementById('chat-search');
     if (f) f.focus({preventScroll: true});
@@ -212,7 +221,7 @@ if (typeof document !== 'undefined') {
     if (e.key === 'Escape') {
       e.preventDefault(); e.stopPropagation();
       if (CHATSEARCH.q) { CHATSEARCH.q = ''; renderSidebar(); }
-      else e.target.blur();
+      else { CHATSEARCH.open = false; e.target.blur(); renderSidebar(); }   // W2: an empty field goes away
       return;
     }
     if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey) {

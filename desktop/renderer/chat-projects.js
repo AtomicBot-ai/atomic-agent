@@ -210,12 +210,17 @@ function projectAct(k, v) {
   return false;
 }
 
-/** The Projects block of the sidebar: each project and its chats. Nothing without projects. */
+/** The Projects block of the sidebar: each project and its chats.
+    W2: "New project" left the rows under New chat and is this header's small
+    button, so the header is drawn whenever the projects store is there, with
+    no projects too (the rail hides an empty block, shell.css). */
 function projectsSidebarHTML(groups) {
-  if (!projectsSupported() || !groups || !groups.length) return '';
-  return '<div class="sb-list sb-folders sb-projects" data-list="projects">'
+  if (!projectsSupported()) return '';
+  groups = groups || [];
+  const plus = typeof lucideIcon === 'function' ? lucideIcon('folderPlus') : ic('folder');
+  return '<div class="sb-list sb-folders sb-projects' + (groups.length ? '' : ' sb-projects-empty') + '" data-list="projects">'
     + '<div class="sb-list-head micro"><span>Projects</span>'
-      + '<button class="iconbtn sb-add" data-act="pnew:" title="New project" aria-label="New project">' + ic('plus') + '</button></div>'
+      + '<button class="iconbtn sb-add sb-pnew" data-act="pnew:" title="New project" aria-label="New project">' + plus + '</button></div>'
     + groups.map((g) => {
       const p = g.project, shut = projectCollapsed(p.id);
       return '<div class="sb-folder sb-project' + (shut ? ' collapsed' : '') + '" data-project="' + esc(p.id) + '">'

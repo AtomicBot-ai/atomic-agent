@@ -115,9 +115,13 @@
 .sb-new-ic{display:flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--ink-2)}
 .sb-new-ic svg{width:15px;height:15px}
 .sb-new-lb{flex:1;min-width:0}
-/* ATO-457: Tasks and Skills, standing rows under New chat (renderer.js
-   sidebarNavHTML). Same row as New chat; the one whose Settings tab is open is lit. */
+/* ATO-457: the standing rows under New chat (renderer.js sidebarNavHTML).
+   W2: Studio, Cron jobs, Skills, Plugins. Same row as New chat; the one whose
+   Settings tab is open is lit. Lucide glyphs (sidebar-nav.js lucideIcon) keep
+   their thin 1.5 stroke, in the muted icon colour. */
 .sb-nav{display:flex;flex-direction:column;gap:1px;margin-top:2px}
+.sb-new-ic svg.lucide{width:16px;height:16px}
+.sb-list-head .sb-add svg.lucide{width:15px;height:15px}
 .sb-nav .sb-nav-row{margin-top:0}
 .sb-nav-row.on{background:var(--brand-wash);color:var(--blue)}
 .sb-nav-row.on .sb-new-ic{color:var(--blue)}
@@ -155,6 +159,9 @@
 .sb-fempty{padding-left:30px}
 .sb-fhead.fdrop-on,.sb-list-head.fdrop-on{background:var(--brand-wash);color:var(--blue)}
 #sidebar.rail .sb-fhead,#sidebar.rail .sb-folders > .sb-list-head,#sidebar.rail [data-list="chats"] > .sb-list-head{display:none}
+/* W2: the Projects header is drawn with no projects too (its New project button); the rail has nothing to show for it. */
+#sidebar.rail .sb-projects-empty{display:none}
+@media (max-width:1000px){#sidebar:not(.drawer) .sb-projects-empty{display:none}}
 #sidebar.rail .sb-folder > .sesrow{padding-left:0}
 /* ATO-1150: the chat search field over the lists (chat-search.js), the same
    pill as the rows; and the folded "Archived" section under Chats, whose

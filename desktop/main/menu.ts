@@ -103,7 +103,7 @@ export function menuTemplate(
       label: "View",
       submenu: [
         item("Chat", "room:chat", "CommandOrControl+1"),
-        item("Tasks", "room:tasks", "CommandOrControl+2"),
+        item("Cron jobs", "room:tasks", "CommandOrControl+2"),   // W2: the Tasks feature's visible name, as in the sidebar
         item("Skills", "room:skills", "CommandOrControl+3"),
         item("Memory", "settings:memory", "CommandOrControl+4"),
         sep,
