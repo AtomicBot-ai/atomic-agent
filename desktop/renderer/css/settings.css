@@ -189,6 +189,12 @@ button.set-search:hover{border-color:var(--bd)}
 /* Д40: Refresh and New task on the filters' row; on a narrow window the pair
    wraps under the filters as one, still on the right. */
 .set-tbrow.set-tbrow--wrap{flex-wrap:wrap;row-gap:10px}
+/* ATO-590 (#1369) added the Paused filter, and nine filters no longer fit
+   beside the pair on the default window: the pair dropped under them and left
+   the hole Д40 closed. The filters now take what the pair leaves (up to their
+   own width) and scroll sideways when that is less, so the pair stays on
+   their row at every width. */
+.set-tbrow--wrap > .set-seg{flex:1 1 0;min-width:0;max-width:max-content}
 .set-tbacts{display:flex;align-items:center;gap:8px;margin-left:auto}
 .set-tblcard{padding:4px;overflow-x:auto}
 .set-tktbl th{height:34px}
