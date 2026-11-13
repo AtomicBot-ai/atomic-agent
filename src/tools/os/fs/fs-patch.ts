@@ -10,7 +10,8 @@ import {
 } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import { checkChangedFile } from "./fs-content-check.js";
-import { withParseWarning } from "./fs-parse-check.js";
+import { displayPath, withParseWarning } from "./fs-parse-check.js";
+import { joinWarnings } from "./lsp/index.js";
 import { dryRunFile, type PreviewOutcome } from "./fs-patch-preview.js";
 import {
   CodexPatchParseError,
@@ -143,10 +144,22 @@ export function buildOsFsPatchTool(
         await writeFile(outcome.absolute, after, "utf8");
         await recordOwnWrite(ctx.fileVersions, outcome.absolute);
         guards.push(await guardAfterPatch(options, ctx, outcome, after));
-        const warning = parseWarningAfterPatch(
-          outcome,
-          after,
-          ctx.workingDir,
+        const original = outcome.originalContent ?? "";
+        const lspWarning =
+          after.length === 0
+            ? null
+            : ((await options.lspDiagnostics?.diagnoseChange({
+                absolute: outcome.absolute,
+                display: displayPath(outcome.absolute, ctx.workingDir),
+                change: "patch",
+                after,
+                sessionId: ctx.sessionId,
+                signal: ctx.signal,
+                ...(original.length > 0 ? { before: original } : {}),
+              })) ?? null);
+        const warning = joinWarnings(
+          parseWarningAfterPatch(outcome, after, ctx.workingDir),
+          lspWarning,
         );
         if (warning !== null) parseWarnings.push(warning);
       }

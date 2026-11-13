@@ -362,6 +362,7 @@ describe("loadConfig", () => {
           envPassthrough: ["GITHUB_TOKEN"],
         },
         screen: { enabled: false, point: true },
+        lsp: { enabled: false },
       },
     });
     const config = loadConfig();

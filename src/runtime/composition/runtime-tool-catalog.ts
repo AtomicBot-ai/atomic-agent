@@ -30,6 +30,8 @@ import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
 import { registerSkillTools, skillNameForPath, trackSkillEdits } from "../../tools/skill/index.js";
 import { SkillChangeRecorder, skillCuratorPaths } from "../../skills/curator/index.js";
+import { registerSkillTools } from "../../tools/skill/index.js";
+import { isProjectFolderTrusted } from "../../skills/project-trust.js";
 import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { planUpdateTool } from "../../tools/plan/index.js";
 import { buildCanvasRenderTool } from "../../tools/canvas/index.js";
@@ -227,6 +229,10 @@ export function registerRuntimeCoreTools(input: {
     shellJobs,
     ...(webSearchKeyHelp === undefined ? {} : { webSearchKeyHelp }),
     ...webFetchRenderer(config, input.browserBackend),
+    // A folder the operator trusted (any project skill or instruction
+    // file said yes to) starts language servers without a question
+    // (ATO-503). Read live, like the skill gate.
+    isTrustedProject: (dir) => isProjectFolderTrusted(config.paths.userConfigFile, config.skills.projectTrust, dir),
   });
   // Computer use (ATO-525): screenshot, click, type, key — macOS only and
   // opt-in (`tools.screen.enabled`, default off). A screenshot asks as
