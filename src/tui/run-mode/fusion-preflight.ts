@@ -41,12 +41,12 @@ export function describeFusionBlocker(state: TuiState): string | null {
     return worker?.policy === "refuse" ? worker.short : null;
   }
   if (cloudReady + localReady === 1 && localReady === 1) {
-    return "needs a second provider to orchestrate — Manage › LLM › Cloud";
+    return "needs a second provider to orchestrate, add one in Manage › LLM › Cloud";
   }
   if (cloudReady + localReady === 1) {
-    return "needs a second provider for the workers — Manage › LLM";
+    return "needs a second provider for the workers, add one in Manage › LLM";
   }
-  return "needs two providers, one per leg — Manage › LLM";
+  return "needs two providers, one to plan and one to run the workers, add them in Manage › LLM";
 }
 
 /**
