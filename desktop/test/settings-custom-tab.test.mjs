@@ -8,6 +8,8 @@ import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
 const renderer = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+// ATO-1066: llmKeylessLocal asks lan-provider.js about servers on another computer.
+const lan = readFileSync(new URL('../renderer/lan-provider.js', import.meta.url), 'utf8');
 function slice(start, end) {
   const i = renderer.indexOf(start);
   assert.ok(i >= 0, start);
@@ -19,7 +21,7 @@ function slice(start, end) {
 function grouping(providers, mode = 'cloud') {
   // URL: a vm context has none, and llmKeylessLocal reads hosts through it.
   const ctx = createContext({ LLMP: { mode }, URL });
-  runInContext('const PROVIDERS = ' + JSON.stringify(providers) + '; function llmProviders() { return PROVIDERS; }\n'
+  runInContext(lan + '\nconst PROVIDERS = ' + JSON.stringify(providers) + '; function llmProviders() { return PROVIDERS; }\n'
     + slice('const PRESETS = [', '\nPRESETS.filter(')
     + slice('function llmCloudProviders()', 'function llmActiveTextId()')
     + slice('function llmKeylessLocal(p)', 'function llmKeysKnown()')

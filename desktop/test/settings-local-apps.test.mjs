@@ -11,6 +11,7 @@ import vm from "node:vm";
 
 const source = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
 const engines = readFileSync(new URL("../renderer/composer-engines.js", import.meta.url), "utf8");
+const lan = readFileSync(new URL("../renderer/lan-provider.js", import.meta.url), "utf8");
 
 function fn(name) {
   const at = source.indexOf("\nfunction " + name + "(");
@@ -59,7 +60,7 @@ function fusionRows() {
     savedKeyInvalid: () => false,
     llmManaged: () => ({}),
   });
-  vm.runInContext(engines + "\nthis.rows = composerFusionEngineRows;", c);
+  vm.runInContext(lan + "\n" + engines + "\nthis.rows = composerFusionEngineRows;", c);
   const detail = (id) => (c.rows("worker").find((r) => r.id === id) || {}).detail;
   return { detail };
 }
@@ -67,6 +68,7 @@ function fusionRows() {
 test("a Fusion seat on a local app reads as on this computer, never Cloud provider", () => {
   const { detail } = fusionRows();
   assert.equal(detail("ollama"), "An app on this computer");
-  assert.equal(detail("lan-ollama"), "Cloud provider");
+  // ATO-1066: one on another computer of this network is the user's own box, not the cloud.
+  assert.equal(detail("lan-ollama"), "A computer on your network");
   assert.equal(detail("openrouter"), "Cloud provider");
 });

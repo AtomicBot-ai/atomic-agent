@@ -49,6 +49,8 @@ function composerFusionEngineRows(leg) {
        local, whatever kind of provider entry carries them. Judged by the address,
        not the preset id: an Ollama on another machine is not on this one. */
     detail: composerProviderOnThisComputer(p) ? 'An app on this computer'
+      /* ATO-1066: a server on another computer on this network is the user's own box, not the cloud (lan-provider.js). */
+      : typeof lanIsOtherComputerUrl === 'function' && lanIsOtherComputerUrl(p.baseUrl) ? 'A computer on your network'
       : BSW.readyIds.includes(p.id) ? 'Cloud provider'
       : typeof savedKeyInvalid === 'function' && savedKeyInvalid(p) ? 'saved key is invalid · paste it again' : 'No API key',
     active:p.id === chosen,
