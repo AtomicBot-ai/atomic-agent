@@ -243,6 +243,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Transcribe speech in an audio file (voice message) to text locally.",
     tier: RARE,
   },
+  "video.render_html": {
+    summary: "Record an HTML page (path or html) to an .mp4 with the local browser and ffmpeg; free.",
+    tier: RARE,
+  },
   "mcp.resource.list": { summary: "List an MCP server's resources.", tier: RARE },
   "mcp.resource.read": { summary: "Read an MCP resource.", tier: RARE },
   "mcp.prompt.list": { summary: "List an MCP server's prompt templates.", tier: RARE },

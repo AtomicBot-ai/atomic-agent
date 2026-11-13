@@ -244,6 +244,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
 
   // video — always a paid cloud clip that runs for minutes: solo.
   "video.generate": "approval_gated",
+  // A headless browser held for the whole recording, then a file write: solo.
+  "video.render_html": "approval_gated",
 
   // audio — whisper.cpp holds the CPU/GPU for as long as the recording
   // lasts, and the first call may ask before a model download: solo.
@@ -460,6 +462,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // Another chat's messages, read or written (ATO-570).
     "sessions.read": ["session_cross"],
     "sessions.send": ["session_cross"],
+    // Asks like a file write onto its output (`categorizeFsMutation`).
+    "video.render_html": FS_WRITE_CATEGORIES,
   };
 
 /**

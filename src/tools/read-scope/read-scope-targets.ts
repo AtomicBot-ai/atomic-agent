@@ -102,6 +102,8 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
       return image === undefined ? [] : [image];
     },
   ],
+  // The page `video.render_html` records (ATO-1164).
+  ["video.render_html", pathArg],
   [
     // whisper.cpp reads the recording: scoped like any read (ATO-702).
     "audio.transcribe",
