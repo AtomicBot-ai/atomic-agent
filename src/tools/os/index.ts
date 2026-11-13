@@ -18,6 +18,7 @@ import { buildOsFsGrepTool } from "./fs/fs-grep.js";
 import { buildOsFsEditTool } from "./fs/fs-edit.js";
 import { buildOsFsReadDocumentTool } from "./read-document/index.js";
 import { buildOsFsWritePptxTool } from "./pptx/index.js";
+import { buildOsFsDocxTool, buildOsFsXlsxTool } from "./office/index.js";
 import {
   buildOsFsArchiveListTool,
   buildOsFsArchiveReadEntryTool,
@@ -76,6 +77,7 @@ export { buildOsFsGrepTool } from "./fs/fs-grep.js";
 export { buildOsFsEditTool } from "./fs/fs-edit.js";
 export { buildOsFsReadDocumentTool } from "./read-document/index.js";
 export { buildOsFsWritePptxTool } from "./pptx/index.js";
+export { buildOsFsDocxTool, buildOsFsXlsxTool } from "./office/index.js";
 export {
   buildOsFsArchiveListTool,
   buildOsFsArchiveReadEntryTool,
@@ -293,6 +295,8 @@ export function registerOsTools(
   // The same bag as os.fs.write: an input deck is refused, a replaced
   // one keeps a restore copy.
   registry.register(buildOsFsWritePptxTool(fsMutation));
+  registry.register(buildOsFsDocxTool(fsMutation));
+  registry.register(buildOsFsXlsxTool(fsMutation));
   registry.register(buildOsFsArchiveListTool());
   registry.register(buildOsFsArchiveReadEntryTool());
   registry.register(

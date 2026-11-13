@@ -11,6 +11,7 @@ import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
 import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
 import { OS_FS_WRITE_PPTX_CONTRACT } from "../tools/os/pptx/pptx-contract.js";
+import { OS_FS_DOCX_CONTRACT, OS_FS_XLSX_CONTRACT } from "../tools/os/office/office-contracts.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 /**
  * Per-tool JSON Schemas for the cloud `native_tools` transport.
@@ -250,6 +251,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["path"],
     ),
   ],
+  [OS_FS_DOCX_CONTRACT.name, OS_FS_DOCX_CONTRACT.argsJsonSchema],
+  [OS_FS_XLSX_CONTRACT.name, OS_FS_XLSX_CONTRACT.argsJsonSchema],
   [
     "os.fs.archive.list",
     obj(
