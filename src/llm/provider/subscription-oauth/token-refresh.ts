@@ -29,7 +29,9 @@ export function createTokenRefresher(options: TokenRefresherOptions): TokenRefre
   const skewMs = options.skewMs ?? DEFAULT_SKEW_MS;
   let inflight: Promise<OAuthTokens> | null = null;
 
-  async function runRefresh(signal?: AbortSignal): Promise<OAuthTokens> {
+  // The shared request never takes a caller's signal: one caller giving up
+  // must not cancel the refresh that other callers joined.
+  async function runRefresh(): Promise<OAuthTokens> {
     const current = await options.store.load();
     if (!current) throw new SignInRequiredError("no_tokens");
     if (!current.refreshToken) throw new SignInRequiredError("no_refresh_token");
@@ -37,7 +39,6 @@ export function createTokenRefresher(options: TokenRefresherOptions): TokenRefre
       fetch: options.fetch,
       url: options.tokenUrl,
       now,
-      ...(signal ? { signal } : {}),
       params: {
         ...options.extraParams,
         grant_type: "refresh_token",
@@ -66,15 +67,15 @@ export function createTokenRefresher(options: TokenRefresherOptions): TokenRefre
 
   function refresh(signal?: AbortSignal): Promise<OAuthTokens> {
     if (!inflight) {
-      inflight = runRefresh(signal).finally(() => {
+      inflight = runRefresh().finally(() => {
         inflight = null;
       });
     }
-    return inflight;
+    return withCallerSignal(inflight, signal);
   }
 
   async function getValidTokens(signal?: AbortSignal): Promise<OAuthTokens> {
-    if (inflight) return inflight;
+    if (inflight) return withCallerSignal(inflight, signal);
     const tokens = await options.store.load();
     if (!tokens) throw new SignInRequiredError("no_tokens");
     if (tokens.expiresAt === undefined || now() + skewMs < tokens.expiresAt) {
@@ -84,4 +85,24 @@ export function createTokenRefresher(options: TokenRefresherOptions): TokenRefre
   }
 
   return { getValidTokens, refresh };
+}
+
+/** Rejects this caller with `cancelled` on abort; the shared refresh keeps going. */
+function withCallerSignal(shared: Promise<OAuthTokens>, signal?: AbortSignal): Promise<OAuthTokens> {
+  if (!signal) return shared;
+  if (signal.aborted) return Promise.reject(new OAuthFlowError("cancelled"));
+  return new Promise<OAuthTokens>((resolve, reject) => {
+    const onAbort = () => reject(new OAuthFlowError("cancelled"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    shared.then(
+      (tokens) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(tokens);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }

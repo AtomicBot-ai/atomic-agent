@@ -95,4 +95,30 @@ describe("createTokenRefresher", () => {
     const { refresher } = setup({ accessToken: "a", refreshToken: "r", expiresAt: NOW - 1 }, 503, { error: "temporarily_unavailable" });
     await expect(refresher.getValidTokens()).rejects.toMatchObject({ code: "token_request_failed", status: 503 });
   });
+
+  it("keeps a joined refresh going when the caller who started it cancels", async () => {
+    const store = memoryStore({ accessToken: "a", refreshToken: "r", expiresAt: NOW - 1 });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const fetchImpl = vi.fn<FetchLike>(async () => {
+      await gate;
+      return jsonResponse(200, { access_token: "new-access", expires_in: 3600 });
+    });
+    const refresher = createTokenRefresher({
+      store,
+      tokenUrl: "https://auth.example.test/token",
+      clientId: "client-under-test",
+      fetch: fetchImpl,
+      now: () => NOW,
+    });
+    const a = new AbortController();
+    const b = new AbortController();
+    const first = refresher.refresh(a.signal);
+    const second = refresher.getValidTokens(b.signal);
+    a.abort();
+    await expect(first).rejects.toMatchObject({ code: "cancelled" });
+    release();
+    await expect(second).resolves.toMatchObject({ accessToken: "new-access" });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });
