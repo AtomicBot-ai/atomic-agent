@@ -94,6 +94,46 @@ describe("/api/sessions", () => {
     expect(response.status).toBe(404);
   });
 
+  // ATO-1149: GET /api/sessions/search, routed before /api/sessions/{id}.
+  it("searches the chat lines of stored sessions", async () => {
+    const session = harness.runtime.createSession({ metadata: { title: "Budget" } });
+    harness.runtime.sessionStore.save({
+      ...session,
+      turns: [
+        { kind: "user", text: "what was the marketing budget for march?", at: 1 },
+        { kind: "assistant_reply", text: "The march budget was 4000 dollars.", at: 2 },
+      ],
+      updatedAt: session.updatedAt + 1,
+    });
+    const response = await fetch(`${harness.baseUrl}/api/sessions/search?q=budget%20march`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      query: string;
+      pending: number;
+      hits: Array<{ sessionId: string; title: string | null; line: number; kind: string; snippet: string }>;
+    };
+    expect(body.query).toBe("budget march");
+    expect(body.pending).toBe(0);
+    expect(body.hits.map((h) => [h.sessionId, h.line])).toEqual(
+      expect.arrayContaining([
+        [session.id, 0],
+        [session.id, 1],
+      ]),
+    );
+    expect(body.hits[0]?.title).toBe("Budget");
+    const limited = await fetch(`${harness.baseUrl}/api/sessions/search?q=budget&limit=1&scope=all`);
+    expect(((await limited.json()) as { hits: unknown[] }).hits).toHaveLength(1);
+  });
+
+  it("rejects an empty search query or a bad limit", async () => {
+    expect((await fetch(`${harness.baseUrl}/api/sessions/search`)).status).toBe(400);
+    expect((await fetch(`${harness.baseUrl}/api/sessions/search?q=%20`)).status).toBe(400);
+    expect((await fetch(`${harness.baseUrl}/api/sessions/search?q=x&limit=0`)).status).toBe(400);
+    expect(
+      (await fetch(`${harness.baseUrl}/api/sessions/search?q=${"a".repeat(501)}`)).status,
+    ).toBe(400);
+  });
+
   it("deletes a session idempotently", async () => {
     const session = harness.runtime.createSession();
     const first = await fetch(`${harness.baseUrl}/api/sessions/${session.id}`, {

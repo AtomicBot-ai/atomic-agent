@@ -30,6 +30,7 @@ import {
   createGetSessionHandler,
   createGetUndeliveredSteersHandler,
   createListSessionsHandler,
+  createSearchSessionsHandler,
   createSteerSessionHandler,
 } from "./route-sessions.js";
 import { createRenameSessionHandler } from "./route-session-title.js";
@@ -165,6 +166,9 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/sessions",
       handler: createListSessionsHandler(),
     },
+    // ATO-1149: full-text search over past chats. Before `{id}`, which
+    // would otherwise take `search` for a session id.
+    { method: "GET", path: "/api/sessions/search", handler: createSearchSessionsHandler() },
     {
       method: "GET",
       path: "/api/sessions/{id}",
