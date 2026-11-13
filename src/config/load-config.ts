@@ -717,6 +717,9 @@ export function loadConfig(): AtomicAgentConfig {
       ownerUserId: user.telegram.ownerUserId,
       parseMode: user.telegram.parseMode,
       progressIndicator: user.telegram.progressIndicator,
+      ...(user.telegram.streamReplies !== undefined
+        ? { streamReplies: user.telegram.streamReplies }
+        : {}),
     },
     discord: {
       enabled: user.discord.enabled,
