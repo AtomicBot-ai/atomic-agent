@@ -10,7 +10,12 @@
 #   ATOMIC_AGENT_INSTALL_DIR=path         (default: $HOME/.local/bin)
 #   ATOMIC_AGENT_NO_PATH=1                 (optional: skip rc-file PATH update)
 #   ATOMIC_AGENT_VERIFY_TIMEOUT=20         (optional: seconds to allow the macOS
-#                                           signature check; 0 skips it)
+#                                           `codesign --verify`; 0 skips it, the
+#                                           Team ID pin below still runs)
+#   ATOMIC_AGENT_TEAM_ID=XXXXXXXXXX        (optional: Apple Team ID the macOS
+#                                           binary must be signed by; default:
+#                                           ours for the default repo, none for a
+#                                           fork; set it empty to turn the pin off)
 
 set -eu
 
@@ -19,6 +24,17 @@ set -eu
 
 REPO_DEFAULT="AtomicBot-ai/atomic-agent"
 REPO="${ATOMIC_AGENT_REPO:-$REPO_DEFAULT}"
+# The Apple Team ID the release workflow signs the macOS binary with
+# (Developer ID Application: AtomicMail Systems OU). A fork signs with its
+# own certificate, so the pin applies to the default repo only unless
+# ATOMIC_AGENT_TEAM_ID names one. `-` (not `:-`) on purpose: an explicitly
+# empty ATOMIC_AGENT_TEAM_ID turns the pin off instead of falling back to ours.
+TEAM_ID_DEFAULT="MU9G7XKJUL"
+if [ "$REPO" = "$REPO_DEFAULT" ]; then
+  EXPECTED_TEAM_ID="${ATOMIC_AGENT_TEAM_ID-$TEAM_ID_DEFAULT}"
+else
+  EXPECTED_TEAM_ID="${ATOMIC_AGENT_TEAM_ID:-}"
+fi
 VERSION="${ATOMIC_AGENT_VERSION:-}"
 INSTALL_DIR="${ATOMIC_AGENT_INSTALL_DIR:-$HOME/.local/bin}"
 
@@ -268,6 +284,10 @@ download() {
 # codesign that actually returns non-zero still aborts -- a binary whose pages
 # do not match its signature is SIGKILLed by the kernel on launch, and saying
 # so here beats letting the user discover it.
+#
+# The Team ID pin (verify_team_id) is not part of that budget: it reads the
+# signature with `codesign -dv`, which does not wait for the scan, so it runs
+# after a pass, after a timeout and with the check switched off alike.
 VERIFY_TIMEOUT="${ATOMIC_AGENT_VERIFY_TIMEOUT:-20}"
 case "$VERIFY_TIMEOUT" in
   '' | *[!0-9]*) VERIFY_TIMEOUT=20 ;;
@@ -303,6 +323,7 @@ verify_signature() {
     return 0
   fi
   if [ "$VERIFY_TIMEOUT" -le 0 ]; then
+    verify_team_id "$_vs_file"
     return 0
   fi
 
@@ -339,6 +360,7 @@ verify_signature() {
       echo "signature check exceeded ${VERIFY_TIMEOUT}s and was skipped."
       echo "  (macOS scans a newly written 140 MB executable the first time it is asked;"
       echo "   the sha256 checksum above already verified this download.)"
+      verify_team_id "$_vs_file"
       return 0
     fi
     if [ "$UI_TTY" = "1" ]; then
@@ -359,6 +381,34 @@ verify_signature() {
   fi
   if [ "$_vs_rc" -ne 0 ]; then
     echo "error: downloaded binary failed 'codesign --verify --strict'; aborting" >&2
+    exit 1
+  fi
+  verify_team_id "$_vs_file"
+  return 0
+}
+
+verify_team_id() {
+  # $1 path to the extracted binary. A valid signature only proves the
+  # bytes match SOME certificate: pin the Team ID too, so a binary re-signed
+  # with someone else's Developer ID is refused (ATO-760). A binary with no
+  # Team ID at all -- ad hoc ("Signature=adhoc", "TeamIdentifier=not set")
+  # or unsigned -- is refused as well: anyone can produce one, and every
+  # release is signed with our Developer ID. `codesign -dv` only reads the
+  # embedded signature, so it does not wait for the first-sight scan.
+  if [ -z "$EXPECTED_TEAM_ID" ]; then
+    return 0
+  fi
+  _vt_team="$(codesign -dv "$1" 2>&1 | awk -F= '/^TeamIdentifier=/ { print $2; exit }' || true)"
+  case "$_vt_team" in
+    '' | 'not set')
+      echo "error: downloaded binary has no Apple Team ID (ad-hoc signed or unsigned), expected ${EXPECTED_TEAM_ID}; aborting" >&2
+      echo "  (a fork that ships ad-hoc builds can set ATOMIC_AGENT_TEAM_ID='' to skip this check)" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$_vt_team" != "$EXPECTED_TEAM_ID" ]; then
+    echo "error: downloaded binary is signed by Apple Team ID ${_vt_team}, expected ${EXPECTED_TEAM_ID}; aborting" >&2
+    echo "  (set ATOMIC_AGENT_TEAM_ID to the Team ID your fork signs with)" >&2
     exit 1
   fi
   return 0
