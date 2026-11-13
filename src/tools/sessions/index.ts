@@ -29,7 +29,7 @@ export interface RegisterSessionToolsOptions extends DangerousToolOptions {
   sessionStore: Pick<SessionStore, "listSummaryPage" | "listChatLines" | "load">;
   taskStore: Pick<TaskStore, "get">;
   taskRunner: Pick<TaskRunner, "create">;
-  createSession(input?: { metadata?: Record<string, unknown> }): SessionState;
+  createSession(input?: { metadata?: Record<string, unknown>; workingDir?: string }): SessionState;
   defaultMaxAttempts: number;
   /**
    * `tasks.sessionToolsEnabled` (env `ATOMIC_AGENT_SESSION_TOOLS_ENABLED`,

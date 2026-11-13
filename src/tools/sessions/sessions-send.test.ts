@@ -40,7 +40,9 @@ function fixture(options: { approved?: boolean; caller?: SessionState } = {}) {
     created.push(input);
     return { id: `t-${created.length}`, sessionId: input.sessionId ?? null } as never;
   });
-  const createSession = vi.fn(() => createEmptySessionState({ id: "s-new", workingDir: "/work" }));
+  const createSession = vi.fn((input?: { workingDir?: string }) =>
+    createEmptySessionState({ id: "s-new", workingDir: input?.workingDir ?? "/boot" }),
+  );
   const tool = buildSessionsSendTool({
     approvals,
     approvalRequired: true,
@@ -92,6 +94,19 @@ describe("sessions.send", () => {
     ).rejects.toBeInstanceOf(ApprovalDeniedError);
     expect(refused.createSession).not.toHaveBeenCalled();
     expect(refused.create).not.toHaveBeenCalled();
+  });
+
+  it("opens the new chat in the sender chat's working folder, not the launch folder", async () => {
+    const { tool, createSession, created } = fixture({
+      caller: createEmptySessionState({ id: "s-me", workingDir: "/tmp/x" }),
+    });
+    const result = await tool.run({ newSession: true, message: "draft notes" }, ctx());
+    expect(result.status).toBe("ok");
+    expect(createSession).toHaveBeenCalledWith({
+      metadata: { createdBySession: "s-me", triggerSource: "agent" },
+      workingDir: "/tmp/x",
+    });
+    expect(created[0]?.sessionId).toBe("s-new");
   });
 
   it("validates the target: exactly one of sessionId / newSession, not this chat, a known id", async () => {

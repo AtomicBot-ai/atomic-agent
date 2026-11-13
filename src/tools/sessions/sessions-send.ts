@@ -18,8 +18,11 @@ import {
 export interface SessionsSendToolOptions extends DangerousToolOptions {
   sessionStore: Pick<SessionStore, "load">;
   taskRunner: Pick<TaskRunner, "create">;
-  /** Opens the chat a `newSession: true` send goes to. */
-  createSession(input?: { metadata?: Record<string, unknown> }): SessionState;
+  /**
+   * Opens the chat a `newSession: true` send goes to, in the sender's
+   * working folder.
+   */
+  createSession(input?: { metadata?: Record<string, unknown>; workingDir?: string }): SessionState;
   defaultMaxAttempts: number;
 }
 
@@ -66,10 +69,8 @@ export function buildSessionsSendTool(options: SessionsSendToolOptions): ToolDef
       if (targetId === ctx.sessionId) {
         return invalid("sessionId", "that is this chat; answer here instead");
       }
-      const forwarded = startedByAnotherChat(
-        ctx.userGroundingTexts,
-        options.sessionStore.load(ctx.sessionId),
-      );
+      const caller = options.sessionStore.load(ctx.sessionId);
+      const forwarded = startedByAnotherChat(ctx.userGroundingTexts, caller);
       if (forwarded !== null) {
         return compressToolResult({
           tool: "sessions.send",
@@ -107,10 +108,13 @@ export function buildSessionsSendTool(options: SessionsSendToolOptions): ToolDef
       );
 
       // Created only after the yes: a refused send leaves no empty chat behind.
+      // It starts in the sender's folder (decision 13), not the agent's
+      // launch folder; the session_cross grant stays per chat.
       const sessionId =
         targetId ??
         options.createSession({
           metadata: { createdBySession: ctx.sessionId, triggerSource: "agent" },
+          workingDir: caller?.workingDir ?? ctx.workingDir,
         }).id;
       try {
         const record = options.taskRunner.create({

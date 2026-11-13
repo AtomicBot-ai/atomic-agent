@@ -121,6 +121,12 @@ describe("runtime session phases", () => {
     expect(calls).toEqual([`save:${persistent.id}`, `trace:${persistent.id}`]);
   });
 
+  it("createSession starts in the folder it is given, else the launch folder (ATO-570)", () => {
+    const factories = createRuntimeSessionFactories(dir, { save: () => {} }, () => null);
+    expect(factories.createSession({ persist: false, workingDir: "/tmp/x" }).workingDir).toBe("/tmp/x");
+    expect(factories.createSession({ persist: false }).workingDir).toBe(dir);
+  });
+
   it("save failure stops recorder creation and propagates the original error", () => {
     const failure = new Error("save failed");
     const recorder = vi.fn(() => null);
