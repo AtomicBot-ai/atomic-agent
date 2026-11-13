@@ -6,7 +6,10 @@
      the files the agent's file tools changed since then are put back. A
      confirmation lists the files that will change and the messages that go.
      The question returns to the composer, as the terminal's /rewind does.
-   - "Edit" (a question): the same rollback, then the edited text is sent.
+   - "Edit" (a question): the same confirmation with the files that will
+     change, then the edited text is sent. When files change there are two
+     ways: files and conversation (files: true), or the conversation only
+     (files: false); with no file changes, one button and no file section.
    - "Fork from here" (a reply): a new chat with the history up to and
      including that reply; the original stays as it is.
 
@@ -85,6 +88,26 @@ function rewindSummary(preview, workingDir) {
   return out;
 }
 
+/**
+ * The confirm buttons of the sheet: [act, label, files flag]. Roll back sends
+ * no flag (the agent's default puts files back). Edit offers both ways only
+ * when files will really change; otherwise one button, conversation only.
+ */
+function rewindButtons(mode, summary) {
+  if (mode !== 'edit') return [['rewind:go', 'Roll back', undefined]];
+  const s = summary || {};
+  const changes = (s.restore || []).length + (s.remove || []).length > 0;
+  if (!changes) return [['rewind:go-chat', 'Send edited message', false]];
+  return [['rewind:go-chat', 'Conversation only', false], ['rewind:go', 'Roll back files and conversation, then resend', true]];
+}
+
+/** Whether the sheet shows its file section (lists and file warnings). */
+function rewindShowsFiles(mode, summary) {
+  if (mode !== 'edit') return true;
+  const s = summary || {};
+  return (s.restore || []).length + (s.remove || []).length + (s.cannot || []).length > 0;
+}
+
 /** The words for the agent refusing (its 409 code). */
 function rewindRefusalText(r) {
   const code = r && r.code;
@@ -113,12 +136,13 @@ function rewindActsHTML(m) {
   return '';
 }
 
-/** `rewind:<verb>:<message id>` from act(): back · edit · fork · go · cancel. */
+/** `rewind:<verb>:<message id>` from act(): back · edit · fork · go · go-chat (edit, conversation only). */
 function rewindAct(v) {
   const colon = v.indexOf(':');
   const verb = colon < 0 ? v : v.slice(0, colon);
   const id = colon < 0 ? '' : v.slice(colon + 1);
-  if (verb === 'go') { rewindConfirm(); return; }
+  if (verb === 'go') return rewindConfirm(REWIND.mode === 'edit' ? true : undefined);
+  if (verb === 'go-chat') return rewindConfirm(false);
   if (verb === 'back' || verb === 'edit' || verb === 'fork') rewindStart(verb, id);
 }
 
@@ -154,8 +178,9 @@ function rewindSheetHTML() {
   }
   if (REWIND.error) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(REWIND.error) + '</span></div>';
   if (REWIND.loading) body += '<div class="tk-empty"><span class="tk-spin"></span><p>Checking what will change…</p></div>';
-  if (REWIND.preview) {
-    const s = rewindSummary(REWIND.preview, typeof WORKSPACE === 'string' ? WORKSPACE : '');
+  const s = REWIND.preview ? rewindSummary(REWIND.preview, typeof WORKSPACE === 'string' ? WORKSPACE : '') : null;
+  if (s && !rewindShowsFiles(REWIND.mode, s)) body += '<p class="sd-cap">' + esc(s.removedText) + '</p>';
+  else if (s) {
     const list = (title, items) => items.length
       ? '<p class="sd-cap"><b>' + esc(title) + '</b></p><div class="rows">' + items.map((t) => '<div class="row"><span class="main"><span class="t">' + esc(t) + '</span></span></div>').join('') + '</div>'
       : '';
@@ -164,15 +189,20 @@ function rewindSheetHTML() {
     body += list('Put back as they were', s.restore) + list('Removed (the agent created them)', s.remove) + list('Cannot be put back', s.cannot);
     body += s.warnings.map((w) => '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(w) + '</span></div>').join('');
   }
-  const ok = edit ? 'Send edited message' : 'Roll back';
   const disabled = REWIND.loading || REWIND.busy || !REWIND.preview;
+  const buttons = rewindButtons(REWIND.mode, s);
+  // The last button is the primary one.
+  const foot = buttons.map(([a, label], i) => {
+    const kind = i < buttons.length - 1 ? 'btn-s' : edit ? 'btn-p' : 'btn-df';
+    return '<button class="btn ' + kind + ' sm" data-act="' + a + '"' + (disabled ? ' disabled' : '') + '>'
+      + (REWIND.busy && i === buttons.length - 1 ? '<span class="tk-spin"></span>' : '') + esc(label) + '</button>';
+  }).join('');
   return sheet(edit ? 'Edit message' : 'Roll back to this message', body,
-    '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Cancel</button>'
-    + '<button class="btn ' + (edit ? 'btn-p' : 'btn-df') + ' sm" data-act="rewind:go"' + (disabled ? ' disabled' : '') + '>'
-    + (REWIND.busy ? '<span class="tk-spin"></span>' : '') + ok + '</button>', 'sheet-rewind');
+    '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Cancel</button>' + foot, 'sheet-rewind');
 }
 
-async function rewindConfirm() {
+/** `files`: undefined (roll back, the agent's default), true or false (edit). */
+async function rewindConfirm(files) {
   if (REWIND.busy || !REWIND.preview) return;
   const edit = REWIND.mode === 'edit';
   const box = document.getElementById('rw-edit');
@@ -183,7 +213,7 @@ async function rewindConfirm() {
   if (typed || (typeof ATT !== 'undefined' && ATT.items.length)) { REWIND.error = 'Your draft is in the way. Send or clear the composer first.'; render(); return; }
   const sid = REWIND.sid;
   REWIND.busy = true; REWIND.error = null; render();
-  const r = await BR.rewind(sid, REWIND.prior, REWIND.text).catch((err) => ({ok: false, supported: true, error: String(err)}));
+  const r = await BR.rewind(sid, REWIND.prior, REWIND.text, files).catch((err) => ({ok: false, supported: true, error: String(err)}));
   REWIND.busy = false;
   if (!r || !r.ok) { REWIND.error = rewindRefusalText(r); render(); return; }
   S.overlay = null;
@@ -216,4 +246,5 @@ if (typeof document !== 'undefined') {
   document.addEventListener('input', (e) => { if (e.target && e.target.id === 'rw-edit') REWIND.draft = e.target.value; });
 }
 
-if (typeof module !== 'undefined') module.exports = {rewindQuestionFor, rewindPathLabel, rewindSummary, rewindRefusalText};
+if (typeof module !== 'undefined') module.exports = {rewindQuestionFor, rewindPathLabel, rewindSummary, rewindRefusalText, rewindButtons, rewindShowsFiles,
+  REWIND, rewindSheetHTML, rewindAct, rewindConfirm};

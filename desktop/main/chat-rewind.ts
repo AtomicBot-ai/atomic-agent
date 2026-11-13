@@ -19,11 +19,19 @@ export type RewindAnswer =
   | { ok: true; supported: true; data: Record<string, unknown> }
   | { ok: false; supported: boolean; code?: string; error: string };
 
-/** The body the window may send: a non-negative whole position and the question's text. */
-export function rewindRequestBody(priorQuestions: unknown, expectText: unknown): { priorQuestions: number; expectText: string } | null {
+/**
+ * The body the window may send: a non-negative whole position, the question's
+ * text and, for a rollback, whether the files go back too (`files: false` is
+ * the conversation only; left out, the agent puts the files back).
+ */
+export function rewindRequestBody(
+  priorQuestions: unknown,
+  expectText: unknown,
+  files?: unknown,
+): { priorQuestions: number; expectText: string; files?: boolean } | null {
   if (typeof priorQuestions !== "number" || !Number.isInteger(priorQuestions) || priorQuestions < 0) return null;
   if (typeof expectText !== "string" || !expectText.trim()) return null;
-  return { priorQuestions, expectText };
+  return typeof files === "boolean" ? { priorQuestions, expectText, files } : { priorQuestions, expectText };
 }
 
 /** The agent's answer to one of the routes, as the window reads it. */

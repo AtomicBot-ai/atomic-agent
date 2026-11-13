@@ -84,6 +84,100 @@ test("refusals are worded, unknown ones keep the agent's message", () => {
   assert.equal(R.rewindRefusalText({ error: "disk full" }), "disk full");
 });
 
+/* ---------- Edit: the same confirmation, files and conversation or the conversation only ---------- */
+
+const FILES_PREVIEW = {
+  removed: { questions: 1, replies: 1 },
+  files: [{ path: "/w/src/a.ts", action: "restore" }, { path: "/w/new.txt", action: "delete" }],
+  notRestorable: [],
+  uncovered: [],
+};
+const NO_FILES_PREVIEW = { removed: { questions: 1, replies: 1 }, files: [], notRestorable: [], uncovered: [] };
+
+/** The renderer globals chat-rewind.js reads at call time, recording what reaches the agent. */
+function fakeWindow(calls) {
+  const g = globalThis;
+  g.S = { overlay: "rewind", agentSession: "s-1", draft: "", log: [] };
+  g.BR = {
+    rewind: async (...args) => { calls.push(["rewind", ...args]); return { ok: true, supported: true, data: { restored: [], deleted: [], failed: [] } }; },
+  };
+  g.openSession = async (sid) => { calls.push(["open", sid]); };
+  g.submit = () => { calls.push(["submit", g.S.draft]); };
+  g.document = { getElementById: (id) => (id === "rw-edit" ? { value: "fixed text" } : null) };
+  g.$ = () => null;
+  g.render = () => {};
+  g.toast = () => {};
+  g.refreshSend = () => {};
+  g.autosize = () => {};
+  g.attToEditor = (t) => t;
+  g.esc = (t) => String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  g.ic = () => "";
+  g.sheet = (title, body, foot) => `<h>${title}</h><b>${body}</b><f>${foot}</f>`;
+  g.WORKSPACE = "/w";
+}
+
+function startEdit(preview) {
+  Object.assign(R.REWIND, { mode: "edit", id: "u1", sid: "s-1", prior: 1, text: "old text", preview, loading: false, busy: false, error: null, draft: "old text" });
+}
+
+const footActs = (html) => [...html.split("<f>")[1].matchAll(/data-act="(rewind:[^"]+)"[^>]*>([^<]*)</g)].map((m) => [m[1], m[2]]);
+
+test("Edit on a message with changed files lists them and offers both ways", () => {
+  fakeWindow([]);
+  startEdit(FILES_PREVIEW);
+  const html = R.rewindSheetHTML();
+  assert.match(html, /id="rw-edit"/);
+  assert.match(html, /Put back as they were/);
+  assert.match(html, /src\/a\.ts/);
+  assert.match(html, /Removed \(the agent created them\)/);
+  assert.match(html, /new\.txt/);
+  assert.deepEqual(footActs(html), [
+    ["rewind:go-chat", "Conversation only"],
+    ["rewind:go", "Roll back files and conversation, then resend"],
+  ]);
+});
+
+for (const [act, files] of [["go", true], ["go-chat", false]]) {
+  test(`Edit's ${act} button rolls back with files: ${files} before it resends`, async () => {
+    const calls = [];
+    fakeWindow(calls);
+    startEdit(FILES_PREVIEW);
+    await R.rewindAct(act);
+    assert.deepEqual(calls, [["rewind", "s-1", 1, "old text", files], ["open", "s-1"], ["submit", "fixed text"]]);
+  });
+}
+
+test("Edit with no file changes has no file section and one button, conversation only", async () => {
+  const calls = [];
+  fakeWindow(calls);
+  startEdit(NO_FILES_PREVIEW);
+  const html = R.rewindSheetHTML();
+  assert.doesNotMatch(html, /Put back as they were|Removed \(the agent|Cannot be put back|No files will change|file tools/);
+  assert.match(html, /1 message of yours and 1 reply will be removed/);
+  assert.deepEqual(footActs(html), [["rewind:go-chat", "Send edited message"]]);
+  await R.rewindAct("go-chat");
+  assert.deepEqual(calls[0], ["rewind", "s-1", 1, "old text", false]);
+  assert.deepEqual(calls.at(-1), ["submit", "fixed text"]);
+});
+
+test("Roll back here keeps one button and leaves the files flag to the agent", async () => {
+  const calls = [];
+  fakeWindow(calls);
+  startEdit(FILES_PREVIEW);
+  R.REWIND.mode = "back";
+  assert.deepEqual(footActs(R.rewindSheetHTML()), [["rewind:go", "Roll back"]]);
+  await R.rewindAct("go");
+  assert.deepEqual(calls, [["rewind", "s-1", 1, "old text", undefined], ["open", "s-1"]]);
+});
+
+test("only a rollback passes the files flag on to the agent", () => {
+  assert.deepEqual(M.rewindRequestBody(0, "x", false), { priorQuestions: 0, expectText: "x", files: false });
+  assert.deepEqual(M.rewindRequestBody(0, "x", true), { priorQuestions: 0, expectText: "x", files: true });
+  assert.deepEqual(M.rewindRequestBody(0, "x", "no"), { priorQuestions: 0, expectText: "x" });
+  assert.match(src("../main/chat-rewind-ipc.ts"), /route === "rewind" \? files : undefined/);
+  assert.match(src("../preload/preload.ts"), /"agent:rewind", \{ sessionId, priorQuestions, expectText, files \}/);
+});
+
 /* ---------- wiring ---------- */
 
 test("the actions are drawn on messages, routed through act() and the overlay, and reach the agent through main", () => {
