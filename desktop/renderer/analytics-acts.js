@@ -96,7 +96,7 @@ const ANX_ACTS = (() => {
       // Settings › Connections › Composio (renderer.js composioAct); never the key.
       composio:{check:L, enable:L, key:L, keyCancel:L, keySave:L, refresh:L, removeKey:L, restart:L},
       // Settings › Connections › Phone push (phone-push.js phonePushAct); never the topic.
-      push:{enable:L, newTopic:L, refresh:L, test:L},
+      push:{copy:L, enable:L, newTopic:L, refresh:L, setup:L, test:L},
       // ATO-328: Save on the Exa key card (chat) or its Settings row; never the key.
       exakey:{save:{chat:L, settings:L}},
       import:{apply:L, field:L, focus:L, preview:L, reset:L, source:Object.assign(set(impSources), {tui:L}),

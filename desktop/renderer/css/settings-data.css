@@ -131,6 +131,8 @@ input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
 .sd-rows .tk-setrow .body{flex:1 1 220px}
 .sd-rows .tk-setrow .d{overflow-wrap:anywhere}
 .sd-rows .tk-setrow .d.sd-mono{font-size:var(--fs-label)}
+/* Phone push step 2: the address on its own line under the words, whole and easy to select. */
+.sd-rows .sd-push-url{margin-top:6px;font-size:var(--fs-label);color:var(--ink);user-select:all;overflow-wrap:anywhere}
 
 /* ---- Composio (composio.js): the Telegram cards' shapes; the key field sits in the card, so it is not centred ---- */
 .sd-cmpcard.tk-card.pad{width:min(520px,100%)}
