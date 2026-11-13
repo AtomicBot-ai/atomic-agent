@@ -15104,6 +15104,7 @@ function hfDiskFit(choice) {
 // A new reading that could change a verdict repaints whatever shows one.
 DISK.onChange = () => render();
 DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
+ALLSET.onChange = () => diagRepaint();   // ATO-41
 /* ATO-1186: the status line repaints in place, never through a full render:
    when the memory word changes and twice a minute for its clock. */
 function statusLineRepaint() {
@@ -15115,7 +15116,6 @@ if (typeof STATUS_LINE !== 'undefined') {
   STATUS_LINE.onChange = statusLineRepaint;
   setInterval(statusLineRepaint, 30 * 1000);
 }
-ALLSET.onChange = () => diagRepaint();   // ATO-41
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
