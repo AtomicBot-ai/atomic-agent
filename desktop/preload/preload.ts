@@ -161,6 +161,8 @@ contextBridge.exposeInMainWorld("atomic", {
   diskSpace: () => ipcRenderer.invoke("app:diskSpace"),
   // ATO-577 / ATO-579: Settings › Diagnostics' Doctor and Data rows.
   doctorRun: (fix: boolean) => ipcRenderer.invoke("doctor:run", fix === true),
+  // ATO-41: every config.json key with value, default and description (`atag config list --json`).
+  settingsReference: () => ipcRenderer.invoke("settings:reference"),
   dataBackup: () => ipcRenderer.invoke("data:backup"),
   dataRestore: () => ipcRenderer.invoke("data:restore"),
   dataMove: () => ipcRenderer.invoke("data:move"),

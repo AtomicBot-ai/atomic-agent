@@ -6359,6 +6359,7 @@ function diagnosticsPane() {
       + '<a class="msglink" href="#" data-url="https://discord.gg/kXWDFSJpMW">Discord</a> or in a '
       + '<a class="msglink" href="#" data-url="https://github.com/AtomicBot-ai/atomic-agent/issues/new">GitHub issue</a>.</p>'
     + doctorDataHTML(DOCD, {esc, ic})
+    + allSettingsHTML(ALLSET, {esc, ic})   // ATO-41 (all-settings.js)
     + diagLogHTML()
     + '</div>';
 }
@@ -7244,6 +7245,8 @@ function act(a) {
   if (k === 'exakey') { exaKeyAct(v); return; }
   // ATO-577 / ATO-579: Diagnostics' Doctor and Data buttons (doctor-data.js).
   if (k === 'doctor') { doctorDataAct(v, BR, () => location.reload()); return; }
+  // ATO-41: Diagnostics' All settings (all-settings.js); a value is written like every other setting (config-patch.js).
+  if (k === 'allset') { allSettingsAct(v, BR, {write: (key, value, patch) => configPatchOr(patch, () => BR.configSet(key, String(value), 'settings')), unset: (key) => BR.configUnset(key)}); return; }
   if (k === 'import') { close(); importAct(a.slice(7)); return; }
   if (a === 'na') return;
 
@@ -8256,6 +8259,7 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'chat-rename') { RENAME.draft = e.target.value; return; }
   // ATO-568: a worker's Steer field keeps its text across repaints.
   if (typeof fzpInput === 'function' && fzpInput(e)) return;
+  if (typeof allSettingsInput === 'function' && allSettingsInput(e, esc)) return;   // ATO-41
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);
     // Lane B — item 3: the draft's estimate moves the projected chip only
@@ -14712,6 +14716,7 @@ function hfDiskFit(choice) {
 // A new reading that could change a verdict repaints whatever shows one.
 DISK.onChange = () => render();
 DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
+ALLSET.onChange = () => diagRepaint();   // ATO-41
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
