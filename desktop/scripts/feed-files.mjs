@@ -113,6 +113,7 @@ export function checkFeed(files, read, channel = "stable") {
     }
   }
   if (present.has(SUMS)) installers.add(SUMS);
+  if (present.has(SUMS_SIG)) installers.add(SUMS_SIG);
 
   return {
     problems,
@@ -123,6 +124,8 @@ export function checkFeed(files, read, channel = "stable") {
 }
 
 export const SUMS = "SHA256SUMS.txt";
+/** desktop.yml's checksums job signs SUMS into this file (ATO-1035). */
+export const SUMS_SIG = "SHA256SUMS.txt.asc";
 
 /** "<sha256>  <name>" lines (sha256sum's format, `*` for binary mode allowed) to a Map name -> hash. */
 export function parseSums(text) {
@@ -152,7 +155,7 @@ export function checkSums(files, sumsText, feedFiles, hash) {
     else if (hash(name) !== digest) problems.push(`${SUMS}: ${name} does not match its sha256`);
   }
   for (const name of feedFiles) {
-    if (name === SUMS || name.endsWith(".yml") || name.endsWith(".blockmap")) continue;
+    if (name === SUMS || name === SUMS_SIG || name.endsWith(".yml") || name.endsWith(".blockmap")) continue;
     if (!sums.has(name)) problems.push(`${SUMS}: does not list ${name}`);
   }
   return problems;

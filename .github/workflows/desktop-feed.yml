@@ -13,20 +13,21 @@
 # 2. Merges the two Windows <channel>.yml into one (merge-update-yml.mjs) and
 #    puts every other file into release/. Two different files with one name
 #    stop the run.
-# 3. Writes SHA256SUMS.txt over every installer in release/ (the format the
-#    desktop release page uses).
+# 3. Takes SHA256SUMS.txt and its signature SHA256SUMS.txt.asc from the run's
+#    desktop-checksums artifact (desktop.yml's checksums job, ATO-1035), so the
+#    feed and the release page carry the one signed file. No sums of its own.
 # 4. Checks release/ with feed-files.mjs --require-sums: every platform's yml,
 #    every file a yml names, both Windows arches, one version, every sum.
 # 5. Refuses a version that is not newer than what desktop-latest serves now.
 # 6. Uploads release/ (everything, including the .dmg/.deb/.rpm for the
 #    desktop-vX.Y.Z page release) as the artifact desktop-release-<version>.
 # 7. Only with publish = true: uploads the feed files to desktop-latest,
-#    installers and SHA256SUMS.txt first, the .yml files last.
+#    installers and SHA256SUMS.txt (+ .asc) first, the .yml files last.
 #
 # Publishing is never automatic: the run is started by hand, and publish is
 # off by default (a dry run). A release goes up only on Nadya's separate "yes".
 # The versioned desktop-vX.Y.Z release with the page downloads stays a
-# separate step; step 6's artifact holds its files and SHA256SUMS.txt.
+# separate step; step 6's artifact holds its files, SHA256SUMS.txt and .asc.
 
 name: Desktop update feed
 
@@ -128,15 +129,21 @@ jobs:
             "../artifacts/desktop-win32-x64/$win_yml" "../artifacts/desktop-win32-arm64/$win_yml" "../release/$win_yml")
           ls -la release
 
-      - name: Write SHA256SUMS.txt
-        working-directory: release
+      # The sums come from desktop.yml's checksums job: one file, signed there.
+      # Summing release/ again here would make a second SHA256SUMS.txt that
+      # the .asc does not verify.
+      - name: Take the signed SHA256SUMS.txt from desktop-checksums
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          files=(*.dmg *.zip *.exe *.AppImage *.deb *.rpm)
-          (( ${#files[@]} > 0 )) || { echo "::error::no installers in release/"; exit 1; }
-          sha256sum "${files[@]}" | LC_ALL=C sort -k2 > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          src=artifacts/desktop-checksums
+          [[ -f "$src/SHA256SUMS.txt" ]] || { echo "::error::run $RUN_ID has no desktop-checksums artifact (a run from before ATO-1035?)"; exit 1; }
+          cp "$src/SHA256SUMS.txt" release/
+          if [[ -f "$src/SHA256SUMS.txt.asc" ]]; then
+            cp "$src/SHA256SUMS.txt.asc" release/
+          else
+            echo "::warning::desktop-checksums has no SHA256SUMS.txt.asc: the sums are not signed"
+          fi
+          cat release/SHA256SUMS.txt
 
       - name: Check the feed
         id: check
