@@ -138,7 +138,8 @@ test('client: a turn on the project\'s model sends provider_id + provider_model 
   client.port = server.address().port;
   client.token = 't0ken';
   try {
-    await client.chat('turn-1', [{ role: 'user', content: 'hi' }], 'chat-1', '/work/site', { providerId: 'openrouter', model: 'anthropic/claude-sonnet-5' });
+    // project and reasoning (ATO-42, ATO-490) come before the turn model in the merged signature.
+    await client.chat('turn-1', [{ role: 'user', content: 'hi' }], 'chat-1', '/work/site', undefined, undefined, { providerId: 'openrouter', model: 'anthropic/claude-sonnet-5' });
     await client.chat('turn-2', [{ role: 'user', content: 'hi' }], 'chat-2', '/work/other');
     const turns = seen.filter((r) => r.url === '/v1/chat/completions').map((r) => JSON.parse(r.body));
     assert.equal(turns.length, 2);

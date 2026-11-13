@@ -174,7 +174,7 @@ test("main and preload wire the projects IPC and the change event", () => {
     assert.ok(main.includes(`ipcMain.handle("${ch}"`), ch);
   }
   assert.ok(main.includes('send("projects:changed")'));
-  assert.match(main, /client\.chat\(turnId, clean, chatId, proj\.workingDir, proj\.instructions\)/);
+  assert.match(main, /client\.chat\(turnId, clean, chatId, proj\.workingDir, proj\.instructions, reasoning, turnModel \?\? undefined\)/);
   const preload = readFileSync(new URL("../preload/preload.ts", import.meta.url), "utf8");
   for (const name of ["projectsList", "projectsSave", "projectsDelete", "projectsAssign", "onProjectsChanged"]) {
     assert.ok(preload.includes(`${name}:`), name);
