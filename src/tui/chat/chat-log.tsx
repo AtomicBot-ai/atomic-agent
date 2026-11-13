@@ -138,7 +138,13 @@ export function ChatLog({
   const estimatedContentRows = isEmpty
     ? 0
     : finalised.reduce(
-        (acc, m) => acc + estimateMessageHeight(m, foldStateOf(m.id)),
+        (acc, m) =>
+          acc +
+          estimateMessageHeight(
+            m,
+            foldStateOf(m.id),
+            state.verboseSteps === true,
+          ),
         0,
       ) +
       (hasStreamingTail ? estimateStreamingTailHeight(state) : 0) +
@@ -211,6 +217,7 @@ export function ChatLog({
               fusion={fusion}
               fold={folds.get(message.id) ?? null}
               turnOpen={state.turnsExpandedById[message.id] === true}
+              verbose={state.verboseSteps === true}
               // The plan's own buttons, under the plan. Only the last
               // message can carry them: the offer is about the newest
               // plan, and an older one further up the log would be an
@@ -286,6 +293,7 @@ function StreamingTail({
             key={card.id}
             card={card}
             expanded={state.toolsExpandedById[card.id] ?? false}
+            verbose={state.verboseSteps === true}
           />
         ))}
         {state.streamingToolCalls.filter(isVisibleToolCard).map((call) => (

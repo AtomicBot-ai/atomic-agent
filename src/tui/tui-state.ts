@@ -669,6 +669,12 @@ export interface TuiState {
    * and flipped with `/steps on|off` (persisted).
    */
   showSteps: boolean;
+  /**
+   * Verbose steps (ATO-34): every finished tool card carries one plain
+   * line under its header: step number, the call with its args, and what
+   * came back. Flipped with `/verbose`; lives for this TUI run only.
+   */
+  verboseSteps: boolean;
   /** Is the session picker overlay visible? */
   sessionPickerOpen: boolean;
   /** Entries shown in the picker, newest first. */
@@ -1046,6 +1052,7 @@ export function createInitialTuiState(
     toolsExpandedById: {},
     turnsExpandedById: {},
     showSteps: layout?.showSteps ?? false,
+    verboseSteps: false,
     sessionPickerOpen: false,
     sessionPickerList: [],
     sessionPickerCursor: 0,

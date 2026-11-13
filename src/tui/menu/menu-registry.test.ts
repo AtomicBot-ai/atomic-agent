@@ -109,6 +109,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "always show steps: `/steps` toggles | `/steps on` keeps finished turns open | `/steps off` folds them",
   },
+  // ATO-34: a plain note per step, and /why for the last one.
+  {
+    name: "verbose",
+    description:
+      "one plain note per step under its tool card: `/verbose` toggles | `/verbose on` | `/verbose off`",
+  },
   {
     name: "session",
     description: "show current session id",
@@ -211,6 +217,11 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "btw",
     description:
       "ask a quick side question: `/btw <question>` — the model sees this chat, runs no tools, and nothing is saved to the session",
+  },
+  {
+    name: "why",
+    description:
+      "the agent's last step in plain words: what it called and with what, what came back, tokens, and its reasoning when the model gave one",
   },
   {
     name: "window",

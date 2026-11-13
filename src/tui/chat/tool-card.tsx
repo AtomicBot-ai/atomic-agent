@@ -12,6 +12,7 @@ import {
   annotationTail,
   toolCardsAnnotationParts,
 } from "./tool-cards-annotation.js";
+import { ToolCardStepNote } from "./tool-card-step-note.js";
 
 interface ToolCardProps {
   card: ToolCardEntry | StreamingToolCall;
@@ -24,6 +25,8 @@ interface ToolCardProps {
    * a click. Stale-read notes are warnings and always stay.
    */
   preview?: "always" | "errors";
+  /** `/verbose` (ATO-34): a plain step note under a finished card. */
+  verbose?: boolean;
 }
 
 /**
@@ -46,6 +49,7 @@ export function ToolCard({
   card,
   expanded,
   preview = "always",
+  verbose = false,
 }: ToolCardProps): ReactElement {
   const isFinalised = "status" in card;
   const status = isFinalised ? card.status : "pending";
@@ -103,6 +107,7 @@ export function ToolCard({
     return (
       <Box flexDirection="column" marginBottom={1}>
         {header}
+        {verbose && isFinalised ? <ToolCardStepNote card={card} /> : null}
         {isFinalised ? (
           <SummaryLine
             summary={card.summary}
@@ -117,6 +122,7 @@ export function ToolCard({
   return (
     <Box flexDirection="column" marginBottom={1}>
       {header}
+      {verbose && isFinalised ? <ToolCardStepNote card={card} /> : null}
       <Box flexDirection="column" marginLeft={2}>
         <Text color={theme.colors.muted}>
           tool <Text color={theme.colors.tool}>{card.tool}</Text>
