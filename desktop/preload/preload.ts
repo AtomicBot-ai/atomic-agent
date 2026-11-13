@@ -109,8 +109,9 @@ contextBridge.exposeInMainWorld("atomic", {
   codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */
-  chat: (messages: Array<{ role: string; content: string }>, sessionId?: string) =>
-    ipcRenderer.invoke("agent:chat", { messages, sessionId }),
+  // ATO-42: `projectId` puts a NEW chat (no sessionId yet) in that project from its first turn.
+  chat: (messages: Array<{ role: string; content: string }>, sessionId?: string, projectId?: string) =>
+    ipcRenderer.invoke("agent:chat", { messages, sessionId, ...(projectId ? { projectId } : {}) }),
   cancel: (turnId: string) => ipcRenderer.invoke("agent:cancel", turnId),
   onChat: (cb: (payload: unknown) => void) => on("agent:chat", cb),
 
@@ -307,6 +308,14 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1034: chat folders (~/.atomic-agent/chat-folders.json, main/chat-folders.ts).
   foldersGet: () => ipcRenderer.invoke("app:foldersGet"),
   foldersSet: (value: unknown) => ipcRenderer.invoke("app:foldersSet", value),
+  // ATO-42: projects (~/.atomic-agent/projects.json, main/projects-store.ts).
+  projectsList: () => ipcRenderer.invoke("projects:list"),
+  projectsSave: (project: { id?: string; name?: string; folder?: string; instructions?: string }) =>
+    ipcRenderer.invoke("projects:save", project),
+  projectsDelete: (id: string) => ipcRenderer.invoke("projects:delete", id),
+  projectsAssign: (payload: { sessionId: string; projectId: string | null }) =>
+    ipcRenderer.invoke("projects:assign", payload),
+  onProjectsChanged: (cb: () => void) => on("projects:changed", () => cb()),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
   /* ATO-523: the global hotkey's one-line box (main/quick-entry-window.ts).
      The box's page: what it opened with, the draft kept while it is away,
