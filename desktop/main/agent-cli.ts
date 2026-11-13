@@ -132,9 +132,9 @@ async function remoteModelsCall(route: RemoteModels, args: string[]): Promise<Cl
     : { ok: true, stdout: text, stderr: "" };
 }
 
-/** ATO-577/579: `atag doctor` and `atag data`, whose stdout counts even when they exit non-zero. */
-export function atagRun(args: string[], timeout: number): Promise<CliResult> {
-  return cli(args, timeout);
+/** ATO-577/579: `atag doctor` and `atag data`, whose stdout counts even when they exit non-zero. ATO-1102: `skill eval` also passes a cwd and a stop signal. */
+export function atagRun(args: string[], timeout: number, cwd?: string, signal?: AbortSignal): Promise<CliResult> {
+  return cli(args, timeout, cwd, signal);
 }
 
 /** What `cli` says when there is no agent binary to run (ATO-1195 reads it as `no_binary`). */
