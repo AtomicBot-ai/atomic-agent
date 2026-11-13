@@ -121,7 +121,7 @@ const HELP =
     "Projects and folders: an imported chat keeps the group it had at the source.",
     "A chat that ran in a folder that still exists goes into a project for that",
     "folder (projects.json); otherwise into a chat folder of that name",
-    "(chat-folders.json). The desktop's \"Put imported chats into folders\" switch",
+    "(chat-folders.json). The desktop's \"Keep chats in their projects\" switch",
     "turns this off. Re-running never duplicates a project, folder or chat.",
     "",
     "Examples:",

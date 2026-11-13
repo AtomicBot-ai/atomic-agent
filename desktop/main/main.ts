@@ -12929,7 +12929,8 @@ async function onboardingTest(
     const argvHermes = argvOf("hermes", ["cron"], true);
     const argvPi = argvOf("pi", ["sessions", "cron"], true);
     const argvOmp = argvOf("oh-my-pi", ["mcp"], true);
-    const argvUnknown = argvOf("atomic-agent", [], false);
+    // W2: "atomic-agent" is a source now (another data folder), so the unknown one is made up.
+    const argvUnknown = argvOf("not-a-source", [], false);
     check(
       "wizard: the import argv excludes only domains the source understands, and gates the secrets flag",
       // `cron` is not a Claude Code domain, so it is dropped rather than
@@ -12943,7 +12944,7 @@ async function onboardingTest(
         argvPi.args?.join(" ") === "import pi --source /tmp/src --exclude sessions --dry-run" &&
         argvOmp.args?.join(" ") === "import oh-my-pi --source /tmp/src --exclude mcp --dry-run" &&
         argvUnknown.ok === false &&
-        argvUnknown.error === "source must be hermes, openclaw, claude-code, codex, pi or oh-my-pi",
+        argvUnknown.error === "source must be hermes, openclaw, claude-code, codex, pi, oh-my-pi, claude-app or atomic-agent",
       `claude=${JSON.stringify(argvClaude)} codex=${JSON.stringify(argvCodex)}` +
         ` openclaw=${JSON.stringify(argvOpenclaw)} hermes=${JSON.stringify(argvHermes)}` +
         ` pi=${JSON.stringify(argvPi)} omp=${JSON.stringify(argvOmp)}` +

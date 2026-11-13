@@ -3912,7 +3912,9 @@ export function defaultAtomicAgentSource(ownStateDir: string, home: string = hom
 
 function sameFolder(a: string, b: string): boolean {
   if (a.replace(/[\\/]+$/, "") === b.replace(/[\\/]+$/, "")) return true;
-  try { return realpathSync(a) === realpathSync(b); } catch { return false; }
+  // The same inode: a symlink, `..`, or another letter case on a case-insensitive disk ("~/.Atomic-Agent").
+  try { const x = statSync(a), y = statSync(b); if (x.ino !== 0 && x.dev === y.dev && x.ino === y.ino) return true; } catch { /* compare names */ }
+  try { return realpathSync.native(a) === realpathSync.native(b); } catch { return false; }
 }
 
 /**
@@ -3979,6 +3981,17 @@ export function importArgs(input: ImportRunInput): { ok: true; args: string[] } 
  * `  migrated=… skipped=… conflict=… error=…`) is parsed into the TUI's
  * rows; `state` names what the run did.
  */
+/** Index of the "(" that the string's final ")" closes, or -1 when it does not end in a balanced group. */
+export function trailingParenStart(s: string): number {
+  if (!s.endsWith(")")) return -1;
+  let depth = 0;
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (s[i] === ")") depth++;
+    else if (s[i] === "(" && --depth === 0) return i;
+  }
+  return -1;
+}
+
 export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
   ok: boolean; state?: "preview" | "applied" | "nothing" | "non-interactive"; report?: ImportReportParsed; stdout?: string; stderr?: string; error?: string;
 }> {
@@ -4002,7 +4015,11 @@ export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
       if (!m) continue;
       let rest = m[3]!.trim();
       let reason: string | null = null;
-      if (rest.startsWith("(") && rest.endsWith(")")) { reason = rest.slice(1, -1); rest = ""; }
+      // The reason is the LAST parenthesised group: a name can carry its own ("app (client)", grouping.ts).
+      const open = trailingParenStart(rest);
+      if (open === 0) { reason = rest.slice(1, -1); rest = ""; }
+      else if (open > 0 && rest[open - 1] === " ") { reason = rest.slice(open + 1, -1); rest = rest.slice(0, open - 1); }
+      else if (rest.startsWith("(") && rest.endsWith(")")) { reason = rest.slice(1, -1); rest = ""; }
       else { const r = rest.match(/^(.*?)\s\((.*)\)$/); if (r) { rest = r[1]!; reason = r[2]!; } }
       let source: string | null = null;
       let destination: string | null = null;

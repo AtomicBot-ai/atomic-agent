@@ -43,7 +43,7 @@ import type { ImportItemResult, ImportReport } from "./import-report.js";
  *
  * Sessions with no hint are not grouped here: the desktop's own sorting
  * still files them into a folder per app ("Codex", "Hermes"). The
- * desktop's "Put imported chats into folders" switch (`autoSort` in
+ * desktop's "Keep chats in their projects" switch (`autoSort` in
  * chat-folders.json) turns this off along with that sorting.
  */
 export interface ImportGroupHint {
@@ -354,7 +354,7 @@ export function planImportGrouping(
     foldersChanged: false,
   };
   if (!folders.autoSort) {
-    plan.off = "Put imported chats into folders is off";
+    plan.off = "Keep chats in their projects is off in Settings > Import";
     return plan;
   }
   const isDir = input.isDir ?? isDirectory;
