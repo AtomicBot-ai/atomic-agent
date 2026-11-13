@@ -21,6 +21,8 @@ export type TurnOrigin =
   | "imessage"
   | "matrix"
   | "googlechat"
+  /** A message from the Microsoft Teams channel (ATO-506). */
+  | "msteams"
   /**
    * A fusion worker turn, submitted by the orchestrator turn on the
    * parent session — not a person sending a message. Treated like
