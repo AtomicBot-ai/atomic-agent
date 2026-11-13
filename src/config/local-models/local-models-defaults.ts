@@ -36,6 +36,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
       autoUpdate: true,
       stopOnExit: true,
       autoRestart: true,
+      promptDiskCache: false,
       device: "auto",
       backendVariant: "auto",
       coreBackendVariant: "auto",

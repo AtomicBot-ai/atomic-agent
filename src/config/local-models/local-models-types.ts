@@ -167,6 +167,17 @@ export interface UserManagedLocalLlmConfig {
    * unversioned: absent means no adapters, as before.
    */
   loraAdapters?: Record<string, LoraAdapter>;
+  /**
+   * Keep the chat daemon's prompt cache on disk between runs (ATO-456).
+   * `true`: the managed server starts with `--slot-save-path`, the cache
+   * of every idle slot is saved before a managed stop and the newest
+   * saves are loaded back after the next start, so a long conversation
+   * continues without the model reading it all again. A save is only
+   * loaded into a launch with the same model, engine build and cache
+   * flags; others are deleted. At most 8 GiB on disk, oldest first.
+   * `false` (default): nothing is written.
+   */
+  promptDiskCache: boolean;
 }
 
 /**

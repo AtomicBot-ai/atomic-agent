@@ -393,6 +393,11 @@ export function prepareLocalModelsInputs(
         readDefaults().managed.autoRestart,
       "localModels.managed.autoRestart",
     ),
+    promptDiskCache: parseBool(
+      rawManaged.promptDiskCache ??
+        readDefaults().managed.promptDiskCache,
+      "localModels.managed.promptDiskCache",
+    ),
     device: parseNonEmptyString(
       rawManaged.device ?? readDefaults().managed.device,
       "localModels.managed.device",
