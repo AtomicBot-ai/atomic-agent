@@ -155,6 +155,18 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    name: "memory.sessions.search",
+    summary:
+      "Find words from past chats (user messages and agent replies, not tool output), then read the lines around a hit. Use when the user refers to something discussed in an earlier session.",
+    argsSchema:
+      "{ query?: string, scope?: 'all' | 'project', limit?: number /* 1..25 */, sessionId?: string, line?: number, radius?: number /* 1..20 */ }",
+    examples: [
+      '{"query":"deploy staging"}',
+      '{"sessionId":"<id from a hit>","line":4}',
+    ],
+    tier: "rare",
+  },
+  {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",
     argsSchema:

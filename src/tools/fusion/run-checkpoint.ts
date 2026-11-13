@@ -82,6 +82,7 @@ const REPEAT_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "memory.notes.recall",
   "memory.lessons.recall",
   "memory.procedures.recall",
+  "memory.sessions.search",
   "memory.profile.list",
   "memory.profile.history",
   "tasks.list",
