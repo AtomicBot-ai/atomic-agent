@@ -40,6 +40,7 @@ import { registerGithubTools } from "./github/github-tools.js";
 import { registerSkillTools } from "./skill/index.js";
 import { buildToolViewTool } from "./tool-view/index.js";
 import { planUpdateTool } from "./plan/index.js";
+import { buildCanvasRenderTool } from "./canvas/index.js";
 import { buildToolSearchTool } from "./tool-search/index.js";
 import { registerMemoryTools } from "./memory/index.js";
 import { registerTaskTools } from "./tasks/index.js";
@@ -295,6 +296,7 @@ beforeAll(() => {
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
   registry.register(buildToolViewTool());
   registry.register(planUpdateTool);
+  registry.register(buildCanvasRenderTool(dangerous));
   // Runtime registers it beside the live descriptor list (runtime-tool-catalog).
   registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));
   registerMemoryTools(registry, memoryOptions(true));
@@ -333,7 +335,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(97);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(98);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {

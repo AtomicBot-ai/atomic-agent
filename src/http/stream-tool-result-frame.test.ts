@@ -196,6 +196,22 @@ describe("tool_result over SSE", () => {
     expect(sent[2]).not.toHaveProperty("key_required");
   });
 
+  it("carries the file an ok canvas.render wrote as canvas, and nothing otherwise (ATO-1137)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const canvas = { path: "/work/canvas-sales-20261112-142233.html", title: "Sales", kind: "chart", chart: "bar", bytes: 2048 };
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "canvas.render", summary: "Saved canvas", details: { canvas } }), 0));
+    hook(executed(result({ tool: "canvas.render", status: "error", summary: "bad args", details: { canvas } }), 1));
+    hook(executed(result({ tool: "os.fs.write", details: { canvas } }), 2));
+    hook(executed(result({ tool: "canvas.render", details: { canvas: { ...canvas, path: 42 } } }), 3));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.canvas).toEqual(canvas);
+    for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("canvas");
+  });
+
   it("carries an ok os.screen.point's marks as screen_marks, and nothing otherwise (ATO-1018)", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));

@@ -240,6 +240,7 @@ const FIXED: Readonly<Record<string, Phrase>> = {
   "verify.run": P(V.ran, "a check"),
   "verify.syntax": P(V.checked, "the syntax"),
   "video.generate": P(V.generated, "a video"),
+  "canvas.render": P(V.created, "a canvas"),
   "github.whoami": P(V.checked, "the GitHub account"),
   "github.issue.list": P(V.listed, "GitHub issues"),
   "github.pr.list": P(V.listed, "pull requests"),

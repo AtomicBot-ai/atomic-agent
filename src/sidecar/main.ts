@@ -25,6 +25,8 @@ import type {
 import type { SessionState } from "../session/index.js";
 import { installLocalSkill, scanApprovalFromIds, uninstallSkill } from "../skills/index.js";
 import { getAppVersion } from "../version.js";
+import type { CompressedToolResult } from "../compressor/result-compressor.js";
+import { canvasRecordOf } from "../tools/canvas/index.js";
 
 interface ActiveSession {
   session: SessionState;
@@ -117,6 +119,8 @@ export async function bootstrapSidecar(): Promise<{
               status: inner.result.status,
               summary: inner.result.summary,
               truncated: inner.result.truncated,
+              // ATO-1137: the canvas an ok `canvas.render` wrote.
+              ...canvasPayload(inner.result),
               // ATO-1145: approval records, auto-approvals included.
               ...(inner.result.approvals !== undefined &&
               inner.result.approvals.length > 0
@@ -509,4 +513,10 @@ if (invokedDirectly) {
   // monotone, so `createAgentRuntime` widening it later is free.
   installTransportDeadlines();
   void bootstrapSidecar();
+}
+
+/** `canvas` on a `tool_call_result` (ATO-1137): the file an ok `canvas.render` wrote. */
+function canvasPayload(result: CompressedToolResult): { canvas?: NonNullable<ReturnType<typeof canvasRecordOf>> } {
+  const canvas = canvasRecordOf(result);
+  return canvas === undefined ? {} : { canvas };
 }

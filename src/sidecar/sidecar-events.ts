@@ -218,6 +218,17 @@ export interface ToolCallResultPayload {
   batchIndex?: number;
   batchSize?: number;
   truncated?: boolean;
+  /**
+   * The HTML file an ok `canvas.render` call wrote (ATO-1137), for the
+   * host to show as a canvas. Absent for every other call.
+   */
+  canvas?: {
+    path: string;
+    title: string;
+    kind: "html" | "chart";
+    chart?: "bar" | "line" | "area" | "pie" | "table";
+    bytes: number;
+  };
 }
 
 export interface StepStartedPayload {

@@ -337,6 +337,20 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // ATO-1137. Rare tier: the one-liner is enough to pick it, and the
+    // full args load through tool.view (or on the first failed call).
+    name: "canvas.render",
+    summary:
+      "Show the user a chart or a page in the chat as a canvas: give `chart` (bar|line|area|pie|table) with `labels` and `series` [{ name, values }], or `html` you wrote. Saves a self-contained HTML file in the working folder and returns its path. Use it for dashboards, comparisons and any numbers the user would rather see than read.",
+    argsSchema:
+      "{ title: string, chart?: 'bar' | 'line' | 'area' | 'pie' | 'table', labels?: string[] /* x axis or pie slices */, series?: [{ name: string, values: number[] /* one per label */ }] /* 1..8 */, values?: number[] /* one series, instead of series */, html?: string /* a page or fragment, instead of chart */, subtitle?: string, name?: string /* file name hint */ }",
+    examples: [
+      '{"title":"Revenue by quarter","chart":"bar","labels":["Q1","Q2","Q3","Q4"],"series":[{"name":"2025","values":[120,135,150,170]},{"name":"2026","values":[140,160,155,190]}]}',
+      '{"title":"Disk usage","chart":"pie","labels":["Photos","Code","Other"],"values":[52,31,17]}',
+    ],
+    tier: "rare",
+  },
+  {
     name: "reply",
     summary:
       "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary. `attachments`: paths of existing files to deliver with the reply (a report you wrote, a screenshot, a converted file) — on Telegram/Discord they are sent as files after the text; never paste a file's contents into `text` when you can attach it.",

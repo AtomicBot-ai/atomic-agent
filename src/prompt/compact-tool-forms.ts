@@ -154,6 +154,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Show a live checklist for work of 3+ steps; send the whole plan each call.",
     tier: RARE,
   },
+  "canvas.render": {
+    summary: "Show a chart (bar, line, area, pie, table) or an HTML page in the chat as a canvas.",
+    tier: RARE,
+  },
   "skill.run_script": { summary: "Run a skill's script (may require approval).", tier: RARE },
   "memory.profile.set": {
     summary: "Save a durable user fact; pinned=false needs keywords.",
