@@ -1540,6 +1540,17 @@ function chatPathPrefix(root: string): string {
  * it leaves this function only inside an Authorization header, or (Studio,
  * studio-key.ts) in the body of Core's loopback `PUT /cloud/providers`.
  */
+/**
+ * The agent's resolve-llm-api-key.ts rule: a compat entry falls back to the shared
+ * OPENAI_COMPAT_API_KEY / OPENAI_API_KEY / ATOMIC_AGENT_OPENAI_API_KEY, except (ATO-1066)
+ * one for a server on another computer on this network. Those variables usually hold
+ * the user's real cloud key, and it would go out as a Bearer over plain http:// to that box.
+ */
+export function readsSharedCompatKey(entry: ProviderEntry): boolean {
+  if (entry.kind !== "openai-compatible" && entry.kind !== "qwen-openai-compatible") return false;
+  return !isOtherComputerOnNetworkUrl(entry.baseUrl ?? "");
+}
+
 export function resolveKeyValue(entry: ProviderEntry): string | null {
   if (entry.apiKey && entry.apiKey.length > 0) return entry.apiKey;
   const names: string[] = [];
@@ -1547,7 +1558,7 @@ export function resolveKeyValue(entry: ProviderEntry): string | null {
   if (entry.kind === "openrouter") names.push("OPENROUTER_API_KEY");
   if (entry.kind === "aimlapi") names.push("AIMLAPI_API_KEY");
   if (entry.kind === "gemini") names.push("GEMINI_API_KEY");
-  if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+  if (readsSharedCompatKey(entry)) {
     names.push("OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY");
   }
   for (const name of names) {
@@ -2690,7 +2701,27 @@ const LOCAL_PRESET_IDS = new Set(["atomic-chat", "lmstudio", "ollama"]);
 export function isKeylessLocalProviderEntry(entry: ProviderEntry): boolean {
   if (entry.kind !== "openai-compatible") return false;
   if (LOCAL_PRESET_IDS.has(entry.id)) return true;
-  return isLocalProviderUrl(entry.baseUrl ?? "");
+  if (isLocalProviderUrl(entry.baseUrl ?? "")) return true;
+  // ATO-1066: the agent's provider-key.ts rule — a server on another computer on this
+  // network, added by hand with no key variable of its own, needs no key either.
+  return !entry.apiKeyEnvVar && isOtherComputerOnNetworkUrl(entry.baseUrl ?? "");
+}
+
+/** src/llm/provider/openai/network-server-address.ts isOtherComputerOnNetworkUrl: a
+    private-network address (RFC 1918, link-local, unique-local, .local/.lan/.internal/
+    .home.arpa or a single-label name) that is not this machine. */
+export function isOtherComputerOnNetworkUrl(url: string): boolean {
+  let host: string;
+  try { host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, ""); } catch { return false; }
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "0.0.0.0") return false;
+  const v4 = host.split(".");
+  if (v4.length === 4 && v4.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) {
+    const [a, b] = v4.map(Number) as [number, number];
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  }
+  if (host.includes(":")) return /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host);
+  if (!host.includes(".")) return true;
+  return [".local", ".lan", ".internal", ".home.arpa"].some((suffix) => host.endsWith(suffix));
 }
 
 /** Ready to route to: a key, or a keyless local server (isCloudTextProviderReady) — and never a key the agent will refuse to send (backlog 32). */
@@ -2714,7 +2745,7 @@ export function providerKeyInvalid(entry: ProviderEntry, names: KeyEnvNames = ke
   else if (entry.kind === "openrouter") name = "OPENROUTER_API_KEY";
   else if (entry.kind === "aimlapi") name = "AIMLAPI_API_KEY";
   else if (entry.kind === "gemini") name = "GEMINI_API_KEY";
-  else if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+  else if (readsSharedCompatKey(entry)) {
     name = ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"].find((n) => names.present.has(n));
   }
   return !!name && names.badChars.has(name);
@@ -2730,7 +2761,7 @@ export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNam
   if (entry.kind === "openrouter") return names.nonEmpty.has("OPENROUTER_API_KEY");
   if (entry.kind === "aimlapi") return names.nonEmpty.has("AIMLAPI_API_KEY");
   if (entry.kind === "gemini") return names.nonEmpty.has("GEMINI_API_KEY");
-  if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+  if (readsSharedCompatKey(entry)) {
     const first = ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"].find((n) => names.present.has(n));
     return first !== undefined && names.nonEmpty.has(first);
   }

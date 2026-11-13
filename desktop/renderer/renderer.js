@@ -289,6 +289,8 @@ const PRESETS = [
 ];
 PRESETS.filter((p) => !['openrouter','aimlapi'].includes(p.id)).forEach((p) =>
   KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers, local:p.local}));
+/* ATO-1066: a model on another computer on this network (lan-provider.js). Last, so every other row keeps its place. */
+KIND_ROWS.push(lanProviderRow());
 /* Backlog 32 — a key is plain ASCII, and the key fields keep it that way
    (main/agent-cli.ts has the same rule, and why: the agent refuses any other
    key on every request, before anything is sent). Pasted or typed, a key
@@ -15344,12 +15346,12 @@ function obWizardHTML() {
   return '<div class="ob-wiz">'
     + '<div class="ob-kicker">API key</div>'
     + '<div class="ob-h">' + providerMark(k.custom ? '' : k.id) + esc(service) + '</div>'
-    + (k.custom ? '<label class="ob-flabel" for="wiz-url">API base URL</label>'
-        + '<input class="ob-inp" id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '">' : '')
+    + (k.custom ? '<label class="ob-flabel" for="wiz-url">' + (k.lan ? 'Address of the other computer' : 'API base URL') + '</label>'
+        + '<input class="ob-inp" id="wiz-url" placeholder="' + (k.lan ? '192.168.1.20:8080' : 'https://host/v1') + '" value="' + esc(WIZ.baseUrl) + '">' : '')
     + '<div class="ob-field' + tone + '">' + ic('key')
       + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
       + ' aria-label="API key for ' + esc(service) + '"'
-      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on ' + THIS_MACHINE + ' needs no key' : k.env && (!WIZ.keyPresent || WIZ.keyPresent.includes(k.env)) ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
+      + ' placeholder="' + esc(k.local ? 'Leave blank — a server on ' + THIS_MACHINE + ' needs no key' : k.lan ? 'Leave blank unless the server asks for one' : k.env && (!WIZ.keyPresent || WIZ.keyPresent.includes(k.env)) ? 'Paste your key, or leave blank to use ' + k.env : 'Paste your key') + '"'
       + ' value="' + esc(WIZ.apiKey) + '">'
       + (verifying ? '<span class="tk-spin" aria-hidden="true"></span>' : '')
     + '</div>'
@@ -21337,13 +21339,13 @@ function wizardHTML() {
   const envNote = k.env && !k.local && !WIZ.error && !verifying
     ? '<p class="ob-help wiz-envnote">Leave it empty to use ' + esc(k.env) + ' from this computer\u2019s environment.</p>' : '';
   const fields = (k.custom
-      ? '<label class="tk-lbl" for="wiz-url">Base URL</label>'
+      ? '<label class="tk-lbl" for="wiz-url">' + (k.lan ? 'Address of the other computer' : 'Base URL') + '</label>'
         + '<span class="tk-inpwrap' + (urlBad ? ' is-error' : '') + '">' + ic('globe')
-        + '<input id="wiz-url" placeholder="https://host/v1" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
+        + '<input id="wiz-url" placeholder="' + (k.lan ? '192.168.1.20:8080' : 'https://host/v1') + '" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
       : '')
-    + '<label class="tk-lbl" for="wiz-key">API key' + (k.local ? ' (optional)' : '') + '</label>'
+    + '<label class="tk-lbl" for="wiz-key">API key' + (k.local || k.lan ? ' (optional)' : '') + '</label>'
     + '<span class="tk-inpwrap' + (urlBad ? '' : tone) + '">' + ic('key')
-    + '<input id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '" placeholder="' + esc(k.local ? 'Only if the server asks for one' : 'Paste the key from your ' + wizService(k) + ' account') + '" spellcheck="false">'
+    + '<input id="wiz-key" type="password" value="' + esc(WIZ.apiKey) + '" placeholder="' + esc(k.local || k.lan ? 'Only if the server asks for one' : 'Paste the key from your ' + wizService(k) + ' account') + '" spellcheck="false">'
     + (verifying ? '<span class="tk-spin"></span>' : '') + '</span>'
     + envNote;
   /* The popover is a flex column with a fixed max-height, and `.selbody` is
@@ -21715,6 +21717,8 @@ async function wizNextStep() {
   if (key) WIZ.apiKey = cleanKeyInput(key.value);
   const url = document.getElementById('wiz-url');
   if (url) WIZ.baseUrl = url.value.trim();
+  /* ATO-1066: another computer's address as typed (192.168.1.20:8080) becomes its base URL here. */
+  if (k.lan) { const lan = lanAddressToBaseUrl(WIZ.baseUrl); if (!lan.ok) { ANX.providerFailed('bad_url', OB.open); WIZ.error = lan.reason; render(); return; } WIZ.baseUrl = lan.baseUrl; }
   if (k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) { ANX.providerFailed('bad_url', OB.open); WIZ.error = 'That does not look like a URL.'; render(); return; }
   /* Backlog 32 — a key with a character keys don't have stops here, on its
      own screen, before anything is saved or asked. It used to be saved, then
@@ -21776,7 +21780,7 @@ async function wizNextStep() {
      key, and the next screens all opened in red. A field left empty on purpose
      (the key is in the environment or .env) still goes on, as it always did.
      The model step's second pass has its key settled already. */
-  if (!WIZ.apiKey && !k.local && !WIZ.modelChosen && !(savedEntry && BSW.readyIds.includes(id)) && BR.providerKeyPresent) {
+  if (!WIZ.apiKey && !k.local && !k.lan && !WIZ.modelChosen && !(savedEntry && BSW.readyIds.includes(id)) && BR.providerKeyPresent) {
     let has = null;
     try {
       const r = await BR.providerKeyPresent({id, kind: k.kind, apiKeyEnvVar: k.env, baseUrl: entry.baseUrl});
@@ -21885,6 +21889,8 @@ async function wizNextStep() {
       : said
       ? 'Could not check this key with ' + wizService(k) + '.'
       : wizService(k) + ' returned no models for this key.';
+    // ATO-1066: for another computer, what to check on that computer.
+    if (k.lan) WIZ.error = lanWizardError(where, unreachable, refused, !!WIZ.apiKey) || WIZ.error;
     WIZ.errorDetail = listed && listed.error ? {for: WIZ.error, text: listed.error} : null;
     // ATO-202: and for every line that is not about the key, the key field stays unlit (wizErrUnreachable).
     const notTheKey = unreachable || cert || (listed && listed.timedOut) || status === 403 || status === 429 || status >= 500;
@@ -26344,6 +26350,8 @@ function llmHasRealKey(p) {
 function llmKeylessLocal(p) {
   if (!p || p.kind !== 'openai-compatible') return false;
   if (['atomic-chat', 'lmstudio', 'ollama'].includes(p.id)) return true;
+  // ATO-1066: so is a server on another computer on this network with no key variable of its own (lan-provider.js).
+  if (!p.apiKeyEnvVar && lanIsOtherComputerUrl(p.baseUrl)) return true;
   try { return ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(new URL(p.baseUrl).hostname.toLowerCase()); } catch (err) { return false; }
 }
 function llmKeysKnown() { return LLMP.envKeys !== null && LLMP.dotenvKeys !== null; }
