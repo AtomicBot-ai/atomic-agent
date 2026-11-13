@@ -101,7 +101,8 @@ export interface BackendReleaseSource {
 }
 
 export function backendReleaseSource(assetName: string): BackendReleaseSource {
-  if (assetName === WINDOWS_ARM64_BACKEND_ASSET) {
+  // Both Windows on ARM builds (ATO-253): the stable repo has neither.
+  if (assetName === WINDOWS_ARM64_BACKEND_ASSET || assetName === WINDOWS_ARM64_COMPAT_BACKEND_ASSET) {
     return { repo: NIGHTLY_BACKEND_REPO, stableOnly: false };
   }
   return { repo: STABLE_BACKEND_REPO, stableOnly: true };

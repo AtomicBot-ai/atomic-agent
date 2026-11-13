@@ -1,6 +1,6 @@
 ---
 name: pdf
-description: Manipulate PDF files — merge, split, extract pages/text, PDF↔images, OCR, info — via the `qpdf` / `poppler` / `ocrmypdf` CLIs. Use to combine, slice, convert, or OCR PDFs.
+description: Merge, split, extract text, OCR or convert PDFs via `qpdf`, `poppler`, `ocrmypdf`.
 version: 1.0.2
 requires_tools:
   - os.shell.run

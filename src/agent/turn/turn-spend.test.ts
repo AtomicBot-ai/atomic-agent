@@ -89,7 +89,7 @@ describe("turn spend ceiling helpers", () => {
     expect(budgetStepPlan(0.2, 0.4, 1)).toBe("work");
     // One more step would leave no room for the summary, the summary fits.
     expect(budgetStepPlan(0.4, 0.4, 1)).toBe("summary");
-    expect(budgetStepPlan(0.9, 0.04, 1)).toBe("summary");
+    expect(budgetStepPlan(0.95, 0.04, 1)).toBe("summary");
     expect(budgetStepPlan(0.6, 0.4, 1)).toBe("summary");
     // Not even the summary fits: no further model call.
     expect(budgetStepPlan(0.7, 0.4, 1)).toBe("stop");

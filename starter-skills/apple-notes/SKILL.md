@@ -1,6 +1,6 @@
 ---
 name: apple-notes
-description: Manage Apple Notes via the `memo` CLI on macOS — create, view, search, edit, export.
+description: Create, search and edit Apple Notes on macOS via the `memo` CLI.
 version: 1.2.2
 requires_tools:
   - os.shell.run

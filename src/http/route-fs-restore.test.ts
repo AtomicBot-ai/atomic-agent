@@ -39,6 +39,8 @@ describe("POST /api/sessions/{id}/fs/restore (ATO-563, from the ATO-1056 checkpo
       turnCount: 2,
       macroTurnStarts: [2, 4],
     });
+    // A plain save never writes a live status; a turn's mark does.
+    if (status === "running") expect(harness.runtime.sessionStore.beginTurn(id)).toBe(true);
   }
 
   /** What the agent's tool does: checkpoint, then write. */

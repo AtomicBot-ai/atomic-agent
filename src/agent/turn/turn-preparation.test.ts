@@ -99,7 +99,7 @@ describe("turn preparation ownership", () => {
     const prepared = await prepareAgentTurn(session(), input, deps);
     expect(prepared.pinnedSlice).toBe(slice);
     expect(resolveLlmSlice).toHaveBeenCalledTimes(1);
-    expect(resolveLlmSlice).toHaveBeenCalledWith("pinned");
+    expect(resolveLlmSlice).toHaveBeenCalledWith("pinned", undefined);
     expect(prepared.visibleToolDescriptors()).toBe(deps.toolDescriptors);
     deps.toolDescriptors = [first, second];
     input.toolFilter = (name: string) => name === "second";

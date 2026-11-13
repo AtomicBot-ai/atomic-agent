@@ -61,7 +61,9 @@ describe("the post-drafts starter skill", () => {
     expect(body).toContain("https://www.reddit.com/r/<sub>/about.json");
     expect(body).toMatch(/Do not write a draft that breaks a rule/);
     const fetcher = readFileSync(join(root, "scripts", "subreddit-rules.mjs"), "utf8");
-    expect(fetcher).toContain("/about/rules.json");
+    // The script builds both URLs from one `.../r/<sub>/about` base.
+    expect(fetcher).toContain("/r/${sub}/about`");
+    expect(fetcher).toContain("${base}/rules.json");
     expect(fetcher).toContain("submit_text");
     expect(fetcher).not.toMatch(/method:\s*["']POST/i);
   });

@@ -1,6 +1,6 @@
 ---
 name: motion
-description: "Make a short MP4 from code with no video credits: release announcement, big number or logo reveal. Fills an HTML template, captures its frames, joins them with ffmpeg."
+description: Make a short MP4 from code (release announcement, big number, logo reveal), no video credits.
 version: 1.0.0
 requires_tools:
   - skill.run_script

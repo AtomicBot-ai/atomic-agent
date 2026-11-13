@@ -46,8 +46,11 @@ describe("ask_user over POST /v1/chat/completions", () => {
     });
     expect(response.status).toBe(200);
     await response.json();
-    expect(prompts.length).toBeGreaterThan(0);
-    return prompts.at(-1)!;
+    // The chat turn's own prompt: the session namer and the memory
+    // extractor complete after it, without the tool list.
+    const turn = prompts.find((prompt) => prompt.includes("### tools"));
+    expect(turn).toBeDefined();
+    return turn!;
   }
 
   it("leaves ask_user out of a desktop (extensions) turn that does not declare questions", async () => {

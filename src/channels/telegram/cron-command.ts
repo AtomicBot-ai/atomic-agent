@@ -93,7 +93,12 @@ function create(input: CronCreateInput, service: CronTaskService, now: number): 
   }
   let task: TaskRecord;
   try {
-    task = service.create(input);
+    // Only the task's fields: the parsed command also carries `kind: "add"`.
+    task = service.create({
+      expression: input.expression,
+      ...(input.tz ? { tz: input.tz } : {}),
+      message: input.message,
+    });
   } catch (err) {
     if (err instanceof TaskValidationError) return `Not scheduled: ${err.message}.`;
     throw err;

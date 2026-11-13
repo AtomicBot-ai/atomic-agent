@@ -36,7 +36,9 @@ const WORDS = [
 function longText(seed: number): string {
   const out: string[] = [];
   for (let i = 0; out.join(" ").length < 800; i += 1) {
-    out.push(`${WORDS[(seed * 7 + i * 13) % WORDS.length]}${(seed + i) % 97}`);
+    // Word and number apart: the porter tokenizer stems the query's
+    // `deploy` to `deploi`, which no `deploy40` token starts with.
+    out.push(`${WORDS[(seed * 7 + i * 13) % WORDS.length]} ${(seed + i) % 97}`);
   }
   return out.join(" ");
 }

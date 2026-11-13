@@ -1,6 +1,6 @@
 ---
 name: traffic-analytics
-description: "Why did traffic drop? Reports from the user's own GA4, Search Console and PostHog: drop diagnosis, rising queries, keyword cannibalization, funnels. Never invents numbers."
+description: Why did traffic drop? Diagnose it from the user's GA4, Search Console and PostHog. Never invents numbers.
 version: 1.0.0
 requires_tools:
   - skill.run_script

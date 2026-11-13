@@ -163,16 +163,17 @@ describe("loadSkills", () => {
     });
 
     it("lets global, plugin and project copies win over the shared copy", async () => {
-      for (const name of ["g", "p", "demo"]) await writeSkill(shared, name, "shared");
-      await writeSkill(global, "g", "global"); await writeSkill(project, "p", "project");
+      // Two-letter names: a skill name is 2-64 chars.
+      for (const name of ["gg", "pp", "demo"]) await writeSkill(shared, name, "shared");
+      await writeSkill(global, "gg", "global"); await writeSkill(project, "pp", "project");
       const pluginDir = join(base, "plugin");
       await mkdir(pluginDir, { recursive: true });
       await writeFile(join(pluginDir, "SKILL.md"), "---\nname: demo\ndescription: plugin\n---\n", "utf8");
       const res = await loadSkills({ globalDir: global, projectDir: project, homeDir: home,
         pluginSkills: () => [{ plugin: "demo", dir: pluginDir, rootSkill: true }] });
       const byName = Object.fromEntries(res.skills.map(s => [s.manifest.name, s]));
-      expect(byName["g"]!.manifest.description).toBe("global");
-      expect(byName["p"]!.source).toBe("project");
+      expect(byName["gg"]!.manifest.description).toBe("global");
+      expect(byName["pp"]!.source).toBe("project");
       expect(byName["demo"]!.plugin).toBe("demo");
       expect(res.skills.some(s => s.shared)).toBe(false);
       expect(res.errors.filter(e => e.error.includes("the shared copy is ignored"))).toHaveLength(3);

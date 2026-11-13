@@ -1,6 +1,6 @@
 ---
 name: email-drafts
-description: "Write outreach or follow-up emails as drafts in Gmail or as local files for Atomic Mail. Drafts only: never sends, the user reviews and sends each one."
+description: Write outreach or follow-up emails as Gmail or Atomic Mail drafts; never sends.
 version: 1.0.0
 requires_tools:
   - os.shell.run

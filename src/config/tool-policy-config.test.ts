@@ -31,7 +31,7 @@ describe("outbound HTTP and tool configuration ownership", () => {
     expect(http).toStrictEqual({ enabled: true, approvalMode: "writes", hostAllowlist: null, maxResponseBytes: 1_048_576, defaultTimeoutMs: 30_000 });
     expect(projects).toStrictEqual({ roots: [] });
     expect(tools).toStrictEqual({ shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3, envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"] }, screen: { enabled: false, point: true }, lsp: { enabled: false } });
-    expect(vision).toStrictEqual({ enabled: true, autoDetect: true, maxImageBytes: 8 * 1024 * 1024, maxImagesPerCall: 4 });
+    expect(vision).toStrictEqual({ enabled: true, autoDetect: true, maxImageBytes: 8 * 1024 * 1024, maxImagesPerCall: 4, maxAudioBytes: 16 * 1024 * 1024 });
     expect(Object.keys(http)).toEqual(["enabled", "approvalMode", "hostAllowlist", "maxResponseBytes", "defaultTimeoutMs"]);
     expect(projects.roots).not.toBe(createProjectsDefaults().roots);
     expect(tools.shell).not.toBe(createToolsDefaults().shell);
@@ -116,7 +116,7 @@ describe("outbound HTTP and tool configuration ownership", () => {
     expect(parseToolsConfig({}, createToolsDefaults, {}, { enabled: true }).lsp).toStrictEqual({ enabled: true });
     expect(schema.parseUserConfigFile({}).tools.lsp.enabled).toBe(false);
     expect(schema.parseUserConfigFile({ tools: { lsp: { enabled: true } } }).tools.lsp.enabled).toBe(true);
-    expect(() => schema.parseUserConfigFile({ tools: { lsp: { enabled: "yes" } } })).toThrow(/tools\.lsp\.enabled/);
+    expect(() => schema.parseUserConfigFile({ tools: { lsp: { enabled: "maybe" } } })).toThrow(/tools\.lsp\.enabled/);
   });
 
   it("keeps pointing on by default and reads tools.screen.point (ATO-1018)", () => {
@@ -128,7 +128,7 @@ describe("outbound HTTP and tool configuration ownership", () => {
   it("short-circuits explicit scalar defaults in all four owners", () => {
     const noDefaults = () => { throw new Error("explicit fields must not read defaults"); };
     const http = { enabled: false, approvalMode: "never", hostAllowlist: [], maxResponseBytes: 1, defaultTimeoutMs: 1 };
-    const vision = { enabled: false, autoDetect: false, maxImageBytes: 1, maxImagesPerCall: 1 };
+    const vision = { enabled: false, autoDetect: false, maxImageBytes: 1, maxImagesPerCall: 1, audioInput: false, maxAudioBytes: 1 };
     expect(parseHttpConfig(http, 79, noDefaults)).toStrictEqual(http);
     expect(parseProjectsConfig({ roots: [] }, noDefaults)).toStrictEqual({ roots: [] });
     expect(parseToolsConfig({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1, envPassthrough: [] }, noDefaults, { enabled: true, point: false }, { enabled: true }))

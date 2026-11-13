@@ -1,6 +1,6 @@
 ---
 name: lead-research
-description: "Build a list of companies and business contacts from open sources (websites, GitHub, Apify with your key), enriched and with a source per row. GDPR-safe; never scrapes LinkedIn or X."
+description: Find companies and business contacts from open sources, a source per row; never scrapes LinkedIn or X.
 version: 1.0.0
 requires_tools:
   - os.web.search

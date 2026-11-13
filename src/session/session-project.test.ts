@@ -94,7 +94,7 @@ describe("project instructions in the prompt", () => {
     const { text } = buildPrompt(i);
     expect(text).toContain("### project\n");
     expect(text).toContain("PROJECT RULE 7");
-    expect(text.indexOf("### project")).toBeLessThan(text.indexOf("### conversation"));
+    expect(text.indexOf("### project\n")).toBeLessThan(text.indexOf("### conversation\n"));
   });
 
   it("local: a long text is capped so a small window keeps room", () => {

@@ -1,6 +1,6 @@
 ---
 name: seo-rank-report
-description: "Track Google positions for a keyword list and send a weekly Telegram report of what moved. Use for keyword positions, rank tracking or a weekly SEO report."
+description: Track Google rankings for keywords; weekly Telegram report of what moved.
 version: 0.1.0
 requires_tools:
   - os.shell.run

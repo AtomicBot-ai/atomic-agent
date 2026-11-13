@@ -1,6 +1,6 @@
 ---
 name: release-check
-description: "Only when the user explicitly asks to prepare a release, publish or ship a package: run a separate release check (clean build, package contents, stubs and secrets, edge cases) tied to one commit hash. Use for /release-check."
+description: "Only when the user explicitly asks to prepare a release or ship a package: run a release check. Use for /release-check."
 version: 1.0.0
 requires_tools:
   - os.shell.run
