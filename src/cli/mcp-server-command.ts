@@ -12,6 +12,7 @@
 import { join } from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { getConfig } from "../config/index.js";
+import type { AtomicAgentConfig } from "../config/config-schema.js";
 import { ApprovalGate } from "../approval/approval-gate.js";
 import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
 import { MemoryStore } from "../memory/memory-store.js";
@@ -35,6 +36,30 @@ import {
   MCP_SERVE_REFUSAL,
   MCP_SERVE_SESSION_ID,
 } from "./mcp-server-bridge.js";
+
+/**
+ * The approval gate `mcp-server` serves under. It keeps the user's level
+ * and saved rules; anything that would still prompt is refused, since an
+ * MCP client cannot show the prompt and nobody could answer it.
+ */
+export function buildMcpServeApprovals(
+  config: {
+    agent: Pick<AtomicAgentConfig["agent"], "approvalLevel">;
+    paths: Pick<AtomicAgentConfig["paths"], "stateDir">;
+  },
+  warn: (message: string) => void = () => undefined,
+): ApprovalGate {
+  const approvals = new ApprovalGate({
+    emit: () => undefined,
+    level: config.agent.approvalLevel,
+  });
+  approvals.setRules(new ApprovalRulesStore({ stateDir: config.paths.stateDir, warn: (m) => warn(m) }));
+  approvals.setSessionPolicy(MCP_SERVE_SESSION_ID, {
+    onPrompt: "refuse",
+    reason: MCP_SERVE_REFUSAL,
+  });
+  return approvals;
+}
 
 export async function mcpServerCommand(args: string[]): Promise<number> {
   let parsed: McpServerArgs | null;
@@ -83,19 +108,7 @@ export async function mcpServerCommand(args: string[]): Promise<number> {
     );
     await skillRegistry.refresh();
 
-    // The gate keeps the user's level and saved rules; anything that
-    // would still prompt is refused, since nobody can answer it.
-    const approvals = new ApprovalGate({
-      emit: () => undefined,
-      level: config.agent.approvalLevel,
-    });
-    approvals.setRules(
-      new ApprovalRulesStore({ stateDir: config.paths.stateDir, warn: (m) => warn(m) }),
-    );
-    approvals.setSessionPolicy(MCP_SERVE_SESSION_ID, {
-      onPrompt: "refuse",
-      reason: MCP_SERVE_REFUSAL,
-    });
+    const approvals = buildMcpServeApprovals(config, warn);
     const jobs = new ShellJobRegistry({
       jobMaxMs: config.tools.shell.jobMaxMs,
       maxJobs: config.tools.shell.maxJobs,
