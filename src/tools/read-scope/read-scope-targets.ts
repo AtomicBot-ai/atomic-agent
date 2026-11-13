@@ -34,6 +34,9 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
   ["os.fs.grep", pathArg],
   // A folder to map or one file to outline; omitted = the working dir.
   ["os.fs.code_map", pathArg],
+  // Both read what they search (ATO-696); the rewrite then asks to write.
+  ["os.code.search", pathArg],
+  ["os.code.rewrite", pathArg],
   [
     "os.fs.glob",
     // `cwd` wins over `path` inside the tool; either names the root.

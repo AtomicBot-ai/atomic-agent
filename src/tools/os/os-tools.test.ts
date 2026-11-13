@@ -584,6 +584,8 @@ describe("registerOsTools", () => {
       [
         "os.clipboard.read",
         "os.clipboard.write",
+        "os.code.rewrite",
+        "os.code.search",
         "os.fs.archive.extract",
         "os.fs.archive.list",
         "os.fs.archive.read_entry",
