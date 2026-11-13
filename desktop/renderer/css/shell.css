@@ -207,7 +207,9 @@
    a transform nudge would be lost for the whole animation. It seats the 6px
    dot on the label's optical centre (cap and x midpoints). */
 .sdot{width:6px;height:6px;border-radius:50%;flex:none;box-sizing:border-box;border:1px solid var(--ink-3);background:transparent;position:relative}
-.sesrow .sdot{top:1px}
+/* Item 1: on the label's optical centre (midway between cap and x height). Figtree 500 at 14px on a 34px row
+   sits that centre 0.3px under the row's flex centre; 1px was measured on the old face and overshot by 0.7px. */
+.sesrow .sdot{top:.5px}
 .sdot.filled{background:var(--brand);border-color:var(--brand)}
 .sdot.filled.tone-amber{background:var(--amber);border-color:var(--amber)}
 .sdot.filled.tone-red{background:var(--critical);border-color:var(--critical)}
