@@ -8,6 +8,8 @@ import { isIP } from "node:net";
 import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 
+import { normalizeTunnelHostname, type TunnelRequest } from "./cloudflared.js";
+
 export interface ServeArgs {
   host: string;
   port: number;
@@ -17,6 +19,8 @@ export interface ServeArgs {
   parentPid: number | null;
   noParentExit: boolean;
   reapOnly: boolean;
+  /** ATO-625: open a Cloudflare tunnel to the webhook routes, or `null`. */
+  tunnel: TunnelRequest | null;
 }
 
 export const HELP =
@@ -40,6 +44,12 @@ export const HELP =
     "  --no-parent-exit    Keep running after the parent exits — the way to daemonise from a shell,",
     "                      including under nohup or with & disown (or ATOMIC_AGENT_SERVE_NO_PARENT_EXIT=1)",
     "  --reap              Sweep stranded servers from earlier runs, print what was found, and exit",
+    "  --tunnel            Reach the webhooks from the internet through a Cloudflare quick tunnel",
+    "                      (random https://….trycloudflare.com address, no account). Needs cloudflared",
+    "                      on PATH and at least one webhook with a secret; only POST /api/webhooks/{name}",
+    "                      is reachable through it, every other route stays on this machine",
+    "  --tunnel-name <n>   Use your named Cloudflare tunnel <n> instead (cloudflared login done),",
+    "  --tunnel-hostname <h>  with the public hostname routed to it, e.g. hooks.example.com",
     "",
     "Remote channels:",
     "  serve boots the same runtime the TUI does, so an enabled Telegram or Discord",
@@ -68,6 +78,8 @@ export const HELP =
     "  POST .../fusion/workers/{taskId}/stop|steer|escalate  Act on one of them",
     "  POST /api/approval/resolve               Resolve a pending approval",
     "  GET  /api/events                         SSE stream of pending approval requests",
+    "  GET  /api/webhooks                       Webhook bindings, and their public addresses with --tunnel",
+    "  POST /api/webhooks/{name}                Deliver a webhook (x-webhook-secret, or a signature per the binding's verify)",
   ].join("\n") + "\n";
 
 export function parseArgs(
@@ -82,6 +94,9 @@ export function parseArgs(
   let parentPid: number | null = null;
   let noParentExit = process.env.ATOMIC_AGENT_SERVE_NO_PARENT_EXIT === "1";
   let reapOnly = false;
+  let quickTunnel = false;
+  let tunnelName: string | null = null;
+  let tunnelHostname: string | null = null;
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -138,6 +153,23 @@ export function parseArgs(
       case "--reap":
         reapOnly = true;
         break;
+      case "--tunnel":
+        quickTunnel = true;
+        break;
+      case "--tunnel-name": {
+        const value = args[++i];
+        if (!value || value.startsWith("-")) return { error: `${flag} requires a value` };
+        tunnelName = value;
+        break;
+      }
+      case "--tunnel-hostname": {
+        const value = args[++i];
+        if (!value || value.startsWith("-")) return { error: `${flag} requires a value` };
+        const host = normalizeTunnelHostname(value);
+        if (!host) return { error: `${flag} expects a hostname such as hooks.example.com, got ${value}` };
+        tunnelHostname = host;
+        break;
+      }
       default:
         return { error: `unknown flag: ${flag}` };
     }
@@ -166,6 +198,18 @@ export function parseArgs(
         `Use at least ${MIN_NETWORK_KEY_LENGTH} (for example: export ATOMIC_AGENT_API_KEY=$(openssl rand -hex 24)).`,
     };
   }
+  let tunnel: TunnelRequest | null = null;
+  if (tunnelName !== null || tunnelHostname !== null) {
+    if (tunnelName === null || tunnelHostname === null) {
+      return {
+        error:
+          "a named tunnel needs both --tunnel-name and --tunnel-hostname (or use --tunnel alone for a quick tunnel)",
+      };
+    }
+    tunnel = { mode: "named", name: tunnelName, hostname: tunnelHostname };
+  } else if (quickTunnel) {
+    tunnel = { mode: "quick" };
+  }
   return {
     host,
     port,
@@ -175,6 +219,7 @@ export function parseArgs(
     parentPid,
     noParentExit,
     reapOnly,
+    tunnel,
   };
 }
 

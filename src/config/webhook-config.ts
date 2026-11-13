@@ -18,13 +18,30 @@ import type { TaskSchedule } from "../tasks/task-types.js";
  *    persistence file, no auto-creation
  *
  * `userMessageTemplate` supports `{{body.<json.path>}}` placeholders
- * against the parsed JSON request body. `secret`, when set, is
- * matched against the `x-webhook-secret` request header in addition
- * to the global API-key check.
+ * against the parsed JSON request body, plus `{{event}}`, `{{action}}`
+ * and `{{delivery}}` for the signed service schemes.
+ *
+ * `verify` picks how `secret` authenticates a hit, always in addition to
+ * the global API-key check:
+ *  - `secret` (default) — `secret`, when set, must equal the
+ *    `x-webhook-secret` request header
+ *  - `github` — `X-Hub-Signature-256: sha256=<hex HMAC of the raw body>`
+ *  - `standard-webhooks` — the Standard Webhooks headers (`webhook-id`,
+ *    `webhook-timestamp`, `webhook-signature`) with a `whsec_` secret
+ *  - `stripe` — `Stripe-Signature: t=<unix>,v1=<hex HMAC of "<t>.<body>">`
+ *    with the endpoint's `whsec_` secret used as-is (ATO-625)
+ * The signed schemes require `secret`. `events`, allowed only with a
+ * signed scheme, limits which events start a task: a GitHub event name
+ * (`pull_request`) or event plus action (`pull_request.opened`), or a
+ * Standard Webhooks or Stripe payload `type`.
  */
+export type WebhookVerifyScheme = "secret" | "github" | "standard-webhooks" | "stripe";
+
 export interface WebhookConfig {
   userMessageTemplate: string;
   secret?: string;
+  verify?: WebhookVerifyScheme;
+  events?: string[];
   schedule?: TaskSchedule;
   sessionMode?: "ephemeral" | "persistent" | "named";
   sessionId?: string;
@@ -99,6 +116,23 @@ export function parseWebhookMap(
     if (cfg.secret !== undefined && cfg.secret !== null) {
       secret = parseNonEmptyString(cfg.secret, `${field}.${name}.secret`);
     }
+    const verify = parseVerifyScheme(cfg.verify, `${field}.${name}.verify`);
+    if (verify !== "secret" && !secret) {
+      throw new ConfigValidationError(
+        `${field}.${name}.secret`,
+        `verify=${verify} requires a non-empty secret`,
+      );
+    }
+    if (verify === "standard-webhooks" && secret) {
+      assertStandardWebhooksSecret(secret, `${field}.${name}.secret`);
+    }
+    const events = parseEventFilter(cfg.events, `${field}.${name}.events`);
+    if (events && verify === "secret") {
+      throw new ConfigValidationError(
+        `${field}.${name}.events`,
+        "events requires verify=github, verify=standard-webhooks or verify=stripe",
+      );
+    }
     let schedule: TaskSchedule | undefined;
     if (cfg.schedule !== undefined && cfg.schedule !== null) {
       schedule = parseWebhookSchedule(
@@ -111,10 +145,50 @@ export function parseWebhookMap(
       sessionMode,
       ...(sessionId ? { sessionId } : {}),
       ...(secret ? { secret } : {}),
+      ...(verify !== "secret" ? { verify } : {}),
+      ...(events ? { events } : {}),
       ...(schedule ? { schedule } : {}),
     };
   }
   return out;
+}
+
+function parseVerifyScheme(raw: unknown, field: string): WebhookVerifyScheme {
+  if (raw === undefined || raw === null) return "secret";
+  if (
+    raw === "secret" ||
+    raw === "github" ||
+    raw === "standard-webhooks" ||
+    raw === "stripe"
+  ) {
+    return raw;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected secret|github|standard-webhooks|stripe, got ${JSON.stringify(raw)}`,
+  );
+}
+
+/** A `whsec_` prefix is optional; what follows must be non-empty base64. */
+function assertStandardWebhooksSecret(secret: string, field: string): void {
+  const body = secret.startsWith("whsec_") ? secret.slice(6) : secret;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body) || Buffer.from(body, "base64").length === 0) {
+    throw new ConfigValidationError(
+      field,
+      "verify=standard-webhooks expects a base64 secret such as whsec_<base64>",
+    );
+  }
+}
+
+function parseEventFilter(raw: unknown, field: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new ConfigValidationError(
+      field,
+      "expected a non-empty array of event names",
+    );
+  }
+  return raw.map((entry, i) => parseNonEmptyString(entry, `${field}[${i}]`));
 }
 
 function parseWebhookSchedule(raw: unknown, field: string): TaskSchedule {
