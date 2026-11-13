@@ -94,7 +94,7 @@ export async function createComposioSession(
   }
   if (res.status === 401 || res.status === 403) {
     throw new ComposioApiError(
-      `Composio rejected the API key (HTTP ${res.status}). Check the key in the Integrations tab.`,
+      "Composio did not accept your API key. Check the key in the Integrations tab.",
       res.status,
     );
   }

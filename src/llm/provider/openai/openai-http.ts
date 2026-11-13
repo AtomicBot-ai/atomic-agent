@@ -246,7 +246,9 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
     return `${who} refused the request (403): its moderation flagged the input, the key is fine.${own ? ` ${own}` : ""}`;
   }
   if (err.status === 401 || err.status === 403) {
-    return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
+    // Decision 56 (ATO-1458): the same words the fallback line uses, no
+    // HTTP code in the sentence; the status stays on the error for logs.
+    return `${who} did not accept your API key. Check the key in the Providers panel.`;
   }
   if ((err.status === 404 || err.status === 405) && isLocalProviderUrl(err.url)) {
     return localServerNotFoundSentence(err.url, err.status);
