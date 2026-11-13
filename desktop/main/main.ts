@@ -7294,7 +7294,7 @@ async function hfAndDeltaTest(
      Item 48 (Д34): the path is a button now, so it is walked. A click on the
      drawn button (act('llm:ollama') itself when this config already has
      Ollama and draws none) opens the provider setup on that preset with its
-     address filled in, over the Cloud pane; and the Local pane drawn over
+     address filled in, over the Custom pane (ATO-1418); and the Local pane drawn over
      this config without and with an `ollama` provider has the button only
      without one. The config object, the wizard and the pane are put back. */
   const ollamaPreset = await js<{ id: string; label: string; baseUrl: string; kind: string; local: boolean } | null>(
@@ -7322,7 +7322,8 @@ async function hfAndDeltaTest(
       && ollamaPreset.kind === "openai-compatible" && ollamaPreset.local === true
       && (ollamaAdded || (!!ollamaBtn && ollamaBtn.title.includes(ollamaPreset.baseUrl) && ollamaPath.clicked))
       && ollamaPath.open && ollamaPath.phase === "configure" && ollamaPath.row === ollamaPreset.id
-      && ollamaPath.baseUrl === ollamaPreset.baseUrl && ollamaPath.mode === "cloud"
+      // ATO-1418: Ollama's setup opens on the Custom tab (LLMP.mode "external"), as T48 (Д34) asserts.
+      && ollamaPath.baseUrl === ollamaPreset.baseUrl && ollamaPath.mode === "external"
       && ollamaPath.drawnWithout && !ollamaPath.drawnWith,
     `${JSON.stringify(ollamaPreset)} · ${JSON.stringify(ollamaPath)}`,
   );
