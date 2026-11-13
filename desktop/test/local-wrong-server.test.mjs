@@ -25,7 +25,7 @@ const NAMES = [
 
 function window(config) {
   const c = vm.createContext({
-    LIVE_CONFIG: config, S: { turnStartedAt: 0 }, SWX: {}, URL,
+    LIVE_CONFIG: config, S: { turnStartedAt: 0 }, SWX: {}, projectTurnModel: () => null, URL,
     esc: (s) => String(s), providerWord: (id) => (id === "openrouter" ? "OpenRouter" : String(id)),
     savedKeyInvalid: () => false, billingFailureLine: () => "",
   });
