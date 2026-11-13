@@ -13,7 +13,6 @@ import type { LogRecord } from "../../tracing/structured-logger.js";
 import type { ReportSection } from "./issue-body.js";
 import {
   mapStrings,
-  maskSecrets,
   redactPaths,
   scrubText,
   type RedactionContext,
@@ -74,12 +73,13 @@ export function buildIssueReport(input: {
 }): IssueReport {
   const { snapshot, facts, level, redaction } = input;
   const includeLogs = input.includeLogs ?? true;
-  // Both reduced levels mask absolute paths: `redactPersonal` only knows
-  // the home and working directories, so a path into another project —
-  // or one the model mistyped, which end-to-end testing turned up — sails
-  // through, and the level's own copy promises paths are redacted.
-  const scrub = (s: string): string =>
-    level === "full" ? maskSecrets(s) : redactPaths(scrubText(s, redaction));
+  // Every level masks secrets, emails, URLs and absolute paths
+  // (ATO-1466): the issue is public, so even "Everything" never carries
+  // raw user data, the way VS Code's issue reporter and Claude Code's
+  // /bug work. `redactPersonal` only knows the home and working
+  // directories, so a path into another project — or one the model
+  // mistyped, which end-to-end testing turned up — needs redactPaths too.
+  const scrub = (s: string): string => redactPaths(scrubText(s, redaction));
   const deep = (v: unknown): unknown => mapStrings(v, scrub);
   // A model name can be a GGUF path on a local backend.
   const safeFacts = deep(facts) as IssueReportFacts;
@@ -162,9 +162,19 @@ export function buildIssueReport(input: {
       timestamp: f.timestamp,
       kind: f.kind,
       stepIndex: f.stepIndex,
-      line: scrub(level === "full" ? f.line : stripToolPayload(f.kind, f.line)),
+      // The issue body never quotes tool payloads or step summaries (the
+      // model's reply): at "full" they go to the zip only.
+      line: scrub(stripToolPayload(f.kind, f.line)),
     }));
-    filtered.feed = feed;
+    filtered.feed =
+      level === "full"
+        ? snapshot.feed.slice(-MAX_FEED_LINES).map((f) => ({
+            timestamp: f.timestamp,
+            kind: f.kind,
+            stepIndex: f.stepIndex,
+            line: scrub(f.line),
+          }))
+        : feed;
     sections.push({
       title: `Runtime feed (${feed.length})`,
       body:
@@ -196,17 +206,10 @@ export function buildIssueReport(input: {
   if (level === "full") {
     filtered.uiMode = snapshot.uiMode;
     filtered.activeTab = snapshot.activeTab;
+    // The conversation goes in the zip only, never in the public issue
+    // body (ATO-1466), and it is scrubbed like everything else.
     filtered.messages = deep(snapshot.messages);
     filtered.reasoning = deep(snapshot.reasoning);
-    sections.push({
-      title: `Conversation (${snapshot.messages.length} messages)`,
-      body: snapshot.messages
-        .map((m) => `[${m.role}] ${scrub(m.text)}`)
-        .join("\n\n"),
-      fenced: true,
-      lang: "text",
-      collapsed: true,
-    });
   }
 
   return { level, title, header, sections, snapshot: filtered };

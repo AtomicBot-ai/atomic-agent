@@ -13,7 +13,6 @@
 import type { IssueReportLevel } from "./report-levels.js";
 import {
   mapStrings,
-  maskSecrets,
   redactPaths,
   scrubText,
   type RedactionContext,
@@ -65,9 +64,12 @@ export interface TraceRedactionStats {
  * happened to each row — the counts land in the report so the reader
  * knows the trace is a projection, not the original.
  *
- * - `full`: every row, strings passed through `maskSecrets`.
+ * Every string is scrubbed the same way at every level: secrets,
+ * emails, URLs and paths.
+ *
+ * - `full`: every row.
  * - `scrubbed`: content-only events dropped; content fields on mixed
- *   events replaced by `"<removed>"`; every remaining string scrubbed.
+ *   events replaced by `"<removed>"`.
  * - `errors`: only `error`, `loop_detected`, `provider_waiting`,
  *   `provider_recovered`, `trace_truncated`, `turn_finished` and
  *   `step_finished` rows, scrubbed.
@@ -78,12 +80,9 @@ export function redactTraceNdjson(
   ctx: RedactionContext,
 ): { text: string; stats: TraceRedactionStats } {
   const stats: TraceRedactionStats = { kept: 0, dropped: 0, stripped: 0 };
-  const scrub = (s: string): string =>
-    level === "full"
-      ? maskSecrets(s)
-      : level === "errors"
-        ? redactPaths(scrubText(s, ctx))
-        : scrubText(s, ctx);
+  // One scrub at every level (ATO-1466): secrets, emails, URLs, home
+  // and working directories, then any other absolute path.
+  const scrub = (s: string): string => redactPaths(scrubText(s, ctx));
   const out: string[] = [];
   for (const line of ndjson.split(/\r?\n/)) {
     if (line.trim().length === 0) continue;

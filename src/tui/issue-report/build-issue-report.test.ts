@@ -235,17 +235,47 @@ describe("buildIssueReport", () => {
     expect(json).not.toContain('"message":"please');
   });
 
-  it("full: everything, secrets still masked", () => {
+  it("full: the zip carries everything, scrubbed; the issue body never the conversation", () => {
     const { md, json } = text("full");
-    expect(md).toContain("Conversation (2 messages)");
-    expect(md).toContain("the secret contents");
+    // The conversation and the model's words stay out of the public body.
+    expect(md).not.toContain("Conversation");
+    expect(md).not.toContain("please read");
+    expect(md).not.toContain("the secret contents");
+    expect(md).not.toContain("I added divide()");
+    expect(md).toContain("→ os.fs.read(…)");
+    // The zip keeps the whole bundle, the join key included.
     expect(json).toContain('"sessionId":"sess-1"');
     expect(json).toContain('"host"');
-    expect(md).toContain(`please read ${CWD}/secret.txt`);
     expect(json).toContain("thinking about secrets");
     expect(json).toContain('"message":"please read the secret file"');
-    for (const s of [md, json]) expect(s).not.toContain(TOKEN);
     expect(json).toContain("[redacted:github-token]");
+    // Same scrub as the other levels, in the body and in the zip.
+    for (const s of [md, json]) {
+      expect(s).not.toContain(TOKEN);
+      expect(s).not.toContain(CWD);
+      expect(s).not.toContain(HOME);
+      expect(s).not.toContain("me@x.io");
+      expect(s).not.toContain("/opt/vendor");
+    }
+    expect(json).toContain("please read <cwd>/secret.txt");
+  });
+
+  it("full: a log line with an email and a home path is scrubbed (ATO-1466)", () => {
+    const snap = snapshot();
+    snap.logs = [
+      { timestamp: 1, level: "error", message: "mail bob@x.io at /Users/alice/p" },
+    ] as unknown as DebugBundleSnapshot["logs"];
+    const report = buildIssueReport({
+      snapshot: snap,
+      facts: FACTS,
+      level: "full",
+      redaction: { homeDir: HOME, workingDir: CWD },
+    });
+    const md = [report.header, ...report.sections.map(renderSection)].join("\n");
+    for (const s of [md, JSON.stringify(report.snapshot)]) {
+      expect(s).not.toContain("bob@x.io");
+      expect(s).not.toContain("/Users/alice");
+    }
   });
 
   it("falls back to a generic title when the last run did not fail", () => {
