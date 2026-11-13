@@ -130,6 +130,7 @@ describe("/api/telegram/pairing", () => {
     expect(opened.status).toBe("waiting");
     expect(opened.code).toBe(CODE);
     expect(opened.botUsername).toBe("atomic_test_bot");
+    expect(opened.link).toBe(`https://t.me/atomic_test_bot?start=${CODE}`);
     expect(opened.timeoutMs).toBe(5 * 60_000);
     expect(opened.instruction).toBe(
       `Send /start ${CODE} to @atomic_test_bot in Telegram within 5 minutes. The code works once; other messages are ignored.`,
@@ -282,6 +283,27 @@ describe("/api/telegram/pairing", () => {
     const after = await status(harness);
     expect(after.status).toBe("failed");
     expect(after.error).toBe("could not write config");
+  });
+
+  it("POST gives no link while the bot's @username is unknown (ATO-516)", async () => {
+    harness = await startTestHarness();
+    stubChannel(harness);
+    vi.spyOn(harness.runtime.telegramChannel!, "getBotIdentity").mockReturnValue(null);
+    const res = await req(harness, "POST");
+    expect(res.status).toBe(200);
+    const opened = (await res.json()) as Record<string, unknown>;
+    expect(opened.code).toBe(CODE);
+    expect(opened.botUsername).toBeNull();
+    expect(opened.link).toBeNull();
+  });
+
+  it("GET never carries the link either", async () => {
+    harness = await startTestHarness();
+    stubChannel(harness);
+    await req(harness, "POST");
+    const waiting = await status(harness);
+    expect(JSON.stringify(waiting)).not.toContain("t.me/");
+    expect("link" in waiting).toBe(false);
   });
 
   it("GET is idle before any window", async () => {
