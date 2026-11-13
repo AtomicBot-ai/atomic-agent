@@ -109,3 +109,42 @@ describe("resolveModelPricingFor — OpenRouter live catalog (F30)", () => {
     expect(resolveModelPricingFor(resolved, "acme/other")?.source).toBe("default");
   });
 });
+
+// ATO-647: the bundled models.dev snapshot prices the direct presets
+// that have no catalog of their own.
+describe("resolveModelPricingFor — models.dev snapshot", () => {
+  const resolved: ResolvedLlmConfig = {
+    activeTextProvider: "moonshot",
+    activeEmbeddingProvider: "local-llama-embed",
+    toolTransport: "auto",
+    providers: [
+      { id: "moonshot", kind: "openai-compatible", baseUrl: "https://api.moonshot.ai" },
+      {
+        id: "moonshot-2",
+        kind: "openai-compatible",
+        baseUrl: "https://api.moonshot.ai",
+        userModels: [{ id: "kimi-k3.1-pro", kind: "chat", pricing: { input: 1, output: 5 } }],
+      },
+      { id: "proxy", kind: "openai-compatible", baseUrl: "https://llm.example.com/v1" },
+    ],
+  };
+
+  it("prices a preset model nobody priced by hand", () => {
+    const model = resolveModelPricingFor(resolved, "kimi-k3.1-pro");
+    expect(model?.source).toBe("catalog");
+    expect(model?.pricing).toEqual({ input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 });
+    expect(model?.contextWindow).toBe(1_048_576);
+  });
+
+  it("a hand-entered price beats models.dev", () => {
+    const model = resolveModelPricingFor(resolved, "kimi-k3.1-pro", "moonshot-2");
+    expect(model?.source).toBe("user");
+    expect(model?.pricing).toEqual({ input: 1, output: 5 });
+  });
+
+  it("an endpoint models.dev does not cover stays unpriced", () => {
+    const model = resolveModelPricingFor(resolved, "kimi-k3.1-pro", "proxy");
+    expect(model?.source).toBe("default");
+    expect(model?.pricing).toBeUndefined();
+  });
+});
