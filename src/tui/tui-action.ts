@@ -89,6 +89,8 @@ export type TuiAction =
   | { type: "context_menu_closed" }
   /** Transient line in the composer meta row; `null` clears it. */
   | { type: "composer_notice"; text: string | null }
+  /** Tab on an empty composer took the next-step suggestion (ATO-1095). */
+  | { type: "next_step_suggestion_accepted" }
   | { type: "metric"; sample: MetricSample }
   | { type: "log"; record: LogRecord }
   /**

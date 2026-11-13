@@ -445,6 +445,13 @@ export interface TuiState {
    */
   composerNotice: string | null;
   /**
+   * The next-step suggestion for the composer (ATO-1095), from the
+   * agent's `next_step_suggestion` event. Shown greyed while the buffer
+   * is empty; Tab fills the buffer with it. Typing, a new turn or a
+   * session change drops it.
+   */
+  nextStepSuggestion: string | null;
+  /**
    * Live provider outage, or `null` when the link is answering.
    *
    * Sticky on purpose: it survives the failed turn that ended the wait
@@ -937,6 +944,7 @@ export function createInitialTuiState(
     approvalPreviewPage: null,
     composerHasSelection: false,
     composerNotice: null,
+    nextStepSuggestion: null,
     providerOutage: null,
     sessionDelete: null,
     uninstall: null,
