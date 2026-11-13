@@ -428,7 +428,15 @@ function checkCommand(all: readonly ShellWord[], outer: CommandContext): GuardVe
   if (name === "cmd" || name === "cmd.exe") {
     // `cmd /c start https://…`: the words after `/c` (or `/k`) are a command.
     const at = args.findIndex((a) => /^\/[ck]$/i.test(a.text));
-    return at === -1 ? null : checkCommand(args.slice(at + 1), ctx);
+    if (at === -1) return null;
+    const rest = args.slice(at + 1);
+    // `cmd /c "start https://…"`: one quoted word is a whole command line,
+    // read again like the script of `sh -c`.
+    if (rest.length === 1) {
+      const script = rest[0]!.text;
+      return checkText(script, script, ctx.printsSafe && outputStaysHere(script)) ?? checkLineCommands(script, { ...ctx, depth: ctx.depth + 1 });
+    }
+    return checkCommand(rest, ctx);
   }
   if (["sensible-browser", "x-www-browser", "www-browser", "gnome-www-browser"].includes(name)) {
     return refuse("starting the default web browser");
