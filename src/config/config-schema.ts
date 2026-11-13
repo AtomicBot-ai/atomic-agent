@@ -122,6 +122,15 @@ import {
   parseWebhookMap,
   type WebhookConfig,
 } from "./webhook-config.js";
+import {
+  parseExtraChannelsConfig,
+  type ExtraChannelConfig,
+} from "./extra-channel-config.js";
+
+export {
+  parseExtraChannelsConfig,
+  type ExtraChannelConfig,
+} from "./extra-channel-config.js";
 
 export {
   parseWebhookMap,
@@ -428,6 +437,11 @@ export interface AtomicAgentConfig {
    * The bot token is not stored here — see `DiscordConfig`.
    */
   discord: DiscordConfig;
+  /**
+   * Chat channels beyond Telegram and Discord (Slack, Signal, ...),
+   * keyed by channel id. Mirrors `UserConfigFile.channels`.
+   */
+  channels: Record<string, ExtraChannelConfig>;
   /** Extra Telegram / Discord bots. Mirrors `UserConfigFile.swarm`. */
   swarm: SwarmConfig;
   /** Out-of-band pings. Mirrors `UserConfigFile.notifications`. */
@@ -742,6 +756,12 @@ export interface UserConfigFile {
    * null }`, which starts nothing.
    */
   discord: DiscordConfig;
+  /**
+   * Chat channels beyond Telegram and Discord, keyed by channel id (see
+   * `ExtraChannelConfig`). Unversioned, additive: a file without the
+   * block reads as `{}`, which starts nothing.
+   */
+  channels: Record<string, ExtraChannelConfig>;
   /**
    * Extra Telegram / Discord bots ("swarm units"). Added in config v52.
    * Older files are transparently upgraded with `{ units: [] }`.
@@ -1124,6 +1144,8 @@ export interface UserConfigFile {
 // 300 000 ms, ATO-922). It used to be env-only
 // (`ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS`, which still wins over the
 // file). An older file has no field and reads the default, as before.
+// Unversioned, additive: top-level `channels` (chat channels beyond
+// Telegram and Discord keyed by id, ATO-1169). Missing reads as `{}`.
 export const USER_CONFIG_VERSION = 79;
 
 /**
@@ -1308,6 +1330,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   telegram: createTelegramDefaults(),
   discord: createDiscordDefaults(),
+  channels: {},
   swarm: createSwarmDefaults(),
   notifications: createNotificationsDefaults(),
   atomicMail: createAtomicMailDefaults(),
@@ -1680,6 +1703,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     },
     telegram: parseTelegramConfig(telegram, () => USER_CONFIG_DEFAULTS.telegram),
     discord: parseDiscordConfig(discord, () => USER_CONFIG_DEFAULTS.discord),
+    channels: parseExtraChannelsConfig(obj.channels),
     swarm: parseSwarmConfig(swarm),
     notifications: parseNotificationsConfig(
       notificationsDownloads,

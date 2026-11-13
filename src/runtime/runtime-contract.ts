@@ -11,6 +11,7 @@ import type { ChannelStatus } from "./channel-status.js";
 import type { TelegramChannel } from "../channels/telegram/index.js";
 import type { DiscordChannel } from "../channels/discord/index.js";
 import type { SwarmRegistry } from "../channels/swarm/index.js";
+import type { ChannelRegistry } from "../channels/channel-registry.js";
 import type { BotFactory } from "../channels/telegram/index.js";
 import type { McpManager } from "../mcp/index.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
@@ -378,6 +379,14 @@ export interface AgentRuntime {
    * when enabled with a token.
    */
   readonly swarm: SwarmRegistry | null;
+  /**
+   * Every chat channel behind the shared `Channel` surface (ATO-1169):
+   * Telegram, Discord and the adapters from `channels/channel-catalog.ts`
+   * (Slack, Signal, ...). `null` until `connectRuntimeChannels` runs.
+   * Hosts list and report channels through it; the primaries keep their
+   * typed handles above for pairing and owner settings.
+   */
+  readonly channels: ChannelRegistry | null;
   /**
    * MCP client manager. **Always non-null** — constructed even when
    * `config.mcp.servers[]` is empty so the live-control surface stays

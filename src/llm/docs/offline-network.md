@@ -19,7 +19,7 @@ Offline mode makes the agent refuse every outbound connection whose host is not 
 - Browser tools: `browser.navigate`, `browser.tabs` new and `browser.search` refuse a remote URL, and a click or redirect that lands on a remote page clears the tab. A Chrome the agent starts while offline gets `--proxy-server=http://127.0.0.1:9`, so pages, subresources and Chrome's own background requests fail; Chrome never proxies loopback.
 - Remote MCP transports (`streamable_http`, `sse`) are refused before connecting unless the URL is on this machine.
 - Subscription CLI providers (Claude Code, Codex) are separate programs that talk to their vendor's cloud; they are refused before they start.
-- The Telegram bot uses grammy's own HTTP client (node-fetch), so the bot factory refuses to start it. A live switch-on stops Telegram, Discord and swarm bots; switching off starts the ones their config enables.
+- The Telegram bot uses grammy's own HTTP client (node-fetch), so the bot factory refuses to start it. Every chat channel keeps its own client or socket, so offline mode handles them through the channel registry (`runtime.channels`, ATO-1169) rather than by name: a live switch-on stops every registered channel (Telegram, Discord and each catalog adapter such as Slack or Signal) plus the swarm bots, `ChannelRegistry.startInBackground` starts none while offline, and switching off starts the ones their config enables (`telegram.enabled`, `discord.enabled`, `channels.<id>.enabled`).
 
 ## What is not enforced
 
