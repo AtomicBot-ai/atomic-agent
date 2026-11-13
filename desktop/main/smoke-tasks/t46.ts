@@ -314,10 +314,12 @@ async function composer(js: Js, check: Check): Promise<void> {
     try {
       window.__voiceProbeSet({available: true});
       const on = document.querySelector('.composer .field .micbtn');
-      const live = {color: getComputedStyle(on).color, ink: getComputedStyle(document.body).color,
+      const live = {color: getComputedStyle(on).color, opacity: getComputedStyle(on).opacity,
         aria: on.getAttribute('aria-disabled'), disabled: on.disabled};
       window.__voiceProbeSet({available: false, reason: 'voice-helper-missing'});
       const off = document.querySelector('.composer .field .micbtn');
+      // The disabled look, as the window draws it (composer.css: --ink-3 at .55), to hold the working one against.
+      live.off = {color: getComputedStyle(off).color, opacity: getComputedStyle(off).opacity};
       const offView = {aria: off.getAttribute('aria-disabled'), title: off.getAttribute('title'), hook: window.__voiceMic().disabled};
       off.click();   // a press with no mousedown before it: the keyboard's way in
       await new Promise((res) => setTimeout(res, 60));
@@ -334,8 +336,13 @@ async function composer(js: Js, check: Check): Promise<void> {
   const live = (mic.live ?? {}) as Record<string, unknown>;
   const off = (mic.off ?? {}) as Record<string, unknown>;
   check(
-    "T46 Д24: a microphone that works is drawn in the full ink, not the disabled grey",
-    live.color === live.ink && live.aria === null && live.disabled === false,
+    /* The W2 composer redesign draws its icons muted (--ink-2, --ink on
+       hover), so "works" is no longer the full ink: it is not the disabled
+       look (the --ink-3 grey at .55) and nothing marks it off. */
+    "T46 Д24: a microphone that works is not drawn in the disabled grey, and is not marked off",
+    typeof live.color === "string" && live.opacity === "1"
+      && !!live.off && (live.off as Record<string, unknown>).color !== live.color && Number((live.off as Record<string, unknown>).opacity) < 1
+      && live.aria === null && live.disabled === false,
     q(live),
   );
   check(

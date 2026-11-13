@@ -19,6 +19,10 @@ function slice(startMarker, endFn) {
   return source.slice(start + 1, source.indexOf("\n}\n", fnAt) + 2);
 }
 
+// Values built inside the vm context carry its Array/Object prototypes, which
+// deepStrictEqual tells apart from this realm's: compare them as plain data.
+const plain = (x) => JSON.parse(JSON.stringify(x));
+
 const FOUND = [
   { path: "/m/lms/Qwen3-4B-Q8_0.gguf", name: "Qwen3-4B-Q8_0", sizeBytes: 4.3 * 1024 ** 3, source: "lmstudio", quant: "Q8_0", registered: false },
   { path: "/m/store/qwen3-8b/Qwen3-8B.gguf", name: "Qwen 3 8B", sizeBytes: 5 * 1024 ** 3, source: "atomic", registered: true },
@@ -77,7 +81,7 @@ test("nothing found: nothing drawn, the download list is the step", () => {
 test("Use registers in place and hands the id to the setup's own pull", async () => {
   const { c, calls } = run({ answer: { ok: true, id: "custom-local-phi-4-1a2b3c4d" } });
   await c.use(1);   // the second unregistered row
-  assert.deepEqual(calls.use, [["/m/hf/phi-4.gguf", { registerOnly: true }]]);
+  assert.deepEqual(plain(calls.use), [["/m/hf/phi-4.gguf", { registerOnly: true }]]);
   assert.deepEqual(calls.handedOver, ["custom-local-phi-4-1a2b3c4d"]);
   assert.equal(c.OB.pendingMmproj, null);
   assert.equal(c.OB_FOUND.models, null, "asked again on the next visit");
@@ -89,7 +93,7 @@ test("a refusal shows the reason and looks again", async () => {
   assert.deepEqual(calls.handedOver, []);
   assert.equal(calls.dispatched[0].type, "onboarding_error_set");
   assert.equal(calls.dispatched[0].error, "No such file: /m/lms/Qwen3-4B-Q8_0.gguf");
-  assert.deepEqual(calls.discovered, [{ fresh: true }]);
+  assert.deepEqual(plain(calls.discovered), [{ fresh: true }]);
 });
 
 test("a download already running is said, not raced; a second click waits for the first", async () => {

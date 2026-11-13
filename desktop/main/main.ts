@@ -8319,6 +8319,7 @@ async function settingsTestPartC(
     activeText: string; providers: Array<{ id: string; kind: string; hasKey: boolean; active: boolean }>; customIds?: string[];
     fallback: { links: Array<{ providerId: string; isActive: boolean; isAppendedLocal: boolean }>; addableProviderIds: string[]; appendLocal: boolean };
     section: { provider: string | null; status: string; models: number; filtered: number }; flatRows: string[];
+    localScopeRows: number;
   };
   const pane = () => js<LlmPane>("window.__llmPane()");
   const readCfg = async () => ((await configGet()).config ?? {}) as Cfg;
@@ -8362,10 +8363,15 @@ async function settingsTestPartC(
     );
   } else {
   const expectedLocal = (listCli.models ?? []).filter((m) => !/embed|bge|nomic|jina/i.test(m.id)).length + (embCli.models ?? []).length;
+  /* 13.11: the Local setup also lists the apps you already run under its
+     catalogue (llmAppsHTML, data-llm-scope="external"), and a saved own
+     server or app there is a row too. Only the catalogue's own sections
+     (data-llm-scope="local") are what the CLI lists; the "Found on this
+     Mac" rows carry no data-llm-row. */
   check(
     "llm tab: Local pane rows come from atag models list + list-embeddings within 10 s",
-    local.mode === "local" && local.rows > 0 && local.rows === expectedLocal && local.localRows + local.embRows === expectedLocal && !local.localErr,
-    `${local.rows} rows painted, ${local.localRows}+${local.embRows} loaded, cli ${expectedLocal}${local.localErr ? " err=" + local.localErr : ""}`,
+    local.mode === "local" && local.localScopeRows > 0 && local.localScopeRows === expectedLocal && local.localRows + local.embRows === expectedLocal && !local.localErr,
+    `${local.localScopeRows} catalogue rows painted (${local.rows} in the pane), ${local.localRows}+${local.embRows} loaded, cli ${expectedLocal}${local.localErr ? " err=" + local.localErr : ""}`,
   );
   }
   /* ---- r7 models: the vendored catalogue metadata cannot rot in silence.

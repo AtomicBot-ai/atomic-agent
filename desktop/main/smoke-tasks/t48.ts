@@ -339,11 +339,18 @@ async function ollama(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, any>>(String.raw`(() => {
     const keep = {cfg: LIVE_CONFIG, mode: LLMP.mode, open: SEL.open, addOpen: SEL.addOpen, err: SEL.err, wiz: Object.assign({}, WIZ)};
     const close = () => { WIZ.unfinishedId = null; act('close'); };
-    const local = (extra) => Object.assign({}, keep.cfg || {}, {llm: {activeTextProvider: 'local-llama', providers: [{id: 'local-llama', kind: 'llama-server'}].concat(extra)}});
+    /* 13.11: Add Ollama is a tile (llmAppTilesHTML) under "Use an app you
+       already run", drawn while that section lists nothing; a saved own
+       server is listed there and puts its Add app in the tiles' place. The
+       main smoke saves one on this profile earlier, so the address is left
+       out here, as on a fresh install. */
+    const lm = Object.assign({}, (keep.cfg && keep.cfg.localModels) || {});
+    delete lm.url; if (lm.mode === 'external') delete lm.mode;
+    const local = (extra) => Object.assign({}, keep.cfg || {}, {localModels: lm, llm: {activeTextProvider: 'local-llama', providers: [{id: 'local-llama', kind: 'llama-server'}].concat(extra)}});
     try {
       LIVE_CONFIG = local([]);
       const box = document.createElement('div'); box.innerHTML = llmLocalHTML();
-      const btn = box.querySelector('[data-act="llm:ollama"]');
+      const btn = box.querySelector('.llm-apps-sec .llm-tile[data-act="llm:ollama"]');
       const out = {signpost: /Using Ollama\?/.test(box.textContent) || !!box.querySelector('.llm-ollama'), button: btn ? btn.textContent.trim() : null};
       close();
       act('llm:ollama');
@@ -351,7 +358,9 @@ async function ollama(js: Js, check: Check): Promise<void> {
       out.mode = LLMP.mode;
       LIVE_CONFIG = local([{id: 'ollama', kind: 'openai-compatible', baseUrl: 'http://localhost:11434'}]);
       const again = document.createElement('div'); again.innerHTML = llmLocalHTML();
-      out.afterAdded = !!again.querySelector('[data-act="llm:ollama"]');
+      // Gone once added: no tile in the section nor among the Add buttons Add app offers, and Ollama is a row of the list instead.
+      out.afterAdded = !!again.querySelector('[data-act="llm:ollama"]') || /data-act="llm:ollama"/.test(llmAppTilesHTML());
+      out.listed = !!again.querySelector('.llm-apps-sec [data-llm-row="cloud-provider:ollama"]');
       return out;
     } finally {
       close();
@@ -363,7 +372,7 @@ async function ollama(js: Js, check: Check): Promise<void> {
   check(
     "T48 (Д34, 13.11): no Ollama signpost under the lists; Add Ollama (under Use an app you already run) opens the provider setup on Ollama with its address filled in, and goes once Ollama is added",
     r["signpost"] === false && r["button"] === "Add Ollama" && wiz.open === true && wiz.phase === "configure" && wiz.row === "ollama"
-      && wiz.baseUrl === "http://localhost:11434" && r["mode"] === "external" && r["afterAdded"] === false,
+      && wiz.baseUrl === "http://localhost:11434" && r["mode"] === "external" && r["afterAdded"] === false && r["listed"] === true,
     show(r),
   );
 }

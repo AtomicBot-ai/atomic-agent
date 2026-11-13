@@ -76,7 +76,8 @@ test("the empty chat draws four starter cards, each with an icon, a title and a 
     assert.match(h, /<span class="gc-ic"><svg [^>]*stroke-width="1\.5"/);
     assert.match(h, /<span class="gc-t">[^<]+<\/span><span class="gc-d">[^<]+<\/span><\/button>$/);
   }
-  assert.deepEqual(cards.map((h) => h.match(/class="gc-t">([^<]+)</)[1]),
+  // cards is an array from the vm context: Array.from makes it this realm's, or deepStrictEqual sees two prototypes.
+  assert.deepEqual(Array.from(cards, (h) => h.match(/class="gc-t">([^<]+)</)[1]),
     ["Summarise this folder", "Create an image", "Make a video", "Write code"]);
 });
 

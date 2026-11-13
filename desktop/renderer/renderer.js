@@ -31061,6 +31061,8 @@ function importKey(e, k, inText) {
 /* Hooks for --smoke (Item 7 part C: the LLM, Telegram and Import tabs). */
 if (typeof window !== 'undefined') {
   window.__llmPane = () => ({mode: LLMP.mode, rows: document.querySelectorAll('#settings [data-llm-row]').length, view: LLMP.view,
+    // The catalogue's own rows (Local models + Embedding models): the apps section under them (data-llm-scope="external") is not the catalogue.
+    localScopeRows: document.querySelectorAll('#settings [data-llm-scope="local"] [data-llm-row]').length,
     localRows: (LLMP.local || []).length, embRows: (LLMP.emb || []).length, refreshed: LLMP.lastRefreshedAt, localErr: LLMP.localErr, statusErr: LLMP.statusErr,
     status: LLMP.status ? {mode: LLMP.status.mode, dataDir: LLMP.status.dataDir, activeModel: LLMP.status.activeModel, daemon: LLMP.status.daemon, health: LLMP.status.health} : null,
     daemonLabel: llmFormatDaemon(), statusLine: llmStatusLine(), msg: LLMP.msg ? LLMP.msg.text : '', restart: !!(LLMP.msg && LLMP.msg.restart),

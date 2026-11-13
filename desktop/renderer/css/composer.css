@@ -414,6 +414,8 @@
    on a 16-unit grid, so a stroke of 1.35 there is ~1.5px at 18px. */
 .composer .field{gap:2px}
 .composer .field .attbtn,.composer .field .micbtn{color:var(--ink-2)}
+/* A mic that cannot work keeps the disabled grey: the muted colour above outranks .micbtn[disabled]. */
+.composer .field .micbtn[disabled],.composer .field .micbtn[aria-disabled="true"]{color:var(--ink-3)}
 .composer .field .attbtn:hover,.composer .field .attbtn.is-open,
 .composer .field .micbtn:hover:not([disabled]):not([aria-disabled="true"]){background:var(--hover);color:var(--ink)}
 .cfoot .cchip > svg{stroke-width:1.4}

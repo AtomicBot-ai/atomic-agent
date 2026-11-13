@@ -88,7 +88,8 @@ test('no Set up models tabs; the Local setup names the apps you already run, in 
   // The apps are added in the apps section only, not from the Local models header too.
   assert.doesNotMatch(local, /llm:ollama|llm:app:/);
   const apps = slice('function llmAppsHTML()', 'function llmCloudHTML()');
-  assert.match(apps, /'Use an app you already run'/);
+  // The section heading is markup now (llm-sh-t), not a bare string argument.
+  assert.match(apps, /<span class="llm-sh-t">Use an app you already run<\/span>/);
   assert.match(apps, /'Add Ollama'/);
   assert.match(apps, /'Add your own server'/);
   // The list and its Add app, or the Add buttons: never both.
@@ -110,7 +111,7 @@ test('an app alone does not count as a cloud provider for the Cloud choice', () 
     + slice('const PRESETS = [', '\nPRESETS.filter(')
     + slice('function llmCloudProviders()', 'function llmActiveTextId()')
     + slice('function llmKeylessLocal(p)', 'function llmKeysKnown()')
-    + slice('function llmRouteNeeds()', '/** What a blocked choice opens'), ctx);
+    + slice('function llmRouteNeeds()', '\nfunction llmRouteNeedsOpen('), ctx);
   const onlyApp = run([{ id: 'local-llama', kind: 'llama-server' }, { id: 'ollama', kind: 'openai-compatible', baseUrl: 'http://localhost:11434' }]);
   assert.equal(onlyApp.cloud && onlyApp.cloud.line, 'Add a cloud provider first');
   ctx.BSW.readyIds = ['groq'];
