@@ -60,8 +60,21 @@ describe("the email-drafts starter skill", () => {
     expect(body).toMatch(/description:.*never sends/);
     expect(body).toMatch(/## The rule: drafts only, always/);
     expect(body).toMatch(/Do not call `os\.email\.send`/);
-    expect(body).toMatch(/Never remove the `--gmail-no-send` flag/);
     expect(body).not.toMatch(/"gmail", "send"/);
+  });
+
+  it("reads gog's accepted flags before drafting", () => {
+    expect(body).toMatch(/\*\*Read the accepted flags first, do not guess them\.\*\*/);
+    expect(body).toMatch(/gog schema gmail drafts --json/);
+    expect(body).toMatch(/gog gmail drafts create --help/);
+  });
+
+  it("keeps --gmail-no-send by default and drops it only when it blocks an explicit draft", () => {
+    expect(body).toMatch(/Keep `--gmail-no-send` on every `gog` call by default/);
+    expect(body).toMatch(/If\s+`--gmail-no-send` blocks draft creation itself, you may run the same\s+draft command again without `--gmail-no-send`/);
+    expect(body).toMatch(/This is the only case where the flag may be dropped/);
+    expect(body).toMatch(/never call `gmail send`\s+or any send, schedule or queue command, and never send the draft/);
+    expect(body).toMatch(/Never drop it to get past any other error/);
   });
 
   it("drafts Atomic Mail to local files since it cannot save drafts", () => {

@@ -20,8 +20,10 @@ follow-ups, replies, partnership notes. This skill **only creates drafts**.
   send` command or any command that sends, schedules or queues mail. This
   holds even when the user says "send them": answer that this skill only
   drafts and that they send from their mail client after reading each one.
-- Never remove the `--gmail-no-send` flag from a `gog` call to get past an
-  error. If a draft command is refused, stop and tell the user.
+- Keep `--gmail-no-send` on every `gog` call by default. The one exception
+  is in "Gmail (via `gog`)" below: if that flag blocks draft creation
+  itself, it may be dropped for an explicit draft request, and only for
+  the draft command. Never drop it to get past any other error.
 - One draft per recipient. No BCC blasts, no mail merge that sends.
 
 ## Inputs
@@ -55,23 +57,37 @@ follow-ups, replies, partnership notes. This skill **only creates drafts**.
 ### Gmail (via `gog`)
 
 `gog` needs to be installed and signed in with Gmail access (see the
-`gog-workspace` skill). Read the exact draft flags from the installed
-binary first, do not guess them:
+`gog-workspace` skill).
 
-```json
-[{ "tool": "os.shell.run", "args": { "cmd": "gog", "args": ["schema", "gmail", "drafts", "--json"] } }]
-```
+1. **Read the accepted flags first, do not guess them.** Run
+   `gog schema gmail drafts --json` (or `gog gmail drafts create --help`
+   if `schema` is not available) and use exactly the command name, flag
+   names and command id it prints:
 
-Then create each draft with only the draft command allowed and sending
-blocked, for example:
+   ```json
+   [{ "tool": "os.shell.run", "args": { "cmd": "gog", "args": ["schema", "gmail", "drafts", "--json"] } }]
+   ```
 
-```json
-[{ "tool": "os.shell.run", "args": { "cmd": "gog", "args": ["--json", "--no-input", "--account", "<email>", "--gmail-no-send", "--enable-commands-exact", "gmail.drafts.create", "gmail", "drafts", "create", "--to", "<recipient>", "--subject", "<subject>", "--body", "<body>"] } }]
-```
+2. **Create the draft with sending blocked**, for example (adjust to what
+   step 1 printed):
 
-Adjust the flag names to what `gog schema` printed. Each call goes
-through the approval gate, so the user sees every draft before it is
-saved.
+   ```json
+   [{ "tool": "os.shell.run", "args": { "cmd": "gog", "args": ["--json", "--no-input", "--account", "<email>", "--gmail-no-send", "--enable-commands-exact", "gmail.drafts.create", "gmail", "drafts", "create", "--to", "<recipient>", "--subject", "<subject>", "--body", "<body>"] } }]
+   ```
+
+3. **If `gog` rejects a flag**: if it says `--enable-commands-exact` is
+   unknown, use the allowlist flag the schema or `--help` lists (for
+   example `--enable-commands gmail.drafts.create`). If
+   `--gmail-no-send` blocks draft creation itself, you may run the same
+   draft command again without `--gmail-no-send`, because the user asked
+   for a draft. This is the only case where the flag may be dropped. The
+   command must still be the draft-create command: never call `gmail send`
+   or any send, schedule or queue command, and never send the draft.
+4. If it still fails, stop, tell the user what `gog` said, and write the
+   draft to a local file instead (see "No mailbox set up").
+
+Each call goes through the approval gate, so the user sees every draft
+before it is saved.
 
 ### Atomic Mail
 
