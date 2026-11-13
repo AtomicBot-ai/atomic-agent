@@ -165,7 +165,7 @@ describe("loading and refreshing", () => {
 
 describe("externalCatalogUrl", () => {
   it("defaults to our own hosted catalog on atomicagent.io", () => {
-    expect(DEFAULT_EXTERNAL_CATALOG_URL).toBe("https://atomicagent.io/models/catalog.json");
+    expect(DEFAULT_EXTERNAL_CATALOG_URL).toBe("https://atomicagent.io/models-catalog.json");
     expect(externalCatalogUrl({})).toBe(DEFAULT_EXTERNAL_CATALOG_URL);
     expect(externalCatalogUrl({ ATOMIC_AGENT_MODEL_CATALOG_URL: "  " })).toBe(DEFAULT_EXTERNAL_CATALOG_URL);
   });

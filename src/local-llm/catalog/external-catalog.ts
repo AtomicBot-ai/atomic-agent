@@ -58,7 +58,7 @@ export const EXTERNAL_CATALOG_URL_ENV = "ATOMIC_AGENT_MODEL_CATALOG_URL";
  * Our own hosted catalog, in the format above (ATO-27). Hosted by the
  * site (atomicagent.io); a 404 or 410 from it means "not published yet".
  */
-export const DEFAULT_EXTERNAL_CATALOG_URL = "https://atomicagent.io/models/catalog.json";
+export const DEFAULT_EXTERNAL_CATALOG_URL = "https://atomicagent.io/models-catalog.json";
 /** Ids of catalog entries; the `custom-` prefix keeps the typed id wall. */
 export const EXTERNAL_ID_PREFIX = "custom-catalog-";
 
