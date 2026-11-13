@@ -166,6 +166,16 @@ describe("local refusal tags (ATO-421, ATO-769)", () => {
     expect(JSON.stringify(odd)).not.toContain("someone");
   });
 
+  it("a lock held too long to be a real operation is its own word (ATO-1433)", () => {
+    expect(sanitizeLlmFailureTags({
+      localEngine: "atomic-core",
+      connectionRefused: true,
+      engineLiveness: "no_pid",
+      engineLivenessReason: "no_pid_file",
+      engineLock: "stale_too_old",
+    })).toMatchObject({ engine_liveness: "no_pid", engine_lock: "stale_too_old" });
+  });
+
   it("an external engine carries no liveness reason tags", () => {
     const tags = sanitizeLlmFailureTags({
       localEngine: "external",
