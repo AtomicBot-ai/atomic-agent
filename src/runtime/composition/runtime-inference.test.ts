@@ -406,8 +406,9 @@ describe("runtime provider/context/fallback/reload phases", () => {
     const wired = connectRuntimeFallback({}, fixture.deps);
     await wired.llmComplete({ ...params, providerId: "served" });
     const snapshot = fixture.turnUsageMeter.snapshot("turn");
-    // #735 records which provider served the turn; no costUsd: unpriced.
-    expect(snapshot).toEqual({ promptTokens: 300, completionTokens: 20, cachedTokens: 100, servedProviderId: "served" });
+    // #735 records which provider served the turn; no costUsd: unpriced. The
+    // timings also give the turn its prefill/generation split and speed.
+    expect(snapshot).toEqual({ promptTokens: 300, completionTokens: 20, cachedTokens: 100, servedProviderId: "served", prefillMs: 1, genMs: 2, genTokensPerS: 10000 });
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBe(0);
   });
 
