@@ -97,7 +97,10 @@ export function isSpendLimitRefusal(err: unknown): boolean {
  */
 export function falloverCause(
   err: unknown,
-): "billing" | "auth" | "other" | undefined {
+): "billing" | "auth" | "spend-limit" | "other" | undefined {
+  // Our own daily ceiling (ATO-649, `onDailyLimit: "local"`): cloud calls
+  // are paused for the day, so the notice must not promise a recovery.
+  if (isSpendLimitRefusal(err)) return "spend-limit";
   if (!(err instanceof OpenAiHttpError)) return undefined;
   if (isBillingRefusal(err)) return "billing";
   const { status } = err;

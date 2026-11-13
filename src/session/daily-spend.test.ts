@@ -104,6 +104,13 @@ describe("dailySpendViewFor", () => {
     expect(dailySpendViewFor(store, { showInStatusBar: false })).toBeUndefined();
   });
 
+  it("shows nothing when no configured cloud link has a known price", () => {
+    const noPricedLink = () => false;
+    expect(dailySpendViewFor(store, { showInStatusBar: true }, noPricedLink)).toBeUndefined();
+    expect(dailySpendViewFor(store, { dailyLimitUsd: 5 }, noPricedLink)).toBeUndefined();
+    expect(dailySpendViewFor(store, { showInStatusBar: true }, () => true)).toEqual(store.peek());
+  });
+
   it("shows the day total when asked, and the ceiling when one is set", () => {
     expect(dailySpendViewFor(store, { showInStatusBar: true })).toEqual(store.peek());
     expect(dailySpendViewFor(store, { showInStatusBar: false, dailyLimitUsd: 5 })).toEqual({

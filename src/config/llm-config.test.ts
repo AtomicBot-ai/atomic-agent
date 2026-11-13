@@ -830,4 +830,62 @@ describe("llm.activeEmbeddingProvider default", () => {
       }),
     ).toThrow(/llm\.activeEmbeddingProvider: unknown provider id "local-llama"/);
   });
+  describe("llm.costTracking (ATO-649)", () => {
+    const withCostTracking = (costTracking: unknown) => ({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "openrouter",
+        activeEmbeddingProvider: "local-llama",
+        toolTransport: "auto" as const,
+        providers: [
+          { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+          { id: "openrouter", kind: "openrouter", defaultChatModel: "gpt" },
+        ],
+        costTracking,
+      },
+    });
+
+    it("reads the block from the file, onDailyLimit included", () => {
+      const parsed = parseUserConfigFile(
+        withCostTracking({ showInStatusBar: true, dailyLimitUsd: 5, onDailyLimit: "local" }),
+      );
+      expect(parsed.llm?.costTracking).toEqual({
+        showInStatusBar: true,
+        dailyLimitUsd: 5,
+        onDailyLimit: "local",
+      });
+      expect(
+        parseUserConfigFile(withCostTracking({ dailyLimitUsd: 2, onDailyLimit: "stop" })).llm
+          ?.costTracking?.onDailyLimit,
+      ).toBe("stop");
+    });
+
+    it("leaves onDailyLimit unset (stop) when absent or written by a newer build", () => {
+      expect(
+        parseUserConfigFile(withCostTracking({ dailyLimitUsd: 2 })).llm?.costTracking?.onDailyLimit,
+      ).toBeUndefined();
+      expect(
+        parseUserConfigFile(withCostTracking({ dailyLimitUsd: 2, onDailyLimit: "ask-first" })).llm
+          ?.costTracking?.onDailyLimit,
+      ).toBeUndefined();
+    });
+
+    it("rejects a wrong onDailyLimit type, a non-positive limit and a bad reset hour", () => {
+      expect(() => parseUserConfigFile(withCostTracking({ onDailyLimit: 1 }))).toThrow(
+        /llm\.costTracking\.onDailyLimit/,
+      );
+      expect(() => parseUserConfigFile(withCostTracking({ dailyLimitUsd: 0 }))).toThrow(
+        /llm\.costTracking\.dailyLimitUsd/,
+      );
+      expect(() => parseUserConfigFile(withCostTracking({ dailyLimitUsd: "5" }))).toThrow(
+        /llm\.costTracking\.dailyLimitUsd/,
+      );
+      expect(() => parseUserConfigFile(withCostTracking({ dailyResetHourUtc: 24 }))).toThrow(
+        /llm\.costTracking\.dailyResetHourUtc/,
+      );
+      expect(() => parseUserConfigFile(withCostTracking({ enabled: "yes" }))).toThrow(
+        /llm\.costTracking\.enabled/,
+      );
+    });
+  });
 });

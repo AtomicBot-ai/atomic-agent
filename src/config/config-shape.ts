@@ -121,6 +121,7 @@ const LLM_KEYS: Record<keyof UserLlmFileConfig, true> = {
   fallback: true,
   runMode: true,
   openrouter: true,
+  costTracking: true,
 };
 const LLM_FALLBACK_KEYS: Record<keyof UserLlmFallbackConfig, true> = {
   chain: true,

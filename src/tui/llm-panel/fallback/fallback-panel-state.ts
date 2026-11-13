@@ -52,7 +52,7 @@ export interface FallbackLastSwitch {
   to: string;
   reason: string;
   /** The failure's kind when the runtime read it off the error. */
-  cause?: "billing" | "auth" | "other";
+  cause?: "billing" | "auth" | "spend-limit" | "other";
 }
 
 export interface FallbackPanelState {

@@ -362,19 +362,27 @@ export function connectRuntimeFallback(
   };
   // ATO-649: refuse a paid link once today's spend reached
   // `costTracking.dailyLimitUsd`, before anything is sent. Thrown from the
-  // seam's per-attempt hook, so the chain advances past the link (to the
-  // local model when it is in the chain). Local and plan links are never
-  // refused: they are not spend. Read live, so a raised limit applies at
-  // once.
+  // seam's per-attempt hook. `onDailyLimit: "stop"` (default): the chain
+  // does not move on, the turn ends saying so, and every later paid call
+  // today is refused here the same way. `"local"`: the chain advances
+  // past the link (to the local model when it is in the chain) and
+  // announces the switch. Local and plan links are never refused: they
+  // are not spend. Read live, so a raised limit applies at once.
   const enforceDailySpendLimit = (providerId: string): void => {
     if (!dailySpend) return;
-    const limitUsd = effectiveDailyLimitUsd(getConfig().llm?.costTracking?.dailyLimitUsd);
+    const costTracking = getConfig().llm?.costTracking;
+    const limitUsd = effectiveDailyLimitUsd(costTracking?.dailyLimitUsd);
     if (limitUsd === null) return;
     const billing = linkBilling(providerId);
     if (billing.local || billing.plan) return;
     const today = dailySpend.today();
     if (isOverDailyLimit(today, limitUsd)) {
-      throw new DailySpendLimitError({ spentUsd: today.usd, limitUsd, providerId });
+      throw new DailySpendLimitError({
+        spentUsd: today.usd,
+        limitUsd,
+        providerId,
+        onLimit: costTracking?.onDailyLimit === "local" ? "local" : "stop",
+      });
     }
   };
   // Fold one completion into its session's spend and the account's
@@ -508,8 +516,8 @@ export function connectRuntimeFallback(
     // against it. No-op on every other attempt — one boolean after the
     // first call. See `prepareLocalLink` above.
     // ATO-649: the daily ceiling is checked here too, per attempt and
-    // before the request, so a refusal advances the chain like any
-    // link that said no.
+    // before the request, so no paid request leaves once it is reached
+    // (`onDailyLimit` decides whether the chain moves on).
     prepareLink: async (providerId) => {
       enforceDailySpendLimit(providerId);
       await prepareLocalLink(providerId);

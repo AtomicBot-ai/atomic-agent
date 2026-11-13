@@ -30,7 +30,7 @@ export interface ProviderSwitchNotice {
    * (`falloverCause`), when it is a cloud provider's answer. The reason
    * text is cut short and can read a rate limit as billing; this cannot.
    */
-  cause?: "billing" | "auth" | "other";
+  cause?: "billing" | "auth" | "spend-limit" | "other";
   /**
    * The failure-catalog cause of the error behind an "away"
    * (`classifyFailureCause`), for the plain "switched to" sentence

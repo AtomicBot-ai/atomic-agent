@@ -1520,7 +1520,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(result.reason).toBe("failed");
     expect(waits).toEqual([]);
     expect(Date.now() - started).toBeLessThan(1_000);
-    expect(failures[0]).toContain("Today's spend limit is reached: $5.10 of $5.00");
+    expect(failures[0]).toContain("Daily cloud limit reached: $5.10 of $5.00");
   });
 
   it("waits out a 503, which is exactly the kind that fixes itself", async () => {

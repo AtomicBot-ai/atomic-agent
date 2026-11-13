@@ -156,14 +156,17 @@ function finiteOrZero(value: unknown): number {
 /**
  * Today's view for the readout, or `undefined` when the operator asked
  * for neither the day total (`showInStatusBar`) nor a ceiling
- * (`dailyLimitUsd`): the readout then stays exactly as it was.
+ * (`dailyLimitUsd`), or when no configured cloud link has a known price
+ * (`pricedCloudLink`, ATO-649): the readout then stays exactly as it was.
  */
 export function dailySpendViewFor(
   store: Pick<DailySpendStore, "peek">,
   costTracking: { showInStatusBar?: boolean; dailyLimitUsd?: number } | undefined,
+  pricedCloudLink: () => boolean = () => true,
 ): DailySpendView | undefined {
   const limit = effectiveDailyLimitUsd(costTracking?.dailyLimitUsd);
   if (costTracking?.showInStatusBar !== true && limit === null) return undefined;
+  if (!pricedCloudLink()) return undefined;
   const reading = store.peek();
   return limit === null ? reading : { ...reading, limitUsd: limit };
 }

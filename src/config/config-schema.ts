@@ -567,12 +567,18 @@ export interface AtomicAgentConfig {
        * Daily spend ceiling in USD, all sessions together (ATO-649).
        * Unset (or not a positive number) means no ceiling. Once today's
        * priced spend reaches it, paid cloud links are refused before the
-       * request is sent: the fallback chain moves on (to the local model
-       * when `fallback.appendLocal` puts it there), and with nothing left
-       * the turn ends saying the limit is reached. Calls with no known
-       * price do not count toward it. Read live.
+       * request is sent; `onDailyLimit` says what the turn does then.
+       * Calls with no known price do not count toward it. Read live.
        */
       dailyLimitUsd?: number;
+      /**
+       * At the daily ceiling (ATO-649): `"stop"` (default) pauses cloud
+       * calls for the rest of the day and ends the turn saying so;
+       * `"local"` moves the turn on to the local model (when
+       * `fallback.appendLocal` or the chain puts one there) with a notice
+       * in the chat. Read live.
+       */
+      onDailyLimit?: "stop" | "local";
     };
     /**
      * Cross-provider fallover. `chain` is an ordered list of provider ids

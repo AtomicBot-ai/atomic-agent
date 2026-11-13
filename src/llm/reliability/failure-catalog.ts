@@ -125,6 +125,11 @@ export const FAILURE_CATALOG = {
     phrase: "The provider's app isn't installed or isn't signed in.",
     action: "none",
   },
+  // ATO-649: our own daily spend ceiling, not the provider's answer.
+  daily_limit_reached: {
+    phrase: "Today's cloud spending limit is reached, so cloud calls are paused.",
+    action: "switch-model",
+  },
 
   // No answer at all.
   connection_refused: {

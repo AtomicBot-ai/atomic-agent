@@ -1061,7 +1061,7 @@ export type AgentLoopEvent =
       to: string;
       reason: string;
       /** The failure's kind, read off the error (`falloverCause`). */
-      cause?: "billing" | "auth" | "other";
+      cause?: "billing" | "auth" | "spend-limit" | "other";
       /** The failure-catalog cause behind an "away" (ATO-483). */
       failure?: FailureCauseId;
       /** The fallback link's model, when its entry names one. */

@@ -64,6 +64,7 @@ import { resolveLlmConfig } from "../llm/provider/index.js";
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { SessionUsageLedger, forwardWorkerUsage } from "../session/usage-meter.js";
 import { DAILY_SPEND_FILE_NAME, DailySpendStore, dailySpendViewFor } from "../session/daily-spend.js";
+import { hasPricedCloudLink } from "./resolve-model-pricing.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
@@ -413,7 +414,11 @@ export async function createAgentRuntime(
   });
   const sessionUsage = new SessionUsageLedger({
     onChange: (sessionId, usage) => {
-      const today = dailySpendViewFor(dailySpend, getConfig().llm?.costTracking);
+      // Only when a configured cloud link has a known price: with none,
+      // "today $0.00" could never move.
+      const today = dailySpendViewFor(dailySpend, getConfig().llm?.costTracking, () =>
+        hasPricedCloudLink(resolveLlmConfig(getConfig())),
+      );
       emitAgentLoopEventFor(sessionId, {
         type: "usage_updated",
         sessionId,

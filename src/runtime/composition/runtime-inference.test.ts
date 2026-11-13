@@ -291,7 +291,7 @@ describe("runtime provider/context/fallback/reload phases", () => {
   });
 
   describe("daily spend and its ceiling (ATO-649)", () => {
-    function withDailySpend(limitUsd?: number) {
+    function withDailySpend(limitUsd?: number, onDailyLimit?: "stop" | "local") {
       config.llm = {
         ...(config.llm ?? resolveLlmConfig(config)),
         costTracking: {
@@ -299,6 +299,7 @@ describe("runtime provider/context/fallback/reload phases", () => {
           showInStatusBar: false,
           dailyResetHourUtc: 0,
           ...(limitUsd !== undefined ? { dailyLimitUsd: limitUsd } : {}),
+          ...(onDailyLimit !== undefined ? { onDailyLimit } : {}),
         },
       };
       const dir = mkdtempSync(join(tmpdir(), "daily-spend-"));
@@ -330,6 +331,54 @@ describe("runtime provider/context/fallback/reload phases", () => {
       await expect(wired.llmComplete(params)).rejects.toBeInstanceOf(DailySpendLimitError);
       expect(cloudCall).not.toHaveBeenCalled();
       expect(servedCall).not.toHaveBeenCalled();
+    });
+
+    it("stops at the limit by default: no paid call now or on a later turn, and no move to the local link", async () => {
+      const fixture = withDailySpend(1);
+      fixture.dailySpend.record({ kind: "priced", usd: 1.2, source: "provider" });
+      const fallbackChain = new ProviderFallbackChain({
+        resolve: () => ({ chain: ["cloud", "local"], timing: DEFAULT_FALLBACK_TIMING }),
+      });
+      const cloud = providers.providerRegistry.getProvider("cloud");
+      const localLink = providers.providerRegistry.getProvider("local");
+      if (!cloud || !localLink) throw new Error("provider fixtures missing");
+      const cloudCall = vi.spyOn(cloud, "complete").mockResolvedValue(completion());
+      const localCall = vi.spyOn(localLink, "complete").mockResolvedValue(completion("local-id"));
+      const wired = connectRuntimeFallback({}, { ...fixture.deps, fallbackChain });
+      const first = await wired.llmComplete(params).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(first).toBeInstanceOf(DailySpendLimitError);
+      expect((first as DailySpendLimitError).onLimit).toBe("stop");
+      expect((first as Error).message).toContain("Daily cloud limit reached: $1.20 of $1.00");
+      expect((first as Error).message).toContain("Cloud calls are paused until tomorrow");
+      // The next turn the same day is refused the same way.
+      await expect(wired.llmComplete({ ...params, sessionId: "next-turn" })).rejects.toBeInstanceOf(
+        DailySpendLimitError,
+      );
+      expect(cloudCall).not.toHaveBeenCalled();
+      expect(localCall).not.toHaveBeenCalled();
+      expect(fallbackChain.activeOverrideFor("turn")).toBeNull();
+    });
+
+    it("onDailyLimit \"local\" moves an over-budget turn on to the local link, which answers", async () => {
+      const fixture = withDailySpend(1, "local");
+      fixture.dailySpend.record({ kind: "priced", usd: 1.2, source: "provider" });
+      const notices: string[] = [];
+      const fallbackChain = new ProviderFallbackChain({
+        resolve: () => ({ chain: ["cloud", "local"], timing: DEFAULT_FALLBACK_TIMING }),
+        noticeSink: (notice) => notices.push(`${notice.from}->${notice.to}:${notice.cause ?? ""}`),
+      });
+      const cloud = providers.providerRegistry.getProvider("cloud");
+      const localLink = providers.providerRegistry.getProvider("local");
+      if (!cloud || !localLink) throw new Error("provider fixtures missing");
+      const cloudCall = vi.spyOn(cloud, "complete").mockResolvedValue(completion());
+      vi.spyOn(localLink, "complete").mockResolvedValue({ ...completion("local-id"), content: "local answer" });
+      const wired = connectRuntimeFallback({}, { ...fixture.deps, fallbackChain });
+      await expect(wired.llmComplete(params)).resolves.toMatchObject({ content: "local answer" });
+      expect(cloudCall).not.toHaveBeenCalled();
+      expect(notices).toEqual(["cloud->local:spend-limit"]);
     });
 
     it("lets paid links through below the limit and with no limit set", async () => {

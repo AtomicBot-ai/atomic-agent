@@ -1,6 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { refreshOpenRouterChatCatalogFromApi } from "../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
-import { resolveModelPricingFor } from "./resolve-model-pricing.js";
+import { hasPricedCloudLink, resolveModelPricingFor } from "./resolve-model-pricing.js";
 import type { ResolvedLlmConfig } from "../llm/provider/registry/index.js";
 
 /**
@@ -107,5 +107,54 @@ describe("resolveModelPricingFor — OpenRouter live catalog (F30)", () => {
     expect(model?.pricing).toEqual({ input: 1, output: 2 });
     // Still unknown: not in the live list either.
     expect(resolveModelPricingFor(resolved, "acme/other")?.source).toBe("default");
+  });
+});
+
+describe("hasPricedCloudLink (ATO-649)", () => {
+  const base = {
+    activeTextProvider: "local-llama",
+    activeEmbeddingProvider: "local-llama",
+    toolTransport: "auto",
+  } as const;
+
+  it("is false with only local, plan-billed or unpriced links", () => {
+    const resolved = {
+      ...base,
+      providers: [
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:8080",
+          userModels: [{ id: "m", kind: "chat", pricing: { input: 0, output: 0 } }],
+        },
+        {
+          id: "lmstudio",
+          kind: "openai-compatible",
+          baseUrl: "http://localhost:1234/v1",
+          defaultChatModel: "m",
+          userModels: [{ id: "m", kind: "chat", pricing: { input: 1, output: 1 } }],
+        },
+        { id: "claude-code", kind: "subscription-cli", cli: "claude" },
+        { id: "mystery", kind: "openai-compatible", baseUrl: "https://example.invalid/v1", defaultChatModel: "no-such-model" },
+      ],
+    } as unknown as ResolvedLlmConfig;
+    expect(hasPricedCloudLink(resolved)).toBe(false);
+  });
+
+  it("is true once a cloud link has a known price", () => {
+    const resolved = {
+      ...base,
+      providers: [
+        { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
+        {
+          id: "cloud",
+          kind: "openai-compatible",
+          baseUrl: "https://api.example.invalid/v1",
+          defaultChatModel: "priced",
+          userModels: [{ id: "priced", kind: "chat", pricing: { input: 3, output: 15 } }],
+        },
+      ],
+    } as unknown as ResolvedLlmConfig;
+    expect(hasPricedCloudLink(resolved)).toBe(true);
   });
 });

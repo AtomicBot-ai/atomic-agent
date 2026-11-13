@@ -3,7 +3,7 @@ import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { LlamaServerError } from "../llama-server-client.js";
 import { TransportError } from "../reliability/llm-failures.js";
 import { isRequestSizeRejection } from "../reliability/request-size-rejection.js";
-import { isDailySpendLimitError } from "../reliability/spend-limit-error.js";
+import { findDailySpendLimitError } from "../reliability/spend-limit-error.js";
 
 /**
  * Fallover decision for a single thrown error.
@@ -61,11 +61,15 @@ const NO: AdvanceDecision = { advance: false, immediate: false };
  */
 export function shouldAdvance(err: unknown): AdvanceDecision {
   // The day's spend ceiling refused this paid link before anything was
-  // sent (ATO-649). The link is fine and nothing about it is down; the
-  // next link (a local model, when the chain has one) is exactly where
-  // the turn should go. Not immediate: the breaker has nothing to learn
-  // about the provider from our own ceiling.
-  if (isDailySpendLimitError(err)) return { advance: true, immediate: false };
+  // sent (ATO-649). With `onDailyLimit: "stop"` (the default) no other
+  // link is tried: the turn ends saying the limit is reached. With
+  // `"local"` the next link (the local model, when the chain has one) is
+  // exactly where the turn should go. Not immediate: the breaker has
+  // nothing to learn about the provider from our own ceiling.
+  const spendLimit = findDailySpendLimitError(err);
+  if (spendLimit !== null) {
+    return spendLimit.onLimit === "local" ? { advance: true, immediate: false } : NO;
+  }
   // A 400/413 that names the reply cap or the context length is the
   // request being too big for the model, not the link being down. It is
   // deterministic on every link (the local fallback usually has the
