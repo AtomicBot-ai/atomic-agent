@@ -1,64 +1,56 @@
-import { existsSync } from "node:fs";
-import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir, platform } from "node:os";
-import { extname, join } from "node:path";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, extname, join } from "node:path";
 
-import { runCommand } from "../../../sandbox/command-runner.js";
-import type { CommandOptions, CommandResult } from "../../../sandbox/command-runner.js";
+import { VisionUnsupportedError, type LlmProvider } from "../../../llm/index.js";
+import { downloadFile } from "../../../local-llm/downloads/download-file.js";
+import { runProcess, type RunProcess } from "../../audio/run-process.js";
+import { cleanTranscript, ffmpegToWavArgs, isAudioPath, readableWithoutFfmpeg, whisperCliArgs } from "../../audio/whisper-args.js";
+import { resolveFfmpegBinary, resolveWhisperBinary, type BinaryLookupOptions } from "../../audio/whisper-binary.js";
+import {
+  DEFAULT_WHISPER_MODEL,
+  formatModelSize,
+  resolveWhisperModel,
+  type ModelLookupOptions,
+} from "../../audio/whisper-models.js";
+import { loadImageFile } from "../../vision/load-image.js";
 
 /**
  * Text out of photos and audio, for the file index (ATO-1051, epic ATO-980).
  *
  * The index itself (ATO-340) is not built yet, so this module is the
  * pluggable step it will call per file: given a path, answer the text a
- * photo shows (OCR) or an audio file says (transcription), or say why it
- * was skipped. It never downloads anything and adds no dependency:
+ * photo shows or an audio file says, or say why it was skipped.
  *
- * - OCR uses the `tesseract` binary when it is on PATH.
- * - Transcription uses whisper.cpp's CLI (`whisper-cli`, or the older
- *   Homebrew name `whisper-cpp`) with a ggml model file the user already
- *   has, named by `whisperModelPath` or `ATOMIC_AGENT_WHISPER_MODEL`.
- *   No Python. Audio that is not WAV is converted with `ffmpeg` first,
- *   when `ffmpeg` is on PATH.
+ * - Photos go to the vision model the agent already uses for
+ *   `vision.describe` (`LlmProvider.describeImage`), asked to copy out
+ *   the visible text, or describe the picture when there is none. No
+ *   separate OCR engine.
+ * - Audio goes through whisper.cpp with the shared pieces of
+ *   `audio.transcribe` (`src/tools/audio/`, ATO-702): the same binary and
+ *   ffmpeg lookup, the same argv, and the same speech models under
+ *   `<localModelsDataDir>/whisper/` (default `base`). A model that is not
+ *   on disk yet is fetched from the same URL into the same place, but
+ *   only when the caller passes `allowModelDownload: true`; otherwise the
+ *   answer is `skipped: needs-model-download` with the size, so the index
+ *   can ask the user once.
  *
- * Both cost real compute (transcription can take minutes per hour of
- * audio), so nothing runs unless the caller passes `enabled: true`; the
- * default answer is `skipped: disabled`. A missing engine or model is a
- * skip, not an error, so an index walk keeps going.
+ * Both cost real compute, so nothing runs unless the caller passes
+ * `enabled: true`; the default answer is `skipped: disabled`. A missing
+ * vision model, whisper binary or ffmpeg is a skip, not an error, so an
+ * index walk keeps going.
  */
 
 export type MediaKind = "image" | "audio";
 
-/** Extensions tesseract (via leptonica) reads directly. */
-export const IMAGE_EXTENSIONS: readonly string[] = [
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".tif",
-  ".tiff",
-  ".bmp",
-  ".gif",
-  ".webp",
-];
-
-/** Audio we hand to whisper.cpp (WAV directly, the rest through ffmpeg). */
-export const AUDIO_EXTENSIONS: readonly string[] = [
-  ".wav",
-  ".mp3",
-  ".m4a",
-  ".ogg",
-  ".oga",
-  ".opus",
-  ".flac",
-  ".aac",
-  ".webm",
-];
+/** The formats `vision.describe` loads (`loadImageFile`). */
+export const IMAGE_EXTENSIONS: readonly string[] = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
 
 /** Which media kind a path is, by extension; `null` for anything else. */
 export function mediaKindForPath(path: string): MediaKind | null {
   const ext = extname(path).toLowerCase();
   if (IMAGE_EXTENSIONS.includes(ext)) return "image";
-  if (AUDIO_EXTENSIONS.includes(ext)) return "audio";
+  if (isAudioPath(path)) return "audio";
   return null;
 }
 
@@ -69,85 +61,69 @@ export type MediaSkipReason =
   | "unsupported"
   /** Larger than `maxBytes`. */
   | "too-large"
-  /** No OCR / transcription binary on PATH. */
+  /** No provider passed, or the model serving it cannot read images. */
+  | "no-vision-model"
+  /** No whisper.cpp binary found. */
   | "no-engine"
-  /** whisper.cpp is there, but no model file is configured or it is missing. */
+  /** The speech model is not on disk and `allowModelDownload` is off. */
+  | "needs-model-download"
+  /** No speech model can be resolved (bad env path, no models folder given). */
   | "no-model"
-  /** Non-WAV audio and no `ffmpeg` to convert it. */
+  /** Non-WAV audio and no ffmpeg to convert it. */
   | "needs-ffmpeg";
 
 export type MediaTextResult =
+  | { status: "ok"; kind: MediaKind; engine: string; text: string }
   | {
-      status: "ok";
-      kind: MediaKind;
-      engine: string;
-      text: string;
-      /** The text came out cut at `maxOutputBytes`. */
-      truncated: boolean;
+      status: "skipped";
+      kind: MediaKind | null;
+      reason: MediaSkipReason;
+      detail?: string;
+      /** Set with `needs-model-download`: what would be fetched. */
+      download?: { model: string; sizeMb: number; url: string };
     }
-  | { status: "skipped"; kind: MediaKind | null; reason: MediaSkipReason; detail?: string }
   | { status: "failed"; kind: MediaKind; engine: string; error: string };
 
-export type CommandRunner = (
-  command: string,
-  args: string[],
-  options: CommandOptions,
-) => Promise<CommandResult>;
-
-/** `true` when `bin` resolves on PATH. */
-export type BinaryProbe = (bin: string) => Promise<boolean>;
+/** The slice of `LlmProvider` photo text needs. */
+export type VisionModel = Pick<LlmProvider, "name" | "capabilities" | "describeImage">;
 
 export interface MediaTextOptions {
-  /** Off unless set: OCR and transcription cost compute. */
+  /** Off unless set: vision calls and transcription cost compute. */
   enabled?: boolean;
   /** Skip files bigger than this. Default 200 MB (audio is large). */
   maxBytes?: number;
-  /** Tesseract language list, e.g. `eng+rus`. Default `eng`. */
-  ocrLanguages?: string;
-  /** whisper.cpp ggml model file. Falls back to `ATOMIC_AGENT_WHISPER_MODEL`. */
-  whisperModelPath?: string;
+  signal?: AbortSignal;
+
+  /** The provider `vision.describe` would use; photos are skipped without one. */
+  vision?: VisionModel | (() => VisionModel | undefined);
+  /** Per-image cap mirrored from `config.vision.maxImageBytes`. Default 20 MB. */
+  maxImageBytes?: number;
+
+  /** `config.paths.localModelsDataDir`; speech models live in `<it>/whisper`. */
+  localModelsDataDir?: string;
+  /** Speech model id from the `audio.transcribe` catalog. Default `base`. */
+  whisperModel?: string;
+  /** Fetch the speech model when it is not on disk yet. Default off. */
+  allowModelDownload?: boolean;
   /** whisper.cpp language code, or `auto` (default). */
   transcriptionLanguage?: string;
-  /** Per-file time limit. Default 10 minutes. */
-  timeoutMs?: number;
-  /** Cap on text kept per file. Default 1 MB. */
-  maxOutputBytes?: number;
-  signal?: AbortSignal;
+
   /** Test seams. */
-  run?: CommandRunner;
-  which?: BinaryProbe;
-  env?: NodeJS.ProcessEnv;
+  binaryLookup?: BinaryLookupOptions;
+  modelLookup?: ModelLookupOptions;
+  run?: RunProcess;
+  download?: (url: string, dest: string, signal: AbortSignal) => Promise<void>;
 }
 
 const DEFAULT_MAX_BYTES = 200 * 1024 * 1024;
-const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024;
+const DEFAULT_MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const CONVERT_TIMEOUT_MS = 5 * 60_000;
+const TRANSCRIBE_TIMEOUT_MS = 30 * 60_000;
 
-/** Whisper CLI names, newest first. `whisper` alone is the Python package, so it is not used. */
-export const WHISPER_BINARIES: readonly string[] = ["whisper-cli", "whisper-cpp"];
-
-export interface MediaTextEngines {
-  ocr: string | null;
-  transcription: string | null;
-  whisperModel: string | null;
-  ffmpeg: boolean;
-}
-
-/**
- * What this machine can do right now. Cheap (`which` per binary); an
- * index can call it once per walk and show the user what is missing.
- */
-export async function probeMediaTextEngines(
-  options: Pick<MediaTextOptions, "whisperModelPath" | "which" | "env"> = {},
-): Promise<MediaTextEngines> {
-  const which = options.which ?? defaultWhich;
-  const [ocr, transcription, ffmpeg] = await Promise.all([
-    which("tesseract").then((ok) => (ok ? "tesseract" : null)),
-    firstPresent(WHISPER_BINARIES, which),
-    which("ffmpeg"),
-  ]);
-  return { ocr, transcription, whisperModel: resolveWhisperModel(options), ffmpeg };
-}
+/** What the vision model is asked for each photo. */
+export const IMAGE_TEXT_PROMPT =
+  "Copy out all text visible in this image exactly as written, keeping line breaks and the original language. " +
+  "Do not translate or comment. If the image has no text, describe what it shows in one or two sentences.";
 
 /** Text from one photo or audio file, or the reason it was skipped. */
 export async function extractMediaText(
@@ -163,146 +139,111 @@ export async function extractMediaText(
   if (size > maxBytes) {
     return { status: "skipped", kind, reason: "too-large", detail: `${size} bytes > ${maxBytes}` };
   }
-
-  const engines = await probeMediaTextEngines(options);
-  return kind === "image" ? ocrImage(path, engines, options) : transcribeAudio(path, engines, options);
+  return kind === "image" ? imageText(path, options) : transcribeAudio(path, options);
 }
 
-async function ocrImage(
-  path: string,
-  engines: MediaTextEngines,
-  options: MediaTextOptions,
-): Promise<MediaTextResult> {
-  if (engines.ocr === null) {
-    return { status: "skipped", kind: "image", reason: "no-engine", detail: "tesseract not found on PATH" };
+async function imageText(path: string, options: MediaTextOptions): Promise<MediaTextResult> {
+  const vision = typeof options.vision === "function" ? options.vision() : options.vision;
+  if (vision === undefined) {
+    return { status: "skipped", kind: "image", reason: "no-vision-model", detail: "no vision provider configured" };
   }
-  const args = [path, "stdout", "-l", options.ocrLanguages ?? "eng"];
-  return runEngine("image", engines.ocr, args, options);
-}
-
-async function transcribeAudio(
-  path: string,
-  engines: MediaTextEngines,
-  options: MediaTextOptions,
-): Promise<MediaTextResult> {
-  if (engines.transcription === null) {
-    return {
-      status: "skipped",
-      kind: "audio",
-      reason: "no-engine",
-      detail: `none of ${WHISPER_BINARIES.join(", ")} found on PATH`,
-    };
+  if (!vision.capabilities.vision) {
+    return { status: "skipped", kind: "image", reason: "no-vision-model", detail: `${vision.name} cannot read images` };
   }
-  const model = engines.whisperModel;
-  if (model === null) {
-    return {
-      status: "skipped",
-      kind: "audio",
-      reason: "no-model",
-      detail: "set whisperModelPath or ATOMIC_AGENT_WHISPER_MODEL to an existing ggml model file",
-    };
-  }
-  const isWav = extname(path).toLowerCase() === ".wav";
-  if (!isWav && !engines.ffmpeg) {
-    return { status: "skipped", kind: "audio", reason: "needs-ffmpeg", detail: "ffmpeg not found on PATH" };
-  }
-
-  let scratch: string | null = null;
+  const maxImageBytes = options.maxImageBytes ?? DEFAULT_MAX_IMAGE_BYTES;
+  let image;
   try {
-    let input = path;
-    if (!isWav) {
-      scratch = await mkdtemp(join(tmpdir(), "atomic-agent-media-"));
-      input = join(scratch, "audio.wav");
-      // whisper.cpp wants 16 kHz mono 16-bit PCM.
-      const converted = await (options.run ?? runCommand)(
-        "ffmpeg",
-        ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", path, "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", input],
-        commandOptions(options),
-      );
-      if (converted.exitCode !== 0) {
-        return { status: "failed", kind: "audio", engine: "ffmpeg", error: failureText(converted) };
+    image = await loadImageFile(path, dirname(path), { maxBytes: maxImageBytes });
+  } catch (err) {
+    return { status: "failed", kind: "image", engine: vision.name, error: (err as Error).message };
+  }
+  try {
+    const result = await vision.describeImage({
+      prompt: IMAGE_TEXT_PROMPT,
+      images: [{ id: 1, bytes: image.bytes, mimeType: image.mimeType }],
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    return { status: "ok", kind: "image", engine: vision.name, text: result.text.trim() };
+  } catch (err) {
+    if (err instanceof VisionUnsupportedError) {
+      return { status: "skipped", kind: "image", reason: "no-vision-model", detail: err.message };
+    }
+    return { status: "failed", kind: "image", engine: vision.name, error: (err as Error).message };
+  }
+}
+
+async function transcribeAudio(path: string, options: MediaTextOptions): Promise<MediaTextResult> {
+  const whisper = resolveWhisperBinary(options.binaryLookup);
+  if (!whisper.found) return { status: "skipped", kind: "audio", reason: "no-engine", detail: whisper.reason };
+
+  if (options.localModelsDataDir === undefined) {
+    return { status: "skipped", kind: "audio", reason: "no-model", detail: "no local models folder given" };
+  }
+  const model = resolveWhisperModel(
+    options.localModelsDataDir,
+    options.whisperModel ?? DEFAULT_WHISPER_MODEL,
+    options.modelLookup,
+  );
+  if (model.kind === "error") return { status: "skipped", kind: "audio", reason: "no-model", detail: model.reason };
+
+  const signal = options.signal ?? new AbortController().signal;
+  let modelPath: string;
+  if (model.kind === "download") {
+    const offer = { model: model.model.id, sizeMb: model.model.sizeMb, url: model.url };
+    if (options.allowModelDownload !== true) {
+      return {
+        status: "skipped",
+        kind: "audio",
+        reason: "needs-model-download",
+        detail: `speech model "${model.model.id}" (${formatModelSize(model.model.sizeMb)}) is not downloaded yet`,
+        download: offer,
+      };
+    }
+    try {
+      await mkdir(dirname(model.path), { recursive: true });
+      await (options.download ?? defaultDownload)(model.url, model.path, signal);
+    } catch (err) {
+      return { status: "failed", kind: "audio", engine: "download", error: (err as Error).message };
+    }
+    modelPath = model.path;
+  } else {
+    modelPath = model.path;
+  }
+
+  const ffmpeg = resolveFfmpegBinary(options.binaryLookup);
+  if (!ffmpeg.found && !readableWithoutFfmpeg(path)) {
+    return { status: "skipped", kind: "audio", reason: "needs-ffmpeg", detail: ffmpeg.reason };
+  }
+
+  const run = options.run ?? runProcess;
+  let workDir: string | null = null;
+  try {
+    let wav = path;
+    if (ffmpeg.found) {
+      workDir = await mkdtemp(join(tmpdir(), "atomic-media-text-"));
+      wav = join(workDir, "audio.wav");
+      const conv = await run(ffmpeg.path, ffmpegToWavArgs(path, wav), { signal, timeoutMs: CONVERT_TIMEOUT_MS });
+      if (conv.code !== 0) {
+        return { status: "failed", kind: "audio", engine: "ffmpeg", error: tail(conv.stderr || conv.error || "unknown error") };
       }
     }
-    const args = [
-      "-m",
-      model,
-      "-f",
-      input,
-      "-l",
-      options.transcriptionLanguage ?? "auto",
-      "-nt",
-      "-np",
-    ];
-    return await runEngine("audio", engines.transcription, args, options);
+    const res = await run(
+      whisper.path,
+      whisperCliArgs({ model: modelPath, wav, language: options.transcriptionLanguage ?? "auto" }),
+      { signal, timeoutMs: TRANSCRIBE_TIMEOUT_MS },
+    );
+    if (res.code !== 0) {
+      return { status: "failed", kind: "audio", engine: "whisper.cpp", error: tail(res.stderr || res.error || "unknown error") };
+    }
+    return { status: "ok", kind: "audio", engine: "whisper.cpp", text: cleanTranscript(res.stdout) };
   } finally {
-    if (scratch !== null) await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+    if (workDir !== null) await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-async function runEngine(
-  kind: MediaKind,
-  engine: string,
-  args: string[],
-  options: MediaTextOptions,
-): Promise<MediaTextResult> {
-  let result: CommandResult;
-  try {
-    result = await (options.run ?? runCommand)(engine, args, commandOptions(options));
-  } catch (err) {
-    return { status: "failed", kind, engine, error: err instanceof Error ? err.message : String(err) };
-  }
-  if (result.exitCode !== 0) return { status: "failed", kind, engine, error: failureText(result) };
-  return { status: "ok", kind, engine, text: normaliseText(result.stdout), truncated: result.truncated };
-}
+const defaultDownload = (url: string, dest: string, signal: AbortSignal) => downloadFile(url, dest, { signal });
 
-function commandOptions(options: MediaTextOptions): CommandOptions {
-  return {
-    cwd: tmpdir(),
-    timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    maxOutputBytes: options.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
-    ...(options.env ? { env: options.env } : {}),
-    ...(options.signal ? { signal: options.signal } : {}),
-  };
-}
-
-function failureText(result: CommandResult): string {
-  if (result.timedOut) return `timed out after ${result.durationMs} ms`;
-  const tail = result.stderr.trim().split("\n").slice(-3).join(" ").trim();
-  return `exit ${result.exitCode ?? result.signal ?? "unknown"}${tail ? `: ${tail}` : ""}`;
-}
-
-/** Trim each line, drop blank runs, keep paragraph breaks. */
-export function normaliseText(raw: string): string {
-  return raw
-    .replace(/\r\n?/g, "\n")
-    .replace(/\f/g, "\n")
-    .split("\n")
-    .map((line) => line.trim())
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function resolveWhisperModel(options: Pick<MediaTextOptions, "whisperModelPath" | "env">): string | null {
-  const env = options.env ?? process.env;
-  const candidate = options.whisperModelPath ?? env.ATOMIC_AGENT_WHISPER_MODEL;
-  if (candidate === undefined || candidate.trim() === "") return null;
-  return existsSync(candidate) ? candidate : null;
-}
-
-async function firstPresent(bins: readonly string[], which: BinaryProbe): Promise<string | null> {
-  for (const bin of bins) {
-    if (await which(bin)) return bin;
-  }
-  return null;
-}
-
-async function defaultWhich(bin: string): Promise<boolean> {
-  const [tool, args] = platform() === "win32" ? ["where", [bin]] : ["which", [bin]];
-  try {
-    const result = await runCommand(tool, args, { cwd: tmpdir(), timeoutMs: 2000 });
-    return result.exitCode === 0;
-  } catch {
-    return false;
-  }
+function tail(text: string, max = 600): string {
+  const t = text.trim();
+  return t.length > max ? `…${t.slice(-max)}` : t;
 }
