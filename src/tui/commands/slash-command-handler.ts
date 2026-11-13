@@ -75,6 +75,8 @@ export interface SlashDispatchResult {
   readonly triggerRewindPicker?: boolean;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
+  /** With `triggerSessionNew`: start the session in its own git worktree (`/new worktree`). */
+  readonly sessionNewWorktree?: boolean;
   /** When true the caller should open a new OS terminal window (`/window`). */
   readonly triggerNewWindow: boolean;
   /** When true the caller should ask the orchestrator to dump the user profile. */
@@ -499,6 +501,10 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
     case "sessions":
       return pureActions([], { triggerSessionPicker: true });
     case "new":
+      // `/new worktree`: the session gets a git worktree of its own (ATO-576).
+      if (/^(--)?worktree$/i.test(parsed.args.trim())) {
+        return pureActions([], { triggerSessionNew: true, sessionNewWorktree: true });
+      }
       return pureActions([], { triggerSessionNew: true });
     case "rewind":
       return pureActions([], { triggerRewindPicker: true });

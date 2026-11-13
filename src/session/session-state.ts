@@ -101,6 +101,11 @@ export interface SessionState {
   id: string;
   /** Working directory for OS tools and relative paths. */
   workingDir: string;
+  /**
+   * Set when the session runs in a git worktree of its own (ATO-576,
+   * `/new worktree`); `workingDir` then points inside `worktree.path`.
+   */
+  worktree?: import("./session-worktree.js").SessionWorktreeBinding;
   status: SessionStatus;
   knownFacts: KnownFact[];
   latestResult: LatestResult | null;

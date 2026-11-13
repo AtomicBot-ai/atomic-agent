@@ -349,8 +349,8 @@ export interface TuiAppCallbacks {
    * session to the top block of the rail, or release it.
    */
   onSessionPinToggled?(sessionId: string): void;
-  /** Ask the orchestrator to start a fresh session. */
-  onSessionNewRequested?(): void;
+  /** Ask the orchestrator to start a fresh session; `worktree` puts it in its own git worktree (ATO-576). */
+  onSessionNewRequested?(options?: { worktree?: boolean }): void;
   /** `instructions`: what the summary must keep (`/compact <text>`, ATO-661). */
   onCompactionRequested?(verb: "run" | "show", instructions?: string): void;
   /** `/goal …`: act on the open chat's goal (ATO-451). */
