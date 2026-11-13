@@ -2813,6 +2813,8 @@ function wireIpc(client: AgentClient): void {
      OpenRouter key goes to Core over loopback only, never to the window. */
   const studio = wireStudioIpc({
     window: () => win,
+    // ATO-875: Improve prompt asks the agent's POST /api/complete first.
+    plainComplete: (body) => client.plainComplete(body),
     gpu: gpuShare,
     stateDir: DESKTOP_STATE_DIR,
     dataDir: managedDataDirNow,
