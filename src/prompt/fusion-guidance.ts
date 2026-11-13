@@ -144,7 +144,35 @@ export function formatFusionMachineLine(
       `Set \`etaSeconds\`: tokens out / ${tokensPerSecond} tok/s × parallel workers + queue.`,
     );
   }
+  // The two limits the late guards enforce (ATO-1363): a worker with no
+  // write by half its steps is handed back, and the timeout ends it.
+  // Stated so a plan is sized against them instead of discovering them.
+  const limits = formatWorkerLimitsLine(facts);
+  if (limits !== null) lines.push(limits);
   return lines.join("\n");
+}
+
+/**
+ * A local worker's step budget and time limit, and the ask for an output
+ * estimate checked against them (ATO-1363); `null` when neither limit
+ * is known, so a facts object without them renders as before.
+ */
+export function formatWorkerLimitsLine(
+  facts: FusionMachineFacts,
+): string | null {
+  const { workerMaxSteps, workerTimeoutMs } = facts;
+  const parts = [
+    workerMaxSteps === undefined ? null : `${workerMaxSteps} steps`,
+    workerTimeoutMs === undefined
+      ? null
+      : `${Math.max(1, Math.round(workerTimeoutMs / 60_000))} min`,
+  ].filter((p): p is string => p !== null);
+  if (parts.length === 0) return null;
+  const estimate =
+    facts.tokensPerSecond === null
+      ? ""
+      : " Set `outputTokens` (or `outputLines`): a task that cannot write that in its limit at this speed is flagged on its row.";
+  return `Each local worker gets ${parts.join(" and ")} (more via \`maxSteps\` / \`timeoutMs\`): a task with \`files\` and no write by half its steps is handed back, one out of time comes back to split, so split big files first.${estimate}`;
 }
 
 /**

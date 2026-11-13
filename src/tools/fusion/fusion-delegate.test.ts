@@ -1974,3 +1974,64 @@ describe("scopeInsideStateDir (ATO-1267)", () => {
     expect(scopeInsideStateDir(["/home/u/.atomic-agent"], undefined)).toEqual([]);
   });
 });
+
+describe("fusion.delegate — output estimate vs the worker's limit (ATO-1363)", () => {
+  // Fixture: workerTimeoutMs 60 s, so the longest a task may ask for is
+  // 4 min; a local leg measured at 5 tok/s.
+  const measured = (over: Partial<FusionDelegateDeps> = {}) =>
+    deps({ localTokensPerSecond: () => 5, ...over });
+
+  it("dispatches a task no allowed limit could hold, with a warning and a planner note, never a worker-fit refusal", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    // 2,000 tokens at 5 tok/s = 6m40s even alone, over the 4 min max.
+    const result = await buildFusionDelegateTool(measured({ runTurn })).run(
+      { tasks: [{ id: "huge", instructions: "Write it all", outputTokens: 2_000 }] },
+      ctx(),
+    );
+    expect(runTurn).toHaveBeenCalledOnce();
+    expect(result.status).toBe("ok");
+    expect(result.details.reason).not.toBe("worker-fit");
+    expect(result.details.oversizedTasks).toEqual(["huge"]);
+    expect(result.summary).toContain("fit: ~2,000 tokens at 5 tok/s is ~6m40s even running alone");
+    expect(result.summary).toContain("split it into smaller tasks");
+    expect(result.summary).toContain("[huge] stated more output than any time limit");
+    expect(result.summary).toContain("it was dispatched anyway");
+  });
+
+  it("runs a task over its limit, warns on its row, and reports estimate vs actual", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    // 400 tokens at 5 tok/s = 80 s, over the 60 s limit, under 4 min.
+    const result = await buildFusionDelegateTool(measured({ runTurn })).run(
+      { tasks: [{ id: "big", instructions: "Write it", outputTokens: 400 }] },
+      ctx(),
+    );
+    expect(runTurn).toHaveBeenCalledOnce();
+    expect(result.summary).toContain("fit: ~400 tokens at 5 tok/s is ~1m20s, over its 1m00s limit");
+    expect(result.summary).toContain("Estimates vs actual");
+    expect(result.summary).toContain("- [big] estimated ~400 tokens, ~1m20s; actual");
+    expect(result.details.estimates).toEqual([
+      expect.objectContaining({ id: "big", estimatedTokens: 400, estimatedMs: 80_000 }),
+    ]);
+  });
+
+  it("says nothing without a measured speed or without an estimate", async () => {
+    const unmeasured = await buildFusionDelegateTool(
+      deps({ localTokensPerSecond: () => null }),
+    ).run(
+      { tasks: [{ id: "huge", instructions: "Write it all", outputTokens: 2_000 }] },
+      ctx(),
+    );
+    expect(unmeasured.status).toBe("ok");
+    expect(unmeasured.summary).not.toContain("fit:");
+    expect(unmeasured.details).not.toHaveProperty("oversizedTasks");
+    // The size is still reported back, without a time estimate.
+    expect(unmeasured.summary).toContain("- [huge] estimated ~2,000 tokens; actual");
+    const plain = await buildFusionDelegateTool(measured()).run(
+      { tasks: TASKS },
+      ctx(),
+    );
+    expect(plain.summary).not.toContain("fit:");
+    expect(plain.summary).not.toContain("Estimates vs actual");
+    expect(plain.details).not.toHaveProperty("estimates");
+  });
+});

@@ -66,6 +66,7 @@ import {
   type DelegateContract,
 } from "./contract.js";
 import { readContractInputs } from "./contract-inputs.js";
+import { readOutputEstimate } from "./worker-fit.js";
 import {
   FUSION_ROLES,
   type FusionRole,
@@ -104,6 +105,15 @@ export interface DelegateTask {
    * elapsed time, exactly as before.
    */
   etaSeconds?: number;
+  /**
+   * The planner's estimate of what the worker will WRITE (ATO-1363), in
+   * tokens or in lines (`outputTokens` wins when both are given). On a
+   * measured local leg it sizes the worker's time limit and is checked
+   * against it before the fan-out (`worker-fit.ts`); the result then
+   * reports it beside the actual tokens out. Absent: as before.
+   */
+  outputTokens?: number;
+  outputLines?: number;
   /** Paths the worker should start from. */
   files?: string[];
   /**
@@ -595,6 +605,7 @@ export function parseDelegateArgs(
     const files = readFiles(entry.files, label, problems);
     const deliverable = readString(entry.deliverable);
     const etaSeconds = readEtaSeconds(entry.etaSeconds);
+    const outputEstimate = readOutputEstimate(entry, label, problems);
     const maxSteps = readBudget(entry.maxSteps, `${label}.maxSteps`, problems);
     const taskTimeoutMs = readBudget(
       entry.timeoutMs,
@@ -622,6 +633,7 @@ export function parseDelegateArgs(
       instructions,
       ...(deliverable === null ? {} : { deliverable }),
       ...(etaSeconds === null ? {} : { etaSeconds }),
+      ...outputEstimate,
       ...(files.length === 0 ? {} : { files }),
       ...(maxSteps === null ? {} : { maxSteps }),
       ...(taskTimeoutMs === null ? {} : { timeoutMs: taskTimeoutMs }),

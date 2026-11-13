@@ -31,6 +31,8 @@
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
 import {
+  DEFAULT_FUSION_WORKER_MAX_STEPS,
+  DEFAULT_FUSION_WORKER_TIMEOUT_MS,
   FUSION_ROLES,
   LOCAL_PROVIDER_KIND,
   type FusionRole,
@@ -76,6 +78,16 @@ export interface FusionMachineFacts {
    * only when the daemon restarts — which drops the local cache anyway.
    */
   tokensPerSecond: number | null;
+  /**
+   * A local worker's step budget and time limit (ATO-1363), from
+   * `llm.runMode.fusion.workerMaxSteps` / `workerTimeoutMs` or their
+   * defaults: with the slots, the context and the speed, the limits a
+   * planner must size a task's output against. Local leg only (absent
+   * for a cloud leg and in `NO_FUSION_MACHINE_FACTS`), config only, so
+   * stable for the prefix.
+   */
+  workerMaxSteps?: number;
+  workerTimeoutMs?: number;
   /**
    * Models by role (ATO-943), from `llm.runMode.fusion.roles`, in role
    * order; absent when no role names a configured provider, so a config
@@ -322,6 +334,14 @@ export function resolveFusionMachineFacts(
     workerTokenBudget,
     workerModel,
     tokensPerSecond,
+    ...(workersAreLocal
+      ? {
+          workerMaxSteps:
+            fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
+          workerTimeoutMs:
+            fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+        }
+      : {}),
     ...(roleModels.length === 0 ? {} : { roleModels }),
   };
 }

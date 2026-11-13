@@ -58,6 +58,7 @@ import {
   type LocalLegHealth,
 } from "./local-leg-health.js";
 import { hasSplitProposal, splitSteer } from "./task-tree.js";
+import { estimatedOutputTokens } from "./worker-fit.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -90,6 +91,12 @@ export function estimateWorkerTimeoutMs(input: {
   declaredFiles: number;
   tokensPerSecond: number | null | undefined;
   ceilingMs: number;
+  /**
+   * The planner's own output estimate for the task (ATO-1363). Used in
+   * place of the per-file guess when it is larger, so a task stated as
+   * big is not sized as two files; never makes the limit shorter.
+   */
+  outputTokens?: number | null;
 }): number {
   const { tokensPerSecond, ceilingMs } = input;
   if (
@@ -100,9 +107,15 @@ export function estimateWorkerTimeoutMs(input: {
   ) {
     return ceilingMs;
   }
-  const tokens =
-    input.briefChars / 4 +
+  const perFile =
     WORKER_TOKENS_PER_DECLARED_FILE * Math.max(0, input.declaredFiles);
+  const stated =
+    typeof input.outputTokens === "number" &&
+    Number.isFinite(input.outputTokens) &&
+    input.outputTokens > 0
+      ? input.outputTokens
+      : 0;
+  const tokens = input.briefChars / 4 + Math.max(perFile, stated);
   const estimateMs =
     (tokens / tokensPerSecond) * WORKER_TIMEOUT_SAFETY_FACTOR * 1000;
   const floor = Math.min(WORKER_TIMEOUT_FLOOR_MS, ceilingMs);
@@ -1008,6 +1021,7 @@ async function runOneTask(
     declaredFiles,
     tokensPerSecond: options.localTokensPerSecond,
     ceilingMs: taskTimeMs,
+    outputTokens: estimatedOutputTokens(task),
   });
 
   // The worker's own clock, kept apart from the operator's signal: when
