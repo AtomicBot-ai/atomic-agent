@@ -20,6 +20,7 @@ export type TurnOrigin =
   | "slack"
   | "imessage"
   | "matrix"
+  | "googlechat"
   /**
    * A fusion worker turn, submitted by the orchestrator turn on the
    * parent session — not a person sending a message. Treated like

@@ -15,10 +15,12 @@ import { SIGNAL_CHANNEL } from "./signal/index.js";
 import { slackChannelDefinition } from "./slack/index.js";
 import { imessageChannelDefinition } from "./imessage/index.js";
 import { MATRIX_CHANNEL } from "./matrix/index.js";
+import { GOOGLE_CHAT_CHANNEL } from "./googlechat/index.js";
 
 export const EXTRA_CHANNELS: readonly ChannelDefinition[] = [
   SIGNAL_CHANNEL,
   slackChannelDefinition,
   imessageChannelDefinition,
   MATRIX_CHANNEL,
+  GOOGLE_CHAT_CHANNEL,
 ];
