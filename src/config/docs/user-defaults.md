@@ -114,6 +114,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `browser.userDataDir` (default `null`): the user's Chrome data folder for `"user-chrome"` when it is not in a standard place.
 - `browser.headless` (default `"auto"`): `"auto"` runs the agent's own Chrome without a window for scheduled tasks, Telegram, Discord and webhooks, and with one for the TUI and the desktop app; `true` / `false` always / never. Env `ATOMIC_AGENT_BROWSER_HEADLESS` wins when set ([browser tools](../../tools/browser/README.md#background-runs-and-throwaway-profiles)).
 - `browser.profile` (default `"agent"`): `"temp"` gives each chat its own throwaway, logged-out profile instead of the agent's.
+- `browser.maxTabs` (default `8`, 1 to 50): tabs the agent may have open at once, fusion workers' included; one more is refused until a tab closes.
+- `browser.workerIsolation` (default `"tabs"`): fusion workers browse in tabs of their own in the agent's profile; `"context"` gives each worker its own throwaway, logged-out context.
 
 ## sessions
 

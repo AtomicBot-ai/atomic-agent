@@ -431,6 +431,8 @@ export function loadConfig(): AtomicAgentConfig {
         ? readBool("ATOMIC_AGENT_BROWSER_HEADLESS", false)
         : user.browser.headless,
       profile: user.browser.profile,
+      maxTabs: user.browser.maxTabs,
+      workerIsolation: user.browser.workerIsolation,
       // Env wins over the file, as before the file key existed. Only the
       // file value is held to loopback (browser-config.ts): the env var
       // is the operator's own shell, the file can be written over HTTP.

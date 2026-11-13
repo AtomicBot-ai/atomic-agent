@@ -232,6 +232,10 @@ export interface AtomicAgentConfig {
      * one per chat. Absent: `"agent"`.
      */
     profile?: "agent" | "temp";
+    /** `UserConfigFile.browser.maxTabs`. Absent: 8. */
+    maxTabs?: number;
+    /** `UserConfigFile.browser.workerIsolation`. Absent: `"tabs"`. */
+    workerIsolation?: "tabs" | "context";
     /**
      * Attach to this DevTools endpoint instead of launching. Env
      * `ATOMIC_AGENT_BROWSER_CDP_URL`, else `UserConfigFile.browser.cdpUrl`

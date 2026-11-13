@@ -12,10 +12,13 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * - `attended`: a person is watching this turn's chat (the TUI, the
  *   desktop app, a `run` in a terminal). A scheduled task, a Telegram or
  *   Discord message, a webhook or a plain HTTP client is not.
+ * - `workerOf`: set for a fusion worker's turn, the session that fanned
+ *   it out. A worker browses only in its own tabs (ATO-961).
  */
 export interface BrowserRunScope {
   sessionId: string;
   attended: boolean;
+  workerOf?: string;
 }
 
 const scopes = new AsyncLocalStorage<BrowserRunScope>();
@@ -27,6 +30,31 @@ export function runInBrowserScope<T>(scope: BrowserRunScope, fn: () => T): T {
 /** The calling turn's scope; `undefined` outside a turn (tests, a direct call). */
 export function currentBrowserScope(): BrowserRunScope | undefined {
   return scopes.getStore();
+}
+
+type WorkerEndListener = (workerSessionId: string) => void;
+const workerEndListeners = new Set<WorkerEndListener>();
+
+/**
+ * Called when a fusion worker's turn ends (its whole life): the browser
+ * closes the worker's tabs. Returns the unsubscribe.
+ */
+export function onBrowserWorkerEnd(listener: WorkerEndListener): () => void {
+  workerEndListeners.add(listener);
+  return () => {
+    workerEndListeners.delete(listener);
+  };
+}
+
+/** The runtime's half of {@link onBrowserWorkerEnd}. Never throws. */
+export function endBrowserWorker(workerSessionId: string): void {
+  for (const listener of workerEndListeners) {
+    try {
+      listener(workerSessionId);
+    } catch {
+      // A browser that fails to tidy up must not fail the worker's turn.
+    }
+  }
 }
 
 /**
