@@ -46,6 +46,7 @@ import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
+import { wireFitTestIpc } from "./fit-test-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
 import { machineProfile } from "./studio-local.js";
@@ -2899,6 +2900,25 @@ function wireIpc(client: AgentClient): void {
   wireTerminalOpenIpc();
   // ATO-590: the Tasks tab's Pause / Resume and a task's past runs.
   wireTaskControlsIpc({ client });
+  // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
+  wireFitTestIpc({
+    window: () => win,
+    isRemote: () => client.isRemote,
+    /* The test stops the chats' model and loads others on the server: in the
+       daemon's turn, held as during an update, and the server put back after
+       it when the agent left it down (finished, failed or cancelled). */
+    inTurn: async (run) => {
+      const held: { hold: UpdateHold | null } = { hold: null };
+      const res = await inDaemonTurn(
+        () => {
+          held.hold = updateBegins("[desktop] local-llm: the model fit-test stops and loads models on the model server; the chats' model is started again after it");
+          return run();
+        },
+        () => ({ ok: false, error: "The app is closing." }),
+      );
+      return held.hold ? afterUpdate(res, held.hold, { keptBackend: true }) : res;
+    },
+  });
   /* Studio (Images + Video): Core's media API for the Studio pages
      (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
      OpenRouter key goes to Core over loopback only, never to the window. */
