@@ -1,0 +1,219 @@
+# Desktop update feed: put one "Desktop packages" run's files together into
+# the desktop-latest feed, check it, and (only when asked) upload it (ATO-685).
+#
+# Until now this was done by hand (desktop/README.md "Where the feed lives"):
+# download the five package artifacts, merge the two Windows stable.yml files,
+# run feed-files.mjs, then two `gh release upload` lines. A missed step is how
+# the 0.0.7 feed went up without the Linux files (ATO-1230).
+#
+# What a run does:
+# 1. Downloads the artifacts of the given desktop.yml run, each platform into
+#    its own folder (both Windows jobs write a stable.yml, so they must not
+#    land in one folder).
+# 2. Merges the two Windows <channel>.yml into one (merge-update-yml.mjs) and
+#    puts every other file into release/. Two different files with one name
+#    stop the run.
+# 3. Takes SHA256SUMS.txt and its signature SHA256SUMS.txt.asc from the run's
+#    desktop-checksums artifact (desktop.yml's checksums job, ATO-1035), so the
+#    feed and the release page carry the one signed file. No sums of its own.
+# 4. Checks release/ with feed-files.mjs --require-sums: every platform's yml,
+#    every file a yml names, both Windows arches, one version, every sum.
+# 5. Refuses a version that is not newer than what desktop-latest serves now.
+# 6. Uploads release/ (everything, including the .dmg/.deb/.rpm for the
+#    desktop-vX.Y.Z page release) as the artifact desktop-release-<version>.
+# 7. Only with publish = true: uploads the feed files to desktop-latest,
+#    installers and SHA256SUMS.txt (+ .asc) first, the .yml files last.
+#
+# Publishing is never automatic: the run is started by hand, and publish is
+# off by default (a dry run). A release goes up only on Nadya's separate "yes".
+# The versioned desktop-vX.Y.Z release with the page downloads stays a
+# separate step; step 6's artifact holds its files, SHA256SUMS.txt and .asc.
+
+name: Desktop update feed
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "ID of the Desktop packages run whose files go into the feed (from its URL: actions/runs/<id>)"
+        required: true
+        type: string
+      channel:
+        description: "Update channel the files were built for (stable or beta)"
+        required: false
+        default: "stable"
+        type: string
+      publish:
+        description: "Upload to desktop-latest. Off = check only, nothing is published."
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: desktop-feed
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  feed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CHANNEL: ${{ inputs.channel }}
+      RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - name: Check the inputs
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "::error::run_id must be a number, got '$RUN_ID'"; exit 1; }
+          [[ "$CHANNEL" =~ ^[a-z0-9-]+$ ]] || { echo "::error::not a channel name: '$CHANNEL'"; exit 1; }
+          wf=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json workflowName,conclusion --jq '.workflowName + " " + .conclusion')
+          echo "run $RUN_ID: $wf"
+          [[ "$wf" == "Desktop packages success" ]] || { echo "::error::run $RUN_ID is not a successful Desktop packages run ($wf)"; exit 1; }
+
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+
+      # merge-update-yml.mjs reads the yml with electron-updater's own js-yaml.
+      # --ignore-scripts: no Electron download, nothing is built here.
+      - name: Install the desktop scripts' dependencies
+        working-directory: desktop
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download the package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          pattern: desktop-*
+          path: artifacts
+
+      - name: Put the feed together
+        run: |
+          set -euo pipefail
+          win_yml="$CHANNEL.yml"
+          mkdir -p release
+          for slug in darwin-arm64 win32-x64 win32-arm64 linux-x64 linux-arm64; do
+            dir="artifacts/desktop-$slug"
+            [[ -d "$dir" ]] || { echo "::error::run $RUN_ID has no desktop-$slug artifact"; exit 1; }
+            for f in "$dir"/*; do
+              name=$(basename "$f")
+              # The two Windows jobs' update files are merged below, never copied.
+              if [[ "$slug" == win32-* && "$name" == "$win_yml" ]]; then continue; fi
+              if [[ -e "release/$name" ]]; then
+                cmp -s "$f" "release/$name" || { echo "::error::two different files named $name ($slug and an earlier platform)"; exit 1; }
+                continue
+              fi
+              cp "$f" "release/$name"
+            done
+          done
+          for slug in win32-x64 win32-arm64; do
+            [[ -f "artifacts/desktop-$slug/$win_yml" ]] || { echo "::error::desktop-$slug has no $win_yml"; exit 1; }
+          done
+          (cd desktop && node scripts/merge-update-yml.mjs \
+            "../artifacts/desktop-win32-x64/$win_yml" "../artifacts/desktop-win32-arm64/$win_yml" "../release/$win_yml")
+          ls -la release
+
+      # The sums come from desktop.yml's checksums job: one file, signed there.
+      # Summing release/ again here would make a second SHA256SUMS.txt that
+      # the .asc does not verify.
+      - name: Take the signed SHA256SUMS.txt from desktop-checksums
+        run: |
+          set -euo pipefail
+          src=artifacts/desktop-checksums
+          [[ -f "$src/SHA256SUMS.txt" ]] || { echo "::error::run $RUN_ID has no desktop-checksums artifact (a run from before ATO-1035?)"; exit 1; }
+          cp "$src/SHA256SUMS.txt" release/
+          if [[ -f "$src/SHA256SUMS.txt.asc" ]]; then
+            cp "$src/SHA256SUMS.txt.asc" release/
+          else
+            echo "::warning::desktop-checksums has no SHA256SUMS.txt.asc: the sums are not signed"
+          fi
+          cat release/SHA256SUMS.txt
+
+      - name: Check the feed
+        id: check
+        run: |
+          set -euo pipefail
+          node desktop/scripts/feed-files.mjs release --channel "$CHANNEL" --require-sums
+          node desktop/scripts/feed-files.mjs release --channel "$CHANNEL" --require-sums --json > feed-plan.json
+          version=$(sed -n 's/^version: *//p' "release/$CHANNEL-mac.yml" | tr -d "\"' ")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || { echo "::error::no version in $CHANNEL-mac.yml"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Never move the feed backwards: an older build would be offered to no
+      # one (electron-updater does not downgrade), and the newer files would be gone.
+      - name: The version must be newer than the feed's
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p current
+          if gh release download desktop-latest --repo "$GITHUB_REPOSITORY" -p "$CHANNEL-mac.yml" -D current 2>/dev/null; then
+            live=$(sed -n 's/^version: *//p' "current/$CHANNEL-mac.yml" | tr -d "\"' ")
+            echo "desktop-latest serves $live, this run has $VERSION"
+            if [[ "$live" == "$VERSION" || "$(printf '%s\n%s\n' "$live" "$VERSION" | sort -V | tail -n 1)" != "$VERSION" ]]; then
+              echo "::error::$VERSION is not newer than the $live on desktop-latest"
+              exit 1
+            fi
+          else
+            echo "desktop-latest has no $CHANNEL-mac.yml yet"
+          fi
+
+      - name: Keep the assembled files
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-${{ steps.check.outputs.version }}
+          path: |
+            release/
+            feed-plan.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload to desktop-latest
+        if: inputs.publish == true
+        run: |
+          set -euo pipefail
+          prerelease=$(gh release view desktop-latest --repo "$GITHUB_REPOSITORY" --json isPrerelease,isDraft --jq '"\(.isPrerelease) \(.isDraft)"') \
+            || { echo "::error::there is no desktop-latest release to upload to"; exit 1; }
+          # A draft needs a login to download, and a full release would become the repo's Latest (the terminal installers read it).
+          [[ "$prerelease" == "true false" ]] || { echo "::error::desktop-latest must be a published pre-release (isPrerelease isDraft = $prerelease)"; exit 1; }
+          cd release
+          mapfile -t first < <(node -e 'console.log(JSON.parse(require("fs").readFileSync("../feed-plan.json","utf8")).uploadFirst.join("\n"))')
+          mapfile -t last < <(node -e 'console.log(JSON.parse(require("fs").readFileSync("../feed-plan.json","utf8")).uploadLast.join("\n"))')
+          echo "installers first: ${first[*]}"
+          gh release upload desktop-latest "${first[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          echo "update files last: ${last[*]}"
+          gh release upload desktop-latest "${last[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Summary
+        if: always()
+        env:
+          VERSION: ${{ steps.check.outputs.version }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          {
+            echo "### Desktop update feed ${VERSION:-?} ($CHANNEL)"
+            echo
+            echo "Source run: $RUN_ID. Published to desktop-latest: $PUBLISH."
+            if [[ -f feed-plan.json ]]; then
+              echo
+              echo '```json'
+              cat feed-plan.json
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
