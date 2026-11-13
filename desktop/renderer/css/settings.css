@@ -94,7 +94,8 @@ button.menurow:hover > svg{color:var(--ink-2)}
 /* ---------------- Body card ---------------- */
 .setmain{position:relative;min-width:0;min-height:0;margin:8px 8px 8px 0;display:flex;flex-direction:column;
   background:var(--lift);border-radius:var(--r-card);box-shadow:var(--sh-card);overflow:hidden}
-.settb{flex:none;height:62px;display:flex;align-items:center;gap:10px;padding:0 14px 0 24px}
+/* Layout pass: Done's right edge on the pane's content edge (the body's 24px), not 10px past it. */
+.settb{flex:none;height:62px;display:flex;align-items:center;gap:10px;padding:0 24px}
 .settb .grow{flex:1}
 .settb .setttl{margin:0;font:600 var(--fs-title)/24px var(--font-ui);letter-spacing:-.025em;color:var(--ink)}
 /* Д26: the status line of a pane that polls; empty (and gone) elsewhere. The
@@ -118,6 +119,16 @@ button.menurow:hover > svg{color:var(--ink-2)}
 .set-desc{margin:0;font-size:var(--fs-ui);line-height:1.5;color:var(--ink-2)}
 .set-state{font-size:var(--fs-cap);color:var(--ink-2);white-space:nowrap}
 .set-state.on{color:var(--ink)}
+/* One section header for every pane (Plugins' Installed, Tasks' Webhooks,
+   Privacy's Approval rules): the label at the pane's left edge, its actions
+   at the pane's right edge, both centred on one 34px line, the toolbar's
+   height. Text under it starts at the same left edge (no indent), and its
+   primary action is the pane's usual `btn btn-p sm`. */
+.set-sechead,.set-plghead{display:flex;align-items:center;flex-wrap:nowrap;gap:8px;min-width:0;min-height:34px;margin:0;padding:0}
+.set-sechead > *,.set-plghead > *{flex:none}
+.set-sechead > .grow,.set-plghead > .grow{flex:1 1 0;min-width:0}
+.set-sechead > .set-counts,.set-plghead > .set-counts{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.set-sechead-t,.set-plgtitle{margin:0;font:600 var(--fs-ui)/1.3 var(--font-ui);color:var(--ink);white-space:nowrap}
 
 /* ---------------- A tab's pane ---------------- */
 .set-pane{display:flex;flex-direction:column;gap:14px;min-width:0;padding-top:2px}
@@ -358,7 +369,8 @@ button.set-search:hover{border-color:var(--bd)}
 .set-log .set-log-err{color:var(--critical)}
 .set-log .set-log-warn{color:var(--amber-text)}
 .set-log .set-log-ok{color:var(--blue)}
-.set-privnote{margin:0 22px}
+/* Layout pass: a note under a section starts at the section label's left edge (was 22px in, on the rows' text). */
+.set-privnote{margin:0}
 /* Д48: what Session grants said, as one line under the switch it is about. */
 .set-setlist .tk-help.set-privgrant{margin-top:4px;max-width:62ch}
 /* Д50: what analytics send — two plain lines under the switch, not two cards. */
@@ -408,7 +420,7 @@ button.set-search:hover{border-color:var(--bd)}
 /* ---------------- Narrow window (≤1000px) ---------------- */
 @media (max-width:1000px){
   .setwin{grid-template-columns:212px minmax(0,1fr)}
-  .settb{padding-left:18px}
+  .settb{padding:0 18px}
   .setbody{padding:0 18px 18px}
   .set-formgrid{gap:16px}
   .set-skcols,.set-skrow{grid-template-columns:40px minmax(100px,150px) 84px minmax(0,1fr);column-gap:10px}
@@ -419,7 +431,9 @@ button.set-search:hover{border-color:var(--bd)}
 /* ATO-241: which build, beside the version in General, small and quiet. */
 .tk-setrow .upd-build{font-size:var(--fs-label);color:var(--ink-3)}
 /* ATO-577 / ATO-579: Diagnostics' Doctor and Data (doctor-data.js). */
-.set-diag .set-h{margin:20px 0 4px;font-size:var(--fs-cap);font-weight:600}
+/* Layout pass: Doctor, Data and All settings head their part like every other section header (.set-sechead-t);
+   the extra top margin, with the pane's 14px gap, parts them from the block above. */
+.set-diag .set-h{margin:10px 0 -4px;font:600 var(--fs-ui)/1.3 var(--font-ui);color:var(--ink)}
 .set-docmark{display:inline-block;min-width:54px;font-size:var(--fs-micro);font-weight:600}
 .set-docmark--ok{color:var(--success)}
 .set-docmark--warn{color:var(--warn, #b7791f)}
@@ -459,11 +473,7 @@ button.set-search:hover{border-color:var(--bd)}
 .set-plgabout{display:flex;flex-direction:column;gap:4px;max-width:640px}
 .set-plgintro{margin:0;font:400 var(--fs-ui)/1.5 var(--font-ui);color:var(--ink)}
 .set-plgintro--2{font-size:var(--fs-cap);color:var(--ink-2)}
-.set-plghead{display:flex;align-items:center;flex-wrap:nowrap;gap:8px;min-width:0;min-height:34px}
-.set-plghead > *{flex:none}
-.set-plghead > .grow{flex:1 1 0;min-width:0}
-.set-plghead > .set-counts{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
-.set-plgtitle{margin:0;font:600 var(--fs-ui)/1.3 var(--font-ui);color:var(--ink)}
+/* .set-plghead / .set-plgtitle: the shared section header (Utilities, .set-sechead). */
 .set-plgmark{display:inline-flex;color:var(--ink-3)}
 .set-plgmark > svg{display:block}
 .set-plgempty h4{margin-top:10px}

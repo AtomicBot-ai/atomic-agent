@@ -106,7 +106,7 @@ function createApprovalRules(api) {
 /** The block under Privacy's settings. deps: {esc, categoryPlain, pathText}. */
 function approvalRulesHTML(st, deps) {
   const {esc} = deps;
-  const head = '<div class="tk-sh set-arules-sh"><span>Approval rules</span></div>';
+  const head = '<div class="set-sechead set-arules-sh"><h4 class="set-sechead-t">Approval rules</h4></div>';
   const note = (text, cls) => '<p class="set-cap set-privnote' + (cls ? ' ' + cls : '') + '">' + text + '</p>';
   if (st.supported === false) return head + note(esc(ARULES_OLD_AGENT), 'set-arules-old');
   const err = st.error ? '<div class="tk-help tk-help--warn set-privnote set-arules-err">' + esc(st.error)

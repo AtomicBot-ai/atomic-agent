@@ -9,15 +9,18 @@
 .studio-video .studio-dim { color:var(--ink-3); font-weight:400; }
 
 /* top bar */
-.studio-video .studio-top { display:flex; align-items:baseline; gap:var(--s4); padding:var(--s5) var(--s6) var(--s4); }
-.studio-video .studio-top h2 { margin:0; font-size:var(--fs-title); letter-spacing:var(--tr-sub); }
+/* Layout pass: the same title row as Images (studio.css .st-top): 44px, centred, the title 10px in.
+   It sat 24px further in, on a taller row, so switching Image/Video moved the title and the panels. */
+.studio-video .studio-top { flex:none; display:flex; align-items:center; gap:12px; height:44px; padding:0 6px 0 10px; }
+.studio-video .studio-top h2 { margin:0; font-size:var(--fs-title); font-weight:600; letter-spacing:-.02em; }
 .studio-video .studio-sub { color:var(--ink-3); font-size:var(--fs-cap); }
 .studio-video .studio-pill { display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 12px; border:1px solid var(--bd); border-radius:var(--r-pill); background:var(--lift); color:var(--ink-2); font:inherit; font-size:var(--fs-cap); cursor:pointer; max-width:320px; }
 .studio-video .studio-pill span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .studio-video .studio-pill:hover { background:var(--hover); }
 
 /* two columns */
-.studio-video .studio-cols { flex:1; min-height:0; display:grid; grid-template-columns:minmax(300px, 360px) 1fr; gap:var(--s4); padding:0 var(--s6) var(--s5); }
+/* Layout pass: Images' columns (.st-cols, .st-form): a 348px form, 10px apart, flush with the page frame's 10px edge. */
+.studio-video .studio-cols { flex:1; min-height:0; display:grid; grid-template-columns:348px minmax(0,1fr); gap:10px; padding:6px 0 0; }
 .studio-video .studio-form { position:relative; display:flex; flex-direction:column; min-height:0; background:var(--lift); border-radius:var(--r-panel); box-shadow:var(--sh-card); }
 .studio-video .studio-form-scroll { flex:1; min-height:0; overflow:auto; padding:var(--s5); display:flex; flex-direction:column; gap:6px; }
 .studio-video .studio-lbl { display:block; margin-top:10px; font-size:var(--fs-label); font-weight:600; color:var(--ink-2); }

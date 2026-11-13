@@ -6343,7 +6343,7 @@ async function webhooksLoad() {
   await pending;
   if (webhooksShown()) render();
 }
-function webhooksSection() { return webhooksHTML(WHK.state, {esc}); }
+function webhooksSection() { return webhooksHTML(WHK.state, {esc, ic}); }
 async function webhooksAct(v) {
   const st = WHK.state;
   const arg = (p) => v.slice(p.length);

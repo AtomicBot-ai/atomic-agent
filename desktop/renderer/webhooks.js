@@ -206,10 +206,13 @@ function createWebhooks(api) {
   };
 }
 
-/** The pane. deps: {esc}. Inputs carry ids so a repaint keeps focus and caret. */
+/** The pane. deps: {esc, ic?}. Inputs carry ids so a repaint keeps focus and caret.
+    The header is the shared section header (css/settings.css .set-sechead): the
+    label at the pane's left edge, New webhook at its right edge, one line. */
 function webhooksHTML(st, deps) {
   const {esc} = deps;
-  const head = (btn) => '<div class="tk-sh set-whk-sh"><span>Webhooks</span>' + (btn || '') + '</div>';
+  const ic = typeof deps.ic === 'function' ? deps.ic : () => '';
+  const head = (btn) => '<div class="set-sechead set-whk-sh"><h4 class="set-sechead-t">Webhooks</h4><span class="grow"></span>' + (btn || '') + '</div>';
   const note = (text, cls) => '<p class="set-cap set-privnote' + (cls ? ' ' + cls : '') + '">' + text + '</p>';
   if (st.supported === false) return '<div class="set-pane set-whk">' + head() + note(esc(WHK_OLD_AGENT), 'set-whk-old') + '</div>';
   const err = st.error ? '<div class="tk-help tk-help--warn set-privnote set-whk-err">' + esc(st.error)
@@ -217,7 +220,7 @@ function webhooksHTML(st, deps) {
   if (!st.data) {
     return '<div class="set-pane set-whk">' + head() + (st.error ? err : note('<span class="tk-spin"></span> Loading webhooks…', 'set-whk-loading')) + '</div>';
   }
-  const newBtn = st.form ? '' : '<button class="btn btn-p sm" data-act="whk:new" title="Add a webhook">New webhook</button>';
+  const newBtn = st.form ? '' : '<button class="btn btn-p sm" data-act="whk:new" title="Add a webhook">' + ic('plus') + 'New webhook</button>';
   const t = st.data.tunnel;
   const reach = t && t.state === 'up' && t.publicUrl ? WHK_TUNNEL_UP
     : t && t.state === 'starting' ? 'The tunnel is starting. The public address shows here when it is up.'

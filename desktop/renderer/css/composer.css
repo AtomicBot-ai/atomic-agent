@@ -10,7 +10,10 @@
    ============================================================ */
 
 /* ---- The dock ---------------------------------------------------------- */
-.composerwrap{flex:none;position:relative;width:100%;max-width:760px;margin:0 auto;
+/* Layout pass: 720px like the transcript column and the empty chat (chat.css
+   .col720, .emptychat, both 28px in), so the composer's edges sit on the
+   messages' and the starter cards' edges; at 760px it stuck out 20px a side. */
+.composerwrap{flex:none;position:relative;width:100%;max-width:720px;margin:0 auto;
   padding:0 28px 14px;display:flex;flex-direction:column;gap:8px}
 
 /* ---- Status line: a glyph, one sentence, a quiet action -----------------

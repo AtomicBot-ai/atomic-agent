@@ -6,7 +6,7 @@
    ============================================================ */
 
 /* ---- Pane ---- */
-.sd-pane{display:flex;flex-direction:column;gap:14px;min-width:0;position:relative;container-type:inline-size;
+.sd-pane{display:flex;flex-direction:column;gap:14px;min-width:0;padding-top:2px;position:relative;container-type:inline-size;
   font-family:var(--font-ui);font-size:var(--fs-ui);line-height:1.45;white-space:normal;color:var(--ink)}
 .sd-pane .grow,.sd-grow{flex:1;min-width:0}
 .sd-pane > .tk-bar{min-height:34px}
@@ -137,6 +137,10 @@ input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
 /* ---- Composio (composio.js): the Telegram cards' shapes; the key field sits in the card, so it is not centred ---- */
 .sd-cmpcard.tk-card.pad{width:min(520px,100%)}
 .sd-cmpcard .sd-acts{flex-wrap:wrap}
+/* Layout pass: a form card between the status card and the rows (Replace the
+   API key, No key is saved) is as wide as they are, not a narrower centred
+   card over full-width rows; its text sits on their 16px text edge. */
+.sd-tgcard.sd-inlinecard.tk-card.pad{width:auto;align-self:stretch;margin:0;padding:16px}
 .sd-cmp .tk-notice .sd-cap{flex:none}
 .sd-steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-ui);line-height:1.5;color:var(--ink-2)}
 
