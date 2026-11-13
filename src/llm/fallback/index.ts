@@ -18,6 +18,18 @@ export {
   lacksRequiredApiKey,
   lacksRequiredApiKeyIn,
 } from "./missing-api-key.js";
+export {
+  createKeyPool,
+  orderedUniqueKeys,
+  ProviderKeyPool,
+  KEY_COOLDOWN_MS,
+  type KeyPoolOptions,
+} from "./key-pool.js";
+export {
+  isRateLimitRefusal,
+  keyRefusalKind,
+  type KeyRefusalKind,
+} from "./link-failure-kind.js";
 export { shouldAdvance, type AdvanceDecision } from "./should-advance.js";
 export { runWithFallback } from "./run-with-fallback.js";
 export { falloverSentence } from "./fallover-sentence.js";

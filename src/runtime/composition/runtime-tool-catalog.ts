@@ -18,6 +18,7 @@ import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js"
 import { ToolRegistry } from "../../tools/tool-registry.js";
 import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
 import { isSecretEnvName } from "../../sandbox/command-env.js";
+import { resolveExtraApiKeys } from "../../config/resolve-llm-api-key.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
@@ -79,6 +80,7 @@ export function runtimeKnownSecrets(
   };
   for (const entry of config.llm?.providers ?? []) {
     add(`${entry.id}-key`, entry.apiKey);
+    for (const extra of resolveExtraApiKeys(entry, env)) add(`${entry.id}-key`, extra);
     addHeaders(`${entry.id}-header`, entry.headers);
   }
   add("local-models-key", config.localModels?.apiKey);

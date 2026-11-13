@@ -831,3 +831,64 @@ describe("llm.activeEmbeddingProvider default", () => {
     ).toThrow(/llm\.activeEmbeddingProvider: unknown provider id "local-llama"/);
   });
 });
+
+describe("provider extraApiKeyEnvVars (ATO-471)", () => {
+  const withEntry = (extraApiKeyEnvVars: unknown) => ({
+    version: USER_CONFIG_VERSION,
+    llm: {
+      activeTextProvider: "groq",
+      activeEmbeddingProvider: "local-llama",
+      toolTransport: "auto" as const,
+      providers: [
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
+        {
+          id: "groq",
+          kind: "openai-compatible",
+          baseUrl: "https://api.groq.com/openai/v1",
+          defaultChatModel: "llama-3.3-70b-versatile",
+          apiKeyEnvVar: "GROQ_API_KEY",
+          ...(extraApiKeyEnvVars === undefined ? {} : { extraApiKeyEnvVars }),
+        },
+      ],
+    },
+  });
+
+  const entry = (parsed: ReturnType<typeof parseUserConfigFile>) =>
+    parsed.llm?.providers.find((p) => p.id === "groq");
+
+  it("round-trips the env var names in order", () => {
+    expect(
+      entry(parseUserConfigFile(withEntry(["GROQ_KEY_2", "GROQ_KEY_3"])))?.extraApiKeyEnvVars,
+    ).toEqual(["GROQ_KEY_2", "GROQ_KEY_3"]);
+  });
+
+  it("drops blank lines and repeated names, and reads an empty list as absent", () => {
+    expect(
+      entry(parseUserConfigFile(withEntry([" GROQ_KEY_2 ", "", "GROQ_KEY_2"])))
+        ?.extraApiKeyEnvVars,
+    ).toEqual(["GROQ_KEY_2"]);
+    expect(entry(parseUserConfigFile(withEntry(["", "  "])))?.extraApiKeyEnvVars).toBeUndefined();
+  });
+
+  it("is absent by default", () => {
+    expect(entry(parseUserConfigFile(withEntry(undefined)))?.extraApiKeyEnvVars).toBeUndefined();
+  });
+
+  it("refuses a key value where a name belongs, and anything not a list of strings, without echoing it", () => {
+    for (const bad of ["GROQ_KEY_2", [1], {}, ["gsk-live-abc123"], ["sk_lower_case"]]) {
+      let message = "";
+      try {
+        parseUserConfigFile(withEntry(bad));
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+      expect(message).toMatch(/extraApiKeyEnvVars/);
+      expect(message).not.toContain("gsk-live-abc123");
+      expect(message).not.toContain("sk_lower_case");
+    }
+  });
+});

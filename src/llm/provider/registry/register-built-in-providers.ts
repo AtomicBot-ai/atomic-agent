@@ -8,6 +8,9 @@ import {
 } from "../gemini/gemini-provider.js";
 import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
 import { OpenAiProvider } from "../openai/openai-provider.js";
+import { createKeyPool, orderedUniqueKeys } from "../../fallback/key-pool.js";
+import { resolveExtraApiKeys } from "../../../config/resolve-llm-api-key.js";
+import type { StructuredLogger } from "../../../tracing/index.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
 import { resolveCloudModelVision } from "../model-vision.js";
 import {
@@ -28,6 +31,25 @@ import {
 } from "./provider-types.js";
 
 let registered = false;
+
+/**
+ * The key a provider sends and, when it holds more than one distinct
+ * key, its key pool (ATO-471): `apiKey` first, then the values of
+ * `extraApiKeyEnvVars` from `<stateDir>/.env`. With `apiKey` blank the
+ * first extra key becomes the key sent, so a provider configured only
+ * through extra keys still authenticates. A single key builds no pool,
+ * so that provider is built exactly as before.
+ */
+function keyOptions(
+  entry: LlmProviderConfigEntry,
+  logger: StructuredLogger,
+): { apiKey: string; keyPool?: NonNullable<ReturnType<typeof createKeyPool>> } {
+  const extras = resolveExtraApiKeys(entry);
+  if (extras.length === 0) return { apiKey: entry.apiKey ?? "" };
+  const keys = orderedUniqueKeys([entry.apiKey, ...extras]);
+  const keyPool = createKeyPool({ providerId: entry.id, keys, logger });
+  return { apiKey: keys[0] ?? "", ...(keyPool ? { keyPool } : {}) };
+}
 
 /**
  * What the entry's `userModels[]` row for the model it serves says about
@@ -135,7 +157,7 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "openai-compatible",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
@@ -170,7 +192,7 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "qwen-openai-compatible",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
@@ -195,7 +217,7 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "openrouter",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: model,
       headers: entry.headers,
       ...modelVisionOptions(entry, model),
@@ -229,7 +251,7 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "aimlapi",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: model,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
@@ -252,7 +274,7 @@ export function registerBuiltInProviderKinds(): void {
       id: entry.id,
       providerKind: "gemini",
       baseUrl: entry.baseUrl,
-      apiKey: entry.apiKey ?? "",
+      ...keyOptions(entry, ctx.logger),
       defaultChatModel: model,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
