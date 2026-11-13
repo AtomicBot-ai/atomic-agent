@@ -530,8 +530,13 @@ export class TaskRunner {
       startedAt: claimed.startedAt ?? Date.now(),
     };
     // No live status for a heartbeat: most of its runs say nothing.
+    // Live snapshots are one edited Telegram message (ATO-965); a push
+    // task gets its one ping at the end and nothing in between.
     const snapshots =
-      collector && this.options.snapshotSink && heartbeat.kind !== "run"
+      collector &&
+      this.options.snapshotSink &&
+      heartbeat.kind !== "run" &&
+      claimed.notify === "telegram"
         ? startTaskSnapshots({
             sink: this.options.snapshotSink,
             cadence: this.options.snapshotCadence,

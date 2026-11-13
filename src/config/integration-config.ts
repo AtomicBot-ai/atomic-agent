@@ -9,6 +9,12 @@ import {
   type ComposioAccount,
 } from "./composio-accounts-config.js";
 
+import {
+  createPushDefaults,
+  parsePushConfig,
+  type PushNotifyConfig,
+} from "./push-config.js";
+
 /**
  * Git remote-sync policy. Added in config v52.
  *
@@ -75,9 +81,12 @@ export interface ComposioConfig {
   sessionPins: string | null;
 }
 
-/** Where a finished (or failed) background model download is reported. */
+/**
+ * Where a finished (or failed) background model download is reported.
+ * `"push"` is the ntfy topic in `notifications.push` (ATO-1129).
+ */
 export type DownloadNotifyChannelSetting =
-  "telegram" | "discord" | "email" | "off";
+  "telegram" | "discord" | "email" | "push" | "off";
 
 export interface NotificationsConfig {
   downloads: {
@@ -88,6 +97,8 @@ export interface NotificationsConfig {
      */
     channel: DownloadNotifyChannelSetting | null;
   };
+  /** Phone push through ntfy. Unversioned, additive (ATO-1129). */
+  push: PushNotifyConfig;
 }
 
 /**
@@ -125,13 +136,14 @@ export function parseDownloadNotifyChannel(
     raw === "telegram" ||
     raw === "discord" ||
     raw === "email" ||
+    raw === "push" ||
     raw === "off"
   ) {
     return raw;
   }
   throw new ConfigValidationError(
     field,
-    `expected "telegram", "discord", "email", "off" or null, got ${JSON.stringify(raw)}`,
+    `expected "telegram", "discord", "email", "push", "off" or null, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -166,6 +178,8 @@ export function createNotificationsDefaults(): NotificationsConfig {
     downloads: {
       channel: null,
     },
+    // Unversioned, additive (ATO-1129): off, no topic until `push on`.
+    push: createPushDefaults(),
   };
 }
 
@@ -207,6 +221,7 @@ export function createComposioDefaults(): ComposioConfig {
 export function parseNotificationsConfig(
   rawDownloads: Record<string, unknown>,
   readDefaults: () => NotificationsConfig,
+  rawPush: Record<string, unknown> = {},
 ): NotificationsConfig {
   return {
       downloads: {
@@ -216,6 +231,10 @@ export function parseNotificationsConfig(
           "notifications.downloads.channel",
         ),
       },
+      push: parsePushConfig(
+        rawPush,
+        () => readDefaults().push ?? createPushDefaults(),
+      ),
     };
 }
 

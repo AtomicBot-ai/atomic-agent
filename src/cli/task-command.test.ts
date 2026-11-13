@@ -137,6 +137,20 @@ describe("taskCommand", () => {
     expect(JSON.parse(stdout()).notify).toBeNull();
   });
 
+  it("create --notify push persists the phone-push opt-in (ATO-1129)", async () => {
+    const code = await taskCommand([
+      "create",
+      "--session",
+      "s-cli-push",
+      "--message",
+      "nightly build",
+      "--notify",
+      "push",
+    ]);
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout()).notify).toBe("push");
+  });
+
   it("create --max-cost-usd / --max-duration persist the task's budget; default stays null", async () => {
     const code = await taskCommand([
       "create",

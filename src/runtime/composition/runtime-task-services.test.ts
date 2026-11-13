@@ -12,6 +12,7 @@ import { StructuredLogger, type LogRecord } from "../../tracing/structured-logge
 import { AgentMetrics } from "../../tracing/agent-metrics.js";
 import { MetricsCollector } from "../../tracing/metrics-collector.js";
 import { createRuntimeScheduler, createRuntimeTaskRunner, createRuntimeTaskStores } from "./runtime-task-services.js";
+import { enablePushNotifications } from "../../notifications/index.js";
 
 let dir: string;
 let config: AtomicAgentConfig;
@@ -95,6 +96,25 @@ describe("runtime task service phases", () => {
     expect(fixture.resolveTelegram).toHaveBeenCalledTimes(1);
     expect(records.some((record) => record.message === "telegram task report skipped: channel not constructed")).toBe(true);
     expect(fixture.toolRegistry.list().map((tool) => tool.name)).toEqual(["tasks.schedule", "tasks.cron", "tasks.list", "tasks.cancel", "tasks.show"]);
+  });
+
+  it("routes a notify: push task's report to ntfy, not to Telegram, with push turned on after boot (ATO-1129)", async () => {
+    // Boot with push off, then `push on` the way the CLI or desktop does it.
+    expect(config.notifications.push.enabled).toBe(false);
+    const fixture = runnerFixture(async (session) => ({ session, reason: "reply", stepCount: 1 }));
+    const setup = enablePushNotifications();
+    const bodies: Record<string, unknown>[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response("{}", { status: 200 });
+    });
+    const task = fixture.runner.create({ userMessage: "nightly build", origin: "cli", maxAttempts: 1, notify: "push" });
+    expect((await fixture.runner.runOne(task.id))?.status).toBe("completed");
+    await vi.waitFor(() => expect(bodies).toHaveLength(1));
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(bodies[0]).toMatchObject({ topic: setup.push.topic });
+    expect(String(bodies[0]!.title)).toContain("nightly build");
+    expect(fixture.resolveTelegram).not.toHaveBeenCalled();
   });
 
   it.each([{ enabled: false, agentToolsEnabled: true }, { enabled: true, agentToolsEnabled: false }])("gates registration with both task switches: %j", (flags) => {

@@ -29,6 +29,7 @@ import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
 import { dataCommand } from "./data-command.js";
 import { idCommand } from "./id-command.js";
+import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
 import { whisperCommand } from "./whisper-command.js";
 import { tuiCommand } from "../tui/index.js";
@@ -186,6 +187,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "data",
     summary: "Back up, restore, move or reset the data folder (shared with the desktop app); export chats as a dataset",
     run: dataCommand,
+  },
+  {
+    name: "push",
+    summary: "Phone notifications through ntfy, no bot needed (on|off|status|test)",
+    run: pushCommand,
   },
   {
     name: "providers",
