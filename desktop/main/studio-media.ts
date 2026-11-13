@@ -76,6 +76,8 @@ export class StudioMedia {
   private lease: StudioLease | null = null;
   private leaseTimer: NodeJS.Timeout | null = null;
   private connecting: Promise<StudioCoreClient> | null = null;
+  /** Serializes sending the key and forgetting it, so a DELETE in flight never undoes a key sent after it. */
+  private keyLock: Promise<void> = Promise.resolve();
   private lastDirs: { image?: string; video?: string } = {};
   /** Engine installs and model loads in flight: the lease stays while any runs. */
   private localBusy = 0;
@@ -145,20 +147,54 @@ export class StudioMedia {
       await this.configure(client);
       this.configuredFor = client.instanceId;
     }
-    const key = await this.deps.openRouterKey();
-    const stamp = key ? `${client.instanceId}:${createHash("sha256").update(key).digest("hex")}` : "";
-    if (key && this.keyFor !== stamp) {
-      // Core replaces base_url, models and custom_headers on every PUT; the agent sends the same body.
-      await client.call("/cloud/providers/openrouter", {
-        api_key: key,
-        base_url: OPENROUTER_MEDIA_BASE_URL,
-        custom_headers: [],
-        models: [],
-        media: { image_api: "openrouter-images", video_api: "openrouter-videos", models: [] },
-      }, { method: "PUT" });
-      this.keyFor = stamp;
-    }
+    await this.withKeyLock(async () => {
+      const key = await this.deps.openRouterKey();
+      const stamp = key ? `${client.instanceId}:${createHash("sha256").update(key).digest("hex")}` : "";
+      if (key && this.keyFor !== stamp) {
+        // Core replaces base_url, models and custom_headers on every PUT; the agent sends the same body.
+        await client.call("/cloud/providers/openrouter", {
+          api_key: key,
+          base_url: OPENROUTER_MEDIA_BASE_URL,
+          custom_headers: [],
+          models: [],
+          media: { image_api: "openrouter-images", video_api: "openrouter-videos", models: [] },
+        }, { method: "PUT" });
+        this.keyFor = stamp;
+      }
+    });
     return client;
+  }
+
+  /** Runs `fn` after every key send or forget queued before it. */
+  private withKeyLock<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.keyLock.then(fn);
+    this.keyLock = run.then(() => {}, () => {});
+    return run;
+  }
+
+  /**
+   * ATO-1441: take the OpenRouter key out of Core (it keeps it in its
+   * credentials.json) after the app's last OpenRouter key was removed
+   * (studio-forget-key.ts decides when). The running Core is used, else one
+   * is started for the call and asked to exit again when idle, as the
+   * terminal's `forgetOpenRouterMedia` does. The next key set (even the same
+   * key) is sent to Core again. Throws when Core cannot be reached.
+   */
+  async forgetOpenRouterKey(): Promise<void> {
+    // Under the key lock: a key set while the DELETE is in flight is sent only after it, never
+    // deleted by it. keyFor is cleared once the DELETE is done, so that key is sent again.
+    return this.withKeyLock(async () => {
+      const dataDir = this.deps.dataDir();
+      const version = this.deps.coreVersion;
+      const running = await connectStudioCore(dataDir, version).catch(() => null);
+      const client = running ?? await ensureStudioCore(dataDir, version);
+      try {
+        await client.call("/cloud/providers/openrouter", undefined, { method: "DELETE", timeoutMs: 10_000 });
+      } finally {
+        this.keyFor = "";
+        if (!running && !this.client) await retireIdleStudioCore(dataDir, version);
+      }
+    });
   }
 
   /** The stable default output folders (not Core's per-version ones, which an upgrade empties). */

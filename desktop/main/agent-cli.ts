@@ -1819,12 +1819,16 @@ export async function providerKeyPresent(
   return { ok: true, present: !!saved && resolveKeyValue(saved) !== null };
 }
 
-/** Drop a provider entry by id — the rollback for a key that did not verify. */
-export function removeProvider(id: string): Promise<CliResult> {
+/**
+ * Drop a provider entry by id — the rollback for a key that did not verify.
+ * `removedKind` names the kind of the entry taken out (ATO-1441: removing
+ * OpenRouter also forgets its key in Core, studio-forget-key.ts).
+ */
+export function removeProvider(id: string): Promise<CliResult & { removedKind?: string }> {
   return withConfigLock(() => removeProviderNow(id));
 }
 
-async function removeProviderNow(id: string): Promise<CliResult> {
+async function removeProviderNow(id: string): Promise<CliResult & { removedKind?: string }> {
   if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, stdout: "", stderr: "", error: `not a provider id: ${id}` };
   const current = await configGet();
   if (!current.ok || !current.config) {
@@ -1833,10 +1837,11 @@ async function removeProviderNow(id: string): Promise<CliResult> {
   const config = current.config as { llm?: { providers?: ProviderEntry[] } };
   const providers = config.llm?.providers;
   if (!providers) return { ok: true, stdout: "", stderr: "" };
-  const kept = providers.filter((p) => p.id !== id);
-  if (kept.length === providers.length) return { ok: true, stdout: "", stderr: "" };
-  config.llm!.providers = kept;
-  return writeWholeConfig(config);
+  const removed = providers.find((p) => p.id === id);
+  if (!removed) return { ok: true, stdout: "", stderr: "" };
+  config.llm!.providers = providers.filter((p) => p.id !== id);
+  const written = await writeWholeConfig(config);
+  return written.ok ? { ...written, removedKind: removed.kind } : written;
 }
 
 /* ---------------------------------------------------------------
