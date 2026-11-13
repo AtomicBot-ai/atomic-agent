@@ -4,6 +4,23 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { normalizeAnswer, runCheck, runChecks } from "./checks.js";
+import type { SkillEvalJudge, SkillEvalJudgeInput } from "./judge.js";
+
+function fakeJudge(score: number | Error, parseFallback = false): SkillEvalJudge & { inputs: SkillEvalJudgeInput[] } {
+  const inputs: SkillEvalJudgeInput[] = [];
+  return {
+    model: "judge-model",
+    baseUrl: "http://127.0.0.1:1",
+    providerId: null,
+    usage: () => ({ calls: inputs.length, promptTokens: null, completionTokens: null, totalTokens: null, costUsd: null }),
+    inputs,
+    async score(input) {
+      inputs.push(input);
+      if (score instanceof Error) throw score;
+      return { score, reason: "because", parseFallback };
+    },
+  };
+}
 
 /** A portable command: the running node with an inline script. */
 function node(script: string): string {
@@ -101,5 +118,33 @@ describe("runCheck", () => {
       { answer: "abc", workingDir: dir },
     );
     expect(outcomes.map((o) => o.passed)).toEqual([false, true]);
+  });
+
+  describe("judge", () => {
+    const check = { type: "judge" as const, rubric: "Names the capital", reference: "Paris", minScore: 4 };
+
+    it("passes at minScore and hands the judge the prompt, reply, rubric and reference", async () => {
+      const judge = fakeJudge(4);
+      const out = await runCheck(check, { answer: "It is Paris", workingDir: dir, prompt: "Capital of France?", judge });
+      expect(out).toEqual({ type: "judge", passed: true, score: 4, detail: "score 4/5 (pass at 4): because" });
+      expect(judge.inputs).toEqual([{ prompt: "Capital of France?", reply: "It is Paris", rubric: "Names the capital", reference: "Paris" }]);
+    });
+
+    it("fails below minScore and keeps the score", async () => {
+      const out = await runCheck(check, { answer: "Lyon", workingDir: dir, prompt: "p", judge: fakeJudge(2) });
+      expect(out).toMatchObject({ passed: false, score: 2 });
+    });
+
+    it("never passes on unreadable judge output", async () => {
+      const out = await runCheck({ ...check, minScore: 1 }, { answer: "x", workingDir: dir, prompt: "p", judge: fakeJudge(1, true) });
+      expect(out.passed).toBe(false);
+    });
+
+    it("fails without a judge or when the judge errors", async () => {
+      expect(await runCheck(check, { answer: "x", workingDir: dir })).toEqual({ type: "judge", passed: false, detail: "no judge configured" });
+      const out = await runCheck(check, { answer: "x", workingDir: dir, prompt: "p", judge: fakeJudge(new Error("judge HTTP 500: x")) });
+      expect(out).toMatchObject({ passed: false, detail: "judge failed: judge HTTP 500: x" });
+      expect(out.score).toBeUndefined();
+    });
   });
 });

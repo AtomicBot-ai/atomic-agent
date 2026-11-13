@@ -63,6 +63,7 @@ const HELP =
     "  search <query>             Search ClawHub + the configured GitHub taps",
     "  tap list|add <owner/repo>|remove <owner/repo>   Manage hub taps (mutates config.json)",
     "  eval <name> --tasks <tasks.yaml> [--repeat <n>] [--only with|without] [--max-steps <n>] [--no-approval] [--json]",
+    "       [--judge-url <url>] [--judge-model <id>]   judge for `judge` checks (else skills.eval.judgeProvider, else the active cloud provider)",
     "                             Run each task with the skill and without it, check the answers, and save",
     "                             accuracy, time, tokens and cost to <stateDir>/skill-evals/<name>/ (Skill Lab)",
   ].join("\n") + "\n";

@@ -15,6 +15,8 @@ import { parse as parseYaml } from "yaml";
 export const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
 /** Ceiling for one `command` check. */
 export const DEFAULT_COMMAND_CHECK_TIMEOUT_MS = 60 * 1000;
+/** A `judge` check passes at this score (of 5) unless it sets `minScore`. */
+export const DEFAULT_JUDGE_MIN_SCORE = 4;
 
 export type SkillEvalCheck =
   | {
@@ -38,6 +40,17 @@ export type SkillEvalCheck =
       type: "command";
       run: string;
       timeoutMs: number;
+    }
+  | {
+      /**
+       * A judge model grades the reply against `rubric` on 1..5 (ATO-1101);
+       * passes at `minScore` or above. For answers no pattern can check.
+       */
+      type: "judge";
+      rubric: string;
+      /** A model answer the judge compares against; null for none. */
+      reference: string | null;
+      minScore: number;
     };
 
 export type SkillEvalCheckType = SkillEvalCheck["type"];
@@ -90,6 +103,11 @@ export async function loadTaskSet(path: string): Promise<SkillEvalTaskSet> {
  * Validate the text of a task set. `sourcePath` is used for messages and
  * to resolve `fixtures:` folders (relative to the file's folder).
  */
+/** Whether any task has a `judge` check, so the CLI knows to set up a judge before running. */
+export function taskSetUsesJudge(set: SkillEvalTaskSet): boolean {
+  return set.tasks.some((t) => t.checks.some((c) => c.type === "judge"));
+}
+
 export function parseTaskSet(text: string, sourcePath: string): SkillEvalTaskSet {
   const fail = (message: string): never => {
     throw new SkillEvalTaskSetError(sourcePath, message);
@@ -185,8 +203,17 @@ function parseCheck(
         DEFAULT_COMMAND_CHECK_TIMEOUT_MS;
       return { type: "command", run: raw.run, timeoutMs };
     }
+    case "judge": {
+      if (typeof raw.rubric !== "string" || raw.rubric.trim() === "") return fail(`${where}: judge needs \`rubric\``);
+      if (raw.reference !== undefined && typeof raw.reference !== "string") return fail(`${where}: reference must be a string`);
+      const minScore = raw.minScore ?? DEFAULT_JUDGE_MIN_SCORE;
+      if (typeof minScore !== "number" || !Number.isInteger(minScore) || minScore < 1 || minScore > 5) {
+        return fail(`${where}: minScore must be a whole number from 1 to 5`);
+      }
+      return { type: "judge", rubric: raw.rubric, reference: typeof raw.reference === "string" ? raw.reference : null, minScore };
+    }
     default:
-      return fail(`${where}: unknown check type ${JSON.stringify(raw.type)} (use exact, regex or command)`);
+      return fail(`${where}: unknown check type ${JSON.stringify(raw.type)} (use exact, regex, command or judge)`);
   }
 }
 
