@@ -278,13 +278,13 @@ async function settled(
 describe("ImportOrchestrator refreshSessions", () => {
   let tmp: string;
   let actions: TuiAction[];
-  let refreshSessions: ReturnType<typeof vi.fn>;
+  let refreshSessions: ReturnType<typeof vi.fn<() => void>>;
   let orchestrator: ImportOrchestrator;
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "atomic-agent-import-"));
     actions = [];
-    refreshSessions = vi.fn();
+    refreshSessions = vi.fn<() => void>();
     const bus = makeTuiEventBus();
     bus.subscribe((a) => actions.push(a));
     orchestrator = new ImportOrchestrator(stubRuntime(tmp), bus, {

@@ -91,6 +91,7 @@ describe("LocalModelsOrchestrator: the memory model alone on a cloud chat route"
   function activate(provider: "openrouter" | "local-llama"): void {
     const path = getUserConfigPath(stateDir);
     const file = readUserConfigFileSync(path);
+    if (file === null) throw new Error("beforeEach wrote no config file");
     writeUserConfigFileSync(path, {
       ...file,
       llm: {

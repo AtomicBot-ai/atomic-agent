@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createInitialTuiState } from "../tui-state.js";
 import type { TuiSessionInfo } from "../tui-state.js";
+import type { PrivacyAction } from "./privacy-actions.js";
 import { reducePrivacyAction } from "./privacy-panel-reducer.js";
 
 function baseState() {
@@ -95,18 +96,20 @@ describe("reducePrivacyAction", () => {
         since: "2026-11-12T10:00:00.000Z",
       },
     };
-    const synced = reducePrivacyAction(baseState(), {
+    const withOffline: PrivacyAction = {
       type: "privacy_synced",
       analyticsEnabled: true,
       sessionGrants: { categories: [], shapes: [] },
       offline,
-    });
+    };
+    const synced = reducePrivacyAction(baseState(), withOffline);
     expect(synced?.privacyPanel.offline).toEqual(offline);
-    const again = reducePrivacyAction(synced!, {
+    const withoutOffline: PrivacyAction = {
       type: "privacy_synced",
       analyticsEnabled: false,
       sessionGrants: { categories: [], shapes: [] },
-    });
+    };
+    const again = reducePrivacyAction(synced!, withoutOffline);
     expect(again?.privacyPanel.offline).toEqual(offline);
   });
 

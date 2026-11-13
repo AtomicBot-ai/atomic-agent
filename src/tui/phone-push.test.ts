@@ -7,7 +7,7 @@ const msg = (
   role: ChatMessage["role"],
   text: string,
   extra: Partial<ChatMessage> = {},
-): ChatMessage => ({ id: `${role}-${text}`, role, text, ...extra });
+): ChatMessage => ({ id: `${role}-${text}`, role, text, timestamp: 0, ...extra });
 
 describe("lastReplyOfTurn (ATO-1129)", () => {
   it("is the last real answer after the last prompt", () => {

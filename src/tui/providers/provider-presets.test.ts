@@ -504,7 +504,7 @@ describe("Google Vertex AI preset (ATO-468)", () => {
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${root}/chat/completions`);
-    expect(new Headers(init.headers as HeadersInit).get("authorization")).toBe(
+    expect(new Headers(init.headers as ConstructorParameters<typeof Headers>[0]).get("authorization")).toBe(
       "Bearer ya29.registry-test",
     );
   });
