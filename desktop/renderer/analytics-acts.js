@@ -64,7 +64,7 @@ const ANX_ACTS = (() => {
       sel:{add:L, browseLocal:L, closeAdd:L, savePreset:L, cancelPull:L, vision:L},
       wiz:{back:L, next:L, cancel:L, model:L, useDefault:L, saveUnchecked:L, subRecheck:L, subLogin:L, subCopy:L},
       // Settings › Privacy and General
-      privacy:{analytics:L, refresh:L, readscope:set(readScopes)}, notify:{toggle:L}, names:{toggle:L},
+      privacy:{analytics:L, refresh:L, readscope:set(readScopes)}, notify:{toggle:L}, names:{toggle:L}, nextstep:{toggle:L},
       // ATO-229: the update toast and General's update rows
       appupd:{update:L, notnow:L, skip:L, cancel:L, install:L, later:L, check:L, auto:L},
       // the Manage panes' own verbs (renderer.js mcpAct / skillsAct / memoryAct / tasksAct / llmAct / telegramAct / composioAct / importAct)

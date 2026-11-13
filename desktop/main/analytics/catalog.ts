@@ -338,6 +338,12 @@ export const EVENTS: Record<string, EventSpec> = {
     },
   },
 
+  /* ATO-1096: the grey next-step suggestion in the composer (renderer/next-step.js).
+     Counts only: the suggestion's text is never sent. `ms_to_accept` is the
+     time from the suggestion appearing to Tab. */
+  suggestion_shown: { owner: "ui", props: {} },
+  suggestion_accepted: { owner: "ui", props: { ms_to_accept: int({ nullable: true }) } },
+
   /* ---- navigation and features ---- */
   /* `prefix`, `prefix:tail` or `runmode:workers:N` — the renderer keeps only enum tails; uiActionOk refuses anything id-like. */
   ui_action: {

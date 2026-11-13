@@ -80,7 +80,7 @@ send `ui` events.
 | Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / setup_finished / workspace_change / import / telegram / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
 | Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out / key_rejected / provider_error / agent_crashed / not_json / no_binary / list_failed; `provider_preset`, `kind` cloud / custom, as in `model_configured`), `custom_endpoint_tested`, `subscription_login_clicked`, `subscription_terminal_opened` (opened; terminal or reason), `subscription_login_succeeded` (seconds_to_sign_in) |
 | Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `local_backend_crashed`, `engine_recovery_shown`, `backend_switched`, `model_switched`, `fusion_configured` | |
-| Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |
+| Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste), `suggestion_shown`, `suggestion_accepted` (ms_to_accept) |
 | Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `overnight_started` (has_budget, hours, notify_telegram), `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `composio_setup` (key_saved / key_removed / key_checked / enable / disable; ok / unverified / rejected / error), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
 | App updates | `update_available` (auto / manual), `update_accepted`, `update_dismissed` (not_now / cancel / later), `update_skipped`, `update_installed` | |
 
@@ -167,6 +167,13 @@ Notes on specific properties:
   `settings` (Settings' engine install or update, and Download again), or
   `launch` (the launch installing Atomic Core's backend before it starts the
   model, when Core is the engine and its backend is not on disk yet).
+
+- `suggestion_shown` / `suggestion_accepted` (ATO-1096): a next-step
+  suggestion appeared in the empty composer, and Tab took it into the field.
+  Sent only while Settings › General › "Suggest a next step"
+  (`tui.nextStepSuggestions`, off by default) is on. `ms_to_accept` is the
+  time from the suggestion appearing to Tab. The suggestion's text is never
+  sent.
 
 Transport: PostHog `/batch/` over `fetch`, batched in memory, flushed every
 10 s; at quit up to five batches of 100, bounded at 2 s in total (also when

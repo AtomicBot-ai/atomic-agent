@@ -60,6 +60,7 @@ window shows "Not while a turn is running".
 | What a turn accepted but never read | `GET` / `DELETE /api/sessions/{id}/steer` |
 | Compacting a chat's context now | `POST /api/sessions/{id}/compact` |
 | "Trust this folder?" and Settings › Skills' folder-trust switch (ATO-1250) | `GET` / `POST /api/project-trust` |
+| The grey next-step suggestion in the empty composer, Tab takes it (ATO-1094; only while Settings › General › Suggest a next step, `tui.nextStepSuggestions`, is on; hidden on an agent without the route) | `GET /api/sessions/{id}/next-step` |
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
 plain OpenAI chunks to atomic's named frames — `session_id`,

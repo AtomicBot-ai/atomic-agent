@@ -88,4 +88,10 @@ export function wireAgentLiveIpc(client: AgentClient): void {
   });
   // ATO-758: why the bot does not answer, when another poller holds it off.
   ipcMain.handle("agent:telegramChannel", () => client.telegramChannel());
+  /* ATO-1094: the grey next-step suggestion for the composer (renderer/next-step.js).
+     Read-only, so no config lock; the text goes to the window and nowhere else. */
+  ipcMain.handle("agent:nextStep", (_event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId || sessionId.length > 200) return { supported: true, text: null };
+    return client.nextStep(sessionId);
+  });
 }
