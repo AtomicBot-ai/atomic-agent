@@ -14,6 +14,7 @@ import { assistantReplyTurn, findCurrentMacroTurnStart, isFinalReplyTurn, isStop
 import type { ProfileFact } from "../../memory/profile-store.js";
 import { formatTurnFailedRecord } from "./parse-failure-recovery.js";
 import { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn-memory-context.js";
+import { isIncognitoSession } from "../../session/incognito.js";
 import { formatPauseDigest } from "./pause-digest.js";
 import { costCeilingHeadline } from "./turn-spend.js";
 
@@ -184,7 +185,10 @@ export function finalizeAgentTurn(
   // `max_steps` are filtered out (neither a success nor failure
   // signal). The `failed` branch already fired the hook above
   // before its early `return`.
-  if (!options.ephemeral && (reason === "reply" || reason === "finish")) {
+  // An incognito chat (ATO-586) writes nothing to memory: no lesson
+  // counters, no reflection below.
+  const writesMemory = !options.ephemeral && !isIncognitoSession(state);
+  if (writesMemory && (reason === "reply" || reason === "finish")) {
     invokeLessonLifecycle(deps, state.id, surfacedLessonIds, "success");
   }
 
@@ -208,10 +212,11 @@ export function finalizeAgentTurn(
   //
   // Never for an ephemeral turn: a fusion worker's transcript is the
   // orchestrator's scratch space, and reflecting on it would write
-  // half-context into the operator's long-term memory.
+  // half-context into the operator's long-term memory. Nor for an
+  // incognito chat: the user asked for it not to be remembered.
   if (
     deps.reflectionRunner &&
-    !options.ephemeral &&
+    writesMemory &&
     (reason === "reply" || reason === "finish")
   ) {
     const segmentation = deps.reflectionSegmentation;
@@ -417,7 +422,7 @@ export function finalizeFailedAgentTurn(
   // carries neither success nor failure signal). Nor is an account
   // that cannot pay (item 40): it says nothing about the lessons
   // recalled at turn start, as the paused path for it says nothing.
-  if (!options.ephemeral && !creditRefused) {
+  if (!options.ephemeral && !isIncognitoSession(state) && !creditRefused) {
     invokeLessonLifecycle(
       deps,
       state.id,

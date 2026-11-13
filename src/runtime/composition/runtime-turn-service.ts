@@ -10,7 +10,7 @@ import type { ProviderRegistry } from "../../llm/provider/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import type { ProviderFallbackChain } from "../../llm/fallback/index.js";
 import type { SessionStore } from "../../session/session-store.js";
-import { readFusionWorkerMeta, SESSION_LLM_METADATA_KEY, SESSION_ROUTE_METADATA_KEY, readSessionRoute, resolveTurnRoute, SESSION_TITLE_METADATA_KEY, SESSION_TITLE_TIMEOUT_MS, generateSessionTitle, readSessionTitle, shouldNameSession, type SessionLlmStamp, type SessionState } from "../../session/index.js";
+import { isIncognitoSession, readFusionWorkerMeta, SESSION_LLM_METADATA_KEY, SESSION_ROUTE_METADATA_KEY, readSessionRoute, resolveTurnRoute, SESSION_TITLE_METADATA_KEY, SESSION_TITLE_TIMEOUT_MS, generateSessionTitle, readSessionTitle, shouldNameSession, type SessionLlmStamp, type SessionState } from "../../session/index.js";
 import { renderRouteChangeNote } from "../../prompt/route-change-note.js";
 import { previousReplyText, workerRequestRecord } from "../../prompt/request-section.js";
 import { pickOriginalRequest } from "../../tools/fusion/index.js";
@@ -546,9 +546,12 @@ export function createRuntimeTurnService(
         // too, and a run that promised to stop at its cap must not make
         // one more paid call. The session stays unnamed until a later
         // turn answers within its budget.
+        // Never for an incognito chat (ATO-586): no list shows its name,
+        // and the late title save would write back a row its close deleted.
         if (
           getConfig().agent.nameSessions &&
           !stoppedForMoney(result.stopCause) &&
+          !isIncognitoSession(finished) &&
           shouldNameSession(finished)
         ) {
           void nameSession(finished);

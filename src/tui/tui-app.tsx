@@ -313,6 +313,8 @@ export interface TuiAppCallbacks {
   onSessionPinToggled?(sessionId: string): void;
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
+  /** `/incognito` (ATO-586): start a fresh incognito chat. */
+  onIncognitoSessionRequested?(): void;
   onCompactionRequested?(verb: "run" | "show"): void;
   /** `/goal …`: act on the open chat's goal (ATO-451). */
   onGoalCommand?(command: import("./commands/goal-command.js").GoalCommand): void;

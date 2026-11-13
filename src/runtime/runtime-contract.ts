@@ -39,6 +39,7 @@ import type { TaskRunner, TaskStore } from "../tasks/index.js";
 import type { Scheduler } from "../scheduler/index.js";
 import type { WebhookSessionStore } from "../http/webhook-session-store.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
+import type { IncognitoDiscardOutcome } from "./incognito-sessions.js";
 import type { LogSink } from "../tracing/structured-logger.js";
 import type { MetricSink } from "../tracing/metrics-collector.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
@@ -411,11 +412,23 @@ export interface AgentRuntime {
    * task writes `session_id` into `tasks.sqlite`, a webhook and a
    * Telegram chat remember a mapping, and each expects a later `load`
    * to answer.
+   *
+   * `incognito: true` opens an incognito chat (ATO-586,
+   * `session/incognito.ts`): nothing from it is written to memory, no
+   * list shows it, and `discardIncognitoSession` deletes it on close.
    */
   createSession(input?: {
     metadata?: Record<string, unknown>;
     persist?: boolean;
+    incognito?: boolean;
   }): SessionState;
+  /**
+   * Close an incognito chat (ATO-586): delete its row, archived turns and
+   * trace file — once its running turn has ended, if one is running. A
+   * session that is not a stored incognito chat is left alone
+   * (`"not_incognito"`). Optional so test runtimes need not provide it.
+   */
+  discardIncognitoSession?(sessionId: string): IncognitoDiscardOutcome;
   /**
    * Drive one chat turn: append the user message, run the agent loop
    * until the model emits `reply` (or `finish`), persist the resulting

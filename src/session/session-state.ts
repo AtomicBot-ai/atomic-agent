@@ -179,6 +179,12 @@ export interface SessionState {
    */
   sessionUsage?: SessionUsageState;
   /**
+   * Set when the chat was opened incognito (ATO-586): no memory is
+   * written from it, no list shows it, and it is deleted when closed.
+   * Fixed at creation; see `incognito.ts`.
+   */
+  incognito?: import("./incognito.js").IncognitoMark;
+  /**
    * Free-form session metadata. Reserved keys (set by the runtime, not
    * the agent — agents may read but must not overwrite them):
    *
@@ -251,6 +257,8 @@ export function createEmptySessionState(params: {
   id: string;
   workingDir: string;
   metadata?: Record<string, unknown>;
+  /** ATO-586: open the chat incognito (`SessionStore.newIncognitoMark`). */
+  incognito?: import("./incognito.js").IncognitoMark;
 }): SessionState {
   const now = Date.now();
   return {
@@ -270,6 +278,7 @@ export function createEmptySessionState(params: {
     updatedAt: now,
     lastError: null,
     metadata: params.metadata ?? {},
+    ...(params.incognito !== undefined ? { incognito: params.incognito } : {}),
   };
 }
 

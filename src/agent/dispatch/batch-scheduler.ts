@@ -258,6 +258,7 @@ export async function executeBatch(
         ...(ctx.userGroundingTexts !== undefined
           ? { userGroundingTexts: ctx.userGroundingTexts }
           : {}),
+        ...(ctx.incognito === true ? { incognito: true } : {}),
         ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
         ...(ctx.tracker ? { fileVersions: ctx.tracker.fileVersions } : {}),
       }));

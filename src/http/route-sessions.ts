@@ -333,7 +333,12 @@ export function createDeleteSessionHandler(): HttpHandler {
       sendError(res, 400, openaiError("session id is required"));
       return;
     }
-    ctx.runtime.sessionStore.delete(id);
+    // An incognito chat (ATO-586) goes with its trace file, and not from
+    // under a running turn — that turn's end would write the row back.
+    const incognito = ctx.runtime.discardIncognitoSession?.(id);
+    if (incognito === undefined || incognito === "not_incognito") {
+      ctx.runtime.sessionStore.delete(id);
+    }
     // Purging the session takes its parked steers with it: they are
     // messages for a conversation the caller just said it is done with,
     // and leaving them would strand rows nobody will ever ack.

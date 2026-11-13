@@ -55,6 +55,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionPicker: boolean;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
+  /** `/incognito` (ATO-586): start a fresh incognito chat. */
+  readonly triggerIncognitoSession?: boolean;
   /** When true the caller should open a new OS terminal window (`/window`). */
   readonly triggerNewWindow: boolean;
   /** When true the caller should ask the orchestrator to dump the user profile. */
@@ -420,6 +422,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerSessionPicker: true });
     case "new":
       return pureActions([], { triggerSessionNew: true });
+    case "incognito":
+      return pureActions([], { triggerIncognitoSession: true });
     case "window":
       return pureActions([], { triggerNewWindow: true });
     case "sidebar":

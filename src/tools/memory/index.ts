@@ -1,4 +1,4 @@
-import type { ToolRegistry } from "../tool-registry.js";
+import type { ToolDefinition, ToolRegistry } from "../tool-registry.js";
 import type { MemoryStore } from "../../memory/memory-store.js";
 import type { ProfileStore } from "../../memory/profile-store.js";
 import type { LessonStore } from "../../memory/lessons/lesson-store.js";
@@ -14,6 +14,7 @@ import { buildNotesRecallTool } from "./notes-recall.js";
 import { buildNotesForgetTool } from "./notes-forget.js";
 import { buildLessonsRecallTool } from "./lessons-recall.js";
 import { buildProceduresRecallTool } from "./procedures-recall.js";
+import { INCOGNITO_MEMORY_READ_REFUSAL, refuseInIncognito } from "./incognito-guard.js";
 
 export { buildProfileSetTool } from "./profile-set.js";
 export { buildProfileRemoveTool } from "./profile-remove.js";
@@ -24,6 +25,12 @@ export { buildNotesRecallTool } from "./notes-recall.js";
 export { buildNotesForgetTool } from "./notes-forget.js";
 export { buildLessonsRecallTool } from "./lessons-recall.js";
 export { buildProceduresRecallTool } from "./procedures-recall.js";
+export {
+  INCOGNITO_MEMORY_READ_REFUSAL,
+  INCOGNITO_MEMORY_WRITE_REFUSAL,
+  INCOGNITO_TASK_REFUSAL,
+  refuseInIncognito,
+} from "./incognito-guard.js";
 
 export interface RegisterMemoryToolsOptions {
   profileStore: ProfileStore;
@@ -63,6 +70,17 @@ export interface RegisterMemoryToolsOptions {
    * it only the current session's messages count.
    */
   nameGroundingSource?: GroundingConversationSource;
+  /**
+   * ATO-586. `memory.profile.set` and `memory.notes.store` refuse in an
+   * incognito chat: always when the call says so (`ToolContext.incognito`),
+   * and also when this answers true for the call's session. The recall
+   * tools (`memory.profile.list` / `.history`, `memory.notes.recall`,
+   * `memory.lessons.recall`, `memory.procedures.recall`) refuse there
+   * too: an incognito chat does not read saved memory either (decision
+   * 8). Removing a fact or forgetting a note stays allowed: it writes
+   * nothing from the chat.
+   */
+  isIncognitoSession?: (sessionId: string) => boolean;
 }
 
 /**
@@ -79,43 +97,47 @@ export function registerMemoryTools(
   registry: ToolRegistry,
   options: RegisterMemoryToolsOptions,
 ): void {
+  const guarded = (tool: ToolDefinition): ToolDefinition =>
+    refuseInIncognito(tool, options.isIncognitoSession);
+  const guardedRead = (tool: ToolDefinition): ToolDefinition =>
+    refuseInIncognito(tool, options.isIncognitoSession, INCOGNITO_MEMORY_READ_REFUSAL);
   if (options.profileEnabled) {
     registry.register(
-      buildProfileSetTool({
+      guarded(buildProfileSetTool({
         store: options.profileStore,
         ...(options.nameGroundingSource
           ? { groundingSource: options.nameGroundingSource }
           : {}),
-      }),
+      })),
     );
     registry.register(buildProfileRemoveTool({ store: options.profileStore }));
-    registry.register(buildProfileListTool({ store: options.profileStore }));
-    registry.register(buildProfileHistoryTool({ store: options.profileStore }));
+    registry.register(guardedRead(buildProfileListTool({ store: options.profileStore })));
+    registry.register(guardedRead(buildProfileHistoryTool({ store: options.profileStore })));
   }
   if (options.notesEnabled) {
     registry.register(
-      buildNotesStoreTool({
+      guarded(buildNotesStoreTool({
         store: options.notesStore,
         maxContentChars: options.notesMaxContentChars,
         ...(options.nameGroundingSource
           ? { groundingSource: options.nameGroundingSource }
           : {}),
-      }),
+      })),
     );
     registry.register(
-      buildNotesRecallTool({
+      guardedRead(buildNotesRecallTool({
         store: options.notesStore,
         defaultK: options.notesRecallDefaultK,
-      }),
+      })),
     );
     registry.register(buildNotesForgetTool({ store: options.notesStore }));
   }
   if (options.lessonsEnabled && options.lessonStore) {
-    registry.register(buildLessonsRecallTool({ store: options.lessonStore }));
+    registry.register(guardedRead(buildLessonsRecallTool({ store: options.lessonStore })));
   }
   if (options.proceduresEnabled && options.procedureStore) {
     registry.register(
-      buildProceduresRecallTool({ store: options.procedureStore }),
+      guardedRead(buildProceduresRecallTool({ store: options.procedureStore })),
     );
   }
 }

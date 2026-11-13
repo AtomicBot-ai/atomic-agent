@@ -15,7 +15,7 @@ import {
   type ProfileSetOptions,
 } from "../../memory/index.js";
 import { Database as DatabaseCtor } from "../../native/load-better-sqlite3.js";
-import { normalizeSessionState, type SessionStore } from "../../session/index.js";
+import { isIncognitoSession, normalizeSessionState, type SessionStore } from "../../session/index.js";
 import type { SessionState, SessionStatus } from "../../session/session-state.js";
 import { TaskStore } from "../../tasks/index.js";
 import { splitMemoryNote } from "../split-note.js";
@@ -253,6 +253,12 @@ function importSessions(
         state = normalizeSessionState(raw);
       } catch {
         unreadable += 1;
+        counts.skipped += 1;
+        continue;
+      }
+      // An incognito chat (ATO-586) is never copied: it was to be deleted
+      // when closed, and a copy would outlive it.
+      if (isIncognitoSession(state)) {
         counts.skipped += 1;
         continue;
       }

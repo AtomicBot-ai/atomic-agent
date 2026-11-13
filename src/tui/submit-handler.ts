@@ -346,6 +346,7 @@ export function runSlashCommand(
   }
   if (result.triggerSessionPicker) callbacks.onSessionPickerRequested?.();
   if (result.triggerSessionNew) callbacks.onSessionNewRequested?.();
+  if (result.triggerIncognitoSession === true) callbacks.onIncognitoSessionRequested?.();
   if (result.triggerMemoryDump) callbacks.onMemoryDumpRequested?.();
   if (result.triggerSkillCatalogDump) callbacks.onSkillCatalogRequested?.();
   if (result.persistLlamaUrl) {

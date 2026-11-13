@@ -126,7 +126,8 @@ export function registerRuntimeCoreTools(input: {
   config: AtomicAgentConfig;
   toolRegistry: ToolRegistry;
   dangerous: DangerousToolOptions;
-  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines">;
+  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines">
+    & Partial<Pick<SessionStore, "isIncognito">>;
   logger: StructuredLogger;
   resolveOriginalRequest: (sessionId: string) => string | undefined;
   resolvePreviousReply?: (sessionId: string) => string | undefined;
@@ -237,6 +238,10 @@ export function registerRuntimeCoreTools(input: {
     procedureStore,
     proceduresEnabled: config.memory.procedures.enabled,
     nameGroundingSource,
+    // ATO-586: an incognito chat's memory writes are refused.
+    ...(sessionStore.isIncognito
+      ? { isIncognitoSession: (sessionId: string) => sessionStore.isIncognito!(sessionId) }
+      : {}),
   });
 }
 

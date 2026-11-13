@@ -665,6 +665,30 @@ export class TaskStore {
   }
 
   /**
+   * Drop every task bound to `sessionId` (ATO-586: an incognito chat
+   * being closed). Rows are deleted, prompt and all, so nothing from the
+   * chat stays in tasks.sqlite. A row still `running` is only cancelled:
+   * its runner still holds it and would fail on a missing row. Returns
+   * the number of rows deleted.
+   */
+  removeForSession(sessionId: string, now: number = Date.now()): number {
+    const remove = this.db.transaction((): number => {
+      const deleted = this.db
+        .prepare(`DELETE FROM tasks WHERE session_id = ? AND status <> 'running'`)
+        .run(sessionId).changes;
+      this.db
+        .prepare(
+          `UPDATE tasks
+              SET status = 'cancelled', completed_at = @now, updated_at = @now
+            WHERE session_id = @sessionId AND status = 'running'`,
+        )
+        .run({ sessionId, now });
+      return deleted;
+    });
+    return remove();
+  }
+
+  /**
    * Put a `running` task back to `pending` because its run was stopped
    * before it could end, rather than ending it: the agent quitting under
    * a scheduled turn, or that turn stopped from its chat. Nothing went
