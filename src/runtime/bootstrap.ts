@@ -827,6 +827,7 @@ export async function createAgentRuntime(
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage, metrics },
     state: turnState, lifecycle, logger,
+    emitEvent: emitAgentLoopEventFor,
   });
 
   const taskRunner = createRuntimeTaskRunner({
