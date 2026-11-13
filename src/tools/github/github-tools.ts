@@ -1,6 +1,7 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import { listingResultCaps } from "../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { isOfflineNetwork } from "../../llm/offline-network.js";
 import {
   requireApproval,
   type DangerousToolOptions,
@@ -31,11 +32,17 @@ import {
  */
 const RECORD_CHARS = 320;
 
+/** What every `github.*` tool says while offline mode is on (ATO-1088). */
+export const GITHUB_OFFLINE_PAUSED =
+  "GitHub is paused: offline mode is on. Turn offline mode off to use it again.";
+
 export interface GithubToolsOptions extends DangerousToolOptions {
   /** Test seam; production reads `GITHUB_TOKEN` at call time. */
   resolveToken?: () => string | null;
   /** Test seam; production builds a real client per call. */
   apiFactory?: (token: string) => GithubApi;
+  /** Test seam; production reads the network kill switch (ATO-1084). */
+  isOffline?: () => boolean;
 }
 
 /**
@@ -60,7 +67,12 @@ export function buildGithubTools(
   const apiFactory =
     options.apiFactory ?? ((token: string) => new GithubApi({ token }));
 
+  const isOffline = options.isOffline ?? (() => isOfflineNetwork());
+
   const client = (): GithubApi => {
+    // Refuse before any request with one plain reason, instead of the
+    // transport's per-host "api.github.com blocked" error.
+    if (isOffline()) throw new Error(GITHUB_OFFLINE_PAUSED);
     const token = resolveToken();
     if (!token) throw new Error(GITHUB_NOT_CONNECTED);
     return apiFactory(token);
