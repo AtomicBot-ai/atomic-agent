@@ -1749,6 +1749,21 @@ export function TuiApp({
     [state.slashPaletteOpen],
   );
 
+  /**
+   * Vim NORMAL Esc Esc (ATO-662): true on the second of two Escs inside
+   * the window; the first only starts it.
+   */
+  const secondVimEsc = (): boolean => {
+    const now = Date.now();
+    const last = vimLastEscAt.current;
+    if (last === null || now - last > VIM_ESC_ESC_WINDOW_MS) {
+      vimLastEscAt.current = now;
+      return false;
+    }
+    vimLastEscAt.current = null;
+    return true;
+  };
+
   const onEscape = useCallback(() => {
     if (state.themePickerOpen) {
       // Cancel: revert the live-preview swap to the theme active on open.
@@ -1769,7 +1784,13 @@ export function TuiApp({
     // Reached only with a draft in the buffer: an empty buffer means
     // Esc was claimed as `abort` before the editor ever saw it. Clearing
     // the draft hands the y / s / e / n keys back.
+    // With vim on (ATO-662) this is a NORMAL Esc, and the NORMAL rule
+    // holds here too: one Esc keeps the draft, Esc Esc stashes it.
     if (state.pendingApproval) {
+      if (state.vimMode) {
+        if (secondVimEsc()) dispatch({ type: "input_draft_stashed" });
+        return;
+      }
       if (state.inputValue.length > 0) {
         dispatch({ type: "input_changed", value: "" });
       }
@@ -1812,13 +1833,7 @@ export function TuiApp({
     // must not throw away the draft or open the menu. Esc Esc clears the
     // draft, and parks it in prompt history so Up brings it back.
     if (state.vimMode) {
-      const now = Date.now();
-      const last = vimLastEscAt.current;
-      if (last === null || now - last > VIM_ESC_ESC_WINDOW_MS) {
-        vimLastEscAt.current = now;
-        return;
-      }
-      vimLastEscAt.current = null;
+      if (!secondVimEsc()) return;
       callbacks.onPromptEnhanceCancel?.();
       dispatch({ type: "input_draft_stashed" });
       return;

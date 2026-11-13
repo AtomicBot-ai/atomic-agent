@@ -144,6 +144,34 @@ describe("vim Esc and the global Esc meanings", () => {
 });
 
 describe("Esc in vim NORMAL", () => {
+  it("keeps the draft on one Esc with a pending approval; Esc Esc stashes it", async () => {
+    const { calls, bus, stdin, lastFrame, unmount } = harness();
+    await settle();
+    bus.emitApproval(REQUEST);
+    await settle();
+
+    stdin.write("not yet");
+    await settle();
+    stdin.write(ESC); // INSERT -> NORMAL
+    await settle();
+    stdin.write(ESC); // bare NORMAL Esc: the draft stays, no verdict
+    await settle();
+    expect(strip(lastFrame() ?? "")).toContain("not yet");
+    expect(calls.decisions).toHaveLength(0);
+    expect(calls.aborts).toBe(0);
+
+    stdin.write(ESC); // Esc Esc: cleared into history, still no verdict
+    await settle();
+    expect(strip(lastFrame() ?? "")).not.toContain("not yet");
+    expect(calls.decisions).toHaveLength(0);
+    expect(calls.aborts).toBe(0);
+
+    stdin.write(UP);
+    await settle();
+    expect(strip(lastFrame() ?? "")).toContain("not yet");
+    unmount();
+  });
+
   it("is a no-op alone; Esc Esc clears the draft into history", async () => {
     const { calls, stdin, lastFrame, unmount } = harness();
     await settle();
