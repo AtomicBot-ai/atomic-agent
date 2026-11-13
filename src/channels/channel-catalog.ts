@@ -11,6 +11,8 @@
  */
 
 import type { ChannelDefinition } from "./channel.js";
+import { msteamsChannelDefinition } from "./msteams/index.js";
 
 export const EXTRA_CHANNELS: readonly ChannelDefinition[] = [
+  msteamsChannelDefinition,
 ];
