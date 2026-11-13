@@ -1,8 +1,9 @@
 import type { CompactionEvent, ContextCompactionControl, CompactionStepOptions } from "../agent/compaction-control.js";
 import type { CompactionConfig } from "../config/agent/compaction-config.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
-import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { decideCompaction, type CompactionSkip } from "../prompt/plan-compaction.js";
+import type { BuildPromptInput, BuiltPrompt } from "../prompt/build-prompt-types.js";
+import { decideCompaction, exactCountCandidate, type CompactionDecision, type CompactionDecisionModel, type CompactionSkip } from "../prompt/plan-compaction.js";
+import type { TokenCounter } from "../llm/token-counter.js";
 import { validSessionCompaction, type CompactionResult } from "../session/session-compaction.js";
 import type { SessionState } from "../session/session-state.js";
 import type { SessionStore } from "../session/session-store.js";
@@ -35,6 +36,13 @@ export interface ContextCompactionDependencies extends CompactionRunnerDependenc
   promptInput(state: SessionState): BuildPromptInput;
   /** Rolling summaries between turns; absent, compaction works as before. */
   background?: BackgroundCompaction;
+  /**
+   * The serving model's exact token counter for this session's route, when
+   * it has one (a local llama-server's `/tokenize`). Asked only when the
+   * heuristic puts history near the automatic trigger; absent, or answering
+   * `null`, the heuristic decides as before (ATO-656).
+   */
+  tokenCounter?(sessionId: string, providerId?: string): TokenCounter | undefined;
 }
 
 /**
@@ -156,8 +164,31 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     if (prompt.cloudContext) input = { ...input, session: { ...input.session, cloudContext: prompt.cloudContext } };
     // The same profile the step's own prompt budget follows (`buildPrompt`'s low water).
     const prefixReuse = input.profileWindowApplies === false ? undefined : input.profile?.prefixReuse;
-    const { plan, skip } = decideCompaction(input.session, prompt, config, request ? "manual" : options.requested,
-      prefixReuse ? { prefixReuse } : {});
+    const decide = (measured?: number) => decideCompaction(input.session, prompt, config, request ? "manual" : options.requested,
+      { ...(prefixReuse ? { prefixReuse } : {}), ...(measured !== undefined ? { measuredActiveTokens: measured } : {}) });
+    const measureText = request ? null : exactCountCandidate(input.session, prompt, config, options.requested);
+    let counter: TokenCounter | undefined;
+    if (measureText !== null) {
+      try { counter = deps.tokenCounter?.(id, options.providerId); } catch { /* The heuristic decides. */ }
+    }
+    if (measureText !== null && counter) {
+      // Near the trigger the heuristic's margin decides: ask the model's own
+      // count once, then decide as usual. Nothing to do resolves to the
+      // step's own session, unchanged.
+      const session = input.session;
+      return counter.count(measureText, options.signal).catch(() => null).then((exact) => {
+        if (stopped || options.signal.aborted) return session;
+        return act(input, options, request, inTurn, prompt, config, decide(exact ?? undefined), prefixReuse, routeKey) ?? session;
+      });
+    }
+    return act(input, options, request, inTurn, prompt, config, decide(), prefixReuse, routeKey);
+  }
+
+  function act(input: BuildPromptInput, options: CompactionStepOptions, request: ManualRequest | undefined, inTurn: boolean,
+    prompt: BuiltPrompt, config: CompactionConfig, decision: CompactionDecision,
+    prefixReuse: CompactionDecisionModel["prefixReuse"], routeKey: () => string): Promise<SessionState> | undefined {
+    const id = input.session.id;
+    const { plan, skip } = decision;
     if (!plan) {
       const reason = request ? "manual" : options.requested ?? "threshold";
       const message = skipMessage(skip ?? "no_reduction", prompt.contextWindow);
