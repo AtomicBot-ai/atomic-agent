@@ -187,6 +187,56 @@ describe("reduceTuiState fusion worker progress", () => {
     expect(after.fusionLiveWorkers[0]?.contextTokens).toBe(9_000);
   });
 
+  it("keeps one collapsed outcome row per worker after the turn ends, until the next turn", () => {
+    const worker = (taskId: string, extra: Record<string, unknown>) => ({
+      type: "agent_event" as const,
+      event: {
+        type: "fusion_worker" as const,
+        taskId,
+        title: taskId,
+        role: "worker" as const,
+        model: "qwen-3.5-4b",
+        ...extra,
+      } as never,
+    });
+    const ended = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      worker("a", { phase: "started", stepBudget: 8 }),
+      worker("a", { phase: "tool", tool: "os.fs.write" }),
+      worker("b", { phase: "started", stepBudget: 8 }),
+      worker("c", { phase: "started", stepBudget: 8 }),
+      worker("a", { phase: "finished", status: "needs_orchestrator", stepCount: 4, stepBudget: 8 }),
+      worker("b", { phase: "finished", status: "timeout", stepCount: 6, stepBudget: 8 }),
+      // `c` never reported an end line: the turn took it down.
+      {
+        type: "agent_event",
+        event: { type: "turn_finished", turnIndex: 0, reason: "reply", stepCount: 2, durationMs: 10 },
+      },
+    ]);
+    expect(ended.status).not.toBe("running");
+    expect(ended.fusionLiveWorkers.map((w) => w.taskId)).toEqual(["a", "b", "c"]);
+    expect(ended.fusionLiveWorkers.every((w) => w.collapsed === true && w.done)).toBe(true);
+    expect(ended.fusionLiveWorkers.map((w) => w.outcome)).toEqual([
+      "needs_orchestrator",
+      "timeout",
+      "cancelled",
+    ]);
+
+    // The next turn starts clean: collapsed rows do not pile up.
+    const next = reduceTuiState(ended, { type: "message_submitted" });
+    expect(next.fusionLiveWorkers).toEqual([]);
+    // A fan-out that arrives without a submit (another origin) replaces
+    // them too, rather than mixing with them.
+    const reused = apply(ended, [worker("d", { phase: "started" })]);
+    expect(reused.fusionLiveWorkers.map((w) => w.taskId)).toEqual(["d"]);
+    expect(reused.fusionLiveWorkers[0]?.collapsed).toBeUndefined();
+    // And a new thread does not inherit them.
+    expect(
+      reduceTuiState(ended, { type: "session_created", sessionId: "s2" }).fusionLiveWorkers,
+    ).toEqual([]);
+  });
+
   it("does not disturb the turn's own status or step counter", () => {
     // These events belong to the parent turn as a whole, not to any one
     // of its steps — they must not read as a step boundary.
