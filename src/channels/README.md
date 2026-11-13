@@ -7,12 +7,16 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 
 ## Entry points
 
+- [channel.ts](channel.ts) — the shared `Channel` / `ChannelDefinition` interface
+- [channel-catalog.ts](channel-catalog.ts) — the list of adapters beyond Telegram and Discord
+- [channel-registry.ts](channel-registry.ts) and [build-extra-channels.ts](build-extra-channels.ts)
 - [model-command.ts](model-command.ts)
 - [model-switch.ts](model-switch.ts)
 - [chat-session-map.ts](chat-session-map.ts)
 - [reconnect-backoff.ts](reconnect-backoff.ts)
 - [telegram-channel.ts](telegram/telegram-channel.ts)
 - [discord-channel.ts](discord/discord-channel.ts)
+- [googlechat-channel.ts](googlechat/googlechat-channel.ts) — Google Chat over Pub/Sub pull (ATO-506)
 
 ## Ownership and dependencies
 
