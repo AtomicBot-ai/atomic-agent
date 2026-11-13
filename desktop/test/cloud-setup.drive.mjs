@@ -403,8 +403,9 @@ try {
   }
   await app.waitFor(`!!document.querySelector('#settings .setmenu')`, { timeoutMs: 20000, label: 'the settings window opens' });
   await app.clickText('Models', { within: '#settings .setmenu', tags: 'button', settleMs: 2500 });
-  await app.waitFor(`!!document.querySelector('[data-act="llm:mode:cloud"]')`, { timeoutMs: 20000, label: 'the LLM pane opens' });
-  await app.clickSel('[data-act="llm:mode:cloud"]', { settleMs: 2500 });
+  // 13.11: the Cloud card is the way to the Cloud setup (chats already run on a cloud provider here, so the click switches nothing).
+  await app.waitFor(`!!document.querySelector('#settings [data-llm-card="cloud"]')`, { timeoutMs: 20000, label: 'the LLM pane opens' });
+  await app.clickSel('#settings [data-llm-card="cloud"]', { settleMs: 2500 });
   /* A provider row as the Cloud pane draws it: the id, its key chip, and
      what Enter does on it. Read per row, so a chip on the wrong row fails. */
   const providerRow = (id) => `(() => { const r = document.querySelector('#settings [data-llm-row="cloud-provider:${id}"]'); if (!r) return null;`
@@ -469,7 +470,7 @@ try {
   if (!(await app.js(`!!document.querySelector('#settings')`))) {
     await app.clickText('Settings', { tags: 'button', settleMs: 1500 });
     await app.clickText('Models', { within: '#settings .setmenu', tags: 'button', settleMs: 2500 });
-    await app.clickSel('[data-act="llm:mode:cloud"]', { settleMs: 2500 });
+    await app.clickSel('#settings [data-llm-card="cloud"]', { settleMs: 2500 });
   }
   await pickCloudModel(REFUSING_MODEL);
   await app.press('Escape', { settleMs: 1500 });

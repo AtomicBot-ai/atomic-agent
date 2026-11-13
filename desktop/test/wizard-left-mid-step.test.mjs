@@ -30,6 +30,10 @@ function load(WIZ, providerModels) {
     ANX: { providerFailed() {} },
     esc: (s) => String(s),
     providerMark: () => '',
+    // 13.11: the provider list's search field, groups and group rows.
+    ic: () => '',
+    logoHTML: () => '',
+    markFallbackHTML: () => '',
     selProviders: () => [],
     selShell: (title, body, foot) => title + '|' + body + '|' + foot,
     wizService: (k) => k.label,
@@ -41,7 +45,8 @@ function load(WIZ, providerModels) {
   });
   // Only a wizard with no row is drawn here: the list, or the screen that threw.
   ctx.render = () => { if (!WIZ.row) drawn.push(ctx.wizardHTML()); };
-  runInContext(fn('wizardHTML') + fn('wizStepLeft') + fn('wizSubscriptionStep', 'async function '), ctx);
+  const words = source.slice(source.indexOf('const WIZ_KIND_WORDS = {'), source.indexOf('\nfunction wizardHTML() {'));
+  runInContext(words + fn('wizardHTML') + fn('wizStepLeft') + fn('wizSubscriptionStep', 'async function '), ctx);
   return { ctx, removed, drawn };
 }
 

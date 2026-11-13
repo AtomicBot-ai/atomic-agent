@@ -73,10 +73,10 @@ const POPUP = `(() => {
   };
 })()`;
 
-/** Which pane Settings › LLM is showing. */
+/** Which card's setup Settings › Models is showing (13.11: the cards are the setup switch; 'local' holds the apps and your own server too). */
 const LLM_MODE = `(() => {
-  const on = document.querySelector('#settings .llmmode.on');
-  return on ? on.textContent.trim() : null;
+  const on = document.querySelector('#settings .llm-rm.is-open');
+  return on ? on.dataset.llmCard || null : null;
 })()`;
 
 /** The route the backend control stands for (its `data-id`; the pill itself
@@ -384,7 +384,9 @@ async function main() {
     const customPane = await app.snap(LLM_MODE);
     t.say(`  Settings › LLM opened on: ${JSON.stringify(customPane)}`);
     await shot('12-llm-custom');
-    t.check('a custom route opens Settings › Models on Custom server', /custom/i.test(customPane || ''), JSON.stringify(customPane));
+    // 13.11: your own server is listed under the Local card's setup (Use an app you already run).
+    t.check('a custom route opens Settings › Models on Local, where your own server is listed', /local/i.test(customPane || '')
+      && await app.snap(`!!document.querySelector('#settings [data-llm-row="external-url"]')`), JSON.stringify(customPane));
     await closeSettings(app);
   } finally {
     await app.close();
