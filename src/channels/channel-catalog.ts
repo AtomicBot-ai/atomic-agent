@@ -11,6 +11,8 @@
  */
 
 import type { ChannelDefinition } from "./channel.js";
+import { GOOGLE_CHAT_CHANNEL } from "./googlechat/index.js";
 
 export const EXTRA_CHANNELS: readonly ChannelDefinition[] = [
+  GOOGLE_CHAT_CHANNEL,
 ];
