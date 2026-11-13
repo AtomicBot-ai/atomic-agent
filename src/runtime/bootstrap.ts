@@ -783,7 +783,7 @@ export async function createAgentRuntime(
   // ATO-586: an incognito chat closed mid-turn is deleted once the turn
   // has left the queue (`isBusy` is still true inside `executeTurn`).
   const incognitoSessions = createIncognitoSessions({
-    sessionStore, tracesDir: config.paths.tracesDir, isBusy: (id) => turnController.isBusy(id), logger,
+    sessionStore, tracesDir: config.paths.tracesDir, isBusy: (id) => turnController.isBusy(id), logger, taskStore,
   });
   const runTurn: typeof runQueuedTurn = (session, ...rest) =>
     runQueuedTurn(session, ...rest).finally(() => incognitoSessions.settle(session.id));

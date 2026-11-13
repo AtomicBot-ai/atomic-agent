@@ -14,7 +14,7 @@ import { buildNotesRecallTool } from "./notes-recall.js";
 import { buildNotesForgetTool } from "./notes-forget.js";
 import { buildLessonsRecallTool } from "./lessons-recall.js";
 import { buildProceduresRecallTool } from "./procedures-recall.js";
-import { refuseInIncognito } from "./incognito-guard.js";
+import { INCOGNITO_MEMORY_READ_REFUSAL, refuseInIncognito } from "./incognito-guard.js";
 
 export { buildProfileSetTool } from "./profile-set.js";
 export { buildProfileRemoveTool } from "./profile-remove.js";
@@ -25,7 +25,12 @@ export { buildNotesRecallTool } from "./notes-recall.js";
 export { buildNotesForgetTool } from "./notes-forget.js";
 export { buildLessonsRecallTool } from "./lessons-recall.js";
 export { buildProceduresRecallTool } from "./procedures-recall.js";
-export { INCOGNITO_MEMORY_WRITE_REFUSAL, refuseInIncognito } from "./incognito-guard.js";
+export {
+  INCOGNITO_MEMORY_READ_REFUSAL,
+  INCOGNITO_MEMORY_WRITE_REFUSAL,
+  INCOGNITO_TASK_REFUSAL,
+  refuseInIncognito,
+} from "./incognito-guard.js";
 
 export interface RegisterMemoryToolsOptions {
   profileStore: ProfileStore;
@@ -68,9 +73,12 @@ export interface RegisterMemoryToolsOptions {
   /**
    * ATO-586. `memory.profile.set` and `memory.notes.store` refuse in an
    * incognito chat: always when the call says so (`ToolContext.incognito`),
-   * and also when this answers true for the call's session. Removing a
-   * fact or forgetting a note stays allowed: it writes nothing from the
-   * chat.
+   * and also when this answers true for the call's session. The recall
+   * tools (`memory.profile.list` / `.history`, `memory.notes.recall`,
+   * `memory.lessons.recall`, `memory.procedures.recall`) refuse there
+   * too: an incognito chat does not read saved memory either (decision
+   * 8). Removing a fact or forgetting a note stays allowed: it writes
+   * nothing from the chat.
    */
   isIncognitoSession?: (sessionId: string) => boolean;
 }
@@ -91,6 +99,8 @@ export function registerMemoryTools(
 ): void {
   const guarded = (tool: ToolDefinition): ToolDefinition =>
     refuseInIncognito(tool, options.isIncognitoSession);
+  const guardedRead = (tool: ToolDefinition): ToolDefinition =>
+    refuseInIncognito(tool, options.isIncognitoSession, INCOGNITO_MEMORY_READ_REFUSAL);
   if (options.profileEnabled) {
     registry.register(
       guarded(buildProfileSetTool({
@@ -101,8 +111,8 @@ export function registerMemoryTools(
       })),
     );
     registry.register(buildProfileRemoveTool({ store: options.profileStore }));
-    registry.register(buildProfileListTool({ store: options.profileStore }));
-    registry.register(buildProfileHistoryTool({ store: options.profileStore }));
+    registry.register(guardedRead(buildProfileListTool({ store: options.profileStore })));
+    registry.register(guardedRead(buildProfileHistoryTool({ store: options.profileStore })));
   }
   if (options.notesEnabled) {
     registry.register(
@@ -115,19 +125,19 @@ export function registerMemoryTools(
       })),
     );
     registry.register(
-      buildNotesRecallTool({
+      guardedRead(buildNotesRecallTool({
         store: options.notesStore,
         defaultK: options.notesRecallDefaultK,
-      }),
+      })),
     );
     registry.register(buildNotesForgetTool({ store: options.notesStore }));
   }
   if (options.lessonsEnabled && options.lessonStore) {
-    registry.register(buildLessonsRecallTool({ store: options.lessonStore }));
+    registry.register(guardedRead(buildLessonsRecallTool({ store: options.lessonStore })));
   }
   if (options.proceduresEnabled && options.procedureStore) {
     registry.register(
-      buildProceduresRecallTool({ store: options.procedureStore }),
+      guardedRead(buildProceduresRecallTool({ store: options.procedureStore })),
     );
   }
 }

@@ -6,10 +6,18 @@ import { join } from "node:path";
 import { ProfileStore } from "../../memory/profile-store.js";
 import type { MemoryStore } from "../../memory/memory-store.js";
 import { ToolRegistry, type ToolContext, type ToolDefinition } from "../tool-registry.js";
-import { INCOGNITO_MEMORY_WRITE_REFUSAL, refuseInIncognito } from "./incognito-guard.js";
+import {
+  INCOGNITO_MEMORY_READ_REFUSAL,
+  INCOGNITO_MEMORY_WRITE_REFUSAL,
+  INCOGNITO_TASK_REFUSAL,
+  refuseInIncognito,
+} from "./incognito-guard.js";
 import { registerMemoryTools } from "./index.js";
 
-/** ATO-586: memory write tools refuse in an incognito chat. */
+/**
+ * ATO-586: memory write tools refuse in an incognito chat, and (decision
+ * 8) so do the memory recall tools: it does not read saved memory either.
+ */
 
 function ctx(extra: Partial<ToolContext> = {}): ToolContext {
   return {
@@ -64,6 +72,16 @@ describe("refuseInIncognito", () => {
     const result = await guarded.run({ a: 1 }, ctx());
     expect(run).toHaveBeenCalledWith({ a: 1 }, expect.objectContaining({ sessionId: "s1" }));
     expect(result.status).toBe("ok");
+  });
+});
+
+describe("refuseInIncognito with its own refusal", () => {
+  it("answers with the refusal it was given", async () => {
+    const { tool, run } = fakeTool();
+    const result = await refuseInIncognito(tool, undefined, INCOGNITO_TASK_REFUSAL).run({}, ctx({ incognito: true }));
+    expect(run).not.toHaveBeenCalled();
+    expect(result.summary).toContain(INCOGNITO_TASK_REFUSAL);
+    expect(result.summary).not.toContain(INCOGNITO_MEMORY_WRITE_REFUSAL);
   });
 });
 
@@ -127,5 +145,32 @@ describe("registerMemoryTools in an incognito chat", () => {
     );
     expect(result.details.reason).not.toBe("incognito_session");
     expect(profileStore.list()).toEqual([]);
+  });
+
+  it("memory.profile.list shows no stored facts in an incognito chat (decision 8)", async () => {
+    profileStore.set("drink", "tea");
+    const result = await registry.get("memory.profile.list").run({}, ctx({ incognito: true }));
+    expect(result.status).toBe("error");
+    expect(result.details.reason).toBe("incognito_session");
+    expect(result.summary).toContain(INCOGNITO_MEMORY_READ_REFUSAL);
+    expect(result.summary).not.toContain("tea");
+  });
+
+  it("memory.profile.history and memory.notes.recall refuse in an incognito chat", async () => {
+    profileStore.set("drink", "tea");
+    const history = await registry.get("memory.profile.history").run({ key: "drink" }, ctx({ incognito: true }));
+    expect(history.details.reason).toBe("incognito_session");
+    expect(history.summary).not.toContain("tea");
+    // notesStore is a bare stub: reaching it would throw, so a refusal
+    // also proves the store was never read.
+    const recall = await registry.get("memory.notes.recall").run({ query: "tea" }, ctx({ incognito: true }));
+    expect(recall.details.reason).toBe("incognito_session");
+  });
+
+  it("memory.profile.list still lists facts in an ordinary chat", async () => {
+    profileStore.set("drink", "tea");
+    const result = await registry.get("memory.profile.list").run({}, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.reason).not.toBe("incognito_session");
   });
 });

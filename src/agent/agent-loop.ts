@@ -11,7 +11,7 @@ import { recoverFromOutOfMemory } from "./turn/out-of-memory-recovery.js";
 import type { AgentLoopDependencies, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
 export type { AgentLoopDependencies, ReflectionSegmentationConfig, ResolvedTurnLlmSlice, MemoryContextProviderInput, MemoryContext, MemoryContextProvider, LessonLifecycleOutcome, LessonLifecycleHook, SteeringChannel, TaskStopCause, RunTurnOptions, AgentLoopReason, AgentLoopEvent, RunTurnResult } from "./agent-contract.js";
 import { prepareAgentTurn, prepareTurnPolicies, prepareTurnBudgets, createTurnLoopTracker } from "./turn/turn-preparation.js";
-import { refreshMemoryContext, createSurfacedMemoryTracker } from "./turn/turn-memory-context.js";
+import { refreshMemoryContext, createSurfacedMemoryTracker, profileFactsForPrompt } from "./turn/turn-memory-context.js";
 export { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn/turn-memory-context.js";
 import { finalizeAgentTurn, finalizeFailedAgentTurn } from "./turn/turn-finalization.js";
 import { armApprovalDeadline } from "./turn/approval-deadline.js";
@@ -415,7 +415,8 @@ export class AgentLoop {
         // classifies `tool` and fails the turn outright.
         let profileFacts: readonly ProfileFact[] | undefined;
         try {
-          profileFacts = this.deps.profileFactsProvider?.();
+          // None in an incognito chat (ATO-586, decision 8).
+          profileFacts = profileFactsForPrompt(this.deps.profileFactsProvider, state);
         } catch (err) {
           this.deps.logger?.warn("profile facts unavailable for this step", {
             sessionId: state.id,

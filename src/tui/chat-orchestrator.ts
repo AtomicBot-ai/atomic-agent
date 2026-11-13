@@ -325,6 +325,7 @@ export class ChatOrchestrator {
     this.tasks = new TasksOrchestrator(runtime, bus, {
       getCurrentSessionId: () => this.session?.id ?? null,
       switchSession: (id) => this.switchSession(id),
+      isCurrentSessionIncognito: () => isIncognitoSession(this.session),
     });
     this.skills = new SkillsOrchestrator(runtime, bus, { currentSession: () => this.session });
     this.projectTrust = new ProjectTrustOrchestrator({

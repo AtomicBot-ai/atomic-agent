@@ -1,6 +1,8 @@
 import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
 import { isFinalReplyTurn, isStoppedTurnMarker } from "../../session/conversation-turn.js";
+import { isIncognitoSession } from "../../session/incognito.js";
+import type { ProfileFact } from "../../memory/profile-store.js";
 
 export type TurnMemoryDependencies = Pick<
   AgentLoopDependencies,
@@ -39,6 +41,10 @@ export async function refreshMemoryContext(
   state: SessionState,
   options: RunTurnOptions,
 ): Promise<SessionState> {
+  // ATO-586 (decision 8): an incognito chat does not read saved memory,
+  // so no recalled notes, index, lessons or procedures reach its prompt.
+  // The provider is not called at all: a recall also bumps counters.
+  if (isIncognitoSession(state)) return withoutRecalledMemory(state);
   if (!deps.memoryContextProvider) return state;
   // An ephemeral (fusion worker) turn neither reads nor primes memory:
   // its prompt is the orchestrator's instruction, not the operator's
@@ -88,6 +94,40 @@ export async function refreshMemoryContext(
     });
     return state;
   }
+}
+
+/**
+ * `state` with no recalled memory on it. The same object when it carries
+ * none, so a turn that never recalled keeps its identity.
+ */
+function withoutRecalledMemory(state: SessionState): SessionState {
+  if (
+    state.recalledNotes === undefined &&
+    state.memoryIndex === undefined &&
+    state.recalledLessons === undefined &&
+    state.recalledProcedures === undefined
+  ) {
+    return state;
+  }
+  const rest: SessionState = { ...state };
+  delete rest.recalledNotes;
+  delete rest.memoryIndex;
+  delete rest.recalledLessons;
+  delete rest.recalledProcedures;
+  return rest;
+}
+
+/**
+ * The profile facts a step renders into `### profile`: none in an
+ * incognito chat (ATO-586, decision 8), else what the provider lists.
+ * The provider may throw; the caller handles that.
+ */
+export function profileFactsForPrompt(
+  provider: (() => readonly ProfileFact[]) | undefined,
+  state: SessionState,
+): readonly ProfileFact[] | undefined {
+  if (isIncognitoSession(state)) return undefined;
+  return provider?.();
 }
 
 function collectRecentToolResultSummaries(

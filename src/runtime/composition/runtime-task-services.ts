@@ -57,7 +57,8 @@ export function createRuntimeTaskRunner(args: {
   config: Pick<AtomicAgentConfig, "agent" | "tasks" | "paths" | "statusSnapshot">;
   taskStore: TaskStore;
   runTurn: TaskRunnerRuntime["runTurn"];
-  sessionStore: Pick<SessionStore, "load" | "save" | "readTurnProgress" | "clearTurnProgress">;
+  sessionStore: Pick<SessionStore, "load" | "save" | "readTurnProgress" | "clearTurnProgress">
+    & Partial<Pick<SessionStore, "isIncognito">>;
   createSession: AgentRuntime["createSession"];
   toolRegistry: ToolRegistry;
   resolveTelegram: () => TelegramChannel | null;
@@ -127,6 +128,10 @@ export function createRuntimeTaskRunner(args: {
     agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
     defaultMaxAttempts: config.tasks.maxAttempts,
     defaultListLimit: 20,
+    // ATO-586: an incognito chat cannot schedule tasks.
+    ...(sessionStore.isIncognito
+      ? { isIncognitoSession: (sessionId: string) => sessionStore.isIncognito!(sessionId) }
+      : {}),
   });
 
   return taskRunner;

@@ -2,6 +2,7 @@ import { rmSync } from "node:fs";
 import { resolve, sep } from "node:path";
 
 import type { SessionStore } from "../session/session-store.js";
+import type { TaskStore } from "../tasks/task-store.js";
 import { traceFilePath } from "../tracing/trace/trace-sink.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 
@@ -9,7 +10,8 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
  * Closing incognito chats (ATO-586, `src/session/incognito.ts`): the row,
  * its archived turns and its trace file go when the chat is closed — the
  * TUI leaving it, `run --incognito` ending, a client deleting it — and at
- * the next start for a chat whose process died first.
+ * the next start for a chat whose process died first. Closing also drops
+ * the tasks bound to it, so none runs later in an ordinary chat.
  */
 
 /**
@@ -74,6 +76,11 @@ export interface IncognitoSessionsDependencies {
   tracesDir: string | null | undefined;
   /** Whether a turn is running on the session (`TurnController.isBusy`). */
   isBusy: (sessionId: string) => boolean;
+  /**
+   * The task queue: a closed chat's tasks go with it, prompt and all, so
+   * none runs later in an ordinary chat. Absent in callers with no queue.
+   */
+  taskStore?: Pick<TaskStore, "removeForSession">;
   logger: Pick<StructuredLogger, "warn">;
 }
 
@@ -89,6 +96,7 @@ export function createIncognitoSessions(deps: IncognitoSessionsDependencies) {
   const remove = (sessionId: string): boolean => {
     try {
       if (!deps.sessionStore.isIncognito(sessionId)) return false;
+      deps.taskStore?.removeForSession(sessionId);
       deps.sessionStore.delete(sessionId);
       removeIncognitoTrace(deps.tracesDir, sessionId);
       return true;
