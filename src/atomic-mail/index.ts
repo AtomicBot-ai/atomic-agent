@@ -40,3 +40,11 @@ export {
   renderAccessCodeMail,
   type AccessCodeMailInput,
 } from "./templates/access-code-mail.js";
+export {
+  AtomicMailTrigger,
+  MAX_TASKS_PER_POLL,
+  activeMailBindings,
+  type AtomicMailTriggerOptions,
+  type MailTriggerTask,
+} from "./atomic-mail-trigger.js";
+export type { TriggerMail } from "./atomic-mail-trigger-batches.js";

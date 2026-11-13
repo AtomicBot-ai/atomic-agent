@@ -61,6 +61,18 @@ export interface SchedulerOptions {
    * from `stop()` before the lock is released. A rejection is logged.
    */
   onLeadershipChange?: (leading: boolean) => void | Promise<void>;
+  /**
+   * Extra periodic work that must run in the same single process as the
+   * drain — today the mail trigger (ATO-601), which turns new inbox
+   * messages into tasks. Called on every interval tick this process
+   * leads, after the leadership check and without waiting; each sidecar
+   * throttles itself and must not throw.
+   */
+  sidecars?: readonly SchedulerSidecar[];
+}
+
+export interface SchedulerSidecar {
+  tick(now: number, signal: AbortSignal): Promise<void>;
 }
 
 const DEFAULT_CLOCK: SchedulerClock = {
@@ -113,6 +125,7 @@ export class Scheduler {
     const handler = () => {
       if (!this.leads()) return;
       void this.tickOnce();
+      this.tickSidecars();
     };
     this.timer = this.clock.setInterval(handler, this.options.tickMs);
   }
@@ -212,6 +225,17 @@ export class Scheduler {
     } catch (err) {
       this.options.logger?.warn("scheduler leadership listener failed", {
         error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private tickSidecars(): void {
+    const now = this.clock.now();
+    for (const sidecar of this.options.sidecars ?? []) {
+      void sidecar.tick(now, this.stopController.signal).catch((err: unknown) => {
+        this.options.logger?.warn("scheduler sidecar failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
     }
   }

@@ -29,6 +29,9 @@ Example entry:
 }
 ```
 
+
+`sidecars` is periodic work that must run in the leading process only, ticked after the leadership check on each interval tick (not on `tickOnce`): today the [mail trigger](../atomic-mail/README.md) (ATO-601). Each sidecar throttles itself; a rejection is logged.
+
 Entry point: [scheduler.ts](scheduler.ts). Read the root instruction route and the underlying domain instructions before cross-domain changes.
 
 Checks: `npx vitest run src/scheduler` when tests are present; `npm run lint`; `npm run docs:check`.

@@ -2,6 +2,7 @@ export { Scheduler } from "./scheduler.js";
 export type {
   SchedulerClock,
   SchedulerOptions,
+  SchedulerSidecar,
   SchedulerTaskRunner,
   SchedulerTimerHandle,
 } from "./scheduler.js";

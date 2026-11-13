@@ -18,6 +18,7 @@ import {
   nodeFileTriggerFs,
   realFileTriggerClock,
   Scheduler,
+  type SchedulerSidecar,
   type FileTriggerFire,
 } from "../../scheduler/index.js";
 import { WebhookSessionStore, WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
@@ -206,8 +207,10 @@ export function createRuntimeScheduler(args: {
    * after the scheduler). Absent or `null`: Telegram is not wanted here.
    */
   resolveTelegram?: () => Pick<TelegramChannel, "hasToken" | "state"> | null;
+  /** Periodic work that runs only in the leading process (the mail trigger, ATO-601). */
+  sidecars?: readonly SchedulerSidecar[];
 }): Scheduler | null {
-  const { config, taskRunner, logger, metrics, resolveTelegram } = args;
+  const { config, taskRunner, logger, metrics, resolveTelegram, sidecars } = args;
   if (!config.tasks.enabled || !config.tasks.schedulerEnabled) return null;
   // ATO-416: the desktop's `atag serve` and the TUI can share this state
   // dir, each with a scheduler. Only one drains due tasks — the Telegram
@@ -231,6 +234,7 @@ export function createRuntimeScheduler(args: {
     ...(fileTriggers
       ? { onLeadershipChange: (leading: boolean) => fileTriggers.setLeader(leading) }
       : {}),
+    ...(sidecars && sidecars.length > 0 ? { sidecars } : {}),
   });
 }
 
