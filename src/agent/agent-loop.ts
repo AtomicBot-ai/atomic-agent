@@ -538,6 +538,9 @@ export class AgentLoop {
             ...(this.deps.liveWorkerSlots
               ? { liveWorkerSlots: this.deps.liveWorkerSlots }
               : {}),
+            ...(this.deps.fusionPastRuns
+              ? { fusionPastRuns: this.deps.fusionPastRuns }
+              : {}),
             toolTransport: contextSlice?.toolTransport ?? effectiveTransport,
             ...(options.modelModePolicy ? {
               modelModePolicy: options.modelModePolicy,

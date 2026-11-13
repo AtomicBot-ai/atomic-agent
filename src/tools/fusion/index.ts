@@ -158,3 +158,10 @@ export {
   planResume,
   renderResumeRequest,
 } from "./run-resume.js";
+export {
+  FUSION_OUTCOMES_FILE_NAME,
+  FusionOutcomeLog,
+  outcomeRowFor,
+} from "./outcome-log.js";
+export type { FusionOutcomeRow, OutcomeSize } from "./outcome-log.js";
+export { summarizeOutcomes } from "./outcome-summary.js";

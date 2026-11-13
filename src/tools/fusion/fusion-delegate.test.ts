@@ -1974,3 +1974,27 @@ describe("scopeInsideStateDir (ATO-1267)", () => {
     expect(scopeInsideStateDir(["/home/u/.atomic-agent"], undefined)).toEqual([]);
   });
 });
+
+describe("fusion.delegate — outcome log (ATO-949)", () => {
+  it("logs one row per finished task, counts and labels only", async () => {
+    const append = vi.fn();
+    const tool = buildFusionDelegateTool(deps({ outcomeLog: { append } }));
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(append).toHaveBeenCalledTimes(2);
+    const rows = append.mock.calls.map((c) => c[0]);
+    for (const row of rows) {
+      expect(row).toMatchObject({ leg: "local", model: "small", size: "small", costUsd: null });
+      expect(JSON.stringify(row)).not.toMatch(/Do one|Do two|One|Two|t1|t2/);
+    }
+  });
+
+  it("calls a cloud leg cloud", async () => {
+    const append = vi.fn();
+    const tool = buildFusionDelegateTool(
+      deps({ outcomeLog: { append }, workerSupportsSlotAffinity: () => false }),
+    );
+    await tool.run({ tasks: [TASKS[0]!] }, ctx());
+    expect(append.mock.calls[0]?.[0]).toMatchObject({ leg: "cloud" });
+  });
+});

@@ -67,3 +67,23 @@ describe("llm.runMode.fusion.roles (ATO-943)", () => {
     expect(scrubRunModeProviderPins(runMode, "openrouter")).toBe(runMode);
   });
 });
+
+describe("llm.runMode.fusion.outcomeJournal (ATO-949)", () => {
+  const parse = (fusion: unknown) =>
+    parseLlmRunModeConfig({ fusion }, providers, "llm.runMode").fusion;
+
+  it("is absent by default, which means on", () => {
+    expect(parse({})?.outcomeJournal).toBeUndefined();
+  });
+
+  it("parses true and false", () => {
+    expect(parse({ outcomeJournal: false })?.outcomeJournal).toBe(false);
+    expect(parse({ outcomeJournal: true })?.outcomeJournal).toBe(true);
+  });
+
+  it("names the field for a wrong type", () => {
+    expect(() => parse({ outcomeJournal: "no" })).toThrow(
+      /llm\.runMode\.fusion\.outcomeJournal/,
+    );
+  });
+});
