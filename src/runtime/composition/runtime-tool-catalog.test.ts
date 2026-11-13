@@ -372,17 +372,24 @@ describe("runtimeKnownSecrets (ATO-1077)", () => {
     ]);
   });
 
-  it("lists a provider's extra keys too (ATO-471)", () => {
+  it("lists the values behind a provider's extra key env vars too (ATO-471)", () => {
     const config = {
       llm: {
         activeTextProvider: "groq",
         activeEmbeddingProvider: "groq",
         providers: [
-          { id: "groq", kind: "openai-compatible", apiKey: "Aa1Bb2Cc3Dd4", extraApiKeys: ["Ee5Ff6Gg7Hh8", "Ii9Jj0Kk1Ll2"] },
+          {
+            id: "groq",
+            kind: "openai-compatible",
+            apiKey: "Aa1Bb2Cc3Dd4",
+            extraApiKeyEnvVars: ["XK_ONE", "XK_TWO", "XK_UNSET"],
+          },
         ],
       },
     } as unknown as Parameters<typeof runtimeKnownSecrets>[0];
-    expect(runtimeKnownSecrets(config, {})).toEqual([
+    const env = { XK_ONE: "Ee5Ff6Gg7Hh8", XK_TWO: "Ii9Jj0Kk1Ll2" };
+    const groq = runtimeKnownSecrets(config, env).filter((s) => s.label === "groq-key");
+    expect(groq).toEqual([
       { label: "groq-key", value: "Aa1Bb2Cc3Dd4" },
       { label: "groq-key", value: "Ee5Ff6Gg7Hh8" },
       { label: "groq-key", value: "Ii9Jj0Kk1Ll2" },

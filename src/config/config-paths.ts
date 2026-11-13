@@ -160,14 +160,7 @@ function editDistance(a: string, b: string): number {
  * non-empty string is the thing worth hiding — so masking is decided in
  * `formatConfigValue`, where the value is in hand.
  */
-const SECRET_NAMES = new Set([
-  "secret",
-  "token",
-  "apikey",
-  // `extraApiKeys` (ATO-471): a list of keys.
-  "apikeys",
-  "password",
-]);
+const SECRET_NAMES = new Set(["secret", "token", "apikey", "password"]);
 
 /**
  * True when a leaf's name suggests its value is a credential. Callers
@@ -187,7 +180,9 @@ export function formatConfigValue(key: string, value: unknown): string {
   if (isSecretConfigKey(key) && typeof value === "string" && value.length > 0) {
     return "***";
   }
-  // A list of keys shows how many there are, never what they are.
+  // A list under a secret name (`extraApiKeyEnvVars`, ATO-471) shows how
+  // many entries there are, never what they are: should a key be pasted
+  // where a name belongs, it still does not reach the terminal.
   if (
     isSecretConfigKey(key) &&
     Array.isArray(value) &&

@@ -44,3 +44,25 @@ export function resolveLlmProviderApiKey(
   }
   return undefined;
 }
+
+/**
+ * The values of an entry's `extraApiKeyEnvVars` (ATO-471), read the way
+ * `apiKeyEnvVar` is: from `process.env`, which bootstrap fills from
+ * `<stateDir>/.env`. config.json holds only the names. Unset or blank
+ * variables are skipped; order is kept, repeats are dropped.
+ */
+export function resolveExtraApiKeys(
+  entry: { readonly extraApiKeyEnvVars?: readonly string[] },
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const out: string[] = [];
+  const names = entry.extraApiKeyEnvVars;
+  // Defensive: a hand-edited runtime entry may carry a non-array here.
+  if (!Array.isArray(names)) return out;
+  for (const name of names) {
+    if (typeof name !== "string" || name.length === 0) continue;
+    const key = env[name]?.trim();
+    if (key && key.length > 0 && !out.includes(key)) out.push(key);
+  }
+  return out;
+}

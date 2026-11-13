@@ -63,9 +63,11 @@ describe("config path helpers reject prototype-reaching keys", () => {
 });
 
 describe("secret masking for a list of keys (ATO-471)", () => {
-  it("treats extraApiKeys as secret and shows only how many keys there are", () => {
-    expect(isSecretConfigKey("llm.providers.groq.extraApiKeys")).toBe(true);
-    expect(formatConfigValue("extraApiKeys", ["gsk-a", "gsk-b"])).toBe('["***","***"]');
+  it("treats extraApiKeyEnvVars as secret and shows only how many entries there are", () => {
+    expect(isSecretConfigKey("llm.providers.groq.extraApiKeyEnvVars")).toBe(true);
+    expect(formatConfigValue("extraApiKeyEnvVars", ["GROQ_KEY_2", "GROQ_KEY_3"])).toBe(
+      '["***","***"]',
+    );
   });
 
   it("still masks a single key and leaves a budget number alone", () => {

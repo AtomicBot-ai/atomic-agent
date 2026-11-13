@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import { resetConfigCache } from "../../../config/index.js";
+import { getUserConfigPath, writeUserConfigFileSync } from "../../../config/config-file.js";
+import { USER_CONFIG_DEFAULTS } from "../../../config/config-schema.js";
+import { loadConfig } from "../../../config/load-config.js";
+import { resetKeyPoolState } from "../../fallback/key-pool.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../../model-profile.js";
 import { registerBuiltInProviderKinds } from "./register-built-in-providers.js";
 import {
@@ -311,5 +318,124 @@ describe("the vision request budget through the llama-server factory", () => {
     process.env.ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS = "600000";
     resetConfigCache();
     expect(await visionOutcome({ requestTimeoutMs: 20 })).toBe("rejected");
+  });
+});
+
+describe("extra keys by env var name (ATO-471)", () => {
+  const silentLogger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  } as never;
+
+  const chatOk = () =>
+    new Response(
+      JSON.stringify({
+        choices: [
+          { message: { role: "assistant", content: "ok" }, finish_reason: "stop" },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  /** Records the Authorization each request carried; answers per key. */
+  function stubFetchByKey(answers: Record<string, () => Response>): string[] {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        const auth = headers.authorization ?? headers.Authorization ?? "";
+        seen.push(auth);
+        const answer = answers[auth.replace(/^Bearer /, "")];
+        return answer ? answer() : new Response("unexpected key", { status: 500 });
+      }),
+    );
+    return seen;
+  }
+
+  async function build(entry: LlmProviderConfigEntry) {
+    registerBuiltInProviderKinds();
+    const factory = getProviderFactory(entry.kind);
+    if (!factory) throw new Error(`${entry.kind} is not registered`);
+    return factory({ config: {} as AtomicAgentConfig, entry, logger: silentLogger });
+  }
+
+  const created: string[] = [];
+  const setEnv = (name: string, value: string) => {
+    created.push(name);
+    process.env[name] = value;
+  };
+
+  afterEach(() => {
+    for (const name of created.splice(0)) delete process.env[name];
+    resetKeyPoolState();
+  });
+
+  it("with apiKey blank and one extra key set, requests carry that key", async () => {
+    setEnv("ATO471_ONLY_KEY", "only-extra-key");
+    const seen = stubFetchByKey({ "only-extra-key": chatOk });
+    const provider = await build({
+      id: "groq",
+      kind: "openai-compatible",
+      baseUrl: "https://api.groq.com/openai/v1",
+      defaultChatModel: "llama-3.3-70b-versatile",
+      extraApiKeyEnvVars: ["ATO471_ONLY_KEY"],
+    });
+    await provider.complete({ prompt: "hi" });
+    expect(seen).toEqual(["Bearer only-extra-key"]);
+  });
+
+  it("reads the extra key from <stateDir>/.env: the pool has both keys and config.json holds no key", async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), "atomic-471-"));
+    const previousStateDir = process.env.ATOMIC_AGENT_STATE_DIR;
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    created.push("ATO471_K1", "K2");
+    try {
+      writeFileSync(join(stateDir, ".env"), "ATO471_K1=key-one\nK2=key-two\n", "utf8");
+      const configPath = getUserConfigPath(stateDir);
+      writeUserConfigFileSync(configPath, {
+        ...USER_CONFIG_DEFAULTS,
+        llm: {
+          activeTextProvider: "groq",
+          activeEmbeddingProvider: "local-llama",
+          toolTransport: "auto",
+          providers: [
+            { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19091" },
+            {
+              id: "groq",
+              kind: "openai-compatible",
+              baseUrl: "https://api.groq.com/openai/v1",
+              defaultChatModel: "llama-3.3-70b-versatile",
+              apiKeyEnvVar: "ATO471_K1",
+              extraApiKeyEnvVars: ["K2"],
+            },
+          ],
+        },
+      });
+      resetConfigCache();
+      const entry = loadConfig().llm?.providers.find((p) => p.id === "groq");
+      if (!entry) throw new Error("groq entry missing");
+
+      // The first key is refused; the pool moves on to K2's key.
+      const seen = stubFetchByKey({
+        "key-one": () => new Response("invalid api key", { status: 401 }),
+        "key-two": chatOk,
+      });
+      const provider = await build(entry as LlmProviderConfigEntry);
+      await provider.complete({ prompt: "hi" });
+      expect(seen).toEqual(["Bearer key-one", "Bearer key-two"]);
+
+      const onDisk = readFileSync(configPath, "utf8");
+      expect(onDisk).toContain('"K2"');
+      expect(onDisk).not.toContain("key-one");
+      expect(onDisk).not.toContain("key-two");
+    } finally {
+      if (previousStateDir === undefined) delete process.env.ATOMIC_AGENT_STATE_DIR;
+      else process.env.ATOMIC_AGENT_STATE_DIR = previousStateDir;
+      resetConfigCache();
+      rmSync(stateDir, { recursive: true, force: true });
+    }
   });
 });

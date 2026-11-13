@@ -60,12 +60,13 @@ export type UserLlmProviderEntry = {
    */
   apiKeyEnvVar?: string;
   /**
-   * More API keys for the same service, tried in order after the main
-   * key when it is rate-limited, refused or out of credit (ATO-471).
-   * Blank entries and duplicates of another key are ignored. Secrets,
-   * like `apiKey`: masked by `config get`/`list` and the log scrubber.
+   * Names of more env vars holding API keys for the same service, tried
+   * in order after the main key when it is rate-limited, refused or out
+   * of credit (ATO-471). Like `apiKeyEnvVar`: the values live in
+   * `<stateDir>/.env`, config.json holds only the names. Each must be an
+   * env var name (`[A-Z_][A-Z0-9_]*`); repeats are dropped.
    */
-  extraApiKeys?: string[];
+  extraApiKeyEnvVars?: string[];
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;
@@ -268,23 +269,35 @@ function parseOptionalString(raw: unknown, field: string): string | undefined {
   return raw;
 }
 
+/** Same shape `<stateDir>/.env` accepts (`dotenv-writer.ts`, `load-dotenv.ts`). */
+const ENV_VAR_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
 /**
- * `extraApiKeys`: an array of strings. Blank strings are kept out rather
- * than refused (a wizard or a hand edit may leave an empty line), and an
- * empty result reads as absent. The message never echoes a value.
+ * `extraApiKeyEnvVars`: an array of env var names. Blank strings are
+ * kept out rather than refused (a hand edit may leave an empty line),
+ * and an empty result reads as absent. Anything that is not an env var
+ * name is refused, so a pasted key never sits in config.json; the
+ * message never echoes the value.
  */
-function parseOptionalKeyList(raw: unknown, field: string): string[] | undefined {
+function parseOptionalEnvVarList(raw: unknown, field: string): string[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (!Array.isArray(raw)) {
-    throw new ConfigValidationError(field, "expected array of strings");
+    throw new ConfigValidationError(field, "expected array of env var names");
   }
   const out: string[] = [];
   raw.forEach((value, i) => {
     if (typeof value !== "string") {
       throw new ConfigValidationError(`${field}[${i}]`, "expected string");
     }
-    const key = value.trim();
-    if (key.length > 0 && !out.includes(key)) out.push(key);
+    const name = value.trim();
+    if (name.length === 0) return;
+    if (!ENV_VAR_NAME.test(name)) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        "must be an env var name ([A-Z_][A-Z0-9_]*) whose value is in <stateDir>/.env, not the key itself",
+      );
+    }
+    if (!out.includes(name)) out.push(name);
   });
   return out.length > 0 ? out : undefined;
 }
@@ -348,7 +361,10 @@ export function parseLlmProviderEntry(
     ...(obj.modelModes == null ? {} : { modelModes: parseModelModes(obj.modelModes, `${field}.modelModes`, fromFile) }),
     url: parseOptionalString(obj.url, `${field}.url`),
     apiKey: parseOptionalString(obj.apiKey, `${field}.apiKey`),
-    extraApiKeys: parseOptionalKeyList(obj.extraApiKeys, `${field}.extraApiKeys`),
+    extraApiKeyEnvVars: parseOptionalEnvVarList(
+      obj.extraApiKeyEnvVars,
+      `${field}.extraApiKeyEnvVars`,
+    ),
     model: parseOptionalString(obj.model, `${field}.model`),
     baseUrl: parseOptionalString(obj.baseUrl, `${field}.baseUrl`),
     apiKeyEnvVar: parseOptionalString(

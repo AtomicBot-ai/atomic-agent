@@ -832,8 +832,8 @@ describe("llm.activeEmbeddingProvider default", () => {
   });
 });
 
-describe("provider extraApiKeys (ATO-471)", () => {
-  const withEntry = (extraApiKeys: unknown) => ({
+describe("provider extraApiKeyEnvVars (ATO-471)", () => {
+  const withEntry = (extraApiKeyEnvVars: unknown) => ({
     version: USER_CONFIG_VERSION,
     llm: {
       activeTextProvider: "groq",
@@ -850,8 +850,8 @@ describe("provider extraApiKeys (ATO-471)", () => {
           kind: "openai-compatible",
           baseUrl: "https://api.groq.com/openai/v1",
           defaultChatModel: "llama-3.3-70b-versatile",
-          apiKey: "gsk-main",
-          ...(extraApiKeys === undefined ? {} : { extraApiKeys }),
+          apiKeyEnvVar: "GROQ_API_KEY",
+          ...(extraApiKeyEnvVars === undefined ? {} : { extraApiKeyEnvVars }),
         },
       ],
     },
@@ -860,33 +860,35 @@ describe("provider extraApiKeys (ATO-471)", () => {
   const entry = (parsed: ReturnType<typeof parseUserConfigFile>) =>
     parsed.llm?.providers.find((p) => p.id === "groq");
 
-  it("round-trips the extra keys in order", () => {
+  it("round-trips the env var names in order", () => {
     expect(
-      entry(parseUserConfigFile(withEntry(["gsk-two", "gsk-three"])))?.extraApiKeys,
-    ).toEqual(["gsk-two", "gsk-three"]);
+      entry(parseUserConfigFile(withEntry(["GROQ_KEY_2", "GROQ_KEY_3"])))?.extraApiKeyEnvVars,
+    ).toEqual(["GROQ_KEY_2", "GROQ_KEY_3"]);
   });
 
-  it("drops blank lines and repeated keys, and reads an empty list as absent", () => {
+  it("drops blank lines and repeated names, and reads an empty list as absent", () => {
     expect(
-      entry(parseUserConfigFile(withEntry([" gsk-two ", "", "gsk-two"])))?.extraApiKeys,
-    ).toEqual(["gsk-two"]);
-    expect(entry(parseUserConfigFile(withEntry(["", "  "])))?.extraApiKeys).toBeUndefined();
+      entry(parseUserConfigFile(withEntry([" GROQ_KEY_2 ", "", "GROQ_KEY_2"])))
+        ?.extraApiKeyEnvVars,
+    ).toEqual(["GROQ_KEY_2"]);
+    expect(entry(parseUserConfigFile(withEntry(["", "  "])))?.extraApiKeyEnvVars).toBeUndefined();
   });
 
   it("is absent by default", () => {
-    expect(entry(parseUserConfigFile(withEntry(undefined)))?.extraApiKeys).toBeUndefined();
+    expect(entry(parseUserConfigFile(withEntry(undefined)))?.extraApiKeyEnvVars).toBeUndefined();
   });
 
-  it("rejects anything that is not a list of strings, without echoing a value", () => {
-    for (const bad of ["gsk-two", [1], {}]) {
+  it("refuses a key value where a name belongs, and anything not a list of strings, without echoing it", () => {
+    for (const bad of ["GROQ_KEY_2", [1], {}, ["gsk-live-abc123"], ["sk_lower_case"]]) {
       let message = "";
       try {
         parseUserConfigFile(withEntry(bad));
       } catch (err) {
         message = err instanceof Error ? err.message : String(err);
       }
-      expect(message).toMatch(/extraApiKeys/);
-      expect(message).not.toContain("gsk-two");
+      expect(message).toMatch(/extraApiKeyEnvVars/);
+      expect(message).not.toContain("gsk-live-abc123");
+      expect(message).not.toContain("sk_lower_case");
     }
   });
 });

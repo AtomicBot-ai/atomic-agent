@@ -41,10 +41,12 @@ export type LlmProviderConfigEntry = {
    */
   apiKeyHeader?: string;
   /**
-   * More keys for the same service, tried in order after `apiKey` when a
-   * key is refused (ATO-471, `llm/fallback/key-pool.ts`).
+   * Env var names of more keys for the same service, tried in order
+   * after `apiKey` when a key is refused (ATO-471,
+   * `llm/fallback/key-pool.ts`). The values are read from `process.env`
+   * (`<stateDir>/.env`) when the provider is built.
    */
-  extraApiKeys?: string[];
+  extraApiKeyEnvVars?: string[];
   supportsTools?: boolean;
   supportsVision?: boolean;
   requestTimeoutMs?: number;

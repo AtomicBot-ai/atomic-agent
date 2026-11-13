@@ -1,6 +1,9 @@
 import type { UserSubscriptionCliOptions } from "../../config/llm-config.js";
 import { usesExternalCliAuth } from "../../config/provider-auth-mode.js";
-import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
+import {
+  resolveExtraApiKeys,
+  resolveLlmProviderApiKey,
+} from "../../config/resolve-llm-api-key.js";
 import { isLocalProviderUrl } from "./presets/is-local-provider-url.js";
 import { presetForEntryId } from "./presets/provider-presets.js";
 
@@ -58,8 +61,11 @@ export interface ProviderKeySubject {
   readonly kind: string;
   readonly baseUrl?: string;
   readonly apiKey?: string;
-  /** More keys for the same service (ATO-471); any one is a credential. */
-  readonly extraApiKeys?: readonly string[];
+  /**
+   * Env var names of more keys for the same service (ATO-471); any one
+   * that is set is a credential.
+   */
+  readonly extraApiKeyEnvVars?: readonly string[];
   readonly apiKeyEnvVar?: string;
   readonly apiKeyHeader?: string;
   readonly headers?: Readonly<Record<string, string>>;
@@ -141,12 +147,7 @@ function hasCredential(
             : {}),
         });
   if (typeof key === "string" && key.trim().length > 0) return true;
-  if (
-    Array.isArray(entry.extraApiKeys) &&
-    entry.extraApiKeys.some((k) => typeof k === "string" && k.trim().length > 0)
-  ) {
-    return true;
-  }
+  if (resolveExtraApiKeys(entry).length > 0) return true;
   const named = entry.apiKeyHeader?.trim().toLowerCase();
   // Read defensively: this runs on every fallback pick, and a hand-edited
   // config with a non-string header value must not stop every turn.
