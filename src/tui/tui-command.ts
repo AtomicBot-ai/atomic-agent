@@ -478,6 +478,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
             pathOverride: path,
           });
         },
+        onQuestionAnswer: (approvalId, answer) => {
+          // ATO-489: the answer is the `ask_user` tool's result.
+          runtime.approvals.resolve({ approvalId, approved: true, answer });
+        },
         onApprovalReply: (approvalId, message) => {
           // Order matters: resolve first so the blocked tool call fails
           // fast with the operator's words, then steer. Steering before

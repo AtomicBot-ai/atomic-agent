@@ -1044,7 +1044,10 @@ export function approvalHotkey(
   // alt+y on a Mac terminal is a character, not a verdict.
   if (!key.ctrl || key.meta) return null;
   const lower = input.toLowerCase();
-  if (lower === APPROVAL_CHORDS.approve) return "approve";
+  // A question (ATO-489) is answered from the composer, never approved.
+  if (lower === APPROVAL_CHORDS.approve) {
+    return request.category === "user_question" ? null : "approve";
+  }
   if (lower === APPROVAL_CHORDS.deny) return "deny";
   if (lower === APPROVAL_CHORDS.grantCategory && canGrantCategory(request)) {
     return "grant_category";

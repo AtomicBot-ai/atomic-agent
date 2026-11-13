@@ -172,3 +172,51 @@ describe("sidecar approval payloads (ATO-1270)", () => {
     expect(responseGrant({ approvalId: request.approvalId, approved: false, grant: "always" }, gate)).toBeUndefined();
   });
 });
+
+describe("sidecar question payloads (ATO-489)", () => {
+  const question = {
+    prompt: "Which database?",
+    options: [{ label: "SQLite" }, { label: "Postgres" }],
+    multiSelect: false,
+    allowOther: false,
+  };
+
+  function ask(): { gate: ApprovalGate; request: ApprovalRequest; pending: Promise<unknown> } {
+    let seen = null as ApprovalRequest | null;
+    const gate = new ApprovalGate({ emit: (r) => { seen = r; }, level: 5 });
+    const pending = gate.request({
+      approvalId: "q-1",
+      sessionId: "s",
+      tool: "ask_user",
+      category: "user_question",
+      reason: question.prompt,
+      question,
+    });
+    if (seen === null) throw new Error("the question was not emitted");
+    return { gate, request: seen, pending };
+  }
+
+  it("carries the question to the host", () => {
+    const { gate, request } = ask();
+    expect(approvalRequestPayload(request, gate).question).toEqual(question);
+    gate.resolve({ approvalId: "q-1", approved: false, automatic: true });
+  });
+
+  it("resolves an approve with its checked answer", async () => {
+    const { gate, pending } = ask();
+    expect(
+      resolveApprovalResponse({ approvalId: "q-1", approved: true, answer: { selected: [1] } }, gate),
+    ).toBe(true);
+    expect(await pending).toMatchObject({ approved: true, answer: { selected: ["Postgres"] } });
+  });
+
+  it("keeps the question open on an approve without a valid answer", () => {
+    const { gate } = ask();
+    expect(() => resolveApprovalResponse({ approvalId: "q-1", approved: true }, gate)).toThrow(/still open/);
+    expect(() =>
+      resolveApprovalResponse({ approvalId: "q-1", approved: true, answer: { other: "MySQL" } }, gate),
+    ).toThrow(/still open/);
+    expect(gate.isPending("q-1")).toBe(true);
+    gate.resolve({ approvalId: "q-1", approved: false, automatic: true });
+  });
+});

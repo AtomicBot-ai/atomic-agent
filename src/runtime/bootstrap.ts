@@ -348,6 +348,11 @@ export async function createAgentRuntime(
   // "Replace sales.csv?" replaces that file (ATO-860). Kept beside
   // `turnRequests`, set and cleared with it.
   const turnPreviousReplies = new Map<string, string>();
+  // Sessions whose running turn is on a surface with no question card
+  // (the desktop until ATO-1502): `ask_user` answers there at once
+  // instead of raising a question nobody can answer (ATO-489). Set and
+  // cleared by `executeTurn` with the two maps above.
+  const turnsWithoutQuestions = new Set<string>();
   // The files a fan-out's contract declared as inputs, per worker
   // session: the worker runner declares them, `os.fs.write` refuses to
   // replace them (`fs-declared-inputs.ts`).
@@ -355,6 +360,7 @@ export async function createAgentRuntime(
   registerRuntimeCoreTools({
     config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
     resolvePreviousReply: (id) => turnPreviousReplies.get(id),
+    canAskUser: (id) => !turnsWithoutQuestions.has(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore,
     // Only the terminal UI has an `/integrations` screen that saves an Exa
     // key into this process; every other entry point keeps the desktop /
@@ -773,7 +779,7 @@ export async function createAgentRuntime(
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
   const { executeTurn, steer, runTurn, controlGoal } = createRuntimeTurnService(config, {
-    sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
+    sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies, turnsWithoutQuestions },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage },

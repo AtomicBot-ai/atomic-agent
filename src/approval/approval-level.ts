@@ -129,6 +129,12 @@ export type ApprovalCategory =
    * the same way.
    */
   | "hook_ask"
+  /**
+   * A clarifying question from `ask_user` (ATO-489, `user-question.ts`):
+   * not an action to allow but a choice only the person can make, so no
+   * level, grant, rule or reviewer ever answers it (`null` below).
+   */
+  | "user_question"
   | "other";
 
 /**
@@ -163,7 +169,7 @@ export type ApprovalCategory =
  * 3 or 4 could rewrite its own config to level 5 without a prompt and
  * escalate itself across a restart. See `fs-approval-scope.ts`.
  */
-const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
+const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel | null> = {
   fs_write_workspace: 2,
   fs_write_home: 3,
   fs_trash: 3,
@@ -188,6 +194,8 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fs_read_outside: 5,
   local_model_restart: 5,
   hook_ask: 5,
+  // Never: even full trust cannot pick an answer for the person.
+  user_question: null,
   other: 5,
 };
 
@@ -210,7 +218,8 @@ export function isAutoApprovedAt(
   level: ApprovalLevel,
   category: ApprovalCategory,
 ): boolean {
-  return level >= AUTO_APPROVE_FROM_LEVEL[category];
+  const from = AUTO_APPROVE_FROM_LEVEL[category];
+  return from !== null && level >= from;
 }
 
 /**
@@ -279,6 +288,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   local_model_restart: false,
   // A hook that asks for a person asks every time.
   hook_ask: false,
+  // Each question is its own; there is nothing to allow "for the session".
+  user_question: false,
   other: true,
 };
 
@@ -318,6 +329,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   screen_capture: "screen · screenshot",
   local_model_restart: "local model · restart",
   hook_ask: "hook · confirm",
+  user_question: "question for you",
   other: "uncategorised",
 };
 

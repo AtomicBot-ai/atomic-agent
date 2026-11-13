@@ -6,6 +6,10 @@ import {
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { describeAlwaysRule } from "../approval/approval-rules.js";
+import {
+  validateUserQuestionAnswer,
+  type UserQuestionAnswer,
+} from "../approval/user-question.js";
 import type {
   ApprovalRequestPayload,
   ApprovalResponsePayload,
@@ -39,6 +43,7 @@ export function approvalRequestPayload(
     canShape: canGrantShape(request),
     canAlways,
     ...(canAlways ? { alwaysLabel: describeAlwaysRule(request) } : {}),
+    ...(request.question !== undefined ? { question: request.question } : {}),
   };
 }
 
@@ -86,10 +91,32 @@ export function resolveApprovalResponse(
   gate: Pick<ApprovalGate, "pendingRequest" | "canGrantAlways" | "resolve">,
 ): boolean {
   const grant = responseGrant(payload, gate);
+  const answer = questionAnswer(payload, gate);
   return gate.resolve({
     approvalId: payload.approvalId,
     approved: payload.approved,
     ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
     ...(grant !== undefined ? { grant } : {}),
+    ...(answer !== undefined ? { answer } : {}),
   });
+}
+
+/**
+ * The answer an approval of a `user_question` request carries (ATO-489),
+ * checked against the pending question. Throws on an approve without a
+ * valid answer, so the question stays open rather than reaching the
+ * model unanswered. `undefined` for everything that is not a question.
+ */
+function questionAnswer(
+  payload: ApprovalResponsePayload,
+  gate: Pick<ApprovalGate, "pendingRequest">,
+): UserQuestionAnswer | undefined {
+  if (!payload.approved) return undefined;
+  const question = gate.pendingRequest(payload.approvalId)?.question;
+  if (question === undefined) return undefined;
+  const answer = validateUserQuestionAnswer(question, payload.answer ?? {});
+  if (typeof answer === "string") {
+    throw new Error(`question ${payload.approvalId}: ${answer}; it is still open`);
+  }
+  return answer;
 }

@@ -39,6 +39,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "screen_capture",
   "local_model_restart",
   "hook_ask",
+  "user_question",
   "other",
 ];
 
@@ -52,7 +53,7 @@ describe("session-grant eligibility", () => {
     );
   });
 
-  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, shell_dangerous and fusion_fanout", () => {
+  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, user_question, shell_dangerous and fusion_fanout", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
         category !== "shell_dangerous" &&
@@ -62,7 +63,8 @@ describe("session-grant eligibility", () => {
           category !== "email" &&
           category !== "browser_secret" &&
           category !== "local_model_restart" &&
-          category !== "hook_ask",
+          category !== "hook_ask" &&
+          category !== "user_question",
       );
     }
   });
@@ -100,7 +102,8 @@ describe("approval ladder", () => {
     // One row per category: the first level at which it goes silent.
     // This is THE product decision — a change here is a behaviour
     // change, not a refactor.
-    const silentFrom: Record<ApprovalCategory, ApprovalLevel> = {
+    // `null`: never silent, at any level.
+    const silentFrom: Record<ApprovalCategory, ApprovalLevel | null> = {
       fs_write_workspace: 2,
       fs_write_home: 3,
       fs_trash: 3,
@@ -135,17 +138,19 @@ describe("approval ladder", () => {
       screen_capture: 3,
       local_model_restart: 5,
       hook_ask: 5,
+      // A question only the person can answer (ATO-489).
+      user_question: null,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
       ApprovalCategory,
-      ApprovalLevel,
+      ApprovalLevel | null,
     ][]) {
       for (const level of LEVELS) {
         expect(
           isAutoApprovedAt(level, category),
           `${category} at level ${level}`,
-        ).toBe(level >= from);
+        ).toBe(from !== null && level >= from);
       }
     }
   });

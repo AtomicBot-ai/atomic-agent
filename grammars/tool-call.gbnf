@@ -121,7 +121,7 @@ fusion-tool ::= "\"fusion.delegate\""
 verify-tool ::= "\"verify." ( "syntax" | "run" ) "\""
 # The live task plan. The prompt tells the model to keep it for any work of
 # three steps or more, so a local model has to be able to spell the name.
-plan-tool ::= "\"plan.update\""
+plan-tool ::= "\"plan.update\"" | "\"ask_user\""
 # Native MCP discovery / resource / prompt tools. Registered once MCP is on
 # (a server configured, or added live) and never unregistered, so they stay
 # after the last server is removed live; with MCP off from the start

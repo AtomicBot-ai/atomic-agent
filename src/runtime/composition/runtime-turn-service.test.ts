@@ -137,6 +137,55 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("taskMaxSteps");
   });
 
+  it("hides ask_user from desktop turns and keeps it for the TUI, the CLI and Telegram (ATO-489)", async () => {
+    const optionsFor = async (id: string, extra: Parameters<typeof fixture.service.executeTurn>[2]) => {
+      await fixture.service.executeTurn(session(id), "request", extra);
+      return fixture.loop.runTurn.mock.calls.at(-1)?.[1];
+    };
+    // The desktop: the sidecar, and an HTTP extensions client without the flag.
+    for (const [id, extra] of [
+      ["sidecar", { origin: "sidecar" as const }],
+      ["desktop-http", { origin: "http" as const, answerChannel: "desktop" as const }],
+      ["plain-http", { origin: "http" as const }],
+    ] as const) {
+      const filter = (await optionsFor(id, extra))?.toolFilter;
+      expect(filter, id).toBeDefined();
+      expect(filter!("ask_user"), id).toBe(false);
+      expect(filter!("fs.read"), id).toBe(true);
+    }
+    // Surfaces that draw the question card get no filter at all.
+    for (const [id, extra] of [
+      ["tui", { origin: "tui" as const }],
+      ["telegram", { origin: "telegram" as const }],
+      ["cli", {}],
+      ["declared", { origin: "http" as const, answerChannel: "desktop" as const, questions: true }],
+    ] as const) {
+      expect(await optionsFor(id, extra), id).not.toHaveProperty("toolFilter");
+    }
+    // A caller's own filter still applies on a desktop turn.
+    const own = await optionsFor("own", { origin: "sidecar", toolFilter: (name) => name !== "fs.write" });
+    expect(own?.toolFilter?.("fs.write")).toBe(false);
+    expect(own?.toolFilter?.("ask_user")).toBe(false);
+    expect(own?.toolFilter?.("fs.read")).toBe(true);
+  });
+
+  it("records a desktop turn as unable to ask for the length of the turn only (ATO-489)", async () => {
+    const turnsWithoutQuestions = new Set<string>();
+    const service = createRuntimeTurnService(fixture.config, {
+      ...fixture.deps,
+      sessions: { ...fixture.deps.sessions, turnsWithoutQuestions },
+    });
+    const seen: boolean[] = [];
+    fixture.loop.runTurn.mockImplementation(async (value: SessionState, options: RunTurnOptions) => {
+      seen.push(turnsWithoutQuestions.has(value.id));
+      return result(value, options);
+    });
+    await service.executeTurn(session("desk"), "request", { origin: "sidecar" });
+    await service.executeTurn(session("term"), "request", { origin: "tui" });
+    expect(seen).toEqual([true, false]);
+    expect(turnsWithoutQuestions.size).toBe(0);
+  });
+
   it("marks the turn's progress at its start and checkpoints every completed step (ATO-1109)", async () => {
     const begin = vi.spyOn(fixture.sessionStore, "beginTurn");
     fixture.loop.runTurn.mockImplementationOnce(async (value: SessionState, options: RunTurnOptions) => {

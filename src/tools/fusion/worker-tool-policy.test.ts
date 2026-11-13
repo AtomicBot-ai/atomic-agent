@@ -26,6 +26,7 @@ describe("worker tool policy", () => {
   it("hides exactly the delegation, session-ending, scheduling, memory-writing and screen tools", () => {
     expect([...WORKER_EXCLUDED_TOOLS].sort()).toEqual(
       [
+        "ask_user",
         "finish",
         "fusion.delegate",
         "memory.notes.forget",
