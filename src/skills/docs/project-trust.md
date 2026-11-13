@@ -3,7 +3,7 @@
 Status: current
 Owner: src/skills/
 
-A cloned repository can ship skills (`.atomic-agent/skills`, `.agents/skills`, `.claude/skills`, `.cursor/skills`, `.pi/skills`) and instruction files (`AGENTS.md`, `CLAUDE.md` and the other names in the [runtime workspace contract](../../runtime/docs/cloud-workspace.md)). Nobody approved them, so they stay unloaded until the operator trusts the folder. Global skills in the state directory are not covered and always load.
+A cloned repository can ship skills (`.atomic-agent/skills`, `.agents/skills`, `.claude/skills`, `.cursor/skills`, `.pi/skills`) and instruction files (`AGENTS.md`, `CLAUDE.md` and the other names in the [runtime workspace contract](../../runtime/docs/cloud-workspace.md)). Nobody approved them, so they stay unloaded until the operator trusts the folder. Global skills in the state directory and skills in the shared `~/.agents/skills` folder are not covered and always load. A session started in the home folder reads `~/.agents/skills` as that shared folder, not as project content.
 
 ## Rule
 

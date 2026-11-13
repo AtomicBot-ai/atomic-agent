@@ -12,16 +12,16 @@ import { ApprovalGate } from "../approval/approval-gate.js";
 import { buildSkillRunScriptTool } from "../tools/skill/skill-run-script.js";
 import { buildSkillViewTool } from "../tools/skill/skill-view.js";
 import { SkillRegistry } from "./skill-registry.js";
-import { loadWorkspaceSkills } from "./workspace-skills.js";
+import { loadWorkspaceSkills, sharedAgentSkillsDir } from "./workspace-skills.js";
 import { installPluginFromDir } from "../plugins/plugin-install.js";
 import { readPluginState } from "../plugins/plugin-store.js";
 import { writeClaudePlugin } from "../plugins/plugin-test-helpers.js";
 
 describe("session workspace skills and live policy", () => {
-  let base: string; let a: string; let b: string;
+  let base: string; let a: string; let b: string; let home: string;
   beforeEach(() => {
     base = realpathSync(mkdtempSync(join(tmpdir(), "workspace-skills-")));
-    a = join(base, "a"); b = join(base, "b"); mkdirSync(a); mkdirSync(b);
+    a = join(base, "a"); b = join(base, "b"); home = join(base, "home"); mkdirSync(a); mkdirSync(b); mkdirSync(home);
     vi.stubEnv("ATOMIC_AGENT_STATE_DIR", join(base, "state")); resetConfigCache();
   });
   afterEach(() => { vi.unstubAllEnvs(); resetConfigCache(); rmSync(base, { recursive: true, force: true }); });
@@ -31,9 +31,11 @@ describe("session workspace skills and live policy", () => {
   }
   /** Project skills load only once the operator trusted the folder (ATO-298). */
   function trust(dir: string, ...skills: string[]) { recordProjectTrust(dir, "trusted", { skills, instructions: [] }); }
-  function load(dir = a, compatible = true) {
-    const c = getConfig(); return loadWorkspaceSkills(dir, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName, configFile: c.paths.userConfigFile, defaults: c.skills }, compatible);
+  function load(dir = a, compatible = true, extra: { pluginSkills?: () => { plugin: string; dir: string; rootSkill: boolean }[] } = {}) {
+    const c = getConfig(); return loadWorkspaceSkills(dir, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName, configFile: c.paths.userConfigFile, defaults: c.skills, homeDir: home, ...extra }, compatible);
   }
+  /** Skills `npx skills -g` installs "for all agents" (ATO-706). */
+  const shared = () => join(home, ".agents/skills");
 
   it("a plugin skill is switched in the plugin's record and never lands in config.json", () => {
     const stateDir = getConfig().paths.stateDir;
@@ -217,5 +219,82 @@ describe("session workspace skills and live policy", () => {
     expect(skills.entries.find(e => e.record.manifest.name === "kept")?.disabledReasons).toEqual([]);
     expect(skills.entries.find(e => e.record.manifest.name === "banned")?.disabledReasons).toEqual(["disabled globally"]);
     expect(skills.diagnostics.join("\n")).toMatch(/config unreadable/);
+  });
+  it("reads skills installed for all agents in ~/.agents/skills without folder trust", () => {
+    const path = put(shared(), "everywhere", "SHARED BODY");
+    const found = load();
+    const entry = found.entries.find(e => e.record.manifest.name === "everywhere");
+    expect(entry?.record.manifestPath).toBe(path);
+    expect(entry?.record.source).toBe("global");
+    expect(entry?.shared).toBe(true);
+    expect(entry?.disabledReasons).toEqual([]);
+    expect(found.assertAvailable("everywhere").body).toContain("SHARED BODY");
+    // Local (non-compatibility) discovery reads the shared folder too.
+    expect(load(a, false).entries.find(e => e.record.manifest.name === "everywhere")?.shared).toBe(true);
+    // Turning project skills off does not hide user-level shared skills.
+    setProjectSkillsEnabled(a, false);
+    expect(load().entries.find(e => e.record.manifest.name === "everywhere")?.disabledReasons).toEqual([]);
+  });
+
+  it("lets Atomic global and project copies win over the shared folder on a name clash", () => {
+    const sharedPath = put(shared(), "example", "SHARED"); const projectPath = put(join(a, ".claude/skills"), "example", "PROJECT");
+    trust(a, "example");
+    let found = load();
+    expect(found.entries).toHaveLength(1);
+    expect(found.entries[0]?.record.manifestPath).toBe(projectPath);
+    expect(found.entries[0]?.shared).toBeUndefined();
+    expect(found.diagnostics.join("\n")).toContain(`using ${projectPath}; shadowed ${sharedPath}`);
+    const globalPath = put(getConfig().paths.globalSkillsDir, "example", "GLOBAL");
+    found = load();
+    expect(found.entries[0]?.record.manifestPath).toBe(globalPath);
+    expect(found.entries[0]?.sources).toEqual([projectPath, globalPath, sharedPath]);
+    rmSync(projectPath); rmSync(globalPath);
+    expect(load().entries[0]?.record.manifestPath).toBe(sharedPath);
+  });
+
+  it("lets a plugin skill win over a shared copy of the same name", () => {
+    const sharedPath = put(shared(), "demo", "SHARED");
+    const pluginDir = dirname(put(join(base, "plugin-root"), "demo", "PLUGIN"));
+    const found = load(a, true, { pluginSkills: () => [{ plugin: "demo", dir: pluginDir, rootSkill: true }] });
+    expect(found.entries).toHaveLength(1);
+    expect(found.entries[0]?.record.plugin).toBe("demo");
+    expect(found.entries[0]?.body).toContain("PLUGIN");
+    expect(found.diagnostics.join("\n")).toContain(`using the plugin copy ${join(pluginDir, "SKILL.md")}; shadowed ${sharedPath}`);
+  });
+
+  it("applies global and workspace bans to shared skills", () => {
+    put(shared(), "example");
+    setSkillDisabled("example", true, a);
+    expect(load().entries[0]?.disabledReasons).toEqual(["disabled in workspace"]);
+    setSkillDisabled("example", false, a); setSkillDisabled("example", true);
+    expect(load().entries[0]?.disabledReasons).toEqual(["disabled globally"]);
+  });
+
+  it("treats ~/.agents/skills as the shared folder when the session runs in the home folder", () => {
+    put(shared(), "example");
+    const found = load(home);
+    expect(found.entries).toHaveLength(1); expect(found.entries[0]?.shared).toBe(true);
+    expect(found.entries[0]?.disabledReasons).toEqual([]);
+  });
+
+  it("confines a symlinked shared skill to its own resolved folder", () => {
+    const target = dirname(put(join(base, "store"), "linked", "LINKED BODY"));
+    mkdirSync(shared(), { recursive: true }); symlinkSync(target, join(shared(), "linked"));
+    const entry = load().entries.find(e => e.record.manifest.name === "linked");
+    expect(entry?.record.rootDir).toBe(target); expect(entry?.shared).toBe(true);
+  });
+
+  it("resolves the shared folder from the home folder, an override, or turns it off", () => {
+    expect(sharedAgentSkillsDir(home)).toBe(join(home, ".agents", "skills"));
+    expect(sharedAgentSkillsDir(null)).toBeNull();
+    expect(sharedAgentSkillsDir(undefined, { ATOMIC_AGENT_SHARED_SKILLS_DIR: join(base, "custom") })).toBe(join(base, "custom"));
+    put(join(base, "custom"), "custom-one");
+    const c = getConfig();
+    vi.stubEnv("ATOMIC_AGENT_SHARED_SKILLS_DIR", join(base, "custom"));
+    const viaEnv = loadWorkspaceSkills(a, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName, configFile: c.paths.userConfigFile, defaults: c.skills });
+    expect(viaEnv.entries.map(e => e.record.manifest.name)).toContain("custom-one");
+    put(shared(), "off"); expect(load().entries.some(e => e.record.manifest.name === "off")).toBe(true);
+    const off = loadWorkspaceSkills(a, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName, configFile: c.paths.userConfigFile, defaults: c.skills, homeDir: null });
+    expect(off.entries.some(e => e.record.manifest.name === "off")).toBe(false);
   });
 });
