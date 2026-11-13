@@ -27,6 +27,8 @@ function loadCore(url) {
   runInNewContext(outputText, {
     exports,
     URL,
+    // The core runs under Node: the Vertex preset reads process.platform when the module loads (#1534).
+    process,
     require: (specifier) => {
       assert.ok(specifier.startsWith("."), `unexpected core dependency: ${specifier}`);
       return loadCore(new URL(specifier.replace(/\.js$/, ".ts"), url));
