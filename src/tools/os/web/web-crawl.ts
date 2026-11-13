@@ -7,6 +7,7 @@
  * same-origin links (breadth first, up to `maxDepth`) and the sitemap.
  */
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { offlineRefusal } from "../../../llm/offline-network.js";
 import { runCommand as defaultRunCommand } from "../../../sandbox/command-runner.js";
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import type { ToolDefinition } from "../../tool-registry.js";
@@ -72,6 +73,12 @@ export function buildOsWebCrawlTool(options: OsWebCrawlOptions = {}): ToolDefini
     untrustedOutput: "web pages",
     async run(rawArgs, ctx) {
       const args = parseCrawlArgs(rawArgs, crawlCfg);
+      // ATO-1084: like os.web.fetch, nothing is resolved or fetched while
+      // offline (the SSRF guard below would otherwise look the host up).
+      const offline = offlineRefusal(args.url, CRAWL_TOOL_NAME);
+      if (offline) {
+        return errorResult(args, offline.message, true, { offline: true, host: offline.host });
+      }
       let start: URL;
       try {
         start = parseHttpUrl(args.url);
