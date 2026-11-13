@@ -1,6 +1,12 @@
 import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
 import type { SessionState } from "../session/session-state.js";
 import { readSessionTitle } from "../session/session-title.js";
+import { getConfig } from "../config/index.js";
+import {
+  SESSION_NEXT_STEP_METADATA_KEY,
+  nextStepSuggestionsEnabled,
+  readSessionNextStep,
+} from "../session/session-next-step.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { openaiError } from "./openai-errors.js";
 import {
@@ -17,6 +23,9 @@ import {
  * transcript by default — callers fetch the full state via
  * `/api/sessions/{id}` when they need it. `title` is the generated
  * session name (`agent.nameSessions`), `null` until one is stored.
+ * `nextStep` is the suggested next message after the last answered turn
+ * (`tui.nextStepSuggestions`, ATO-1093): `null` when none is stored, the
+ * setting is off, a turn is running, or a later turn made it stale.
  */
 export function createListSessionsHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -33,6 +42,7 @@ export function createListSessionsHandler(): HttpHandler {
     }
     const workingDir = ctx.runtime.capabilities.workingDir;
     // ATO-731: chats keep their own folders, so `scope=all` lists them from every folder.
+    const suggestionsOn = nextStepSuggestionsEnabled(getConfig());
     const sessions = url.searchParams.get("scope") === "all"
       ? ctx.runtime.sessionStore.listRecent(limit)
       : ctx.runtime.sessionStore.listByWorkingDir(workingDir, limit);
@@ -51,6 +61,7 @@ export function createListSessionsHandler(): HttpHandler {
         updatedAt: s.updatedAt,
         lastError: s.lastError,
         title: readSessionTitle(s.metadata),
+        nextStep: suggestionsOn ? readSessionNextStep(s) : null,
       })),
     });
   };
@@ -64,7 +75,7 @@ export function createListSessionsHandler(): HttpHandler {
  * the call in words as the live stream's `tool_progress.done_line` reads
  * once done ("Used github: create issue"). Built here from the stored
  * name and args, never stored, so a reopened chat labels its steps the
- * way they read while the turn ran.
+ * way they read while the turn ran. `nextStep` is as on the list rows.
  */
 export function createGetSessionHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -78,8 +89,53 @@ export function createGetSessionHandler(): HttpHandler {
       sendError(res, 404, openaiError(`session not found: ${id}`));
       return;
     }
-    sendJson(res, 200, withToolCallDoneLines(state));
+    // `nextStep`: the same fresh-only read the list rows carry (ATO-1093).
+    sendJson(res, 200, withNextStep(withToolCallDoneLines(state)));
   };
+}
+
+/**
+ * `GET /api/sessions/{id}/next-step` (ATO-1093, for the desktop composer)
+ * — `200 { sessionId, suggestion }`: the suggested next message for the
+ * session's last finished turn, or `null` until the call has landed, while
+ * a new turn runs (and after it, until its own suggestion lands), and when
+ * `tui.nextStepSuggestions` is off (also for one stored while it was on)
+ * or the call produced nothing. Nothing
+ * is written to clear it: `readSessionNextStep` ties it to `turnCount`.
+ * 404 for an unknown id.
+ */
+export function createGetSessionNextStepHandler(): HttpHandler {
+  return async (_req, res, ctx) => {
+    const id = ctx.params.id;
+    if (!id) {
+      sendError(res, 400, openaiError("session id is required"));
+      return;
+    }
+    const state = ctx.runtime.sessionStore.load(id);
+    if (!state) {
+      sendError(res, 404, openaiError(`session not found: ${id}`));
+      return;
+    }
+    const suggestion = nextStepSuggestionsEnabled(getConfig())
+      ? readSessionNextStep(state)
+      : null;
+    sendJson(res, 200, { sessionId: id, suggestion });
+  };
+}
+
+/**
+ * The state with its `nextStep` read (ATO-1093). With
+ * `tui.nextStepSuggestions` off, `nextStep` is `null` and the stored
+ * `metadata.nextStep` is left out too, so a suggestion written before the
+ * switch was turned off is not served by any route.
+ */
+function withNextStep(state: SessionState): SessionState & { nextStep: string | null } {
+  if (nextStepSuggestionsEnabled(getConfig())) {
+    return { ...state, nextStep: readSessionNextStep(state) };
+  }
+  const { [SESSION_NEXT_STEP_METADATA_KEY]: _hidden, ...metadata } = state.metadata ?? {};
+  void _hidden;
+  return { ...state, metadata, nextStep: null };
 }
 
 /** The state with `done_line` on every tool call row, for the history view. */

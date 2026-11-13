@@ -28,6 +28,7 @@ import {
   createAckUndeliveredSteersHandler,
   createDeleteSessionHandler,
   createGetSessionHandler,
+  createGetSessionNextStepHandler,
   createGetUndeliveredSteersHandler,
   createListSessionsHandler,
   createSteerSessionHandler,
@@ -182,6 +183,8 @@ export function buildRouteTable(): RouteDefinition[] {
     },
     // ATO-731: one chat's folder, changed without restarting serve.
     { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
+    // ATO-1093: the suggested next message after the last finished turn.
+    { method: "GET", path: "/api/sessions/{id}/next-step", handler: createGetSessionNextStepHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
     { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
     {
