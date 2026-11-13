@@ -27,6 +27,7 @@ import { ImessageApprovalBridge } from "./imessage-approval-bridge.js";
 import { normalizeOwnerIds } from "./imessage-handle.js";
 import { handleImessageMessage } from "./imessage-inbound-handler.js";
 import { parseImessageOptions } from "./imessage-options.js";
+import { ChatDbServiceLookup, ServiceCheck, type MessageServiceLookup } from "./imessage-service-check.js";
 import { classifyImsgFailure, scrubImessageError, type ImsgFailure } from "./imsg-errors.js";
 import { createImsgSender, ImsgSendError, type ExecFileLike, type ImessageTarget } from "./imsg-send.js";
 import { ImsgWatcher, type SpawnLike } from "./imsg-watch.js";
@@ -52,6 +53,8 @@ export interface ImessageChannelDeps {
   spawnImpl?: SpawnLike;
   execFileImpl?: ExecFileLike;
   watchDelayMs?: (attempt: number) => number;
+  /** Replaces the read-only chat.db lookup of `message.service`. */
+  serviceLookup?: MessageServiceLookup;
 }
 
 export class ImessageChannel implements Channel {
@@ -63,6 +66,7 @@ export class ImessageChannel implements Channel {
   private lockHeld = false;
   private watcher: ImsgWatcher | null = null;
   private bridge: ImessageApprovalBridge | null = null;
+  private chatDb: ChatDbServiceLookup | null = null;
   private readonly sessions: ChatSessionMap;
   private readonly inflight = new Map<string, AbortController>();
   private readonly approvalBindings = new Map<string, { chatId: number; unsubscribe: () => void }>();
@@ -116,6 +120,13 @@ export class ImessageChannel implements Channel {
     const send = (target: ImessageTarget, text: string): Promise<void> => this.sendSafely(sender.send, target, text);
     const bridge = new ImessageApprovalBridge({ approvals: this.deps.approvals, logger: this.deps.logger, send });
     this.bridge = bridge;
+    // Opened lazily on the first unknown-service message, closed in stop().
+    let lookup = this.deps.serviceLookup;
+    if (!lookup) {
+      this.chatDb = new ChatDbServiceLookup();
+      lookup = this.chatDb.lookup;
+    }
+    const serviceCheck = new ServiceCheck({ lookup, logger: this.deps.logger });
 
     this.watcher = new ImsgWatcher({
       binary: options.value.binary,
@@ -133,6 +144,7 @@ export class ImessageChannel implements Channel {
           ownerIds: () => this.owners,
           allowGroups: options.value.allowGroups,
           bridge,
+          serviceCheck,
           inflight: this.inflight,
           send,
           ensureApprovalSession: (sessionId, chatId, target) => this.bindApprovals(sessionId, chatId, target),
@@ -158,6 +170,8 @@ export class ImessageChannel implements Channel {
     this.bridge = null;
     this.watcher?.stop();
     this.watcher = null;
+    this.chatDb?.close();
+    this.chatDb = null;
     this.releaseLock();
     this.setState("disabled", null);
   }
@@ -165,6 +179,8 @@ export class ImessageChannel implements Channel {
   /** `imsg` is not installed: a resting state with an install hint, not a red failure. */
   private onFatal(failure: ImsgFailure): void {
     this.watcher = null;
+    this.chatDb?.close();
+    this.chatDb = null;
     this.releaseLock();
     this.setState(failure.kind === "missing" ? "disabled" : "down", failure.message);
   }

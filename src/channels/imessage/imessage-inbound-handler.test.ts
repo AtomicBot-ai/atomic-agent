@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatSessionMap } from "../chat-session-map.js";
 import { ImessageApprovalBridge } from "./imessage-approval-bridge.js";
 import { normalizeOwnerIds } from "./imessage-handle.js";
+import { ServiceCheck, type MessageServiceLookup } from "./imessage-service-check.js";
 import { handleImessageMessage, type ImessageInboundContext } from "./imessage-inbound-handler.js";
 import { parseImsgLine, type ImsgMessage } from "./imsg-event.js";
 import type { ImessageTarget } from "./imsg-send.js";
@@ -22,7 +23,9 @@ function msg(over: Partial<ImsgMessage> = {}): ImsgMessage {
   return { rowId: 1, chatId: 42, sender: OWNER, isFromMe: false, isGroup: false, text: "hello", attachmentCount: 0, service: "iMessage", ...over };
 }
 
-function setup(over: { allowGroups?: boolean; owners?: string[]; reply?: string } = {}) {
+function setup(
+  over: { allowGroups?: boolean; owners?: string[]; reply?: string; lookup?: MessageServiceLookup } = {},
+) {
   const sent: Array<{ target: ImessageTarget; text: string }> = [];
   const send = async (target: ImessageTarget, text: string): Promise<void> => {
     sent.push({ target, text });
@@ -56,6 +59,7 @@ function setup(over: { allowGroups?: boolean; owners?: string[]; reply?: string 
     ownerIds: () => normalizeOwnerIds(over.owners ?? ["+1 (415) 555-1212"]),
     allowGroups: over.allowGroups ?? false,
     bridge,
+    serviceCheck: new ServiceCheck({ logger: logger as never, ...(over.lookup ? { lookup: over.lookup } : {}) }),
     inflight: new Map(),
     send,
     ensureApprovalSession: ensure,
@@ -113,6 +117,25 @@ describe("handleImessageMessage", () => {
     await handleImessageMessage(msg({ service: "unknown" }), t.ctx);
     expect(t.runTurn).not.toHaveBeenCalled();
     expect(t.sent).toEqual([]);
+  });
+
+  it("looks up chat.db when the service is unknown and accepts only iMessage", async () => {
+    const ok = setup({ lookup: () => "iMessage" });
+    await handleImessageMessage(msg({ service: "unknown" }), ok.ctx);
+    expect(ok.runTurn).toHaveBeenCalledTimes(1);
+
+    const sms = setup({ lookup: () => "SMS" });
+    await handleImessageMessage(msg({ service: "unknown" }), sms.ctx);
+    expect(sms.runTurn).not.toHaveBeenCalled();
+
+    const broken = setup({
+      lookup: () => {
+        throw new Error("unable to open database file");
+      },
+    });
+    await handleImessageMessage(msg({ service: "unknown" }), broken.ctx);
+    expect(broken.runTurn).not.toHaveBeenCalled();
+    expect(broken.sent).toEqual([]);
   });
 
   it("ignores group chats unless allowGroups, then replies by chat id", async () => {

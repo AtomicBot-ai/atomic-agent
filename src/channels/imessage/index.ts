@@ -43,5 +43,7 @@ export {
 export type { ImsgFailure, ImsgFailureKind } from "./imsg-errors.js";
 export { chunkText, createImsgSender, IMESSAGE_CHUNK_CHARS, ImsgSendError, sendArgs } from "./imsg-send.js";
 export type { ExecFileLike, ImessageTarget, ImsgSender } from "./imsg-send.js";
+export { CHAT_DB_PATH, ChatDbServiceLookup, ServiceCheck } from "./imessage-service-check.js";
+export type { MessageServiceLookup } from "./imessage-service-check.js";
 export { ImsgWatcher } from "./imsg-watch.js";
 export type { ImsgWatcherDeps, SpawnLike, WatchChild } from "./imsg-watch.js";

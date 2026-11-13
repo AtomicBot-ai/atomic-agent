@@ -18,6 +18,7 @@ import type { ChatSessionMap } from "../chat-session-map.js";
 import { runModelCommand } from "../model-command.js";
 import type { ImessageApprovalBridge } from "./imessage-approval-bridge.js";
 import { isOwnerHandle, maskHandle } from "./imessage-handle.js";
+import type { ServiceCheck } from "./imessage-service-check.js";
 import type { ImsgMessage } from "./imsg-event.js";
 import { scrubImessageError } from "./imsg-errors.js";
 import type { ImessageTarget } from "./imsg-send.js";
@@ -30,6 +31,8 @@ export interface ImessageInboundContext {
   ownerIds: () => readonly string[];
   allowGroups: boolean;
   bridge: ImessageApprovalBridge;
+  /** iMessage-only rule; looks up chat.db when the stream does not say. */
+  serviceCheck: Pick<ServiceCheck, "isIMessage">;
   /** `chatKey -> AbortController` of the running turn. */
   inflight: Map<string, AbortController>;
   /** Send and swallow errors (the channel records them for `lastError`). */
@@ -78,20 +81,21 @@ async function route(message: ImsgMessage, ctx: ImessageInboundContext): Promise
     ctx.logger.info("imessage: ignoring group chat message", { chatId: message.chatId });
     return;
   }
-  // Only iMessage authenticates the sender. With Text Message
-  // Forwarding on, an SMS from a spoofed caller id would otherwise look
-  // exactly like the owner's number and drive a shell on this Mac.
-  if (message.service !== "iMessage") {
-    ctx.logger.warn("imessage: dropping message not sent over iMessage", {
-      service: message.service,
-      sender: maskHandle(message.sender),
-    });
-    return;
-  }
   if (!isOwnerHandle(message.sender, ctx.ownerIds())) {
     ctx.logger.warn("imessage: dropping message from non-owner", {
       sender: maskHandle(message.sender),
       ownerConfigured: ctx.ownerIds().length > 0,
+    });
+    return;
+  }
+  // Only iMessage authenticates the sender. With Text Message
+  // Forwarding on, an SMS from a spoofed caller id would otherwise look
+  // exactly like the owner's number and drive a shell on this Mac.
+  // Checked after the owner match so strangers never cost a chat.db read.
+  if (!ctx.serviceCheck.isIMessage(message)) {
+    ctx.logger.warn("imessage: dropping owner-numbered message not proven to be iMessage", {
+      service: message.service,
+      sender: maskHandle(message.sender),
     });
     return;
   }

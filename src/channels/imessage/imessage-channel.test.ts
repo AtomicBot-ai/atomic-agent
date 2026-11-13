@@ -64,6 +64,7 @@ function make(over: Partial<ImessageChannelDeps> = {}, execFail?: string) {
     },
     execFileImpl,
     watchDelayMs: () => 1000,
+    serviceLookup: () => "iMessage",
     ...over,
   });
   return { channel, children, sends, statuses, lock };
