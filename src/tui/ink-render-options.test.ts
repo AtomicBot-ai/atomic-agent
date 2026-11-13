@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   INCREMENTAL_RENDERING,
+  INCREMENTAL_RENDERING_ENV,
   buildInkRenderOptions,
+  incrementalRenderingEnabled,
 } from "./ink-render-options.js";
 
 const streams = {
@@ -11,14 +13,33 @@ const streams = {
 };
 
 describe("buildInkRenderOptions", () => {
-  it("repaints only what changed, behind one switch", () => {
-    // Ink 8 rewrote incremental rendering (ATO-648). The option follows
-    // the single `INCREMENTAL_RENDERING` constant so falling back to
-    // full-frame repaints stays a one-line change; the session-swap
-    // measurement that turned it off under Ink 7 is in its comment.
-    const options = buildInkRenderOptions({ ...streams, kittyKeyboard: false });
-    expect(INCREMENTAL_RENDERING).toBe(true);
-    expect(options.incrementalRendering).toBe(INCREMENTAL_RENDERING);
+  it("repaints the full frame until the session-swap measurement passes", () => {
+    // Under Ink 7 incremental rendering lost the session rail's fill
+    // after `ctrl+g n` (33 painted rows -> 1). Ink 8 rewrote that path,
+    // but it stays off until scripts/tui-session-swap-paint.py prints
+    // 33/33 with it forced on (ATO-648). Flipping the constant is the
+    // one-line switch; this test is the reminder to update it with it.
+    const options = buildInkRenderOptions({
+      ...streams,
+      kittyKeyboard: false,
+      env: {},
+    });
+    expect(INCREMENTAL_RENDERING).toBe(false);
+    expect(options.incrementalRendering).toBe(false);
+  });
+
+  it("forces incremental rendering on only for the measurement env var", () => {
+    expect(incrementalRenderingEnabled({ [INCREMENTAL_RENDERING_ENV]: "1" })).toBe(true);
+    expect(incrementalRenderingEnabled({ [INCREMENTAL_RENDERING_ENV]: "0" })).toBe(false);
+    expect(incrementalRenderingEnabled({ [INCREMENTAL_RENDERING_ENV]: "" })).toBe(false);
+    expect(incrementalRenderingEnabled({})).toBe(false);
+    expect(
+      buildInkRenderOptions({
+        ...streams,
+        kittyKeyboard: false,
+        env: { [INCREMENTAL_RENDERING_ENV]: "1" },
+      }).incrementalRendering,
+    ).toBe(true);
   });
 
   it("keeps Ctrl+C for the app", () => {

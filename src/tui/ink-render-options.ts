@@ -23,23 +23,26 @@ export interface InkRenderOptionsInput {
    * protocol only when we know it is understood.
    */
   readonly kittyKeyboard: boolean;
+  /** Environment to read `INCREMENTAL_RENDERING_ENV` from; `process.env` by default. */
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 /**
- * Whether Ink repaints only the lines that changed. Flip to `false` to
- * go back to full-frame repaints; nothing else depends on it.
+ * Whether Ink repaints only the lines that changed. Flip to `true` to
+ * turn it on; nothing else depends on it.
  *
- * On since Ink 8 (ATO-648). Ink's `incrementalRendering` writes only
- * the lines whose rendered string differs from the previous frame's,
- * and since 8.0.0 only the changed tail of each such line. The default
- * erases and rewrites every line of the frame, several times a second
- * while a turn runs, which a terminal without DEC 2026 synchronized
- * output paints as a blink.
+ * Off until the session-swap measurement below passes on Ink 8 (run it
+ * on the second Mac, `scripts/tui-session-swap-paint.py`). Ink's
+ * `incrementalRendering` writes only the lines whose rendered string
+ * differs from the previous frame's, and since 8.0.0 only the changed
+ * tail of each such line. The default erases and rewrites every line of
+ * the frame, several times a second while a turn runs, which a terminal
+ * without DEC 2026 synchronized output paints as a blink.
  *
- * It was off under Ink 7 because the diff anchor did not survive a
- * session swap. Driven over a PTY at 120x34 into a pyte grid, counting
- * the cells that carry a non-default background (the sidebar's fill
- * and the composer's frame) before and after `ctrl+g n`:
+ * It was turned off under Ink 7 because the diff anchor did not survive
+ * a session swap. Driven over a PTY at 120x34 into a pyte grid,
+ * counting the rows that carry a non-default background (the sidebar's
+ * fill and the composer's frame) before and after `ctrl+g n`:
  *
  *   painted rows          before the swap   after the swap
  *   incremental: true          33                 1
@@ -47,16 +50,27 @@ export interface InkRenderOptionsInput {
  *
  * The renderer believed lines it never repainted were still where it
  * left them; `instance.clear()` on the session change did not resync
- * it. Ink 8.0.0 rewrote that path (vadimdemedes/ink#1036, #1039: fixes
- * for single-line updates, new blank rows and changed rows, plus a
- * redraw when the terminal loses rows). That swap measurement has to
- * be repeated on the new renderer before release; if the rail fill is
- * lost again, set this back to `false`.
+ * it. Ink 8.0.0 rewrote that path (vadimdemedes/ink#1036, #1039), but
+ * nobody has repeated the measurement on it yet. When the script prints
+ * 33/33 with incremental rendering forced on, flip this to `true`.
  *
  * Not tied to this flag: the elapsed-time tick in `ThinkingIndicator`
  * stays at 1000 ms either way.
  */
-export const INCREMENTAL_RENDERING = true;
+export const INCREMENTAL_RENDERING = false;
+
+/**
+ * Set to `1` to force incremental rendering on for one run, whatever
+ * `INCREMENTAL_RENDERING` says. Exists for the session-swap measurement
+ * above; not a user setting, and read nowhere else.
+ */
+export const INCREMENTAL_RENDERING_ENV = "ATOMIC_AGENT_INK_INCREMENTAL";
+
+export function incrementalRenderingEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env[INCREMENTAL_RENDERING_ENV] === "1" || INCREMENTAL_RENDERING;
+}
 
 export function buildInkRenderOptions(
   input: InkRenderOptionsInput,
@@ -66,7 +80,7 @@ export function buildInkRenderOptions(
     stdout: input.stdout,
     stderr: input.stderr,
     exitOnCtrlC: false,
-    incrementalRendering: INCREMENTAL_RENDERING,
+    incrementalRendering: incrementalRenderingEnabled(input.env),
     // `disambiguateEscapeCodes` alone: it is what makes Shift+Enter a
     // distinct keystroke (`ESC [ 13 ; 2 u`). `reportAllKeysAsEscapeCodes`
     // would reroute ordinary typing through CSI u as well, putting the
