@@ -14,6 +14,7 @@ import { pluginCommand } from "./plugin-command.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { traceCommand } from "./trace-command.js";
+import { exportCommand } from "./export-command.js";
 import { taskCommand } from "./task-command.js";
 import { overnightCommand } from "./overnight-command.js";
 import { memoryCommand } from "./memory-command.js";
@@ -110,6 +111,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "trace",
     summary: "Inspect append-only session traces (list|show|export)",
     run: traceCommand,
+  },
+  {
+    name: "export",
+    summary: "Save one chat as Markdown, HTML or Word (export <sessionId>|--last [--format md|html|docx])",
+    run: exportCommand,
   },
   {
     name: "task",

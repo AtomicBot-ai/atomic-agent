@@ -33,6 +33,7 @@ import {
   createSteerSessionHandler,
 } from "./route-sessions.js";
 import { createRenameSessionHandler } from "./route-session-title.js";
+import { createExportSessionHandler } from "./route-session-export.js";
 import {
   createEscalateFusionWorkerHandler,
   createListFusionWorkersHandler,
@@ -180,6 +181,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/sessions/{id}",
       handler: createRenameSessionHandler(),
     },
+    // ATO-1054: one chat as Markdown / HTML / DOCX (PDF is printed from the HTML by the client).
+    { method: "GET", path: "/api/sessions/{id}/export", handler: createExportSessionHandler() },
     // ATO-731: one chat's folder, changed without restarting serve.
     { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
