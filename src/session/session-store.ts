@@ -59,6 +59,7 @@ import {
 import {
   SessionSearchIndex,
   forgetSessionSearchRows,
+  searchableSessionSource,
   type SessionSearchOptions,
   type SessionSearchResult,
 } from "./session-search.js";
@@ -1068,6 +1069,17 @@ export class SessionStore {
       this.listChatLines(id),
     );
     return this.searchIndex.search(options);
+  }
+
+  /**
+   * `listChatLines` for a session search may show, and nothing for one it
+   * may not (incognito, a Fusion worker, an internal session; see
+   * `classifySessionForSearch`) or one that is not stored. What the agent's
+   * `memory.sessions.search` reads a hit through.
+   */
+  listSearchableChatLines(id: string): SessionChatLine[] {
+    if (searchableSessionSource(this.db, id) === null) return [];
+    return this.listChatLines(id);
   }
 
   /** Rows whose payload is not valid JSON — the ones every reader skips. */

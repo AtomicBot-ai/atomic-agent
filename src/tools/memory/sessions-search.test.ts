@@ -61,6 +61,36 @@ describe("memory.sessions.search", () => {
     expect(result.summary).toContain('{"sessionId":"<id>","line":<n>}');
   });
 
+  it("labels hits with their source and never finds or reads hidden sessions", async () => {
+    const turns: ConversationTurn[] = [{ kind: "user", text: "capybara plans", at: 1 }];
+    store.save({ ...createEmptySessionState({ id: "chat", workingDir: "/w" }), turns });
+    store.save({
+      ...createEmptySessionState({ id: "tg", workingDir: "/w", metadata: { telegramChannel: true } }),
+      turns,
+    });
+    store.save({
+      ...createEmptySessionState({ id: "sub", workingDir: "/w", metadata: { subagent: true } }),
+      turns,
+    });
+    store.save({
+      ...createEmptySessionState({ id: "incog", workingDir: "/w" }),
+      incognito: { since: 1, owner: "x" },
+      turns,
+    } as unknown as Parameters<SessionStore["save"]>[0]);
+    const tool = buildSessionsSearchTool({ source: store });
+    const result = await tool.run({ query: "capybara" }, makeCtx());
+    const hits = result.details.hits as Array<{ sessionId: string; source: string }>;
+    expect(Object.fromEntries(hits.map((h) => [h.sessionId, h.source]))).toEqual({
+      chat: "chat",
+      tg: "telegram",
+    });
+    expect(result.summary).toContain("(telegram, ");
+    for (const id of ["sub", "incog"]) {
+      const read = await tool.run({ sessionId: id }, makeCtx());
+      expect(read.summary, id).toContain(`no chat lines in session ${id}`);
+    }
+  });
+
   it("scopes to the current folder with scope: project", async () => {
     save("here", ["redis cache"], "/w");
     save("elsewhere", ["redis cache"], "/x");
@@ -130,7 +160,7 @@ describe("memory.sessions.search", () => {
         searchTranscripts: () => {
           throw new SessionSearchUnavailableError("read-only file");
         },
-        listChatLines: () => [],
+        listSearchableChatLines: () => [],
       },
     });
     const result = await tool.run({ query: "x" }, makeCtx());

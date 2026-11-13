@@ -1,5 +1,9 @@
 import type Database from "better-sqlite3";
 import { SESSION_TITLE_METADATA_KEY } from "./session-title.js";
+import {
+  FUSION_WORKER_ID_PREFIX,
+  FUSION_WORKER_METADATA_KEY,
+} from "./fusion-worker-session.js";
 
 /**
  * Full-text search over stored chats (ATO-1149): the user messages and
@@ -15,7 +19,17 @@ import { SESSION_TITLE_METADATA_KEY } from "./session-title.js";
  * wrote or a retention prune removed. The cost is paid by the search
  * that first sees a change, bounded per call by
  * {@link SYNC_BATCH}; the rest waits for the next search and is
- * reported as `pending`.
+ * reported as `pending`. Transcripts are read outside the write lock and
+ * the index is written {@link SYNC_TX_SESSIONS} sessions per
+ * transaction, so a backfill never holds the lock long enough for a
+ * concurrent message append to hit its busy timeout.
+ *
+ * Which sessions are searched (decision 73): every channel, each hit
+ * labelled with its `source` (`chat`, `telegram`, `discord`, `webhook`,
+ * `task`, `imported`); scheduled-task sessions rank lower; incognito
+ * chats (ATO-586), Fusion workers and sessions stamped
+ * `metadata.internal` / `metadata.subagent` are never indexed, so no
+ * search or read can return them. See {@link classifySessionForSearch}.
  *
  * Lines go into a plain table (`session_search_lines`, indexed by
  * session) with the FTS5 table as its external-content index, so a
@@ -50,12 +64,31 @@ AFTER DELETE ON session_search_lines BEGIN
 END;
 CREATE TABLE IF NOT EXISTS session_search_state (
   session_id         TEXT PRIMARY KEY,
-  indexed_updated_at INTEGER NOT NULL
+  indexed_updated_at INTEGER NOT NULL,
+  source             TEXT
 );
 `;
 
 /** Sessions (re)indexed by one search at most; the rest wait for the next. */
 export const SYNC_BATCH = 500;
+
+/** Sessions written per index transaction (the write lock is held this long). */
+export const SYNC_TX_SESSIONS = 25;
+
+/**
+ * bm25 is negative (lower is better); a task session's score is scaled by
+ * this, so it ranks below an interactive chat that matches as well.
+ */
+export const TASK_RANK_FACTOR = 0.5;
+
+/** Where a searchable session came from, for a label beside each hit. */
+export type SessionSearchSource =
+  | "chat"
+  | "telegram"
+  | "discord"
+  | "webhook"
+  | "task"
+  | "imported";
 
 /** Hits one search returns by default, and at most. */
 export const SESSION_SEARCH_DEFAULT_LIMIT = 10;
@@ -93,6 +126,8 @@ export interface SessionSearchHit {
   kind: "user" | "assistant_reply";
   /** The matching part of the line, terms wrapped in `«` and `»`. */
   snippet: string;
+  /** Where the session came from. */
+  source: SessionSearchSource;
 }
 
 export interface SessionSearchResult {
@@ -117,7 +152,96 @@ interface HitRow {
   updatedAt: number;
   workingDir: string;
   title: unknown;
+  source: unknown;
 }
+
+/** What classification reads off a row, projected in SQL. */
+export interface ClassifyRow {
+  id: string;
+  /** `json_type(payload, '$.incognito')`; `null` for an unreadable payload. */
+  incognitoType: unknown;
+  /** `json_extract(payload, '$.metadata')`: JSON text, or `null`. */
+  metadata: unknown;
+}
+
+interface StaleRow extends ClassifyRow {
+  updatedAt: number;
+}
+
+/**
+ * The SQL columns {@link classifySessionForSearch} reads, guarded so a
+ * payload that is not JSON never reaches `json_extract`.
+ */
+const CLASSIFY_COLUMNS = `
+  s.id AS id,
+  CASE WHEN json_valid(s.payload) THEN json_type(s.payload, '$.incognito') END AS incognitoType,
+  CASE WHEN json_valid(s.payload) AND json_type(s.payload, '$.metadata') = 'object'
+       THEN json_extract(s.payload, '$.metadata') END AS metadata`;
+
+/**
+ * The source label of a session, or `null` when it must never be
+ * searched: an incognito chat (`incognito` is an object, ATO-586), a
+ * Fusion worker (`s-w-` id or the `fusionWorker` stamp), or a session
+ * stamped `metadata.internal: true` or `metadata.subagent`. Task sessions
+ * are the ones the task runner and the scheduler create
+ * (`recurringTask`, `ephemeralTask`, `overnight`, `source: "http-task"`).
+ */
+export function classifySessionForSearch(row: ClassifyRow): SessionSearchSource | null {
+  if (row.incognitoType === "object") return null;
+  if (row.id.startsWith(FUSION_WORKER_ID_PREFIX)) return null;
+  let meta: Record<string, unknown> = {};
+  if (typeof row.metadata === "string") {
+    try {
+      const parsed: unknown = JSON.parse(row.metadata);
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        meta = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // A metadata bag that will not parse reads as an ordinary chat.
+    }
+  }
+  const set = (key: string): boolean =>
+    meta[key] !== undefined && meta[key] !== null && meta[key] !== false;
+  if (set(FUSION_WORKER_METADATA_KEY) || meta.internal === true || set("subagent")) {
+    return null;
+  }
+  if (set("telegramChannel")) return "telegram";
+  if (set("discordChannel")) return "discord";
+  if (set("webhookName")) return "webhook";
+  if (
+    set("recurringTask") ||
+    set("ephemeralTask") ||
+    meta.overnight === true ||
+    meta.source === "http-task"
+  ) {
+    return "task";
+  }
+  if (set("importedFrom")) return "imported";
+  return "chat";
+}
+
+/**
+ * The searchable source of stored session `id`, or `null` when it is
+ * hidden from search or not stored. A plain read, no index needed.
+ */
+export function searchableSessionSource(
+  db: Database.Database,
+  id: string,
+): SessionSearchSource | null {
+  const row = db
+    .prepare(`SELECT ${CLASSIFY_COLUMNS} FROM sessions AS s WHERE s.id = ?`)
+    .get(id) as ClassifyRow | undefined;
+  return row === undefined ? null : classifySessionForSearch(row);
+}
+
+const SOURCES: ReadonlySet<string> = new Set([
+  "chat",
+  "telegram",
+  "discord",
+  "webhook",
+  "task",
+  "imported",
+]);
 
 /** Whether the index tables exist (a read; never takes the write lock). */
 export function sessionSearchTablesExist(db: Database.Database): boolean {
@@ -148,6 +272,7 @@ export class SessionSearchIndex {
   private readonly clearLinesStmt: Database.Statement;
   private readonly insertLineStmt: Database.Statement;
   private readonly upsertStateStmt: Database.Statement;
+  private readonly currentStmt: Database.Statement;
   private readonly searchStmt: Database.Statement;
 
   constructor(
@@ -166,7 +291,7 @@ export class SessionSearchIndex {
       LEFT JOIN session_search_state AS st ON st.session_id = s.id
      WHERE st.session_id IS NULL OR st.indexed_updated_at <> s.updated_at`;
     this.staleStmt = db.prepare(
-      `SELECT s.id AS id, s.updated_at AS updatedAt ${stale}
+      `SELECT ${CLASSIFY_COLUMNS}, s.updated_at AS updatedAt ${stale}
        ORDER BY s.updated_at DESC LIMIT ?`,
     );
     this.countStaleStmt = db.prepare(`SELECT COUNT(*) AS n ${stale}`);
@@ -186,9 +311,14 @@ export class SessionSearchIndex {
        VALUES (@sessionId, @ord, @kind, @text)`,
     );
     this.upsertStateStmt = db.prepare(
-      `INSERT INTO session_search_state (session_id, indexed_updated_at)
-       VALUES (@sessionId, @updatedAt)
-       ON CONFLICT(session_id) DO UPDATE SET indexed_updated_at = excluded.indexed_updated_at`,
+      `INSERT INTO session_search_state (session_id, indexed_updated_at, source)
+       VALUES (@sessionId, @updatedAt, @source)
+       ON CONFLICT(session_id) DO UPDATE SET
+         indexed_updated_at = excluded.indexed_updated_at,
+         source = excluded.source`,
+    );
+    this.currentStmt = db.prepare(
+      `SELECT updated_at AS updatedAt FROM sessions WHERE id = ?`,
     );
     // `json_extract` raises on a payload that is not JSON; the `CASE`
     // keeps it off such a row (its lines were never indexed anyway, but
@@ -200,41 +330,77 @@ export class SessionSearchIndex {
               snippet(session_search_fts, 0, '«', '»', '…', 24) AS snippet,
               s.updated_at AS updatedAt,
               s.working_dir AS workingDir,
+              st.source AS source,
               CASE WHEN json_valid(s.payload)
                    THEN json_extract(s.payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}')
               END AS title
          FROM session_search_fts
          JOIN session_search_lines AS l ON l.id = session_search_fts.rowid
          JOIN sessions AS s ON s.id = l.session_id
+         JOIN session_search_state AS st ON st.session_id = l.session_id
         WHERE session_search_fts MATCH @match
+          AND st.source IS NOT NULL
           AND (@exclude IS NULL OR l.session_id <> @exclude)
           AND (@workingDir IS NULL OR s.working_dir = @workingDir)
-        ORDER BY bm25(session_search_fts) ASC, s.updated_at DESC
+        ORDER BY bm25(session_search_fts)
+                   * (CASE WHEN st.source = 'task' THEN ${TASK_RANK_FACTOR} ELSE 1.0 END) ASC,
+                 s.updated_at DESC
         LIMIT @scan`,
     );
   }
 
   /**
-   * Bring the index up to date with `sessions`, at most `batch` sessions
-   * at a time, newest first. Returns how many changed sessions are left.
+   * Bring the index up to date with `sessions`, at most `budget` sessions
+   * per call, newest first. Returns how many changed sessions are left.
+   *
+   * Each round reads up to {@link SYNC_TX_SESSIONS} transcripts with no
+   * write lock held (WAL readers do not block writers), then writes their
+   * lines in one short `IMMEDIATE` transaction. A session written again
+   * in between is left for the next round, which reads it afresh; one
+   * deleted in between is skipped (the orphan pass removes what is left).
    */
-  sync(batch: number = SYNC_BATCH): number {
-    const run = this.db.transaction(() => {
-      this.orphanLinesStmt.run();
-      this.orphanStateStmt.run();
-      const rows = this.staleStmt.all(batch) as Array<{ id: string; updatedAt: number }>;
-      for (const row of rows) {
-        this.clearLinesStmt.run(row.id);
-        const lines = this.listChatLines(row.id);
-        lines.forEach((line, ord) => {
-          if (line.text.trim().length === 0) return;
-          this.insertLineStmt.run({ sessionId: row.id, ord, kind: line.kind, text: line.text });
-        });
-        this.upsertStateStmt.run({ sessionId: row.id, updatedAt: row.updatedAt });
-      }
-      return (this.countStaleStmt.get() as { n: number }).n;
-    });
-    return run.immediate();
+  sync(budget: number = SYNC_BATCH): number {
+    this.db
+      .transaction(() => {
+        this.orphanLinesStmt.run();
+        this.orphanStateStmt.run();
+      })
+      .immediate();
+    let seen = 0;
+    while (seen < budget) {
+      const rows = this.staleStmt.all(
+        Math.min(SYNC_TX_SESSIONS, budget - seen),
+      ) as StaleRow[];
+      if (rows.length === 0) break;
+      seen += rows.length;
+      const prepared = rows.map((row) => {
+        const source = classifySessionForSearch(row);
+        return {
+          row,
+          source,
+          lines: source === null ? [] : this.listChatLines(row.id),
+        };
+      });
+      this.db
+        .transaction(() => {
+          for (const { row, source, lines } of prepared) {
+            const current = this.currentStmt.get(row.id) as
+              | { updatedAt: number }
+              | undefined;
+            if (current === undefined || current.updatedAt !== row.updatedAt) continue;
+            this.clearLinesStmt.run(row.id);
+            lines.forEach((line, ord) => {
+              if (line.text.trim().length === 0) return;
+              this.insertLineStmt.run({ sessionId: row.id, ord, kind: line.kind, text: line.text });
+            });
+            // A hidden session gets a state row with no source and no
+            // lines, so it is not read again until it changes.
+            this.upsertStateStmt.run({ sessionId: row.id, updatedAt: row.updatedAt, source });
+          }
+        })
+        .immediate();
+    }
+    return (this.countStaleStmt.get() as { n: number }).n;
   }
 
   search(options: SessionSearchOptions): SessionSearchResult {
@@ -242,8 +408,9 @@ export class SessionSearchIndex {
     try {
       pending = this.sync();
     } catch {
-      // Another process holds the write lock past the busy timeout: search
-      // what is indexed, and say how much of it may be behind.
+      // Another process held the write lock past the busy timeout: keep
+      // the rounds already written, search what is indexed, and say how
+      // much of it may be behind.
       pending = (this.countStaleStmt.get() as { n: number }).n;
     }
     const limit = clampLimit(options.limit);
@@ -271,6 +438,7 @@ export class SessionSearchIndex {
     const perSession = new Map<string, number>();
     const hits: SessionSearchHit[] = [];
     for (const row of rows) {
+      if (typeof row.source !== "string" || !SOURCES.has(row.source)) continue;
       const seen = perSession.get(row.sessionId) ?? 0;
       if (seen >= SESSION_SEARCH_PER_SESSION) continue;
       perSession.set(row.sessionId, seen + 1);
@@ -282,6 +450,7 @@ export class SessionSearchIndex {
         line: row.ord,
         kind: row.kind === "user" ? "user" : "assistant_reply",
         snippet: row.snippet,
+        source: row.source as SessionSearchSource,
       });
       if (hits.length >= limit) break;
     }

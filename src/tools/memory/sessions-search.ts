@@ -12,10 +12,14 @@ import type { ToolDefinition } from "../tool-registry.js";
 
 export const SESSIONS_SEARCH_TOOL = "memory.sessions.search";
 
-/** What the tool reads: the session store's search and its chat lines. */
+/**
+ * What the tool reads: the session store's search, and the chat lines of
+ * a session search may show (empty for an incognito, worker or internal
+ * one, so a guessed id reads nothing).
+ */
 export interface SessionsSearchSource {
   searchTranscripts(options: SessionSearchOptions): SessionSearchResult;
-  listChatLines(id: string): SearchableChatLine[];
+  listSearchableChatLines(id: string): SearchableChatLine[];
 }
 
 export interface SessionsSearchToolOptions {
@@ -53,7 +57,10 @@ class ArgsError extends Error {
  *     {@link READ_LINE_MAX_CHARS}.
  *
  * Tool calls and tool output are not indexed: the lines are what the
- * person and the agent said to each other. Read-only.
+ * person and the agent said to each other. Every channel is searched and
+ * each hit carries its `source` (Telegram, Discord, a webhook, a task);
+ * task sessions rank lower; incognito chats, Fusion workers and internal
+ * sessions are never found or read. Read-only.
  */
 export function buildSessionsSearchTool(
   options: SessionsSearchToolOptions,
@@ -61,7 +68,7 @@ export function buildSessionsSearchTool(
   return {
     name: SESSIONS_SEARCH_TOOL,
     description:
-      "Search past chats by their words. Pass `query` (plus optional `scope` 'all' (default) or 'project', `limit` 1..25) to find user messages and agent replies from earlier sessions that contain those words; each hit gives a sessionId and line. Then pass `sessionId` (plus optional `line` and `radius`) to read the lines around a hit. Tool calls and tool output are not searched. The current session is left out of the search.",
+      "Search past chats by their words. Pass `query` (plus optional `scope` 'all' (default) or 'project', `limit` 1..25) to find user messages and agent replies from earlier sessions that contain those words; each hit gives a sessionId, its source (chat, telegram, discord, webhook, task, imported) and line. Then pass `sessionId` (plus optional `line` and `radius`) to read the lines around a hit. Tool calls and tool output are not searched. The current session is left out of the search.",
     readonly: true,
     untrustedOutput: "past chats",
     async run(rawArgs, ctx) {
@@ -161,7 +168,7 @@ function readSession(source: SessionsSearchSource, args: Record<string, unknown>
     coercePositiveInt(args.radius, "radius") ?? READ_DEFAULT_RADIUS,
     READ_MAX_RADIUS,
   );
-  const all = source.listChatLines(sessionId.trim());
+  const all = source.listSearchableChatLines(sessionId.trim());
   if (all.length === 0) {
     return compressToolResult({
       tool: SESSIONS_SEARCH_TOOL,
@@ -209,7 +216,7 @@ function renderHit(hit: SessionSearchHit, index: number): string {
   const title = hit.title === null ? "" : ` "${clip(hit.title, 80)}"`;
   const who = hit.kind === "user" ? "user" : "agent";
   const snippet = hit.snippet.replace(/\s+/g, " ").trim();
-  return `[${index + 1}] sessionId=${hit.sessionId}${title} (${when}, ${hit.workingDir}) line ${hit.line} ${who}: ${snippet}`;
+  return `[${index + 1}] sessionId=${hit.sessionId}${title} (${hit.source}, ${when}, ${hit.workingDir}) line ${hit.line} ${who}: ${snippet}`;
 }
 
 function clip(text: string, max: number): string {

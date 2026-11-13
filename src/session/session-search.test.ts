@@ -6,7 +6,11 @@ import { Database as DatabaseCtor } from "../native/load-better-sqlite3.js";
 import { SessionStore } from "./session-store.js";
 import { createEmptySessionState, type SessionState } from "./session-state.js";
 import type { ConversationTurn } from "./conversation-turn.js";
-import { SESSION_SEARCH_PER_SESSION, searchTerms } from "./session-search.js";
+import {
+  SESSION_SEARCH_PER_SESSION,
+  classifySessionForSearch,
+  searchTerms,
+} from "./session-search.js";
 
 // ATO-1149: full-text search over the chat lines of stored sessions.
 describe("SessionStore.searchTranscripts", () => {
@@ -173,6 +177,76 @@ describe("SessionStore.searchTranscripts", () => {
     const result = store.searchTranscripts({ query: "legacy" });
     expect(result.hits.map((h) => h.sessionId)).toEqual(["old"]);
     expect(result.pending).toBe(0);
+  });
+
+  // Decision 73: every channel with a label, hidden sessions never shown,
+  // task sessions ranked lower.
+  it("never indexes incognito, Fusion worker, sub-agent or internal sessions", () => {
+    const words: ConversationTurn[] = [{ kind: "user", text: "platypus secret", at: 1 }];
+    session("open", words);
+    session("incog", words, { incognito: { since: 1, owner: "x" } } as unknown as Partial<SessionState>);
+    session("s-w-worker", words);
+    session("stamped", words, { metadata: { fusionWorker: { taskId: "t" } } });
+    session("sub", words, { metadata: { subagent: true } });
+    session("internal", words, { metadata: { internal: true } });
+    const { hits } = store.searchTranscripts({ query: "platypus" });
+    expect(hits.map((h) => h.sessionId)).toEqual(["open"]);
+    for (const id of ["incog", "s-w-worker", "stamped", "sub", "internal"]) {
+      expect(store.listSearchableChatLines(id), id).toEqual([]);
+      // Still a normal stored session for everything else.
+      expect(store.listChatLines(id), id).toHaveLength(1);
+    }
+    expect(store.listSearchableChatLines("open")).toHaveLength(1);
+    const raw = new DatabaseCtor(file);
+    try {
+      expect(
+        raw
+          .prepare(
+            `SELECT COUNT(*) AS n FROM session_search_lines WHERE session_id IN ('incog','s-w-worker','stamped','sub','internal')`,
+          )
+          .get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      raw.close();
+    }
+  });
+
+  it("ranks a task session below an interactive one that matches as well", () => {
+    const words: ConversationTurn[] = [{ kind: "user", text: "quarterly report numbers", at: 1 }];
+    const base = Date.now();
+    // The task session is the newer one, so only the source can put it second.
+    session("task", words, { metadata: { recurringTask: true }, updatedAt: base + 10 });
+    session("chat", words, { updatedAt: base });
+    const { hits } = store.searchTranscripts({ query: "quarterly report" });
+    expect(hits.map((h) => [h.sessionId, h.source])).toEqual([
+      ["chat", "chat"],
+      ["task", "task"],
+    ]);
+  });
+
+  it("labels every hit with its source", () => {
+    const words: ConversationTurn[] = [{ kind: "user", text: "wombat", at: 1 }];
+    session("c", words);
+    session("tg", words, { metadata: { telegramChannel: true } });
+    session("dc", words, { metadata: { discordChannel: true } });
+    session("wh", words, { metadata: { webhookName: "ci" } });
+    session("im", words, { metadata: { importedFrom: "chatgpt" } });
+    session("ov", words, { metadata: { overnight: true } });
+    const { hits } = store.searchTranscripts({ query: "wombat" });
+    expect(Object.fromEntries(hits.map((h) => [h.sessionId, h.source]))).toEqual({
+      c: "chat",
+      tg: "telegram",
+      dc: "discord",
+      wh: "webhook",
+      im: "imported",
+      ov: "task",
+    });
+    for (const hit of hits) expect(typeof hit.source).toBe("string");
+  });
+
+  it("classifies a row that will not parse as an ordinary chat", () => {
+    expect(classifySessionForSearch({ id: "x", incognitoType: null, metadata: "{bad" })).toBe("chat");
+    expect(classifySessionForSearch({ id: "x", incognitoType: "object", metadata: null })).toBeNull();
   });
 
   it("deleting a session before any search does not need the index", () => {

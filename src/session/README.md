@@ -13,12 +13,15 @@ This area owns session state and persistence. Read [AGENTS.md](AGENTS.md) before
 - [session-retention.ts](session-retention.ts)
 - [turn-owner.ts](turn-owner.ts)
 - [turn-progress.ts](turn-progress.ts)
+- [session-search.ts](session-search.ts)
 
 ## Ownership and dependencies
 
 SessionState holds turns, loaded descriptors and transient recalled context; SessionStore persists the chat and turn ownership. Retention owns bounded cleanup of eligible inactive sessions. Runtime controls execution and memory stores own durable facts, so a session snapshot must not be treated as either executor or memory database.
 
 The optional version-1 [cloud context journal](cloud-context.ts) records the exact model-visible history and state updates in the existing session JSON. It has stable transcript-based call IDs, a processed transcript boundary and a boundary hash; old sessions initialize it on their first cloud build. Assembly extends it without mutation, runtime persists it before inference, and preview never commits. Current recalled inputs remain transient, but messages already shown to a cloud model remain journaled. Complete output increases stored session size; retention still applies to whole inactive sessions. Switching to local leaves the journal intact and uses the local projection; previously clipped local records cannot be reconstructed.
+
+[Search over past chats](session-search.ts) (ATO-1149) is an FTS5 index of the chat lines `listChatLines` reads, in the same file. It is filled at search time, not on writes: each search reads changed transcripts without the write lock and writes them 25 sessions per transaction, up to 500 per search. Every channel is indexed with a `source` label and task sessions rank lower; incognito chats, Fusion workers and sessions stamped `metadata.internal` / `metadata.subagent` are never indexed (`classifySessionForSearch`).
 
 ## Task-specific reading
 

@@ -299,7 +299,7 @@ beforeAll(() => {
   registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));
   registerMemoryTools(registry, memoryOptions(true));
   // Runtime registers it beside the memory tools, always on (runtime-tool-catalog).
-  registry.register(buildSessionsSearchTool({ source: { searchTranscripts: unexpected, listChatLines: unexpected } }));
+  registry.register(buildSessionsSearchTool({ source: { searchTranscripts: unexpected, listSearchableChatLines: unexpected } }));
   registerTaskTools(registry, taskOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
   registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });

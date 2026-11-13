@@ -126,7 +126,7 @@ export function registerRuntimeCoreTools(input: {
   config: AtomicAgentConfig;
   toolRegistry: ToolRegistry;
   dangerous: DangerousToolOptions;
-  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines" | "searchTranscripts">;
+  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines" | "searchTranscripts" | "listSearchableChatLines">;
   logger: StructuredLogger;
   resolveOriginalRequest: (sessionId: string) => string | undefined;
   resolvePreviousReply?: (sessionId: string) => string | undefined;
