@@ -1,5 +1,5 @@
 import { cp, readdir, rm } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { runChecks } from "./checks.js";
 import {
@@ -116,7 +116,13 @@ export async function runSkillEval(options: RunSkillEvalOptions): Promise<SkillE
     }
     const answer = outcome.reply ?? "";
     const ranToEnd = outcome.end !== "error" && outcome.end !== "timeout";
-    const checks = ranToEnd ? await runChecks(task.checks, { answer, workingDir: options.workRoot, prompt: task.prompt, judge: options.judge ?? null }) : [];
+    const checks = ranToEnd ? await runChecks(task.checks, {
+          answer,
+          workingDir: options.workRoot,
+          tasksDir: dirname(options.taskSet.sourcePath),
+          prompt: task.prompt,
+          judge: options.judge ?? null,
+        }) : [];
     const record: SkillEvalRunRecord = {
       taskId: task.id,
       variant: step.variant,

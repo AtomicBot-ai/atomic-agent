@@ -22,6 +22,8 @@ export interface RunChecksInput {
   answer: string;
   /** The run's working folder; `command` checks run here. */
   workingDir: string;
+  /** Folder of the tasks file; `command` checks get it as `SKILL_EVAL_TASKS_DIR` to reach their helper scripts. */
+  tasksDir?: string;
   /** The task's prompt, shown to the judge. */
   prompt?: string;
   /** Grades `judge` checks; without one a `judge` check fails as unavailable. */
@@ -115,7 +117,11 @@ async function runCommandCheck(
     await writeFile(answerFile, input.answer, "utf8");
     const result = await spawnShell(command, {
       cwd: input.workingDir,
-      env: { ...buildCommandEnv(process.env), SKILL_EVAL_ANSWER_FILE: answerFile },
+      env: {
+        ...buildCommandEnv(process.env),
+        SKILL_EVAL_ANSWER_FILE: answerFile,
+        ...(input.tasksDir ? { SKILL_EVAL_TASKS_DIR: input.tasksDir } : {}),
+      },
       stdin: input.answer,
       timeoutMs,
     });
