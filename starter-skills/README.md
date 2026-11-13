@@ -49,3 +49,4 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `email-drafts/` | Outreach and follow-up emails as drafts only (Gmail via `gog`, or local files for Atomic Mail); never sends | `gog` signed in for Gmail drafts |
 | `landing-cro-review/` | Landing page review from a browser screenshot against a conversion checklist | a vision-capable model for the screenshot part |
 | `ad-copy/` | Google Ads RSA and Meta ad text variants, every length checked by a script | none |
+| `motion/` | Short MP4s from code with no video credits: release announcement, big number, logo reveal (HTML templates + frame capture + ffmpeg) | Chrome / Chromium / Edge + `brew install ffmpeg` (or the agent's HTML-to-MP4 tool when present) |
