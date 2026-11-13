@@ -36,8 +36,8 @@ export async function verifyGuardedEndpoint(
         status: response.status,
         kind: "llama-auth",
         error: apiKey
-          ? `http ${response.status} — the server rejected the configured API key`
-          : `http ${response.status} — the server requires an API key (--api-key)`,
+          ? `http ${response.status}: the server rejected the configured API key`
+          : `http ${response.status}: the server requires an API key (--api-key)`,
       };
     }
     return passed;

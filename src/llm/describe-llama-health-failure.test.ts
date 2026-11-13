@@ -18,13 +18,13 @@ function result(partial: Partial<HealthResult>): HealthResult {
 }
 
 describe("describeLlamaHealthFailure", () => {
-  it("steers an openai-compatible server to the cloud provider flow", () => {
+  it("steers an openai-compatible server to the OpenAI-compatible API row", () => {
     const line = describeLlamaHealthFailure(
       result({ kind: "openai-compat", status: 404, error: "http 404" }),
       "http://127.0.0.1:1234",
     );
     expect(line).toContain("OpenAI-compatible");
-    expect(line).toContain("openai-compatible, base URL http://127.0.0.1:1234");
+    expect(line).toContain("OpenAI-compatible API, base URL http://127.0.0.1:1234");
   });
 
   it("names Ollama outright when the openai-compat server sits on :11434", () => {
@@ -50,7 +50,7 @@ describe("describeLlamaHealthFailure", () => {
     );
     expect(line).toContain("answers like Ollama");
     expect(line).toContain(
-      "openai-compatible, base URL http://192.168.1.50:11434",
+      "OpenAI-compatible API, base URL http://192.168.1.50:11434",
     );
     expect(line).not.toContain("Ollama (local)");
   });
@@ -70,7 +70,7 @@ describe("describeLlamaHealthFailure", () => {
       result({ kind: "openai-compat", status: 404, error: "http 404" }),
       "http://192.168.1.50:1337",
     );
-    expect(line).toContain("openai-compatible, base URL http://192.168.1.50:1337");
+    expect(line).toContain("OpenAI-compatible API, base URL http://192.168.1.50:1337");
     expect(line).not.toContain("Atomic Chat (local)");
   });
 
@@ -87,7 +87,7 @@ describe("describeLlamaHealthFailure", () => {
       result({
         kind: "llama-auth",
         status: 401,
-        error: "http 401 — the server requires an API key (--api-key)",
+        error: "http 401: the server requires an API key (--api-key)",
       }),
       "http://127.0.0.1:8080",
     );
@@ -100,7 +100,7 @@ describe("describeLlamaHealthFailure", () => {
     const auth = result({
       kind: "llama-auth",
       status: 401,
-      error: "http 401 — the server requires an API key (--api-key)",
+      error: "http 401: the server requires an API key (--api-key)",
     });
     const line = describeLlamaHealthFailure(auth, "http://127.0.0.1:19091", [19091, 19092]);
     expect(line).toContain("http 401");
