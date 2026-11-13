@@ -17,6 +17,8 @@ import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { engineBusy, retryWhileEngineBusy } from "./engine-busy-retry.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
 import { readChatFolders, writeChatFolders } from "./chat-folders.js";
+import { assignChat, deleteProject, readProjects, saveProject, turnProject, updateProjects } from "./projects-store.js";
+import { newChatSessionId } from "./chat-session.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { busyPorts, modelPortsOf, onSmokeStopSignal, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
@@ -1511,9 +1513,11 @@ function wireIpc(client: AgentClient): void {
   });
 
   ipcMain.handle("agent:chat", async (_event, payload: unknown) => {
-    const { messages, sessionId } = payload as {
+    const { messages, sessionId, projectId } = payload as {
       messages?: Array<{ role: string; content: string }>;
       sessionId?: string;
+      /** ATO-42: the project a NEW chat starts in (a stored chat's own project wins). */
+      projectId?: string;
     };
     if (!Array.isArray(messages) || messages.length === 0) {
       return { ok: false, error: "messages must be a non-empty array" };
@@ -1528,8 +1532,8 @@ function wireIpc(client: AgentClient): void {
        here, with its own line, until the generation ends and the model is on
        its way back; a cloud turn never asks. */
     const held = chatRouteIsLocal() ? await gpuShare.chatTurn().catch(() => null) : null;
-    if (held) return holdForStudio(held, clean, sessionId, queuedAt);
-    return startTurn(randomUUID(), clean, sessionId, queuedAt, false);
+    if (held) return holdForStudio(held, clean, sessionId, queuedAt, projectId);
+    return startTurn(randomUUID(), clean, sessionId, queuedAt, false, projectId);
   });
 
   async function startTurn(
@@ -1538,6 +1542,7 @@ function wireIpc(client: AgentClient): void {
     sessionId: string | undefined,
     queuedAt: number,
     listed: boolean,
+    projectId?: unknown,
   ): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
     /* Backlog 18 (its second review): a restart a switch held back for the
        turns runs as the last one ends (backend-switch restartAfterSwitch), and
@@ -1564,7 +1569,18 @@ function wireIpc(client: AgentClient): void {
     }
     // ATO-731: a new chat opens in the folder the window shows; an existing one keeps its own.
     // A remote agent opens new chats in its own folder: this computer's path means nothing there.
-    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined, client.isRemote ? undefined : client.status.workingDir);
+    // ATO-42: a chat in a project opens in the project's folder and carries its instructions.
+    const proj = turnProject(readProjects(DESKTOP_STATE_DIR), {
+      sessionId: known, projectId, windowDir: client.status.workingDir, remote: client.isRemote,
+    });
+    let chatId = known ?? undefined;
+    if (!known && proj.project) {
+      // A new chat started in a project: its id is fixed here so it is in the project from its first turn.
+      chatId = newChatSessionId();
+      const pid = proj.project.id;
+      updateProjects(DESKTOP_STATE_DIR, (d) => assignChat(d, chatId, pid), () => send("projects:changed"));
+    }
+    void client.chat(turnId, clean, chatId, proj.workingDir, proj.instructions);
     return { ok: true, turnId };
   }
 
@@ -1578,6 +1594,7 @@ function wireIpc(client: AgentClient): void {
     clean: Array<{ role: string; content: string }>,
     sessionId: string | undefined,
     queuedAt: number,
+    projectId?: unknown,
   ): { ok: true; turnId: string } {
     const turnId = randomUUID();
     const known = typeof sessionId === "string" && sessionId ? sessionId : null;
@@ -1602,7 +1619,7 @@ function wireIpc(client: AgentClient): void {
       heldForStudio.delete(turnId);
       if (dropped) return;
       client.emit("chat", { turnId, kind: "provider_recovered", payload: { waited_ms: Date.now() - queuedAt, studio: true } });
-      const res = await startTurn(turnId, clean, sessionId, queuedAt, true);
+      const res = await startTurn(turnId, clean, sessionId, queuedAt, true, projectId);
       if (!res.ok) client.emit("chat", { turnId, kind: "error", error: res.error });
     });
     return { ok: true, turnId };
@@ -2296,6 +2313,22 @@ function wireIpc(client: AgentClient): void {
   // ATO-1034: chat folders, in the shared state dir so the terminal sees the same ones.
   ipcMain.handle("app:foldersGet", () => ({ ok: true, data: readChatFolders(DESKTOP_STATE_DIR) }));
   ipcMain.handle("app:foldersSet", (_event, value: unknown) => writeChatFolders(DESKTOP_STATE_DIR, value));
+  // ATO-42: projects (~/.atomic-agent/projects.json, main/projects-store.ts); every write says projects:changed.
+  const projectsChanged = () => send("projects:changed");
+  ipcMain.handle("projects:list", () => ({ ok: true, data: readProjects(DESKTOP_STATE_DIR) }));
+  ipcMain.handle("projects:save", (_event, input: unknown) => {
+    const res = updateProjects(DESKTOP_STATE_DIR, (d) => saveProject(d, input), projectsChanged);
+    return res.ok ? { ok: true, data: res.project } : res;
+  });
+  ipcMain.handle("projects:delete", (_event, id: unknown) => {
+    const res = updateProjects(DESKTOP_STATE_DIR, (d) => deleteProject(d, id), projectsChanged);
+    return res.ok ? { ok: true } : res;
+  });
+  ipcMain.handle("projects:assign", (_event, payload: unknown) => {
+    const { sessionId, projectId } = (payload ?? {}) as { sessionId?: unknown; projectId?: unknown };
+    const res = updateProjects(DESKTOP_STATE_DIR, (d) => assignChat(d, sessionId, projectId), projectsChanged);
+    return res.ok ? { ok: true } : res;
+  });
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
