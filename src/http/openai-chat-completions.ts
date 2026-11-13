@@ -42,6 +42,7 @@ import {
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
+import { PROJECT_SECTION_MAX_TOKENS } from "../prompt/build-prompt.js";
 import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
@@ -464,6 +465,9 @@ async function handleStream(
  *    same names (extensions opt-in only, `stream-maintenance-frames.ts`)
  *  - `tool_disabled` → `event: tool_disabled` with the chat sentence
  *    (extensions opt-in only, ATO-1417)
+ *  - the first `prompt_built` whose local prompt carries a project block
+ *    → `event: project_instructions` {name, tokens, truncated, max_tokens}
+ *    (extensions opt-in only, ATO-42)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
  *    whether extensions are opted in)
  *
@@ -494,6 +498,8 @@ export function buildStreamEventHook(
      can say in words what it did ("Read config.ts"). Removed when the
      result is written. */
   const openCallArgs = new Map<string, unknown>();
+  /* ATO-42: the project block is fixed for the turn, so it is told once. */
+  let projectReported = false;
   const writeContent = (content: string): void => {
     sse.writeEvent(
       null,
@@ -619,6 +625,24 @@ export function buildStreamEventHook(
           ...(inner.result.approvals !== undefined && inner.result.approvals.length > 0
             ? { approvals: inner.result.approvals }
             : {}),
+        });
+      } else if (inner.type === "prompt_built") {
+        /* ATO-42: the local prompt carried the chat's project instructions,
+           and whether they were cut to PROJECT_SECTION_MAX_TOKENS, so a
+           host can say so in the chat. Once per turn, extensions-only. */
+        const project = inner.prompt.project;
+        if (!env.request.extensionsEnabled || projectReported || project === undefined) return;
+        projectReported = true;
+        sse.writeEvent("project_instructions", {
+          id: env.completionId,
+          object: "chat.completion.project_instructions",
+          created: env.created,
+          model: env.request.model,
+          session_id: env.session.id,
+          name: project.name,
+          tokens: project.tokens,
+          truncated: project.truncated,
+          max_tokens: PROJECT_SECTION_MAX_TOKENS,
         });
       } else if (inner.type === "plan_updated") {
         /* ATO-486: the live checklist, whole, each time it changes. A

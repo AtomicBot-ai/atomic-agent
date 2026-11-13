@@ -52,7 +52,7 @@ import {
   SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
 } from "./token-budget.js";
-import { renderSessionProjectBody } from "../session/session-project.js";
+import { readSessionProject, renderSessionProjectBody } from "../session/session-project.js";
 
 /**
  * ATO-42: the most the `### project` block takes in the local prompt. The
@@ -279,6 +279,14 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const project =
     projectFull !== null ? truncateToTokens(projectFull, PROJECT_SECTION_MAX_TOKENS) : null;
   const projectTokens = project !== null ? estimateTokens(project) : 0;
+  const projectReport =
+    projectFull !== null && project !== null
+      ? {
+          name: readSessionProject(input.session)?.name ?? null,
+          tokens: estimateTokens(projectFull),
+          truncated: project.length < projectFull.length,
+        }
+      : null;
   const loadedForTail = sessionParts.loaded;
   const factsForTail = sessionParts.facts;
   const sessionPartsForBudget = [loadedForTail, factsForTail]
@@ -655,6 +663,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     ...(profileSection?.clip !== undefined
       ? { profileClip: profileSection.clip }
       : {}),
+    ...(projectReport !== null ? { project: projectReport } : {}),
     contextWindow,
     conversationCapEffective,
     conversationCapAuto,

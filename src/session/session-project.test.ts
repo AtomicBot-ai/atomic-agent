@@ -106,6 +106,21 @@ describe("project instructions in the prompt", () => {
     expect(estimateTokens(block)).toBeLessThanOrEqual(PROJECT_SECTION_MAX_TOKENS + 8);
   });
 
+  it("local: the built prompt reports the block, its full size and the cut", () => {
+    const small = input();
+    applySessionProject(small.session, { name: "Docs", instructions: "Short rule." });
+    const uncut = buildPrompt(small).project;
+    expect(uncut).toMatchObject({ name: "Docs", truncated: false });
+    expect(uncut!.tokens).toBeGreaterThan(0);
+    const big = input();
+    applySessionProject(big.session, { name: null, instructions: "word ".repeat(3000) });
+    const cut = buildPrompt(big).project!;
+    expect(cut.truncated).toBe(true);
+    expect(cut.name).toBeNull();
+    expect(cut.tokens).toBeGreaterThan(PROJECT_SECTION_MAX_TOKENS);
+    expect(buildPrompt(input()).project).toBeUndefined();
+  });
+
   it("cloud: the full text as a project section", () => {
     const i = input("cloud");
     applySessionProject(i.session, { name: "Docs", instructions: "word ".repeat(3000) + "TAIL END" });
