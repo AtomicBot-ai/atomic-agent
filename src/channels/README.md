@@ -18,6 +18,7 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 - [discord-channel.ts](discord/discord-channel.ts)
 - [signal/index.ts](signal/index.ts) — Signal through a user-run signal-cli daemon
 - [slack-channel.ts](slack/slack-channel.ts) and [slack/index.ts](slack/index.ts) (Slack, Socket Mode)
+- [imessage-channel.ts](imessage/imessage-channel.ts) — iMessage on macOS through the external `imsg` CLI
 
 ## Ownership and dependencies
 

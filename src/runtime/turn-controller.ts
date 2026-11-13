@@ -18,6 +18,7 @@ export type TurnOrigin =
   | "signal"
   /** A message from the Slack channel (ATO-499). */
   | "slack"
+  | "imessage"
   /**
    * A fusion worker turn, submitted by the orchestrator turn on the
    * parent session — not a person sending a message. Treated like
