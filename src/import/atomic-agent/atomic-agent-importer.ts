@@ -9,6 +9,7 @@ import {
 } from "../../config/index.js";
 import { ConfigValidationError } from "../../config/config-validation-error.js";
 import { setDotenvKey } from "../../config/dotenv-writer.js";
+import { readLlmBlockOrDefault } from "../../config/llm-provider-commands.js";
 import type { McpServerConfig } from "../../mcp/mcp-types.js";
 import {
   checkAtomicDesktopSource,
@@ -277,8 +278,8 @@ export class AtomicAgentImporter {
     }
     if (selected.has("providers")) {
       const list = objectAt(raw, "llm")?.providers;
-      const llm = (prev as { llm?: { providers?: Array<{ id: string }> } }).llm;
-      const have = new Set((llm?.providers ?? []).map((p) => p.id));
+      // A config with no `llm` block still has the built-in `local-llama`.
+      const have = new Set(readLlmBlockOrDefault(prev).providers.map((p) => p.id));
       const entries = Array.isArray(list) ? list : [];
       if (entries.length === 0) {
         items.push({ kind: "providers", status: "skipped", reason: `no cloud providers in ${sourcePath}` });
@@ -329,9 +330,11 @@ export class AtomicAgentImporter {
       const next: Record<string, unknown> = { ...prev };
       if (servers.length > 0) next.mcp = { ...prev.mcp, servers: [...prev.mcp.servers, ...servers] };
       if (providers.length > 0) {
-        const llm = (prev as { llm?: Record<string, unknown> }).llm ?? {};
-        const had = Array.isArray(llm.providers) ? (llm.providers as unknown[]) : [];
-        next.llm = { ...llm, providers: [...had, ...providers] };
+        // A fresh config has no `llm` block: start from the implicit one, or the
+        // added providers would replace `local-llama`, which the default
+        // `activeTextProvider` names, and the whole write would be refused.
+        const llm = readLlmBlockOrDefault(prev);
+        next.llm = { ...llm, providers: [...llm.providers, ...providers] };
       }
       const validated = parseUserConfigFile(next);
       writeUserConfigFileSync(this.deps.userConfigFile, validated);
