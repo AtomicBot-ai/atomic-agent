@@ -36,7 +36,9 @@ import { resolveLatestVersion, stageSkillFromClawHub } from "./install-from-claw
  *  - the previous copy is moved to `backupRoot/<name>` before the new one
  *    goes in, and put back if the swap fails; {@link rollbackSkillUpdate}
  *    restores it later.
- * Nothing here runs on its own: callers (the CLI) decide when to check.
+ * Nothing here runs on its own: callers (the CLI) decide when to check,
+ * and an update replaces a skill only after the person agreed to it
+ * (`confirmUpdate`, or `skill update --yes`).
  */
 
 export type SkillUpdateState =
@@ -121,16 +123,32 @@ export class SkillUpdateError extends Error {
   }
 }
 
+/** What an update would change, shown before anything is replaced. */
+export interface SkillUpdatePreview {
+  name: string;
+  identifier: string;
+  fromVersion: string;
+  toVersion: string;
+  scan: SkillScanResult;
+}
+
 export interface ApplySkillUpdateOptions extends SkillUpdateSources, ScanGateOptions {
   targetRoot: string;
   name: string;
   /** Where the previous copy is kept; see {@link defaultBackupRoot}. */
   backupRoot?: string;
+  /**
+   * Asked after the new version is staged and passed the scan gate, and
+   * before the installed copy is touched. Returning false keeps the
+   * installed version (`state: "declined"`). Omit it only when the
+   * person already opted in (`skill update --yes`).
+   */
+  confirmUpdate?: (preview: SkillUpdatePreview) => Promise<boolean>;
 }
 
 export interface ApplySkillUpdateResult {
   name: string;
-  state: "updated" | "up_to_date";
+  state: "updated" | "up_to_date" | "declined";
   fromVersion: string;
   toVersion: string;
   scan?: SkillScanResult;
@@ -176,6 +194,19 @@ export async function applySkillUpdate(
       );
     }
     await enforceScanGate(lock.identifier, staged.scan, options);
+    if (options.confirmUpdate) {
+      const yes = await options.confirmUpdate({
+        name: options.name,
+        identifier: lock.identifier,
+        fromVersion: lock.version,
+        toVersion,
+        scan: staged.scan,
+      });
+      if (!yes) {
+        await discardStagedInstall(staged);
+        return { name: options.name, state: "declined", fromVersion: lock.version, toVersion, scan: staged.scan };
+      }
+    }
   } catch (err) {
     await discardStagedInstall(staged);
     throw err;

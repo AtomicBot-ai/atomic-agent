@@ -53,6 +53,7 @@ export type {
   CheckSkillUpdatesOptions,
   RollbackSkillUpdateOptions,
   SkillUpdateErrorCode,
+  SkillUpdatePreview,
   SkillUpdateSources,
   SkillUpdateState,
   SkillUpdateStatus,

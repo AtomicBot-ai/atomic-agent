@@ -146,5 +146,6 @@ export type {
   SkillSourceKind,
   StageSkillOptions,
   ApplySkillUpdateResult,
+  SkillUpdatePreview,
   SkillUpdateStatus,
 } from "./clawhub/index.js";
