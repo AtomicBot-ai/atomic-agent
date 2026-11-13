@@ -94,6 +94,7 @@ const ENGINE_LOCK_STATES: ReadonlySet<string> = new Set([
   "stale_dead_owner",
   "stale_before_boot",
   "stale_no_owner",
+  "stale_too_old",
   "probe_failed",
 ]);
 const LOCAL_FAULTS: ReadonlySet<string> = new Set([
