@@ -8,7 +8,8 @@
  *    is gone);
  *  - its branch is fully merged into the branch it started from
  *    (`git merge-base --is-ancestor`), so no commit is lost;
- *  - the removal preflight passes: no uncommitted or untracked change.
+ *  - the removal preflight passes: no uncommitted or untracked change,
+ *    and no ignored file other than regenerable ones such as node_modules.
  *
  * Anything else is kept and reported with the reason. A squash-merged
  * branch does not count as merged here; it stays until the person

@@ -194,8 +194,9 @@ export type RemovalPreflight =
 
 /**
  * May this worktree be removed? Refuses on any uncommitted or untracked
- * change, on a path git does not list as a worktree of the repository,
- * and when git cannot answer.
+ * change, on any ignored file outside REGENERABLE_IGNORED_NAMES, on a path
+ * git does not list as a worktree of the repository, and when git cannot
+ * answer.
  */
 export async function worktreeRemovalPreflight(
   binding: SessionWorktreeBinding,
@@ -207,10 +208,35 @@ export async function worktreeRemovalPreflight(
   const paths = listed.stdout.split("\n").filter(l => l.startsWith("worktree ")).map(l => l.slice("worktree ".length));
   const resolved = await Promise.all(paths.map(p => realpath(p).catch(() => p)));
   if (!resolved.includes(binding.path)) return { ok: false, reason: "git does not list this folder as a worktree of the repository" };
-  const status = await exec(["status", "--porcelain", "--untracked-files=normal"], binding.path);
+  // `--ignored=matching` too: `git worktree remove` deletes ignored files
+  // (.env, notes, build output) without asking, so they count as work.
+  const status = await exec(["status", "--porcelain", "-z", "--untracked-files=normal", "--ignored=matching"], binding.path);
   if (!succeeded(status)) return { ok: false, reason: "git status failed in the worktree" };
-  if (status.stdout.trim() !== "") return { ok: false, reason: "the worktree has uncommitted changes" };
+  const entries = status.stdout.split("\0").filter(e => e !== "");
+  if (entries.some(e => !e.startsWith("!! "))) return { ok: false, reason: "the worktree has uncommitted changes" };
+  const kept = entries.map(e => e.slice(3)).filter(p => !isRegenerableIgnoredPath(p));
+  if (kept.length > 0) return { ok: false, reason: `the worktree has ignored files that would be deleted: ${kept.slice(0, 3).join(", ")}${kept.length > 3 ? ", ..." : ""}` };
   return { ok: true, missing: false };
+}
+
+/**
+ * Ignored folders and files a tool can rebuild, so losing them with the
+ * worktree costs nothing. Everything else ignored keeps the worktree.
+ */
+export const REGENERABLE_IGNORED_NAMES: ReadonlySet<string> = new Set([
+  "node_modules",
+  ".turbo",
+  ".parcel-cache",
+  "__pycache__",
+  ".pytest_cache",
+  ".mypy_cache",
+  ".ruff_cache",
+  ".DS_Store",
+]);
+
+/** Is this ignored path (as `git status` prints it) inside or equal to a regenerable name? */
+export function isRegenerableIgnoredPath(path: string): boolean {
+  return path.split("/").some(part => REGENERABLE_IGNORED_NAMES.has(part));
 }
 
 /** Is the session branch fully contained in its base (so deleting it loses no commit)? */

@@ -7,6 +7,7 @@ import { runCommand } from "../sandbox/command-runner.js";
 import { createEmptySessionState } from "./session-state.js";
 import {
   bindSessionWorktree,
+  isRegenerableIgnoredPath,
   isWorktreeBranchMerged,
   listSessionWorktreeMarkers,
   markerPathFor,
@@ -104,6 +105,44 @@ describe("session worktree (ATO-576)", () => {
     expect(preflight).toEqual({ ok: false, reason: "the worktree has uncommitted changes" });
     expect(await removeSessionWorktree(wt)).toBe("the worktree has uncommitted changes");
     expect(existsSync(join(wt.path, "new-file.txt"))).toBe(true);
+  });
+
+  it("counts regenerable ignored folders as safe and everything else ignored as work", () => {
+    expect(isRegenerableIgnoredPath("node_modules/")).toBe(true);
+    expect(isRegenerableIgnoredPath("pkg/node_modules/")).toBe(true);
+    expect(isRegenerableIgnoredPath(".DS_Store")).toBe(true);
+    expect(isRegenerableIgnoredPath(".env")).toBe(false);
+    expect(isRegenerableIgnoredPath("dist/")).toBe(false);
+    expect(isRegenerableIgnoredPath("notes.md")).toBe(false);
+  });
+
+  it("cleanup keeps an idle merged worktree that holds an ignored .env", async () => {
+    const repo = await makeRepo(root);
+    await writeFile(join(repo, ".gitignore"), ".env\nnode_modules/\n");
+    await git(repo, "add", ".gitignore");
+    await git(repo, "commit", "-q", "-m", "ignore");
+    const withEnv = (await bindSessionWorktree(createEmptySessionState({ id: "s-envfile1", workingDir: repo }), { worktreesDir })).worktree!;
+    const onlyCache = (await bindSessionWorktree(createEmptySessionState({ id: "s-cache001", workingDir: repo }), { worktreesDir })).worktree!;
+    await writeFile(join(withEnv.path, ".env"), "SECRET=1\n");
+    await mkdir(join(onlyCache.path, "node_modules", "x"), { recursive: true });
+    await writeFile(join(onlyCache.path, "node_modules", "x", "index.js"), "\n");
+    // Ignored files do not show in plain status: the old preflight saw a clean tree.
+    expect(await git(withEnv.path, "status", "--porcelain")).toBe("");
+    expect(await isWorktreeBranchMerged(withEnv)).toBe(true);
+
+    const now = Date.now();
+    const result = await cleanupIdleSessionWorktrees({
+      worktreesDir,
+      lastActiveAt: () => now - 3 * 86_400_000,
+      now: () => now,
+    });
+
+    expect(result.removed.map(m => m.sessionId)).toEqual(["s-cache001"]);
+    expect(existsSync(onlyCache.path)).toBe(false);
+    const kept = result.kept.find(k => k.marker.sessionId === "s-envfile1");
+    expect(kept?.reason).toBe("the worktree has ignored files that would be deleted: .env");
+    expect(existsSync(join(withEnv.path, ".env"))).toBe(true);
+    expect(existsSync(markerPathFor(withEnv.path))).toBe(true);
   });
 
   it("removes a clean merged worktree and its branch", async () => {
