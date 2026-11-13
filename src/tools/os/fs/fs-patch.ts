@@ -155,6 +155,8 @@ export function buildOsFsPatchTool(
                 display: displayPath(outcome.absolute, ctx.workingDir),
                 change: "patch",
                 after: patched,
+                sessionId: ctx.sessionId,
+                signal: ctx.signal,
                 ...(original.length > 0 ? { before: original } : {}),
               })) ?? null);
         const warning = joinWarnings(

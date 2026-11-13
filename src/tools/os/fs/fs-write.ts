@@ -37,7 +37,7 @@ import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "./fs-require-approval.js";
-import type { ToolDefinition } from "../../tool-registry.js";
+import type { ToolContext, ToolDefinition } from "../../tool-registry.js";
 
 /**
  * How many times one write may be retargeted from the approval prompt
@@ -194,6 +194,7 @@ export function buildOsFsWriteTool(
         ctx.workingDir,
         prior,
         options.lspDiagnostics,
+        ctx,
       );
       const linesAfter = countLines(content);
       // The path is echoed in `output` (not just `details`) so a model
@@ -281,6 +282,7 @@ async function parseWarningAfterWrite(
   workingDir: string,
   prior: PriorFile | null,
   lsp: Pick<LspDiagnostics, "diagnoseChange"> | undefined,
+  ctx: Pick<ToolContext, "sessionId" | "signal">,
 ): Promise<string | null> {
   try {
     let written = content;
@@ -303,6 +305,8 @@ async function parseWarningAfterWrite(
         display: displayPath(target, workingDir),
         change: "write",
         after: written,
+        sessionId: ctx.sessionId,
+        signal: ctx.signal,
         ...(before === undefined ? {} : { before }),
       })) ?? null;
     return joinWarnings(parse, fromLsp);

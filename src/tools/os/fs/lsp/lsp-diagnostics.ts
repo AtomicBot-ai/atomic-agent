@@ -16,6 +16,11 @@
  *    `pyright-langserver`); nothing is ever installed;
  *  - started lazily, on the first edit of a matching file, one per
  *    language per repository, and reused;
+ *  - a language server runs the project's own code (tsconfig plugins,
+ *    a local TypeScript, pyright's environment), so in a folder the
+ *    operator has not trusted the first start asks once for the work
+ *    tree and the answer is kept for it; no answer (a surface without a
+ *    window, a refuse policy) starts nothing;
  *  - only errors the change added (`lsp-delta.ts`);
  *  - advisory: bounded in time, never throws, never alters a write.
  *    No verdict in time is silence.
@@ -45,7 +50,27 @@ export interface LspChangeInput {
   /** The file before the change; omitted when new or unknown. */
   readonly before?: string;
   readonly after: string;
+  /** The session making the change, for the start question. */
+  readonly sessionId?: string;
+  /** The tool call's signal; aborting it drops the start question. */
+  readonly signal?: AbortSignal;
 }
+
+/** What the start question is about. */
+export interface LspStartQuestion {
+  /** The git work tree the server would treat as its workspace. */
+  readonly root: string;
+  /** The server about to start, as the operator knows it. */
+  readonly server: string;
+  readonly sessionId: string;
+  readonly signal: AbortSignal;
+}
+
+/**
+ * The operator's answer: `yes` / `no` from a person, `unanswered` when
+ * nobody could be asked (refuse policy, no window, timeout, abort).
+ */
+export type LspStartAnswer = "yes" | "no" | "unanswered";
 
 export interface LspDiagnostics {
   /** The warning block for the tool result, or null. Never throws. */
@@ -69,6 +94,18 @@ export interface LspDiagnosticsOptions {
   readonly startClient?: StartClient;
   readonly diagnosticsTimeoutMs?: number;
   readonly startupWaitMs?: number;
+  /**
+   * Whether the operator trusts the folder (project folder trust,
+   * `skills.projectTrust`). A trusted work tree starts without a
+   * question. Omitted with `askToStart` set: nothing is trusted.
+   */
+  readonly isTrustedProject?: (root: string) => boolean;
+  /**
+   * Asks the operator before the first start in an untrusted work tree.
+   * Omitted (embedders, tests of the old behaviour): servers start
+   * without asking.
+   */
+  readonly askToStart?: (question: LspStartQuestion) => Promise<LspStartAnswer>;
 }
 
 interface ServerEntry {
@@ -102,6 +139,46 @@ export function createLspDiagnostics(
   const startupWaitMs = options.startupWaitMs ?? LSP_STARTUP_WAIT_MS;
   const binaries = new Map<string, string | null>();
   const entries = new Map<string, Entry>();
+  /** A person's answer per work tree, kept for this process. */
+  const startAnswers = new Map<string, boolean>();
+  /** A question on screen, shared by edits that arrive meanwhile. */
+  const asking = new Map<string, Promise<boolean>>();
+
+  /**
+   * May a server start in `root`? Trusted folders and earlier answers
+   * decide at once; otherwise the operator is asked once per work tree.
+   * Only a person's yes or no is remembered, so a session that could not
+   * ask does not stop a later one with a window from asking.
+   */
+  const mayStart = (
+    spec: LspServerSpec,
+    root: string,
+    input: LspChangeInput,
+  ): Promise<boolean> => {
+    const ask = options.askToStart;
+    if (ask === undefined) return Promise.resolve(true);
+    const known = startAnswers.get(root);
+    if (known !== undefined) return Promise.resolve(known);
+    if (options.isTrustedProject?.(root) === true) return Promise.resolve(true);
+    if (input.sessionId === undefined) return Promise.resolve(false);
+    const pending = asking.get(root);
+    if (pending !== undefined) return pending;
+    const question = ask({
+      root,
+      server: spec.command,
+      sessionId: input.sessionId,
+      signal: input.signal ?? new AbortController().signal,
+    }).then(
+      (answer) => {
+        if (answer !== "unanswered") startAnswers.set(root, answer === "yes");
+        return answer === "yes";
+      },
+      () => false,
+    );
+    const shared = question.finally(() => asking.delete(root));
+    asking.set(root, shared);
+    return shared;
+  };
 
   const binaryFor = (command: string): string | null => {
     if (!binaries.has(command)) binaries.set(command, findBinary(command));
@@ -152,6 +229,12 @@ export function createLspDiagnostics(
     if (spec === null) return null;
     const root = findRoot(dirname(input.absolute));
     if (root === null) return null;
+    const known = entries.get(`${spec.id}\u0000${root}`);
+    if (known === undefined || known.state === "unavailable") {
+      // No server on PATH: nothing to ask about.
+      if (binaryFor(spec.command) === null) return null;
+      if (!(await mayStart(spec, root, input))) return null;
+    }
     const entry = entryFor(spec, root);
     if (entry.state === "unavailable" || entry.state === "failed") return null;
     const client = await withTimeout(entry.ready, startupWaitMs);

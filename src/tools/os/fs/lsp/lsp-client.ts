@@ -6,7 +6,16 @@
  * full new text as a change) and waits for the server's
  * `textDocument/publishDiagnostics` for it. Servers send those on their
  * own schedule and sometimes twice (syntax first, types after), so the
- * wait settles for a moment after the first one and keeps the latest.
+ * wait settles for a moment after each one and keeps the latest.
+ *
+ * typescript-language-server sends the quick syntax-only result first
+ * and the type errors (TS2322 and friends) up to a second later, both
+ * without a version. A short settle would take the empty syntax pass as
+ * the verdict, so a publish without a version settles for
+ * DIAGNOSTICS_UNVERSIONED_SETTLE_MS; one that names the version it is
+ * for settles for the short DIAGNOSTICS_SETTLE_MS. A publish naming an
+ * older version (a late answer to the "before" sync) is ignored. All of
+ * it stays inside the caller's overall `timeoutMs`.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { basename } from "node:path";
@@ -34,8 +43,16 @@ export interface DiagnosticsClient {
   dispose(): void;
 }
 
-/** Quiet time after a publish before its result is taken as final. */
+/**
+ * Quiet time after a publish that names the version it is for, before
+ * its result is taken as final.
+ */
 export const DIAGNOSTICS_SETTLE_MS = 300;
+/**
+ * Quiet time after a publish without a version: long enough for the
+ * semantic pass that follows a syntax-only one.
+ */
+export const DIAGNOSTICS_UNVERSIONED_SETTLE_MS = 1500;
 
 interface OpenDoc {
   version: number;
@@ -175,8 +192,10 @@ export class LspConnectionClient implements DiagnosticsClient {
     if (typeof p?.uri !== "string" || !Array.isArray(p.diagnostics)) return;
     const waiter = this.waiters.get(uriKey(p.uri));
     if (waiter === undefined) return;
-    // A server that tracks versions tells us when a publish is stale.
-    if (typeof p.version === "number" && p.version < waiter.version) return;
+    const versioned = typeof p.version === "number";
+    // A server that tracks versions tells us when a publish is stale:
+    // a late answer to the "before" sync never counts for the "after" one.
+    if (versioned && (p.version as number) < waiter.version) return;
     waiter.latest = p.diagnostics.filter(
       (d): d is LspDiagnostic =>
         d !== null &&
@@ -184,9 +203,11 @@ export class LspConnectionClient implements DiagnosticsClient {
         typeof (d as { message?: unknown }).message === "string",
     );
     if (waiter.settle !== null) clearTimeout(waiter.settle);
+    // Without a version the publish may be the syntax-only pass with the
+    // type errors still to come, so wait longer for a later one.
     waiter.settle = setTimeout(
       () => waiter.finish(waiter.latest),
-      DIAGNOSTICS_SETTLE_MS,
+      versioned ? DIAGNOSTICS_SETTLE_MS : DIAGNOSTICS_UNVERSIONED_SETTLE_MS,
     );
   }
 }

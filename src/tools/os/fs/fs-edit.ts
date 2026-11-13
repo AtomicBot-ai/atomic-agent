@@ -161,6 +161,8 @@ async function editFile(
       change: "edit",
       before: original,
       after: updated,
+      sessionId: ctx.sessionId,
+      signal: ctx.signal,
     })) ?? null;
 
   return withReplaceNotes(

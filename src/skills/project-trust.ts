@@ -43,6 +43,17 @@ export function readProjectTrust(configFile: string, startup: readonly ProjectTr
   return findProjectTrust(records, workingDir);
 }
 
+/**
+ * Whether the operator has trusted the folder at all: they said yes to
+ * at least one item it ships. Used where the question is about the
+ * folder rather than one skill, such as starting a language server in
+ * it (ATO-503).
+ */
+export function isProjectFolderTrusted(configFile: string, startup: readonly ProjectTrustRecord[] | undefined, workingDir: string): boolean {
+  const record = readProjectTrust(configFile, startup, workingDir);
+  return record !== undefined && (record.trustedSkills.length > 0 || record.trustedInstructions.length > 0);
+}
+
 export function skillTrust(record: ProjectTrustRecord | undefined, name: string): ProjectItemTrust {
   if (record?.trustedSkills.includes(name)) return "trusted";
   return record?.declinedSkills.includes(name) ? "declined" : "pending";

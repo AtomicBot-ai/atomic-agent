@@ -1,7 +1,11 @@
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
-import { describe, expect, it } from "vitest";
-import { LspConnectionClient, uriKey } from "./lsp-client.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  DIAGNOSTICS_UNVERSIONED_SETTLE_MS,
+  LspConnectionClient,
+  uriKey,
+} from "./lsp-client.js";
 import {
   answerServerRequest,
   createJsonRpcConnection,
@@ -147,6 +151,71 @@ describe("LspConnectionClient (ATO-503)", () => {
     expect(client.alive).toBe(false);
     expect(owned).toBe(false);
     await expect(client.diagnose(FILE, "typescript", "x", 1000)).resolves.toBeNull();
+  });
+});
+
+describe("LspConnectionClient settle on unversioned publishes (ATO-503)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Lets stream data and promise callbacks run; setImmediate stays real. */
+  const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+  it("waits past the empty syntax pass for the TS2322 that follows 800 ms later", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { connection, send, until } = wire();
+    const client = new LspConnectionClient(connection);
+
+    // "Before" sync: the old text, no errors.
+    const before = client.diagnose(FILE, "typescript", "let a: number = 1;", 3000);
+    await until(1);
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: URI, diagnostics: [] } });
+    await flush();
+    await vi.advanceTimersByTimeAsync(DIAGNOSTICS_UNVERSIONED_SETTLE_MS);
+    await expect(before).resolves.toEqual([]);
+
+    // "After" sync: syntax-only [] at t=0, the semantic TS2322 at t=800 ms.
+    let settled = false;
+    const after = client.diagnose(FILE, "typescript", "let a: number = 'x';", 3000);
+    void after.then(() => {
+      settled = true;
+    });
+    await until(2);
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: URI, diagnostics: [] } });
+    await flush();
+    await vi.advanceTimersByTimeAsync(800);
+    expect(settled).toBe(false);
+    const ts2322 = {
+      message: "Type 'string' is not assignable to type 'number'.",
+      severity: 1,
+      code: 2322,
+      source: "typescript",
+    };
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: URI, diagnostics: [ts2322] } });
+    await flush();
+    await vi.advanceTimersByTimeAsync(DIAGNOSTICS_UNVERSIONED_SETTLE_MS);
+    await expect(after).resolves.toEqual([ts2322]);
+  });
+
+  it("ignores a late versioned publish for the before sync", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { connection, send, until } = wire();
+    const client = new LspConnectionClient(connection);
+    const before = client.diagnose(FILE, "typescript", "v1", 3000);
+    await until(1);
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: URI, version: 1, diagnostics: [] } });
+    await flush();
+    await vi.advanceTimersByTimeAsync(400);
+    await expect(before).resolves.toEqual([]);
+
+    const after = client.diagnose(FILE, "typescript", "v2", 3000);
+    await until(2);
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: URI, version: 2, diagnostics: [{ message: "new" }] } });
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: URI, version: 1, diagnostics: [] } });
+    await flush();
+    await vi.advanceTimersByTimeAsync(400);
+    await expect(after).resolves.toEqual([{ message: "new" }]);
   });
 });
 

@@ -5,8 +5,11 @@ import {
   createLspDiagnostics,
   type LspChangeInput,
   type LspDiagnosticsOptions,
+  type LspStartAnswer,
+  type LspStartQuestion,
   type StartClient,
 } from "./lsp-diagnostics.js";
+import { askToStartLspThroughApprovals, LSP_START_TOOL } from "./lsp-start-question.js";
 
 /**
  * A fake server: diagnostics are a pure function of the text — one
@@ -224,5 +227,129 @@ describe("createLspDiagnostics (ATO-503)", () => {
     lsp.dispose();
     await new Promise((r) => setTimeout(r, 0));
     expect(client.disposed).toBe(true);
+  });
+});
+
+describe("start question in an untrusted folder (ATO-503)", () => {
+  function asking(answers: LspStartAnswer[]) {
+    const questions: LspStartQuestion[] = [];
+    const askToStart = async (question: LspStartQuestion): Promise<LspStartAnswer> => {
+      questions.push(question);
+      return answers.shift() ?? "unanswered";
+    };
+    return { questions, askToStart };
+  }
+  const inSession = (over: Partial<LspChangeInput> = {}) => change({ sessionId: "s1", ...over });
+
+  it("asks on the first start in an untrusted work tree, and not on the second", async () => {
+    const { questions, askToStart } = asking(["yes"]);
+    const { lsp, starts } = setup({ askToStart, isTrustedProject: () => false });
+    expect(await lsp.diagnoseChange(inSession())).toContain("new problem");
+    expect(questions).toHaveLength(1);
+    expect(questions[0]).toMatchObject({ root: REPO, server: "typescript-language-server", sessionId: "s1" });
+    expect(await lsp.diagnoseChange(inSession())).toContain("new problem");
+    expect(questions).toHaveLength(1);
+    expect(starts).toHaveLength(1);
+  });
+
+  it("remembers the answer for the work tree, not per language", async () => {
+    const { questions, askToStart } = asking(["yes"]);
+    const { lsp, starts } = setup({ askToStart, isTrustedProject: () => false });
+    await lsp.diagnoseChange(inSession());
+    await lsp.diagnoseChange(inSession({ absolute: `${REPO}/tool.py`, display: "tool.py" }));
+    expect(questions).toHaveLength(1);
+    expect(starts.map((s) => s.id).sort()).toEqual(["pyright", "typescript"].sort());
+  });
+
+  it("does not ask in a trusted folder", async () => {
+    const { questions, askToStart } = asking([]);
+    const trustedRoots: string[] = [];
+    const { lsp, starts } = setup({
+      askToStart,
+      isTrustedProject: (root) => {
+        trustedRoots.push(root);
+        return true;
+      },
+    });
+    expect(await lsp.diagnoseChange(inSession())).toContain("new problem");
+    expect(questions).toEqual([]);
+    expect(trustedRoots).toEqual([REPO]);
+    expect(starts).toHaveLength(1);
+  });
+
+  it("starts nothing on a no, and remembers it", async () => {
+    const { questions, askToStart } = asking(["no"]);
+    const { lsp, starts } = setup({ askToStart, isTrustedProject: () => false });
+    expect(await lsp.diagnoseChange(inSession())).toBeNull();
+    expect(await lsp.diagnoseChange(inSession())).toBeNull();
+    expect(questions).toHaveLength(1);
+    expect(starts).toEqual([]);
+  });
+
+  it("starts nothing when nobody could answer, and asks again next time", async () => {
+    const { questions, askToStart } = asking(["unanswered", "yes"]);
+    const { lsp, starts } = setup({ askToStart, isTrustedProject: () => false });
+    expect(await lsp.diagnoseChange(inSession())).toBeNull();
+    expect(starts).toEqual([]);
+    expect(await lsp.diagnoseChange(inSession())).toContain("new problem");
+    expect(questions).toHaveLength(2);
+    expect(starts).toHaveLength(1);
+  });
+
+  it("asks once for edits that arrive while the question is open", async () => {
+    let answer: (a: LspStartAnswer) => void = () => {};
+    let asked = 0;
+    const askToStart = () => {
+      asked += 1;
+      return new Promise<LspStartAnswer>((resolve) => {
+        answer = resolve;
+      });
+    };
+    const { lsp, starts } = setup({ askToStart, isTrustedProject: () => false });
+    const a = lsp.diagnoseChange(inSession());
+    const b = lsp.diagnoseChange(inSession());
+    await new Promise((r) => setTimeout(r, 0));
+    answer("yes");
+    await Promise.all([a, b]);
+    expect(asked).toBe(1);
+    expect(starts).toHaveLength(1);
+  });
+
+  it("starts nothing without a session to ask in", async () => {
+    const { questions, askToStart } = asking(["yes"]);
+    const { lsp, starts } = setup({ askToStart, isTrustedProject: () => false });
+    expect(await lsp.diagnoseChange(change())).toBeNull();
+    expect(questions).toEqual([]);
+    expect(starts).toEqual([]);
+  });
+});
+
+describe("askToStartLspThroughApprovals (ATO-503)", () => {
+  const question: LspStartQuestion = {
+    root: REPO,
+    server: "typescript-language-server",
+    sessionId: "s1",
+    signal: new AbortController().signal,
+  };
+  function gate(decision: { approved: boolean; automatic?: boolean; declinedEarlier?: boolean }) {
+    const requests: Array<{ tool: string; category: string; sessionId: string }> = [];
+    const approvals = {
+      request: async (req: { tool: string; category: string; sessionId: string }) => {
+        requests.push(req);
+        return decision;
+      },
+    };
+    return { requests, ask: askToStartLspThroughApprovals({ approvals: approvals as never, approvalRequired: true }) };
+  }
+
+  it("asks as trust_config and maps a yes", async () => {
+    const { requests, ask } = gate({ approved: true });
+    await expect(ask(question)).resolves.toBe("yes");
+    expect(requests[0]).toMatchObject({ tool: LSP_START_TOOL, category: "trust_config", sessionId: "s1" });
+  });
+
+  it("maps a person's no to no, and a refuse policy to unanswered", async () => {
+    await expect(gate({ approved: false }).ask(question)).resolves.toBe("no");
+    await expect(gate({ approved: false, automatic: true }).ask(question)).resolves.toBe("unanswered");
   });
 });
