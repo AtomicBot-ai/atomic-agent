@@ -43,6 +43,7 @@ import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAns
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
+import { pushTurnNote, wirePushIpc } from "./push-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
@@ -1408,6 +1409,8 @@ function wireIpc(client: AgentClient): void {
     },
     workingDirName: () => lastSegment(process.platform, client.status.workingDir),
     show: (note) => {
+      // ATO-1129: and the phone, when Settings › Phone push is on.
+      void pushTurnNote(note);
       if (!Notification.isSupported()) return;
       const n = new Notification({ title: note.title, body: note.body });
       n.on("click", () => {
@@ -3020,6 +3023,8 @@ function wireIpc(client: AgentClient): void {
   wirePluginsIpc();
   // ATO-1102: "Test skill" on a skill card, through `atag skill eval` (skill-eval-ipc.ts).
   wireSkillEvalIpc({ cwd: () => client.status.workingDir });
+  // ATO-1129: Settings › Connections › Phone push, through `atag push` (push-ipc.ts).
+  wirePushIpc();
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).
