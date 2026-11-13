@@ -120,14 +120,39 @@ const VERSION = "0.18.6";
 const roots = [];
 after(() => { for (const d of roots) rmSync(d, { recursive: true, force: true }); });
 
-async function fakeCore(dataDir) {
+/**
+ * A stand-in Core. `state.key` is the OpenRouter key it holds. With `slowDelete`, a DELETE of
+ * the key takes effect and answers only once a PUT of the key has come in (or after 500 ms,
+ * when none comes), as a DELETE overtaken by a later PUT would.
+ */
+async function fakeCore(dataDir, { slowDelete = false } = {}) {
   const dataFolder = join(dataDir, "core", "versions", VERSION, "data");
   const seen = [];
-  const server = createServer((req, res) => {
+  const state = { key: null };
+  let putCame = null;
+  const putSeen = new Promise((r) => { putCame = r; });
+  const server = createServer(async (req, res) => {
     const path = req.url.replace(/^\/atomic\/v1/, "");
     seen.push(`${req.method} ${path}`);
+    let body = "";
+    for await (const chunk of req) body += chunk;
     res.setHeader("content-type", "application/json");
     res.setHeader("connection", "close");
+    if (path === "/cloud/providers/openrouter" && req.method === "PUT") {
+      state.key = JSON.parse(body).api_key;
+      putCame();
+      return res.end(JSON.stringify({ ok: true }));
+    }
+    if (path === "/cloud/providers/openrouter" && req.method === "DELETE") {
+      if (slowDelete) {
+        let timer;
+        await Promise.race([putSeen, new Promise((r) => { timer = setTimeout(r, 500); })]);
+        clearTimeout(timer);
+      }
+      state.key = null;
+      seen.push("DELETE done");
+      return res.end(JSON.stringify({ ok: true }));
+    }
     if (path === "/snapshot") {
       return res.end(JSON.stringify({
         instance_id: "this-app", version: VERSION, protocol: 2, owner_scope: "cli", data_folder: dataFolder, sessions: [],
@@ -142,7 +167,7 @@ async function fakeCore(dataDir) {
   writeFileSync(join(dataFolder, "atomic-core", "instance.lock"), JSON.stringify({
     state: "ready", instance_id: "this-app", control_host: "127.0.0.1", control_port: server.address().port,
   }));
-  return { seen };
+  return { seen, state };
 }
 
 test("StudioMedia sends DELETE /cloud/providers/openrouter to the running Core and leaves it running", async () => {
@@ -159,5 +184,26 @@ test("StudioMedia sends DELETE /cloud/providers/openrouter to the running Core a
   assert.ok(core.seen.includes("DELETE /cloud/providers/openrouter"), core.seen.join(", "));
   // A Core that was already running is not this call's to retire.
   assert.equal(core.seen.includes("POST /shutdown"), false, core.seen.join(", "));
+  studio.dispose();
+});
+
+test("a key set while the DELETE is in flight ends up in Core, not deleted by it", async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "studio-forget-key-")));
+  roots.push(root);
+  const dataDir = join(root, "models");
+  const core = await fakeCore(dataDir, { slowDelete: true });
+  const studio = new StudioMedia({
+    dataDir: () => dataDir, stateDir: root, coreVersion: VERSION, openRouterKey: async () => "sk-or-dummy-new",
+    emitJob: () => {}, emitLocal: () => {},
+    coreRequest: () => { throw new Error("must not download Core"); },
+  });
+  const forgetting = studio.forgetOpenRouterKey();
+  const readying = studio.ready();
+  await Promise.all([forgetting, readying]);
+  assert.equal(core.state.key, "sk-or-dummy-new", core.seen.join(", "));
+  // The key went out after the DELETE was done, not while it was in flight.
+  const deleted = core.seen.indexOf("DELETE done");
+  const put = core.seen.indexOf("PUT /cloud/providers/openrouter");
+  assert.ok(deleted >= 0 && put > deleted, core.seen.join(", "));
   studio.dispose();
 });
