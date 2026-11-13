@@ -110,6 +110,10 @@ export async function startWebhookTunnel(options: StartWebhookTunnelOptions): Pr
     host: "127.0.0.1",
     port: 0,
     apiKey: null,
+    // The public tunnel host and senders' own body types would trip the
+    // keyless loopback guard (ATO-1495); each binding's secret and
+    // signature check stands in for it here.
+    loopbackGuard: false,
     routes: buildTunnelRouteTable(),
     approvalBus: options.approvalBus,
     completionRegistry: options.completionRegistry,
