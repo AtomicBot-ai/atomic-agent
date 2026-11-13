@@ -572,6 +572,14 @@ Honestly degraded, and labelled as such in the UI:
   Models, "prvcy" Privacy), then a one-typo match ("modles"). fuzzysort is
   vendored in `renderer/vendor/` because the renderer loads plain scripts.
   The chats still fold to five plus an "N more chats" row.
+- **Formulas and diagrams in replies.** `$…$`, `$$…$$`, `\(…\)` and `\[…\]`
+  are drawn with KaTeX and a closed ```mermaid fence with Mermaid
+  (`renderer/rich-blocks.js`, ATO-1140). Prices stay text: on Pandoc's rules
+  there is no space just inside either `$` and the closing one is not followed
+  by a digit or a letter. Both libraries are npm dependencies copied into
+  `out/renderer/vendor/` at build (`scripts/vendor-math.mjs`) and loaded the
+  first time a reply needs them; a drawn block is kept across stream frames by
+  its `data-morph-keep` key, and an open fence stays code until it closes.
 - **Settings is the TUI menu.** The bottom-left gear (and ⌘ , and Escape with
   nothing else on screen) opens the menu tree from
   `src/tui/menu/menu-registry.ts` with the Manage tabs on the right — minus the

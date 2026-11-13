@@ -25,6 +25,7 @@
 <link rel="stylesheet" href="css/studio.css">
 <link rel="stylesheet" href="css/studio-images.css">
 <link rel="stylesheet" href="css/studio-video.css">
+<link rel="stylesheet" href="css/rich-blocks.css">
 </head>
 <body>
 <div id="desktop">
@@ -110,6 +111,8 @@
 <script src="vendor/purify.js"></script>
 <!-- ATO-1251: the reply's markdown blocks (renderMarkdown hands its text here). -->
 <script src="md-render.js"></script>
+<!-- ATO-1140: formulas and Mermaid diagrams; KaTeX and Mermaid themselves load on first use. -->
+<script src="rich-blocks.js"></script>
 <!-- ATO-1053: the file preview panel (main reads the file; this only draws it). -->
 <script src="chat-files.js"></script>
 <script src="file-preview.js"></script>
