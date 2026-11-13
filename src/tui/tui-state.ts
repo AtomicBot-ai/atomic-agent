@@ -182,8 +182,18 @@ export interface ChatMessage {
    * `add-cloud-provider` is set on the notice a cloud or Fusion pick
    * leaves when no cloud provider exists yet: the agent stays on local,
    * and the button opens the add-provider wizard (ATO-1460).
+   * `fix-key` is set on the "Turn failed" notice when the provider
+   * refused the API key (`auth_rejected`, ATO-1457): a refused key never
+   * fixes itself, and the button opens that provider's key field.
    */
-  action?: "configure-fallback" | "add-cloud-provider";
+  action?: "configure-fallback" | "add-cloud-provider" | "fix-key";
+  /**
+   * The provider whose API key was refused, for the `[check key]`
+   * button. Set with `action: "fix-key"` when the error names it, and
+   * on a fallover notice whose cause was a refused key (that notice
+   * keeps `configure-fallback` and shows both buttons).
+   */
+  fixKeyProviderId?: string;
   /**
    * A session this notice offers to open, rendered as a `[switch back]`
    * button beside `[copy]`. Set on the notices that name a thread the

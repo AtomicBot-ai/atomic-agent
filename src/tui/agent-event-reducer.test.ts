@@ -2,6 +2,7 @@ import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
 import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
 import { LocalOutOfMemoryError } from "../llm/index.js";
+import { failureVerdict } from "../llm/reliability/failure-catalog.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
 import { providerRow } from "./composer-switch/composer-switch-fixtures.js";
@@ -2789,5 +2790,106 @@ describe("reduceTuiState session usage (ATO-569)", () => {
     const last = state.messages[state.messages.length - 1];
     expect(last?.role).toBe("system");
     expect(last?.text).toContain("$0.31 over 1 priced call");
+  });
+});
+
+/* ATO-1457: a turn that failed because the provider refused the API key
+   offers `[check key]`, which opens that provider's key field. */
+describe("a refused API key offers the key field", () => {
+  const refused = (error: Error) =>
+    apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error,
+          category: "transport",
+          failure: failureVerdict("auth_rejected"),
+        },
+      },
+    ]);
+
+  it("sets fix-key and names the provider the error was raised for", () => {
+    const error = Object.assign(new Error("openai provider 401: "), {
+      providerLabel: "openrouter",
+    });
+    const msg = refused(error).messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(msg?.action).toBe("fix-key");
+    expect(msg?.fixKeyProviderId).toBe("openrouter");
+  });
+
+  it("finds the provider through a wrapping error", () => {
+    const inner = Object.assign(new Error("401"), { providerLabel: "anthropic" });
+    const outer = new Error("all providers failed", { cause: inner });
+    const msg = refused(outer).messages.find((m) => m.variant === "warn");
+    expect(msg?.action).toBe("fix-key");
+    expect(msg?.fixKeyProviderId).toBe("anthropic");
+  });
+
+  it("still sets fix-key when the error names no provider", () => {
+    const msg = refused(new Error("401 unauthorized")).messages.find(
+      (m) => m.variant === "warn",
+    );
+    expect(msg?.action).toBe("fix-key");
+    expect(msg?.fixKeyProviderId).toBeUndefined();
+  });
+
+  it("leaves other failures without the button", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("boom"),
+          category: "transport",
+          failure: failureVerdict("provider_unreachable"),
+        },
+      },
+    ]);
+    const msg = next.messages.find((m) => m.variant === "warn");
+    expect(msg?.action).toBeUndefined();
+    expect(msg?.fixKeyProviderId).toBeUndefined();
+  });
+
+  it("adds the key button to a fallover away from a refused key, keeping configure-fallback", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: {
+          type: "provider_switched",
+          direction: "away",
+          from: "openrouter",
+          to: "local-llama",
+          reason: "provider rejected the request (401).",
+          cause: "auth",
+          failure: "auth_rejected",
+        },
+      },
+    ]);
+    const system = next.messages.filter((m) => m.role === "system");
+    expect(system).toHaveLength(1);
+    expect(system[0]?.action).toBe("configure-fallback");
+    expect(system[0]?.fixKeyProviderId).toBe("openrouter");
+  });
+
+  it("does not add it to a fallover for any other reason", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: {
+          type: "provider_switched",
+          direction: "away",
+          from: "openrouter",
+          to: "local-llama",
+          reason: "503",
+          cause: "other",
+        },
+      },
+    ]);
+    expect(next.messages[0]?.fixKeyProviderId).toBeUndefined();
   });
 });
