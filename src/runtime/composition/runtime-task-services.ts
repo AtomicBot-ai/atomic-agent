@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import {
+  openPerCallHeartbeatStore,
   parseQuietHours,
   SqliteHeldReportStore,
   TaskReportHold,
@@ -12,6 +13,7 @@ import type { TaskRunnerRuntime } from "../../tasks/task-runner.js";
 import { createSchedulerLeadership, Scheduler } from "../../scheduler/index.js";
 import { WebhookSessionStore, WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
 import { registerTaskTools } from "../../tools/tasks/index.js";
+import { showDesktopNotification } from "../../tools/os/notify.js";
 import type { ToolRegistry } from "../../tools/tool-registry.js";
 import type { SessionStore } from "../../session/index.js";
 import { TelegramChannel } from "../../channels/telegram/index.js";
@@ -105,6 +107,13 @@ export function createRuntimeTaskRunner(args: {
       quietHours: parseQuietHours(config.tasks.report?.quietHours ?? undefined),
     }),
     snapshotCadence: config.statusSnapshot ?? null,
+    // Heartbeats (ATO-454): settings in tasks.sqlite, read per run; news
+    // goes to Telegram through the report sink above and, when the
+    // heartbeat asks, to a desktop notification.
+    heartbeat: {
+      store: openPerCallHeartbeatStore(config.paths.tasksDbFile),
+      notifyDesktop: (title, message) => showDesktopNotification({ title, message }),
+    },
     logger,
     metrics,
     ...(args.approvalLevel ? { approvalLevel: args.approvalLevel } : {}),
