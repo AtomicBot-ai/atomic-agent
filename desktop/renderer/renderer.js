@@ -14733,15 +14733,16 @@ function hfDiskFit(choice) {
 // A new reading that could change a verdict repaints whatever shows one.
 DISK.onChange = () => render();
 DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
-/* ATO-1186: the status line repaints when the memory word changes, and its
-   clock moves in place twice a minute (no full render for a clock). */
+/* ATO-1186: the status line repaints in place, never through a full render:
+   when the memory word changes and twice a minute for its clock. */
+function statusLineRepaint() {
+  const el = document.querySelector('#composer .cstatus');
+  const html = el ? composerStatusLine() : '';
+  if (el && html && el.outerHTML !== html) el.outerHTML = html;
+}
 if (typeof STATUS_LINE !== 'undefined') {
-  STATUS_LINE.onChange = () => render();
-  setInterval(() => {
-    const el = document.querySelector('#composer .cstatus');
-    const html = el ? composerStatusLine() : '';
-    if (el && html && el.outerHTML !== html) el.outerHTML = html;
-  }, 30 * 1000);
+  STATUS_LINE.onChange = statusLineRepaint;
+  setInterval(statusLineRepaint, 30 * 1000);
 }
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
 function modelPickNote(model, ram) {

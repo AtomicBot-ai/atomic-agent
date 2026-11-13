@@ -104,3 +104,45 @@ test('wired: preload, main, the page and the renderer', () => {
   assert.match(r, /\+ composerStatusLine\(\)/);
   assert.match(r, /replySpeedHTML\(m\.speed\)/);
 });
+
+test('review F06-4: an idle chat whose memory drifts repaints only the status line, never a full render', async () => {
+  const r = src('../renderer/renderer.js');
+  const start = r.indexOf('function statusLineRepaint()');
+  const end = r.indexOf('/** @returns {{v:', start);
+  assert.ok(start > 0 && end > start, 'the repaint block is in renderer.js');
+  const block = r.slice(start, end);
+  assert.doesNotMatch(block, /render\(\)/, 'the status line block never calls render()');
+  const S = R.STATUS_LINE;
+  Object.assign(S, {memBytes: null, memAt: 0, pending: null, onChange: null});
+  let renders = 0;
+  let swaps = 0;
+  let now = 1_000_000;
+  let rss = 300 * 1024 * 1024;
+  const br = {appMemory: async () => ({bytes: rss})};
+  const el = {
+    _html: '<div class="cstatus">x</div>',
+    get outerHTML() { return this._html; },
+    set outerHTML(v) { swaps++; this._html = v; },
+  };
+  const ticks = [];
+  const env = {
+    document: {querySelector: (q) => (q === '#composer .cstatus' ? el : null)},
+    composerStatusLine: () => { R.statusMemRefresh(br, now); return R.statusLineHTML({model: 'm', memBytes: S.memBytes}); },
+    render: () => { renders++; },
+    setInterval: (fn) => { ticks.push(fn); return 1; },
+    STATUS_LINE: S,
+  };
+  new Function(...Object.keys(env), block)(...Object.values(env));
+  assert.equal(typeof S.onChange, 'function');
+  assert.equal(ticks.length, 1, 'one 30 s clock');
+  // Five idle minutes: ten ticks, memory drifting a few hundred KB each time.
+  for (let i = 0; i < 10; i++) {
+    now += 30 * 1000;
+    rss += 300 * 1024;
+    ticks[0]();
+    await S.pending;
+  }
+  assert.equal(renders, 0, 'no full render');
+  assert.ok(swaps > 0, 'the status element itself was updated');
+  S.onChange = null;
+});
