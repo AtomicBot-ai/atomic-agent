@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve } from "node:path";
-import { buildCommandEnv } from "../sandbox/command-env.js";
+import { buildCommandEnv, KNOWN_SECRET_ENV_VARS } from "../sandbox/command-env.js";
 import { runCommand, type CommandResult } from "../sandbox/command-runner.js";
 import {
   buildSubshellInvocation,
@@ -22,6 +22,20 @@ export interface RunSkillScriptParams {
    * ATO-347). Omitted means none.
    */
   envPassthrough?: readonly string[];
+}
+
+const AGENT_CREDENTIALS = new Set(KNOWN_SECRET_ENV_VARS.map((name) => name.toUpperCase()));
+
+/**
+ * The `env_keys` a skill declared that its scripts may receive. The
+ * agent's own provider keys and bot tokens (`KNOWN_SECRET_ENV_VARS`) are
+ * never among them: a skill asks for its own service key, not for the
+ * credentials the agent runs on.
+ */
+export function skillEnvKeys(skill: Pick<SkillRecord, "manifest">): string[] {
+  return (skill.manifest.envKeys ?? []).filter(
+    (name) => !AGENT_CREDENTIALS.has(name.toUpperCase()),
+  );
 }
 
 export interface SkillScriptOutcome extends CommandResult {
@@ -52,7 +66,8 @@ export class SkillScriptError extends Error {
  * The script gets the same filtered environment as a shell command: a
  * skill is third-party code the model chose to run, so it must not
  * inherit the provider keys and bot tokens `.env` loaded into the
- * agent's own process (ATO-877).
+ * agent's own process (ATO-877). The one addition is the skill's own
+ * `env_keys` (see `skillEnvKeys`).
  */
 export async function runSkillScript(
   skill: SkillRecord,
@@ -130,7 +145,12 @@ export async function runSkillScript(
       cwd: skill.rootDir,
       // Built per call from the live env, so a key added mid-session is
       // filtered the same way.
-      env: buildCommandEnv(process.env, params.envPassthrough ?? []),
+      // plus the names this skill declared in `env_keys`, for its own
+      // scripts only (never another skill's, never `os.shell.run`).
+      env: buildCommandEnv(process.env, [
+        ...(params.envPassthrough ?? []),
+        ...skillEnvKeys(skill),
+      ]),
       timeoutMs: params.timeoutMs ?? 30_000,
       ...(params.signal ? { signal: params.signal } : {}),
       ...(windowsVerbatimArguments ? { windowsVerbatimArguments } : {}),

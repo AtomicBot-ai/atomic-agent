@@ -7,6 +7,8 @@ requires_tools:
 requires_scripts:
   - crawl.mjs
   - pagespeed.mjs
+env_keys:
+  - PAGESPEED_API_KEY
 dangerous: false
 ---
 
@@ -47,8 +49,15 @@ Run the crawl with the site the user gave (a bare domain works):
 ```
 
 Optional args: `--max-pages N` (up to 50), `--max-links N` (up to 300),
-`--delay-ms N`. Raise the caps only when the user asks for a deeper
-audit, and then use `timeoutMs: 600000`.
+`--delay-ms N`, `--deadline-seconds N` (240 by default). Raise the caps
+only when the user asks for a deeper audit, and then pass
+`--deadline-seconds 540` with `timeoutMs: 600000`. Keep the deadline
+well under `timeoutMs`: a run that hits the timeout is killed and
+returns nothing.
+
+A bare domain that redirects (`example.com` to `www.example.com`) is
+crawled on the host it lands on; the www and bare forms count as the
+same site.
 
 The script reads the sitemap from robots.txt (or `/sitemap.xml`), fetches
 the home page and sitemap pages up to the cap (when there is no sitemap it
@@ -63,8 +72,21 @@ prints one JSON object:
   redirecting links with the pages they were found on.
 - `limits`: how many pages and links were crawled and checked. If the
   site has more pages than the cap, say the report covers a sample.
+- `site.redirectedTo`: set when the start URL sends visitors to another
+  domain. Tell the user and offer to audit that domain instead.
 
-If the output has `error`, report it plainly and stop.
+**Partial results.** The crawl has a time budget. At 80% of
+`--deadline-seconds` it starts no new request and prints what it has
+with `partial: true`, `partialReason` (`time_budget`, or
+`stopped_by_SIGTERM` / `stopped_by_SIGINT` when it was stopped) and
+`partialDetail`. This happens on slow sites and when robots.txt sets a
+long `Crawl-delay` (5 seconds allows about 38 requests in the default
+budget). A partial result is still a valid report: use it, say in the
+first lines that it covers only the pages and links in `limits`, and do
+not rerun with a shorter delay. Offer a longer run (bigger
+`--deadline-seconds` and `timeoutMs`) only if the user wants more.
+
+If the output has `error` and no `partial`, report it plainly and stop.
 
 ## Step 2: speed (Core Web Vitals)
 
@@ -89,11 +111,10 @@ quota is shared and is often used up (`error: rate_limited`). Then:
 
 1. Do not retry in a loop. Write "Speed: not measured" in the report.
 2. Tell the user they can get a free key from Google Cloud (enable the
-   "PageSpeed Insights API", create an API key), put
-   `PAGESPEED_API_KEY=...` in `~/.atomic-agent/.env`, and add
-   `PAGESPEED_API_KEY` to `tools.shell.envPassthrough` in the config so
-   skill scripts can see it (scripts get a filtered environment and
-   secret-looking variables are removed unless listed there).
+   "PageSpeed Insights API", create an API key) and put
+   `PAGESPEED_API_KEY=...` in `~/.atomic-agent/.env`. Nothing else to
+   set: this skill declares the key in `env_keys`, so its own scripts
+   receive it, and other skills and shell commands do not.
 3. Offer the manual check: https://pagespeed.web.dev/ with their URL.
 
 Never ask the user to paste the key into the chat, and never pass it as a

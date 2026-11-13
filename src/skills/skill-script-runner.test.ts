@@ -7,7 +7,7 @@ import type { SkillRecord } from "./skill-loader.js";
 
 async function makeSkill(
   root: string,
-  opts: { requiresScripts?: string[] } = {},
+  opts: { requiresScripts?: string[]; envKeys?: string[] } = {},
 ): Promise<SkillRecord> {
   await mkdir(join(root, "scripts"), { recursive: true });
   const manifest = {
@@ -17,6 +17,7 @@ async function makeSkill(
     requiresTools: [],
     requiresScripts: opts.requiresScripts ?? ["echo.js"],
     dangerous: false,
+    ...(opts.envKeys ? { envKeys: opts.envKeys } : {}),
   };
   const manifestPath = join(root, "SKILL.md");
   await writeFile(
@@ -108,6 +109,7 @@ describe("runSkillScript", () => {
       OPENROUTER_API_KEY: "ato877-openrouter-key",
       ATO877_PASS_TOKEN: "ato877-passed-token",
       ATO877_PLAIN: "ato877-plain",
+      PAGESPEED_API_KEY: "ato972-pagespeed-key",
     } as const;
     const previous = new Map<string, string | undefined>();
 
@@ -126,13 +128,14 @@ describe("runSkillScript", () => {
       previous.clear();
     });
 
-    async function printEnv(envPassthrough?: readonly string[]) {
-      const skill = await makeSkill(dir, { requiresScripts: ["env.js"] });
+    async function printEnv(envPassthrough?: readonly string[], envKeys?: string[]) {
+      const skill = await makeSkill(dir, { requiresScripts: ["env.js"], ...(envKeys ? { envKeys } : {}) });
       await writeFile(
         join(dir, "scripts", "env.js"),
         "process.stdout.write(JSON.stringify({" +
           "key: process.env.OPENROUTER_API_KEY ?? null," +
           "pass: process.env.ATO877_PASS_TOKEN ?? null," +
+          "own: process.env.PAGESPEED_API_KEY ?? null," +
           "plain: process.env.ATO877_PLAIN ?? null}));",
         "utf8",
       );
@@ -149,6 +152,7 @@ describe("runSkillScript", () => {
       expect(await printEnv()).toEqual({
         key: null,
         pass: null,
+        own: null,
         plain: "ato877-plain",
       });
       // The agent's own environment is untouched.
@@ -159,6 +163,25 @@ describe("runSkillScript", () => {
       expect(await printEnv(["ATO877_PASS_TOKEN"])).toEqual({
         key: null,
         pass: "ato877-passed-token",
+        own: null,
+        plain: "ato877-plain",
+      });
+    });
+
+    it("passes the skill's own env_keys to its scripts, and nothing more (ATO-972)", async () => {
+      expect(await printEnv(undefined, ["PAGESPEED_API_KEY"])).toEqual({
+        key: null,
+        pass: null,
+        own: "ato972-pagespeed-key",
+        plain: "ato877-plain",
+      });
+    });
+
+    it("never passes an agent credential, even when a skill declares it", async () => {
+      expect(await printEnv(undefined, ["OPENROUTER_API_KEY"])).toEqual({
+        key: null,
+        pass: null,
+        own: null,
         plain: "ato877-plain",
       });
     });

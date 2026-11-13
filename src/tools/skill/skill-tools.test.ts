@@ -544,4 +544,58 @@ describe("skill tools", () => {
       else process.env.ATO877_TOOL_TOKEN = saved.pass;
     }
   });
+  it("skill.run_script gives env_keys to that skill's scripts only, and never shows the value (ATO-972)", async () => {
+    const saved = process.env.PAGESPEED_API_KEY;
+    process.env.PAGESPEED_API_KEY = "ato972-tool-pagespeed-key";
+    try {
+      const probe = "process.stdout.write('own=' + (process.env.PAGESPEED_API_KEY ?? 'unset'));";
+      // `loud` declares no env_keys; `speed` declares the key.
+      const skills = await installWriting("'own=' + (process.env.PAGESPEED_API_KEY ?? 'unset')");
+      const speedDir = join(global, "speed");
+      await mkdir(join(speedDir, "scripts"), { recursive: true });
+      await writeFile(
+        join(speedDir, "SKILL.md"),
+        [
+          "---",
+          "name: speed",
+          'description: "Measures speed"',
+          "version: 0.1.0",
+          "requires_scripts: [probe.js]",
+          "env_keys: [PAGESPEED_API_KEY]",
+          "---",
+          "",
+          "Speed playbook body.",
+        ].join("\n"),
+        "utf8",
+      );
+      await writeFile(join(speedDir, "scripts", "probe.js"), probe, "utf8");
+      await skills.refresh();
+
+      const previews: string[] = [];
+      const gate = new ApprovalGate({
+        emit: (req) => {
+          previews.push(JSON.stringify(req));
+          gate.resolve({ approvalId: req.approvalId, approved: true });
+        },
+      });
+      const tool = buildSkillRunScriptTool(skills, { approvals: gate, approvalRequired: true });
+
+      const own = await tool.run({ skill: "speed", script: "probe.js" }, makeCtx(base));
+      const other = await tool.run({ skill: "loud", script: "loud.js" }, makeCtx(base));
+
+      // The declaring skill got the value (masked in what the model reads);
+      // the other skill's script did not get it at all.
+      expect(own.summary).toContain("own=[redacted:PAGESPEED_API_KEY]");
+      expect(other.summary).toContain("own=unset");
+      // Names in the approval preview, never the value anywhere.
+      expect(previews[0]).toContain("env keys: PAGESPEED_API_KEY");
+      expect(previews[1]).not.toContain("env keys");
+      for (const text of [...previews, own.summary, other.summary, JSON.stringify(own.details), JSON.stringify(other.details)]) {
+        expect(text).not.toContain("ato972-tool-pagespeed-key");
+      }
+    } finally {
+      if (saved === undefined) delete process.env.PAGESPEED_API_KEY;
+      else process.env.PAGESPEED_API_KEY = saved;
+    }
+  });
 });
