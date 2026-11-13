@@ -175,6 +175,11 @@ export interface SiteToolCallInput {
   argsJson: string;
   timeoutMs: number;
   maxResultChars: number;
+  /**
+   * The host the call was approved for (normalised, no port). The page
+   * refuses to run the tool when it is on another host by then.
+   */
+  host?: string;
 }
 
 export interface SiteToolCallResult {
@@ -185,7 +190,7 @@ export interface SiteToolCallResult {
   text: string;
   /** The tool said its own call failed (`isError` in an MCP-style result). */
   isError: boolean;
-  /** Why the call did not run or finish: `not_found`, `timeout`, `threw`, `bad_args`. */
+  /** Why the call did not run or finish: `not_found`, `timeout`, `threw`, `bad_args`, `wrong_host`. */
   error?: string;
   /** The page's own error message, when it threw (site text, untrusted). */
   message?: string;

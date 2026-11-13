@@ -137,6 +137,20 @@ describe("WebMCP page scripts", () => {
     expect(await call(page, "nothing", {})).toEqual({ ok: false, error: "not_found" });
   });
 
+  it("refuses to run when the page is no longer on the approved host", async () => {
+    const page = fakePage({ location: { hostname: "b.test" } });
+    runInit(page);
+    let ran = 0;
+    await page.document.modelContext.registerTool({ ...addTool, execute: async () => { ran += 1; return "2"; } });
+    const run = (host: string) =>
+      evaluate(page, callSiteToolExpression({ name: "add", argsJson: "{}", timeoutMs: 1_000, maxResultChars: 100, host }));
+    expect(await run("a.test")).toEqual({ ok: false, error: "wrong_host" });
+    expect(ran).toBe(0);
+    page.location.hostname = "B.Test.";
+    expect(await run("b.test")).toEqual({ ok: true, isError: false, text: "2" });
+    expect(ran).toBe(1);
+  });
+
   it("caps schemas and descriptions in the page, and survives a hostile entry", async () => {
     const page = fakePage();
     runInit(page);

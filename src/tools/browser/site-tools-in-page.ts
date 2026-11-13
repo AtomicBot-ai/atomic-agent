@@ -190,11 +190,18 @@ export interface CallSiteToolInPageArg {
   argsJson: string;
   timeoutMs: number;
   maxResultChars: number;
+  /** Approved host; the tool runs only while the page is still on it. */
+  host?: string;
 }
 
 const CALL_SITE_TOOL_SOURCE = String.raw`async (arg) => {
   const g = globalThis;
   const reg = g["${SITE_TOOLS_REGISTRY_KEY}"];
+  if (typeof arg.host === "string") {
+    let here = "";
+    try { here = String(g.location.hostname).trim().toLowerCase().replace(/\.+$/, ""); } catch (e) { here = ""; }
+    if (here !== arg.host) return { ok: false, error: "wrong_host" };
+  }
   let input;
   try { input = JSON.parse(arg.argsJson); } catch (e) { return { ok: false, error: "bad_args" }; }
   const ctrl = typeof AbortController === "function" ? new AbortController() : null;

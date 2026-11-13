@@ -282,9 +282,21 @@ export function buildBrowserSiteToolsTool(
         argsJson,
         timeoutMs,
         maxResultChars: SITE_TOOL_LIMITS.maxResultChars,
+        // The approval covers this host only: the page refuses the call
+        // when it moved elsewhere during the wait.
+        host: page.host,
       });
       const refusedAfter = refusal(await gatePageRead(outcome, policy, ctx.sessionId), outcome.url, true);
       if (refusedAfter) return refusedAfter;
+      const hostAfter = webHostOf(outcome.url);
+      if (outcome.error === "wrong_host" || hostAfter !== page.host) {
+        // Another site's tool (or its answer) would be reported under this
+        // site's approval: drop it.
+        return errorResult(
+          `${BROWSER_SITE_TOOLS_TOOL}: the page left ${page.host}${hostAfter ? ` for ${hostAfter}` : ""} before "${name}" could run there; nothing from it is kept. Open ${page.host} again and call it once more.`,
+          { name, url: outcome.url, host: page.host, reason: "page_moved" },
+        );
+      }
       if (!outcome.ok) {
         const why =
           outcome.error === "timeout"

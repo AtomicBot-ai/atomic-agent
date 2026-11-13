@@ -115,7 +115,9 @@ describe("browser.site_tools call", () => {
     });
     expect(prompts[0]?.preview).toContain('"search"');
     expect(prompts[0]?.preview).toContain('{"query":"shoes"}');
-    expect(backend.calls).toEqual([{ name: "search", argsJson: '{"query":"shoes"}', timeoutMs: 30_000, maxResultChars: 20_000 }]);
+    expect(backend.calls).toEqual([
+      { name: "search", argsJson: '{"query":"shoes"}', timeoutMs: 30_000, maxResultChars: 20_000, host: "shop.example" },
+    ]);
   });
 
   it("the site's read-only hint does not skip the prompt, and a no means it never runs", async () => {
@@ -190,6 +192,36 @@ describe("browser.site_tools call", () => {
     ).run({ action: "call", name: "search", arguments: { query: "x" } }, GATE_CTX);
     expect(result.details).toMatchObject({ reason: "blocked_domain" });
     expect(result.summary).not.toContain("1234");
+  });
+
+  it("runs only on the approved host: a page that moved to another site gets an error, not its answer", async () => {
+    const backend = new SiteToolsBackend();
+    backend.url = "https://a.test/";
+    // The fake page reports a.test while listing and b.test once the tool ran.
+    backend.landAfterCall = "https://b.test/";
+    backend.answer = { ok: true, text: "b's answer", isError: false };
+    const { prompts, options } = recordingGate(true);
+    const result = await buildBrowserSiteToolsTool(backend, options, NO_POLICY).run(
+      { action: "call", name: "search", arguments: { query: "x" } },
+      GATE_CTX,
+    );
+    expect(prompts[0]).toMatchObject({ affectedResources: ["a.test"] });
+    expect(backend.calls[0]?.host).toBe("a.test");
+    expect(result.status).toBe("error");
+    expect(result.details).toMatchObject({ reason: "page_moved", host: "a.test", url: "https://b.test/" });
+    expect(result.summary).not.toContain("answered");
+    expect(result.summary).not.toContain("b's answer");
+  });
+
+  it("reports the page's own wrong-host refusal as page_moved", async () => {
+    const backend = new SiteToolsBackend();
+    backend.answer = { ok: false, text: "", isError: false, error: "wrong_host" };
+    const result = await buildBrowserSiteToolsTool(backend, recordingGate(true).options, NO_POLICY).run(
+      { action: "call", name: "search", arguments: { query: "x" } },
+      GATE_CTX,
+    );
+    expect(result.status).toBe("error");
+    expect(result.details).toMatchObject({ reason: "page_moved" });
   });
 
   it("cuts a long answer and says so", async () => {
