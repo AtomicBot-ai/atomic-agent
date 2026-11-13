@@ -79,6 +79,7 @@ import {
 import { createWebhookHandler } from "./route-webhooks.js";
 import { createListWebhooksHandler } from "./route-webhooks-list.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
+import { createGetOfflineModeHandler, createSetOfflineModeHandler } from "./route-offline-mode.js";
 import { createContextPreviewHandler } from "./route-context-preview.js";
 import { createPlainCompleteHandler } from "./route-complete.js";
 import {
@@ -290,6 +291,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // shows before the first message of a session.
     { method: "GET", path: "/api/coding-mode", handler: codingMode.get },
     { method: "POST", path: "/api/coding-mode", handler: codingMode.set },
+    // ATO-1084: the network kill switch and its outbound counter.
+    { method: "GET", path: "/api/offline-mode", handler: createGetOfflineModeHandler() },
+    { method: "POST", path: "/api/offline-mode", handler: createSetOfflineModeHandler() },
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
     // ATO-875: one plain model call, no tools, no session (route-complete.ts).
     { method: "POST", path: "/api/complete", handler: createPlainCompleteHandler() },

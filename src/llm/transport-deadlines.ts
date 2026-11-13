@@ -3,10 +3,15 @@ import {
   EnvHttpProxyAgent,
   getGlobalDispatcher,
   setGlobalDispatcher,
+  type Dispatcher,
 } from "undici";
 
 import { ENV_DEFAULTS } from "../config/config-schema.js";
 import type { AtomicAgentConfig } from "../config/index.js";
+import {
+  offlineNetworkInterceptor,
+  setOfflineNetwork,
+} from "./offline-network.js";
 
 /**
  * How far above the longest budget this process can express the
@@ -123,6 +128,13 @@ export function transportDeadlinesFor(config?: AtomicAgentConfig): {
 let installed: { headersTimeout: number; bodyTimeout: number } | null = null;
 
 /**
+ * The loopback pool beside the installed proxy-aware one, if any. A
+ * composed dispatcher closes only its own base, so `renewTransportPool`
+ * closes this one itself.
+ */
+let directPool: Agent | null = null;
+
+/**
  * Install the deadlines for this process. Idempotent and monotone: a
  * later call with smaller numbers is ignored, so a second runtime built
  * in the same process (the HTTP test harness does this) cannot narrow
@@ -137,6 +149,10 @@ export function installTransportDeadlines(config?: AtomicAgentConfig): {
   headersTimeout: number;
   bodyTimeout: number;
 } {
+  // Offline mode (ATO-1084) is read by the pool at dispatch time, so
+  // applying the config's switch needs no new pool. Only a config can
+  // turn it on here; the bare floor install leaves it as it is.
+  if (config?.network?.offline === true) setOfflineNetwork(true);
   const wanted = transportDeadlinesFor(config);
   const next = {
     headersTimeout: Math.max(
@@ -152,11 +168,7 @@ export function installTransportDeadlines(config?: AtomicAgentConfig): {
   ) {
     return installed;
   }
-  setGlobalDispatcher(
-    proxyConfigured(process.env)
-      ? new EnvHttpProxyAgent(next)
-      : new Agent(next),
-  );
+  setGlobalDispatcher(buildPool(next));
   installed = next;
   return installed;
 }
@@ -214,12 +226,9 @@ export function proxyConfigured(env: NodeJS.ProcessEnv): boolean {
 export function renewTransportPool(): boolean {
   try {
     const previous = getGlobalDispatcher();
+    const previousDirect = directPool;
     const deadlines = installed ?? transportDeadlinesFor();
-    setGlobalDispatcher(
-      proxyConfigured(process.env)
-        ? new EnvHttpProxyAgent(deadlines)
-        : new Agent(deadlines),
-    );
+    setGlobalDispatcher(buildPool(deadlines));
     installed = deadlines;
     // Graceful: waits for the requests still on it. A request that is
     // itself stuck keeps the old pool alive until its own signal ends
@@ -227,10 +236,37 @@ export function renewTransportPool(): boolean {
     if (typeof previous.close === "function") {
       void previous.close().catch(() => undefined);
     }
+    if (previousDirect !== null) {
+      void previousDirect.close().catch(() => undefined);
+    }
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * The pool every `fetch` goes through: undici's `Agent` (or the
+ * proxy-aware one) with the deadlines above, behind the offline-mode
+ * guard (ATO-1084). The guard passes loopback requests uncounted and
+ * only counts the rest while offline mode is off.
+ */
+function buildPool(deadlines: {
+  headersTimeout: number;
+  bodyTimeout: number;
+}): Dispatcher {
+  if (!proxyConfigured(process.env)) {
+    directPool = null;
+    return new Agent(deadlines).compose(offlineNetworkInterceptor());
+  }
+  // With a proxy in the environment, loopback requests made while
+  // offline go on a plain Agent: `EnvHttpProxyAgent` would hand them to
+  // the (remote) proxy unless `no_proxy` names them. See
+  // `offlineNetworkInterceptor`.
+  directPool = new Agent(deadlines);
+  return new EnvHttpProxyAgent(deadlines).compose(
+    offlineNetworkInterceptor(directPool),
+  );
 }
 
 /** Test seam: forget what this process installed. */

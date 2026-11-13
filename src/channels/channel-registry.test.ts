@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { resetOfflineNetworkForTests, setOfflineNetwork } from "../llm/offline-network.js";
 import { StructuredLogger, type LogRecord } from "../tracing/structured-logger.js";
 import type { Channel } from "./channel.js";
 import { channelStatusOf } from "./channel.js";
@@ -83,6 +84,27 @@ describe("channelStatusOf", () => {
     expect(channelStatusOf({ ...base, state: () => "up", lastError: () => "stale" })).toEqual({
       channel: "x",
       state: "up",
+    });
+  });
+
+  describe("offline mode (ATO-1084)", () => {
+    afterEach(() => resetOfflineNetworkForTests());
+
+    it("starts no registered channel while offline", async () => {
+      const records: LogRecord[] = [];
+      const calls: string[] = [];
+      const registry = new ChannelRegistry(logger(records));
+      for (const id of ["telegram", "discord", "slack", "signal"]) registry.register(channel(id, calls));
+      setOfflineNetwork(true);
+      registry.startInBackground(registry.list().map((c) => c.id));
+      await Promise.resolve();
+      expect(calls).toEqual([]);
+      expect(records.some((r) => r.message === "offline mode: chat channels not started")).toBe(true);
+
+      setOfflineNetwork(false);
+      registry.startInBackground(["slack"]);
+      await Promise.resolve();
+      expect(calls).toEqual(["slack:start"]);
     });
   });
 });

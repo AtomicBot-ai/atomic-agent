@@ -24,6 +24,10 @@ Cloud tool, resource and prompt text projections bypass presentation character c
 
 [mcp-catalog-data.ts](mcp-catalog-data.ts) lists known servers by shelf (Basics, Code & docs, Work apps, Web & growth). An entry is only a pasteable `mcpServers` shortcut plus the `<your ...>` values the user must fill in, each with a label and, for keys, where to get one. Picking an entry fills the add box; the normal `parseAddServerJson` + `persistMcpServer` path still does the write, and a submit that still holds a placeholder is refused. Add an entry only after checking its package name or URL and key variable against the official README; OAuth-only servers stay out until `mcp.servers` can sign in. The desktop keeps a copy in `desktop/renderer/mcp-catalog.js` on the desktop branch, and its test compares the two.
 
+## Offline mode
+
+While offline mode is on (ATO-1084), a `streamable_http` or `sse` server that is not on this machine is refused before connecting. A stdio server is a separate program and is not network-isolated. See [offline mode](../llm/docs/offline-network.md).
+
 ## Task-specific reading
 
 Read docs/client.md before lifecycle, trust, sampling, elicitation or dynamic schema changes; ../tui/AGENTS.md for MCP panel work.

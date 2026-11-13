@@ -18,6 +18,7 @@ import { connectRuntimeChannels } from "./runtime-channels.js";
 import { createRuntimeTaskRunner } from "./runtime-task-services.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
 import type { Channel, ChannelContext } from "../../channels/channel.js";
+import { resetOfflineNetworkForTests, setOfflineNetwork } from "../../llm/offline-network.js";
 
 const unexpected = (): never => { throw new Error("No external operation in channel composition tests"); };
 const browser: BrowserBackend = {
@@ -194,5 +195,36 @@ describe("catalog channels (ATO-1169)", () => {
     expect(connected).toBe(runtime.channels);
     await connected!.stopAll(new Set(["telegram", "discord"]));
     expect(calls).toEqual(["alpha:stop"]);
+  });
+
+  describe("offline mode (ATO-1084)", () => {
+    afterEach(() => resetOfflineNetworkForTests());
+
+    it("builds every catalog adapter but starts none while offline", async () => {
+      const calls: string[] = [];
+      runtime.config.channels = {
+        alpha: { enabled: true, ownerIds: [], options: {} },
+        beta: { enabled: true, ownerIds: [], options: {} },
+      };
+      setOfflineNetwork(true);
+      connectRuntimeChannels({
+        ...args(),
+        extraChannels: [
+          { id: "alpha", label: "Alpha", create: () => fakeChannel("alpha", calls) },
+          { id: "beta", label: "Beta", create: () => fakeChannel("beta", calls) },
+        ],
+      });
+      await Promise.resolve();
+      expect(runtime.channels?.list().map((c) => c.id)).toEqual(["telegram", "discord", "alpha", "beta"]);
+      expect(calls).toEqual([]);
+    });
+
+    it("runtime.offlineMode stops every channel in runtime.channels", async () => {
+      const registered = runtime.channels?.list() ?? [];
+      expect(registered.length).toBeGreaterThan(0);
+      const stops = registered.map((c) => vi.spyOn(c, "stop"));
+      await runtime.offlineMode!.setEnabled(true);
+      registered.forEach((c, i) => expect(stops[i], `${c.id} stopped`).toHaveBeenCalled());
+    });
   });
 });

@@ -135,6 +135,10 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `browser.maxTabs` (default `8`, 1 to 50): tabs the agent may have open at once, fusion workers' included; one more is refused until a tab closes.
 - `browser.workerIsolation` (default `"tabs"`): fusion workers browse in tabs of their own in the agent's profile; `"context"` gives each worker its own throwaway, logged-out context.
 
+## network
+
+- `network.offline` (default `false`): offline mode. Every outbound connection to a host other than this machine (`localhost`, `127.0.0.0/8`, `::1`) is refused; local models keep working. `ATOMIC_AGENT_OFFLINE=1` turns it on for one process. Shell commands and stdio MCP servers are not isolated ([offline mode](../../llm/docs/offline-network.md)).
+
 ## sessions
 
 - `sessions.retention.enabled` (default `false`).

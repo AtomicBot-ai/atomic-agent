@@ -23,6 +23,7 @@ import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
 import { emitConfigNoticeOnce } from "./config-primitives.js";
 import { cloneExtraChannelsConfig } from "./extra-channel-config.js";
+import { OFFLINE_ENV } from "./network-config.js";
 import type {
   LocalModelsValueSource,
   LocalModelsValueSources,
@@ -608,6 +609,11 @@ export function loadConfig(): AtomicAgentConfig {
         headers: { ...user.tracing.otel.headers },
         captureContent: user.tracing.otel.captureContent,
       },
+    },
+    // ATO-1084: the env var can only turn the kill switch on, never
+    // off: a file that says offline stays offline whatever the shell has.
+    network: {
+      offline: user.network.offline || readBool(OFFLINE_ENV, false),
     },
     memory: {
       profile: {

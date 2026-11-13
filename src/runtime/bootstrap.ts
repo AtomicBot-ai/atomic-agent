@@ -16,6 +16,7 @@ import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition
 import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
+import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
 export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
 export { managedLocalLlmHealthFailureHint } from "./composition/runtime-local-profile.js";
@@ -974,6 +975,17 @@ export async function createAgentRuntime(
     discordChannel: null,
     swarm: null,
     channels: null,
+    // ATO-1084: the channels are attached below; read at call time.
+    offlineMode: createOfflineModeControl({
+      channels: () => ({
+        registry: channelsForShutdown,
+        swarm: swarmForShutdown,
+      }),
+      warn: (message, err) =>
+        logger.warn(message, {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+    }),
     mcpManager,
     providerRegistry,
     capabilities,

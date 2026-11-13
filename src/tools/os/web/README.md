@@ -24,6 +24,11 @@ This area owns `os.web.fetch` page retrieval, `os.web.crawl` multi-page reads an
 3. Readers that render on their own servers, so the URL leaves the machine: [web-fetch-readers.ts](web-fetch-readers.ts). Jina Reader runs when `web.fetch.jinaReader` is on (keyless, rate-limited) or a key is in `web.fetch.jinaApiKeyEnv`; Firecrawl when a key is in `web.fetch.firecrawlApiKeyEnv`. Both are off by default. Keys go to curl in a header file, never on the command line.
 
 ## Approval and credentials (ATO-1182, ATO-1471)
+## Offline mode (ATO-1084)
+
+While offline mode is on, `os.web.fetch`, `os.http.request` and `os.web.search` return a tool error (`details.offline: true`) before approval, DNS or curl, and `runCurl` refuses a remote URL argument as a backstop. See [offline mode](../../../llm/docs/offline-network.md).
+
+## Approval and credentials (ATO-1182)
 
 - "Allow for this session" on an `os.http.request` prompt covers the target's origin (scheme, host, port) only: the request carries `grantKey` and the gate keys the grant by it. A POST to another host asks again.
 - A redirect that would carry the method and body to another origin (a 307/308 after a POST) is not followed. The result names the `Location` (`details.redirectNotFollowed`) and the model has to make a new request there, which is gated like any other. Same-origin redirects and bodyless GET hops are still followed.

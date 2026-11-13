@@ -9,6 +9,7 @@ import { planShot, type CssRect } from "./screenshot-geometry.js";
 import { runPageAction } from "./playwright-page-actions.js";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
 import { pinWebIdentityToBrowser } from "./web-identity.js";
+import { isOfflineNetwork } from "../../llm/offline-network.js";
 import { clearStaleChromeLocks } from "./clear-stale-chrome-locks.js";
 import {
   decorateChromeProfile,
@@ -709,6 +710,7 @@ export class PlaywrightBackend implements BrowserBackend {
       noSandbox: this.options.noSandbox ?? false,
       userAgent: identity.versionKnown ? identity.userAgent : undefined,
       lang: identity.locale,
+      offline: isOfflineNetwork(),
     });
     const running = await spawnChrome({
       executablePath: executable.path,

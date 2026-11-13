@@ -25,6 +25,7 @@ import {
   maskUrlSecrets,
 } from "./http-request-preview.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
+import { offlineRefusal } from "../../../llm/offline-network.js";
 
 export type { HttpMethod } from "./http-request-fetch.js";
 export { parseCurlOutput } from "./http-request-fetch.js";
@@ -71,6 +72,22 @@ export function buildOsHttpRequestTool(
         );
       }
       const args = parseArgs(rawArgs, httpCfg.defaultTimeoutMs);
+      // ATO-1084: refused before approval, DNS or curl while offline.
+      const offline = offlineRefusal(args.urlObj, "os.http.request");
+      if (offline) {
+        return compressToolResult({
+          tool: "os.http.request",
+          status: "error",
+          output: offline.message,
+          details: {
+            url: args.url,
+            method: args.method,
+            blocked: true,
+            offline: true,
+            host: offline.host,
+          },
+        });
+      }
       if (!hostAllowed(args.urlObj.hostname, httpCfg.hostAllowlist)) {
         throw new Error(
           `os.http.request: host ${args.urlObj.hostname} is not in config.http.hostAllowlist`,

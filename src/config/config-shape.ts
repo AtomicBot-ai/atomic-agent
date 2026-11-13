@@ -62,6 +62,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "tracing",
   "tracing.trace",
   "tracing.otel",
+  "network",
   "memory",
   "memory.profile",
   "memory.reflection",

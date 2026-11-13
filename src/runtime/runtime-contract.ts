@@ -17,6 +17,7 @@ import type { BotFactory } from "../channels/telegram/index.js";
 import type { McpElicitationPort, McpManager } from "../mcp/index.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
+import type { EgressSnapshot } from "../llm/offline-network.js";
 import type { ApprovalGate } from "../approval/approval-gate.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type { ApprovalHandler } from "../approval/approval-router.js";
@@ -202,6 +203,21 @@ export interface MemoryEmbeddingReconnect {
   changed?: boolean;
 }
 
+/**
+ * Live control of offline mode (ATO-1084, read by the ATO-1087 UI).
+ * `setEnabled` persists `network.offline` and applies it at once.
+ */
+export interface OfflineModeControl {
+  isEnabled(): boolean;
+  /**
+   * Turning on applies before it saves, so it rejects with
+   * `OfflineModePersistError` when only the save failed and the process
+   * is offline anyway. Turning off saves first.
+   */
+  setEnabled(enabled: boolean): Promise<void>;
+  egress(): EgressSnapshot;
+}
+
 export interface AgentRuntime {
   readonly config: AtomicAgentConfig;
   readonly loop: AgentLoop;
@@ -370,6 +386,12 @@ export interface AgentRuntime {
    * defensively check before calling.
    */
   readonly telegramChannel: TelegramChannel | null;
+  /**
+   * Offline mode, the network kill switch (ATO-1084). Optional so hand-
+   * built runtimes (tests, embedders) keep compiling; `createAgentRuntime`
+   * always sets it. See `createOfflineModeControl`.
+   */
+  readonly offlineMode?: OfflineModeControl;
   /**
    * Discord remote-control channel, or `null` when the build never
    * constructed one. Same contract as `telegramChannel`.

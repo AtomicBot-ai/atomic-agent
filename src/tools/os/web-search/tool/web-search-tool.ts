@@ -21,6 +21,7 @@ import {
 } from "../web-search-errors.js";
 import type { WebSearchResult } from "../web-search-provider.js";
 import { checkMissingSearchKey } from "./warn-missing-search-key.js";
+import { offlineRefusalFor } from "../../../../llm/offline-network.js";
 
 const TOOL_NAME = "os.web.search";
 const MAX_RESULTS_CAP = 20;
@@ -125,6 +126,17 @@ export function buildOsWebSearchTool(
           output:
             "os.web.search is disabled by config (`web.search.enabled = false`).",
           details: { provider: cfg.provider },
+        });
+      }
+      // ATO-1084: every provider is a remote host (the SSRF guard refuses
+      // a local SearXNG too), so offline mode refuses the search outright.
+      const offline = offlineRefusalFor("web search providers", TOOL_NAME);
+      if (offline) {
+        return compressToolResult({
+          tool: TOOL_NAME,
+          status: "error",
+          output: offline.message,
+          details: { provider: cfg.provider, blocked: true, offline: true },
         });
       }
       const args = parseArgs(rawArgs, cfg.maxResults);

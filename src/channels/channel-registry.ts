@@ -9,6 +9,7 @@
  * Adapters from `channel-catalog.ts` are only reachable through here.
  */
 
+import { isOfflineNetwork } from "../llm/offline-network.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { Channel } from "./channel.js";
 
@@ -38,8 +39,18 @@ export class ChannelRegistry {
    * Start `ids` fire-and-forget, like the primaries at boot: a slow
    * connect never delays the first turn, and a rejected `start()` is
    * logged rather than thrown into bootstrap.
+   *
+   * Offline mode (ATO-1084) starts nothing: every channel talks to the
+   * internet on its own client, which the offline network guard does not
+   * see. Turning offline mode off starts the enabled ones again.
    */
   startInBackground(ids: readonly string[]): void {
+    if (isOfflineNetwork()) {
+      if (ids.length > 0) {
+        this.logger.info("offline mode: chat channels not started", { channels: ids.join(", ") });
+      }
+      return;
+    }
     for (const id of ids) {
       const channel = this.channels.get(id);
       if (!channel) continue;
