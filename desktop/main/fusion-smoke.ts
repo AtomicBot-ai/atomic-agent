@@ -99,7 +99,7 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
     "fusion: /runmode status names both legs, and a stored mode that is not in force",
     status.fusion === "Fusion — orchestrator aimlapi (x-ai/grok-4-6), 3 workers on openrouter (qwen/qwen3.7-flash)"
       && /stored fusion, effective cloud — the orchestrator provider is not the active one; pick the mode again to re-apply$/.test(status.fusionHandSwitched!)
-      && status.fusionOneProvider!.includes("Fusion needs a cloud orchestrator"),
+      && status.fusionOneProvider!.includes("Fusion needs a cloud model"),
     status.fusionHandSwitched,
   );
 

@@ -20244,8 +20244,8 @@ function rmNow() { return rmResolve(LIVE_CONFIG); }
 function rmDegradationLine(d) {
   if (d.reason === 'no-cloud-provider') {
     return d.requested === 'fusion'
-      ? 'Fusion needs a cloud orchestrator — no cloud provider is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm).'
-      : 'Cloud mode needs a cloud provider — none is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm).';
+      ? "Fusion needs a cloud model to plan the work. You don't have one yet, so answers come from the local model."
+      : "Cloud mode needs a cloud model. You don't have one yet, so answers come from the local model.";
   }
   return 'Fusion needs two providers — one to orchestrate and one to run the workers. Only one is configured. Add another in Manage → LLM (or /llm).';
 }
