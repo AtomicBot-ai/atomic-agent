@@ -147,3 +147,58 @@ test('renderer wiring: the pairing helper loads before renderer.js; the IPC and 
   assert.ok(source.includes('hasCode: !!TG.pair.code'));
   assert.ok(!/console\.(log|info|warn|error)\([^)]*pair\.code/.test(source));
 });
+
+// ATO-516: the code as a t.me deep link (Copy link / Open in Telegram) and its countdown.
+test('the deep link: the agent\'s own link when it matches the code, else built from botUsername; none when it cannot work', () => {
+  assert.equal(P.tgPairLink('atomic_test_bot', '048213'), 'https://t.me/atomic_test_bot?start=048213');
+  assert.equal(P.tgPairLink(null, '048213', 'https://t.me/atomic_test_bot?start=048213'), 'https://t.me/atomic_test_bot?start=048213');
+  // A link for another code, another host or with extra parts is not used; the one built from the parts is.
+  assert.equal(P.tgPairLink('atomic_test_bot', '048213', 'https://t.me/atomic_test_bot?start=111111'), 'https://t.me/atomic_test_bot?start=048213');
+  assert.equal(P.tgPairLink('atomic_test_bot', '048213', 'https://evil.example/?start=048213'), 'https://t.me/atomic_test_bot?start=048213');
+  assert.equal(P.tgPairLink(null, '048213', 'javascript:alert(1)//?start=048213'), null);
+  for (const bot of [null, '', 'bot', 'evil.com/x', 'a_bot?x=1', 'x'.repeat(33)]) assert.equal(P.tgPairLink(bot, '048213'), null, String(bot));
+  for (const code of [null, '', '12345', '1234567', '04821a']) assert.equal(P.tgPairLink('atomic_test_bot', code), null, String(code));
+});
+
+test('a start keeps the link while the window is open and drops it with the code', () => {
+  const waiting = P.tgPairApply(P.tgPairInitial(), 'start', opened, NOW);
+  assert.equal(waiting.link, 'https://t.me/atomic_test_bot?start=048213', 'an agent without `link` still gets one');
+  const withLink = P.tgPairApply(P.tgPairInitial(), 'start', {ok:true, data:Object.assign({}, opened.data, {link:'https://t.me/atomic_test_bot?start=048213'})}, NOW);
+  assert.equal(withLink.link, 'https://t.me/atomic_test_bot?start=048213');
+  const noBot = P.tgPairApply(P.tgPairInitial(), 'start', {ok:true, data:Object.assign({}, opened.data, {botUsername:null, link:null})}, NOW);
+  assert.equal(noBot.link, null);
+  for (const [op, res] of [['status', {ok:true, data:{status:'claimed', pairedLine:'Paired.'}}], ['status', {ok:true, data:{status:'expired'}}], ['cancel', {ok:true, data:{}}]]) {
+    assert.equal(P.tgPairApply(waiting, op, res, NOW + 1000).link, null, op + ' ' + JSON.stringify(res));
+  }
+});
+
+test('the waiting card shows the link with Copy link and Open in Telegram, and how long the code has left', () => {
+  const waiting = P.tgPairApply(P.tgPairInitial(), 'start', opened, NOW);
+  const html = P.tgPairCardHTML(waiting, Object.assign({}, ctx, {now:NOW + 1000}), h);
+  assert.ok(html.includes('data-tg-link'));
+  assert.ok(html.includes('t.me/atomic_test_bot?start=048213'));
+  assert.ok(html.includes('data-act="telegram:pairCopy"') && html.includes('data-act="telegram:pairOpen"'));
+  assert.match(html, /data-tg-countdown>4:59</);
+  assert.ok(!html.includes('—'));
+  // No link without a bot @username: the code and the instruction still pair.
+  const noBot = P.tgPairApply(P.tgPairInitial(), 'start', {ok:true, data:Object.assign({}, opened.data, {botUsername:null})}, NOW);
+  const plain = P.tgPairCardHTML(noBot, ctx, h);
+  assert.ok(!plain.includes('data-tg-link') && !plain.includes('data-tg-countdown'));
+  assert.match(plain, /data-tg-code[^>]*>048213</);
+});
+
+test('the countdown reads m:ss and stops at 0:00', () => {
+  assert.equal(P.tgPairCountdown(NOW + 300_000, NOW), '5:00');
+  assert.equal(P.tgPairCountdown(NOW + 61_500, NOW), '1:02');
+  assert.equal(P.tgPairCountdown(NOW + 9_000, NOW), '0:09');
+  assert.equal(P.tgPairCountdown(NOW - 5_000, NOW), '0:00');
+  assert.equal(P.tgPairCountdown(null, NOW), null);
+  assert.equal(P.tgPairCountdown(NOW, undefined), null);
+});
+
+test('renderer wiring (ATO-516): Copy link and Open in Telegram use the link in state; the countdown ticks only while the tab polls', () => {
+  assert.ok(source.includes("if (verb === 'pairCopy') { if (TG.pair.link) copyText(TG.pair.link, 'Link copied'); return; }"));
+  assert.ok(source.includes("if (verb === 'pairOpen') { if (TG.pair.link && BR && BR.openExternal) BR.openExternal(TG.pair.link); return; }"));
+  assert.match(source, /if \(tgPairPolling\(TG\.pair\) && telegramVisible\(\)\) TG\.pairTick = setInterval\(/);
+  assert.ok(!/console\.(log|info|warn|error)\([^)]*pair\.link/.test(source));
+});

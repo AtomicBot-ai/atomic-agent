@@ -28,8 +28,8 @@ function freshDir() {
 }
 const KEY = "exa-dummy-0123456789abcdef";
 
-test("the window may write EXA_API_KEY and TELEGRAM_BOT_TOKEN to .env, and no other name", () => {
-  assert.deepEqual([...cli.DESKTOP_DOTENV_KEYS], ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY"]);
+test("the window may write EXA_API_KEY, TELEGRAM_BOT_TOKEN and DISCORD_BOT_TOKEN to .env, and no other name", () => {
+  assert.deepEqual([...cli.DESKTOP_DOTENV_KEYS], ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN"]);
   assert.equal(cli.desktopDotenvError("EXA_API_KEY", KEY), null);
   assert.equal(cli.desktopDotenvError("EXA_API_KEY", null), null, "null removes the key");
   assert.equal(cli.desktopDotenvError("TELEGRAM_BOT_TOKEN", "123:abc"), null);
@@ -58,6 +58,16 @@ test("a line break or NUL is refused for every key the window may write, so no s
   }
   assert.equal(cli.desktopDotenvError("TELEGRAM_BOT_TOKEN", "123:abc"), null);
   assert.equal(cli.desktopDotenvError("TELEGRAM_BOT_TOKEN", null), null);
+});
+
+test("ATO-516: a Discord bot token is one run of printable characters, 20 to 200 long, and is never quoted back", () => {
+  const TOKEN = "MTAxdummy.discord-token_0123456789abcdef";
+  assert.equal(cli.desktopDotenvError("DISCORD_BOT_TOKEN", TOKEN), null);
+  assert.equal(cli.desktopDotenvError("DISCORD_BOT_TOKEN", null), null, "null removes the token");
+  for (const bad of ["two words in a token here", "short", "", "k".repeat(201)]) {
+    assert.equal(cli.desktopDotenvError("DISCORD_BOT_TOKEN", bad), "That does not look like a Discord bot token.", JSON.stringify(bad));
+  }
+  assert.equal(cli.desktopDotenvError("DISCORD_BOT_TOKEN", TOKEN + "\nPATH=/tmp/evil"), "value must be one line");
 });
 
 test("the key lands in .env as EXA_API_KEY, owner-only, other keys and comments kept", { skip: !posix }, () => {
