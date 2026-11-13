@@ -1789,6 +1789,8 @@ export class AgentClient extends EventEmitter {
     messages: Array<{ role: string; content: string }>,
     sessionId?: string,
     workingDir?: string,
+    /** ATO-1148: this turn runs on the chat's project cloud model (main/project-model.ts). */
+    turnModel?: { providerId: string; model: string },
   ): Promise<void> {
     const controller = new AbortController();
     this.turns.set(turnId, controller);
@@ -1817,9 +1819,15 @@ export class AgentClient extends EventEmitter {
           session_id: chatSessionIdFor(sessionId),
           // ATO-731: the folder a NEW session works in; the agent keeps an existing session's own.
           ...(workingDir ? { working_dir: workingDir } : {}),
+          // ATO-1148: for this turn only; the agent's config and active model stay as they are.
+          ...(turnModel ? { provider_id: turnModel.providerId, provider_model: turnModel.model } : {}),
         }),
         signal: controller.signal,
       });
+      // An agent from before ATO-1148 ignores the fields and runs its own model; say so in the log.
+      if (turnModel && res.ok && !res.headers.get("x-atomic-turn-model")) {
+        console.warn(`[desktop] project model: the agent ran this turn on its own model, not ${turnModel.providerId}/${turnModel.model} (older agent)`);
+      }
       if (!res.ok || !res.body) {
         const detail = res.ok ? "no response body" : `HTTP ${res.status}`;
         // ATO-275: `transport` / `httpStatus` are for the turn's analytics (chat-turns.ts); the window reads `error`.

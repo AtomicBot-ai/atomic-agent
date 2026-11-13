@@ -104,8 +104,12 @@ contextBridge.exposeInMainWorld("atomic", {
   codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */
-  chat: (messages: Array<{ role: string; content: string }>, sessionId?: string) =>
-    ipcRenderer.invoke("agent:chat", { messages, sessionId }),
+  chat: (messages: Array<{ role: string; content: string }>, sessionId?: string, turnModel?: { providerId: string; model: string } | null) =>
+    ipcRenderer.invoke("agent:chat", { messages, sessionId, ...(turnModel ? { turnModel } : {}) }),
+  /** ATO-1148: each working folder's own cloud model (main/project-model.ts). */
+  projectModels: () => ipcRenderer.invoke("app:projectModels"),
+  setProjectModel: (dir: string, pick: { providerId: string; model: string } | null) =>
+    ipcRenderer.invoke("app:setProjectModel", { dir, providerId: pick ? pick.providerId : null, model: pick ? pick.model : null }),
   cancel: (turnId: string) => ipcRenderer.invoke("agent:cancel", turnId),
   onChat: (cb: (payload: unknown) => void) => on("agent:chat", cb),
 
