@@ -18,8 +18,8 @@ export interface ClawHubDetail {
   skillMd: string;
 }
 
-const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
-const SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/;
+export const CLAWHUB_OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+export const CLAWHUB_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/;
 
 function resolveVersion(o: Record<string, unknown>): string {
   const latest = o.latestVersion as { version?: unknown } | undefined;
@@ -65,8 +65,8 @@ export async function clawhubSkillDetail(
   owner: string | null,
 ): Promise<{ ok: boolean; detail?: ClawHubDetail; error?: string }> {
   if (!/^https?:\/\/[^\s/]+(?:\/[^\s]*)?$/.test(apiBase)) return { ok: false, error: `not an api base: ${apiBase}` };
-  if (!SLUG_RE.test(slug)) return { ok: false, error: `invalid clawhub slug: ${slug}` };
-  if (owner !== null && !OWNER_RE.test(owner)) return { ok: false, error: `invalid clawhub owner: ${owner}` };
+  if (!CLAWHUB_SLUG_RE.test(slug)) return { ok: false, error: `invalid clawhub slug: ${slug}` };
+  if (owner !== null && !CLAWHUB_OWNER_RE.test(owner)) return { ok: false, error: `invalid clawhub owner: ${owner}` };
   const params = new URLSearchParams();
   if (owner) params.set("owner", owner);
   const qs = params.toString();

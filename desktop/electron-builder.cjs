@@ -62,6 +62,17 @@ const config = {
   "productName": "Atomic Agent",
   "copyright": "Copyright (c) 2026 Atomic Bot",
   "asar": true,
+  /* ATO-556: atomicagent:// links ("Add to Atomic Agent" buttons). This
+     writes CFBundleURLTypes into the mac Info.plist, the URL handler into the
+     Windows registry (NSIS) and x-scheme-handler/atomicagent into the Linux
+     .desktop file. The app takes the handler at launch only in a packaged,
+     ordinary run (main/deeplink.ts shouldRegisterProtocol). */
+  "protocols": [
+    {
+      "name": "Atomic Agent link",
+      "schemes": ["atomicagent"]
+    }
+  ],
   "files": [
     "out/**",
     "!out/native/**",
