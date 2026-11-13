@@ -216,6 +216,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "mouse support on/off/status (off restores the terminal's drag-to-select)",
   },
+  // ATO-662: vim keys in the composer.
+  {
+    name: "vim",
+    description:
+      "vim keys in the prompt (NORMAL / INSERT): `/vim` toggles | `/vim on` | `/vim off`",
+  },
   {
     name: "context",
     description: "show where this session's context window went",

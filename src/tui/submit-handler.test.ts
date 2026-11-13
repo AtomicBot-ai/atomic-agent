@@ -766,3 +766,20 @@ describe("bare /enhance", () => {
     expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
   });
 });
+
+describe("/vim (ATO-662)", () => {
+  it("flips the composer's vim keys from the live value and asks to persist", () => {
+    const onVimModePersistRequested = vi.fn();
+    const dispatched: Array<{ type: string; on?: boolean }> = [];
+    const push = (a: unknown) => dispatched.push(a as { type: string; on?: boolean });
+    const off = createInitialTuiState(fakeSession());
+    runSlashCommand("/vim", off, push, stubCallbacks({ onVimModePersistRequested }));
+    expect(dispatched).toContainEqual({ type: "vim_mode_set", on: true });
+    expect(onVimModePersistRequested).toHaveBeenLastCalledWith(true);
+    const on = { ...off, vimMode: true };
+    runSlashCommand("/vim", on, push, stubCallbacks({ onVimModePersistRequested }));
+    expect(onVimModePersistRequested).toHaveBeenLastCalledWith(false);
+    runSlashCommand("/vim on", on, push, stubCallbacks({ onVimModePersistRequested }));
+    expect(onVimModePersistRequested).toHaveBeenLastCalledWith(true);
+  });
+});

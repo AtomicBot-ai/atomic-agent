@@ -8,6 +8,7 @@ import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands, skillSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { THEME_NAMES } from "./theme/theme.js";
+import { pushRing } from "./reducer-helpers.js";
 import { goalSummaryLine } from "../agent/goal/goal-state.js";
 import { lastTurnFoldId, turnFoldsOf } from "./render/turn-collapse.js";
 import type { TuiAction } from "./tui-action.js";
@@ -114,6 +115,8 @@ export function reduceUiAction(
     }
     case "show_steps_set":
       return { ...state, showSteps: action.on };
+    case "vim_mode_set":
+      return { ...state, vimMode: action.on };
     case "menu_opened":
       // Always reopen at the root with an empty query: a menu that resumes
       // where it was last left makes the same keypress mean different
@@ -214,6 +217,22 @@ export function reduceUiAction(
     }
     case "input_history_navigated":
       return navigateInputHistory(state, action.delta);
+    case "input_draft_stashed":
+      if (state.inputValue.length === 0) return state;
+      return {
+        ...state,
+        inputHistory: pushRing(
+          state.inputHistory,
+          state.inputValue,
+          state.ringBufferSize,
+        ),
+        inputValue: "",
+        inputHistoryCursor: null,
+        inputHistoryDraft: null,
+        slashPaletteOpen: false,
+        slashQuery: "",
+        slashPaletteCursor: 0,
+      };
     case "message_queued":
       return {
         ...state,

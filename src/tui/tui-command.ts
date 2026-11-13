@@ -39,6 +39,7 @@ import {
 import {
   persistUserTuiMouse,
   persistUserTuiShowSteps,
+  persistUserTuiVimMode,
   persistUserTuiTheme,
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
@@ -181,6 +182,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     // Finished turns fold into one line unless the operator asked to
     // always see their steps (ATO-963).
     showSteps: config.tui.showSteps,
+    // Vim keys in the composer, off unless `/vim` turned them on (ATO-662).
+    vimMode: config.tui.vimMode,
     // The composer's route controls read these on the home screen, and
     // the local-models slice only refreshes while the Models tab is
     // open — unseeded, a managed install mislabels itself `custom`
@@ -537,6 +540,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onThemePersistRequested: (themeName) =>
           persistThemeChoice(themeName, bus),
         onShowStepsPersistRequested: (on) => persistShowSteps(on, bus),
+        onVimModePersistRequested: (on) => persistVimMode(on, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) =>
@@ -1191,6 +1195,24 @@ function persistShowSteps(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     bus.emit({ type: "runtime_info", line: `steps setting not saved: ${msg}` });
+  }
+}
+
+function persistVimMode(
+  on: boolean,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserTuiVimMode(on);
+    bus.emit({
+      type: "runtime_info",
+      line: on
+        ? "vim keys on: Esc for NORMAL, i to type again"
+        : "vim keys off",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `vim setting not saved: ${msg}` });
   }
 }
 
