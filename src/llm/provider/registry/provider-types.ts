@@ -40,6 +40,13 @@ export type LlmProviderConfigEntry = {
    * working after a restart. See `openai/openai-auth-headers.ts`.
    */
   apiKeyHeader?: string;
+  /**
+   * Env var names of more keys for the same service, tried in order
+   * after `apiKey` when a key is refused (ATO-471,
+   * `llm/fallback/key-pool.ts`). The values are read from `process.env`
+   * (`<stateDir>/.env`) when the provider is built.
+   */
+  extraApiKeyEnvVars?: string[];
   supportsTools?: boolean;
   supportsVision?: boolean;
   requestTimeoutMs?: number;

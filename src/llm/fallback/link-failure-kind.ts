@@ -59,6 +59,41 @@ export function isBillingRefusal(err: unknown): boolean {
 }
 
 /**
+ * Did the link answer "too many requests" for this key: a 429 that is
+ * not an empty account (`isBillingRefusal` reads OpenAI's
+ * `insufficient_quota` 429 as billing)?
+ *
+ * The third kind next to billing and auth, for the key pool (ATO-471):
+ * another key of the same provider usually has its own limit, so the
+ * pool tries it before the chain moves to another provider. Unlike the
+ * other two it heals by itself, so its cooldown is short.
+ */
+export function isRateLimitRefusal(err: unknown): boolean {
+  return (
+    err instanceof OpenAiHttpError &&
+    !err.timedOut &&
+    err.status === 429 &&
+    !isBillingRefusal(err)
+  );
+}
+
+/** Why one key of a provider was refused, when another key could help. */
+export type KeyRefusalKind = "rate_limit" | "auth" | "billing";
+
+/**
+ * Which key refusal this failure is, or undefined when a different key
+ * would not change the answer (a 5xx, a network error, a bad request,
+ * a moderation 403). Billing first: an empty account can answer 403 or
+ * 429, and that is neither a bad key nor a rate limit.
+ */
+export function keyRefusalKind(err: unknown): KeyRefusalKind | undefined {
+  if (isBillingRefusal(err)) return "billing";
+  if (isRateLimitRefusal(err)) return "rate_limit";
+  if (isCredentialRejection(err)) return "auth";
+  return undefined;
+}
+
+/**
  * Which reading the fallover notice gives this failure, judged on the
  * error rather than on its reason text: "billing" (top up), "auth" (fix
  * the key) or "other" (the chain's probe will see it clear).

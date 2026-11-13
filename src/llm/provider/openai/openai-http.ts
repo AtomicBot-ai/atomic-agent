@@ -63,7 +63,34 @@ export type OpenAiHttpDeps = {
    * (ATO-569). Must not throw; a throw is swallowed.
    */
   onResponseHeaders?: (headers: Headers) => void;
+  /**
+   * More than one key for this provider (ATO-471). When set, a request
+   * a key was refused for (rate limit, bad key, empty account) is sent
+   * again with the pool's next key before the error goes up to the
+   * fallback chain. Absent: one key, the historical behaviour.
+   */
+  keyPool?: OpenAiKeyRotation;
 };
+
+/**
+ * What the HTTP layer needs from a provider's key pool. The pool itself
+ * (`llm/fallback/key-pool.ts`) owns the order, the cooldowns and the
+ * classification; this layer only asks it for keys.
+ */
+export interface OpenAiKeyRotation {
+  /** The key the next request should carry. */
+  current(): string;
+  /**
+   * `key` was refused with `err`: the key to try next, or null when no
+   * other key would help (the error is not about the key, or every
+   * other key is cooling down).
+   */
+  rotate(key: string, err: unknown): string | null;
+  /** Would `rotate` move off `key` for `err`? Never changes state. */
+  wouldRotate(key: string, err: unknown): boolean;
+  /** `key` served a request. */
+  succeeded(key: string): void;
+}
 
 /**
  * A key problem the request itself shows, without asking the provider:
@@ -622,13 +649,15 @@ export async function openAiGetJson(
   deps: OpenAiHttpDeps,
   path: string,
 ): Promise<Record<string, unknown>> {
-  return runOpenAiWithRetry(deps, path, undefined, async () => {
-    const res = await openAiFetch(deps, path, null, {}, false, "GET");
-    if (!res.ok) {
-      throw await httpErrorFromResponse(deps, path, res);
-    }
-    return (await res.json()) as Record<string, unknown>;
-  });
+  return withKeyRotation(deps, undefined, (keyed) =>
+    runOpenAiWithRetry(keyed, path, undefined, async () => {
+      const res = await openAiFetch(keyed, path, null, {}, false, "GET");
+      if (!res.ok) {
+        throw await httpErrorFromResponse(keyed, path, res);
+      }
+      return (await res.json()) as Record<string, unknown>;
+    }),
+  );
 }
 
 export async function openAiPostJson(
@@ -639,20 +668,22 @@ export async function openAiPostJson(
   onSend?: OnOpenAiRequestBody,
 ): Promise<Record<string, unknown>> {
   return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
-    runOpenAiWithRetry(deps, path, request.signal, async () => {
-      const res = await openAiFetch(
-        deps,
-        path,
-        attemptBody,
-        request,
-        false,
-        "POST",
-      );
-      if (!res.ok) {
-        throw await httpErrorFromResponse(deps, path, res);
-      }
-      return readJsonBody(res, request.signal);
-    }),
+    withKeyRotation(deps, undefined, (keyed) =>
+      runOpenAiWithRetry(keyed, path, request.signal, async () => {
+        const res = await openAiFetch(
+          keyed,
+          path,
+          attemptBody,
+          request,
+          false,
+          "POST",
+        );
+        if (!res.ok) {
+          throw await httpErrorFromResponse(keyed, path, res);
+        }
+        return readJsonBody(res, request.signal);
+      }),
+    ),
   );
 }
 
@@ -786,27 +817,67 @@ export async function openAiStartStream(
   // refused before any bytes exist, so re-sending with a lower ceiling
   // cannot duplicate output — the same argument the open-retry makes.
   return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
-    runOpenAiWithRetry(
-      deps,
-      path,
-      request.signal,
-      async () => {
-        const res = await openAiFetch(
-          deps,
-          path,
-          attemptBody,
-          request,
-          true,
-          "POST",
-        );
-        if (!res.ok || !res.body) {
-          throw await httpErrorFromResponse(deps, path, res);
-        }
-        return res as Response & { body: NonNullable<Response["body"]> };
-      },
-      budget,
+    withKeyRotation(deps, budget, (keyed) =>
+      runOpenAiWithRetry(
+        keyed,
+        path,
+        request.signal,
+        async () => {
+          const res = await openAiFetch(
+            keyed,
+            path,
+            attemptBody,
+            request,
+            true,
+            "POST",
+          );
+          if (!res.ok || !res.body) {
+            throw await httpErrorFromResponse(keyed, path, res);
+          }
+          return res as Response & { body: NonNullable<Response["body"]> };
+        },
+        budget,
+      ),
     ),
   );
+}
+
+/**
+ * Send with the pool's current key; when that key is refused (rate
+ * limit, bad key, empty account) send the same request with the pool's
+ * next key, until one serves or no other key would help (ATO-471).
+ * Only then does the error go up, so the fallback chain moves to another
+ * provider only after every key of this one was tried.
+ *
+ * Inside the credit-limit retry on purpose: a funded second key beats
+ * resending with a smaller reply cap on the first. A refusal is a
+ * complete HTTP answer before any byte of a stream exists, so resending
+ * cannot duplicate output. A stream's shared `budget` still bounds the
+ * total requests of one completion; once it is spent the last refusal
+ * goes up as it was. Cancellation is never rotated.
+ */
+async function withKeyRotation<T>(
+  deps: OpenAiHttpDeps,
+  budget: OpenAiAttemptBudget | undefined,
+  send: (keyed: OpenAiHttpDeps) => Promise<T>,
+): Promise<T> {
+  const pool = deps.keyPool;
+  if (!pool) return send(deps);
+  const tried = new Set<string>();
+  let key = pool.current();
+  for (;;) {
+    tried.add(key);
+    try {
+      const out = await send({ ...deps, apiKey: key });
+      pool.succeeded(key);
+      return out;
+    } catch (err) {
+      const next = pool.rotate(key, err);
+      if (next === null || tried.has(next)) throw err;
+      if (budget !== undefined && budget.remaining <= 0) throw err;
+      key = next;
+    }
+  }
 }
 
 /**
@@ -1067,6 +1138,9 @@ async function runOpenAiWithRetry<T>(
       // surfaced as.
       if (signal?.aborted) throw err;
       if (!isRetryableOpenAiError(err) || budget.remaining <= 0) throw err;
+      // Another key of this provider answers a rate limit better than
+      // the same key again: `withKeyRotation` sends it there (ATO-471).
+      if (deps.keyPool?.wouldRotate(deps.apiKey, err)) throw err;
       // A provider asking for a longer cooldown than this layer will wait
       // gets it from the turn (the outage wait honours the whole hint) or
       // from the person's fallback link, not from a quick retry it already

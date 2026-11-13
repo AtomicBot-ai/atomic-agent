@@ -14,6 +14,8 @@ import {
   isCliSetupRefusal,
   isCredentialRejection,
   isOutageFailure,
+  isRateLimitRefusal,
+  keyRefusalKind,
 } from "./link-failure-kind.js";
 
 function http(
@@ -323,5 +325,37 @@ describe("falloverCause", () => {
   it("leaves anything that is not a cloud provider's answer to the text", () => {
     expect(falloverCause(new TypeError("fetch failed"))).toBeUndefined();
     expect(falloverCause(new LlamaServerError("boom", 503, "http://l"))).toBeUndefined();
+  });
+});
+
+describe("keyRefusalKind (ATO-471)", () => {
+  it("reads a plain 429 as a rate limit", () => {
+    expect(isRateLimitRefusal(http(429))).toBe(true);
+    expect(keyRefusalKind(http(429))).toBe("rate_limit");
+  });
+
+  it("reads OpenAI's insufficient_quota 429 as billing, not a rate limit", () => {
+    const quota = withBody(
+      429,
+      '{"error":{"message":"You exceeded your current quota","code":"insufficient_quota"}}',
+      "openai",
+    );
+    expect(isRateLimitRefusal(quota)).toBe(false);
+    expect(keyRefusalKind(quota)).toBe("billing");
+  });
+
+  it("reads a 401 and a key 403 as auth, an empty account as billing", () => {
+    expect(keyRefusalKind(http(401))).toBe("auth");
+    expect(keyRefusalKind(http(403, "openai provider 403: invalid api key"))).toBe("auth");
+    expect(keyRefusalKind(withBody(403, OUT_OF_FUNDS))).toBe("billing");
+    expect(keyRefusalKind(http(402))).toBe("billing");
+  });
+
+  it("is undefined where another key would not help", () => {
+    expect(keyRefusalKind(http(500))).toBeUndefined();
+    expect(keyRefusalKind(http(null))).toBeUndefined();
+    expect(keyRefusalKind(http(400))).toBeUndefined();
+    expect(keyRefusalKind(http(429, "boom", true))).toBeUndefined();
+    expect(keyRefusalKind(new TypeError("fetch failed"))).toBeUndefined();
   });
 });
