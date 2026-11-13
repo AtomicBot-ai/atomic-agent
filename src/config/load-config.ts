@@ -841,5 +841,7 @@ function mapUserLlmToRuntime(
           },
         }
       : {}),
+    // Without this the router block (ATO-483) never reached the runtime.
+    ...(llm.router ? { router: llm.router } : {}),
   };
 }
