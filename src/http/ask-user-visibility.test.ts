@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CompletionResult } from "../llm/llama-server-client.js";
+import { SESSION_TITLE_SESSION_PREFIX } from "../session/session-title.js";
 
 import { EXTENSIONS_HEADER, QUESTIONS_HEADER } from "./openai-chat-completions.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
@@ -19,7 +20,8 @@ describe("ask_user over POST /v1/chat/completions", () => {
     prompts.length = 0;
     harness = await startTestHarness({
       llamaComplete: async (params): Promise<CompletionResult> => {
-        prompts.push(params.prompt);
+        // The chat's own turn, not the session namer that runs after it.
+        if (!params.sessionId.startsWith(SESSION_TITLE_SESSION_PREFIX)) prompts.push(params.prompt);
         return {
           content: JSON.stringify({ tool: "reply", args: { text: "ok" } }),
           reasoningContent: "",
