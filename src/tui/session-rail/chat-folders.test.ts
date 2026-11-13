@@ -14,6 +14,7 @@ import {
   type RailChatFolders,
 } from "./chat-folders.js";
 import { SessionRailOrchestrator } from "./session-rail-orchestrator.js";
+import type { SessionRailLayout } from "./session-rail-pin.js";
 
 /**
  * ATO-1180: the desktop's chat folders (`<stateDir>/chat-folders.json`,
@@ -38,7 +39,10 @@ function folders(): RailChatFolders {
   return coerceRailChatFolders(desktopFile);
 }
 
-const row = (sessionId: string, pinned = false) => ({ sessionId, pinned });
+const row = (
+  sessionId: string,
+  pinned = false,
+): { sessionId: string; pinned: boolean; folder?: string } => ({ sessionId, pinned });
 const ids = (rows: readonly { sessionId: string }[]) =>
   rows.map((r) => r.sessionId);
 
@@ -184,7 +188,7 @@ describe("SessionRailOrchestrator with chat folders", () => {
   });
 
   it("groups the arranged rail by folder and moves against that list", () => {
-    let layout = { order: [] as string[], pinned: [] as string[] };
+    let layout: SessionRailLayout = { order: [], pinned: [] };
     const rail = new SessionRailOrchestrator(
       {
         read: () => layout,

@@ -22,6 +22,7 @@ import {
   type IssueReportDeps,
   type IssueReportRuntime,
 } from "./issue-report-orchestrator.js";
+import type { IssueReportPreview } from "./issue-report-state.js";
 
 const TOKEN = `ghp_${"A".repeat(36)}`;
 
@@ -36,6 +37,13 @@ function makeBus() {
       return actions.filter((a) => a.type === type).at(-1);
     },
   };
+}
+
+/** The last preview the orchestrator emitted (the test bus is untyped). */
+function previewOf(bus: ReturnType<typeof makeBus>): IssueReportPreview {
+  const action = bus.last("issue_report_previewed");
+  if (action === undefined) throw new Error("no issue_report_previewed emitted");
+  return action.preview as IssueReportPreview;
 }
 
 function fakeApi() {
@@ -301,21 +309,13 @@ describe("IssueReportOrchestrator", () => {
       });
       orchestrator.open();
       await orchestrator.pick("errors", state);
-      const first = (
-        bus.last("issue_report_previewed") as {
-          preview: { includeSupportId: boolean; includeLogs: boolean };
-        }
-      ).preview;
+      const first = previewOf(bus);
       expect(first.includeSupportId).toBe(true);
       expect(first.includeLogs).toBe(true);
 
       orchestrator.toggle("supportId");
       orchestrator.toggle("logs");
-      const second = (
-        bus.last("issue_report_previewed") as {
-          preview: { includeSupportId: boolean; includeLogs: boolean };
-        }
-      ).preview;
+      const second = previewOf(bus);
       expect(second.includeSupportId).toBe(false);
       expect(second.includeLogs).toBe(false);
       await orchestrator.send();
@@ -333,11 +333,7 @@ describe("IssueReportOrchestrator", () => {
       });
       orchestrator.open();
       await orchestrator.pick("errors", state);
-      const preview = (
-        bus.last("issue_report_previewed") as {
-          preview: { supportId: string; includeSupportId: boolean };
-        }
-      ).preview;
+      const preview = previewOf(bus);
       expect(preview.supportId).toBe(ID);
       expect(preview.includeSupportId).toBe(false);
       orchestrator.toggle("supportId");
@@ -387,11 +383,7 @@ describe("IssueReportOrchestrator", () => {
         );
         orchestrator.open();
         await orchestrator.pick("errors", state);
-        const preview = (
-          bus.last("issue_report_previewed") as {
-            preview: { supportId: string | null; includeSupportId: boolean };
-          }
-        ).preview;
+        const preview = previewOf(bus);
         expect(preview.supportId).toBe(ID);
         expect(preview.includeSupportId).toBe(true);
         await orchestrator.send();
@@ -412,11 +404,7 @@ describe("IssueReportOrchestrator", () => {
       orchestrator.open();
       await orchestrator.pick("errors", state);
       orchestrator.toggle("supportId");
-      const preview = (
-        bus.last("issue_report_previewed") as {
-          preview: { includeSupportId: boolean };
-        }
-      ).preview;
+      const preview = previewOf(bus);
       expect(preview.includeSupportId).toBe(false);
     });
 

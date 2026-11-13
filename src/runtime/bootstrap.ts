@@ -673,7 +673,7 @@ export async function createAgentRuntime(
     // The local leg's slot count once `/props` has answered — what the
     // `### fusion` facts state for an external server.
     liveWorkerSlots: () => slotManager.observedPoolSize(),
-    fusionPastRuns: (sessionId) => fusionOutcomes.summaryLines(sessionId),
+    fusionPastRuns: (sessionId: string) => fusionOutcomes.summaryLines(sessionId),
     onContextWindowObserved: observeContextWindow,
     onContextWindowExceeded: raiseContextWindowTo,
     // A refused connection to a managed local model whose process is gone

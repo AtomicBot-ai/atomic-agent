@@ -62,11 +62,11 @@ describe("createMcpElicitationHandler", () => {
     const handler = createMcpElicitationHandler({ port, server: "gmail" });
     const res = await handler(PICK_ACCOUNT, live());
     expect(res).toEqual({ action: "accept", content: { account: "home" } });
-    const question = port.ask.mock.calls[0][0] as McpElicitationQuestion;
+    const question = port.ask.mock.calls[0]![0] as McpElicitationQuestion;
     expect(question.server).toBe("gmail");
     expect(question.message).toBe("Which account should I use?");
     expect(question.fields.map((f) => f.name)).toEqual(["account", "password"]);
-    expect(question.fields[1].sensitive).toBe(true);
+    expect(question.fields[1]!.sensitive).toBe(true);
   });
 
   it.each(["decline", "cancel"] as const)("passes the person's %s through", async (action) => {
@@ -260,7 +260,7 @@ describe("createMcpElicitationHandler", () => {
     const port = portReplying({ action: "decline" });
     const handler = createMcpElicitationHandler({ port, server: "s" });
     await handler({ ...PICK_ACCOUNT, message: "x".repeat(MAX_MESSAGE_CHARS * 2) }, live());
-    const question = port.ask.mock.calls[0][0] as McpElicitationQuestion;
+    const question = port.ask.mock.calls[0]![0] as McpElicitationQuestion;
     expect(Array.from(question.message).length).toBe(MAX_MESSAGE_CHARS);
   });
 

@@ -111,7 +111,7 @@ describe("the traffic-analytics starter skill", () => {
       private_key: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
     };
     const jwt: string = mod.signServiceAccountJwt(sa, mod.GA4_SCOPE, 1_000);
-    const [header, claims, signature] = jwt.split(".");
+    const [header = "", claims = "", signature = ""] = jwt.split(".");
     const decode = (part: string) =>
       JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
     expect(decode(header)).toEqual({ alg: "RS256", typ: "JWT" });

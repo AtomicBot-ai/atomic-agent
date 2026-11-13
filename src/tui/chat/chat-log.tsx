@@ -265,7 +265,6 @@ export function ChatLog({
       flexGrow={1}
       flexShrink={1}
       justifyContent="flex-end"
-              verbose={state.verboseSteps === true}
       overflow="hidden"
       height={viewport}
     >

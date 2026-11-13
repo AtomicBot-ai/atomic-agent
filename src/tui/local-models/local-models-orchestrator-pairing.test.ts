@@ -368,6 +368,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stubBackendInstalled(dataDir);
     stubChatModelDownloaded(dataDir);
     const file = readUserConfigFileSync(getUserConfigPath(stateDir));
+    if (file === null) throw new Error("beforeEach wrote no config file");
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...file,
       llm: {

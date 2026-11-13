@@ -75,7 +75,7 @@ const signal = () => new AbortController().signal;
 describe("automatic compaction with an exact token count (ATO-656)", () => {
   it("skips the compaction when the exact count is under the trigger the estimate reached", async () => {
     const { state, trigger } = justDue();
-    const count = vi.fn(async () => Math.floor(trigger * 0.7));
+    const count = vi.fn<TokenCounter["count"]>(async () => Math.floor(trigger * 0.7));
     const f = fixture(state, () => ({ count }));
     const pending = f.control.beforeStep(input(state), { signal: signal() });
     expect(pending).toBeInstanceOf(Promise);

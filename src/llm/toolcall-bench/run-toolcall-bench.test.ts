@@ -10,7 +10,7 @@ const ONE: BenchCase[] = [
 function scripted(replies: Array<string | Error | null>): BenchComplete {
   let i = 0;
   return async () => {
-    const next = replies[i++ % replies.length];
+    const next = replies[i++ % replies.length] ?? null;
     if (next instanceof Error) throw next;
     if (next === null) return { content: "plain text" };
     return { content: "", toolCalls: [{ function: { name: "read_file", arguments: next } }] };

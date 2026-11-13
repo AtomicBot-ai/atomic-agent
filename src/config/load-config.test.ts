@@ -490,7 +490,7 @@ describe("loadConfig", () => {
   it("honours user-pinned tracing.trace.enabled", () => {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
-      tracing: { trace: { enabled: false, maxBytesPerSession: 4096 } },
+      tracing: { ...USER_CONFIG_DEFAULTS.tracing, trace: { enabled: false, maxBytesPerSession: 4096 } },
     });
     const config = loadConfig();
     expect(config.tracing.trace.enabled).toBe(false);

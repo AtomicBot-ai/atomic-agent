@@ -66,7 +66,7 @@ describe("turn memory context seam", () => {
 describe("incognito chats read no memory", () => {
   const incognito = (base: SessionState = session()): SessionState => ({ ...base, incognito: { since: 1, owner: "{}" } });
   const storedNote = (): MemoryEntry => ({ ...note(7), content: "secret note: the user is planning a surprise" });
-  const facts: ProfileFact[] = [{ key: "favourite_drink", value: "oolong-tea-42", updatedAt: 1, pinned: true, keywords: [] } as ProfileFact];
+  const facts: ProfileFact[] = [{ id: 1, key: "favourite_drink", value: "oolong-tea-42", validFrom: 1, updatedAt: 1, pinned: true, keywords: [], supersedes: null, supersededBy: null, voteScore: 0 }];
   const provider = () => vi.fn(() => ({ recalled: [storedNote()], index: [{ id: 7, preview: "secret note preview", tags: [], updatedAt: 1, workingDir: null, sessionId: null }] }));
   const prompt = (state: SessionState, profileFacts: readonly ProfileFact[] | undefined) => buildPrompt({
     session: recordTurn(state, userTurn("current")),

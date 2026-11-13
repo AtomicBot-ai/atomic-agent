@@ -13,6 +13,8 @@ const SESSION: TuiSessionInfo = {
   approvalLevel: 5,
   maxSteps: 10,
   skillCount: 0,
+  completionMaxTokens: 2048,
+  localBackendConfigured: false,
 };
 
 const ESC = String.fromCharCode(27);

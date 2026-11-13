@@ -75,8 +75,8 @@ describe("the motion starter skill", () => {
       it("defaults to a light background", () => {
         const match = page.match(/P\("bg", "([0-9a-f,]+)"\)/);
         expect(match).not.toBeNull();
-        for (const colour of match![1].split(",")) {
-          const [r, g, b] = [0, 2, 4].map((i) => parseInt(colour.slice(i, i + 2), 16) / 255);
+        for (const colour of match![1]!.split(",")) {
+          const [r, g, b] = [0, 2, 4].map((i) => parseInt(colour.slice(i, i + 2), 16) / 255) as [number, number, number];
           expect(0.2126 * r + 0.7152 * g + 0.0722 * b).toBeGreaterThan(0.8);
         }
       });

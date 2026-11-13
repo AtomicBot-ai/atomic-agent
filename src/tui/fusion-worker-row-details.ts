@@ -17,6 +17,7 @@ const OUTCOME_LABELS: Record<WorkerTaskStatus, string> = {
   ok: "done",
   no_changes: "done, no changes",
   needs_orchestrator: "returned to planner",
+  needs_input: "asked a question",
   max_steps: "hit max steps",
   timeout: "timed out",
   failed: "failed",

@@ -28,6 +28,8 @@ const TAINT_SENSITIVE: Record<ApprovalCategory, boolean> = {
   fs_write_home: true,
   fs_trash: false,
   http: true,
+  // A POST can carry files or keys to any host (ATO-1462).
+  http_write: true,
   shell: true,
   shell_dangerous: true,
   script: true,
@@ -37,6 +39,8 @@ const TAINT_SENSITIVE: Record<ApprovalCategory, boolean> = {
   browser_commit: true,
   browser_secret: true,
   browser_offsite: true,
+  // The site's own code runs and may send, buy or delete (ATO-521).
+  browser_site_tool: true,
   trust_config: true,
   publish: true,
   email: true,
@@ -48,6 +52,11 @@ const TAINT_SENSITIVE: Record<ApprovalCategory, boolean> = {
   screen_capture: false,
   local_model_restart: false,
   hook_ask: false,
+  // Never auto-approved (no level, grant or reviewer answers it), so
+  // there is nothing to hold; `true` would route it to the reviewer.
+  user_question: false,
+  // Sends into another chat or reads its private context (ATO-570).
+  session_cross: true,
   // MCP tools that are gated land here: arbitrary third-party code.
   other: true,
 };

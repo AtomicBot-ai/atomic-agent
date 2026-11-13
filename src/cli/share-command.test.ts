@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi, type Mock } from "vitest";
 
 import type { SessionSummary } from "../session/index.js";
 import {
@@ -26,7 +26,7 @@ function summary(id: string, workingDir: string, updatedAt: number): SessionSumm
 function fakeStore(
   rows: SessionSummary[],
   lines: { kind: "user" | "assistant_reply"; text: string }[] = [],
-): ShareSessionStore & { close: ReturnType<typeof vi.fn> } {
+): ShareSessionStore & { close: Mock<() => void> } {
   return {
     load: vi.fn((id: string) => {
       const row = rows.find((r) => r.id === id);
@@ -36,7 +36,7 @@ function fakeStore(
     }),
     listSummaryPage: vi.fn(() => rows),
     listChatLines: vi.fn(() => lines),
-    close: vi.fn(),
+    close: vi.fn<() => void>(),
   };
 }
 

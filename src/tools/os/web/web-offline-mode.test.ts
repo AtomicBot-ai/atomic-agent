@@ -40,7 +40,7 @@ describe("web tools in offline mode (ATO-1084)", () => {
     const tool = buildOsWebFetchTool({ runCommand: run, lookup });
     const result = await tool.run({ url: "https://example.com/page" }, ctx());
     expect(result.status).toBe("error");
-    expect(result.output).toContain("offline mode: example.com blocked");
+    expect(result.summary).toContain("offline mode: example.com blocked");
     expect(result.details.offline).toBe(true);
     expect(run).not.toHaveBeenCalled();
     expect(lookup).not.toHaveBeenCalled();
@@ -71,7 +71,7 @@ describe("web tools in offline mode (ATO-1084)", () => {
       ctx(),
     );
     expect(result.status).toBe("error");
-    expect(result.output).toContain("offline mode: api.example.com blocked");
+    expect(result.summary).toContain("offline mode: api.example.com blocked");
     expect(run).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
   });
@@ -86,7 +86,7 @@ describe("web tools in offline mode (ATO-1084)", () => {
     })) as unknown as typeof RunCommandType;
     const tool = buildOsWebFetchTool({ runCommand: run, lookup: publicLookup });
     const result = await tool.run({ url: "https://example.com/" }, ctx());
-    expect(result.output).not.toContain("offline mode");
+    expect(result.summary).not.toContain("offline mode");
     expect(run).toHaveBeenCalled();
   });
 

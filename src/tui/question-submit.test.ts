@@ -26,6 +26,7 @@ function questionState(question: UserQuestion = QUESTION): TuiState {
       maxSteps: 10,
       completionMaxTokens: 2048,
       skillCount: 0,
+      localBackendConfigured: false,
     }),
     pendingApproval: {
       approvalId: "q-1",

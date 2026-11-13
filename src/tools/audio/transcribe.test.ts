@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolContext } from "../tool-registry.js";
-import { buildAudioTranscribeTool, type AudioTranscribeToolOptions } from "./transcribe.js";
+import { buildAudioTranscribeTool } from "./transcribe.js";
 import type { RunProcess } from "./run-process.js";
 import type { InstallDeps } from "./whisper-install.js";
 import { whisperModelById } from "./whisper-models.js";

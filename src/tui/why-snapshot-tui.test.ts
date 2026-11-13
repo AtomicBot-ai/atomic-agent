@@ -14,6 +14,7 @@ const SESSION: TuiSessionInfo = {
   maxSteps: 10,
   completionMaxTokens: 2048,
   skillCount: 0,
+  localBackendConfigured: false,
 };
 
 function card(extra: Partial<ToolCardEntry> = {}): ToolCardEntry {

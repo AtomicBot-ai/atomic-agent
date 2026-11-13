@@ -569,7 +569,7 @@ export interface AtomicAgentConfig {
        */
       extraApiKeyEnvVars?: string[];
       /** Command whose output is the key (`UserLlmProviderEntry.apiKeyCommand`). */
-      apiKeyCommand?: string[];
+      apiKeyCommand?: readonly string[];
       supportsTools?: boolean;
       supportsVision?: boolean;
       supportsAudio?: boolean;
