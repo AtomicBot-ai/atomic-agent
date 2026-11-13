@@ -467,6 +467,33 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
   ["tool.search", obj({ query: stringSchema, limit: numberSchema }, ["query"])],
+  // ATO-1137. `series` nests an object, so its bound keeps the schema off
+  // the strict path like `plan.update`; the tool's parser owns the rest
+  // (one value per label, `html` or `chart`, numbers sent as strings).
+  [
+    "canvas.render",
+    obj(
+      {
+        title: stringSchema,
+        chart: { type: "string", enum: ["bar", "line", "area", "pie", "table"] },
+        labels: stringArraySchema,
+        series: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          items: obj(
+            { name: stringSchema, values: { type: "array", items: numberSchema } },
+            ["name", "values"],
+          ),
+        },
+        values: { type: "array", items: numberSchema },
+        html: stringSchema,
+        subtitle: stringSchema,
+        name: stringSchema,
+      },
+      ["title"],
+    ),
+  ],
   [
     "skill.run_script",
     obj(

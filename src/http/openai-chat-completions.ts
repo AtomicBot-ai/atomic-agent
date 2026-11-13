@@ -43,6 +43,7 @@ import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
 import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
+import { canvasRecordOf, type CanvasRecord } from "../tools/canvas/index.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
 import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import { claimScreenOverlay } from "../tools/os/screen/screen-overlay-hosts.js";
@@ -444,6 +445,8 @@ async function handleStream(
  *    else.
  *  - `reasoning_delta` → `event: reasoning_progress` (extensions opt-in
  *    only)
+ *  - an ok `canvas.render` call's `tool_result` carries `canvas`: the
+ *    file it wrote, for the chat to show (extensions opt-in only, ATO-1137)
  *  - `plan_updated` → `event: plan_updated` with the whole checklist
  *    (extensions opt-in only, ATO-486)
  *  - compaction lifecycle and `history_trimmed` → named frames of the
@@ -598,6 +601,8 @@ export function buildStreamEventHook(
           }).line,
           ...keyRequiredFrame(inner.result),
           ...screenMarksFrame(inner.result),
+          // ATO-1137: the canvas an ok `canvas.render` wrote, for the chat to show.
+          ...canvasFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
           // them (`tool_result.approvals`), so a live turn summary can list
           // what was auto-approved (`verdict: "auto-approved"`, `via`,
@@ -1022,6 +1027,17 @@ function screenMarksFrame(
   if (!Array.isArray(marks) || marks.length === 0) return {};
   if (typeof seconds !== "number" || !Number.isFinite(seconds)) return {};
   return { screen_marks: { marks, seconds } };
+}
+
+/**
+ * `canvas` on a `tool_result` frame (ATO-1137): the HTML file an ok
+ * `canvas.render` call wrote, as `{path, title, kind, chart?, bytes}`,
+ * so a host can open the canvas beside the chat while the turn runs.
+ * Left out for every other call and for a shape a host cannot open.
+ */
+function canvasFrame(result: CompressedToolResult): { canvas?: CanvasRecord } {
+  const canvas = canvasRecordOf(result);
+  return canvas === undefined ? {} : { canvas };
 }
 
 /** Longest `summary` a `tool_result` carries; the store keeps the whole one. */

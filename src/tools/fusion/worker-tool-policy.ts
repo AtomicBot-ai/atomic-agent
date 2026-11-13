@@ -47,6 +47,9 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   // The live checklist is the operator's view of the orchestrator's
   // work (ATO-486); a worker's own list would reach nobody.
   "plan.update",
+  // Same for a canvas (ATO-1137): only the orchestrator's stream reaches
+  // the chat, so a worker's chart would be a file nobody is shown.
+  "canvas.render",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */

@@ -182,6 +182,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // The live plan (ATO-486): writes only the session's own record, so it
   // batches with anything; the step commit applies results in order.
   "plan.update": "pure_read",
+  // ATO-1137: writes one new file in the working folder through the fs
+  // approval funnel, so it is gated like `os.fs.write`.
+  "canvas.render": "approval_gated",
   "tool.search": "pure_read",
   "skill.run_script": "approval_gated",
 
@@ -364,6 +367,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // dangerous one asks as `shell_dangerous` too (ATO-1266).
     "verify.run": ["shell", "shell_dangerous"],
     "os.fs.write": FS_WRITE_CATEGORIES,
+    // ATO-1137: the same funnel (`requireFsApproval`, kind `write`).
+    "canvas.render": FS_WRITE_CATEGORIES,
     "os.fs.edit": FS_WRITE_CATEGORIES,
     "os.fs.patch": FS_WRITE_CATEGORIES,
     // Puts a saved copy back: a write in every sense.
