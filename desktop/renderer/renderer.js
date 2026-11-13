@@ -33160,7 +33160,10 @@ if (typeof window !== 'undefined') {
             keycaps: b.querySelectorAll('.kc').length,
             labelVisible: !!(lb && lb.offsetParent), iconVisible: !!(gi && gi.offsetParent),
             belowLists: !!lists && Math.round(r.top) >= Math.round(lists.getBoundingClientRect().bottom) - 1,
-            oldRow: document.querySelectorAll('#sidebar .sb-foot').length};
+            oldRow: document.querySelectorAll('#sidebar .sb-foot').length,
+            // ATO-1465 (#1363): Join Discord shares the bottom row, right of Settings.
+            rowWidth: b.parentElement ? Math.round(b.parentElement.getBoundingClientRect().width) : 0,
+            discordWidth: (() => { const d = document.querySelector('#sidebar .sb-footwrap .sb-discord'); return d ? Math.round(d.getBoundingClientRect().width) : 0; })()};
   };
   window.__settingsBtnClick = () => {
     const b = document.querySelector('#sidebar .sb-settings');

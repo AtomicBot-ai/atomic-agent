@@ -13635,7 +13635,7 @@ async function chromeTest(
     text: string; act: string; title: string; aria: string | null;
     classes: string; bg: string; fg: string;
     height: number; width: number; keycaps: number; labelVisible: boolean; iconVisible: boolean;
-    belowLists: boolean; oldRow: number;
+    belowLists: boolean; oldRow: number; rowWidth?: number; discordWidth?: number;
   };
   type Acts = {
     present: boolean; vis?: string; opacity?: string; events?: string; height?: number;
@@ -13817,11 +13817,13 @@ async function chromeTest(
     );
     // #sidebar is 260px (8px window gutter + the 252px floating panel with 8px
     // side padding), so the button's full width is 236. Calm (S1): 34px, the
-    // height of every other sidebar row.
+    // height of every other sidebar row. ATO-1465 (#1363): the row is 236 wide and
+    // shares it with the 34px Join Discord button (4px gap), so Settings takes the rest.
+    const discordW = setBtn?.discordWidth ?? 0;
     check(
-      "item 8: it is 34px tall, full width, below the lists",
-      !!setBtn && setBtn.height === 34 && setBtn.width === 236 && setBtn.belowLists,
-      setBtn ? `${setBtn.width}×${setBtn.height}, belowLists=${setBtn.belowLists}` : "no button",
+      "item 8: it is 34px tall, full width (beside Join Discord), below the lists",
+      !!setBtn && setBtn.height === 34 && setBtn.rowWidth === 236 && discordW === 34 && setBtn.width === 236 - discordW - 4 && setBtn.belowLists,
+      setBtn ? `${setBtn.width}×${setBtn.height} in a ${setBtn.rowWidth}px row, Discord ${discordW}px, belowLists=${setBtn.belowLists}` : "no button",
     );
     const setDark = await js<SetBtn>("(() => { window.__theme('dark'); return window.__settingsBtn(); })()");
     const setLight = await js<SetBtn>("(() => { window.__theme('light'); return window.__settingsBtn(); })()");
