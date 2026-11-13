@@ -159,6 +159,7 @@ const LLM_FUSION_KEYS: Record<keyof UserLlmFusionConfig, true> = {
   autoReplan: true,
   roles: true,
   mixLocalModels: true,
+  outcomeJournal: true,
   isolation: true,
   taskTree: true,
 };

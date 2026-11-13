@@ -258,9 +258,9 @@ export interface StepDependencies {
   fusionTokensPerSecond?: () => number | null;
   /**
    * The fusion outcome log's summary for the `### fusion` block
-   * (ATO-949). Held once per process by the log, so stable per step.
+   * (ATO-949). Held per session by the log, so stable per step.
    */
-  fusionPastRuns?: () => readonly string[];
+  fusionPastRuns?: (sessionId: string) => readonly string[];
   /**
    * Provider capability: whether the active native-tools provider can
    * generate parallel tool calls in one response. When false (or the

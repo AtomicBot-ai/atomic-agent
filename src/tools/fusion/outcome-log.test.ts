@@ -168,21 +168,61 @@ describe("fusion outcome log (ATO-949)", () => {
     const log = new FusionOutcomeLog({ path: join(blocker, "sub", "log.jsonl") });
     expect(() => log.append(row())).not.toThrow();
     expect(log.read()).toEqual([]);
-    expect(log.summaryLines()).toEqual([]);
+    expect(log.summaryLines("s1")).toEqual([]);
   });
 
-  it("holds the summary once per process, so the prefix does not move mid-session", () => {
+  it("holds the summary per session, so the prefix does not move mid-session", () => {
     const path = join(dir, "fusion-outcomes.jsonl");
     const log = new FusionOutcomeLog({ path });
     for (let i = 0; i < 3; i += 1) log.append(row({ at: i }));
-    const first = log.summaryLines();
+    const first = log.summaryLines("s1");
     expect(first).toHaveLength(1);
     expect(first[0]).toContain("failed 3 of 3");
     for (let i = 0; i < 5; i += 1) log.append(row({ at: 10 + i, status: "ok" }));
-    expect(log.summaryLines()).toBe(first);
-    // The next process reads what this one appended.
-    expect(new FusionOutcomeLog({ path }).summaryLines()[0]).toContain("5 of 8 ok");
+    expect(log.summaryLines("s1")).toBe(first);
+    // Another process reads what this one appended.
+    expect(new FusionOutcomeLog({ path }).summaryLines("s1")[0]).toContain("5 of 8 ok");
     expect(existsSync(path)).toBe(true);
+  });
+
+  it("rebuilds the summary when a new session starts on the same instance", () => {
+    const path = join(dir, "fusion-outcomes.jsonl");
+    const log = new FusionOutcomeLog({ path });
+    expect(log.summaryLines("s1")).toEqual([]);
+    for (let i = 0; i < 3; i += 1) log.append(row({ at: i }));
+    // The running session keeps its prefix…
+    expect(log.summaryLines("s1")).toEqual([]);
+    // …and the next one, in the same long-lived process, sees the rows.
+    const next = log.summaryLines("s2");
+    expect(next).toHaveLength(1);
+    expect(next[0]).toContain("failed 3 of 3");
+  });
+
+  it("keeps a busy session's summary while many other sessions come and go", () => {
+    const path = join(dir, "fusion-outcomes.jsonl");
+    const log = new FusionOutcomeLog({ path });
+    const held = log.summaryLines("parent");
+    for (let i = 0; i < 3; i += 1) log.append(row({ at: i }));
+    for (let i = 0; i < 200; i += 1) {
+      log.summaryLines(`worker-${i}`);
+      expect(log.summaryLines("parent")).toBe(held);
+    }
+  });
+
+  it("with the journal off, writes no rows and states no summary", () => {
+    const path = join(dir, "fusion-outcomes.jsonl");
+    let on = false;
+    const log = new FusionOutcomeLog({ path, enabled: () => on });
+    for (let i = 0; i < 3; i += 1) log.append(row({ at: i }));
+    expect(existsSync(path)).toBe(false);
+    on = true;
+    for (let i = 0; i < 3; i += 1) log.append(row({ at: i }));
+    expect(log.summaryLines("s1")).toHaveLength(1);
+    on = false;
+    expect(log.summaryLines("s1")).toEqual([]);
+    expect(log.summaryLines("s2")).toEqual([]);
+    log.append(row({ at: 99 }));
+    expect(log.read()).toHaveLength(3);
   });
 
   it("rejects rows of another version or with an unknown status", () => {

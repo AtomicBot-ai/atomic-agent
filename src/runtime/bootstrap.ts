@@ -402,10 +402,12 @@ export async function createAgentRuntime(
     dir: join(config.paths.stateDir, FUSION_RUNS_DIR_NAME),
   });
   // What past fan-outs showed on this machine (ATO-949): one line per
-  // finished worker task, summarized once per process into the
-  // `### fusion` facts. See `outcome-log.ts`.
+  // finished worker task, summarized into the `### fusion` facts once
+  // per session start. `llm.runMode.fusion.outcomeJournal: false` turns
+  // both off; read live, like every run-mode setting. See `outcome-log.ts`.
   const fusionOutcomes = new FusionOutcomeLog({
     path: join(config.paths.stateDir, FUSION_OUTCOMES_FILE_NAME),
+    enabled: () => getConfig().llm?.runMode?.fusion?.outcomeJournal !== false,
   });
 
   // ATO-569: what each session has spent and the account limits last
@@ -595,7 +597,7 @@ export async function createAgentRuntime(
     // The local leg's slot count once `/props` has answered — what the
     // `### fusion` facts state for an external server.
     liveWorkerSlots: () => slotManager.observedPoolSize(),
-    fusionPastRuns: () => fusionOutcomes.summaryLines(),
+    fusionPastRuns: (sessionId) => fusionOutcomes.summaryLines(sessionId),
     onContextWindowObserved: observeContextWindow,
     onContextWindowExceeded: raiseContextWindowTo,
     // A refused connection to a managed local model whose process is gone

@@ -109,7 +109,7 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
     fusionTokensPerSecond: deps.fusionTokensPerSecond?.() ?? null,
     ...(deps.fusionPastRuns !== undefined
-      ? { fusionPastRuns: deps.fusionPastRuns() }
+      ? { fusionPastRuns: deps.fusionPastRuns(ctx.session.id) }
       : {}),
     // The prefix must match the request shape: a native-tools link gets
     // native function-calling guidance instead of the text-JSON array

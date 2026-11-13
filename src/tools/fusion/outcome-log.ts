@@ -37,6 +37,8 @@ export const OUTCOME_LOG_MAX_ROWS = 2_000;
 export const OUTCOME_SUMMARY_WINDOW = 300;
 
 const OUTCOME_ROW_VERSION = 1;
+/** Sessions whose starting summary is held at once. */
+const SESSION_SUMMARIES_KEPT = 64;
 const MODEL_CHARS = 80;
 
 /** A coarse size of the task as briefed: what the planner can act on. */
@@ -160,6 +162,11 @@ export function parseOutcomeRow(line: string): FusionOutcomeRow | null {
 
 export interface FusionOutcomeLogOptions {
   path: string;
+  /**
+   * `llm.runMode.fusion.outcomeJournal`, read per call. Off: no row is
+   * written and the summary is empty. Absent: on.
+   */
+  enabled?: () => boolean;
   maxBytes?: number;
   maxRows?: number;
   summaryWindow?: number;
@@ -170,17 +177,21 @@ export class FusionOutcomeLog {
   private readonly maxBytes: number;
   private readonly maxRows: number;
   private readonly summaryWindow: number;
-  private summary: readonly string[] | undefined;
+  private readonly enabled: () => boolean;
+  /** The summary each session started with, least recently used first. */
+  private readonly summaries = new Map<string, readonly string[]>();
 
   constructor(options: FusionOutcomeLogOptions) {
     this.path = options.path;
     this.maxBytes = options.maxBytes ?? OUTCOME_LOG_MAX_BYTES;
     this.maxRows = options.maxRows ?? OUTCOME_LOG_MAX_ROWS;
     this.summaryWindow = options.summaryWindow ?? OUTCOME_SUMMARY_WINDOW;
+    this.enabled = options.enabled ?? (() => true);
   }
 
   /** Append one row; compacts when the file passed `maxBytes`. Never throws. */
   append(row: FusionOutcomeRow): void {
+    if (!this.isEnabled()) return;
     try {
       mkdirSync(dirname(this.path), { recursive: true });
       appendFileSync(this.path, `${JSON.stringify(row)}\n`, "utf8");
@@ -208,16 +219,40 @@ export class FusionOutcomeLog {
   }
 
   /**
-   * The facts the `### fusion` block states, read once per process and
-   * then held: those bytes sit in the KV-cache-hot stable prefix, so a
-   * fan-out mid-session must not move them. The next process reads the
-   * rows this one appended.
+   * The facts the `### fusion` block states for `sessionId`, read from
+   * the log the first time that session asks and then held for it:
+   * those bytes sit in the KV-cache-hot stable prefix, so a fan-out
+   * mid-session must not move them. A session started later (a new
+   * chat in the same long-lived process) reads the rows appended since.
+   * Empty while the journal is off.
    */
-  summaryLines(): readonly string[] {
-    if (this.summary === undefined) {
-      this.summary = summarizeOutcomes(this.read(this.summaryWindow));
+  summaryLines(sessionId: string): readonly string[] {
+    if (!this.isEnabled()) return [];
+    const held = this.summaries.get(sessionId);
+    if (held !== undefined) {
+      // Least recently used goes first: a chat that keeps asking (every
+      // step) is never evicted by the worker sessions around it.
+      this.summaries.delete(sessionId);
+      this.summaries.set(sessionId, held);
+      return held;
     }
-    return this.summary;
+    const lines = summarizeOutcomes(this.read(this.summaryWindow));
+    this.summaries.set(sessionId, lines);
+    // Bounded: a long-lived process sees many sessions.
+    while (this.summaries.size > SESSION_SUMMARIES_KEPT) {
+      const oldest = this.summaries.keys().next().value;
+      if (oldest === undefined) break;
+      this.summaries.delete(oldest);
+    }
+    return lines;
+  }
+
+  private isEnabled(): boolean {
+    try {
+      return this.enabled();
+    } catch {
+      return true;
+    }
   }
 
   private compact(): void {

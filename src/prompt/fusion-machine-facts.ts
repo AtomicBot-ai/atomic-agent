@@ -87,7 +87,7 @@ export interface FusionMachineFacts {
    * What past runs on this machine showed (ATO-949), from the outcome
    * log: one short fact per (leg, model, size) group with enough
    * samples. Absent when nothing qualifies, so the block reads as
-   * before. Read once per process, so stable for the prefix.
+   * before. Held per session, so stable for that session's prefix.
    */
   pastRuns?: readonly string[];
 }

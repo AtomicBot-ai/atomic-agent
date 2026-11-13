@@ -44,7 +44,7 @@ export interface BuildPromptInput {
   fusionTokensPerSecond?: number | null;
   /**
    * What past fusion runs on this machine showed (ATO-949), from the
-   * outcome log's summary, read once per process. Rendered into the
+   * outcome log's summary, held per session. Rendered into the
    * `### fusion` block as "Past runs here: …"; absent or empty says
    * nothing.
    */
