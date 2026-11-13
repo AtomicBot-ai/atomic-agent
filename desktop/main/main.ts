@@ -3858,8 +3858,9 @@ function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tas
   // ATO-1034: "Folders" sits between Pinned and Chats while there is a folder.
   return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
 }
-/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js). */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Tasks", "Skills"]);
+/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js).
+    ATO-1146 (#1350): "New project" comes first while the projects store is there, which the app's bridge always is. */
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["New project", "Tasks", "Skills"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
