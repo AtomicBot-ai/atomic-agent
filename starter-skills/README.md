@@ -45,3 +45,7 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |
 | `release-check/` | Only on an explicit "prepare a release" request: clean build from a fresh checkout, package contents, metadata, stubs and secrets, edge cases, verdict tied to one commit hash; never sends code to another provider without asking | none |
 | `traffic-analytics/` | "Why did traffic drop" and other reports from your own GA4, Search Console and PostHog; never invents numbers | Your own Google service account key and/or PostHog personal API key in `~/.atomic-agent/traffic-analytics.json` |
+| `lead-research/` | Companies and business contacts from open sources (websites, GitHub, Apify with your key), one source per row; GDPR-safe, never scrapes LinkedIn or X | none (Apify only with your own key) |
+| `email-drafts/` | Outreach and follow-up emails as drafts only (Gmail via `gog`, or local files for Atomic Mail); never sends | `gog` signed in for Gmail drafts |
+| `landing-cro-review/` | Landing page review from a browser screenshot against a conversion checklist | a vision-capable model for the screenshot part |
+| `ad-copy/` | Google Ads RSA and Meta ad text variants, every length checked by a script | none |
