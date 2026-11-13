@@ -34,6 +34,8 @@
     "eval:full": "node eval/scripts/run-full-eval.mjs",
     "eval:gaia": "node eval/scripts/run-full-eval.mjs -t gaia-style",
     "eval:summary": "node eval/scripts/summarize-run.mjs",
+    "eval:promptfoo": "PROMPTFOO_DISABLE_TELEMETRY=1 npx --yes promptfoo@0.125.1 eval -c eval/promptfoo/promptfooconfig.yaml --no-cache",
+    "eval:redteam": "export PROMPTFOO_DISABLE_TELEMETRY=1 PROMPTFOO_DISABLE_REMOTE_GENERATION=true && npx --yes promptfoo@0.125.1 redteam generate -c eval/promptfoo/redteam.yaml -o eval/promptfoo/redteam-generated.yaml && npx --yes promptfoo@0.125.1 eval -c eval/promptfoo/redteam-generated.yaml --no-cache",
     "eval:memory": "node eval-memory/scripts/run-all.mjs",
     "eval:memory:e1": "node eval-memory/scripts/run-e1.mjs",
     "eval:memory:e2": "node eval-memory/scripts/run-e2.mjs",
