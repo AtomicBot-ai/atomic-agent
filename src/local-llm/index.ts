@@ -326,6 +326,11 @@ export {
 } from "./server/context-growth.js";
 export { readLogTail, type LogTailResult } from "./server/log-tail.js";
 export {
+  classifyEngineExitReason,
+  readEngineExitReason,
+  type EngineExitReason,
+} from "./server/engine-exit-reason.js";
+export {
   classifyLocalFault,
   describeServerFault,
   type LocalFaultTag,

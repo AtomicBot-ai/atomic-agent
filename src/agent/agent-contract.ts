@@ -37,6 +37,26 @@ import type { ReviewStallSignal } from "./review-stall.js";
 export type LocalEngineState = "alive" | "dead" | "unknown" | "atomic_chat_app";
 
 /**
+ * A `LocalEngineState` with the fixed word for why it reads so (ATO-1432):
+ * the liveness branch (`lock_held`, `pid_dead`, `pid_unreadable`, ...) or
+ * why the engine was not looked at (`not_local_link`, `not_active_provider`,
+ * `not_managed`). Fixed words only: it travels in error reports.
+ */
+export interface LocalEngineVerdict {
+  state: LocalEngineState;
+  reason?: string;
+}
+
+/**
+ * The verdicts the outage wait decided "wait or not" on in one outage: the
+ * first and the latest (ATO-1432). Reported with `loop_failed`'s `outage`.
+ */
+export interface EngineWaitVerdicts {
+  first: LocalEngineVerdict;
+  last: LocalEngineVerdict;
+}
+
+/**
  * The answers to "the local model ran out of memory" (ATO-334): restart
  * it with half the context window, stop so the person can pick a smaller
  * model, or stop.
@@ -195,6 +215,12 @@ export interface AgentLoopDependencies {
    * say. Absent (embedders, tests) means `unknown` for every link.
    */
   localEngineState?: (providerId: string | undefined) => LocalEngineState;
+  /**
+   * `localEngineState` with the reason as a fixed word (ATO-1432). Asked
+   * in its place by the outage wait when given, so the turn can report
+   * what it decided on. Absent: the plain state, with no reason.
+   */
+  explainLocalEngineState?: (providerId: string | undefined) => LocalEngineVerdict;
   /**
    * The managed local model ran out of memory (ATO-334). A server error
    * from it is then not an outage to wait out: the turn restarts the
@@ -1034,7 +1060,9 @@ export type AgentLoopEvent =
    * LLM-failure taxonomy (see `src/llm/reliability/`); downstream
    * consumers never need to classify the error themselves.
    * `outage` is the provider-outage wait the turn had spent when it
-   * failed (zero when it never parked); error reporting tags it.
+   * failed (zero when it never parked); error reporting tags it. Its
+   * `engineVerdicts` are the local engine readings the wait decided on,
+   * first and last (ATO-1432), when it read any.
    * `failure` is the shared failure-catalog entry (ATO-384): a stable
    * `cause` id, a plain `phrase` to show, and the `action` button that
    * helps. Set by the agent loop on every failure; optional only so an
@@ -1044,7 +1072,7 @@ export type AgentLoopEvent =
       type: "loop_failed";
       error: Error;
       category: LlmFailureCategory;
-      outage?: { waitedMs: number; attempts: number };
+      outage?: { waitedMs: number; attempts: number; engineVerdicts?: EngineWaitVerdicts };
       failure?: FailureVerdict;
     }
   /**
