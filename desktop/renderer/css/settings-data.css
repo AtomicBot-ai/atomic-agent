@@ -38,6 +38,9 @@
 .sd-memtbl tbody tr.on td:first-child{color:var(--blue)}
 .sd-memtbl .tk-chip svg{width:12px;height:12px}
 .sd-memtbl th:nth-child(3),.sd-memtbl td:nth-child(3),.sd-memtbl th:nth-child(4),.sd-memtbl td:nth-child(4){width:1%}
+/* ATO-582: a note's text in an edit box (memory-edit.js). */
+.sd-memedit{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+textarea.tk-inp.sd-memedit-box{width:100%;min-height:140px;font-size:var(--fs-ui);line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;resize:vertical}
 .sd-memrow .sd-id{flex:none;min-width:44px;font:400 var(--fs-label)/1.3 var(--font-mono);color:var(--ink-2);white-space:nowrap}
 .sd-memrow.on .sd-id{color:var(--blue)}
 .sd-memrow .t{font-size:var(--fs-ui);font-weight:500}
