@@ -78,7 +78,7 @@ export const APPROVAL_CATEGORIES = [
   "local_model_restart", "hook_ask", "other",
 ] as const;
 export const SETTINGS_PANES = [
-  "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "skills", "privacy", "import", "diagnostics",
+  "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "webhooks", "skills", "privacy", "import", "diagnostics",
 ] as const;
 export const IMPORT_SOURCES = ["tui", "hermes", "openclaw", "claude-code", "codex", "pi", "other"] as const;
 export const IMPORT_PARTS = ["providers", "keys", "skills", "sessions", "memory"] as const;

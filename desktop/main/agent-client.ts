@@ -1583,6 +1583,61 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  /**
+   * ATO-445: Settings › Tasks › Webhooks. `GET /api/webhooks` lists the saved
+   * routes (never their secrets); `baseUrl` is where this agent answers, so
+   * the screen can show the full address. An agent from before the route
+   * answers "No route for" and is reported as unsupported. Never throws.
+   */
+  async webhooks(): Promise<{ supported: false } | { supported: true; ok: true; data: unknown; baseUrl: string; remote: boolean } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/webhooks`, { headers: this.headers(), signal: AbortSignal.timeout(10_000) });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, data: JSON.parse(text) as unknown, baseUrl: this.base(), remote: this.isRemote };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /** ATO-445: `POST /api/webhooks`. The reply's `secret` is the only time it is shown. */
+  async createWebhook(body: Record<string, unknown>): Promise<{ supported: false } | { ok: true; data: unknown } | { ok: false; conflict?: boolean; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/webhooks`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) return { ok: true, data: JSON.parse(text) as unknown };
+      if (res.status === 409) return { ok: false, conflict: true, error: errorMessage(text, res.status) };
+      return { ok: false, error: errorMessage(text, res.status) };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /** ATO-445: `DELETE /api/webhooks/:name`. `notFound`: already gone. */
+  async deleteWebhook(name: string): Promise<{ supported: false } | { ok: true } | { ok: false; notFound?: boolean; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/webhooks/${encodeURIComponent(name)}`, {
+        method: "DELETE",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) return { ok: true };
+      if (res.status === 404) return { ok: false, notFound: true, error: errorMessage(text, res.status) };
+      return { ok: false, error: errorMessage(text, res.status) };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
   // --- Lane B — context before the first message (item 3) ---
 
   /**
