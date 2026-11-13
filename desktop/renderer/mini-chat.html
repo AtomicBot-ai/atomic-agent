@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>Ask Atomic Agent</title>
+<!-- ATO-1063: the mini window's chat. The theme and the reply's markdown are the main window's; the rest is its own. -->
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="css/chat.css">
+<link rel="stylesheet" href="css/mini-chat.css">
+</head>
+<body class="mini-chat">
+  <header class="mc-head">
+    <span class="mc-title">New chat</span>
+    <button id="mc-open" class="btn btn-s sm" type="button" disabled>Open in big window</button>
+  </header>
+  <main id="mc-log" class="mc-log" aria-live="polite"></main>
+  <div id="mc-wait" class="mc-wait" role="status" hidden><span class="mc-dot" aria-hidden="true"></span><span id="mc-wait-text"></span></div>
+  <footer class="mc-foot">
+    <textarea id="mc-input" class="mc-input" rows="2" spellcheck="true" placeholder="Ask Atomic Agent…" aria-label="Message"></textarea>
+    <button id="mc-send" class="btn btn-p sm" type="button" disabled>Send</button>
+  </footer>
+  <!-- The reply's markdown, as in the main window (vendored marked and DOMPurify, md-render.js). -->
+  <script src="vendor/marked.js"></script>
+  <script src="vendor/purify.js"></script>
+  <script src="md-render.js"></script>
+  <script src="code-highlight.js"></script>
+  <script src="mini-chat.js"></script>
+</body>
+</html>
