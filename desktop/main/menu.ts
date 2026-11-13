@@ -197,6 +197,8 @@ export function menuTemplate(
         item("Report an Issue…", "help.report"),
         /* ATO-1465: the renderer opens the invite (DISCORD_URL, renderer.js) and counts the click. */
         item("Join Discord", "help.discord"),
+        /* ATO-1467: the interview invite's permanent entry, no limits. */
+        item("Talk to the Team ($50 Credits)…", "help.feedback"),
         ...(mac ? [] : [sep, { role: "about" } as MenuItemConstructorOptions]),
       ],
     },

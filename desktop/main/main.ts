@@ -47,6 +47,7 @@ import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
+import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
 import { machineProfile } from "./studio-local.js";
@@ -2933,6 +2934,7 @@ function wireIpc(client: AgentClient): void {
       return held.hold ? afterUpdate(res, held.hold, { keptBackend: true }) : res;
     },
   });
+  wireInterviewInviteIpc({ stateDir: TUI_STATE_DIR });   // ATO-1467
   /* Studio (Images + Video): Core's media API for the Studio pages
      (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
      OpenRouter key goes to Core over loopback only, never to the window. */
