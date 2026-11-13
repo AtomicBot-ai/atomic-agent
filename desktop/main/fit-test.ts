@@ -4,6 +4,8 @@
  * draw. Pure: fit-test-ipc.ts runs the commands, this file only reads their
  * text and builds their arguments (test/fit-test.test.mjs).
  *
+ * Also how a cancel stops the run (stopFitTest), with the spawn handed in.
+ *
  * Aligned with the agent's PR #1367 (ATO-1090) and #1316 (ATO-1089):
  *
  *   `atag models --help` has a `fit-test --tasks <file>` line. No line, no card.
@@ -22,6 +24,8 @@
  *   A task passes at score 4 or more (fit-test-report.ts PASS_SCORE).
  *   The run picks no winner: the window does (fitWinnerId, fit-test.js).
  */
+
+import { stopPlan } from "./platform.js";
 
 export type FitPhase = "collecting" | "loading" | "running" | "judging";
 
@@ -223,4 +227,37 @@ export function fitJudgeArgs(
   if (inline) return { args: [...args, "--judge-key-env", "FIT_JUDGE_API_KEY"], env: { FIT_JUDGE_API_KEY: inline } };
   const name = str(entry.apiKeyEnvVar) ?? keyEnvOf(judge.id) ?? null;
   return { args: name ? [...args, "--judge-key-env", name] : args, env: {} };
+}
+
+/** What stopFitTest needs from node, handed in so the test can watch it. */
+export interface FitStopDeps {
+  platform: NodeJS.Platform;
+  spawn: (command: string, args: string[], opts: { stdio: "ignore"; windowsHide: true; shell: false }) => unknown;
+  kill: (pid: number, signal: NodeJS.Signals) => void;
+  systemRoot?: string;
+}
+
+/**
+ * Cancel. The run starts its own `atomic-agent run` children, one per task,
+ * and they must go with it. macOS and Linux: the run has its own process
+ * group (spawned detached), and the whole group is signalled. Windows has
+ * no groups or signals: `taskkill /PID <pid> /T /F` ends the run and its
+ * tree, by absolute path, no shell, no window (platform.ts stopPlan, as the
+ * agent's own stop does).
+ */
+export function stopFitTest(child: { pid?: number; kill: (signal?: NodeJS.Signals) => boolean }, deps: FitStopDeps): void {
+  const pid = child.pid;
+  const plan = pid ? stopPlan(deps.platform, pid, deps.systemRoot) : null;
+  try {
+    if (plan?.kind === "taskkill") {
+      const proc = deps.spawn(plan.command, plan.args, { stdio: "ignore", windowsHide: true, shell: false }) as { on?: (ev: "error", cb: () => void) => unknown };
+      // No taskkill to run: the one process at least.
+      proc?.on?.("error", () => { try { child.kill("SIGTERM"); } catch { /* gone */ } });
+      return;
+    }
+    if (plan && pid) { deps.kill(-pid, "SIGTERM"); return; }
+  } catch {
+    /* fall through to the one process */
+  }
+  try { child.kill("SIGTERM"); } catch { /* gone already */ }
 }

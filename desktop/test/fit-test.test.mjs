@@ -250,3 +250,90 @@ test("the sheet while running has a bar and Cancel test", () => {
   const stopping = R.fitDialogHTML({ open: true, phase: "cancelling", progress: null }, { nameOf, judgeWord, currentId: null }, h);
   assert.match(stopping, /Stopping…/);
 });
+
+/* ---------- review: Send is held while a test runs ---------- */
+
+test("while a fit-test runs, Send on the local model is held with a notice; after it ends or is cancelled it works again", async () => {
+  assert.equal(R.FIT_HOLD_TITLE, "A model test is running");
+  assert.match(R.FIT_HOLD_TEXT, /Chat is back when it ends or you cancel it/);
+  assert.doesNotMatch(R.FIT_HOLD_TITLE + R.FIT_HOLD_TEXT, /—/);
+  // The rule: held in every phase but idle, unless the chat does not use the managed server.
+  assert.equal(R.fitHoldsSendFor("idle", "local"), false);
+  for (const phase of ["running", "cancelling"]) {
+    for (const backend of ["local", "fusion", null]) assert.equal(R.fitHoldsSendFor(phase, backend), true, `${phase}/${backend}`);
+    assert.equal(R.fitHoldsSendFor(phase, "cloud"), false);
+    assert.equal(R.fitHoldsSendFor(phase, "custom"), false);
+  }
+
+  // The real flow through fitStart / fitCancel, with the bridge faked.
+  let answer = null;
+  globalThis.BR = {
+    fitTestSupported: async () => true,
+    fitTestStart: () => new Promise((resolve) => { answer = resolve; }),
+    fitTestCancel: async () => { answer({ ok: false, cancelled: true }); return { ok: true }; },
+  };
+  globalThis.selBackend = () => "local";
+  try {
+    assert.equal(R.fitHoldsSend(), false, "nothing held before a run");
+    // A run that ends with a result.
+    const first = R.fitStart();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(R.fitHoldsSend(), true, "held while running");
+    globalThis.selBackend = () => "cloud";
+    assert.equal(R.fitHoldsSend(), false, "a cloud chat goes through");
+    globalThis.selBackend = () => "local";
+    answer({ ok: true, result });
+    await first;
+    assert.equal(R.fitHoldsSend(), false, "back after the run ends");
+    // A run that is cancelled: held through the cancel until main answers.
+    const second = R.fitStart();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(R.fitHoldsSend(), true);
+    const cancel = R.fitCancel();
+    assert.equal(R.fitHoldsSend(), true, "still held while stopping");
+    await cancel;
+    await second;
+    assert.equal(R.fitHoldsSend(), false, "back after a cancel");
+  } finally {
+    delete globalThis.BR;
+    delete globalThis.selBackend;
+  }
+});
+
+/* ---------- review: Cancel ends the run's whole tree ---------- */
+
+test("cancel: taskkill /T /F on the run's pid on Windows, the process group on macOS and Linux", () => {
+  const calls = [];
+  const deps = (platform) => ({
+    platform,
+    systemRoot: "C:\\Windows",
+    spawn: (command, args, opts) => { calls.push({ spawn: command, args, opts }); return { on: () => {} }; },
+    kill: (pid, sig) => { calls.push({ kill: pid, sig }); },
+  });
+  const child = { pid: 4242, kill: (sig) => { calls.push({ childKill: sig }); return true; } };
+
+  M.stopFitTest(child, deps("win32"));
+  assert.deepEqual(calls, [{
+    spawn: "C:\\Windows\\System32\\taskkill.exe",
+    args: ["/PID", "4242", "/T", "/F"],
+    opts: { stdio: "ignore", windowsHide: true, shell: false },
+  }]);
+
+  calls.length = 0;
+  M.stopFitTest(child, deps("darwin"));
+  assert.deepEqual(calls, [{ kill: -4242, sig: "SIGTERM" }]);
+
+  calls.length = 0;
+  M.stopFitTest(child, deps("linux"));
+  assert.deepEqual(calls, [{ kill: -4242, sig: "SIGTERM" }]);
+
+  // No taskkill to run on Windows: the one process at least.
+  calls.length = 0;
+  M.stopFitTest(child, { ...deps("win32"), spawn: () => ({ on: (ev, cb) => { if (ev === "error") cb(); } }) });
+  assert.deepEqual(calls, [{ childKill: "SIGTERM" }]);
+
+  // The group is gone already: the one process.
+  calls.length = 0;
+  M.stopFitTest(child, { ...deps("darwin"), kill: () => { throw new Error("ESRCH"); } });
+  assert.deepEqual(calls, [{ childKill: "SIGTERM" }]);
+});

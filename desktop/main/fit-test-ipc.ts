@@ -26,7 +26,8 @@
  * left running is stopped and the model that was active before is made
  * active again (`models use`), still in the turn; main then starts it.
  * The run's own `atomic-agent run` children go with it: on macOS and Linux
- * the test runs in its own process group, and the whole group is signalled.
+ * the test runs in its own process group, and the whole group is signalled;
+ * on Windows `taskkill /T /F` ends its tree (fit-test.ts stopFitTest).
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
@@ -46,6 +47,7 @@ import {
   fitTestListed,
   parseFitProgressLine,
   readCollected,
+  stopFitTest,
   type FitProgress,
   type FitResult,
 } from "./fit-test.js";
@@ -70,12 +72,7 @@ interface Running { child: ChildProcess | null; cancelled: boolean }
 const NO_TASKS = "There are no recent tasks to test with yet. Chat with the agent for a while, then try again.";
 
 function signal(child: ChildProcess): void {
-  try {
-    if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGTERM");
-    else child.kill("SIGTERM");
-  } catch {
-    child.kill("SIGTERM");
-  }
+  stopFitTest(child, { platform: process.platform, spawn, kill: process.kill.bind(process), systemRoot: process.env.SystemRoot });
 }
 
 export function wireFitTestIpc(deps: FitTestIpcDeps): void {

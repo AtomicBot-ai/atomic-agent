@@ -306,6 +306,21 @@ async function fitStart() {
   if (typeof llmRefresh === 'function') void llmRefresh();
   if (res && res.ok && !FIT.open && typeof toast === 'function') toast('Model test finished', 'Open Settings › Models to see the results.');
 }
+/* While a test runs, the local model server is the test's: it stops it and
+   loads other models on it, so a chat message on the local model would go to
+   a test model or to a stopped server. Send holds it in the box, the way the
+   starter model's download does (starter-chat.js starterHoldsSend), until the
+   run is over, a cancel's put-back included. A chat on a cloud model, or on
+   the person's own server (custom), does not use that server and goes through. */
+const FIT_HOLD_TITLE = 'A model test is running';
+const FIT_HOLD_TEXT = 'Chat is back when it ends or you cancel it. Your message stays in the box.';
+function fitHoldsSendFor(phase, backend) {
+  return phase !== 'idle' && backend !== 'cloud' && backend !== 'custom';
+}
+/** renderer submit: is Send held by a running fit-test? */
+function fitHoldsSend() {
+  return fitHoldsSendFor(FIT.phase, typeof selBackend === 'function' ? selBackend() : null);
+}
 async function fitCancel() {
   const br = fitBridge();
   if (!br || FIT.phase !== 'running') return;
@@ -355,5 +370,6 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {FIT_MAX_MODELS, fitPercent, fitRightWords, fitSpeedWords, fitMemoryWords, fitFinished, fitRank, fitWinnerId,
-    fitSummary, fitProgressLine, fitJudgeNote, fitJudgeHTML, fitProgressFraction, fitPickModels, fitEntryHTML, fitDialogHTML};
+    fitSummary, fitProgressLine, fitJudgeNote, fitJudgeHTML, fitProgressFraction, fitPickModels, fitEntryHTML, fitDialogHTML,
+    FIT_HOLD_TITLE, FIT_HOLD_TEXT, fitHoldsSendFor, fitHoldsSend, fitStart, fitCancel};
 }
