@@ -1,8 +1,8 @@
 import { OS_FS_PATCH_CONTRACT } from "./fs-patch-contract.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { refuseMaskedSecretWrite } from "./fs-masked-secret-guard.js";
 import { dirname, basename } from "node:path";
-import { applyPatch, parsePatch } from "diff";
+import { parsePatch } from "diff";
 import type { StructuredPatch } from "diff";
 import {
   compressToolResult,
@@ -12,6 +12,13 @@ import { resolveUserPath } from "../expand-home.js";
 import { checkChangedFile } from "./fs-content-check.js";
 import { withParseWarning } from "./fs-parse-check.js";
 import { dryRunFile, type PreviewOutcome } from "./fs-patch-preview.js";
+import {
+  CodexPatchParseError,
+  looksLikeCodexPatch,
+  parseCodexPatch,
+  planCodexPatch,
+  type CodexFileOp,
+} from "./fs-patch-codex.js";
 import {
   changedSinceRead,
   recordOwnWrite,
@@ -38,7 +45,11 @@ interface PatchArgs {
   rootDir: string;
   fuzzFactor: number;
   stripComponents: number;
+  format: PatchFormat;
 }
+
+/** `auto` (default) reads a `*** Begin Patch` envelope as codex, anything else as a unified diff. */
+type PatchFormat = "auto" | "unified" | "codex";
 
 export function buildOsFsPatchTool(
   options: FsDangerousToolOptions,
@@ -49,18 +60,10 @@ export function buildOsFsPatchTool(
     readonly: OS_FS_PATCH_CONTRACT.readonly,
     async run(rawArgs, ctx) {
       const args = await parseArgs(rawArgs, ctx.workingDir);
-      const parsed = safeParsePatch(args.patch);
-
-      const previews = await Promise.all(
-        parsed.map((hunkFile) =>
-          dryRunFile(
-            hunkFile,
-            args.rootDir,
-            args.fuzzFactor,
-            args.stripComponents,
-          ),
-        ),
-      );
+      const planned = useCodexFormat(args)
+        ? await planCodexPatch(safeParseCodexPatch(args.patch), args.rootDir)
+        : await planUnifiedPatch(args);
+      const previews = planned.map((p) => p.outcome);
 
       if (!args.apply) {
         return buildResult(previews, "dry-run");
@@ -73,28 +76,25 @@ export function buildOsFsPatchTool(
       // A `[redacted:…]` marker copied out of masked tool output must not
       // land over the real secret (ATO-1077). Checked on every file
       // before the prompt, so a refused patch writes nothing.
-      for (let i = 0; i < parsed.length; i++) {
-        const hunkFile = parsed[i];
-        const outcome = previews[i];
-        if (!hunkFile || !outcome?.applied) continue;
-        const patched = applyPatch(
-          outcome.originalContent ?? "",
-          hunkFile as StructuredPatch,
-          { fuzzFactor: args.fuzzFactor },
-        );
-        if (patched !== false) {
-          refuseMaskedSecretWrite("os.fs.patch", outcome.path, outcome.originalContent ?? "", patched);
-        }
+      for (const { outcome, after } of planned) {
+        if (!outcome.applied || after === null) continue;
+        refuseMaskedSecretWrite("os.fs.patch", outcome.path, outcome.originalContent ?? "", after);
       }
       const preview = formatReport(previews, "applied");
+      // A patch that removes a file (`*** Delete File`, the old path of
+      // a move) asks like os.fs.trash does: `fs_trash` is never silent
+      // below level 3, where a plain workspace write is from level 2.
+      // Outside the workspace and home, and on trust config, both kinds
+      // land in the same bucket, so the trash kind is never weaker.
+      const removesFiles = planned.some((p) => p.after === null);
       await requireFsApproval(
         options,
         {
-          kind: "write",
+          kind: removesFiles ? "trash" : "write",
           paths: previews.map((p) => p.absolute),
           sessionId: ctx.sessionId,
           tool: "os.fs.patch",
-          reason: `apply ${parsed.length} patch file(s) under ${args.rootDir}`,
+          reason: `apply ${planned.length} patch file(s) under ${args.rootDir}`,
           preview,
           affectedResources: previews.map((p) => p.absolute),
           workingDir: ctx.workingDir,
@@ -128,26 +128,24 @@ export function buildOsFsPatchTool(
 
       const parseWarnings: string[] = [];
       const guards: ReplaceGuardOutcome[] = [];
-      for (let i = 0; i < parsed.length; i++) {
-        const hunkFile = parsed[i];
-        const outcome = previews[i];
-        if (!hunkFile || !outcome) continue;
-        const patched = applyPatch(
-          outcome.originalContent ?? "",
-          hunkFile as StructuredPatch,
-          { fuzzFactor: args.fuzzFactor },
-        );
-        if (patched === false) {
-          throw new Error(
-            `os.fs.patch: hunk re-application failed unexpectedly for ${outcome.path}`,
-          );
+      for (const { outcome, after } of planned) {
+        if (after === null) {
+          // `*** Delete File` (or the old path of a move): the previous
+          // content is saved first when a restore store is wired, so
+          // `os.fs.restore` can bring it back.
+          guards.push(await guardAfterPatch(options, ctx, outcome, ""));
+          await unlink(outcome.absolute);
+          continue;
         }
-        await writeFile(outcome.absolute, patched, "utf8");
+        if (!outcome.existed) {
+          await mkdir(dirname(outcome.absolute), { recursive: true });
+        }
+        await writeFile(outcome.absolute, after, "utf8");
         await recordOwnWrite(ctx.fileVersions, outcome.absolute);
-        guards.push(await guardAfterPatch(options, ctx, outcome, patched));
+        guards.push(await guardAfterPatch(options, ctx, outcome, after));
         const warning = parseWarningAfterPatch(
           outcome,
-          patched,
+          after,
           ctx.workingDir,
         );
         if (warning !== null) parseWarnings.push(warning);
@@ -162,6 +160,36 @@ export function buildOsFsPatchTool(
       ));
     },
   };
+}
+
+/** One file of the patch: its dry-run outcome and the content it would land (null: removed). */
+interface PlannedFile {
+  outcome: PreviewOutcome;
+  after: string | null;
+}
+
+async function planUnifiedPatch(args: PatchArgs): Promise<PlannedFile[]> {
+  const parsed = safeParsePatch(args.patch);
+  const previews = await Promise.all(
+    parsed.map((hunkFile) =>
+      dryRunFile(
+        hunkFile,
+        args.rootDir,
+        args.fuzzFactor,
+        args.stripComponents,
+      ),
+    ),
+  );
+  return previews.map((outcome) => ({
+    outcome,
+    after: outcome.patchedContent ?? "",
+  }));
+}
+
+function useCodexFormat(args: PatchArgs): boolean {
+  if (args.format === "codex") return true;
+  if (args.format === "unified") return false;
+  return looksLikeCodexPatch(args.patch);
 }
 
 /**
@@ -251,7 +279,17 @@ async function parseArgs(
     "stripComponents",
   );
 
-  return { patch: patchString, apply, rootDir, fuzzFactor, stripComponents };
+  const format = parseFormat(rawArgs.format);
+
+  return { patch: patchString, apply, rootDir, fuzzFactor, stripComponents, format };
+}
+
+function parseFormat(raw: unknown): PatchFormat {
+  if (raw === undefined || raw === null) return "auto";
+  if (raw === "auto" || raw === "unified" || raw === "codex") return raw;
+  throw new Error(
+    'os.fs.patch: `format` must be "auto", "unified" or "codex"',
+  );
 }
 
 function parseNonNegativeInt(
@@ -276,6 +314,19 @@ function safeParsePatch(source: string): StructuredPatch[] {
   }
 }
 
+function safeParseCodexPatch(source: string): CodexFileOp[] {
+  try {
+    return parseCodexPatch(source);
+  } catch (err) {
+    if (err instanceof CodexPatchParseError) {
+      throw new Error(
+        `os.fs.patch: failed to parse the *** Begin Patch format — ${err.message}`,
+      );
+    }
+    throw err;
+  }
+}
+
 function buildResult(
   previews: PreviewOutcome[],
   mode: "dry-run" | "applied" | "apply-refused",
@@ -296,6 +347,9 @@ function buildResult(
           reason: p.reason,
           addedLines: p.addedLines,
           removedLines: p.removedLines,
+          ...(p.action !== undefined ? { action: p.action } : {}),
+          ...(p.movedFrom !== undefined ? { movedFrom: p.movedFrom } : {}),
+          ...(p.movedTo !== undefined ? { movedTo: p.movedTo } : {}),
         })),
         anyFailed,
       },
@@ -318,6 +372,11 @@ function formatReport(
   for (const p of previews) {
     const mark = p.applied ? "✓" : "✗";
     const bits = [`${mark} ${p.path}`, `+${p.addedLines}/-${p.removedLines}`];
+    if (p.action === "add") bits.push("(new file)");
+    if (p.movedFrom !== undefined) bits.push(`(moved from ${p.movedFrom})`);
+    if (p.action === "delete") {
+      bits.push(p.movedTo !== undefined ? `(moved to ${p.movedTo})` : "(deleted)");
+    }
     if (p.reason) bits.push(p.reason);
     lines.push(`  ${bits.join("  ")}`);
   }

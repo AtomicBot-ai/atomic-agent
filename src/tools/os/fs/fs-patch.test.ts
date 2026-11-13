@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
@@ -186,5 +186,194 @@ describe("os.fs.patch", () => {
     expect(result.status).toBe("ok");
     expect(result.summary).not.toContain("⚠");
     expect(result.details.parseWarning).toBeUndefined();
+  });
+});
+
+describe("os.fs.patch with the *** Begin Patch format", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "atomic-codex-patch-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const exists = async (path: string): Promise<boolean> =>
+    stat(path).then(() => true, () => false);
+
+  const multiFile = [
+    "*** Begin Patch",
+    "*** Update File: src/app.ts",
+    "@@ function main() {",
+    "-  return 1;",
+    "+  return 2;",
+    "*** Add File: docs/notes.md",
+    "+# Notes",
+    "*** Delete File: stale.txt",
+    "*** Update File: old-name.txt",
+    "*** Move to: new-name.txt",
+    "-old",
+    "+new",
+    "*** End Patch",
+  ].join("\n");
+
+  async function seed(): Promise<void> {
+    await writeFile(join(dir, "stale.txt"), "remove me\n", "utf8");
+    await writeFile(join(dir, "old-name.txt"), "old\n", "utf8");
+    await mkdir(join(dir, "src"));
+    await writeFile(join(dir, "src", "app.ts"), "function main() {\n  return 1;\n}\n", "utf8");
+  }
+
+  it("detects the format and dry-runs every file without touching disk", async () => {
+    await seed();
+    const tool = buildOsFsPatchTool({ approvals: denyAll(), approvalRequired: true });
+    const result = await tool.run({ patch: multiFile }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.details.mode).toBe("dry-run");
+    requirePatchFiles(result.details.files);
+    expect(result.details.files.map((f) => [f.path, f.applied, f.action])).toEqual([
+      ["src/app.ts", true, "update"],
+      ["docs/notes.md", true, "add"],
+      ["stale.txt", true, "delete"],
+      ["new-name.txt", true, "update"],
+      ["old-name.txt", true, "delete"],
+    ]);
+    expect(result.summary).toContain("(new file)");
+    expect(result.summary).toContain("(moved from old-name.txt)");
+    expect(result.summary).toContain("(moved to new-name.txt)");
+    expect(await exists(join(dir, "stale.txt"))).toBe(true);
+    expect(await exists(join(dir, "docs"))).toBe(false);
+  });
+
+  it("applies add, update, delete and move after one approval", async () => {
+    await seed();
+    const tool = buildOsFsPatchTool({ approvals: approveAll(), approvalRequired: true });
+    const result = await tool.run({ patch: multiFile, apply: true }, makeCtx(dir));
+    expect(result.status).toBe("ok");
+    expect(result.details.mode).toBe("applied");
+    expect(await readFile(join(dir, "src", "app.ts"), "utf8")).toBe(
+      "function main() {\n  return 2;\n}\n",
+    );
+    expect(await readFile(join(dir, "docs", "notes.md"), "utf8")).toBe("# Notes\n");
+    expect(await exists(join(dir, "stale.txt"))).toBe(false);
+    expect(await exists(join(dir, "old-name.txt"))).toBe(false);
+    expect(await readFile(join(dir, "new-name.txt"), "utf8")).toBe("new\n");
+  });
+
+  it("writes nothing when the approval is declined", async () => {
+    await seed();
+    const tool = buildOsFsPatchTool({ approvals: denyAll(), approvalRequired: true });
+    await expect(tool.run({ patch: multiFile, apply: true }, makeCtx(dir))).rejects.toThrow(
+      /The user declined/,
+    );
+    expect(await exists(join(dir, "stale.txt"))).toBe(true);
+    expect(await exists(join(dir, "docs"))).toBe(false);
+  });
+
+  it("refuses the whole patch when one hunk misses, writing nothing", async () => {
+    await seed();
+    const patch = multiFile.replace("-old\n+new", "-not in the file\n+new");
+    const tool = buildOsFsPatchTool({ approvals: approveAll(), approvalRequired: true });
+    const result = await tool.run({ patch, apply: true }, makeCtx(dir));
+    expect(result.status).toBe("error");
+    expect(result.details.mode).toBe("apply-refused");
+    requirePatchFiles(result.details.files);
+    const failed = result.details.files.find((f) => f.applied === false);
+    expect(failed?.path).toBe("old-name.txt");
+    expect(String(failed?.reason)).toMatch(/hunk 1: these lines were not found/);
+    expect(await readFile(join(dir, "src", "app.ts"), "utf8")).toContain("return 1;");
+    expect(await exists(join(dir, "stale.txt"))).toBe(true);
+    expect(await exists(join(dir, "docs"))).toBe(false);
+  });
+
+  it("reports a malformed envelope as a parse error", async () => {
+    const tool = buildOsFsPatchTool({ approvals: approveAll(), approvalRequired: true });
+    await expect(
+      tool.run({ patch: "*** Begin Patch\n*** Update File: a.txt\n*** End Patch" }, makeCtx(dir)),
+    ).rejects.toThrow(/os\.fs\.patch: failed to parse the \*\*\* Begin Patch format — line 2: .* has no hunks/);
+  });
+
+  it("honours an explicit format and rejects an unknown one", async () => {
+    const tool = buildOsFsPatchTool({ approvals: approveAll(), approvalRequired: true });
+    await expect(
+      tool.run({ patch: "--- a/x\n+++ b/x\n", format: "codex" }, makeCtx(dir)),
+    ).rejects.toThrow(/must start with "\*\*\* Begin Patch"/);
+    await expect(
+      tool.run({ patch: multiFile, format: "git" }, makeCtx(dir)),
+    ).rejects.toThrow('os.fs.patch: `format` must be "auto", "unified" or "codex"');
+  });
+
+  it("asks for a Delete File like os.fs.trash: fs_trash, not silent at level 2", async () => {
+    await writeFile(join(dir, "stale.txt"), "remove me\n", "utf8");
+    await writeFile(join(dir, "keep.txt"), "a\n", "utf8");
+    const asked: string[] = [];
+    const levelTwo = (): ApprovalGate => {
+      const gate = new ApprovalGate({
+        level: 2,
+        emit: (req) => {
+          asked.push(req.category);
+          gate.resolve({ approvalId: req.approvalId, approved: true });
+        },
+      });
+      return gate;
+    };
+
+    // A plain workspace update is silent at level 2 ...
+    const update = [
+      "*** Begin Patch",
+      "*** Update File: keep.txt",
+      "-a",
+      "+b",
+      "*** End Patch",
+    ].join("\n");
+    await buildOsFsPatchTool({ approvals: levelTwo(), approvalRequired: true }).run(
+      { patch: update, apply: true },
+      makeCtx(dir),
+    );
+    expect(asked).toEqual([]);
+    expect(await readFile(join(dir, "keep.txt"), "utf8")).toBe("b\n");
+
+    // ... a deletion in the same workspace asks, as fs_trash.
+    const remove = [
+      "*** Begin Patch",
+      "*** Update File: keep.txt",
+      "-b",
+      "+c",
+      "*** Delete File: stale.txt",
+      "*** End Patch",
+    ].join("\n");
+    await buildOsFsPatchTool({ approvals: levelTwo(), approvalRequired: true }).run(
+      { patch: remove, apply: true },
+      makeCtx(dir),
+    );
+    expect(asked).toEqual(["fs_trash"]);
+    expect(await exists(join(dir, "stale.txt"))).toBe(false);
+  });
+
+  it("a declined Delete File approval removes nothing", async () => {
+    await writeFile(join(dir, "stale.txt"), "remove me\n", "utf8");
+    const gate = new ApprovalGate({
+      level: 2,
+      emit: (req) => gate.reject(req.approvalId, "denied"),
+    });
+    const patch = ["*** Begin Patch", "*** Delete File: stale.txt", "*** End Patch"].join("\n");
+    await expect(
+      buildOsFsPatchTool({ approvals: gate, approvalRequired: true }).run({ patch, apply: true }, makeCtx(dir)),
+    ).rejects.toThrow(/The user declined/);
+    expect(await readFile(join(dir, "stale.txt"), "utf8")).toBe("remove me\n");
+  });
+
+  it("refuses a masked secret marker before asking for approval", async () => {
+    await writeFile(join(dir, ".env"), "TOKEN=real\n", "utf8");
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: .env",
+      "-TOKEN=real",
+      "+TOKEN=[redacted:api_key]",
+      "*** End Patch",
+    ].join("\n");
+    const tool = buildOsFsPatchTool({ approvals: denyAll(), approvalRequired: true });
+    await expect(tool.run({ patch, apply: true }, makeCtx(dir))).rejects.toThrow(/masked secret/);
+    expect(await readFile(join(dir, ".env"), "utf8")).toBe("TOKEN=real\n");
   });
 });

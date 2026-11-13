@@ -59,6 +59,31 @@ describe("mutationTargets / readTargetPath", () => {
     expect(mutationTargets("os.fs.patch", { patch: "garbage", apply: true })).toBe("any");
   });
 
+  it("reads a *** Begin Patch envelope's files as written, moves included", () => {
+    const patch = [
+      "*** Begin Patch",
+      "*** Update File: src/a.ts",
+      "*** Move to: src/b.ts",
+      "@@",
+      "--- not a header",
+      "+++ not a header either",
+      "*** Add File: docs/new.md",
+      "+hello",
+      "*** Delete File: old.txt",
+      "*** End Patch",
+    ].join("\n");
+    expect(mutationTargets("os.fs.patch", { patch, apply: true })).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+      "docs/new.md",
+      "old.txt",
+    ]);
+    expect(
+      mutationTargets("os.fs.patch", { patch, apply: true, rootDir: "/Repo" }),
+    ).toEqual(["/repo/src/a.ts", "/repo/src/b.ts", "/repo/docs/new.md", "/repo/old.txt"]);
+    expect(mutationTargets("os.fs.patch", { patch })).toBeNull();
+  });
+
   it("reads the target of an os.fs.read only", () => {
     expect(readTargetPath("os.fs.read", { path: "./src/a.ts" })).toBe("src/a.ts");
     expect(readTargetPath("os.fs.read", {})).toBeNull();
