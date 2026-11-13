@@ -149,7 +149,7 @@ function parseResult(stdout: string, fallbackModel: string): CompletionResult {
         detail.slice(0, 500),
       );
     }
-    throw new SubscriptionCliInvocationError(`codex turn failed: ${detail}`);
+    throw new SubscriptionCliInvocationError(`codex turn failed: ${detail}`, null, "turn_failed");
   }
 
   // `cached_input_tokens` is a subset of `input_tokens` here, unlike
