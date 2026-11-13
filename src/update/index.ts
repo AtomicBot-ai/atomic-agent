@@ -13,6 +13,14 @@ export {
   type RunAppUpdateResult,
 } from "./run-app-update.js";
 export {
+  parseUpdatePolicy,
+  requiredUpdateReason,
+  requiredUpdateText,
+  EMPTY_UPDATE_POLICY,
+  type UpdatePolicy,
+  type RequiredUpdateReason,
+} from "./update-policy.js";
+export {
   compareSemver,
   isNewerVersion,
   parseSemver,

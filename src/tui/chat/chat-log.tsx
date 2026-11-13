@@ -20,6 +20,7 @@ import {
 } from "./chat-message-height.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
 import { SplashBanner } from "./splash-banner.js";
+import { UpdateRequiredScreen } from "../update/required-update.js";
 import { ThinkingIndicator } from "./thinking-indicator.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
@@ -175,7 +176,11 @@ export function ChatLog({
   if (isEmpty) {
     return (
       <Box flexDirection="column" flexGrow={1} justifyContent="center">
-        <SplashBanner extraChromeRows={extraChromeRows} />
+        {state.updateBanner?.required === "broken" ? (
+          <UpdateRequiredScreen latest={state.updateBanner.latest} />
+        ) : (
+          <SplashBanner extraChromeRows={extraChromeRows} />
+        )}
       </Box>
     );
   }

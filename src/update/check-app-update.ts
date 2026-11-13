@@ -1,5 +1,11 @@
 import { getAppVersion } from "../version.js";
 import { isNewerVersion } from "./compare-semver.js";
+import {
+  parseUpdatePolicy,
+  requiredUpdateReason,
+  type RequiredUpdateReason,
+  type UpdatePolicy,
+} from "./update-policy.js";
 
 export interface AppUpdateCheckResult {
   updateAvailable: boolean;
@@ -7,6 +13,13 @@ export interface AppUpdateCheckResult {
   latestTag: string;
   /** `latestTag` with a leading `v` stripped, for display. */
   latestVersion: string;
+  /**
+   * ATO-1125: the latest release's policy lists the running version as
+   * broken or below its minimum (update-policy.ts). Always false when
+   * `updateAvailable` is. How hard to insist is up to the caller.
+   */
+  updateRequired: boolean;
+  requiredReason: RequiredUpdateReason | null;
 }
 
 export class AppUpdateCheckError extends Error {
@@ -32,6 +45,7 @@ interface CacheEntry {
   repo: string;
   fetchedAt: number;
   tag: string;
+  policy: UpdatePolicy;
 }
 
 let cache: CacheEntry | null = null;
@@ -41,10 +55,10 @@ export function resetAppReleaseCache(): void {
   cache = null;
 }
 
-async function fetchLatestTag(
+async function fetchLatestRelease(
   repo: string,
   fetchImpl: typeof fetch,
-): Promise<string> {
+): Promise<{ tag: string; policy: UpdatePolicy }> {
   const url = `https://api.github.com/repos/${repo}/releases/latest`;
   const headers: Record<string, string> = {
     "User-Agent": "atomic-agent/self-update",
@@ -66,11 +80,14 @@ async function fetchLatestTag(
       res.status,
     );
   }
-  const data = (await res.json()) as { tag_name?: unknown };
+  const data = (await res.json()) as { tag_name?: unknown; body?: unknown };
   if (typeof data.tag_name !== "string" || data.tag_name.length === 0) {
     throw new AppUpdateCheckError("Latest release has no tag_name", null);
   }
-  return data.tag_name;
+  return {
+    tag: data.tag_name,
+    policy: parseUpdatePolicy(typeof data.body === "string" ? data.body : null),
+  };
 }
 
 /**
@@ -90,6 +107,7 @@ export async function checkForAppUpdate(opts?: {
   const fetchImpl = opts?.fetchImpl ?? fetch;
 
   let tag: string;
+  let policy: UpdatePolicy;
   if (
     !opts?.force &&
     cache &&
@@ -97,16 +115,20 @@ export async function checkForAppUpdate(opts?: {
     Date.now() - cache.fetchedAt < RELEASE_CACHE_TTL_MS
   ) {
     tag = cache.tag;
+    policy = cache.policy;
   } else {
-    tag = await fetchLatestTag(repo, fetchImpl);
-    cache = { repo, fetchedAt: Date.now(), tag };
+    ({ tag, policy } = await fetchLatestRelease(repo, fetchImpl));
+    cache = { repo, fetchedAt: Date.now(), tag, policy };
   }
 
   const latestVersion = tag.replace(/^v/i, "");
+  const requiredReason = requiredUpdateReason(currentVersion, latestVersion, policy);
   return {
     updateAvailable: isNewerVersion(latestVersion, currentVersion),
     currentVersion,
     latestTag: tag,
     latestVersion,
+    updateRequired: requiredReason !== null,
+    requiredReason,
   };
 }
