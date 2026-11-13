@@ -17,6 +17,7 @@ export const PROVIDER_PRESETS = [
   "openrouter", "openai", "anthropic", "gemini", "groq", "aimlapi", "atomic-chat", "cerebras", "deepseek",
   "fireworks", "hyperbolic", "lmstudio", "mistral", "moonshot", "nous", "novita", "ollama", "ollama-cloud",
   "perplexity", "dashscope", "sambanova", "sarvam", "together", "xai", "local-llama", "custom",
+  "wandb", "azure-openai", "bedrock", "lemonade", "foundry-local",
 ] as const;
 /**
  * ATO-1195 / ATO-816: presets for an app the user already runs on this
@@ -24,7 +25,7 @@ export const PROVIDER_PRESETS = [
  * `kind: custom` ("Custom" = any app or server you already run); `local`
  * is only the managed llama.cpp backend. Keep in step with renderer.js.
  */
-export const LOCAL_APP_PRESETS = ["atomic-chat", "ollama", "lmstudio"] as const;
+export const LOCAL_APP_PRESETS = ["atomic-chat", "ollama", "lmstudio", "lemonade"] as const;
 /** `model_configured.provider` as the agent runtime spells it: the managed local backend is `llama.cpp`. */
 export const CONFIGURED_PROVIDERS = [...PROVIDER_PRESETS, "llama.cpp"] as const;
 
