@@ -310,6 +310,24 @@ export function generationMsFor(
 }
 
 /**
+ * How long one streamed completion spent generating its output
+ * (ATO-1186). A local llama-server measures its own decode time
+ * (`timing.predictedMs`), which leaves out prompt processing, so that
+ * figure wins. Every other provider reports none; the time from the
+ * stream's first chunk to its end (`streamMs`, measured by the
+ * streaming seam) stands in. `undefined` when neither is known.
+ */
+export function generationMsFor(
+  result: { timing?: CompletionTiming },
+  streamMs: number | undefined,
+): number | undefined {
+  const predicted = result.timing?.predictedMs ?? 0;
+  if (Number.isFinite(predicted) && predicted > 0) return predicted;
+  if (streamMs !== undefined && Number.isFinite(streamMs) && streamMs > 0) return streamMs;
+  return undefined;
+}
+
+/**
  * The usage a completion contributes to its turn: the provider's own
  * `usage` block when it sent one (cloud providers), otherwise the token
  * counts in its `timing` (a local llama-server reports no `usage` block,
