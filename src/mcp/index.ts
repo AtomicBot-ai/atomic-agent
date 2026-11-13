@@ -74,3 +74,19 @@ export type {
   McpTrustLevel,
   McpApprovalMode,
 } from "./mcp-types.js";
+
+export {
+  buildMcpCatalogJson,
+  describeUnfilledPlaceholders,
+  findCatalogPlaceholders,
+  findMcpCatalogEntry,
+  listMcpCatalog,
+  mcpCatalogShelves,
+  validateMcpCatalog,
+} from "./mcp-catalog.js";
+export type {
+  McpCatalogEntry,
+  McpCatalogInput,
+  McpCatalogShelf,
+  McpCatalogShelfId,
+} from "./mcp-catalog.js";

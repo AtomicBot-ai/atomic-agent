@@ -38,6 +38,9 @@ export type McpAction =
   | { type: "mcp_add_modal_opened" }
   | { type: "mcp_add_modal_closed" }
   | { type: "mcp_add_json_changed"; json: string }
+  | { type: "mcp_add_catalog_moved"; delta: number }
+  | { type: "mcp_add_catalog_picked"; id: string }
+  | { type: "mcp_add_catalog_skipped" }
   | { type: "mcp_add_submit_requested" }
   | { type: "mcp_add_submitting_started" }
   | { type: "mcp_add_validation_failed"; error: string }

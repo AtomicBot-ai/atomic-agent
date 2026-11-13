@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
+import { listMcpCatalog } from "../../mcp/mcp-catalog.js";
 import { handleMcpTabKey } from "./mcp-key-bindings.js";
 import type { McpPanelState, McpServerRow } from "./mcp-panel-state.js";
 
@@ -127,5 +128,61 @@ describe("MCP tab restart / enable keys", () => {
       removeConfirm: { name: "docs", error: null, submitting: false },
     });
     expect(callbacks.onMcpToggleServerEnabled).not.toHaveBeenCalled();
+  });
+});
+
+describe("MCP add modal catalog keys (ATO-1131)", () => {
+  function pressInPicker(
+    input: string,
+    key: Partial<Key> = {},
+    picker: { cursor: number } | null = { cursor: 0 },
+  ) {
+    const initial = createInitialTuiState(SESSION);
+    const dispatch = vi.fn();
+    const handled = handleMcpTabKey(input, { ...emptyKey(), ...key }, {
+      state: {
+        ...initial,
+        uiMode: "debug",
+        activeTab: "mcp",
+        mcpPanel: {
+          ...initial.mcpPanel,
+          ...LIST,
+          addModal: { json: "", error: null, submitting: false, picker, catalogId: null },
+        },
+      },
+      dispatch,
+      callbacks: {} as TuiAppCallbacks,
+    });
+    return { handled, dispatch };
+  }
+
+  it("j / k and arrows move the catalog cursor", () => {
+    expect(pressInPicker("j").dispatch).toHaveBeenCalledWith({ type: "mcp_add_catalog_moved", delta: 1 });
+    expect(pressInPicker("k").dispatch).toHaveBeenCalledWith({ type: "mcp_add_catalog_moved", delta: -1 });
+    expect(pressInPicker("", { downArrow: true }).dispatch).toHaveBeenCalledWith({ type: "mcp_add_catalog_moved", delta: 1 });
+  });
+
+  it("Enter picks the entry under the cursor", () => {
+    const second = listMcpCatalog()[1]!;
+    const { handled, dispatch } = pressInPicker("", { return: true }, { cursor: 1 });
+    expect(handled).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith({ type: "mcp_add_catalog_picked", id: second.id });
+  });
+
+  it("p skips to pasting and Esc closes the modal", () => {
+    expect(pressInPicker("p").dispatch).toHaveBeenCalledWith({ type: "mcp_add_catalog_skipped" });
+    expect(pressInPicker("", { escape: true }).dispatch).toHaveBeenCalledWith({ type: "mcp_add_modal_closed" });
+  });
+
+  it("swallows list keys behind the modal while the catalog is shown", () => {
+    const { handled, dispatch } = pressInPicker("d");
+    expect(handled).toBe(true);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("falls through to the editor once the catalog is closed", () => {
+    const { handled, dispatch } = pressInPicker("j", {}, null);
+    expect(handled).toBe(false);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });
