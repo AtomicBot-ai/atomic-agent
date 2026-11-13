@@ -262,6 +262,10 @@ export function parseMemoryConfig(
           readDefaults().notes.recallDefaultK,
         "memory.notes.recallDefaultK",
       ),
+      reconcile: parseBool(
+        memoryNotes.reconcile ?? readDefaults().notes.reconcile,
+        "memory.notes.reconcile",
+      ),
     },
     recallInjection: {
       enabled: parseBool(

@@ -47,6 +47,7 @@ export function createMemoryDefaults(): UserMemoryConfig {
       maxEntries: 1_000,
       maxContentChars: 4_000,
       recallDefaultK: 5,
+      reconcile: false,
     },
     recallInjection: {
       enabled: true,

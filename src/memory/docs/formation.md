@@ -15,6 +15,8 @@ Sub-runners must isolate errors, cancellation, provider/session identity and slo
 
 Repeated failures/timeouts are observed per session and sub-call kind by the memory health tracker. Runtime emits the operator warning once for the affected streak; these fire-and-forget calls do not turn the main agent step into an infrastructure failure. Keep the session attribution when wiring a runner or forwarding its warning.
 
+With `memory.notes.reconcile` on (off by default), [note reconciliation](../reconcile/index.ts) runs after reflection: one bounded background call compares the first new note with a few similar older notes and tags the ones it replaces (or the new note, when it only repeats one) `superseded`; the context provider then leaves those out of recall and the index. No candidates means no call; a timeout gives up.
+
 ## Sources
 
 - [Reflection](../reflection/reflection-runner.ts), [profile history](../profile-store.ts), [evolution](../evolution/index.ts), [links](../links/index.ts).

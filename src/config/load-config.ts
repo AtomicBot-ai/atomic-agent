@@ -602,6 +602,7 @@ export function loadConfig(): AtomicAgentConfig {
         maxEntries: user.memory.notes.maxEntries,
         maxContentChars: user.memory.notes.maxContentChars,
         recallDefaultK: user.memory.notes.recallDefaultK,
+        reconcile: user.memory.notes.reconcile,
       },
       recallInjection: {
         enabled: user.memory.recallInjection.enabled,

@@ -15,6 +15,7 @@ import { type RewriterLlmComplete, createQueryRewriterRunner, createRewriterAwar
 import { createReflectionRunner, type ReflectionLlmComplete, type ReflectionRunner, type ReflectionTraceEvent } from "../../memory/reflection/index.js";
 import { createLinkGeneratorRunner, createLinkAwareReflectionRunner, type LinkGeneratorLlmComplete, type LinkGeneratorTraceEvent } from "../../memory/links/index.js";
 import { NeighborEvolver } from "../../memory/evolution/index.js";
+import { createNoteReconcileRunner, createReconcileAwareReflectionRunner, type NoteReconcileLlmComplete } from "../../memory/reconcile/index.js";
 import { ConsolidatorJob, DistillRunner } from "../../memory/consolidator/index.js";
 import { createVoteRunner, createVoteAwareReflectionRunner, type VoteRunnerLlmComplete } from "../../memory/voting/index.js";
 import { createVoteTraceSink, observeVoteRunnerHealth, type MemoryHealthAnnouncer } from "../announce-memory-health.js";
@@ -102,8 +103,34 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
   // is absent (memory.reflection disabled), link-generation is also
   // skipped — we never want to spawn an LLM call just for the graph.
   let reflectionRunner: ReflectionRunner | undefined = baseReflectionRunner;
+  // ATO-672. Off by default (`memory.notes.reconcile`): one background
+  // call per reflection that marks older notes the new one replaces.
+  if (reflectionRunner && config.memory.notes.enabled && config.memory.notes.reconcile) {
+    const reconcileLlmComplete: NoteReconcileLlmComplete = abortableSubcall(
+      llmComplete,
+      (params: Parameters<NoteReconcileLlmComplete>[0]) => ({
+        prompt: params.prompt,
+        grammar: params.grammar,
+        slotId: params.slotId,
+        sessionId: params.sessionId,
+        ...(params.responseFormat ? { responseFormat: params.responseFormat } : {}),
+      }),
+    );
+    reflectionRunner = createReconcileAwareReflectionRunner({
+      reflection: reflectionRunner,
+      reconciler: createNoteReconcileRunner({
+        llmComplete: reconcileLlmComplete,
+        notesStore,
+        reflectionSlotId: () => slotManager.sideCallSlotId(),
+        timeoutMs: config.memory.reflection.timeoutMs,
+        leaseMs: config.memory.evolution.leaseMs,
+        logger,
+      }),
+      notesStore,
+    });
+  }
   if (
-    baseReflectionRunner &&
+    reflectionRunner &&
     config.memory.links.enabled &&
     config.memory.links.autoGenerate
   ) {
@@ -155,7 +182,7 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
       emitTrace: emitLinkGeneratorTrace,
     });
     reflectionRunner = createLinkAwareReflectionRunner({
-      reflection: baseReflectionRunner,
+      reflection: reflectionRunner,
       linkGenerator,
       notesStore,
       minCandidates: config.memory.links.minCandidates,
@@ -235,6 +262,7 @@ export function createRuntimeMemoryServices(args: MemoryServiceDependencies & {
   const baseMemoryContextProvider = config.memory.notes.enabled
     ? createDefaultMemoryContextProvider({
         store: notesStore,
+        ...(config.memory.notes.reconcile ? { hideSuperseded: true } : {}),
         recall: {
           enabled: config.memory.recallInjection.enabled,
           k: config.memory.recallInjection.k,

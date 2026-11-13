@@ -147,6 +147,12 @@ export interface MemoryListOptions {
    * rows with the young ones filtered out afterwards.
    */
   updatedBefore?: number;
+  /**
+   * ATO-672. Leave out rows carrying any of these tags (e.g. the
+   * `superseded` tag note reconciliation sets). Applied in SQL before
+   * `LIMIT`, like `excludeArchived`.
+   */
+  excludeTags?: readonly string[];
 }
 
 /**
@@ -668,6 +674,36 @@ export class MemoryStore {
   }
 
   /**
+   * ATO-672. Notes that share words with `content`, best BM25 first,
+   * WITHOUT the recall side effects (`recall_count` / `last_recalled_at`
+   * stay as they are): a background comparison is not a use of the
+   * note. Archived rows are left out. A query FTS5 cannot parse yields
+   * no rows instead of throwing.
+   */
+  findSimilar(content: string, k: number): MemoryEntry[] {
+    const ftsQuery = buildFtsQuery(content.slice(0, MEMORY_QUERY_MAX_LENGTH));
+    if (ftsQuery.length === 0) return [];
+    const limit = clampPositiveInt(k, 1, MEMORY_RECALL_MAX_K, "k");
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT m.id, m.content, m.created_at, m.updated_at,
+                  m.source, m.session_id, m.working_dir, m.tags,
+                  m.recall_count, m.last_recalled_at
+             FROM memories_fts
+             JOIN memories m ON m.id = memories_fts.rowid
+            WHERE memories_fts MATCH ? AND m.consolidated_into IS NULL
+            ORDER BY bm25(memories_fts) ASC
+            LIMIT ?`,
+        )
+        .all(ftsQuery, limit) as MemoryRow[];
+      return rows.map(rowToEntry);
+    } catch {
+      return [];
+    }
+  }
+
+  /**
    * Memory-v2 phase 1A: bump `recall_count` + stamp `last_recalled_at`
    * on every row returned by the most recent `recall()` call. Wrapped
    * in a transaction so all touches commit together; the in-memory
@@ -749,6 +785,12 @@ export class MemoryStore {
     }
     if (opts.excludeArchived) {
       where.push(`consolidated_into IS NULL`);
+    }
+    for (const tag of opts.excludeTags ?? []) {
+      where.push(
+        `(tags IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE json_each.value = ?))`,
+      );
+      params.push(tag);
     }
     if (opts.updatedBefore !== undefined) {
       if (!Number.isFinite(opts.updatedBefore)) {
@@ -943,13 +985,18 @@ export class MemoryStore {
    *  - Validation errors (empty `addTags`, invalid tag tokens) throw
    *    `MemoryValidationError` — same surface as `store()`.
    *
+   *  - `evictable` (optional): when the row is already at
+   *    `MEMORY_MAX_TAGS`, existing tags this predicate accepts are
+   *    dropped (newest first) to make room for the new ones. Without
+   *    it, new tags past the cap are silently dropped (old behaviour).
+   *
    * The `now` parameter is exposed for tests; production callers pass
    * the runner's injected clock.
    */
   evolveTags(
     id: number,
     addTags: readonly string[],
-    opts: { leaseMs: number; now?: number } = { leaseMs: 0 },
+    opts: { leaseMs: number; now?: number; evictable?: (tag: string) => boolean } = { leaseMs: 0 },
   ): EvolveTagsResult {
     const normalizedId = validateId(id);
     const cleanTags = normalizeTagsInput(addTags);
@@ -972,7 +1019,7 @@ export class MemoryStore {
       }
     }
     const existing = parseTags(row.tags);
-    const merged = applyEvolveTags(existing, cleanTags);
+    const merged = applyEvolveTags(existing, cleanTags, opts.evictable);
     if (merged.addedTags.length === 0) {
       return {
         outcome: "skipped_no_change",
@@ -1309,12 +1356,28 @@ function normalizeTagsInput(raw: readonly string[]): string[] {
 function applyEvolveTags(
   existing: readonly string[],
   addTags: readonly string[],
+  evictable?: (tag: string) => boolean,
 ): { tags: string[]; addedTags: string[] } {
   const merged: string[] = [...existing];
   const addedTags: string[] = [];
   for (const tag of addTags) {
-    if (merged.length >= MEMORY_MAX_TAGS) break;
     if (merged.includes(tag)) continue;
+    if (merged.length >= MEMORY_MAX_TAGS) {
+      // Make room only by dropping an older tag the caller allows,
+      // never one of the tags this call is adding.
+      let victim = -1;
+      if (evictable) {
+        for (let i = merged.length - 1; i >= 0; i -= 1) {
+          const candidate = merged[i]!;
+          if (!addTags.includes(candidate) && evictable(candidate)) {
+            victim = i;
+            break;
+          }
+        }
+      }
+      if (victim < 0) break;
+      merged.splice(victim, 1);
+    }
     merged.push(tag);
     addedTags.push(tag);
   }
