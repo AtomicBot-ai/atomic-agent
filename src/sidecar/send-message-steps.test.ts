@@ -11,6 +11,7 @@ import {
   writeUserConfigFileSync,
 } from "../config/index.js";
 import type { SidecarMessage } from "./sidecar-events.js";
+import { answerChannelForOrigin } from "../prompt/answer-style.js";
 
 /**
  * Issue #547 — `send_message` filled in `agent.maxSteps` (the leg
@@ -225,5 +226,16 @@ describe("sidecar send_message — step ceiling", () => {
     expect(response.kind === "response" && response.ok).toBe(true);
     expect(turnOptions).toHaveLength(1);
     expect(turnOptions[0]!.interactive).toBe(true);
+  }, 60_000);
+
+  // ATO-967: the sidecar's reply gets the desktop answer clean-up. It
+  // sends no explicit `answerChannel`; `executeTurn` derives it from the
+  // `sidecar` origin, so pin both halves.
+  it("sends its turns as the desktop answer channel", async () => {
+    const response = await sendOne({});
+    expect(response.kind === "response" && response.ok).toBe(true);
+    const opts = turnOptions[0]! as { origin?: string; answerChannel?: string };
+    expect(opts.origin).toBe("sidecar");
+    expect(opts.answerChannel ?? answerChannelForOrigin(opts.origin)).toBe("desktop");
   }, 60_000);
 });
