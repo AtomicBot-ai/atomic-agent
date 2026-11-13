@@ -10,6 +10,7 @@ import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
 import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
+import { OS_FS_WRITE_PPTX_CONTRACT } from "../tools/os/pptx/pptx-contract.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 /**
  * Resource class taxonomy for parallel batched tool calls.
@@ -112,6 +113,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   [OS_FS_PATCH_CONTRACT.name]: OS_FS_PATCH_CONTRACT.resourceClass,
   [OS_FS_RESTORE_CONTRACT.name]: OS_FS_RESTORE_CONTRACT.resourceClass,
   [OS_FS_MOVE_CONTRACT.name]: OS_FS_MOVE_CONTRACT.resourceClass,
+  [OS_FS_WRITE_PPTX_CONTRACT.name]: OS_FS_WRITE_PPTX_CONTRACT.resourceClass,
   "os.fs.archive.extract": "approval_gated",
 
   // os.code.* — structural search (read) and rewrite (fs write funnel)
@@ -399,6 +401,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.fs.move": FS_WRITE_CATEGORIES,
     // Writes the files ast-grep rewrote, through the same funnel.
     "os.code.rewrite": FS_WRITE_CATEGORIES,
+    // One new file through the same funnel as os.fs.write (`write-pptx-tool.ts`).
+    "os.fs.write_pptx": FS_WRITE_CATEGORIES,
     "os.fs.trash": ["fs_trash", "trust_config", "other"],
     "os.fs.archive.extract": ["fs_write_home", "other"],
     // Local git writes ride the fs funnel against the repository root.

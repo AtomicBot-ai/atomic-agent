@@ -733,6 +733,25 @@ describe("os-tool names the local-model grammar admits", () => {
     ).toBe(true);
   });
 
+  it("includes os.fs.write_pptx, so a local model can build a deck (ATO-537)", () => {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const grammar = readFileSync(
+      resolve(__dirname, "../../../grammars/tool-call.gbnf"),
+      "utf8",
+    );
+    const osToolLine =
+      grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
+    expect(osToolLine).toContain('"fs.write_pptx"');
+    expect(
+      gbnfAccepts(
+        grammar,
+        "root",
+        '[{"tool":"os.fs.write_pptx","args":{"path":"deck.pptx","slides":[{"title":"Hello","bullets":["One","  Two"],"notes":"Say hi"}]}}]',
+      ),
+    ).toBe(true);
+  });
+
   it("includes the git WRITE tools, not just the read half", () => {
     // Same class of bug as the missing `fusion.delegate`: the local-first
     // git tools were registered and described, and the grammar still only

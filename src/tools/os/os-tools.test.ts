@@ -605,6 +605,7 @@ describe("registerOsTools", () => {
         "os.fs.trash",
         "os.fs.watch",
         "os.fs.write",
+        "os.fs.write_pptx",
         "os.git.add",
         "os.git.blame",
         "os.git.branch",

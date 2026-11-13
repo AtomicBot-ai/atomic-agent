@@ -532,7 +532,7 @@ describe("toStrictJsonSchema", () => {
    * knowingly — either the schema loses a bound it does not need, or
    * the tool joins this list.
    */
-  it("converts all but eight of the sampled built-in tool schemas", () => {
+  it("converts all but nine of the sampled built-in tool schemas", () => {
     const refused: string[] = [];
     let converted = 0;
     for (const name of DEFAULT_TOOL_NAMES) {
@@ -550,6 +550,8 @@ describe("toStrictJsonSchema", () => {
       "os.fs.archive.extract",
       // minItems/maxItems on `moves`, whose items nest an object.
       "os.fs.move",
+      // minItems/maxItems on `slides`, whose items nest an object.
+      "os.fs.write_pptx",
       // `headers` is a map; `body` may be any object.
       "os.http.request",
       // `minItems` keeps it off the strict path: its items nest an object.
@@ -560,9 +562,9 @@ describe("toStrictJsonSchema", () => {
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 93 registered schemas, 85 of them strict. Pinned as a number so
+    // 94 registered schemas, 85 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
-    expect(DEFAULT_TOOL_NAMES.length).toBe(93);
+    expect(DEFAULT_TOOL_NAMES.length).toBe(94);
     expect(converted).toBe(85);
   });
 
@@ -631,6 +633,7 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "os.fs.patch",
   "os.fs.restore",
   "os.fs.move",
+  "os.fs.write_pptx",
   "os.fs.watch",
   "os.git.status",
   "os.git.log",
