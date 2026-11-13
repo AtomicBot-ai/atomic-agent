@@ -118,6 +118,27 @@ test("the page follows the window's theme, and its own scheme when none is given
   assert.match(D.dashboardHtml(sales), /@media \(prefers-color-scheme:dark\)\{:root:not\(\[data-theme\]\)/);
 });
 
+test("numbers too large to draw give the error page instead of freezing", () => {
+  const big = /class="err">The numbers are too large to draw/;
+  assert.match(D.dashboardHtml({ type: "bar", labels: ["a"], values: [1.7e308] }), big);
+  assert.match(D.dashboardHtml({ type: "line", labels: ["a", "b"], values: [-1.7e308, 1.7e308] }), big);
+  assert.match(D.dashboardHtml({ type: "area", labels: ["a", "b"], values: [-1.7e308, 5] }), big);
+  assert.match(D.dashboardHtml({ type: "pie", labels: ["a", "b"], values: [1.7e308, 1.7e308] }), big);
+  assert.equal(D.dashScale(0, 1.7e308), null);
+  assert.equal(D.dashScale(-1.7e308, 1.7e308), null);
+  assert.equal(D.dashScale(NaN, 1), null);
+});
+
+test("NaN, Infinity and their strings are dropped, the chart still draws", () => {
+  for (const type of ["bar", "line", "area", "pie"]) {
+    const page = D.dashboardHtml({ type, labels: ["a", "b", "c", "d"], values: [NaN, Infinity, -Infinity, "Infinity"] });
+    assert.doesNotMatch(page, /NaN|Infinity/, type);
+    assert.match(page, /<\/html>$/, type);
+  }
+  const mixed = D.dashboardHtml({ type: "bar", labels: ["a", "b"], values: [Infinity, 4] });
+  assert.doesNotMatch(mixed, /class="err"|NaN/);
+});
+
 test("the window loads the templates before the artifact module and renderer.js", () => {
   const html = readFileSync(new URL("../renderer/index.html", import.meta.url), "utf8");
   const t = html.indexOf('src="dashboard-templates.js"');

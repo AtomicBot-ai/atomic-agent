@@ -47,14 +47,26 @@ function dashFmt(v) {
   return String(+v.toFixed(2));
 }
 
-/** Axis bounds and step: 0..87 → 0..100 by 20. Always includes 0. */
+const DASH_MAX_TICKS = 50;
+const DASH_TOO_BIG = 'The numbers are too large to draw as a chart. Use a table, or scale them down.';
+
+/**
+ * Axis bounds and step: 0..87 → 0..100 by 20. Always includes 0. null when
+ * the range cannot be drawn (1.7e308 rounds up to Infinity, a step of 0), so
+ * no tick loop is ever built on a range it cannot walk.
+ */
 function dashScale(min, max) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
   let lo = Math.min(0, min), hi = Math.max(0, max);
   if (lo === hi) hi = lo + 1;
+  if (!Number.isFinite(hi - lo)) return null;
   const raw = (hi - lo) / 5;
   const mag = Math.pow(10, Math.floor(Math.log10(raw)));
   const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((x) => x >= raw) || raw;
-  return {lo: Math.floor(lo / step) * step, hi: Math.ceil(hi / step) * step, step};
+  if (!Number.isFinite(step) || !(step > 0)) return null;
+  const out = {lo: Math.floor(lo / step) * step, hi: Math.ceil(hi / step) * step, step};
+  if (!Number.isFinite(out.hi - out.lo) || !(out.hi > out.lo)) return null;
+  return out;
 }
 
 /**
@@ -111,7 +123,7 @@ function dashAxes(n, lo, hi, step, xAt) {
   const plotH = DASH_H - DASH_PAD.top - DASH_PAD.bottom;
   const y = (v) => DASH_PAD.top + plotH - ((v - lo) / (hi - lo)) * plotH;
   const parts = [];
-  for (let v = lo; v <= hi + step / 2; v += step) {
+  for (let v = lo, i = 0; v <= hi + step / 2 && i < DASH_MAX_TICKS; v += step, i++) {
     const yy = y(v).toFixed(1);
     parts.push('<line class="grid" x1="' + DASH_PAD.left + '" x2="' + (DASH_W - DASH_PAD.right) + '" y1="' + yy + '" y2="' + yy + '"/>'
       + '<text class="tick" x="' + (DASH_PAD.left - 8) + '" y="' + yy + '" text-anchor="end" dominant-baseline="middle">' + dashEsc(dashFmt(v)) + '</text>');
@@ -132,7 +144,9 @@ function dashRange(series) {
 
 function dashBar(c) {
   const {min, max} = dashRange(c.series);
-  const {lo, hi, step} = dashScale(min, max);
+  const sc = dashScale(min, max);
+  if (!sc) return null;
+  const {lo, hi, step} = sc;
   const plotW = DASH_W - DASH_PAD.left - DASH_PAD.right;
   const slot = plotW / c.labels.length;
   const xAt = (i) => DASH_PAD.left + slot * (i + 0.5);
@@ -151,7 +165,9 @@ function dashBar(c) {
 
 function dashLine(c, area) {
   const {min, max} = dashRange(c.series);
-  const {lo, hi, step} = dashScale(min, max);
+  const sc = dashScale(min, max);
+  if (!sc) return null;
+  const {lo, hi, step} = sc;
   const plotW = DASH_W - DASH_PAD.left - DASH_PAD.right;
   const xAt = (i) => DASH_PAD.left + (c.labels.length === 1 ? plotW / 2 : (plotW * i) / (c.labels.length - 1));
   const ax = dashAxes(c.labels.length, lo, hi, step, xAt);
@@ -178,6 +194,7 @@ function dashLine(c, area) {
 function dashPie(c) {
   const vals = (c.series[0] ? c.series[0].values : []).map((v) => (v != null && v > 0 ? v : 0));
   const total = vals.reduce((a, b) => a + b, 0);
+  if (!Number.isFinite(total)) return null;
   if (!total) return '<text class="tick" x="' + DASH_W / 2 + '" y="' + DASH_H / 2 + '" text-anchor="middle">No values above zero.</text>';
   const cx = DASH_H / 2, cy = DASH_H / 2, r = DASH_H / 2 - 12;
   let a0 = -Math.PI / 2;
@@ -258,6 +275,7 @@ function dashboardHtml(spec, theme) {
   else if (c.type === 'table') body = dashTable(c);
   else {
     const svg = c.type === 'bar' ? dashBar(c) : c.type === 'pie' ? dashPie(c) : dashLine(c, c.type === 'area');
+    if (svg == null) return dashErrorPage(DASH_TOO_BIG, theme);
     body = '<svg viewBox="0 0 ' + DASH_W + ' ' + DASH_H + '" role="img" aria-label="' + dashEsc(c.title || c.type + ' chart') + '">' + svg + '</svg>'
       + (c.type === 'pie' ? '' : dashLegend(c.series));
   }
