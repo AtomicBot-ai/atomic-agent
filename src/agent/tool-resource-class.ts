@@ -200,6 +200,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // ATO-1137: writes one new file in the working folder through the fs
   // approval funnel, so it is gated like `os.fs.write`.
   "canvas.render": "approval_gated",
+  // ATO-489: waits for the person like an approval, so it runs alone.
+  ask_user: "approval_gated",
   "tool.search": "pure_read",
   "skill.run_script": "approval_gated",
 

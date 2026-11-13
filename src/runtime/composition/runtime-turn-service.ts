@@ -38,6 +38,7 @@ import { createRuntimeGoalRunner } from "./runtime-goal.js";
 import { createNextStepSuggester } from "./runtime-next-step.js";
 import { routeTurnProvider } from "./runtime-turn-router.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
+import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -80,6 +81,12 @@ export interface RuntimeTurnDependencies {
      * nothing is recorded and only the user's own words lift it.
      */
     turnPreviousReplies?: Map<string, string>;
+    /**
+     * Sessions whose running turn cannot show an `ask_user` card
+     * (ATO-489): the tool answers there at once. Omitted (tests,
+     * embedders): nothing is recorded and the tool is only hidden.
+     */
+    turnsWithoutQuestions?: Set<string>;
   };
   execution: {
     loop: Pick<AgentLoop, "runTurn">;
@@ -122,7 +129,7 @@ export function createRuntimeTurnService(
   config: AtomicAgentConfig,
   deps: RuntimeTurnDependencies,
 ) {
-  const { sessionStore, turnContext, turnRequests, turnPreviousReplies } = deps.sessions;
+  const { sessionStore, turnContext, turnRequests, turnPreviousReplies, turnsWithoutQuestions } = deps.sessions;
   const { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete } = deps.execution;
   const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain } = deps.inference;
   const { traces, lifecycle, logger } = deps;
@@ -403,6 +410,11 @@ export function createRuntimeTurnService(
        * extensions client is the desktop app. Wins over `origin`.
        */
       answerChannel?: AnswerChannel;
+      /**
+       * The client declared whether it can show a question card
+       * (`ask_user`, ATO-489). Absent: decided from origin and channel.
+       */
+      questions?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -561,6 +573,18 @@ export function createRuntimeTurnService(
           turnPreviousReplies?.set(session.id, previousReply);
         }
         const answerChannel = runOptions.answerChannel ?? answerChannelForOrigin(runOptions.origin);
+        // `ask_user` only where a person can see and answer the question
+        // (ATO-489). The desktop has no question card until ATO-1502, so
+        // its turns do not get the tool; remove that hide when it lands.
+        const showsQuestions = surfaceShowsQuestions({
+          ...(runOptions.origin !== undefined ? { origin: runOptions.origin } : {}),
+          ...(answerChannel !== undefined ? { answerChannel } : {}),
+          ...(runOptions.questions !== undefined ? { questions: runOptions.questions } : {}),
+        });
+        const toolFilter = withAskUserVisibility(runOptions.toolFilter, showsQuestions);
+        // A model that calls the hidden tool anyway gets an answer at
+        // once rather than a question nobody can see (ask-user.ts).
+        if (!showsQuestions) turnsWithoutQuestions?.add(session.id);
         // An explicit `maxSteps` from a caller (a durable task that pins
         // its own budget, `run --max-steps`) is a *ceiling* that caller
         // chose — honour it as one. Absent that, the config value is the
@@ -589,7 +613,10 @@ export function createRuntimeTurnService(
           // `origin: "fusion"` and gets no block (its reply goes to the
           // orchestrator, not to a person).
           ...(answerChannel !== undefined ? { answerChannel } : {}),
-          ...buildLoopTurnBudget(runOptions),
+          ...buildLoopTurnBudget({
+            ...runOptions,
+            ...(toolFilter !== undefined ? { toolFilter } : {}),
+          }),
           onStepCheckpoint: (state, step) =>
             checkpointStep(state, progress.atStep(step)),
         }));
@@ -654,6 +681,7 @@ export function createRuntimeTurnService(
         traces.clearContextUsage(session.id);
         turnRequests.delete(session.id);
         turnPreviousReplies?.delete(session.id);
+        turnsWithoutQuestions?.delete(session.id);
         traces.releaseSession(session.id);
         if (routedProviderId !== undefined) {
           fallbackChain.setTurnPrimary(session.id, null);
@@ -742,6 +770,8 @@ export function createRuntimeTurnService(
       answerChannel?: AnswerChannel;
       /** ATO-42: see the runtime contract's `project`. */
       project?: SessionProject | null;
+      /** See `executeTurn`'s `questions`. */
+      questions?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
     if (runOptions.goal !== undefined) {

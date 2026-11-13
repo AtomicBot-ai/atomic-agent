@@ -54,6 +54,7 @@ import {
   createApprovalEventsHandler,
   createResolveApprovalHandler,
 } from "./route-approval.js";
+import { createAnswerQuestionHandler } from "./route-question.js";
 import {
   createDeleteApprovalRuleHandler,
   createListApprovalRulesHandler,
@@ -296,6 +297,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
       path: "/api/events",
       handler: createApprovalEventsHandler(),
     },
+    // ATO-489: the answer to an `ask_user` question shown from /api/events.
+    { method: "POST", path: "/api/question/answer", handler: createAnswerQuestionHandler() },
     // ATO-1141: saved "always allow" / ask / deny rules.
     { method: "GET", path: "/api/approval-rules", handler: createListApprovalRulesHandler() },
     { method: "DELETE", path: "/api/approval-rules/{id}", handler: createDeleteApprovalRuleHandler() },

@@ -41,6 +41,7 @@ import { registerSkillTools } from "./skill/index.js";
 import { buildToolViewTool } from "./tool-view/index.js";
 import { planUpdateTool } from "./plan/index.js";
 import { buildCanvasRenderTool } from "./canvas/index.js";
+import { buildAskUserTool } from "./conversation/index.js";
 import { buildToolSearchTool } from "./tool-search/index.js";
 import { buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
 import { registerTaskTools } from "./tasks/index.js";
@@ -298,6 +299,7 @@ beforeAll(() => {
   registry.register(buildToolViewTool());
   registry.register(planUpdateTool);
   registry.register(buildCanvasRenderTool(dangerous));
+  registry.register(buildAskUserTool({ approvals: dangerous.approvals }));
   // Runtime registers it beside the live descriptor list (runtime-tool-catalog).
   registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));
   registerMemoryTools(registry, memoryOptions(true));
@@ -339,7 +341,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(107);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(108);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {

@@ -6,6 +6,7 @@
 
 import type { ApprovalCategory } from "../approval/approval-level.js";
 import type { RiskLevel } from "../approval/risk-review.js";
+import type { UserQuestion } from "../approval/user-question.js";
 
 export type HostRequestType =
   | "start_session"
@@ -144,6 +145,12 @@ export interface ApprovalResponsePayload {
    * session grant takes the request's own scope.
    */
   grantHost?: string;
+  /**
+   * With `approved: true` on a `user_question` request (ATO-489): option
+   * labels or 0-based indexes picked, and/or the person's own words. An
+   * answer the question does not take fails the request; it stays open.
+   */
+  answer?: { selected?: Array<string | number>; other?: string };
 }
 
 export interface GetSessionPayload {
@@ -217,6 +224,11 @@ export interface ApprovalRequestPayload {
   canAlways?: boolean;
   /** The text of that choice, when `canAlways`: `Always allow "git status" in this project`. */
   alwaysLabel?: string;
+  /**
+   * Set on a `user_question` request (`ask_user`, ATO-489): draw option
+   * cards and answer with `approval_response.answer`; a deny skips it.
+   */
+  question?: UserQuestion;
 }
 
 export interface ToolCallStartedPayload {

@@ -542,6 +542,8 @@ describe("toStrictJsonSchema", () => {
       else refused.push(name);
     }
     expect(refused).toEqual([
+      // minItems on `options`, whose items nest an object.
+      "ask_user",
       // minItems / maxItems on the task list.
       "fusion.delegate",
       // `arguments` is a map of arbitrary string keys.
@@ -666,6 +668,7 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "skill.view",
   "tool.view",
   "plan.update",
+  "ask_user",
   "skill.run_script",
   "memory.profile.set",
   "memory.profile.remove",

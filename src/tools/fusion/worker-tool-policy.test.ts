@@ -27,6 +27,7 @@ describe("worker tool policy", () => {
     expect([...WORKER_EXCLUDED_TOOLS].sort()).toEqual(
       [
         "canvas.render",
+        "ask_user",
         "finish",
         "fusion.delegate",
         "memory.notes.forget",

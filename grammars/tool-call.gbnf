@@ -127,7 +127,7 @@ verify-tool ::= "\"verify." ( "syntax" | "run" ) "\""
 plan-tool ::= "\"plan.update\""
 # A chart or page shown in the chat (ATO-1137); asked for in plain words
 # ("show me a chart of ..."), so a local model has to be able to spell it.
-canvas-tool ::= "\"canvas.render\""
+canvas-tool ::= "\"canvas.render\"" | "\"ask_user\""
 # Native MCP discovery / resource / prompt tools. Registered once MCP is on
 # (a server configured, or added live) and never unregistered, so they stay
 # after the last server is removed live; with MCP off from the start

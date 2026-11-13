@@ -43,6 +43,7 @@ export {
   COMPLETION_ID_HEADER,
   EXTENSIONS_HEADER,
   SCREEN_OVERLAY_HEADER,
+  QUESTIONS_HEADER,
   createChatCompletionsHandler,
 } from "./openai-chat-completions.js";
 

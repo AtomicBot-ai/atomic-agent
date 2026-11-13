@@ -23,7 +23,7 @@ import { isSecretEnvName } from "../../sandbox/command-env.js";
 import { resolveExtraApiKeys } from "../../config/resolve-llm-api-key.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
-import { replyTool } from "../../tools/conversation/index.js";
+import { buildAskUserTool, replyTool } from "../../tools/conversation/index.js";
 import { buildBrowserPageRenderer, buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
 import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
@@ -191,6 +191,8 @@ export function registerRuntimeCoreTools(input: {
   logger: StructuredLogger;
   resolveOriginalRequest: (sessionId: string) => string | undefined;
   resolvePreviousReply?: (sessionId: string) => string | undefined;
+  /** Whether the session's running turn can show an `ask_user` card (ATO-489). */
+  canAskUser?: (sessionId: string) => boolean;
   declaredInputs: DeclaredInputsRegistry;
   shellJobs: ShellJobRegistry;
   skillRegistry: SkillRegistry;
@@ -201,7 +203,7 @@ export function registerRuntimeCoreTools(input: {
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
   const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, resolvePreviousReply, declaredInputs,
     shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger,
-    webSearchKeyHelp } = input;
+    webSearchKeyHelp, canAskUser } = input;
 
   registerOsTools(toolRegistry, {
     ...dangerous,
@@ -305,6 +307,17 @@ export function registerRuntimeCoreTools(input: {
   toolRegistry.register(buildCanvasRenderTool({
     ...dangerous,
     trustConfigPaths: getTrustConfigPaths(config.paths),
+  }));
+  // Clarifying questions with ready answers (ATO-489): through the
+  // approval gate, so the turn waits like an approval and only the
+  // person answers. Registered for the whole process, but each turn
+  // offers it only where a question card is drawn (TUI, CLI, Telegram,
+  // an HTTP client sending `X-Atomic-Questions`): `surfaceShowsQuestions`
+  // in executeTurn. Hidden from the desktop until ATO-1502 ships its card.
+  // A call from a turn where it is hidden is answered at once, no question raised.
+  toolRegistry.register(buildAskUserTool({
+    approvals: dangerous.approvals,
+    ...(canAskUser !== undefined ? { canAsk: canAskUser } : {}),
   }));
   // Older stored names stay out of the prompt until checked against actual
   // user messages. The background walk never deletes facts or blocks boot.

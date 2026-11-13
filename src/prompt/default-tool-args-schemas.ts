@@ -540,6 +540,26 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["items"],
     ),
   ],
+  // ATO-489. `minItems` is a real bound here and, as for plan.update, it
+  // keeps a schema whose items nest an object off the strict path. The
+  // runtime still checks the count, labels and lengths
+  // (`normalizeUserQuestion`).
+  [
+    "ask_user",
+    obj(
+      {
+        question: stringSchema,
+        options: {
+          type: "array",
+          minItems: 2,
+          items: obj({ label: stringSchema, description: stringSchema }, ["label"]),
+        },
+        multiSelect: booleanSchema,
+        allowOther: booleanSchema,
+      },
+      ["question", "options"],
+    ),
+  ],
   ["tool.search", obj({ query: stringSchema, limit: numberSchema }, ["query"])],
   // ATO-1137. `series` nests an object, so its bound keeps the schema off
   // the strict path like `plan.update`; the tool's parser owns the rest
