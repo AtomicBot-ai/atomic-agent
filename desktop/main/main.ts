@@ -7275,12 +7275,15 @@ async function hfAndDeltaTest(
     "[...document.querySelectorAll('#settings button[data-act=\"llm:hf\"]')].some((b) => b.textContent.trim() === 'Add from Hugging Face' && !b.disabled)",
   );
   /* Item 48 (Д34): the Ollama signpost under the lists ("Using Ollama? Add it
-     under Cloud…") read as an ad. One "Add Ollama" button in the Local models
-     header took its place, the sentence went to its tooltip, and it is drawn
-     only while no `ollama` provider is configured. */
-  const ollamaBtn = await js<{ text: string; title: string; disabled: boolean } | null>(
+     under Cloud…") read as an ad. One "Add Ollama" button took its place, the
+     sentence went to its tooltip, and it is drawn only while no `ollama`
+     provider is configured. 13.11: it sits under "Use an app you already
+     run" in the Local setup, among the Add buttons drawn while no app is
+     listed there; once one is, the section's Add app is the way to it. */
+  const ollamaBtn = await js<{ text: string; title: string; disabled: boolean; addApp: boolean } | null>(
     "(() => { const b = document.querySelector('#settings .setbody button[data-act=\"llm:ollama\"]');"
-    + " return b ? {text: b.textContent.trim(), title: b.title, disabled: b.disabled} : null; })()",
+    + " const addApp = !!document.querySelector('#settings .setbody .llm-apps-sec [data-act=\"llm:addApp\"]');"
+    + " return b ? {text: b.textContent.trim(), title: b.title, disabled: b.disabled, addApp} : addApp ? {text: '', title: '', disabled: false, addApp} : null; })()",
   );
   const ollamaAdded = await js<boolean>("!!llmProvider('ollama')");
   // Calm (S5): the hint row's "a add from hugging face" left; the section's own button is the mouse route (the `a` key still works).
@@ -7288,8 +7291,9 @@ async function hfAndDeltaTest(
     "llm tab: the Hugging Face button is live and the Local pane offers Add Ollama",
     rowLive && localBody0.includes("Add from Hugging Face") && !localBody0.includes("Using Ollama?")
       && (ollamaAdded
-        ? ollamaBtn === null
-        : !!ollamaBtn && ollamaBtn.text === "Add Ollama" && !ollamaBtn.disabled && ollamaBtn.title.includes("Nothing here downloads from Ollama")),
+        ? ollamaBtn === null || (ollamaBtn.addApp && ollamaBtn.text === "")
+        : !!ollamaBtn && (ollamaBtn.addApp && ollamaBtn.text === ""
+          || ollamaBtn.text === "Add Ollama" && !ollamaBtn.disabled && ollamaBtn.title.includes("Nothing here downloads from Ollama"))),
     `row enabled=${rowLive} · ollama ${ollamaAdded ? "is a provider already" : "is not a provider"} · button ${JSON.stringify(ollamaBtn)}`,
   );
   /* Review fix: the check above only proved the signpost's own text
@@ -7308,8 +7312,9 @@ async function hfAndDeltaTest(
   );
   type OllamaPath = { clicked: boolean; open: boolean; phase: string | null; row: string | null; baseUrl: string; mode: string; drawnWithout: boolean; drawnWith: boolean };
   const ollamaPath = await js<OllamaPath>(
-    "(() => { const keep = LIVE_CONFIG; const block = llmBlock(); const others = llmProviders().filter((p) => p.id !== 'ollama');"
-    + " const drawn = (providers) => { LIVE_CONFIG = Object.assign({}, keep || {}, {llm: Object.assign({}, block, {providers})});"
+    "(() => { const keep = LIVE_CONFIG; const block = llmBlock(); const others = llmProviders().filter((p) => p.id !== 'ollama' && !llmIsCustomEntry(p));"
+    // 13.11: drawn with no app listed and no server of your own, so the Add buttons are what the section shows.
+    + " const drawn = (providers) => { LIVE_CONFIG = Object.assign({}, keep || {}, {llm: Object.assign({}, block, {providers}), localModels: {mode: 'managed'}});"
     + " const box = document.createElement('div'); box.innerHTML = llmLocalHTML(); return !!box.querySelector('[data-act=\"llm:ollama\"]'); };"
     + " try {"
     + " const drawnWithout = drawn(others);"
@@ -7326,7 +7331,7 @@ async function hfAndDeltaTest(
     !!ollamaPreset && ollamaPreset.label === "Ollama (local)"
       && ollamaPreset.baseUrl === "http://localhost:11434"
       && ollamaPreset.kind === "openai-compatible" && ollamaPreset.local === true
-      && (ollamaAdded || (!!ollamaBtn && ollamaBtn.title.includes(ollamaPreset.baseUrl) && ollamaPath.clicked))
+      && (ollamaAdded || (!!ollamaBtn && (ollamaBtn.addApp && ollamaBtn.text === "" || ollamaBtn.title.includes(ollamaPreset.baseUrl))))
       && ollamaPath.open && ollamaPath.phase === "configure" && ollamaPath.row === ollamaPreset.id
       // ATO-1418: Ollama's setup opens on the Custom tab (LLMP.mode "external"), as T48 (Д34) asserts.
       && ollamaPath.baseUrl === ollamaPreset.baseUrl && ollamaPath.mode === "external"
@@ -8405,12 +8410,13 @@ async function settingsTestPartC(
     + " for (const d of box.querySelectorAll('.llm-adv, .llm-details')) d.open = true;"
     + " const kv = [...box.querySelectorAll('.llm-route .llm-kv')].map((row) => { const k = ((row.querySelector('.llm-k') || {}).innerText || '').trim();"
     + " const all = (row.innerText || '').replace(/\\s+/g, ' ').trim(); return [k, all.startsWith(k) ? all.slice(k.length).trim() : all]; });"
-    + " return {modes: [...box.querySelectorAll('.llm-bar .llmmode')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-bar .llmmode.on')].map((b) => b.textContent.trim()), kv,"
+    + " return {modes: [...box.querySelectorAll('.llm-rm .llm-rm-t')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-rm.is-open .llm-rm-t')].map((b) => b.textContent.trim()), kv,"
     + " effects: [...box.querySelectorAll('[data-llm-row^=\"local-text:\"]')].map((r) => { const e = r.querySelector('.llm-effect'); return [e ? e.textContent.trim() : '', e ? e.title : '', r.hasAttribute('data-pull-local')]; })}; })()",
   );
-  const localCopy = ["Where chats run now", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
+  const localCopy = ["Where the agent runs now", "Local models", "Embedding models", "Add from Hugging Face", "Use an app you already run", "Advanced"];
   const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
-  if (!same(localView.modes, ["Local models", "Cloud providers", "Custom"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
+  // 13.11: the three cards are the setup switch (the Set up models tabs are gone); the Local card's setup is the one open.
+  if (!same(localView.modes, ["Local models", "Cloud", "Fusion"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode cards ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
   if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
   // A remote row's pill says Download with its size, and its tooltip is the TUI's "Enter: download"; a downloaded row never offers a download.
   const badPills = localView.effects.filter(([label, title, remote]) => remote
@@ -8469,12 +8475,13 @@ async function settingsTestPartC(
   });
   // The model filter is a search box, drawn with the provider's model list (Calm S5: the inert price facet is gone).
   const filterBox = await js<boolean>("(() => { const i = document.querySelector('#settings .setbody .llm-filter #llm-filter'); return !!i && i.getClientRects().length > 0 && !i.disabled; })()");
-  const cloudCopy = ["Cloud providers", "Add provider"].concat(cloudProviders.length ? ["Models on "] : []);
+  // 13.11: an empty list is the popular providers and More providers…; Add provider heads a list that has something in it.
+  const cloudCopy = ["Cloud providers"].concat(cloudProviders.length ? ["Add provider", "Models on "] : ["More providers"]);
   const cloudMissing: string[] = cloudCopy.filter((c) => !cloudBody.includes(c));
   if (cloudProviders.length && !filterBox) cloudMissing.push("the model filter box");
   check(
     "llm tab: Cloud providers rows carry the key status from the env ∪ .env names",
-    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && misfiled.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers yet.")),
+    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && misfiled.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("More providers")),
     `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${misfiled.length ? " on this computer but under Cloud: " + misfiled.join(",") : ""}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}${providersOk ? "" : " drawn " + JSON.stringify(cloudRows)}`,
   );
   const models = await until(pane, (p) => p.section.status !== "loading", 90_000);
@@ -8495,6 +8502,9 @@ async function settingsTestPartC(
   const extBody = await js<string>("window.__settingsBody()");
   const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:9931";
   const extActive = cfg0.localModels?.mode === "external" && activeText === "local-llama";
+  // 13.11: your own server is a row once it is set up (in use, or an address saved), and one of the Add buttons until then.
+  const extListed = cfg0.localModels?.mode === "external" || !!cfg0.localModels?.url;
+  const extTile = await js<boolean>("!!document.querySelector('#settings .setbody .llm-apps-sec [data-act=\"llm:external:edit\"]')");
   // The row as drawn: the "Server address" label, the URL, its status chip, and the action pill (the TUI's sentence as its tooltip).
   const extRow = await js<{ label: string; url: string; status: string; effect: string; title: string } | null>(
     "(() => { const r = document.querySelector('#settings .setbody [data-llm-row=\"external-url\"]'); if (!r) return null; const e = r.querySelector('.llm-effect');"
@@ -8502,12 +8512,14 @@ async function settingsTestPartC(
     + " effect: e ? e.textContent.trim() : '', title: e ? e.title : ''}; })()",
   );
   check(
-    // ATO-1418: the Custom pane also lists the apps you run (Atomic Chat, Ollama, LM Studio); the server-address row is its last.
-    "llm tab: Custom pane ends with the one server-address row and the way back to Local",
-    ext.rows >= 1 && !!extRow && extRow.label === "Server address" && extRow.url === extUrl && (extActive || extRow.status === "not active")
-      && extBody.includes("Your own llama.cpp server") && extBody.includes("Apps you already run") && extBody.includes("pick one under Local")
-      && extRow.effect === (extActive ? "Edit address" : "Use this server") && extRow.title === (extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp"),
-    `${ext.rows} row(s), active=${extActive}, drawn ${JSON.stringify(extRow)}`,
+    // ATO-1418, 13.11: the apps you run (Atomic Chat, Ollama, LM Studio) and your own server sit under the local models, in one section.
+    "llm tab: Use an app you already run lists your own server as its last row once it is set up, and offers it as an Add button before",
+    ext.rows >= 1 && extBody.includes("Use an app you already run") && !extBody.includes("pick one under Local")
+      && (extListed
+        ? !!extRow && extRow.label === "Server address" && extRow.url === extUrl && (extActive || extRow.status === "not active")
+          && extRow.effect === (extActive ? "Edit address" : "Use this server") && extRow.title === (extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp")
+        : !extRow && extTile),
+    `${ext.rows} row(s), active=${extActive}, listed=${extListed}, tile=${extTile}, drawn ${JSON.stringify(extRow)}`,
   );
   const cfgBeforeProbe = JSON.stringify((await configGet()).config);
   const probed = await js<LlmPane>("window.__llmExternalSave('127.0.0.1:1')");

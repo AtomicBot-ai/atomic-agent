@@ -16,9 +16,10 @@ import { downloadJobRunning, modelIdFromPath, modelsRemoveSafe, probeServer, rem
  *
  *   Д30 — Two look-alike rows at the top, "Set up: Local / Cloud / Custom
  *         server" over "Chats run on: Local models / Cloud / Fusion". Where
- *         chats run is the pane's first block now, three cards with a line
- *         each; the setup tabs come under it, in words that are not that
- *         choice's words (Local models · Cloud providers · Custom).
+ *         the agent runs is the pane's first block now, three cards with a
+ *         line each. Since 13.11 (Nadya) the cards are the one switch: they
+ *         choose the run mode and the setup shown under them, and the setup
+ *         tabs are gone.
  *   Д31 — Cloud with no cloud provider ran the switch, and its refusal landed
  *         in the chat behind Settings. A choice that cannot be made yet opens
  *         what it needs here: Add provider, a provider's key, the Local
@@ -73,44 +74,45 @@ export async function checks48(js: Js, check: Check): Promise<void> {
   await removeInMain(check);
 }
 
-/* Д30: where chats run first, the setup tabs under it, each in its own words. */
+/* Д30, 13.11: where the agent runs first — three cards that are the switch — and no setup tabs under them. */
 async function layout(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, any>>(String.raw`(() => {
-    const keep = LLMP.mode;
+    const keep = LLMP.mode, keepF = LLMP.fusionView;
     try {
-      LLMP.mode = 'local';
+      LLMP.mode = 'local'; LLMP.fusionView = false;
       const box = document.createElement('div'); box.className = 'llm-pane'; box.innerHTML = llmPanelHTML();
-      const run = box.querySelector('.llm-runmode'), bar = box.querySelector('.llm-srcbar');
+      const run = box.querySelector('.llm-runmode');
       return {
         first: box.firstElementChild ? box.firstElementChild.className : null,
-        before: !!run && !!bar && !!(run.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING),
         title: run ? ((run.querySelector('.llm-sh-t') || {}).textContent || null) : null,
-        cards: run ? [...run.querySelectorAll('.llm-rm')].map((b) => [((b.querySelector('.llm-rm-t') || {}).textContent || ''), ((b.querySelector('.llm-rm-d') || {}).textContent || '')]) : [],
+        cards: run ? [...run.querySelectorAll('.llm-rm')].map((b) => [((b.querySelector('.llm-rm-t') || {}).textContent || ''), ((b.querySelector('.llm-rm-d') || {}).textContent || ''), b.dataset.llmCard || '']) : [],
+        open: [...box.querySelectorAll('.llm-rm.is-open')].map((b) => b.dataset.llmCard),
         refresh: !!(run && run.querySelector('[data-act="llm:refresh"]')),
-        tabs: [...box.querySelectorAll('.llm-bar .llmmode')].map((b) => b.textContent.trim()),
-        barTitle: bar ? ((bar.querySelector('.llm-sh-t') || {}).textContent || null) : null,
-        old: /Chats run on/.test(box.textContent),
+        tabs: box.querySelectorAll('.llm-bar .llmmode, .llm-srcbar').length,
+        apps: !!box.querySelector('.llm-apps-sec[data-llm-scope="external"]'),
+        old: /Chats run on|Chats go to|Set up models/.test(box.textContent),
       };
-    } finally { LLMP.mode = keep; }
+    } finally { LLMP.mode = keep; LLMP.fusionView = keepF; }
   })()`);
   const cards = (r["cards"] ?? []) as string[][];
   check(
-    "T48 (Д30): where chats run is the pane's first block — three cards, each with a line — and the setup tabs come under it",
-    r["first"] === "llm-section llm-runmode" && r["before"] === true && r["title"] === "Where chats run now" && r["refresh"] === true
-      && cards.length === 3 && cards.map((c) => c[0]).join("|") === "Local models|Cloud|Fusion" && cards.every((c) => (c[1] ?? "").length > 0),
-    show({ first: r["first"], before: r["before"], title: r["title"], cards }),
+    "T48 (Д30): where the agent runs is the pane's first block — three cards, each with a line",
+    r["first"] === "llm-section llm-runmode" && r["title"] === "Where the agent runs now" && r["refresh"] === true
+      && cards.length === 3 && cards.map((c) => c[0]).join("|") === "Local models|Cloud|Fusion" && cards.every((c) => (c[1] ?? "").length > 0)
+      && cards.map((c) => c[2]).join("|") === "local|cloud|fusion",
+    show({ first: r["first"], title: r["title"], cards }),
   );
   check(
-    "T48 (Д30, ATO-1418): the setup tabs say what they set up — Local models · Cloud providers · Custom — and \"Chats run on\" is gone",
-    show(r["tabs"]) === show(["Local models", "Cloud providers", "Custom"]) && r["barTitle"] === "Set up models" && r["old"] === false,
-    show({ tabs: r["tabs"], barTitle: r["barTitle"], old: r["old"] }),
+    "T48 (13.11): the cards are the setup switch — no Set up models tabs, the Local card's setup open with the apps you run folded in, no \"Chats go to\" line",
+    r["tabs"] === 0 && show(r["open"]) === show(["local"]) && r["apps"] === true && r["old"] === false,
+    show({ tabs: r["tabs"], open: r["open"], apps: r["apps"], old: r["old"] }),
   );
 }
 
 /* Д31: a choice made before what it needs is there opens that, and tries no switch. */
 async function routeNeeds(js: Js, check: Check): Promise<void> {
   const r = await js<Record<string, any>>(String.raw`(async () => {
-    const keep = {cfg: LIVE_CONFIG, mode: LLMP.mode, msg: LLMP.msg, open: SEL.open, addOpen: SEL.addOpen, err: SEL.err, wiz: Object.assign({}, WIZ),
+    const keep = {cfg: LIVE_CONFIG, mode: LLMP.mode, fv: LLMP.fusionView, msg: LLMP.msg, open: SEL.open, addOpen: SEL.addOpen, err: SEL.err, wiz: Object.assign({}, WIZ),
       swxErr: SWX.err, log: S.log.length, ids: BSW.readyIds, rl: BSW.readyLoaded, ll: BSW.localLoaded, local: SEL.local, llmLocal: LLMP.local,
       choose: window.selChooseBackend, fusion: window.selChooseFusion, activate: window.fzActivateBackend};
     const calls = [];
@@ -136,11 +138,17 @@ async function routeNeeds(js: Js, check: Check): Promise<void> {
       close();
       act(out.cloud ? out.cloud.act : 'runmode:cloud');
       await tick();
-      out.afterCloud = {calls: calls.slice(), open: SEL.open, phase: WIZ.phase, mode: LLMP.mode, swxErr: SWX.err, logGrew: S.log.length - keep.log};
+      const setup = () => { const d = document.createElement('div'); d.className = 'llm-pane'; d.innerHTML = llmPanelHTML(); return d; };
+      const cloudSetup = setup();
+      out.afterCloud = {calls: calls.slice(), open: SEL.open, phase: WIZ.phase, mode: LLMP.mode, pending: LLMP.pendingRoute, swxErr: SWX.err, logGrew: S.log.length - keep.log,
+        need: ((cloudSetup.querySelector('.llm-need') || {}).textContent || null), tiles: [...cloudSetup.querySelectorAll('.llm-tiles [data-act]')].map((b) => b.dataset.act),
+        headerAdd: !!cloudSetup.querySelector('.llm-sh [data-act="llm:add"]')};
       close();
       act(out.fusion ? out.fusion.act : 'runmode:fusion');
       await tick();
-      out.afterFusion = {calls: calls.slice(), open: SEL.open, phase: WIZ.phase, mode: LLMP.mode, msg: LLMP.msg ? LLMP.msg.text : null, logGrew: S.log.length - keep.log};
+      const fz = setup();
+      out.afterFusion = {calls: calls.slice(), open: SEL.open, phase: WIZ.phase, fusionView: LLMP.fusionView, pending: LLMP.pendingRoute, logGrew: S.log.length - keep.log,
+        need: ((fz.querySelector('.llm-fz-need') || {}).textContent || null), go: ((fz.querySelector('.llm-fz-need [data-act]') || {dataset: {}}).dataset || {}).act || null};
       // A cloud provider whose key cannot be used: Cloud opens that provider's key screen.
       close();
       LIVE_CONFIG = Object.assign({}, keep.cfg || {}, providers([{id: 'openrouter', kind: 'openrouter', defaultChatModel: 'openrouter/auto'}]),
@@ -148,7 +156,7 @@ async function routeNeeds(js: Js, check: Check): Promise<void> {
       out.keyless = card(cards(), 'Cloud');
       act(out.keyless ? out.keyless.act : 'runmode:cloud');
       await tick();
-      out.afterKeyless = {calls: calls.slice(), open: SEL.open, phase: WIZ.phase, row: WIZ.row ? WIZ.row.id : null};
+      out.afterKeyless = {calls: calls.slice(), open: SEL.open, mode: LLMP.mode, pending: LLMP.pendingRoute};
       // No local model on disk: Local models goes to the list to download one, not onto a route with nothing to run.
       close();
       LIVE_CONFIG = Object.assign({}, keep.cfg || {}, {localModels: {mode: 'managed', managed: {modelId: null}},
@@ -158,31 +166,34 @@ async function routeNeeds(js: Js, check: Check): Promise<void> {
       out.empty = card(cards(), 'Local models');
       act(out.empty ? out.empty.act : 'runmode:local');
       await tick();
-      out.afterEmpty = {calls: calls.slice(), open: SEL.open, mode: LLMP.mode, msg: LLMP.msg ? LLMP.msg.text : null, logGrew: S.log.length - keep.log};
+      out.afterEmpty = {calls: calls.slice(), open: SEL.open, mode: LLMP.mode, pending: LLMP.pendingRoute, logGrew: S.log.length - keep.log,
+        need: ((setup().querySelector('.llm-need') || {}).textContent || null)};
       return out;
     } finally {
       close();
       Object.assign(WIZ, keep.wiz, {unfinishedId: null}); SEL.open = keep.open; SEL.addOpen = keep.addOpen; SEL.err = keep.err;
       window.selChooseBackend = keep.choose; window.selChooseFusion = keep.fusion; window.fzActivateBackend = keep.activate;
       BSW.readyIds = keep.ids; BSW.readyLoaded = keep.rl; BSW.localLoaded = keep.ll; SEL.local = keep.local; LLMP.local = keep.llmLocal;
-      LIVE_CONFIG = keep.cfg; LLMP.mode = keep.mode; LLMP.msg = keep.msg; SWX.err = keep.swxErr; render();
+      LIVE_CONFIG = keep.cfg; LLMP.mode = keep.mode; LLMP.fusionView = keep.fv; LLMP.pendingRoute = null; LLMP.msg = keep.msg; SWX.err = keep.swxErr; render();
     }
   })()`);
   const cloud = r["cloud"] ?? {};
   const after = r["afterCloud"] ?? {};
   check(
-    "T48 (Д31): with no cloud provider the Cloud card says so, and a click opens Add provider — no switch is tried, nothing lands in the chat",
-    cloud.act === "llm:needs:cloud" && cloud.blocked === true && /cloud provider/i.test(String(cloud.line))
-      && show(after.calls) === "[]" && after.open === true && after.phase === "pick_kind" && after.mode === "cloud"
+    "T48 (Д31, 13.11): with no cloud provider the Cloud card reads Needs setup; a click opens the Cloud setup (the popular providers, More providers) — no switch, no popup, nothing in the chat",
+    cloud.act === "llm:needs:cloud" && cloud.blocked === true && cloud.line === "Needs setup" && /cloud provider/i.test(String(cloud.title))
+      && show(after.calls) === "[]" && after.open === false && after.mode === "cloud" && after.pending === "cloud"
+      && /Add a cloud provider/.test(String(after.need)) && after.tiles.includes("llm:preset:openrouter") && after.tiles.includes("llm:add") && after.headerAdd === false
       && after.swxErr === null && after.logGrew === 0,
     show({ cloud, after }),
   );
   const fusion = r["fusion"] ?? {};
   const fafter = r["afterFusion"] ?? {};
   check(
-    "T48 (Д31): Fusion with no cloud provider to plan says what it needs and opens Add provider too, with no switch tried",
-    fusion.act === "llm:needs:fusion" && fusion.blocked === true && show(fafter.calls) === "[]" && fafter.open === true
-      && fafter.phase === "pick_kind" && /Fusion needs a cloud provider/.test(String(fafter.msg)) && fafter.logGrew === 0,
+    "T48 (Д31, 13.11): Fusion with no cloud provider to plan opens its own setup: one sentence and Set up Cloud, with no switch tried",
+    fusion.act === "llm:needs:fusion" && fusion.blocked === true && fusion.line === "Needs setup" && show(fafter.calls) === "[]" && fafter.open === false
+      && fafter.fusionView === true && fafter.pending === "fusion" && /Fusion needs a cloud provider/.test(String(fafter.need)) && fafter.go === "llm:show:cloud"
+      && fafter.logGrew === 0,
     show({ fusion, fafter }),
   );
   const keyless = r["keyless"] ?? {};
@@ -190,10 +201,10 @@ async function routeNeeds(js: Js, check: Check): Promise<void> {
   const empty = r["empty"] ?? {};
   const eafter = r["afterEmpty"] ?? {};
   check(
-    "T48 (Д31): Cloud with providers but no key it can use opens that provider's key screen; Local models with nothing on disk opens the list to download from — no switch tried",
-    keyless.act === "llm:needs:cloud" && /key/i.test(String(keyless.line)) && kafter.open === true && kafter.phase === "configure" && kafter.row === "openrouter"
-      && empty.act === "llm:needs:local" && /Download a model/.test(String(empty.line)) && eafter.mode === "local" && eafter.open === false
-      && /needs a model on/.test(String(eafter.msg)) && show(eafter.calls) === "[]" && eafter.logGrew === 0,
+    "T48 (Д31, 13.11): Cloud with providers but no key it can use, and Local models with nothing on disk, open their own setup and say what they need — no switch tried",
+    keyless.act === "llm:needs:cloud" && /key/i.test(String(keyless.title)) && kafter.open === false && kafter.mode === "cloud" && kafter.pending === "cloud"
+      && empty.act === "llm:needs:local" && /needs a model on/.test(String(empty.title)) && eafter.mode === "local" && eafter.open === false && eafter.pending === "local"
+      && /Download a model/.test(String(eafter.need)) && show(eafter.calls) === "[]" && eafter.logGrew === 0,
     show({ keyless, kafter, empty, eafter }),
   );
 }
@@ -350,7 +361,7 @@ async function ollama(js: Js, check: Check): Promise<void> {
   })()`);
   const wiz = r["wizard"] ?? {};
   check(
-    "T48 (Д34): no Ollama signpost under the lists; Add Ollama opens the provider setup on Ollama with its address filled in, on the Custom tab, and goes once Ollama is added",
+    "T48 (Д34, 13.11): no Ollama signpost under the lists; Add Ollama (under Use an app you already run) opens the provider setup on Ollama with its address filled in, and goes once Ollama is added",
     r["signpost"] === false && r["button"] === "Add Ollama" && wiz.open === true && wiz.phase === "configure" && wiz.row === "ollama"
       && wiz.baseUrl === "http://localhost:11434" && r["mode"] === "external" && r["afterAdded"] === false,
     show(r),
@@ -517,7 +528,7 @@ async function nowLine(js: Js, check: Check): Promise<void> {
     "T48 (Д35): a model server up under a Cloud or a Custom server route shows, with its Stop; none when it is down",
     cloudUp.act === "llm:daemon" && cloudUp.label === "Stop" && /still up/.test(String(cloudUp.text)) && cloudDown.act === null
       && customUp.act === "llm:daemon" && customUp.label === "Stop" && /custom server/.test(String(customUp.text))
-      && r["customCard"] === "On your custom server",
+      && r["customCard"] === "Running on your own server",
     show({ cloudUp, cloudDown, customUp, customCard: r["customCard"] }),
   );
   check(

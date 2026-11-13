@@ -72,21 +72,30 @@ test('the built-in llama.cpp entry is on neither provider list', () => {
   for (const t of ['cloud', 'external']) assert.ok(!g.tab(t).some((p) => p.id === 'local-llama'), t);
 });
 
-test('the model block and filter follow the tab on screen', () => {
+test('the model block and filter follow the setup on screen', () => {
   assert.equal(grouping(saved, 'external').now(), 'external');
   assert.equal(grouping(saved, 'cloud').now(), 'cloud');
-  assert.equal(grouping(saved, 'local').now(), 'cloud');
+  assert.equal(grouping(saved, 'fallback').now(), 'cloud');
+  // 13.11: the Local card's setup lists the apps you run under the local models, so their models block is the one it shows.
+  assert.equal(grouping(saved, 'local').now(), 'external');
 });
 
-test('the tabs read Local models, Cloud providers, Custom; the Custom pane names the apps', () => {
-  assert.match(renderer, /const LLM_BAR_MODES = \[\['local', 'Local models'\], \['cloud', 'Cloud providers'\], \['external', 'Custom'\]\];/);
-  const ext = slice('function llmExternalHTML()', '/* Gaps 11:');
-  assert.match(ext, /'Apps you already run'/);
-  assert.match(ext, /Atomic Chat, Ollama, LM Studio or any server you run yourself/);
-  assert.match(ext, /'Your own llama\.cpp server'/);
-  // No word "cloud" in what the Custom pane says; its code may name the shared llmCloud* helpers and row kinds.
+test('no Set up models tabs; the Local setup names the apps you already run, in one place', () => {
+  assert.doesNotMatch(renderer, /const LLM_BAR_MODES =/);
+  assert.doesNotMatch(renderer, /class="llmmode|llm-srcbar|'Set up models'/);
+  const local = slice('function llmLocalHTML()', '\n}\n');
+  assert.match(local, /llmAppsHTML\(\)/);
+  // The apps are added in the apps section only, not from the Local models header too.
+  assert.doesNotMatch(local, /llm:ollama|llm:app:/);
+  const apps = slice('function llmAppsHTML()', 'function llmCloudHTML()');
+  assert.match(apps, /'Use an app you already run'/);
+  assert.match(apps, /'Add Ollama'/);
+  assert.match(apps, /'Add your own server'/);
+  // The list and its Add app, or the Add buttons: never both.
+  assert.match(apps, /listed\.length \? listHTML/);
+  // No word "cloud" in what the apps section says; its code may name the shared llmCloud* helpers and row kinds.
   // Comments out first: an apostrophe in one ("the wizard's") would pair the quotes wrongly.
-  const code = ext.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const code = apps.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const words = (code.match(/'[^']*'/g) || []).filter((w) => !/^'cloud[A-Z]/.test(w)).join(' ');
   assert.doesNotMatch(words, /cloud/i);
 });
@@ -109,9 +118,12 @@ test('an app alone does not count as a cloud provider for the Cloud choice', () 
   assert.equal(withGroq.cloud, null);
 });
 
-test('Configure and a blocked choice open the Cloud tab on cloud providers only', () => {
+test('Configure opens the Cloud setup on cloud providers only; a card not ready opens its setup and switches nothing', () => {
   const needsOpen = slice('function llmRouteNeedsOpen(id)', '\n}\n');
-  assert.match(needsOpen, /const cloud = llmTabProviders\('cloud'\);/);
+  // 13.11: the card's own setup, with what it needs said in it; no wizard pops up on the click.
+  assert.match(needsOpen, /LLMP\.pendingRoute = id;/);
+  assert.match(needsOpen, /llmShowCard\(id\);/);
+  assert.doesNotMatch(needsOpen, /llmOpenWizard|runmode:/);
   const configure = slice("if (verb === 'configure') {", 'llmOpenWizard(p || null); return;');
   assert.match(configure, /llmTabProviders\(tab\)/);
   assert.match(configure, /llmSetMode\(tab\)/);

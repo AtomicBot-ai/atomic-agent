@@ -173,7 +173,9 @@ const WIZ = { phase:null, row:null, apiKey:'', baseUrl:'', error:null, busy:fals
   /* Backlog 18: opened on its own — by the download card's "Set up a cloud
      model meanwhile" — rather than from the composer's own panes, so its
      Cancel closes the popover instead of falling back to the backend list. */
-  alone:false };
+  alone:false,
+  /* 13.11: which providers the list offers ('cloud' | 'local' | null for all) and what is typed in its search. */
+  scope:null, kindQ:'' };
 /* Kind rows in the TUI's KIND_ROW_ORDER. ATO-844: the two subscription-CLI
    rows come after the three one-key services rather than first, as the TUI
    has them, so the rows the app and its smoke address by position keep their
@@ -1419,6 +1421,15 @@ const LLMP = {
   pulling:null, pullLog:[], pullFrame:null, // {kind:'chat'|'embedding', id} while a `models pull[-embedding]` streams
   tune:{busy:null, msg:null, err:null}, // the Thinking knobs and the chat template: busy = the config path being written; where = 'tune' | 'adv', the card the last write's line goes under
   timer:null, seq:0, inflight:null,
+  /* The pane's three cards (Nadya, 13.11): they both choose where the agent
+     runs and which setup shows under them. `fusionView`: the Fusion card's
+     setup is the one shown (Local and Cloud are read off `mode`).
+     `pendingRoute`: a card clicked before its mode was ready; it is switched
+     to once its setup is done. `seenCard`: the card in effect when the tab was
+     last entered, so a Fusion switch made elsewhere opens on Fusion. */
+  fusionView:false, pendingRoute:null, pendingFactsAt:0, seenCard:null,
+  /* GGUF files already on this computer (LM Studio, the Hugging Face cache, Jan…), from main's discoverLocalModels when this build has it; null until read. `foundAct`: {path, busy, error} for the row whose Use runs. */
+  found:null, foundBusy:false, foundAct:null,
 };
 const LLM_PANEL_MODES = ['local','cloud','external','fallback']; // llm-panel-state.ts LLM_PANEL_MODES
 const LLM_MODE_LABELS = {local:'Local', cloud:'Cloud', external:'External llama.cpp', fallback:'Fallback'}; // llm-panel.tsx MODE_LABELS
@@ -5693,20 +5704,6 @@ function refreshDlProgress() {
  *  inspector. Its width (narrowed when the column is narrower) and the height
  *  the column leaves above the card are part of the returned style, so a
  *  caller's own `width:` in front of it is only the default. */
-/* ATO-1235: a popover under (or, short of room, over) a button inside
-   Settings, kept inside the window: on a 700 px window it scrolls rather
-   than run off the bottom. */
-function settingsAnchorStyle(el, width) {
-  const r = el.getBoundingClientRect();
-  const vw = window.innerWidth, vh = window.innerHeight, pad = 12;
-  const w = Math.round(Math.min(width, vw - pad * 2));
-  const left = Math.round(Math.max(pad, Math.min(r.right - w, vw - pad - w)));
-  const below = vh - r.bottom - pad - 6, above = r.top - pad - 6;
-  if (below >= 260 || below >= above) {
-    return 'position:fixed;left:' + left + 'px;top:' + Math.round(Math.min(r.bottom + 6, vh - pad - 160)) + 'px;bottom:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, Math.min(below, vh - pad * 2))) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 0';
-  }
-  return 'position:fixed;left:' + left + 'px;bottom:' + Math.round(vh - r.top + 6) + 'px;top:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, above)) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 100%';
-}
 function anchorStyle(sel, width) {
   const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
   const winEl = $('#window');
@@ -7352,7 +7349,7 @@ function act(a) {
   if (a === 'context') { close(); S.overlay = 'context'; render(); return; }
   if (a === 'context:compact') { close(); render(); compactNow(); return; }
   if (a === 'modes') { close(); S.overlay = 'modes'; render(); return; }
-  if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.softError = null; WIZ.errorKind = null; WIZ.forId = null; SEL.err = null; SEL.addOpen = false; render(); return; }
+  if (a === 'sel:add') { WIZ.phase = 'pick_kind'; WIZ.scope = null; WIZ.kindQ = ''; WIZ.alone = false; WIZ.row = null; WIZ.apiKey = ''; WIZ.baseUrl = ''; WIZ.error = null; WIZ.softError = null; WIZ.errorKind = null; WIZ.forId = null; SEL.err = null; SEL.addOpen = false; render(); return; }
   /* Chat review (Д21): Where it runs › Add provider. Settings › Models on its
      cloud providers, with the provider setup started — what that pane's own
      Add provider button does (llm:add). */
@@ -8409,7 +8406,17 @@ document.addEventListener('click', (e) => {
   // ATO-563: a reply's file diff (Changes) and its Revert (diff-review.js).
   if (typeof diffReviewClick === 'function' && diffReviewClick(t)) return;
   // a real control always wins over the dismiss-on-scrim handler behind it
-  const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
+  const a = t.closest('[data-act]');
+  if (a) {
+    e.preventDefault();
+    /* Settings › Models: a card is the run-mode switch AND the setup switch
+       (llmCardClick); a list says which of the Local view's two lists the
+       click is in, so its row indexes resolve against that list. */
+    if (a.dataset.llmCard && typeof llmCardClick === 'function') { llmCardClick(a.dataset.llmCard); return; }
+    const scope = a.closest('[data-llm-scope]');
+    if (scope && typeof llmScope === 'function') llmScope(scope.dataset.llmScope);
+    act(a.dataset.act); return;
+  }
   // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
   // the bar keeps working if it ever renders inside something that carries
   // [data-close]. It is not in a scrim today; the ordering is one line.
@@ -8662,7 +8669,9 @@ document.addEventListener('input', (e) => {
     return;
   }
   // Item 7 part C: the LLM filter / URL prompt, the Telegram token prompt and the Import form edit state in place.
-  if (e.target.id === 'llm-filter') { LLMP.filter = e.target.value; LLMP.cursor[llmProvTabNow()] = llmCloudSectionStart(llmProvTabNow()); llmRepaintList(); return; }
+  // 13.11: the provider list's search; only the list repaints, so the caret stays.
+  if (e.target.id === 'wiz-kind-q') { WIZ.kindQ = e.target.value; const box = $('#wiz-kind-list'); if (box) box.innerHTML = wizKindListHTML(); return; }
+  if (e.target.id === 'llm-filter') { llmScope(LLMP.mode === 'local' ? 'external' : LLMP.mode); LLMP.filter = e.target.value; LLMP.cursor[llmProvTabNow()] = llmCloudSectionStart(llmProvTabNow()); llmRepaintList(); return; }
   // Item 7A: editing the reference clears its error (local-models-reducer.ts:101-110).
   // Nothing else repaints on a keystroke — a full render would drop the caret.
   if (e.target.id === 'llm-hf-ref') {
@@ -19614,13 +19623,13 @@ function selShell(title, body, foot, lead) {
     || document.querySelector('.modelchip') || document.querySelector('.modechip');
   const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' || SEL.kind === 'workers' ? 520
     : SEL.kind === 'provider' ? 420 : 440;
-  /* ATO-1235: opened from Settings › Models' Add provider, the list hangs off
-     that button over a dimmed Settings, not off the composer chip under it,
-     where it lay on top of the cards with nothing between. */
-  const fromSettings = S.settings && WIZ.phase ? document.querySelector('.setwin [data-act="llm:add"]') : null;
-  if (fromSettings) {
+  /* ATO-1235, 13.11: opened over Settings, the provider setup is a dialog
+     in the middle of the window over a dimmed Settings (as Claude, ChatGPT
+     and Raycast open theirs), up to 560 px wide and the window's width less
+     its margins on a narrow one; its list scrolls inside it. */
+  if (S.settings && WIZ.phase) {
     return '<div class="scrim selscrim--settings" data-close="1">'
-      + '<div class="popover selpop selpop--settings tk-pop" style="' + settingsAnchorStyle(fromSettings, width) + '">'
+      + '<div class="popover selpop selpop--settings tk-pop" role="dialog" aria-modal="true" aria-label="' + esc(title) + '">'
       + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
       + (SEL.busy ? '<span class="cap selbusy"><span class="tk-spin"></span>' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
       + body
@@ -21341,7 +21350,8 @@ if (typeof window !== 'undefined') {
       // Calm (S2): the id each chip stands for is its data-id; its text is the human word.
       const chips = Array.from(tpl.content.querySelectorAll('.cfoot [data-sel-open]')).map((b) => [b.dataset.selOpen, b.dataset.id || '']);
       const set = document.createElement('template');
-      set.innerHTML = llmRunModeHTML();
+      // 13.11: the cards, and the Fusion card's setup (the status line, the worker count) under them.
+      set.innerHTML = llmRunModeHTML() + llmFusionHTML();
       const on = set.content.querySelector('.llm-rm.on');
       return {
         backend: selBackend(), kinds: selKinds(), chips,
@@ -21863,20 +21873,107 @@ function modelMatches(id, tags, query) {
    Add-provider wizard — pick_kind → configure → verifying
    ============================================================ */
 
+/* 13.11: the provider list's words. Each provider is its plain name and one
+   line on what it is, from what the preset is (its label, its kind, its
+   subscription), with no ids and no addresses. KIND_ROWS' own labels stay
+   the TUI's; they are what the setup screens and the drivers quote. */
+const WIZ_KIND_WORDS = {
+  openrouter:['OpenRouter', 'Hundreds of models with one key'],
+  aimlapi:['AI/ML API', '1000+ models with one key'],
+  gemini:['Gemini', 'Google’s models, with a key from Google AI Studio'],
+  'claude-cli':['Claude Code subscription', 'Uses your Claude plan, no API key'],
+  'codex-cli':['Codex subscription', 'Uses your ChatGPT plan, no API key'],
+  anthropic:['Anthropic', 'Claude models with an Anthropic API key'],
+  groq:['Groq', 'Open models, served fast'],
+  deepseek:['DeepSeek', 'DeepSeek’s own models'],
+  mistral:['Mistral', 'Mistral’s own models'],
+  cerebras:['Cerebras', 'Open models, served fast'],
+  together:['Together AI', 'Open models in the cloud'],
+  wandb:['W&B Inference', 'Open models on CoreWeave'],
+  fireworks:['Fireworks AI', 'Open models in the cloud'],
+  xai:['xAI', 'Grok models'],
+  moonshot:['Moonshot AI', 'Kimi models'],
+  perplexity:['Perplexity', 'Sonar models that search the web'],
+  dashscope:['DashScope', 'Qwen models from Alibaba Cloud'],
+  nous:['Nous Research', 'Hermes models'],
+  novita:['Novita AI', 'Open models in the cloud'],
+  'atomic-chat':['Atomic Chat', 'The app on this computer, no key'],
+  ollama:['Ollama', 'The app on this computer, no key'],
+  lmstudio:['LM Studio', 'The app on this computer, no key'],
+  lemonade:['Lemonade', 'AMD’s server on this computer, no key'],
+  custom:['Other server', 'Any OpenAI-compatible address'],
+  lan:['Another computer', 'A model server on your network'],
+};
+const WIZ_KIND_POPULAR = ['openrouter', 'gemini', 'aimlapi', 'anthropic'];
+function wizKindKey(k) { return !k ? '' : k.lan ? 'lan' : k.custom ? 'custom' : k.id; }
+/** A provider row's mark: a subscription wears its CLI's (Claude Code, Codex), a custom address the server icon. */
+function wizKindMark(k, size) {
+  if (k && k.subscriptionCli) return logoHTML(k.subscriptionCli === 'claude' ? 'claudecode' : 'codex', size) || providerMark('', size);
+  return providerMark(!k || k.custom ? '' : k.id, size);
+}
+/** A provider row's plain name ("OpenRouter", "Claude Code subscription"). */
+function wizKindName(k) {
+  const w = WIZ_KIND_WORDS[wizKindKey(k)];
+  return w ? w[0] : k ? String(k.word || k.label || k.id || '').split(' (')[0] : '';
+}
+/** Its one line, by row or by id. */
+function wizKindHint(k) {
+  const row = typeof k === 'string' ? KIND_ROWS.find((r) => r.id === k && !r.custom) : k;
+  const w = WIZ_KIND_WORDS[wizKindKey(row)];
+  return w ? w[1] : row && row.local ? 'An app on this computer' : 'Models with an API key';
+}
+/* The groups, as KIND_ROWS indexes. From Cloud (`cloud`) the cloud providers
+   only; from Local's Add app (`local`) the apps and servers you run, your own
+   llama.cpp server among them; from the composer all of them. */
+function wizKindGroups(scope) {
+  const idx = KIND_ROWS.map((k, i) => i);
+  const isApp = (k) => !!(k.local || k.custom || k.lan);
+  const popular = WIZ_KIND_POPULAR.map((id) => KIND_ROWS.findIndex((k) => k.id === id && !k.custom)).filter((i) => i >= 0);
+  const subs = idx.filter((i) => KIND_ROWS[i].subscriptionCli);
+  const more = idx.filter((i) => !popular.includes(i) && !subs.includes(i) && !isApp(KIND_ROWS[i]));
+  const apps = idx.filter((i) => isApp(KIND_ROWS[i]));
+  const groups = [];
+  if (scope !== 'local') groups.push({title:'Popular', ids:popular}, {title:'Use your subscription', ids:subs}, {title:'More', ids:more});
+  if (scope !== 'cloud') groups.push({title:'Apps you already run', ids:apps, own: scope === 'local'});
+  return groups;
+}
+/** The list under the search field, filtered by what is typed in it. */
+function wizKindListHTML() {
+  const taken = new Set(selProviders().map((p) => p.id));
+  const q = String(WIZ.kindQ || '').trim().toLowerCase();
+  const hit = (words) => !q || q.split(/\s+/).every((t) => words.toLowerCase().includes(t));
+  const row = (i) => {
+    const k = KIND_ROWS[i];
+    const added = !k.custom && taken.has(k.id);
+    return '<button class="modelrow' + (added ? ' dim' : '') + '" data-wiz-kind="' + i + '">'
+      + wizKindMark(k, 'sm')
+      + '<span class="col"><span class="nm">' + esc(wizKindName(k)) + '</span>'
+      + '<span class="cap">' + esc(wizKindHint(k)) + '</span></span>'
+      + (added ? '<span class="tk-chip tk-chip--sm tk-chip--line">Added</span>' : '') + '</button>';
+  };
+  const own = '<button class="modelrow" data-act="llm:ownServer">' + markFallbackHTML('server', 'sm')
+    + '<span class="col"><span class="nm">Your own llama.cpp server</span><span class="cap">A server you run, by its address</span></span></button>';
+  const html = wizKindGroups(WIZ.scope).map((g) => {
+    const ids = g.ids.filter((i) => hit(wizKindName(KIND_ROWS[i]) + ' ' + wizKindHint(KIND_ROWS[i]) + ' ' + KIND_ROWS[i].id));
+    const withOwn = g.own && hit('your own llama.cpp server address');
+    if (!ids.length && !withOwn) return '';
+    return '<div class="wizgrp" role="presentation">' + esc(g.title) + '</div>' + ids.map(row).join('') + (withOwn ? own : '');
+  }).join('');
+  return html || '<p class="selnote cap">No provider matches.</p>';
+}
+
 function wizardHTML() {
   /* ATO-1281: a step that is not the list needs its row. With none (the
      wizard was left and opened again while a step still awaited the network)
      the list is drawn, as the setup wizard's own copy does, not a TypeError. */
   if (WIZ.phase === 'pick_kind' || !WIZ.row) {
-    const taken = new Set(selProviders().map((p) => p.id));
-    return selShell('Add a provider',
-      '<div class="selbody"><div class="sellist">' + KIND_ROWS.map((k, i) =>
-        '<button class="modelrow' + (taken.has(k.id) ? ' dim' : '') + '" data-wiz-kind="' + i + '">'
-        + providerMark(k.custom ? '' : k.id, 'sm')
-        + '<span class="col"><span class="nm">' + esc(k.label) + '</span>'
-        + '<span class="cap">' + (k.custom ? esc('you supply the URL') : k.subscriptionCli ? esc('no API key') : '<span class="mono">' + esc(k.baseUrl || k.kind) + '</span>')
-        + (taken.has(k.id) ? ' \u00b7 already configured' : '') + '</span></span></button>').join('')
-      + '</div></div>',
+    /* 13.11: a search field, then the providers in groups (Popular · Use your
+       subscription · More, and the apps you already run), each a clean name
+       and one plain line on what it is: no ids, no addresses. */
+    return selShell(WIZ.scope === 'local' ? 'Add an app you already run' : 'Add a provider',
+      '<div class="selsearch"><label class="tk-inpwrap">' + ic('search') + '<input id="wiz-kind-q" placeholder="Search providers" value="' + esc(WIZ.kindQ || '')
+        + '" spellcheck="false" autocomplete="off" aria-label="Search providers"></label></div>'
+      + '<div class="selbody"><div class="sellist wizkinds" id="wiz-kind-list">' + wizKindListHTML() + '</div></div>',
       '<button class="btn btn-g xs" data-act="wiz:cancel">Cancel</button>');
   }
   const k = WIZ.row;
@@ -26953,7 +27050,8 @@ function llmTabProviders(tab) {
   return llmCloudProviders().filter((p) => llmProviderTab(p) === want);
 }
 /* The tab whose provider list the pane's model block and filter belong to now. */
-function llmProvTabNow() { return LLMP.mode === 'external' ? 'external' : 'cloud'; }
+/* The Local view lists the apps you run under its local models, so their models block is the one it shows. */
+function llmProvTabNow() { return LLMP.mode === 'external' || (LLMP.mode === 'local' && !LLMP.fusionView) ? 'external' : 'cloud'; }
 function llmActiveTextId() { return llmBlock().activeTextProvider || 'local-llama'; }
 function llmActiveEmbId() { return llmBlock().activeEmbeddingProvider || 'local-llama'; }
 function llmProvider(id) { return llmProviders().find((p) => p.id === id) || null; }
@@ -27057,6 +27155,17 @@ function llmTabEntered() {
     LLMP.syncModeToRoute = true;
     llmSyncModeToRoute();
   }
+  /* 13.11: a card clicked before it was ready waits for its setup while the
+     tab is open, not across visits. A run mode changed since the last visit
+     (a switch from the composer) opens on its card's setup. */
+  LLMP.pendingRoute = null;
+  const card = llmCardActive();
+  if (LLMP.seenCard !== null && LLMP.seenCard !== card) {
+    if (card === 'fusion') LLMP.fusionView = true;
+    else { LLMP.fusionView = false; if (llmView() !== card) llmShowCard(card); }
+  }
+  LLMP.seenCard = card;
+  llmFoundLoad();
   // Д31: what Cloud and Fusion still need (llmRouteNeeds) is read off these facts; a window that has not loaded them yet does it now.
   if (BR && (!BSW.readyLoaded || !BSW.localLoaded)) fzLoadFacts().then(() => llmRepaint());
   llmEnsurePoll();
@@ -27237,7 +27346,7 @@ function llmRetryModels() {
   llmFetchModels(p);
 }
 function llmRepaint() {
-  if (llmVisible()) paneRepaintKeepFocus(llmTab());
+  if (llmVisible()) { llmPendingCheck(); paneRepaintKeepFocus(llmTab()); }
   // Backlog 18: LLMP.pulling moves without a render (a pull starting, ending,
   // its projector phase); the download card shows it, and the composer's chip
   // says it while it brings a chat model down (xpullChatModel).
@@ -27477,29 +27586,94 @@ function llmTab() {
   return '<div class="llm-pane has-modal"><div class="llm-modal-layer">' + modal + '</div>'
     + '<div class="llm-behind" inert aria-hidden="true">' + body + '</div></div>';
 }
-/* The panel, top to bottom (Д30, Danya 01.10): where chats run — the one
-   choice here that changes what answers — with the model and its server;
-   what the pane has to report; then the setup tabs (Local models · Cloud
-   providers · Custom server) and the tab's lists; Advanced last, behind a
-   disclosure. The two choices used to be two look-alike rows at the top,
-   "Set up: Local / Cloud / Custom server" over "Chats run on: Local models /
-   Cloud / Fusion", and people took one for the other. */
+/* The panel, top to bottom (Nadya, 13.11, after Д30): where the agent runs —
+   three cards that are both the run-mode switch and the setup switch — then
+   what the pane has to report, then the chosen card's setup (Local models
+   with the apps you already run, Cloud providers, or Fusion), Reasoning, and
+   Advanced last, behind a disclosure. The "Set up models" tabs that used to
+   sit under the cards are gone: a second row of look-alike choices read as a
+   second switch. Their verbs (llm:mode:*) still open each setup. */
 function llmPanelHTML() {
   const mode = LLMP.mode;
+  const view = llmView();
   const status = llmStatusLine();
   const tone = llmStatusTone(status);
   const msg = llmMsgNow();
   return llmRunModeHTML(status, tone)
-    // External reports its probe under its own row (ST-24); the other panes report here.
+    // The apps' own status is said under their list (ST-24); the other panes report here.
     + (mode !== 'external' ? llmStatusNoteHTML(status, tone) : '')
     + (LLMP.daemonPhase === 'starting'
       ? '<div class="tk-notice tk-notice--blue llm-start"><span class="tk-spin"></span><span class="grow"><b>The model is starting</b>'
         + '<span class="llm-note">Loading it into memory. Chats wait until it is ready.</span></span></div>' : '')
-    + (mode === 'local' && LLMP.pulling ? llmDownloadBannerHTML() : '')
+    + (view === 'local' && LLMP.pulling ? llmDownloadBannerHTML() : '')
     + (msg ? (msg.restart ? restartLine(msg.text) : llmMsgHTML(msg.text)) : '')
-    + llmBarHTML(mode)
-    + (mode === 'fallback' ? llmFallbackHTML() : mode === 'cloud' ? llmCloudHTML() : mode === 'external' ? llmExternalHTML() : llmLocalHTML())
-    + llmAdvancedHTML(mode);
+    + (view === 'fusion' ? llmFusionHTML()
+      : view === 'cloud' ? (mode === 'fallback' ? llmFallbackHTML() : llmCloudHTML())
+      : llmLocalHTML())
+    // Reasoning is the local models' (the managed server and your own server alike), so it follows the views that run one.
+    + (view === 'cloud' ? '' : llmTuneHTML())
+    + llmAdvancedHTML(view === 'cloud' ? 'cloud' : 'local');
+}
+/** Which card's setup the pane shows: Fusion's when chosen, else the one the list mode belongs to. */
+function llmView() {
+  if (LLMP.fusionView) return 'fusion';
+  return LLMP.mode === 'cloud' || LLMP.mode === 'fallback' ? 'cloud' : 'local';
+}
+/** Show one card's setup, without switching anything. */
+function llmShowCard(id) {
+  if (id === 'fusion') { LLMP.fusionView = true; LLMP.filterFocused = false; llmRepaint(); return; }
+  llmSetMode(id === 'cloud' ? 'cloud' : LLMP.mode === 'external' ? 'external' : 'local');
+}
+/* The Local view holds two lists (your local models, and the apps you run),
+   each with its own row indexes; a click says which one it is in. */
+function llmScope(s) {
+  if ((s === 'local' || s === 'external') && (LLMP.mode === 'local' || LLMP.mode === 'external') && LLMP.mode !== s) {
+    LLMP.mode = s;
+    if (s === 'external') llmEnsureModels();
+  }
+}
+/**
+ * The card the agent runs on now: Fusion when it is in effect; Local models
+ * for the managed server, your own llama.cpp server and an app on this
+ * computer (Ollama, LM Studio, Atomic Chat: they are listed under Local);
+ * Cloud for the rest. A switch on its way paints its card at once.
+ */
+function llmCardActive() {
+  const want = SWX.want && SWX.want.backend;
+  if (want) return want === 'custom' ? 'local' : want;
+  if (rmNow().effective === 'fusion') return 'fusion';
+  const p = llmProvider(llmActiveTextId());
+  return !p || p.kind === 'llama-server' || llmIsCustomEntry(p) ? 'local' : 'cloud';
+}
+/**
+ * A card's click (Nadya, 13.11): it shows that card's setup and, when the
+ * mode is ready, switches to it through the composer's own switch
+ * (runmode:*). A mode that is not ready yet only shows its setup; it is
+ * switched to by itself once that setup is done (llmPendingCheck).
+ */
+function llmCardClick(id) {
+  if (id === llmCardActive()) { LLMP.pendingRoute = null; llmShowCard(id); return; }
+  if (llmRouteNeeds()[id]) { llmRouteNeedsOpen(id); return; }
+  LLMP.pendingRoute = null;
+  llmShowCard(id);
+  act('runmode:' + id);
+}
+/* A card clicked before its mode was ready: once nothing it needs is
+   missing (a cloud provider added, a model downloaded), the switch the click
+   would have made runs, once. Adding a cloud provider already moves chats to
+   it (wizActivate), so Cloud usually needs nothing more. */
+function llmPendingCheck() {
+  const id = LLMP.pendingRoute;
+  if (!id) return;
+  if (llmCardActive() === id) { LLMP.pendingRoute = null; return; }
+  if ((SWX.pending > 0) || SEL.busy || WIZ.phase || LLMP.pulling || !BSW.readyLoaded) return;
+  if (llmRouteNeeds()[id]) {
+    // What Fusion and Cloud need is read off the providers' facts; after a setup they are read again, not more than every 5 s.
+    if (BR && id !== 'local' && Date.now() - LLMP.pendingFactsAt > 5000) { LLMP.pendingFactsAt = Date.now(); fzLoadFacts().then(() => llmRepaint()); }
+    return;
+  }
+  LLMP.pendingRoute = null;
+  setTimeout(() => act('runmode:' + id), 0);
 }
 /* How loud the status line is on screen. The sentence is llmStatusLine's,
    unchanged: a quiet readout in the toolbar while nothing is wrong or while
@@ -27514,23 +27688,6 @@ function llmStatusTone(line) {
   if (/^probing |: (loading|updating)$/.test(line)) return 'busy';
   if (/^Server address saved|^cloud providers: Active (text|embedding provider): /.test(line)) return 'ok';
   return 'err';
-}
-/* The setup tabs (Д30): which list the pane shows — local models to
-   download, cloud providers to add, a llama.cpp server of your own. They
-   write nothing; where chats run is the choice above them, and their words
-   are not that choice's words ("Cloud providers", not "Cloud"). Fallback is
-   reached from Cloud providers and keeps that tab lit. Drivers read
-   `#settings .llmmode.on` and click `[data-act="llm:mode:cloud"]`. */
-/* ATO-1418: 'Custom' as in the first-run wizard (ATO-816): apps and servers you already run. */
-const LLM_BAR_MODES = [['local', 'Local models'], ['cloud', 'Cloud providers'], ['external', 'Custom']];
-function llmBarHTML(mode) {
-  const lit = mode === 'fallback' ? 'cloud' : mode;
-  return '<div class="tk-bar llm-bar llm-srcbar">'
-    + '<span class="llm-sh-t">Set up models</span>'
-    + '<span class="tk-seg llm-seg" role="tablist" aria-label="Set up models">'
-    + LLM_BAR_MODES.map(([m, label]) => '<button class="llmmode' + (m === lit ? ' on' : '') + '" role="tab" aria-selected="' + (m === lit) + '" data-act="llm:mode:' + m + '">'
-      + esc(label) + '</button>').join('')
-    + '</span></div>';
 }
 /* The pane's message as it stands now. A Fusion workers notice
    (fzWorkersMsg) that outlived Fusion — Local models or Cloud picked since —
@@ -27567,57 +27724,63 @@ function llmProviderMark(p, size) {
 function llmModelName(m) {
   return m && m.name ? m.name.replace(/\s+(?:QAT\s+)?GGUF$/i, '') : modelWord(m ? m.id : '');
 }
-/* Where chats run (Calm S5; Д30 made it the pane's first and main choice).
-   The three run modes stay the one write path they were — act 'runmode:*'
-   → the composer's own switch — drawn as three cards, each with a line on
-   what it means, and the answer under them in plain words: which model, on
-   which provider, whether it is ready, and the local server's Start / Stop
-   beside that (Д35). The resolved `/runmode status` line only when Fusion is
-   stored or in effect (it is the only case where the stored and the
-   effective mode can disagree); the worker count only under Fusion. The
-   pane's refresh, and its busy readout while something is on its way,
-   head the section: "ready" is not news. */
+/* Where the agent runs (Nadya, 13.11; Calm S5 and Д30 before it). Three
+   cards, Local models · Cloud · Fusion, and they are the pane's one switch:
+   a click shows that card's setup under them and, when the mode is ready,
+   moves chats to it through the composer's own switch (act 'runmode:*').
+   The card in effect wears the brand ring (`.on`) and says what runs on it
+   ("Running: Qwen3 8B", "Running on Ollama"); the card whose setup is shown
+   is `.is-open`. A mode that is not ready says "Needs setup", and its click
+   opens that setup with what it needs (llm:needs:*). The pane's refresh,
+   and its busy readout while something is on its way, head the section. */
 function llmRunModeHTML(status, tone) {
-  /* The EFFECTIVE mode, resolved as the agent resolves it (rmResolve): a
-     stored `fusion` whose orchestrator is no longer the active provider is not
-     Fusion, and it must not be drawn as the active choice. */
-  const rm = rmNow();
-  const mode = rm.effective;
+  const active = llmCardActive();
+  const open = llmView();
   const needs = llmRouteNeeds();
-  // A Custom server is the local route too (rmResolve), but nothing runs on this machine there: the card says where it does.
-  const custom = llmLocalModels().mode === 'external';
   const MODES = [
-    ['local', 'Local models', custom ? 'On your custom server' : 'Runs on ' + THIS_MACHINE, 'laptop'],
+    ['local', 'Local models', 'Runs on ' + THIS_MACHINE, 'laptop'],
     ['cloud', 'Cloud', 'Runs on a provider you add', 'cloud'],
     ['fusion', 'Fusion', 'A cloud model plans, local workers do the work', 'fusion'],
   ];
-  const fusionShown = mode === 'fusion' || rm.stored === 'fusion';
   return '<section class="llm-section llm-runmode">'
-    + '<div class="tk-sh llm-sh llm-rm-head"><span class="llm-sh-t">Where chats run now</span><span class="grow"></span>'
+    + '<div class="tk-sh llm-sh llm-rm-head"><span class="llm-sh-t">Where the agent runs now</span><span class="grow"></span>'
       + (tone === 'busy' ? '<span class="llm-status is-busy"><span class="tk-spin"></span><span>' + esc(status) + '</span></span>' : '')
       + '<button class="iconbtn sm" data-act="llm:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
-    + '<div class="llm-rm-grid" role="group" aria-label="Where chats run now">'
+    + '<div class="llm-rm-grid" role="group" aria-label="Where the agent runs now">'
     + MODES.map(([id, label, what, icon]) => {
-        const on = id === mode;
-        /* Д31: a choice that cannot be made yet says what it needs and opens
-           that here (llm:needs:*), rather than trying a switch whose error
-           lands in the chat behind Settings, or that moves the route onto
-           nothing (Local with no model on disk). */
+        const on = id === active;
+        // Д31: a choice that cannot be made yet opens what it needs here, rather than trying a switch whose error lands in the chat behind Settings.
         const need = on ? null : needs[id];
-        return '<button class="llm-rm' + (on ? ' on' : '') + (need ? ' blocked' : '') + '" data-act="' + (need ? 'llm:needs:' + id : 'runmode:' + id) + '"'
-          + ' aria-pressed="' + on + '" title="' + esc(need ? need.title : what) + '">'
+        const line = on ? llmCardRunning(id) : need ? 'Needs setup' : what;
+        return '<button class="llm-rm' + (on ? ' on' : '') + (id === open ? ' is-open' : '') + (need ? ' blocked' : '') + '"'
+          + ' data-llm-card="' + id + '" data-act="' + (need ? 'llm:needs:' + id : 'runmode:' + id) + '"'
+          + ' aria-pressed="' + on + '" title="' + esc(need ? need.title : on ? label + ': ' + line : what) + '">'
           + '<span class="llm-rm-ico">' + ic(icon) + '</span>'
           + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span>'
-          // ATO-504: the need line is the card's action, so it reads as one (an arrow, underlined on hover), not as a dead warning.
-          + (need ? '<span class="llm-rm-d llm-rm-need">' + esc(need.line) + ic('arrowR') + '</span>' : '<span class="llm-rm-d">' + esc(what) + '</span>')
+          + '<span class="llm-rm-d">' + (on ? '<span class="tk-dot tk-dot--green" aria-hidden="true"></span>' : '') + esc(line) + '</span>'
           + '</span></button>';
       }).join('')
     + '</div>'
-    + llmNowHTML() + engfCardHTML() + cpufbCardHTML() + tpLlmFaultHTML()
-    + (fusionShown ? '<p class="llm-rm-status">' + esc(rmSettingsLine(rm)) + '</p>' : '')
-    // The worker count is Fusion's alone: under Local or Cloud nothing fans out, so it is not drawn there.
-    + (mode === 'fusion' ? llmWorkersHTML(rm) + fzrSettingsHTML(rm) : '')   // ATO-606: the workers' reasoning level (fusion-reasoning.js)
+    // The local engine's own trouble is news in every view.
+    + engfCardHTML() + cpufbCardHTML() + tpLlmFaultHTML()
     + '</section>';
+}
+/** The card in effect's line: what answers on it, in the words people see elsewhere. */
+function llmCardRunning(id) {
+  const rm = rmNow();
+  if (id === 'fusion') {
+    const orch = rm.orchestratorProviderId;
+    return orch ? 'Running: ' + providerWord(orch) + ' plans' : 'Running';
+  }
+  const p = llmProvider(llmActiveTextId());
+  if (p && p.kind !== 'llama-server') {
+    const model = p.defaultChatModel || p.model || '';
+    return id === 'local' || !model ? 'Running on ' + providerWord(p.id) : 'Running: ' + modelWord(model);
+  }
+  if (llmLocalModels().mode === 'external') return 'Running on your own server';
+  const served = llmServedChatIds();
+  const model = (served && served[0]) || (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId || '';
+  return model ? 'Running: ' + modelWord(model) : 'Runs on ' + THIS_MACHINE;
 }
 /**
  * Д31 (Danya, 01.10): Cloud with no cloud provider ran the switch anyway,
@@ -27634,42 +27797,30 @@ function llmRouteNeeds() {
   const cloud = llmTabProviders('cloud');   // an app or your own server is not a cloud provider (ATO-1418)
   const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
   const out = {local:null, cloud:null, fusion:null};
-  if (!cloud.length) out.cloud = {line:'Add a cloud provider first', title:'Cloud needs a cloud provider. Click to add one.'};
-  else if (BSW.readyLoaded && !ready) out.cloud = {line:'Add a key for a cloud provider', title:'None of the cloud providers has a key it can use. Click to add one.'};
+  if (!cloud.length) out.cloud = {line:'Add a cloud provider first', title:'Cloud needs a cloud provider. Click to add one.', say:'Add a cloud provider and chats move to it.'};
+  else if (BSW.readyLoaded && !ready) out.cloud = {line:'Add a key for a cloud provider', title:'None of the cloud providers has a key it can use. Click to add one.', say:'None of your cloud providers has a key it can use. Add one and chats move to it.'};
   const catalogue = LLMP.local || (BSW.localLoaded ? SEL.local : null);
   if (llmLocalModels().mode !== 'external' && catalogue && !catalogue.some((m) => m.downloaded)) {
-    out.local = {line:'Download a model first', title:'Local models needs a model on ' + THIS_MACHINE + '. Click to pick one to download.'};
+    out.local = {line:'Download a model first', title:'Local models needs a model on ' + THIS_MACHINE + '. Click to pick one to download.',
+      say:'Download a model, or add an app you already run, and chats move to it.'};
   }
   if (BSW.readyLoaded && fzBlocker()) {
     out.fusion = !ready
-      ? {line:'Needs a cloud provider to plan', title:'Fusion needs a cloud provider, with its key, to plan the work. Click to add one.'}
-      : {line:'Needs a local model for the work', title:'Fusion needs a local model, or a second provider, to do the work. Click to pick a local model.'};
+      ? {line:'Needs a cloud provider to plan', title:'Fusion needs a cloud provider, with its key, to plan the work. Click to add one.', say:'Fusion needs a cloud provider to plan the work.', go:'cloud'}
+      : {line:'Needs a local model for the work', title:'Fusion needs a local model, or a second provider, to do the work. Click to pick a local model.', say:'Fusion needs a local model to do the work.', go:'local'};
   }
   return out;
 }
-/** What a blocked choice opens (llm:needs:local | llm:needs:cloud | llm:needs:fusion). */
+/**
+ * What a card that is not ready opens (llm:needs:local | llm:needs:cloud |
+ * llm:needs:fusion): its own setup, with the one thing it needs said at the
+ * top of it, and no switch tried. The mode is switched to by itself once
+ * that is done (llmPendingCheck).
+ */
 function llmRouteNeedsOpen(id) {
-  const cloud = llmTabProviders('cloud');
-  const ready = cloud.some((p) => BSW.readyIds.includes(p.id));
-  if (id === 'local') {
-    LLMP.msg = {text:'Local models needs a model on ' + THIS_MACHINE + '. Download one below, then choose Local models again.'};
-    llmSetMode('local');
-    return;
-  }
-  if (id === 'cloud' || (id === 'fusion' && !ready)) {
-    if (id === 'fusion') LLMP.msg = {text:'Fusion needs a cloud provider to plan. Add one, then choose Fusion again.'};
-    llmSetMode('cloud');
-    // A provider without a key it can use opens on that key; none at all opens the list to add one from.
-    const open = cloud.length ? (cloud.find((p) => !BSW.readyIds.includes(p.id)) || cloud[0]) : null;
-    llmOpenWizard(open);
-    // ATO-725: opened straight on a provider, the kind list's pick (which reports the start) never runs.
-    if (open) ANX.providerStarted(open);
-    return;
-  }
-  if (id === 'fusion') {
-    LLMP.msg = {text:'Fusion needs a local model for the work. Download one below, then choose Fusion again.'};
-    llmSetMode('local');
-  }
+  if (!['local', 'cloud', 'fusion'].includes(id)) return;
+  LLMP.pendingRoute = id;
+  llmShowCard(id);
 }
 /** Whether the managed model server is up: its pid file says so (`models status`), or its port answers — a server the route no longer counts (a Custom server picked since) included. */
 function llmServerUp() {
@@ -27726,7 +27877,8 @@ function llmNowHTML() {
       ? button('llm:daemon', up ? 'stop' : 'play', phase === 'stopping' ? 'Stopping…' : phase === 'starting' ? 'Starting…' : up ? 'Stop' : 'Start',
           up ? 'Stop the local model server' : 'Start the local model server')
       : '';
-  return '<p class="llm-now">' + (model ? '<b>' + esc(local ? modelWord(model) : model) + '</b> on ' : 'Chats go to ') + esc(where)
+  // The line sits in the setup now (13.11); what chats run on is the card's own line, so no "Chats go to" here.
+  return '<p class="llm-now">' + (model ? '<b>' + esc(local ? modelWord(model) : model) + '</b> on ' + esc(where) : esc(where.charAt(0).toUpperCase() + where.slice(1)))
     + (workers ? esc(customWorkers ? ', local workers on a custom server' : ', local workers on ' + (serverModel ? modelWord(serverModel) : THIS_MACHINE)) : '')
     + (stray ? esc(' · the local model server' + (runs ? ' (' + modelWord(runs) + ')' : '') + ' is still up') : '')
     + (word ? '<span class="llm-nowst"><span class="tk-dot ' + dot + '"></span>' + esc(word) + '</span>' : '')
@@ -28069,37 +28221,139 @@ function llmRowHTML(row, index, cursor) {
   }
   return open + '<span class="body"><span class="t">' + esc(row.text) + '</span></span>' + effect + '</button>';
 }
+/* One section: its header (the label left, its one action right), an
+   optional line under it, then the list or, with nothing in it, the empty
+   block. `scope` names the list a click on its rows belongs to (llmScope). */
 function llmSectionHTML(title, rows, offset, cursor, empty, emphasise, extra) {
   const x = extra || {};
-  return '<section class="llm-section">'
+  return '<section class="llm-section' + (x.cls ? ' ' + x.cls : '') + '"' + (x.scope ? ' data-llm-scope="' + x.scope + '"' : '') + '>'
     + '<div class="tk-sh llm-sh"><span class="llm-sh-t">' + esc(title) + '</span><span class="grow"></span>' + (x.actions || '') + '</div>'
     + (x.note || '')
     + (rows.length ? '<div class="tk-list llm-list">' + rows.map((r, i) => llmRowHTML(r, offset + i, cursor)).join('') + '</div>'
+      : x.emptyHTML !== undefined ? x.emptyHTML
       : '<div class="llm-empty' + (emphasise ? ' is-strong' : '') + '">' + esc(empty || 'Nothing here yet.') + (x.emptyActions || '') + '</div>')
     + '</section>';
 }
+/* What a card that is not ready needs, said once at the top of its setup. */
+function llmNeedNoteHTML(id) {
+  // Only for the card that was clicked: its mode is switched to once this is done (llmPendingCheck), which is what the line promises.
+  const need = LLMP.pendingRoute === id ? llmRouteNeeds()[id] : null;
+  return need && need.say ? '<div class="tk-notice llm-msg llm-need">' + ic('info') + '<span class="grow">' + esc(need.say) + '</span></div>' : '';
+}
+/* The Local card's setup: the models on this computer, then the apps you
+   already run (the former Custom tab, ATO-1418), one list each. The cursor
+   row is lit only in the list the pane's keys act on. */
 function llmLocalHTML() {
   const rows = llmLocalRows();
-  const cursor = LLMP.cursor.local;
+  const cursor = LLMP.mode === 'local' ? LLMP.cursor.local : -1;
   const text = rows.filter((r) => r.kind === 'localTextModel');
   const emb = rows.filter((r) => r.kind === 'localEmbeddingModel');
+  const route = llmCardActive();
   /* Д32: no sentence over the list about its order and this machine's
-     memory (the order is plain to see: on disk first, then the best fit);
-     each row's badge says how it fits, and its tooltip the figures.
-     Д34: the Ollama signpost under the lists read as an ad. Ollama is a
-     provider, never a download source here, so it is one quiet button
-     that opens the provider setup with Ollama and its address filled in —
-     gone once Ollama is added. */
-  return llmSectionHTML('Local models', text, 0, cursor, null, false, {
-      actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'
-        + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')
-        + llmAppButtonsHTML(['lmstudio', 'atomic-chat'])})
+     memory; each row's badge says how it fits. Д34 / 13.11: the apps
+     (Ollama and the rest) are added in one place only, the section below. */
+  return llmNeedNoteHTML('local')
+    // The local model server's state and its Start / Stop (Д35), wherever that server matters.
+    + (route === 'local' || llmServerUp() ? llmNowHTML() : '')
+    + llmFoundHTML()
+    + llmSectionHTML('Local models', text, 0, cursor, null, false, {scope: 'local',
+      actions: '<button class="btn btn-s sm" data-act="llm:hf">' + logoHTML('huggingface', 'xs') + 'Add from Hugging Face</button>'})
     // ATO-1091: "Find the best model for my tasks" (fit-test.js), '' while the agent has no fit-test.
     + (typeof fitModelsPaneHTML === 'function' ? fitModelsPaneHTML() : '')
-    + llmTuneHTML()
     + lcsContextHTML() // ATO-336: local-context-slots.js
-    + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false,
-      {note: '<p class="llm-note">Used to search the agent\u2019s memory by meaning. Without one, it searches by keyword.</p>'});
+    + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false, {scope: 'local',
+      note: '<p class="llm-note">Used to search the agent’s memory by meaning. Without one, it searches by keyword.</p>'})
+    + llmAppsHTML();
+}
+/* Models already on this computer that the agent does not list yet (LM
+   Studio's "My Models" idea): read once per visit, through main's
+   discoverLocalModels when this build has it, and hidden when it has none
+   or found nothing. Use adds the file (useLocalModel), then the lists are
+   read again. */
+const LLM_FOUND_FROM = {atomic:'from Atomic Chat', lmstudio:'from LM Studio', huggingface:'from Hugging Face cache', jan:'from Jan', llamacpp:'from llama.cpp', other:'found on disk'};
+function llmFoundLoad() {
+  if (!BR || typeof BR.discoverLocalModels !== 'function' || LLMP.foundBusy) return;
+  LLMP.foundBusy = true;
+  Promise.resolve().then(() => BR.discoverLocalModels())
+    .then((r) => { LLMP.found = r && Array.isArray(r.models) ? r.models : []; }, () => { LLMP.found = []; })
+    .finally(() => { LLMP.foundBusy = false; llmRepaint(); });
+}
+function llmFoundRows() { return (LLMP.found || []).filter((m) => m && m.path && !m.registered); }
+function llmFoundHTML() {
+  const rows = llmFoundRows();
+  if (!rows.length || !BR || typeof BR.useLocalModel !== 'function') return '';
+  const fa = LLMP.foundAct;
+  const gb = (n) => { const v = Number(n) || 0; return v ? (v >= 1e9 ? (v / 1e9).toFixed(1) + ' GB' : Math.round(v / 1e6) + ' MB') : ''; };
+  return '<section class="llm-section llm-found">'
+    + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Found on ' + esc(THIS_MACHINE) + '</span><span class="grow"></span></div>'
+    + '<p class="llm-note llm-sec-note">Models already downloaded by other apps. Use one without downloading it again.</p>'
+    + '<div class="tk-list llm-list">' + rows.map((m, i) => {
+        const busy = !!(fa && fa.path === m.path && fa.busy);
+        const err = fa && fa.path === m.path && fa.error ? fa.error : '';
+        const facts = [gb(m.sizeBytes), m.quant || '', LLM_FOUND_FROM[m.source] || LLM_FOUND_FROM.other].filter(Boolean).join(' \u00b7 ');
+        return '<div class="tuirow tk-li llm-row llm-found-row" title="' + esc(m.path) + '">' + modelMark(m.name || '', '')
+          + '<span class="body"><span class="t"><span class="llm-name">' + esc(m.name || m.path.split(/[\\/]/).pop()) + '</span></span>'
+          + '<span class="d">' + esc(facts) + '</span>'
+          + (err ? '<span class="llm-best-why llm-disk-why">' + esc(err) + '</span>' : '') + '</span>'
+          + '<button class="btn btn-s sm" data-act="llm:found:' + i + '"' + (busy || (fa && fa.busy) ? ' disabled' : '') + '>'
+          + (busy ? '<span class="tk-spin"></span>Adding\u2026' : 'Use') + '</button></div>';
+      }).join('') + '</div></section>';
+}
+async function llmFoundUse(i) {
+  const m = llmFoundRows()[i];
+  if (!m || !BR || typeof BR.useLocalModel !== 'function' || (LLMP.foundAct && LLMP.foundAct.busy)) return;
+  LLMP.foundAct = {path:m.path, busy:true, error:null}; llmRepaint();
+  let res = null;
+  try { res = await BR.useLocalModel(m.path); } catch (err) { res = {ok:false, error:String((err && err.message) || err)}; }
+  LLMP.foundAct = res && res.ok ? null : {path:m.path, busy:false, error:(res && res.error) || 'Could not add this model.'};
+  llmRepaint();
+  if (res && res.ok) { llmRefresh(); llmFoundLoad(); }
+}
+/* The apps you already run (ATO-1418, folded into Local on 13.11): Atomic
+   Chat, Ollama, LM Studio and your own llama.cpp server. One place adds
+   them: with none added, a row of Add buttons; with some, the list and a
+   small Add app on the header. Never both. */
+function llmAppsHTML() {
+  const rows = llmExternalRows();
+  const cursor = LLMP.mode === 'external' ? LLMP.cursor.external : -1;
+  const apps = rows.filter((r) => r.kind === 'cloudProvider');
+  const emb = rows.filter((r) => r.kind === 'cloudEmbeddingModel');
+  const urlRow = rows.find((r) => r.kind === 'externalUrl');
+  const urlOffset = rows.length - 1;
+  const lm = llmLocalModels();
+  // Your own server is listed once it is set up (in use, or an address saved); until then it is one of the Add buttons.
+  const ownShown = lm.mode === 'external' || !!lm.url;
+  const section = llmCloudSection('external');
+  const sp = section.provider;
+  const embOffset = apps.length + section.filtered.length;
+  const listed = ownShown ? apps.concat([urlRow]) : apps;
+  const listHTML = '<div class="tk-list llm-list">' + apps.map((r, i) => llmRowHTML(r, i, cursor)).join('')
+    + (ownShown ? llmRowHTML(urlRow, urlOffset, cursor) : '') + '</div>';
+  const status = LLMP.mode === 'external' ? llmStatusLine() : '';
+  return '<section class="llm-section llm-apps-sec" data-llm-scope="external">'
+    + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Use an app you already run</span><span class="grow"></span>'
+      + (listed.length ? '<button class="btn btn-s sm" data-act="llm:addApp">' + ic('plus') + 'Add app</button>' : '') + '</div>'
+    + (listed.length ? listHTML
+      : '<p class="llm-note llm-sec-note">Already run models in another app? Connect it here. Nothing to download.</p>'
+        + '<div class="llm-tiles">' + llmAppTilesHTML() + '</div>')
+    + (status ? llmStatusNoteHTML(status, llmStatusTone(status)) : '')
+    + '</section>'
+    + (sp ? '<div data-llm-scope="external">' + llmProviderModelsHTML('external', sp)
+      + (emb.length ? llmSectionHTML('Embedding models on ' + providerWord(sp.id), emb, embOffset, cursor) : '') + '</div>' : '');
+}
+/* The Add buttons for the apps not added yet, and your own server. Ollama
+   keeps its own llm:ollama verb (Д34) and its sentence as the tooltip. */
+function llmAppTilesHTML() {
+  const tile = (act, mark, label, title) => '<button class="btn btn-s llm-tile" data-act="' + act + '" title="' + esc(title) + '">' + mark + '<span>' + esc(label) + '</span></button>';
+  return ['atomic-chat', 'ollama', 'lmstudio'].filter((id) => !llmProvider(id)).map((id) => {
+      const k = KIND_ROWS.find((r) => r.id === id);
+      const word = LLM_APP_WORDS[id];
+      return id === 'ollama'
+        ? tile('llm:ollama', logoHTML('ollama', 'xs'), 'Add Ollama', OLLAMA_SIGNPOST)
+        : tile('llm:app:' + id, logoHTML(LLM_APP_LOGOS[id], 'xs'), 'Add ' + word,
+          word + ' runs its own models on this computer: this adds it at ' + (k ? k.baseUrl : '') + '. Nothing downloads.');
+    }).join('')
+    + tile('llm:external:edit', markFallbackHTML('server', 'xs'), 'Add your own server', 'The address of a llama.cpp server you run yourself.');
 }
 function llmCloudHTML() {
   const rows = llmCloudRows('cloud');
@@ -28109,20 +28363,44 @@ function llmCloudHTML() {
   const section = llmCloudSection('cloud');
   const embOffset = providers.length + section.filtered.length;
   const sp = section.provider;
-  /* ATO-504: an empty list offers the popular presets the wizard knows, each
-     opening Add provider on that provider's key screen. */
-  const presets = ['openrouter', 'gemini', 'aimlapi'].filter((id) => KIND_ROWS.some((k) => k.id === id));
-  const emptyActions = '<span class="llm-empty-acts">' + presets.map((id) => '<button class="btn btn-s sm" data-act="llm:preset:' + id + '">'
-    + logoHTML(id, 'xs') + esc(providerWord(id)) + '</button>').join('') + '</span>';
-  return llmSectionHTML('Cloud providers', providers, 0, cursor, 'No cloud providers yet.', true,
-      {actions: '<button class="btn btn-p sm" data-act="llm:add">' + ic('plus') + 'Add provider</button>', emptyActions})
-    + (sp ? '<section class="llm-section">'
-      + '<div class="tk-sh llm-sh"><span class="llm-sh-t">Models on ' + esc(providerWord(sp.id)) + '</span>'
-        + '<span class="grow"></span>'
-        + '<span class="llm-filter"><label class="tk-inpwrap llm-filterbox">' + ic('search')
-          + '<input id="llm-filter" value="' + esc(LLMP.filter) + '" autocomplete="off" spellcheck="false" placeholder="Filter models" aria-label="Filter models" title="Filter (f)"></label></span></div>'
-      + '<div id="llm-cloud-models">' + llmCloudModelListHTML('cloud') + '</div></section>'
+  /* ATO-504 / 13.11: an empty list is one sentence and the popular
+     providers as tiles, each opening the setup on that provider; More
+     providers opens the whole list. No Add provider on the header then. */
+  const presets = ['openrouter', 'gemini', 'aimlapi', 'claude-cli'].filter((id) => KIND_ROWS.some((k) => k.id === id));
+  const emptyHTML = '<p class="llm-note llm-sec-note">Run chats on models in the cloud with a key, or on your Claude or ChatGPT plan.</p>'
+    + '<div class="llm-tiles">' + presets.map((id) => '<button class="btn btn-s llm-tile" data-act="llm:preset:' + id + '" title="' + esc(wizKindHint(id)) + '">'
+      + wizKindMark(KIND_ROWS.find((k) => k.id === id), 'xs') + '<span>' + esc(wizKindName(KIND_ROWS.find((k) => k.id === id))) + '</span></button>').join('')
+    + '<button class="btn btn-s llm-tile llm-tile--more" data-act="llm:add">' + ic('plus') + '<span>More providers…</span></button></div>';
+  return llmNeedNoteHTML('cloud')
+    + llmSectionHTML('Cloud providers', providers, 0, cursor, null, true,
+      {actions: providers.length ? '<button class="btn btn-s sm" data-act="llm:add">' + ic('plus') + 'Add provider</button>' : '', emptyHTML})
+    + (sp ? llmProviderModelsHTML('cloud', sp)
       + (emb.length ? llmSectionHTML('Embedding models', emb, embOffset, cursor) : '') : '');
+}
+/* The Fusion card's setup: what it still needs (and the one way there), or
+   its settings: the resolved status line, the worker count and the
+   workers' reasoning level (ATO-606, fusion-reasoning.js). */
+function llmFusionHTML() {
+  const rm = rmNow();
+  const on = rm.effective === 'fusion';
+  const need = on ? null : llmRouteNeeds().fusion;
+  const head = '<div class="tk-sh llm-sh"><span class="llm-sh-t">Fusion</span><span class="grow"></span></div>';
+  if (need) {
+    return '<section class="llm-section llm-fusion">' + head
+      + '<div class="llm-empty is-strong llm-fz-need"><span>' + esc(need.say) + '</span>'
+      + '<span class="llm-empty-acts"><button class="btn btn-p sm" data-act="llm:show:' + need.go + '">'
+        + esc(need.go === 'cloud' ? 'Set up Cloud' : 'Choose a local model') + '</button></span></div>'
+      + '</section>';
+  }
+  return '<section class="llm-section llm-fusion">' + head
+    + '<p class="llm-note llm-sec-note">A cloud model plans the work and local workers do it.</p>'
+    + (on ? '' : '<div class="llm-empty-acts"><button class="btn btn-p sm" data-act="runmode:fusion">Use Fusion</button></div>')
+    + (on || rm.stored === 'fusion' ? '<p class="llm-rm-status">' + esc(rmSettingsLine(rm)) + '</p>' : '')
+    // Where the workers run and their server's Start / Stop (Д35).
+    + (on ? llmNowHTML() : '')
+    // The worker count is Fusion's alone: under Local or Cloud nothing fans out.
+    + (on ? llmWorkersHTML(rm) + fzrSettingsHTML(rm) : '')
+    + '</section>';
 }
 /* "Models on <provider>" with its filter, for the Cloud or the Custom tab. */
 function llmProviderModelsHTML(tab, sp) {
@@ -28154,32 +28432,6 @@ function llmCloudModelListHTML(tab) {
     + (section.status === 'error' ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">Couldn’t fetch the model list (' + esc(section.error || 'unknown error') + '). Showing the current model only.</span></div>' : '')
     + (visible.length ? '<div class="tk-list llm-list">' + visible.map((r, i) => llmRowHTML(r, section.sectionStart + start + i, cursor)).join('') + '</div>' : '')
     + (counter ? '<div class="llm-counter">' + esc(counter) + '</div>' : '');
-}
-function llmExternalHTML() {
-  const rows = llmExternalRows();
-  const status = llmStatusLine();
-  const cursor = LLMP.cursor.external;
-  /* ATO-1418: the apps first, as in the wizard's Custom list. An app not
-     added yet is one button that opens the provider setup with it filled in. */
-  const apps = rows.filter((r) => r.kind === 'cloudProvider');
-  const emb = rows.filter((r) => r.kind === 'cloudEmbeddingModel');
-  const url = rows.filter((r) => r.kind === 'externalUrl');
-  const section = llmCloudSection('external');
-  const sp = section.provider;
-  const embOffset = apps.length + section.filtered.length;
-  const urlOffset = rows.length - url.length;
-  /* ATO-1401: one click adds the app at its usual address. */
-  const addApps = llmAppButtonsHTML(['atomic-chat', 'ollama', 'lmstudio']);
-  return llmSectionHTML('Apps you already run', apps, 0, cursor, 'No apps added yet.', true,
-      {note: '<p class="llm-ram">Atomic Chat, Ollama, LM Studio or any server you run yourself. Nothing to download.</p>',
-        actions: addApps, emptyActions: addApps ? '<span class="llm-empty-acts">' + addApps + '</span>' : ''})
-    + (sp ? llmProviderModelsHTML('external', sp)
-      + (emb.length ? llmSectionHTML('Embedding models', emb, embOffset, cursor) : '') : '')
-    + llmSectionHTML('Your own llama.cpp server', url, urlOffset, cursor, null, false,
-      {note: '<p class="llm-ram">Point chats at a llama.cpp server you run yourself.</p>'})
-    + llmStatusNoteHTML(status, llmStatusTone(status))
-    + '<p class="llm-back">To go back to a local model, <button class="llm-link" data-act="llm:mode:local">pick one under Local models</button>.</p>'
-    + llmTuneHTML();
 }
 /* Gaps 11: the three knobs agent v0.6.3 reads on every local completion
    (config v66/v68) — the managed daemon and an External llama.cpp alike:
@@ -28413,17 +28665,6 @@ function llmSteerPresetId(url) {
 /* ATO-1401: the model apps on this computer, by preset id, as people call them. */
 const LLM_APP_WORDS = {ollama:'Ollama', lmstudio:'LM Studio', 'atomic-chat':'Atomic Chat'};
 const LLM_APP_LOGOS = {ollama:'ollama', lmstudio:'lmstudio', 'atomic-chat':'atomicchat'};
-/* One "Add <app>" button per app not added yet (llm:app:<id>). Ollama keeps
-   its own llm:ollama verb where it already had one. */
-function llmAppButtonsHTML(ids) {
-  return ids.filter((id) => !llmProvider(id)).map((id) => {
-    const k = KIND_ROWS.find((r) => r.id === id);
-    const word = LLM_APP_WORDS[id];
-    const title = word + ' runs its own models on this computer: this adds it at ' + (k ? k.baseUrl : '') + '. Nothing downloads.';
-    return '<button class="btn btn-s sm" data-act="llm:app:' + id + '" title="' + esc(title) + '">'
-      + logoHTML(LLM_APP_LOGOS[id], 'xs') + esc('Add ' + word) + '</button>';
-  }).join('');
-}
 /* ATO-1401: the provider wizard for one app, at `url` when given, and its
    first step taken at once: a local app needs no key, so the person lands on
    its model list (one click to choose) instead of a key form. */
@@ -28431,7 +28672,7 @@ function llmAddApp(id, url) {
   const preset = KIND_ROWS.find((k) => k.id === id);
   if (!preset) return;
   llmSetMode('external');   // ATO-1418: an app on this computer lives under Custom
-  llmOpenWizard({id:preset.id, kind:preset.kind, baseUrl:url || preset.baseUrl}, url || preset.baseUrl);
+  llmOpenWizard({id:preset.id, kind:preset.kind, baseUrl:url || preset.baseUrl}, url || preset.baseUrl, 'local');
   ANX.providerStarted(preset);
   if (preset.local && WIZ.phase === 'configure') wizNext();
 }
@@ -29315,8 +29556,10 @@ async function llmPrimary(row) {
    `n` opens it at pick_kind; `c` / a missing-key row opens it configured
    for that provider (the wizard's kind row by id, then by kind, else the
    custom row). */
-function llmOpenWizard(provider, baseUrl) {
+function llmOpenWizard(provider, baseUrl, scope) {
   SEL.open = true; SEL.addOpen = false; SEL.err = null; WIZ.alone = false;
+  // Which providers the list offers (wizKindGroups): the cloud ones from Cloud, the apps from Local, all of them otherwise.
+  WIZ.scope = scope || null; WIZ.kindQ = '';
   // Backlog 32: opened for a provider whose saved key the agent will not send — the screen says why.
   WIZ.error = provider && savedKeyInvalid(provider) ? savedKeyLine(provider.id) : null; WIZ.busy = false; WIZ.apiKey = '';
   if (provider) {
@@ -29408,6 +29651,8 @@ function llmSyncModeToRoute() {
   const mode = route === 'cloud' && p ? llmProviderTab(p) : route;
   LLMP.syncModeToRoute = false; LLMP.routeSyncSpent = true;
   if (LLMP.mode !== mode) llmSetMode(mode);
+  // Under Fusion the pane opens on the Fusion card's setup (13.11).
+  if (llmCardActive() === 'fusion' && !LLMP.fusionView) { LLMP.fusionView = true; llmRepaint(); }
 }
 /**
  * SELECTOR LANE — the pane the CURRENT chat route lives in, or null while no
@@ -29445,13 +29690,24 @@ function llmSetMode(mode) {
   if (!LLM_PANEL_MODES.includes(mode)) return;
   // An explicit pane choice retires the one-shot route sync, for good.
   LLMP.syncModeToRoute = false; LLMP.routeSyncSpent = true;
-  LLMP.mode = mode; LLMP.filterFocused = false; LLMP.fallbackPicker = null;
+  LLMP.mode = mode; LLMP.filterFocused = false; LLMP.fallbackPicker = null; LLMP.fusionView = false;
   llmRepaint();
-  if (mode === 'cloud' || mode === 'external') llmEnsureModels();
+  // The Local view lists the apps you run too, with their models (llmProvTabNow).
+  if (mode !== 'fallback') llmEnsureModels();
 }
 function llmAct(what) {
   const [verb, ...rest] = what.split(':');
   const arg = rest.join(':');
+  // 13.11: the Fusion card's setup has no list mode of its own.
+  if (verb === 'mode' && arg === 'fusion') { llmShowCard('fusion'); return; }
+  // A setup's own "go there" (Fusion's Set up Cloud): that card's setup, nothing switched, a pending switch kept.
+  if (verb === 'show') { llmShowCard(arg); return; }
+  if (verb === 'card') { llmCardClick(arg); return; }
+  if (verb === 'found') { llmFoundUse(+arg); return; }
+  // The apps section's Add app: the provider list, on the apps you run (wizKindGroups 'local').
+  if (verb === 'addApp') { llmSetMode('external'); llmOpenWizard(null, undefined, 'local'); return; }
+  // The provider list's "Your own llama.cpp server" row: the address prompt here, the list closed.
+  if (verb === 'ownServer') { closeSelector(); llmAct('external:edit'); return; }
   if (verb === 'mode') {
     if (arg === 'next' || arg === 'prev') { const d = arg === 'next' ? 1 : -1; llmSetMode(LLM_PANEL_MODES[(LLM_PANEL_MODES.indexOf(LLMP.mode) + d + 4) % 4]); }
     else llmSetMode(arg);
@@ -29462,12 +29718,12 @@ function llmAct(what) {
   if (verb === 'enter') { if (LLMP.mode === 'fallback') { llmFallbackEnter(); return; } llmPrimary(llmRowAt()); return; }
   if (verb === 'refresh') { llmRefresh(); return; }
   if (verb === 'modelsRetry') { llmRetryModels(); return; }
-  if (verb === 'filter') { llmSetMode(LLMP.mode === 'external' && llmCloudSectionProvider('external') ? 'external' : 'cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
+  if (verb === 'filter') { llmSetMode((LLMP.mode === 'external' || LLMP.mode === 'local') && llmCloudSectionProvider('external') ? 'external' : 'cloud'); LLMP.filterFocused = true; llmRepaint(); const n = $('#llm-filter'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
   if (verb === 'pricing') return; // inert: pricing is not in the CLI's model list
-  if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null); return; }
+  if (verb === 'add') { llmSetMode('cloud'); llmOpenWizard(null, undefined, 'cloud'); return; }
   // ATO-504: an empty list's preset button, Add provider opened on that provider.
   // It skips the wizard's kind list, so it reports the setup start that list's pick would have (provider_setup_started).
-  if (verb === 'preset') { const row = KIND_ROWS.find((k) => k.id === arg && !k.custom) || null; llmSetMode(row && row.local ? 'external' : 'cloud'); llmOpenWizard(row); if (row) ANX.providerStarted(row); return; }
+  if (verb === 'preset') { const row = KIND_ROWS.find((k) => k.id === arg && !k.custom) || null; llmSetMode(row && row.local ? 'external' : 'cloud'); llmOpenWizard(row, undefined, row && row.local ? 'local' : 'cloud'); if (row) ANX.providerStarted(row); return; }
   if (verb === 'configure') {
     // ATO-1418: open the active provider on its own tab (an app on Custom), else the first cloud provider on Cloud.
     const active = llmProvider(llmActiveTextId());
@@ -29575,7 +29831,7 @@ function llmAct(what) {
   // Д34: Ollama as a provider, its preset and address filled in.
   // ATO-725: like `preset`, it skips the kind list, so it reports the setup start itself.
   if (verb === 'app') { if (LLM_APP_WORDS[arg]) llmAddApp(arg); return; }
-  if (verb === 'ollama') { llmSetMode('external'); const row = KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}; llmOpenWizard(row); ANX.providerStarted(row); return; }
+  if (verb === 'ollama') { llmSetMode('external'); const row = KIND_ROWS.find((k) => k.id === 'ollama') || {id:'ollama', kind:'openai-compatible', baseUrl:'http://localhost:11434'}; llmOpenWizard(row, undefined, 'local'); ANX.providerStarted(row); return; }
   // A confirm that is working is not let go of mid-way (Cancel, n and Esc wait for it).
   if (verb === 'cancel') { if (LLMP.confirm && LLMP.confirm.submitting) return; LLMP.confirm = null; llmRepaint(); return; }
   if (verb === 'external') {
@@ -29627,6 +29883,7 @@ function llmKey(e, k, inText) {
   // The add-provider wizard / selector popup owns the keys while open (its inputs type; Esc closes it, not the window).
   if (SEL.open || WIZ.phase) { if (k === 'Escape') { e.preventDefault(); act('close'); return true; } return inText ? false : true; }
   if (e.target.id === 'llm-filter') {
+    llmScope('external');   // only the apps' model list has a filter in the Local view
     if (k === 'Escape') { e.preventDefault(); LLMP.filterFocused = false; e.target.blur(); llmRepaint(); return true; }
     if (k === 'Enter') { e.preventDefault(); const row = llmRowAt(); if (row && row.kind === 'cloudChatModel') { LLMP.filterFocused = false; llmPrimary(row); } return true; }
     if (k === 'ArrowDown' || k === 'ArrowUp') {
