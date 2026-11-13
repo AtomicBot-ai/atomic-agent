@@ -44,6 +44,12 @@ export interface TurnLoopState {
    * says after it ended. Cleared with the outage.
    */
   engineWaitVerdicts: EngineWaitVerdicts | null;
+  /**
+   * `outageWaitedMs` when the wait first saw the managed engine's lock held
+   * with no model process behind it, in an unbroken run of such readings
+   * (ATO-1434). `null` once a model process appears or the outage ends.
+   */
+  lockNoProcessSinceWaitedMs: number | null;
   /** Retried a step after an outage and have not yet seen it succeed. */
   awaitingRecovery: boolean;
   /**
@@ -132,6 +138,7 @@ export function createTurnLoopState(): TurnLoopState {
     outageWaitedMs: 0,
     outageAttempts: 0,
     engineWaitVerdicts: null,
+    lockNoProcessSinceWaitedMs: null,
     awaitingRecovery: false,
     oomRestarts: 0,
     truncationRetry: null,

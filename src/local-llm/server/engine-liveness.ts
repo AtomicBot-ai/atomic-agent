@@ -148,3 +148,35 @@ function pidFileBeforeBoot(dataDir: string, bootTimeMs: () => number): boolean {
     return false;
   }
 }
+
+/**
+ * Whether a model process exists right now, by the pid file alone, with
+ * the engine operation lock left out (ATO-1434). While a start or load
+ * holds the lock, `explainManagedEngineLiveness` answers `unknown` without
+ * looking at the pid; the outage wait asks this beside it to tell "a load
+ * is bringing the model up" from "a lock is held and no model exists".
+ *
+ *   - `none`     no pid file, an empty or garbled one, one written before
+ *                the last boot, or a pid that is gone.
+ *   - `running`  the recorded pid answers (another user's process counts).
+ *   - `unknown`  the pid file exists and could not be read.
+ *
+ * Read only, like `explainManagedEngineLiveness`.
+ */
+export type ManagedModelProcess = "none" | "running" | "unknown";
+
+export function readManagedModelProcess(
+  dataDir: string,
+  probes: Pick<ManagedEngineLivenessProbes, "pidLiveness" | "bootTimeMs"> = {},
+): ManagedModelProcess {
+  let raw: string;
+  try {
+    raw = readFileSync(resolvePidFilePath(dataDir), "utf-8").trim();
+  } catch (err) {
+    return (err as NodeJS.ErrnoException | null)?.code === "ENOENT" ? "none" : "unknown";
+  }
+  const pid = Number(raw);
+  if (!Number.isInteger(pid) || pid <= 0) return "none";
+  if (pidFileBeforeBoot(dataDir, probes.bootTimeMs ?? machineBootTimeMs)) return "none";
+  return (probes.pidLiveness ?? classifyPidLiveness)(pid) === "dead" ? "none" : "running";
+}

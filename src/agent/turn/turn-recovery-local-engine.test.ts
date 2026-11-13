@@ -16,7 +16,7 @@ import { classifyFailureCause } from "../../llm/reliability/index.js";
 import { attachFailingLink } from "../../llm/fallback/failed-attempts.js";
 import { createEmptySessionState } from "../../session/session-state.js";
 import type { AgentLoopEvent, LocalEngineState, LocalEngineVerdict } from "../agent-contract.js";
-import { ATOMIC_CHAT_START_GRACE_MS, LOCAL_ENGINE_RESTART_GRACE_MS, recoverTurnStep, type TurnRecoveryContext } from "./turn-recovery.js";
+import { ATOMIC_CHAT_START_GRACE_MS, LOCAL_ENGINE_NO_PROCESS_CEILING_MS, LOCAL_ENGINE_RESTART_GRACE_MS, recoverTurnStep, type TurnRecoveryContext } from "./turn-recovery.js";
 import { createTurnLoopState } from "./turn-state.js";
 
 /**
@@ -426,5 +426,78 @@ describe("turn recovery: the engine verdicts the wait decided on", () => {
     recoverTurnStep(error, context({ providerWaitCfg: { enabled: false, maxWaitMs: 300_000 } }), { onEvent: (e) => events.push(e) }, createTurnLoopState());
     const outage = (events.at(-1) as Extract<AgentLoopEvent, { type: "loop_failed" }>).outage;
     expect(outage?.engineVerdicts).toBeUndefined();
+  });
+});
+
+/**
+ * ATO-1434: the engine lock is held and no model process exists at all.
+ * The turn's clock is `outageWaitedMs`, advanced by each wait as the loop
+ * does after sleeping it.
+ */
+describe("turn recovery: a held engine lock with no model process", () => {
+  const lockedNoProcess: LocalEngineVerdict = { state: "unknown", reason: "lock_held", modelProcess: "none" };
+  const lockedWithProcess: LocalEngineVerdict = { state: "unknown", reason: "lock_held", modelProcess: "running" };
+
+  /** Runs the outage wait to its end; the verdict for each look comes from `at(waitedMs)`. */
+  function runOutage(at: (waitedMs: number) => LocalEngineVerdict, cfg = context()) {
+    const turn = createTurnLoopState();
+    const events: AgentLoopEvent[] = [];
+    const deps = {
+      explainLocalEngineState: (providerId: string | undefined): LocalEngineVerdict =>
+        providerId === "local-llama" ? at(turn.outageWaitedMs) : { state: "unknown", reason: "not_local_link" },
+      onEvent: (e: AgentLoopEvent) => events.push(e),
+    };
+    for (;;) {
+      const decision = recoverTurnStep(refused("local-llama"), cfg, deps, turn);
+      if (decision.kind !== "wait") return { decision, turn, events };
+      turn.outageWaitedMs += decision.nextRetryMs;
+    }
+  }
+
+  it("ends the turn with local_engine_down at the 90 s ceiling, not the 300 s budget", () => {
+    const { decision, turn, events } = runOutage(() => lockedNoProcess);
+    expect(decision.kind).toBe("failure");
+    if (decision.kind !== "failure") return;
+    expect(decision.runError).toBeInstanceOf(LocalEngineDownError);
+    expect(decision.runError.message).toBe(LOCAL_ENGINE_DOWN_MESSAGE);
+    expect((decision.runError as LocalEngineDownError).reasonCode).toBe(LOCAL_ENGINE_DOWN_CODE);
+    expect(turn.outageWaitedMs).toBe(LOCAL_ENGINE_NO_PROCESS_CEILING_MS);
+    expect(LOCAL_ENGINE_NO_PROCESS_CEILING_MS).toBe(90_000);
+    expect(events.at(-1)).toMatchObject({ type: "loop_failed" });
+  });
+
+  it("with a live model process behind the lock the old wait stays: the full budget", () => {
+    const { decision, turn } = runOutage(() => lockedWithProcess);
+    expect(decision.kind).toBe("failure");
+    if (decision.kind === "failure") expect(decision.runError).not.toBeInstanceOf(LocalEngineDownError);
+    expect(turn.outageWaitedMs).toBe(300_000);
+  });
+
+  it("a model process that appears resets the count: the turn keeps waiting past 90 s", () => {
+    // No process for the first 20 s, then the load writes its pid.
+    const { decision, turn } = runOutage((waited) => (waited < 20_000 ? lockedNoProcess : lockedWithProcess));
+    if (decision.kind === "failure") expect(decision.runError).not.toBeInstanceOf(LocalEngineDownError);
+    expect(turn.outageWaitedMs).toBe(300_000);
+  });
+
+  it("a process that appears and goes again starts a fresh 90 s", () => {
+    const { decision, turn } = runOutage((waited) =>
+      waited >= 20_000 && waited < 40_000 ? lockedWithProcess : lockedNoProcess);
+    expect(decision.kind).toBe("failure");
+    if (decision.kind === "failure") expect(decision.runError).toBeInstanceOf(LocalEngineDownError);
+    expect(turn.outageWaitedMs).toBeGreaterThanOrEqual(40_000 + LOCAL_ENGINE_NO_PROCESS_CEILING_MS);
+    expect(turn.outageWaitedMs).toBeLessThan(300_000);
+  });
+
+  it("an unknown reading with no word on the model process keeps the old wait", () => {
+    const { decision, turn } = runOutage(() => ({ state: "unknown", reason: "lock_held" }));
+    if (decision.kind === "failure") expect(decision.runError).not.toBeInstanceOf(LocalEngineDownError);
+    expect(turn.outageWaitedMs).toBe(300_000);
+  });
+
+  it("with waiting disabled the turn ends at once with the same reason", () => {
+    const { decision } = runOutage(() => lockedNoProcess, context({ providerWaitCfg: { enabled: false, maxWaitMs: 300_000 } }));
+    expect(decision.kind).toBe("failure");
+    if (decision.kind === "failure") expect(decision.runError).toBeInstanceOf(LocalEngineDownError);
   });
 });
