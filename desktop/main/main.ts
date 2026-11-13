@@ -44,6 +44,7 @@ import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
+import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
@@ -2923,6 +2924,8 @@ function wireIpc(client: AgentClient): void {
   wireSessionGoalIpc(client);
   // ATO-1136: HTML artifacts in the chat, sandboxed (artifact-frame-ipc.ts).
   wireArtifactIpc();
+  // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".
+  wireMiniChatIpc(client, { mainWindow: () => win, showMainWindow: () => (openWindowAgain(), win) });
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
   wireOvernightIpc({ window: () => win, client });
   // ATO-1424: a code block's command typed (not run) into a new Terminal window (macOS).

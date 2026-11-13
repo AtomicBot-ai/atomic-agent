@@ -1,0 +1,22 @@
+/* ATO-1063: the mini window's chat (mini-chat.html). Tokens are styles.css's,
+   the reply's blocks chat.css's `.prose`; this lays out the small page. */
+body.mini-chat{display:flex;flex-direction:column;height:100%;background:var(--paper);color:var(--ink);overflow:hidden}
+.mc-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);-webkit-app-region:drag}
+.mc-head button{-webkit-app-region:no-drag}
+.mc-title{font-weight:600;font-size:var(--fs-cap);color:var(--ink-2)}
+.mc-log{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.mc-empty{margin:auto;color:var(--ink-3);font-size:var(--fs-cap);text-align:center}
+.mc-row{min-width:0}
+.mc-user{display:flex;justify-content:flex-end}
+.mc-user .prose{max-width:85%;padding:8px 12px;border-radius:12px;background:var(--panel-2)}
+.mc-note{font-size:var(--fs-cap);color:var(--ink-2)}
+.mc-note.bad{color:var(--critical)}
+.mc-wait{flex:none;display:flex;align-items:center;gap:8px;padding:6px 14px;font-size:var(--fs-cap);color:var(--ink-2);border-top:1px solid var(--line-hair)}
+.mc-wait[hidden]{display:none}
+.mc-wait.approval{color:var(--amber-text);font-weight:500}
+.mc-dot{width:7px;height:7px;border-radius:50%;background:currentColor;animation:pulse 1.4s ease-in-out infinite}
+.mc-foot{flex:none;display:flex;align-items:flex-end;gap:8px;padding:10px 12px;border-top:1px solid var(--line)}
+.mc-input{flex:1 1 auto;min-height:36px;max-height:120px;resize:none;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--lift);color:var(--ink);font:inherit;line-height:1.4}
+.mc-input:focus{outline:2px solid var(--brand);outline-offset:0}
+#mc-send.stop{background:var(--critical);color:var(--paper)}
+@media (prefers-reduced-motion: reduce){.mc-dot{animation:none}}
