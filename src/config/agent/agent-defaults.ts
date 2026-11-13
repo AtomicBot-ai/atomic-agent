@@ -1,7 +1,7 @@
 import { createCompactionDefaults } from "./compaction-config.js";
 import { createPromptDefaults } from "./prompt-config.js";
 import type { UserAgentConfig } from "./agent-types.js";
-import { createProviderWaitDefaults, createAgentTaskDefaults } from "../agent-execution-config.js";
+import { createAgentGoalDefaults, createProviderWaitDefaults, createAgentTaskDefaults } from "../agent-execution-config.js";
 
 export function createAgentDefaults(): UserAgentConfig {
   return {
@@ -9,6 +9,7 @@ export function createAgentDefaults(): UserAgentConfig {
     maxSteps: 25,
     providerWait: createProviderWaitDefaults(),
     task: createAgentTaskDefaults(),
+    goal: createAgentGoalDefaults(),
     toolTimeoutMs: 60_000,
     readScope: "working-dir",
     approvalLevel: 1,

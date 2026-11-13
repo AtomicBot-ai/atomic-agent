@@ -32,6 +32,13 @@ describe("decideGoalAction (the TUI's /goal rules)", () => {
     expect(out.message).toContain("1. ship it");
   });
 
+  it("gives a new goal the configured token budget (agent.goal.maxTokens, ATO-1036)", () => {
+    const out = decideGoalAction({ action: "set", criteria: ["ship it"] }, { ...idle, stored: null, defaultMaxTokens: 5000 });
+    expect(out.ok && out.goal?.maxTokens).toBe(5000);
+    const off = decideGoalAction({ action: "set", criteria: ["ship it"] }, { ...idle, stored: null });
+    expect(off.ok && off.goal?.maxTokens).toBe(0);
+  });
+
   it("refuses to set or resume while a turn runs", () => {
     const busy = { ...idle, turnRunning: true };
     const set = decideGoalAction({ action: "set", criteria: ["x"] }, { ...busy, stored: null });

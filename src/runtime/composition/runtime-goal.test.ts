@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { RunTurnResult } from "../../agent/agent-contract.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
 import { readGoalState, type GoalState } from "../../agent/goal/index.js";
+import { getConfig, resetConfigCache } from "../../config/index.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import { createEmptySessionState, type SessionState } from "../../session/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
@@ -83,6 +84,42 @@ describe("runtime goal runner", () => {
     // A resumed goal continues rather than kicking off again.
     expect(t.messages[1]).toContain("not done yet");
     expect(second.goal?.createdAt).toBe(first.goal?.createdAt);
+  });
+
+  it("starts a new goal with agent.goal.maxTokens, keeps a stored budget on resume (ATO-1036)", async () => {
+    // The cached config object: set the key for this test only.
+    getConfig().agent.goal = { maxTokens: 5000 };
+    try {
+      const t = setup([verdictResult("not_met"), verdictResult("met"), verdictResult("met")]);
+      const session = createEmptySessionState({ id: "s-tokens", workingDir: process.cwd() });
+      t.store.save(session);
+      const first = await t.runner.run(session, "go", { goal: { criteria: ["a"], maxRounds: 1 } }, t.runRound);
+      expect(first.goal?.maxTokens).toBe(5000);
+      // A spec that names its own budget wins over the config default.
+      const own = await t.runner.run(
+        createEmptySessionState({ id: "s-own", workingDir: process.cwd() }),
+        "go", { goal: { criteria: ["b"], maxTokens: 70 } }, t.runRound,
+      );
+      expect(own.goal?.maxTokens).toBe(70);
+
+      getConfig().agent.goal = { maxTokens: 0 };
+      // Resuming without a budget in the spec keeps the stored 5000.
+      const resumed = await t.runner.run(t.store.load("s-tokens")!, "", { goal: { criteria: ["a"], maxRounds: 1 } }, t.runRound);
+      expect(resumed.goal?.maxTokens).toBe(5000);
+    } finally {
+      resetConfigCache();
+    }
+  });
+
+  it("starts a new goal uncapped when agent.goal.maxTokens is the default 0", async () => {
+    resetConfigCache();
+    expect(getConfig().agent.goal?.maxTokens ?? 0).toBe(0);
+    const t = setup([verdictResult("met")]);
+    const out = await t.runner.run(
+      createEmptySessionState({ id: "s-nocap", workingDir: process.cwd() }),
+      "go", { goal: { criteria: ["a"] } }, t.runRound,
+    );
+    expect(out.goal?.maxTokens).toBe(0);
   });
 
   it("asks the active model as the judge with a short side-call", async () => {

@@ -319,6 +319,7 @@ export function loadConfig(): AtomicAgentConfig {
       maxSteps: user.agent.maxSteps,
       providerWait: user.agent.providerWait,
       task: user.agent.task,
+      ...(user.agent.goal === undefined ? {} : { goal: user.agent.goal }),
       toolTimeoutMs: user.agent.toolTimeoutMs,
       readScope: user.agent.readScope,
       approvalLevel: user.agent.approvalLevel,

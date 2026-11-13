@@ -57,6 +57,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.task.maxResumes` (default `3`): crash/kill resumes before the task is failed.
 - `agent.task.maxCostUsd` (default `0`): spend ceiling per task in USD, `0` = no cap; unpriced (local) models count as $0.
 - `agent.task.replanEveryNSteps` (default `0`): every this many steps of a task, ask the model to review and resend its live plan (`plan.update`) through the next step's notice, no extra model call; `0` = off.
+- `agent.goal.maxTokens` (default `0`): token budget a new goal starts with, across all its rounds; `0` = no cap. `/goal tokens` changes it for one goal.
 - `agent.toolTimeoutMs` (default `60000`).
 - `agent.readScope` (default `"working-dir"`).
 - `agent.approvalLevel` (default `1`).

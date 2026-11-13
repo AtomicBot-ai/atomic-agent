@@ -1,7 +1,7 @@
 import type { CompactionConfig } from "./compaction-config.js";
 import type { PromptConfig } from "./prompt-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
-import type { AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-config.js";
+import type { AgentGoalConfig, AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-config.js";
 
 /**
  * Where a session's tools may READ (config v67).
@@ -56,6 +56,8 @@ export interface RuntimeAgentConfig {
   maxSteps: number;
   providerWait: ProviderWaitConfig;
   task: AgentTaskConfig;
+  /** Goal mode defaults (`agent.goal`, ATO-1036); absent reads as the defaults. */
+  goal?: AgentGoalConfig;
   toolTimeoutMs: number;
   /** Where reads may go: the working directory and user-named paths, or anywhere. */
   readScope: ReadScope;
@@ -225,6 +227,8 @@ export interface UserAgentConfig {
   providerWait: ProviderWaitConfig;
   /** Ceilings that actually end a task. See the runtime type above. */
   task: AgentTaskConfig;
+  /** Goal mode defaults (`agent.goal`, ATO-1036). */
+  goal?: AgentGoalConfig;
   toolTimeoutMs: number;
   /**
    * Where a session's reads may go (config v67). `working-dir` (the
