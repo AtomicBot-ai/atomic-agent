@@ -2,6 +2,7 @@ import { projectSessionConversation } from "../session/session-compaction.js";
 import { buildCloudPrompt } from "./build-cloud-prompt.js";
 import {
   buildSkillCatalogSection,
+  cloudSkillCatalogBudget,
   reclipSkillCatalog,
 } from "../skills/skill-catalog.js";
 import { getConfig } from "../config/index.js";
@@ -201,7 +202,8 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
 
   const workspaceCatalog = input.workspace ? buildSkillCatalogSection(
     input.workspace.skills.entries.filter(e => !e.disabledReasons.length).map(e => e.record),
-    input.workspace.cloud ? { maxChars: Infinity } : { tokenBudget: catalogTokenBudget },
+    // A cloud workspace may ship many skills: a larger, window-scaled budget, still capped (ATO-312).
+    { tokenBudget: input.workspace.cloud ? cloudSkillCatalogBudget(catalogTokenBudget, catalogWindow) : catalogTokenBudget },
   ) : undefined;
   // A catalog built upstream used the configured budget; the compact
   // scaffold re-packs it against the window-scaled one.

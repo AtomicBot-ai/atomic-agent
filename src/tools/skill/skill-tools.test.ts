@@ -418,8 +418,9 @@ describe("skill tools", () => {
 
   it("skill.run_script denies when approval gate rejects", async () => {
     const skills = await installEcho();
+    let preview = "";
     const gate = new ApprovalGate({
-      emit: (req) => gate.reject(req.approvalId, "denied"),
+      emit: (req) => { preview = req.preview ?? ""; gate.reject(req.approvalId, "denied"); },
     });
     const tool = buildSkillRunScriptTool(skills, {
       approvals: gate,
@@ -428,6 +429,9 @@ describe("skill tools", () => {
     await expect(
       tool.run({ skill: "echo", script: "say.js" }, makeCtx(base)),
     ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    // An installed skill carries no project-source line.
+    expect(preview).toContain("skill: echo");
+    expect(preview).not.toContain("source: project skill");
   });
 
   it("skill.run_script auto-approves the read-only gog setup check", async () => {
@@ -478,9 +482,11 @@ describe("skill tools", () => {
     await skills.refresh();
     expect(skills.get("gog-workspace").source).toBe("project");
     const asked: string[] = [];
+    const previews: string[] = [];
     const gate = new ApprovalGate({
       emit: (req) => {
         asked.push(req.tool);
+        previews.push(req.preview ?? "");
         gate.reject(req.approvalId, "denied");
       },
     });
@@ -492,6 +498,8 @@ describe("skill tools", () => {
       tool.run({ skill: "gog-workspace", script: "check-gog.sh" }, makeCtx(base)),
     ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
     expect(asked).toEqual(["skill.run_script"]);
+    // The prompt names where a project skill comes from (ATO-312).
+    expect(previews[0]).toContain(`source: project skill from ${base}`);
     expect(existsSync(marker)).toBe(false);
   });
 

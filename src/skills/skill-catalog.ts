@@ -28,6 +28,26 @@ export const SKILL_CATALOG_CHARS_PER_TOKEN = 8;
  */
 export const DEFAULT_CATALOG_MAX_CHARS = 4096;
 
+/** Largest `skills.catalogTokenBudget` the config accepts; also the cloud catalog's ceiling. */
+export const MAX_SKILL_CATALOG_TOKEN_BUDGET = 100_000;
+/** Share of a known context window a cloud workspace catalog may take, in catalog tokens. */
+export const CLOUD_SKILL_CATALOG_WINDOW_SHARE = 0.025;
+/** Window assumed for a cloud model whose window is unknown. */
+const CLOUD_CATALOG_FALLBACK_WINDOW = 128_000;
+
+/**
+ * Catalog budget for a cloud workspace: at least the local budget, grown to
+ * 2.5% of the window (3,200 tokens for 128K, 5,000 for 200K; the char
+ * accounting at {@link SKILL_CATALOG_CHARS_PER_TOKEN} overstates real
+ * tokens, so the rendered section is roughly 5% of the window), and never
+ * above {@link MAX_SKILL_CATALOG_TOKEN_BUDGET}. The cloud catalog used to
+ * have no cap, so a folder with thousands of skills filled the prompt.
+ */
+export function cloudSkillCatalogBudget(configured: number, contextWindow: number | null | undefined): number {
+  const window = contextWindow && Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : CLOUD_CATALOG_FALLBACK_WINDOW;
+  return Math.min(MAX_SKILL_CATALOG_TOKEN_BUDGET, Math.max(configured, Math.floor(window * CLOUD_SKILL_CATALOG_WINDOW_SHARE)));
+}
+
 export interface BuildCatalogOptions {
   /** Soft cap for total `### skills` chars (join with `\n`). Defaults to 4096. */
   maxChars?: number;

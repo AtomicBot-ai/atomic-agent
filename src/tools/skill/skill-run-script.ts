@@ -200,6 +200,8 @@ export function buildSkillRunScriptTool(
       const envKeys = skillEnvKeys(record);
       const preview = [
         `skill: ${record.manifest.name} (v${record.manifest.version})`,
+        // A project skill is repository content, possibly from a cloned stranger's repo (ATO-312).
+        ...(record.source === "project" ? [`source: project skill from ${ctx.workspaceSkills?.workingDir ?? ctx.workingDir}`] : []),
         `script: ${scriptName}`,
         `cwd: ${record.rootDir}`,
         `args: ${scriptArgs.join(" ")}`,

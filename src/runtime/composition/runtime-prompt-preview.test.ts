@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getConfig, resetConfigCache } from "../../config/index.js";
@@ -8,6 +9,8 @@ import { QWEN_THINK_PROFILE } from "../../llm/model-profile.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import { createRuntimePromptPreview } from "./runtime-prompt-preview.js";
 import { SessionNotFoundError } from "../session-not-found-error.js";
+import { createWorkspaceLoader } from "../session-workspace.js";
+import { recordProjectTrust } from "../../config/skill-policy-commands.js";
 
 describe("pure next-turn prompt preview", () => {
   let dir: string;
@@ -91,5 +94,24 @@ describe("pure next-turn prompt preview", () => {
     expect(profileWindowApplies).toHaveBeenCalledWith(session.id);
     expect(session.cloudContext).toBeUndefined();
     expect(preview({ sessionId: session.id }).cloudContext).toEqual(built.cloudContext);
+  });
+
+  it("budgets cloud project instructions with the session's window, as a real step does (ATO-312)", () => {
+    const work = join(dir, "work"); mkdirSync(work);
+    writeFileSync(join(work, "AGENTS.md"), "R".repeat(4000));
+    recordProjectTrust(work, "trusted", { skills: [], instructions: ["AGENTS.md"] });
+    const session = recordTurn(createEmptySessionState({ id: "cloud-session", workingDir: work }), userTurn("continue"));
+    const preview = createRuntimePromptPreview(getConfig(), {
+      workingDir: work, sessionStore: { load: () => session }, profileStore: { listForPrompt: () => [] },
+      capabilities: { platform: "darwin", arch: "arm64", browserChannel: "chrome", workingDir: work, hasClipboard: false, hasWmctrl: false, hasNotifications: false },
+      effectiveToolDescriptors: () => [], getSkillCatalog: () => [], getLiveProfile: () => QWEN_THINK_PROFILE,
+      resolveToolTransport: () => "native_tools", resolveCatalogContextWindow: () => 8192,
+      resolveModelMode: () => ({ mode: "cloud" as const, source: "provider" as const, providerId: "remote", modelId: "large" }),
+      prepareWorkspace: createWorkspaceLoader(getConfig()),
+    });
+    // 10% of an 8K window at three bytes per token is about 2.4 KB, well under the 48 KB default.
+    const text = preview({ sessionId: session.id }).text;
+    expect(text).toContain("truncated: project instruction budget reached");
+    expect(text).not.toContain("R".repeat(3000));
   });
 });
