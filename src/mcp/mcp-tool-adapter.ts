@@ -28,15 +28,18 @@
 import {
   ApprovalDeniedError,
   requireApproval,
+  savedRuleOverridesScope,
   type DangerousToolOptions,
 } from "../approval/dangerous-tool.js";
 import { compressToolResult } from "../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tools/tool-registry.js";
 
+import { mcpToolPrompts, modeSkipsDefaultPrompt } from "./mcp-approval-mode.js";
 import type { McpClient } from "./mcp-client.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
 import type {
+  McpApprovalMode,
   McpServerConfig,
   McpToolMeta,
   McpTransport,
@@ -100,6 +103,10 @@ export interface McpToolGateOptions {
    * own install, which is the line ATO-1178 draws.
    */
   trustReadOnlyHint?: boolean;
+  /** The server's `approval` mode, when its config sets one (ATO-1134). */
+  approval?: McpApprovalMode;
+  /** The server runs over stdio (`isLocalMcpTransport`); read by `ask_writes`. */
+  localTransport?: boolean;
 }
 
 /** Whether a transport counts as local for the `readOnlyHint` rule (stdio only). */
@@ -140,10 +147,18 @@ export function createMcpToolDefinition(
   // and the agent's own named exceptions): other remote read-only tools
   // ask like everything else (ATO-1178). The prompt still offers "Allow
   // in this chat", so trusting one is one click.
+  // A per-server `approval` mode (ATO-1134) replaces that answer for the
+  // server's tools; see `mcp-approval-mode.ts`.
   const dangerous = gate?.dangerous;
-  const trustsReadOnlyHint =
-    gate?.trustReadOnlyHint === true && meta.annotations?.readOnlyHint === true;
-  const gated = gate?.trust === "approval_gated" && !trustsReadOnlyHint;
+  const promptInputs = {
+    trust: gate?.trust ?? "pure_read",
+    ...(gate?.approval !== undefined ? { approval: gate.approval } : {}),
+    readOnlyHint: meta.annotations?.readOnlyHint === true,
+    trustReadOnlyHint: gate?.trustReadOnlyHint === true,
+    localTransport: gate?.localTransport === true,
+  } as const;
+  const gated = gate !== undefined && mcpToolPrompts(promptInputs);
+  const modeSkipped = gate !== undefined && modeSkipsDefaultPrompt(promptInputs);
   return {
     name: meta.qualifiedName,
     description:
@@ -162,7 +177,15 @@ export function createMcpToolDefinition(
       meta.annotations?.destructiveHint === false,
     run: async (args, ctx): Promise<CompressedToolResult> => {
       try {
-        if (gated && dangerous) {
+        const ruleCheck = {
+          sessionId: ctx.sessionId,
+          tool: meta.qualifiedName,
+          category: "other",
+        } as const;
+        if (
+          dangerous &&
+          (gated || (modeSkipped && savedRuleOverridesScope(dangerous.approvals, ruleCheck)))
+        ) {
           await requireApproval(
             dangerous,
             {

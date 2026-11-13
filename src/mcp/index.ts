@@ -72,4 +72,5 @@ export type {
   McpResourceMeta,
   McpPromptMeta,
   McpTrustLevel,
+  McpApprovalMode,
 } from "./mcp-types.js";
