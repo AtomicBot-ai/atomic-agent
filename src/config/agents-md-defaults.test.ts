@@ -132,6 +132,7 @@ const ENV_KEY_BY_DOC_KEY: Readonly<Record<string, keyof typeof ENV_DEFAULTS>> =
     "tasks.schedulerTickMs": "TASKS_SCHEDULER_TICK_MS",
     "tasks.schedulerBatch": "TASKS_SCHEDULER_BATCH",
     "tasks.agentToolsEnabled": "TASKS_AGENT_TOOLS_ENABLED",
+    "tasks.sessionToolsEnabled": "SESSION_TOOLS_ENABLED",
     "tasks.minIntervalMs": "TASKS_MIN_INTERVAL_MS",
   };
 

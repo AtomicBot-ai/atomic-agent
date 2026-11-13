@@ -142,6 +142,14 @@ export type ApprovalCategory =
    * level, grant, rule or reviewer ever answers it (`null` below).
    */
   | "user_question"
+  /**
+   * Reading another chat's messages or sending a request into another
+   * chat (`sessions.read`, `sessions.send`, ATO-570). The other chat is
+   * the operator's private context, so it asks until full trust; a
+   * session grant is the operator's call, but the risk reviewer never
+   * settles it (`risk-review.ts`).
+   */
+  | "session_cross"
   | "other";
 
 /**
@@ -205,6 +213,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel | null> = 
   hook_ask: 5,
   // Never: even full trust cannot pick an answer for the person.
   user_question: null,
+  session_cross: 5,
   other: 5,
 };
 
@@ -301,6 +310,9 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   hook_ask: false,
   // Each question is its own; there is nothing to allow "for the session".
   user_question: false,
+  // "Let it read and message my other chats for this session" is the
+  // operator's call; each prompt still names the chat.
+  session_cross: true,
   other: true,
 };
 
@@ -342,6 +354,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   local_model_restart: "local model · restart",
   hook_ask: "hook · confirm",
   user_question: "question for you",
+  session_cross: "another chat · read / send",
   other: "uncategorised",
 };
 

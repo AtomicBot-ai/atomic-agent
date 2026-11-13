@@ -60,6 +60,7 @@ import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { BrowserExtractModelRef } from "../tools/browser/extract-request.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
+import { registerSessionTools } from "../tools/sessions/index.js";
 import {
   FUSION_OUTCOMES_FILE_NAME,
   FUSION_RUNS_DIR_NAME,
@@ -885,6 +886,12 @@ export async function createAgentRuntime(
     config, taskStore, runTurn, sessionStore, createSession, toolRegistry,
     resolveTelegram: () => telegramChannelForShutdown, logger, metrics,
     approvalLevel: () => approvals.getLevel(),
+  });
+  // Cross-chat tools (ATO-570), off unless `tasks.sessionToolsEnabled`: a send is a queued task.
+  registerSessionTools(toolRegistry, {
+    ...dangerous, sessionStore, taskStore, taskRunner, createSession,
+    defaultMaxAttempts: config.tasks.maxAttempts,
+    enabled: config.tasks.enabled && config.tasks.sessionToolsEnabled === true,
   });
 
   registerRuntimeFusionAndReadScope({

@@ -41,6 +41,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "local_model_restart",
   "hook_ask",
   "user_question",
+  "session_cross",
   "other",
 ];
 
@@ -143,6 +144,8 @@ describe("approval ladder", () => {
       hook_ask: 5,
       // A question only the person can answer (ATO-489).
       user_question: null,
+      // Another chat's messages, read or written (ATO-570).
+      session_cross: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
@@ -186,6 +189,9 @@ describe("approval ladder", () => {
     );
     expect(formatApprovalCategory("browser_secret")).toBe(
       "browser · password or payment",
+    );
+    expect(formatApprovalCategory("session_cross")).toBe(
+      "another chat · read / send",
     );
   });
 

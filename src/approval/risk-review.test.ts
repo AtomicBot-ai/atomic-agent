@@ -202,6 +202,8 @@ describe("isRiskReviewEligible", () => {
     expect(isRiskReviewEligible("local_model_restart")).toBe(false);
     expect(isRiskReviewEligible("user_question")).toBe(false);
     expect(isRiskReviewEligible("fs_read_outside")).toBe(false);
+    // Another chat's private context: grantable, but never a model's call.
+    expect(isRiskReviewEligible("session_cross")).toBe(false);
   });
 });
 
