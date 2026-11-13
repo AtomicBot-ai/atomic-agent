@@ -71,7 +71,9 @@ function mdrMarked() {
   const lib = typeof marked !== 'undefined' ? marked : null;
   if (!lib || typeof lib.Marked !== 'function') return null;
   const m = new lib.Marked({gfm: true, breaks: false});
-  m.use({tokenizer: {lheading() { return undefined; }}, extensions: [MDR_PATH_EXT]});
+  // ATO-1140: formulas ($…$, $$…$$, \(…\), \[…\]) when rich-blocks.js is loaded.
+  const rich = typeof RB_MD_EXTENSIONS !== 'undefined' ? RB_MD_EXTENSIONS : [];
+  m.use({tokenizer: {lheading() { return undefined; }}, extensions: [MDR_PATH_EXT].concat(rich)});
   MDR_MD = m;
   return m;
 }
@@ -114,6 +116,7 @@ function mdrInlineToken(t, ctx) {
     case 'br': return '\n';
     case 'link': case 'image': return mdrLinkToken(t, ctx);
     case 'checkbox': return '';
+    case 'rbmath': return mdrHold(ctx.held, rbMathHtml(t.text, t.display, t.raw));   // ATO-1140 (rich-blocks.js)
     // Raw HTML (and anything unknown) is shown as the model wrote it.
     default: return mdrEsc(t.raw || '');
   }
@@ -427,7 +430,9 @@ function mdrBlock(t, ctx, depth) {
       return '<h' + n + ' class="mdh">' + mdrInlineTokens(t.tokens, ctx) + '</h' + n + '>';
     }
     case 'hr': return '<hr class="mdhr">';
-    case 'code': return mdrHold(ctx.held, mdrCodeHtml(t));
+    // ATO-1140: a closed ```mermaid fence is a diagram block (rich-blocks.js), any other fence code.
+    case 'code': return mdrHold(ctx.held, (typeof rbMermaidHtml === 'function' && rbMermaidHtml(t)) || mdrCodeHtml(t));
+    case 'rbmath': return mdrHold(ctx.held, rbMathHtml(t.text, true, String(t.raw || '').replace(/\n+$/, '').trim()));
     case 'table': return mdrTableHtml(t, ctx);
     case 'blockquote': return mdrQuoteHtml(t, ctx, depth);
     case 'list': return mdrListHtml(t, ctx, 0);

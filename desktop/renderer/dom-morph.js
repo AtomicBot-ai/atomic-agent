@@ -14,7 +14,18 @@
    alone, an element of the same tag (and the same id, when it has one) keeps
    its identity with its attributes brought in line and its children morphed
    the same way, a text node takes the new text. Only what differs is
-   replaced. Nodes of `from` are moved into `into`, so `from` is spent. */
+   replaced. Nodes of `from` are moved into `into`, so `from` is spent.
+
+   ATO-1136: an element marked `data-morph-keep="<key>"` whose new markup has
+   the same tag and key is left exactly as it is, children and attributes: it
+   holds what was put in after the paint (an artifact's <iframe>, which would
+   reload if it were taken out). */
+
+function morphKept(a, b) {
+  if (a.nodeType !== 1 || b.nodeType !== 1 || a.nodeName !== b.nodeName) return false;
+  const k = a.getAttribute('data-morph-keep');
+  return !!k && k === b.getAttribute('data-morph-keep');
+}
 
 function morphSameKind(a, b) {
   if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName) return false;
@@ -33,6 +44,8 @@ function morphChildren(into, from) {
     const nextWant = want.nextSibling;
     if (!have) {
       into.appendChild(want);
+    } else if (morphKept(have, want)) {
+      have = have.nextSibling;
     } else if (have.isEqualNode(want)) {
       have = have.nextSibling;
     } else if (morphSameKind(have, want)) {
@@ -51,4 +64,4 @@ function morphChildren(into, from) {
   }
 }
 
-if (typeof module !== 'undefined') module.exports = {morphChildren, morphSameKind, morphAttributes};
+if (typeof module !== 'undefined') module.exports = {morphChildren, morphSameKind, morphAttributes, morphKept};

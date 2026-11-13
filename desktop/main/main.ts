@@ -269,6 +269,10 @@ import { lastErrorCategory, lastErrorSentence, reportAgentExit, reportRendererEr
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
+// ATO-1136: HTML artifacts in the chat, served sandboxed from their own scheme (artifact-frame.ts).
+import { permissionFromSubframe, subframeNavAllowed } from "./artifact-frame.js";
+import { registerArtifactScheme, wireArtifactIpc } from "./artifact-frame-ipc.js";
+registerArtifactScheme();
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -1018,11 +1022,16 @@ function createWindow(): BrowserWindow {
   });
 
   // The renderer is local and must never navigate anywhere else.
+  // ATO-1136: an artifact page never gets here: its sandbox has no allow-popups.
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  // ATO-1136: a frame in the window (an artifact, the file preview's) never goes to the web or the disk.
+  window.webContents.on("will-frame-navigate", (event) => {
+    if (!event.isMainFrame && !subframeNavAllowed(event.url)) event.preventDefault();
+  });
 
   /* Item 2 (voice input): until this feature there was no permission handler
      at all, and Electron's default grants everything — the renderer could
@@ -1039,10 +1048,13 @@ function createWindow(): BrowserWindow {
      boolean — returning nothing from it denies everything, the armed
      session included. */
   window.webContents.session.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    // ATO-1136: nothing for a frame inside the window (an artifact page), whatever it asks.
+    if (permissionFromSubframe(details as { isMainFrame?: boolean; requestingUrl?: string })) { callback(false); return; }
     callback(voicePermissionVerdict(permission, details as { mediaTypes?: string[] } | undefined));
   });
   window.webContents.session.setPermissionCheckHandler((_wc, permission, _origin, details) =>
-    voicePermissionVerdict(permission, details as unknown as { mediaTypes?: string[] } | undefined),
+    !permissionFromSubframe(details as unknown as { isMainFrame?: boolean; requestingUrl?: string })
+      && voicePermissionVerdict(permission, details as unknown as { mediaTypes?: string[] } | undefined),
   );
 
   void window.loadFile(join(__dirname, "..", "renderer", "index.html"));
@@ -2806,6 +2818,8 @@ function wireIpc(client: AgentClient): void {
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).
   wireWindowSnapshotIpc();
+  // ATO-1136: HTML artifacts in the chat, sandboxed (artifact-frame-ipc.ts).
+  wireArtifactIpc();
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
   wireOvernightIpc({ window: () => win, client });
   /* Studio (Images + Video): Core's media API for the Studio pages

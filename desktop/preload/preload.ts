@@ -180,6 +180,9 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1053: the preview panel reads a file through main (file-preview.ts), never the disk itself.
   filePreview: (path: string) => ipcRenderer.invoke("app:filePreview", path),
   filePreviewAction: (path: string, action: "open" | "reveal") => ipcRenderer.invoke("app:filePreviewAction", path, action),
+  // ATO-1136: an HTML artifact kept in main and served sandboxed; answers {ok:true, url:'atomic-art://…/'} | {ok:false, reason}.
+  artifactPut: (html: string) => ipcRenderer.invoke("app:artifactPut", html),
+  artifactDrop: (url: string) => ipcRenderer.invoke("app:artifactDrop", url),
   // Studio's "From chat" clip: Show in Finder / Save As… for a reply's file in the home folder.
   // {ok:true[, path]} | {ok:false, reason:'missing'|'outside'|'not-a-file'|'canceled'|'failed'}
   replyReveal: (path: string) => ipcRenderer.invoke("app:replyReveal", path),
