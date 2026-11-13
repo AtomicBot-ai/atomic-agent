@@ -412,6 +412,11 @@ contextBridge.exposeInMainWorld("atomic", {
   voiceInstall: (locale: string) => ipcRenderer.invoke("voice:install", locale),
   voiceSetLocales: (locales: string[]) => ipcRenderer.invoke("voice:setLocales", locales),
   onVoice: (cb: (payload: unknown) => void) => on("app:voice", cb),
+  /** ATO-1074: an audio file transcribed on this machine (main/transcribe-file.ts). */
+  transcribeAvailable: () => ipcRenderer.invoke("speech:fileAvailable"),
+  transcribeFile: (req: { job: string; path: string }) => ipcRenderer.invoke("speech:transcribeFile", req),
+  transcribeCancel: (job: string) => ipcRenderer.invoke("speech:transcribeCancel", job),
+  onTranscribe: (cb: (payload: unknown) => void) => on("app:transcribe", cb),
 
   /** Lane B — backend switch: whole-file config writes + agent restart, main-process side. */
   switchBackend: (kind: "cloud" | "local") => ipcRenderer.invoke("cli:switchBackend", kind),

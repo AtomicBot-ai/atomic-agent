@@ -973,6 +973,26 @@ Honestly degraded, and labelled as such in the UI:
   transcription was refused on purpose — every AIMLAPI speech model is a
   submit-and-poll job, so it could only ever produce text after you stop,
   never while you speak, and it would send your voice to a third party.
+- **An audio file can be transcribed on this Mac (ATO-1074).** Drop an
+  audio file on the composer (or pick it with `+` → Files, which has an
+  `Audio to transcribe` filter on macOS) and its chip carries a `Transcribe`
+  button instead of the old `Audio files are not supported yet`. The same
+  helper runs in file mode, `atomic-speech --file <path> <locale>`: it opens
+  the file with `AVAudioFile`, runs the same on-device `SpeechAnalyzer`, and
+  prints NDJSON `file-ready`, then a `segment` `{start, end, text}` (seconds
+  into the file, from each result's `range`) and a `progress` `{fraction}` per
+  finalized phrase, then `done`. Main (`main/transcribe-file.ts`, IPC
+  `speech:fileAvailable` / `speech:transcribeFile` / `speech:transcribeCancel`,
+  progress on `app:transcribe`) runs one file at a time, kills the child on
+  cancel or when the chip is removed, and answers with the segments and a
+  `[HH:MM:SS] text` transcript; the chip then becomes `<name> transcript.txt`,
+  saved to the inbox like any typed file, and the audio itself is never sent.
+  The language is the first voice-input language whose model is installed
+  (else en-US, else any installed one). Where the helper cannot run the chip
+  says why (`Transcribing audio needs macOS 26 or later`, no helper, no
+  language downloaded yet) and off macOS nothing changes. The engine sits
+  behind a small `TranscribeEngine` interface so a Windows whisper.cpp engine
+  (ATO-1076) can plug in without touching the IPC or the renderer.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from
@@ -1534,7 +1554,9 @@ xattr -dr com.apple.quarantine "/Applications/Atomic Agent.app"
 The voice helper is compiled into `out/native/atomic-speech` by
 `scripts/build-speech-helper.mjs` on every `npm run build` (about two
 seconds; the step prints `speech helper: skipped` and the build carries on
-if there is no `swiftc`). It ships through `extraResources`, NOT through
+off macOS or if there is no `swiftc`; when `swiftc` is there and the compile
+fails, the build fails with the compiler output; `ATOMIC_SKIP_SPEECH_HELPER=1`
+leaves the helper out on purpose, e.g. with an Xcode older than 26). It ships through `extraResources`, NOT through
 `files` — `asar` is on, and a binary inside an asar archive cannot be
 executed, so `out/native/**` is excluded from the archive and the same file
 is copied to `Contents/Resources/native/atomic-speech`. `mac.extendInfo`
@@ -1815,7 +1837,7 @@ desktop/
   main/speech.ts         the one voice-input child: probe, start/stop, audio, install
   main/updater.ts        app updates (electron-updater), only ever on a click
   electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)
-  native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout
+  native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout (live, and --file for an audio file)
   preload/preload.ts     the window.atomic bridge
   renderer/              index.html · styles.css · renderer.js · voice-worklet.js
   scripts/copy-renderer.mjs

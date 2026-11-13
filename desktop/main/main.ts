@@ -236,6 +236,8 @@ import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js
 import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type ComposioDeps, type ComposioKeyResult } from "./composio-key.js";
 // Item 2 (voice input): the on-device speech helper's supervisor.
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
+// ATO-1074: an audio file transcribed on this machine, with timestamps.
+import { FileTranscriber, appleSpeechEngine } from "./transcribe-file.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
@@ -376,6 +378,14 @@ let pull: DownloadSlot | null = null;
    handlers read `voice.armed`, and both quit paths have to be able to kill
    it — a helper outliving the window holds the microphone indicator on. */
 const voice = new VoiceSession();
+/* ATO-1074: the same helper in file mode. Its own child, never the voice
+   session's: a dictation and a file can run side by side. The engine is the
+   one place that knows it is Apple's (ATO-1076 adds a whisper.cpp one). */
+const fileTranscriber = new FileTranscriber(appleSpeechEngine({
+  command: speechHelperPath,
+  probe: () => voice.probe(),
+  chosen: () => readVoicePrefs().locales,
+}));
 
 /* Voice input exists only where the speech helper can run (macOS; see
    platform.ts voiceSupported). Answered synchronously so the preload can
@@ -1250,6 +1260,7 @@ function wireUpdater(): void {
  */
 async function shutdownForUpdate(): Promise<boolean> {
   voice.kill();
+  fileTranscriber.kill();
   stopForQuit();
   const client = agent;
   agent = null;
@@ -3378,6 +3389,17 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("voice:setLocales", (_event, locales: unknown) =>
     writeVoicePrefs(Array.isArray(locales) ? locales.filter((l): l is string => typeof l === "string") : []),
   );
+  /* ATO-1074: an audio file in the composer, transcribed on this machine.
+     Progress goes out on app:transcribe, named by the renderer's job id. */
+  ipcMain.handle("speech:fileAvailable", () => fileTranscriber.available());
+  ipcMain.handle("speech:transcribeFile", (_event, req: unknown) => {
+    const r = (req && typeof req === "object" ? req : {}) as { job?: unknown; path?: unknown };
+    return fileTranscriber.transcribe(
+      { job: typeof r.job === "string" ? r.job : "", path: typeof r.path === "string" ? r.path : "" },
+      (job, ev) => send("app:transcribe", { job, ...ev }),
+    );
+  });
+  ipcMain.handle("speech:transcribeCancel", (_event, job: unknown) => fileTranscriber.cancel(job));
 
   client.on("status", (status) => send("agent:status", status));
   /* ATO-767: an agent that exits on its own while running is started again,
@@ -10782,6 +10804,7 @@ app.on("window-all-closed", () => {
   // system microphone indicator lit, which is worse for trust than any bug
   // in the transcript.
   voice.kill();
+  fileTranscriber.kill();
   // ATO-598: unless Keep Running is on, closing the last window quits off macOS;
   // and with no tray icon to come back through, it quits anyway.
   if (quitsOnLastWindow(process.platform, readBackgroundPrefs(app.getPath("userData"))) || (process.platform !== "darwin" && !tray)) app.quit();
@@ -10850,6 +10873,7 @@ app.on("before-quit", (event) => {
   // the degraded state in which someone is most likely to be poking at the
   // microphone button.
   voice.kill();
+  fileTranscriber.kill();
   stopForQuit();
   // Analytics: app_closed and a last flush, bounded (2 s); idempotent across repeated Quits.
   const analyticsClosed = A.appClosing();

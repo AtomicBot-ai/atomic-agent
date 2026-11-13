@@ -25,6 +25,7 @@ import { basename } from "node:path";
 
 import { discardAttachment, inboxDir, readPickedImage, saveAttachment, type AttachmentSource } from "./attachments.js";
 import { replyPathVerdict } from "./reply-paths.js";
+import { TRANSCRIBE_AUDIO_EXTS } from "./transcribe-file.js";
 
 /** The open dialog's two filters, mirroring renderer/attachments.js. */
 const IMAGE_EXTS = ["jpg", "jpeg", "png", "webp", "gif"];
@@ -74,7 +75,12 @@ export function wireAttachmentIpc(opts: { window: () => BrowserWindow | null; st
       message: images ? "Choose images to attach" : "Choose files to attach",
       filters: images
         ? [{ name: "Images", extensions: IMAGE_EXTS }]
-        : [{ name: "Documents and code", extensions: FILE_EXTS }, { name: "All files", extensions: ["*"] }],
+        : [
+          { name: "Documents and code", extensions: FILE_EXTS },
+          // ATO-1074: audio is transcribed on this Mac (macOS 26+), never sent as a file.
+          ...(process.platform === "darwin" ? [{ name: "Audio to transcribe", extensions: [...TRANSCRIBE_AUDIO_EXTS] }] : []),
+          { name: "All files", extensions: ["*"] },
+        ],
     });
     if (res.canceled) return [];
     const out: Array<{ path: string; name: string; size: number | null }> = [];
