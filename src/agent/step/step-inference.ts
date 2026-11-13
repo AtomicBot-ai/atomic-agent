@@ -588,6 +588,7 @@ export function buildLlmStreamParams(args: {
     | "supportsParallelTools"
     | "strictTools"
     | "providerId"
+    | "model"
     | "modelModePolicy"
   >;
   /** The grammar for this request — see `resolveStepGrammar`. */
@@ -607,6 +608,7 @@ export function buildLlmStreamParams(args: {
     // The pin rides on every completion of the step: the repair retry
     // spreads `llmParams`, so it inherits without a second wiring point.
     ...(args.deps.providerId ? { providerId: args.deps.providerId } : {}),
+    ...(args.deps.providerId && args.deps.model ? { model: args.deps.model } : {}),
   };
   if (args.deps.toolTransport !== "native_tools") {
     return base;
