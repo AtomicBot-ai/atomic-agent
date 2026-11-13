@@ -1554,7 +1554,9 @@ xattr -dr com.apple.quarantine "/Applications/Atomic Agent.app"
 The voice helper is compiled into `out/native/atomic-speech` by
 `scripts/build-speech-helper.mjs` on every `npm run build` (about two
 seconds; the step prints `speech helper: skipped` and the build carries on
-if there is no `swiftc`). It ships through `extraResources`, NOT through
+off macOS or if there is no `swiftc`; when `swiftc` is there and the compile
+fails, the build fails with the compiler output; `ATOMIC_SKIP_SPEECH_HELPER=1`
+leaves the helper out on purpose, e.g. with an Xcode older than 26). It ships through `extraResources`, NOT through
 `files` — `asar` is on, and a binary inside an asar archive cannot be
 executed, so `out/native/**` is excluded from the archive and the same file
 is copied to `Contents/Resources/native/atomic-speech`. `mac.extendInfo`

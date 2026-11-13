@@ -309,8 +309,9 @@ jobs:
         working-directory: desktop
         run: npm run build
 
-      # build-speech-helper.mjs never fails the build (a contributor without
-      # Xcode still gets an app); CI must not ship a Mac DMG without it.
+      # build-speech-helper.mjs fails the build when swiftc is there but the
+      # compile fails; it still skips quietly with no swiftc at all or with
+      # ATOMIC_SKIP_SPEECH_HELPER=1. CI must not ship a Mac DMG without it.
       - name: Check the voice helper was built (macOS)
         if: matrix.slug == 'darwin-arm64'
         run: |
