@@ -693,6 +693,7 @@ export class AgentLoop {
           turn.outageWaitedMs = 0;
           turn.outageAttempts = 0;
           turn.engineWaitVerdicts = null;
+          turn.lockNoProcessSinceWaitedMs = null;
         }
         state = outcome.nextSession;
         turn.stepsTaken += 1;

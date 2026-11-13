@@ -284,9 +284,11 @@ export {
 export {
   explainManagedEngineLiveness,
   readManagedEngineLiveness,
+  readManagedModelProcess,
   type ManagedEngineLiveness,
   type ManagedEngineLivenessReason,
   type ManagedEngineLivenessReport,
+  type ManagedModelProcess,
 } from "./server/engine-liveness.js";
 export {
   classifyPrefixReuse,

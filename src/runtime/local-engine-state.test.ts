@@ -59,8 +59,8 @@ describe("explainLocalEngineState (ATO-1432)", () => {
     vi.fn(() => ({ state, reason, lock: "free" }) as never);
 
   it("passes the liveness branch through as the reason", () => {
-    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report("unknown", "lock_held")))
-      .toEqual({ state: "unknown", reason: "lock_held" });
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report("unknown", "lock_held"), () => "running"))
+      .toEqual({ state: "unknown", reason: "lock_held", modelProcess: "running" });
     expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report("no_pid", "no_pid_file")))
       .toEqual({ state: "dead", reason: "no_pid_file" });
     expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report("unknown", "pid_unreadable")))
@@ -96,5 +96,31 @@ describe("explainLocalEngineState (ATO-1432)", () => {
       expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", report(state, "pid_alive")).state)
         .toBe(readLocalEngineState("local-llama", cfg("managed"), "local-llama", () => state));
     }
+  });
+});
+
+describe("explainLocalEngineState: a held lock with no model process (ATO-1434)", () => {
+  const held = vi.fn(() => ({ state: "unknown", reason: "lock_held", lock: "held" }) as never);
+
+  it("says whether a model process exists when the lock hides the pid", () => {
+    const probe = vi.fn(() => "none" as const);
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", held, probe))
+      .toEqual({ state: "unknown", reason: "lock_held", modelProcess: "none" });
+    expect(probe).toHaveBeenCalledWith("/state/models");
+  });
+
+  it("a probe that throws is unknown, never none", () => {
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", held, () => { throw new Error("EACCES"); }))
+      .toMatchObject({ modelProcess: "unknown" });
+  });
+
+  it("is not asked when the lock is not what made the reading unknown, nor for other links", () => {
+    const probe = vi.fn(() => "none" as const);
+    const unreadable = vi.fn(() => ({ state: "unknown", reason: "pid_unreadable", lock: "free" }) as never);
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "local-llama", unreadable, probe).modelProcess).toBeUndefined();
+    expect(explainLocalEngineState("local-llama", cfg("external"), "local-llama", held, probe).modelProcess).toBeUndefined();
+    expect(explainLocalEngineState("local-llama", cfg("managed"), "openrouter", held, probe).modelProcess).toBeUndefined();
+    expect(explainLocalEngineState("my-llama", cfg("managed"), "local-llama", held, probe).modelProcess).toBeUndefined();
+    expect(probe).not.toHaveBeenCalled();
   });
 });
