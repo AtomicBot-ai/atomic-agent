@@ -1,5 +1,12 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
+import type { WorkerTaskStatus } from "../tools/fusion/worker-result.js";
 import { formatTokens } from "./components/format-tokens.js";
+import {
+  clipRowTitle,
+  describeOutcome,
+  describeProgress,
+  describeSpend,
+} from "./fusion-worker-row-details.js";
 
 /** One leg of a fan-out, as the chat surface shows it while it runs. */
 export interface FusionLiveWorker {
@@ -10,14 +17,6 @@ export interface FusionLiveWorker {
   /** The tool it is running right now, or `null` between calls. */
   readonly tool: string | null;
   readonly done: boolean;
-  /**
-   * How a finished leg ended, when it did not simply finish. A worker
-   * whose provider refused it (out of credit, ATO-309) read `done ·
-   * 1m12s` on this row while its task had failed: `done` says the leg
-   * is over, this says whether it worked. Absent or `null` while
-   * running and for a leg that finished.
-   */
-  readonly outcome?: "failed" | "cancelled" | null;
   /**
    * When this leg was first seen, and when it ended.
    *
@@ -53,6 +52,27 @@ export interface FusionLiveWorker {
    */
   readonly tokens?: number | null;
   readonly spentUsd?: number | null;
+  /** The reply part of `tokens`: what this leg generated (ATO-78). */
+  readonly tokensOut?: number | null;
+  /**
+   * Steps finished so far and the budget it runs under, and distinct
+   * files written (ATO-1364). Live on `phase: "usage"`, final on the
+   * end line; kept once the leg is done.
+   */
+  readonly stepCount?: number | null;
+  readonly stepBudget?: number | null;
+  readonly filesWritten?: number | null;
+  /**
+   * Why an ended leg ended — the task's status, or `failed` /
+   * `cancelled` read off the phase when the end line carried none.
+   * `null` while it runs, and for a `finished` line with no status.
+   */
+  readonly outcome?: WorkerTaskStatus | null;
+  /**
+   * The turn this leg ran in is over: the row is kept, collapsed to its
+   * outcome, until the next turn or fan-out (`fusion-worker-summary.ts`).
+   */
+  readonly collapsed?: boolean;
 }
 
 /**
@@ -70,13 +90,17 @@ export interface FusionLiveWorker {
  * turn ends, so the block does not shrink under the reader mid-fan-out.
  */
 export function reduceFusionLiveWorkers(
-  current: readonly FusionLiveWorker[],
+  incoming: readonly FusionLiveWorker[],
   event: Extract<AgentLoopEvent, { type: "fusion_worker" }>,
   now: number = Date.now(),
 ): readonly FusionLiveWorker[] {
   // The orchestrator's own bracket lines are not a leg of the fan-out;
   // the composer already names the model it is running.
-  if (event.role === "orchestrator") return current;
+  if (event.role === "orchestrator") return incoming;
+  // A finished turn's collapsed rows make way for the next fan-out
+  // rather than mixing with it: a turn started from outside the composer
+  // never went through `startNewRun`, which clears them otherwise.
+  const current = incoming.some((w) => w.collapsed === true) ? [] : incoming;
   const at = current.findIndex((w) => w.taskId === event.taskId);
   const done =
     event.phase === "finished" ||
@@ -89,10 +113,6 @@ export function reduceFusionLiveWorkers(
     model: event.model ?? previous?.model ?? null,
     tool: done ? null : (event.tool ?? previous?.tool ?? null),
     done,
-    outcome:
-      event.phase === "failed" || event.phase === "cancelled"
-        ? event.phase
-        : null,
     // First sight starts the clock. A leg that reappears keeps its
     // original start, or the elapsed time would restart on every tool
     // call and the readout would always say a few seconds.
@@ -104,11 +124,26 @@ export function reduceFusionLiveWorkers(
     contextTokens: event.contextTokens ?? previous?.contextTokens ?? null,
     tokens: event.tokens ?? previous?.tokens ?? null,
     spentUsd: event.spentUsd ?? previous?.spentUsd ?? null,
+    tokensOut: event.tokensOut ?? previous?.tokensOut ?? null,
+    stepCount: event.stepCount ?? previous?.stepCount ?? null,
+    stepBudget: event.stepBudget ?? previous?.stepBudget ?? null,
+    filesWritten: event.filesWritten ?? previous?.filesWritten ?? null,
+    outcome: done ? endOutcome(event) : null,
   };
   if (at < 0) return [...current, next];
   const copy = [...current];
   copy[at] = next;
   return copy;
+}
+
+function endOutcome(
+  event: Extract<AgentLoopEvent, { type: "fusion_worker" }>,
+): WorkerTaskStatus | null {
+  if (event.status !== undefined) return event.status;
+  if (event.phase === "failed" || event.phase === "cancelled") {
+    return event.phase;
+  }
+  return null;
 }
 
 /**
@@ -372,8 +407,10 @@ export function formatFusionLiveWorker(
   expectation: FanoutExpectation | number | null = null,
 ): string {
   const model = worker.model ?? "local";
+  // An ended leg says how it ended: "returned to planner" and "hit max
+  // steps" are why a task came back, and "done" said neither.
   const what = worker.done
-    ? (worker.outcome ?? "done")
+    ? describeOutcome(worker.outcome)
     : (worker.tool ?? "working");
   const elapsedMs = (worker.finishedAt ?? now) - worker.startedAt;
   const elapsed = formatElapsed(elapsedMs);
@@ -387,12 +424,16 @@ export function formatFusionLiveWorker(
     worker.contextTokens === null
       ? ""
       : ` · ${formatTokens(worker.contextTokens)} ctx`;
+  // Steps and files before spend: how far the leg got is the next
+  // question after whether it needs attention, and the $ / token
+  // figures are also on the feed's end line.
+  const progress = describeProgress(worker);
   const spend = describeSpend(worker);
-  return `${worker.title} · ${model} — ${what} · ${elapsed}${describeExpectation(
+  return `${clipRowTitle(worker.title)} · ${model} — ${what} · ${elapsed}${describeExpectation(
     worker,
     elapsedMs,
     measured,
-  )}${stuck}${spend}${context}`;
+  )}${stuck}${progress}${spend}${context}`;
 }
 
 /**
@@ -419,19 +460,6 @@ function describeExpectation(
     return ` (past the ~${formatElapsed(expectedMs)} expected)`;
   }
   return ` (~${formatElapsed(expectedMs)} expected)`;
-}
-
-/** ` · 41.2k tok · $0.031`, or less of it when that is all that is known. */
-function describeSpend(worker: FusionLiveWorker): string {
-  const tokens =
-    worker.tokens == null || worker.tokens <= 0
-      ? ""
-      : ` · ${formatTokens(worker.tokens)} tok`;
-  const usd =
-    worker.spentUsd == null
-      ? ""
-      : ` · ${worker.spentUsd > 0 && worker.spentUsd < 0.01 ? `$${worker.spentUsd.toFixed(4)}` : `$${worker.spentUsd.toFixed(2)}`}`;
-  return `${tokens}${usd}`;
 }
 
 /**

@@ -22,6 +22,10 @@ import { ReasoningBubble } from "./reasoning-bubble.js";
 import { SplashBanner } from "./splash-banner.js";
 import { UpdateRequiredScreen } from "../update/required-update.js";
 import { ThinkingIndicator } from "./thinking-indicator.js";
+import {
+  FusionWorkerSummaryRows,
+  fusionWorkerSummaryHeight,
+} from "./fusion-worker-summary-rows.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
 import { turnFoldsOf } from "../render/turn-collapse.js";
@@ -138,7 +142,7 @@ export function ChatLog({
         0,
       ) +
       (hasStreamingTail ? estimateStreamingTailHeight(state) : 0) +
-      (showIndicator ? 2 : 0) +
+      (showIndicator ? 2 : fusionWorkerSummaryHeight(state.fusionLiveWorkers)) +
       pendingSteers.reduce(
         (acc, text) => acc + estimatePendingSteerHeight(text),
         0,
@@ -236,7 +240,13 @@ export function ChatLog({
               pending
             />
           ))}
-          {showIndicator ? <ThinkingIndicator state={state} /> : null}
+          {showIndicator ? (
+            <ThinkingIndicator state={state} />
+          ) : (
+            // The finished turn's workers, one outcome row each, until
+            // the next turn or fan-out replaces them.
+            <FusionWorkerSummaryRows workers={state.fusionLiveWorkers} />
+          )}
         </Box>
       </Box>
       {!stickyBottom ? <ScrollHint offset={offset} /> : null}

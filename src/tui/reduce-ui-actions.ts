@@ -340,6 +340,8 @@ export function reduceUiAction(
         // gone too. Leaving the old figure up would claim tokens that
         // no longer exist.
         contextUsage: EMPTY_CONTEXT_USAGE,
+        // The worker rows under the last reply go with the reply.
+        fusionLiveWorkers: [],
       };
     case "chat_messages_truncated": {
       const cut = state.messages.findIndex(
@@ -539,6 +541,8 @@ export function reduceUiAction(
         messages: [...action.messages],
         // Rebuilt from the session: nothing of it is hidden any more.
         clearedQuestions: 0,
+        // Worker rows belong to the thread they ran on.
+        fusionLiveWorkers: [],
         reasoning: [],
         feed: [],
         logs: [],
