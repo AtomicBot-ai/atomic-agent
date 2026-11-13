@@ -80,3 +80,6 @@ Before saving, the carried history is fitted into a local model's window (ATO-11
 - `--tool` narrows the set (wire or dotted name); a name the flags do not allow is a usage error (exit 2).
 
 Tool names on the wire use `_` for `.` because several clients accept only `[A-Za-z0-9_-]`. Results carry the whole text (`modelMode: "cloud"`), not the local model's short previews. Not done yet: HTTP transport in `serve`, a session turn or task tools.
+
+
+`handoff --to claude|codex [--out <file>] [--session latest|<id>] [--cwd <dir>]` goes the other way (ATO-1158): it reads one Atomic Agent chat (`latest` = the newest chat in the folder, else the newest anywhere) and writes a Markdown handoff for the other agent ([handoff export](../import/handoff/handoff-export.ts)): the task and the latest request, the agent's last answers as decisions, open items (a turn that did not finish or was stopped), and the files changed by successful `os.fs.write|edit|move` calls and applied `os.fs.patch` calls (shell changes are not tracked). It goes to `--out` (relative to where the command ran) or to stdout. Nothing is written into `~/.claude`, `~/.codex` or the session store: their session formats are undocumented, so the person hands the file over themselves. Serving Atomic Agent to those tools over MCP/ACP is ATO-990, not this command.

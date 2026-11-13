@@ -32,3 +32,13 @@ export {
   turnTokens,
 } from "./fit-context.js";
 export type { FitContextOptions, FitContextResult } from "./fit-context.js";
+export {
+  HANDOFF_EXPORT_ENTRY_CHARS,
+  HANDOFF_EXPORT_REPLIES,
+  HANDOFF_TARGETS,
+  HANDOFF_TARGET_LABEL,
+  buildHandoffBrief,
+  changedFilesOf,
+  parseHandoffTarget,
+} from "./handoff-export.js";
+export type { HandoffBriefInput, HandoffTarget } from "./handoff-export.js";
