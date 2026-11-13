@@ -340,6 +340,15 @@ export interface AtomicAgentConfig {
      * on a malformed value. Optional so hand-built configs stay valid.
      */
     report?: { quietHours: string | null };
+    /**
+     * Keep the computer awake for scheduled tasks (ATO-592): the raw
+     * `ATOMIC_AGENT_TASKS_KEEP_AWAKE` value (`off` or `while-working`:
+     * held only while a task or turn runs) or `null` (default: off). The
+     * runtime parses it (`src/scheduler/keep-awake.ts`) and treats any
+     * other value, the removed `always` included, as off, with a warning. A closed MacBook lid still sleeps the Mac.
+     * Optional so hand-built configs stay valid.
+     */
+    keepAwake?: string | null;
   };
   /**
    * Auto status snapshots on long turns and running tasks (ATO-965).

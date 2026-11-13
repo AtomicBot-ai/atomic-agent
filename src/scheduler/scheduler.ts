@@ -111,6 +111,21 @@ export class Scheduler {
   }
 
   /**
+   * Run a tick now instead of at the next interval: the computer just
+   * woke up (the desktop's `powerMonitor` "resume", ATO-592), so tasks
+   * that fell due while it slept start at once. Unlike `tickOnce` this
+   * respects leadership and does nothing before `start()` or after
+   * `stop()`. Returns whether a tick was started.
+   */
+  poke(): boolean {
+    if (this.timer === null || this.stopping) return false;
+    if (this.running) return false;
+    if (!this.leads()) return false;
+    void this.tickOnce();
+    return true;
+  }
+
+  /**
    * Stop polling. Clears the interval and aborts the in-flight tick
    * synchronously, then awaits that tick (if any) so callers can rely on
    * "no more runTurn calls originate here" after the returned promise

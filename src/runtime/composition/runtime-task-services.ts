@@ -9,7 +9,13 @@ import {
   type TaskReportSink,
 } from "../../tasks/index.js";
 import type { TaskRunnerRuntime } from "../../tasks/task-runner.js";
-import { createSchedulerLeadership, Scheduler } from "../../scheduler/index.js";
+import {
+  createKeepAwake,
+  createSchedulerLeadership,
+  parseKeepAwakeMode,
+  Scheduler,
+  type KeepAwake,
+} from "../../scheduler/index.js";
 import { WebhookSessionStore, WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
 import { registerTaskTools } from "../../tools/tasks/index.js";
 import type { ToolRegistry } from "../../tools/tool-registry.js";
@@ -65,6 +71,8 @@ export function createRuntimeTaskRunner(args: {
   metrics: AgentMetrics;
   /** The live approval level, so a task started under another is left alone (ATO-1324). */
   approvalLevel?: () => number;
+  /** Sleep inhibitor held while a drain runs (ATO-592). */
+  keepAwake?: KeepAwake;
 }): TaskRunner {
   const { config, taskStore, runTurn, sessionStore, createSession, toolRegistry, resolveTelegram, logger, metrics } = args;
   const taskRunner = new TaskRunner({
@@ -108,6 +116,7 @@ export function createRuntimeTaskRunner(args: {
     logger,
     metrics,
     ...(args.approvalLevel ? { approvalLevel: args.approvalLevel } : {}),
+    ...(args.keepAwake ? { keepAwake: args.keepAwake } : {}),
     // Continue a run a crash, a kill or a restart cut off from its
     // session's checkpoint (ATO-1109).
     resume: {
@@ -176,6 +185,36 @@ function createTaskReportSink(args: {
     });
     return direct;
   }
+}
+
+/**
+ * The sleep inhibitor for tasks and turns (ATO-592), from
+ * `ATOMIC_AGENT_TASKS_KEEP_AWAKE`. Default off; a value that is not
+ * `off` / `while-working` (the removed `always` included) is warned
+ * about and treated as off.
+ */
+export function createRuntimeKeepAwake(args: {
+  config: Pick<AtomicAgentConfig, "tasks">;
+  logger: StructuredLogger;
+  platform?: NodeJS.Platform;
+}): KeepAwake {
+  const { config, logger } = args;
+  const raw = config.tasks.keepAwake ?? null;
+  let mode = parseKeepAwakeMode(raw);
+  if (raw !== null && raw.trim() !== "" && mode === null) {
+    logger.warn("keep-awake setting ignored: expected off or while-working", {
+      value: raw,
+      ...(raw.trim().toLowerCase() === "always"
+        ? { hint: "always was removed: while-working keeps the computer awake only while a task or turn runs" }
+        : {}),
+    });
+  }
+  mode ??= "off";
+  return createKeepAwake({
+    mode,
+    logger,
+    ...(args.platform ? { platform: args.platform } : {}),
+  });
 }
 
 export function createRuntimeScheduler(args: {

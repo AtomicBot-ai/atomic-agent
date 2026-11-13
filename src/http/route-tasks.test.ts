@@ -276,6 +276,27 @@ describe("tasks.minIntervalMs at runtime (#548)", () => {
   });
 });
 
+describe("POST /api/tasks/wake (ATO-592)", () => {
+  let harness: Harness;
+
+  beforeEach(async () => {
+    harness = await startTestHarness();
+  });
+
+  afterEach(async () => {
+    await harness.cleanup();
+  });
+
+  it("answers 202 at once and says whether a tick started", async () => {
+    const res = await fetch(`${harness.baseUrl}/api/tasks/wake`, { method: "POST" });
+    expect(res.status).toBe(202);
+    const body = (await res.json()) as { started: boolean; scheduler: boolean };
+    expect(typeof body.started).toBe("boolean");
+    expect(body.scheduler).toBe(harness.runtime.scheduler !== null);
+    if (!body.scheduler) expect(body.started).toBe(false);
+  });
+});
+
 describe("POST /api/tasks with workingDir and notify (ATO-1113)", () => {
   let harness: Harness;
   let dir: string;

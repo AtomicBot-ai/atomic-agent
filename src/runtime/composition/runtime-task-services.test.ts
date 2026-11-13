@@ -11,7 +11,7 @@ import { ToolRegistry } from "../../tools/tool-registry.js";
 import { StructuredLogger, type LogRecord } from "../../tracing/structured-logger.js";
 import { AgentMetrics } from "../../tracing/agent-metrics.js";
 import { MetricsCollector } from "../../tracing/metrics-collector.js";
-import { createRuntimeScheduler, createRuntimeTaskRunner, createRuntimeTaskStores } from "./runtime-task-services.js";
+import { createRuntimeKeepAwake, createRuntimeScheduler, createRuntimeTaskRunner, createRuntimeTaskStores } from "./runtime-task-services.js";
 
 let dir: string;
 let config: AtomicAgentConfig;
@@ -181,5 +181,34 @@ describe("runtime task service phases", () => {
       scheduler?.start(); await vi.advanceTimersByTimeAsync(100);
       expect(due).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("createRuntimeKeepAwake (ATO-592)", () => {
+  it("is off by default and holds no blocker", () => {
+    config.tasks.keepAwake = null;
+    const ka = createRuntimeKeepAwake({ config, logger });
+    expect(ka.mode).toBe("off");
+    ka.hold();
+    expect(ka.active).toBe(false);
+  });
+
+  it("reads the env value the config carries", () => {
+    config.tasks.keepAwake = "while-working";
+    expect(createRuntimeKeepAwake({ config, logger, platform: "win32" }).mode).toBe("while-working");
+  });
+
+  it("rejects the removed always mode: off, with a warning", () => {
+    config.tasks.keepAwake = "always";
+    expect(createRuntimeKeepAwake({ config, logger, platform: "win32" }).mode).toBe("off");
+    const warning = records.find((r) => r.message.startsWith("keep-awake setting ignored"));
+    expect(warning).toBeDefined();
+    expect(JSON.stringify(warning)).toContain("always was removed");
+  });
+
+  it("warns about a malformed value and stays off", () => {
+    config.tasks.keepAwake = "forever";
+    expect(createRuntimeKeepAwake({ config, logger }).mode).toBe("off");
+    expect(records.some((r) => r.message.startsWith("keep-awake setting ignored"))).toBe(true);
   });
 });
