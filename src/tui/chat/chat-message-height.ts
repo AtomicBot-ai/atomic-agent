@@ -1,4 +1,5 @@
 import type { ChatMessage, ToolCardEntry, TuiState } from "../tui-state.js";
+import { estimateToolCardImageRows } from "../terminal-image/index.js";
 import { toolCardsAnnotationParts } from "./tool-cards-annotation.js";
 
 /**
@@ -100,7 +101,12 @@ export function estimatePendingSteerHeight(text: string): number {
 
 export function estimateToolCardHeight(card: ToolCardEntry): number {
   const summaryLines = bodyLines(card.summary);
-  return TOOL_CARD_BASE_ROWS + Math.max(0, summaryLines - 1);
+  // The inline picture strip (ATO-660); 0 unless it is switched on.
+  return (
+    TOOL_CARD_BASE_ROWS +
+    Math.max(0, summaryLines - 1) +
+    estimateToolCardImageRows(card)
+  );
 }
 
 /**
