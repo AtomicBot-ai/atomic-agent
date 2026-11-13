@@ -1,6 +1,7 @@
 import { getConfig } from "../../config/index.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { isAsciiOnly } from "../../llm/provider/openai/ascii-header-guard.js";
+import { isOtherComputerOnNetworkUrl } from "../../llm/provider/openai/network-server-address.js";
 import {
   setActiveTextProviderInConfig,
   upsertLlmProvider,
@@ -37,6 +38,11 @@ function defaultChatModelForKind(kind: ProvidersWizardKind): string {
   if (kind === "aimlapi") return AIMLAPI_DEFAULT_CHAT_MODEL;
   if (kind === "gemini") return GEMINI_DEFAULT_CHAT_MODEL;
   return OPENROUTER_DEFAULT_CHAT_MODEL;
+}
+
+/** `.env` variable for the key of a server on another computer: `custom-192-168-1-20-8080` -> `ATOMIC_AGENT_KEY_CUSTOM_192_168_1_20_8080`. */
+export function networkComputerKeyEnvVar(providerId: string): string {
+  return `ATOMIC_AGENT_KEY_${providerId.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`;
 }
 
 export function saveProviderWizardToConfig(
@@ -91,6 +97,15 @@ export function saveProviderWizardToConfig(
   // an empty key is a valid state for both: nothing is written to .env
   // and requests go out without Authorization.
   const keyOptional = wizardKeyIsOptional(wizard);
+  // ATO-1066: a server on another computer on this network never reads
+  // the shared compat variables (they usually hold a real cloud key), so
+  // a key typed for it lives under a variable of its own.
+  const networkKeyEnvVar =
+    !preset &&
+    entry.kind === "openai-compatible" &&
+    isOtherComputerOnNetworkUrl(entry.baseUrl)
+      ? (existing?.apiKeyEnvVar ?? networkComputerKeyEnvVar(entry.id))
+      : undefined;
   if (wizard.apiKeyBuffer.trim().length > 0) {
     // Validate the value that is actually persisted: the dotenv writer
     // trims, and `trim()` strips U+00A0/U+FEFF paste artifacts that are
@@ -104,9 +119,16 @@ export function saveProviderWizardToConfig(
         "API key contains non-ASCII characters. Use a plain ASCII key.",
       );
     }
-    writeProviderApiKeyToDotenv(kind, wizard.apiKeyBuffer, preset?.envVar);
+    writeProviderApiKeyToDotenv(
+      kind,
+      wizard.apiKeyBuffer,
+      preset?.envVar ?? networkKeyEnvVar,
+    );
+    if (networkKeyEnvVar) entry = { ...entry, apiKeyEnvVar: networkKeyEnvVar };
   } else if (existing?.apiKey) {
     entry = { ...entry, apiKey: existing.apiKey };
+  } else if (networkKeyEnvVar && existing?.apiKeyEnvVar) {
+    entry = { ...entry, apiKeyEnvVar: existing.apiKeyEnvVar };
   } else if (
     !keyOptional &&
     !resolveLlmProviderApiKey(entry) &&

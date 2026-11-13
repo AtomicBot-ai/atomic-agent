@@ -20,6 +20,10 @@ import {
 import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { isAsciiOnly } from "../../llm/provider/openai/ascii-header-guard.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
+import {
+  isOtherComputerOnNetworkUrl,
+  withAssumedScheme,
+} from "../../llm/provider/openai/network-server-address.js";
 import { openAiChatPathPrefix } from "../../llm/provider/openai/openai-chat-path.js";
 import {
   DEFAULT_OPENROUTER_BASE,
@@ -147,8 +151,13 @@ export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
   // `llama-server` on `http://127.0.0.1:9931` needs no key, so an empty
   // one is valid there. The wizard collects the base URL before the key
   // screen for this kind, so the URL is known by the time this runs.
+  // ATO-1066: so is a server on another computer on this network (a GPU
+  // box running llama-server, LM Studio or Ollama): usually keyless, and
+  // one started with a key still takes it from this screen.
   return (
-    wizard.kind === "openai-compatible" && isLoopbackBaseUrl(wizard.baseUrlLine)
+    wizard.kind === "openai-compatible" &&
+    (isLoopbackBaseUrl(wizard.baseUrlLine) ||
+      isOtherComputerOnNetworkUrl(withAssumedScheme(wizard.baseUrlLine)))
   );
 }
 

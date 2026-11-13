@@ -649,6 +649,21 @@ describe("handleProvidersWizardKey", () => {
     expect(wizard.error).toBeNull();
   });
 
+  it("adds http:// to another computer's address typed without one (ATO-1066)", () => {
+    let wizard = createProvidersWizardState("add");
+    wizard = next(wizard, "", emptyKey({ upArrow: true }));
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("base_url");
+    for (const ch of "192.168.1.20:8080") wizard = next(wizard, ch, emptyKey());
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.baseUrlLine).toBe("http://192.168.1.20:8080");
+    expect(wizard.phase).toBe("api_key");
+    // Keyless home server: the empty key screen passes.
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.error).toBeNull();
+  });
+
   describe("empty API key", () => {
     // The gate reads the environment, so a key left over from the host
     // shell would silently satisfy the screen under test.

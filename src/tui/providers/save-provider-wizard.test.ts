@@ -1,12 +1,16 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
 import { setModelModeInConfig } from "../../config/model-mode-commands.js";
 import { LOCAL_EMBEDDING_CHOICE_ID } from "./providers-model-options.js";
-import { saveProviderWizardToConfig } from "./save-provider-wizard.js";
+import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
+import {
+  networkComputerKeyEnvVar,
+  saveProviderWizardToConfig,
+} from "./save-provider-wizard.js";
 import { createProvidersWizardState } from "./providers-wizard-state.js";
 
 const ENV_KEYS = [
@@ -132,6 +136,40 @@ describe("saveProviderWizardToConfig", () => {
       modelMode: "local",
       defaultChatModel: "venice-uncensored",
     });
+  });
+
+  function lanWizard(apiKey: string) {
+    return {
+      ...createProvidersWizardState("add"),
+      kind: "openai-compatible" as const,
+      phase: "chat_model_line" as const,
+      apiKeyBuffer: apiKey,
+      baseUrlLine: "http://192.168.1.20:8080",
+      chatModelLine: "qwen3.6-27b",
+    };
+  }
+
+  it("keeps a key for another computer out of the shared compat variable (ATO-1066)", () => {
+    process.env.OPENAI_COMPAT_API_KEY = "sk-real-cloud-key";
+    const built = saveProviderWizardToConfig(lanWizard("lan-key"));
+    const envVar = networkComputerKeyEnvVar(built.entry.id);
+    onTestFinished(() => {
+      delete process.env[envVar];
+    });
+
+    expect(envVar).toMatch(/^ATOMIC_AGENT_KEY_[A-Z0-9_]+$/);
+    expect(built.entry.apiKeyEnvVar).toBe(envVar);
+    expect(process.env[envVar]).toBe("lan-key");
+    expect(process.env.OPENAI_COMPAT_API_KEY).toBe("sk-real-cloud-key");
+    expect(resolveLlmProviderApiKey(built.entry)).toBe("lan-key");
+  });
+
+  it("saves another computer with a blank key and never hands it the shared key (ATO-1066)", () => {
+    process.env.OPENAI_COMPAT_API_KEY = "sk-real-cloud-key";
+    const built = saveProviderWizardToConfig(lanWizard(""));
+
+    expect(built.entry.apiKeyEnvVar).toBeUndefined();
+    expect(resolveLlmProviderApiKey(built.entry)).toBeUndefined();
   });
 
   function groqWizard(apiKey: string) {

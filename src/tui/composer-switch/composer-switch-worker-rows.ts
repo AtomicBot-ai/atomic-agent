@@ -1,3 +1,4 @@
+import { isOtherComputerOnNetworkUrl } from "../../llm/provider/openai/network-server-address.js";
 import type { TuiState } from "../tui-state.js";
 import {
   configuredCloudProviders,
@@ -58,7 +59,9 @@ export function selectWorkerRows(
     .map((provider) => ({
       id: `worker:provider:${provider.id}`,
       label: provider.id,
-      detail: provider.hasApiKey ? "workers · in the cloud" : "no API key",
+      detail: isOtherComputerOnNetworkUrl(provider.baseUrl ?? undefined)
+        ? "workers · on a computer on your network"
+        : provider.hasApiKey ? "workers · in the cloud" : "no API key",
       active: runMode?.workerProviderId === provider.id,
       intent: {
         kind: "fusionLeg" as const,
