@@ -27,8 +27,15 @@ DATAFORSEO_URL = "https://api.dataforseo.com/v3/serp/google/organic/live/regular
 SUGGEST_URL = "https://suggestqueries.google.com/complete/search"
 
 
+STATE_DIR_OVERRIDE = None
+
+
 def state_dir():
-    return os.path.expanduser(os.environ.get("ATOMIC_AGENT_STATE_DIR") or "~/.atomic-agent")
+    """The agent's state folder: --state-dir, else $ATOMIC_AGENT_STATE_DIR,
+    else ~/.atomic-agent. "~" is expanded here, because a command started
+    without a shell never expands it."""
+    raw = STATE_DIR_OVERRIDE or os.environ.get("ATOMIC_AGENT_STATE_DIR") or "~/.atomic-agent"
+    return os.path.abspath(os.path.expanduser(raw))
 
 
 def default_db():
@@ -269,7 +276,8 @@ def cmd_suggest(args):
 
 def build_parser():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--db", default=default_db(), help="SQLite file (default: %(default)s)")
+    p.add_argument("--state-dir", help="agent state folder (default: $ATOMIC_AGENT_STATE_DIR or ~/.atomic-agent)")
+    p.add_argument("--db", help="SQLite file (default: <state dir>/seo-rank-report/history.sqlite)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     r = sub.add_parser("record")
@@ -309,7 +317,11 @@ def build_parser():
 
 
 def main(argv=None):
+    global STATE_DIR_OVERRIDE
     args = build_parser().parse_args(argv)
+    STATE_DIR_OVERRIDE = args.state_dir
+    if args.db is None:
+        args.db = default_db()
     try:
         out = args.func(args)
     except (ValueError, OSError, sqlite3.Error) as exc:

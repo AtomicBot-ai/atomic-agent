@@ -48,6 +48,23 @@ describe("the seo-rank-report starter skill", () => {
     expect(body).toMatch(/replaced on every agent start/);
   });
 
+  it("never passes a ~/ script path to python and uses the Skill directory path", () => {
+    // Commands run without a shell, so "~" is never expanded (review of #1310).
+    expect(body).not.toMatch(/"args":\s*\[\s*"~\//);
+    expect(body).not.toMatch(/python3?"?[^\n]*~\/[^\n]*rank_history\.py/);
+    expect(body).toMatch(/`Skill directory:` line/);
+    expect(body).toMatch(/"<skill directory>\/scripts\/rank_history\.py", "--state-dir", "<state dir>"/);
+  });
+
+  it("offers a saved allow rule for exactly this script before the weekly task", () => {
+    const rule = body.indexOf('"commandPrefix": ["python3", "<skill directory>/scripts/rank_history.py"]');
+    const cron = body.indexOf('"tool": "tasks.cron"');
+    expect(rule).toBeGreaterThan(0);
+    expect(cron).toBeGreaterThan(rule);
+    expect(body).toMatch(/approval-rules\.json/);
+    expect(body).toMatch(/stops at that approval/);
+  });
+
   it("tries free sources before paid ones and never scrapes Google", () => {
     const gsc = body.indexOf("Google Search Console, free");
     const paid = body.indexOf("The user's own paid key");
@@ -104,6 +121,30 @@ describe("the seo-rank-report starter skill", () => {
       const noKey = run("fetch-dataforseo", "--domain", "example.com",
         "--keywords-file", join(tmp, "missing.txt"));
       expect(noKey.status).toBe("no_key");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(!python)("finds its state dir from --state-dir or ATOMIC_AGENT_STATE_DIR", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "seo-rank-state-"));
+    const run = (env: Record<string, string>, ...args: string[]) => {
+      const out = spawnSync("python3", ["-I", script, ...args], {
+        encoding: "utf8",
+        cwd: tmp,
+        env: { ...process.env, ATOMIC_AGENT_STATE_DIR: "", ...env },
+      });
+      expect(out.status, out.stderr).toBe(0);
+      return JSON.parse(out.stdout);
+    };
+    const rec = ["record", "--domain", "example.com", "--source", "gsc",
+      "--json", '[{"keyword":"a","position":1}]'];
+    try {
+      const fromEnv = run({ ATOMIC_AGENT_STATE_DIR: join(tmp, "env") }, ...rec);
+      expect(fromEnv.db).toBe(join(tmp, "env", "seo-rank-report", "history.sqlite"));
+      const fromFlag = run({ ATOMIC_AGENT_STATE_DIR: join(tmp, "env") },
+        "--state-dir", join(tmp, "flag"), ...rec);
+      expect(fromFlag.db).toBe(join(tmp, "flag", "seo-rank-report", "history.sqlite"));
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }

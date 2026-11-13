@@ -21,25 +21,38 @@ in a local SQLite file, so the weekly report compares against real history.
 
 ## Where things live
 
-Everything this skill keeps goes in `~/.atomic-agent/seo-rank-report/` (or
-`$ATOMIC_AGENT_STATE_DIR/seo-rank-report/` when the state dir is moved).
-Never write into the skill folder `~/.atomic-agent/skills/seo-rank-report/`:
-it is replaced on every agent start, so anything saved there is lost.
+Two folders, both written out in full in every command. Commands run
+without a shell, so a `~` in a path is never expanded: never pass a path
+that starts with `~`.
 
-| File | What it holds |
+- **Skill directory**: the absolute path on the `Skill directory:` line at
+  the top of this skill when it is viewed (for example
+  `/Users/ana/.atomic-agent/skills/seo-rank-report`). The script is
+  `<skill directory>/scripts/rank_history.py`. This folder is
+  replaced on every agent start, so never write anything into it.
+- **State dir**: the folder two levels above the skill directory (in the
+  example, `/Users/ana/.atomic-agent`; by default `~/.atomic-agent/`, or
+  wherever `ATOMIC_AGENT_STATE_DIR` moved it). Everything this skill keeps
+  goes in `<state dir>/seo-rank-report/`, the default being
+  `~/.atomic-agent/seo-rank-report/`.
+
+| File in `<state dir>/seo-rank-report/` | What it holds |
 |---|---|
 | `config.json` | `{"domain", "source", "location_code", "language_code", "cron", "tz"}` |
 | `keywords.txt` | one keyword per line, `#` starts a comment, up to ~50 |
 | `history.sqlite` | every stored run, written only by `rank_history.py` |
 
-The script is `~/.atomic-agent/skills/seo-rank-report/scripts/rank_history.py`.
-Run it with `os.shell.run`, `cmd: "python3"` (`python` on Windows), the
-script path as the first arg. It needs only Python 3, no packages, and
-prints JSON. If `python3` is missing, say Python 3 is required and stop.
+Run the script with `os.shell.run`, `cmd: "python3"` (`python` on
+Windows). The first arg is the absolute script path, then
+`--state-dir <state dir>`, then the subcommand. It needs only Python 3, no
+packages, and prints JSON. If `python3` is missing, say Python 3 is
+required and stop.
 
 ```
-[{ "tool": "os.shell.run", "args": { "cmd": "python3", "args": ["~/.atomic-agent/skills/seo-rank-report/scripts/rank_history.py", "report", "--domain", "example.com"] } }]
+[{ "tool": "os.shell.run", "args": { "cmd": "python3", "args": ["<skill directory>/scripts/rank_history.py", "--state-dir", "<state dir>", "report", "--domain", "example.com"] } }]
 ```
+
+Below, `rank_history.py <subcommand> ...` is short for that full command.
 
 ## Setup (first time)
 
@@ -75,8 +88,8 @@ keep using it every week: positions from different sources do not compare.
      Never type a password or sign in for the user.
 2. **The user's own paid key**, only if they already have one:
    - DataForSEO: `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD` in
-     `~/.atomic-agent/.env`. Run
-     `rank_history.py fetch-dataforseo --domain <d> --keywords-file <path to keywords.txt> --record`
+     `<state dir>/.env`. Run
+     `rank_history.py fetch-dataforseo --domain <d> --keywords-file <state dir>/seo-rank-report/keywords.txt --record`
      (`--location-code`, default 2840 United States; `--language-code`,
      default `en`). Each keyword is one paid request on the user's account,
      so say how many keywords will be checked before the first run.
@@ -138,11 +151,39 @@ until they pair it.
 1. `tasks.list` first: if a task with "seo-rank-report" in its message
    already exists, do not add a second one. To change the day or time,
    `tasks.cancel { id }` the old one, then create the new one.
-2. Create it with `tasks.cron`:
+2. **Offer a saved allow rule for this one script.** A scheduled run has
+   nobody to answer an approval prompt, and `os.shell.run` asks before it
+   runs a command, so without a rule the weekly run stops at that approval
+   and no report is sent. Say exactly that, and offer to add an allow rule
+   that covers only `python3 <skill directory>/scripts/rank_history.py`
+   (the absolute path, every subcommand of this script, nothing else).
+   Do not tell the user to pick "Allow always" on the prompt instead: that
+   choice saves a rule for the program and its subcommand, which for
+   `python3 /path/script.py` is every `python3` command in the project.
+   If the user agrees, add this entry to the `rules` array of
+   `<state dir>/approval-rules.json` (create the file as
+   `{"version": 1, "rules": [...]}` if it is missing, keep every rule
+   already in it). Writing that file asks for approval itself; that is
+   expected.
+
+```
+{ "decision": "allow", "tool": "os.shell.run", "category": "shell",
+  "commandPrefix": ["python3", "<skill directory>/scripts/rank_history.py"],
+  "source": "user", "note": "seo-rank-report weekly run" }
+```
+
+   Use `python` as the first entry on Windows, the same name the command
+   uses. The rule is read on the next approval, no restart needed. The
+   user can remove it any time (desktop app: Settings, Privacy; or delete
+   the entry from the file). If the source is an MCP server (Composio,
+   Ahrefs, SE Ranking) or the browser, those calls can still ask; say the
+   first weekly run should be watched. If the user declines the rule,
+   create the task anyway and say each run will wait at the approval.
+3. Create it with `tasks.cron`:
 
 ```
 [{ "tool": "tasks.cron", "args": {
-  "userMessage": "Run the seo-rank-report skill: read ~/.atomic-agent/seo-rank-report/config.json and keywords.txt, get this week's positions from the configured source, store them with rank_history.py record, run rank_history.py report and reply with the short weekly report.",
+  "userMessage": "Run the seo-rank-report skill: view it, read <state dir>/seo-rank-report/config.json and keywords.txt, get this week's positions from the configured source, store them with rank_history.py record, run rank_history.py report and reply with the short weekly report.",
   "expression": "0 9 * * 1",
   "tz": "<the user's IANA time zone, e.g. Europe/Berlin>",
   "notify": "telegram"
@@ -151,8 +192,9 @@ until they pair it.
 
 The default is **Monday 09:00** in the user's time zone; use another day or
 time if the user asks, and save it as `cron` and `tz` in `config.json`.
-Each firing runs in its own session and sends its final reply to Telegram,
-so the reply must be the report itself.
+Write the real absolute state dir into `userMessage` in place of
+`<state dir>`. Each firing runs in its own session and sends its final
+reply to Telegram, so the reply must be the report itself.
 
 If `tasks.cron` is not available (agent task tools turned off), give the
 user the terminal command instead:
