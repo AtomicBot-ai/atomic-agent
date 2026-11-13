@@ -648,6 +648,48 @@ export function modelsPull(
   return { done, cancel: () => child.kill("SIGTERM") };
 }
 
+/**
+ * ATO-1049 / decision 75: `atomic-agent whisper install --json`, the agent's
+ * first-use download of whisper.cpp (Windows/Linux) and the speech model
+ * into the shared models folder, verified against the published SHA-256.
+ * One JSON object per stdout line (`progress` / `done` / `error`), relayed
+ * to `onLine`. The model is the saved default unless `model` names one.
+ */
+export function whisperInstall(
+  onLine: (line: string) => void,
+  model?: string,
+): { done: Promise<CliResult>; cancel: () => void } {
+  const binary = resolveBinary();
+  if (!binary || (model !== undefined && !/^[a-z0-9.-]{1,32}$/.test(model))) {
+    return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "cannot start the download" }), cancel: () => {} };
+  }
+  const child = spawn(binary, ["whisper", "install", "--json", ...(model ? ["--model", model] : [])], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  let stdout = "";
+  let stderr = "";
+  let pending = "";
+  child.stdout.on("data", (c: Buffer) => {
+    const text = c.toString("utf8");
+    stdout += text;
+    pending += text;
+    let nl = pending.indexOf("\n");
+    while (nl >= 0) {
+      const line = pending.slice(0, nl).trim();
+      pending = pending.slice(nl + 1);
+      if (line) onLine(line);
+      nl = pending.indexOf("\n");
+    }
+  });
+  child.stderr.on("data", (c: Buffer) => { stderr = (stderr + c.toString("utf8")).slice(-4000); });
+  const done = new Promise<CliResult>((resolve) => {
+    child.on("exit", (code) => {
+      if (pending.trim()) onLine(pending.trim());
+      resolve(code === 0 ? { ok: true, stdout, stderr } : { ok: false, stdout, stderr, error: `whisper install exited with code ${code ?? "null"}` });
+    });
+    child.on("error", (err) => resolve({ ok: false, stdout, stderr, error: err.message }));
+  });
+  return { done, cancel: () => child.kill("SIGTERM") };
+}
+
 /** The memory sizes Macs are sold with, in GB (really GiB). */
 const MARKETED_RAM_GB = [4, 6, 8, 12, 16, 18, 24, 32, 36, 48, 64, 96, 128, 192, 256, 384, 512];
 
