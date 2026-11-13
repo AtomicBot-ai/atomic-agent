@@ -30,6 +30,7 @@ import { CodingModeChip } from "./coding-mode/coding-mode-chip.js";
 import { CodingModePopup } from "./coding-mode/coding-mode-popup.js";
 import { IssueReportPopup } from "./issue-report/issue-report-popup.js";
 import type { IssueReportLevel } from "./issue-report/report-levels.js";
+import type { IssueReportToggle } from "./issue-report/issue-report-state.js";
 import { OnboardingScreen } from "./onboarding/onboarding-screen.js";
 import { TerminalTooSmall } from "./components/terminal-too-small.js";
 import { ContextPanel } from "./context/context-panel.js";
@@ -720,6 +721,8 @@ export interface TuiAppCallbacks {
   onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
   /** The operator confirmed: file the prepared report on GitHub. */
   onIssueReportSendRequested?(): void;
+  /** `i` / `l` on the confirm step: include the support id / log tail. */
+  onIssueReportToggleRequested?(option: IssueReportToggle): void;
   /** The popup was dismissed; the orchestrator drops its prepared report. */
   onIssueReportCloseRequested?(): void;
   /** Telegram tab: refresh state mirror (token presence, owner, etc.). */

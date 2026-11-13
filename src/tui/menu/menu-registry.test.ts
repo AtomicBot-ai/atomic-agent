@@ -241,6 +241,7 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "report",
     description:
       "file a GitHub issue with your logs attached — you choose how much leaves this machine",
+    aliases: ["bug"],
   },
   {
     name: "runmode",

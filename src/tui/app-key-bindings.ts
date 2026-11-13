@@ -2,6 +2,7 @@ import { handleUpdateKey } from "./update/update-key-bindings.js";
 import { handleProjectTrustKey } from "./project-trust/project-trust-key-bindings.js";
 import { CODING_MODES, type CodingMode } from "./coding-mode/coding-mode.js";
 import type { IssueReportLevel } from "./issue-report/report-levels.js";
+import type { IssueReportToggle } from "./issue-report/issue-report-state.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context/context-panel-keys.js";
@@ -80,6 +81,8 @@ export interface AppKeyCallbacks {
   onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
   /** Issue-report popup: the operator confirmed sending. */
   onIssueReportSendRequested?(): void;
+  /** Issue-report popup: `i` / `l` flipped a checkbox on the confirm step. */
+  onIssueReportToggleRequested?(option: IssueReportToggle): void;
   /** Issue-report popup: dismissed on any step. */
   onIssueReportCloseRequested?(): void;
   onApprovalDecision(

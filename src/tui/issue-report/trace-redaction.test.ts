@@ -122,13 +122,14 @@ describe("redactTraceNdjson", () => {
     expect(stats.stripped).toBe(7);
   });
 
-  it("full: keeps everything but masks secrets", () => {
+  it("full: keeps every row, scrubbed like the other levels", () => {
     const { text, stats } = redactTraceNdjson(NDJSON, "full", CTX);
     const rows = parse(text);
     expect(rows).toHaveLength(8);
     expect(rows[0]?.userMessage).toBe("my private ask");
     expect(rows[2]?.tail).toBe("secret plans");
-    expect(rows[3]?.args).toEqual({ path: "/Users/valerii/proj/a" });
+    expect(rows[3]?.args).toEqual({ path: "<cwd>/a" });
+    expect(text).not.toContain("/Users/valerii");
     expect(rows[0]?.sessionId).toBe("s");
     expect(text).not.toContain("ghp_");
     expect(stats).toEqual({ kept: 8, dropped: 0, stripped: 0 });

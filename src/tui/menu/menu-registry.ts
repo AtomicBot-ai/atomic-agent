@@ -825,6 +825,8 @@ export const MENU: readonly MenuNode[] = [
       name: "report",
       description:
         "file a GitHub issue with your logs attached — you choose how much leaves this machine",
+      // `/bug` is what Claude Code and Zed users type (ATO-1466).
+      aliases: ["bug"],
       rank: 41,
     },
   },

@@ -13,7 +13,6 @@ import type { LogRecord } from "../../tracing/structured-logger.js";
 import type { ReportSection } from "./issue-body.js";
 import {
   mapStrings,
-  maskSecrets,
   redactPaths,
   scrubText,
   type RedactionContext,
@@ -35,6 +34,12 @@ export interface IssueReportFacts {
   approvalLevel: number;
   codingMode: string;
   capturedAt: string;
+  /** `terminal` (ATO-1466); the desktop builds its own issue body. */
+  surface?: string;
+  /** How this copy was installed (`curl_sh`, `dmg`, `deb`, …, `unknown`). */
+  installChannel?: string;
+  /** Local engine and its build (`atomic-core b1234`), or `cloud`. */
+  engine?: string | null;
 }
 
 export interface IssueReport {
@@ -56,14 +61,25 @@ export function buildIssueReport(input: {
   facts: IssueReportFacts;
   level: IssueReportLevel;
   redaction: RedactionContext;
+  /**
+   * The support id (anonymous install id, ATO-1466), shown in the
+   * header so a report can be matched to PostHog and Sentry. `null` or
+   * absent leaves it out: the operator unticked it, or analytics is off.
+   * Never put in the zip's snapshot.
+   */
+  supportId?: string | null;
+  /** `false` leaves the log section out of the issue (it stays in the zip). */
+  includeLogs?: boolean;
 }): IssueReport {
   const { snapshot, facts, level, redaction } = input;
-  // Both reduced levels mask absolute paths: `redactPersonal` only knows
-  // the home and working directories, so a path into another project —
-  // or one the model mistyped, which end-to-end testing turned up — sails
-  // through, and the level's own copy promises paths are redacted.
-  const scrub = (s: string): string =>
-    level === "full" ? maskSecrets(s) : redactPaths(scrubText(s, redaction));
+  const includeLogs = input.includeLogs ?? true;
+  // Every level masks secrets, emails, URLs and absolute paths
+  // (ATO-1466): the issue is public, so even "Everything" never carries
+  // raw user data, the way VS Code's issue reporter works.
+  // `redactPersonal` only knows the home and working
+  // directories, so a path into another project — or one the model
+  // mistyped, which end-to-end testing turned up — needs redactPaths too.
+  const scrub = (s: string): string => redactPaths(scrubText(s, redaction));
   const deep = (v: unknown): unknown => mapStrings(v, scrub);
   // A model name can be a GGUF path on a local backend.
   const safeFacts = deep(facts) as IssueReportFacts;
@@ -94,7 +110,13 @@ export function buildIssueReport(input: {
     }));
 
   const title = buildTitle(lastRunStatus, safeFacts);
-  const header = buildHeader(title, safeFacts, level, snapshot);
+  const header = buildHeader(
+    title,
+    safeFacts,
+    level,
+    snapshot,
+    input.supportId ?? null,
+  );
   const sections: ReportSection[] = [];
 
   if (runs.length > 0) {
@@ -111,16 +133,18 @@ export function buildIssueReport(input: {
       collapsed: true,
     });
   }
-  sections.push({
-    title:
-      level === "errors"
-        ? `Warnings and errors (${logs.length})`
-        : `Logs (${logs.length})`,
-    body: logs.length > 0 ? logs.map(formatLog).join("\n") : "(none)",
-    fenced: true,
-    lang: "text",
-    collapsed: true,
-  });
+  if (includeLogs) {
+    sections.push({
+      title:
+        level === "errors"
+          ? `Warnings and errors (${logs.length})`
+          : `Logs (${logs.length})`,
+      body: logs.length > 0 ? logs.map(formatLog).join("\n") : "(none)",
+      fenced: true,
+      lang: "text",
+      collapsed: true,
+    });
+  }
 
   const filtered: Record<string, unknown> = {
     level,
@@ -138,9 +162,19 @@ export function buildIssueReport(input: {
       timestamp: f.timestamp,
       kind: f.kind,
       stepIndex: f.stepIndex,
-      line: scrub(level === "full" ? f.line : stripToolPayload(f.kind, f.line)),
+      // The issue body never quotes tool payloads or step summaries (the
+      // model's reply): at "full" they go to the zip only.
+      line: scrub(stripToolPayload(f.kind, f.line)),
     }));
-    filtered.feed = feed;
+    filtered.feed =
+      level === "full"
+        ? snapshot.feed.slice(-MAX_FEED_LINES).map((f) => ({
+            timestamp: f.timestamp,
+            kind: f.kind,
+            stepIndex: f.stepIndex,
+            line: scrub(f.line),
+          }))
+        : feed;
     sections.push({
       title: `Runtime feed (${feed.length})`,
       body:
@@ -172,17 +206,10 @@ export function buildIssueReport(input: {
   if (level === "full") {
     filtered.uiMode = snapshot.uiMode;
     filtered.activeTab = snapshot.activeTab;
+    // The conversation goes in the zip only, never in the public issue
+    // body (ATO-1466), and it is scrubbed like everything else.
     filtered.messages = deep(snapshot.messages);
     filtered.reasoning = deep(snapshot.reasoning);
-    sections.push({
-      title: `Conversation (${snapshot.messages.length} messages)`,
-      body: snapshot.messages
-        .map((m) => `[${m.role}] ${scrub(m.text)}`)
-        .join("\n\n"),
-      fenced: true,
-      lang: "text",
-      collapsed: true,
-    });
   }
 
   return { level, title, header, sections, snapshot: filtered };
@@ -205,6 +232,7 @@ function buildHeader(
   facts: IssueReportFacts,
   level: IssueReportLevel,
   snapshot: DebugBundleSnapshot,
+  supportId: string | null,
 ): string {
   const info = issueReportLevelInfo(level);
   const rows: [string, string][] = [
@@ -214,6 +242,16 @@ function buildHeader(
       "Provider",
       `${facts.providerLabel}${facts.textModel ? ` · ${facts.textModel}` : ""} (${facts.toolTransport})`,
     ],
+    ...(facts.engine ? [["Engine", facts.engine] as [string, string]] : []),
+    ...(facts.surface
+      ? [
+          [
+            "Surface",
+            `${facts.surface}${facts.installChannel ? ` · installed via ${facts.installChannel}` : ""}`,
+          ] as [string, string],
+        ]
+      : []),
+    ...(supportId ? [["Support ID", supportId] as [string, string]] : []),
     ["Approval level", `${facts.approvalLevel} · mode ${facts.codingMode}`],
     ["Last run", snapshot.lastRunStatus === null ? "—" : "see below"],
     ["Captured", facts.capturedAt],

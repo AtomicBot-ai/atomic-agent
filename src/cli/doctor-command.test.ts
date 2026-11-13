@@ -113,3 +113,23 @@ describe("atag doctor --json", () => {
     expect(out).not.toContain("not installed");
   });
 });
+
+describe("atag doctor support id (ATO-1466)", () => {
+  const ID = "11111111-2222-4333-8444-555555555555";
+
+  it("ends the text output with the support id", async () => {
+    save(USER_CONFIG_DEFAULTS);
+    await doctorCommand([], { stateDir: dir, write, engine: null, context: { findOnPath: () => true }, supportId: () => ID });
+    expect(out).toContain(`support id: ${ID}`);
+  });
+
+  it("says none yet without an id, and keeps --json to the findings alone", async () => {
+    save(USER_CONFIG_DEFAULTS);
+    await doctorCommand([], { stateDir: dir, write, engine: null, context: { findOnPath: () => true }, supportId: () => null });
+    expect(out).toContain("support id: none yet");
+    out = "";
+    await doctorCommand(["--json"], { stateDir: dir, write, engine: null, context: { findOnPath: () => true }, supportId: () => ID });
+    expect(out).not.toContain(ID);
+    expect(Array.isArray(JSON.parse(out))).toBe(true);
+  });
+});

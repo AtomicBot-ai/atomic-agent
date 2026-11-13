@@ -20,6 +20,7 @@ import {
   ISSUE_REPORT_REPO,
   IssueReportOrchestrator,
   type IssueReportDeps,
+  type IssueReportRuntime,
 } from "./issue-report-orchestrator.js";
 
 const TOKEN = `ghp_${"A".repeat(36)}`;
@@ -112,7 +113,10 @@ describe("IssueReportOrchestrator", () => {
   });
 
   function make(
-    deps: Partial<IssueReportDeps> & { api?: ReturnType<typeof fakeApi> } = {},
+    deps: Partial<IssueReportDeps> & {
+      api?: ReturnType<typeof fakeApi>;
+      config?: Partial<IssueReportRuntime["config"]>;
+    } = {},
   ) {
     const bus = makeBus();
     const api = deps.api ?? fakeApi();
@@ -122,6 +126,8 @@ describe("IssueReportOrchestrator", () => {
           tracing: {
             trace: { dir: traceDir, enabled: true, maxBytesPerSession: 1 },
           },
+          paths: { stateDir: join(dir, "state") },
+          ...deps.config,
         },
         sessionStore: {
           listRecent: () => [{ id: "sess-1" }, { id: "sess-0" }] as never,
@@ -282,5 +288,178 @@ describe("IssueReportOrchestrator", () => {
     const trace = await zip.file("traces/1.ndjson")!.async("string");
     expect(trace).toContain("private prompt");
     expect(trace).toContain("sess-1");
+  });
+
+  describe("support details (ATO-1466)", () => {
+    const ID = "11111111-2222-4333-8444-555555555555";
+
+    it("adds surface, channel and the support id, and the toggles rebuild the body", async () => {
+      const { orchestrator, bus, api } = make({
+        readSupportId: () => ID,
+        analyticsEnabled: () => true,
+        installChannel: () => "curl_sh",
+      });
+      orchestrator.open();
+      await orchestrator.pick("errors", state);
+      const first = (
+        bus.last("issue_report_previewed") as {
+          preview: { includeSupportId: boolean; includeLogs: boolean };
+        }
+      ).preview;
+      expect(first.includeSupportId).toBe(true);
+      expect(first.includeLogs).toBe(true);
+
+      orchestrator.toggle("supportId");
+      orchestrator.toggle("logs");
+      const second = (
+        bus.last("issue_report_previewed") as {
+          preview: { includeSupportId: boolean; includeLogs: boolean };
+        }
+      ).preview;
+      expect(second.includeSupportId).toBe(false);
+      expect(second.includeLogs).toBe(false);
+      await orchestrator.send();
+      const body = api.calls.find((c) => c.op === "issue")!.body;
+      expect(body).toContain("terminal · installed via curl_sh");
+      expect(body).not.toContain(ID);
+      expect(body).not.toContain("Warnings and errors");
+    });
+
+    it("with analytics off the id is offered but unticked", async () => {
+      const { orchestrator, bus, api } = make({
+        readSupportId: () => ID,
+        analyticsEnabled: () => false,
+        installChannel: () => "dmg",
+      });
+      orchestrator.open();
+      await orchestrator.pick("errors", state);
+      const preview = (
+        bus.last("issue_report_previewed") as {
+          preview: { supportId: string; includeSupportId: boolean };
+        }
+      ).preview;
+      expect(preview.supportId).toBe(ID);
+      expect(preview.includeSupportId).toBe(false);
+      orchestrator.toggle("supportId");
+      await orchestrator.send();
+      expect(api.calls.find((c) => c.op === "issue")!.body).toContain(
+        `| **Support ID** | ${ID} |`,
+      );
+    });
+
+    it("reads the support id from config.paths.stateDir with no overrides", async () => {
+      // Hermetic: no shared id file in the fake home, no env overrides.
+      vi.stubEnv("ATOMIC_AGENT_INSTALL_ID_FILE", "");
+      vi.stubEnv("ATOMIC_AGENT_ANALYTICS", "");
+      vi.stubEnv("DO_NOT_TRACK", "");
+      try {
+        const stateDir = join(dir, "state");
+        mkdirSync(stateDir, { recursive: true });
+        writeFileSync(
+          join(stateDir, "analytics.json"),
+          JSON.stringify({ installId: ID }),
+        );
+        mkdirSync(join(dir, "home"), { recursive: true });
+        const bus = makeBus();
+        const api = fakeApi();
+        // The shape loadConfig() gives the real TUI runtime; no
+        // readSupportId / installChannel overrides.
+        const orchestrator = new IssueReportOrchestrator(
+          {
+            config: {
+              tracing: {
+                trace: { dir: traceDir, enabled: true, maxBytesPerSession: 1 },
+              },
+              paths: { stateDir },
+              analytics: { enabled: true },
+              localModels: { mode: "managed" },
+            },
+            sessionStore: { listRecent: () => [] as never },
+          },
+          bus,
+          {
+            resolveToken: () => TOKEN,
+            apiFactory: () => api,
+            homeDir: join(dir, "home"),
+            outDir,
+            now: () => new Date("2026-09-09T00:00:00Z"),
+          },
+        );
+        orchestrator.open();
+        await orchestrator.pick("errors", state);
+        const preview = (
+          bus.last("issue_report_previewed") as {
+            preview: { supportId: string | null; includeSupportId: boolean };
+          }
+        ).preview;
+        expect(preview.supportId).toBe(ID);
+        expect(preview.includeSupportId).toBe(true);
+        await orchestrator.send();
+        const body = api.calls.find((c) => c.op === "issue")!.body;
+        // The header table carries the id.
+        expect(body).toContain(`| **Support ID** | ${ID} |`);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    });
+
+    it("cannot tick an id that does not exist", async () => {
+      const { orchestrator, bus } = make({
+        readSupportId: () => null,
+        analyticsEnabled: () => true,
+        installChannel: () => "unknown",
+      });
+      orchestrator.open();
+      await orchestrator.pick("errors", state);
+      orchestrator.toggle("supportId");
+      const preview = (
+        bus.last("issue_report_previewed") as {
+          preview: { includeSupportId: boolean };
+        }
+      ).preview;
+      expect(preview.includeSupportId).toBe(false);
+    });
+
+    it("external mode does not claim the managed engine", async () => {
+      const { orchestrator, api } = make({
+        readSupportId: () => null,
+        analyticsEnabled: () => false,
+        installChannel: () => "unknown",
+        config: { localModels: { mode: "external" } },
+      });
+      const local: TuiState = {
+        ...state,
+        providersPanel: {
+          ...state.providersPanel,
+          rows: [
+            {
+              id: "local",
+              kind: "llama-server",
+              isActiveText: true,
+              isActiveEmbedding: false,
+              hasApiKey: false,
+              baseUrl: null,
+              subscriptionCli: null,
+              chatModel: "m",
+              embeddingModel: null,
+            },
+          ],
+        },
+        localModelsPanel: {
+          ...state.localModelsPanel,
+          backend: {
+            ...state.localModelsPanel.backend,
+            engine: "atomic-core",
+            currentTag: "b1",
+          },
+        },
+      };
+      orchestrator.open();
+      await orchestrator.pick("errors", local);
+      await orchestrator.send();
+      const body = api.calls.find((c) => c.op === "issue")!.body;
+      expect(body).toContain("| **Engine** | external llama-server |");
+      expect(body).not.toContain("| **Engine** | atomic-core");
+    });
   });
 });
