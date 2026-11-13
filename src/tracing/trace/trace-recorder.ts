@@ -298,6 +298,19 @@ export function createTraceRecorder(
                   predictedMs: completion.timing.predictedMs,
                   promptTokens: completion.timing.promptTokens,
                   predictedTokens: completion.timing.predictedTokens,
+                  ...(completion.timing.predictedPerSecond !== undefined
+                    ? {
+                        predictedPerSecond:
+                          completion.timing.predictedPerSecond,
+                      }
+                    : {}),
+                  ...(completion.timing.draftTokens !== undefined
+                    ? {
+                        draftTokens: completion.timing.draftTokens,
+                        draftAcceptedTokens:
+                          completion.timing.draftAcceptedTokens ?? 0,
+                      }
+                    : {}),
                 },
               }
             : {}),

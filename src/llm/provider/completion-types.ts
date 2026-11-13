@@ -247,6 +247,21 @@ export interface CompletionTiming {
   predictedMs: number;
   promptTokens: number;
   predictedTokens: number;
+  /**
+   * Decode speed as the server stated it (llama.cpp
+   * `timings.predicted_per_second`), tokens per second. Absent when the
+   * provider does not report one; `stepSpeedFromCompletion` then
+   * derives it from `predictedTokens` / `predictedMs` where it can.
+   */
+  predictedPerSecond?: number;
+  /**
+   * Speculative decoding (llama.cpp `timings.draft_n` /
+   * `draft_n_accepted`): tokens the draft model proposed this request,
+   * and how many of them the main model kept. Absent unless the server
+   * runs with a draft model.
+   */
+  draftTokens?: number;
+  draftAcceptedTokens?: number;
 }
 
 /**

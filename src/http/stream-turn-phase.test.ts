@@ -227,3 +227,57 @@ describe("slow_first_token", () => {
     expect(payload).toMatchObject({ cloud_available: false });
   });
 });
+
+describe("step_speed", () => {
+  it("tells the host each completion's prefill, cache share and decode rate (ATO-631)", () => {
+    const h = harness();
+    h.tracker.start();
+    h.tracker.onEvent({ type: "step_started", stepIndex: 3 });
+    h.tracker.onEvent(
+      step({
+        type: "llm_completed",
+        completion: {
+          content: "",
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          timing: {
+            promptMs: 41_000,
+            predictedMs: 2_000,
+            promptTokens: 32_000,
+            predictedTokens: 24,
+            predictedPerSecond: 12.04,
+            draftTokens: 30,
+            draftAcceptedTokens: 21,
+          },
+          cacheHitTokens: 2_000,
+          slotId: 0,
+          modelId: "qwen",
+        },
+      }),
+    );
+    const frames = h.written.filter((w) => w.name === "step_speed");
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.payload).toEqual({
+      object: "atomic.step_speed",
+      session_id: "s1",
+      step_index: 3,
+      prompt_tokens: 32_000,
+      cached_tokens: 2_000,
+      prefill_ms: 41_000,
+      decode_ms: 2_000,
+      decode_tokens_per_second: 12,
+      draft_tokens: 30,
+      draft_accepted_tokens: 21,
+    });
+    // Speed is its own frame; the phase stream is untouched by it.
+    expect(h.phases()).toEqual(["starting", "processing_prompt"]);
+  });
+
+  it("writes nothing for a completion that reported nothing", () => {
+    const h = harness();
+    h.tracker.start();
+    h.tracker.onEvent(step({ type: "llm_completed", completion: {} as never }));
+    expect(h.written.filter((w) => w.name === "step_speed")).toEqual([]);
+  });
+});

@@ -147,10 +147,20 @@ export interface TracePromptCaptured extends TraceEventBase {
 }
 
 export interface TraceLlmTiming {
+  /** Prompt evaluation (prefill) time, ms. */
   promptMs: number;
+  /** Reply generation (decode) time, ms. */
   predictedMs: number;
   promptTokens: number;
   predictedTokens: number;
+  /**
+   * Decode rate the server stated, tokens/s (ATO-631). Absent on traces
+   * recorded before it, and for providers that do not report one.
+   */
+  predictedPerSecond?: number;
+  /** Speculative decoding: draft tokens proposed and kept (ATO-631). */
+  draftTokens?: number;
+  draftAcceptedTokens?: number;
 }
 
 export interface TraceLlmCompletion extends TraceEventBase {

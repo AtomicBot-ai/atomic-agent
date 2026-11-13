@@ -242,6 +242,7 @@ export function startNewRun(state: TuiState): TuiState {
       completionTokensLast: null,
       llmDurationMsLast: null,
       stepDurationMsLast: null,
+      stepSpeedLast: null,
     },
     lastRunStatus: null,
     inputValue: "",
