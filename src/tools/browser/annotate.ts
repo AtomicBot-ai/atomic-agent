@@ -75,7 +75,8 @@ function refusal(verdict: PageReadVerdict, url: string, after: boolean): Compres
  *
  * - `start` puts an overlay on the active page (`annotate-in-page.ts`):
  *   the user clicks an element, types what should change, and a numbered
- *   pin stays on it; "Done" stops picking. While picking, clicks on the
+ *   pin stays on it. A floating "Annotate" toggle on the page (badge: the
+ *   pin count) turns picking off and on again. While picking, clicks on the
  *   page are swallowed (a pin never presses a button), so browser.click
  *   should wait until `read` or `stop`.
  * - `read` returns every pin: the comment, a CSS selector, the box, key
@@ -85,8 +86,9 @@ function refusal(verdict: PageReadVerdict, url: string, after: boolean): Compres
  *   (`annotate-pins.ts`), so each group can go to its own worker.
  * - `stop` removes the overlay and forgets the pins.
  *
- * The overlay runs in an isolated world, so the page cannot read or
- * forge pins; a navigation or reload drops them. Reading is a page read
+ * The overlay runs in an isolated world, so the page cannot read the
+ * saved pins or forge them; a navigation or reload drops them. The page
+ * can see the keys while a comment is typed (see `annotate-in-page.ts`). Reading is a page read
  * (`gate-page-read.ts`): a blocked page is refused, and in the user's own
  * Chrome a site not opened this session asks first. Nothing is clicked
  * or typed on the site, so there is no other prompt.
@@ -143,7 +145,7 @@ export function buildBrowserAnnotateTool(
           started.started
             ? `annotate overlay is on ${started.url}.`
             : `annotate overlay was already on ${started.url}; picking resumed (${started.pins} pin(s) so far).`,
-          "In the browser window the user clicks an element, types what should change and saves; each pin gets a number. They press Done when finished.",
+          "In the browser window the user clicks an element, types what should change and saves; each pin gets a number. The Annotate button on the page (it shows the pin count) turns picking off and on.",
           "Tell the user that, then wait for them; when they say they are done, call browser.annotate { \"action\": \"read\" } (add \"crops\": true for pictures of the elements).",
           "Until then do not click or type on this page: the overlay catches clicks. Navigating away drops the pins.",
         ];

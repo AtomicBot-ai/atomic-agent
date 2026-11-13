@@ -6,9 +6,16 @@
  * The scripts are JS source strings run in an isolated world of the page
  * (CDP `Page.createIsolatedWorld`, `annotate-playwright.ts`): they share
  * the DOM with the page but not its JavaScript, so the page's own scripts
- * cannot read or forge the pins. The overlay lives in a closed shadow
- * root, only trusted (real input) events count, and clicks on the page
- * are swallowed while picking so a pin never presses a button. Styles are
+ * cannot read the saved pins or forge them. The overlay lives in a closed
+ * shadow root, only trusted (real input) events count, and clicks on the
+ * page are swallowed while picking so a pin never presses a button.
+ *
+ * Known limit: the comment is typed into the page's document, and key and
+ * input events are composed, so a page script listening on `window` in
+ * the capture phase sees each key as it is typed (it fires before any
+ * listener here can stop it). The comment box says so. Moving the typing
+ * out of the page (a native prompt answered through the backend's dialog
+ * handling, or the agent's own UI) is a possible follow-up. Styles are
  * set through `element.style`, never a `<style>` tag or `innerHTML`, so a
  * strict Content-Security-Policy or Trusted Types page still shows it.
  * Strings, not functions: the SEA bundle keeps names and would wrap
@@ -40,6 +47,14 @@ export const ANNOTATE_STYLE_KEYS = [
   "gap",
   "opacity",
 ] as const;
+
+/**
+ * The floating "Annotate" toggle (ATO-518, decision 72): it appears with
+ * the overlay (after the first `start` on the page) and stays until
+ * `stop`. A click turns picking on or off; its badge is the pin count.
+ * Asking in chat (`start`) is the other way in.
+ */
+export const ANNOTATE_TOGGLE_LABEL = "Annotate";
 
 /** Pins one page may hold; the overlay refuses more. */
 export const MAX_PINS = 50;
@@ -79,17 +94,22 @@ export const ANNOTATE_START_SCRIPT = String.raw`(() => {
   const layer = make("div", "position: fixed; inset: 0; pointer-events: none;");
   const bar = make("div", "position: fixed; top: 12px; right: 12px; pointer-events: auto; display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 8px; background: #1f1b2e; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.25); max-width: 360px; " + FONT);
   const barText = make("span", "flex: 1;");
-  const toggle = make("button", "all: unset; cursor: pointer; padding: 3px 8px; border-radius: 5px; background: " + ACCENT + "; color: #fff; " + FONT);
+  const toggle = make("button", "all: unset; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; padding: 3px 8px; border-radius: 5px; border: 1px solid " + ACCENT + "; color: #fff; " + FONT);
+  const toggleLabel = make("span", "", "${ANNOTATE_TOGGLE_LABEL}");
+  const countBadge = make("span", "min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: #fff; color: " + ACCENT + "; text-align: center; font-size: 11px; line-height: 16px;", "0");
+  toggle.append(toggleLabel, countBadge);
+  toggle.setAttribute("aria-pressed", "true");
   bar.append(barText, toggle);
   const pop = make("div", "position: fixed; display: none; pointer-events: auto; width: 280px; padding: 8px; border-radius: 8px; background: #fff; color: #111; box-shadow: 0 6px 24px rgba(0,0,0,.25); " + FONT);
   const area = make("textarea", "box-sizing: border-box; width: 100%; height: 72px; resize: vertical; padding: 6px; border: 1px solid #ccc; border-radius: 5px; color: #111; background: #fff; " + FONT);
   area.placeholder = "What should change here?";
   area.maxLength = 2000;
+  const note = make("div", "margin-top: 4px; color: #666; font-size: 11px;", "This page can see what you type here: no passwords or secrets.");
   const row = make("div", "display: flex; gap: 6px; justify-content: flex-end; margin-top: 6px;");
   const save = make("button", "all: unset; cursor: pointer; padding: 3px 10px; border-radius: 5px; background: " + ACCENT + "; color: #fff; " + FONT, "Save");
   const cancel = make("button", "all: unset; cursor: pointer; padding: 3px 10px; border-radius: 5px; background: #eee; color: #111; " + FONT, "Cancel");
   row.append(cancel, save);
-  pop.append(area, row);
+  pop.append(area, note, row);
   root.append(hl, layer, bar, pop);
   (doc.body || doc.documentElement).appendChild(host);
 
@@ -157,10 +177,12 @@ export const ANNOTATE_START_SCRIPT = String.raw`(() => {
   };
   const closePop = () => { state.pending = null; pop.style.display = "none"; area.value = ""; };
   const render = () => {
-    barText.textContent = state.picking
-      ? "Annotate: click an element and write what to change. " + state.pins.length + " pin(s)."
-      : state.pins.length + " pin(s) ready for the agent.";
-    toggle.textContent = state.picking ? "Done" : "Add more";
+    barText.textContent = state.picking ? "Click an element and write what to change." : "";
+    barText.style.display = state.picking ? "" : "none";
+    countBadge.textContent = String(state.pins.length);
+    toggle.setAttribute("aria-pressed", state.picking ? "true" : "false");
+    toggle.title = state.picking ? "Leave annotate mode (pins stay)" : "Annotate: click elements to comment on them";
+    toggle.style.background = state.picking ? ACCENT : "transparent";
     layer.replaceChildren();
     for (const pin of state.pins) {
       if (!pin.el.isConnected) continue;
@@ -199,7 +221,9 @@ export const ANNOTATE_START_SCRIPT = String.raw`(() => {
     render();
   };
   save.addEventListener("click", (event) => { if (event.isTrusted) commit(); });
-  // Keystrokes in the comment box stay in the overlay.
+  // Stops the page's bubble-phase handlers (its shortcuts) from reacting to
+  // the comment. It does NOT hide the keys: a capture listener on window
+  // ran before this one (see the known limit above).
   for (const type of ["keydown", "keyup", "keypress", "input"]) {
     area.addEventListener(type, (event) => {
       event.stopPropagation();
