@@ -22,7 +22,7 @@ describe("AnalyticsClient", () => {
     client.capture("message_sent", { provider: "llama-server", model: "qwen" });
 
     expect(posthog.capture).toHaveBeenCalledTimes(1);
-    const arg = posthog.capture.mock.calls[0][0];
+    const arg = posthog.capture.mock.calls[0]![0];
     expect(arg.distinctId).toBe("install-123");
     expect(arg.event).toBe("message_sent");
     expect(arg.disableGeoip).toBe(true);
