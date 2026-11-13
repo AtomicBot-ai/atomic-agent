@@ -100,7 +100,7 @@ export function StatusBar({
       (state.session.sessionId ? 0 : SESSION_TAG),
   );
   const bannerPlan = banner
-    ? planUpdateBanner(banner.latest, bannerBudget, bannerPhase)
+    ? planUpdateBanner(banner.latest, bannerBudget, bannerPhase, banner.required)
     : null;
   return (
     // One row, always. The bar is empty on a fresh session now that the
@@ -185,6 +185,7 @@ export function StatusBar({
             latest={banner.latest}
             phase={bannerPhase}
             budget={bannerBudget}
+            required={banner.required}
           />
         </>
       ) : null}

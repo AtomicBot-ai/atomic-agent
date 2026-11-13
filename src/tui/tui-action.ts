@@ -380,7 +380,13 @@ export type TuiAction =
   /** Snap the chat scroll back to the bottom (newest message). */
   | { type: "chat_scroll_reset" }
   /** A newer release was detected at startup; offer the in-app update. */
-  | { type: "update_available"; current: string; latest: string }
+  | {
+      type: "update_available";
+      current: string;
+      latest: string;
+      /** ATO-1125: the release policy lists the running version. */
+      required?: "broken" | "below-minimum" | null;
+    }
   /** User declined the update offer (or it was otherwise cleared). */
   | { type: "update_dismissed" }
   /** The opened folder ships project skills or instruction files nobody trusted yet. */
