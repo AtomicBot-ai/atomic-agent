@@ -40,6 +40,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "agent",
   "agent.providerWait",
   "agent.task",
+  "agent.goal",
   "agent.compaction",
   "agent.prompt",
   "agent.tools",
