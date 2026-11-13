@@ -107,6 +107,8 @@ export function effectiveToolDescriptors(
       enabled: config.vision.enabled,
       providerAvailable: config.vision.enabled,
     },
+    // Approximated like vision: `true` lists it; unset (auto) depends on
+    // the loaded model's `/props`, invisible here, so it is not listed.
     audio: { enabled: config.vision.audioInput === true },
     email: {
       available:

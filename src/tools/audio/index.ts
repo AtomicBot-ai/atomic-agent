@@ -20,9 +20,14 @@ export type { LoadedAudio } from "./load-audio.js";
 
 export interface RegisterAudioToolsOptions {
   provider: VisionProviderSource | undefined;
-  /** `config.vision.audioInput` — opt-in, default off. */
+  /** `config.vision.audioInput !== false` (unset is auto, ATO-497 decision 62). */
   enabled: boolean;
   maxAudioBytes: number;
+  /**
+   * Whether audio may be sent to this provider at all (auto mode keeps
+   * cloud links out). Absent: every provider.
+   */
+  allowProvider?: AudioListenToolOptions["allowProvider"];
 }
 
 /**
@@ -39,6 +44,7 @@ export function registerAudioTools(
     buildAudioListenTool({
       provider: options.provider,
       maxAudioBytes: options.maxAudioBytes,
+      ...(options.allowProvider ? { allowProvider: options.allowProvider } : {}),
     }),
   );
 }

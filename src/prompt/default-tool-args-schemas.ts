@@ -578,7 +578,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["prompt"],
     ),
   ],
-  // ── audio (ATO-497; registered only with `vision.audioInput`) ───────────
+  // ── audio (ATO-497; gated by `vision.audioInput`, unset = local model that hears) ──
   ["audio.listen", obj({ path: stringSchema, prompt: stringSchema }, ["path"])],
 
   // ── image ────────────────────────────────────────────────────────────────

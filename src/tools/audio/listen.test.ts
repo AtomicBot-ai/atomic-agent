@@ -125,7 +125,7 @@ describe("audio.listen (ATO-497)", () => {
     expect((await tool.run({ path: "notes.txt" }, ctx(root))).summary).toMatch(/only WAV and MP3/);
   });
 
-  it("is registered only when audio input is switched on", () => {
+  it("is registered unless audio input is switched off", () => {
     const registered: string[] = [];
     const registry = { register: (tool: { name: string }) => registered.push(tool.name) };
     const provider = fakeProvider({ audio: true });
@@ -134,5 +134,20 @@ describe("audio.listen (ATO-497)", () => {
     expect(registered).toEqual([]);
     registerAudioTools(registry as never, { enabled: true, provider, maxAudioBytes: 1 });
     expect(registered).toEqual(["audio.listen"]);
+  });
+
+  it("auto mode refuses a cloud link without uploading, even when its model hears (decision 62)", async () => {
+    const root = await withClip();
+    const provider = fakeProvider({ audio: true });
+    const tool = buildAudioListenTool({
+      provider,
+      maxAudioBytes: 1024,
+      allowProvider: () => false,
+    });
+    const result = await tool.run({ path: "note.wav" }, ctx(root));
+    expect(result.status).toBe("error");
+    expect(result.summary).toMatch(/audio-transcribe/);
+    expect(result.details).toMatchObject({ reason: "cloud-audio-off", retryable: false });
+    expect(provider.describeAudio).not.toHaveBeenCalled();
   });
 });

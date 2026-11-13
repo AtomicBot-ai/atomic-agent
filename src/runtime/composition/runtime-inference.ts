@@ -18,7 +18,7 @@ import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js"
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { LearnedContextWindows } from "../learned-context-windows.js";
 import { isOllamaEntry, readOllamaContextWindow } from "../../llm/provider/ollama/ollama-context-window.js";
-import { resolveVisionProvider, visionRouteAvailable } from "../vision-route.js";
+import { audioRouteAvailable, resolveVisionProvider, visionRouteAvailable } from "../vision-route.js";
 import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { createLocalLinkPreparer } from "../../llm/local-backend-gate.js";
 import type { ProviderFallbackChain } from "../../llm/fallback/index.js";
@@ -289,6 +289,22 @@ export function createRuntimeModelContext(
       },
     });
 
+  // `audio.listen` (ATO-497, decision 62): same live route as vision.
+  // Unset `vision.audioInput` offers it only on a local link whose loaded
+  // model reports audio; `true` also allows cloud, `false` never.
+  const audioOnLiveRoute = (): boolean =>
+    audioRouteAvailable({
+      registry: providerRegistry,
+      isLlamaServer: (providerId) =>
+        providerIdIsLlamaServer(resolveLlmConfig(getConfig()), providerId),
+      fusionWorkerProviderId: () => {
+        const mode = resolveCurrentRunMode();
+        return mode.effective === "fusion" ? mode.workerProviderId : null;
+      },
+      // Boot snapshot, like the registration it gates.
+      audioInput: () => config.vision.audioInput,
+    });
+
   return {
     resolveModelPricing,
     observeContextWindow,
@@ -297,6 +313,7 @@ export function createRuntimeModelContext(
     primeLocalContextWindow,
     resolveCurrentVisionProvider,
     visionOnLiveRoute,
+    audioOnLiveRoute,
   };
 }
 

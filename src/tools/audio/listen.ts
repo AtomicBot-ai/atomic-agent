@@ -27,6 +27,12 @@ export interface AudioListenToolOptions {
   provider: VisionProviderSource;
   /** `config.vision.maxAudioBytes`. */
   maxAudioBytes: number;
+  /**
+   * Whether audio may be sent to this provider (ATO-497, decision 62):
+   * with `vision.audioInput` unset only a local link may receive the
+   * file; `true` lets a cloud link have it too. Absent: every provider.
+   */
+  allowProvider?: (provider: LlmProvider) => boolean;
 }
 
 /**
@@ -61,6 +67,9 @@ export function buildAudioListenTool(options: AudioListenToolOptions): ToolDefin
         return errorResult(
           `audio is not available: provider "${ctx.providerId ?? "(active)"}" is not configured`,
         );
+      }
+      if (options.allowProvider && !options.allowProvider(provider)) {
+        return notAllowedResult(provider, path);
       }
       if (provider.capabilities.audio !== true || !provider.describeAudio) {
         return cannotHearResult(provider, path);
@@ -138,6 +147,25 @@ function cannotHearResult(provider: LlmProvider, path: string) {
       provider: providerId,
       ...(model ? { model } : {}),
       audioSource: provider.capabilities.audioSource ?? "absent",
+    },
+  );
+}
+
+/**
+ * Auto mode (`vision.audioInput` unset) and a cloud link: the file is not
+ * uploaded, even if the model could hear. Setting `vision.audioInput`
+ * to `true` allows it.
+ */
+function notAllowedResult(provider: LlmProvider, path: string) {
+  const providerId = provider.id ?? provider.name;
+  return errorResult(
+    `audio input to a cloud model is off (${providerId}): the file is not uploaded. ` +
+      `Transcribe ${path} with the audio-transcribe skill instead (local whisper), then work from the text. ` +
+      `Setting vision.audioInput to true allows cloud models.`,
+    {
+      retryable: false,
+      reason: "cloud-audio-off",
+      provider: providerId,
     },
   );
 }

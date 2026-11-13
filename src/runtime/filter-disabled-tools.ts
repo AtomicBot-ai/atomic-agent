@@ -34,8 +34,10 @@ export interface ToolGateConfig {
   web: { search: { enabled: boolean } };
   vision: { enabled: boolean; providerAvailable: boolean };
   /**
-   * Audio input gate (ATO-497): `vision.audioInput`, opt-in. Absent or
-   * `false` drops `audio.listen`, which is then not registered either.
+   * Audio input gate (ATO-497, decision 62): the runtime passes the live
+   * `audioRouteAvailable` answer (unset `vision.audioInput` = a local
+   * model that reports audio only; `true` also cloud). Absent or `false`
+   * drops `audio.listen`.
    */
   audio?: { enabled: boolean };
   memory: {
