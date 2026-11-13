@@ -93,7 +93,7 @@ describe("agent configuration ownership", () => {
       "tokenBudget", "maxSteps", "providerWait", "task", "goal", "toolTimeoutMs",
       "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
       "nameSessions", "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
-      "smartApproval", "smartApprovalModel",
+      "smartApproval", "smartApprovalModel", "taintReview",
       "prompt",
       "tools",
     ]);
@@ -142,8 +142,8 @@ describe("agent configuration ownership", () => {
     expect(events).toEqual([
       "raw-wait", "read-defaults", "default-wait",
       "raw-task", "read-defaults", "default-task",
-      // compaction, prompt and tools are always parsed against their defaults.
-      "read-defaults", "read-defaults", "read-defaults",
+      // goal, compaction, prompt and tools are always parsed against their defaults.
+      "read-defaults", "read-defaults", "read-defaults", "read-defaults",
     ]);
     expect(parsed.providerWait).toEqual({ enabled: false, maxWaitMs: 1 });
     expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0, replanEveryNSteps: 0 });
@@ -219,10 +219,10 @@ describe("agent configuration ownership", () => {
       expect(root.task).toBe(USER_CONFIG_DEFAULTS.agent.task);
       expect(root.providerWait).toBe(USER_CONFIG_DEFAULTS.agent.providerWait);
       expect(Object.keys(direct)).toEqual([
-        "tokenBudget", "maxSteps", "providerWait", "nameSessions", "task", "toolTimeoutMs",
+        "tokenBudget", "maxSteps", "providerWait", "nameSessions", "task", "goal", "toolTimeoutMs",
         "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
         "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
-        "smartApproval", "smartApprovalModel",
+        "smartApproval", "smartApprovalModel", "taintReview",
         "prompt", "tools",
       ]);
     } finally {

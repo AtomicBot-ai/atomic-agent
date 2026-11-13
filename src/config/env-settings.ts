@@ -100,6 +100,23 @@ export const ENV_SETTINGS: readonly EnvSetting[] = [
   env("ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_STEPS", ENV_DEFAULTS.STATUS_SNAPSHOT_EVERY_STEPS, "Post a status snapshot of a long run every this many steps; 0 turns it off."),
   env("ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_MS", ENV_DEFAULTS.STATUS_SNAPSHOT_EVERY_MS, "Post a status snapshot of a long run this often, in ms; 0 turns it off."),
 
+  env("ATOMIC_AGENT_SESSION_TOOLS_ENABLED", ENV_DEFAULTS.SESSION_TOOLS_ENABLED, "Let the agent list, read and message its other sessions (the sessions.* tools)."),
+  env("ATOMIC_AGENT_TASKS_KEEP_AWAKE", null, "Keep the computer awake for tasks and turns: off or while-working. Unset or any other value: off."),
+
+  // Persona, network and server.
+  env("ATOMIC_AGENT_PERSONA", null, "Persona name to use for this process, above every config.json setting."),
+  env("ATOMIC_AGENT_OFFLINE", null, "Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process."),
+  env("ATOMIC_AGENT_ALLOWED_ORIGINS", null, "Comma-separated web origins that may call a keyless local `serve`, besides loopback ones."),
+  env("ATOMIC_AGENT_MODEL_CATALOG_URL", null, "URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io."),
+
+  // Channels and media.
+  env("ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES", null, "Stream Telegram replies into the owner's DM (private) or not (off). Wins over telegram.streamReplies when set."),
+  env("ATOMIC_AGENT_WHISPER_BIN", null, "Path of the whisper.cpp CLI for audio transcription. Unset: the downloaded copy, then the PATH."),
+  env("ATOMIC_AGENT_WHISPER_MODEL", null, "Whisper model file or catalog id to transcribe with. Unset: the saved default (base)."),
+  env("ATOMIC_AGENT_FFMPEG_BIN", null, "Path of ffmpeg, used to convert audio before transcription. Unset: the PATH."),
+  env("ATOMIC_AGENT_INLINE_IMAGES", null, "Set to 1 to show images inline in the terminal (kitty and iTerm2 graphics)."),
+  env("ATOMIC_AGENT_NO_INLINE_IMAGES", null, "Set to 1 to never show inline images in the terminal; wins over ATOMIC_AGENT_INLINE_IMAGES."),
+
   // Updates and analytics.
   env("ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP", ENV_DEFAULTS.UPDATE_CHECK_ON_STARTUP, "Check GitHub Releases for a newer version when the TUI starts."),
   env("ATOMIC_AGENT_REPO", ENV_DEFAULTS.UPDATE_REPO, "GitHub owner/repo used for update checks and self-update."),
@@ -123,6 +140,9 @@ export const INTERNAL_ENV_NAMES: ReadonlyMap<string, string> = new Map([
   ["ATOMIC_AGENT_TEAM", "marks team test runs in analytics"],
   ["ATOMIC_AGENT_SESSION_PARENT_PID", "set by the desktop app on every agent process it starts"],
   ["ATOMIC_AGENT_USER_PATH_B64", "used internally by the Windows uninstaller"],
+  ["ATOMIC_AGENT_INSTALL_SOURCE", "set by the install scripts for analytics"],
+  ["ATOMIC_AGENT_KEYCHAIN_PROBE", "a throwaway keychain account name, not a variable"],
+  ["ATOMIC_AGENT_INK_INCREMENTAL", "a one-off switch for the session-swap render measurement, not a user setting"],
 ]);
 
 /** The env variable that wins over `configKey`, or null. */
