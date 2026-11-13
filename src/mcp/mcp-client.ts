@@ -12,6 +12,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CreateMessageRequestSchema,
   ElicitRequestSchema,
@@ -71,6 +72,11 @@ export interface McpClientDeps {
    */
   elicitationHandler?: McpElicitationHandler;
   /**
+   * Test seam: build the transport instead of deriving it from
+   * `config.transport`. Production never sets it.
+   */
+  transportFactory?: (config: McpServerConfig) => Transport;
+  /**
    * Wall-clock for connect deadlines / debounce timers. Override in
    * tests; production uses `() => Date.now()`.
    */
@@ -84,6 +90,13 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 /** Grace for a dying child's stderr to arrive after the transport closes. */
 const STDERR_SETTLE_MS = 250;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
+/**
+ * Timeout handed to the SDK for our own requests. Our `RequestDeadline`
+ * is the real one (it can be held during an elicitation); the SDK's
+ * fixed 60 s default would otherwise fail a call whose server is still
+ * waiting on the person. This is the largest delay `setTimeout` takes.
+ */
+const SDK_REQUEST_TIMEOUT_MS = 2_147_483_647;
 
 /**
  * Thin wrapper around `@modelcontextprotocol/sdk`'s `Client`. One
@@ -110,6 +123,10 @@ export class McpClient {
   private connecting = false;
   /** Why the last `close()` happened, told to a call it cut short. */
   private closeReason: string | null = null;
+  /** `elicitation/create` requests from this server still waiting on a person. */
+  private pendingElicitations = 0;
+  /** Deadlines of this client's in-flight requests; held while an elicitation is pending. */
+  private readonly deadlines = new Set<RequestDeadline>();
   private catalog: McpServerCatalog = {
     server: "",
     tools: [],
@@ -149,7 +166,8 @@ export class McpClient {
     this.connecting = true;
     let stderrTail: StderrTail = { read: () => "", settle: async () => {} };
     try {
-      const transport = this.buildTransport();
+      const transport =
+        this.deps.transportFactory?.(this.config) ?? this.buildTransport();
       // Attached before `client.connect()` starts the child: the SDK hands
       // out a PassThrough up front precisely so early output is not lost.
       stderrTail = attachStderrTail(
@@ -325,8 +343,9 @@ export class McpClient {
   ): Promise<Record<string, unknown>> {
     const client = this.requireClient();
     try {
-      const res = await withTimeout(
-        client.callTool({ name: rawName, arguments: args }),
+      const res = await this.request(
+        (options) =>
+          client.callTool({ name: rawName, arguments: args }, undefined, options),
         timeoutMs,
         signal,
         () =>
@@ -370,8 +389,8 @@ export class McpClient {
   ): Promise<Record<string, unknown>> {
     const client = this.requireClient();
     try {
-      const res = await withTimeout(
-        client.readResource({ uri }),
+      const res = await this.request(
+        (options) => client.readResource({ uri }, options),
         DEFAULT_TOOL_CALL_TIMEOUT_MS,
         signal,
         () =>
@@ -398,8 +417,9 @@ export class McpClient {
   ): Promise<Record<string, unknown>> {
     const client = this.requireClient();
     try {
-      const res = await withTimeout(
-        client.getPrompt({ name, ...(args ? { arguments: args } : {}) }),
+      const res = await this.request(
+        (options) =>
+          client.getPrompt({ name, ...(args ? { arguments: args } : {}) }, options),
         DEFAULT_TOOL_CALL_TIMEOUT_MS,
         signal,
         () =>
@@ -493,9 +513,125 @@ export class McpClient {
   private installElicitationHandler(client: Client): void {
     const handler = this.deps.elicitationHandler!;
     client.setRequestHandler(ElicitRequestSchema, async (req, extra) => {
+      // The SDK aborts `extra.signal` when the server cancels this
+      // request or the connection closes, so even an open-ended wait
+      // on a person ends with the server.
       const signal = extra.signal ?? new AbortController().signal;
-      return handler(req.params, signal);
+      this.holdDeadlines();
+      try {
+        return await handler(req.params, signal);
+      } finally {
+        this.releaseDeadlines();
+      }
     });
+  }
+
+  /**
+   * While the server waits on the person, the call that is waiting on
+   * the server must not time out. Elicitations are not tied to a
+   * specific call here, so every in-flight request of this client is
+   * held; the person answering is progress for all of them.
+   */
+  private holdDeadlines(): void {
+    this.pendingElicitations += 1;
+    if (this.pendingElicitations > 1) return;
+    for (const d of this.deadlines) d.pause();
+  }
+
+  /** Last pending elicitation settled: every held request gets a fresh full window. */
+  private releaseDeadlines(): void {
+    this.pendingElicitations -= 1;
+    if (this.pendingElicitations > 0) return;
+    for (const d of this.deadlines) d.start();
+  }
+
+  /**
+   * Send one SDK request under our own deadline and the caller's
+   * signal. The deadline is held while an elicitation from this server
+   * is pending (see `holdDeadlines`). On our timeout or the caller's
+   * abort the SDK request is aborted too, so it tells the server
+   * (`notifications/cancelled`) and drops its response handler.
+   */
+  private request<T>(
+    send: (options: { signal: AbortSignal; timeout: number }) => Promise<T>,
+    timeoutMs: number,
+    signal: AbortSignal | undefined,
+    onTimeout: () => Error,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const sdkAbort = new AbortController();
+      let settled = false;
+      const finalize = (cb: () => void) => {
+        if (settled) return;
+        settled = true;
+        deadline.clear();
+        this.deadlines.delete(deadline);
+        if (signal) signal.removeEventListener("abort", onAbort);
+        cb();
+      };
+      const deadline = new RequestDeadline(timeoutMs, () => {
+        const err = onTimeout();
+        finalize(() => reject(err));
+        sdkAbort.abort(err);
+      });
+      const onAbort = () => {
+        finalize(() => reject(new Error("aborted")));
+        sdkAbort.abort();
+      };
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.deadlines.add(deadline);
+      if (this.pendingElicitations === 0) deadline.start();
+      let sent: Promise<T>;
+      try {
+        sent = send({ signal: sdkAbort.signal, timeout: SDK_REQUEST_TIMEOUT_MS });
+      } catch (err) {
+        finalize(() => reject(err));
+        return;
+      }
+      sent.then(
+        (v) => finalize(() => resolve(v)),
+        (err) => finalize(() => reject(err)),
+      );
+    });
+  }
+}
+
+/**
+ * A request deadline that can be held. `start()` (re)starts a full
+ * window, `pause()` stops the clock, `clear()` ends it for good.
+ */
+class RequestDeadline {
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private done = false;
+
+  constructor(
+    private readonly ms: number,
+    private readonly onExpire: () => void,
+  ) {}
+
+  start(): void {
+    if (this.done) return;
+    this.pause();
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      this.done = true;
+      this.onExpire();
+    }, this.ms);
+  }
+
+  pause(): void {
+    if (this.timer === undefined) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+
+  clear(): void {
+    this.done = true;
+    this.pause();
   }
 }
 

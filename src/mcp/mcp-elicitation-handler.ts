@@ -18,6 +18,9 @@
  *      fields, never values.
  *   4. Form mode only. URL mode (`mode: "url"`) is declined: the client
  *      advertises `elicitation: {}`, which the spec reads as form-only.
+ *   5. How long to wait depends on the port's surface: no deadline for
+ *      a person at the screen, 5 minutes for a remote chat, none at all
+ *      (decline at once) when nobody is there.
  *
  * This file does not import `@modelcontextprotocol/sdk`; mcp-client.ts
  * hands it the raw params and forwards the result unchanged.
@@ -55,11 +58,29 @@ export type McpElicitationReply =
   | { action: "unavailable"; reason?: string };
 
 /**
+ * Who, if anyone, can answer through a port right now. It sets how
+ * long the handler waits:
+ *
+ * - `interactive`: a person is at the screen (desktop, TUI). No
+ *   deadline: the question stays until it is answered; Esc / Decline
+ *   is the answer. The wait still ends when the server cancels its
+ *   request or the connection closes.
+ * - `remote-chat`: a chat bridge (Telegram, Discord) where the person
+ *   may not be looking. Waits `remoteChatTimeoutMs` (5 minutes), then
+ *   declines.
+ * - `none`: nobody is there (cron task, heartbeat, headless or
+ *   overnight run). Declined at once, the port is not asked.
+ */
+export type McpElicitationSurface = "interactive" | "remote-chat" | "none";
+
+/**
  * The "ask the human" port. A host (TUI, desktop, a chat bridge)
- * implements it. It must resolve, or settle on `signal` abort; the
- * handler also stops waiting after its own timeout.
+ * implements it. `surface` is fixed, or a function the handler calls
+ * for every request so a host can say `none` while only background
+ * work is running. `ask` must resolve, or settle on `signal` abort.
  */
 export interface McpElicitationPort {
+  surface: McpElicitationSurface | (() => McpElicitationSurface);
   ask(question: McpElicitationQuestion, signal: AbortSignal): Promise<McpElicitationReply>;
 }
 
@@ -82,17 +103,22 @@ export interface CreateMcpElicitationHandlerDeps {
   /** Configured server name, shown to the person and used in logs. */
   server: string;
   logger?: StructuredLogger;
-  /** How long to wait for the person. Default `DEFAULT_ELICITATION_TIMEOUT_MS`. */
-  timeoutMs?: number;
+  /**
+   * How long a `remote-chat` surface waits before declining. Default
+   * `DEFAULT_ELICITATION_TIMEOUT_MS`. An `interactive` surface has no
+   * deadline; `none` never waits.
+   */
+  remoteChatTimeoutMs?: number;
 }
 
+/** How long a remote chat (Telegram, Discord) waits for the person. */
 export const DEFAULT_ELICITATION_TIMEOUT_MS = 5 * 60_000;
 export const MAX_MESSAGE_CHARS = 2_000;
 
 export function createMcpElicitationHandler(
   deps: CreateMcpElicitationHandlerDeps,
 ): McpElicitationHandler {
-  const timeoutMs = deps.timeoutMs ?? DEFAULT_ELICITATION_TIMEOUT_MS;
+  const remoteChatTimeoutMs = deps.remoteChatTimeoutMs ?? DEFAULT_ELICITATION_TIMEOUT_MS;
   const log = (action: McpElicitationResult["action"], why: string, fields = 0): void => {
     deps.logger?.info("mcp.elicitation", { server: deps.server, action, why, fields });
   };
@@ -112,17 +138,23 @@ export function createMcpElicitationHandler(
       return { action: "decline" };
     }
     const fields = parsed.value;
+    const surface = surfaceOf(deps.port);
+    if (surface === "none") {
+      log("decline", "no_human", fields.length);
+      return { action: "decline" };
+    }
     const question: McpElicitationQuestion = {
       server: deps.server,
       message: clip(params.message, MAX_MESSAGE_CHARS),
       fields,
     };
 
+    const timeoutMs = surface === "remote-chat" ? remoteChatTimeoutMs : null;
     const reply = await askWithDeadline(deps.port, question, signal, timeoutMs);
     switch (reply.action) {
       case "timeout":
-        log("cancel", "timeout", fields.length);
-        return { action: "cancel" };
+        log("decline", "timeout", fields.length);
+        return { action: "decline" };
       case "aborted":
         log("cancel", "server_cancelled", fields.length);
         return { action: "cancel" };
@@ -161,22 +193,39 @@ type Outcome =
   | { action: "failed" };
 
 /**
- * Ask the port, but stop waiting on the deadline or when the server
- * cancels its request. Either way the port's own signal is aborted so
- * a surface can take the question down.
+ * The port's surface for this request. A throwing or unknown answer is
+ * treated as `none`: never wait on a surface that cannot say it exists.
+ */
+function surfaceOf(port: McpElicitationPort): McpElicitationSurface {
+  let surface: unknown;
+  try {
+    surface = typeof port.surface === "function" ? port.surface() : port.surface;
+  } catch {
+    return "none";
+  }
+  return surface === "interactive" || surface === "remote-chat" ? surface : "none";
+}
+
+/**
+ * Ask the port, but stop waiting on the deadline (when there is one,
+ * `timeoutMs` null means none) or when the server cancels its request
+ * or the connection closes (both abort `outer`). Either way the port's
+ * own signal is aborted so a surface can take the question down.
  */
 async function askWithDeadline(
   port: McpElicitationPort,
   question: McpElicitationQuestion,
   outer: AbortSignal,
-  timeoutMs: number,
+  timeoutMs: number | null,
 ): Promise<Outcome> {
   if (outer.aborted) return { action: "aborted" };
   const inner = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
   const stop = new Promise<Outcome>((resolve) => {
-    timer = setTimeout(() => resolve({ action: "timeout" }), timeoutMs);
+    if (timeoutMs !== null) {
+      timer = setTimeout(() => resolve({ action: "timeout" }), timeoutMs);
+    }
     onAbort = () => resolve({ action: "aborted" });
     outer.addEventListener("abort", onAbort, { once: true });
   });
@@ -189,7 +238,7 @@ async function askWithDeadline(
   try {
     return await Promise.race([asked, stop]);
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
     if (onAbort) outer.removeEventListener("abort", onAbort);
     inner.abort();
   }

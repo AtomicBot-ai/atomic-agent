@@ -137,7 +137,7 @@ describe("McpManager", () => {
     const ask = vi.fn<McpElicitationPort["ask"]>(async () => ({ action: "decline" }));
     new McpManager([stdioConfig("a"), stdioConfig("b")], {
       toolRegistry: new ToolRegistry(),
-      elicitationPort: { ask },
+      elicitationPort: { surface: "interactive", ask },
     });
     const handlerA = CONSTRUCTED_DEPS.get("a")?.elicitationHandler as
       | ((params: unknown, signal: AbortSignal) => Promise<unknown>)

@@ -4,10 +4,12 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
 
 import {
   createMcpElicitationHandler,
+  DEFAULT_ELICITATION_TIMEOUT_MS,
   MAX_MESSAGE_CHARS,
   type McpElicitationPort,
   type McpElicitationQuestion,
   type McpElicitationReply,
+  type McpElicitationSurface,
 } from "./mcp-elicitation-handler.js";
 
 const PICK_ACCOUNT = {
@@ -24,10 +26,25 @@ const PICK_ACCOUNT = {
 
 type Ask = McpElicitationPort["ask"];
 
-function portReplying(reply: McpElicitationReply | Ask) {
+function portReplying(
+  reply: McpElicitationReply | Ask,
+  surface: McpElicitationPort["surface"] = "interactive",
+) {
   const ask = vi.fn<Ask>(typeof reply === "function" ? reply : async () => reply);
-  return { ask };
+  return { surface, ask };
 }
+
+/** A port that answers only after `afterMs` (run under fake timers). */
+function portAnsweringAfter(afterMs: number, reply: McpElicitationReply, surface: McpElicitationSurface) {
+  let seen: AbortSignal | undefined;
+  const port = portReplying((_q, signal) => {
+    seen = signal;
+    return new Promise<McpElicitationReply>((resolve) => setTimeout(() => resolve(reply), afterMs));
+  }, surface);
+  return { port, signal: () => seen };
+}
+
+const MINUTE = 60_000;
 
 function fakeLogger(): StructuredLogger & { lines: string[] } {
   const lines: string[] = [];
@@ -65,31 +82,119 @@ describe("createMcpElicitationHandler", () => {
     expect(await handler(PICK_ACCOUNT, live())).toEqual({ action: "decline" });
   });
 
-  it("cancels on timeout and aborts the port's signal", async () => {
-    vi.useFakeTimers();
-    try {
-      let seen: AbortSignal | undefined;
-      const port = portReplying((_q, signal) => {
-        seen = signal;
-        return new Promise<McpElicitationReply>(() => {});
+  describe("how long it waits, by surface", () => {
+    it("interactive: no cut-off, an answer after 10 minutes is accepted", async () => {
+      vi.useFakeTimers();
+      try {
+        const { port, signal } = portAnsweringAfter(
+          10 * MINUTE,
+          { action: "accept", content: { account: "work" } },
+          "interactive",
+        );
+        const handler = createMcpElicitationHandler({ port, server: "s" });
+        let result: unknown;
+        const pending = handler(PICK_ACCOUNT, live()).then((r) => (result = r));
+        await vi.advanceTimersByTimeAsync(10 * MINUTE - 1);
+        expect(result).toBeUndefined();
+        expect(signal()?.aborted).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        await pending;
+        expect(result).toEqual({ action: "accept", content: { account: "work" } });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("none (cron, headless, overnight): declines at once without asking", async () => {
+      const port = portReplying({ action: "accept", content: { account: "work" } }, "none");
+      const handler = createMcpElicitationHandler({ port, server: "s" });
+      expect(await handler(PICK_ACCOUNT, live())).toEqual({ action: "decline" });
+      expect(port.ask).not.toHaveBeenCalled();
+    });
+
+    it("remote-chat: declines after 5 minutes and takes the question down", async () => {
+      vi.useFakeTimers();
+      try {
+        const { port, signal } = portAnsweringAfter(
+          10 * MINUTE,
+          { action: "accept", content: { account: "work" } },
+          "remote-chat",
+        );
+        const handler = createMcpElicitationHandler({ port, server: "s" });
+        let result: unknown;
+        const pending = handler(PICK_ACCOUNT, live()).then((r) => (result = r));
+        await vi.advanceTimersByTimeAsync(DEFAULT_ELICITATION_TIMEOUT_MS - 1);
+        expect(result).toBeUndefined();
+        await vi.advanceTimersByTimeAsync(1);
+        await pending;
+        expect(DEFAULT_ELICITATION_TIMEOUT_MS).toBe(5 * MINUTE);
+        expect(result).toEqual({ action: "decline" });
+        expect(signal()?.aborted).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("remote-chat: an answer inside the window is used", async () => {
+      vi.useFakeTimers();
+      try {
+        const { port } = portAnsweringAfter(
+          4 * MINUTE,
+          { action: "accept", content: { account: "home" } },
+          "remote-chat",
+        );
+        const handler = createMcpElicitationHandler({ port, server: "s" });
+        const pending = handler(PICK_ACCOUNT, live());
+        await vi.advanceTimersByTimeAsync(4 * MINUTE);
+        expect(await pending).toEqual({ action: "accept", content: { account: "home" } });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("reads a surface function per request", async () => {
+      let surface: McpElicitationSurface = "none";
+      const port = portReplying({ action: "decline" }, () => surface);
+      const handler = createMcpElicitationHandler({ port, server: "s" });
+      await handler(PICK_ACCOUNT, live());
+      expect(port.ask).not.toHaveBeenCalled();
+      surface = "interactive";
+      await handler(PICK_ACCOUNT, live());
+      expect(port.ask).toHaveBeenCalledTimes(1);
+    });
+
+    it("treats a throwing or unknown surface as nobody there", async () => {
+      const throwing = portReplying({ action: "accept", content: { account: "work" } }, () => {
+        throw new Error("no idea");
       });
-      const handler = createMcpElicitationHandler({ port, server: "s", timeoutMs: 1_000 });
-      const pending = handler(PICK_ACCOUNT, live());
-      await vi.advanceTimersByTimeAsync(1_001);
-      expect(await pending).toEqual({ action: "cancel" });
-      expect(seen?.aborted).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
+      expect(await createMcpElicitationHandler({ port: throwing, server: "s" })(PICK_ACCOUNT, live())).toEqual({
+        action: "decline",
+      });
+      const unknown = portReplying(
+        { action: "accept", content: { account: "work" } },
+        "tv" as unknown as McpElicitationSurface,
+      );
+      expect(await createMcpElicitationHandler({ port: unknown, server: "s" })(PICK_ACCOUNT, live())).toEqual({
+        action: "decline",
+      });
+      expect(throwing.ask).not.toHaveBeenCalled();
+      expect(unknown.ask).not.toHaveBeenCalled();
+    });
   });
 
-  it("cancels when the server cancels its request", async () => {
+  it("cancels an open-ended interactive wait when the server cancels its request", async () => {
     const outer = new AbortController();
-    const port = portReplying(() => new Promise<McpElicitationReply>(() => {}));
+    let seen: AbortSignal | undefined;
+    const port = portReplying((_q, signal) => {
+      seen = signal;
+      return new Promise<McpElicitationReply>(() => {});
+    }, "interactive");
     const handler = createMcpElicitationHandler({ port, server: "s" });
     const pending = handler(PICK_ACCOUNT, outer.signal);
+    await Promise.resolve();
     outer.abort();
     expect(await pending).toEqual({ action: "cancel" });
+    expect(seen?.aborted).toBe(true);
   });
 
   it("declines, without asking, a schema that is not a flat form", async () => {

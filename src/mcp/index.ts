@@ -47,6 +47,7 @@ export type {
   McpElicitationQuestion,
   McpElicitationReply,
   McpElicitationResult,
+  McpElicitationSurface,
 } from "./mcp-elicitation-handler.js";
 export type {
   McpElicitationField,
