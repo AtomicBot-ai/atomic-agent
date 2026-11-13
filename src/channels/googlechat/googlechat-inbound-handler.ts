@@ -45,7 +45,14 @@ export interface GoogleChatInboundContext {
   releaseApprovalSession: (sessionId: string) => void;
   /** Remember the thread of the latest owner message per space (approval prompts go there). */
   noteThread: (space: string, thread: string | undefined) => void;
+  /** `sender -> last /whoami answer` (ms), owned by the channel. */
+  whoamiAnswered: Map<string, number>;
+  now?: () => number;
 }
+
+/** One `/whoami` answer per sender per this many ms. */
+export const WHOAMI_INTERVAL_MS = 60_000;
+const WHOAMI_RE = /^\/whoami(?:@\S+)?\s*$/i;
 
 /** Entry point for one decoded Chat event. Always returns; never throws. */
 export async function handleGoogleChatEvent(
@@ -66,6 +73,14 @@ async function route(event: GoogleChatEvent, ctx: GoogleChatInboundContext): Pro
   // Never react to apps, ours or anyone else's: that is how bots loop.
   if (user?.type === "BOT") return;
   const isOwner = ctx.isOwner(user);
+  const rawThread = event.message?.thread?.name;
+  const thread = isThreadName(rawThread) ? rawThread : undefined;
+
+  // The one thing anyone may ask: their own id, so an owner can be set up.
+  if (event.type === "MESSAGE" && WHOAMI_RE.test(googleChatRequestText(event))) {
+    await answerWhoami(user, space, thread, ctx);
+    return;
+  }
 
   if (event.type === "ADDED_TO_SPACE") {
     if (isOwner) await say(ctx, space, GOOGLE_CHAT_HELP_TEXT);
@@ -84,8 +99,6 @@ async function route(event: GoogleChatEvent, ctx: GoogleChatInboundContext): Pro
     });
     return;
   }
-  const rawThread = event.message?.thread?.name;
-  const thread = isThreadName(rawThread) ? rawThread : undefined;
   ctx.noteThread(space, thread);
 
   if ((event.message?.attachment?.length ?? 0) > 0) {
@@ -112,6 +125,35 @@ async function route(event: GoogleChatEvent, ctx: GoogleChatInboundContext): Pro
     return;
   }
   await dispatchToRuntime(`${googleChatSenderLine(user?.name, space)}\n${text}`, space, thread, ctx);
+}
+
+/**
+ * Tell the sender their own `users/<id>` (and email, when Chat sent one)
+ * and nothing else: no session, no state, no hint of who the owners
+ * are. Rate-limited per sender, so it cannot be used to flood a space.
+ */
+async function answerWhoami(
+  user: GoogleChatUserRef | undefined,
+  space: string,
+  thread: string | undefined,
+  ctx: GoogleChatInboundContext,
+): Promise<void> {
+  const name = typeof user?.name === "string" && /^users\/[A-Za-z0-9_.@-]+$/.test(user.name) ? user.name : null;
+  if (name === null) return;
+  const now = (ctx.now ?? Date.now)();
+  const last = ctx.whoamiAnswered.get(name);
+  if (last !== undefined && now - last < WHOAMI_INTERVAL_MS) return;
+  ctx.whoamiAnswered.set(name, now);
+  if (ctx.whoamiAnswered.size > 1000) {
+    for (const [key, at] of ctx.whoamiAnswered) {
+      if (now - at >= WHOAMI_INTERVAL_MS) ctx.whoamiAnswered.delete(key);
+    }
+  }
+  const email = typeof user?.email === "string" && /^[^\s@]+@[^\s@]+$/.test(user.email) ? user.email : null;
+  const lines = [`Your Google Chat id: ${name}`];
+  if (email !== null) lines.push(`Your email: ${email}`);
+  lines.push("Add this to channels.googlechat.ownerIds to let this account drive the agent.");
+  await say(ctx, space, lines.join("\n"), thread);
 }
 
 async function dispatchToRuntime(

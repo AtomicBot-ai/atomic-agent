@@ -42,7 +42,7 @@ export {
   googleChatSenderLine,
 } from "./googlechat-events.js";
 export type { GoogleChatEvent, GoogleChatUser } from "./googlechat-events.js";
-export { handleGoogleChatEvent } from "./googlechat-inbound-handler.js";
+export { WHOAMI_INTERVAL_MS, handleGoogleChatEvent } from "./googlechat-inbound-handler.js";
 export type { GoogleChatInboundContext } from "./googlechat-inbound-handler.js";
 export { GoogleChatPullLoop } from "./googlechat-pull-loop.js";
 export {

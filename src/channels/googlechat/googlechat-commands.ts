@@ -29,6 +29,7 @@ export const GOOGLE_CHAT_HELP_TEXT = [
   "  /new: start a fresh session in this space (the current one is archived)",
   "  /model: show the provider and model; /model <provider> [model-id] switches",
   "  /cancel: stop the turn running in this space",
+  "  /whoami: your own Google Chat id, for channels.googlechat.ownerIds",
   "",
   'Approvals: answer "yes <code>" or "no <code>" from the prompt.',
 ].join("\n");

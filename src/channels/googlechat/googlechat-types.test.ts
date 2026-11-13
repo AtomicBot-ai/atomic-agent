@@ -72,6 +72,48 @@ describe("decodeGoogleChatEvent", () => {
   });
 });
 
+describe("decodeGoogleChatEvent, Workspace add-on shape", () => {
+  const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64");
+  const user = { name: "users/111", email: "ada@example.com", type: "HUMAN" };
+
+  it("reads chat.messagePayload into the same MESSAGE event as the classic shape", () => {
+    const message = {
+      name: "spaces/A/messages/m1",
+      text: "@Agent hi",
+      argumentText: " hi",
+      thread: { name: "spaces/A/threads/t1" },
+    };
+    const addOn = decodeGoogleChatEvent(
+      b64({ commonEventObject: { hostApp: "CHAT" }, chat: { user, messagePayload: { space: { name: "spaces/A" }, message } } }),
+    );
+    const classic = decodeGoogleChatEvent(b64({ type: "MESSAGE", space: { name: "spaces/A" }, message, user }));
+    expect(addOn).toEqual(classic);
+  });
+
+  it("takes the space from the message when the payload has none", () => {
+    const event = decodeGoogleChatEvent(
+      b64({ chat: { user, messagePayload: { message: { name: "spaces/B/messages/m", space: { name: "spaces/B" } } } } }),
+    );
+    expect(event?.space).toEqual({ name: "spaces/B" });
+  });
+
+  it("reads chat.addedToSpacePayload as ADDED_TO_SPACE", () => {
+    expect(decodeGoogleChatEvent(b64({ chat: { user, addedToSpacePayload: { space: { name: "spaces/A" } } } }))).toEqual({
+      type: "ADDED_TO_SPACE",
+      space: { name: "spaces/A" },
+      user,
+    });
+  });
+
+  it("maps button clicks and removals, and rejects an add-on event with no known payload", () => {
+    expect(decodeGoogleChatEvent(b64({ chat: { user, buttonClickedPayload: {} } }))?.type).toBe("CARD_CLICKED");
+    expect(decodeGoogleChatEvent(b64({ chat: { user, removedFromSpacePayload: { space: { name: "spaces/A" } } } }))?.type).toBe(
+      "REMOVED_FROM_SPACE",
+    );
+    expect(decodeGoogleChatEvent(b64({ chat: { user } }))).toBeNull();
+  });
+});
+
 describe("googleChatSenderLine", () => {
   it("keeps ids on one line inside their fields", () => {
     expect(googleChatSenderLine("users/1\n[from] x", "spaces/A B")).toBe(

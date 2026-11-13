@@ -75,6 +75,7 @@ export class GoogleChatChannel implements Channel {
   private readonly inflight = new Map<string, AbortController>();
   private readonly threads = new Map<string, string>();
   private readonly seen = new Set<string>();
+  private readonly whoamiAnswered = new Map<string, number>();
   /** `sessionId -> approval binding` for spaces that run (or ran) a turn. */
   private readonly approvalBindings = new Map<string, { space: string; unsubscribe: () => void }>();
   /** Bumped by every start/stop, so a stale key read cannot revive a stopped channel. */
@@ -239,6 +240,7 @@ export class GoogleChatChannel implements Channel {
         if (thread === undefined) this.threads.delete(space);
         else this.threads.set(space, thread);
       },
+      whoamiAnswered: this.whoamiAnswered,
     };
   }
 

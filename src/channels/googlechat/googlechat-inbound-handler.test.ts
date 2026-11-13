@@ -52,6 +52,7 @@ function makeCtx(over: Partial<GoogleChatInboundContext> = {}, reply = "done") {
     ensureApprovalSession: vi.fn(),
     releaseApprovalSession: vi.fn(),
     noteThread: vi.fn(),
+    whoamiAnswered: new Map(),
     ...over,
   };
   return { ctx, posts, runTurn };
@@ -154,6 +155,51 @@ describe("handleGoogleChatEvent", () => {
     await handleGoogleChatEvent(event, ctx);
     expect(runTurn).not.toHaveBeenCalled();
     expect(posts[0]?.text).toMatch(/Files are not supported/);
+  });
+
+  it("answers /whoami to anyone with only their own id, once a minute", async () => {
+    let now = 1_000_000;
+    const { ctx, posts, runTurn } = makeCtx({ now: () => now });
+    const stranger = { name: "users/999", email: "eve@example.org", type: "HUMAN" };
+    await handleGoogleChatEvent(message("/whoami", stranger), ctx);
+    expect(posts).toEqual([
+      {
+        space: SPACE,
+        text: [
+          "Your Google Chat id: users/999",
+          "Your email: eve@example.org",
+          "Add this to channels.googlechat.ownerIds to let this account drive the agent.",
+        ].join("\n"),
+        thread: THREAD,
+      },
+    ]);
+    now += 10_000;
+    await handleGoogleChatEvent(message("/whoami", stranger), ctx);
+    expect(posts).toHaveLength(1);
+    now += 60_000;
+    await handleGoogleChatEvent(message("/WHOAMI", stranger), ctx);
+    expect(posts).toHaveLength(2);
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(ctx.noteThread).not.toHaveBeenCalled();
+  });
+
+  it("keeps everything but /whoami closed to non-owners", async () => {
+    const { ctx, posts, runTurn } = makeCtx();
+    const stranger = { name: "users/999", type: "HUMAN" };
+    for (const text of ["/help", "/status", "/whoami please", "yes abc123"]) {
+      await handleGoogleChatEvent(message(text, stranger), ctx);
+    }
+    expect(posts).toEqual([]);
+    expect(runTurn).not.toHaveBeenCalled();
+    expect(ctx.bridge.tryAnswer).not.toHaveBeenCalled();
+  });
+
+  it("answers /whoami for an owner too, without email when Chat sent none", async () => {
+    const { ctx, posts } = makeCtx();
+    await handleGoogleChatEvent(message("/whoami"), ctx);
+    expect(posts[0]?.text).toBe(
+      "Your Google Chat id: users/111\nAdd this to channels.googlechat.ownerIds to let this account drive the agent.",
+    );
   });
 
   it("never throws, even when posting fails", async () => {

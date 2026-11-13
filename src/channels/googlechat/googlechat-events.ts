@@ -5,8 +5,12 @@
  * A Chat app with a Pub/Sub connection publishes each interaction event
  * as one Pub/Sub message whose `data` is the base64 of the event JSON
  * (`type` = `MESSAGE`, `ADDED_TO_SPACE`, `REMOVED_FROM_SPACE`,
- * `CARD_CLICKED`, ...). Everything off the wire is checked structurally
- * here; downstream code relies only on the fields typed below.
+ * `CARD_CLICKED`, ...). An app built as a Google Workspace add-on gets
+ * a different shape instead: `{ chat: { user, messagePayload |
+ * addedToSpacePayload | removedFromSpacePayload | buttonClickedPayload } }`.
+ * Both are read into the one `GoogleChatEvent` below, here and nowhere
+ * else. Everything off the wire is checked structurally; downstream
+ * code relies only on the fields typed below.
  */
 
 import { GOOGLE_CHAT_MESSAGE_LIMIT, type GoogleChatUserRef } from "./googlechat-types.js";
@@ -44,9 +48,43 @@ export function decodeGoogleChatEvent(data: string | undefined): GoogleChatEvent
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  if (!isObject(parsed)) return null;
+  if (isObject(parsed.chat)) return fromAddOnEvent(parsed.chat);
   const event = parsed as GoogleChatEvent;
   return typeof event.type === "string" ? event : null;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Payload key of a Workspace add-on Chat event → the classic event type. */
+const ADD_ON_PAYLOADS: ReadonlyArray<[string, string]> = [
+  ["messagePayload", "MESSAGE"],
+  ["addedToSpacePayload", "ADDED_TO_SPACE"],
+  ["removedFromSpacePayload", "REMOVED_FROM_SPACE"],
+  ["buttonClickedPayload", "CARD_CLICKED"],
+];
+
+/** Map the Workspace add-on shape (`event.chat`) onto the classic event. */
+function fromAddOnEvent(chat: Record<string, unknown>): GoogleChatEvent | null {
+  for (const [key, type] of ADD_ON_PAYLOADS) {
+    const payload = chat[key];
+    if (!isObject(payload)) continue;
+    const message = isObject(payload.message) ? (payload.message as GoogleChatEvent["message"]) : undefined;
+    const space = isObject(payload.space)
+      ? payload.space
+      : isObject((message as { space?: unknown } | undefined)?.space)
+        ? (message as { space: Record<string, unknown> }).space
+        : undefined;
+    return {
+      type,
+      ...(space ? { space: space as GoogleChatEvent["space"] } : {}),
+      ...(message ? { message } : {}),
+      ...(isObject(chat.user) ? { user: chat.user as GoogleChatEvent["user"] } : {}),
+    };
+  }
+  return null;
 }
 
 /** The request text of a MESSAGE event: mention stripped, trimmed. */
