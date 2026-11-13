@@ -182,6 +182,23 @@ describe("matchRules", () => {
     expect(matchRules([rule({ decision: "deny", tool: "os.fs.write" })], trust)?.decision).toBe("deny");
   });
 
+  it("never lets a saved http allow silence a POST, but an http deny or ask covers it (ATO-1462)", () => {
+    const postRequest: ApprovalRequest = {
+      approvalId: "a",
+      sessionId: "s",
+      tool: "os.http.request",
+      category: "http_write",
+      reason: "POST https://example.com/upload",
+    };
+    // The rule "Allow always" saved from a GET prompt before or after ATO-1462.
+    const savedAllow = rule({ decision: "allow", tool: "os.http.request", category: "http" });
+    expect(matchRules([savedAllow], postRequest)).toBeNull();
+    expect(matchRules([savedAllow], { ...postRequest, category: "http" })?.decision).toBe("allow");
+    // A tighter rule on http still stands for the POST.
+    expect(matchRules([rule({ decision: "deny", category: "http" })], postRequest)?.decision).toBe("deny");
+    expect(matchRules([rule({ decision: "ask", category: "http" })], postRequest)?.decision).toBe("ask");
+  });
+
   it("scopes a project rule to sessions inside the project", () => {
     const rules = [rule({ decision: "allow", commandPrefix: ["npm", "test"], project: "/work/app" })];
     expect(matchRules(rules, shell(["npm", "test"]), { workdir: "/work/app" })?.decision).toBe("allow");
