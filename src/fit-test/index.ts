@@ -40,3 +40,10 @@ export type { FitJudgeConfig } from "./fit-judge.js";
 export { childConfig, countTraceTokens, createAgentTaskRunner } from "./agent-task-runner.js";
 export type { AgentTaskRunnerOptions } from "./agent-task-runner.js";
 export { readProcessRssBytes } from "./process-memory.js";
+export {
+  compareFitRuns,
+  formatFitComparison,
+  parseFitTestRun,
+  pickModel,
+} from "./compare-runs.js";
+export type { FitComparison, FitTaskDelta } from "./compare-runs.js";
