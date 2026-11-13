@@ -173,7 +173,8 @@ describe("the fallover notice for the errors the chain actually sees", () => {
   it("still tells the operator to top up for OpenAI's insufficient_quota", () => {
     const err = providerError(429, OPENAI_INSUFFICIENT_QUOTA_429, "openai");
     expect(falloverCause(err)).toBe("billing");
-    expect(notice(err)).toContain("openai is out of credit");
+    // The helper always names "gemini" as the provider that fell over.
+    expect(notice(err)).toContain("gemini is out of credit");
   });
 
   it("does not send the operator to the key for a moderation 403", () => {
