@@ -72,6 +72,7 @@ import { createWebhookHandler } from "./route-webhooks.js";
 import { createListWebhooksHandler } from "./route-webhooks-list.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
 import { createContextPreviewHandler } from "./route-context-preview.js";
+import { createPlainCompleteHandler } from "./route-complete.js";
 import {
   createRestartMcpServerHandler,
   createSetMcpServerEnabledHandler,
@@ -265,6 +266,8 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "GET", path: "/api/coding-mode", handler: codingMode.get },
     { method: "POST", path: "/api/coding-mode", handler: codingMode.set },
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
+    // ATO-875: one plain model call, no tools, no session (route-complete.ts).
+    { method: "POST", path: "/api/complete", handler: createPlainCompleteHandler() },
     // ATO-873: the desktop's Reconnect button after a local server answered 404/405.
     { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },
     // ATO-1021: the desktop's model pick, swapped live instead of restarting serve.

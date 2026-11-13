@@ -4,6 +4,7 @@ import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
 import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
 import { askSideQuestion, sideQuestionPartition } from "./side-question.js";
+import { completePlain, PLAIN_COMPLETE_PARTITION, type PlainCompleteInput } from "./plain-complete.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createCompactionTokenCounter } from "./compaction-token-counter.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
@@ -979,6 +980,19 @@ export async function createAgentRuntime(
           logger.debug("side question failed", {
             error: err instanceof Error ? err.message : String(err),
           }),
+      });
+    },
+    // ATO-875: `POST /api/complete`, routed like `/enhance` above.
+    completePlain: (input: PlainCompleteInput) => {
+      if (lifecycle.isShutdown()) return Promise.resolve({ ok: false as const, reason: "shutting down", kind: "failed" as const });
+      return completePlain(input, {
+        complete: (params) => llmComplete(params),
+        slotId: () => slotManager.sideCallSlotId(),
+        toolTransport: resolveActiveLlmSlice(fallbackChain.standingOverrideFor(PLAIN_COMPLETE_PARTITION) ?? undefined).transport,
+        pending: pendingPromptEnhances,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
+        onError: (err: unknown) =>
+          logger.debug("plain completion failed", { error: err instanceof Error ? err.message : String(err) }),
       });
     },
     refreshSkills,
