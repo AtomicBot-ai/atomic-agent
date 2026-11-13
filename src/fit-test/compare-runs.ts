@@ -38,6 +38,8 @@ export interface FitComparison {
     tokensDelta: number | null;
     /** Tasks only one of the runs has. */
     unmatched: number;
+    /** Tasks both runs have but at least one did not score (crashed, timed out, judge failed). */
+    unscored: number;
   };
 }
 
@@ -93,9 +95,18 @@ export function compareFitRuns(
   const matched = tasks.filter((t) => t.before !== null && t.after !== null);
   // Totals over tasks both runs have, so a missing task does not read as a gain or a loss.
   const keep = new Set(matched.map((t) => t.taskId));
-  const only = (m: FitModelResult): FitModelResult => ({ ...m, tasks: m.tasks.filter((t) => keep.has(t.taskId)) });
-  const sa = summarizeModel(only(a));
-  const sb = summarizeModel(only(b));
+  const only = (m: FitModelResult, ids: Set<string>): FitModelResult => ({
+    ...m,
+    tasks: m.tasks.filter((t) => ids.has(t.taskId)),
+  });
+  const sa = summarizeModel(only(a, keep));
+  const sb = summarizeModel(only(b, keep));
+  // Mean scores only over tasks scored on both sides: a task that crashed
+  // after the change must not drop out of the mean and read as a gain.
+  const scoredBoth = matched.filter((t) => t.scoreDelta !== null);
+  const scoredIds = new Set(scoredBoth.map((t) => t.taskId));
+  const meanBefore = scoredBoth.length > 0 ? summarizeModel(only(a, scoredIds)).meanScore : null;
+  const meanAfter = scoredBoth.length > 0 ? summarizeModel(only(b, scoredIds)).meanScore : null;
   const tokenDeltas = matched.map((t) => t.tokensDelta);
   return {
     beforeModel: a.modelId,
@@ -103,15 +114,16 @@ export function compareFitRuns(
     sameTaskSet: before.taskSetCreatedAt === after.taskSetCreatedAt,
     tasks,
     total: {
-      meanScoreBefore: sa.meanScore,
-      meanScoreAfter: sb.meanScore,
-      meanScoreDelta: diff(sa.meanScore, sb.meanScore),
+      meanScoreBefore: meanBefore,
+      meanScoreAfter: meanAfter,
+      meanScoreDelta: diff(meanBefore, meanAfter),
       passedDelta: sb.passed - sa.passed,
       durationDeltaMs: sb.totalMs - sa.totalMs,
       tokensDelta: tokenDeltas.length > 0 && tokenDeltas.every((d) => d !== null)
         ? (tokenDeltas as number[]).reduce((s, d) => s + d, 0)
         : null,
       unmatched: tasks.length - matched.length,
+      unscored: matched.length - scoredBoth.length,
     },
   };
 }
@@ -148,6 +160,7 @@ export function formatFitComparison(c: FitComparison): string {
     ...rows.map(line),
     `total: score ${mean(t.meanScoreBefore)} -> ${mean(t.meanScoreAfter)} (${signed(t.meanScoreDelta, 2)}), passed ${signed(t.passedDelta)}, time ${signed(t.durationDeltaMs / 1000, 1, "s")}, tokens ${signed(t.tokensDelta)}`,
     ...(t.unmatched > 0 ? [`${t.unmatched} task(s) are in only one run and not totalled`] : []),
+    ...(t.unscored > 0 ? [`${t.unscored} task(s) have no score in one run and are left out of the mean score`] : []),
   ];
   return `${out.join("\n")}\n`;
 }

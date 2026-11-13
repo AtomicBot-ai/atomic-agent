@@ -38,6 +38,7 @@ describe("compareFitRuns", () => {
       durationDeltaMs: -500,
       tokensDelta: 0,
       unmatched: 0,
+      unscored: 0,
     });
   });
 
@@ -54,6 +55,15 @@ describe("compareFitRuns", () => {
     expect(text).toContain("different task sets");
     expect(text).toMatch(/gone\s+5 -> missing/);
     expect(text).toContain("total: score 3.00 -> 4.00 (+1.00), passed +1, time 0.0s, tokens n/a");
+  });
+
+  it("leaves a task that lost its score out of the mean, so a crash is not a gain", () => {
+    const before = run("m", [t("t1", 5, 1000, null), t("t2", 1, 1000, null)]);
+    const after = run("m", [t("t1", 5, 1000, null), t("t2", null, 1000, null)]);
+    const c = compareFitRuns(before, after);
+    expect(c.total.meanScoreDelta).toBe(0);
+    expect(c.total.unscored).toBe(1);
+    expect(formatFitComparison(c)).toContain("1 task(s) have no score in one run");
   });
 
   it("picks a named model, else the first that loaded", () => {
