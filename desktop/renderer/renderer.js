@@ -1558,6 +1558,11 @@ const VOICE_REASONS = {
   'voice-mic-stale':'macOS is holding a microphone permission for an older build of this app, so it will not start the device. Resetting it makes macOS ask again.',
   'voice-no-mic':'No microphone was found',
   'voice-no-bridge':'Voice input needs the desktop app',
+  // ATO-1049: Windows and Linux dictate with the user's whisper.cpp.
+  'voice-whisper-missing':'Voice input on this computer needs whisper.cpp: install whisper-cli (for example brew install whisper-cpp), then press the microphone again',
+  'voice-whisper-model-missing':'Voice input needs a speech model: press the microphone to download it once',
+  // Decision 75: where the agent can fetch whisper.cpp itself (Windows, Linux).
+  'voice-whisper-download':'Voice input downloads whisper.cpp and a speech model once, on first use: press the microphone to start',
 };
 /* Measured before it shipped, not taken from documentation. A Russian
    dictation fed at real time through two analyzers at once (en-US speech +
@@ -1566,7 +1571,7 @@ const VOICE_REASONS = {
    all-process capture taken in the same window holds 612 rows — none of
    them corespeechd, com.apple.siri.embeddedspeech or any other speech
    daemon — while recording other processes moving hundreds of megabytes. */
-const VOICE_ONDEVICE = 'On-device — the audio never leaves this Mac';
+const VOICE_ONDEVICE = /^mac/i.test(navigator.platform || '') ? 'On-device — the audio never leaves this Mac' : 'On-device — the audio never leaves this computer';
 /* Item 2 (voice input): the one call site for a model download. It is a
    binding rather than a direct BR.voiceInstall() call so the smoke can watch
    where an uninstalled language routes — to the download, never to the
@@ -4440,7 +4445,8 @@ function micButton() {
   const rec = VOICE.state === 'recording' || VOICE.state === 'starting' || VOICE.state === 'finishing';
   const off = VOICE.available === false;
   const checking = VOICE.available === null;
-  const title = off ? VOICE.reason
+  const title = VOICE.installing === 'whisper' ? 'Downloading voice input… ' + Math.round(VOICE.installFraction * 100) + '%'
+    : off ? VOICE.reason
     : checking ? 'Checking for the on-device speech model…'
     : rec ? 'Stop and insert · Esc to discard'
     : 'Dictate (click to start, click again to insert) · right-click to choose the language';
@@ -8378,7 +8384,7 @@ function refreshMic() {
   // Same reason as above: .micbtn.rec carries the recording pulse, and this
   // ran on every audio chunk. Nothing but these four fields reaches
   // micButton(), so anything else is a repaint with no new pixels.
-  const key = VOICE.state + '|' + VOICE.available + '|' + VOICE.reason + '|' + VOICE.locales.join(',');
+  const key = VOICE.state + '|' + VOICE.available + '|' + VOICE.reason + '|' + VOICE.locales.join(',') + '|' + (VOICE.installing === 'whisper' ? Math.round(VOICE.installFraction * 100) : '');
   if (key === VOICE_MIC_KEY) return;
   VOICE_MIC_KEY = key;
   b.outerHTML = micButton();
@@ -8402,6 +8408,8 @@ function voiceProbe() {
     VOICE.speechLocales = d.speech || [];
     VOICE.dictationLocales = d.dictation || [];
     VOICE.offMachine = !!d.offMachine;
+    VOICE.batch = !!d.batch;   // whisper.cpp (ATO-1049): the text comes after the take
+    VOICE.canDownload = !!d.canDownload;   // decision 75: a press downloads what is missing
     if (d.ok) {
       VOICE.available = true; VOICE.code = ''; VOICE.reason = ''; VOICE.detail = '';
       const chosen = (d.chosen || []).filter((id) => VOICE.supported.indexOf(id) >= 0);
@@ -8410,7 +8418,7 @@ function voiceProbe() {
     } else {
       VOICE.available = false;
       VOICE.code = d.reason || 'voice-helper-failed';
-      VOICE.reason = VOICE_REASONS[VOICE.code] || VOICE_REASONS['voice-helper-failed'];
+      VOICE.reason = (VOICE.code === 'voice-whisper-missing' && VOICE.canDownload ? VOICE_REASONS['voice-whisper-download'] : VOICE_REASONS[VOICE.code]) || VOICE_REASONS['voice-helper-failed'];
       VOICE.detail = d.detail || '';
     }
     refreshVoice();
@@ -8489,6 +8497,23 @@ function voiceInstall(id) {
   });
 }
 
+/** Windows/Linux first use (decision 75): the agent downloads whisper.cpp
+    and the speech model; the microphone's tooltip carries the percentage,
+    and a fresh probe decides whether it is ready. */
+function voiceSetupWhisper() {
+  if (VOICE.installing) return;
+  VOICE.installing = 'whisper'; VOICE.installFraction = 0; VOICE.installErr = null;
+  toast('Voice input', 'Downloading the speech engine and model once. The microphone shows the progress.');
+  refreshVoice();
+  const end = (msg) => {
+    VOICE.installing = null; VOICE.installFraction = 0;
+    if (msg) toast('Voice input did not install', msg, 'bad');
+    voiceProbe().then(() => { if (!msg && VOICE.available) toast('Voice input is ready', 'Press the microphone to dictate'); });
+  };
+  voiceInstallBridge('whisper').then((r) => end(r && r.ok ? '' : String((r && r.error) || 'unknown')))
+    .catch((e) => end(String((e && e.message) || e)));
+}
+
 /** Hold-to-talk and click/click, decided on the press. See VOICE_HOLD_MS. */
 function voiceMouseDown(e) {
   const b = e.target.closest && e.target.closest('[data-mic]');
@@ -8514,6 +8539,7 @@ function voiceMouseUp() {
 
 function voiceToggle() {
   // Chat review (Д24): a press on a microphone that cannot work says why.
+  if (VOICE.available === false && VOICE.canDownload) { voiceSetupWhisper(); return; }
   if (VOICE.available === false) { toast('Voice input is off', VOICE.reason || VOICE_REASONS['voice-helper-failed'], 'bad'); return; }
   if (VOICE.available !== true) return;   // still checking: nothing to start yet
   if (VOICE.state === 'idle' || VOICE.state === 'error') voiceStart();
@@ -8665,7 +8691,7 @@ function voiceStop() {
       // claimable until the next take starts — see VOICE.lateTake.
       VOICE.lateTake = VOICE.seq;
       voiceSettle();
-    }, 2500);
+    }, VOICE.batch ? 120000 : 2500);
   }).then(() => voiceInsert());
 }
 function voiceSettle() {
@@ -8768,6 +8794,7 @@ function voiceEvent(o) {
       voiceFail(String(o.message || o.code || 'the speech helper failed'));
       return;
     }
+    else if (o.code === 'whisper') toast('Voice input', String(o.message || 'whisper.cpp failed'));
   }
   else if (t === 'done') { voiceSettle(); }
   else if (t === 'closed') {

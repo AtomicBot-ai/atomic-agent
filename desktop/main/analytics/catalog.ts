@@ -364,7 +364,7 @@ export const EVENTS: Record<string, EventSpec> = {
     owner: "main",
     props: {
       result: en(["ok", "install_failed", "unavailable"]),
-      reason: en(["voice-not-macos", "voice-os-too-old", "voice-helper-missing", "voice-helper-failed"], { nullable: true }),
+      reason: en(["voice-not-macos", "voice-os-too-old", "voice-helper-missing", "voice-helper-failed", "voice-whisper-missing", "voice-whisper-model-missing"], { nullable: true }),
     },
   },
   task_created: { owner: "main", props: { kind: en(["cron", "interval", "at"]) } },

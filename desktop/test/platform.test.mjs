@@ -153,8 +153,9 @@ test("window chrome: inset lights on macOS, overlay controls on Windows, a frame
 
 test("voice input and the file-manager label are platform facts", () => {
   assert.equal(P.voiceSupported("darwin"), true);
-  assert.equal(P.voiceSupported("win32"), false);
-  assert.equal(P.voiceSupported("linux"), false);
+  // ATO-1049: whisper.cpp serves Windows and Linux; the probe says if it runs.
+  assert.equal(P.voiceSupported("win32"), true);
+  assert.equal(P.voiceSupported("linux"), true);
   assert.equal(P.fileManagerLabel("darwin"), "Show in Finder");
   assert.equal(P.fileManagerLabel("win32"), "Show in Explorer");
   assert.equal(P.bundledAgentFileName("win32"), "atomic-agent.exe");

@@ -284,9 +284,11 @@ export function windowChrome(platform: Platform): ChromeOptions {
 
 /* ------------------------------------------------------------ voice --- */
 
-/** The speech helper is Apple's on-device SpeechAnalyzer; macOS only. */
+/** Voice input: Apple's on-device SpeechAnalyzer on macOS; the user's
+ *  whisper.cpp on Windows and Linux (ATO-1049, speech.ts). Whether it can
+ *  actually run is the probe's answer; this only says a mic button belongs. */
 export function voiceSupported(platform: Platform): boolean {
-  return platform === "darwin";
+  return platform === "darwin" || platform === "win32" || platform === "linux";
 }
 
 /** The file manager's name, for "Show in …". */
