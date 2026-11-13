@@ -69,6 +69,21 @@ export class TempProfiles {
     await context.close().catch(() => undefined);
   }
 
+  /** Close the session's context now, tabs and all (a fusion worker ended). */
+  async close(sessionId: string): Promise<void> {
+    const context = this.contexts.get(sessionId);
+    if (!context) return;
+    this.contexts.delete(sessionId);
+    await context.close().catch(() => undefined);
+  }
+
+  /** Open tabs across every context here (for `browser.maxTabs`). */
+  tabCount(): number {
+    let count = 0;
+    for (const context of this.contexts.values()) count += context.pages().filter((page) => !page.isClosed()).length;
+    return count;
+  }
+
   isTemp(context: PwBrowserContext): boolean {
     for (const open of this.contexts.values()) if (open === context) return true;
     return false;

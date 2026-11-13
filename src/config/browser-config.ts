@@ -44,6 +44,11 @@ export const BROWSER_CONNECT_MODES: readonly BrowserConnectMode[] = [
  * - `profile` (default `"agent"`, ATO-959): `"temp"` makes every chat
  *   browse in its own throwaway, logged-out profile instead of the
  *   agent's (`../tools/browser/temp-profiles.ts`).
+ * - `maxTabs` (default 8, 1–50, ATO-961): tabs the agent may have open at
+ *   once, fusion workers' and throwaway ones included.
+ * - `workerIsolation` (default `"tabs"`, ATO-961): fusion workers browse in
+ *   tabs of their own in the agent's profile (`"tabs"`), or each in its own
+ *   throwaway context (`"context"`) (`../tools/browser/worker-tabs.ts`).
  */
 export interface UserBrowserConfig {
   blockedDomains: string[];
@@ -53,6 +58,8 @@ export interface UserBrowserConfig {
   userDataDir: string | null;
   headless: boolean | "auto";
   profile: "agent" | "temp";
+  maxTabs: number;
+  workerIsolation: "tabs" | "context";
 }
 
 export function createBrowserDefaults(): UserBrowserConfig {
@@ -64,6 +71,8 @@ export function createBrowserDefaults(): UserBrowserConfig {
     userDataDir: null,
     headless: "auto",
     profile: "agent",
+    maxTabs: 8,
+    workerIsolation: "tabs",
   };
 }
 
@@ -116,6 +125,16 @@ function parseProfile(raw: unknown, field: string): "agent" | "temp" {
   throw new ConfigValidationError(field, `expected "agent" | "temp", got ${JSON.stringify(raw)}`);
 }
 
+function parseMaxTabs(raw: unknown, field: string): number {
+  if (typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 50) return raw;
+  throw new ConfigValidationError(field, `expected a whole number from 1 to 50, got ${JSON.stringify(raw)}`);
+}
+
+function parseWorkerIsolation(raw: unknown, field: string): "tabs" | "context" {
+  if (raw === "tabs" || raw === "context") return raw;
+  throw new ConfigValidationError(field, `expected "tabs" | "context", got ${JSON.stringify(raw)}`);
+}
+
 export function parseBrowserConfig(
   raw: Record<string, unknown>,
   readDefaults: () => UserBrowserConfig,
@@ -143,5 +162,10 @@ export function parseBrowserConfig(
     ),
     headless: parseHeadless(raw.headless ?? defaults.headless, "browser.headless"),
     profile: parseProfile(raw.profile ?? defaults.profile, "browser.profile"),
+    maxTabs: parseMaxTabs(raw.maxTabs ?? defaults.maxTabs, "browser.maxTabs"),
+    workerIsolation: parseWorkerIsolation(
+      raw.workerIsolation ?? defaults.workerIsolation,
+      "browser.workerIsolation",
+    ),
   };
 }
