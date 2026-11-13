@@ -24,7 +24,7 @@ import { assignChat, deleteProject, readProjects, saveProject, turnProject, upda
 import { newChatSessionId } from "./chat-session.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
-import { busyPorts, modelPortsOf, onSmokeStopSignal, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
+import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
@@ -39,7 +39,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS, commandOf, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
@@ -116,6 +116,7 @@ import {
   // Item 7A — add a model from Hugging Face
   addCustomModelEntry,
   normaliseLlmBlock,
+  daemonPidsIn,
 } from "./agent-cli.js";
 // Item 7A — the vendored port of the agent's huggingface-* modules; the
 // renderer's CSP forbids it from reaching huggingface.co itself.
@@ -11385,7 +11386,18 @@ async function smokePortsFree(): Promise<boolean> {
   if (!smokeOwnsItsState({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV })) return true;
   try {
     const read = await settleWithin(readWholeConfig(), 8_000, null);
-    const taken = await busyPorts(modelPortsOf(read?.ok ? read.config : null));
+    const cfg = read?.ok ? read.config : null;
+    const busy = await busyPorts(modelPortsOf(cfg));
+    /* A server this run started itself (the QA stand's pre-start of the full
+       smoke's model, on this run's fresh directory) is the run's own, not a
+       leftover: its pid is in the run's own pid files (portsHeldByRun). */
+    const managed = (cfg as { localModels?: { managed?: { dataDirOverride?: string | null } } } | null)?.localModels?.managed;
+    const dataDir = managedDataDir(managed?.dataDirOverride);
+    const ours = busy.length && smokeMayStopModels({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV, dataDir })
+      ? portsHeldByRun(busy, daemonPidsIn(dataDir, true), commandOf)
+      : [];
+    if (ours.length) console.error(`[desktop] smoke: model port ${ours.join(", ")} is held by the model server this run started — using it`);
+    const taken = busy.filter((p) => !ours.includes(p));
     if (!taken.length) return true;
     process.stdout.write(
       `FAIL smoke: model port ${taken.join(", ")} is already taken by another process (a model server left by a stopped run?). Stop it and start the run again.\n`,
