@@ -137,7 +137,7 @@ describe("agent configuration ownership", () => {
       "read-defaults", "read-defaults", "read-defaults",
     ]);
     expect(parsed.providerWait).toEqual({ enabled: false, maxWaitMs: 1 });
-    expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0 });
+    expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0, replanEveryNSteps: 0 });
     expect(parsed.task).not.toBe(defaults.task);
   });
 

@@ -57,6 +57,14 @@ export interface AgentTaskConfig {
    * no field and runs uncapped, as before.
    */
   maxCostUsd: number;
+  /**
+   * Ask the model to review and resend its live plan (`plan.update`)
+   * every this many steps of a long task (ATO-609). The request joins
+   * the next step's notice, so it costs no extra model call. `0` (the
+   * default) is off. Additive and unversioned: an older file has no
+   * field and never re-plans.
+   */
+  replanEveryNSteps: number;
 }
 
 export function createProviderWaitDefaults(): ProviderWaitConfig {
@@ -82,6 +90,7 @@ export function createAgentTaskDefaults(): AgentTaskConfig {
     resumeInterrupted: true,
     maxResumes: 3,
     maxCostUsd: 0,
+    replanEveryNSteps: 0,
   };
 }
 
@@ -150,6 +159,10 @@ export function parseAgentTask(
     maxCostUsd: parseNonNegativeUsd(
       task.maxCostUsd ?? defaults.maxCostUsd,
       "agent.task.maxCostUsd",
+    ),
+    replanEveryNSteps: parseNonNegativeInt(
+      task.replanEveryNSteps ?? defaults.replanEveryNSteps,
+      "agent.task.replanEveryNSteps",
     ),
   };
 }
