@@ -3,7 +3,8 @@
 // refuses a feed folder that misses a platform's update file or a file it names.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkFeed, feedYmlNames, namedFiles } from "../scripts/feed-files.mjs";
+import { readFileSync } from "node:fs";
+import { SUMS, SUMS_SIG, checkFeed, checkSums, feedYmlNames, namedFiles, parseSums } from "../scripts/feed-files.mjs";
 
 const V = "0.0.8";
 const YML = {
@@ -110,4 +111,71 @@ test("update files of different versions are refused", () => {
 test("namedFiles reads files[].url and the legacy path, quoted or not", () => {
   assert.deepEqual(namedFiles("files:\n  - url: 'a.AppImage'\n    sha512: x\npath: a.AppImage\n"), ["a.AppImage"]);
   assert.deepEqual(namedFiles('files:\n  - url: "b.exe"\n'), ["b.exe"]);
+});
+
+// ATO-685: the desktop-feed workflow checks SHA256SUMS.txt and the blockmaps too.
+const H = (name) => name.length.toString(16).padStart(64, "0");
+
+test("a .zip or .exe without its .blockmap is a warning, not a problem", () => {
+  const { problems, warnings } = checkFeed(...folder());
+  assert.deepEqual(problems, []);
+  assert.ok(warnings.some((w) => w.includes(`Atomic-Agent-Setup-${V}-x64.exe has no .blockmap`)));
+  assert.ok(!warnings.some((w) => w.includes("mac.zip has no")));
+  assert.ok(!warnings.some((w) => w.includes(".AppImage")));
+});
+
+test("SHA256SUMS.txt in the folder is uploaded with the installers", () => {
+  const [files, read] = folder();
+  const { uploadFirst, uploadLast } = checkFeed([...files, SUMS], read);
+  assert.ok(uploadFirst.includes(SUMS));
+  assert.ok(!uploadLast.includes(SUMS));
+});
+
+test("the signature SHA256SUMS.txt.asc goes up with the sums, and is not itself summed", () => {
+  const [files, read] = folder();
+  const { uploadFirst, uploadLast } = checkFeed([...files, SUMS, SUMS_SIG], read);
+  assert.ok(uploadFirst.includes(SUMS_SIG));
+  assert.ok(!uploadLast.includes(SUMS_SIG));
+  const feed = [...uploadFirst, ...uploadLast];
+  const listed = feed.filter((n) => n !== SUMS && n !== SUMS_SIG && !n.endsWith(".yml") && !n.endsWith(".blockmap"));
+  const good = listed.map((n) => `${H(n)}  ${n}`).join("\n") + "\n";
+  assert.deepEqual(checkSums([...files, SUMS, SUMS_SIG], good, feed, H), []);
+});
+
+// Review of #1263 vs #1282: one signed SHA256SUMS.txt, made by desktop.yml.
+test("desktop-feed.yml takes SHA256SUMS.txt + .asc from desktop-checksums and never sums by itself", () => {
+  const wf = readFileSync(new URL("../../.github/workflows/desktop-feed.yml", import.meta.url), "utf8");
+  const steps = wf.split("\n").filter((l) => !l.trimStart().startsWith("#")).join("\n");
+  assert.doesNotMatch(steps, /\bsha256sum\b/);
+  assert.match(steps, /artifacts\/desktop-checksums/);
+  assert.match(steps, /cp "\$src\/SHA256SUMS\.txt" release\//);
+  assert.match(steps, /cp "\$src\/SHA256SUMS\.txt\.asc" release\//);
+  assert.match(steps, /pattern: desktop-\*/);
+});
+
+test("SHA256SUMS.txt must list every feed file with the right hash", () => {
+  const [files] = folder();
+  const { uploadFirst, uploadLast } = checkFeed(...folder());
+  const feed = [...uploadFirst, ...uploadLast];
+  const listed = feed.filter((n) => !n.endsWith(".yml") && !n.endsWith(".blockmap"));
+  const good = listed.map((n) => `${H(n)}  ${n}`).join("\n") + "\n";
+  assert.deepEqual(checkSums([...files, SUMS], good, feed, H), []);
+
+  // A file left out of the sums.
+  const missing = listed.slice(1).map((n) => `${H(n)}  ${n}`).join("\n");
+  assert.deepEqual(checkSums(files, missing, feed, H), [`${SUMS}: does not list ${listed[0]}`]);
+
+  // A hash that does not match, and a listed file that is not in the folder.
+  const wrong = good.replace(H(listed[0]), "f".repeat(64)) + `${"a".repeat(64)}  gone.dmg\n`;
+  const problems = checkSums(files, wrong, feed, H);
+  assert.equal(problems.length, 2);
+  assert.match(problems[0], /does not match its sha256/);
+  assert.match(problems[1], /lists gone\.dmg, which is not in the folder/);
+});
+
+test("parseSums reads sha256sum output, binary-mode star included, and flags junk", () => {
+  const { sums, bad } = parseSums(`${"A".repeat(64)}  a.dmg\n${"b".repeat(64)} *b.exe\nnot a line\n`);
+  assert.equal(sums.get("a.dmg"), "a".repeat(64));
+  assert.equal(sums.get("b.exe"), "b".repeat(64));
+  assert.deepEqual(bad, ["not a line"]);
 });

@@ -1765,6 +1765,31 @@ gh release upload desktop-latest stable-mac.yml stable.yml stable-linux.yml stab
 The page's own downloads (DMG, .deb, .rpm, SHA256SUMS.txt) go up as before;
 the feed does not need them.
 
+**The workflow does all of the above (ATO-685).** `.github/workflows/desktop-feed.yml`
+("Desktop update feed", started by hand) takes the ID of a successful
+"Desktop packages" run, downloads its five artifacts, merges the two Windows
+`stable.yml`, takes the signed `SHA256SUMS.txt` and `SHA256SUMS.txt.asc` from
+the run's `desktop-checksums` artifact (it never sums the files itself, so
+there is one sums file and the signature verifies it), runs `feed-files.mjs --require-sums`
+(every yml, every file a yml names, both Windows arches, one version, every
+sum; a `.zip`/`.exe` without its `.blockmap` is only a warning), and refuses a
+version that is not newer than the one `desktop-latest` serves. It keeps the
+whole folder as the artifact `desktop-release-<version>` (the DMG, .deb and
+.rpm too, for the `desktop-v<version>` page release). With **publish** off,
+the default, nothing is uploaded; with it on, the feed files go to
+`desktop-latest`, installers and `SHA256SUMS.txt` (+ `.asc`) first, the `.yml` last.
+A run from before the checksums job (ATO-1035) has no `desktop-checksums` and stops.
+
+```bash
+gh workflow run desktop-feed.yml --repo AtomicBot-ai/atomic-agent --ref <branch> \
+  -f run_id=<Desktop packages run id>                 # check only
+gh workflow run desktop-feed.yml --repo AtomicBot-ai/atomic-agent --ref <branch> \
+  -f run_id=<Desktop packages run id> -f publish=true # publish: only after a separate "yes"
+```
+
+GitHub lists a workflow that only has `workflow_dispatch` once the file is on
+the default branch (`main`).
+
 Until the `desktop-latest` release exists, a check finds nothing (a failed
 automatic check shows nothing). A draft release does not work as a feed: its
 files need a GitHub login.
