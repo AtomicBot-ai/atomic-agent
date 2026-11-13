@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolvePidFilePath } from "../backend-paths.js";
-import { CORE_OPERATION_STALE_MS, readCoreOperationLock as readCoreOperationLockForTest } from "../core/core-operation.js";
+import {
+  CORE_OPERATION_STALE_MS,
+  readCoreOperationLock as readCoreOperationLockForTest,
+  readCoreOperationLockForTurn,
+} from "../core/core-operation.js";
 import { explainManagedEngineLiveness, readManagedEngineLiveness } from "./engine-liveness.js";
 
 describe("readManagedEngineLiveness (ATO-772)", () => {
@@ -151,13 +155,20 @@ describe("explainManagedEngineLiveness (ATO-1275)", () => {
     // A pid that a crashed owner left on Windows, now naming another program.
     writeLock(process.ppid);
     age(lockPath(), CORE_OPERATION_STALE_MS + 60_000);
-    expect(explainManagedEngineLiveness(dataDir, { bootTimeMs: () => Date.now() - 30 * 24 * HOUR })).toEqual({
+    // Boot long ago for both the lock and the pid file, so the reboot rule
+    // never decides this on a machine that has only just started.
+    const bootTimeMs = () => Date.now() - 30 * 24 * HOUR;
+    const probes = {
+      bootTimeMs,
+      operationLock: (dir: string) => readCoreOperationLockForTurn(dir, { bootTimeMs }),
+    };
+    expect(explainManagedEngineLiveness(dataDir, probes)).toEqual({
       state: "no_pid",
       reason: "no_pid_file",
       lock: "stale_too_old",
     });
     writeFileSync(resolvePidFilePath(dataDir), String(deadPid()));
-    expect(explainManagedEngineLiveness(dataDir, { bootTimeMs: () => Date.now() - 30 * 24 * HOUR })).toMatchObject({
+    expect(explainManagedEngineLiveness(dataDir, probes)).toMatchObject({
       state: "dead",
       reason: "pid_dead",
       lock: "stale_too_old",
