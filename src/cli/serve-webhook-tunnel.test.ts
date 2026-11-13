@@ -155,6 +155,8 @@ describe("startWebhookTunnel gateway (ATO-625)", () => {
       ["POST", "/api/skills/install"],
       ["POST", "/api/webhooks/gh/../../config"],
       ["POST", "/api/webhooks"],
+      // ATO-445's admin routes live on the main API only.
+      ["DELETE", "/api/webhooks/gh"],
     ];
     for (const [method, path] of probes) {
       const res = await fetch(`${gateway}${path}`, { method, ...(method === "GET" ? {} : { body: "{}" }) });

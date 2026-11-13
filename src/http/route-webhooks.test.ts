@@ -177,8 +177,27 @@ describe("POST /api/webhooks/:name", () => {
     expect(payload.tunnel.state).toBe("off");
     expect(payload.webhooks).toEqual(
       expect.arrayContaining([
-        { name: "secure", path: "/api/webhooks/secure", hasSecret: true, sessionMode: "ephemeral", publicUrl: null },
-        { name: "open", path: "/api/webhooks/open", hasSecret: false, sessionMode: "persistent", publicUrl: null },
+        // verify, userMessageTemplate and live come from ATO-445.
+        {
+          name: "secure",
+          path: "/api/webhooks/secure",
+          hasSecret: true,
+          sessionMode: "ephemeral",
+          publicUrl: null,
+          verify: "secret",
+          userMessageTemplate: "x",
+          live: true,
+        },
+        {
+          name: "open",
+          path: "/api/webhooks/open",
+          hasSecret: false,
+          sessionMode: "persistent",
+          publicUrl: null,
+          verify: "secret",
+          userMessageTemplate: "y",
+          live: true,
+        },
       ]),
     );
   });
