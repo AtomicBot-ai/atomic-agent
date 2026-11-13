@@ -1,5 +1,6 @@
 import { getConfig, readUserConfigFileSync } from "../../config/index.js";
-import { formatConfigValue, readConfigPath } from "../../config/config-paths.js";
+import { readConfigPath } from "../../config/config-paths.js";
+import { formatSettingValue } from "../../config/settings-value-mask.js";
 import { listSettingsReference } from "../../config/settings-reference-data.js";
 import {
   filterSettings,
@@ -40,7 +41,7 @@ function currentValues(entries: readonly SettingEntry[]): Map<string, string> {
   try {
     const file = readUserConfigFileSync(getConfig().paths.userConfigFile);
     if (!file) return new Map();
-    return new Map(entries.map((entry) => [entry.key, formatConfigValue(entry.key, readConfigPath(file, entry.key))]));
+    return new Map(entries.map((entry) => [entry.key, formatSettingValue(entry.key, readConfigPath(file, entry.key))]));
   } catch {
     // A broken file is reported elsewhere (startup, `atag doctor`); the list still helps.
     return new Map();

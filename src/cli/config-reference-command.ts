@@ -1,7 +1,8 @@
 import { ensureUserConfigFileSync, getConfig } from "../config/index.js";
-import { formatConfigValue, isSecretConfigKey, readConfigPath } from "../config/config-paths.js";
+import { readConfigPath } from "../config/config-paths.js";
 import { ENV_SETTINGS } from "../config/env-settings.js";
 import { listSettingsReference } from "../config/settings-reference-data.js";
+import { formatSettingValue, maskSettingValue } from "../config/settings-value-mask.js";
 import {
   filterSettings,
   renderEnvSettingsText,
@@ -23,11 +24,8 @@ export function wantsSettingsReference(args: readonly string[]): boolean {
   return args.includes(DESCRIBE_FLAG) || args.includes(JSON_FLAG);
 }
 
-/** A value as `config list --json` prints it: secrets masked, never the raw string. */
-export function maskedValue(key: string, value: unknown): unknown {
-  if (isSecretConfigKey(key) && typeof value === "string" && value.length > 0) return "***";
-  return value;
-}
+/** A value as `config list` prints it, secrets masked at any depth (see settings-value-mask.ts). */
+export { maskSettingValue as maskedValue } from "../config/settings-value-mask.js";
 
 export function handleListReference(args: readonly string[]): number {
   const query = args.filter((arg) => arg !== DESCRIBE_FLAG && arg !== JSON_FLAG).join(" ");
@@ -36,7 +34,7 @@ export function handleListReference(args: readonly string[]): number {
   if (args.includes(JSON_FLAG)) {
     const rows = entries.map((entry) => ({
       ...entry,
-      value: maskedValue(entry.key, readConfigPath(file, entry.key)),
+      value: maskSettingValue(entry.key, readConfigPath(file, entry.key)),
     }));
     process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
     return 0;
@@ -46,7 +44,7 @@ export function handleListReference(args: readonly string[]): number {
     return 0;
   }
   const values = new Map(
-    entries.map((entry) => [entry.key, formatConfigValue(entry.key, readConfigPath(file, entry.key))]),
+    entries.map((entry) => [entry.key, formatSettingValue(entry.key, readConfigPath(file, entry.key))]),
   );
   process.stdout.write(`${renderSettingsText(entries, values)}\n`);
   return 0;

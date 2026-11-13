@@ -826,6 +826,41 @@ describe("configCommand", () => {
       expect(rows.find((row) => row.key === "web.search.exa.apiKeyEnv")?.value).toBe("***");
     });
 
+    // Review F09-8: nested values are masked too; the desktop's All settings list renders them.
+    it("list --json and list --describe mask mcp.servers[].env and headers at any depth", async () => {
+      seedSparseConfig({
+        mcp: {
+          servers: [
+            { name: "gh", env: { GITHUB_TOKEN: "ghp_abc" }, transport: { kind: "stdio", command: "x" } },
+            {
+              name: "remote",
+              transport: {
+                kind: "streamable_http",
+                url: "https://example.invalid/mcp",
+                headers: { Authorization: "Bearer sk-live-xyz" },
+              },
+            },
+          ],
+        },
+      });
+      expect(await configCommand(["list", "--json"])).toBe(0);
+      expect(stdout).not.toContain("ghp_abc");
+      expect(stdout).not.toContain("sk-live-xyz");
+      const rows = JSON.parse(stdout) as Array<Record<string, unknown>>;
+      const servers = rows.find((row) => row.key === "mcp.servers")?.value as Array<Record<string, unknown>>;
+      // Names and the shape stay readable; only the values are hidden.
+      expect(servers[0]).toMatchObject({ name: "gh", env: { GITHUB_TOKEN: "***" } });
+      expect(servers[1]).toMatchObject({
+        name: "remote",
+        transport: { url: "https://example.invalid/mcp", headers: { Authorization: "***" } },
+      });
+
+      stdout = "";
+      expect(await configCommand(["list", "--describe", "mcp"])).toBe(0);
+      expect(stdout).not.toContain("ghp_abc");
+      expect(stdout).not.toContain("sk-live-xyz");
+    });
+
     it("env lists the env-only settings without printing values", async () => {
       process.env.ATOMIC_AGENT_LLAMA_API_KEY = "sk-secret-value";
       try {
