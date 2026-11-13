@@ -16,7 +16,8 @@ export { managedLocalLlmHealthFailureHint } from "./composition/runtime-local-pr
 import { createRuntimeObservability } from "./composition/runtime-observability.js";
 import { createRuntimeTraces } from "./composition/runtime-traces.js";
 import { prepareRuntimeLocalProfile, connectRuntimeLocalProfile } from "./composition/runtime-local-profile.js";
-import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallback, createRuntimeProviderReloads } from "./composition/runtime-inference.js";
+import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallback, createRuntimeProviderReloads, catalogWindowOf } from "./composition/runtime-inference.js";
+import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
@@ -441,6 +442,7 @@ export async function createAgentRuntime(
   const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
     fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
     costAccumulator, turnUsageMeter, sessionUsage, resolveModelPricing, resolveCatalogContextWindow,
+    providerRegistry,
   });
   // Smart approval (ATO-465): off unless `agent.smartApproval`, read live.
   installRiskReviewer({
@@ -613,15 +615,22 @@ export async function createAgentRuntime(
     // way compaction prices its own: cache-aware, unpriced (local) = $0.
     priceCompletion: (result: CompletionResult, providerId: string | undefined) =>
       compactionCost(result, providerId ?? providerRegistry.activeText.id),
-    resolveLlmSlice: (providerId: string) => {
+    resolveLlmSlice: (providerId: string, model?: string) => {
       const slice = resolveActiveLlmSlice(providerId);
+      // A per-turn cloud model (ATO-1148) is sized and flagged as that
+      // model, not the entry's default one.
+      const turnModel = model !== undefined && !slice.isLlamaServer ? model : undefined;
       return {
-        contextWindow: resolveCatalogContextWindow(providerId),
+        contextWindow: turnModel === undefined
+          ? resolveCatalogContextWindow(providerId)
+          : catalogWindowOf(resolveModelPricing(turnModel, providerId)),
         toolTransport: slice.transport,
         toolCallAdapter: slice.adapter,
         supportsSlotAffinity: slice.slotAffinity,
         supportsParallelTools: slice.parallelTools,
-        strictTools: slice.strictTools,
+        strictTools: turnModel === undefined
+          ? slice.strictTools
+          : modelWantsStrictTools(resolveLlmConfig(getConfig()), providerId, turnModel),
         isLlamaServer: slice.isLlamaServer,
       };
     },

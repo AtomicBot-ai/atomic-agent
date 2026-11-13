@@ -71,6 +71,19 @@ describe("POST /v1/chat/completions (non-stream)", () => {
     expect(body.error.message).toMatch(/messages/i);
   });
 
+  it("refuses a per-turn model on the local model, which every project shares (ATO-1148)", async () => {
+    const response = await postChat(harness.baseUrl, {
+      model: "atomic-agent",
+      messages: [{ role: "user", content: "hello" }],
+      provider_id: "local-llama",
+      provider_model: "other.gguf",
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { message: string; param: string | null } };
+    expect(body.error.message).toMatch(/shared by all projects/);
+    expect(body.error.param).toBe("provider_model");
+  });
+
   it("returns the assistant reply as an OpenAI chat.completion", async () => {
     const response = await postChat(harness.baseUrl, {
       model: "atomic-agent",

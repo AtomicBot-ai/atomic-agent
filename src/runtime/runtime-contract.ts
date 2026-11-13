@@ -445,6 +445,12 @@ export interface AgentRuntime {
       eventHook?: TurnEventHook;
       origin?: TurnOrigin;
       providerId?: string;
+      /**
+       * With `providerId`: the cloud chat model for this turn only
+       * (`RunTurnOptions.model`, ATO-1148). Refused before the turn is
+       * queued on a local provider or without `providerId`.
+       */
+      model?: string;
       taskMaxDurationMs?: number;
       /** Spend ceiling in USD (see `RunTurnOptions.taskMaxCostUsd`). */
       taskMaxCostUsd?: number;
@@ -516,6 +522,8 @@ export interface AgentRuntime {
       maxSteps?: number;
       signal?: AbortSignal;
       providerId?: string;
+      /** See `runTurn`'s `model`. */
+      model?: string;
       taskMaxDurationMs?: number;
       /** Spend ceiling in USD (see `RunTurnOptions.taskMaxCostUsd`). */
       taskMaxCostUsd?: number;

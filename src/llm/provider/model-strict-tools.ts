@@ -21,9 +21,11 @@ import { resolveModel } from "./model-resolver.js";
 export function modelWantsStrictTools(
   resolved: ResolvedLlmConfig,
   providerId: string,
+  /** A per-turn model on that link (ATO-1148) instead of the entry's. */
+  modelOverride?: string,
 ): boolean {
   const entry = resolved.providers.find((p) => p.id === providerId);
-  const modelId = entry?.defaultChatModel ?? entry?.model;
+  const modelId = modelOverride ?? entry?.defaultChatModel ?? entry?.model;
   if (!entry || !modelId) return false;
   return (
     resolveModel(entry, modelId, catalogForProvider(entry)).supportsTools ===
