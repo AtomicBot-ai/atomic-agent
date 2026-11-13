@@ -1462,6 +1462,41 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1150: archive or unarchive a chat in the agent's own session
+   * metadata (`POST /api/sessions/{id}/archived`), so the terminal sees it
+   * too. `supported: false` on an agent from before the route ("No route
+   * for"): the window then keeps the flag in prefs.json, as it did before.
+   * `notFound` for a chat the agent does not hold. Never throws.
+   */
+  async setSessionArchived(id: string, archived: boolean): Promise<
+    | { supported: false }
+    | { supported: true; ok: true; archived: boolean }
+    | { supported: true; ok: false; notFound: boolean; error: string }
+  > {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(id)}/archived`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ archived }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) {
+        let stored = archived;
+        try { stored = (JSON.parse(text) as { archived?: unknown }).archived === true; } catch { /* the asked value */ }
+        return { supported: true, ok: true, archived: stored };
+      }
+      let message = `HTTP ${res.status}`;
+      try { message = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? message; } catch { /* not JSON */ }
+      return { supported: true, ok: false, notFound: res.status === 404, error: message };
+    } catch (err) {
+      // Not reached (agent down, timeout): not a missing route, just not done now.
+      return { supported: true, ok: false, notFound: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
    * ATO-731: move one chat to another folder (`POST /api/sessions/{id}/working-dir`),
    * no restart. `supported: false` on an agent without the route; `busy` while
    * that chat runs a turn. With no stored chat yet (`id` null or unknown) only

@@ -14,16 +14,26 @@
 
    Archive: the row menu's Archive takes a stored chat out of Pinned, its
    folder's list and Chats, into an "Archived" section folded at the bottom of
-   the chats; Unarchive (same menu) puts it back where it was. The list of
-   archived ids lives in userData/prefs.json beside the pins (main.ts
-   coercePrefs): the agent has no archive flag or route, so nothing is written
-   to the session store and the terminal does not see it. Archiving unpins.
+   the chats; Unarchive (same menu) puts it back where it was. Archiving unpins.
+   The flag is the agent's (`metadata.archived`, POST /api/sessions/{id}/archived),
+   in the shared state dir, so the terminal's rail leaves the same chats out.
+   Against an agent from before that route ("No route for") the window keeps
+   archived ids in userData/prefs.json beside the pins, as a fallback; once the
+   agent has the route, those ids are moved to it, once per launch
+   (archivesAfterSessions).
 
    The sidebar is rebuilt whole on every render, so the field's text lives in
    CHATSEARCH.q and its focus and caret are carried across the rebuild
    (chatSearchHold / chatSearchRestore around renderSidebar's write). */
 
-const CHATSEARCH = {q: '', archOpen: false};
+/* `agent`: whether the agent keeps the archive flag (null: not known yet).
+   `migrating`: the prefs.json ids are being moved to the agent. */
+const CHATSEARCH = {q: '', archOpen: false, agent: null, migrating: false};
+
+/** The archived chat ids, from the agent's rows and the window's own fallback list. */
+function chatArchivedIds() {
+  return archivedIdsOf(SESSIONS, PREFS.archived);
+}
 
 /** Whether the lists show search results: a query, and the sidebar not folded to the rail. */
 function chatSearchOn() {
@@ -50,7 +60,7 @@ function chatSearchRows() {
 
 /** The lists' content while a query is typed: the matches, archived ones under their own heading. */
 function chatSearchListsHTML() {
-  const r = chatSearch(CHATSEARCH.q, chatSearchRows(), PREFS.archived);
+  const r = chatSearch(CHATSEARCH.q, chatSearchRows(), chatArchivedIds());
   const more = r.total - r.live.length - r.archived.length;
   return '<div class="sb-list sb-results" data-list="results">'
       + '<div class="sb-list-head micro"><span>Results</span>'
@@ -83,17 +93,72 @@ function archivedSidebarHTML(rows) {
     + '</div>';
 }
 
-/** Archive (`on`) or unarchive chat `id`; returns whether anything changed. */
+/* Archive (`on`) or unarchive chat `id`; returns whether anything changed.
+   The row moves at once; the agent's answer confirms it, or puts it back
+   with a toast. An agent without the route gets the prefs.json list instead. */
 function chatArchive(id, on) {
-  if (!id || !SESSIONS.some((s) => s.id === id)) return false;
-  const was = PREFS.archived.includes(id);
-  if (was === !!on) return false;
-  PREFS.archived = archiveSet(PREFS.archived, id, !!on);
+  const row = SESSIONS.find((s) => s.id === id);
+  if (!id || !row) return false;
+  on = !!on;
+  if (chatArchivedIds().includes(id) === on) return false;
   if (on) PREFS.pinned = PREFS.pinned.filter((x) => x !== id);   // an archived chat is not on the main list, Pinned included
+  toast(on ? 'Chat archived' : 'Chat unarchived', row.t || '');
+  if (CHATSEARCH.agent === false || !BR || !BR.setSessionArchived) {
+    archiveInPrefs(id, on);
+    return true;
+  }
+  const wasRow = row.archived === true, wasPrefs = PREFS.archived.includes(id);
+  row.archived = on;
+  // The agent holds the flag now: the window's own copy goes, whichever way.
+  if (wasPrefs) PREFS.archived = archiveSet(PREFS.archived, id, false);
   savePrefs();
-  const s = SESSIONS.find((x) => x.id === id);
-  toast(on ? 'Chat archived' : 'Chat unarchived', (s && s.t) || '');
+  BR.setSessionArchived(id, on).then((res) => {
+    if (res && res.supported === false) {   // an agent from before the route: the fallback list
+      CHATSEARCH.agent = false;
+      row.archived = wasRow;
+      archiveInPrefs(id, on);
+      render(); nameVisibleSessions();
+      return;
+    }
+    if (res && res.ok) return;
+    row.archived = wasRow;
+    if (wasPrefs) { PREFS.archived = archiveSet(PREFS.archived, id, true); savePrefs(); }
+    render(); nameVisibleSessions();
+    toast(on ? 'Could not archive the chat' : 'Could not unarchive the chat', (res && res.error) || '');
+  });
   return true;
+}
+
+function archiveInPrefs(id, on) {
+  PREFS.archived = archiveSet(PREFS.archived, id, on);
+  savePrefs();
+}
+
+/* After each read of the chat list (applySessions) and of prefs.json
+   (loadPrefs): learn whether the agent keeps the flag, and when it does,
+   move the ids prefs.json still holds to it, once per launch. Each id
+   leaves prefs.json when the agent took it (or does not hold that chat);
+   one the agent could not take now stays for the next launch. */
+function archivesAfterSessions() {
+  const keeps = agentKeepsArchive(SESSIONS);
+  if (keeps !== null) CHATSEARCH.agent = keeps;
+  if (CHATSEARCH.agent !== true || CHATSEARCH.migrating || !PREFS.loaded || !PREFS.archived.length) return;
+  if (!BR || !BR.setSessionArchived) return;
+  CHATSEARCH.migrating = true;
+  const ids = PREFS.archived.slice();
+  (async () => {
+    for (const id of ids) {
+      const res = await BR.setSessionArchived(id, true);
+      const step = archiveMigrationStep(res);
+      if (step === 'stop') { CHATSEARCH.agent = false; break; }
+      if (step !== 'moved') continue;
+      const row = SESSIONS.find((s) => s.id === id);
+      if (row && res.ok) row.archived = true;
+      PREFS.archived = archiveSet(PREFS.archived, id, false);
+    }
+    savePrefs();
+    render();
+  })();
 }
 
 /* The act() verbs: archive:<id>, unarchive:<id>, archtoggle:, chatsearch:clear.
@@ -152,7 +217,7 @@ if (typeof document !== 'undefined') {
     }
     if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault(); e.stopPropagation();
-      const r = chatSearch(CHATSEARCH.q, chatSearchRows(), PREFS.archived);
+      const r = chatSearch(CHATSEARCH.q, chatSearchRows(), chatArchivedIds());
       const first = r.live[0] || r.archived[0];
       if (first) act('ses:' + first.id);
     }

@@ -879,9 +879,11 @@ function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia }
    userData as prefs.json, per machine and per viewer, and are honestly empty
    on first run — every historical chat then draws unread until it is opened.
    Never write this through `atag config set`.
-   ATO-1150: `archived` is the same kind of view state — the chats the viewer
-   archived, hidden from the sidebar's lists. The agent has no archive flag or
-   route, so it lives here too; an older file without it reads as none. */
+   ATO-1150: `archived` is the fallback for the chat archive: the agent keeps
+   the flag in the session's metadata (POST /api/sessions/{id}/archived), and
+   only against an agent from before that route are archived ids kept here.
+   The renderer moves them to the agent once the route is there. An older
+   file without it reads as none. */
 type SidebarPrefs = { pinned: string[]; seen: Record<string, number>; archived: string[] };
 const PREFS_PATH = () => join(app.getPath("userData"), "prefs.json");
 
@@ -1421,6 +1423,12 @@ function wireIpc(client: AgentClient): void {
     typeof id === "string" && id
       ? client.deleteSession(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
       : { ok: false, error: "id required" },
+  );
+  // ATO-1150: archive / unarchive a chat in the agent's session metadata (agent-client setSessionArchived).
+  ipcMain.handle("agent:setSessionArchived", (_event, id: unknown, archived: unknown) =>
+    typeof id === "string" && id && id.length <= 256 && typeof archived === "boolean"
+      ? client.setSessionArchived(id, archived)
+      : { supported: true, ok: false, notFound: false, error: "id and archived required" },
   );
   // ATO-455: rename a chat. The agent validates the title again (1-120 chars, one line); this only refuses what is not a string at all.
   ipcMain.handle("agent:renameSession", (_event, id: unknown, title: unknown) =>

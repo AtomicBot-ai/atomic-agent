@@ -73,11 +73,44 @@ function chatMenuPlace(x, y, w, h, winW, winH) {
 }
 
 /* ---------------- ATO-1150: archive and search in the chat list ----------------
-   Archived chats are a list of session ids the window keeps beside the pins
-   (userData/prefs.json `archived`): the agent has no archive flag or route
-   yet, and the session store is not touched. An archived chat is left out of
-   Pinned, the folders and Chats, and drawn only under the "Archived" toggle;
-   its transcript, folder and title stay as they were. */
+   The archive flag is the agent's: `archived: true` in the session's metadata
+   (POST /api/sessions/{id}/archived), listed on every GET /api/sessions row,
+   so the terminal leaves the same chats out of its rail. Against an agent
+   from before that route the window keeps a list of archived ids beside the
+   pins (userData/prefs.json `archived`), and moves them to the agent once the
+   route is there. An archived chat is left out of Pinned, the folders and
+   Chats, and drawn only under the "Archived" toggle; its transcript, folder
+   and title stay as they were. */
+
+/* The archived chat ids: the rows the agent lists as archived, and the ids
+   the window still keeps itself (an agent without the route, or ones not
+   moved to the agent yet). */
+function archivedIdsOf(sessions, prefsIds) {
+  const out = new Set();
+  for (const s of sessions || []) if (s && s.id && s.archived === true) out.add(s.id);
+  for (const id of prefsIds || []) if (typeof id === 'string' && id) out.add(id);
+  return [...out];
+}
+
+/* Whether the agent keeps the archive flag, from its list: a row with an
+   `archived` field (`archivedKnown`, set from a boolean in GET /api/sessions)
+   says yes, rows without one say no (an older agent), no rows say nothing yet. */
+function agentKeepsArchive(sessions) {
+  const rows = (sessions || []).filter((s) => s && s.id);
+  if (!rows.length) return null;
+  return rows.some((s) => s.archivedKnown === true);
+}
+
+/* What one answer of the archive route means for an id kept in prefs.json
+   while it is being moved to the agent: 'moved' (the agent holds it now, or
+   does not hold the chat at all), 'keep' (try again later), 'stop' (the
+   agent has no route after all: keep every id here). */
+function archiveMigrationStep(res) {
+  if (!res || typeof res !== 'object') return 'keep';
+  if (res.supported === false) return 'stop';
+  if (res.ok === true || res.notFound === true) return 'moved';
+  return 'keep';
+}
 
 /** The ids list with `id` in it (`on`) or out of it; a new array, newest archived first. */
 function archiveSet(list, id, on) {
@@ -129,4 +162,4 @@ function chatSearch(rawQuery, rows, archivedIds) {
 }
 
 if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace,
-  archiveSet, splitArchived, chatSearchQuery, chatSearch, CHAT_SEARCH_MAX};
+  archiveSet, splitArchived, chatSearchQuery, chatSearch, CHAT_SEARCH_MAX, archivedIdsOf, agentKeepsArchive, archiveMigrationStep};

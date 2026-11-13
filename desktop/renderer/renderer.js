@@ -2500,7 +2500,7 @@ function sidebarChats() {
   const stored = new Set(SESSIONS.map((s) => s.id));
   const pending = [...PENDING_CHATS.values()].filter((p) => !stored.has(p.id)).reverse();
   // ATO-1150: archived chats leave every list but their own section (chat-search.js).
-  const arch = splitArchived(SESSIONS, PREFS.archived);
+  const arch = splitArchived(SESSIONS, chatArchivedIds());
   const order = orderChats(arch.live, pending, PREFS.pinned);
   /* ATO-1034: a chat in a folder is drawn under that folder (all of them, a
      folder is short), a pinned one stays in Pinned; Load more pages the rest.
@@ -2679,7 +2679,7 @@ function chatMenuHTML() {
   const stored = SESSIONS.some((x) => x.id === id);
   const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id]),
     renamable: stored, folders: stored,   // ATO-455: a stand-in has nothing stored to rename; ATO-1034: nor to file
-    archivable: stored, archived: PREFS.archived.includes(id)});   // ATO-1150: nor to archive
+    archivable: stored, archived: chatArchivedIds().includes(id)});   // ATO-1150: nor to archive
   const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
   let x = 60, y = 60;
   if (SESMENU.point) { x = SESMENU.point.x; y = SESMENU.point.y; }
@@ -9669,6 +9669,8 @@ function applySessions(res, askedAt) {
       turnCount:x.turnCount || 0,
       // ATO-1253: the folder the chat ran in; an imported Claude Code chat is filed under its project by it.
       workingDir:typeof x.workingDir === 'string' ? x.workingDir : null,
+      // ATO-1150: the agent's archive flag; an agent from before it sends no field (chat-search.js falls back to prefs.json).
+      archived:x.archived === true, archivedKnown:typeof x.archived === 'boolean',
     });
   });
   settlePendingChats();
@@ -9679,6 +9681,7 @@ function applySessions(res, askedAt) {
   }
   sessionsRead();   // B01 QA: requests kept while the list was not known yet
   foldersAfterSessions();   // ATO-1034: imported chats find their folder
+  archivesAfterSessions();  // ATO-1150: prefs.json archive ids move to the agent
   return true;
 }
 
@@ -9733,6 +9736,7 @@ async function loadPrefs() {
     PREFS.archived = Array.isArray(res.data.archived) ? res.data.archived.slice() : [];   // ATO-1150; absent in an older prefs.json
   }
   PREFS.loaded = true;
+  archivesAfterSessions();   // ATO-1150
   render();
 }
 function savePrefs() {

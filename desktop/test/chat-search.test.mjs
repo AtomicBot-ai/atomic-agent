@@ -5,7 +5,8 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
-const {archiveSet, splitArchived, chatSearchQuery, chatSearch, chatMenuItems, orderChats, CHAT_SEARCH_MAX} =
+const {archiveSet, splitArchived, chatSearchQuery, chatSearch, chatMenuItems, orderChats, CHAT_SEARCH_MAX,
+  archivedIdsOf, agentKeepsArchive, archiveMigrationStep} =
   createRequire(import.meta.url)('../renderer/chat-list.js');
 
 const ses = (id, t = id) => ({id, t, updatedAt: 1});
@@ -37,6 +38,35 @@ test('an archived chat is on none of the main lists, Pinned included, once split
   const order = orderChats(arch.live, [], ['b', 'c']);
   assert.deepEqual(ids(order.pinned), ['c']);
   assert.deepEqual(ids(order.rest), ['a']);
+});
+
+test('the archived ids: the rows the agent flags, plus the ones prefs.json still holds, once each', () => {
+  const rows = [{id: 'a', archived: true}, {id: 'b', archived: false}, {id: 'c'}];
+  assert.deepEqual(archivedIdsOf(rows, []).sort(), ['a']);
+  assert.deepEqual(archivedIdsOf(rows, ['c', 'a', '', 7]).sort(), ['a', 'c']);
+  assert.deepEqual(archivedIdsOf(undefined, undefined), []);
+  // Only a literal true from the agent counts.
+  assert.deepEqual(archivedIdsOf([{id: 'x', archived: 'true'}], []), []);
+});
+
+test('whether the agent keeps the flag, read from its list', () => {
+  assert.equal(agentKeepsArchive([{id: 'a', archivedKnown: true, archived: false}]), true);
+  // An agent from before the route sends no field: the prefs.json fallback.
+  assert.equal(agentKeepsArchive([{id: 'a', archivedKnown: false}, {id: 'b'}]), false);
+  // No rows yet: not known.
+  assert.equal(agentKeepsArchive([]), null);
+  assert.equal(agentKeepsArchive(undefined), null);
+});
+
+test('moving prefs.json ids to the agent: moved, kept for later, or stopped', () => {
+  assert.equal(archiveMigrationStep({supported: true, ok: true, archived: true}), 'moved');
+  // The agent does not hold that chat (deleted elsewhere): nothing to keep.
+  assert.equal(archiveMigrationStep({supported: true, ok: false, notFound: true, error: 'session not found'}), 'moved');
+  // The agent is down or refused: try again next launch.
+  assert.equal(archiveMigrationStep({supported: true, ok: false, notFound: false, error: 'timeout'}), 'keep');
+  assert.equal(archiveMigrationStep(undefined), 'keep');
+  // No route after all ("No route for"): every id stays in prefs.json.
+  assert.equal(archiveMigrationStep({supported: false}), 'stop');
 });
 
 test('the query is trimmed, lowercased and its spaces collapsed; blank is no search', () => {
@@ -103,15 +133,26 @@ test('wiring: chat-search.js loads after chat-list.js and before renderer.js; th
   assert.match(src, /chatSearchFieldHTML\(\)/);
   assert.match(src, /chatSearchOn\(\) \? chatSearchListsHTML\(\)/);
   assert.match(src, /archivedSidebarHTML\(ch\.archived\)/);
-  assert.match(src, /splitArchived\(SESSIONS, PREFS\.archived\)/);
+  assert.match(src, /splitArchived\(SESSIONS, chatArchivedIds\(\)\)/);
+  assert.match(src, /archived:x\.archived === true, archivedKnown:typeof x\.archived === 'boolean'/);
+  assert.match(src, /archivesAfterSessions\(\);  \/\/ ATO-1150/);
   assert.match(src, /chatSearchHold\(\)/);
   assert.match(src, /chatSearchRestore\(searchHeld\)/);
-  assert.match(src, /archivable: stored, archived: PREFS\.archived\.includes\(id\)/);
+  assert.match(src, /archivable: stored, archived: chatArchivedIds\(\)\.includes\(id\)/);
   assert.match(src, /if \(chatArchiveAct\(k, v, close\)\) return;/);
   assert.match(src, /PREFS\.archived = archiveSet\(PREFS\.archived, v, false\)/);
   assert.match(src, /archived:PREFS\.archived\.slice\(\)/);
   assert.match(src, /\barchive:'<rect/);
+  const ui = readFileSync(new URL('../renderer/chat-search.js', import.meta.url), 'utf8');
+  assert.match(ui, /BR\.setSessionArchived\(id, on\)/);
+  assert.match(ui, /res\.supported === false/);
+  const client = readFileSync(new URL('../main/agent-client.ts', import.meta.url), 'utf8');
+  assert.match(client, /\/api\/sessions\/\$\{encodeURIComponent\(id\)\}\/archived/);
+  assert.match(client, /res\.status === 404 && \/No route for\/\.test\(text\)\) return \{ supported: false \};\n      if \(res\.ok\)/);
+  const preload = readFileSync(new URL('../preload/preload.ts', import.meta.url), 'utf8');
+  assert.match(preload, /setSessionArchived: \(id: string, archived: boolean\) => ipcRenderer\.invoke\("agent:setSessionArchived"/);
   const main = readFileSync(new URL('../main/main.ts', import.meta.url), 'utf8');
+  assert.match(main, /ipcMain\.handle\("agent:setSessionArchived"/);
   assert.match(main, /archived: string\[\] \};/);
   assert.match(main, /Array\.isArray\(src\.archived\)/);
 });
