@@ -77,7 +77,8 @@ function pieces(text) {
 function zshInputLine(dir, home) {
   const out = execFileSync("zsh", ["-c", [
     "for f in $precmd_functions; do $f; done",
-    "read -rz buf",
+    // IFS empty: a plain `read` strips the leading spaces the input line keeps.
+    "IFS= read -rz buf",
     'print -r -- "pwd=$PWD"',
     'print -rn -- "$buf"',
   ].join("\n")], {
