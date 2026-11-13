@@ -287,6 +287,7 @@ export function runSlashCommand(
   state: TuiState,
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
+  /** How the command was run; `menu` is also what `/feedback` reads (ATO-1467). */
   via: "slash" | "palette" | "menu" = "slash",
 ): void {
   reportBuiltInSlashCommand(raw, via, callbacks);
@@ -317,6 +318,12 @@ export function runSlashCommand(
   }
   if (result.openUrl) {
     callbacks.onOpenUrlRequested?.(result.openUrl);
+  }
+  if (result.feedbackVerb) {
+    callbacks.onFeedbackRequested?.(
+      result.feedbackVerb,
+      via === "menu" ? "menu" : undefined,
+    );
   }
   if (result.triggerUninstallPlan) {
     callbacks.onUninstallPlanRequested?.();

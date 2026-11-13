@@ -84,6 +84,11 @@ export interface SlashDispatchResult {
   readonly triggerIssueReport: boolean;
   /** An http(s) URL the caller should open in the OS browser (`/discord`). */
   readonly openUrl?: string;
+  /**
+   * `/feedback` (ATO-1467): `open` opens the interview form, `never`
+   * hides the rare invite for good. The caller owns both.
+   */
+  readonly feedbackVerb?: "open" | "never";
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
@@ -314,6 +319,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         openUrl: DISCORD_INVITE_URL,
         systemMessage: `Join us on Discord: ${DISCORD_INVITE_URL}`,
       });
+    case "feedback":
+      return dispatchFeedbackSub(parsed.args);
     case "dump":
       return pureActions([], {
         triggerDebugBundleDump: true,
@@ -678,6 +685,17 @@ export const ENHANCE_USAGE =
 
 export const SIDE_QUESTION_USAGE =
   "Usage: /btw <question>. Asks a quick side question about this chat; the model runs no tools and nothing is saved to the session.";
+
+export const FEEDBACK_USAGE =
+  "usage: `/feedback` opens the form for a 15 min call with the team · `/feedback never` hides the invite for good";
+
+/** `/feedback` and `/feedback never`; anything else prints the usage. */
+function dispatchFeedbackSub(args: string): SlashDispatchResult {
+  const verb = args.trim().toLowerCase();
+  if (verb === "") return pureActions([], { feedbackVerb: "open" });
+  if (verb === "never") return pureActions([], { feedbackVerb: "never" });
+  return pureActions([], { systemMessage: FEEDBACK_USAGE });
+}
 
 function pureActions(
   actions: readonly TuiAction[],

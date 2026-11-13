@@ -324,6 +324,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "continue the last reply a restart cut off: starts a new turn from it, once (the model checks before repeating commands or writes)",
   },
+  // The interview invite's permanent entry (ATO-1467).
+  {
+    name: "feedback",
+    description:
+      "15 min call with the team, $50 in OpenRouter credits after it: `/feedback` opens the form · `/feedback never` hides the invite",
+  },
   {
     name: "uninstall",
     description:

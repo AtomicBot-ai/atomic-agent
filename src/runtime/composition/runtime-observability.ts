@@ -14,6 +14,7 @@ import {
   captureOnboardingStep,
   captureUiAction,
   createTelemetryToggle,
+  INTERVIEW_INVITE_EVENTS,
   detectOtherSurfaceInstalled,
   resolveAnalyticsDimensions,
   type AnalyticsDisabledVia,
@@ -158,7 +159,30 @@ export function createRuntimeObservability(
     const reportUiAction = (action: string, via: UiActionVia): void => {
       captureUiAction(analytics, action, via);
     };
-    return { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed, reportUiAction };
+    // ATO-1467: the interview invite reads the id and the install age
+    // only while analytics is on; its events carry fixed words only.
+    const interviewInviteIdentity = () => {
+      if (!analytics) return null;
+      return {
+        installId: analyticsStateStore.getSharedInstallId(true, analyticsDimensions.surface),
+        daysSinceInstall: analyticsStateStore.getDaysSinceInstall(),
+      };
+    };
+    const reportInterviewInvite = (
+      kind: keyof typeof INTERVIEW_INVITE_EVENTS,
+      props: { via?: string; reason?: string },
+    ): void => {
+      analytics?.capture(INTERVIEW_INVITE_EVENTS[kind], { ...props });
+    };
+    return {
+      setAnalyticsEnabled,
+      reportOnboardingStep,
+      reportModelConfigured,
+      reportLocalEngineFailed,
+      reportUiAction,
+      interviewInviteIdentity,
+      reportInterviewInvite,
+    };
   };
 
   return {

@@ -131,8 +131,15 @@ export async function createAgentRuntime(
     brokenPipe: options.brokenPipe,
   });
 
-  const { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed, reportUiAction } =
-    observability.createControls();
+  const {
+    setAnalyticsEnabled,
+    reportOnboardingStep,
+    reportModelConfigured,
+    reportLocalEngineFailed,
+    reportUiAction,
+    interviewInviteIdentity,
+    reportInterviewInvite,
+  } = observability.createControls();
 
   const traces = createRuntimeTraces(config, options, logger);
   const { traceBus, turnContext, touchRecorder, dropRecorder, ensureRecorder } = traces;
@@ -1017,6 +1024,8 @@ export async function createAgentRuntime(
     reportModelConfigured,
     reportLocalEngineFailed,
     reportUiAction,
+    interviewInviteIdentity,
+    reportInterviewInvite,
     setLocalModelRestarter: (restarter: LocalModelRestarter | null) => {
       localModelRestarter = restarter;
     },
