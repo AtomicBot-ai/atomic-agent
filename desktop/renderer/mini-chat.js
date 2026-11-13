@@ -11,7 +11,7 @@
      only its own turn's; the ones that land before BR.chat answers with the
      turn's id wait here and are read once it does.
    - Approvals are not answered here. A request of this chat shows one line
-     and the big window, where its card is.
+     and the big window, where its card is (kept there for this chat: BR.miniChatSession).
    - A reply is drawn with md-render.js (mdRender, mdSanitize), the same
      markdown as the main window, without its file chips.
 
@@ -175,6 +175,7 @@ function mcApproval(st, payload) {
   return true;
 }
 
+const mcTitle = (st) => (st.rows.find((r) => r.k === 'user') || {}).text || '';   // the chat's first message
 function mcApprovalLine(a) {
   return 'The agent is asking to use ' + a.tool + '. Open the big window to approve or deny it.';
 }
@@ -214,7 +215,7 @@ function mcBoot() {
   const $ = (id) => document.getElementById(id);
   const st = mcState();
   let painting = false;
-  let stick = true;
+  let stick = true, told = null;   // told: the chat id given to main (mini:session), the big window keeps its approvals for it
 
   const paint = () => {
     painting = false;
@@ -232,7 +233,10 @@ function mcBoot() {
     send.disabled = st.busy ? !st.turnId : !$('mc-input').value.trim();
     if (stick) log.scrollTop = log.scrollHeight;
   };
-  const repaint = () => { if (!painting) { painting = true; requestAnimationFrame(paint); } };
+  const repaint = () => {
+    if (st.sessionId && told !== st.sessionId && BR.miniChatSession) BR.miniChatSession(told = st.sessionId, mcTitle(st));
+    if (!painting) { painting = true; requestAnimationFrame(paint); }
+  };
 
   $('mc-log').addEventListener('scroll', () => {
     const log = $('mc-log');
@@ -291,6 +295,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && document
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {mcState, mcSend, mcStartFailed, mcStarted, mcFrame, mcApproval, mcApprovalLine, mcReplyHTML, mcRowsHTML, mcEsc,
+  module.exports = {mcState, mcTitle, mcSend, mcStartFailed, mcStarted, mcFrame, mcApproval, mcApprovalLine, mcReplyHTML, mcRowsHTML, mcEsc,
     MC_EARLY_MAX};
 }

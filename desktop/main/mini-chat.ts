@@ -90,3 +90,51 @@ export class MiniChatViewers<V extends MiniChatViewer = MiniChatViewer> {
     }
   }
 }
+
+/** How many mini chats the main window is told about, newest kept. */
+export const MINI_CHAT_SESSIONS_MAX = 50;
+
+/**
+ * The chats the mini window started, sessionId → its first message (a
+ * title). The main window is told each one (mini:sessionKnown) and asks for
+ * the list when its page loads (mini:sessions): it never saw those turns
+ * start, so without this an approval of one has no chat to be kept for and
+ * is drawn in whatever chat it shows.
+ */
+export class MiniChatSessions {
+  private readonly known = new Map<string, string>();
+
+  /** The chat, when it is new here (the main window is to be told); null for a repeat or a bad id. */
+  add(rawId: unknown, rawTitle: unknown): { sessionId: string; title: string } | null {
+    const sessionId = miniChatSessionId(rawId);
+    if (!sessionId) return null;
+    const title = typeof rawTitle === "string" ? rawTitle.trim().replace(/\s+/g, " ").slice(0, 200) : "";
+    if (this.known.has(sessionId)) return null;
+    this.known.set(sessionId, title);
+    while (this.known.size > MINI_CHAT_SESSIONS_MAX) this.known.delete(this.known.keys().next().value as string);
+    return { sessionId, title };
+  }
+
+  list(): Array<{ sessionId: string; title: string }> {
+    return [...this.known].map(([sessionId, title]) => ({ sessionId, title }));
+  }
+}
+
+/** What a window is, as far as its blur listeners go (Electron's BrowserWindow). */
+export interface MiniChatBlurTarget {
+  removeAllListeners(event: "blur"): unknown;
+  on(event: "blur", listener: (...args: unknown[]) => void): unknown;
+}
+
+/**
+ * The mini chat window stays up when it loses focus: it closes only on Esc,
+ * the hotkey or its close button. The window that hosts the page (ATO-523's
+ * quick-entry-window.ts) puts itself away on blur, which would close the chat
+ * while a reply is written, so the page's attach drops the window's blur
+ * listeners. `relay` puts back Electron's own one (app "browser-window-blur").
+ * Nothing else is touched: "closed" and the rest stay as they are.
+ */
+export function miniChatKeepOnBlur(win: MiniChatBlurTarget, relay?: (...args: unknown[]) => void): void {
+  win.removeAllListeners("blur");
+  if (relay) win.on("blur", relay);
+}

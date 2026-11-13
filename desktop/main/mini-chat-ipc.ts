@@ -10,6 +10,15 @@
  *                    window closes
  *   mini:take        the main window's page: the chat waiting to be opened,
  *                    once (asked at load and on mini:openSession)
+ *   mini:session     the page learned its chat's id: main keeps it and tells
+ *                    the main window (mini:sessionKnown), so an approval of
+ *                    that chat is kept for it there, not drawn in the chat
+ *                    the main window shows
+ *   mini:sessions    the main window's page, at load: the chats told so far
+ *
+ * The mini window stays up when it loses focus (it closes on Esc, the hotkey
+ * or its close button): mini:attach drops the window's blur listeners
+ * (miniChatKeepOnBlur).
  *
  * The page sends with the existing agent:chat route, without a session id
  * for its first message, so it is a new chat in the agent like any other,
@@ -24,7 +33,7 @@
 import { app, BrowserWindow, ipcMain, type WebContents } from "electron";
 
 import type { AgentClient } from "./agent-client.js";
-import { MiniChatHandoff, MiniChatViewers, miniChatSessionId } from "./mini-chat.js";
+import { MiniChatHandoff, MiniChatSessions, MiniChatViewers, miniChatKeepOnBlur, miniChatSessionId } from "./mini-chat.js";
 
 export interface MiniChatWiring {
   /** The main window as it is now, or null; never created by this. */
@@ -36,6 +45,7 @@ export interface MiniChatWiring {
 export function wireMiniChatIpc(client: AgentClient, w: MiniChatWiring): void {
   const viewers = new MiniChatViewers<WebContents>();
   const handoff = new MiniChatHandoff();
+  const sessions = new MiniChatSessions();
 
   client.on("chat", (ev: unknown) => viewers.forward("agent:chat", ev));
   client.on("approval", (ev: unknown) => viewers.forward("agent:approval", ev));
@@ -51,8 +61,21 @@ export function wireMiniChatIpc(client: AgentClient, w: MiniChatWiring): void {
     if (isMain(wc)) return { ok: false };
     viewers.add(wc);
     wc.once("destroyed", () => viewers.delete(wc));
+    // Clicking another app does not close the chat; Esc, the hotkey and the close button still do.
+    const win = BrowserWindow.fromWebContents(wc);
+    if (win && !win.isDestroyed()) miniChatKeepOnBlur(win, (e: unknown) => app.emit("browser-window-blur", e, win));
     return { ok: true };
   });
+
+  ipcMain.on("mini:session", (event, raw: unknown) => {
+    if (isMain(event.sender)) return;
+    const r = raw && typeof raw === "object" ? (raw as { sessionId?: unknown; title?: unknown }) : {};
+    const added = sessions.add(r.sessionId, r.title);
+    const main = w.mainWindow();
+    if (added && main && !main.isDestroyed() && !main.webContents.isLoading()) main.webContents.send("mini:sessionKnown", added);
+  });
+
+  ipcMain.handle("mini:sessions", (event) => (isMain(event.sender) ? sessions.list() : []));
 
   ipcMain.handle("mini:openInMain", (event, raw: unknown) => {
     const sessionId = miniChatSessionId(raw);

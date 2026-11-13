@@ -11465,6 +11465,7 @@ function approvalReachable(sid) {
   if (!SESSIONS_READ) return true;
   if (OPENING && OPENING.id === sid) return true;   // the chat being opened: openSession draws it when it lands
   if (SESSIONS.some((x) => x.id === sid) || PENDING_CHATS.has(sid)) return true;
+  if (typeof mchoKnows === 'function' && mchoKnows(sid)) return true;   // ATO-1063: a chat the mini window started (mini-chat-handoff.js)
   for (const s of RUNNING.values()) if (!s || s === sid) return true;
   return false;
 }

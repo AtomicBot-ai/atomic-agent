@@ -124,6 +124,11 @@ contextBridge.exposeInMainWorld("atomic", {
   miniChatOpenInMain: (sessionId: string) => ipcRenderer.invoke("mini:openInMain", sessionId),
   miniChatTake: () => ipcRenderer.invoke("mini:take"),
   onMiniChatOpen: (cb: (payload: unknown) => void) => on("mini:openSession", cb),
+  /* The page names its chat once the turn says it; the main window keeps an
+     approval of that chat for it instead of drawing it in the chat on screen. */
+  miniChatSession: (sessionId: string, title: string) => ipcRenderer.send("mini:session", { sessionId, title }),
+  miniChatSessions: () => ipcRenderer.invoke("mini:sessions"),
+  onMiniChatSession: (cb: (payload: unknown) => void) => on("mini:sessionKnown", cb),
 
   /** Setup wizard: real config writes and the real model catalogue. */
   configGet: () => ipcRenderer.invoke("cli:configGet"),

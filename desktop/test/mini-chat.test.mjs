@@ -217,6 +217,87 @@ test("a failed live-turn read still opens the chat; a failed open says so", asyn
   assert.equal(await H.mchoOpen(null, { open: async () => {} }), false);
 });
 
+/* ---------- the main window: an approval of a mini chat (review fix 1) ---------- */
+
+test("main window on chat A, approval for the mini chat: not drawn in A, kept for the mini chat", () => {
+  const known = new Map();
+  // Before main says which chat the mini window started, nothing keeps it: drawn where the person is.
+  assert.equal(H.mchoApprovalPlace("mini-1", "chat-A", false, known), "here");
+  assert.equal(H.mchoNote(known, { sessionId: "mini-1", title: "what is on my calendar" }), "mini-1");
+  assert.equal(H.mchoApprovalPlace("mini-1", "chat-A", false, known), "kept");
+  // Opened (the mini chat is the one on screen): drawn there.
+  assert.equal(H.mchoApprovalPlace("mini-1", "mini-1", false, known), "here");
+  // Others as before: a reachable chat is kept, an unknown one with no row is drawn here.
+  assert.equal(H.mchoApprovalPlace("chat-B", "chat-A", true, known), "kept");
+  assert.equal(H.mchoApprovalPlace("stray", "chat-A", false, known), "here");
+});
+
+test("main's word about a mini chat is read as a session id, newest kept", () => {
+  const known = new Map();
+  assert.equal(H.mchoNote(known, { sessionId: "../x" }), null);
+  assert.equal(H.mchoNote(known, null), null);
+  assert.equal(known.size, 0);
+  for (let i = 0; i < H.MCHO_KNOWN_MAX + 5; i++) H.mchoNote(known, { sessionId: "s" + i });
+  assert.equal(known.size, H.MCHO_KNOWN_MAX);
+  assert.ok(!known.has("s0") && known.has("s" + (H.MCHO_KNOWN_MAX + 4)));
+});
+
+test("main keeps the mini chats once each, for the main window's page", () => {
+  const s = new M.MiniChatSessions();
+  assert.deepEqual(s.add("s1", "  hello \n there "), { sessionId: "s1", title: "hello there" });
+  assert.equal(s.add("s1", "again"), null, "told once");
+  assert.equal(s.add("<x>", "bad"), null);
+  assert.deepEqual(s.list(), [{ sessionId: "s1", title: "hello there" }]);
+  for (let i = 0; i < M.MINI_CHAT_SESSIONS_MAX + 3; i++) s.add("n" + i, "");
+  assert.equal(s.list().length, M.MINI_CHAT_SESSIONS_MAX);
+});
+
+test("the page names its chat to main once, with its first message", () => {
+  const st = R.mcState();
+  R.mcSend(st, "first question");
+  assert.equal(R.mcTitle(st), "first question");
+  const page = src("../renderer/mini-chat.js");
+  assert.match(page, /BR\.miniChatSession\(told = st\.sessionId, mcTitle\(st\)\)/);
+  assert.match(page, /told !== st\.sessionId/);
+});
+
+test("approvalReachable asks the hand-over about mini chats; the hand-over listens to main", () => {
+  const r = src("../renderer/renderer.js");
+  const body = r.slice(r.indexOf("function approvalReachable(sid)"), r.indexOf("function sessionsRead()"));
+  assert.match(body, /typeof mchoKnows === 'function' && mchoKnows\(sid\)\) return true;/);
+  const h = src("../renderer/mini-chat-handoff.js");
+  assert.match(h, /onMiniChatSession\(/);
+  assert.match(h, /miniChatSessions\(\)/);
+  const preload = src("../preload/preload.ts");
+  for (const ch of ["mini:session", "mini:sessions", "mini:sessionKnown"]) assert.ok(preload.includes(`"${ch}"`), ch);
+  const ipc = src("../main/mini-chat-ipc.ts");
+  for (const ch of ["mini:session", "mini:sessions", "mini:sessionKnown"]) assert.ok(ipc.includes(`"${ch}"`), ch);
+});
+
+/* ---------- the mini window stays up on blur (review fix 2) ---------- */
+
+test("attach drops the window's blur listeners and keeps the rest; Esc still closes it", async () => {
+  const { EventEmitter } = await import("node:events");
+  const win = new EventEmitter();
+  let hidden = 0, closed = 0, relayed = 0;
+  win.on("blur", () => { hidden++; });          // the host window's "put away on blur"
+  win.on("closed", () => { closed++; });
+  M.miniChatKeepOnBlur(win, () => { relayed++; });
+  win.emit("blur");
+  assert.equal(hidden, 0, "losing focus does not put the chat away");
+  assert.equal(relayed, 1, "Electron's own blur relay is put back");
+  win.emit("closed");
+  assert.equal(closed, 1, "closing still runs the host's own handler");
+  M.miniChatKeepOnBlur(win);
+  assert.equal(win.listenerCount("blur"), 0);
+  // Wiring: attach does it, for the mini window only; Esc in the page closes the window.
+  const ipc = src("../main/mini-chat-ipc.ts");
+  const attach = ipc.slice(ipc.indexOf('"mini:attach"'), ipc.indexOf('"mini:openInMain"'));
+  assert.ok(attach.indexOf("if (isMain(wc)) return") < attach.indexOf("miniChatKeepOnBlur("), "never the main window");
+  assert.match(attach, /BrowserWindow\.fromWebContents\(wc\)/);
+  assert.match(src("../renderer/mini-chat.js"), /e\.key === 'Escape' && !e\.defaultPrevented\) window\.close\(\)/);
+});
+
 /* ---------- wiring, read from the sources ---------- */
 
 test("main wires the routes, the preload exposes them, the main window loads the hand-over after renderer.js", () => {
