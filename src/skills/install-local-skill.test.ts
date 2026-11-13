@@ -181,4 +181,13 @@ describe("installLocalSkill", () => {
     expect(await readlink(join(target, "linked", "docs", "alias.md"))).toBe("real.md");
     expect(await readdir(tmpRoot)).toEqual([]);
   });
+
+  it("drops a hub lock file the folder carries, so updates leave it alone", async () => {
+    const src = await makeSkill("copied", {
+      ".atomic-skill-lock.json": JSON.stringify({ schema: 1, source: "github", identifier: "o/r/copied" }),
+    });
+    await installLocalSkill({ sourceDir: src, targetRoot: target });
+    expect(await installed("copied")).toBe(true);
+    expect(await stat(join(target, "copied", ".atomic-skill-lock.json")).catch(() => null)).toBeNull();
+  });
 });

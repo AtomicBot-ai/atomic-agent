@@ -91,6 +91,9 @@ export {
   SkillIdentifierError,
   stageSkillFromHub,
   summarizeScan,
+  computeSkillDigest,
+  readSkillLock,
+  SKILL_LOCK_FILE,
 } from "./hub/index.js";
 export type {
   DownloadedSkillFile,
@@ -108,6 +111,8 @@ export type {
   SkillScanVerdict,
   SkillTap,
   StagedSkillInstall,
+  SkillLock,
+  SkillOrigin,
 } from "./hub/index.js";
 
 export {
@@ -124,6 +129,10 @@ export {
   searchClawHub,
   stageSkill,
   stageSkillFromClawHub,
+  applySkillUpdate,
+  checkSkillUpdates,
+  rollbackSkillUpdate,
+  SkillUpdateError,
 } from "./clawhub/index.js";
 export type {
   ClawHubBrowseOptions,
@@ -136,4 +145,7 @@ export type {
   InstallSkillRoutedOptions,
   SkillSourceKind,
   StageSkillOptions,
+  ApplySkillUpdateResult,
+  SkillUpdatePreview,
+  SkillUpdateStatus,
 } from "./clawhub/index.js";
