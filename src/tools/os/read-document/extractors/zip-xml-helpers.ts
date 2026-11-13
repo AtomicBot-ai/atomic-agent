@@ -125,38 +125,65 @@ export function nodeAttr(item: XmlNode, name: string): string | undefined {
 }
 
 /**
+ * `text:c` is attacker-controlled: `<text:s text:c="400000000"/>` would
+ * otherwise allocate hundreds of MB from a few bytes of XML. No real
+ * document needs more than a handful of consecutive spaces.
+ */
+export const ODF_MAX_SPACE_RUN = 1000;
+/**
+ * Cap on the text of one inline element (one paragraph or cell). Far above
+ * any real paragraph, small enough that a crafted file cannot blow up
+ * memory before the dispatcher's own `maxBytes` cut applies.
+ */
+export const ODF_MAX_INLINE_CHARS = 100_000;
+
+/**
  * Inline text of an OpenDocument paragraph-ish element. Handles the ODF
  * whitespace elements (`text:s` with its `text:c` count, `text:tab`,
  * `text:line-break`) and descends through spans, links and fields.
  * Annotations (comments) and change-tracking bodies are skipped: they are
- * not part of the visible text.
+ * not part of the visible text. Output is bounded by the two caps above.
  */
 export function odfInlineText(nodes: XmlNode[]): string {
+  const budget = { left: ODF_MAX_INLINE_CHARS };
+  return collectOdfInline(nodes, budget);
+}
+
+function collectOdfInline(nodes: XmlNode[], budget: { left: number }): string {
   const parts: string[] = [];
+  const push = (text: string): void => {
+    if (budget.left <= 0 || text.length === 0) return;
+    const piece = text.length > budget.left ? text.slice(0, budget.left) : text;
+    budget.left -= piece.length;
+    parts.push(piece);
+  };
   for (const item of nodes) {
+    if (budget.left <= 0) break;
     const tag = nodeTag(item);
     if (!tag) continue;
     if (tag === "#text") {
       const value = item[tag];
-      if (typeof value === "string") parts.push(value);
-      else if (typeof value === "number") parts.push(String(value));
+      if (typeof value === "string") push(value);
+      else if (typeof value === "number") push(String(value));
       continue;
     }
     if (tag === "text:s") {
-      const count = parseInt(nodeAttr(item, "text:c") ?? "1", 10);
-      parts.push(" ".repeat(Number.isFinite(count) && count > 0 ? count : 1));
+      const raw = parseInt(nodeAttr(item, "text:c") ?? "1", 10);
+      const count = Number.isFinite(raw) && raw > 0 ? Math.min(raw, ODF_MAX_SPACE_RUN) : 1;
+      push(" ".repeat(Math.min(count, Math.max(0, budget.left))));
       continue;
     }
     if (tag === "text:tab") {
-      parts.push("\t");
+      push("\t");
       continue;
     }
     if (tag === "text:line-break") {
-      parts.push("\n");
+      push("\n");
       continue;
     }
     if (tag === "office:annotation" || tag === "text:tracked-changes") continue;
-    parts.push(odfInlineText(nodeChildren(item, tag)));
+    // Children draw from the same budget, so nesting cannot multiply it.
+    parts.push(collectOdfInline(nodeChildren(item, tag), budget));
   }
   return parts.join("");
 }

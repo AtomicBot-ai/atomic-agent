@@ -31,6 +31,13 @@ import {
  * and currencies read the way the user sees them in Calc.
  */
 const MAX_REPEAT = 1000;
+/**
+ * Output cap per sheet, a little above the dispatcher's default `maxBytes`
+ * (5 MB). Repeat counts multiply (cells x rows x cell text), so a small
+ * crafted file could otherwise build gigabytes of text before the
+ * dispatcher ever gets to cut it.
+ */
+export const ODS_MAX_SHEET_CHARS = 6_000_000;
 
 export const odsExtractor: Extractor = async (input) => {
   const warnings: string[] = [];
@@ -111,10 +118,12 @@ function repeatCount(item: XmlNode, attr: string): number {
 function renderTable(table: XmlNode, warnings: string[], name: string): string {
   const lines: string[] = [];
   let clipped = false;
+  const budget = { left: ODS_MAX_SHEET_CHARS };
   const rows: XmlNode[] = [];
   collectRows(nodeChildren(table, "table:table"), rows);
   for (const row of rows) {
-    const cells = renderRow(row);
+    if (budget.left <= 0) break;
+    const cells = renderRow(row, budget);
     const repeat = repeatCount(row, "table:number-rows-repeated");
     // Blank rows (including the ~1M trailing padding rows) are skipped,
     // same as the XLSX extractor.
@@ -122,7 +131,13 @@ function renderTable(table: XmlNode, warnings: string[], name: string): string {
     const line = cells.join(" | ");
     const times = Math.min(repeat, MAX_REPEAT);
     if (repeat > MAX_REPEAT) clipped = true;
-    for (let i = 0; i < times; i++) lines.push(line);
+    for (let i = 0; i < times && budget.left > 0; i++) {
+      lines.push(line);
+      budget.left -= line.length + 1;
+    }
+  }
+  if (budget.left <= 0) {
+    warnings.push(`sheet "${name}": output cut at ${ODS_MAX_SHEET_CHARS} characters`);
   }
   if (clipped) {
     warnings.push(`sheet "${name}": a repeated row was shown ${MAX_REPEAT} times only`);
@@ -149,10 +164,16 @@ function collectRows(nodes: XmlNode[], out: XmlNode[]): void {
   }
 }
 
-function renderRow(row: XmlNode): string[] {
+/**
+ * `budget` is the sheet's remaining output; it is only read here (the
+ * caller charges the joined line), so a single row cannot outgrow it.
+ */
+function renderRow(row: XmlNode, budget: { left: number }): string[] {
   const out: string[] = [];
+  let used = 0;
   let pendingEmpty = 0;
   for (const cell of nodeChildren(row, "table:table-row")) {
+    if (used >= budget.left) break;
     const tag = nodeTag(cell);
     if (tag !== "table:table-cell" && tag !== "table:covered-table-cell") continue;
     const repeat = repeatCount(cell, "table:number-columns-repeated");
@@ -165,7 +186,10 @@ function renderRow(row: XmlNode): string[] {
     // ends in 16k empty cells costs nothing.
     for (let i = 0; i < Math.min(pendingEmpty, MAX_REPEAT); i++) out.push("");
     pendingEmpty = 0;
-    for (let i = 0; i < Math.min(repeat, MAX_REPEAT); i++) out.push(text);
+    for (let i = 0; i < Math.min(repeat, MAX_REPEAT) && used < budget.left; i++) {
+      out.push(text);
+      used += text.length + 3;
+    }
   }
   return out;
 }

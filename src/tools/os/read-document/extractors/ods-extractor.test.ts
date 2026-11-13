@@ -1,7 +1,8 @@
 import JSZip from "jszip";
 import { describe, expect, it } from "vitest";
 
-import { odsExtractor } from "./ods-extractor.js";
+import { ODS_MAX_SHEET_CHARS, odsExtractor } from "./ods-extractor.js";
+import { ODF_MAX_INLINE_CHARS, ODF_MAX_SPACE_RUN } from "./zip-xml-helpers.js";
 
 const NS =
   'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ' +
@@ -75,6 +76,37 @@ describe("odsExtractor", () => {
     expect(byIndex.text).toContain("first");
     expect(byIndex.text).not.toContain("second");
     expect(byIndex.warnings).toContain('sheet "Missing" not found');
+  });
+
+  it("clamps huge <text:s text:c> space runs instead of allocating them", async () => {
+    // Review F04-2: five 300M-space runs in a few bytes of XML used to go
+    // straight into " ".repeat() (hundreds of MB, or a RangeError).
+    const spaces = '<text:s text:c="300000000"/>'.repeat(5);
+    const data = await makeOds(
+      `<table:table table:name="S"><table:table-row>` +
+        `<table:table-cell><text:p>a${spaces}b</text:p></table:table-cell>` +
+        `</table:table-row></table:table>`,
+    );
+    const result = await odsExtractor({ data, sourcePath: "crafted.ods" });
+    expect(result.text.startsWith("## Sheet: S\n\na ")).toBe(true);
+    expect(result.text.endsWith(" b")).toBe(true);
+    expect(result.text.length).toBeLessThanOrEqual(5 * ODF_MAX_SPACE_RUN + 100);
+  });
+
+  it("caps one cell's text and a whole sheet's output", async () => {
+    // Over ODF_MAX_INLINE_CHARS of visible text (spaces with words between
+    // them, so trimming cannot shrink it back).
+    const manySpaces = `x${'<text:s text:c="1000"/>y'.repeat(300)}`;
+    const data = await makeOds(
+      `<table:table table:name="S">` +
+        `<table:table-row table:number-rows-repeated="1000">` +
+        `<table:table-cell table:number-columns-repeated="1000"><text:p>${manySpaces}</text:p></table:table-cell>` +
+        `</table:table-row></table:table>`,
+    );
+    const result = await odsExtractor({ data, sourcePath: "crafted.ods" });
+    // 1000 x 1000 cells of 100k characters would be 10^11 characters.
+    expect(result.text.length).toBeLessThan(2 * ODS_MAX_SHEET_CHARS + ODF_MAX_INLINE_CHARS);
+    expect(result.warnings.join(" ")).toMatch(/output cut at/);
   });
 
   it("returns a warning when content.xml is missing", async () => {
