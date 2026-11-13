@@ -21,7 +21,7 @@ import {
 export const MAX_CRAWL_DELAY_MS = 30_000;
 /** Longest pause after a 429/503, whatever `Retry-After` says. */
 export const MAX_BACKOFF_MS = 60_000;
-/** Throttle answers in a row after which a host is left alone for this crawl. */
+/** Pages in a row still throttled after their retries, after which the crawl stops. */
 export const THROTTLE_STRIKES_TO_STOP = 3;
 
 export type Sleep = (ms: number, signal: AbortSignal) => Promise<void>;
@@ -29,11 +29,15 @@ export type Sleep = (ms: number, signal: AbortSignal) => Promise<void>;
 /**
  * Holds one request slot per host at a time: each request waits until the
  * host's next free moment, then pushes it on by the host's delay. Throttle
- * answers push it further and count strikes.
+ * answers push it further. Strikes count pages (not retries) that still got
+ * 429/503 after the fetch retries; the crawl resets them when it starts.
  */
 export class HostPacer {
   private readonly nextAt = new Map<string, number>();
   private readonly delayMs = new Map<string, number>();
+  /** 429/503 answers in a row, retries included: only the backoff length. */
+  private readonly backoffStreak = new Map<string, number>();
+  /** Pages in a row that ended throttled: what stops a crawl. */
   private readonly strikes = new Map<string, number>();
 
   constructor(
@@ -59,21 +63,38 @@ export class HostPacer {
     if (at > now) await this.sleep(at - now, signal);
   }
 
-  /** Record an answer: 429/503 back off (honouring `Retry-After`), success clears strikes. */
+  /**
+   * Record one request's answer: 429/503 back off (honouring `Retry-After`),
+   * success clears the backoff and the strikes. Called per attempt, so it
+   * does not add strikes itself; see `notePageThrottled`.
+   */
   noteResponse(host: string, status: number, retryAfterMs: number | null): void {
     if (status === 429 || status === 503) {
-      const strikes = (this.strikes.get(host) ?? 0) + 1;
-      this.strikes.set(host, strikes);
-      const backoff = retryAfterMs ?? this.hostDelay(host) * 2 ** strikes;
+      const streak = (this.backoffStreak.get(host) ?? 0) + 1;
+      this.backoffStreak.set(host, streak);
+      const backoff = retryAfterMs ?? this.hostDelay(host) * 2 ** Math.min(streak, 10);
       const pause = Math.min(MAX_BACKOFF_MS, Math.max(this.hostDelay(host), backoff));
       const at = Math.max(this.nextAt.get(host) ?? 0, this.now() + pause);
       this.nextAt.set(host, at);
       return;
     }
-    if (status > 0 && status < 400) this.strikes.delete(host);
+    if (status > 0 && status < 400) {
+      this.backoffStreak.delete(host);
+      this.strikes.delete(host);
+    }
   }
 
-  /** Has `host` answered "slow down" too many times in a row? */
+  /** A page still answered 429/503 after its retries: one strike for `host`. */
+  notePageThrottled(host: string): void {
+    this.strikes.set(host, (this.strikes.get(host) ?? 0) + 1);
+  }
+
+  /** Forget `host`'s strikes: each crawl gets its own count (the pace and backoff stay). */
+  resetStrikes(host: string): void {
+    this.strikes.delete(host);
+  }
+
+  /** Have too many pages of `host` in a row ended with "slow down"? */
   isThrottled(host: string): boolean {
     return (this.strikes.get(host) ?? 0) >= THROTTLE_STRIKES_TO_STOP;
   }

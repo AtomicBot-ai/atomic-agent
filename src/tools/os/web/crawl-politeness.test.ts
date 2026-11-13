@@ -55,7 +55,7 @@ describe("HostPacer", () => {
     expect(pacer.hostDelay("c.com")).toBe(1_000);
   });
 
-  it("waits out Retry-After after a 429, capped, and counts strikes", async () => {
+  it("waits out Retry-After after a 429, capped", async () => {
     const clock = fakeClock();
     const pacer = new HostPacer(1_000, clock.sleep, clock.now);
     await pacer.acquire("a.com", signal);
@@ -65,10 +65,23 @@ describe("HostPacer", () => {
     pacer.noteResponse("a.com", 429, 10 * 60_000);
     await pacer.acquire("a.com", signal);
     expect(clock.waits[1]).toBe(MAX_BACKOFF_MS);
-    expect(pacer.isThrottled("a.com")).toBe(false);
+    // Per-request answers (retries included) only set the pause, not strikes.
     pacer.noteResponse("a.com", 503, null);
+    expect(pacer.isThrottled("a.com")).toBe(false);
+  });
+
+  it("counts strikes per throttled page, clears them on success and on reset", () => {
+    const clock = fakeClock();
+    const pacer = new HostPacer(1_000, clock.sleep, clock.now);
+    pacer.notePageThrottled("a.com");
+    pacer.notePageThrottled("a.com");
+    expect(pacer.isThrottled("a.com")).toBe(false);
+    pacer.notePageThrottled("a.com");
     expect(pacer.isThrottled("a.com")).toBe(true);
     pacer.noteResponse("a.com", 200, null);
+    expect(pacer.isThrottled("a.com")).toBe(false);
+    for (let i = 0; i < 3; i++) pacer.notePageThrottled("a.com");
+    pacer.resetStrikes("a.com");
     expect(pacer.isThrottled("a.com")).toBe(false);
   });
 

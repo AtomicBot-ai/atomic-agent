@@ -48,6 +48,10 @@ export async function runCrawl(input: RunCrawlInput): Promise<CrawlReport> {
   let consecutiveErrors = 0;
   let stoppedBecause: StopReason = "done";
 
+  const block = (key: string): void => {
+    if (!blockedByRobots.includes(key)) blockedByRobots.push(key);
+  };
+
   const enqueue = (url: URL, depth: number): boolean => {
     if (!inCrawlScope(url, start, args.pathPrefix)) return false;
     const key = normaliseCrawlUrl(url);
@@ -90,8 +94,14 @@ export async function runCrawl(input: RunCrawlInput): Promise<CrawlReport> {
       continue;
     }
 
+    if (res.refusedRedirect !== undefined) {
+      // A same-site redirect into a robots.txt-disallowed path: not requested.
+      block(normaliseCrawlUrl(new URL(res.refusedRedirect)));
+      continue;
+    }
     const finalUrl = new URL(res.finalUrl);
-    seen.add(normaliseCrawlUrl(finalUrl));
+    const finalKey = normaliseCrawlUrl(finalUrl);
+    seen.add(finalKey);
     if (finalUrl.origin !== start.origin) {
       // Usually example.com -> www.example.com on the start page: the model
       // can crawl again from where the site sent it.
@@ -99,6 +109,13 @@ export async function runCrawl(input: RunCrawlInput): Promise<CrawlReport> {
       errors.push({ url: item.url, message: `redirected off the site to ${finalUrl.origin}${hint}` });
       continue;
     }
+    // Backstop for a redirect that ended on a disallowed path anyway (e.g. a
+    // fetcher without the per-hop check): the page is dropped, not returned.
+    if (finalKey !== item.url && !politeness.allows(robots, finalUrl)) {
+      block(finalKey);
+      continue;
+    }
+    if (res.status === 429 || res.status === 503) politeness.pacer.notePageThrottled(start.host);
     const challenge = detectChallenge({ status: res.status, contentType: res.contentType, body: res.body });
     if (challenge.challenged) {
       errors.push({ url: item.url, message: `bot-protection challenge (HTTP ${res.status})` });

@@ -81,7 +81,11 @@ export function buildOsWebCrawlTool(options: OsWebCrawlOptions = {}): ToolDefini
         return errorResult(args, (err as Error).message, err instanceof SsrfBlockedError);
       }
 
-      const fetchPage = (url: string): Promise<FetchOutcome> =>
+      // Each crawl counts its own throttle strikes: a 429 streak from an
+      // earlier crawl must not stop this one before its first request.
+      politeness.pacer.resetStrikes(start.host);
+
+      const fetchPage = (url: string, allowRedirect?: (u: URL) => boolean): Promise<FetchOutcome> =>
         fetchRawPage(url, {
           cwd: ctx.workingDir,
           signal: ctx.signal,
@@ -93,6 +97,7 @@ export function buildOsWebCrawlTool(options: OsWebCrawlOptions = {}): ToolDefini
             beforeRequest: (u, signal) => politeness.pacer.acquire(u.host, signal),
             afterResponse: (u, status, retryAfterMs) =>
               politeness.pacer.noteResponse(u.host, status, retryAfterMs),
+            allowRedirect,
           },
         });
 
@@ -132,7 +137,12 @@ export function buildOsWebCrawlTool(options: OsWebCrawlOptions = {}): ToolDefini
         fetchPage: async (url) => {
           const cached = pageCache.get(url);
           if (cached !== undefined) return cached;
-          const res = await fetchPage(url);
+          // A same-site redirect hop is checked against robots.txt before it
+          // is requested; off-site hops are left to runCrawl's origin check.
+          const res = await fetchPage(
+            url,
+            (u) => u.origin !== start.origin || politeness.allows(robots, u),
+          );
           if (res.status >= 200 && res.status < 400) pageCache.set(url, res);
           return res;
         },

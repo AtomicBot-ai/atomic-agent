@@ -101,6 +101,11 @@ export interface FetchOutcome {
   body: string;
   truncated: boolean;
   redirectChain: string[];
+  /**
+   * Set when `hooks.allowRedirect` refused the next hop: the redirect target
+   * that was not requested. `finalUrl`/`status` are then the redirecting page.
+   */
+  refusedRedirect?: string;
 }
 
 export function buildOsWebFetchTool(
@@ -296,6 +301,8 @@ interface FetchWithGuardOptions {
 export interface FetchRequestHooks {
   beforeRequest?: (url: URL, signal: AbortSignal) => Promise<void>;
   afterResponse?: (url: URL, status: number, retryAfterMs: number | null) => void;
+  /** Asked before a redirect hop is requested; `false` stops there (robots.txt in `os.web.crawl`). */
+  allowRedirect?: (url: URL) => boolean;
 }
 
 export interface FetchRawPageOptions {
@@ -366,7 +373,19 @@ async function fetchWithGuard(
           `${TOOL_NAME}: too many redirects (> ${MAX_REDIRECTS})`,
         );
       }
-      currentUrl = parseHttpUrl(res.redirectUrl);
+      const nextUrl = parseHttpUrl(res.redirectUrl);
+      if (opts.hooks?.allowRedirect?.(nextUrl) === false) {
+        return {
+          finalUrl: currentUrl.toString(),
+          status: res.status,
+          contentType: res.contentType,
+          body: res.body,
+          truncated: res.truncated,
+          redirectChain: chain,
+          refusedRedirect: nextUrl.toString(),
+        };
+      }
+      currentUrl = nextUrl;
       continue;
     }
     return {
