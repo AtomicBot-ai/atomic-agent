@@ -404,7 +404,7 @@ describe("ClaudeCodeImporter", () => {
       seedProjectSession(join(home, "gone", "legacy"), "s-gone-1", "2026-08-05T10:00:00Z");
 
       const report = await importOnce(true);
-      const groups = report.items.filter((i) => i.kind === "projects" || i.kind === "folders");
+      const groups = report.items.filter((i) => (i.kind as string) === "projects" || (i.kind as string) === "folders");
       expect(groups.map((g) => [g.kind, g.source, g.reason])).toEqual(
         expect.arrayContaining([
           ["projects", "shop", "new project; 2 chats; 2 added"],

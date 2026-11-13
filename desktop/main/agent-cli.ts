@@ -4819,6 +4819,8 @@ const IMPORT_AGENT_LABELS: Record<ImportSourceId, string> = {
   codex: "Codex",
   pi: "Pi",
   "oh-my-pi": "Oh-My-Pi",
+  "claude-app": "Claude",
+  "atomic-agent": "Atomic Agent",
 };
 
 export function importAgentDir(id: ImportSourceId, home = homedir(), env = process.env): string {
@@ -4836,6 +4838,11 @@ export function importAgentDir(id: ImportSourceId, home = homedir(), env = proce
       return env["PI_STATE_DIR"] ?? join(home, ".pi", "agent");
     case "oh-my-pi":
       return env["OMP_STATE_DIR"] ?? join(home, ".omp", "agent");
+    // Picked by the person (an export .zip, or another data folder): no fixed home.
+    case "claude-app":
+      return "";
+    case "atomic-agent":
+      return join(home, ".atomic-agent");
   }
 }
 
@@ -4862,6 +4869,10 @@ function hasImportableState(id: ImportSourceId, dir: string): boolean {
       return existsSync(join(dir, "skills")) || existsSync(join(dir, "sessions"));
     case "oh-my-pi":
       return existsSync(join(dir, "skills")) || existsSync(join(dir, "sessions")) || existsSync(join(dir, "mcp.json"));
+    // Never auto-detected: the Claude export and another Atomic Agent folder are picked by hand.
+    case "claude-app":
+    case "atomic-agent":
+      return false;
   }
 }
 
