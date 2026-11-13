@@ -415,6 +415,7 @@ describe("replace guard (F36)", () => {
               maxRetries: 2,
               retryBaseDelayMs: 500,
               retryMaxDelayMs: 5_000,
+              extractor: "readability",
             },
           },
           projects: { roots: [] },

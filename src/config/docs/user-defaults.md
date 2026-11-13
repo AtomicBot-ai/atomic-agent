@@ -106,6 +106,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `web.crawl.respectRobots` (default `true`): obey robots.txt.
 - `web.crawl.robotsExemptHosts` (default `[]`): your own sites, where robots.txt is not applied (`*.example.com` covers subdomains). The rate limit still applies.
 - `web.crawl.cacheTtlMinutes` (default `15`): how long fetched pages and robots.txt are reused.
+- `web.fetch.extractor` (default `"readability"`): `"defuddle"` runs Defuddle first on HTML pages and falls back to Readability.
 
 ## tools
 

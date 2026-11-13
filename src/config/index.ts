@@ -18,6 +18,7 @@ export type {
   UserManagedLocalLlmConfig,
   WebFetchConfig,
   WebCrawlConfig,
+  WebFetchExtractorName,
   WebSearchConfig,
   WebSearchProviderName,
   TuiNotifyConfig,
