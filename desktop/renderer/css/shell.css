@@ -255,8 +255,14 @@
 /* Footer: a quiet full-width Settings row; the ⌘ , chord is its tooltip. */
 .sb-footwrap{flex:none;padding-top:8px;display:flex;align-items:center;gap:4px}
 .sb-footwrap .sb-settings{width:auto;flex:1;min-width:0}
-.sb-discord{flex:none;width:34px;height:34px;color:var(--ink-2)}
-.sb-discord:hover{color:var(--ink)}
+/* Join Discord sits beside Settings as a quiet icon of the same weight: the
+   gear's 16px box, a thinner stroke and pin-dot eyes (the shared glyph's eyes
+   are stroked discs that read as a heavy filled mark at this size), the muted
+   ink, and only the hover wash Settings has. */
+.sb-discord{flex:none;width:34px;height:34px;background:transparent;color:var(--ink-2)}
+.sb-discord:hover{background:var(--hover);color:var(--ink)}
+.sb-discord svg{width:16px;height:16px;stroke-width:1.5}
+.sb-discord svg circle{r:1px;stroke:none;fill:currentColor}
 .sb-settings{width:100%;height:34px;justify-content:flex-start;gap:9px;padding:0 8px 0 12px;background:transparent;color:var(--ink);font-weight:500}
 .sb-settings:hover{background:var(--hover)}
 .sb-settings-ic{display:flex;align-items:center;justify-content:center}
