@@ -29,7 +29,17 @@ export interface AgentTaskRunnerOptions {
   modelApiKey: string | null;
   timeoutMs: number;
   defaultMaxSteps?: number;
+  /**
+   * Aborted when the fit-test is stopped (SIGINT / SIGTERM, ATO-1498): a
+   * task not started yet is skipped, a running child gets SIGTERM and,
+   * if still alive after a short grace, SIGKILL. The temp dirs go once it
+   * has exited.
+   */
+  signal?: AbortSignal;
 }
+
+/** How long a stopped child gets to exit on SIGTERM before SIGKILL. */
+const STOP_KILL_GRACE_MS = 3000;
 
 /** The child's config: external mode on the loaded model, traces on for token counts. */
 export function childConfig(modelUrl: string): Record<string, unknown> {
@@ -77,6 +87,9 @@ function readTraces(stateDir: string): string {
 
 export function createAgentTaskRunner(options: AgentTaskRunnerOptions): (task: FitTask) => Promise<AgentTaskOutcome> {
   return async (task) => {
+    if (options.signal?.aborted) {
+      return { reply: "", durationMs: 0, tokens: null, timedOut: false, error: "stopped" };
+    }
     const root = mkdtempSync(join(tmpdir(), "atomic-fit-"));
     const workDir = join(root, "work");
     const stateDir = join(root, "state");
@@ -90,24 +103,37 @@ export function createAgentTaskRunner(options: AgentTaskRunnerOptions): (task: F
       if (options.modelApiKey) env.ATOMIC_AGENT_LLAMA_API_KEY = options.modelApiKey;
       else delete env.ATOMIC_AGENT_LLAMA_API_KEY;
       const started = Date.now();
-      const result = await new Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }>((resolve, reject) => {
+      const result = await new Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean; stopped: boolean }>((resolve, reject) => {
         const child = spawn(self.cmd, args, { env, stdio: ["pipe", "pipe", "pipe"], ...(process.platform === "win32" ? { windowsHide: true } : {}) });
         let stdout = "";
         let stderr = "";
         let timedOut = false;
+        let stopped = false;
+        let killTimer: ReturnType<typeof setTimeout> | null = null;
         const timer = setTimeout(() => {
           timedOut = true;
           child.kill("SIGKILL");
         }, options.timeoutMs);
+        const onAbort = (): void => {
+          stopped = true;
+          child.kill("SIGTERM");
+          killTimer = setTimeout(() => child.kill("SIGKILL"), STOP_KILL_GRACE_MS);
+        };
+        const settle = (): void => {
+          clearTimeout(timer);
+          if (killTimer !== null) clearTimeout(killTimer);
+          options.signal?.removeEventListener("abort", onAbort);
+        };
+        options.signal?.addEventListener("abort", onAbort, { once: true });
         child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf8")));
         child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf8")));
         child.on("error", (err) => {
-          clearTimeout(timer);
+          settle();
           reject(err);
         });
         child.on("close", (code) => {
-          clearTimeout(timer);
-          resolve({ code, stdout, stderr, timedOut });
+          settle();
+          resolve({ code, stdout, stderr, timedOut, stopped });
         });
         // `run` takes one piped line per turn: a multi-line prompt goes in as one line.
         child.stdin.end(`${task.prompt.replace(/\r?\n/g, " ")}\n`);
@@ -119,7 +145,7 @@ export function createAgentTaskRunner(options: AgentTaskRunnerOptions): (task: F
         durationMs: Date.now() - started,
         tokens: countTraceTokens(readTraces(stateDir)),
         timedOut: result.timedOut,
-        error: result.timedOut ? "timed out" : result.code === 0 ? null : `agent exited ${String(result.code)}: ${tail.slice(0, 200)}`,
+        error: result.stopped ? "stopped" : result.timedOut ? "timed out" : result.code === 0 ? null : `agent exited ${String(result.code)}: ${tail.slice(0, 200)}`,
       };
     } finally {
       rmSync(root, { recursive: true, force: true });
