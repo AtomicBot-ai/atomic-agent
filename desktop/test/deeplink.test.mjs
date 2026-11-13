@@ -113,7 +113,7 @@ test("mcp: args= is the same as arg=, and an unpinned package is warned about", 
 test("mcp: uvx and bunx are allowed, with their package checks", () => {
   assert.equal(mcp("name=time&command=uvx&arg=mcp-server-time%3D%3D0.6.2").ok, true);
   assert.ok(mcp("name=time&command=uvx&arg=mcp-server-time").request.warnings.some((w) => /no version/.test(w)));
-  assert.equal(mcp("name=b&command=bunx&arg=some-mcp%401.0.0").ok, true);
+  assert.equal(mcp("name=bun&command=bunx&arg=some-mcp%401.0.0").ok, true);   // a name is 2 to 32 characters
   assert.equal(mcp("name=time&command=uvx").ok, false);
   assert.equal(mcp("name=time&command=npx&arg=-y").ok, false);
 });
