@@ -17,14 +17,18 @@ import { CurlUnavailableError } from "./ensure-curl.js";
 import {
   executeGuardedHttpRequest,
   isCurlTransportError,
-  isSensitiveHeaderName,
   type HttpMethod,
   SsrfBlockedError,
 } from "./http-request-fetch.js";
+import {
+  buildHttpApprovalPreview,
+  maskUrlSecrets,
+} from "./http-request-preview.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
 
 export type { HttpMethod } from "./http-request-fetch.js";
 export { parseCurlOutput } from "./http-request-fetch.js";
+export { maskHeaderValue } from "./http-request-preview.js";
 
 type RunCommandFn = (
   cmd: string,
@@ -73,16 +77,20 @@ export function buildOsHttpRequestTool(
         );
       }
       if (needsApproval(httpCfg.approvalMode, args.method)) {
+        // Every text the prompt (and the ledger) shows has secrets in the
+        // query, fragment and body masked (ATO-1471).
+        const shownUrl = maskUrlSecrets(args.url);
         await requireApproval(
           options,
           {
             sessionId: ctx.sessionId,
             tool: "os.http.request",
             category: "http",
-            reason: `${args.method} ${args.url}`,
-            preview: buildApprovalPreview(args),
-            affectedResources: [args.url],
-            // "Allow for this session" covers this origin only (ATO-1182).
+            reason: `${args.method} ${shownUrl}`,
+            preview: buildHttpApprovalPreview(args),
+            affectedResources: [shownUrl],
+            // "Allow for this session" and "Allow always" cover this
+            // origin only (ATO-1182, ATO-1471).
             grantKey: args.urlObj.origin,
           },
           ctx.signal,
@@ -344,58 +352,4 @@ export function hostAllowed(
     }
   }
   return false;
-}
-
-function buildApprovalPreview(args: HttpArgs): string {
-  const lines: string[] = [`${args.method} ${args.url}`];
-  for (const [k, v] of Object.entries(args.headers)) {
-    lines.push(`${k}: ${isSensitiveHeaderName(k) ? maskHeaderValue(v) : v}`);
-  }
-  if (args.body !== undefined) {
-    const snippet =
-      args.body.length > 400
-        ? `${args.body.slice(0, 400)}… [${args.body.length} bytes]`
-        : args.body;
-    lines.push("");
-    lines.push(snippet);
-  }
-  return lines.join("\n");
-}
-
-/**
- * Auth scheme words (RFC 9110 / IANA registry, plus common vendor ones)
- * the preview may keep in front of the mask. Anything else is treated as
- * part of the secret: `X-Auth-Token: abc123 def456` must not show
- * `abc123`.
- */
-const AUTH_SCHEMES = new Set([
-  "basic",
-  "bearer",
-  "digest",
-  "token",
-  "negotiate",
-  "ntlm",
-  "hoba",
-  "mutual",
-  "vapid",
-  "aws4-hmac-sha256",
-  "dpop",
-  "gnap",
-  "privatetoken",
-]);
-
-/**
- * The value of a credential header as the approval preview shows it: a
- * known scheme word kept (`Bearer ****`, `Basic ****`), everything else
- * masked. The preview reaches the terminal, the desktop app and
- * Telegram, so a token in it would be one more copy of the token
- * (ATO-1182).
- */
-export function maskHeaderValue(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length === 0) return value;
-  const scheme = /^(\S+)\s+\S/.exec(trimmed);
-  return scheme && AUTH_SCHEMES.has(scheme[1]!.toLowerCase())
-    ? `${scheme[1]} ****`
-    : "****";
 }
