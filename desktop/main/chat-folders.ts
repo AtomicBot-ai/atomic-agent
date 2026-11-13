@@ -17,6 +17,9 @@
  *            again; the person's own placements are never in it
  *   projectSort: false in a file from before ATO-1253, whose one "Claude
  *            Code" folder is split into project folders once
+ *   imported: {folderId: true}   folders the terminal's import grouping
+ *            created (src/import/grouping.ts), the only ones it may reuse
+ *            or delete; kept as it is, absent when empty
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,6 +28,7 @@ export interface ChatFolder { id: string; name: string; collapsed: boolean }
 export interface ChatFolders {
   version: 1; folders: ChatFolder[]; chats: Record<string, string | null>; autoSort: boolean;
   projects: Record<string, string>; auto: Record<string, true>; projectSort: boolean;
+  imported?: Record<string, true>;
 }
 
 const MAX_FOLDERS = 200;
@@ -45,7 +49,7 @@ export function emptyChatFolders(): ChatFolders {
 export function coerceChatFolders(raw: unknown): ChatFolders {
   const out = emptyChatFolders();
   if (!raw || typeof raw !== "object") return out;
-  const r = raw as { folders?: unknown; chats?: unknown; autoSort?: unknown; projects?: unknown; auto?: unknown; projectSort?: unknown };
+  const r = raw as { folders?: unknown; chats?: unknown; autoSort?: unknown; projects?: unknown; auto?: unknown; projectSort?: unknown; imported?: unknown };
   const ids = new Set<string>();
   if (Array.isArray(r.folders)) {
     for (const f of r.folders.slice(0, MAX_FOLDERS)) {
@@ -80,6 +84,13 @@ export function coerceChatFolders(raw: unknown): ChatFolders {
     }
   }
   out.projectSort = r.projectSort === true;
+  if (r.imported && typeof r.imported === "object" && !Array.isArray(r.imported)) {
+    const imported: Record<string, true> = {};
+    for (const [fid, on] of Object.entries(r.imported as Record<string, unknown>)) {
+      if (on === true && ids.has(fid)) imported[fid] = true;
+    }
+    if (Object.keys(imported).length > 0) out.imported = imported;
+  }
   return out;
 }
 

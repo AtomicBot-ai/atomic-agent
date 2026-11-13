@@ -68,6 +68,9 @@ function foldersCoerce(raw) {
   for (const sid of Object.keys(auto)) if (auto[sid] === true && typeof out.chats[sid] === 'string') out.auto[sid] = true;
   // A file from before ATO-1253 has no `projectSort`: its Claude Code chats move to their project's folder once.
   out.projectSort = raw.projectSort === true;
+  // Folders the terminal's import grouping created (src/import/grouping.ts): kept so it never takes over or deletes one of the person's own.
+  const imported = raw.imported && typeof raw.imported === 'object' ? raw.imported : {};
+  for (const fid of Object.keys(imported)) if (imported[fid] === true && ids.has(fid)) (out.imported = out.imported || {})[fid] = true;
   return out;
 }
 
@@ -125,6 +128,7 @@ function folderRemove(state, id) {
   state.folders.splice(i, 1);
   for (const sid of Object.keys(state.chats)) if (state.chats[sid] === id) { state.chats[sid] = null; delete state.auto[sid]; }
   delete state.projects[id];
+  if (state.imported) delete state.imported[id];
   return true;
 }
 

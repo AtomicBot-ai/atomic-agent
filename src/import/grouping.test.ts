@@ -149,9 +149,89 @@ describe("planImportGrouping", () => {
     expect(plan.projects.chats["claude-code:mine"]).toBeUndefined();
     expect(plan.projects.chats["claude-code:auto"]).toBeDefined();
     expect(plan.outcomes[0]).toMatchObject({ added: 1, kept: 1 });
-    // The sorting's own "app" folder is empty now, and goes.
+    // "app" is empty now but the grouping did not make it: it stays.
+    expect(plan.folders.folders.map((f) => f.id)).toEqual(["fmine", "fauto"]);
+    expect(plan.folders.projects.fauto).toBe("/src/app");
+  });
+
+  it("never rebinds or deletes the person's own folder with a group's name", () => {
+    const folders = {
+      ...emptyFoldersFile(),
+      folders: [{ id: "fmine", name: "Research", collapsed: false }],
+      chats: { "claude-app:mine": "fmine" } as Record<string, string | null>,
+    };
+    const research = namedGroupHint("claude-app:project:u1", "Research")!;
+    const first = planImportGrouping({
+      ...base,
+      projects: emptyProjectsFile(),
+      folders,
+      entries: [{ sessionId: "claude-app:new", group: research }],
+    });
+    // A folder of its own, not the person's.
+    expect(first.folders.projects.fmine).toBeUndefined();
+    const made = first.folders.folders.find((f) => f.id !== "fmine")!;
+    expect(made.name).toBe("Research (imported)");
+    expect(first.folders.imported).toEqual({ [made.id]: true });
+    expect(first.folders.chats["claude-app:new"]).toBe(made.id);
+    expect(first.folders.chats["claude-app:mine"]).toBe("fmine");
+
+    // Later the desktop's sorting files a chat into the person's folder as
+    // automatic, and an import moves it into a project: the folder stays.
+    const later = {
+      ...first.folders,
+      chats: { ...first.folders.chats, "claude-code:x": "fmine", "claude-app:mine": null },
+      auto: { "claude-code:x": true } as Record<string, true>,
+    };
+    const second = planImportGrouping({
+      ...base,
+      projects: emptyProjectsFile(),
+      folders: later,
+      entries: [{ sessionId: "claude-code:x", group: hint("/src/app") }],
+    });
+    expect(second.projects.chats["claude-code:x"]).toBeDefined();
+    expect(second.folders.folders.map((f) => f.id)).toContain("fmine");
+    expect(second.folders.projects.fmine).toBeUndefined();
+  });
+
+  it("still removes a folder it created itself once a run empties it", () => {
+    const folders = {
+      ...emptyFoldersFile(),
+      folders: [
+        { id: "fmine", name: "Work", collapsed: false },
+        { id: "fimp", name: "app", collapsed: false },
+      ],
+      chats: { "claude-code:auto": "fimp" } as Record<string, string | null>,
+      projects: { fimp: "/src/app" },
+      auto: { "claude-code:auto": true } as Record<string, true>,
+      imported: { fimp: true } as Record<string, true>,
+    };
+    const plan = planImportGrouping({
+      ...base,
+      projects: emptyProjectsFile(),
+      folders,
+      entries: [{ sessionId: "claude-code:auto", group: hint("/src/app") }],
+    });
+    expect(plan.projects.chats["claude-code:auto"]).toBeDefined();
     expect(plan.folders.folders.map((f) => f.id)).toEqual(["fmine"]);
-    expect(plan.folders.projects.fauto).toBeUndefined();
+    expect(plan.folders.projects.fimp).toBeUndefined();
+    expect(plan.folders.imported).toBeUndefined();
+  });
+
+  it("reuses a folder it created itself by name", () => {
+    const folders = {
+      ...emptyFoldersFile(),
+      folders: [{ id: "fimp", name: "Research", collapsed: false }],
+      imported: { fimp: true } as Record<string, true>,
+    };
+    const plan = planImportGrouping({
+      ...base,
+      projects: emptyProjectsFile(),
+      folders,
+      entries: [{ sessionId: "claude-app:1", group: namedGroupHint("claude-app:project:u1", "Research")! }],
+    });
+    expect(plan.folders.folders).toHaveLength(1);
+    expect(plan.folders.projects.fimp).toBe("claude-app:project:u1");
+    expect(plan.folders.chats["claude-app:1"]).toBe("fimp");
   });
 
   it("does nothing when the person turned the sorting off", () => {
