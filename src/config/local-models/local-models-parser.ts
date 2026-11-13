@@ -18,6 +18,7 @@ import {
 } from "../config-primitives.js";
 import { parseUrl } from "../config-values.js";
 import { parseCustomLocalModels } from "../custom-models-schema.js";
+import { parseLoraAdapters } from "./lora-adapters-parser.js";
 import { isKnownLocalModelId, type LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import {
   BACKEND_VARIANT_PREFERENCES,
@@ -421,6 +422,8 @@ export function prepareLocalModelsInputs(
       "localModels.managed.swaFull",
     ),
   };
+  const loraAdapters = parseLoraAdapters(rawManaged.loraAdapters, "localModels.managed.loraAdapters");
+  if (loraAdapters) managed.loraAdapters = loraAdapters;
 
   const rawEmbeddings =
     (localModels.embeddings as Record<string, unknown> | undefined) ?? {};

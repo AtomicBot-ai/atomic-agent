@@ -349,6 +349,11 @@ export {
   type ReclaimOutcome,
   type ReclaimRequest,
 } from "./server/port-reclaim.js";
+export {
+  loraAdapterForModel,
+  loraAdapterKey,
+  type LoraAdapter,
+} from "./server/lora-adapter.js";
 
 export {
   huggingFaceToken,

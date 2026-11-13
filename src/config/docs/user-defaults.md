@@ -32,6 +32,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.contextSize` (default `0`).
 - `localModels.managed.parallel` (default `"auto"`).
 - `localModels.managed.swaFull` (default `"auto"`).
+- `localModels.managed.loraAdapters` (default absent: no adapters; `{ "<modelId>": { "path": "/abs/adapter.gguf", "scale"?: number } }` launches that model with `--lora`, or `--lora-scaled` when `scale` is not 1).
 - `localModels.embeddings.enabled` (default `false`).
 - `localModels.embeddings.modelId` (default `null`).
 - `localModels.embeddings.port` (default `19092`).

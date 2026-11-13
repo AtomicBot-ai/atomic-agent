@@ -1,6 +1,7 @@
 import type { LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import type { BackendVariantPreference, CoreBackendVariant } from "../../local-llm/backend/windows-backend-variant.js";
 import type { SwaFullPreference } from "../../local-llm/server/swa-full.js";
+import type { LoraAdapter } from "../../local-llm/server/lora-adapter.js";
 
 export type LocalLlmMode = "external" | "managed";
 
@@ -156,6 +157,16 @@ export interface UserManagedLocalLlmConfig {
    * predate the key get `true`.
    */
   autoRestart: boolean;
+  /**
+   * LoRA adapters for the managed chat server, keyed by local model id
+   * (ATO-1106): `{ "<modelId>": { "path": "/abs/adapter.gguf", "scale": 0.8 } }`.
+   * The adapter of the model being launched is passed as `--lora` (or
+   * `--lora-scaled` when `scale` is not 1); a missing file fails that
+   * launch with its path. A running server launched with another adapter
+   * is restarted on the next start instead of adopted. Additive and
+   * unversioned: absent means no adapters, as before.
+   */
+  loraAdapters?: Record<string, LoraAdapter>;
 }
 
 /**
