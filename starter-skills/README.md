@@ -39,3 +39,4 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
 | `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |
+| `traffic-analytics/` | "Why did traffic drop" and other reports from your own GA4, Search Console and PostHog; never invents numbers | Your own Google service account key and/or PostHog personal API key in `~/.atomic-agent/traffic-analytics.json` |
