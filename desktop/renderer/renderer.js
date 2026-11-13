@@ -25000,7 +25000,7 @@ function skpListHTML(visible) {
         + '<span class="tk-switch' + (r.enabled ? ' on' : '') + '" role="switch" aria-checked="' + r.enabled + '" aria-label="' + (r.enabled ? 'Disable ' : 'Enable ') + esc(r.name) + '" title="' + (SK.workingDir ? 'Toggle in this workspace (e)' : 'Toggle globally (e)') + '" data-act="skills:toggle:' + esc(r.name) + '"></span>'
         + '<span class="t mono" title="' + esc(r.name) + '">' + esc(r.name) + '</span>'
         + '<span class="set-src" title="' + esc(r.rootDir || r.source) + '">' + skpSourceChip(r.source) + '</span>'
-        + '<span class="d" title="' + esc(r.description) + '">' + esc(r.description) + (r.disabledReasons && r.disabledReasons.length ? '<br><small>' + esc(r.disabledReasons.join(', ')) + '</small>' : '') + '</span></button>';
+        + '<span class="d" title="' + esc(r.description) + '">' + esc(r.description) + (r.disabledReasons && r.disabledReasons.length ? '<br><small>' + esc(r.disabledReasons.join(', ')) + '</small>' : '') + skillBinsRowHTML(r.bins, esc) + '</span></button>';
     }).join('')
     + (hiddenAfter > 0 ? '<button class="tuimore" data-act="skills:page:down">↓ ' + hiddenAfter + ' below</button>' : '')
     + '</div>'
@@ -25136,6 +25136,7 @@ function skpDetailHTML() {
     + '<div class="set-titlerow"><h3 class="set-dtitle mono">' + esc(name) + '</h3>' + (row ? skpSourceChip(row.source) + '<span class="mono set-meta">v' + esc(row.version) + '</span>' : '') + '</div>'
     + (row && row.description ? '<p class="set-desc">' + esc(row.description) + '</p>' : '')
     + skillEvalHTML({name, probe:SKE.probeName === name ? SKE.probe : null, runningName:SKE.runningName, cancelling:SKE.cancelling, outcome:SKE.outcomes[name] || null}, esc)
+    + (row ? skillBinsDetailHTML(row.bins, esc) : '')
     + (row && SK.workingDir ? '<p class="set-cap mono">' + esc(row.rootDir || '') + '</p>'
       + '<p class="set-cap">' + esc((row.disabledReasons || []).join(', ') || 'Available to the model') + '</p>'
       + '<div class="acts">' + ['workspace', 'global'].map(scope => {
