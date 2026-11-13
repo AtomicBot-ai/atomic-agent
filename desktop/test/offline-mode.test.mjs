@@ -64,7 +64,7 @@ test('the line is the agent\'s number, not a fixed zero', async () => {
 });
 
 test('a missing counter says so instead of showing zero', async () => {
-  const om = createOfflineMode(fakeApi([ok(true, undefined)]));
+  const om = createOfflineMode(fakeApi([ok(true, null)]));
   await om.load();
   const html = offlineModeHTML(om.state, {esc});
   assert.ok(html.includes(esc(OFFLINE_NO_COUNTER)));
