@@ -1974,3 +1974,71 @@ describe("scopeInsideStateDir (ATO-1267)", () => {
     expect(scopeInsideStateDir(["/home/u/.atomic-agent"], undefined)).toEqual([]);
   });
 });
+
+describe("fusion.delegate subagent profiles (ATO-566)", () => {
+  const roles: NonNullable<ResolvedRunMode["roles"]> = {
+    byRole: { review: { providerId: "or-sonnet", model: "sonnet", local: false } },
+    mixLocalModels: false,
+    localLegProviderIds: ["local-llama"],
+  };
+
+  it("applies a built-in profile: its brief, its read-only tools and its role's model", async () => {
+    const seen: Array<{ brief: string; providerId?: string; filter?: (n: string) => boolean }> = [];
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => fusionMode({ roles }),
+        workerSupportsSlotAffinity: (id) => id === "local-llama",
+        runTurn: async (_session, brief, options) => {
+          seen.push({ brief, providerId: options.providerId, ...(options.toolFilter ? { filter: options.toolFilter } : {}) });
+          return turnResult();
+        },
+      }),
+    ).run({ tasks: [{ id: "r", instructions: "review src/a.ts", profile: "review" }] }, ctx());
+    expect(result.status).toBe("ok");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.brief).toContain("PROFILE review");
+    expect(seen[0]!.providerId).toBe("or-sonnet");
+    expect(seen[0]!.filter?.("os.fs.read")).toBe(true);
+    expect(seen[0]!.filter?.("os.fs.write")).toBe(false);
+    expect(seen[0]!.filter?.("os.shell.run")).toBe(false);
+    expect(result.details.profiles).toEqual([
+      expect.objectContaining({ task: "r", profile: "review", source: "builtin", model: "role review" }),
+    ]);
+  });
+
+  it("refuses an unknown profile before any worker starts and uses the runtime's profile set", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    const asked: string[] = [];
+    const result = await buildFusionDelegateTool(
+      deps({
+        runTurn,
+        resolveAgentProfiles: (dir) => {
+          asked.push(dir);
+          return { profiles: [], get: () => undefined, diagnostics: [], withheld: [] };
+        },
+      }),
+    ).run({ tasks: [{ id: "x", instructions: "go", profile: "explore" }] }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain('names profile "explore"');
+    expect(asked).toEqual(["/repo"]);
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("loads no profiles and changes nothing when no task names one", async () => {
+    const resolveAgentProfiles = vi.fn();
+    let filter: ((n: string) => boolean) | undefined;
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveAgentProfiles,
+        runTurn: async (_s, _b, options) => {
+          filter = options.toolFilter;
+          return turnResult();
+        },
+      }),
+    ).run({ tasks: TASKS }, ctx());
+    expect(result.status).toBe("ok");
+    expect(resolveAgentProfiles).not.toHaveBeenCalled();
+    expect(filter?.("os.fs.write")).toBe(true);
+    expect(result.details).not.toHaveProperty("profiles");
+  });
+});

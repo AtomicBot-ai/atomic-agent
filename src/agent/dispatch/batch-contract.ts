@@ -144,6 +144,13 @@ export interface BatchExecutionContext {
    */
   toolSet?: StepToolSet;
   /**
+   * The turn's `RunTurnOptions.toolFilter` (a fusion worker's policy and
+   * profile allowlist). The prompt and grammar already hide what it
+   * rejects; this makes a call by name refused too, for a native-tool
+   * model that emits a hidden tool anyway. Terminals are exempt.
+   */
+  toolFilter?: (name: string) => boolean;
+  /**
    * Plan mode, read at dispatch time rather than passed as a boolean.
    *
    * A getter for the same reason `dangerous.approvalRequired` is one

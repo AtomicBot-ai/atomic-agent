@@ -6,8 +6,8 @@ import { isPartDisabled } from "./plugin-store.js";
 /**
  * A subagent profile from a plugin's `agents/*.md` (Claude format:
  * frontmatter `name`, `description`, `tools`, `model`; body = system prompt).
- * Nothing runs these yet: they are exposed so the Fusion worker profiles
- * (ATO-935) can pick them up, and so the Plugins screen can list them.
+ * A Fusion task can name one as `plugin:agent` (ATO-566, see
+ * `src/agent-profiles/`); the Plugins screen lists them.
  */
 export interface PluginSubagentProfile {
   /** `plugin:agent` */

@@ -132,6 +132,26 @@ export interface DelegateTask {
    * run mode); a name outside it refuses the call.
    */
   model?: string;
+  /**
+   * A subagent profile by name (ATO-566): `explore`, `review`,
+   * `research`, or one the user or a trusted project defined. Checked by
+   * the tool against the loaded profiles, not here; an unknown name
+   * refuses the call.
+   */
+  profile?: string;
+  /**
+   * The profile as applied by the tool, never read from the wire: its
+   * instructions for the brief and its tool allowlist (compiled
+   * patterns; absent = the worker's usual tools).
+   */
+  agentProfile?: AppliedAgentProfile;
+}
+
+/** What `fusion.delegate` resolved a task's `profile` to. */
+export interface AppliedAgentProfile {
+  name: string;
+  prompt: string;
+  tools?: readonly string[];
 }
 
 export type ParsedDelegateArgs =
@@ -609,6 +629,13 @@ export function parseDelegateArgs(
     if (model === null && entry.model !== undefined && entry.model !== null) {
       problems.push(`${label}.model must be a non-empty string`);
     }
+    const profile =
+      entry.profile === undefined || entry.profile === null
+        ? null
+        : readString(entry.profile);
+    if (profile === null && entry.profile !== undefined && entry.profile !== null) {
+      problems.push(`${label}.profile must be a non-empty string`);
+    }
     if (id !== null && !seen.has(id)) {
       seen.add(id);
       bindable.push({ id, ...(files.length === 0 ? {} : { files }) });
@@ -627,6 +654,7 @@ export function parseDelegateArgs(
       ...(taskTimeoutMs === null ? {} : { timeoutMs: taskTimeoutMs }),
       ...(role === null ? {} : { role }),
       ...(model === null ? {} : { model }),
+      ...(profile === null ? {} : { profile }),
     });
   }
 
