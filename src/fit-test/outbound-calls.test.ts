@@ -44,4 +44,24 @@ describe("isOutboundCall", () => {
     expect(isOutboundCall({ tool: "skill.run_script", args: {}, approvalCategories: ["publish"] })).toBe(true);
     expect(isOutboundCall({ tool: "os.fs.write", args: {}, approvalCategories: ["fs_write_workspace"] })).toBe(false);
   });
+
+  it("catches the send and push forms the first rule missed", () => {
+    const shell = (cmd: string, args?: string[]) => isOutboundCall({ tool: "os.shell.run", args: args ? { cmd, args } : { cmd } });
+    expect(shell("gog", ["gmail", "send", "--to", "a@b.c"])).toBe(true);
+    expect(shell("curl", ["--request", "POST", "https://x.test"])).toBe(true);
+    expect(shell("curl --request=PUT https://x.test")).toBe(true);
+    expect(shell("curl --json '{}' https://x.test")).toBe(true);
+    expect(shell("curl -d'x=1' https://x.test")).toBe(true);
+    expect(shell("git", ["-C", "repo", "push"])).toBe(true);
+    expect(shell("http POST https://x.test a=1")).toBe(true);
+    expect(shell("curl -s https://x.test")).toBe(false);
+  });
+
+  it("drops tasks that schedule jobs or run skill scripts, keeps task reads", () => {
+    expect(isOutboundCall({ tool: "tasks.cron", args: {} })).toBe(true);
+    expect(isOutboundCall({ tool: "tasks.schedule", args: {} })).toBe(true);
+    expect(isOutboundCall({ tool: "skill.run_script", args: {} })).toBe(true);
+    expect(isOutboundCall({ tool: "tasks.list", args: {} })).toBe(false);
+    expect(isOutboundCall({ tool: "tasks.get", args: {} })).toBe(false);
+  });
 });

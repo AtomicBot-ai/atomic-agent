@@ -36,8 +36,23 @@ const OUTBOUND_APPROVALS: ReadonlySet<ApprovalCategory> = new Set<ApprovalCatego
 const READ_HTTP_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
 
 /** Shell commands that push, publish or send. Matched anywhere in the line. */
-const OUTBOUND_SHELL =
-  /\bgit\s+push\b|\bgh\s+(?:pr|issue|release|repo|gist|api)\b|\bnpm\s+publish\b|\b(?:scp|rsync|sftp|ssh)\s|\bcurl\b[^|;&]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--data|\s-d\s|\s-F\s|--upload-file|-T\s)|\bwget\b[^|;&]*--post|\b(?:sendmail|mail)\s/i;
+const OUTBOUND_SHELL = new RegExp(
+  [
+    String.raw`\bgit\b[^|;&]*\bpush\b`, // also `git -C repo push`
+    String.raw`\bgh\s+(?:pr|issue|release|repo|gist|api)\b`,
+    String.raw`\bnpm\s+publish\b`,
+    String.raw`\b(?:scp|rsync|sftp|ssh)\s`,
+    String.raw`\bcurl\b[^|;&]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--request[\s=]*(?:POST|PUT|PATCH|DELETE)|--data|--json|\s-d|\s-F\s|--form|--upload-file|-T\s)`,
+    String.raw`\bwget\b[^|;&]*--post`,
+    String.raw`\b(?:https?|xh)\s+(?:POST|PUT|PATCH|DELETE)\b`, // httpie / xh
+    String.raw`\bgog\b[^|;&]*\bsend\b`, // `gog gmail send`
+    String.raw`\b(?:sendmail|mail)\s`,
+  ].join("|"),
+  "i",
+);
+
+/** Task tools that only read; any other `tasks.*` call creates or changes a job. */
+const TASK_READ_TOOLS: ReadonlySet<string> = new Set(["tasks.get", "tasks.list", "tasks.lists.list", "tasks.show"]);
 
 /** MCP tool name words that read; any other MCP call counts as outbound. */
 const MCP_READ_WORDS = /^(?:search|list|get|read|fetch|query|find|describe|lookup|view)$/;
@@ -65,6 +80,10 @@ export interface ToolCallFacts {
 /** Whether this call sent, published or wrote something outside the machine. */
 export function isOutboundCall(call: ToolCallFacts): boolean {
   if (OUTBOUND_TOOLS.has(call.tool)) return true;
+  // A replayed task would schedule the same job again or rerun a skill
+  // script whose side effects the transcript does not show.
+  if (call.tool === "skill.run_script") return true;
+  if (call.tool.startsWith("tasks.") && !TASK_READ_TOOLS.has(call.tool)) return true;
   if (call.approvalCategories?.some((c) => OUTBOUND_APPROVALS.has(c))) return true;
   if (call.tool.startsWith("mcp.")) {
     // The MCP meta tools only read the servers' catalogs.
