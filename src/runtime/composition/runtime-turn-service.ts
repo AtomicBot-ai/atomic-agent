@@ -19,6 +19,7 @@ import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
 import { captureMessageSent, type AnalyticsStateStore, type LocalEngine, type TurnUsageMeter } from "../../analytics/index.js";
 import type { SessionUsageLedger } from "../../session/usage-meter.js";
 import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
+import { perTurnModelRefusal } from "../per-turn-model.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
 import type { SteeringInbox } from "../steering-inbox.js";
@@ -130,6 +131,7 @@ export function createRuntimeTurnService(
     maxSteps?: number;
     signal?: AbortSignal;
     providerId?: string;
+    model?: string;
     taskMaxDurationMs?: number;
     taskMaxCostUsd?: number;
     toolFilter?: (name: string) => boolean;
@@ -163,6 +165,9 @@ export function createRuntimeTurnService(
     ...(runOptions.providerId === undefined
       ? {}
       : { providerId: runOptions.providerId }),
+    ...(runOptions.providerId === undefined || runOptions.model === undefined
+      ? {}
+      : { model: runOptions.model }),
     ...(runOptions.toolFilter === undefined
       ? {}
       : { toolFilter: runOptions.toolFilter }),
@@ -178,13 +183,24 @@ export function createRuntimeTurnService(
    * active provider inside `resolveActiveLlmSlice` — for a fusion worker
    * that means silently running on the cloud leg.
    */
-  const assertKnownProvider = (providerId: string | undefined): void => {
-    if (providerId === undefined) return;
+  const assertKnownProvider = (providerId: string | undefined, model?: string): void => {
+    if (providerId === undefined) {
+      if (model !== undefined) {
+        throw new Error("a per-turn model needs the provider it runs on (providerId)");
+      }
+      return;
+    }
     if (!providerRegistry.getProvider(providerId)) {
       throw new Error(
         `cannot pin turn to llm provider "${providerId}": not configured`,
       );
     }
+    if (model === undefined) return;
+    // ATO-1148: a project's own model is a cloud choice. A local model
+    // is one per agent (one server, one loaded GGUF), so a per-turn
+    // model on a local link is refused rather than silently ignored.
+    const refusal = perTurnModelRefusal(resolveLlmConfig(getConfig()), providerId, model);
+    if (refusal !== null) throw new Error(refusal);
   };
 
   /**
@@ -347,6 +363,8 @@ export function createRuntimeTurnService(
       maxSteps?: number;
       signal?: AbortSignal;
       providerId?: string;
+      /** The pinned cloud provider's model for this turn only (ATO-1148). */
+      model?: string;
       taskMaxDurationMs?: number;
       taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
@@ -365,7 +383,7 @@ export function createRuntimeTurnService(
       answerChannel?: AnswerChannel;
     } = {},
   ): Promise<RunTurnResult> => {
-    assertKnownProvider(runOptions.providerId);
+    assertKnownProvider(runOptions.providerId, runOptions.model);
     // A fusion worker session is throwaway: no recorder, no trace pin, no
     // memory, and — at the end — no save. The parent session's turn
     // owns the durable record of what the worker did.
@@ -417,16 +435,21 @@ export function createRuntimeTurnService(
     const llmEntry = llmResolved.providers.find(
       (p) => p.id === llmResolved.activeTextProvider,
     );
-    const llmStamp: SessionLlmStamp = {
-      providerId: llmResolved.activeTextProvider,
-      chatModel: llmEntry?.defaultChatModel ?? llmEntry?.model ?? null,
-    };
+    // A turn on a project's own cloud model (ATO-1148) ran on that
+    // provider and model, not the active one: that is what it records.
+    const turnModel = runOptions.providerId !== undefined ? runOptions.model : undefined;
+    const llmStamp: SessionLlmStamp = turnModel !== undefined
+      ? { providerId: runOptions.providerId!, chatModel: turnModel }
+      : {
+          providerId: llmResolved.activeTextProvider,
+          chatModel: llmEntry?.defaultChatModel ?? llmEntry?.model ?? null,
+        };
     // What this turn is served by, against what the session's previous
     // turn was: a switch of provider, model, run mode or fusion worker —
     // or a fallover still in force — is told to the model once, as
     // `### route`, because the transcript it reads names the old model
     // and repeats the old model's refusals (session-route.ts).
-    const turnRoute = resolveTurnRoute({
+    const configuredRoute = resolveTurnRoute({
       resolved: llmResolved,
       runMode: resolveCurrentRunMode(),
       managedModelId: getConfig().localModels.managed.modelId ?? null,
@@ -437,6 +460,9 @@ export function createRuntimeTurnService(
       // turn starts on the primary then, and that is what it is told.
       fallbackOverrideId: fallbackChain.standingOverrideFor(session.id),
     });
+    const turnRoute = turnModel === undefined
+      ? configuredRoute
+      : { ...configuredRoute, main: { ...configuredRoute.main, model: turnModel } };
     const previousRoute = readSessionRoute(session.metadata);
     const routeNote =
       previousRoute === null
@@ -619,6 +645,8 @@ export function createRuntimeTurnService(
       eventHook?: TurnEventHook;
       origin?: TurnOrigin;
       providerId?: string;
+      /** See `executeTurn`'s `model`. */
+      model?: string;
       taskMaxDurationMs?: number;
       taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
@@ -656,7 +684,7 @@ export function createRuntimeTurnService(
     }
     // Before the queue, so a bad pin rejects now rather than after
     // waiting behind whatever is running on the session.
-    assertKnownProvider(runOptions.providerId);
+    assertKnownProvider(runOptions.providerId, runOptions.model);
     const origin = runOptions.origin ?? "cli";
     const submission = {
       sessionId: session.id,
@@ -714,7 +742,10 @@ export function createRuntimeTurnService(
       const localEngine = resolveTurnLocalEngine(getConfig(), provider.id);
       return {
         provider: provider.name,
-        model: resolveActiveModelName(provider.id),
+        model:
+          runOptions.model !== undefined && provider.id === runOptions.providerId
+            ? runOptions.model
+            : resolveActiveModelName(provider.id),
         ...(localEngine ? { localEngine } : {}),
         ...usage,
       };
@@ -769,3 +800,4 @@ export function resolveTurnLocalEngine(config: AtomicAgentConfig, providerId: st
   if (providerId !== "local-llama" || config.localModels.mode !== "managed") return "external";
   return config.localModels.managed.engine === "llama-server" ? "llama-server" : "atomic-core";
 }
+

@@ -175,6 +175,43 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.events).toEqual([]);
   });
 
+  it("a turn on a project's own cloud model runs pinned to it and leaves the active provider and config alone (ATO-1148)", async () => {
+    const local = resolveLlmConfig(fixture.config).providers[0]!;
+    fixture.config.llm = {
+      activeTextProvider: "local-llama",
+      activeEmbeddingProvider: "local-llama-embed",
+      toolTransport: "auto",
+      providers: [
+        local,
+        { id: "cloud", kind: "openai-compatible", baseUrl: "https://api.example.invalid/v1", apiKey: "k", defaultChatModel: "default-model" },
+      ],
+    } as never;
+    const registry = fixture.providers.providerRegistry;
+    await registry.mergeProvidersFromConfig(fixture.config, { config: fixture.config, logger: fixture.deps.logger } as never);
+    const swap = vi.spyOn(registry, "swapActive");
+
+    const output = await fixture.service.runTurn(session(), "request", { providerId: "cloud", model: "project-model" });
+
+    const options = fixture.loop.runTurn.mock.calls[0]?.[1];
+    expect(options).toMatchObject({ providerId: "cloud", model: "project-model" });
+    expect(output.session.metadata?.llm).toEqual({ providerId: "cloud", chatModel: "project-model" });
+    expect(output.session.metadata?.llmRoute).toMatchObject({ main: { providerId: "cloud", model: "project-model" } });
+    expect(swap).not.toHaveBeenCalled();
+    expect(registry.activeTextProviderId).toBe("local-llama");
+    expect(resolveLlmConfig(fixture.config).activeTextProvider).toBe("local-llama");
+    expect(resolveLlmConfig(fixture.config).providers.find((p) => p.id === "cloud")?.defaultChatModel).toBe("default-model");
+  });
+
+  it("a per-turn model is refused before enqueue on a local provider or without a provider (ATO-1148)", async () => {
+    const enqueue = vi.spyOn(fixture.turnController, "enqueue");
+    await expect(fixture.service.runTurn(session(), "request", { providerId: "local-llama", model: "other.gguf" }))
+      .rejects.toThrow(/local model, which is shared by all projects/);
+    await expect(fixture.service.runTurn(session(), "request", { model: "some-model" }))
+      .rejects.toThrow(/needs the provider it runs on/);
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(fixture.loop.runTurn).not.toHaveBeenCalled();
+  });
+
   it("same-session queued callbacks load state when they acquire the lock", async () => {
     const gate = deferred<void>();
     fixture.loop.runTurn.mockImplementationOnce(async (value, options) => { await gate.promise; return result(value, options); });

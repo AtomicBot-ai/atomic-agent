@@ -558,6 +558,9 @@ export class AgentLoop {
             ...(options.providerId !== undefined
               ? { providerId: options.providerId }
               : {}),
+            ...(options.providerId !== undefined && options.model !== undefined
+              ? { model: options.model }
+              : {}),
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }
