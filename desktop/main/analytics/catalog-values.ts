@@ -91,7 +91,8 @@ export const APPROVAL_CATEGORIES = [
   "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "shell_dangerous", "script", "proc_kill", "publish",
   "git_remote", "fusion_fanout", "browser_nonweb", "browser_commit", "browser_secret", "browser_offsite",
   "trust_config", "state_secret", "email", "fs_read_outside", "paid_generation", "screen_control", "screen_capture",
-  "local_model_restart", "hook_ask", "other",
+  "local_model_restart", "hook_ask", "http_write", "browser_site_tool", "user_question",
+    "session_cross", "other",
 ] as const;
 export const SETTINGS_PANES = [
   "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "webhooks", "skills", "privacy", "import", "diagnostics",

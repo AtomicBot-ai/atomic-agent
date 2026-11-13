@@ -328,6 +328,9 @@ const CATEGORY_PLAIN = {
   browser_offsite:'open a site outside the allowed list', state_secret:'touch the agent\u2019s secret files',
   screen_control:'click and type on your screen', screen_capture:'take a screenshot of your screen',
   local_model_restart:'restart the local model', hook_ask:'take a step a hook asked about',
+  // Categories the agent added since (approval-level.ts APPROVAL_CATEGORY_LABELS).
+  http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
+  user_question:'ask you a question', session_cross:'read or write in another chat',
 };
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
 /* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
@@ -4086,6 +4089,8 @@ const APPR_FALLBACK = {
   browser_offsite:'open a site outside the allowed list', state_secret:'touch its own secret files',
   screen_control:'click and type on your screen', screen_capture:'take a screenshot of your screen',
   local_model_restart:'restart the local model', hook_ask:'take a step one of your hooks asked about',
+  http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
+  user_question:'ask you a question', session_cross:'read or write in another chat',
 };
 /** ATO-473: whether the card offers "Allow in this chat". The agent grants
     the request's command shape (the binary, `git`) for the rest of the chat;
@@ -12204,6 +12209,9 @@ const CATEGORY_LABEL = {
   browser_offsite:'browser · site outside the allow-list', state_secret:'agent secret file',
   screen_control:'screen · click / type', screen_capture:'screen · screenshot',
   local_model_restart:'local model · restart', hook_ask:'hook · confirm',
+  // Added since (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
+  http_write:'HTTP request · sends data', browser_site_tool:'browser · the site\'s own tool',
+  user_question:'question for you', session_cross:'another chat · read / send',
 };
 
 /* Calm (S7): why an answer to an approval did not land, in words. The
