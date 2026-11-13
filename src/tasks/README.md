@@ -14,6 +14,7 @@ This area owns durable task queue. Read [AGENTS.md](AGENTS.md) before changing i
 - [task-resume.ts](task-resume.ts)
 - [task-run-summary.ts](task-run-summary.ts)
 - [task-report-hold.ts](task-report-hold.ts)
+- [task-heartbeat.ts](task-heartbeat.ts)
 
 ## Ownership and dependencies
 

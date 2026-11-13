@@ -9,6 +9,7 @@ import {
 } from "../tasks/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { parseDurationFlag, parseUsdFlag } from "./task-budget-flags.js";
+import { taskHeartbeatCommand } from "./task-heartbeat-command.js";
 
 const HELP =
   [
@@ -52,6 +53,8 @@ const HELP =
     "                            (optionally scoped to one session)",
     "  tick [--limit N]          One-shot scheduler pump: drain every due task (based on",
     "                            scheduled_for) without starting the long-lived ticker",
+    "  heartbeat create|list     A recurring check of a checklist file that writes only",
+    "                            when there is news (see `task heartbeat --help`)",
     "",
     "Examples:",
     "  atomic-agent task list --status pending",
@@ -81,6 +84,8 @@ export async function taskCommand(args: string[]): Promise<number> {
         return await handleRun(args.slice(1));
       case "tick":
         return await handleTick(args.slice(1));
+      case "heartbeat":
+        return await taskHeartbeatCommand(args.slice(1));
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);

@@ -54,6 +54,29 @@ export type {
   HeldReportStore,
   HeldTaskReport,
 } from "./task-report-hold-store.js";
+export {
+  HEARTBEAT_CHECKLIST_FILENAME,
+  HEARTBEAT_DEFAULT_INTERVAL_MS,
+  HEARTBEAT_MIN_INTERVAL_MS,
+  HEARTBEAT_SENTINEL,
+  buildHeartbeatPrompt,
+  clampHeartbeatIntervalMs,
+  heartbeatTaskMessage,
+  isHeartbeatSilent,
+  isWithinActiveHours,
+  parseActiveHours,
+} from "./task-heartbeat.js";
+export type {
+  HeartbeatConfig,
+  HeartbeatOutcome,
+  HeartbeatState,
+} from "./task-heartbeat.js";
+export {
+  SqliteHeartbeatStore,
+  openPerCallHeartbeatStore,
+} from "./task-heartbeat-store.js";
+export type { HeartbeatStore } from "./task-heartbeat-store.js";
+export type { TaskHeartbeatOptions } from "./task-heartbeat-run.js";
 export { nextDelayMs } from "./task-backoff.js";
 export type { BackoffOptions } from "./task-backoff.js";
 export {

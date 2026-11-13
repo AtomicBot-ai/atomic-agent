@@ -30,6 +30,18 @@ async function loadNotifier(): Promise<NotifierApi> {
   return cached;
 }
 
+/**
+ * Show a desktop notification outside a tool call: a heartbeat's news
+ * (ATO-454) uses it. Rejects when the platform notifier fails.
+ */
+export async function showDesktopNotification(options: {
+  title: string;
+  message: string;
+}): Promise<void> {
+  const notifier = await loadNotifier();
+  await notifier.notify({ title: options.title, message: options.message, sound: false });
+}
+
 export const osNotifyTool: ToolDefinition = {
   name: "os.notify",
   description: "Show a system notification (title + message).",
