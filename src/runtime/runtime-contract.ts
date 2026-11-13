@@ -453,6 +453,12 @@ export interface AgentRuntime {
        * `fusion.delegate` narrows a worker's catalog with it.
        */
       toolFilter?: (name: string) => boolean;
+      /**
+       * Read memory, write none of it (see `RunTurnOptions.memoryReadOnly`):
+       * no reflection, no lesson bump, the `memory.*` write tools hidden.
+       * `skill eval` runs with it so its variants cannot leak into each other.
+       */
+      memoryReadOnly?: boolean;
       /** The turn's tool role (see `RunTurnOptions.toolRole`); a worker is a `builder`. */
       toolRole?: ToolRole;
       /** See `RunTurnOptions.reasoningEffort` — a fusion worker's setting. */
@@ -520,6 +526,8 @@ export interface AgentRuntime {
       /** Spend ceiling in USD (see `RunTurnOptions.taskMaxCostUsd`). */
       taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
+      /** See `runTurn`'s `memoryReadOnly`. */
+      memoryReadOnly?: boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;

@@ -62,6 +62,9 @@ const HELP =
     "  browse [--source owner/repo]   Browse installable skills (ClawHub + configured GitHub taps)",
     "  search <query>             Search ClawHub + the configured GitHub taps",
     "  tap list|add <owner/repo>|remove <owner/repo>   Manage hub taps (mutates config.json)",
+    "  eval <name> --tasks <tasks.yaml> [--repeat <n>] [--only with|without] [--max-steps <n>] [--no-approval] [--json]",
+    "                             Run each task with the skill and without it, check the answers, and save",
+    "                             accuracy, time, tokens and cost to <stateDir>/skill-evals/<name>/ (Skill Lab)",
   ].join("\n") + "\n";
 
 export async function skillCommand(args: string[]): Promise<number> {
@@ -97,6 +100,11 @@ export async function skillCommand(args: string[]): Promise<number> {
         return await handleSearch(args.slice(1));
       case "tap":
         return await handleTap(args.slice(1));
+      case "eval": {
+        // Loaded on demand: it boots a full runtime, the other subcommands do not.
+        const { skillEvalCommand } = await import("./skill-eval-command.js");
+        return await skillEvalCommand(args.slice(1));
+      }
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);

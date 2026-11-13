@@ -596,6 +596,15 @@ export interface RunTurnOptions {
    */
   ephemeral?: boolean;
   /**
+   * Memory is read as usual (recall, the profile in the prompt) but the
+   * turn writes nothing to it: no end-of-turn reflection (notes, lessons,
+   * procedures), no lesson lifecycle bump, and the `memory.*` write tools
+   * are hidden (`memoryReadOnlyToolFilter`, applied by the runtime turn
+   * service). For `skill eval` (ATO-1098): a run with a skill and a run
+   * without it must not reach each other through the person's memory.
+   */
+  memoryReadOnly?: boolean;
+  /**
    * Hide tools from this turn. Applied to the descriptors handed to every
    * step, composed with the finalization-step filter, so under native
    * tools the hidden tool also leaves the wire payload — the step builds

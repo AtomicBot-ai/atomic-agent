@@ -137,6 +137,19 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("taskMaxSteps");
   });
 
+  it("a memoryReadOnly turn (skill eval) reaches the loop with the memory write tools hidden", async () => {
+    await fixture.service.executeTurn(session(), "request", { memoryReadOnly: true, toolFilter: (name) => name !== "os.fs.read" });
+    const options = fixture.loop.runTurn.mock.calls[0]?.[1];
+    expect(options?.memoryReadOnly).toBe(true);
+    const filter = options?.toolFilter;
+    expect(filter?.("memory.notes.store")).toBe(false);
+    expect(filter?.("memory.profile.set")).toBe(false);
+    expect(filter?.("memory.notes.recall")).toBe(true);
+    expect(filter?.("os.fs.read")).toBe(false);
+    await fixture.service.executeTurn(session("other"), "request");
+    expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("memoryReadOnly");
+  });
+
   it("marks the turn's progress at its start and checkpoints every completed step (ATO-1109)", async () => {
     const begin = vi.spyOn(fixture.sessionStore, "beginTurn");
     fixture.loop.runTurn.mockImplementationOnce(async (value: SessionState, options: RunTurnOptions) => {

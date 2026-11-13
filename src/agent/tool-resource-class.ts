@@ -323,6 +323,17 @@ export function isBookkeepingTool(toolName: string): boolean {
 }
 
 /**
+ * `RunTurnOptions.toolFilter` for a `memoryReadOnly` turn: hides every
+ * memory write tool (`isBookkeepingTool`: a note stored or forgotten, a
+ * profile fact set or removed) on top of `base`. Memory reads stay.
+ */
+export function memoryReadOnlyToolFilter(
+  base?: (name: string) => boolean,
+): (name: string) => boolean {
+  return (name) => !isBookkeepingTool(name) && (base ? base(name) : true);
+}
+
+/**
  * Read-only snapshot of the registry — useful for tests and debugging.
  */
 export function listKnownToolResourceClasses(): Readonly<
