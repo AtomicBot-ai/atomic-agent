@@ -26,6 +26,7 @@ import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallb
 import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
+import { sessionGroundingSource } from "../memory/name-grounding.js";
 import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
 import { join, resolve } from "node:path";
 
@@ -511,6 +512,7 @@ export async function createAgentRuntime(
   const { reflectionRunner, memoryContextProvider } = createRuntimeMemoryServices({
     config, profileStore, notesStore, linkStore, lessonStore, procedureStore, voteStore, embeddingClient,
     slotManager, llmComplete, toolTransport: bootstrapLlmSlice.transport, logger, metrics, touchRecorder, memoryHealth,
+    nameGroundingSource: sessionGroundingSource(sessionStore),
   });
 
   const promptPreviewDeps = {

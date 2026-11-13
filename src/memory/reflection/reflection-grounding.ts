@@ -1210,6 +1210,20 @@ export function namingQuestionsOf(reply: string): string[] {
 }
 
 /**
+ * ATO-321. Every name `text` claims for the user ("I am Alex", "The user
+ * is Alex", "Пользователь Анна"), grounded or not, de-duplicated. Used by
+ * the recall-time guard (`recall-name-guard.ts`), which checks each one
+ * against every stored session.
+ */
+export function claimedUserNames(text: string): string[] {
+  const out: string[] = [];
+  for (const word of claimedNames(text.replace(/’/g, "'"))) {
+    if (!out.includes(word)) out.push(word);
+  }
+  return out;
+}
+
+/**
  * ATO-200. The names `text` claims for the user ("The user is Anna",
  * "Пользователь Анна …", "my name is Anna") that no text in `texts` —
  * the user's own messages — vouches for. Empty when every claimed name

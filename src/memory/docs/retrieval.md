@@ -15,6 +15,8 @@ The query rewriter is enabled by default and heuristic-gated. Its sub-call uses 
 
 Profile rendering selects pinned/contextual facts. Lessons and procedures have separate retrieval and token budgets. Prompt assembly owns their ordering; profile/lessons/procedures come after conversation, while memory-index/recalled precede it. Do not use the archived v1 order.
 
+Notes and lessons that claim a user name ("I am Alex", "The user is Alex") reach `### recalled`, `### memory-index` and `### lessons` only when some stored user message carries that name; a name not checked yet stays out until a background check settles it ([name guard](../recall-name-guard.ts)). The guard never changes a row; `memory forget --before <date>` clears old test-run memory.
+
 ## Sources and tests
 
 - [Store](../memory-store.ts), [context provider](../memory-context-provider.ts), [profile](../profile-store.ts), [renderer](../notes-renderer.ts).

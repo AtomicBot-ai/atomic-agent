@@ -15,6 +15,7 @@ import type {
   ProcedureIndexEntry,
   ProcedureStore,
 } from "./procedures/procedure-store.js";
+import type { RecallNameGuard } from "./recall-name-guard.js";
 
 /**
  * Configuration for the default memory context provider.
@@ -96,6 +97,12 @@ export interface DefaultMemoryContextProviderOptions {
    * means "any project". Matches `memory.notes.recall`'s semantics.
    */
   workingDir?: string | null;
+  /**
+   * ATO-321. Keeps notes and lessons that claim a user name nobody
+   * typed ("I am Alex") out of `### recalled`, `### memory-index` and
+   * `### lessons`. Unset: every row passes, as before.
+   */
+  nameGuard?: RecallNameGuard;
 }
 
 /**
@@ -128,13 +135,19 @@ export function createDefaultMemoryContextProvider(
             workingDir: opts.workingDir,
           })
         : [];
-      const recalled = expandWithLinks({
+      const expanded = expandWithLinks({
         store: opts.store,
         base: recalledBase,
         links: opts.links,
         metrics: opts.metrics,
       });
-      const recalledIds = new Set(recalled.map((e) => e.id));
+      // Ids held out by the name guard are still excluded from the
+      // index below, which would hold them out too.
+      const recalledIds = new Set(expanded.map((e) => e.id));
+      const guard = opts.nameGuard;
+      const recalled = guard
+        ? expanded.filter((e) => guardAllows(guard, e.content))
+        : expanded;
       const index = opts.index.enabled
         ? loadIndex({
             store: opts.store,
@@ -142,6 +155,7 @@ export function createDefaultMemoryContextProvider(
             previewChars: opts.index.previewChars,
             workingDir: opts.workingDir,
             excludeIds: recalledIds,
+            ...(guard ? { nameGuard: guard } : {}),
           })
         : [];
       // Memory-v2 phase 5/7b: include `lessons` / `procedures`
@@ -153,6 +167,7 @@ export function createDefaultMemoryContextProvider(
         out.lessons = loadLessons({
           lessons: opts.lessons,
           query: buildRecallQuery(input),
+          ...(guard ? { nameGuard: guard } : {}),
         });
       }
       if (opts.procedures && opts.procedures.enabled) {
@@ -213,6 +228,7 @@ function loadProcedures(
 interface LoadLessonsArgs {
   lessons: DefaultMemoryContextProviderOptions["lessons"];
   query: string;
+  nameGuard?: RecallNameGuard;
 }
 
 /**
@@ -234,7 +250,11 @@ function loadLessons(args: LoadLessonsArgs): readonly LessonIndexEntry[] {
   if (query.length === 0) return [];
   try {
     const hits = cfg.store.recall({ query, k: cfg.k });
-    return hits.map((l) => ({
+    const guard = args.nameGuard;
+    const allowed = guard
+      ? hits.filter((l) => guardAllows(guard, `${l.activation}\n${l.principle}`))
+      : hits;
+    return allowed.map((l) => ({
       id: l.id,
       activation: l.activation,
       tags: l.tags,
@@ -346,6 +366,7 @@ interface LoadIndexArgs {
   previewChars: number;
   workingDir: string | null | undefined;
   excludeIds: ReadonlySet<number>;
+  nameGuard?: RecallNameGuard;
 }
 
 function loadIndex(args: LoadIndexArgs): readonly MemoryIndexEntry[] {
@@ -367,8 +388,26 @@ function loadIndex(args: LoadIndexArgs): readonly MemoryIndexEntry[] {
         : {}),
     });
     const filtered = raw.filter((row) => !args.excludeIds.has(row.id));
-    return filtered.slice(0, args.limit);
+    const guard = args.nameGuard;
+    if (!guard) return filtered.slice(0, args.limit);
+    const out: MemoryIndexEntry[] = [];
+    for (const row of filtered) {
+      if (out.length >= args.limit) break;
+      // The preview is only the first line; check the whole note.
+      const content = args.store.get(row.id)?.content ?? row.preview;
+      if (guardAllows(guard, content)) out.push(row);
+    }
+    return out;
   } catch {
     return [];
+  }
+}
+
+/** A guard that throws must not take the whole recall down: fail open. */
+function guardAllows(guard: RecallNameGuard, text: string): boolean {
+  try {
+    return guard.allows(text);
+  } catch {
+    return true;
   }
 }
