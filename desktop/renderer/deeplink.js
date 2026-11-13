@@ -55,7 +55,15 @@ function deeplinkTitle(req) {
 
 /* ---- renderer side (globals from renderer.js, read at call time) ---- */
 
-const DLINK = {req: null, busy: false, error: null, confirm: null, detail: null, detailLoading: false, seq: 0};
+const DLINK = {req: null, busy: false, error: null, confirm: null, detail: null, detailLoading: false, seq: 0,
+  queue: [], showTimer: null, armAt: 0, armTimer: null};
+
+/* A link that comes in while a card is open waits for it to close (review F08-7):
+   swapping the card in place would put link B's Install under a click aimed at A.
+   And after any change to what the card shows, Install stays off for a moment,
+   so a click already on its way cannot land on content the person has not seen. */
+const DLINK_ARM_MS = 1000;
+const DLINK_QUEUE_MAX = 5;
 
 /** Other cards (ATO-1071 recipes) draw through this: route → {html(req), install(req)}. */
 const DLINK_CARDS = {};
@@ -66,17 +74,54 @@ function deeplinkWire() {
   deeplinkPull();
 }
 
+function deeplinkCardOpen() {
+  return !!DLINK.req && (S.overlay === 'deeplink' || DLINK.busy);
+}
+
+/** The card's content just changed: Install waits DLINK_ARM_MS before it works again. */
+function deeplinkArm() {
+  DLINK.armAt = Date.now() + DLINK_ARM_MS;
+  if (DLINK.armTimer) clearTimeout(DLINK.armTimer);
+  DLINK.armTimer = setTimeout(() => { DLINK.armTimer = null; if (S.overlay === 'deeplink') render(); }, DLINK_ARM_MS + 20);
+}
+
+function deeplinkArmed() {
+  return Date.now() >= DLINK.armAt;
+}
+
 async function deeplinkPull() {
   const list = await BR.deeplinkTake().catch(() => []);
   if (!Array.isArray(list) || !list.length) return;
   const req = list[list.length - 1];   // several at once: the newest one is the one just clicked
-  if (DLINK.busy) { toast('An install is running', 'Open the link again once it has finished.', 'bad'); return; }
+  if (deeplinkCardOpen()) {
+    const same = (q) => !!req.link && q.link === req.link;
+    if (same(DLINK.req) || DLINK.queue.some(same)) return;   // the same link twice is one card
+    DLINK.queue.push(req);
+    if (DLINK.queue.length > DLINK_QUEUE_MAX) DLINK.queue.shift();
+    toast('Another link is waiting', 'It opens when you close this card.');
+    return;
+  }
+  deeplinkShow(req);
+}
+
+function deeplinkShow(req) {
   DLINK.req = req; DLINK.error = null; DLINK.confirm = null; DLINK.detail = null; DLINK.detailLoading = false;
   const seq = ++DLINK.seq;
+  deeplinkArm();
   S.overlay = 'deeplink';
   S.settings = null;   // as handoff: the card is the one thing on screen, so Escape and the scrim close it
   render();
   if (req.route === 'skill-install') deeplinkLoadSkill(req, seq);
+}
+
+/** Called from overlaysHTML when the card is not on screen: the next waiting link, once nothing else is up. */
+function deeplinkWhenClosed() {
+  if (!DLINK.queue.length || DLINK.busy || S.overlay || DLINK.showTimer) return;
+  DLINK.showTimer = setTimeout(() => {
+    DLINK.showTimer = null;
+    if (!DLINK.queue.length || DLINK.busy || S.overlay) return;
+    deeplinkShow(DLINK.queue.shift());
+  }, 0);
 }
 
 async function deeplinkLoadSkill(req, seq) {
@@ -87,6 +132,7 @@ async function deeplinkLoadSkill(req, seq) {
     : {ok:false, error:'the Skills Hub address is not known'};
   if (seq !== DLINK.seq) return;
   DLINK.detailLoading = false;
+  deeplinkArm();   // the rows just changed
   if (res && res.ok && res.detail) DLINK.detail = res.detail;
   else DLINK.error = 'ClawHub did not answer for this skill: ' + ((res && res.error) || 'no answer') + '.';
   if (S.overlay === 'deeplink') render();
@@ -138,7 +184,7 @@ function deeplinkSheetHTML() {
   const installLabel = DLINK.confirm ? 'Install anyway' : (req.route === 'mcp-install' ? 'Add server' : 'Install');
   const foot = '<span class="grow"></span>'
     + '<button class="btn btn-s sm" data-act="close">' + (req.route === 'error' ? 'Close' : 'Cancel') + '</button>'
-    + (req.route === 'error' ? '' : '<button class="btn btn-p sm" data-act="dlink:install"' + (canInstall && !DLINK.busy ? '' : ' disabled') + '>'
+    + (req.route === 'error' ? '' : '<button class="btn btn-p sm" data-act="dlink:install"' + (canInstall && !DLINK.busy && deeplinkArmed() ? '' : ' disabled') + '>'
       + (DLINK.busy ? '<span class="tk-spin"></span>' : '') + esc(installLabel) + '</button>');
   return sheet(deeplinkTitle(req), body, foot, 'sheet-deeplink');
 }
@@ -176,7 +222,7 @@ async function deeplinkInstallSkill(req) {
 
 async function deeplinkInstall() {
   const req = DLINK.req;
-  if (!req || DLINK.busy || !BR) return;
+  if (!req || DLINK.busy || !BR || !deeplinkArmed()) return;
   const custom = DLINK_CARDS[req.route];
   const run = req.route === 'mcp-install' ? deeplinkInstallMcp
     : req.route === 'skill-install' ? deeplinkInstallSkill
@@ -185,15 +231,23 @@ async function deeplinkInstall() {
   DLINK.busy = true; DLINK.error = null; render();
   const res = await run(req);
   DLINK.busy = false;
-  if (DLINK.req !== req) return;   // another link took the card meanwhile
+  if (DLINK.req !== req) { deeplinkWhenClosed(); return; }
+  if (S.overlay !== 'deeplink' && !(res && res.ok)) {   // the card was closed while it ran: say how it ended, then the next link
+    DLINK.req = null; DLINK.confirm = null;
+    if (!(res && res.again)) toast('The link’s install did not finish', (res && res.error) || 'The install failed.', 'bad');
+    deeplinkWhenClosed();
+    return;
+  }
   if (res && res.ok) {
     DLINK.req = null; DLINK.confirm = null;
     if (S.overlay === 'deeplink') S.overlay = null;
     render();
     if (res.title) toast(res.title, res.text || '');
+    deeplinkWhenClosed();
     return;
   }
   if (!(res && res.again)) { DLINK.confirm = null; DLINK.error = (res && res.error) || 'The install failed.'; }
+  deeplinkArm();   // "Install anyway" or a new error now sits under the pointer
   render();
 }
 

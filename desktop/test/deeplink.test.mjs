@@ -4,6 +4,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
 const M = require("../out/main/deeplink.js");
@@ -195,6 +197,103 @@ test("mcp: docker run only, without the host's powers", () => {
     ["run", "-i", "--rm"],
   ];
   for (const args of refused) assert.equal(M.checkMcpCommand("docker", args).ok, false, args.join(" "));
+});
+
+test("mcp: the docker mount guard reads every spelling of a mount (review F08-8)", () => {
+  const refused = [
+    ["run", "-v/:/host", "alpine:3.20"],
+    ["run", "-v=/:/host", "alpine:3.20"],
+    ["run", "-itv/:/host", "alpine:3.20"],
+    ["run", "-it", "-v", "/:/host:ro", "alpine:3.20"],
+    ["run", "--volume=/:/host", "alpine:3.20"],
+    ["run", "-v", "/var/run/docker.sock:/var/run/docker.sock:ro", "img:1"],
+    ["run", "-v", "/run/user/501/docker.sock:/s", "img:1"],
+    ["run", "-v", "/Users/me/.docker/run/docker.sock:/s:ro", "img:1"],
+    ["run", "--mount", "type=bind,src=//,dst=/host", "img:1"],
+    ["run", "--mount", "type=bind,source=/./,target=/host,readonly", "img:1"],
+    ["run", "--mount=type=bind,src=/var/run/docker.sock,dst=/s,ro", "img:1"],
+    ["run", "-v", "//:/host", "img:1"],
+    ["run", "-v", "/./:/host", "img:1"],
+    ["run", "-v", "/etc/..:/host", "img:1"],
+    ["run", "-v", "/var/run:/r", "img:1"],
+    ["run", "img:1", "-v", "/:/host"],   // after the image too: an unknown value flag could hide the image
+  ];
+  for (const args of refused) assert.equal(M.checkMcpCommand("docker", args).ok, false, args.join(" "));
+  assert.match(M.checkMcpCommand("docker", ["run", "-v/:/host", "alpine:3.20"]).error, /whole disk or the Docker socket/);
+});
+
+test("mcp: Windows drive roots and the Docker pipe are refused as mounts (review F08-8)", () => {
+  const refused = [
+    ["run", "-v", "C:\\:/host", "img:1"],
+    ["run", "-v", "C:/:/host", "img:1"],
+    ["run", "-v", "c:\\.\\:/host:ro", "img:1"],
+    ["run", "-v", "D::/host", "img:1"],
+    ["run", "-v", "/c/:/host", "img:1"],
+    ["run", "-v", "/mnt/c:/host", "img:1"],
+    ["run", "-v", "/host_mnt/c/:/host", "img:1"],
+    ["run", "--mount", "type=bind,source=C:\\,target=/host", "img:1"],
+    ["run", "-v", "//./pipe/docker_engine://./pipe/docker_engine", "img:1"],
+    ["run", "-v", "\\\\.\\pipe\\docker_engine:\\\\.\\pipe\\docker_engine", "img:1"],
+  ];
+  for (const args of refused) assert.equal(M.checkMcpCommand("docker", args).ok, false, args.join(" "));
+  const folder = M.checkMcpCommand("docker", ["run", "-v", "C:\\Users\\me\\notes:/data:ro", "img:1"]);
+  assert.equal(folder.ok, true, err({ ok: false, error: folder.error }));
+  assert.ok(folder.warnings.some((w) => w === "The container can read C:\\Users\\me\\notes on this computer."));
+  const vol = M.checkMcpCommand("docker", ["run", "-v", "cache:/cache", "img:1"]);
+  assert.equal(vol.ok, true);
+  assert.ok(vol.warnings.some((w) => /Docker volume named cache/.test(w)));
+});
+
+test("normaliseHostPath / dockerFlags: one spelling for every path and flag", () => {
+  for (const p of ["/", "//", "/./", "/.", "///", "/a/..", "\\"]) assert.equal(M.normaliseHostPath(p), "/", p);
+  for (const p of ["C:\\", "C:/", "c:", "C:\\.", "/c", "/c/", "/mnt/C", "/host_mnt/c"]) assert.equal(M.normaliseHostPath(p), "c:", p);
+  assert.equal(M.normaliseHostPath("/Users//me/./notes/"), "/Users/me/notes");
+  assert.deepEqual(M.dockerFlags(["-itv/:/h", "-e", "A", "--mount=src=/x", "--rm"]), [
+    { name: "-i", value: "" }, { name: "-t", value: "" }, { name: "-v", value: "/:/h" },
+    { name: "-e", value: "A" }, { name: "--mount", value: "src=/x" }, { name: "--rm", value: "" },
+  ]);
+  assert.deepEqual(M.dockerFlags(["-v=/a:/b"]), [{ name: "-v", value: "/a:/b" }]);
+  assert.equal(M.volumeSource("/a:/b:ro"), "/a");
+  assert.equal(M.volumeSource("C:\\x:/b"), "C:\\x");
+  assert.equal(M.volumeSource("/anon"), "");
+  assert.equal(M.mountSource("type=bind,src=//,dst=/h"), "//");
+  assert.equal(M.dockerSourceRefused("data"), false);
+});
+
+test("mcp: npx and bunx take only -y, --yes and -p/--package before the package (review F08-9)", () => {
+  assert.equal(M.checkMcpCommand("npx", ["-yc", "echo hi; id"]).ok, false);
+  assert.equal(M.checkMcpCommand("npx", ["--regi=https://e.x", "a@1"]).ok, false);
+  const refused = [
+    ["-cy", "id"], ["-yp", "a@1"], ["--yes=true", "a@1"], ["--call", "id"], ["--reg", "https://e.x", "a@1"],
+    ["--userconf=/tmp/x", "a@1"], ["--", "a@1"], ["-y", "--no-install", "a@1"], ["--package"], ["-p", "--registry=x", "a@1"],
+    ["-p", "a@1", "echo hi; id"], ["-p", "a@1", "$(id)"], ["--package=a@1", "sh -c id"],
+  ];
+  for (const args of refused) {
+    assert.equal(M.checkMcpCommand("npx", args).ok, false, "npx " + args.join(" "));
+    assert.equal(M.checkMcpCommand("bunx", args).ok, false, "bunx " + args.join(" "));
+  }
+  assert.equal(M.checkMcpCommand("bunx", ["--bun", "a@1"]).ok, false);
+  for (const args of [["-y", "a@1"], ["--yes", "@s/a@1.2.0", "--port", "3", "-v"], ["-p", "a@1", "a-bin"], ["--package=a@1", "a-bin", "--stdio"], ["--package", "@s/a@1", "@s/a"]]) {
+    const r = M.checkMcpCommand("npx", args);
+    assert.equal(r.ok, true, "npx " + args.join(" ") + ": " + (r.ok ? "" : r.error));
+  }
+  assert.equal(M.checkMcpCommand("npx", ["-p", "./evil", "bin"]).ok, false);
+  assert.ok(M.checkMcpCommand("npx", ["-p", "a", "bin"]).warnings.some((w) => /has no version/.test(w)));
+});
+
+test("mcp: uvx takes only --from, --with, --python and -q before the package", () => {
+  const refused = [
+    ["--index", "https://e.x", "p==1"], ["--index-url=https://e.x", "p==1"], ["--extra-index-url", "https://e.x", "p==1"],
+    ["--default-index", "https://e.x", "p==1"], ["--find-links", "/tmp", "p==1"], ["-i", "https://e.x", "p==1"], ["-f", "/tmp", "p==1"],
+    ["--with-requirements", "r.txt", "p==1"], ["--with-editable", ".", "p==1"], ["--config-file", "/tmp/uv.toml", "p==1"],
+    ["-qi", "https://e.x", "p==1"], ["--python", "/tmp/evil/python", "p==1"], ["--from", "p==1"], ["--with", "./x", "p==1"],
+    ["--from", "p==1", "echo hi; id"],
+  ];
+  for (const args of refused) assert.equal(M.checkMcpCommand("uvx", args).ok, false, "uvx " + args.join(" "));
+  for (const args of [["--from", "git+https://github.com/o/r@v1", "tool"], ["--from=p==1", "p"], ["--python", "3.12", "p==1"], ["-q", "--with", "extra==2", "p==1", "--index", "x"]]) {
+    const r = M.checkMcpCommand("uvx", args);
+    assert.equal(r.ok, true, "uvx " + args.join(" ") + ": " + (r.ok ? "" : r.error));
+  }
 });
 
 test("dockerImage: skips flags and their values", () => {
@@ -412,4 +511,88 @@ test("card: titles", () => {
   assert.equal(R.deeplinkTitle({ route: "mcp-install" }), "Add this MCP server?");
   assert.equal(R.deeplinkTitle({ route: "skill-install" }), "Install this skill?");
   assert.equal(R.deeplinkTitle({ route: "error" }), "This link can\u2019t be opened");
+});
+
+/* ---------------- the card on screen (renderer/deeplink.js in a vm, review F08-7) ---------------- */
+
+const DLINK_SRC = readFileSync(new URL("../renderer/deeplink.js", import.meta.url), "utf8");
+const RENDERER_SRC = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
+const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
+const mcpReq = (name) => ({
+  route: "mcp-install", link: `atomicagent://mcp/install?name=${name}`, warnings: [],
+  server: { name, transport: { kind: "stdio", command: "npx", args: [`${name}@1`] } },
+});
+
+/** deeplink.js with renderer.js's globals stubbed; render() draws the overlay as overlaysHTML does. */
+function cardPage() {
+  const page = { pending: [], added: [], toasts: [] };
+  const ctx = vm.createContext({
+    setTimeout: (f, ms) => { const t = setTimeout(f, ms); t.unref?.(); return t; }, clearTimeout,
+    S: { overlay: null, settings: null }, MCP: {},
+    BR: { deeplinkTake: async () => page.pending.splice(0), onDeeplink() {} },
+    toast: (title) => page.toasts.push(title),
+    mcpAddSubmit: async (json) => { page.added.push(JSON.parse(json).name); return { ok: true }; },
+    sheet: (title, body, foot) => title + body + foot, ic: () => "", esc: (v) => String(v),
+  });
+  vm.runInContext(DLINK_SRC + `
+    function render() { globalThis.html = S.overlay === 'deeplink' ? deeplinkSheetHTML() : (deeplinkWhenClosed(), ''); }
+    globalThis.DL = DLINK;`, ctx);
+  page.ctx = ctx;
+  page.link = async (name) => { page.pending.push(mcpReq(name)); await ctx.deeplinkPull(); };
+  page.install = () => ctx.deeplinkAct("install");   // act('dlink:install') in renderer.js
+  page.settle = () => { ctx.DL.armAt = 0; };          // the card has been on screen past the arming delay
+  return page;
+}
+
+test("card race: a link that comes in while a card is open waits; Install in the same tick installs A, never B", async () => {
+  const p = cardPage();
+  await p.link("a");
+  p.settle();
+  await p.link("b");                       // B arrives while A is on screen
+  p.install();                             // same tick: the click meant for A
+  await tick();
+  assert.deepEqual(p.added, ["a"], "no mcpAddSubmit call for b");
+  assert.ok(p.toasts.includes("Another link is waiting"));
+  await tick();                            // A's card closed on success: B opens now
+  assert.equal(p.ctx.S.overlay, "deeplink");
+  assert.equal(p.ctx.DL.req.server.name, "b");
+  p.install();                             // a click right after B appeared does nothing
+  await tick();
+  assert.deepEqual(p.added, ["a"]);
+  assert.match(p.ctx.html, /data-act="dlink:install" disabled/);
+  p.settle();
+  p.install();
+  await tick();
+  assert.deepEqual(p.added, ["a", "b"]);
+});
+
+test("card race: Cancel on A shows the waiting link; the same link twice is one card", async () => {
+  const p = cardPage();
+  await p.link("a");
+  await p.link("b");
+  assert.equal(p.ctx.DL.req.server.name, "a");
+  p.ctx.S.overlay = null; p.ctx.render();  // Cancel / Escape / the scrim (act's close())
+  await tick();
+  assert.equal(p.ctx.DL.req.server.name, "b");
+  assert.equal(p.ctx.S.overlay, "deeplink");
+  await p.link("b");                       // the same link twice is one card
+  assert.equal(p.ctx.DL.queue.length, 0);
+});
+
+test("card: Install is off for a moment after the card's content changes", async () => {
+  const p = cardPage();
+  await p.link("a");
+  assert.match(p.ctx.html, /data-act="dlink:install" disabled/);
+  p.install();
+  await tick();
+  assert.deepEqual(p.added, []);
+  p.settle(); p.ctx.render();
+  assert.doesNotMatch(p.ctx.html, /data-act="dlink:install" disabled/);
+  p.ctx.deeplinkArm(); p.ctx.render();     // e.g. ClawHub's details or "Install anyway" just arrived
+  assert.match(p.ctx.html, /data-act="dlink:install" disabled/);
+  assert.ok(/const DLINK_ARM_MS = 1000;/.test(DLINK_SRC));
+});
+
+test("renderer.js: the overlay hook opens a waiting link once the card is closed", () => {
+  assert.match(RENDERER_SRC, /if \(S\.overlay === 'deeplink'\) html \+= deeplinkSheetHTML\(\); else deeplinkWhenClosed\(\);/);
 });

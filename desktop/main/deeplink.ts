@@ -182,13 +182,26 @@ const ARG_MAX = 1024;
 /* cmd.exe's own characters (the Windows route above) and quotes. */
 const ARG_FORBIDDEN_RE = /[&|<>^"%`\r\n\u0000]/;
 
-/** Flags that turn the runner into a shell, or point it at another registry. */
-const BLOCKED_FLAGS: Record<string, readonly string[]> = {
-  npx: ["-c", "--call", "--shell", "--script-shell", "--node-options", "--registry", "--userconfig", "--globalconfig", "--prefix"],
-  bunx: ["--registry", "--config", "-c"],
-  uvx: ["--index", "--index-url", "--extra-index-url", "--default-index", "--find-links", "-i", "-f"],
-  docker: ["--privileged", "--pid", "--ipc", "--uts", "--userns", "--cgroupns", "--cap-add", "--security-opt", "--device"],
+/**
+ * Flags a link may put before the package (review F08-9). An allowlist: npx and
+ * bunx take `-c`, `--call`, `--registry`, `--userconfig`… in many spellings
+ * (`-yc`, `--regi=` as an abbreviation), so anything not named here is refused.
+ * Everything after the package goes to the package itself, not to the runner.
+ * Flags with a `value` take the next argument (or `=value`): "from" names the
+ * package the command comes from (npx -p, uvx --from), "with" an extra package
+ * (uvx --with), "python" a Python version.
+ */
+const RUNNER_FLAGS: Record<"npx" | "bunx" | "uvx", Readonly<Record<string, { value?: "from" | "with" | "python" }>>> = {
+  npx: { "-y": {}, "--yes": {}, "-p": { value: "from" }, "--package": { value: "from" } },
+  bunx: { "-y": {}, "--yes": {}, "-p": { value: "from" }, "--package": { value: "from" } },
+  // uvx: --index/--index-url/--extra-index-url/--default-index/--find-links/-i/-f (another
+  // registry), --with-requirements/--with-editable/--config-file (files on this computer)
+  // and every other flag are refused by not being here.
+  uvx: { "--from": { value: "from" }, "--with": { value: "with" }, "--python": { value: "python" }, "-q": {}, "--quiet": {} },
 };
+
+/** docker run flags a link may never pass: they hand the container the host's powers. */
+const DOCKER_BLOCKED_FLAGS: readonly string[] = ["--privileged", "--pid", "--ipc", "--uts", "--userns", "--cgroupns", "--cap-add", "--security-opt", "--device"];
 
 /** Environment names a link may not set: they change what runs, or where packages come from. */
 const BLOCKED_ENV = new Set([
@@ -206,12 +219,6 @@ const BLOCKED_ENV_PREFIXES = ["DYLD_", "NPM_CONFIG_", "PIP_", "YARN_", "PNPM_"];
 export function envNameBlocked(name: string): boolean {
   const up = name.toUpperCase();
   return BLOCKED_ENV.has(up) || BLOCKED_ENV_PREFIXES.some((p) => up.startsWith(p));
-}
-
-/** `--flag=value` and `--flag value` both name `--flag`. */
-function flagName(arg: string): string {
-  const eq = arg.indexOf("=");
-  return eq > 0 && arg.startsWith("-") ? arg.slice(0, eq) : arg;
 }
 
 /* docker run flags that take the next argument as their value. */
@@ -243,6 +250,125 @@ function unpinnedNpm(spec: string): boolean {
 }
 
 /**
+ * The runner's own flags, before the package: only those in RUNNER_FLAGS, each
+ * spelled whole (`-y`, `--package=x`, `--package x`). Combined short flags
+ * (`-yc`), abbreviations (`--regi=`) and `--` are refused.
+ */
+export function runnerLead(cmd: "npx" | "bunx" | "uvx", list: readonly string[]): { ok: true; from: string[]; with: string[]; next: number } | { ok: false; error: string } {
+  const allowed = RUNNER_FLAGS[cmd];
+  const from: string[] = [];
+  const extra: string[] = [];
+  let i = 0;
+  for (; i < list.length; i++) {
+    const a = list[i]!;
+    if (!a.startsWith("-")) break;
+    const eq = a.startsWith("--") ? a.indexOf("=") : -1;
+    const name = eq > 0 ? a.slice(0, eq) : a;
+    const spec = allowed[name];
+    const only = Object.keys(allowed).join(", ");
+    if (!spec) return { ok: false, error: `A link may not pass ${name.slice(0, 40)} to ${cmd} (only ${only}).` };
+    if (!spec.value) {
+      if (eq > 0) return { ok: false, error: `${name} takes no value.` };
+      continue;
+    }
+    const value = eq > 0 ? a.slice(eq + 1) : list[++i];
+    if (!value || value.startsWith("-")) return { ok: false, error: `${name} needs a value.` };
+    if (spec.value === "python") {
+      if (!/^(?:(?:cpython|pypy)-?)?\d+(?:\.\d+){0,2}$/i.test(value)) return { ok: false, error: "--python takes a version number." };
+    } else (spec.value === "from" ? from : extra).push(value);
+  }
+  return { ok: true, from, with: extra, next: i };
+}
+
+/* docker's one-letter flags that take a value (`-v x`, `-vx`, `-v=x`, `-itv x`). */
+const DOCKER_SHORT_VALUE = new Set([...DOCKER_VALUE_FLAGS].filter((f) => /^-[a-z]$/i.test(f)).map((f) => f[1]!));
+
+/**
+ * Every flag in docker run's arguments as {name, value}: `--flag=value`,
+ * `--flag value`, attached short values (`-v/:/host`, `-v=/:/host`) and
+ * combined short flags (`-itv /:/host`) all read the same.
+ */
+export function dockerFlags(args: readonly string[]): { name: string; value: string }[] {
+  const out: { name: string; value: string }[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (!a.startsWith("-") || a === "-" || a === "--") continue;
+    if (a.startsWith("--")) {
+      const eq = a.indexOf("=");
+      const name = eq > 0 ? a.slice(0, eq) : a;
+      out.push({ name, value: eq > 0 ? a.slice(eq + 1) : DOCKER_VALUE_FLAGS.has(name) ? args[i + 1] ?? "" : "" });
+      continue;
+    }
+    for (let j = 1; j < a.length; j++) {
+      const c = a[j]!;
+      if (!DOCKER_SHORT_VALUE.has(c)) { out.push({ name: "-" + c, value: "" }); continue; }
+      let rest = a.slice(j + 1);
+      if (rest.startsWith("=")) rest = rest.slice(1);
+      out.push({ name: "-" + c, value: rest || (args[i + 1] ?? "") });
+      break;
+    }
+  }
+  return out;
+}
+
+/** The host side of `-v src:dst[:opts]`; a Windows drive (`C:\\x:/data`) keeps its colon. */
+export function volumeSource(value: string): string {
+  const drive = /^[A-Za-z]:(?=[\\/]|$|:)/.exec(value);
+  if (drive) return drive[0] + value.slice(2).split(":")[0];
+  const src = value.split(":")[0] ?? "";
+  // `-v /data` alone is an anonymous volume at /data in the container, not a host folder.
+  return value.includes(":") ? src : "";
+}
+
+/** The host side of `--mount type=bind,source=…` (`src=` too). */
+export function mountSource(value: string): string {
+  for (const part of value.split(",")) {
+    const m = /^\s*(?:source|src)\s*=(.*)$/i.exec(part);
+    if (m) return m[1]!.trim().replace(/^["']|["']$/g, "");
+  }
+  return "";
+}
+
+/**
+ * A host path in one spelling: `\\` as `/`, `//`, `/./`, `..` and a trailing
+ * `/` folded, a Windows drive as `c:` (`C:\\`, `C:/`, `/c/`, `/mnt/c`,
+ * `/host_mnt/c` are all the drive's root).
+ */
+export function normaliseHostPath(raw: string): string {
+  let s = raw.replace(/\\/g, "/");
+  let drive = "";
+  const d = /^([A-Za-z]):/.exec(s);
+  if (d) { drive = d[1]!.toLowerCase() + ":"; s = s.slice(2); }
+  if (!s.startsWith("/")) s = "/" + s;
+  const parts: string[] = [];
+  for (const seg of s.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") parts.pop();
+    else parts.push(seg);
+  }
+  if (!drive) {
+    const wsl = /^(?:mnt|host_mnt|run\/desktop\/mnt\/host)$/i;
+    if (parts.length === 1 && /^[A-Za-z]$/.test(parts[0]!)) return parts[0]!.toLowerCase() + ":";
+    if (parts.length >= 2 && /^[A-Za-z]$/.test(parts[parts.length - 1]!) && wsl.test(parts.slice(0, -1).join("/"))) return parts[parts.length - 1]!.toLowerCase() + ":";
+  }
+  return drive + "/" + parts.join("/");
+}
+
+/**
+ * A mount source a link may never use: the host's root (any drive's root on
+ * Windows), the Docker socket or named pipe anywhere in the path, or a folder
+ * that holds the socket (/var, /run, /var/run).
+ */
+export function dockerSourceRefused(src: string): boolean {
+  if (!src) return false;
+  if (/docker\.sock|docker_engine/i.test(src)) return true;
+  // Not a path (`data`, `cache-1`): a named Docker volume, not a host folder.
+  if (!/^(?:[\\/.~]|[A-Za-z]:)/.test(src)) return false;
+  const p = normaliseHostPath(src);
+  return p === "/" || /^[a-z]:(?:\/)?$/.test(p) || p === "/var" || p === "/run" || p === "/var/run";
+}
+
+/**
  * A stdio command from a link: allowed or not, and what the card warns about.
  * The allowlist and the argument rules are the only gate before the card;
  * the person's click is the only gate after it.
@@ -261,36 +387,37 @@ export function checkMcpCommand(command: unknown, args: readonly unknown[]): { o
     if (ARG_FORBIDDEN_RE.test(a)) return { ok: false, error: `The argument ${JSON.stringify(a.slice(0, 60))} holds a character a link may not pass (& | < > ^ " % \` or a line break).` };
     list.push(a);
   }
-  const blocked = BLOCKED_FLAGS[cmd] ?? [];
-  for (const a of list) {
-    const name = flagName(a);
-    if (blocked.includes(name)) return { ok: false, error: `A link may not pass ${name} to ${cmd}.` };
-  }
   const warnings: string[] = [];
-  const positional = list.filter((a) => !a.startsWith("-"));
-  if (cmd === "npx" || cmd === "bunx") {
-    const pkgFlag = list.findIndex((a) => a === "-p" || a === "--package");
-    const pkg = pkgFlag >= 0 ? list[pkgFlag + 1] : list.find((a) => a.startsWith("--package="))?.slice("--package=".length) ?? positional[0];
-    if (!pkg) return { ok: false, error: `The link gives ${cmd} no package to run.` };
-    if (localPackageSpec(pkg)) return { ok: false, error: "A link may only run a published package, not a file on this computer." };
-    if (unpinnedNpm(pkg)) warnings.push(`The package ${pkg} has no version, so whatever is newest is run each time.`);
-  } else if (cmd === "uvx") {
-    const fromAt = list.indexOf("--from");
-    const pkg = fromAt >= 0 ? list[fromAt + 1] : positional[0];
-    if (!pkg) return { ok: false, error: "The link gives uvx no package to run." };
-    if (localPackageSpec(pkg)) return { ok: false, error: "A link may only run a published package, not a file on this computer." };
-    if (!/[=@]/.test(pkg)) warnings.push(`The package ${pkg} has no version, so whatever is newest is run each time.`);
+  if (cmd === "npx" || cmd === "bunx" || cmd === "uvx") {
+    const lead = runnerLead(cmd, list);
+    if (!lead.ok) return lead;
+    const target = list[lead.next];
+    if (target === undefined) return { ok: false, error: `The link gives ${cmd} no package to run.` };
+    // With -p/--package (or uvx --from) the first argument after the flags is a command name, and
+    // npm exec hands that name to a shell: a bare program name only, so `-p x "echo hi; id"` cannot pass.
+    if (lead.from.length && !/^[A-Za-z0-9@_][A-Za-z0-9@._+\/-]*$/.test(target)) {
+      return { ok: false, error: `${JSON.stringify(target.slice(0, 60))} is not a program name ${cmd} can run.` };
+    }
+    const pkgs = [...(lead.from.length ? lead.from : [target]), ...lead.with];
+    for (const pkg of pkgs) {
+      if (localPackageSpec(pkg)) return { ok: false, error: "A link may only run a published package, not a file on this computer." };
+      const pinned = cmd === "uvx" ? /[=@]/.test(pkg) : !unpinnedNpm(pkg);
+      if (!pinned) warnings.push(`The package ${pkg} has no version, so whatever is newest is run each time.`);
+    }
   } else if (cmd === "docker") {
     if (list[0] !== "run") return { ok: false, error: "A link may only use docker run." };
-    for (let i = 1; i < list.length; i++) {
-      const a = list[i]!;
-      const name = flagName(a);
-      const value = a.includes("=") && a.startsWith("-") ? a.slice(a.indexOf("=") + 1) : list[i + 1] ?? "";
-      if ((name === "--network" || name === "--net") && value === "host") return { ok: false, error: "A link may not give the container the host's network." };
-      if (name === "-v" || name === "--volume" || name === "--mount") {
-        const src = name === "--mount" ? (/(?:^|,)(?:source|src)=([^,]+)/.exec(value)?.[1] ?? "") : value.split(":")[0] ?? "";
-        if (src === "/" || /docker\.sock$/.test(value)) return { ok: false, error: "A link may not mount the whole disk or the Docker socket into the container." };
-        warnings.push(`The container can read and write ${src || "a folder"} on this computer.`);
+    // Every flag-shaped argument is checked, also after the image: an unknown value flag would
+    // otherwise make the image guess wrong and hide a mount behind it.
+    for (const f of dockerFlags(list.slice(1))) {
+      if (DOCKER_BLOCKED_FLAGS.includes(f.name)) return { ok: false, error: `A link may not pass ${f.name} to docker.` };
+      if ((f.name === "--network" || f.name === "--net") && f.value === "host") return { ok: false, error: "A link may not give the container the host's network." };
+      if (f.name === "-v" || f.name === "--volume" || f.name === "--mount") {
+        const src = f.name === "--mount" ? mountSource(f.value) : volumeSource(f.value);
+        if (dockerSourceRefused(src)) return { ok: false, error: "A link may not mount the whole disk or the Docker socket into the container, not even read-only." };
+        const rw = /(?:^|[:,])(?:ro|readonly)(?:$|[,=])/.test(f.value) ? "read" : "read and write";
+        if (src && !/^(?:[\\/.~]|[A-Za-z]:)/.test(src)) warnings.push(`The container keeps its data in a Docker volume named ${src}.`);
+        else if (src) warnings.push(`The container can ${rw} ${src} on this computer.`);
+        else if (f.name !== "--mount") warnings.push("The container gets a folder of its own on this computer.");
       }
     }
     const image = dockerImage(list);
