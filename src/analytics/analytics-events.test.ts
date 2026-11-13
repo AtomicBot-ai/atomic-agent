@@ -7,6 +7,7 @@ import {
   captureMessageSent,
   captureModelConfigured,
   captureOnboardingStep,
+  captureUiAction,
 } from "./analytics-events.js";
 import type { AnalyticsStateStore } from "./analytics-state-store.js";
 
@@ -351,5 +352,29 @@ describe("captureModelConfigured", () => {
     const store = fakeStore();
     expect(() => captureModelConfigured(null, store, ctx)).not.toThrow();
     expect(store.markModelConfiguredSent).not.toHaveBeenCalled();
+  });
+});
+
+describe("captureUiAction (ATO-1465)", () => {
+  it("sends ui_action with the command name and the trigger only", () => {
+    const client = fakeClient();
+    captureUiAction(client, "/report", "slash");
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.uiAction, {
+      action: "/report",
+      via: "slash",
+    });
+    expect(ANALYTICS_EVENTS.uiAction).toBe("ui_action");
+  });
+
+  it("drops anything that is not a bare command name", () => {
+    const client = fakeClient();
+    captureUiAction(client, "/discord foo bar", "slash");
+    captureUiAction(client, "report", "slash");
+    captureUiAction(client, "/x/../etc", "menu");
+    expect(client.capture).not.toHaveBeenCalled();
+  });
+
+  it("no-ops when analytics is disabled (null client)", () => {
+    expect(() => captureUiAction(null, "/report", "slash")).not.toThrow();
   });
 });

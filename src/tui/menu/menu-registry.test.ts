@@ -242,6 +242,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "file a GitHub issue with your logs attached — you choose how much leaves this machine",
   },
+  // ATO-1465: the community server, right after /report.
+  {
+    name: "discord",
+    description:
+      "open our Discord server in the browser (the link is printed too, for SSH sessions)",
+  },
   {
     name: "runmode",
     description:

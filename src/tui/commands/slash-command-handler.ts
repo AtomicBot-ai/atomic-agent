@@ -7,6 +7,7 @@ import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
+import { DISCORD_INVITE_URL } from "../community-links.js";
 import { parseRunModeCommand } from "./dispatch-run-mode.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS, type SlashCommandDef } from "./slash-commands.js";
@@ -65,6 +66,8 @@ export interface SlashDispatchResult {
   readonly triggerDebugBundleDump: boolean;
   /** When true the caller should open the issue-report popup (`/report`). */
   readonly triggerIssueReport: boolean;
+  /** An http(s) URL the caller should open in the OS browser (`/discord`). */
+  readonly openUrl?: string;
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
@@ -273,6 +276,13 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       // The popup is the feedback; a system line here would be noise
       // behind a modal.
       return pureActions([], { triggerIssueReport: true });
+    case "discord":
+      // ATO-1465: the browser opens it, and the line in the chat is the
+      // fallback over SSH, where there is no browser to open.
+      return pureActions([], {
+        openUrl: DISCORD_INVITE_URL,
+        systemMessage: `Join us on Discord: ${DISCORD_INVITE_URL}`,
+      });
     case "dump":
       return pureActions([], {
         triggerDebugBundleDump: true,

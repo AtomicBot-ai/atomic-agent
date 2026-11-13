@@ -227,6 +227,23 @@ describe("handleEditorSubmit", () => {
     expect(onIssueReportRequested).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the Discord invite in the browser for /discord (ATO-1465)", () => {
+    const state = createInitialTuiState(fakeSession());
+    const onOpenUrlRequested = vi.fn();
+    const texts: string[] = [];
+    const dispatch = (a: { type: string; text?: string }): void => {
+      if (a.type === "system_message" && a.text) texts.push(a.text);
+    };
+    handleEditorSubmit(
+      "/discord",
+      state,
+      dispatch as never,
+      stubCallbacks({ onOpenUrlRequested }),
+    );
+    expect(onOpenUrlRequested).toHaveBeenCalledWith("https://discord.gg/DCqtG8WZX8");
+    expect(texts.some((t) => t.includes("https://discord.gg/DCqtG8WZX8"))).toBe(true);
+  });
+
   it("invokes onDebugBundleExportRequested for /dump", () => {
     const state = createInitialTuiState(fakeSession());
     const onDebugBundleExportRequested = vi.fn();
@@ -764,5 +781,95 @@ describe("bare /enhance", () => {
     runSlashCommand("/enhance", state, (a) => dispatched.push(a as { type: string; value?: string }), stubCallbacks());
     expect(dispatched.some((a) => a.type === "system_message")).toBe(true);
     expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
+  });
+});
+
+describe("ui_action for built-in slash commands (ATO-1465)", () => {
+  const noop = (): void => {};
+
+  it("counts /report by name only", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "/report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction, onIssueReportRequested: vi.fn() }),
+    );
+    expect(onUiAction).toHaveBeenCalledTimes(1);
+    expect(onUiAction).toHaveBeenCalledWith("/report", "slash");
+  });
+
+  it("sends /discord without its arguments", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "/discord foo bar",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction, onOpenUrlRequested: vi.fn() }),
+    );
+    expect(onUiAction).toHaveBeenCalledTimes(1);
+    expect(onUiAction).toHaveBeenCalledWith("/discord", "slash");
+    expect(JSON.stringify(onUiAction.mock.calls)).not.toMatch(/foo|bar/);
+  });
+
+  it("sends nothing for an unknown command", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "/definitely-not-a-command secret",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction }),
+    );
+    expect(onUiAction).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing for a plain message", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "hello /report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction }),
+    );
+    expect(onUiAction).not.toHaveBeenCalled();
+  });
+
+  it("reports an alias as its canonical command", () => {
+    const onUiAction = vi.fn();
+    runSlashCommand(
+      "/cost",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction }),
+    );
+    expect(onUiAction).toHaveBeenCalledWith("/usage", "slash");
+  });
+
+  it("passes the menu as the trigger when the menu runs the command", () => {
+    const onUiAction = vi.fn();
+    runSlashCommand(
+      "/report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction, onIssueReportRequested: vi.fn() }),
+      "menu",
+    );
+    expect(onUiAction).toHaveBeenCalledWith("/report", "menu");
+  });
+
+  it("still runs the command when analytics throws", () => {
+    const onIssueReportRequested = vi.fn();
+    runSlashCommand(
+      "/report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({
+        onUiAction: () => {
+          throw new Error("boom");
+        },
+        onIssueReportRequested,
+      }),
+    );
+    expect(onIssueReportRequested).toHaveBeenCalledTimes(1);
   });
 });

@@ -830,6 +830,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "help.discord",
+    label: "Join Discord",
+    group: "help",
+    // ATO-1465: our server was nearly impossible to find from the app.
+    slash: {
+      name: "discord",
+      description:
+        "open our Discord server in the browser (the link is printed too, for SSH sessions)",
+      rank: 41.5,
+    },
+  },
+  {
+    kind: "action",
     id: "help.quit",
     label: "Quit",
     group: "help",

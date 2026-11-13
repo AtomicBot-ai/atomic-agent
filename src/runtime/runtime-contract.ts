@@ -44,7 +44,7 @@ import type { MetricSink } from "../tracing/metrics-collector.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { TraceSink } from "../tracing/trace/index.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
-import type { AnalyticsDisabledVia, AnalyticsSurface } from "../analytics/index.js";
+import type { AnalyticsDisabledVia, AnalyticsSurface, UiActionVia } from "../analytics/index.js";
 import type { BrokenPipePolicy } from "../error-reporting/index.js";
 
 
@@ -668,6 +668,14 @@ export interface AgentRuntime {
     stage: string;
     reasonCode: string;
   }): void;
+  /**
+   * Count a built-in TUI slash command (`ui_action`, ATO-1465). `action`
+   * is the command name only (`/report`), never its arguments; the TUI
+   * passes only names from the built-in registry. A no-op while
+   * analytics is off. Optional so test doubles and older hosts need not
+   * implement it.
+   */
+  reportUiAction?(action: string, via: UiActionVia): void;
   /**
    * Register what restarts the managed local model with a smaller context
    * window after it ran out of memory (ATO-334), or `null` to clear it.

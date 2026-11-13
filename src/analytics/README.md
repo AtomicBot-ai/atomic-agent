@@ -18,3 +18,12 @@ A file written before the desktop flag existed has only `appInstalledSent`; it r
 `first_message_sent` and `model_configured` are split the same way (ATO-1262): `firstMessageSent` / `modelConfiguredSent` for the terminal and `firstMessageSentDesktop` / `modelConfiguredSentDesktop` for the desktop. The store takes the process's surface at construction (`runtime-observability.ts`), so callers need not pass it. A file from before the split reads as "terminal reported, desktop not", so on a machine where the desktop already sent its first message on an older build, it sends `first_message_sent` and `model_configured` once more after the upgrade.
 
 Writes merge the file's current flags first (a flag only goes from `false` to `true`) and keep keys this build does not know, because both surfaces may have the file open at once. Older builds rewrite the file with only the keys they know, so an older terminal can drop `appInstalledSentDesktop`; the desktop then reports once more.
+
+## `ui_action` from the terminal
+
+Every built-in slash command the TUI runs sends one `ui_action` (ATO-1465), the same event name and property names the desktop uses, so a dashboard can union both and split them by the `surface` the client stamps on every event (`tui` here, `desktop` there).
+
+- `action`: the command's canonical name with its slash (`/report`, `/discord`; an alias counts as its command, so `/cost` is `/usage`). Never its arguments: `/discord foo bar` sends `/discord`.
+- `via`: `slash` (typed), `palette` (picked in the slash palette) or `menu` (a menu entry that runs a command).
+
+Only names from the built-in registry are sent. Skills, plugin commands, unknown input and plain messages send nothing. The event goes through the normal client, so it is dropped while analytics is off, under `ATOMIC_AGENT_ANALYTICS=off` and under `DO_NOT_TRACK`. Wiring: `reportBuiltInSlashCommand` in `src/tui/submit-handler.ts` → `TuiAppCallbacks.onUiAction` → `runtime.reportUiAction` → `captureUiAction`.

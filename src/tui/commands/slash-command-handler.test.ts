@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { dispatchSlashCommand } from "./slash-command-handler.js";
 import { SLASH_COMMANDS } from "./slash-commands.js";
+import { DISCORD_INVITE_URL } from "../community-links.js";
 
 describe("dispatchSlashCommand", () => {
   it("lists slash commands with descriptions for /help", () => {
@@ -12,6 +13,23 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toContain("clear chat transcript");
     expect(result.systemMessage).toContain("/quit");
     expect(result.systemMessage).toContain("aliases: /exit");
+  });
+
+  it("/discord opens the live invite and prints it for SSH sessions (ATO-1465)", () => {
+    expect(DISCORD_INVITE_URL).toBe("https://discord.gg/DCqtG8WZX8");
+    const result = dispatchSlashCommand("/discord");
+    expect(result.openUrl).toBe(DISCORD_INVITE_URL);
+    expect(result.systemMessage).toContain(DISCORD_INVITE_URL);
+    expect(result.actions).toEqual([]);
+    expect(result.clearBuffer).toBe(true);
+    expect(result.forwardAsMessage).toBe(false);
+  });
+
+  it("registers /discord and lists it in /help (ATO-1465)", () => {
+    expect(SLASH_COMMANDS.some((c) => c.name === "discord")).toBe(true);
+    expect(dispatchSlashCommand("/help").systemMessage).toContain(
+      "/discord — open our Discord server",
+    );
   });
 
   it("opens the Integrations tab for /integrations", () => {
