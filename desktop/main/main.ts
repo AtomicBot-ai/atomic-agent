@@ -8860,7 +8860,7 @@ async function uiTest(
   // --- item 1: the circles ---------------------------------------------------
   const probe = await js<{
     dots: Array<{ cls: string; w: number; h: number; border: number; bg: string; animation: string; shadow: string }>;
-    seat: { dotMid: number; capMid: number; xMid: number } | null;
+    seat: { dotMid: number; capMid: number; xMid: number; font?: string; fontLoaded?: boolean; rowH?: number } | null;
   } | null>("window.__dotProbe()");
   const dots = probe ? probe.dots : [];
   check(
@@ -8888,7 +8888,7 @@ async function uiTest(
     "item 1: the dot sits on the label's optical centre",
     !!seat && Math.abs(seat.dotMid - seatMid) <= 0.5,
     seat ? `dot ${seat.dotMid.toFixed(2)}, target ${seatMid.toFixed(2)}`
-      + ` (cap-mid ${seat.capMid.toFixed(2)}, x-mid ${seat.xMid.toFixed(2)})` : "no probe row",
+      + ` (cap-mid ${seat.capMid.toFixed(2)}, x-mid ${seat.xMid.toFixed(2)}; font ${seat.font ?? "?"}, loaded ${seat.fontLoaded ?? "?"}, row ${seat.rowH ?? "?"}px)` : "no probe row",
   );
   const ec = await js<{ found: boolean; display: string; strays: number }>("window.__emptyChatProbe()");
   check(

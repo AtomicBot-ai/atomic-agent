@@ -30989,7 +30989,9 @@ if (typeof window !== 'undefined') {
       + (lh - (mAll.fontBoundingBoxAscent + mAll.fontBoundingBoxDescent)) / 2 + mAll.fontBoundingBoxAscent;
     const dr = d.getBoundingClientRect();
     return {dotMid: dr.top + dr.height / 2, capMid: base - mH.actualBoundingBoxAscent / 2,
-            xMid: base - mx.actualBoundingBoxAscent / 2};
+            xMid: base - mx.actualBoundingBoxAscent / 2,
+            // what the canvas measured with, so a miss can be told from a font that was not loaded yet
+            font: c.font, fontLoaded: !!(document.fonts && document.fonts.check(c.font)), rowH: row.getBoundingClientRect().height};
   }
   /* Item 1: all three states measured together, on real rows inside the real
      list, whatever the agent's own sessions happen to look like. The `empty`
