@@ -22,6 +22,7 @@ import {
   runLocalModelsPullWorker,
 } from "./models-downloads.js";
 import { runModelsSearch } from "./models-search-command.js";
+import { runModelsCatalog } from "./models-catalog-command.js";
 import { runLocalModelsCheck } from "./models-check.js";
 import { runModelsRecommend, runModelsUpgrade } from "./models-recommend.js";
 import { runLocalModelsPullAndRun } from "./models-pull-run.js";
@@ -67,6 +68,10 @@ const HELP =
     "  update                        Install the supported engine and inference backend",
     "                                (stops daemon first; does not auto-restart)",
     "  remove <id>                   Delete a downloaded model (refuses if active + daemon running)",
+    "  catalog [--refresh] [--json]  Models an external catalog adds (models-catalog.json in",
+    "                                the state dir, or our hosted catalog; ATOMIC_AGENT_MODEL_",
+    "                                CATALOG_URL overrides it), each with its fit for this",
+    "                                machine; --refresh fetches the URL",
     "",
     "Fit-test subcommands:",
     "  tasks collect [--last <n>]    Write your last n tasks (default 10) as a test set;",
@@ -165,6 +170,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runModelsFitTest(args.slice(1));
       case "list":
         return runLocalModelsList();
+      case "catalog":
+        return await runModelsCatalog(args.slice(1));
       case "pull":
         if (args.includes("--run")) return await runLocalModelsPullAndRun(args.slice(1));
         return runLocalModelsPull(args.slice(1));
