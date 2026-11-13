@@ -19,6 +19,8 @@
     ATOMIC_AGENT_NO_PATH      1                    (optional: skip user PATH update)
     ATOMIC_AGENT_EXPECTED_SHA256  hex              (set by `atomic-agent update` from the
                                                    release's signed SHA256SUMS)
+    ATOMIC_AGENT_INSTALL_FROM reddit               (optional: where the install link
+                                                   was found, for anonymous analytics)
 #>
 
 $ErrorActionPreference = "Stop"
@@ -39,6 +41,13 @@ try {
 $RepoDefault = "AtomicBot-ai/atomic-agent"
 $Repo = if ($env:ATOMIC_AGENT_REPO) { $env:ATOMIC_AGENT_REPO } else { $RepoDefault }
 $Version = $env:ATOMIC_AGENT_VERSION
+
+# Where the install link was found, for anonymous analytics
+# (`install_source`). `irm ... | iex` cannot see its own URL, so
+# atomicagent.io/install.ps1?from=<tag> fills in the empty value on the next
+# line before serving this script. Keep that line exactly as it is.
+$InstallFromTag = ""
+$InstallFrom = if ($env:ATOMIC_AGENT_INSTALL_FROM) { $env:ATOMIC_AGENT_INSTALL_FROM } else { $InstallFromTag }
 $InstallDir = if ($env:ATOMIC_AGENT_INSTALL_DIR) {
   $env:ATOMIC_AGENT_INSTALL_DIR
 } else {
@@ -458,6 +467,35 @@ function Write-InstallChannel {
 }
 
 Write-InstallChannel
+
+# Install source marker for anonymous analytics (`install_source`). The file
+# holds one word from the fixed list below and nothing else; any other value
+# is never written. The first recorded source is kept, so an update or a
+# reinstall from another link does not move the install to a new source.
+# Best effort: a failure here never fails the install.
+function Write-InstallSource {
+  try {
+    $sources = @("x", "reddit", "github", "email", "site", "discord", "hn", "youtube", "other")
+    $from = "$InstallFrom".Trim().ToLowerInvariant()
+    if ($sources -notcontains $from) { return }
+    $stateDir = if ($env:ATOMIC_AGENT_STATE_DIR) {
+      $env:ATOMIC_AGENT_STATE_DIR
+    } else {
+      Join-Path $HOME ".atomic-agent"
+    }
+    $sourceFile = Join-Path $stateDir "install-source"
+    if (Test-Path -LiteralPath $sourceFile) {
+      $existing = ([IO.File]::ReadAllText($sourceFile)).Trim().TrimStart([char]0xFEFF).ToLowerInvariant()
+      if ($sources -contains $existing) { return }
+    }
+    New-Item -ItemType Directory -Force -Path $stateDir | Out-Null
+    [IO.File]::WriteAllText($sourceFile, "$from`n", [Text.Encoding]::ASCII)
+  } catch {
+    # Analytics metadata only; ignore.
+  }
+}
+
+Write-InstallSource
 
 Add-ToUserPath $InstallDir
 

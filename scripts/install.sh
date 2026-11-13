@@ -14,6 +14,8 @@
 #   ATOMIC_AGENT_EXPECTED_SHA256=<hex>     (set by `atomic-agent update` from the
 #                                           release's signed SHA256SUMS; the
 #                                           archive must hash to it)
+#   ATOMIC_AGENT_INSTALL_FROM=reddit       (optional: where the install link was
+#                                           found, for anonymous analytics)
 
 set -eu
 
@@ -36,6 +38,13 @@ FIRST_SIGNED_VERSION=""
 REPO="${ATOMIC_AGENT_REPO:-$REPO_DEFAULT}"
 VERSION="${ATOMIC_AGENT_VERSION:-}"
 INSTALL_DIR="${ATOMIC_AGENT_INSTALL_DIR:-$HOME/.local/bin}"
+
+# Where the install link was found, for anonymous analytics
+# (`install_source`). `curl ... | sh` cannot see its own URL, so
+# atomicagent.io/install?from=<tag> fills in the empty value on the next line
+# before serving this script. Keep that line exactly as it is.
+INSTALL_FROM_TAG=""
+INSTALL_FROM="${ATOMIC_AGENT_INSTALL_FROM:-$INSTALL_FROM_TAG}"
 
 if command -v uname >/dev/null 2>&1; then
   OS_NAME="$(uname -s)"
@@ -748,6 +757,30 @@ record_install_channel() {
 }
 
 record_install_channel
+
+# Install source marker for anonymous analytics (`install_source`). The file
+# holds one word from the fixed list below and nothing else; any other value
+# is never written. The first recorded source is kept, so an update or a
+# reinstall from another link does not move the install to a new source.
+record_install_source() {
+  _from="$(printf '%s' "$INSTALL_FROM" | tr '[:upper:]' '[:lower:]')"
+  case "$_from" in
+    x|reddit|github|email|site|discord|hn|youtube|other) ;;
+    *) return 0 ;;
+  esac
+  _state_dir="${ATOMIC_AGENT_STATE_DIR:-$HOME/.atomic-agent}"
+  _source_file="$_state_dir/install-source"
+  if [ -f "$_source_file" ]; then
+    _existing="$(head -n 1 "$_source_file" 2>/dev/null || true)"
+    case "$_existing" in
+      x|reddit|github|email|site|discord|hn|youtube|other) return 0 ;;
+    esac
+  fi
+  mkdir -p "$_state_dir" 2>/dev/null || return 0
+  printf '%s\n' "$_from" > "$_source_file" 2>/dev/null || true
+}
+
+record_install_source
 
 add_to_path "$INSTALL_DIR"
 
