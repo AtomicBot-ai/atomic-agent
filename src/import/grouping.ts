@@ -38,8 +38,13 @@ import type { ImportItemResult, ImportReport } from "./import-report.js";
  * by its key, and a chat already in place is counted, not moved. A chat
  * the person placed (put in a project, moved into or out of a folder)
  * stays where they put it. A chat the desktop's automatic sorting filed
- * (`auto` in chat-folders.json, ATO-1253) may move into its project; an
- * automatic project folder left empty by that goes.
+ * (`auto` in chat-folders.json, ATO-1253) may move into its project.
+ *
+ * Folders the person made are never deleted and never taken over: only a
+ * folder this grouping created itself (listed in `imported` in
+ * chat-folders.json) is reused by name or removed when a run leaves it
+ * empty. A group whose name is taken by another folder gets a folder of
+ * its own, "Name (imported)".
  *
  * Sessions with no hint are not grouped here: the desktop's own sorting
  * still files them into a folder per app ("Codex", "Hermes"). The
@@ -126,6 +131,11 @@ export interface ImportFoldersFile {
   /** Chats the automatic sorting placed and may move again. */
   auto: Record<string, true>;
   projectSort: boolean;
+  /**
+   * folderId → true for folders this grouping created. The only folders
+   * it may reuse by name or delete; absent when there are none.
+   */
+  imported?: Record<string, true>;
   [extra: string]: unknown;
 }
 
@@ -250,7 +260,19 @@ export function coerceFoldersFile(raw: unknown): ImportFoldersFile {
     }
   }
   out.projectSort = r.projectSort === true;
+  if (r.imported && typeof r.imported === "object" && !Array.isArray(r.imported)) {
+    const imported: Record<string, true> = {};
+    for (const [fid, on] of Object.entries(r.imported)) {
+      if (on === true && ids.has(fid)) imported[fid] = true;
+    }
+    if (Object.keys(imported).length > 0) out.imported = imported;
+  }
   return out;
+}
+
+/** A folder this grouping created (never one the person or the desktop made). */
+function importCreated(folders: ImportFoldersFile, fid: string): boolean {
+  return folders.imported?.[fid] === true;
 }
 
 export class ImportGroupingError extends Error {
@@ -379,7 +401,7 @@ export function planImportGrouping(
     g.sessions.push(entry.sessionId);
   }
 
-  /** Automatic project folders a chat left in this run; dropped if left empty. */
+  /** Folders a chat left in this run; an import-created one is dropped if left empty. */
   const vacated = new Set<string>();
 
   for (const { hint, sessions } of groups.values()) {
@@ -454,9 +476,14 @@ export function planImportGrouping(
 
     let folder = findFolderForKey(folders, hint);
     if (!folder) {
+      // Only a folder this grouping made itself is taken over by name: a
+      // folder of the person's own is never bound to a group key, or the
+      // desktop's sorting could file chats into it and a later run empty
+      // and delete it.
       const named = folders.folders.find(
         (f) =>
           f.name.toLowerCase() === hint.name.toLowerCase() &&
+          importCreated(folders, f.id) &&
           !(f.id in folders.projects) &&
           !APP_FOLDER_NAMES.has(f.name),
       );
@@ -477,16 +504,22 @@ export function planImportGrouping(
           continue;
         }
         const names = folders.folders.map((f) => f.name);
+        const taken = names.some((n) => n.toLowerCase() === hint.name.toLowerCase());
         folder = {
           id,
           name: freeName(
             names,
-            hint.cwd !== null ? disambiguated(hint.name, hint.cwd, names) : hint.name,
+            hint.cwd !== null
+              ? disambiguated(hint.name, hint.cwd, names)
+              : taken
+                ? cleanName(`${hint.name} (imported)`)
+                : hint.name,
           ),
           collapsed: false,
         };
         folders.folders.push(folder);
         folders.projects[folder.id] = hint.key;
+        (folders.imported ??= {})[folder.id] = true;
         outcome.created = true;
         plan.foldersChanged = true;
       }
@@ -513,13 +546,16 @@ export function planImportGrouping(
     }
   }
 
-  // An automatic project folder (one the sorting made for a path) that
-  // this run emptied goes, as the desktop drops its old "Claude Code" one.
+  // A folder this grouping created that this run emptied goes. Any other
+  // folder stays, empty or not: it may be the person's own, and the
+  // desktop's sorting may have filed chats into it as automatic.
   for (const fid of vacated) {
-    if (!(fid in folders.projects)) continue;
+    if (!importCreated(folders, fid)) continue;
     if (Object.values(folders.chats).includes(fid)) continue;
     folders.folders = folders.folders.filter((f) => f.id !== fid);
     delete folders.projects[fid];
+    delete folders.imported![fid];
+    if (Object.keys(folders.imported!).length === 0) delete folders.imported;
     plan.foldersChanged = true;
   }
   return plan;
@@ -763,6 +799,13 @@ export interface MergeGroupingInput {
  *    added.
  *  - a chat's link is copied only when this side has none for it: what the
  *    person arranged here wins.
+ *
+ * Unlike planImportGrouping this ignores the `autoSort` switch on purpose:
+ * that switch turns off sorting chats into groups derived from where they
+ * ran, while this copies the person's own arrangement, which they made by
+ * hand and always comes over. Nothing here deletes a folder, and folders
+ * made here are not marked `imported`: they are the person's, not the
+ * grouping's.
  */
 export function mergeGroupingFrom(input: MergeGroupingInput): ImportGroupingPlan {
   const projects = clone(input.target.projects);
