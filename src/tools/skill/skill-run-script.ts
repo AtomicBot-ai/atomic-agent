@@ -1,7 +1,7 @@
 import { compressToolResult, retainToolOutput } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
-import { runSkillScript } from "../../skills/skill-script-runner.js";
+import { runSkillScript, skillEnvKeys } from "../../skills/skill-script-runner.js";
 import { realpathSync } from "node:fs";
 import { isWithinWorkspace } from "../../skills/workspace-files.js";
 import { DEFAULT_MAX_OUTPUT_BYTES } from "../../sandbox/command-runner.js";
@@ -192,11 +192,15 @@ export function buildSkillRunScriptTool(
           );
         }
       }
+      // Names only: the user sees which keys the script will get, never
+      // their values.
+      const envKeys = skillEnvKeys(record);
       const preview = [
         `skill: ${record.manifest.name} (v${record.manifest.version})`,
         `script: ${scriptName}`,
         `cwd: ${record.rootDir}`,
         `args: ${scriptArgs.join(" ")}`,
+        ...(envKeys.length > 0 ? [`env keys: ${envKeys.join(", ")}`] : []),
       ].join("\n");
 
       // Only the copy installed in the global skills directory is trusted

@@ -41,5 +41,6 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
 | `seo-rank-report/` | Weekly Telegram report of Google positions for a keyword list, with week-over-week moves; history in local SQLite (`scripts/rank_history.py`) | `python3`; data from Google Search Console (Composio or signed-in browser), or the user's own DataForSEO key / Ahrefs or SE Ranking MCP |
+| `seo-audit/` | "Check my site": polite read-only crawl from the sitemap (robots.txt obeyed, 20-page cap, delay between requests) plus PageSpeed Core Web Vitals, reported as quick wins vs strategic with affected URLs | none (`PAGESPEED_API_KEY` optional, see the skill) |
 | `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |
 | `release-check/` | Only on an explicit "prepare a release" request: clean build from a fresh checkout, package contents, metadata, stubs and secrets, edge cases, verdict tied to one commit hash; never sends code to another provider without asking | none |
