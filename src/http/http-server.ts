@@ -12,6 +12,7 @@ import { CompletionRegistry } from "./completion-registry.js";
 import { openaiError } from "./openai-errors.js";
 import { UndeliveredSteerStore } from "./undelivered-steers.js";
 import { AuthThrottle } from "./auth-throttle.js";
+import { enforceLoopbackGuard } from "./loopback-guard.js";
 
 /** ATO-1126: one per process; loopback callers are never counted. */
 const authThrottle = new AuthThrottle();
@@ -205,6 +206,8 @@ async function dispatch(
     sendError(res, 400, openaiError("Malformed request URL"));
     return;
   }
+  // ATO-1495: without a key, refuse foreign Host/Origin and non-JSON bodies before routing (preflights too).
+  if (!enforceLoopbackGuard(req, res, baseCtx.apiKey)) return;
   const method = (req.method ?? "GET").toUpperCase();
   const matched = matchRoute(routes, method, url.pathname);
   if (!matched) {
