@@ -105,6 +105,8 @@ export interface McpToolGateOptions {
   trustReadOnlyHint?: boolean;
   /** The server's `approval` mode, when its config sets one (ATO-1134). */
   approval?: McpApprovalMode;
+  /** The server runs over stdio (`isLocalMcpTransport`); read by `ask_writes`. */
+  localTransport?: boolean;
 }
 
 /** Whether a transport counts as local for the `readOnlyHint` rule (stdio only). */
@@ -153,6 +155,7 @@ export function createMcpToolDefinition(
     ...(gate?.approval !== undefined ? { approval: gate.approval } : {}),
     readOnlyHint: meta.annotations?.readOnlyHint === true,
     trustReadOnlyHint: gate?.trustReadOnlyHint === true,
+    localTransport: gate?.localTransport === true,
   } as const;
   const gated = gate !== undefined && mcpToolPrompts(promptInputs);
   const modeSkipped = gate !== undefined && modeSkipsDefaultPrompt(promptInputs);

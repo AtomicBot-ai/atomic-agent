@@ -50,9 +50,10 @@ export interface McpServerConfig {
    *  - `ask`: every call asks, except a stdio tool's own
    *    `readOnlyHint: true` (the default `approval_gated` behaviour,
    *    also on a `pure_read` server).
-   *  - `ask_writes`: a tool that advertised `readOnlyHint: true` at
-   *    discovery runs without asking, on any transport; every other
-   *    tool asks.
+   *  - `ask_writes`: on a stdio server, a tool that advertised
+   *    `readOnlyHint: true` at discovery runs without asking; every
+   *    other tool asks, and every tool of a remote HTTP / SSE server
+   *    asks (ATO-1178).
    *  - `auto`: no prompt for this server's tools.
    *
    * A saved deny or ask rule still applies to a call the mode lets

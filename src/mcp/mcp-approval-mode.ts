@@ -17,6 +17,8 @@ export interface McpPromptInputs {
   readOnlyHint: boolean;
   /** That hint may skip the prompt without a mode (see `trustsReadOnlyHintFor`). */
   trustReadOnlyHint: boolean;
+  /** The server runs over stdio (`isLocalMcpTransport`). */
+  localTransport: boolean;
 }
 
 export function mcpToolPrompts(input: McpPromptInputs): boolean {
@@ -27,8 +29,10 @@ export function mcpToolPrompts(input: McpPromptInputs): boolean {
     case "ask":
       return !trustedReadOnly;
     case "ask_writes":
-      // The operator chose to believe this server's read-only claims.
-      return !input.readOnlyHint;
+      // A read-only claim counts only from a stdio server the operator
+      // installed here; a remote HTTP / SSE tool always asks, whatever
+      // it says about itself (the ATO-1178 line, no exceptions).
+      return !(input.readOnlyHint && input.localTransport);
     case "auto":
       return false;
   }

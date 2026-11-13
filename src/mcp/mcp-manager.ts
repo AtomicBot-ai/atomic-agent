@@ -32,6 +32,7 @@ import { McpConnectError, scrubErrorMessage } from "./mcp-errors.js";
 import { createMcpResourceClassResolver } from "./mcp-resource-class.js";
 import {
   createMcpToolDefinition,
+  isLocalMcpTransport,
   trustsReadOnlyHintFor,
 } from "./mcp-tool-adapter.js";
 import type {
@@ -340,6 +341,7 @@ export class McpManager {
         trust,
         dangerous: this.deps.dangerous,
         trustReadOnlyHint: trustsReadOnlyHintFor(s.config, meta.rawName),
+        localTransport: isLocalMcpTransport(s.config.transport),
         ...(s.config.approval !== undefined ? { approval: s.config.approval } : {}),
       });
       // ToolRegistry.register is last-writer-wins. Two servers

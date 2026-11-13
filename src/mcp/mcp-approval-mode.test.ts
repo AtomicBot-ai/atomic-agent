@@ -16,12 +16,14 @@ function inputs(
   approval: McpApprovalMode | undefined,
   readOnlyHint: boolean,
   trustReadOnlyHint: boolean,
+  localTransport = trustReadOnlyHint,
 ) {
   return {
     trust,
     ...(approval !== undefined ? { approval } : {}),
     readOnlyHint,
     trustReadOnlyHint,
+    localTransport,
   };
 }
 
@@ -45,10 +47,15 @@ describe("mcpToolPrompts", () => {
     }
   });
 
-  it("ask_writes: a read-only-hinted tool runs unasked on any transport, others ask", () => {
-    expect(mcpToolPrompts(inputs("approval_gated", "ask_writes", true, false))).toBe(false);
-    expect(mcpToolPrompts(inputs("approval_gated", "ask_writes", false, true))).toBe(true);
-    expect(mcpToolPrompts(inputs("pure_read", "ask_writes", false, false))).toBe(true);
+  it("ask_writes: a read-only-hinted tool runs unasked only on a stdio server", () => {
+    // stdio, read-only: no prompt.
+    expect(mcpToolPrompts(inputs("approval_gated", "ask_writes", true, true, true))).toBe(false);
+    // Remote, read-only: asks, also for an agent-named exception.
+    expect(mcpToolPrompts(inputs("approval_gated", "ask_writes", true, false, false))).toBe(true);
+    expect(mcpToolPrompts(inputs("approval_gated", "ask_writes", true, true, false))).toBe(true);
+    // Not read-only: asks anywhere.
+    expect(mcpToolPrompts(inputs("approval_gated", "ask_writes", false, true, true))).toBe(true);
+    expect(mcpToolPrompts(inputs("pure_read", "ask_writes", false, false, false))).toBe(true);
   });
 
   it("auto: never asks", () => {
@@ -58,7 +65,8 @@ describe("mcpToolPrompts", () => {
   it("modeSkipsDefaultPrompt is true only where the mode loosened the default", () => {
     expect(modeSkipsDefaultPrompt(inputs("approval_gated", undefined, false, false))).toBe(false);
     expect(modeSkipsDefaultPrompt(inputs("approval_gated", "auto", false, false))).toBe(true);
-    expect(modeSkipsDefaultPrompt(inputs("approval_gated", "ask_writes", true, false))).toBe(true);
+    // ask_writes never loosens the default: remote read-only tools ask.
+    expect(modeSkipsDefaultPrompt(inputs("approval_gated", "ask_writes", true, false, false))).toBe(false);
     // Already unasked by default: the mode changed nothing.
     expect(modeSkipsDefaultPrompt(inputs("pure_read", "auto", false, false))).toBe(false);
     expect(modeSkipsDefaultPrompt(inputs("approval_gated", "auto", true, true))).toBe(false);
@@ -75,11 +83,11 @@ describe("createMcpToolDefinition with an approval mode", () => {
     signal: new AbortController().signal,
   };
 
-  function meta(rawName: string, readOnlyHint?: boolean): McpToolMeta {
+  function meta(rawName: string, readOnlyHint?: boolean, server = "remote"): McpToolMeta {
     return {
-      server: "remote",
+      server,
       rawName,
-      qualifiedName: `mcp.remote.${rawName}`,
+      qualifiedName: `mcp.${server}.${rawName}`,
       description: "",
       inputSchema: { type: "object" },
       resourceClass: "approval_gated",
@@ -97,11 +105,19 @@ describe("createMcpToolDefinition with an approval mode", () => {
       ruleDecisionFor: vi.fn(() => rule),
     } as unknown as ApprovalGate;
     const callTool = vi.fn(async () => ({ content: [{ type: "text", text: "ok" }] }));
-    const tool = (m: McpToolMeta, approval?: McpApprovalMode, trust: McpTrustLevel = "approval_gated") =>
+    const tool = (
+      m: McpToolMeta,
+      approval?: McpApprovalMode,
+      trust: McpTrustLevel = "approval_gated",
+      local = false,
+    ) =>
       createMcpToolDefinition(m, { callTool } as unknown as McpClient, {
         trust,
         dangerous: { approvals, approvalRequired: true },
         ...(approval !== undefined ? { approval } : {}),
+        // Mirrors the manager: a stdio server trusts its tools' hints.
+        trustReadOnlyHint: local,
+        localTransport: local,
       });
     return { requests, tool, callTool };
   }
@@ -114,13 +130,20 @@ describe("createMcpToolDefinition with an approval mode", () => {
     expect(h.callTool).toHaveBeenCalledTimes(1);
   });
 
-  it("ask_writes: a read-only remote tool runs unasked, a write tool asks", async () => {
+  it("ask_writes: a remote tool with readOnlyHint: true still asks", async () => {
     const h = harness();
     await h.tool(meta("search", true), "ask_writes").run({}, ctx);
-    expect(h.requests).toHaveLength(0);
-    await h.tool(meta("create_issue"), "ask_writes").run({}, ctx);
     expect(h.requests).toHaveLength(1);
-    expect(h.requests[0]).toMatchObject({ tool: "mcp.remote.create_issue", category: "other" });
+    expect(h.requests[0]).toMatchObject({ tool: "mcp.remote.search", category: "other" });
+  });
+
+  it("ask_writes: a stdio tool with readOnlyHint: true runs unasked, a stdio write tool asks", async () => {
+    const h = harness();
+    await h.tool(meta("search", true, "local"), "ask_writes", "approval_gated", true).run({}, ctx);
+    expect(h.requests).toHaveLength(0);
+    await h.tool(meta("write_file", undefined, "local"), "ask_writes", "approval_gated", true).run({}, ctx);
+    expect(h.requests).toHaveLength(1);
+    expect(h.requests[0]).toMatchObject({ tool: "mcp.local.write_file" });
   });
 
   it("ask on a pure_read server asks again", async () => {
