@@ -1781,29 +1781,31 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
-   * ATO-563: put back a file the agent replaced, from the copy it saved
-   * before the write, through the agent's `POST /api/sessions/{id}/fs/restore`
-   * (the store os.fs.restore uses). The window asks the person first; this
-   * is the act. A 404 with no code is an agent without the route.
+   * ATO-563: put one file back as it was before one reply changed it,
+   * through the agent's `POST /api/sessions/{id}/fs/restore`, from the file
+   * checkpoint the agent took before that reply's first write (ATO-1056).
+   * The reply is named by its question: `priorQuestions` (questions before
+   * it, steers not counted) and `expectText`. The window asks the person
+   * first; this is the act. A 404 with no code is an agent without the route.
    */
-  async restoreFile(sessionId: string, path: string): Promise<{
-    ok: boolean; supported: boolean; code?: string; error?: string;
+  async restoreFile(sessionId: string, path: string, priorQuestions: number, expectText: string): Promise<{
+    ok: boolean; supported: boolean; code?: string; error?: string; action?: string;
   }> {
     try {
       const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/fs/restore`, {
         method: "POST",
         headers: this.headers(),
-        body: JSON.stringify({ path }),
+        body: JSON.stringify({ path, priorQuestions, expectText }),
         signal: AbortSignal.timeout(30_000),
       });
-      let body: { error?: { message?: unknown; code?: unknown } } | null = null;
+      let body: { action?: unknown; error?: { message?: unknown; code?: unknown } } | null = null;
       try {
         const raw = await res.text();
         body = raw ? JSON.parse(raw) : null;
       } catch {
         /* not JSON */
       }
-      if (res.ok) return { ok: true, supported: true };
+      if (res.ok) return { ok: true, supported: true, ...(typeof body?.action === "string" ? { action: body.action } : {}) };
       const message = typeof body?.error?.message === "string" ? body.error.message : "";
       const code = typeof body?.error?.code === "string" && body.error.code ? body.error.code : undefined;
       if (res.status === 404 && !code) {
@@ -1811,8 +1813,10 @@ export class AgentClient extends EventEmitter {
       }
       const words: Record<string, string> = {
         session_not_found: "This chat is not saved yet",
-        no_copy: "The agent kept no earlier version of this file",
-        copy_gone: "The earlier version the agent kept is gone",
+        no_snapshot: "The agent kept no copy of this file from before this reply",
+        changed_later: "A later reply changed this file too; revert it from the latest reply",
+        not_restorable: "The agent could not keep a copy of this file (too large or not plain text)",
+        point_mismatch: "The agent's chat no longer matches this window; reopen the chat and try again",
         turn_in_progress: "The agent is still working in this chat; revert the file when it finishes",
       };
       return { ok: false, supported: true, ...(code ? { code } : {}), error: (code && words[code]) || message || `HTTP ${res.status}` };

@@ -1,7 +1,8 @@
 // ATO-563: the Changes / Revert row under a reply's "Saved to" lines
 // (renderer/diff-review.js), run in a vm with the renderer globals it reads
 // stubbed: which file gets which diff, when Revert is offered, the two-step
-// confirmation, and the refusal when a later turn wrote the file again.
+// confirmation, the reply selector sent with it (its question), and the
+// refusal when a later turn wrote the file again.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -22,7 +23,16 @@ function load() {
     render: () => {},
     repaintTranscript: () => true,
     toast: (t, s, kind) => toasts.push({t, s, kind}),
-    BR: {fsRestore: async (sid, path) => { calls.push({sid, path}); return {ok: true, supported: true}; }},
+    // The renderer's own (renderer.js priorQuestions): questions before m, steers not counted.
+    priorQuestions: (m) => {
+      let n = 0;
+      for (const x of c.S.log) { if (x === m) return n; if (x.k === 'user' && !x.steered) n++; }
+      return n;
+    },
+    BR: {fsRestore: async (sid, path, priorQuestions, expectText) => {
+      calls.push({sid, path, priorQuestions, expectText});
+      return {ok: true, supported: true, action: 'restore'};
+    }},
     Date,
   };
   vm.createContext(c);
@@ -37,9 +47,9 @@ function load() {
 const EDIT_OUT = '--- a//w/a.txt\n+++ b//w/a.txt\n-one\n+two';
 const fakeEl = (attrs, parent) => ({dataset: attrs, parentElement: parent || null, closest() { return this; }});
 
-test('each file gets the diffs of the cards that wrote it, and Revert only where a copy was saved', () => {
+test('each file gets the diffs of the cards that wrote it, and Revert for every checkpointed write', () => {
   const {c} = load();
-  const user = {id: 'u', k: 'user'};
+  const user = {id: 'u', k: 'user', text: 'q'};
   const edit = {id: 't1', k: 'tool', ok: true, name: 'os.fs.edit', writes: ['/w/a.txt'], out: EDIT_OUT};
   const write = {id: 't2', k: 'tool', ok: true, name: 'os.fs.write', writes: ['/w/b.txt'],
     out: "wrote 4 bytes to /w/b.txt (replace)\nreplaced the user's file `b.txt` (9 → 1 lines); previous content saved"};
@@ -51,16 +61,23 @@ test('each file gets the diffs of the cards that wrote it, and Revert only where
   c.diffReviewAnnotate(m, '/w');
   const [a, b, cc] = m.attach;
   assert.equal(a.diffs.length, 1);
-  assert.equal(a.restorable, false, 'an ordinary edit saves no copy');
+  assert.equal(a.restorable, true, 'an ordinary edit is checkpointed too (ATO-1056)');
   assert.equal(b.diffs.length, 0, 'a whole-file write has no diff');
   assert.equal(b.restorable, true);
   assert.equal(cc.diffs.length, 1);
   assert.ok(cc.diffs[0].includes('+y'));
+  assert.equal(cc.restorable, true);
+  // A tool the agent does not checkpoint (archive extraction) gets no Revert.
+  const ex = {id: 't4', k: 'tool', ok: true, name: 'os.fs.archive.extract', writes: ['/w/d'], out: 'extracted 1 entries (3 bytes) to /w/d'};
+  const m2 = {id: 'a2', k: 'assistant', attach: [{path: '/w/d', name: 'd'}]};
+  c.S.log.push({id: 'u2', k: 'user', text: 'unzip'}, ex, m2);
+  c.diffReviewAnnotate(m2, '/w');
+  assert.equal(m2.attach[0].restorable, false);
 
   const rowA = c.diffReviewRowHTML(m, a);
   assert.ok(rowA.includes('Changes'));
   assert.ok(rowA.includes('dl-add'));
-  assert.ok(!rowA.includes('data-diffrev="revert"'));
+  assert.ok(rowA.includes('data-diffrev="revert"'));
   const rowB = c.diffReviewRowHTML(m, b);
   assert.ok(rowB.includes('data-diffrev="revert"'));
   assert.ok(!rowB.includes('Changes'));
@@ -69,9 +86,9 @@ test('each file gets the diffs of the cards that wrote it, and Revert only where
 
 test('Revert asks first, and only the confirmation calls the agent', async () => {
   const {c, calls, toasts} = load();
-  const write = {id: 't1', k: 'tool', ok: true, name: 'os.fs.write', writes: ['/w/b.txt'], out: 'previous content saved'};
+  const write = {id: 't1', k: 'tool', ok: true, name: 'os.fs.write', writes: ['/w/b.txt'], out: 'wrote 3 bytes to /w/b.txt (replace)'};
   const m = {id: 'a1', k: 'assistant', attach: [{path: '/w/b.txt', name: 'b.txt'}]};
-  c.S.log.push({id: 'u', k: 'user'}, write, m);
+  c.S.log.push({id: 'u', k: 'user', text: 'make b'}, write, m);
   c.diffReviewAnnotate(m, '/w');
   const ids = {item: 'a1', path: '/w/b.txt'};
   assert.equal(c.diffReviewClick(fakeEl({diffrev: 'revert', ...ids})), true);
@@ -82,17 +99,17 @@ test('Revert asks first, and only the confirmation calls the agent', async () =>
   c.DIFF_REVIEW.armed.at -= 1000;
   c.diffReviewClick(fakeEl({diffrev: 'confirm', ...ids}));
   await new Promise((r) => setTimeout(r, 0));
-  assert.deepEqual(calls, [{sid: 'sess-1', path: '/w/b.txt'}]);
+  assert.deepEqual(calls, [{sid: 'sess-1', path: '/w/b.txt', priorQuestions: 0, expectText: 'make b'}]);
   assert.equal(toasts[0].t, 'Reverted b.txt');
   assert.ok(c.diffReviewRowHTML(m, m.attach[0]).includes('Reverted'));
 });
 
 test('Cancel disarms, and a file written again later is not reverted from the older reply', async () => {
   const {c, calls, toasts} = load();
-  const w1 = {id: 't1', k: 'tool', ok: true, name: 'os.fs.write', writes: ['/w/b.txt'], out: 'previous content saved'};
+  const w1 = {id: 't1', k: 'tool', ok: true, name: 'os.fs.write', writes: ['/w/b.txt'], out: 'wrote 1 bytes to /w/b.txt (replace)'};
   const m = {id: 'a1', k: 'assistant', attach: [{path: '/w/b.txt', name: 'b.txt'}]};
-  const w2 = {id: 't2', k: 'tool', ok: true, name: 'os.fs.write', writes: ['/w/b.txt'], out: 'previous content saved'};
-  c.S.log.push({id: 'u1', k: 'user'}, w1, m, {id: 'u2', k: 'user'}, w2, {id: 'a2', k: 'assistant'});
+  const w2 = {id: 't2', k: 'tool', ok: true, name: 'os.fs.write', writes: ['/w/b.txt'], out: 'wrote 1 bytes to /w/b.txt (replace)'};
+  c.S.log.push({id: 'u1', k: 'user', text: 'one'}, w1, m, {id: 'u2', k: 'user', text: 'two'}, w2, {id: 'a2', k: 'assistant'});
   c.diffReviewAnnotate(m, '/w');
   const ids = {item: 'a1', path: '/w/b.txt'};
   c.diffReviewClick(fakeEl({diffrev: 'revert', ...ids}));
@@ -115,4 +132,52 @@ test('Changes keeps its open state across repaints', () => {
   c.diffReviewClick(fakeEl({diffrev: 'toggle', ...ids}, {open: true}));
   assert.equal(c.DIFF_REVIEW.open.size, 0);
   assert.equal(c.diffReviewClick({closest: () => null}), false);
+});
+
+test('two writes of one file in one reply: Revert names that reply by its question, not the newest copy', async () => {
+  const {c, calls, toasts} = load();
+  const first = {id: 'u0', k: 'user', text: 'something else'};
+  const q = {id: 'u1', k: 'user', text: 'write f twice'};
+  const w1 = {id: 't1', k: 'tool', ok: true, name: 'os.fs.write', writes: ['/w/f.txt'], out: 'wrote 3 bytes to /w/f.txt (replace)'};
+  const steer = {id: 's1', k: 'user', text: 'and shorter', steered: true};
+  const w2 = {id: 't2', k: 'tool', ok: true, name: 'os.fs.write', writes: ['/w/f.txt'], out: 'wrote 2 bytes to /w/f.txt (replace)'};
+  const m = {id: 'a1', k: 'assistant', attach: [{path: '/w/f.txt', name: 'f.txt'}]};
+  c.S.log.push(first, {id: 'a0', k: 'assistant'}, q, w1, steer, w2, m);
+  c.diffReviewAnnotate(m, '/w');
+  assert.equal(m.attach[0].restorable, true, 'offered for every checkpointed write, no "previous content saved" needed');
+  assert.equal(c.diffReviewQuestion(m), q, 'a steer does not open a new reply');
+  assert.ok(c.diffReviewRowHTML(m, m.attach[0]).includes('data-diffrev="revert"'));
+  const ids = {item: 'a1', path: '/w/f.txt'};
+  c.diffReviewClick(fakeEl({diffrev: 'revert', ...ids}));
+  c.DIFF_REVIEW.armed.at -= 1000;
+  c.diffReviewClick(fakeEl({diffrev: 'confirm', ...ids}));
+  await new Promise((r) => setTimeout(r, 0));
+  // The selector: one question before it, and its text. The agent restores
+  // the checkpoint from before w1 (the pre-turn content), not the copy w2 took.
+  assert.deepEqual(calls, [{sid: 'sess-1', path: '/w/f.txt', priorQuestions: 1, expectText: 'write f twice'}]);
+  assert.equal(toasts[0].t, 'Reverted f.txt');
+});
+
+test('a write later in the same reply does not block Revert; the agent refusing is shown', async () => {
+  const {c, calls, toasts} = load();
+  const q = {id: 'u1', k: 'user', text: 'go'};
+  const w1 = {id: 't1', k: 'tool', ok: true, name: 'os.fs.edit', writes: ['/w/g.txt'], out: ''};
+  const mid = {id: 'a1', k: 'assistant', attach: [{path: '/w/g.txt', name: 'g.txt'}]};
+  const w2 = {id: 't2', k: 'tool', ok: true, name: 'os.fs.edit', writes: ['/w/g.txt'], out: ''};
+  c.S.log.push(q, w1, mid, w2, {id: 'a2', k: 'assistant'});
+  c.BR.fsRestore = async (sid, path, priorQuestions, expectText) => {
+    calls.push({sid, path, priorQuestions, expectText});
+    return {ok: false, supported: true, code: 'no_snapshot', error: 'The agent kept no copy of this file from before this reply'};
+  };
+  c.diffReviewAnnotate(mid, '/w');
+  const ids = {item: 'a1', path: '/w/g.txt'};
+  c.diffReviewClick(fakeEl({diffrev: 'revert', ...ids}));
+  c.DIFF_REVIEW.armed.at -= 1000;
+  c.diffReviewClick(fakeEl({diffrev: 'confirm', ...ids}));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].priorQuestions, 0);
+  assert.equal(toasts[0].t, 'Not reverted');
+  assert.match(toasts[0].s, /no copy/);
+  assert.ok(!c.DIFF_REVIEW.done.has(c.diffReviewKey('a1', '/w/g.txt')));
 });

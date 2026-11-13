@@ -448,8 +448,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1299: remove the chat's last question and answer (POST /api/sessions/{id}/rollback-last-turn). */
   rollbackLastTurn: (sessionId: string, expectText?: string, expectPriorQuestions?: number, expectUnanswered?: boolean) =>
     ipcRenderer.invoke("agent:rollbackLastTurn", { sessionId, expectText, expectPriorQuestions, expectUnanswered }),
-  /** ATO-563: put back a file the agent replaced, from its saved copy (POST /api/sessions/{id}/fs/restore). */
-  fsRestore: (sessionId: string, path: string) => ipcRenderer.invoke("agent:fsRestore", { sessionId, path }),
+  /** ATO-563: put a file back as it was before one reply (its question: priorQuestions + expectText), POST /api/sessions/{id}/fs/restore. */
+  fsRestore: (sessionId: string, path: string, priorQuestions: number, expectText: string) =>
+    ipcRenderer.invoke("agent:fsRestore", { sessionId, path, priorQuestions, expectText }),
 
   /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
   hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),

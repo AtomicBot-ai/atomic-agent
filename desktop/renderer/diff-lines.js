@@ -96,15 +96,6 @@ function diffSectionFor(text, file, root) {
   return null;
 }
 
-/** Did a write tool's result say the file's previous content was saved?
-    fs-replace-guard.ts: "previous content saved", or "the previous content is
-    saved — `os.fs.restore …` brings it back". Too large or a failed save say
-    otherwise, and an ordinary edit says nothing: then there is nothing to
-    revert to. */
-function restoreSaved(out) {
-  return /\bprevious content (?:is )?saved\b/.test(String(out || ''));
-}
-
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {looksLikeUnifiedDiff, diffLineKind, parseDiffLines, diffCounts, diffLinesHTML, diffSectionFor, restoreSaved};
+  module.exports = {looksLikeUnifiedDiff, diffLineKind, parseDiffLines, diffCounts, diffLinesHTML, diffSectionFor};
 }

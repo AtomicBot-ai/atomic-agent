@@ -102,14 +102,3 @@ test('one file\'s section of a multi-file patch, by the patch root', () => {
   assert.equal(D.diffSectionFor(PATCH, '/w/none.ts', '/w'), null);
   assert.equal(D.diffSectionFor(PATCH, '', '/w'), null);
 });
-
-test('a write result says whether a copy of the previous content was saved', () => {
-  // fs-replace-guard.ts: quiet and loud wording.
-  assert.equal(D.restoreSaved("wrote 12 bytes to /w/a.txt (replace)\nreplaced the user's file `a.txt` (3 → 1 lines); previous content saved"), true);
-  assert.equal(D.restoreSaved("⚠ shrank the user's file `a.txt` (40 → 2 lines); the previous content is saved — `os.fs.restore {\"path\":\"a.txt\"}` brings it back"), true);
-  // Not saved: too large, a failed save, an ordinary edit.
-  assert.equal(D.restoreSaved("replaced the user's file `big.bin`; the previous content was too large to save (over 5 MB)"), false);
-  assert.equal(D.restoreSaved("replaced the user's file `a.txt`; the previous content could not be saved: EACCES"), false);
-  assert.equal(D.restoreSaved(EDIT), false);
-  assert.equal(D.restoreSaved(null), false);
-});

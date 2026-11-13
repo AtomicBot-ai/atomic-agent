@@ -1,5 +1,5 @@
 /* ATO-563 step 1: under a reply, each file the turn wrote can show its diff
-   and, when the agent saved the file's previous content, be reverted.
+   and be reverted to what it held before that reply.
 
    Data, all of it already in the window: the turn's write cards (S.log, the
    same cards the "Saved to" strip is built from, renderer.js
@@ -8,16 +8,20 @@
    whole-file os.fs.write has no diff (it is new content, not a change), so
    that file shows no "Changes".
 
-   Revert is the agent's own restore (os.fs.restore's store), through
-   POST /api/sessions/{id}/fs/restore (BR.fsRestore). It is offered only where
-   the write's result said the previous content was saved (restoreSaved):
-   a whole-file replacement of a user file, or an edit that cut it down a lot.
-   An ordinary edit saves nothing, so it has no Revert. The click arms a
-   confirmation in place; only the second button reverts.
+   Revert goes through POST /api/sessions/{id}/fs/restore (BR.fsRestore),
+   which puts back the file checkpoint the agent took before the reply's
+   first change of that file (ATO-1056): the content from before the reply,
+   however many times the reply wrote it. The reply is named by its question
+   (priorQuestions + its text, as the rollback names one), never "the newest
+   copy". It is offered for every file the turn changed with a checkpointed
+   tool (os.fs.write / edit / patch); the agent refuses when it kept no copy
+   (an agent from before checkpoints, a file too large) and when a later
+   reply changed the file too. The click arms a confirmation in place; only
+   the second button reverts.
 
    Pure text work is in diff-lines.js. This file reads the renderer's
    globals (S, esc, ic, BR, toast, render, cardWrittenPaths, cardArgs,
-   resolveAgentPath, homeDir, pathBase) at call time, like the other
+   resolveAgentPath, homeDir, pathBase, priorQuestions) at call time, like the other
    renderer modules loaded before renderer.js. */
 
 const DIFF_REVIEW = {
@@ -30,6 +34,8 @@ const DIFF_REVIEW = {
 const DIFF_REVIEW_CONFIRM_MIN_MS = 400;
 /* At most this many diffs per file under one reply (an edit loop is cut). */
 const DIFF_REVIEW_MAX_DIFFS = 6;
+/* The write tools the agent checkpoints before they run (src/tools/os/fs/fs-checkpoint-targets.ts). */
+const DIFF_REVIEW_CHECKPOINTED = new Set(['os.fs.write', 'os.fs.edit', 'os.fs.patch']);
 
 function diffReviewKey(itemId, path) { return String(itemId) + '\n' + String(path); }
 
@@ -50,8 +56,10 @@ function diffReviewAnnotate(m, cwd) {
   if (!files || !files.length || typeof S === 'undefined') return;
   for (const f of files) { f.diffs = []; f.restorable = false; }
   const idx = S.log.indexOf(m);
-  for (let i = idx - 1; i >= 0 && S.log[i].k !== 'user'; i--) {
+  for (let i = idx - 1; i >= 0; i--) {
     const c = S.log[i];
+    // A steer joins the turn its question opened; only a new question ends it.
+    if (c.k === 'user') { if (c.steered) continue; break; }
     const written = cardWrittenPaths(c, cwd);
     if (!written.length) continue;
     const out = String(c.out || '');
@@ -67,20 +75,32 @@ function diffReviewAnnotate(m, cwd) {
       }
       // Walking back, so the earliest change of the turn ends up first.
       if (diff && f.diffs.length < DIFF_REVIEW_MAX_DIFFS) f.diffs.unshift(diff);
-      // A patch's result notes each file it replaced on its own line, by absolute path.
-      if (c.name === 'os.fs.patch'
-        ? out.split('\n').some((l) => restoreSaved(l) && l.indexOf(f.path) >= 0)
-        : restoreSaved(out)) f.restorable = true;
+      // The agent took a checkpoint before this card changed the file.
+      if (DIFF_REVIEW_CHECKPOINTED.has(c.name)) f.restorable = true;
     }
   }
 }
 
-/** Did a turn after this item write the file again? Then this reply's
-    Revert would put back a later copy, not the one it promises. */
+/** The question that opened `m`'s turn (steers skipped), or null. */
+function diffReviewQuestion(m) {
+  const idx = S.log.indexOf(m);
+  for (let i = idx - 1; i >= 0; i--) {
+    const x = S.log[i];
+    if (x.k === 'user' && !x.steered) return x;
+  }
+  return null;
+}
+
+/** Did a later turn (after the next question) write the file again? Putting
+    back this reply's starting point would undo that one too, so the window
+    refuses, as the agent does (changed_later). */
 function diffReviewWrittenLater(m, path, cwd) {
   const idx = S.log.indexOf(m);
+  let later = false;
   for (let i = idx + 1; i < S.log.length; i++) {
-    if (cardWrittenPaths(S.log[i], cwd).some((p) => diffReviewSamePath(p, path))) return true;
+    const x = S.log[i];
+    if (x.k === 'user' && !x.steered) { later = true; continue; }
+    if (later && cardWrittenPaths(x, cwd).some((p) => diffReviewSamePath(p, path))) return true;
   }
   return false;
 }
@@ -106,12 +126,12 @@ function diffReviewRowHTML(m, f) {
     if (DIFF_REVIEW.done.has(key)) html += '<span class="dr-done">' + ic('check') + 'Reverted</span>';
     else if (DIFF_REVIEW.busy.has(key)) html += '<span class="dr-done">Reverting…</span>';
     else if (DIFF_REVIEW.armed && DIFF_REVIEW.armed.key === key) {
-      html += '<span class="dr-confirm">Put back the version of ' + name + ' from before this reply? What the agent wrote there is replaced.</span>'
+      html += '<span class="dr-confirm">Put ' + name + ' back as it was before this reply? What the agent wrote there is replaced; a file this reply created is removed.</span>'
         + '<button class="btn sm btn-danger" data-diffrev="confirm"' + ids + '>Revert</button>'
         + '<button class="btn sm btn-g" data-diffrev="cancel"' + ids + '>Cancel</button>';
     } else {
       html += '<button class="btn sm btn-g dr-revert" data-diffrev="revert"' + ids
-        + ' title="Put back the content this file had before the agent replaced it">Revert</button>';
+        + ' title="Put back the content this file had before this reply changed it">Revert</button>';
     }
   }
   return html + '</div>';
@@ -162,14 +182,24 @@ async function diffReviewRevert(itemId, path) {
     diffReviewRepaint();
     return;
   }
+  // The reply's question: the agent restores what the file held before it.
+  const q = diffReviewQuestion(m);
+  const prior = q && typeof priorQuestions === 'function' ? priorQuestions(q) : null;
+  if (!q || !Number.isInteger(prior)) {
+    toast('Not reverted', 'this window could not tell which reply to revert', 'bad');
+    diffReviewRepaint();
+    return;
+  }
   DIFF_REVIEW.busy.add(key);
   diffReviewRepaint();
   let r = null;
-  try { r = await BR.fsRestore(S.agentSession, path); } catch (e) { r = {ok: false, error: String((e && e.message) || e)}; }
+  try { r = await BR.fsRestore(S.agentSession, path, prior, String(q.text || '')); } catch (e) { r = {ok: false, error: String((e && e.message) || e)}; }
   DIFF_REVIEW.busy.delete(key);
   if (r && r.ok) {
     DIFF_REVIEW.done.add(key);
-    toast('Reverted ' + name, 'it has the content it had before the agent replaced it');
+    if (r.action === 'delete') toast('Removed ' + name, 'this reply created it, so going back means it is gone');
+    else if (r.action === 'unchanged') toast(name + ' already as it was', 'it has the content it had before this reply');
+    else toast('Reverted ' + name, 'it has the content it had before this reply');
   } else {
     toast('Not reverted', (r && r.error) || 'the agent did not put the file back', 'bad');
   }
@@ -177,5 +207,5 @@ async function diffReviewRevert(itemId, path) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {diffReviewKey, diffReviewSamePath, DIFF_REVIEW};
+  module.exports = {diffReviewKey, diffReviewSamePath, diffReviewQuestion, DIFF_REVIEW};
 }
