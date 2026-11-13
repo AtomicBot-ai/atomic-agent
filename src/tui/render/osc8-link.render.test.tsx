@@ -20,7 +20,7 @@ describe("Osc8Link through Ink's renderer", () => {
       `${OSC8_CONSTANTS.open}https://example.com/docs${OSC8_CONSTANTS.terminator}`,
     );
     expect(frame).toContain(OSC8_CONSTANTS.close);
-    expect(frame.indexOf("docs")).toBeGreaterThan(
+    expect(frame.lastIndexOf("docs")).toBeGreaterThan(
       frame.indexOf(OSC8_CONSTANTS.terminator),
     );
   });

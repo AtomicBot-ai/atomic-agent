@@ -129,7 +129,9 @@ describe("cursor clamping against a filtered list", () => {
       // the filtered list is what the render highlights, so it is what
       // Enter has to select.
       { query: "cli", cursor: 20, expected: 1 },
-      { query: "gemini", cursor: 20, expected: 0 },
+      // Gemini itself and the Vertex AI preset, whose note names Gemini
+      // (ATO-468).
+      { query: "gemini", cursor: 20, expected: 1 },
       { query: "no-such-provider", cursor: 20, expected: 0 },
       { query: "cli", cursor: -4, expected: 0 },
     ];

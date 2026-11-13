@@ -218,7 +218,13 @@ export function ChatLog({
     measuredContentRows > 0 ? measuredContentRows : estimatedContentRows;
   // Cap the scroll so the very first message lands at the top and a
   // further wheel-up tick does nothing. Floor stop matches opencode.
-  const maxOffset = Math.max(0, totalContentRows - viewport);
+  // Once scrolled, the hint under the log takes SCROLL_HINT_ROWS of the
+  // viewport, so the top stop is that much further up: without it the
+  // first message's header sat behind the hint.
+  const maxOffset =
+    totalContentRows > viewport
+      ? totalContentRows - viewport + SCROLL_HINT_ROWS
+      : 0;
   const offset = Math.max(0, Math.min(state.chatScrollOffset, maxOffset));
   // Self-correct an over-scrolled state — happens after a session
   // swap that shrank the chat, or when `measuredContentRows` lands
@@ -375,9 +381,15 @@ function StreamingTail({
   );
 }
 
+/** Rows `ScrollHint` takes: its top margin and its one line. */
+const SCROLL_HINT_ROWS = 2;
+
 function ScrollHint({ offset }: { offset: number }): ReactElement {
   return (
-    <Box marginTop={1}>
+    // Never shrunk: the column above is taller than the viewport and
+    // cannot shrink, so a shrinkable hint is the one row Yoga takes the
+    // overflow from and it vanished while scrolled (ATO-650).
+    <Box marginTop={1} flexShrink={0}>
       <Text color={theme.colors.muted} dimColor>
         ↑ scrolled up {offset} line{offset === 1 ? "" : "s"} — Esc to jump to
         latest

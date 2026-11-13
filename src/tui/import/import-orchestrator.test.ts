@@ -9,7 +9,6 @@ import { makeTuiEventBus } from "../make-event-bus.js";
 import type { OnboardingImportPlan } from "../onboarding/import-step.js";
 import type { TuiAction } from "../tui-action.js";
 import { ImportOrchestrator } from "./import-orchestrator.js";
-import type { ImportFormState } from "./import-panel-state.js";
 import {
   createInitialImportFormState,
   type ImportFormState,
@@ -19,11 +18,6 @@ interface Emitted {
   type: string;
   [key: string]: unknown;
 }
-import {
-  createInitialImportFormState,
-  type ImportFormState,
-} from "./import-panel-state.js";
-
 function makeBus() {
   const actions: Emitted[] = [];
   return {
