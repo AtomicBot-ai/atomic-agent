@@ -102,4 +102,21 @@ describe("runtime observability construction phases", () => {
     expect(report).toHaveBeenLastCalledWith(next.analytics, "download_started", undefined);
     await controls.setAnalyticsEnabled(false);
   });
+
+  it("sends ui_action through the live client, and to no client while analytics is off (ATO-1465)", async () => {
+    const events: string[] = [];
+    const first = clients(events, "first");
+    const next = clients(events, "next");
+    vi.spyOn(analytics, "buildRuntimeTelemetry").mockReturnValueOnce(first).mockReturnValue(next);
+    const report = vi.spyOn(analytics, "captureUiAction");
+    const config = getConfig();
+    config.analytics.enabled = true;
+    const component = createRuntimeObservability(config, {});
+    const controls = component.createControls();
+    controls.reportUiAction("/report", "slash");
+    expect(report).toHaveBeenLastCalledWith(first.analytics, "/report", "slash");
+    await controls.setAnalyticsEnabled(false);
+    controls.reportUiAction("/report", "slash");
+    expect(report).toHaveBeenLastCalledWith(null, "/report", "slash");
+  });
 });

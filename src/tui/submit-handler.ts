@@ -89,7 +89,7 @@ export function handleEditorSubmit(
     const safeCursor = Math.min(state.slashPaletteCursor, maxRow);
     const chosen = completions[safeCursor];
     if (chosen) {
-      runSlashCommand(`/${chosen.name}`, state, dispatch, callbacks);
+      runSlashCommand(`/${chosen.name}`, state, dispatch, callbacks, "palette");
       return;
     }
   }
@@ -221,12 +221,38 @@ function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCal
   return text;
 }
 
+/**
+ * Count a built-in slash command as `ui_action` (ATO-1465): only the
+ * registry's canonical name (`/report`, an alias counts as its command),
+ * never the arguments. Skills, plugin commands and unknown input are not
+ * reported, since their names are the operator's own. The runtime drops
+ * the event while analytics is off.
+ */
+export function reportBuiltInSlashCommand(
+  raw: string,
+  via: "slash" | "palette" | "menu",
+  callbacks: Pick<TuiAppCallbacks, "onUiAction">,
+): void {
+  if (!callbacks.onUiAction) return;
+  const parsed = parseSlashCommand(raw);
+  if (parsed === null) return;
+  const builtIn = resolveSlashCommand(parsed.name);
+  if (builtIn === null) return;
+  try {
+    callbacks.onUiAction(`/${builtIn.name}`, via);
+  } catch {
+    // Analytics must never get in the way of the command.
+  }
+}
+
 export function runSlashCommand(
   raw: string,
   state: TuiState,
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
+  via: "slash" | "palette" | "menu" = "slash",
 ): void {
+  reportBuiltInSlashCommand(raw, via, callbacks);
   const result: SlashDispatchResult = dispatchSlashCommand(raw, skillSlashCommands(state.skillsPanel));
   if (result.skillInvocation || result.pluginCommandInvocation) {
     if (!canTypeMessage(state)) return;

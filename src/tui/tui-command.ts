@@ -530,6 +530,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         },
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
         onOpenUrlRequested: (url) => openUrlFromChat(url, bus),
+        onUiAction: (action, via) => runtime.reportUiAction?.(action, via),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
         onPersistLlamaUrl: (nextUrl) =>

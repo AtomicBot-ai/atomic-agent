@@ -123,7 +123,7 @@ export async function createAgentRuntime(
     brokenPipe: options.brokenPipe,
   });
 
-  const { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed } =
+  const { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed, reportUiAction } =
     observability.createControls();
 
   const traces = createRuntimeTraces(config, options, logger);
@@ -921,6 +921,7 @@ export async function createAgentRuntime(
     reportOnboardingStep,
     reportModelConfigured,
     reportLocalEngineFailed,
+    reportUiAction,
     setLocalModelRestarter: (restarter: LocalModelRestarter | null) => {
       localModelRestarter = restarter;
     },

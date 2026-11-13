@@ -783,3 +783,93 @@ describe("bare /enhance", () => {
     expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
   });
 });
+
+describe("ui_action for built-in slash commands (ATO-1465)", () => {
+  const noop = (): void => {};
+
+  it("counts /report by name only", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "/report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction, onIssueReportRequested: vi.fn() }),
+    );
+    expect(onUiAction).toHaveBeenCalledTimes(1);
+    expect(onUiAction).toHaveBeenCalledWith("/report", "slash");
+  });
+
+  it("sends /discord without its arguments", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "/discord foo bar",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction, onOpenUrlRequested: vi.fn() }),
+    );
+    expect(onUiAction).toHaveBeenCalledTimes(1);
+    expect(onUiAction).toHaveBeenCalledWith("/discord", "slash");
+    expect(JSON.stringify(onUiAction.mock.calls)).not.toMatch(/foo|bar/);
+  });
+
+  it("sends nothing for an unknown command", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "/definitely-not-a-command secret",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction }),
+    );
+    expect(onUiAction).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing for a plain message", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "hello /report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction }),
+    );
+    expect(onUiAction).not.toHaveBeenCalled();
+  });
+
+  it("reports an alias as its canonical command", () => {
+    const onUiAction = vi.fn();
+    runSlashCommand(
+      "/cost",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction }),
+    );
+    expect(onUiAction).toHaveBeenCalledWith("/usage", "slash");
+  });
+
+  it("passes the menu as the trigger when the menu runs the command", () => {
+    const onUiAction = vi.fn();
+    runSlashCommand(
+      "/report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction, onIssueReportRequested: vi.fn() }),
+      "menu",
+    );
+    expect(onUiAction).toHaveBeenCalledWith("/report", "menu");
+  });
+
+  it("still runs the command when analytics throws", () => {
+    const onIssueReportRequested = vi.fn();
+    runSlashCommand(
+      "/report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({
+        onUiAction: () => {
+          throw new Error("boom");
+        },
+        onIssueReportRequested,
+      }),
+    );
+    expect(onIssueReportRequested).toHaveBeenCalledTimes(1);
+  });
+});
