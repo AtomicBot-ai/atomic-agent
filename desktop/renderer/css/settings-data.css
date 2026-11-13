@@ -180,3 +180,17 @@ input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
 .sd-imptbl th:nth-child(1),.sd-imptbl th:nth-child(2){width:112px}
 .sd-imptbl td.sd-path{font:400 var(--fs-label)/1.3 var(--font-mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis}
 .sd-reason{color:var(--ink-2)}
+/* W2: the source chips wrap onto a second line instead of running past the pane;
+   the folder field carries its Choose… button; the group list after a preview. */
+.sd-form .tk-seg.sd-impsrc{display:flex;flex-wrap:wrap;height:auto;row-gap:4px;max-width:100%;border-radius:16px}
+.sd-form .tk-seg.sd-impsrc button{flex:none}
+.sd-imppath{display:flex;gap:8px;align-items:center;min-width:0}
+.sd-imppath .tk-inp{flex:1 1 auto;min-width:0}
+.sd-imppath .btn{flex:none}
+.sd-impwarn{display:flex;gap:6px;align-items:center;color:var(--ink-2)}
+.sd-impsent{color:var(--ink);font-size:var(--fs-label)}
+.sd-impgrp{display:flex;gap:10px;align-items:flex-start;padding:8px 12px}
+.sd-impgrp .sd-impgic{flex:none;color:var(--ink-2);margin-top:2px}
+.sd-impgrp .body{min-width:0}
+.sd-impgrp .d{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sd-imp .set-sechead{margin-top:6px}

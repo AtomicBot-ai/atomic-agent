@@ -89,6 +89,16 @@ export interface ImportAtomicDesktopOptions {
   scratchParent?: string;
   /** Rows per write transaction (default 200), so no lock is held for long. */
   batchSize?: number;
+  /**
+   * Which databases to merge (default all three). The "Atomic Agent"
+   * import source (atomic-agent-importer.ts) leaves tasks out unless the
+   * person asks for their scheduled jobs.
+   */
+  parts?: { sessions?: boolean; tasks?: boolean; memory?: boolean };
+  /** Count what would be merged without writing to the targets. */
+  dryRun?: boolean;
+  /** Each session / task id met, and whether it is (or would be) new here. */
+  onItem?: (part: "sessions" | "tasks", id: string, imported: boolean) => void;
 }
 
 const DEFAULT_BATCH_SIZE = 200;
@@ -154,6 +164,13 @@ export async function importAtomicDesktop(
   const sourceDir = resolve(options.sourceDir);
   const batchSize = Math.max(1, options.batchSize ?? DEFAULT_BATCH_SIZE);
   const { targets } = options;
+  const parts = {
+    sessions: options.parts?.sessions !== false,
+    tasks: options.parts?.tasks !== false,
+    memory: options.parts?.memory !== false,
+  };
+  const dryRun = options.dryRun === true;
+  const onItem = options.onItem ?? (() => {});
   const scratch = mkdtempSync(
     join(options.scratchParent ?? tmpdir(), "atomic-desktop-import-"),
   );
@@ -179,15 +196,21 @@ export async function importAtomicDesktop(
 
   try {
     // Sessions before tasks: a copied task names its session by id.
-    await part("sessions", ATOMIC_DESKTOP_DB_FILES.sessions, (file) =>
-      importSessions(file, targets.sessionStore, result, batchSize),
-    );
-    await part("tasks", ATOMIC_DESKTOP_DB_FILES.tasks, (file) =>
-      importTasks(file, targets.taskStore, result, batchSize),
-    );
-    await part("memory", ATOMIC_DESKTOP_DB_FILES.memory, (file) =>
-      importMemory(file, targets, result),
-    );
+    if (parts.sessions) {
+      await part("sessions", ATOMIC_DESKTOP_DB_FILES.sessions, (file) =>
+        importSessions(file, targets.sessionStore, result, batchSize, dryRun, onItem),
+      );
+    }
+    if (parts.tasks) {
+      await part("tasks", ATOMIC_DESKTOP_DB_FILES.tasks, (file) =>
+        importTasks(file, targets.taskStore, result, batchSize, dryRun, onItem),
+      );
+    }
+    if (parts.memory) {
+      await part("memory", ATOMIC_DESKTOP_DB_FILES.memory, (file) =>
+        importMemory(file, targets, result, dryRun),
+      );
+    }
   } finally {
     try {
       rmSync(scratch, { recursive: true, force: true });
@@ -215,6 +238,8 @@ function importSessions(
   store: SessionStore,
   result: AtomicDesktopImportResult,
   batchSize: number,
+  dryRun = false,
+  onItem: (part: "sessions", id: string, imported: boolean) => void = () => {},
 ): void {
   const counts = result.sessions;
   const db = new DatabaseCtor(snapshotFile, { fileMustExist: true });
@@ -226,9 +251,14 @@ function importSessions(
     let batch: SessionState[] = [];
     const flush = (): void => {
       if (batch.length === 0) return;
-      const inserted = store.insertMissing(batch).length;
-      counts.imported += inserted;
-      counts.skipped += batch.length - inserted;
+      const inserted = new Set(
+        dryRun
+          ? batch.filter((s) => store.load(s.id) === null).map((s) => s.id)
+          : store.insertMissing(batch),
+      );
+      for (const s of batch) onItem("sessions", s.id, inserted.has(s.id));
+      counts.imported += inserted.size;
+      counts.skipped += batch.length - inserted.size;
       batch = [];
     };
     let unreadable = 0;
@@ -294,6 +324,8 @@ function importTasks(
   store: TaskStore,
   result: AtomicDesktopImportResult,
   batchSize: number,
+  dryRun = false,
+  onItem: (part: "tasks", id: string, imported: boolean) => void = () => {},
 ): void {
   const counts = result.tasks;
   // Opening the store migrates the private copy to this binary's schema.
@@ -302,9 +334,14 @@ function importTasks(
     const records = source.list({ limit: Number.MAX_SAFE_INTEGER }).reverse();
     for (let i = 0; i < records.length; i += batchSize) {
       const batch = records.slice(i, i + batchSize);
-      const inserted = store.insertMissing(batch).length;
-      counts.imported += inserted;
-      counts.skipped += batch.length - inserted;
+      const inserted = new Set(
+        dryRun
+          ? batch.filter((t) => store.get(t.id) === null).map((t) => t.id)
+          : store.insertMissing(batch),
+      );
+      for (const t of batch) onItem("tasks", t.id, inserted.has(t.id));
+      counts.imported += inserted.size;
+      counts.skipped += batch.length - inserted.size;
     }
   } finally {
     source.close();
@@ -324,6 +361,7 @@ function importMemory(
   snapshotFile: string,
   targets: AtomicDesktopImportTargets,
   result: AtomicDesktopImportResult,
+  dryRun = false,
 ): void {
   // Opening the store migrates the private copy to this binary's schema,
   // so the note query below can name current columns.
@@ -350,12 +388,12 @@ function importMemory(
   }
   // Independent halves: a failure in one still lets the other import.
   try {
-    importNotes(notes, targets.memoryStore, result);
+    importNotes(notes, targets.memoryStore, result, dryRun);
   } catch (err) {
     result.errors.push(`notes: ${errorMessage(err)}`);
   }
   try {
-    importProfileFacts(facts, targets.profileStore, result);
+    importProfileFacts(facts, targets.profileStore, result, dryRun);
   } catch (err) {
     result.errors.push(`profile facts: ${errorMessage(err)}`);
   }
@@ -365,6 +403,7 @@ function importNotes(
   notes: readonly NoteRow[],
   store: MemoryStore,
   result: AtomicDesktopImportResult,
+  dryRun = false,
 ): void {
   const counts = result.notes;
   const before = store.count();
@@ -376,6 +415,10 @@ function importNotes(
     const missing = chunks.filter((chunk) => !store.hasContent(chunk));
     if (missing.length === 0) {
       counts.skipped += 1;
+      continue;
+    }
+    if (dryRun) {
+      counts.imported += 1;
       continue;
     }
     const base = {
@@ -429,6 +472,7 @@ function importProfileFacts(
   facts: readonly ProfileFact[],
   store: ProfileStore,
   result: AtomicDesktopImportResult,
+  dryRun = false,
 ): void {
   const counts = result.profileFacts;
   let invalid = 0;
@@ -441,6 +485,10 @@ function importProfileFacts(
       // row, so the desktop's value is imported.)
       if (store.history(fact.key).length > 0) {
         counts.skipped += 1;
+        continue;
+      }
+      if (dryRun) {
+        counts.imported += 1;
         continue;
       }
       const options: ProfileSetOptions = {

@@ -4,6 +4,7 @@ import { getConfig } from "../config/index.js";
 import { SessionStore } from "../session/index.js";
 import { processFinaleIo, writeImportFinale } from "./import-finale.js";
 import {
+  groupImportReport,
   importAgentDir,
   OhMyPiImporter,
   OhMyPiOptionError,
@@ -76,7 +77,11 @@ export async function importPi(args: string[]): Promise<number> {
       selectedLine: `Selected: ${options.join(", ")}\n\n`,
       dryRun,
       yes,
-      run: (execute) => importer.run({ options, execute, overwrite, limit }),
+      run: async (execute) =>
+        groupImportReport(
+          await importer.run({ options, execute, overwrite, limit }),
+          { stateDir: config.paths.stateDir, execute },
+        ),
     });
   } finally {
     sessionStore.close();
@@ -135,7 +140,11 @@ export async function importOhMyPi(args: string[]): Promise<number> {
       selectedLine: `Selected: ${options.join(", ")}\n\n`,
       dryRun,
       yes,
-      run: (execute) => importer.run({ options, execute, overwrite, limit }),
+      run: async (execute) =>
+        groupImportReport(
+          await importer.run({ options, execute, overwrite, limit }),
+          { stateDir: config.paths.stateDir, execute },
+        ),
     });
   } finally {
     sessionStore.close();
@@ -146,7 +155,7 @@ export async function importOhMyPi(args: string[]): Promise<number> {
  * The preview -> confirm -> execute skeleton every import subcommand
  * follows, with the phases behind one `run(execute)` callback.
  */
-async function runTwoPhase(input: {
+export async function runTwoPhase(input: {
   sourceLine: string;
   selectedLine: string;
   dryRun: boolean;
@@ -221,7 +230,7 @@ async function confirm(prompt: string): Promise<boolean> {
   }
 }
 
-function readOption(args: string[], name: string): string | undefined {
+export function readOption(args: string[], name: string): string | undefined {
   const idx = args.indexOf(name);
   if (idx < 0) return undefined;
   const value = args[idx + 1];
@@ -229,7 +238,7 @@ function readOption(args: string[], name: string): string | undefined {
   return value;
 }
 
-function parseCsv(raw: string | undefined): string[] {
+export function parseCsv(raw: string | undefined): string[] {
   if (!raw) return [];
   return raw
     .split(",")

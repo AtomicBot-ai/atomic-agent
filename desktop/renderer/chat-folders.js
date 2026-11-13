@@ -19,6 +19,12 @@
    moved (out of a folder too) is theirs and never sorted again; Settings ›
    Import's "Put imported chats into folders" turns the sorting off.
 
+   W2: the import itself now files chats by the project they had at the
+   source (src/import/grouping.ts): a Project when that folder exists here,
+   else a folder of that name. It writes those placements as the person's
+   (no `auto` mark; a chat in a Project gets `null` here), so this sorting
+   leaves them alone and only files what the import could not.
+
    ATO-1253: Claude Code chats go into a folder per PROJECT instead, the
    folder that Claude Code session ran in (its last path segment; a second
    project with the same name gets its parent's name too: "app (client)").
@@ -32,6 +38,8 @@
 const FOLDER_NAME_MAX = 80;
 const FOLDER_SOURCES = {
   'claude-code': 'Claude Code', codex: 'Codex', hermes: 'Hermes', openclaw: 'OpenClaw', pi: 'Pi', 'oh-my-pi': 'Oh My Pi',
+  // W2: Claude app chats the export filed in no project.
+  'claude-app': 'Claude',
 };
 
 function foldersEmpty() {

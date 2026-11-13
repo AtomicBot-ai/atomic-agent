@@ -1492,16 +1492,16 @@ const EXA = {
 /* Import panel — the TUI's ImportPanelState; the form is
    createInitialImportFormState (hermes, ~/.hermes, sessions+cron on). */
 const IMP = {
-  mode:'configure', form:{source:'hermes', sourceDir:'', skills:true, memory:true, mcp:true, sessions:true, cron:true, secrets:false, overwrite:false, limit:'', focus:'sourceType'},
+  mode:'configure', form:{source:'hermes', sourceDir:'', skills:true, memory:true, mcp:true, sessions:true, cron:true, providers:true, secrets:false, overwrite:false, limit:'', focus:'sourceType'},
   report:null, reportExecuted:false, notice:null, state:null, defaults:null, runs:0, busy:false,
   applying:false, // the run on screen is Apply's (Importing…), not a preview's (Checking…)
 };
-const IMP_TOGGLE_FIELDS = ['skills','memory','mcp','sessions','cron','secrets','overwrite'];
+const IMP_TOGGLE_FIELDS = ['skills','memory','mcp','sessions','providers','cron','secrets','overwrite'];
 /* src/tui/import/import-sources.ts: the source row's order, its labels, the
    default-folder placeholder, and which toggles each source draws, in row order.
    The descriptions are the importers' own (obImportRegistry); the secrets row
    shows the variable names instead, as the TUI's hint does. */
-const IMP_SOURCES = ['hermes','openclaw','claude-code','codex','pi','oh-my-pi'];
+const IMP_SOURCES = ['hermes','openclaw','claude-code','codex','pi','oh-my-pi','claude-app','atomic-agent'];
 const IMP_SOURCE_META = {
   hermes:{label:'Hermes', logo:'hermes', dir:'~/.hermes', toggles:['sessions','cron','secrets'], secretsHint:'OPENROUTER_API_KEY / AIMLAPI_API_KEY'},
   openclaw:{label:'OpenClaw', logo:'openclaw', dir:'~/.openclaw', toggles:['sessions','cron']},
@@ -1509,8 +1509,35 @@ const IMP_SOURCE_META = {
   codex:{label:'Codex', logo:'codex', dir:'~/.codex', toggles:['skills','memory','sessions','secrets'], secretsHint:'OPENAI_API_KEY'},
   pi:{label:'Pi', logo:'pi', dir:'~/.pi/agent', toggles:['skills','sessions']},
   'oh-my-pi':{label:'Oh-My-Pi', logo:'ohmypi', dir:'~/.omp/agent', toggles:['skills','mcp','sessions']},
+  /* W2: the Claude app (claude.ai and the Claude desktop app) through its data
+     export, and another Atomic Agent data folder ("import from another profile"). */
+  'claude-app':{label:'Claude', logo:'claude', dir:'', pick:'file', toggles:['sessions','memory'],
+    hint:'In Claude, open Settings › Privacy › Export data. Claude emails you a link to a .zip: choose that file here, or the folder it unpacks to.'},
+  'atomic-agent':{label:'Atomic Agent', logo:'', dir:'~/.atomic-agent', toggles:['sessions','memory','skills','mcp','providers','cron','secrets'], cronOff:true,
+    hint:'Another Atomic Agent data folder, such as one from another computer or another profile. It is only read, never changed.'},
 };
-const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'MCP servers', sessions:'Sessions', cron:'Cron jobs', secrets:'Secrets'};
+const IMP_TOGGLE_TITLES = {skills:'Skills', memory:'Memory', mcp:'Connected tools', sessions:'Chats', providers:'Cloud models', cron:'Scheduled jobs', secrets:'API keys'};
+/* W2 (owner: "developer-speak"): what each row brings, in plain words, per source. */
+const IMP_TOGGLE_WORDS = {
+  sessions:'Your chats, kept in their projects and folders',
+  skills:'Your skills',
+  memory:'Notes and instructions the agent remembers',
+  mcp:'Tools you connected (MCP servers)',
+  providers:'Cloud model providers you set up',
+  cron:'Jobs that run on a schedule',
+  secrets:'Your API keys, stored only on ' + THIS_MACHINE,
+};
+const IMP_SOURCE_WORDS = {
+  hermes:{secrets:'Your OpenRouter and AI/ML API keys, stored only on ' + THIS_MACHINE},
+  'claude-code':{memory:'Your notes and instructions for Claude Code (CLAUDE.md)', secrets:'Your Anthropic API key, stored only on ' + THIS_MACHINE},
+  codex:{memory:'Your instructions for Codex (AGENTS.md)', secrets:'Your OpenAI API key, stored only on ' + THIS_MACHINE},
+  'claude-app':{sessions:'Your conversations, in a folder per Claude project when the export says which', memory:'Each project’s instructions and files, as notes the agent remembers'},
+  'atomic-agent':{sessions:'Your chats, in the projects and folders they were in', memory:'Notes and facts the agent remembers',
+    cron:'Scheduled jobs and tasks. Off unless you turn it on', secrets:'API keys saved in that folder, stored only on ' + THIS_MACHINE},
+};
+function impToggleWords(source, t) { return (IMP_SOURCE_WORDS[source] && IMP_SOURCE_WORDS[source][t]) || IMP_TOGGLE_WORDS[t] || ''; }
+/* The report's Kind column, in the same words. */
+const IMP_KIND_WORDS = {sessions:'chat', skills:'skill', memory:'memory', mcp:'tool', providers:'cloud model', cron:'job', secrets:'API key', projects:'project', folders:'folder'};
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 /* Settings › Diagnostics (Д56/Д58): what each row's Copy takes, and the model
    server's log shown there — open or not, its last read, the poll's timer. */
@@ -30845,7 +30872,7 @@ function discordKey(e, k, inText) {
 
 function importVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'import'; }
 // Д51: Preview import sits in the header, above the form, so the keyboard reaches it first.
-function impFocusOrder(source) { return ['run', 'sourceType', 'source'].concat(impMeta(source).toggles, ['overwrite', 'limit']); }
+function impFocusOrder(source) { return ['run', 'sourceType', 'source'].concat(impMeta(source).toggles, source === 'atomic-agent' ? ['overwrite'] : ['overwrite', 'limit']); }
 function impMeta(source) { return IMP_SOURCE_META[source] || IMP_SOURCE_META.hermes; }
 /* import-sources.ts nextImportSource: ←/→ / space / Enter step the source row, wrapping. */
 function impNextSource(source, d) { const i = Math.max(0, IMP_SOURCES.indexOf(source)); return IMP_SOURCES[(i + d + IMP_SOURCES.length) % IMP_SOURCES.length]; }
@@ -30853,9 +30880,14 @@ function impRepaint() { if (importVisible()) paneRepaintKeepFocus(importTab()); 
 async function importTabEntered() {
   if (!BR || IMP.defaults) return;
   const d = await BR.importDefaults();
-  if (d && d.hermes) { IMP.defaults = d; if (!IMP.form.sourceDir) IMP.form.sourceDir = d[IMP.form.source] || ''; impRepaint(); }
+  if (d && d.hermes) { IMP.defaults = d; if (!IMP.form.sourceDir) IMP.form.sourceDir = impDefaultDir(IMP.form.source); impRepaint(); }
 }
-function impDefaultDir(source) { return IMP.defaults && IMP.defaults[source] ? IMP.defaults[source] : (homeDir() ? homeDir() + impMeta(source).dir.slice(1) : ''); }
+function impDefaultDir(source) {
+  // W2: a source main answered for (the Claude export has no default, the Atomic Agent one is null when ~/.atomic-agent is this app's own) keeps its answer.
+  if (IMP.defaults && source in IMP.defaults) return IMP.defaults[source] || '';
+  const dir = impMeta(source).dir;
+  return dir && homeDir() ? homeDir() + dir.slice(1) : '';
+}
 /* Д51/Д52: Preview import lives in the header, which stays at the top of the
    pane while the form scrolls. Under the form it moved with each source's
    rows and, for the longer ones (Codex), went past the window's bottom edge. */
@@ -30886,30 +30918,36 @@ function impLogoHTML(source, size) {
 function impFormHTML(f) {
   const fc = f.focus;
   const meta = impMeta(f.source);
-  // The agent's own option descriptions (src/import/<source>/import-options.ts), via the wizard's registry.
-  const desc = {};
-  for (const o of obImportRegistry(f.source)) desc[o.id] = o.description.replace(/ -> /g, ' → ');
   const sw = (field, title, d, badge) => '<div class="tk-setrow sd-frow' + (fc === field ? ' sd-kfocus' : '') + '">'
     + '<div class="body"><div class="t">' + title + (badge || '') + '</div><div class="d">' + d + '</div></div>'
     + '<button class="tk-switch" role="switch" aria-checked="' + !!f[field] + '" aria-label="' + title + '" data-act="import:toggle:' + field + '"></button></div>';
+  const self = impSourceIsSelf(f);
   // ST-31. Only the two text inputs carry data-imp-focus: importKey's move() calls setSelectionRange on whatever does.
   return '<div class="sd-form">'
-    + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl" id="imp-source-type">Source</span><div class="tk-seg" role="group" aria-labelledby="imp-source-type">'
+    + '<div class="tk-field sd-frow' + (fc === 'sourceType' ? ' sd-kfocus' : '') + '"><span class="tk-lbl" id="imp-source-type">Source</span><div class="tk-seg sd-impsrc" role="group" aria-labelledby="imp-source-type">'
     + IMP_SOURCES.map((s) => '<button class="' + (f.source === s ? 'on' : '') + '" aria-pressed="' + (f.source === s) + '" data-act="import:source:' + s + '">'
       + impLogoHTML(s, 'xs') + esc(IMP_SOURCE_META[s].label) + '</button>').join('') + '</div></div>'
-    + '<div class="tk-field sd-frow' + (fc === 'source' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-source">Source folder</label>'
-    + '<input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="' + esc(meta.dir) + '" autocomplete="off" spellcheck="false"></div>'
-    + '<div class="tk-card sd-rows">'
-    + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
+    + '<div class="tk-field sd-frow' + (fc === 'source' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-source">' + (meta.pick === 'file' ? 'Export file or folder' : 'Source folder') + '</label>'
+    + '<div class="sd-imppath"><input id="imp-source" class="tk-inp mono" data-imp-field="sourceDir" data-imp-focus="source" value="' + esc(f.sourceDir) + '" placeholder="'
+      + esc(meta.pick === 'file' ? 'claude-data-export.zip' : (impDefaultDir(f.source) || meta.dir || 'Choose a folder')) + '" autocomplete="off" spellcheck="false">'
+    + '<button class="btn btn-s sm" data-act="import:pick">' + ic('folder') + 'Choose…</button></div>'
+    + (meta.hint ? '<span class="tk-help">' + esc(meta.hint) + '</span>' : '')
+    + (self ? '<span class="tk-help sd-impwarn">' + ic('info') + 'This app already keeps its data in ' + esc(memStateDir() || '~/.atomic-agent') + '. Choose another Atomic Agent folder.</span>' : '')
     + '</div>'
-    /* ATO-1034: imported chats go into a folder named after the app they came
-       from (chat-folders.js). Not an `atag import` option: it is the sidebar's,
-       kept in chat-folders.json, so it holds for every import and for chats
-       imported before. */
+    + '<div class="set-sechead"><h4 class="set-sechead-t">What to bring</h4></div>'
+    + '<div class="tk-card sd-rows">'
+    + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], esc(impToggleWords(f.source, t)))).join('')
+    + '</div>'
+    /* ATO-1034 / ATO-1253 / W2: where imported chats go. Not an `atag import`
+       option: it is chat-folders.json's `autoSort`, which the import's
+       grouping step (src/import/grouping.ts) and the sidebar's sorting both
+       read, so it holds for every import and for chats imported before. */
+    + '<div class="set-sechead"><h4 class="set-sechead-t">Projects and folders</h4></div>'
     + '<div class="tk-card sd-rows"><div class="tk-setrow sd-frow">'
-      + '<div class="body"><div class="t">Put imported chats into folders</div><div class="d">Claude Code chats go into a folder per project, other apps’ chats into a folder per app, such as “Codex”. '
-      + 'Chats imported earlier are sorted too. A chat you move yourself stays where you put it.</div></div>'
-      + '<button class="tk-switch" role="switch" aria-checked="' + !!FOLDERS.state.autoSort + '" aria-label="Put imported chats into folders" data-act="fautosort:"></button></div></div>'
+      + '<div class="body"><div class="t">Keep chats in their projects</div><div class="d">A chat that ran in a folder on ' + THIS_MACHINE + ' goes into a project for that folder, '
+      + 'so continuing it works there. If the folder is gone, or the app has projects of its own, the chat goes into a folder of the same name. '
+      + 'Chats with no project go into a folder per app, such as “Codex”. A chat you move yourself stays where you put it.</div></div>'
+      + '<button class="tk-switch" role="switch" aria-checked="' + !!FOLDERS.state.autoSort + '" aria-label="Keep chats in their projects" data-act="fautosort:"></button></div></div>'
     /* ATO-531: Overwrite is the one option that can lose data, so it sits in its own card with an amber tag.
        What it replaces, per src/import (reconcile-session.ts, import-skill-dirs.ts, each importer's secrets
        and cron steps): a chat under the same id whose messages differ, including ones added here; a skill of
@@ -30918,13 +30956,65 @@ function impFormHTML(f) {
     + '<div class="tk-card sd-rows">'
     + sw('overwrite', 'Overwrite', 'Replaces what you already have here when the source differs: a chat with the same id, '
       + 'including messages you added to it here, a skill with the same name, and an API key with a different value. '
-      + 'Cron jobs that already exist are added again as a second copy. Preview import shows what would change.',
+      + 'Scheduled jobs that already exist are added again as a second copy. Preview import shows what would change.',
       ' <span class="tk-chip tk-chip--sm tk-chip--amber">Can replace your data</span>') + '</div>'
     // Д52: `--limit N` caps the sessions imported, newest first (src/cli/import-command.ts); "Limit / no limit" said none of that.
-    + '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Sessions to import</label>'
+    + (f.source === 'atomic-agent' ? '' : '<div class="tk-field sd-frow sd-limit' + (fc === 'limit' ? ' sd-kfocus' : '') + '"><label class="tk-lbl" for="imp-limit">Chats to import</label>'
     + '<input id="imp-limit" class="tk-inp sm" data-imp-field="limit" data-imp-focus="limit" value="' + esc(f.limit) + '" placeholder="All" inputmode="numeric" autocomplete="off" spellcheck="false">'
-    + '<span class="tk-help">The newest first. Leave it empty to import them all.</span></div>'
+    + '<span class="tk-help">The newest first. Leave it empty to import them all.</span></div>')
     + '</div>';
+}
+/* W2: the Atomic Agent source pointed at this app's own data folder (nothing typed and the
+   default is this app's, or the typed path is it). Main refuses it too (importSourceProblem). */
+function impSourceIsSelf(f) {
+  if (f.source !== 'atomic-agent') return false;
+  const typed = String(f.sourceDir || '').trim().replace(/[\\/]+$/, '');
+  const own = String(memStateDir() || '').replace(/[\\/]+$/, '');
+  if (!typed) return !!IMP.defaults && IMP.defaults['atomic-agent'] === null;
+  return !!own && typed === own;
+}
+/* W2: the grouping rows (`[projects]` / `[folders]`, src/import/grouping.ts outcomeItem) read back:
+   {kind, name, path, created, chats, added}. Note rows (no name) are left out. */
+function impGroups(report) {
+  const out = [];
+  for (const it of (report && report.items) || []) {
+    if ((it.kind !== 'projects' && it.kind !== 'folders') || !it.source || it.status === 'error') continue;
+    const reason = it.reason || '';
+    const num = (re) => { const m = re.exec(reason); return m ? +m[1] : 0; };
+    out.push({kind: it.kind === 'projects' ? 'project' : 'folder', name: it.source, path: it.destination || '',
+      created: /^new /.test(reason), chats: num(/(\d+) chats?\b/), added: num(/(\d+) added\b/)});
+  }
+  return out;
+}
+/* "12 chats in 3 projects and 1 folder", from the session rows and the grouping rows. */
+function impGroupSentence(report, executed) {
+  const chats = ((report && report.items) || []).filter((it) => it.kind === 'sessions' && it.destination && it.status !== 'error').length;
+  const groups = impGroups(report);
+  const nP = groups.filter((g) => g.kind === 'project').length, nF = groups.length - nP;
+  const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+  if (!chats && !groups.length) return '';
+  const where = [nP ? plural(nP, 'project', 'projects') : '', nF ? plural(nF, 'folder', 'folders') : ''].filter(Boolean).join(' and ');
+  const lead = plural(chats, 'chat', 'chats');
+  if (!where) return lead + (executed ? ' are here.' : ' found.') + ' They go into a folder per app.';
+  return lead + ' in ' + where + (executed ? '.' : ', kept as they were.');
+}
+function impGroupsHTML(report, executed) {
+  const groups = impGroups(report);
+  if (!groups.length) return '';
+  const rows = groups.slice(0, 40).map((g) => '<div class="tk-setrow sd-impgrp">'
+    + '<span class="sd-impgic">' + ic('folder') + '</span>'
+    + '<div class="body"><div class="t">' + esc(g.name)
+      + ' <span class="tk-chip tk-chip--sm tk-chip--line">' + (g.kind === 'project' ? 'project' : 'folder') + '</span>'
+      + (g.created ? ' <span class="tk-chip tk-chip--sm tk-chip--green">' + (executed ? 'new' : 'will be new') + '</span>' : '') + '</div>'
+      + '<div class="d">' + (g.path ? '<span class="mono" title="' + esc(g.path) + '">' + esc(homeTilde(g.path)) + '</span> · ' : '')
+      + g.chats + (g.chats === 1 ? ' chat' : ' chats') + (g.added && g.added !== g.chats ? ', ' + g.added + (executed ? ' moved in' : ' to move in') : '') + '</div></div></div>').join('');
+  return '<div class="set-sechead"><h4 class="set-sechead-t">' + (executed ? 'Where your chats went' : 'Where your chats will go') + '</h4></div>'
+    + '<div class="tk-card sd-rows">' + rows + '</div>'
+    + (groups.length > 40 ? '<p class="sd-cap">… ' + (groups.length - 40) + ' more</p>' : '');
+}
+function homeTilde(p) {
+  const home = typeof homeDir === 'function' ? homeDir() : '';
+  return home && p.startsWith(home + '/') ? '~' + p.slice(home.length) : p;
 }
 /* import-panel.tsx ReportView / ReportRow / SummaryRow, over the parsed CLI report. ST-32. */
 function impReportHTML(report, executed) {
@@ -30939,6 +31029,7 @@ function impReportHTML(report, executed) {
   const arrowOf = (it) => (it.source && it.destination ? it.source + ' → ' + it.destination : (it.source || it.destination || ''));
   // Nothing would be imported: Apply has nothing to do, so it is not offered as if it had.
   const nothing = !executed && !(s.migrated > 0);
+  const sentence = impGroupSentence(report, executed);
   return '<div class="tk-bar"><h3 class="sd-title">' + (executed ? 'Result' : 'Preview') + ' · ' + n + noun + '</h3>'
     + (executed ? (IMP.state === 'applied' ? '<span class="tk-chip tk-chip--sm tk-chip--green">applied</span>' : '') : '<span class="sd-cap sd-dry">Nothing is changed yet</span>')
     + '<span class="grow"></span>'
@@ -30947,10 +31038,13 @@ function impReportHTML(report, executed) {
       : '<button class="btn btn-g sm" data-act="import:reset">Back</button><button class="btn btn-p sm" data-act="import:apply"'
         + (IMP.busy || nothing ? ' disabled' : '') + (nothing ? ' title="Nothing to import"' : '') + '>Apply</button>')
     + '</div>'
+    + (sentence ? '<p class="sd-sum sd-impsent">' + esc(sentence) + '</p>' : '')
     + '<p class="sd-sum">' + esc(impSummaryText(s, executed)) + '</p>'
-    + (items.length ? '<div class="tk-list sd-tblwrap"><table class="tk-tbl sd-imptbl"><thead><tr><th>Outcome</th><th>Kind</th><th>Item</th></tr></thead><tbody>'
+    + impGroupsHTML(report, executed)
+    + (items.length ? '<div class="set-sechead"><h4 class="set-sechead-t">Everything in this import</h4></div>'
+      + '<div class="tk-list sd-tblwrap"><table class="tk-tbl sd-imptbl"><thead><tr><th>Outcome</th><th>Kind</th><th>Item</th></tr></thead><tbody>'
       + items.map((it) => '<tr data-import-row="1"><td><span class="tk-chip tk-chip--sm ' + tone(it.status) + '">' + esc(outcome(it.status)) + '</span></td>'
-        + '<td><span class="tk-chip tk-chip--sm tk-chip--line">' + esc(it.kind) + '</span></td>'
+        + '<td><span class="tk-chip tk-chip--sm tk-chip--line">' + esc(IMP_KIND_WORDS[it.kind] || it.kind) + '</span></td>'
         + '<td class="sd-path" title="' + esc(arrowOf(it) + (it.reason ? ' (' + it.reason + ')' : '')) + '">' + esc(arrowOf(it)) + (it.reason ? ' <span class="sd-reason">(' + esc(it.reason) + ')</span>' : '') + '</td></tr>').join('')
       + '</tbody></table></div>' : '')
     + (hidden > 0 ? '<p class="sd-cap">… ' + hidden + ' more</p>' : '')
@@ -30979,13 +31073,16 @@ async function impRun(execute) {
   const selected = toggles.some((t) => f[t]);
   if (!selected) {
     // nothingSelectedNotice: "enable a, b or c".
-    const names = toggles.slice(); const last = names.pop();
+    const names = toggles.map((t) => (IMP_TOGGLE_TITLES[t] || t).toLowerCase()); const last = names.pop();
     IMP.mode = 'configure'; IMP.notice = 'nothing selected to import — enable ' + (names.length ? names.join(', ') + ' or ' + last : last);
     impRepaint(); return {ok:false, error:IMP.notice};
   }
+  const dir = f.sourceDir.trim() || impDefaultDir(f.source);
+  if (impSourceIsSelf(f)) { IMP.mode = 'configure'; IMP.notice = 'That is this app’s own data folder. Choose another Atomic Agent folder.'; impRepaint(); return {ok:false, error:IMP.notice}; }
+  if (!dir && impMeta(f.source).pick === 'file') { IMP.mode = 'configure'; IMP.notice = 'Choose the .zip from Claude’s Export data first.'; impRepaint(); return {ok:false, error:IMP.notice}; }
   IMP.mode = 'running'; IMP.applying = !!execute; IMP.notice = null; IMP.busy = true; IMP.runs++; impRepaint();
   const secrets = toggles.includes('secrets') && f.secrets;
-  const res = await BR.importRun({source:f.source, dir:f.sourceDir.trim() || impDefaultDir(f.source), exclude, secrets, overwrite:f.overwrite, limit, execute});
+  const res = await BR.importRun({source:f.source, dir, exclude, secrets, overwrite:f.overwrite, limit, execute});
   IMP.busy = false;
   if (!res || !res.ok) { IMP.mode = 'configure'; IMP.notice = (res && res.error) || 'import failed'; impRepaint(); return {ok:false, error:IMP.notice}; }
   IMP.report = res.report; IMP.state = res.state;
@@ -30993,9 +31090,16 @@ async function impRun(execute) {
   if (execute) {
     IMP.mode = 'done'; IMP.reportExecuted = true;
     if (res.state === 'applied') {
-      toast('Import finished', impSummaryText(res.report.summary, true));
+      toast('Import finished', impGroupSentence(res.report, true) || impSummaryText(res.report.summary, true));
       if (toggles.includes('cron') && f.cron) tasksRefresh();
-      if (f.sessions) loadResources();
+      if (f.sessions) {
+        /* W2: the import wrote projects.json / chat-folders.json. Read the folders
+           back BEFORE the chat list lands: its sorting saves the folders whole, and
+           the copy this window held would write over what the import filed. */
+        await loadFolders();
+        loadProjects();
+        loadResources();
+      }
     }
   } else { IMP.mode = 'preview'; IMP.reportExecuted = false; }
   impRepaint();
@@ -31006,7 +31110,26 @@ function importAct(what) {
   const arg = rest.join(':');
   const f = IMP.form;
   // import-reducer.ts import_source_set: the folder follows the source; a source with no secrets row drops the opt-in.
-  if (verb === 'source') { if (arg !== f.source && IMP_SOURCES.includes(arg)) { f.source = arg; f.sourceDir = impDefaultDir(arg); if (!impMeta(arg).toggles.includes('secrets')) f.secrets = false; f.focus = 'sourceType'; } impRepaint(); return; }
+  if (verb === 'source') {
+    if (arg !== f.source && IMP_SOURCES.includes(arg)) {
+      // W2: the Atomic Agent source brings scheduled jobs only when asked; leaving it turns them back on for the agents whose cron is their point.
+      const wasOff = impMeta(f.source).cronOff;
+      f.source = arg; f.sourceDir = impDefaultDir(arg);
+      if (impMeta(arg).cronOff) f.cron = false; else if (wasOff) f.cron = true;
+      if (!impMeta(arg).toggles.includes('secrets')) f.secrets = false;
+      f.focus = 'sourceType';
+    }
+    impRepaint(); return;
+  }
+  if (verb === 'pick') {
+    if (!BR || typeof BR.importPickSource !== 'function') return;
+    const asked = f.source;
+    BR.importPickSource(asked).then((res) => {
+      if (!res || !res.ok || !res.path || f.source !== asked) return;
+      f.sourceDir = res.path; IMP.notice = null; f.focus = 'source'; impRepaint();
+    }, () => {});
+    return;
+  }
   if (verb === 'toggle') { if (IMP_TOGGLE_FIELDS.includes(arg)) { f[arg] = !f[arg]; f.focus = arg; } impRepaint(); return; }
   if (verb === 'field') { const [name, ...v] = rest; if (name === 'sourceDir' || name === 'limit') f[name] = v.join(':'); impRepaint(); return; }
   if (verb === 'focus') { f.focus = arg; impRepaint(); return; }

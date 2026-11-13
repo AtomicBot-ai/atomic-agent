@@ -3870,7 +3870,7 @@ export async function modelsUseDevice(id: string): Promise<CliResult> {
    the import-options.ts files under src/import — with one whitelist for all four an
    unticked `skills` on Claude Code was dropped from --exclude and the dry
    run previewed more than the operator ticked. */
-export type ImportSourceId = "hermes" | "openclaw" | "claude-code" | "codex" | "pi" | "oh-my-pi";
+export type ImportSourceId = "hermes" | "openclaw" | "claude-code" | "codex" | "pi" | "oh-my-pi" | "claude-app" | "atomic-agent";
 /** Domain ids each source's resolver understands, from its import-options.ts. */
 export const IMPORT_DOMAINS: Record<ImportSourceId, readonly string[]> = {
   hermes: ["sessions", "cron", "secrets"],
@@ -3880,9 +3880,17 @@ export const IMPORT_DOMAINS: Record<ImportSourceId, readonly string[]> = {
   // agent 0.6.2 (#457): src/import/pi/import-options.ts, src/import/oh-my-pi/import-options.ts.
   pi: ["skills", "sessions"],
   "oh-my-pi": ["skills", "mcp", "sessions"],
+  // W2: the Claude app's data export (src/import/claude-app) and another
+  // Atomic Agent data folder (src/import/atomic-agent).
+  "claude-app": ["sessions", "memory"],
+  "atomic-agent": ["sessions", "memory", "skills", "mcp", "providers", "cron", "secrets"],
+};
+/** Domains a source leaves out unless asked (`--include`): the Atomic Agent source's scheduled jobs. */
+const IMPORT_OPT_IN: Partial<Record<ImportSourceId, readonly string[]>> = {
+  "atomic-agent": ["cron"],
 };
 /** Sources whose CLI leg accepts `--migrate-secrets` (import-command.ts:128, :332, :446). */
-const IMPORT_SECRET_SOURCES: readonly ImportSourceId[] = ["hermes", "claude-code", "codex"];
+const IMPORT_SECRET_SOURCES: readonly ImportSourceId[] = ["hermes", "claude-code", "codex", "atomic-agent"];
 
 export interface ImportRunInput {
   source: ImportSourceId;
@@ -3896,6 +3904,41 @@ export interface ImportRunInput {
 export interface ImportItem { kind: string; status: string; source: string | null; destination: string | null; reason: string | null }
 export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: number; skipped: number; conflict: number; error: number } }
 
+/** The folder an Atomic Agent source would be read from when none is typed: ~/.atomic-agent, unless that is this app's own. */
+export function defaultAtomicAgentSource(ownStateDir: string, home: string = homedir()): string | null {
+  const dir = join(home, ".atomic-agent");
+  return sameFolder(dir, ownStateDir) ? null : dir;
+}
+
+function sameFolder(a: string, b: string): boolean {
+  if (a.replace(/[\\/]+$/, "") === b.replace(/[\\/]+$/, "")) return true;
+  try { return realpathSync(a) === realpathSync(b); } catch { return false; }
+}
+
+/**
+ * W2: the main side's own check of the folder (or file) an import reads,
+ * before any `atag import` runs. The renderer's path is only a string:
+ * this decides what may be read. An Atomic Agent source must be a folder
+ * other than this app's own state dir (importing yourself into yourself
+ * would only re-read what is there); a Claude export must be the .zip as
+ * downloaded or the folder it unpacks to.
+ */
+export function importSourceProblem(source: ImportSourceId, dir: string, ownStateDir: string): string | null {
+  const path = dir.trim();
+  if (!path) return null;   // the CLI's default folder
+  if (!isAbsolute(path)) return "Choose the folder with Choose…, or type its full path.";
+  let st: ReturnType<typeof statSync>;
+  try { st = statSync(path); } catch { return source === "claude-app" ? "That file or folder is not there." : null; }
+  if (source === "atomic-agent") {
+    if (!st.isDirectory()) return "Choose the Atomic Agent data folder, not a file.";
+    if (sameFolder(path, ownStateDir)) return "That is this app's own data folder. Choose another Atomic Agent folder.";
+  }
+  if (source === "claude-app" && !st.isDirectory() && !/\.zip$/i.test(path)) {
+    return "Choose the .zip from Claude's Export data, or the folder it unpacks to.";
+  }
+  return null;
+}
+
 /**
  * `atag import <hermes|openclaw|claude-code|codex> --source <dir>
  * [--exclude a,b] [--migrate-secrets] [--overwrite] [--limit N]
@@ -3908,15 +3951,18 @@ export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: 
  */
 export function importArgs(input: ImportRunInput): { ok: true; args: string[] } | { ok: false; error: string } {
   const domains = IMPORT_DOMAINS[input.source as ImportSourceId];
-  if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code, codex, pi or oh-my-pi" };
+  if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code, codex, pi, oh-my-pi, claude-app or atomic-agent" };
   const dir = input.dir.trim();
   if (!dir) return { ok: false, error: "source dir is empty" };
   const args = ["import", input.source, "--source", dir];
-  const exclude = input.exclude.filter((x) => domains.includes(x));
+  const optIn = IMPORT_OPT_IN[input.source] ?? [];
+  const exclude = input.exclude.filter((x) => domains.includes(x) && !optIn.includes(x));
   if (exclude.length) args.push("--exclude", exclude.join(","));
+  const include = optIn.filter((x) => !input.exclude.includes(x));
+  if (include.length) args.push("--include", include.join(","));
   if (input.secrets && IMPORT_SECRET_SOURCES.includes(input.source)) args.push("--migrate-secrets");
   if (input.overwrite) args.push("--overwrite");
-  const limit = input.limit.trim();
+  const limit = input.source === "atomic-agent" ? "" : input.limit.trim();
   if (limit) {
     if (!/^\d+$/.test(limit)) return { ok: false, error: "limit must be a non-negative integer" };
     args.push("--limit", limit);
