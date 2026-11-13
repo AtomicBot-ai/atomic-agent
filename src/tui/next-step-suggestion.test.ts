@@ -27,6 +27,8 @@ function session(): TuiSessionInfo {
     approvalLevel: 5,
     maxSteps: 8,
     skillCount: 0,
+    completionMaxTokens: 2048,
+    localBackendConfigured: false,
   };
 }
 
@@ -83,6 +85,10 @@ function pressTab(state: TuiState, opts: { shift?: boolean } = {}) {
     ctrlCArmed: false,
     setCtrlCArmed: vi.fn(),
     sidebarVisible: true,
+    menuLeaderArmed: false,
+    setMenuLeaderArmed: vi.fn(),
+    activateMenuNode: vi.fn(),
+    activateComposerSwitch: vi.fn(),
   });
   return { handled, dispatch };
 }

@@ -146,6 +146,7 @@ describe("pickerQuery and the draft the picker opened over", () => {
       maxSteps: 10,
       completionMaxTokens: 2048,
       skillCount: 0,
+      localBackendConfigured: false,
     });
     const list = [entry("s-1", "Trip plan"), entry("s-2", "Login bug")];
     const opened = reduceTuiState(
