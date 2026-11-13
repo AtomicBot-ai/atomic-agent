@@ -18,13 +18,31 @@ export class RunModePersistError extends Error {
   }
 }
 
+/**
+ * Is `localModels.managed.parallel` the user's own pin? `"auto"` (or
+ * nothing) is not. A number equal to the stored Fusion worker count is
+ * taken as Fusion's own earlier write (the worker setter keeps the two
+ * equal), so it keeps following the worker count; any other number was
+ * set by the user and Fusion leaves it alone. The desktop applies the
+ * same rule in desktop/main/run-mode.ts (#1362).
+ */
+export function isManagedParallelPin(
+  parallel: number | "auto" | undefined,
+  fusionWorkers: number | undefined,
+): boolean {
+  if (parallel === undefined || parallel === "auto") return false;
+  if (!Number.isInteger(parallel) || parallel < 1) return false;
+  return parallel !== fusionWorkers;
+}
+
 export interface RunModeChangeOptions {
   /** Merged over the stored `llm.runMode.fusion` block. */
   readonly fusion?: Partial<UserLlmFusionConfig>;
   /**
    * Mirror of `fusion.workers` onto `localModels.managed.parallel`, so
    * the worker count and the llama-server slot count that lets workers
-   * actually run side by side move in the same write.
+   * actually run side by side move in the same write. Skipped when the
+   * stored slot count is a user pin (`isManagedParallelPin`).
    */
   readonly managedParallel?: number;
 }
@@ -67,6 +85,12 @@ export function setRunModeInConfig(args: SetRunModeArgs): void {
     llm.runMode?.fusion,
     args.fusion,
   );
+  const mirrorParallel =
+    args.managedParallel !== undefined &&
+    !isManagedParallelPin(
+      file.localModels.managed.parallel,
+      llm.runMode?.fusion?.workers,
+    );
   const next: UserConfigFile = {
     ...file,
     llm: {
@@ -78,7 +102,7 @@ export function setRunModeInConfig(args: SetRunModeArgs): void {
         ...(Object.keys(fusion).length > 0 ? { fusion } : {}),
       },
     },
-    ...(args.managedParallel === undefined
+    ...(!mirrorParallel || args.managedParallel === undefined
       ? {}
       : {
           localModels: {
@@ -133,6 +157,10 @@ function repinFusionLegs(
  * and how many llama-server slots exist for them to run in — so they
  * must not be able to disagree. Valid off the fusion route too: the
  * count is remembered for the next time fusion is picked.
+ *
+ * A slot count the user pinned wins (ATO-1541): when
+ * `localModels.managed.parallel` is a number other than the worker count
+ * Fusion itself last stored, only the worker count is written.
  */
 export function setFusionWorkersInConfig(workers: number): void {
   if (
@@ -153,10 +181,17 @@ export function setFusionWorkersInConfig(workers: number): void {
       ...llm,
       runMode: { ...llm.runMode, fusion: { ...llm.runMode?.fusion, workers } },
     },
-    localModels: {
-      ...file.localModels,
-      managed: { ...file.localModels.managed, parallel: workers },
-    },
+    ...(isManagedParallelPin(
+      file.localModels.managed.parallel,
+      llm.runMode?.fusion?.workers,
+    )
+      ? {}
+      : {
+          localModels: {
+            ...file.localModels,
+            managed: { ...file.localModels.managed, parallel: workers },
+          },
+        }),
   };
   writeUserConfigFileSync(path, next);
   resetConfigCache();

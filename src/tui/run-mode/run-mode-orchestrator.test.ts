@@ -241,6 +241,34 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(line.line).toBe("fusion: 2 workers");
   });
 
+  it("setWorkers keeps a slot count the user pinned and says so (ATO-1541)", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        mode: "managed",
+        managed: {
+          ...USER_CONFIG_DEFAULTS.localModels.managed,
+          modelId: "qwen-3.5-4b" as never,
+          parallel: 2,
+        },
+      },
+      llm: BOTH_LEGS,
+    });
+    resetConfigCache();
+    const app = harness();
+    app.orchestrator.setWorkers(4);
+    expect(getConfig().llm?.runMode?.fusion?.workers).toBe(4);
+    expect(getConfig().localModels.managed.parallel).toBe(2);
+    const line = app.actions.find((a) => a.type === "runtime_info") as {
+      line: string;
+    };
+    expect(line.line).toMatch(
+      /^fusion: 4 workers — the local model keeps the 2 parallel slots you set/,
+    );
+    expect(line.line).not.toMatch(/--parallel 4/);
+  });
+
   it("setWorkers refuses an out-of-range count with a notice, writing nothing", () => {
     seed(BOTH_LEGS);
     const app = harness();

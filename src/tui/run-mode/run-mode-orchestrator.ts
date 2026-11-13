@@ -264,7 +264,8 @@ export class RunModeOrchestrator {
    * that is already up keeps the slot count it was launched with, so the
    * notice says how to apply the new one — a silent write here would
    * leave N workers queueing on the old slots with nothing on screen to
-   * explain why.
+   * explain why. A slot count the user pinned is left as it is
+   * (ATO-1541), and the notice says so instead.
    */
   setWorkers(workers: number): void {
     const before = getConfig().localModels.managed.parallel;
@@ -276,8 +277,12 @@ export class RunModeOrchestrator {
     }
     this.deps.providers.refresh();
     const after = getConfig().localModels;
-    const applyHint =
-      after.mode === "managed" && before !== workers
+    const kept = after.managed.parallel !== workers;
+    const applyHint = after.mode !== "managed"
+      ? ""
+      : kept
+      ? ` — the local model keeps the ${String(after.managed.parallel)} parallel slot${after.managed.parallel === 1 ? "" : "s"} you set (localModels.managed.parallel)`
+      : before !== workers
         ? ` — restart the local daemon (Manage › LLM › Local, \`s\`) to apply --parallel ${workers}`
         : "";
     this.deps.bus.emit({
