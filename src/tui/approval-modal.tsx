@@ -22,6 +22,7 @@ import {
   hiddenLinesNote,
   previewLines,
 } from "../approval/approval-preview.js";
+import { formatRiskLine } from "../approval/risk-review.js";
 import {
   APPROVAL_CHORDS,
   canEditPath,
@@ -104,6 +105,8 @@ export function ApprovalModal({
   const grantAlways = canGrantAlways(request);
   const editable = canEditPath(request);
   const editing = pathDraft !== null;
+  // Smart approval's verdict on a request it did not let through (ATO-1268).
+  const riskLine = formatRiskLine(request);
   return (
     <Box
       flexDirection="column"
@@ -128,6 +131,11 @@ export function ApprovalModal({
           <Text color="gray">reason: </Text>
           {request.reason}
         </Text>
+        {riskLine !== null ? (
+          <Text color={request.riskLevel === "high" ? theme.colors.error : "yellow"}>
+            {riskLine}
+          </Text>
+        ) : null}
         {request.preview ? (
           <ApprovalPreview
             request={request}

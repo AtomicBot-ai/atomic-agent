@@ -88,10 +88,12 @@ describe("sidecar approval payloads (ATO-1270)", () => {
       ...gitStatus(),
       riskNote: "risk review: medium (pushes)",
       riskLevel: "medium",
+      riskReason: "pushes",
     };
     expect(approvalRequestPayload(request, gate)).toMatchObject({
       riskNote: "risk review: medium (pushes)",
       riskLevel: "medium",
+      riskReason: "pushes",
     });
   });
 

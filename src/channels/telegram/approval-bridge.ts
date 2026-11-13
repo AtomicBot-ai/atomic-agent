@@ -6,6 +6,7 @@ import {
   hiddenLinesNote,
   previewLines,
 } from "../../approval/index.js";
+import { formatRiskLine } from "../../approval/risk-review.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { withThread, type TelegramApi } from "./outbound-sender.js";
@@ -550,6 +551,10 @@ function formatApprovalText(
     `kind: ${formatApprovalCategory(req.category)}`,
   ];
   if (req.reason) head.push(`reason: ${req.reason}`);
+  // Smart approval's verdict (ATO-1268). This message is plain text (no
+  // parse_mode), so the reason needs no escaping.
+  const riskLine = formatRiskLine(req);
+  if (riskLine !== null) head.push(riskLine);
   const tail: string[] = [];
   if (req.affectedResources && req.affectedResources.length > 0) {
     tail.push("resources:");

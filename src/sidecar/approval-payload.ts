@@ -38,6 +38,7 @@ export function approvalRequestPayload(
     ...(request.commandShape !== undefined ? { commandShape: request.commandShape } : {}),
     ...(request.riskNote !== undefined ? { riskNote: request.riskNote } : {}),
     ...(request.riskLevel !== undefined ? { riskLevel: request.riskLevel } : {}),
+    ...(request.riskReason !== undefined ? { riskReason: request.riskReason } : {}),
     canSession,
     ...(grantHost !== null ? { grantHost } : {}),
     canShape: canGrantShape(request),

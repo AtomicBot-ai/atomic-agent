@@ -4,6 +4,7 @@ import {
   buildRiskReviewPrompt,
   createModelRiskReviewer,
   extractRiskVerdict,
+  formatRiskLine,
   formatRiskNote,
   isRiskReviewEligible,
   parseRiskVerdict,
@@ -313,5 +314,42 @@ describe("createModelRiskReviewer", () => {
     const long = "echo " + "a".repeat(RISK_REVIEW_MAX_ACTION_CHARS);
     await expect(reviewer.review({ request: shellRequest(long) })).resolves.toBeNull();
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("formatRiskLine (ATO-1268)", () => {
+  it("says the level and the reason", () => {
+    expect(
+      formatRiskLine({
+        riskNote: "risk check: medium (installs a package)",
+        riskLevel: "medium",
+        riskReason: "installs a package",
+      }),
+    ).toBe("Risk check: medium. Installs a package");
+    expect(formatRiskLine({ riskNote: "risk check: high", riskLevel: "high" })).toBe(
+      "Risk check: high.",
+    );
+  });
+
+  it("reads the reason back out of riskNote when riskReason is absent", () => {
+    expect(
+      formatRiskLine({ riskNote: "risk check: high (deletes (many) files)", riskLevel: "high" }),
+    ).toBe("Risk check: high. Deletes (many) files");
+  });
+
+  it("says when the review gave no answer", () => {
+    expect(formatRiskLine({ riskNote: formatRiskNote(null) })).toBe(
+      "Risk check: no answer, asking you.",
+    );
+  });
+
+  it("is null when no review ran", () => {
+    expect(formatRiskLine({})).toBeNull();
+    expect(formatRiskLine({ riskNote: "  " })).toBeNull();
+  });
+
+  it("keeps the line to one line", () => {
+    const line = formatRiskLine({ riskLevel: "medium", riskReason: "a\nb\u0007c" });
+    expect(line).toBe("Risk check: medium. A b c");
   });
 });

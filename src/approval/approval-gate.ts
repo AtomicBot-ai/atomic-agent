@@ -134,6 +134,12 @@ export interface ApprovalRequest {
   riskNote?: string;
   /** The level behind `riskNote`; absent when the review gave no verdict. */
   riskLevel?: RiskLevel;
+  /**
+   * The reviewer's reason on its own (`installs a package`), so a surface
+   * can draw `Risk check: medium. Installs a package` (`formatRiskLine`)
+   * without parsing `riskNote`. Absent when there is no verdict or no reason.
+   */
+  riskReason?: string;
 }
 
 /**
@@ -648,12 +654,22 @@ export class ApprovalGate {
       };
     }
     this.riskReviewed.add(request.approvalId);
+    // The verdict fields are the gate's alone: whatever a caller put in
+    // them is dropped, so the prompt never shows a level or reason the
+    // review did not give (ATO-1268 draws them on every surface).
+    const unreviewed: ApprovalRequest = { ...request };
+    delete unreviewed.riskNote;
+    delete unreviewed.riskLevel;
+    delete unreviewed.riskReason;
     try {
       return this.request(
         {
-          ...request,
+          ...unreviewed,
           riskNote: formatRiskNote(verdict),
           ...(verdict !== null ? { riskLevel: verdict.risk } : {}),
+          ...(verdict !== null && verdict.reason.length > 0
+            ? { riskReason: verdict.reason }
+            : {}),
         },
         signal ? { signal } : {},
       );
