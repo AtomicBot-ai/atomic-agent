@@ -38,4 +38,5 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `ffmpeg/` | Audio / video transform: convert, trim, extract, resize, GIF | `brew install ffmpeg` |
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
+| `mention-monitor/` | New mentions on Reddit + Hacker News (read-only, seen once), competitor page change diffs, daily digest to Telegram via `tasks.cron` | none (X only via `xurl` if the user set it up) |
 | `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |
