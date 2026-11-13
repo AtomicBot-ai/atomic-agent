@@ -393,8 +393,23 @@ export function planSwapLegs(cfg: RunModeConfig, isKeyed: (p: RunModeProvider) =
 }
 
 /**
+ * ATO-336: is `localModels.managed.parallel` the user's own pin? Missing or
+ * "auto" is not. A number equal to the stored Fusion worker count is taken
+ * as Fusion's own earlier write (planFusionWorkers keeps the two equal), so
+ * it keeps following the worker count; any other number is a pin.
+ */
+export function isParallelPin(parallel: number | string | undefined, fusionWorkers: number | undefined): boolean {
+  if (parallel === undefined || parallel === null) return false;
+  if (typeof parallel === "string" && parallel.trim().toLowerCase() === "auto") return false;
+  const n = Number(parallel);
+  if (!Number.isInteger(n) || n < 1) return false;
+  return n !== fusionWorkers;
+}
+
+/**
  * setWorkers: `llm.runMode.fusion.workers` and `localModels.managed.parallel`
  * in one change — how many workers, and how many llama-server slots for them.
+ * A parallel the user pinned is not touched (isParallelPin).
  * Valid off the fusion route too: the count is remembered.
  */
 export function planFusionWorkers(cfg: RunModeConfig, workers: number): RunModeVerdict {
@@ -406,9 +421,13 @@ export function planFusionWorkers(cfg: RunModeConfig, workers: number): RunModeV
   const snapshot = JSON.stringify(cfg);
   const parallelBefore = cfg.localModels?.managed?.parallel;
   const llm = cfg.llm;
+  const workersBefore = llm.runMode?.fusion?.workers;
   cfg.llm = { ...llm, runMode: { ...llm.runMode, fusion: { ...llm.runMode?.fusion, workers } } };
-  cfg.localModels = { ...cfg.localModels, managed: { ...cfg.localModels?.managed, parallel: workers } };
-  const hint = cfg.localModels.mode === "managed" && parallelBefore !== workers
+  // ATO-336: a slot count the user set (Settings › Models › Local, or the
+  // terminal) wins over Fusion, so it is left as is.
+  const pinned = isParallelPin(parallelBefore, workersBefore);
+  if (!pinned) cfg.localModels = { ...cfg.localModels, managed: { ...cfg.localModels?.managed, parallel: workers } };
+  const hint = !pinned && cfg.localModels?.mode === "managed" && parallelBefore !== workers
     // The TUI's notice names its `s` chord and the `--parallel` flag; the
     // desktop says what to do in its own terms.
     ? ` — restart the local model (Settings › Models › Local) so it runs ${workers} at once`

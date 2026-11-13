@@ -27217,6 +27217,7 @@ function llmAdvancedHTML(mode) {
                   sw('llm:autoUpdate', autoOn, 'Update llama.cpp automatically', 'Fetch a newer llama.cpp after each start')))
           + llmTuneRowHTML('Device', 'Auto runs the model on the GPU when there is one. A change applies the next time the model server starts.',
               btn('llm:device', device === 'auto' ? 'Auto' : device === 'cpu' ? 'CPU' : device, 'Try the next device: auto, each GPU, CPU'))
+          + lcsSlotsRowHTML() // ATO-336: local-context-slots.js
           // The log itself is Diagnostics' (Д58: one place for it); this is the way there.
           + llmTuneRowHTML('Server log', 'What the local model server printed. It opens in Settings › Diagnostics.',
               btn('diag:llmlogs', 'Open', 'The local model server’s log, in Diagnostics'))
@@ -27447,6 +27448,7 @@ function llmLocalHTML() {
         + (llmProvider('ollama') ? '' : '<button class="btn btn-s sm" data-act="llm:ollama" title="' + esc(OLLAMA_SIGNPOST) + '">' + logoHTML('ollama', 'xs') + 'Add Ollama</button>')
         + llmAppButtonsHTML(['lmstudio', 'atomic-chat'])})
     + llmTuneHTML()
+    + lcsContextHTML() // ATO-336: local-context-slots.js
     + llmSectionHTML('Embedding models', emb, text.length, cursor, null, false,
       {note: '<p class="llm-note">Used to search the agent\u2019s memory by meaning. Without one, it searches by keyword.</p>'});
 }
@@ -28863,6 +28865,7 @@ function llmAct(what) {
   if (verb === 'autoUpdate') { llmAutoUpdateToggle(); return; }
   if (verb === 'tune') { llmTuneSet(rest[0], rest[1]); return; }
   if (verb === 'device') { llmDeviceCycle(); return; }
+  if (verb === 'ctx' || verb === 'slots') { lcsSet(verb, rest[0]); return; } // ATO-336
   if (verb === 'cancelPull') { if (BR) BR.cancelPull(); LLMP.pulling = null; llmRepaint(); return; }
   // Details' Copy (Д56): one value of the route, as drawn.
   if (verb === 'copy') { const f = llmRouteFacts()[+arg]; if (f) copyText(f.value, 'Copied', f.label); return; }
