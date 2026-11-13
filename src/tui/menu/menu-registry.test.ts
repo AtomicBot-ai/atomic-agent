@@ -262,6 +262,12 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "enhance",
     description: "rewrite a prompt into a clearer one in the composer; nothing is sent",
   },
+  // ATO-1057.
+  {
+    name: "rewind",
+    description:
+      "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are",
+  },
   // Added with the plugin loader (ATO-954).
   {
     name: "plugins",

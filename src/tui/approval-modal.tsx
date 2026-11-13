@@ -34,6 +34,7 @@ import {
 import { MultiLineEditor } from "./components/multi-line-editor.js";
 import { readableOn } from "./theme/readable-foreground.js";
 import { theme } from "./theme/theme.js";
+import { diffLineTone, diffToneColor, looksLikeUnifiedDiff } from "./diff-line-tone.js";
 import { MouseTarget, useMouseCommands } from "./mouse/mouse-context.js";
 import { isPrimaryPress } from "./mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "./mouse/mouse-registry.js";
@@ -297,6 +298,10 @@ function ApprovalPreview({
 }): ReactElement {
   const truncated = approvalPreviewTruncated(request);
   const pages = truncated && page !== null ? approvalPreviewPages(request) : [];
+  // ATO-563: an edit's preview is a unified diff; its + and - lines are coloured.
+  const isDiff = looksLikeUnifiedDiff(preview);
+  const tone = (line: string): string | undefined =>
+    isDiff ? diffToneColor(diffLineTone(line), theme.colors) : undefined;
   const shown = page === null ? undefined : pages[page];
   if (shown) {
     const total = previewLines(preview).length;
@@ -307,7 +312,7 @@ function ApprovalPreview({
           {`preview, full command (${total} ${total === 1 ? "line" : "lines"}), page ${(page ?? 0) + 1} of ${pages.length}:`}
         </Text>
         {shown.map((line, index) => (
-          <Text key={index}>{`  ${line}`}</Text>
+          <Text key={index} color={tone(line)}>{`  ${line}`}</Text>
         ))}
         <Box marginLeft={2}>
           <CommandButton onPress={onPage}>
@@ -331,7 +336,7 @@ function ApprovalPreview({
     <Box flexDirection="column">
       <Text color="gray">preview:</Text>
       {excerpt.lines.map((line, index) => (
-        <Text key={index}>{`  ${line}`}</Text>
+        <Text key={index} color={tone(line)}>{`  ${line}`}</Text>
       ))}
       {note === null ? null : <Text color="gray">{`  ${note}`}</Text>}
       {truncated ? (
