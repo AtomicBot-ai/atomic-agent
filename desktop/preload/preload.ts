@@ -155,6 +155,8 @@ contextBridge.exposeInMainWorld("atomic", {
   traceTools: (stateDir: string, sessionId: string) =>
     ipcRenderer.invoke("cli:traceTools", { stateDir, sessionId }),
   hostRam: () => ipcRenderer.invoke("app:hostRam"),
+  // ATO-1186: memory the app itself uses, {bytes} | null (composer status line).
+  appMemory: () => ipcRenderer.invoke("app:memory"),
   modelSpotlightIds: () => ipcRenderer.invoke("app:modelSpotlightIds"),
   keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
   // ATO-507: free space on the models disk, {freeBytes, totalBytes, path} | null

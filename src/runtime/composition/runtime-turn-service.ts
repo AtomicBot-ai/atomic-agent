@@ -733,7 +733,14 @@ export function createRuntimeTurnService(
       // The same totals reach the caller, e.g. the OpenAI-compatible
       // endpoint's `usage` (ATO-276).
       return context.promptTokens !== undefined && context.completionTokens !== undefined
-        ? { ...result, usage: { promptTokens: context.promptTokens, completionTokens: context.completionTokens } }
+        ? {
+            ...result,
+            usage: {
+              promptTokens: context.promptTokens,
+              completionTokens: context.completionTokens,
+              ...(context.generation ? { generation: context.generation } : {}),
+            },
+          }
         : result;
     } catch (error) {
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {

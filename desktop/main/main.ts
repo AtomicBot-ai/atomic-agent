@@ -264,6 +264,7 @@ import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { AgentMemoryTracker } from "./agent-memory-sample.js";
+import { appMemoryBytes } from "./app-memory.js";
 import { lastErrorCategory, lastErrorSentence, reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
@@ -2214,6 +2215,15 @@ function wireIpc(client: AgentClient): void {
   // `--fake-ram=N` (test only, see FAKE_RAM_GB) is the one thing that can
   // stand between this window and os.totalmem().
   ipcMain.handle("app:hostRam", () => FAKE_RAM_GB ?? hostRamGb());
+  // ATO-1186: the app's own memory for the composer's status line ({bytes} | null; app-memory.ts).
+  ipcMain.handle("app:memory", () => {
+    try {
+      const bytes = appMemoryBytes(app.getAppMetrics());
+      return bytes === null ? null : { bytes };
+    } catch {
+      return null;
+    }
+  });
   // None on another computer's agent: its models are managed there, and a pull is refused (REMOTE_MODELS_HERE).
   ipcMain.handle("app:modelSpotlightIds", () => (client.isRemote ? [] : spotlightIds()));
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);

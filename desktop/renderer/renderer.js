@@ -3110,8 +3110,10 @@ function msgActs(m) {
         ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + ACTED_RETRY_HINT
           + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
         : '';
+    // ATO-1186: the reply's speed, under the last reply only, when the agent measured it.
+    const tps = last && m.speed && typeof replySpeedHTML === 'function' ? replySpeedHTML(m.speed) : '';
     // ATO-1046: Read aloud after copy, under a finished reply (tts.js).
-    return '<div class="' + cls + '">' + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '') + '</div>';
+    return '<div class="' + cls + '">' + tps + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '') + '</div>';
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
   // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
@@ -4213,7 +4215,20 @@ function composer() {
         + contextChip()
         + codingModeChip()
       + '</div>'
+      + composerStatusLine()   // ATO-1186: quiet status line (status-line.js)
     + '</div></div>';
+}
+/* ATO-1186: model · context tokens · time on this chat · app memory, under the control row. */
+function composerStatusLine() {
+  if (typeof statusLineHTML !== 'function') return '';
+  const label = composerNeedsSetup() ? '' : activeModel();
+  statusMemRefresh(BR);
+  return statusLineHTML({
+    model: label && label !== DOWNLOAD_MODEL_LABEL ? modelWord(label) : '',
+    tokens: CTX.tokens, tokensText: CTX.tokens ? tokensWord(CTX.tokens) : '',
+    sessionMs: Date.now() - statusChatSince(STATUS_LINE, S.sessionId),
+    memBytes: STATUS_LINE.memBytes,
+  });
 }
 
 /* Calm (S6, U16) — no route anyone chose. Skipping setup leaves the agent's
@@ -11066,6 +11081,12 @@ function onChatEvent(ev) {
     render();
     return;
   }
+  // ATO-1186: the turn's timed generation (agent with ATO-1186; none from an older one, and no speed is shown).
+  if (ev.kind === 'usage') {
+    const speed = typeof replySpeedOf === 'function' ? replySpeedOf(ev.payload) : null;
+    if (item && speed) item.speed = speed;
+    return;
+  }
   if (ev.kind === 'done' || ev.kind === 'finish' || ev.kind === 'aborted' || ev.kind === 'error') {
     /* B5: the finish reason is kept on the reply. `length` is how the agent
        ends a task it PAUSED (step or time ceiling, no progress, out of
@@ -14712,6 +14733,17 @@ function hfDiskFit(choice) {
 // A new reading that could change a verdict repaints whatever shows one.
 DISK.onChange = () => render();
 DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
+/* ATO-1186: the status line repaints in place, never through a full render:
+   when the memory word changes and twice a minute for its clock. */
+function statusLineRepaint() {
+  const el = document.querySelector('#composer .cstatus');
+  const html = el ? composerStatusLine() : '';
+  if (el && html && el.outerHTML !== html) el.outerHTML = html;
+}
+if (typeof STATUS_LINE !== 'undefined') {
+  STATUS_LINE.onChange = statusLineRepaint;
+  setInterval(statusLineRepaint, 30 * 1000);
+}
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);

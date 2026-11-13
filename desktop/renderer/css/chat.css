@@ -648,3 +648,6 @@
 .exak-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .exak-row .exak-inp{margin-top:8px;max-width:420px}
 .exak-row .exak-acts{margin-top:8px}
+
+/* ATO-1186: the last reply's speed, quiet, before its buttons (status-line.js replySpeedHTML). */
+.msgtps{font-size:var(--fs-label);color:var(--ink-3);padding:0 6px;font-variant-numeric:tabular-nums;white-space:nowrap}

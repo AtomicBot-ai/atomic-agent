@@ -10,7 +10,7 @@ import { resolveActiveToolTransport } from "../../llm/provider/registry/resolve-
 import { modelWantsStrictTools } from "../../llm/provider/model-strict-tools.js";
 import { resolveRunMode, type ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { sanitizeModelAlias } from "../../analytics/index.js";
-import { completionUsageForTurn, type TurnUsageMeter } from "../../analytics/index.js";
+import { completionUsageForTurn, generationMsFor, type TurnUsageMeter } from "../../analytics/index.js";
 import type { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import type { ResolvedModel } from "../../llm/provider/model-resolver.js";
 import type { SessionUsageLedger } from "../../session/usage-meter.js";
@@ -397,6 +397,7 @@ export function connectRuntimeFallback(
     sessionId: string | undefined,
     result: CompletionResult,
     servedProviderId: string,
+    streamMs?: number,
   ): void => {
     if (sessionId) turnUsageMeter.recordServed(sessionId, servedProviderId);
     const metered = completionUsageForTurn(result);
@@ -418,10 +419,13 @@ export function connectRuntimeFallback(
     }
     if (!sessionId) return;
     recordSessionUsage(sessionId, result, servedProviderId, true, model);
+    // ATO-1186: the reply speed the desktop shows under the answer.
+    const generationMs = generationMsFor(result, streamMs);
     turnUsageMeter.record({
       sessionId,
       usage: metered,
       ...(model ? { model } : {}),
+      ...(generationMs !== undefined ? { generationMs } : {}),
     });
   };
 

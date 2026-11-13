@@ -1107,7 +1107,16 @@ export interface RunTurnResult {
    * provider reported usage; absent on scheduler and fusion turns and
    * when no call reported any, so a missing figure never reads as zero.
    */
-  usage?: { promptTokens: number; completionTokens: number };
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    /**
+     * The turn's streamed generation time and the output tokens it
+     * produced (`TurnUsageSnapshot.generation`, ATO-1186): the reply
+     * speed. Absent when no completion was timed.
+     */
+    generation?: { completionTokens: number; durationMs: number };
+  };
   /**
    * Estimated USD the turn's own step completions cost (ATO-1108),
    * priced through `AgentLoopDependencies.priceCompletion`. `0` when
