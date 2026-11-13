@@ -216,7 +216,10 @@ export function registerRuntimeCoreTools(input: {
   toolRegistry.register(planUpdateTool);
   // Clarifying questions with ready answers (ATO-489): through the
   // approval gate, so the turn waits like an approval and only the
-  // person answers.
+  // person answers. Registered for the whole process, but each turn
+  // offers it only where a question card is drawn (TUI, CLI, Telegram,
+  // an HTTP client sending `X-Atomic-Questions`): `surfaceShowsQuestions`
+  // in executeTurn. Hidden from the desktop until ATO-1502 ships its card.
   toolRegistry.register(buildAskUserTool({ approvals: dangerous.approvals }));
   // Older stored names stay out of the prompt until checked against actual
   // user messages. The background walk never deletes facts or blocks boot.

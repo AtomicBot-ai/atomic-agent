@@ -72,6 +72,13 @@ export const EXTENSIONS_HEADER = "X-Atomic-Extensions";
  * it the tool answers that marks need the desktop app.
  */
 export const SCREEN_OVERLAY_HEADER = "X-Atomic-Screen-Overlay";
+/**
+ * ATO-489: the extensions client draws `ask_user` question cards and
+ * answers them with POST /api/question/answer, so its turns are offered
+ * the tool. Without it an extensions client (today's desktop app) does
+ * not get `ask_user`. The desktop sends it once ATO-1502 ships.
+ */
+export const QUESTIONS_HEADER = "X-Atomic-Questions";
 const MODEL_DEFAULT = "atomic-agent";
 
 /**
@@ -104,6 +111,8 @@ interface ParsedRequest {
   extensionsEnabled: boolean;
   /** `X-Atomic-Screen-Overlay` on an extensions request (ATO-1018). */
   screenOverlay: boolean;
+  /** `X-Atomic-Questions` on an extensions request (ATO-489). */
+  questions: boolean;
 }
 
 /**
@@ -178,6 +187,8 @@ async function handleNonStream(
       ...(env.request.extensionsEnabled
         ? { interactive: true, answerChannel: "desktop" as const }
         : {}),
+      // ATO-489: `ask_user` only for a client that draws its card.
+      ...(env.request.questions ? { questions: true } : {}),
     });
   } catch (err) {
     // Reaches this branch only for unclassified / programming
@@ -329,6 +340,8 @@ async function handleStream(
       ...(env.request.extensionsEnabled
         ? { interactive: true, answerChannel: "desktop" as const }
         : {}),
+      // ATO-489: `ask_user` only for a client that draws its card.
+      ...(env.request.questions ? { questions: true } : {}),
     });
   } catch (err) {
     // Same contract as the non-stream branch above: classified
@@ -1255,6 +1268,9 @@ async function parseRequestBody(
     screenOverlay:
       isExtensionsHeaderTruthy(getHeader(req, EXTENSIONS_HEADER)) &&
       isExtensionsHeaderTruthy(getHeader(req, SCREEN_OVERLAY_HEADER)),
+    questions:
+      isExtensionsHeaderTruthy(getHeader(req, EXTENSIONS_HEADER)) &&
+      isExtensionsHeaderTruthy(getHeader(req, QUESTIONS_HEADER)),
   };
 }
 

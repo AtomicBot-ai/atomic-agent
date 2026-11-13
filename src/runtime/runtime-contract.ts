@@ -487,6 +487,13 @@ export interface AgentRuntime {
        * `### answer-style` and its polish (ATO-966, ATO-967).
        */
       answerChannel?: AnswerChannel;
+      /**
+       * The client declared whether it can show a question card, so the
+       * turn is offered `ask_user` (ATO-489). Absent: the TUI, the CLI
+       * and Telegram get it; the desktop (sidecar or an HTTP extensions
+       * client) does not until ATO-1502, nor does any other origin.
+       */
+      questions?: boolean;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -535,6 +542,8 @@ export interface AgentRuntime {
       origin?: TurnOrigin;
       /** See `runTurn`'s `answerChannel`; wins over `origin`. */
       answerChannel?: AnswerChannel;
+      /** See `runTurn`'s `questions`. */
+      questions?: boolean;
     },
   ): Promise<RunTurnResult>;
   /**
