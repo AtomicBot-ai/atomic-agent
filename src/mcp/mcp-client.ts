@@ -31,6 +31,7 @@ import {
 } from "./mcp-stderr-tail.js";
 import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
 import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
+import { offlineRefusal } from "../llm/offline-network.js";
 import {
   MCP_TOOL_NAME_RE,
   type McpPromptMeta,
@@ -461,6 +462,11 @@ export class McpClient {
         stderr: "pipe",
       });
     }
+    // ATO-1084: a remote server is refused before any connection while
+    // offline; one on this machine still connects. A stdio server is a
+    // separate program and is not network-isolated (no OS sandbox).
+    const offline = offlineRefusal(t.url, `MCP server "${this.config.name}"`);
+    if (offline) throw new McpConnectError(this.config.name, offline.message);
     if (t.kind === "streamable_http") {
       return new StreamableHTTPClientTransport(new URL(t.url), {
         requestInit: t.headers ? { headers: { ...t.headers } } : undefined,

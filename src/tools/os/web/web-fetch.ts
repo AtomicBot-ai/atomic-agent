@@ -9,6 +9,7 @@ import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import { parseRetryAfterValueMs } from "./retry-after-header.js";
 import { explainCurlStderr, runCurl } from "./run-curl.js";
+import { offlineRefusal } from "../../../llm/offline-network.js";
 import {
   assertHostAllowed,
   formatResolveEntry,
@@ -128,6 +129,17 @@ export function buildOsWebFetchTool(
     untrustedOutput: "a web page",
     async run(rawArgs, ctx) {
       const args = parseArgs(rawArgs, fetchCfg.timeoutMs);
+      // ATO-1084: nothing is resolved or spawned while offline. The SSRF
+      // guard already refuses this machine, so there is no local case.
+      const offline = offlineRefusal(args.url, TOOL_NAME);
+      if (offline) {
+        return compressToolResult({
+          tool: TOOL_NAME,
+          status: "error",
+          output: offline.message,
+          details: { url: args.url, blocked: true, offline: true, host: offline.host },
+        });
+      }
       let outcome: FetchOutcome;
       try {
         outcome = await fetchWithGuard(args.url, {

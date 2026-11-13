@@ -22,6 +22,7 @@ import { createSkillsDefaults, parseSkillsConfig, parseClawHubConfigWithDefaults
 export { DEFAULT_SKILLS_CATALOG_BUDGET, parseSkillNameArray, parseSkillTapArray } from "./skills-config.js";
 import { createSessionDefaults, parseSessionConfig, type RuntimeSessionsConfig, type UserSessionsConfig } from "./session-retention-config.js";
 import { createTracingDefaults, parseTracingConfig, type RuntimeTracingConfig, type UserTracingConfig } from "./tracing-config.js";
+import { createNetworkDefaults, parseNetworkConfig, type NetworkConfig } from "./network-config.js";
 
 import {
   createTuiDefaults, parseTuiConfig,
@@ -121,6 +122,15 @@ import {
   parseWebhookMap,
   type WebhookConfig,
 } from "./webhook-config.js";
+import {
+  parseExtraChannelsConfig,
+  type ExtraChannelConfig,
+} from "./extra-channel-config.js";
+
+export {
+  parseExtraChannelsConfig,
+  type ExtraChannelConfig,
+} from "./extra-channel-config.js";
 
 export {
   parseWebhookMap,
@@ -273,6 +283,13 @@ export interface AtomicAgentConfig {
   sessions: RuntimeSessionsConfig;
   tracing: RuntimeTracingConfig;
   /**
+   * Network kill switch (ATO-1084). Mirrors `UserConfigFile.network`,
+   * with `ATOMIC_AGENT_OFFLINE=1` folded in by `loadConfig`. Optional so
+   * hand-built configs (tests, embedders) keep compiling; absent reads
+   * as `{ offline: false }`. See `src/llm/offline-network.ts`.
+   */
+  network?: NetworkConfig;
+  /**
    * Durable task queue. All values are env-only operational tuning —
    * not part of the user config file because the queue is an
    * infrastructure detail, not a user-facing knob. When `enabled` is
@@ -420,6 +437,11 @@ export interface AtomicAgentConfig {
    * The bot token is not stored here — see `DiscordConfig`.
    */
   discord: DiscordConfig;
+  /**
+   * Chat channels beyond Telegram and Discord (Slack, Signal, ...),
+   * keyed by channel id. Mirrors `UserConfigFile.channels`.
+   */
+  channels: Record<string, ExtraChannelConfig>;
   /** Extra Telegram / Discord bots. Mirrors `UserConfigFile.swarm`. */
   swarm: SwarmConfig;
   /** Out-of-band pings. Mirrors `UserConfigFile.notifications`. */
@@ -644,6 +666,11 @@ export interface UserConfigFile {
    */
   sessions: UserSessionsConfig;
   tracing: UserTracingConfig;
+  /**
+   * Network kill switch (ATO-1084): `{ offline: false }` by default.
+   * Additive and unversioned: a file without the block reads the default.
+   */
+  network: NetworkConfig;
   memory: UserMemoryConfig;
   /**
    * Keyed map of webhook ingress bindings. Each entry is mounted at
@@ -729,6 +756,12 @@ export interface UserConfigFile {
    * null }`, which starts nothing.
    */
   discord: DiscordConfig;
+  /**
+   * Chat channels beyond Telegram and Discord, keyed by channel id (see
+   * `ExtraChannelConfig`). Unversioned, additive: a file without the
+   * block reads as `{}`, which starts nothing.
+   */
+  channels: Record<string, ExtraChannelConfig>;
   /**
    * Extra Telegram / Discord bots ("swarm units"). Added in config v52.
    * Older files are transparently upgraded with `{ units: [] }`.
@@ -1111,6 +1144,8 @@ export interface UserConfigFile {
 // 300 000 ms, ATO-922). It used to be env-only
 // (`ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS`, which still wins over the
 // file). An older file has no field and reads the default, as before.
+// Unversioned, additive: top-level `channels` (chat channels beyond
+// Telegram and Discord keyed by id, ATO-1169). Missing reads as `{}`.
 export const USER_CONFIG_VERSION = 79;
 
 /**
@@ -1284,6 +1319,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   browser: createBrowserDefaults(),
   sessions: createSessionDefaults(),
   tracing: createTracingDefaults(),
+  network: createNetworkDefaults(),
   memory: createMemoryDefaults(),
   webhooks: {},
   vision: createVisionDefaults(),
@@ -1294,6 +1330,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   telegram: createTelegramDefaults(),
   discord: createDiscordDefaults(),
+  channels: {},
   swarm: createSwarmDefaults(),
   notifications: createNotificationsDefaults(),
   atomicMail: createAtomicMailDefaults(),
@@ -1544,6 +1581,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const legacyTelemetry =
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
+  const network = (obj.network as Record<string, unknown> | undefined) ?? {};
   const traceFromLegacy =
     (legacyTelemetry.trace as Record<string, unknown> | undefined) ?? {};
   const traceFromTracing =
@@ -1647,6 +1685,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     browser: parseBrowserConfig(browser, () => USER_CONFIG_DEFAULTS.browser),
     sessions: parseSessionConfig(sessionsRetention, () => USER_CONFIG_DEFAULTS.sessions),
     tracing: parseTracingConfig(mergedTrace, () => USER_CONFIG_DEFAULTS.tracing),
+    network: parseNetworkConfig(network, () => USER_CONFIG_DEFAULTS.network),
     memory: parseMemoryConfig(
       preparedMemory,
       version,
@@ -1664,6 +1703,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     },
     telegram: parseTelegramConfig(telegram, () => USER_CONFIG_DEFAULTS.telegram),
     discord: parseDiscordConfig(discord, () => USER_CONFIG_DEFAULTS.discord),
+    channels: parseExtraChannelsConfig(obj.channels),
     swarm: parseSwarmConfig(swarm),
     notifications: parseNotificationsConfig(
       notificationsDownloads,

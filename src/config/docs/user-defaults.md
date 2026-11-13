@@ -113,6 +113,10 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `browser.cdpUrl` (default `null`): a DevTools address to attach to instead; loopback only. Env `ATOMIC_AGENT_BROWSER_CDP_URL` wins.
 - `browser.userDataDir` (default `null`): the user's Chrome data folder for `"user-chrome"` when it is not in a standard place.
 
+## network
+
+- `network.offline` (default `false`): offline mode. Every outbound connection to a host other than this machine (`localhost`, `127.0.0.0/8`, `::1`) is refused; local models keep working. `ATOMIC_AGENT_OFFLINE=1` turns it on for one process. Shell commands and stdio MCP servers are not isolated ([offline mode](../../llm/docs/offline-network.md)).
+
 ## sessions
 
 - `sessions.retention.enabled` (default `false`).

@@ -13,6 +13,10 @@ This area owns `os.web.fetch` page retrieval and `os.http.request` raw GET/POST 
 - [retry-after-header.ts](retry-after-header.ts) parses server retry hints for both request and fetch. Retry state follows the actual hop method/body: an earlier POST may already have been processed. Preserve the existing explicit invitation requirement for POST replay and the bodyless GET transition after a redirect.
 - [ensure-curl.ts](ensure-curl.ts) classifies a missing curl binary and provides its error type. Web-search transport uses this helper directly; it does not acquire page-fetch or raw-request orchestration.
 
+## Offline mode (ATO-1084)
+
+While offline mode is on, `os.web.fetch`, `os.http.request` and `os.web.search` return a tool error (`details.offline: true`) before approval, DNS or curl, and `runCurl` refuses a remote URL argument as a backstop. See [offline mode](../../../llm/docs/offline-network.md).
+
 ## Approval and credentials (ATO-1182)
 
 - "Allow for this session" on an `os.http.request` prompt covers the target's origin (scheme, host, port) only: the request carries `grantKey` and the gate keys the grant by it. A POST to another host asks again.
