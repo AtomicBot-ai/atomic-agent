@@ -12,6 +12,7 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.patch",
   "os.fs.restore",
   "os.fs.move",
+  "os.fs.write_pptx",
 ]);
 
 /** One of the tools whose success means the workspace moved, landed or not. */

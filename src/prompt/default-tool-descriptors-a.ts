@@ -10,6 +10,7 @@ import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
 import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
+import { OS_FS_WRITE_PPTX_CONTRACT } from "../tools/os/pptx/pptx-contract.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
@@ -310,4 +311,5 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   // (`tool-contract-conformance.test.ts`), and a rare tool renders as
   // one line in `# extras` wherever it sits.
   OS_FS_MOVE_CONTRACT.descriptor,
+  OS_FS_WRITE_PPTX_CONTRACT.descriptor,
 ];

@@ -98,6 +98,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Move or rename files and folders; creates missing folders. Use instead of mv/mkdir.",
     tier: RARE,
   },
+  "os.fs.write_pptx": {
+    summary: "Create an editable .pptx deck: per slide title, bullets, image path, notes (may require approval).",
+    tier: RARE,
+  },
   "os.git.status": { summary: "Git status and current branch." },
   "os.git.log": { summary: "Commit history." },
   "os.git.diff": { summary: "Git diff (working tree, staged or revisions)." },

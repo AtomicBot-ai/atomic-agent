@@ -166,6 +166,7 @@ describe("tool-resource-class", () => {
       "os.fs.patch",
       "os.fs.restore",
       "os.fs.move",
+      "os.fs.write_pptx",
       "os.fs.archive.extract",
       "os.git.init",
       "os.git.add",

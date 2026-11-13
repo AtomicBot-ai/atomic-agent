@@ -50,6 +50,20 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
       ),
   ],
   [
+    // Not a read, but a way to one: a picture from outside the scope
+    // embedded in a deck inside it could then be read without asking.
+    // The deck itself is a write, which the approval ladder classifies.
+    "os.fs.write_pptx",
+    (args) =>
+      (Array.isArray(args.slides) ? args.slides : [])
+        .map((slide: unknown) =>
+          typeof slide === "object" && slide !== null
+            ? nonEmpty((slide as Record<string, unknown>).image)
+            : undefined,
+        )
+        .filter((path): path is string => path !== undefined),
+  ],
+  [
     "vision.describe",
     (args) =>
       [
