@@ -56,6 +56,11 @@ import {
   createListTasksHandler,
   createRunTaskHandler,
 } from "./route-tasks.js";
+import {
+  createListTaskRunsHandler,
+  createPauseTaskHandler,
+  createResumeTaskHandler,
+} from "./route-task-controls.js";
 import { createWebhookHandler } from "./route-webhooks.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
 import { createContextPreviewHandler } from "./route-context-preview.js";
@@ -253,6 +258,10 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/tasks/{id}/run",
       handler: createRunTaskHandler(),
     },
+    // ATO-590: the desktop's schedule controls (pause, resume, run history).
+    { method: "POST", path: "/api/tasks/{id}/pause", handler: createPauseTaskHandler() },
+    { method: "POST", path: "/api/tasks/{id}/resume", handler: createResumeTaskHandler() },
+    { method: "GET", path: "/api/tasks/{id}/runs", handler: createListTaskRunsHandler() },
     {
       method: "POST",
       path: "/api/tasks/drain",

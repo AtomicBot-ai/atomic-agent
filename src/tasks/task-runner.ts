@@ -30,6 +30,7 @@ import { approvalLevelAllows, formatRunTime, remainingCostUsd, remainingDuration
 import { formatUsd } from "../llm/provider/usage-cost.js";
 import { startTaskSnapshots, type TaskSnapshotSink } from "./task-snapshot.js";
 import {
+  TaskStateError,
   TaskValidationError,
   type TaskRecord,
   type TaskSchedule,
@@ -232,7 +233,8 @@ export class TaskRunner {
   private readonly sleep: (ms: number) => Promise<void>;
   /**
    * The runs in progress, by task id. A task is claimed by one run at a
-   * time (`markRunning` only claims a `pending` row), so the id is enough.
+   * time (`markRunning` only claims a `pending` row, or a `paused` one
+   * for "Run now"), so the id is enough.
    */
   private readonly runs = new Map<string, InFlightRun>();
   /** Set by `stop`: nothing is claimed after it. */
@@ -345,23 +347,65 @@ export class TaskRunner {
    * regardless of outcome. Returns `null` when the task vanished or was
    * already claimed by a concurrent runner — callers must treat this as
    * "skipped, try the next one".
+   *
+   * A `paused` task is left alone (returned as is) unless `evenIfPaused`
+   * is set: the operator's "Run now" (ATO-590). Then it runs this one
+   * attempt and stays paused: when the run would leave the row `pending`
+   * (a recurring task armed for its next firing, a retry, an
+   * interrupted run) it goes back to `paused`, so nothing fires again
+   * until it is resumed. An end that closes the task for good
+   * (a one-shot completed, failed, blocked or cancelled) stays as it is.
+   * The run is logged in the history like any other.
    */
   async runOne(
     taskId: string,
     runtimeSignal?: AbortSignal,
+    options: { evenIfPaused?: boolean } = {},
+  ): Promise<TaskRecord | null> {
+    if (!options.evenIfPaused) return this.runAttempt(taskId, runtimeSignal);
+    const claim: { fromPaused: boolean } = { fromPaused: false };
+    const result = await this.runAttempt(taskId, runtimeSignal, claim);
+    // Not claimed from `paused` by this call (it was pending, or another
+    // run got it): nothing to put back.
+    if (!claim.fromPaused) return result;
+    if (!result || result.status !== "pending") return result;
+    try {
+      return this.options.store.pause(taskId) ?? result;
+    } catch (err) {
+      // Claimed or cancelled in between: that newer state wins.
+      if (err instanceof TaskStateError) return this.options.store.get(taskId);
+      throw err;
+    }
+  }
+
+  /**
+   * One attempt, as `runOne` describes. With `pausedClaim` a `paused`
+   * row may be claimed too, and `pausedClaim.fromPaused` says whether
+   * this call did so.
+   */
+  private async runAttempt(
+    taskId: string,
+    runtimeSignal?: AbortSignal,
+    pausedClaim?: { fromPaused: boolean },
   ): Promise<TaskRecord | null> {
     if (this.stopping) return null;
     const task = this.options.store.get(taskId);
     if (!task) return null;
-    if (task.status !== "pending") return task;
+    const fromPaused = pausedClaim !== undefined && task.status === "paused";
+    if (task.status !== "pending" && !fromPaused) return task;
 
     const resolvedTask = this.ensureSessionBeforeClaim(task);
     if (!resolvedTask) {
       return this.options.store.get(task.id);
     }
 
-    const claimed = this.options.store.markRunning(resolvedTask.id);
+    const claimed = this.options.store.markRunning(
+      resolvedTask.id,
+      undefined,
+      { fromPaused },
+    );
     if (!claimed) return this.options.store.get(resolvedTask.id);
+    if (pausedClaim) pausedClaim.fromPaused = fromPaused;
 
     this.options.metrics?.recordTaskStarted({
       taskId: claimed.id,

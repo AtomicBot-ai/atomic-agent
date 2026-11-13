@@ -243,7 +243,8 @@ export function createCancelTaskHandler(): HttpHandler {
 /**
  * `POST /api/tasks/:id/run` — execute one attempt of a single task.
  * Resolves with the post-attempt record (which may be `pending` again
- * if the attempt was retryable but more attempts remain).
+ * if the attempt was retryable but more attempts remain). A `paused`
+ * task runs too and is `paused` again after the run (ATO-590).
  */
 export function createRunTaskHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -262,7 +263,10 @@ export function createRunTaskHandler(): HttpHandler {
       return;
     }
     try {
-      const result = await ctx.runtime.taskRunner.runOne(id);
+      // "Run now": a paused task runs this once and stays paused (ATO-590).
+      const result = await ctx.runtime.taskRunner.runOne(id, undefined, {
+        evenIfPaused: true,
+      });
       sendJson(res, 200, {
         task: result ? recordToJson(result) : null,
       });
@@ -304,6 +308,7 @@ function parseStatusParam(
   const allowed: TaskStatus[] = [
     "pending",
     "running",
+    "paused",
     "completed",
     "failed",
     "blocked",
@@ -319,7 +324,7 @@ function parseStatusParam(
   return parts as TaskStatus[];
 }
 
-function recordToJson(record: TaskRecord): Record<string, unknown> {
+export function recordToJson(record: TaskRecord): Record<string, unknown> {
   return {
     id: record.id,
     sessionId: record.sessionId,
