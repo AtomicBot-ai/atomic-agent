@@ -22,8 +22,9 @@
    longest edge, WebP re-encoded). */
 
 const ATT_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
-// Audio is its own task (ATO-403 "not taken"): named, so the chip says so.
-const ATT_AUDIO_EXTENSIONS = new Set(['mp3', 'wav']);
+// Audio is not sent as a file: on macOS 26 it can be transcribed (ATO-1074, transcribe.js),
+// elsewhere the chip says it is not supported. The list is what AVAudioFile opens.
+const ATT_AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'm4a', 'aac', 'aif', 'aiff', 'caf']);
 const ATT_DOCUMENT_EXTENSIONS = new Set([
   // Documents
   'pdf', 'docx', 'txt', 'md', 'csv', 'xlsx', 'xls', 'ods', 'pptx', 'html', 'htm',
@@ -275,10 +276,12 @@ function attAdd(sources, method) {
       break;
     }
     const kind = attClassifyName(name);
+    const transcribe = kind === 'audio' && typeof trxOffer === 'function' && trxOffer();
     const item = {id: 'att' + (++ATT.seq), key, name: name || 'file', size: size || 0, method,
-      kind: kind === 'image' ? 'image' : 'document', status: 'preparing', thumb: null, error: '', warn: '', saved: null};
+      kind: kind === 'image' ? 'image' : transcribe ? 'audio' : 'document', status: 'preparing', thumb: null, error: '', warn: '', saved: null};
     ATT.items.push(item);
     added++;
+    if (transcribe) { trxPrepare(item, path).catch(() => attFail(item, 'The file could not be read')); continue; }
     if (kind === 'unsupported' || kind === 'audio') {
       attFail(item, kind === 'audio' ? 'Audio files are not supported yet' : 'This file type is not supported');
       continue;
@@ -350,6 +353,7 @@ function attRemove(id) {
   const item = ATT.items.find((i) => i.id === id);
   if (!item) return;
   ATT.items = ATT.items.filter((i) => i !== item);
+  if (item.kind === 'audio' && typeof trxForget === 'function') trxForget(item);
   if (item.saved) attMaybeDiscard(item.saved.path);
   attRepaint();
 }
@@ -406,7 +410,8 @@ function attComposeMessage(caption) {
 }
 /** The message went: the chips go (their files stay, the message names them). */
 function attClearSent() {
-  ATT.items = [];
+  // An audio chip was not part of the message (ATO-1074): it stays to be transcribed.
+  ATT.items = ATT.items.filter((i) => i.kind === 'audio' && i.status !== 'error');
   ATT.menu = false;
   attRepaint();
 }
@@ -471,6 +476,7 @@ function attStripHTML() {
 function attChipHTML(i) {
   const x = '<button class="attx" data-att-remove="' + i.id + '" aria-label="Remove ' + esc(i.name) + '" title="Remove">' + ic('x') + '</button>';
   const sizeText = i.size ? attFormatBytes(i.size) : (i.sizeText || '');
+  if (i.kind === 'audio' && i.status !== 'error' && typeof trxChipHTML === 'function') return trxChipHTML(i, x);
   if (i.kind === 'image' && i.status !== 'error') {
     const src = i.thumb || (i.saved && attImgCache(i.saved.path));
     const tip = i.name + (sizeText ? ' · ' + sizeText : '') + (i.warn ? ' — ' + i.warn : '');
