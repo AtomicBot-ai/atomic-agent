@@ -56,6 +56,8 @@ function chatMenuItems(opts) {
     ...(o.renamable === false ? [] : [{verb: 'rename', label: 'Rename', icon: 'edit'}]),
     // ATO-1034: "Move to folder…" opens the folder list (chat-folders.js), for a stored chat.
     ...(o.folders === true ? [{verb: 'fpick', label: 'Move to folder…', icon: 'folder'}] : []),
+    // ATO-1054: "Export…" saves the chat as Markdown / PDF / Word (chat-export.js), for a stored chat.
+    ...(o.exportable === true ? [{verb: 'export', label: 'Export…', icon: 'download'}] : []),
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }

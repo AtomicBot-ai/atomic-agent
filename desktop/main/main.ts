@@ -9,6 +9,7 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKT
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
+import { printHtmlToPdf, registerChatExportIpc } from "./chat-export.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
@@ -1422,6 +1423,8 @@ function wireIpc(client: AgentClient): void {
       ? client.renameSession(id, title).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
       : { ok: false, error: "id and title required" },
   );
+  // ATO-1054: the chat row's Export… (chat-export.ts): Markdown, PDF, Word or HTML.
+  registerChatExportIpc({ ipcMain, dialog, window: () => win, fetchExport: (id, format) => client.exportSession(id, format), printPdf: printHtmlToPdf });
   /* Backlog 18 (its second review): the last coding mode the window set. A
      switch's restart puts it back on the new agent before the turns waiting
      for that restart go (restartsAgent below). */
