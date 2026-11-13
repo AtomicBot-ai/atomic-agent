@@ -419,6 +419,9 @@ contextBridge.exposeInMainWorld("atomic", {
   pluginSet: (name: string, op: "enable" | "disable" | "allow-code" | "deny-code", part?: string) =>
     ipcRenderer.invoke("cli:pluginSet", { name, op, part }),
   pluginRemove: (name: string) => ipcRenderer.invoke("cli:pluginRemove", name),
+  /** Settings › Plugins' "Install from folder…": main's picker, then `atag plugin install <folder>`. */
+  pluginPickFolder: () => ipcRenderer.invoke("cli:pluginPickFolder"),
+  pluginInstall: (folder: string, confirmCaution?: boolean) => ipcRenderer.invoke("cli:pluginInstall", { folder, confirmCaution }),
   /** ATO-1102: "Test skill" on a skill card (main/skill-eval-ipc.ts). */
   skillEvalProbe: (name: string) => ipcRenderer.invoke("cli:skillEvalProbe", name),
   skillEvalRun: (name: string) => ipcRenderer.invoke("cli:skillEvalRun", name),
