@@ -103,6 +103,52 @@ test("a combo another app holds comes back as taken, with the sentence Settings 
   assert.match(Q.SHORTCUT_TAKEN_MESSAGE, /taken by another app/);
 });
 
+test("mock register -> false: Settings shows the message and no binding is stored", () => {
+  const { quickEntryRowHTML } = require("../renderer/quick-entry-settings.js");
+  const dir = tmp();
+  const saved = { enabled: true, accelerator: "CommandOrControl+Shift+Space" };
+  assert.equal(Q.writeQuickEntryPref(dir, saved), true);
+  const host = fakeHost();
+  host.register = (acc, cb) => { host.calls.push(["register", acc]); if (acc === "Control+Alt+K") return false; host.held.set(acc, cb); return true; };
+  const s = new Q.QuickEntryShortcut(host, () => {});
+  assert.equal(s.apply(saved).state, "registered");
+  let writes = 0;
+  const save = (p) => { writes++; return Q.writeQuickEntryPref(dir, p); };
+
+  const out = Q.settleQuickEntrySet(saved, { accelerator: "Ctrl+Alt+K", enabled: true }, s, save);
+  assert.equal(out.ok, false);
+  assert.equal(out.error, Q.SHORTCUT_TAKEN_MESSAGE);
+  assert.equal(writes, 0, "nothing is written for a combo that did not take");
+  assert.deepEqual(Q.readQuickEntryPref(dir), saved, "the stored binding is still the old one");
+  assert.deepEqual(out.pref, saved);
+  assert.equal(host.held.has("Control+Alt+K"), false, "the taken combo is not held");
+  assert.equal(host.held.has("CommandOrControl+Shift+Space"), true, "the old combo is back in force");
+  assert.equal(out.pref.enabled, true, "it stays on");
+
+  // What Settings draws from that answer.
+  const html = quickEntryRowHTML({ info: { ok: false, enabled: true, label: "⌘⇧Space", error: out.error }, busy: false, recording: false, error: out.error },
+    { esc: (t) => String(t), setSwitchHTML: () => "" });
+  assert.match(html, /tk-help--warn[^>]*>This shortcut is taken by another app\. Choose another one\./);
+});
+
+test("at launch a default combo another app holds: unbound, still on, the line shows", () => {
+  const host = fakeHost(["CommandOrControl+Shift+Space"]);
+  const s = new Q.QuickEntryShortcut(host, () => {});
+  const st = s.apply(Q.QUICK_ENTRY_DEFAULT_PREF);
+  assert.equal(st.state, "taken");
+  assert.equal(host.held.size, 0);
+  assert.equal(Q.QUICK_ENTRY_DEFAULT_PREF.enabled, true);
+  assert.equal(Q.quickEntryStateLine(st), Q.SHORTCUT_TAKEN_MESSAGE);
+});
+
+test("a Settings write that takes is saved", () => {
+  const dir = tmp();
+  const s = new Q.QuickEntryShortcut(fakeHost(), () => {});
+  const out = Q.settleQuickEntrySet(Q.QUICK_ENTRY_DEFAULT_PREF, { accelerator: "Ctrl+Alt+K" }, s, (p) => Q.writeQuickEntryPref(dir, p));
+  assert.equal(out.ok, true);
+  assert.equal(Q.readQuickEntryPref(dir).accelerator, "Control+Alt+K");
+});
+
 test("a register that throws (a combo Electron does not parse) is invalid, not a crash", () => {
   const host = fakeHost();
   host.register = () => { throw new Error("conversion failure"); };

@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import {
   acceleratorLabel,
-  mergeQuickEntryPref,
   quickEntryBounds,
   quickEntrySkipReason,
   quickEntryStateLine,
@@ -11,6 +10,7 @@ import {
   quickEntryWindowLevel,
   QuickEntryShortcut,
   readQuickEntryPref,
+  settleQuickEntrySet,
   writeQuickEntryPref,
   type QuickEntryPref,
 } from "./quick-entry.js";
@@ -163,24 +163,9 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void } {
   // Settings › General.
   ipcMain.handle("app:quickEntryGet", () => describe());
   ipcMain.handle("app:quickEntrySet", (_event, patch: unknown) => {
-    const merged = mergeQuickEntryPref(pref, patch);
-    if (!merged.ok) {
-      shortcut.apply(pref);   // a recording that ended in a bad combo takes the old one back
-      return { ...describe(), ok: false, error: merged.error };
-    }
-    const prev = pref;
-    pref = merged.pref;
-    const st = shortcut.apply(pref);
-    if (st.state === "taken" || st.state === "invalid") {
-      /* The new combo did not take: the old one goes back in force and stays
-         saved, and the row says why. Turning it off always saves. */
-      const failed = { ...describe(), ok: false };
-      pref = prev;
-      shortcut.apply(pref);
-      return { ...failed, enabled: pref.enabled, accelerator: pref.accelerator, label: acceleratorLabel(pref.accelerator, w.platform) };
-    }
-    if (!writeQuickEntryPref(w.userData, pref)) return { ...describe(), ok: false, error: "The setting could not be saved." };
-    return describe();
+    const out = settleQuickEntrySet(pref, patch, shortcut, (p) => writeQuickEntryPref(w.userData, p));
+    pref = out.pref;
+    return out.ok ? describe() : { ...describe(), ok: false, error: out.error };
   });
   // While Settings records a new combo, the old one does not open the box.
   ipcMain.handle("app:quickEntryPause", (_event, paused: unknown) => {

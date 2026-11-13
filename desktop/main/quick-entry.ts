@@ -316,6 +316,34 @@ export function quickEntryStateLine(st: QuickEntryState): string | null {
   return null;
 }
 
+/**
+ * A Settings write, end to end: checked, put in force, and saved only when
+ * it took. A combo another app holds (register answers false) or Electron
+ * refuses is not saved and not held: the previous pref goes back in force
+ * and stays saved, and the answer carries the line Settings shows. Turning
+ * it off always takes, so it always saves. `save` writes quick-entry.json.
+ */
+export function settleQuickEntrySet(
+  current: QuickEntryPref,
+  patch: unknown,
+  shortcut: QuickEntryShortcut,
+  save: (pref: QuickEntryPref) => boolean,
+): { ok: true; pref: QuickEntryPref } | { ok: false; pref: QuickEntryPref; error: string } {
+  const merged = mergeQuickEntryPref(current, patch);
+  if (!merged.ok) {
+    shortcut.apply(current);   // a recording that ended in a bad combo takes the old one back
+    return { ok: false, pref: current, error: merged.error };
+  }
+  const st = shortcut.apply(merged.pref);
+  if (st.state === "taken" || st.state === "invalid") {
+    const error = quickEntryStateLine(st) ?? SHORTCUT_TAKEN_MESSAGE;
+    shortcut.apply(current);
+    return { ok: false, pref: current, error };
+  }
+  if (!save(merged.pref)) return { ok: false, pref: merged.pref, error: "The setting could not be saved." };
+  return { ok: true, pref: merged.pref };
+}
+
 /* ---------------- placement ---------------- */
 
 export interface Rect {
