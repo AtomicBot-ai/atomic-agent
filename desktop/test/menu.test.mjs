@@ -34,6 +34,47 @@ test("the renderer counts the act and lets it through over first-run setup", asy
   assert.match(src, /if \(OB\.open && a === 'help\.report'\) \{ helpReport\(\); return; \}\n    if \(OB\.open\) return;/);
 });
 
+// ATO-1464/1465: Discord was nearly impossible to find, and the one link the
+// app had (Diagnostics) pointed at a dead invite. Help › Join Discord sends
+// `help.discord`, the palette and the sidebar carry the same act, it is
+// counted as a ui_action, and the invite lives in one constant.
+for (const platform of ["darwin", "win32", "linux"]) {
+  test(`Help › Join Discord sends help.discord, next to Report an Issue… (${platform})`, () => {
+    const { it, sent } = helpItem(platform, "Join Discord");
+    assert.ok(it, "the Help menu has Join Discord");
+    it.click();
+    assert.deepEqual(sent, ["help.discord"]);
+    const help = menuTemplate(() => {}, platform).find((m) => m.label === "Help").submenu.map((i) => i.label);
+    assert.equal(help.indexOf("Join Discord"), help.indexOf("Report an Issue…") + 1);
+  });
+}
+
+test("Join Discord: one live invite, the palette row, the sidebar button and the ui_action", async () => {
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const src = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
+  const acts = readFileSync(new URL("../renderer/analytics-acts.js", import.meta.url), "utf8");
+  assert.match(src, /const DISCORD_URL = 'https:\/\/discord\.gg\/DCqtG8WZX8';/);
+  assert.equal(src.match(/discord\.gg\//g).length, 1, "the invite is written once, in DISCORD_URL");
+  assert.match(src, /data-url="' \+ DISCORD_URL \+ '">Discord<\/a>/, "the Diagnostics caption uses the constant");
+  assert.match(src, /\['discord','Join Discord','','','help\.discord'\]/, "the palette has Join Discord");
+  assert.match(src, /class="iconbtn sb-discord" data-act="help\.discord"/, "the sidebar foot has the Discord button");
+  assert.match(src, /if \(a === 'help\.discord'\) \{ close\(\); render\(\); openDiscord\(\); return; \}/);
+  assert.match(src, /function openDiscord\(\) \{\n  if \(BR && BR\.openExternal\) BR\.openExternal\(DISCORD_URL\);/);
+  assert.match(acts, /'help\.discord':L/, "help.discord is on the ui_action allowlist");
+  // ATO-1464: the dead invite is gone from every desktop source file.
+  const dead = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (["node_modules", "out", "dist", "vendor", "fonts", "logos"].includes(e.name)) continue;
+      const u = new URL(e.name + (e.isDirectory() ? "/" : ""), dir);
+      if (e.isDirectory()) walk(u);
+      else if (/\.(js|mjs|cjs|ts|html|css|json|md)$/.test(e.name) && readFileSync(u, "utf8").includes("kXWDFSJpMW")) dead.push(u.pathname);
+    }
+  };
+  for (const d of ["../renderer/", "../main/"]) walk(new URL(d, import.meta.url));
+  assert.deepEqual(dead, [], "no file still links the dead Discord invite");
+});
+
 // ATO-544: View has Actual Size / Zoom In / Zoom Out, and none of their keys
 // collides with another menu accelerator. ATO-900: ⌘0 is Actual Size, as in
 // every Mac app and browser, and Toggle Sidebar moved to ⌘\.
