@@ -29,6 +29,7 @@ These operational keys resolve through ENV_DEFAULTS rather than USER_CONFIG_DEFA
 - `tasks.schedulerTickMs` (default `5000`).
 - `tasks.schedulerBatch` (default `10`).
 - `tasks.agentToolsEnabled` (default `true`).
+- `tasks.sessionToolsEnabled` (default `false`), env `ATOMIC_AGENT_SESSION_TOOLS_ENABLED`: the cross-chat `sessions.*` tools.
 - `tasks.minIntervalMs` (default `1000`).
 
 ## Non-config helper parameters

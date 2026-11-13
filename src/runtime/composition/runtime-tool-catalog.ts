@@ -501,6 +501,10 @@ export async function connectRuntimeMcpCatalog(input: {
         agentToolsEnabled:
           config.tasks.enabled && config.tasks.agentToolsEnabled,
       },
+      sessions: {
+        agentToolsEnabled:
+          config.tasks.enabled && config.tasks.sessionToolsEnabled === true,
+      },
       email: {
         available:
           readAtomicMailApiKey() !== null && config.atomicMail.address !== null,

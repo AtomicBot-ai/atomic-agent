@@ -326,6 +326,15 @@ export interface AtomicAgentConfig {
      */
     agentToolsEnabled: boolean;
     /**
+     * Cross-chat tools (`sessions.list|read|send|check`, ATO-570): the
+     * agent lists the operator's other chats, reads one, or queues a
+     * request into one as a task. Off by default; needs `tasks.enabled`
+     * too, since a send is a queued task. Reading or sending into another
+     * chat still asks first (`session_cross`). Optional so hand-built
+     * configs need not name it; absent means off.
+     */
+    sessionToolsEnabled?: boolean;
+    /**
      * Lower bound on `interval` schedule `everyMs`. Cannot go below
      * `SCHEDULE_INTERVAL_MIN_MS` (1 000 ms) in `task-schedule.ts`;
      * this knob lets operators enforce a larger floor.
@@ -1364,6 +1373,7 @@ export const ENV_DEFAULTS = {
   TASKS_SCHEDULER_TICK_MS: 5_000,
   TASKS_SCHEDULER_BATCH: 10,
   TASKS_AGENT_TOOLS_ENABLED: true,
+  SESSION_TOOLS_ENABLED: false,
   TASKS_MIN_INTERVAL_MS: 1_000,
   /** Auto status snapshot after this many more steps (ATO-965); 0 = off. */
   STATUS_SNAPSHOT_EVERY_STEPS: 10,

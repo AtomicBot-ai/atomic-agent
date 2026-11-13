@@ -18,6 +18,7 @@ const ALL_OPEN: ToolGateConfig = {
     procedures: { enabled: true },
   },
   tasks: { agentToolsEnabled: true },
+  sessions: { agentToolsEnabled: true },
   mcp: { enabled: true },
   github: { connected: true },
   email: { available: true },
@@ -228,6 +229,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.memoryLessons,
       ...GATED_TOOL_NAMES.memoryProcedures,
       ...GATED_TOOL_NAMES.tasks,
+      ...GATED_TOOL_NAMES.sessions,
       ...GATED_TOOL_NAMES.mcp,
       ...GATED_TOOL_NAMES.fusion,
       ...GATED_TOOL_NAMES.image,
@@ -252,6 +254,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.memoryLessons,
       ...GATED_TOOL_NAMES.memoryProcedures,
       ...GATED_TOOL_NAMES.tasks,
+      ...GATED_TOOL_NAMES.sessions,
       ...GATED_TOOL_NAMES.mcp,
       ...GATED_TOOL_NAMES.fusion,
       ...GATED_TOOL_NAMES.image,
@@ -261,6 +264,28 @@ describe("filterToolDescriptorsByConfig", () => {
     for (const name of allGated) {
       expect(known.has(name)).toBe(true);
     }
+  });
+});
+
+describe("sessions gate (ATO-570)", () => {
+  it("keeps sessions.* only when the cross-chat tools are switched on", () => {
+    const on = nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN));
+    const off = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        sessions: { agentToolsEnabled: false },
+      }),
+    );
+    const withoutKey: ToolGateConfig = { ...ALL_OPEN };
+    delete withoutKey.sessions;
+    const absent = nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, withoutKey));
+    for (const name of GATED_TOOL_NAMES.sessions) {
+      expect(on.has(name), name).toBe(true);
+      expect(off.has(name), name).toBe(false);
+      // A gate set that does not name the switch never advertises them.
+      expect(absent.has(name), name).toBe(false);
+    }
+    expect(off.has("tasks.list")).toBe(true);
   });
 });
 

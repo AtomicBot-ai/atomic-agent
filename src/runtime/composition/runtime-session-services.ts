@@ -124,11 +124,13 @@ export function createRuntimeSessionFactories(
   ensureRecorder: ReturnType<typeof createRuntimeTraces>["ensureRecorder"],
 ) {
   const createSession = (
-    input: { metadata?: Record<string, unknown>; persist?: boolean } = {},
+    input: { metadata?: Record<string, unknown>; persist?: boolean; workingDir?: string } = {},
   ): SessionState => {
     const state = createEmptySessionState({
       id: `s-${randomUUID()}`,
-      workingDir,
+      // A chat opened on another chat's behalf (sessions.send) starts in
+      // that chat's folder, not the folder the agent was launched in.
+      workingDir: input.workingDir ?? workingDir,
       ...(input.metadata ? { metadata: input.metadata } : {}),
     });
     // Deferred: the first turn writes the row and opens the recorder, so

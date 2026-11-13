@@ -561,6 +561,25 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ["tasks.cancel", obj({ id: stringSchema }, ["id"])],
   ["tasks.show", obj({ id: stringSchema }, ["id"])],
 
+  // ── sessions (ATO-570) ───────────────────────────────────────────────────
+  ["sessions.list", obj({ query: stringSchema, limit: numberSchema })],
+  [
+    "sessions.read",
+    obj({ sessionId: stringSchema, limit: numberSchema }, ["sessionId"]),
+  ],
+  [
+    "sessions.send",
+    obj(
+      {
+        message: stringSchema,
+        sessionId: stringSchema,
+        newSession: booleanSchema,
+      },
+      ["message"],
+    ),
+  ],
+  ["sessions.check", obj({ taskId: stringSchema }, ["taskId"])],
+
   // ── vision ───────────────────────────────────────────────────────────────
   [
     "vision.describe",
