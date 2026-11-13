@@ -9,8 +9,13 @@ import { detectLinuxX64BackendAsset } from "./linux-x64-backend-variant.js";
 import {
   resolvePlatformAsset,
   WINDOWS_ARM64_BACKEND_ASSET,
+  WINDOWS_ARM64_COMPAT_BACKEND_ASSET,
   type PlatformAsset,
 } from "./platform-assets.js";
+import {
+  detectWindowsArm64FastBuildSupport,
+  windowsArm64AssetPreference,
+} from "./windows-arm64-backend-variant.js";
 
 /**
  * The turboquant repo ships four Windows x64 backend builds. The binary
@@ -123,8 +128,13 @@ export function getConfiguredCoreBackendVariant(): CoreBackendVariant {
 export function isWindowsGpuBackendAsset(
   assetName: string | undefined,
 ): boolean {
-  // ATO-252: the arm64 build is CPU only; there is nothing to fall back from.
-  if (assetName === WINDOWS_ARM64_BACKEND_ASSET) return false;
+  // ATO-252: the arm64 builds are CPU only; there is nothing to fall back from.
+  if (
+    assetName === WINDOWS_ARM64_BACKEND_ASSET ||
+    assetName === WINDOWS_ARM64_COMPAT_BACKEND_ASSET
+  ) {
+    return false;
+  }
   if (assetName === undefined) return true;
   return (
     assetName === WINDOWS_BACKEND_ASSETS.vulkan ||
@@ -361,9 +371,12 @@ export function resetWindowsBackendAssetCache(): void {
  * `binaryName` is unchanged within a platform, so install paths and
  * `isBackendDownloaded` stay stable.
  *
- * Windows arm64 (ATO-252) keeps `resolvePlatformAsset`'s single CPU
- * asset too: the x64 zips the probe chooses between cannot run there,
- * so neither detection nor a configured `backendVariant` applies.
+ * Windows arm64 (ATO-252) never gets an x64 zip: neither the nvidia-smi
+ * probe nor a configured `backendVariant` applies. It chooses between its
+ * own two CPU builds instead (ATO-253): the armv8.7 one only when the CPU
+ * register shows I8MM and BF16, the compat one otherwise, with the other
+ * in `alternateAssetNames` for a release that carries only one of them
+ * (`windowsArm64AssetPreference`).
  *
  * Linux arm64 keeps `resolvePlatformAsset`'s single asset — there is
  * only one published arm64 build — but refuses a host whose glibc
@@ -383,7 +396,12 @@ export function resolveDownloadAsset(
     );
     return base;
   }
-  if (base.platform === "win32" && base.arch === "arm64") return base;
+  if (base.platform === "win32" && base.arch === "arm64") {
+    const [assetName, ...alternateAssetNames] = windowsArm64AssetPreference(
+      detectWindowsArm64FastBuildSupport(),
+    );
+    return { ...base, assetName, alternateAssetNames };
+  }
   // ATO-619: CUDA or ROCm when the machine can run it, as Atomic Core picks.
   if (base.platform === "linux" && base.arch === "x64") {
     return { ...base, assetName: detectLinuxX64BackendAsset() };

@@ -14,8 +14,10 @@ import {
   type BackendVersionInfo,
 } from "./backend-version.js";
 import {
+  acceptableAssetNames,
   backendReleaseSource,
   isWindowsArm64,
+  pickReleaseAssetName,
   resolvePlatformAsset,
   UnsupportedPlatformError,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
@@ -110,9 +112,16 @@ export async function fetchLatestRelease(opts?: {
   force?: boolean;
   assetName?: string;
 }): Promise<LatestReleaseInfo | null> {
-  const assetName = opts?.assetName ?? resolveDownloadAsset().assetName;
-  const { repo, stableOnly } = backendReleaseSource(assetName);
-  const cached = releaseCache.get(assetName);
+  // An explicit `assetName` (the Linux x64 fallback, ATO-619) asks for that
+  // one archive; otherwise every archive this machine can run, best first
+  // (Windows arm64 accepts either of its two builds, ATO-253).
+  const acceptable =
+    opts?.assetName !== undefined
+      ? [opts.assetName]
+      : acceptableAssetNames(resolveDownloadAsset());
+  const { repo, stableOnly } = backendReleaseSource(acceptable[0]!);
+  const cacheKey = acceptable.join("|");
+  const cached = releaseCache.get(cacheKey);
   if (
     !opts?.force &&
     cached &&
@@ -155,7 +164,7 @@ export async function fetchLatestRelease(opts?: {
     (r) =>
       !r.draft &&
       !(stableOnly && r.prerelease === true) &&
-      (r.assets ?? []).some((a) => a.name === assetName),
+      (r.assets ?? []).some((a) => acceptable.includes(a.name)),
   );
   if (candidates.length === 0) {
     // A rarely-built platform's newest asset can fall off page 1 of the
@@ -163,7 +172,7 @@ export async function fetchLatestRelease(opts?: {
     // here would fail the check on every single start and, with the
     // pre-staging installer, was the only thing standing between the
     // user and a working binary already on disk.
-    releaseCache.set(assetName, { fetchedAt: Date.now(), release: null });
+    releaseCache.set(cacheKey, { fetchedAt: Date.now(), release: null });
     return null;
   }
   const match = candidates.reduce((best, cur) =>
@@ -174,7 +183,7 @@ export async function fetchLatestRelease(opts?: {
     assets: match.assets ?? [],
     releasedAt: match.published_at ?? match.created_at ?? null,
   };
-  releaseCache.set(assetName, { fetchedAt: Date.now(), release });
+  releaseCache.set(cacheKey, { fetchedAt: Date.now(), release });
   return release;
 }
 
@@ -205,11 +214,21 @@ async function resolveInstallTarget(force: boolean): Promise<{
   assetName: string;
   release: LatestReleaseInfo | null;
 }> {
-  const wanted = resolveDownloadAsset().assetName;
-  const release = await fetchLatestRelease({ force, assetName: wanted });
-  if (release !== null || !isLinuxX64AcceleratedAsset(wanted)) {
-    return { assetName: wanted, release };
+  const wantedAsset = resolveDownloadAsset();
+  const wanted = wantedAsset.assetName;
+  const release = await fetchLatestRelease({ force });
+  if (release !== null) {
+    // On Windows arm64 the best of its two builds this release carries
+    // (ATO-253), so a release with only one of them is not flagged as an
+    // update forever; elsewhere the one platform asset.
+    return {
+      assetName:
+        pickReleaseAssetName(release.assets.map((a) => a.name), wantedAsset) ??
+        wanted,
+      release,
+    };
   }
+  if (!isLinuxX64AcceleratedAsset(wanted)) return { assetName: wanted, release };
   const fallback = LINUX_X64_BACKEND_ASSETS.vulkan;
   return {
     assetName: fallback,
