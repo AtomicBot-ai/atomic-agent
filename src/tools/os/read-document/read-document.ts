@@ -41,7 +41,7 @@ export function buildOsFsReadDocumentTool(
   return {
     name: "os.fs.read_document",
     description:
-      "Extract plain text (with light structure markers) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, and plain-text files. NOT for source code — read code with os.fs.read, which pages with offset/limit. Auto-detects format by extension; override with `format`, one of: pdf, docx, doc, xlsx, rtf, odt, pptx, plain. Read-only, no approval required.",
+      "Extract plain text (with light structure markers) from PDF, DOCX, DOC (legacy), XLSX, RTF, ODT, PPTX, ODS, ODP, EPUB, HTML (as markdown), email (.eml, .mbox) and plain-text files. NOT for source code — read code with os.fs.read, which pages with offset/limit. Auto-detects format by extension; override with `format`, one of: pdf, docx, doc, xlsx, rtf, odt, pptx, ods, odp, epub, html, eml, mbox, plain. pagesFrom/pagesTo/maxPages page through PDF pages, slides, EPUB chapters and mbox messages. Read-only, no approval required.",
     readonly: true,
     async run(rawArgs, ctx) {
       const args = await parseArgs(rawArgs, ctx.workingDir);
@@ -272,9 +272,10 @@ const SOURCE_LIKE_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Resolve extension → canonical format. `.html/.xml/.json/.csv/.tsv`
- * currently fall through to `plain` — it's the safest default until we need
- * format-specific pretty-printing for them.
+ * Resolve extension → canonical format. `.html/.htm/.xhtml` go to the HTML
+ * extractor (rendered as markdown; pass `format: "plain"` for raw markup).
+ * `.xml/.json/.csv/.tsv` still fall through to `plain` — it's the safest
+ * default until we need format-specific pretty-printing for them.
  */
 function detectFormat(absolute: string, override: unknown): DocumentFormat {
   if (typeof override === "string" && override.length > 0) {
@@ -304,6 +305,26 @@ function detectFormat(absolute: string, override: unknown): DocumentFormat {
       return "odt";
     case "pptx":
       return "pptx";
+    case "ods":
+      return "ods";
+    case "odp":
+      return "odp";
+    case "epub":
+      return "epub";
+    case "html":
+    case "htm":
+    case "xhtml":
+      return "html";
+    case "eml":
+      return "eml";
+    case "mbox":
+      return "mbox";
+    case "msg":
+      // Outlook's .msg is a binary OLE2 container, not MIME text; reading
+      // it as plain would hand the model binary noise.
+      throw new Error(
+        'os.fs.read_document: Outlook ".msg" files are not supported — save the message as .eml (File > Save As in Outlook, or drag it out of a webmail client) and read that',
+      );
     case "":
     case "txt":
     case "md":
@@ -311,7 +332,6 @@ function detectFormat(absolute: string, override: unknown): DocumentFormat {
     case "csv":
     case "tsv":
     case "json":
-    case "html":
     case "xml":
     case "yaml":
     case "yml":
@@ -361,6 +381,18 @@ async function resolveExtractor(
       return (await import("./extractors/odt-extractor.js")).odtExtractor;
     case "pptx":
       return (await import("./extractors/pptx-extractor.js")).pptxExtractor;
+    case "ods":
+      return (await import("./extractors/ods-extractor.js")).odsExtractor;
+    case "odp":
+      return (await import("./extractors/odp-extractor.js")).odpExtractor;
+    case "epub":
+      return (await import("./extractors/epub-extractor.js")).epubExtractor;
+    case "html":
+      return (await import("./extractors/html-extractor.js")).htmlExtractor;
+    case "eml":
+      return (await import("./extractors/email-extractor.js")).emlExtractor;
+    case "mbox":
+      return (await import("./extractors/email-extractor.js")).mboxExtractor;
     case "plain":
       return (await import("./extractors/plain-text-extractor.js"))
         .plainTextExtractor;

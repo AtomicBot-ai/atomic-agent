@@ -172,7 +172,7 @@ describe("os.fs.read_document dispatcher", () => {
     expect(description).toContain("NOT for source code");
     expect(description).toContain("os.fs.read");
     expect(description).toContain(
-      "pdf, docx, doc, xlsx, rtf, odt, pptx, plain",
+      "pdf, docx, doc, xlsx, rtf, odt, pptx, ods, odp, epub, html, eml, mbox, plain",
     );
     // It must not claim the tool refuses text files: it reads .txt/.md/.csv
     // as `plain`, and the whole point of issue #113 is removing ambiguity.
@@ -206,6 +206,24 @@ describe("os.fs.read_document dispatcher", () => {
         pptx: fakeExtractor({ format: "pptx", text: "s" }, () =>
           seen.push("pptx"),
         ),
+        ods: fakeExtractor({ format: "ods", text: "c" }, () =>
+          seen.push("ods"),
+        ),
+        odp: fakeExtractor({ format: "odp", text: "i" }, () =>
+          seen.push("odp"),
+        ),
+        epub: fakeExtractor({ format: "epub", text: "b" }, () =>
+          seen.push("epub"),
+        ),
+        html: fakeExtractor({ format: "html", text: "h" }, () =>
+          seen.push("html"),
+        ),
+        eml: fakeExtractor({ format: "eml", text: "m" }, () =>
+          seen.push("eml"),
+        ),
+        mbox: fakeExtractor({ format: "mbox", text: "x" }, () =>
+          seen.push("mbox"),
+        ),
         plain: fakeExtractor({ format: "plain", text: "t" }, () =>
           seen.push("plain"),
         ),
@@ -222,13 +240,20 @@ describe("os.fs.read_document dispatcher", () => {
       "a.rtf",
       "a.odt",
       "a.pptx",
+      "a.ods",
+      "a.odp",
+      "a.epub",
+      "a.html",
+      "a.htm",
+      "a.xhtml",
+      "a.eml",
+      "a.mbox",
       "a.txt",
       "a.md",
       "a.log",
       "a.csv",
       "a.tsv",
       "a.json",
-      "a.html",
       "a.xml",
       "a.yaml",
       "a.yml",
@@ -246,8 +271,25 @@ describe("os.fs.read_document dispatcher", () => {
       "rtf",
       "odt",
       "pptx",
-      ...Array<string>(11).fill("plain"),
+      "ods",
+      "odp",
+      "epub",
+      "html",
+      "html",
+      "html",
+      "eml",
+      "mbox",
+      ...Array<string>(10).fill("plain"),
     ]);
+  });
+
+  it("points Outlook .msg files at .eml instead of reading binary as text", async () => {
+    const tool = buildOsFsReadDocumentTool({});
+    const path = join(dir, "mail.msg");
+    await writeFile(path, Buffer.from([0xd0, 0xcf, 0x11, 0xe0]));
+    await expect(tool.run({ path }, makeCtx(dir))).rejects.toThrow(
+      /\.msg" files are not supported.*\.eml/,
+    );
   });
 
   it("rejects unknown format overrides", async () => {
@@ -276,7 +318,7 @@ describe("os.fs.read_document dispatcher", () => {
     expect(error).toBeInstanceOf(Error);
     const message = (error as Error).message;
     expect(message).toContain('unknown format override "text"');
-    expect(message).toContain("pdf, docx, doc, xlsx, rtf, odt, pptx, plain");
+    expect(message).toContain("pdf, docx, doc, xlsx, rtf, odt, pptx, ods, odp, epub, html, eml, mbox, plain");
     expect(message).toContain("os.fs.read");
   });
 

@@ -91,9 +91,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     // preemptively never sees the runtime hint.
     name: "os.fs.read_document",
     summary:
-      "Extract plain text from documents — PDF, Office, ODF, RTF (markers in output). NOT for source code: use os.fs.read. Read-only.",
+      "Extract plain text from documents — PDF, Office, ODF, RTF, EPUB, HTML, email (markers in output). NOT for source code: use os.fs.read. Read-only.",
     argsSchema:
-      "{ path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
+      "{ path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'ods' | 'odp' | 'epub' | 'html' | 'eml' | 'mbox' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
   },
   {
     name: "os.fs.archive.list",
