@@ -10,6 +10,7 @@ export interface TasksListToolOptions {
 const ALLOWED_STATUSES: readonly TaskStatus[] = [
   "pending",
   "running",
+  "paused",
   "completed",
   "failed",
   "blocked",

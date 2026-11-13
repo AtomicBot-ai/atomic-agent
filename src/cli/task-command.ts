@@ -9,6 +9,12 @@ import {
 } from "../tasks/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { parseDurationFlag, parseUsdFlag } from "./task-budget-flags.js";
+import {
+  TASK_PAUSE_HELP,
+  handlePause,
+  handleResume,
+  handleRuns,
+} from "./task-pause-command.js";
 
 const HELP =
   [
@@ -47,6 +53,7 @@ const HELP =
     "                            without Z or an offset is the machine's local time; a",
     "                            date alone (YYYY-MM-DD) is midnight UTC.",
     "  cancel <id>               Move a task to 'cancelled' (idempotent on terminal rows)",
+    ...TASK_PAUSE_HELP,
     "  run [<id>|--all-pending] [--session <id>]",
     "                            Manually drain — single task by id, or every pending row",
     "                            (optionally scoped to one session)",
@@ -77,6 +84,12 @@ export async function taskCommand(args: string[]): Promise<number> {
         return await handleCreate(args.slice(1));
       case "cancel":
         return handleCancel(args.slice(1));
+      case "pause":
+        return handlePause(args.slice(1), openTaskStore);
+      case "resume":
+        return handleResume(args.slice(1), openTaskStore);
+      case "runs":
+        return handleRuns(args.slice(1), openTaskStore);
       case "run":
         return await handleRun(args.slice(1));
       case "tick":
@@ -407,7 +420,10 @@ async function handleRun(args: string[]): Promise<number> {
   });
   try {
     if (explicitId) {
-      const result = await runtime.taskRunner.runOne(explicitId);
+      // A paused task runs this once and stays paused (ATO-590).
+      const result = await runtime.taskRunner.runOne(explicitId, undefined, {
+        evenIfPaused: true,
+      });
       if (!result) {
         process.stderr.write(
           `task not found or already claimed: ${explicitId}\n`,
@@ -484,6 +500,7 @@ function parseStatuses(
   const allowed: TaskStatus[] = [
     "pending",
     "running",
+    "paused",
     "completed",
     "failed",
     "blocked",
