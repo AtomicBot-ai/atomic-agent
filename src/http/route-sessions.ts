@@ -1,5 +1,6 @@
 import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
 import type { SessionState } from "../session/session-state.js";
+import { readSessionArchived } from "../session/session-archived.js";
 import { readSessionTitle } from "../session/session-title.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { openaiError } from "./openai-errors.js";
@@ -51,6 +52,8 @@ export function createListSessionsHandler(): HttpHandler {
         updatedAt: s.updatedAt,
         lastError: s.lastError,
         title: readSessionTitle(s.metadata),
+        // ATO-1150: the operator archived this chat (POST /api/sessions/{id}/archived).
+        archived: readSessionArchived(s.metadata),
       })),
     });
   };

@@ -61,6 +61,7 @@ export const HELP =
     "  GET  /api/skills, GET /api/skills/{name} List or inspect installed skills",
     "  POST /api/skills/install, /uninstall     Manage installed skills",
     "  GET  /api/sessions, GET /api/sessions/{id}, DELETE /api/sessions/{id}",
+    "  POST /api/sessions/{id}/archived         Archive or unarchive a chat: { archived: true|false }",
     "  POST /api/sessions/{id}/steer            Fold a message into the turn already running",
     "  GET  /api/sessions/{id}/steer            Steers a turn accepted but never delivered",
     "  DELETE /api/sessions/{id}/steer          Acknowledge those: ?through={seq} and/or ?discarded={n}",

@@ -149,3 +149,10 @@ export {
 } from "./session-title-user.js";
 
 export type { SessionCompaction, RollingCompactionSummary, CompactionResult, CompactionReason } from "./session-compaction.js";
+export {
+  SESSION_ARCHIVED_METADATA_KEY,
+  SESSION_ARCHIVED_SET_AT_KEY,
+  readSessionArchived,
+  readSessionArchivedSetAt,
+  withSessionArchived,
+} from "./session-archived.js";

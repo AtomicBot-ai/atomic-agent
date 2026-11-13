@@ -21,6 +21,7 @@ import {
   sessionSummaryCursorAfter,
   type SessionSummaryCursor,
 } from "../session/session-summary-page.js";
+import { readSessionArchived } from "../session/session-archived.js";
 import { readSessionTitle } from "../session/session-title.js";
 import {
   planLastTurnRollback,
@@ -435,6 +436,8 @@ export class ChatOrchestrator {
       (sessionId) => {
         const state = this.runtime.sessionStore.load(sessionId);
         if (!state) return null;
+        // ATO-1150: an archived chat stays off the rail, pinned or not.
+        if (readSessionArchived(state.metadata) && state.id !== this.session?.id) return null;
         // The rail's rows come from a SQL projection now (#367); a
         // pinned thread fetched by id is projected the same way here.
         return toPickerEntry(summariseSessionState(state));
@@ -806,7 +809,14 @@ export class ChatOrchestrator {
 
   /** Stored threads that have a first prompt, plus the pending ones. */
   private railSessions(): SessionPickerEntry[] {
-    const stored = this.railPage().map((row) => toPickerEntry(row));
+    /* ATO-1150: chats archived (from the desktop's sidebar, or
+       `POST /api/sessions/{id}/archived`) are left out of the rail and the
+       session picker, which list the same set. The open chat stays, so
+       archiving it elsewhere does not pull the row out from under it. */
+    const openId = this.session?.id;
+    const stored = this.railPage()
+      .filter((row) => !row.archived || row.id === openId)
+      .map((row) => toPickerEntry(row));
     // The manual order applies whether or not there are stand-ins.
     if (this.pendingRows.size === 0) return this.sessionRail.arrange(stored);
     const storedIds = new Set(stored.map((entry) => entry.sessionId));
@@ -2145,6 +2155,7 @@ function summariseSessionState(state: SessionState): SessionSummary {
       typeof state.metadata?.importedFrom === "string"
         ? state.metadata.importedFrom
         : null,
+    archived: readSessionArchived(state.metadata),
   };
 }
 
