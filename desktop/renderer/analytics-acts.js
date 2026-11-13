@@ -79,7 +79,8 @@ const ANX_ACTS = (() => {
         hubPage:UPDOWN, hubSearch:L, install:L, installAck:L, installCancel:L, page:UPDOWN,
         rebrowse:L, refresh:L, remove:L, removeCancel:L, removeConfirm:L, search:L, toggle:L, tools:L},
       // ATO-954: Settings › Plugins (renderer/plugins-pane.js); the plugin and part names are cut off.
-      plugins:{refresh:L, expand:L, toggle:L, part:L, code:L, codeConfirm:L, codeCancel:L, remove:L, removeConfirm:L, removeCancel:L},
+      plugins:{refresh:L, expand:L, toggle:L, part:L, code:L, codeConfirm:L, codeCancel:L, remove:L, removeConfirm:L, removeCancel:L,
+        install:L, installAnyway:L, installDismiss:L},
       memory:{auto:L, back:L, ch:set(memChannels), cycle:L, expand:L, filter:set(memFilters), jump:L,
         neighbor:L, open:L, page:UPDOWN, refresh:L},
       tasks:{auto:L, back:L, cancel:L, cancelConfirm:L, cancelKeep:L, clearSearch:L, detail:L,
