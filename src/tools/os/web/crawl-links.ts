@@ -44,6 +44,14 @@ function resolveHref(href: string, base: URL): URL | null {
   }
 }
 
+/**
+ * What the loops below read from a linkedom element. Without the DOM lib
+ * `querySelectorAll` yields `unknown` items (as in `duckduckgo-provider.ts`).
+ */
+interface AttributeElement {
+  getAttribute(name: string): string | null;
+}
+
 /** Links from an HTML page, honouring `<base href>`, `rel="nofollow"` and the robots meta tag. */
 export function extractHtmlLinks(html: string, pageUrl: URL): PageLinks {
   let document: ReturnType<typeof parseHTML>["document"];
@@ -52,7 +60,7 @@ export function extractHtmlLinks(html: string, pageUrl: URL): PageLinks {
   } catch {
     return { links: [], nofollow: false };
   }
-  const robotsMeta = Array.from(document.querySelectorAll("meta[name]"))
+  const robotsMeta = (Array.from(document.querySelectorAll("meta[name]")) as AttributeElement[])
     .filter((m) => /^(?:robots|atomic-agent)$/i.test(m.getAttribute("name") ?? ""))
     .map((m) => (m.getAttribute("content") ?? "").toLowerCase());
   const nofollow = robotsMeta.some((c) => /\b(?:nofollow|none)\b/.test(c));
@@ -63,7 +71,7 @@ export function extractHtmlLinks(html: string, pageUrl: URL): PageLinks {
   if (baseHref) base = resolveHref(baseHref, pageUrl) ?? pageUrl;
 
   const links: URL[] = [];
-  for (const anchor of Array.from(document.querySelectorAll("a[href]"))) {
+  for (const anchor of Array.from(document.querySelectorAll("a[href]")) as AttributeElement[]) {
     const rel = (anchor.getAttribute("rel") ?? "").toLowerCase();
     if (/\bnofollow\b/.test(rel)) continue;
     const url = resolveHref(anchor.getAttribute("href") ?? "", base);
