@@ -8120,6 +8120,9 @@ document.addEventListener('click', (e) => {
   // ATO-666: Copy in a code block's header copies that block's code, as written.
   // ATO-728: a CRLF reply's lines go out as plain \n, with no stray \r at their ends.
   const mdc = t.closest('[data-mdcopy]');
+  // ATO-1136: Preview / Hide on a ```html block, beside its Copy.
+  const artp = t.closest('[data-artprev]');
+  if (artp) { e.preventDefault(); const code = artp.closest('.mdblock')?.querySelector('pre code'); chatArtifactToggleCode(artp.dataset.artprev, code ? code.textContent : ''); return; }
   if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\r\n?/g, '\n').replace(/\n$/, '') : '', 'Code copied'); return; }
   // ATO-1426: the same text to Terminal, in the folder the chip names.
   const mdterm = t.closest('[data-mdterm]');
@@ -11105,6 +11108,8 @@ function onChatEvent(ev) {
     const card = toolResultCard(p, ev.turnId);
     if (!card) return;   // reply / finish draw no card
     toolSettle(card, p, ev.at || Date.now());
+    // ATO-1136: the page an ok canvas.render wrote (`canvas` on the frame, ATO-1137) runs in the reply, sandboxed (chat-artifact.js).
+    if (p.canvas && item && typeof chatArtifactCanvas === 'function') chatArtifactCanvas(item, p, card);
     render();
     return;
   }
@@ -22850,9 +22855,11 @@ function codeBlockFrame(pre) {
   const term = !/^<pre class="mdpre"[^>]*\sdata-open="1"/.test(pre) && codeBlockTerminalOk(lang)
     ? '<button class="mdcopy mdterm" data-mdterm title="Open in Terminal" aria-label="Open in Terminal">' + ic('term') + '<span>Open in Terminal</span></button>'
     : '';
-  return '<div class="mdblock"><div class="mdbar"><span class="mdlang">' + lang + '</span>' + term
+  // ATO-1136: a ```html block has Preview too, which runs it under the block in a sandboxed frame (chat-artifact.js).
+  const prev = typeof chatArtifactCodeButton === 'function' ? chatArtifactCodeButton(pre, lang) : '';
+  return '<div class="mdblock"><div class="mdbar"><span class="mdlang">' + lang + '</span>' + term + prev
     + '<button class="mdcopy" data-mdcopy title="Copy code" aria-label="Copy code">' + ic('copy') + '<span>Copy</span></button></div>'
-    + lit + '</div>';
+    + lit + (prev ? chatArtifactCodeSlot(pre) : '') + '</div>';
 }
 /** ATO-1426: whether a code block in `lang` gets "Open in Terminal". The
     platforms are one list, macOS only until ATO-1422 says otherwise; an older
@@ -23321,7 +23328,9 @@ function chatImageWhy(st, path) {
 function replyFilesStrip(m) {
   const files = m.replyFiles || [];
   const extra = (m.turnPics || []).filter((p) => !files.includes(p));
-  if (!files.length && !extra.length) return '';
+  // ATO-1136: the reply's artifacts (its pages and its .html files) run in sandboxed frames (chat-artifact.js).
+  const arts = typeof chatArtifactEventSlots === 'function' ? chatArtifactEventSlots(m, esc) : [];
+  if (!files.length && !extra.length && !arts.length) return '';
   const pics = [], chips = [], shown = [];
   for (const p of extra) {
     // Drawn once main has read it: a path a reply merely names (an example, a typo) never shows an empty slot.
@@ -23335,6 +23344,8 @@ function replyFilesStrip(m) {
     // A video plays in the reply (chat-media.js); one that cannot is a chip like any file.
     const vid = chatMediaKind(p) === 'video' ? chatVideoSlotHTML(p, esc) : null;
     if (vid) { pics.push(vid); shown.push(p); continue; }
+    const art = typeof chatArtifactFileSlotHTML === 'function' ? chatArtifactFileSlotHTML(p, esc, m) : null;
+    if (art !== null) { if (art) arts.push(art); continue; }
     const st = CHAT_IMG_EXT.test(p) ? chatImage(p) : null;
     if (st && st.state !== 'fail') {
       pics.push(chatPicHTML(p, st));
@@ -23344,8 +23355,9 @@ function replyFilesStrip(m) {
         + ic(st ? 'image' : 'file') + '<span>' + esc(name) + '</span></button>');
     }
   }
-  if (!pics.length && !chips.length) return '';
+  if (!pics.length && !chips.length && !arts.length) return '';
   return '<div class="replyfiles" data-replyfiles="' + esc(m.id) + '">'
+    + (arts.length ? '<div class="replyfiles-arts">' + arts.join('') + '</div>' : '')
     + (pics.length ? '<div class="replyfiles-pics">' + pics.join('') + '</div>' : '')
     + (chips.length ? '<div class="attach-chips">' + chips.join('') + '</div>' : '')
     // Studio: the reply's pictures and clips open there, from its gallery or as "From chat" (studio/shell.js).
