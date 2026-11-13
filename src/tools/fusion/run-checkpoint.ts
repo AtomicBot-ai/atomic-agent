@@ -94,6 +94,7 @@ const REPEAT_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "mcp.prompt.list",
   "browser.read_aria",
   "browser.screenshot",
+  "browser.extract",
 ]);
 
 /** Whether one call of `tool` may have changed something a re-run would change again. */

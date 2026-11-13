@@ -112,6 +112,7 @@ const GATED_TOOLS = {
     "browser.scroll",
     "browser.screenshot",
     "browser.act",
+    "browser.extract",
   ],
   webSearch: ["os.web.search"],
   vision: ["vision.describe"],

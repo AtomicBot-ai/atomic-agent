@@ -444,6 +444,7 @@ describe("browser tools on a fake backend", () => {
     ).toEqual([
       "browser.act",
       "browser.click",
+      "browser.extract",
       "browser.navigate",
       "browser.read_aria",
       "browser.screenshot",

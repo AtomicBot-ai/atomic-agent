@@ -85,6 +85,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "browser.scroll": "browser",
   "browser.screenshot": "browser",
   "browser.act": "browser",
+  "browser.extract": "browser",
 
   // os.shell.* — always approval-gated when approvals are on
   "os.shell.run": "approval_gated",
