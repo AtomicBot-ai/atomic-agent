@@ -1084,6 +1084,8 @@ const SWXBR = {
   activateProvider: (id, opts) => { SWX.route = 'activateProvider'; return BR.activateProvider(id, opts); },
   selectCloudModel: (id, model, opts) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model, opts); },
   selectLocalModel: (id) => { SWX.route = 'selectLocalModel'; return BR.selectLocalModel(id); },
+  // A model found on this computer (main/local-models-found.ts): registered in place, then the same local pick.
+  useLocalModel: (path) => { SWX.route = 'selectLocalModel'; return BR.useLocalModel(path); },
   codingMode: (id) => { SWX.route = 'codingMode'; return BR.codingMode(id); },
   // Run mode — Fusion: the TUI's RunModeOrchestrator writes (main/backend-switch.ts).
   enterFusion: (pins) => { SWX.route = 'enterFusion'; return BR.enterFusion(pins || {}); },
@@ -1092,6 +1094,14 @@ const SWXBR = {
   fusionWorkerModel: (id) => { SWX.route = 'fusionWorkerModel'; return BR.fusionWorkerModel(id); },
   composerEngine: (id, leg) => { SWX.route = 'composerEngine'; return BR.composerEngine(id, leg); },
   fusionModel: (leg, id) => { SWX.route = 'fusionModel'; return BR.fusionModel(leg, id); },
+};
+
+/* The models found on this computer for the setup's Local step (obFoundHTML).
+   Declared up here: the step hook that first asks for them runs in the first paint. */
+const OB_FOUND = {models: null, busy: false, using: null};
+const FOUND_SOURCE_WORDS = {
+  atomic: 'from Atomic Agent', lmstudio: 'from LM Studio', huggingface: 'from Hugging Face',
+  jan: 'from Jan', llamacpp: 'from llama.cpp', other: 'on this computer',
 };
 
 /* ---- Item 7: settings surface — the TUI menu tree + the Manage tabs ----
@@ -13124,6 +13134,8 @@ function obAfterStep() {
     obStampOnce('localSetupSeenAt');
   }
   if (OB.step === 'local_pick' && !OB.models.length && !OB.busy) obLoadModels();
+  // Asked on the way in (the Local / Cloud choice) too, so the list is there when Local opens.
+  if ((OB.step === 'choose' || OB.step === 'local_pick') && OB_FOUND.models === null) obFoundLoad(false);
   // ATO-507: a fresh free-space reading for the screens that start a download.
   if (OB.step === 'local_pick' || OB.step === 'local_hf_pick') diskSpaceRefresh(BR, true);
   if (OB.step === 'finished') { obSettleSlowArm(); obSettle(); }
@@ -14911,6 +14923,76 @@ function obLocalWaysInHTML() {
     + '</div>';
 }
 
+/* "If some model was downloaded before, it should just get picked up."
+   The GGUF models already on this computer (BR.discoverLocalModels: our own
+   store, the default ~/.atomic-agent one under another state dir, LM Studio,
+   the Hugging Face cache, Jan, llama.cpp), as LM Studio and Jan list what is
+   in their folders before they offer a download. They lead the Local step;
+   the download list stays under them. A model the app already knows is in
+   that list already (on disk, first), so only the ones it does not know are
+   here. Use registers the file where it lies and hands the id to the same
+   pull a .gguf pick uses (obGgufPick), which finds the weights present. */
+function obFoundLoad(fresh) {
+  if (!BR || !BR.discoverLocalModels || OB_FOUND.busy) return;
+  OB_FOUND.busy = true;
+  Promise.resolve(BR.discoverLocalModels({fresh: fresh === true}))
+    .then((res) => { OB_FOUND.models = res && Array.isArray(res.models) ? res.models : []; })
+    .catch(() => { OB_FOUND.models = []; })
+    .finally(() => { OB_FOUND.busy = false; render(); });
+}
+function obFoundRows() {
+  return (OB_FOUND.models || []).filter((m) => m && typeof m.path === 'string' && m.registered !== true);
+}
+function obFoundDetail(m) {
+  const gb = (Number(m.sizeBytes) || 0) / (1024 * 1024 * 1024);
+  return [gb > 0 ? obGbWord(gb) : '', m.quant || '', FOUND_SOURCE_WORDS[m.source] || FOUND_SOURCE_WORDS.other]
+    .filter(Boolean).join(' · ');
+}
+function obFoundHTML() {
+  const rows = obFoundRows();
+  if (!rows.length || !(BR && BR.useLocalModel)) return '';
+  const head = IS_MAC ? 'You already have models on this Mac' : 'You already have models on this computer';
+  const items = rows.map((m, i) => {
+    const using = OB_FOUND.using === m.path;
+    return '<button class="ob-wayin ob-found-row" data-obact="local:found:' + i + '"'
+      + (OB_FOUND.using ? ' disabled' : '') + ' title="' + esc(m.path) + '">'
+      + '<span class="tk-ico">' + ic('file') + '</span>'
+      + '<span class="ob-wayin-t"><span class="ob-wayin-l">' + esc(m.name || m.path) + '</span>'
+      + '<span class="ob-wayin-d">' + esc(obFoundDetail(m)) + '</span></span>'
+      + '<span class="ob-found-use">' + (using ? '<span class="tk-spin" aria-hidden="true"></span>' : esc('Use this')) + '</span></button>';
+  }).join('');
+  return '<div class="ob-found">'
+    + '<div class="ob-found-h">' + esc(head) + '</div>'
+    + '<div class="ob-explain">' + esc('They run from where they are. No download.') + '</div>'
+    + '<div class="ob-found-list">' + items + '</div>'
+    + '<div class="ob-found-or">' + esc('Or download a model') + '</div>'
+    + '</div>';
+}
+async function obFoundUse(index) {
+  const m = obFoundRows()[index];
+  if (!m || !BR || !BR.useLocalModel || OB_FOUND.using) return;
+  if (dlBusy() || DL.projector || SEL.pulling || LLMP.pulling) {
+    obDispatch({type:'onboarding_error_set', error:'a download is already running'});
+    return;
+  }
+  OB_FOUND.using = m.path;
+  render();
+  let res;
+  try { res = await BR.useLocalModel(m.path, {registerOnly: true}); }
+  catch (e) { res = {ok: false, error: String(e && e.message || e)}; }
+  finally { OB_FOUND.using = null; }
+  if (!OB.open || OB.step !== 'local_pick') return;
+  if (!res || res.ok !== true || !res.id) {
+    // A file gone since the scan: look again, so the list stops offering it.
+    obFoundLoad(true);
+    obDispatch({type:'onboarding_error_set', error: (res && res.error) || 'could not use that model'});
+    return;
+  }
+  OB_FOUND.models = null;   // registered now: the next visit asks again
+  OB.pendingMmproj = null;
+  obDownloadAndHandOver(res.id);
+}
+
 function obLocalPickHTML() {
   const rows = obPickRows();
   const models = rows.filter((r) => r.kind === 'model');
@@ -14954,7 +15036,8 @@ function obLocalPickHTML() {
   const order = lifted
     ? 'Models already on ' + yours + ' come first, then the rest ordered for its ' + OB.ram + ' GB of memory.'
     : 'Ordered for ' + yours + '’s ' + OB.ram + ' GB of memory.';
-  return (OB.ram ? '<div class="ob-explain">' + esc(order) + '</div>' : '')
+  return obFoundHTML()
+    + (OB.ram ? '<div class="ob-explain">' + esc(order) + '</div>' : '')
     /* The out-of-reach block lives INSIDE the scroller, not beside it.
        Beside it, it collapsed the list to nothing: an `overflow-y:auto` flex
        item next to a sibling that cannot shrink absorbs every pixel of
@@ -17909,6 +17992,7 @@ function obControlClick(spec) {
   if (spec === 'key:s') { obKey('s', {}); return; }
   if (spec === 'route:apps') { obPickBackend('custom'); return; }
   if (spec === 'local:gguf') { obGgufPick(); return; }
+  if (spec.startsWith('local:found:')) { obFoundUse(Number(spec.slice('local:found:'.length))); return; }
   /* r6 cloud item 1: the hint strip's `esc` chord, clickable. The split is
      obKeydown's own — a step that owns its keyboard answers Escape through
      obOwnEscape, everything else through the key table — so the button and

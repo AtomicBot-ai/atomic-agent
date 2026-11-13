@@ -593,6 +593,14 @@ contextBridge.exposeInMainWorld("atomic", {
   hfAdd: (repo: unknown, index: number) => ipcRenderer.invoke("cli:hfAdd", { repo, index }),
   /** ATO-1402: pick a .gguf on disk and register it where it lies (main/local-gguf.ts). */
   ggufPick: () => ipcRenderer.invoke("cli:ggufPick"),
+  /** The GGUF models already on this computer (main/local-models-found.ts): our store, LM Studio,
+   *  the Hugging Face cache, Jan, llama.cpp's cache. `{ models: [{ path, name, sizeBytes, source, quant?, registered }] }`;
+   *  cached for 30 s unless `fresh`. */
+  discoverLocalModels: (opts?: { fresh?: boolean }) => ipcRenderer.invoke("cli:discoverLocalModels", opts ?? {}),
+  /** Register a found file where it lies (no copy) and switch chats to it. Only a path
+   *  discoverLocalModels returned is accepted. `{ ok, error?, id? }`; `registerOnly` (the setup's
+   *  Use) adds the entry and answers its id, and the caller starts it through its own pull. */
+  useLocalModel: (path: string, opts?: { registerOnly?: boolean }) => ipcRenderer.invoke("cli:useLocalModel", path, opts ?? {}),
   hfProjector: (id: string, mmprojUrl: string, mmprojFilename: string, name?: string) =>
     ipcRenderer.invoke("cli:hfProjector", { id, mmprojUrl, mmprojFilename, name }),
 
