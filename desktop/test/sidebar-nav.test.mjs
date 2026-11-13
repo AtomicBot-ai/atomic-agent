@@ -55,7 +55,7 @@ test('the sidebar draws one Studio row first in the section rows, and its popove
   assert.match(r, /'<div class="sb-nav" role="group" aria-label="Sections">'\s*\n\s*\+ \(window\.STUDIO \? STUDIO\.sidebarHTML\(S\.room\) : ''\)\s*\n\s*\+ sidebarNavItems\(pane\)/);
   assert.doesNotMatch(r, /\+ sidebarNavHTML\(\)[^\n]*\n\s*\/\/ Studio: the Images and Video rows/);
   // A click on the Studio row in the narrow window's drawer keeps the drawer, its popover hangs off it.
-  assert.match(r, /\[data-act="studio:menu"\], \[data-more\]/);
+  assert.match(r, /\[data-act="studio:menu"\], \[data-act\^="chatsearch:"\], \[data-more\]/);
 });
 
 test('the View menu and the section rows name the same ⌘ 2 / ⌘ 3 places', () => {
@@ -132,6 +132,7 @@ test('the rail draws every row as one 32px cell, Studio included, and its workin
     assert.match(shell, new RegExp(scope + ' \\.sesrow\\{[^}]*width:32px;height:32px'), `${scope}: a chat row is a 32px cell`);
     assert.match(shell, new RegExp(scope + ' \\.sb-new\\{width:32px;height:32px'), `${scope}: New chat, Studio and the section rows are 32px cells`);
     assert.match(shell, new RegExp(scope + ' \\.sb-projects-empty\\{display:none\\}'), `${scope}: an empty Projects block draws nothing in the rail`);
+    assert.match(shell, new RegExp(scope + ' \\.sb-projects-empty:first-child \\+ \\.sb-list::before\\{display:none\\}'), `${scope}: no divider over the list after an empty Projects block`);
   }
   assert.doesNotMatch(studio, /sb-studio-head/);
   assert.doesNotMatch(studio, /max-width:999px/);
@@ -155,6 +156,12 @@ test('the chat search field is drawn only once the magnifier opened it (or while
   const r = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
   assert.match(r, /'<div class="sb-top">' \+ searchBtnHTML\(true\) \+ sidebarToggleHTML\(\)/);
   assert.match(r, /data-act="chatsearch:open" title="Search chats"/);
+  // The narrow window's drawer draws the magnifier too (sidebarExpanded() is false there), and a click on it keeps the drawer.
+  assert.match(r, /: drawer \? '<div class="sb-top">' \+ searchBtnHTML\(true\) \+ '<\/div>' : ''\)/);
+  assert.match(r, /\[data-act\^="chatsearch:"\]/);
+  const shell = readFileSync(new URL('../renderer/css/shell.css', import.meta.url), 'utf8');
+  assert.match(shell, /#sidebar:not\(\.drawer\) \.sb-top\{display:none\}/, 'the narrow rail hides the row, the drawer keeps it');
+  assert.match(shell, /#sidebar\.drawer \.sb-top\{/);
   assert.match(r, /\(open \? '' : sidebarToggleHTML\(\) \+ searchBtnHTML\(\)\)/, 'the toolbar magnifier (rail) is still the palette');
 });
 

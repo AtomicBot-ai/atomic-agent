@@ -1266,7 +1266,7 @@ if (typeof document !== 'undefined') {
   // A click outside the drawer closes it (the toggle runs its own verb). A pick
   // inside it (a chat, a task, a section row, New chat, Settings) closes it as
   // well; the workspace chip, Load more and a row's "…" menu keep it, their
-  // menus hang off it. Where the click landed is read in the capture phase,
+  // menus hang off it, and so do the chat search's magnifier and clear button. Where the click landed is read in the capture phase,
   // before a handler repaints the sidebar under it; the close itself waits
   // until that handler has run on the DOM it clicked.
   document.addEventListener('click', (e) => {
@@ -1274,7 +1274,7 @@ if (typeof document !== 'undefined') {
     const t = e.target instanceof Element ? e.target : null;
     if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
     const inside = !!t.closest('#sidebar');
-    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-act^="pedit:"], [data-act="studio:menu"], [data-more], input, textarea')) return;
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-act^="pedit:"], [data-act="studio:menu"], [data-act^="chatsearch:"], [data-more], input, textarea')) return;
     if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -2422,7 +2422,9 @@ function renderSidebar() {
     // 13.10: the expanded sidebar's top row sits in the window's title band —
     // the traffic lights on its left, Search and the toggle on its right.
     // W2: here the magnifier opens the chat search over the lists (chat-search.js); the toolbar's, in the rail, is still ⌘ K.
-    (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML(true) + sidebarToggleHTML() + '</div>' : '')
+    // The narrow window's drawer gets the magnifier too (its toggle stays in the toolbar), or the search had no way in there.
+    (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML(true) + sidebarToggleHTML() + '</div>'
+      : drawer ? '<div class="sb-top">' + searchBtnHTML(true) + '</div>' : '')
     + '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button>'
       // ATO-1185: the downloads icon (renderDlcard paints it between renders).
@@ -5134,10 +5136,39 @@ function renderInspector() {
     // ("Show session id", ⌃ ⌘ C) for the person who needs to copy it.
     + '<div class="inspbody">' + body + '</div>';
   INSP_VIEW.tab = S.inspTab; INSP_VIEW.log = S.log;
+  inspTabsFit(el.querySelector('.insphead .seg'));
   const now = keep === null ? null : el.querySelector('.inspbody');
   if (now) now.scrollTop = inspScrollTo(keep, now);
   const held = now && anchor ? inspAnchorScroll(now, anchor) : null;
   if (held !== null) now.scrollTop = held;
+}
+
+/* The side panel's tab strip (Steps · Reasoning · Results · World) cut its
+   last tab off at the panel's edge. The tabs now take their own width
+   (shell.css); when they still do not fit, the strip scrolls sideways with
+   no scrollbar, a soft fade marks the clipped edge, the chosen tab is
+   scrolled into view, and a mouse wheel scrolls it too. */
+function inspTabsFade(seg) {
+  const max = seg.scrollWidth - seg.clientWidth;
+  seg.classList.toggle('fade-l', max > 1 && seg.scrollLeft > 1);
+  seg.classList.toggle('fade-r', max > 1 && seg.scrollLeft < max - 1);
+}
+function inspTabsFit(seg) {
+  if (!seg) return;
+  const on = seg.querySelector('button.on');
+  if (on && seg.scrollWidth > seg.clientWidth) {
+    const pad = 20;   // the fade's width: the chosen tab clears it
+    const l = on.offsetLeft - seg.offsetLeft, r = l + on.offsetWidth;
+    if (l - pad < seg.scrollLeft) seg.scrollLeft = Math.max(0, l - pad);
+    else if (r + pad > seg.scrollLeft + seg.clientWidth) seg.scrollLeft = r + pad - seg.clientWidth;
+  }
+  inspTabsFade(seg);
+  seg.addEventListener('scroll', () => inspTabsFade(seg), {passive: true});
+  seg.addEventListener('wheel', (e) => {
+    if (seg.scrollWidth <= seg.clientWidth || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    seg.scrollLeft += e.deltaY;
+  }, {passive: false});
 }
 
 /** ATO-1249: the tab on screen lists newest first (World is not a list). */

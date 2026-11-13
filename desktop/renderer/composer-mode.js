@@ -43,9 +43,17 @@ function cmodeCurrent(st) {
   if (st && (st.goalFormOpen || st.goalStatus === 'active')) return 'goal';
   return 'chat';
 }
-/** The rows the menu offers: no Voice conversation without dictation. */
-function cmodeRows(voiceSupported) {
-  return CMODE_ROWS.filter((r) => r.id !== 'voice' || voiceSupported !== false);
+/* While a goal is running, picking Chat has to stop it, or nothing would change: the row says so. */
+const CMODE_END_GOAL = {id: 'chat', word: 'End goal', icon: 'x', hint: 'Stop the goal and chat normally', endGoal: true};
+/**
+ * The rows the menu offers: no Voice conversation without dictation, and the
+ * Chat row reads "End goal" while a goal on this chat is still going.
+ * st: {goalStatus} (cmodeState), optional.
+ */
+function cmodeRows(voiceSupported, st) {
+  const endGoal = !!(st && st.goalStatus === 'active');
+  return CMODE_ROWS.filter((r) => r.id !== 'voice' || voiceSupported !== false)
+    .map((r) => (r.id === 'chat' && endGoal ? CMODE_END_GOAL : r));
 }
 
 /* ---------- reading the flows ---------- */
@@ -83,9 +91,10 @@ function cmodePickChipHTML(deps) {
 /** The menu: a titled list of rows, each with its one-line hint under the label. */
 function cmodeMenuHTML(deps) {
   const {esc, ic} = deps;
-  const cur = cmodeCurrent(cmodeState());
+  const st = cmodeState();
+  const cur = cmodeCurrent(st);
   return '<div class="cmodemenu" id="cmodemenu" role="menu" aria-label="Mode"' + (CMODE.open ? '' : ' hidden') + '>'
-    + cmodeRows(cmodeVoiceSupported()).map((r) =>
+    + cmodeRows(cmodeVoiceSupported(), st).map((r) =>
       '<button class="cmoderow' + (r.id === cur ? ' on' : '') + '" role="menuitemradio" aria-checked="' + (r.id === cur ? 'true' : 'false') + '"'
         + ' data-cmode="' + r.id + '" data-conv="1">'
         + '<span class="cmodeic">' + ic(r.icon) + '</span>'
@@ -105,29 +114,56 @@ function cmodeRepaint() {
   if (!menu) return;
   menu.hidden = !CMODE.open;
   if (!CMODE.open || !chip) return;
+  cmodePlace();
+  const on = menu.querySelector('.cmoderow.on') || menu.querySelector('.cmoderow');
+  if (on) on.focus();
+}
+/* Puts the open menu over the chip. A render() while it is open draws a new
+   menu without the offsets (composer.css has none), and a resize moves the
+   chip, so this runs after every DOM change and on resize too, like the "+"
+   menu's attPlaceMenu. It never moves the focus. */
+function cmodePlace() {
+  if (!CMODE.open || typeof document === 'undefined') return;
+  const menu = document.getElementById('cmodemenu');
+  const chip = document.querySelector('#composer .cmodepick');
+  if (!menu || !chip) return;
+  if (menu.hidden) menu.hidden = false;
+  if (!chip.classList.contains('is-open')) { chip.classList.add('is-open'); chip.setAttribute('aria-expanded', 'true'); }
   const wrap = menu.parentElement;
   const wr = wrap ? wrap.getBoundingClientRect() : {left: 0, top: 0, width: window.innerWidth};
   const cr = chip.getBoundingClientRect();
   const w = menu.offsetWidth || 300;
-  const left = Math.max(0, Math.min(cr.right - wr.left - w, wr.width - w));
-  menu.style.left = Math.round(left) + 'px';
-  menu.style.bottom = Math.round(wr.top + wrap.offsetHeight - cr.top + 6) + 'px';
-  const on = menu.querySelector('.cmoderow.on') || menu.querySelector('.cmoderow');
-  if (on) on.focus();
+  const left = Math.round(Math.max(0, Math.min(cr.right - wr.left - w, wr.width - w))) + 'px';
+  const bottom = Math.round(wr.top + (wrap ? wrap.offsetHeight : 0) - cr.top + 6) + 'px';
+  // Only write a changed value: a style write is itself a DOM change the observer below sees.
+  if (menu.style.left !== left) menu.style.left = left;
+  if (menu.style.bottom !== bottom) menu.style.bottom = bottom;
 }
 function cmodeClose() { if (!CMODE.open) return; CMODE.open = false; cmodeRepaint(); }
+
+/** What a pick does to the goal: 'clear' when Chat is picked while a goal is still going (the "End goal" row). */
+function cmodeGoalVerb(id, st) {
+  return id === 'chat' && st && st.goalStatus === 'active' ? 'clear' : null;
+}
 
 /** A row was picked: leave the mode the chat is in, then start the chosen one's own flow. */
 function cmodePick(id) {
   CMODE.open = false;
   cmodeRepaint();
   const st = cmodeState();
+  const goalVerb = cmodeGoalVerb(id, st);
+  // Analytics: the row's fixed id only (analytics-acts.js `cmode`), like a data-act click.
+  try {
+    if (typeof ANX !== 'undefined') ANX.track('ui_action', {action: ANX.sanitizeAct('cmode:' + (goalVerb ? 'endGoal' : id)), via: 'click'});
+  } catch (e) { /* never in the way */ }
   const convOn = st.conv && st.conv !== 'off';
   if (id !== 'voice' && convOn && typeof convToggle === 'function') convToggle();
   if (id !== 'goal' && st.goalFormOpen && typeof goalFormShow === 'function') goalFormShow(false);
   if (id === 'goal') { if (!st.goalFormOpen && typeof goalFormShow === 'function') goalFormShow(true); return; }
   if (id === 'overnight') { if (typeof ovnOpen === 'function') void ovnOpen(); return; }
   if (id === 'voice') { if (!convOn && typeof convToggle === 'function') convToggle(); return; }
+  // "End goal": the goal card's own Clear (goal-actions.js), which lands after the round when one is running.
+  if (goalVerb && typeof goalControl === 'function') void goalControl(goalVerb);
   if (typeof render === 'function') render();
   const e = typeof $ === 'function' ? $('#entry') : null;
   if (e) e.focus();
@@ -154,8 +190,13 @@ if (typeof document !== 'undefined') {
       rows[n].focus();
     }
   }, true);
+  window.addEventListener('resize', cmodePlace);
+  // After every composer redraw while the menu is open: the new menu goes back over the chip.
+  const cmodeWatch = () => new MutationObserver(() => { if (CMODE.open) cmodePlace(); })
+    .observe(document.body, {childList: true, subtree: true});
+  if (document.body) cmodeWatch(); else document.addEventListener('DOMContentLoaded', cmodeWatch);
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {CMODE, CMODE_ROWS, cmodeCurrent, cmodeRows, cmodePickChipHTML, cmodeMenuHTML};
+  module.exports = {CMODE, CMODE_ROWS, CMODE_END_GOAL, cmodeCurrent, cmodeRows, cmodeGoalVerb, cmodePick, cmodePickChipHTML, cmodeMenuHTML};
 }

@@ -291,6 +291,8 @@
 #sidebar.rail .sb-list-head{justify-content:center;padding:0;margin-top:6px}
 #sidebar.rail .sb-list-head > span{display:none}
 #sidebar.rail .sb-list + .sb-list::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 0;background:var(--bd)}
+/* An empty Projects block draws nothing in the rail, so the list after it has no list above to divide from. */
+#sidebar.rail .sb-projects-empty:first-child + .sb-list::before{display:none}
 /* ATO-900: a rail row is the same 32px cell as New chat, the section rows,
    Studio and the gear, on the same centre line, so the column reads as one
    set of controls; a header with no plus (Chats, Pinned) gives the rail
@@ -329,6 +331,7 @@
   #sidebar:not(.drawer) .sb-list-head{justify-content:center;padding:0;margin-top:6px}
   #sidebar:not(.drawer) .sb-list-head > span{display:none}
   #sidebar:not(.drawer) .sb-list + .sb-list::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 0;background:var(--bd)}
+  #sidebar:not(.drawer) .sb-projects-empty:first-child + .sb-list::before{display:none}
   #sidebar:not(.drawer) .sb-list-head:not(:has(button)){display:none}
   #sidebar:not(.drawer) .sb-list{gap:2px}
   #sidebar:not(.drawer) .sesrow{justify-content:center;align-self:center;width:32px;height:32px;padding:0}
@@ -349,6 +352,8 @@
   #sidebar:not(.drawer) .sesrow[data-g] .sdot{position:absolute;top:3px;right:3px}
   #sidebar.drawer{width:260px;margin-right:-208px;margin-top:0;padding:10px 8px 18px 16px;z-index:17}
   #sidebar.drawer::before{top:0;box-shadow:var(--sh-pop)}
+  /* The drawer sits under the toolbar band, so its top row (just the chat search magnifier) is a plain 36px row. */
+  #sidebar.drawer .sb-top{height:36px;padding-top:0}
 }
 
 /* ---------------- content ---------------- */
@@ -365,8 +370,16 @@
   background:var(--lift);border-radius:var(--r-panel);box-shadow:var(--sh-card);overflow:hidden;
 }
 .insphead{flex:none;padding:10px 10px 6px}
-.insphead .seg{display:flex;width:100%}
-.insphead .seg button{flex:1}
+/* Every tab stays reachable (renderer.js inspTabsFit): the tabs take their own
+   width with tighter padding and share what is left; if they still do not
+   fit, the strip scrolls sideways with no scrollbar and fades at the clipped
+   edge. */
+.insphead .seg{display:flex;width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain}
+.insphead .seg::-webkit-scrollbar{display:none}
+.insphead .seg button{flex:1 0 auto;padding:0 9px}
+.insphead .seg.fade-r{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 20px),transparent);mask-image:linear-gradient(to right,#000 calc(100% - 20px),transparent)}
+.insphead .seg.fade-l{-webkit-mask-image:linear-gradient(to left,#000 calc(100% - 20px),transparent);mask-image:linear-gradient(to left,#000 calc(100% - 20px),transparent)}
+.insphead .seg.fade-l.fade-r{-webkit-mask-image:linear-gradient(to right,transparent,#000 20px,#000 calc(100% - 20px),transparent);mask-image:linear-gradient(to right,transparent,#000 20px,#000 calc(100% - 20px),transparent)}
 .inspbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:4px 6px 10px}
 .inspbody > .cap{margin:0;padding:8px 10px;font-size:var(--fs-cap);line-height:18px;color:var(--ink-2)}
 

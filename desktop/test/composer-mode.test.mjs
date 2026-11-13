@@ -60,3 +60,49 @@ test('W2: no context ring in the composer row; the driver still reads its figure
   assert.match(r, /window\.__ctxChip = \(\) => ctxChipTip\(\);/);
   assert.doesNotMatch(src('../renderer/css/composer.css'), /\.ctxring/);
 });
+
+// Review fix: with a goal running, Chat used to do nothing (the mode stayed Goal).
+test('while a goal is running the Chat row reads "End goal" and clears the goal', async () => {
+  assert.deepEqual(M.cmodeRows(true, {goalStatus: 'active'}).map((r) => [r.id, r.word]),
+    [['chat', 'End goal'], ['goal', 'Goal'], ['overnight', 'Run overnight'], ['voice', 'Voice conversation']]);
+  assert.equal(M.cmodeRows(true, {goalStatus: 'active'})[0].hint, 'Stop the goal and chat normally');
+  assert.equal(M.cmodeRows(true, {goalStatus: 'paused'})[0].word, 'Chat');
+  assert.equal(M.cmodeRows(true)[0].word, 'Chat');
+  assert.equal(M.cmodeGoalVerb('chat', {goalStatus: 'active'}), 'clear');
+  assert.equal(M.cmodeGoalVerb('chat', {goalStatus: 'paused'}), null);
+  assert.equal(M.cmodeGoalVerb('goal', {goalStatus: 'active'}), null);
+
+  const calls = [], tracked = [];
+  const g = globalThis;
+  const keep = {S: g.S, goalOf: g.goalOf, goalControl: g.goalControl, ANX: g.ANX};
+  g.S = {sessionId: 's1'};
+  g.goalOf = () => ({status: 'active'});
+  g.goalControl = async (verb) => { calls.push(verb); };
+  g.ANX = {track: (e, p) => tracked.push([e, p]), sanitizeAct: (a) => a};
+  try {
+    M.cmodePick('chat');
+    assert.deepEqual(calls, ['clear']);
+    assert.deepEqual(tracked, [['ui_action', {action: 'cmode:endGoal', via: 'click'}]]);
+    g.goalOf = () => null;
+    M.cmodePick('chat');
+    assert.deepEqual(calls, ['clear'], 'no goal: Chat stays a plain pick');
+    assert.deepEqual(tracked[1], ['ui_action', {action: 'cmode:chat', via: 'click'}]);
+  } finally { Object.assign(g, keep); }
+  assert.match(M.cmodeMenuHTML(deps), /<span class="ml">Chat<\/span>/);
+});
+
+// Review fix: a render() while the menu is open drew it without its offsets.
+test('the open menu is put back over the chip after every redraw and on resize, without moving the focus', () => {
+  const cm = src('../renderer/composer-mode.js');
+  assert.match(cm, /window\.addEventListener\('resize', cmodePlace\)/);
+  assert.match(cm, /new MutationObserver\(\(\) => \{ if \(CMODE\.open\) cmodePlace\(\); \}\)/);
+  const place = cm.slice(cm.indexOf('function cmodePlace()'), cm.indexOf('function cmodeClose()'));
+  assert.doesNotMatch(place, /focus\(/);
+});
+
+test('analytics: the mode picks and the W2 sidebar verbs are allowlisted words', () => {
+  const acts = src('../renderer/analytics-acts.js');
+  assert.match(acts, /chatsearch:\{clear:L, open:L\}/);
+  assert.match(acts, /studio:\{menu:L, open:\{images:L, video:L\}\}/);
+  assert.match(acts, /cmode:\{chat:L, endGoal:L, goal:L, overnight:L, voice:L\}/);
+});
