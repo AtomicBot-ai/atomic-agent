@@ -27,6 +27,7 @@ import { runModelsRecommend, runModelsUpgrade } from "./models-recommend.js";
 import { runLocalModelsPullAndRun } from "./models-pull-run.js";
 import { runModelsAsk, runModelsToolcallBench } from "./models-toolcall-bench.js";
 import { runModelsTasks } from "./models-tasks-command.js";
+import { runModelsFitTest } from "./models-fit-test-command.js";
 
 const HELP =
   [
@@ -69,6 +70,11 @@ const HELP =
     "Fit-test subcommands:",
     "  tasks collect [--last <n>]    Write your last n tasks (default 10) as a test set;",
     "        [--out <file>] [--json] tasks that sent mail, pushed or posted are left out",
+    "  fit-test --tasks <file>       Run the set on up to 3 models one at a time, score each",
+    "    --models <a,b> --judge-url  reply with the judge, print score / time / peak memory.",
+    "    <url> [--judge-model <id>]  Stops the local model while it runs and puts the",
+    "    [--judge-key-env <NAME>]    active one back after. Tasks run in temp folders",
+    "    [--timeout <s>] [--out <f>] with approvals refused.",
     "",
     "Cloud subcommands (no local runtime needed):",
     "  search <query>                Search configured cloud providers' models by id,",
@@ -152,6 +158,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runModelsAsk(args.slice(1));
       case "tasks":
         return await runModelsTasks(args.slice(1));
+      case "fit-test":
+        return await runModelsFitTest(args.slice(1));
       case "list":
         return runLocalModelsList();
       case "pull":

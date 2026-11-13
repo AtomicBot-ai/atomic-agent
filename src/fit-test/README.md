@@ -18,4 +18,14 @@ Prompts and reference replies are masked with the error scrubber's `maskSecrets`
 
 Each task carries the JSON fields of an eval case (`eval/harness/case-schema.ts`) with one `judge` expectation whose rubric quotes the old reply as a hint, not ground truth. `eval/harness/load-fit-task-set.ts` turns the file into `EvalCase[]` for the eval runner. The file shape only gains fields; a breaking change bumps `version`.
 
-Checks: `npx vitest run src/fit-test src/cli/models-tasks-command.test.ts`.
+## Fit-test (ATO-1090)
+
+`atomic-agent models fit-test --tasks <file> --models <a,b[,c]> --judge-url <url> [--judge-model <id>] [--judge-key-env <NAME>] [--timeout <s>] [--out <file>] [--json]` runs the set on up to three local models and prints one row per model: mean judge score, tasks passed (score 4 or more), total task time, peak memory of the model server, tokens. `--out` keeps the full run as JSON ([fit-test-types.ts](fit-test-types.ts)).
+
+- The runner ([run-fit-test.ts](run-fit-test.ts)) takes its outside world as `FitTestDeps` (load a model, run a task, judge a reply, sample memory), so it is tested with fakes. Models are loaded and released one at a time; one that fails to load is recorded and the run goes on.
+- The CLI ([../cli/models-fit-test-command.ts](../cli/models-fit-test-command.ts)) loads a model through the `models stop` / `use` / `start` handlers, so it needs managed mode, and puts the previously active model back at the end (started again if it was running). The local model is not available to other clients while the run goes on.
+- Each task runs as a child `atomic-agent run` in a temp working dir and a temp state dir, in external mode on the loaded model ([agent-task-runner.ts](agent-task-runner.ts)). Stdin closes after the prompt, so every approval prompt is denied: that is the dry mode for tools with side effects. Chats, memory and tasks of the run never reach the user's state. Tokens are read from the child's trace.
+- Peak memory is the model server's resident memory from `ps` every 2 s ([process-memory.ts](process-memory.ts)); `n/a` on Windows. The table also prints the machine's GPU memory budget (`readRecommendSnapshot`, `gpu-memory-budget.ts`).
+- The judge ([fit-judge.ts](fit-judge.ts)) is a copy of the eval harness's prompt and parsing: the shipped `src/` tree cannot import `eval/`. There is no default endpoint, because the judge reads the user's prompts; the key is read from the environment variable `--judge-key-env` names, never from the command line.
+
+Checks: `npx vitest run src/fit-test src/cli/models-tasks-command.test.ts src/cli/models-fit-test-command.test.ts`.
