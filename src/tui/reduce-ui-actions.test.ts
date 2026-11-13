@@ -489,6 +489,21 @@ describe("reduceUiAction finished-turn folds (ATO-963)", () => {
     expect(reduceUiAction(state, { type: "vim_mode_set", on: true })?.vimMode).toBe(true);
   });
 
+  it("stashes the draft into history on vim Esc Esc, so Up recalls it (ATO-662)", () => {
+    const typed = { ...createInitialTuiState(SESSION), inputValue: "hello world" };
+    const stashed = reduceUiAction(typed, { type: "input_draft_stashed" });
+    expect(stashed?.inputValue).toBe("");
+    expect(stashed?.inputHistory).toEqual(["hello world"]);
+    const recalled = reduceUiAction(stashed!, {
+      type: "input_history_navigated",
+      delta: -1,
+    });
+    expect(recalled?.inputValue).toBe("hello world");
+    // Nothing to keep: an empty draft leaves history alone.
+    const empty = createInitialTuiState(SESSION);
+    expect(reduceUiAction(empty, { type: "input_draft_stashed" })).toBe(empty);
+  });
+
   it("forgets opened turns when the chat is cleared", () => {
     const opened = reduceUiAction(withTurns(), {
       type: "turn_expand_toggled",

@@ -83,6 +83,10 @@ import {
 import { DebugPane } from "./components/debug-pane.js";
 import { HotkeyHint } from "./components/hotkey-hint.js";
 import { PromptShell } from "./components/prompt-shell.js";
+import {
+  createVimEscClaim,
+  vimClaimsEsc,
+} from "./components/vim/index.js";
 import { EXECUTE_PLAN_MESSAGE } from "./coding-mode/plan-handoff.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { PlanStrip } from "./components/plan-strip.js";
@@ -880,6 +884,12 @@ const CTRL_C_WINDOW_MS = 1500;
  * pending: it unfocuses the editor and eats the next keystroke.
  */
 const MENU_LEADER_WINDOW_MS = CTRL_C_WINDOW_MS;
+/**
+ * Vim NORMAL (ATO-662): a bare Esc does nothing, two inside this window
+ * clear the draft into prompt history. The same "finish the two-key
+ * gesture" window as Ctrl+C.
+ */
+const VIM_ESC_ESC_WINDOW_MS = CTRL_C_WINDOW_MS;
 /** Left gutter of the whole app frame — see the root `paddingLeft`. */
 const ROOT_PADDING_COLUMNS = 2;
 
@@ -1287,6 +1297,15 @@ export function TuiApp({
   const composerVisibleRef = useRef(true);
   composerVisibleRef.current = composerVisible;
 
+  /**
+   * Vim mode (ATO-662): the composer's editor keeps this in step so the
+   * app's own Esc handling can tell the Esc vim spends (leaving INSERT,
+   * dropping a half-typed command) from one it lets through.
+   */
+  const vimEscClaim = useRef(createVimEscClaim());
+  /** When the last bare NORMAL-mode Esc landed, for the Esc Esc clear. */
+  const vimLastEscAt = useRef<number | null>(null);
+
   const editorFocus =
     !state.menuOpen &&
     !state.contextPanelOpen &&
@@ -1645,6 +1664,7 @@ export function TuiApp({
 
   useInput((input, key) => {
     const appHandled = handleAppKey(input, key, {
+      vimClaimsEsc: state.vimMode && vimClaimsEsc(vimEscClaim.current),
       state,
       dispatch,
       callbacks,
@@ -1716,6 +1736,8 @@ export function TuiApp({
       // a "/" seeded into it would open the slash palette over a panel
       // that owns that key itself.
       if (!composerVisibleRef.current) return;
+      // An edit between two NORMAL Escs makes them two gestures (ATO-662).
+      vimLastEscAt.current = null;
       dispatch({ type: "input_changed", value: next });
       const prefix = slashPrefix(next);
       if (prefix !== null) {
@@ -1785,6 +1807,22 @@ export function TuiApp({
     // says `abort, draft kept` whenever there is a draft (see
     // `hotkey-hint.tsx`).
     if (!canAcceptMessage(state)) return;
+    // Vim NORMAL (ATO-662; INSERT's Esc never gets here, vim takes it).
+    // A bare Esc is a no-op: vim users press it by reflex, and a reflex
+    // must not throw away the draft or open the menu. Esc Esc clears the
+    // draft, and parks it in prompt history so Up brings it back.
+    if (state.vimMode) {
+      const now = Date.now();
+      const last = vimLastEscAt.current;
+      if (last === null || now - last > VIM_ESC_ESC_WINDOW_MS) {
+        vimLastEscAt.current = now;
+        return;
+      }
+      vimLastEscAt.current = null;
+      callbacks.onPromptEnhanceCancel?.();
+      dispatch({ type: "input_draft_stashed" });
+      return;
+    }
     // Idle: Esc never quits. Everywhere else in the TUI it means cancel /
     // back one level, so a single unannounced press killing the agent —
     // and the half-typed message with it — was a trap: no hint strip ever
@@ -1814,7 +1852,13 @@ export function TuiApp({
    * prompt and type itself into the buffer.
    */
   const composerClaimKey = useCallback(
-    (input: string, key: Key) => approvalHotkey(state, input, key) !== null,
+    (input: string, key: Key) =>
+      approvalHotkey(
+        state,
+        input,
+        key,
+        state.vimMode && vimClaimsEsc(vimEscClaim.current),
+      ) !== null,
     [state],
   );
 
@@ -2632,6 +2676,7 @@ export function TuiApp({
                         onHistoryPrev={onHistoryPrev}
                         onHistoryNext={onHistoryNext}
                         vim={state.vimMode}
+                        vimEscClaim={vimEscClaim.current}
                       />
                     </ComposerOverlay>
                   </>

@@ -18,8 +18,9 @@ import {
  *   - NORMAL claims single printable keys (commands; unknown ones are
  *     swallowed, never typed) and Backspace/Delete (move left).
  *     Esc is claimed only to drop a half-typed command; otherwise it
- *     falls through and does what Esc always did (close the palette,
- *     clear the draft, back out of a panel). Enter falls through and
+ *     falls through to the editor's Esc, where the app makes a bare one
+ *     a no-op and Esc Esc clears the draft into history (`tui-app`'s
+ *     `onEscape`). Enter falls through and
  *     submits. Ctrl/Meta chords, arrows, Tab, Home/End and multi-char
  *     input (a paste, inserted verbatim as Neovim does) fall through.
  */

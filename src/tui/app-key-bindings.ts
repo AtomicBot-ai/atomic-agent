@@ -166,6 +166,13 @@ export interface AppKeyContext {
   onPlanExecute?: (mode: CodingMode) => void;
   /** Decline the plan on offer without leaving plan mode. */
   onPlanDismiss?: () => void;
+  /**
+   * Vim (ATO-662) spends an Esc right now: the composer is live in
+   * INSERT, has a half-typed command, or just spent the Esc being
+   * handled. None of the global Esc meanings may fire on such an Esc
+   * (`components/vim/vim-esc-claim.ts`). Absent means vim is off.
+   */
+  vimClaimsEsc?: boolean;
 }
 
 /**
@@ -546,15 +553,21 @@ export function handleAppKey(
     return true;
   }
   // Esc aborts a turn in flight — the binding the hint strip advertises
-  // for the whole time `status === "running"`. It has to be claimed here
-  // rather than in the editor's own Esc handler because the editor is
-  // `disabled` while a turn runs, which switches its `useInput` off and
-  // makes the abort branch over there unreachable. Overlays that own Esc
-  // themselves keep it; a pending approval already returned above.
-  // Between turns Esc can cancel context maintenance without arming an
-  // agent-turn abort: no completed steps are being discarded then.
+  // for the whole time `status === "running"`. It is claimed here, not
+  // in the editor's own Esc handler, because the editor runs its own
+  // `useInput` subscription (it stays live mid-turn so the next message
+  // can be drafted) and its Esc ladder deliberately leaves abort to this
+  // layer, so the key aborts once whichever subscription fires first.
+  // Overlays that own Esc themselves keep it; a pending approval already
+  // returned above. Between turns Esc can cancel context maintenance
+  // without arming an agent-turn abort: no completed steps are being
+  // discarded then. With vim on (ATO-662), the Esc that leaves INSERT or
+  // drops a half-typed command is vim's alone: typing `x`, Esc, `1`
+  // mid-turn must not abort, and leaving INSERT must not stop a
+  // compaction. A bare Esc in NORMAL still arms the abort.
   if (
     key.escape &&
+    !ctx.vimClaimsEsc &&
     (state.status === "running" || Boolean(state.contextCompactions[state.session.sessionId ?? ""])) &&
     !state.slashPaletteOpen &&
     !state.themePickerOpen &&
@@ -594,12 +607,13 @@ export function handleAppKey(
   // make the chord work or not depending on how fast it was typed. So
   // `meta+1` on a running turn completes it on its own, and a `1` after
   // a reported Esc completes it too. `ctrl` is still excluded: ctrl+1
-  // belongs to tab switching.
+  // belongs to tab switching. In vim INSERT that Alt-prefixed `1` is the
+  // Esc vim takes to leave INSERT, so it does not count (ATO-662).
   if (
     state.status === "running" &&
     input === "1" &&
     !key.ctrl &&
-    (state.abortArmed || key.meta)
+    (state.abortArmed || (key.meta && !ctx.vimClaimsEsc))
   ) {
     callbacks.onAbort();
     dispatch({ type: "abort_requested" });
@@ -1026,6 +1040,7 @@ export function approvalHotkey(
   state: TuiState,
   input: string,
   key: Key,
+  vimClaimsEsc = false,
 ): ApprovalHotkey | null {
   const request = state.pendingApproval;
   if (!request) return null;
@@ -1039,7 +1054,11 @@ export function approvalHotkey(
   // editor's "clear the draft" key too, so only an empty buffer lets it
   // abort the run. Unlike the letters it was never a *decision* — the
   // worst a misread Esc does is throw away a half-typed message.
-  if (key.escape) return state.inputValue.length > 0 ? null : "abort";
+  // With vim on, an Esc that only leaves INSERT (or drops a half-typed
+  // command) is never the answer either (ATO-662).
+  if (key.escape) {
+    return vimClaimsEsc || state.inputValue.length > 0 ? null : "abort";
+  }
   // Everything else is a chord. `meta` is excluded rather than ignored:
   // alt+y on a Mac terminal is a character, not a verdict.
   if (!key.ctrl || key.meta) return null;
@@ -1161,7 +1180,7 @@ function handleApprovalKey(
     ctx.dispatch({ type: "abort_requested" });
     return true;
   }
-  switch (approvalHotkey(ctx.state, input, key)) {
+  switch (approvalHotkey(ctx.state, input, key, ctx.vimClaimsEsc)) {
     case "approve":
       decideApproval(request, true, ctx);
       return true;

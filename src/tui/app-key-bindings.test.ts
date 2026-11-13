@@ -87,6 +87,40 @@ describe("handleAppKey", () => {
     expect(dispatch).not.toHaveBeenCalledWith({ type: "abort_armed" });
   });
 
+  it("leaves an Esc vim spends to vim: no compaction cancel, no abort arm (ATO-662)", () => {
+    const idle = createInitialTuiState(stubSession());
+    idle.contextCompactions = { "s-x": { phase: "running", sinceTs: Date.now() } };
+    const running = { ...createInitialTuiState(stubSession()), status: "running" as const };
+    for (const state of [idle, running]) {
+      const dispatch = vi.fn();
+      const onAbort = vi.fn();
+      handleAppKey("", emptyKey({ escape: true }), {
+        state, dispatch,
+        callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+        ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false,
+        menuLeaderArmed: false, setMenuLeaderArmed: vi.fn(),
+        activateMenuNode: vi.fn(), activateComposerSwitch: vi.fn(),
+        vimClaimsEsc: true,
+      });
+      expect(onAbort).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalledWith({ type: "abort_armed" });
+    }
+  });
+
+  it("does not take a meta+1 in vim INSERT as the abort confirm (ATO-662)", () => {
+    const state = { ...createInitialTuiState(stubSession()), status: "running" as const };
+    const onAbort = vi.fn();
+    handleAppKey("1", emptyKey({ meta: true }), {
+      state, dispatch: vi.fn(),
+      callbacks: { onApprovalDecision: vi.fn(), onAbort, onQuit: vi.fn() },
+      ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false,
+      menuLeaderArmed: false, setMenuLeaderArmed: vi.fn(),
+      activateMenuNode: vi.fn(), activateComposerSwitch: vi.fn(),
+      vimClaimsEsc: true,
+    });
+    expect(onAbort).not.toHaveBeenCalled();
+  });
+
   it("returns false when no binding matches", () => {
     const state = createInitialTuiState(stubSession());
     const handled = handleAppKey("z", emptyKey(), {

@@ -13,7 +13,7 @@ import { useEditorClipboard } from "./multi-line-editor-clipboard.js";
 import { cursorToRowCol } from "./multi-line-editor-cursor.js";
 import { handleKey } from "./multi-line-editor-keys.js";
 import { createEditorPointer } from "./multi-line-editor-pointer.js";
-import { useVimKeys, type VimMode } from "./vim/index.js";
+import { useVimKeys, type VimEscClaim, type VimMode } from "./vim/index.js";
 
 export interface MultiLineEditorProps {
   value: string;
@@ -102,6 +102,8 @@ export interface MultiLineEditorProps {
   vim?: boolean;
   /** The vim mode changed (or vim was turned on, in INSERT). */
   onVimModeChange?: (mode: VimMode) => void;
+  /** Kept in step for the app's Esc handling (`vim/vim-esc-claim.ts`). */
+  vimEscClaim?: VimEscClaim;
 }
 
 /**
@@ -143,8 +145,14 @@ export function MultiLineEditor(props: MultiLineEditorProps): ReactElement {
     mouseLayer,
     vim = false,
     onVimModeChange,
+    vimEscClaim,
   } = props;
-  const vimKeys = useVimKeys(vim, onVimModeChange);
+  const vimKeys = useVimKeys(
+    vim,
+    onVimModeChange,
+    vimEscClaim,
+    focus && !disabled,
+  );
   const [cursorPos, setCursorPos] = useState<number>(value.length);
   /**
    * Where the current selection was started, or `null` when there is
