@@ -264,7 +264,7 @@ describe("RunModeOrchestrator.setMode", () => {
       line: string;
     };
     expect(line.line).toMatch(
-      /^fusion: 4 workers — the local model keeps the 2 parallel slots you set/,
+      /^fusion: 4 workers\. The local model keeps the 2 parallel slots you set \(localModels\.managed\.parallel\)\.$/,
     );
     expect(line.line).not.toMatch(/--parallel 4/);
   });

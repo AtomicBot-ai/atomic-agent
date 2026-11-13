@@ -281,7 +281,7 @@ export class RunModeOrchestrator {
     const applyHint = after.mode !== "managed"
       ? ""
       : kept
-      ? ` — the local model keeps the ${String(after.managed.parallel)} parallel slot${after.managed.parallel === 1 ? "" : "s"} you set (localModels.managed.parallel)`
+      ? `. The local model keeps the ${String(after.managed.parallel)} parallel slot${after.managed.parallel === 1 ? "" : "s"} you set (localModels.managed.parallel).`
       : before !== workers
         ? ` — restart the local daemon (Manage › LLM › Local, \`s\`) to apply --parallel ${workers}`
         : "";
