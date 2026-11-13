@@ -196,9 +196,10 @@ function releaseTime(r: {
 
 /**
  * The asset to install and the release that carries it. ATO-619: a Linux
- * x64 CUDA or ROCm build that no scanned release carries falls back to
- * the Vulkan build, which every release has, rather than leaving the
- * machine without an engine or without updates.
+ * x64 CUDA, ROCm or CPU build that no scanned release carries falls back
+ * to the Vulkan build, which every release has (and which carries the same
+ * dispatched CPU backends), rather than leaving the machine without an
+ * engine or without updates.
  */
 async function resolveInstallTarget(force: boolean): Promise<{
   assetName: string;

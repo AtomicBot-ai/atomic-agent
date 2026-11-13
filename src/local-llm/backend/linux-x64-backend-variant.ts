@@ -7,18 +7,26 @@ import { posix } from "node:path";
  * (`AtomicBot-ai/atomic-llama-cpp-turboquant`, the one Atomic Core installs
  * from). Every zip carries `build/bin/llama-server` and the dispatched CPU
  * backends; the CUDA zips also bundle their CUDA runtime (`libcudart`,
- * `libcublas`), the ROCm zip needs a HIP runtime on the host.
+ * `libcublas`), the ROCm zip needs a HIP runtime on the host, the Vulkan
+ * zip a Vulkan loader and driver. The CPU zip is the build for a machine
+ * with no usable GPU.
  */
 export const LINUX_X64_BACKEND_ASSETS = {
+  cpu: "llama-turboquant-linux-x64-cpu.zip",
   vulkan: "llama-turboquant-linux-x64-vulkan.zip",
   cuda124: "llama-turboquant-linux-x64-cuda-12.4.zip",
   cuda133: "llama-turboquant-linux-x64-cuda-13.3.zip",
   rocm: "llama-turboquant-linux-x64-rocm.zip",
 } as const;
 
-/** A Linux x64 GPU build other than Vulkan: one a release may lack, with Vulkan to fall back on. */
+/**
+ * A Linux x64 build other than Vulkan: one a release may lack, with Vulkan
+ * (every release has it, and it carries the same dispatched CPU backends)
+ * to fall back on.
+ */
 export function isLinuxX64AcceleratedAsset(assetName: string): boolean {
   return (
+    assetName === LINUX_X64_BACKEND_ASSETS.cpu ||
     assetName === LINUX_X64_BACKEND_ASSETS.cuda124 ||
     assetName === LINUX_X64_BACKEND_ASSETS.cuda133 ||
     assetName === LINUX_X64_BACKEND_ASSETS.rocm
@@ -77,14 +85,14 @@ export function compareDriverVersions(a: string, b: string): number {
  * Pure choice of the Linux x64 build, in Core's order
  * (`detectIdealTurboquantBackendType`): CUDA 13 (driver >= 580 and every
  * NVIDIA GPU Turing or newer), CUDA 12 (driver >= 525.60.13), ROCm (an AMD
- * card with >= 6 GiB, a supported RDNA target and a HIP runtime), else
- * Vulkan. Where Core would pick its CPU build (no usable GPU) this keeps
- * Vulkan, the build the direct path has always installed: it carries the
- * same dispatched CPU backends.
+ * card with >= 6 GiB, a supported RDNA target and a HIP runtime), then
+ * Vulkan only when a Vulkan GPU was found (`hasVulkanGpu`), else the CPU
+ * build. A failed or timed-out Vulkan probe counts as no GPU.
  */
 export function selectLinuxX64BackendAsset(
   nvidia: readonly NvidiaGpuFacts[],
   rocm: LinuxRocmFacts,
+  hasVulkanGpu: boolean,
 ): string {
   if (nvidia.length > 0) {
     const meets = (floor: string) =>
@@ -107,7 +115,7 @@ export function selectLinuxX64BackendAsset(
     rocm.amdVramMiB >= LINUX_GPU_MIN_VRAM_MIB &&
     rocm.gfxTargetVersions.some((v) => ROCM_SUPPORTED_GFX_TARGET_VERSIONS.includes(v));
   if (rocmUsable) return LINUX_X64_BACKEND_ASSETS.rocm;
-  return LINUX_X64_BACKEND_ASSETS.vulkan;
+  return hasVulkanGpu ? LINUX_X64_BACKEND_ASSETS.vulkan : LINUX_X64_BACKEND_ASSETS.cpu;
 }
 
 /**
@@ -218,19 +226,122 @@ export function probeLinuxRocmFacts(
       libraryDirs.push(posix.join("/opt", entry, "lib"), posix.join("/opt", entry, "lib64"));
     }
   }
-  let hasRuntime = false;
-  for (const dir of new Set(libraryDirs)) {
-    if (safe(() => fs.exists(posix.join(dir, "libamdhip64.so")), false)) {
-      hasRuntime = true;
-      break;
-    }
-    // Runtime-only packages can omit the unversioned linker symlink.
-    if (safe(() => fs.readdir(dir), []).some((n) => /^libamdhip64\.so(?:\.\d+)+$/.test(n))) {
-      hasRuntime = true;
-      break;
-    }
-  }
+  const hasRuntime = hasSharedLibrary(fs, libraryDirs, "libamdhip64.so");
   return { gfxTargetVersions, hasRuntime, amdVramMiB };
+}
+
+/** `<base>` or a versioned `<base>.N[.N...]` in one of `dirs`. */
+function hasSharedLibrary(fs: LinuxProbeFs, dirs: readonly string[], base: string): boolean {
+  const versioned = new RegExp(`^${base.replace(/\./g, "\\.")}(?:\\.\\d+)+$`);
+  for (const dir of new Set(dirs)) {
+    if (safe(() => fs.exists(posix.join(dir, base)), false)) return true;
+    // Runtime-only packages can omit the unversioned linker symlink.
+    if (safe(() => fs.readdir(dir), []).some((n) => versioned.test(n))) return true;
+  }
+  return false;
+}
+
+/**
+ * Software rasterizers expose a Vulkan device but run on the CPU; the same
+ * filter `gpu-devices.ts` applies before picking an offload device.
+ */
+const SOFTWARE_VULKAN_DEVICE_RE = /llvmpipe|lavapipe|swiftshader|software/i;
+
+const HARDWARE_VULKAN_DEVICE_TYPES = new Set([
+  "PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU",
+  "PHYSICAL_DEVICE_TYPE_DISCRETE_GPU",
+  "PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU",
+]);
+
+/**
+ * Hardware GPUs in `vulkaninfo --summary` output: one block per device
+ * with `deviceType = PHYSICAL_DEVICE_TYPE_*` and `deviceName = ...`.
+ * CPU-type devices and software rasterizers (llvmpipe, lavapipe,
+ * SwiftShader) are not counted.
+ */
+export function countVulkanSummaryGpus(output: string): number {
+  let count = 0;
+  let type: string | null = null;
+  let name: string | null = null;
+  const flush = () => {
+    if (type !== null && HARDWARE_VULKAN_DEVICE_TYPES.has(type) && !SOFTWARE_VULKAN_DEVICE_RE.test(name ?? "")) {
+      count++;
+    }
+    type = null;
+    name = null;
+  };
+  for (const raw of output.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (/^GPU\d+:$/.test(line)) {
+      flush();
+      continue;
+    }
+    const m = line.match(/^(deviceType|deviceName)\s*=\s*(.+)$/);
+    if (!m) continue;
+    if (m[1] === "deviceType") type = m[2]!.trim();
+    else name = m[2]!.trim();
+  }
+  flush();
+  return count;
+}
+
+/** `vulkaninfo --summary`: its output, `"missing"` when not installed, `"failed"` on any other error or timeout. */
+export type VulkaninfoResult = { output: string } | "missing" | "failed";
+
+function runVulkaninfo(): VulkaninfoResult {
+  try {
+    return {
+      output: execSync("vulkaninfo --summary", {
+        timeout: 4000,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).toString(),
+    };
+  } catch (err) {
+    // The shell exits 127 when the command does not exist.
+    return (err as { status?: unknown }).status === 127 ? "missing" : "failed";
+  }
+}
+
+/** PCI vendors with a hardware Vulkan driver on Linux: AMD, NVIDIA, Intel. */
+const VULKAN_GPU_VENDORS = new Set(["0x1002", "0x10de", "0x8086"]);
+
+/**
+ * Whether this host has a hardware Vulkan GPU. `vulkaninfo --summary`
+ * decides when it is installed; a failure or timeout there counts as no
+ * GPU. Without `vulkaninfo` (the `vulkan-tools` package is often absent)
+ * it falls back to the DRM render nodes: a `renderD*` node whose PCI
+ * vendor is AMD, NVIDIA or Intel, plus a Vulkan loader
+ * (`libvulkan.so.1`) the Vulkan build could load.
+ */
+export function detectLinuxVulkanGpu(
+  fs: LinuxProbeFs = nodeProbeFs,
+  run: () => VulkaninfoResult = runVulkaninfo,
+  libraryPath: string = process.env.LD_LIBRARY_PATH ?? "",
+): boolean {
+  const result = run();
+  if (result === "failed") return false;
+  if (result !== "missing") return countVulkanSummaryGpus(result.output) > 0;
+
+  const drmDir = "/sys/class/drm";
+  const hasGpuRenderNode = safe(() => fs.readdir(drmDir), []).some(
+    (node) =>
+      /^renderD\d+$/.test(node) &&
+      VULKAN_GPU_VENDORS.has(
+        safe(() => fs.readFile(posix.join(drmDir, node, "device", "vendor")), "").trim().toLowerCase(),
+      ),
+  );
+  if (!hasGpuRenderNode) return false;
+  return hasSharedLibrary(
+    fs,
+    [
+      ...libraryPath.split(":").filter((d) => posix.isAbsolute(d)),
+      "/usr/lib/x86_64-linux-gnu",
+      "/usr/lib64",
+      "/usr/lib",
+      "/usr/local/lib",
+    ],
+    "libvulkan.so",
+  );
 }
 
 let cachedLinuxX64Asset: string | null = null;
@@ -250,7 +361,12 @@ export function detectLinuxX64BackendAsset(): string {
   )
     ? { gfxTargetVersions: [], hasRuntime: false, amdVramMiB: null }
     : probeLinuxRocmFacts();
-  cachedLinuxX64Asset = selectLinuxX64BackendAsset(nvidia, rocm);
+  const gpuChoice = selectLinuxX64BackendAsset(nvidia, rocm, false);
+  // Vulkan is probed only when neither CUDA nor ROCm applies.
+  cachedLinuxX64Asset =
+    gpuChoice !== LINUX_X64_BACKEND_ASSETS.cpu
+      ? gpuChoice
+      : selectLinuxX64BackendAsset(nvidia, rocm, detectLinuxVulkanGpu());
   return cachedLinuxX64Asset;
 }
 

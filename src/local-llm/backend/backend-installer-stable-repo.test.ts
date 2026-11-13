@@ -175,6 +175,26 @@ describe("direct engine downloads from the stable turboquant repo (ATO-619)", ()
     expect(readBackendVersion(dir)?.asset).toBe(LINUX_X64_BACKEND_ASSETS.cuda133);
   });
 
+  it("installs the Linux x64 CPU build when no GPU is found", async () => {
+    onHost("linux", "x64");
+    // No nvidia-smi, no vulkaninfo: every probe command fails.
+    const { downloaded } = serve([
+      {
+        tag: "b10298-2.1.0",
+        publishedAt: "2026-10-27T00:00:00Z",
+        assets: {
+          [LINUX_X64_BACKEND_ASSETS.cpu]: await serverZip("cpu"),
+          [LINUX_X64_BACKEND_ASSETS.vulkan]: await serverZip("vulkan"),
+        },
+      },
+    ]);
+
+    await downloadBackend(dir);
+
+    expect(downloaded).toEqual([LINUX_X64_BACKEND_ASSETS.cpu]);
+    expect(readBackendVersion(dir)?.asset).toBe(LINUX_X64_BACKEND_ASSETS.cpu);
+  });
+
   it("falls back to the Vulkan build when no release carries the CUDA zip", async () => {
     onHost("linux", "x64");
     nvidiaSmi("550.54.14, 8.9");

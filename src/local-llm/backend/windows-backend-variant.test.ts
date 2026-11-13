@@ -287,12 +287,12 @@ describe("resolveDownloadAsset", () => {
     expect(execSyncMock).not.toHaveBeenCalled();
   });
 
-  it("keeps Vulkan on Linux x64 without an NVIDIA driver (ATO-619)", () => {
+  it("picks the CPU build on Linux x64 with no NVIDIA driver and no Vulkan GPU (ATO-619)", () => {
     execSyncMock.mockImplementation(() => {
       throw new Error("not found");
     });
     expect(resolveDownloadAsset("linux", "x64").assetName).toBe(
-      "llama-turboquant-linux-x64-vulkan.zip",
+      "llama-turboquant-linux-x64-cpu.zip",
     );
   });
 
@@ -454,7 +454,13 @@ describe("resolveDownloadAsset", () => {
     expect(resolveDownloadAsset("darwin", "arm64").assetName).toBe(
       "llama-turboquant-macos-arm64.zip",
     );
-    execSyncMock.mockImplementation(() => {
+    // A Vulkan GPU, no NVIDIA driver: the probe says Vulkan, the "cpu" preference changes nothing.
+    execSyncMock.mockImplementation((cmd: string) => {
+      if (String(cmd).startsWith("vulkaninfo")) {
+        return Buffer.from(
+          "GPU0:\n\tdeviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU\n\tdeviceName = AMD Radeon RX 6600\n",
+        );
+      }
       throw new Error("not found");
     });
     expect(resolveDownloadAsset("linux", "x64").assetName).toBe(
