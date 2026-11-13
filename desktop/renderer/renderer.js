@@ -3111,7 +3111,8 @@ function msgActs(m) {
           + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
         : '';
     // ATO-1046: Read aloud after copy, under a finished reply (tts.js).
-    return '<div class="' + cls + '">' + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '') + '</div>';
+    return '<div class="' + cls + '">' + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '')
+      + (typeof rewindActsHTML === 'function' ? rewindActsHTML(m) : '') + '</div>';   // ATO-1058: Fork (chat-rewind.js)
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
   // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
@@ -3126,7 +3127,7 @@ function msgActs(m) {
     ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + BUSY_RETRY_HINT
       + '" aria-label="' + BUSY_RETRY_HINT + '">' + ic('retry') + '</button>'
     : '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + '</button>';
-  return '<div class="' + cls + '">' + resend + copy + '</div>';
+  return '<div class="' + cls + '">' + resend + copy + (typeof rewindActsHTML === 'function' ? rewindActsHTML(m) : '') + '</div>';   // ATO-1056/1058 (chat-rewind.js)
 }
 
 /* What is copied is `m.text` and only `m.text`. For a user message that is the
@@ -5213,6 +5214,7 @@ function overlaysHTML() {
   if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
   if (S.overlay === 'handoff') html += handoffSheetHTML();   // ATO-1156 (handoff.js)
+  if (S.overlay === 'rewind') html += rewindSheetHTML();   // ATO-1056/1058 (chat-rewind.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -7026,6 +7028,8 @@ function act(a) {
   // ATO-1156: Continue from Claude Code / Codex (handoff.js). Opening it takes every other overlay
   // and the settings window down first, so Escape and the scrim close the sheet itself.
   if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
+  // ATO-1056/1058: Roll back here, Edit, Fork from here (chat-rewind.js).
+  if (k === 'rewind') { rewindAct(v || ''); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
@@ -31991,7 +31995,8 @@ if (typeof window !== 'undefined') {
     // Hidden with opacity, so that is what is reported; `vis` stays for the
     // record because a visibility regression would show up there.
 
-    const btns = Array.from(box.querySelectorAll('button'));
+    // ATO-1056/1058: Roll back / Edit / Fork (data-rw) are not part of the copy and retry contract pinned here.
+    const btns = Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.rw);
     const danger = btns.find((b) => b.classList.contains('danger'));
     const anchor = t.querySelector('.bubble') || t.querySelector('.prose');
     /* `right` is the CONTAINER's edge and proves nothing on its own: `.msgacts`
@@ -32042,7 +32047,7 @@ if (typeof window !== 'undefined') {
          ATO-900: its sentence is data-tip (the CSS tooltip), and one that
          also carried a native title would show it twice, so it reads '?'. */
       // ATO-1046: Read aloud is not part of the retry contract these checks pin.
-      return Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.speak).map((b) => b.dataset.regen
+      return Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.speak && !b.dataset.rw).map((b) => b.dataset.regen
         ? 'regen:' + b.dataset.regen + ':' + b.getAttribute('title')
         : b.dataset.resend ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
         : b.dataset.copy ? 'copy'

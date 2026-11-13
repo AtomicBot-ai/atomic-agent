@@ -1781,6 +1781,29 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1056 / ATO-1058: one of the agent's rewind and fork routes of a chat
+   * (`/api/sessions/{id}/<path>`), answered as the status and the parsed JSON
+   * body (null when there is none). chat-rewind.ts words the answer; a request
+   * that never got one throws.
+   */
+  async sessionRoute(sessionId: string, path: string, method: "GET" | "POST", body?: unknown, timeoutMs = 60_000): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/${path}`, {
+      method,
+      headers: this.headers(),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    let parsed: unknown = null;
+    try {
+      const raw = await res.text();
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch {
+      /* not JSON */
+    }
+    return { status: res.status, body: parsed };
+  }
+
+  /**
    * Run one turn. Deltas are emitted as `chat` events rather than
    * returned, so the renderer can paint tokens as they arrive.
    */
