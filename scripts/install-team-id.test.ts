@@ -7,8 +7,8 @@ import { afterEach, describe, expect, it } from "vitest";
 
 /**
  * install.sh pins the Apple Team ID of a signed macOS binary (ATO-760):
- * a valid signature from someone else's Developer ID is refused, an ad-hoc
- * signature (no Team ID) still installs. The function is cut out of the
+ * a valid signature from someone else's Developer ID is refused, and so is
+ * an ad-hoc or unsigned binary (no Team ID). The function is cut out of the
  * script and run under `sh` with a stub `codesign` on PATH, so the test
  * runs on any OS.
  */
@@ -47,9 +47,31 @@ function run(teamLine: string, expected: string): { status: number | null; stder
 describe("install.sh Team ID pin", () => {
   it("defaults to the release workflow's Team ID for the default repo only", () => {
     expect(script).toContain('TEAM_ID_DEFAULT="MU9G7XKJUL"');
-    expect(script).toContain('EXPECTED_TEAM_ID="${ATOMIC_AGENT_TEAM_ID:-$TEAM_ID_DEFAULT}"');
+    // `-`, not `:-`: an explicitly empty ATOMIC_AGENT_TEAM_ID turns the pin off.
+    expect(script).toContain('EXPECTED_TEAM_ID="${ATOMIC_AGENT_TEAM_ID-$TEAM_ID_DEFAULT}"');
     expect(script).toContain('EXPECTED_TEAM_ID="${ATOMIC_AGENT_TEAM_ID:-}"');
-    expect(extractFunction("verify_signature")).toContain('verify_team_id "$_vs_file"');
+  });
+
+  it("resolves ATOMIC_AGENT_TEAM_ID='' to no pin and unset to ours", () => {
+    const teamFor = (env: Record<string, string>) =>
+      spawnSync(
+        "sh",
+        ["-c", 'TEAM_ID_DEFAULT=MU9G7XKJUL; printf "[%s]" "${ATOMIC_AGENT_TEAM_ID-$TEAM_ID_DEFAULT}"'],
+        { env: { PATH: process.env.PATH ?? "", ...env }, encoding: "utf8" },
+      ).stdout;
+    expect(teamFor({})).toBe("[MU9G7XKJUL]");
+    expect(teamFor({ ATOMIC_AGENT_TEAM_ID: "" })).toBe("[]");
+    expect(teamFor({ ATOMIC_AGENT_TEAM_ID: "ABCDE12345" })).toBe("[ABCDE12345]");
+  });
+
+  it("runs the pin on every macOS path, including a --verify timeout or skip", () => {
+    const fn = extractFunction("verify_signature");
+    // once when the check is switched off, once after a timeout, once after a pass
+    expect(fn.split('verify_team_id "$_vs_file"').length - 1).toBe(3);
+    const skip = fn.indexOf('if [ "$VERIFY_TIMEOUT" -le 0 ]; then');
+    expect(fn.slice(skip, fn.indexOf("return 0", skip))).toContain("verify_team_id");
+    const timeout = fn.indexOf("was skipped.");
+    expect(fn.slice(timeout, fn.indexOf("return 0", timeout))).toContain("verify_team_id");
   });
 
   it("accepts the expected Team ID", () => {
@@ -62,12 +84,17 @@ describe("install.sh Team ID pin", () => {
     expect(res.stderr).toContain("ABCDE12345");
   });
 
-  it("lets an ad-hoc signature through (no Team ID to compare)", () => {
-    expect(run("TeamIdentifier=not set", "MU9G7XKJUL").status).toBe(0);
-    expect(run("Signature=adhoc", "MU9G7XKJUL").status).toBe(0);
+  it("refuses an ad-hoc or unsigned binary when a Team ID is expected", () => {
+    for (const line of ["TeamIdentifier=not set", "Signature=adhoc", "code object is not signed at all"]) {
+      const res = run(line, "MU9G7XKJUL");
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toContain("no Apple Team ID");
+    }
   });
 
-  it("does not pin when no Team ID is expected (a fork)", () => {
+  it("does not pin when no Team ID is expected (ATOMIC_AGENT_TEAM_ID='' or a fork)", () => {
     expect(run("TeamIdentifier=ABCDE12345", "").status).toBe(0);
+    expect(run("Signature=adhoc", "").status).toBe(0);
+    expect(run("TeamIdentifier=not set", "").status).toBe(0);
   });
 });

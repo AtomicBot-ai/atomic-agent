@@ -228,11 +228,18 @@ Set `ATOMIC_AGENT_REPO=owner/atomic-agent` if the default in
 Optional: `ATOMIC_AGENT_VERSION`, `ATOMIC_AGENT_INSTALL_DIR`.
 
 On macOS the installer checks the binary with `codesign --verify --strict`
-and then pins its Apple Team ID: a binary signed by any other team is
-refused. An ad-hoc signature (no Team ID, a release built without the
-signing secrets) still installs, covered by the sha256 check. The pin
-applies to the default repo; a fork sets `ATOMIC_AGENT_TEAM_ID` to its own
-Team ID to get the same check.
+and pins its Apple Team ID (`MU9G7XKJUL`, the Developer ID the release
+workflow signs with): a binary signed by any other team is refused, and so
+is an ad-hoc or unsigned one (no Team ID). The pin reads the signature with
+`codesign -dv`, so it still runs when the slower `--verify` times out or is
+switched off with `ATOMIC_AGENT_VERIFY_TIMEOUT=0`. It applies to the default
+repo; a fork sets `ATOMIC_AGENT_TEAM_ID` to its own Team ID to get the same
+check, and `ATOMIC_AGENT_TEAM_ID=''` turns the pin off (for a fork that ships
+ad-hoc builds).
+
+This means a macOS release built without the signing secrets
+(`MACOS_CSC_LINK` empty, so `sign-mac-binary.sh` skips signing) will not
+install through `install.sh`. Do not publish one.
 
 ## Signing / notarisation (local / manual)
 
