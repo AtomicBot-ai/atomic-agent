@@ -37,6 +37,7 @@ const CLOUD_ORIGINS = new Set([
 const CLOUD_HOST_PATTERNS: readonly RegExp[] = [
   /\.(?:openai|services\.ai|cognitiveservices)\.azure\.com$/i,
   /^bedrock-(?:mantle|runtime)\.[a-z0-9-]+\.(?:api\.aws|amazonaws\.com)$/i,
+  /^(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com$/i,   // Google Vertex AI
 ];
 
 /** Only for a new connection. Existing choices, including inherit, stay put. */
