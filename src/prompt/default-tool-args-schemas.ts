@@ -122,6 +122,27 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ],
   ["browser.screenshot", obj({ ref: stringSchema, fullPage: booleanSchema })],
   [
+    "browser.act",
+    obj(
+      {
+        action: {
+          type: "string",
+          enum: ["select", "upload", "back", "forward", "key", "hover", "dialog", "wait"],
+        },
+        ref: stringSchema,
+        values: { type: "array", items: stringSchema },
+        paths: { type: "array", items: stringSchema },
+        key: stringSchema,
+        accept: booleanSchema,
+        text: stringSchema,
+        state: { type: "string", enum: ["visible", "hidden"] },
+        ms: numberSchema,
+        timeoutMs: numberSchema,
+      },
+      ["action"],
+    ),
+  ],
+  [
     "browser.scroll",
     obj(
       {

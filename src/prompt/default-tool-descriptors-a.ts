@@ -62,6 +62,12 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     argsSchema: "{ ref?: string, fullPage?: boolean }",
   },
   {
+    name: "browser.act",
+    summary:
+      "More page actions by `action`: select (choose `values` in a <select> ref), upload (local `paths` into a file input ref; always asks), back, forward, key (press `key`, e.g. Enter, Escape, Tab, ArrowDown, optionally on a ref), hover (ref), dialog (answer the NEXT alert/confirm/prompt: `accept`, optional `text`; call it before the click that opens it), wait (`text` to appear, or with state \"hidden\" to go; a `ref`; or `ms`, at most 10000).",
+    argsSchema: `{ action: "select" | "upload" | "back" | "forward" | "key" | "hover" | "dialog" | "wait", ref?: string, values?: string[], paths?: string[], key?: string, accept?: boolean, text?: string, state?: "visible" | "hidden", ms?: number, timeoutMs?: number }`,
+  },
+  {
     name: "os.shell.run",
     summary:
       "Run a shell command in the working directory (may require approval). Not for deleting user files (use os.fs.trash when the user wants paths removed) or for moving, renaming or sorting them into folders (use os.fs.move), or for controlling a web browser (AppleScript, `open -a <browser> <url>`: use the browser tools). To run a command, `cmd` is required: the program, with its arguments in `args`, or a full command line. Run task steps (installs, clones, builds) yourself rather than telling the user to type them; hand over only a step the result says needs the user. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs; `background: true` starts a server or watcher as a kept job at once.",

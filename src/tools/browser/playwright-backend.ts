@@ -6,6 +6,7 @@ import { summariseAriaSnapshot } from "./aria-compressor.js";
 import { describeElementInPage, toRefDescription } from "./describe-element.js";
 import { searchUrlFor } from "./search-engines.js";
 import { planShot, type CssRect } from "./screenshot-geometry.js";
+import { runPageAction } from "./playwright-page-actions.js";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
 import { pinWebIdentityToBrowser } from "./web-identity.js";
 import { clearStaleChromeLocks } from "./clear-stale-chrome-locks.js";
@@ -36,6 +37,8 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  PageActionInput,
+  PageActionResult,
   RefDescription,
   ScreenshotInput,
   ScreenshotResult,
@@ -342,6 +345,10 @@ export class PlaywrightBackend implements BrowserBackend {
       frameUrls: Array.from(new Set([...framesBefore, ...framesAfter])),
       clipped: plan.clipped,
     };
+  }
+
+  async act(input: PageActionInput): Promise<PageActionResult> {
+    return runPageAction(await this.requireActivePage(), input);
   }
 
   async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {

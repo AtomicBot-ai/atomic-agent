@@ -58,6 +58,19 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
       ].filter((path): path is string => path !== undefined),
   ],
   [
+    // `browser.act { action: "upload" }` reads local files and sends
+    // them to a site (ATO-957): scoped like any read, and the agent's
+    // own secret files ask as `state_secret` before the upload prompt.
+    "browser.act",
+    (args) =>
+      args.action !== "upload"
+        ? []
+        : [
+            nonEmpty(args.path),
+            ...(Array.isArray(args.paths) ? args.paths.map(nonEmpty) : [nonEmpty(args.paths)]),
+          ].filter((path): path is string => path !== undefined),
+  ],
+  [
     // The first frame of an image-to-video clip: Core reads the file and
     // sends it to OpenRouter, so it is scoped like any read.
     "video.generate",
