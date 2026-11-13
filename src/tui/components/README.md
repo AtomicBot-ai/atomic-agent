@@ -7,7 +7,7 @@ Read inherited [TUI instructions](../AGENTS.md). This directory has two intentio
 
 ## Shared primitives
 
-Generic pick-list/geometry, multi-line-editor and its body/clipboard/cursor/edits/input/keys/pointer helpers, chip, logo/art/types, fit-to-width, format-tokens, render-progress-bar and session-title text formatting consume data and callbacks. [Row windowing](../row-window.ts), shared input, mouse, context-menu, clipboard and theme have their own owners. LogoVariant/WordmarkPlacement are defined in [logo-types.ts](logo-types.ts); start-page layout consumes and re-exports those unchanged types.
+Generic pick-list/geometry, multi-line-editor and its body/clipboard/cursor/edits/input/keys/pointer helpers and its opt-in [vim layer](vim/index.ts) (`/vim`, ATO-662), chip, logo/art/types, fit-to-width, format-tokens, render-progress-bar and session-title text formatting consume data and callbacks. [Row windowing](../row-window.ts), shared input, mouse, context-menu, clipboard and theme have their own owners. LogoVariant/WordmarkPlacement are defined in [logo-types.ts](logo-types.ts); start-page layout consumes and re-exports those unchanged types.
 
 The [import checker](../../../scripts/check-imports.mjs) rejects direct feature/domain imports, including type imports, from these named primitives, input/ and theme/. Shared theme must not import the chooser. Mouse/context-menu services deliberately retain global state/callback contracts; the gate does not claim transitive isolation of all UI infrastructure.
 

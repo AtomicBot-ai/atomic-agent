@@ -737,6 +737,7 @@ export function loadConfig(): AtomicAgentConfig {
       mouse: user.tui.mouse,
       showSteps: user.tui.showSteps,
       nextStepSuggestions: user.tui.nextStepSuggestions,
+      vimMode: user.tui.vimMode,
       notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {

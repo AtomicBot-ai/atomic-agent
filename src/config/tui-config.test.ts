@@ -49,7 +49,7 @@ describe("TUI configuration ownership", () => {
     const second = createTuiDefaults();
     expect(first).toEqual(USER_CONFIG_DEFAULTS.tui);
     expect(Object.keys(first)).toEqual([
-      "theme", "whileBusySubmit", "mouse", "showSteps", "nextStepSuggestions", "notify", "sessionRail", "onboarding",
+      "theme", "whileBusySubmit", "mouse", "showSteps", "vimMode", "nextStepSuggestions", "notify", "sessionRail", "onboarding",
     ]);
     expect(Object.keys(first.onboarding)).toEqual([
       "completedAt", "importOfferedAt", "introSeenAt", "localSetupSeenAt",
@@ -187,8 +187,18 @@ describe("TUI configuration ownership", () => {
     expect(parsed.sessionRail.order).toEqual(["a"]);
     expect(parsed.notify).toEqual({ enabled: false, minDurationMs: 0 });
     expect(Object.keys(parsed)).toEqual([
-      "theme", "whileBusySubmit", "mouse", "showSteps", "nextStepSuggestions", "onboarding", "sessionRail", "notify",
+      "theme", "whileBusySubmit", "mouse", "showSteps", "nextStepSuggestions", "vimMode", "onboarding", "sessionRail", "notify",
     ]);
+  });
+
+  it("reads tui.vimMode as off when absent and refuses a non-boolean", () => {
+    const defaults = createTuiDefaults();
+    expect(defaults.vimMode).toBe(false);
+    expect(parseTuiConfig({}, () => defaults).vimMode).toBe(false);
+    expect(parseTuiConfig({ vimMode: true }, () => defaults).vimMode).toBe(true);
+    expect(thrownError(() => parseTuiConfig({ vimMode: "on" }, () => defaults)))
+      .toBeInstanceOf(ConfigValidationError);
+    expect(parseUserConfigFile({ tui: { vimMode: true } }).tui.vimMode).toBe(true);
   });
 
   it("reads tui.showSteps as off when absent and refuses a non-boolean", () => {

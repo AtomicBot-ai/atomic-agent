@@ -237,6 +237,8 @@ export type TuiAction =
   | { type: "show_steps_set"; on: boolean }
   /** `/verbose on|off`: one plain note per finished step (ATO-34). */
   | { type: "verbose_steps_set"; on: boolean }
+  /** `/vim on|off`: vim keys in the composer (`tui.vimMode`). */
+  | { type: "vim_mode_set"; on: boolean }
   /** Open the slash palette with a leading-slash query. */
   | { type: "slash_palette_opened"; query: string }
   /** Update the filter query while the palette is open. */
@@ -261,6 +263,11 @@ export type TuiAction =
   | { type: "slash_palette_cursor_set"; row: number }
   /** Navigate input history by delta (up = older, down = newer). */
   | { type: "input_history_navigated"; delta: 1 | -1 }
+  /**
+   * Vim NORMAL Esc Esc (ATO-662): clear the draft and push it onto the
+   * prompt history, so Up recalls it. No-op on an empty draft.
+   */
+  | { type: "input_draft_stashed" }
   /** Clear the chat transcript (slash `/clear`). */
   | { type: "chat_cleared" }
   /**
