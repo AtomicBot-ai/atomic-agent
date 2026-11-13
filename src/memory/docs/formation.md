@@ -9,7 +9,7 @@ Reflection forms bounded profile facts and notes from completed turn observation
 
 Reflection skips probe-only and one-off instruction turns and rejects ungrounded user names, assistant identity and instruction-as-preference writes. [Grounding](../reflection/reflection-grounding.ts) checks actual user messages. At boot, [name verification](../name-grounding.ts) walks stored user messages without blocking startup; `ProfileStore.listForPrompt()` omits unchecked or ungrounded name-like facts while retaining their history.
 
-ProfileStore retains temporal history; note content is not rewritten by tag evolution. Link generation, neighbor evolution and vote curation operate through their stores and bounded runners. Consolidation distills durable lessons/procedures and manages lifecycle/deprecation; its timer has explicit shutdown ownership.
+ProfileStore retains temporal history; note content is not rewritten by tag evolution. Link generation, neighbor evolution and vote curation operate through their stores and bounded runners. After a link-generation timeout the session skips the next few link calls (doubling on repeat timeouts, reset by a call that completes) instead of retrying on the next turn. Consolidation distills durable lessons/procedures and manages lifecycle/deprecation; its timer has explicit shutdown ownership.
 
 Sub-runners must isolate errors, cancellation, provider/session identity and slots from the main turn. Credentials and other secrets must not become durable facts. Preserve dedup, utility eviction, capacity caps and leases; config controls the actual limits.
 
