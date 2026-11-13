@@ -353,7 +353,13 @@ export function applyCheckOutcomes(
       failed: failed.length,
       ...(detail === undefined ? {} : { detail }),
     };
-    if (failed.length === 0 || result.status === "cancelled") {
+    // A task that stopped to ask (ATO-945) could not have passed its
+    // checks either; its question is the row's next step, not a failure.
+    if (
+      failed.length === 0 ||
+      result.status === "cancelled" ||
+      result.status === "needs_input"
+    ) {
       return { ...result, checks };
     }
     const error = `checks: ${detail}`;

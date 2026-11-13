@@ -18,6 +18,8 @@ import type { WorkerTaskResult, WorkerTaskStatus } from "./worker-result.js";
 const OPEN_STATUSES: ReadonlySet<WorkerTaskStatus> = new Set([
   "failed",
   "needs_orchestrator",
+  // Open until the orchestrator answers and sends it again (ATO-945).
+  "needs_input",
   "no_changes",
   "max_steps",
   "timeout",
