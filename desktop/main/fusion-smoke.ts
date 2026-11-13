@@ -5,6 +5,7 @@ import {
   describeFusionBlocker,
   describeFusionIntro,
   describeRunMode,
+  describeSubscriptionCliWorker,
   parseRunModeCommand,
   planEnterFusion,
   planFusionWorkers,
@@ -158,13 +159,42 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
       && b.llm?.runMode?.fusion?.workerProvider === "local-llama",
     JSON.stringify(b.llm?.runMode));
   const c = clone(cfgs.cloud);
-  planEnterFusion(c, { workerProvider: "openrouter" }, () => true);
+  const vc = planEnterFusion(c, { workerProvider: "openrouter" }, () => true);
   check("fusion: a workers pin keeps the orchestrator where it is",
     c.llm?.activeTextProvider === "aimlapi" && c.llm?.runMode?.fusion?.workerProvider === "openrouter", JSON.stringify(c.llm?.runMode));
   const one = clone(cfgs.fusionOneProvider);
   const vOne = planEnterFusion(one, {}, () => true);
   check("fusion: one provider is refused in the resolver's words and writes nothing",
     !vOne.write && vOne.refusal?.startsWith("Fusion needs two providers") === true && same(one, cfgs.fusionOneProvider), vOne.refusal);
+
+  /* ATO-1489: a worker seat on a subscription CLI is warned about, not refused. */
+  const CLI_WARNING = "Workers on a subscription CLI: every task uses your subscription limit, and there is no live progress.";
+  const withCli = (cli: string): RunModeConfig => {
+    const cfg = clone(cfgs.cloud);
+    cfg.llm!.providers = [...cfg.llm!.providers!, { id: "cli", kind: "subscription-cli", defaultChatModel: "m", subscriptionCli: { cli } }];
+    return cfg;
+  };
+  const codex = withCli("codex");
+  const vCodex = planEnterFusion(codex, { workerProvider: "cli" }, () => true);
+  const claude = withCli("claude");
+  const vClaude = planEnterFusion(claude, { workerProvider: "cli" }, () => true);
+  const vCliOrch = planEnterFusion(withCli("codex"), { orchestratorProvider: "cli", workerProvider: "local-llama" }, () => true);
+  check("fusion: a Codex worker seat enters Fusion with the subscription-limit and no-live-progress warning",
+    vCodex.write && !vCodex.refusal && codex.llm?.runMode?.mode === "fusion" && codex.llm?.runMode?.fusion?.workerProvider === "cli"
+      && vCodex.after?.effective === "fusion" && vCodex.notice === CLI_WARNING,
+    `${vCodex.refusal ?? ""} · ${vCodex.notice ?? "no notice"}`);
+  check("fusion: a Claude Code worker seat warns about the limit only; a local or API-key worker, or a CLI orchestrator, gets no warning",
+    vClaude.write && !vClaude.refusal && vClaude.notice === "Workers on a subscription CLI: every task uses your subscription limit."
+      && va.notice === undefined && vc.notice === undefined && vCliOrch.notice === undefined && !vCliOrch.refusal
+      && describeSubscriptionCliWorker({ id: "openrouter", kind: "openrouter" }) === null,
+    `${vClaude.notice ?? "no notice"} · ${va.notice ?? ""} · ${vCliOrch.notice ?? ""}`);
+  const shown = await js<{ toast: string | null; status: string; ok: boolean }>(
+    `(() => { const res = fzAfter({ok: true, notice: ${JSON.stringify(CLI_WARNING)}, runMode: {before: 'cloud', after: 'fusion', line: '', enteredFusion: false}}, rmNow().effective);
+       const t = window.__lastToast();
+       return {toast: t ? t.t : null, status: APPSTATUS.text, ok: !!(res && res.ok)}; })()`,
+  );
+  check("fusion: the renderer shows the worker warning as a toast and a caution status line, and the switch stays a success",
+    shown.ok && shown.toast === CLI_WARNING && shown.status === CLI_WARNING, JSON.stringify(shown));
 
   const notFusion = clone(cfgs.cloud);
   const vs0 = planSwapLegs(notFusion, () => true);
