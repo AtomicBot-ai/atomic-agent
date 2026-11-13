@@ -428,16 +428,17 @@ async function advanced(js: Js, check: Check): Promise<void> {
   check(
     "T48 (Д35): llama.cpp's update, auto-update and device are one Engine card (with the way to the server log); the route's internals fold under Details",
     // On llama.cpp (reached only through the support CLI) the Engine choice row is the one quiet way back to Core.
-    show(r["engine"]) === show(["llama.cpp", "Engine choice", "Update automatically", "Device", "Server log"])
-      && show(r["engineActs"]) === show(["llm:backend", "llm:engine", "llm:autoUpdate", "llm:device", "diag:llmlogs"])
+    // ATO-336 (#1362): Parallel slots (Auto, 1, 2, 4) joined the card, after Device.
+    show(r["engine"]) === show(["llama.cpp", "Engine choice", "Update automatically", "Device", "Parallel slots", "Server log"])
+      && show(r["engineActs"]) === show(["llm:backend", "llm:engine", "llm:autoUpdate", "llm:device", "llm:slots:auto", "llm:slots:1", "llm:slots:2", "llm:slots:4", "diag:llmlogs"])
       && r["engineBack"] === "Use Atomic Chat engine"
       && r["routeInDetails"] === true && r["routeOutside"] === 0 && r["logsInAdv"] === false && r["logsInPane"] === false && r["faultAct"] === "diag:llmlogs",
     show({ engine: r["engine"], engineActs: r["engineActs"], engineBack: r["engineBack"], routeInDetails: r["routeInDetails"], routeOutside: r["routeOutside"], logsInAdv: r["logsInAdv"], logsInPane: r["logsInPane"], faultAct: r["faultAct"] }),
   );
   check(
     "T48: a config that names no engine runs Atomic Chat Core, the default: Core's card with Core updates and no engine choice",
-    show(r["engineCore"]) === show(["Atomic Core", "Core updates", "Device", "Server log"])
-      && show(r["engineCoreActs"]) === show(["llm:backend", "llm:engineCheck", "llm:device", "diag:llmlogs"]),
+    show(r["engineCore"]) === show(["Atomic Core", "Core updates", "Device", "Parallel slots", "Server log"])
+      && show(r["engineCoreActs"]) === show(["llm:backend", "llm:engineCheck", "llm:device", "llm:slots:auto", "llm:slots:1", "llm:slots:2", "llm:slots:4", "diag:llmlogs"]),
     show({ engine: r["engineCore"], engineActs: r["engineCoreActs"] }),
   );
   check(
