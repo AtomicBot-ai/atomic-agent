@@ -20,6 +20,11 @@ import {
 } from "./attach-user-chrome.js";
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
 import {
+  readAnnotationsOnPage,
+  startAnnotateOnPage,
+  stopAnnotateOnPage,
+} from "./annotate-playwright.js";
+import {
   collectSecretFieldValuesInPage,
   ONE_TIME_CODE_HINT,
   redactSecretFieldValues,
@@ -31,6 +36,9 @@ import {
   stopChrome,
 } from "./spawn-chrome.js";
 import type {
+  AnnotateReadInput,
+  AnnotateReadResult,
+  AnnotateStartResult,
   AriaSnapshot,
   BrowserBackend,
   ClickInput,
@@ -341,6 +349,18 @@ export class PlaywrightBackend implements BrowserBackend {
       frameUrls: Array.from(new Set([...framesBefore, ...framesAfter])),
       clipped: plan.clipped,
     };
+  }
+
+  async startAnnotate(): Promise<AnnotateStartResult> {
+    return startAnnotateOnPage(await this.requireActivePage());
+  }
+
+  async readAnnotations(input: AnnotateReadInput): Promise<AnnotateReadResult> {
+    return readAnnotationsOnPage(await this.requireActivePage(), input);
+  }
+
+  async stopAnnotate(): Promise<{ url: string; removed: number }> {
+    return stopAnnotateOnPage(await this.requireActivePage());
   }
 
   async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {
