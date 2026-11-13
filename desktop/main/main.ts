@@ -8882,7 +8882,7 @@ async function uiTest(
   // wide) also accepted the row's plain flex centre — the misalignment the
   // whole item is about — so deleting `top:1px` from styles.css left the suite
   // green. The spec's own acceptance is the MIDPOINT of cap and x, ±0.5px,
-  // which the shipped dot hits exactly and an un-nudged one misses by 1px.
+  // which the shipped dot hits (on Figtree 14px the nudge is .5px, shell.css).
   const seatMid = seat ? (seat.capMid + seat.xMid) / 2 : 0;
   check(
     "item 1: the dot sits on the label's optical centre",
@@ -13647,6 +13647,7 @@ async function chromeTest(
     anchorRight?: number | null; insideBubble?: number;
     btnLeft?: number | null; anchorLeft?: number | null; dot?: boolean; dotLive?: boolean;
     acted?: boolean;
+    rowLeft?: number | null; rowRight?: number | null; lead?: string | null; rewind?: number;
   };
 
   /* r5 review fix — the two writes this lane makes to the WINDOW itself, put
@@ -14169,16 +14170,24 @@ async function chromeTest(
     /* ATO-168: a reply's actions moved to its LEFT, under the text they copy,
        after the dot the last reply carries (20px in); a user message keeps
        them at its bubble's right edge. */
+    /* ATO-1056/1058 (#1516): Edit and Roll back follow copy on a user message, so the row's LAST control (not copy) is
+       the one at the bubble's end, and copy stands right before them. ATO-1186 (#1434): the last reply's speed leads
+       its row, so the row's FIRST thing (the speed, else the first button) is the one after the dot. Read from the
+       row's own children, so dropping justify-content:flex-end still goes red. */
+    const userEnd = userActs?.rowRight ?? userActs?.btnRight;
+    const asstStart = asstActs?.rowLeft ?? asstActs?.btnLeft;
     check(
       "item 4: the actions sit at the user bubble's end and at the reply's start (after its dot), never inside the bubble",
       !!userActs && !!asstActs
-        && typeof userActs.btnRight === "number" && typeof asstActs.btnLeft === "number"
-        && Math.abs(userActs.btnRight - (userActs.anchorRight ?? -1)) <= 1
-        && Math.abs(asstActs.btnLeft - ((asstActs.anchorLeft ?? -100) + (asstActs.dot ? 20 : 0))) <= 1
+        && typeof userEnd === "number" && typeof asstStart === "number" && typeof userActs.btnRight === "number"
+        && Math.abs(userEnd - (userActs.anchorRight ?? -1)) <= 1
+        && (userActs.rewind ? userActs.btnRight < userEnd : userActs.btnRight === userEnd)
+        && Math.abs(asstStart - ((asstActs.anchorLeft ?? -100) + (asstActs.dot ? 20 : 0))) <= 1
+        && (asstActs.lead === "speed" || asstActs.lead === "button")
         && asstActs.dot === true && asstActs.dotLive === false
         && userActs.insideBubble === 0,
-      `user last button right ${userActs?.btnRight} vs bubble ${userActs?.anchorRight};`
-      + ` assistant first button left ${asstActs?.btnLeft} vs prose ${asstActs?.anchorLeft} (dot ${asstActs?.dot}, live ${asstActs?.dotLive});`
+      `user row right ${userEnd} (copy ${userActs?.btnRight}, ${userActs?.rewind ?? 0} rewind controls) vs bubble ${userActs?.anchorRight};`
+      + ` assistant row left ${asstStart} (${asstActs?.lead}; first button ${asstActs?.btnLeft}) vs prose ${asstActs?.anchorLeft} (dot ${asstActs?.dot}, live ${asstActs?.dotLive});`
       + ` (row boxes ${userActs?.right}/${asstActs?.right} span the whole column either way, so they are context only);`
       + ` .bubble .msgact count ${userActs?.insideBubble}`,
     );

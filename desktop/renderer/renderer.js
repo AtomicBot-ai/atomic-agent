@@ -30991,7 +30991,7 @@ if (typeof window !== 'undefined') {
     return {dotMid: dr.top + dr.height / 2, capMid: base - mH.actualBoundingBoxAscent / 2,
             xMid: base - mx.actualBoundingBoxAscent / 2,
             // what the canvas measured with, so a miss can be told from a font that was not loaded yet
-            font: c.font, fontLoaded: !!(document.fonts && document.fonts.check(c.font)), rowH: row.getBoundingClientRect().height};
+            font: c.font, fontLoaded: !!(document.fonts && document.fonts.check(cs.fontWeight + ' ' + cs.fontSize + ' ' + cs.fontFamily.split(',')[0], t.textContent || 'x')), rowH: row.getBoundingClientRect().height};
   }
   /* Item 1: all three states measured together, on real rows inside the real
      list, whatever the agent's own sessions happen to look like. The `empty`
@@ -32738,7 +32738,13 @@ if (typeof window !== 'undefined') {
             right: Math.round(br.right),
             btnRight: last ? Math.round(last.getBoundingClientRect().right) : null,
             anchorRight: anchor ? Math.round(anchor.getBoundingClientRect().right) : null,
-            insideBubble: document.querySelectorAll('.bubble .msgact').length};
+            insideBubble: document.querySelectorAll('.bubble .msgact').length,
+            /* The row's own ends, whatever stands there: ATO-1186 (#1434) puts the reply's speed before its
+               buttons, and ATO-1056/1058 (#1516) put Edit / Roll back / Fork after copy. */
+            rowLeft: box.firstElementChild ? Math.round(box.firstElementChild.getBoundingClientRect().left) : null,
+            rowRight: box.lastElementChild ? Math.round(box.lastElementChild.getBoundingClientRect().right) : null,
+            lead: box.firstElementChild ? (box.firstElementChild.classList.contains('msgtps') ? 'speed' : box.firstElementChild.tagName === 'BUTTON' ? 'button' : 'other') : null,
+            rewind: box.querySelectorAll('button[data-rw]').length};
   };
   /* ATO-863: the last reply's own buttons on drawn transcripts, so the smoke
      can hold "Ask again" to a turn without tools. Each case is rendered for
@@ -32985,7 +32991,8 @@ if (typeof window !== 'undefined') {
         : 0;
       if (!box) return {count: list.length, buttons: -1, reserved: -1, boxBottom: -1, endmark, colHeight};
       const r = box.getBoundingClientRect();
-      return {count: list.length, buttons: box.querySelectorAll('button').length,
+      // ATO-1056/1058 (#1516): Fork (data-rw) is not part of the copy and retry contract counted here.
+      return {count: list.length, buttons: box.querySelectorAll('button:not([data-rw])').length,
               reserved: Math.round(r.height + parseFloat(getComputedStyle(box).marginTop)),
               boxBottom: Math.round(r.bottom - colTop),
               endmark, colHeight};
