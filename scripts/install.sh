@@ -377,11 +377,12 @@ fi
 
 # Preflight: is there a build for this platform at all?
 #
-# Not every slug the installer can *name* is one the release matrix
-# *publishes* — darwin-x64 is commented out of .github/workflows/release.yml,
-# so an Intel Mac used to reach `download` and die on a bare
-# "download failed: <url>" with a 404 behind it and no hint that the binary
-# had never existed. Say so instead, and say what to do about it.
+# Not every release carries every slug the installer can *name*: releases up
+# to v0.7.0 have no darwin-x64 build (ATO-682 added it to the release
+# matrix), so an Intel Mac pinning one of them with --version used to reach
+# `download` and die on a bare "download failed: <url>" with a 404 behind it
+# and no hint that the binary had never existed. Say so instead, and say what
+# to do about it.
 #
 # Only a literal 404 counts as "not published". Everything else — offline
 # (000), a proxy, a 5xx, no curl at all — falls through to the real
@@ -398,9 +399,10 @@ no_build_published() {
   echo "no published build for ${SLUG}." >&2
   echo >&2
   if [ "$SLUG" = "darwin-x64" ]; then
-    echo "atomic-agent does not publish a macOS Intel binary yet, and the Apple" >&2
-    echo "Silicon build will not run on this machine. Tracking:" >&2
-    echo "  https://github.com/${REPO}/issues/300" >&2
+    echo "this release has no macOS Intel binary (older releases were Apple Silicon only)," >&2
+    echo "and the Apple Silicon build will not run on this machine. Install the" >&2
+    echo "latest release instead (run the installer without --version), or see:" >&2
+    echo "  https://github.com/${REPO}/releases" >&2
   else
     echo "${TAR_NAME} is not attached to this release. See what is published:" >&2
     echo "  https://github.com/${REPO}/releases" >&2

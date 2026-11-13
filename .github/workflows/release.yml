@@ -56,8 +56,13 @@ jobs:
           # available; BUNDLE_TARGETS / install.sh / fetch-assets already know
           # the slug. Without this job the one-line installer 404s on ARM Linux.
           - { slug: linux-arm64, os: ubuntu-24.04-arm }
-          # Still disabled (runner-availability / cost; out of scope for #43):
-          # - { slug: darwin-x64, os: macos-13 }
+          # Intel Macs (ATO-682). Built natively on GitHub's Intel image, like every other row: the
+          # SEA takes the runner's own Node and better-sqlite3 builds for the runner's arch, so an
+          # arm64 runner would produce an arm64 binary. macos-15-intel is the last Intel image
+          # GitHub offers. Signed and notarized by the same macOS steps (runner.os == 'macOS').
+          # Local models: Atomic Chat Core publishes an x86_64-apple-darwin build; the older managed
+          # llama.cpp backend has none (src/local-llm/backend/platform-assets.ts says so at runtime).
+          - { slug: darwin-x64, os: macos-15-intel }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     permissions:

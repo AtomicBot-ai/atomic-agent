@@ -102,7 +102,7 @@ Arch Linux: `yay -S atomic-agent-desktop-bin`, or any other AUR helper.
 Installed as a package, the app is updated with the rest of the system (`sudo apt upgrade`, `sudo dnf upgrade` or `yay -Syu`) and its Settings say so instead of offering an in-app update; the AppImage from the [releases page](https://github.com/AtomicBot-ai/atomic-agent/releases) updates itself. `sudo apt remove atomic-agent-desktop`, `sudo dnf remove atomic-agent-desktop` or `sudo pacman -R atomic-agent-desktop-bin` removes the app and leaves your data.
 
 > [!NOTE]
-> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64. Intel Macs are not supported yet; Windows on ARM runs the x64 build under emulation.
+> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon and Intel), Linux x64 / arm64, and Windows x64. Windows on ARM runs the x64 build under emulation.
 
 ### Run
 
