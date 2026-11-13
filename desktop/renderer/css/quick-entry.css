@@ -1,0 +1,9 @@
+/* ATO-523: the global hotkey's one-line box (quick-entry.html). */
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body.qe { background: var(--lift, var(--paper)); color: var(--ink); font: 400 15px/20px var(--font-ui); -webkit-user-select: none; }
+.qe-box { height: 100%; display: flex; align-items: center; gap: 12px; padding: 0 18px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 12px; -webkit-app-region: drag; }
+.qe-input { flex: 1 1 auto; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--ink);
+  font: 400 17px/24px var(--font-ui); -webkit-app-region: no-drag; -webkit-user-select: text; }
+.qe-input::placeholder { color: var(--ink-3); }
+.qe-hint { flex: none; color: var(--ink-3); font: 400 12px/16px var(--font-ui); white-space: nowrap; }
