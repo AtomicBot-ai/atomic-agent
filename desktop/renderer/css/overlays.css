@@ -105,6 +105,15 @@
 .handoffrows > .row .s{font-size:var(--fs-label);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .handoffrows > .row .btn .tk-spin{margin-right:6px}
 
+/* ATO-1466: Report an issue: the text, two switches, and what the app adds under the text. */
+.sheet-bugrep .sd-cap{margin:0 12px 8px;font-size:var(--fs-cap);color:var(--ink-2)}
+.sheet-bugrep .bugrep-text{display:block;box-sizing:border-box;width:calc(100% - 24px);margin:0 12px 8px;padding:8px 10px;resize:vertical;font:inherit;font-size:var(--fs-ui);color:var(--ink);background:transparent;border:1px solid var(--divider);border-radius:8px}
+.sheet-bugrep .bugrep-row{display:flex;align-items:center;gap:12px;padding:6px 12px}
+.sheet-bugrep .bugrep-row .body{flex:1;min-width:0}
+.sheet-bugrep .bugrep-row .d{font-size:var(--fs-label);color:var(--ink-2);overflow-wrap:anywhere}
+.sheet-bugrep .bugrep-cap{margin-top:6px}
+.sheet-bugrep .bugrep-pre{margin:0 12px 8px;padding:8px 10px;font-size:var(--fs-label);color:var(--ink-2);white-space:pre-wrap;overflow-wrap:anywhere;border-radius:8px;box-shadow:inset 0 0 0 1px var(--divider)}
+
 /* Keyboard shortcuts: two columns of label · keycaps rows with a hairline under each. */
 .kbgrid{display:grid;grid-template-columns:1fr 1fr;column-gap:28px;padding:0 12px 4px}
 .kbgrid > .kbrow{min-height:36px;padding:0;gap:12px;border-radius:0;box-shadow:inset 0 -1px 0 var(--divider)}

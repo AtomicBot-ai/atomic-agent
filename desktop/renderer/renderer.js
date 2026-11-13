@@ -1887,7 +1887,7 @@ const keycaps = (raw) => { const str = kbd(raw); return str ? str.split(' ').map
 // slash registry in the registry's own rank order (rank is user-visible)
 const SLASH = [
   ['dump','save a report for support — logs and config, secrets removed'],
-  ['report','report an issue, with a bundle you choose whether to attach'],
+  ['report','report an issue, with a bundle you choose whether to attach','',['bug']],   // ATO-1466: /bug as Claude Code and Zed
   ['help','list available slash commands'],
   ['tools','list built-in tools (fs, shell, browser, memory, vision)','<query>'],
   ['theme','switch the UI theme','<name>|list'],
@@ -2016,7 +2016,7 @@ const PAL = [
   ['Help', [
     ['doc','List built-in tools','','⌥ ⌘ T','tools'],
     ['download','Save report for support','','','dump'],
-    ['flag','Report an issue…','','','help.report'],
+    ['flag','Report an issue…','','/bug','help.report'],
     // ATO-1465: the community server, the same act as Help › Join Discord and the sidebar button.
     ['discord','Join Discord','','','help.discord'],
     ['chat','Talk to the team ($50 credits)…','','/feedback','help.feedback'],   // ATO-1467
@@ -5324,6 +5324,7 @@ function overlaysHTML() {
   if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
   if (S.overlay === 'handoff') html += handoffSheetHTML();   // ATO-1156 (handoff.js)
+  if (S.overlay === 'bugrep') html += bugRepHTML();   // ATO-1466 (bug-report.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -6464,6 +6465,7 @@ function diagnosticsPane() {
     ['App', BUILD ? BUILD.version + (BUILD.build ? ' (' + BUILD.build + ')' : '') + ' · ' + BUILD.platform + ' ' + BUILD.arch : ''],
     ['Agent', S.live.binary ? short(S.live.binary) : 'not started', S.live.binary || ''],
     ...diagAgentRows(),
+    ...bugRepDiagRows(),   // ATO-1466: Support ID, with its Copy button
     ['State folder', short(sd), sd, sd],
     // Chat review (Д29): written as the chat and Settings › General write it.
     ['Working folder', workingDirLabel(wd), wd, wd],
@@ -7122,6 +7124,8 @@ function openDiscord() {
     support report saved beside it. ATO-279: the native menu reaches it through `help.report` too, so
     it is counted, and it works over first-run setup (which lets this act through). */
 function helpReport() {
+  // ATO-1466: a sheet first (text, support ID, log tail); first-run setup keeps the direct link.
+  if (!OB.open && typeof bugRepOpen === 'function') { bugRepOpen(); return; }
   const b2 = BUILD || {};
   const body = [
     'What happened:', '', '', 'What I expected:', '', '',
@@ -7209,6 +7213,7 @@ function act(a) {
   // ATO-1467: Help › Talk to the team, and the sidebar card's three buttons.
   if (a === 'help.feedback') { close(); render(); interviewOpen('menu'); return; }
   if (a === 'interview:card' || a === 'interview:later' || a === 'interview:never') { interviewCardAct(a.slice('interview:'.length)); return; }
+  if (k === 'bugrep') { bugRepAct(v || ''); return; }   // ATO-1466 (bug-report.js)
   /* Run mode — every route to it lands here or in fzSlash: the native menu's
      Run › Where it runs…, the Settings › LLM cards and worker count, the
      composer's ⇄, and the palette row. One switch path per verb, shared with
@@ -8109,7 +8114,7 @@ function runSlash(parts) {
     theme:'palette:theme', sessions:'session:switch', new:'session:new', clear:'clear', abort:'stop',
     session:'session:id', dump:'dump', tools:'tools', quit:'quit', help:'palette', debug:'toggle:console',
     expand:'cards:expand', collapse:'cards:collapse', mode:'modes', context:'context', sidebar:'toggle:sidebar',
-    onboarding:'onboarding', setup:'onboarding'};
+    onboarding:'onboarding', setup:'onboarding', report:'help.report', bug:'help.report'};
   if (name === 'runmode') { fzSlash(parts.slice(1).join(' ')); return; }
   // Item 7: `/privacy [analytics <verb>]` and `/analytics <verb>` as
   // slash-command-handler.ts dispatchPrivacySub / dispatchAnalyticsSub.

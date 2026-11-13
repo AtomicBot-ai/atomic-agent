@@ -16,6 +16,7 @@ export {
   onAnalyticsEnabledChange,
   refreshRunMode,
   sendingAllowed,
+  supportId,
   track,
   trackFromRenderer,
 } from "./core.js";

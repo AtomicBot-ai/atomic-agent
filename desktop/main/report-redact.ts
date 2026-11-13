@@ -217,3 +217,42 @@ export function logTail(text: string, maxChars: number): string {
   const firstBreak = tail.indexOf("\n");
   return firstBreak === -1 ? "" : tail.slice(firstBreak + 1);
 }
+
+/* ------------------------------------------------- bug report (ATO-1466) */
+
+const EMAIL = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+/** Any user's home under the common roots, not just this one's. */
+const OTHER_HOMES = /(?:\/Users|\/home)\/[^/\s"'`]+/g;
+/** `C:\Users\name`, literal or JSON-escaped (`C:\\Users\\name`). */
+const WINDOWS_HOMES = /[A-Za-z]:(?:\\\\|\\)Users(?:\\\\|\\)[^\\\s"'`]+/g;
+
+/** `home` as `~`, only where it ends a path segment (`/Users/v` does not eat `/Users/v2`). */
+function homeToTilde(text: string, home: string): string {
+  if (!home || home.length < 2 || !text.includes(home)) return text;
+  const escaped = home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return text.replace(new RegExp(`${escaped}(?=[\\/\\\\\\s"'\`:)\\]>,]|$)`, "g"), "~");
+}
+
+/**
+ * What a GitHub issue opened from Help › Report an Issue… may carry from the
+ * log: `scrubText` first (keys, tokens, Bearer and Authorization values,
+ * secret pairs, URL passwords), then who and where the person is, as the TUI
+ * report's `redactPersonal` (src/tui/issue-report/redact.ts) does: emails,
+ * this home folder and any other `/Users/<name>`, `/home/<name>` or
+ * `C:\Users\<name>` become `<email>` and `~`. An issue is public, so this is
+ * stricter than the support report, which stays on the machine.
+ */
+export function scrubForIssue(text: string, home: string): string {
+  let out = scrubText(text);
+  out = homeToTilde(out, home);
+  out = homeToTilde(out, home.replace(/\\/g, "/"));
+  out = out.replace(OTHER_HOMES, "~").replace(WINDOWS_HOMES, "~");
+  return out.replace(EMAIL, "<email>");
+}
+
+/** The last `count` lines of a text (a trailing newline does not count as a line). */
+export function lastLines(text: string, count: number): string {
+  const lines = text.replace(/\r?\n$/, "").split(/\r?\n/);
+  return lines.slice(-Math.max(0, count)).join("\n");
+}
+

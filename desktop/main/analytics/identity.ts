@@ -93,6 +93,22 @@ export function resolveInstallId(input: ResolveIdInput): { id: string; source: "
   return { id, source: "minted" };
 }
 
+/**
+ * ATO-1466: the id a person gives support, read without side effects: the
+ * shared file's id, else the first local `analytics.json` id. Never mints
+ * and never writes, so Settings › Diagnostics can show it (and a bug report
+ * can offer it) with analytics off. Null when there is none yet.
+ */
+export function readSupportId(sharedPath: string, localFiles: string[]): string | null {
+  const shared = readText(sharedPath)?.trim();
+  if (isUuid(shared)) return shared!;
+  for (const f of localFiles) {
+    const id = readJson(f)?.installId;
+    if (isUuid(id)) return id.trim();
+  }
+  return null;
+}
+
 /* ---- desktop once-flags ---- */
 
 export interface DesktopFlags {
