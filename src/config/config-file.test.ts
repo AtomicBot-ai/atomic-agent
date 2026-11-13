@@ -15,6 +15,7 @@ import { resolveSessionPath } from "../atomic-mail/atomic-mail-store.js";
 import { resolveApiKeyFilePath } from "../local-llm/backend-paths.js";
 import { coreSessionPath } from "../local-llm/core/core-state.js";
 import { userHooksPath } from "../hooks/hook-config.js";
+import { secretsStorePath } from "./secret-store.js";
 import { installedPluginDir, pluginsRoot } from "../plugins/plugin-store.js";
 import {
   ensureUserConfigFileSync,
@@ -981,5 +982,15 @@ describe("the state's secret files (ATO-877)", () => {
     // model must not be able to grant itself an "always allow".
     expect(getTrustConfigPaths(paths)).toContain(getApprovalRulesPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(getApprovalRulesPath(stateDir));
+  });
+
+  it("protects the OS keychain switch like .env (ATO-474)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    expect(getTrustConfigPaths(paths)).toContain(secretsStorePath(stateDir));
   });
 });

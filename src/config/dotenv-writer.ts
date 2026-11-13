@@ -10,6 +10,14 @@ import {
 import { dirname, join } from "node:path";
 
 import { restrictWindowsAcl } from "./windows-acl.js";
+import {
+  defaultSecretKeychain,
+  isKeychainSecretName,
+  readSecretsStoreState,
+  writeSecretsStoreState,
+  type SecretKeychain,
+  type SecretsStoreState,
+} from "./secret-store.js";
 
 /**
  * Match the same conventional env-var key shape that `loadDotenvFromStateDir`
@@ -58,8 +66,84 @@ export interface SetDotenvKeyResult {
  *
  * **Never logs the value.** The result object exposes the key and a
  * boolean — values do not leave this module through the return surface.
+ *
+ * When the operator opted into the OS keychain
+ * (`atomic-agent config secrets keychain`), API keys and tokens go to
+ * the keychain instead and `path` still names `.env`, which no longer
+ * carries them. `keychain` is a test seam; production callers omit it.
  */
 export function setDotenvKey(
+  stateDir: string,
+  key: string,
+  value: string | null,
+  keychain?: SecretKeychain,
+): SetDotenvKeyResult {
+  if (!KEY_PATTERN.test(key)) {
+    throw new DotenvWriterError(`invalid key '${key}'`);
+  }
+  // Opt-in (ATO-474): with the OS keychain selected, secret-shaped keys
+  // go there instead. The default `.env` mode never reaches the branch.
+  const store = readSecretsStoreState(stateDir);
+  if (store.store === "keychain" && isKeychainSecretName(key)) {
+    return setKeychainKey(
+      stateDir,
+      store,
+      key,
+      value,
+      keychain ?? defaultSecretKeychain(),
+    );
+  }
+  return setDotenvFileKey(stateDir, key, value);
+}
+
+/**
+ * Keychain mode: write the value to the OS keychain, list its name in
+ * `secrets-store.json` and drop any `.env` line for it. When the
+ * keychain fails (once per process, see `SecretKeychain`) the value is
+ * written to `.env` exactly as in the default mode; a `.env` line wins
+ * over the keychain at load time, so the newest value is the one used.
+ */
+function setKeychainKey(
+  stateDir: string,
+  store: SecretsStoreState,
+  key: string,
+  value: string | null,
+  keychain: SecretKeychain,
+): SetDotenvKeyResult {
+  const listed = store.keychainKeys.includes(key);
+  if (value === null) {
+    if (listed) {
+      if (!keychain.remove(key)) {
+        process.stderr.write(
+          `atomic-agent: could not remove ${key} from the OS keychain; it is no longer loaded, delete the "atomic-agent" entry for it by hand.\n`,
+        );
+      }
+      writeSecretsStoreState(stateDir, {
+        ...store,
+        keychainKeys: store.keychainKeys.filter((k) => k !== key),
+      });
+    }
+    const file = setDotenvFileKey(stateDir, key, null);
+    return { ...file, changed: file.changed || listed };
+  }
+  if (!keychain.write(key, value)) {
+    return setDotenvFileKey(stateDir, key, value);
+  }
+  if (!listed) {
+    writeSecretsStoreState(stateDir, {
+      ...store,
+      keychainKeys: [...store.keychainKeys, key],
+    });
+  }
+  const file = setDotenvFileKey(stateDir, key, null);
+  return { ...file, changed: true };
+}
+
+/**
+ * The `.env` half of `setDotenvKey`: always writes the file, whatever
+ * store is selected. The secrets migration uses it to move keys back.
+ */
+export function setDotenvFileKey(
   stateDir: string,
   key: string,
   value: string | null,
