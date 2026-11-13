@@ -32,6 +32,8 @@ Example entry:
 
 `sidecars` is periodic work that must run in the leading process only, ticked after the leadership check on each interval tick (not on `tickOnce`): today the [mail trigger](../atomic-mail/README.md) (ATO-601). Each sidecar throttles itself; a rejection is logged.
 
+[keep-awake.ts](keep-awake.ts) (ATO-592, `ATOMIC_AGENT_TASKS_KEEP_AWAKE`, default `off`): `while-working` holds `caffeinate -i -w <pid>` (macOS) or `systemd-inhibit` (Linux, when installed) for each task drain and each turn (`holdWhileRunning` around `runTurn`/`executeTurn` in bootstrap); there is no `always` mode, and the scheduler itself never holds; Windows has none. `poke()` (`POST /api/tasks/wake`, the desktop's resume signal) runs a gated tick at once.
+
 Entry point: [scheduler.ts](scheduler.ts). Read the root instruction route and the underlying domain instructions before cross-domain changes.
 
 Checks: `npx vitest run src/scheduler` when tests are present; `npm run lint`; `npm run docs:check`.

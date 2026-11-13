@@ -14,10 +14,11 @@ import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeS
 import { createInterruptedTurns } from "./interrupted-turns.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
 import { createIncognitoSessions } from "./incognito-sessions.js";
-import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
+import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
 import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
+import { holdWhileRunning } from "../scheduler/index.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
 export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
 export { managedLocalLlmHealthFailureHint } from "./composition/runtime-local-profile.js";
@@ -889,7 +890,10 @@ export async function createAgentRuntime(
   const createEphemeralSession: typeof createWorkerSession = forwardWorkerUsage(createWorkerSession, sessionUsage);
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
-  const { executeTurn, steer, runTurn: runQueuedTurn, controlGoal } = createRuntimeTurnService(config, {
+  // ATO-592: `while-working` holds a sleep inhibitor while any turn runs
+  // (chat, Telegram, a task); off by default.
+  const keepAwake = createRuntimeKeepAwake({ config, logger });
+  const turnService = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies, turnsWithoutQuestions },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
@@ -897,6 +901,9 @@ export async function createAgentRuntime(
     state: turnState, lifecycle, logger,
     emitEvent: emitAgentLoopEventFor,
   });
+  const { steer, controlGoal } = turnService;
+  const runQueuedTurn = holdWhileRunning(keepAwake, turnService.runTurn);
+  const executeTurn = holdWhileRunning(keepAwake, turnService.executeTurn);
   // ATO-586: an incognito chat closed mid-turn is deleted once the turn
   // has left the queue (`isBusy` is still true inside `executeTurn`).
   const incognitoSessions = createIncognitoSessions({
@@ -909,6 +916,7 @@ export async function createAgentRuntime(
     config, taskStore, runTurn, sessionStore, createSession, toolRegistry,
     resolveTelegram: () => telegramChannelForShutdown, logger, metrics,
     approvalLevel: () => approvals.getLevel(),
+    keepAwake,
   });
   // Cross-chat tools (ATO-570), off unless `tasks.sessionToolsEnabled`: a send is a queued task.
   registerSessionTools(toolRegistry, {

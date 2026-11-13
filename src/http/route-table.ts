@@ -68,6 +68,7 @@ import {
   createGetTaskHandler,
   createListTasksHandler,
   createRunTaskHandler,
+  createWakeTasksHandler,
 } from "./route-tasks.js";
 import {
   createListTaskRunsHandler,
@@ -375,6 +376,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
       path: "/api/webhooks",
       handler: createListWebhooksHandler(),
     },
+    // ATO-592: the desktop's powerMonitor "resume" runs due tasks now.
+    { method: "POST", path: "/api/tasks/wake", handler: createWakeTasksHandler() },
     {
       method: "POST",
       path: "/api/webhooks/{name}",
