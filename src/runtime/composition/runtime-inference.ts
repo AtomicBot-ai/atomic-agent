@@ -423,6 +423,8 @@ export function connectRuntimeFallback(
   ): void => {
     if (params.sessionId) {
       turnUsageMeter.recordServed(params.sessionId, servedProviderId);
+      // ATO-1026: a local llama-server's prefill / generation time.
+      turnUsageMeter.recordTiming(params.sessionId, result);
     }
     // A local llama-server sends no usage block; its timings still count
     // toward the turn's tokens (the meter only), but are never priced.
@@ -456,7 +458,11 @@ export function connectRuntimeFallback(
     servedProviderId: string,
     streamMs?: number,
   ): void => {
-    if (sessionId) turnUsageMeter.recordServed(sessionId, servedProviderId);
+    if (sessionId) {
+      turnUsageMeter.recordServed(sessionId, servedProviderId);
+      // ATO-1026: a local llama-server's prefill / generation time.
+      turnUsageMeter.recordTiming(sessionId, result);
+    }
     const metered = completionUsageForTurn(result);
     if (!metered) {
       recordSessionUsage(sessionId, result, servedProviderId, false, undefined);

@@ -34,3 +34,8 @@ Every built-in slash command the TUI runs sends one `ui_action` (ATO-1465), the 
 - `via`: `slash` (typed), `palette` (picked in the slash palette) or `menu` (a menu entry that runs a command).
 
 Only names from the built-in registry are sent. Skills, plugin commands, unknown input and plain messages send nothing. The event goes through the normal client, so it is dropped while analytics is off, under `ATOMIC_AGENT_ANALYTICS=off` and under `DO_NOT_TRACK`. Wiring: `reportBuiltInSlashCommand` in `src/tui/submit-handler.ts` → `TuiAppCallbacks.onUiAction` → `runtime.reportUiAction` → `captureUiAction`.
+
+
+## Local turn speed on `message_sent`
+
+A turn served by a local llama-server also carries `prefill_ms` (time spent reading the prompt), `gen_ms` (time spent generating) and `gen_tokens_per_s`, summed over the turn's completions from llama.cpp's own `timings` (ATO-1026, [turn-usage-meter.ts](turn-usage-meter.ts) `recordTiming`). Completions with a `usage` block (cloud providers, subscription CLIs) and OpenAI-compatible servers that report zero times add nothing, so cloud turns carry none of the three. Model loading time is not in these figures: llama-server does not report it per completion.
