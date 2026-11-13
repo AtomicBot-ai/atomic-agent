@@ -2,6 +2,8 @@ import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
 import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
 import { LocalOutOfMemoryError } from "../llm/index.js";
+import { TransportError } from "../llm/reliability/llm-failures.js";
+import { DailySpendLimitError } from "../llm/reliability/spend-limit-error.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
 import { providerRow } from "./composer-switch/composer-switch-fixtures.js";
@@ -655,6 +657,25 @@ describe("reduceTuiState", () => {
       "Turn failed: couldn't get a reply from the provider.",
       'Details: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
     ]);
+  });
+
+  it("says the daily cloud limit stopped the turn, not that the provider is unreachable (ATO-649)", () => {
+    const limit = new DailySpendLimitError({ spentUsd: 5.1, limitUsd: 5, providerId: "openrouter" });
+    const error = new TransportError(limit.message, null, "", { cause: limit });
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: { type: "loop_failed", error, category: "transport" },
+      },
+    ]);
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text).toContain(
+      "Daily cloud limit reached: $5.10 of $5.00. Cloud calls are paused until tomorrow.",
+    );
+    expect(errMsg?.text).not.toContain("couldn't get a reply");
   });
 
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {

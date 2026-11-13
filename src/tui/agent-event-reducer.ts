@@ -6,6 +6,7 @@ import { describeFailedAttempts, falloverSentence } from "../llm/fallback/index.
 import {
   LOCAL_SERVER_NOT_FOUND_CODE,
   classifyLocalServerError,
+  findDailySpendLimitError,
   isAtomicChatNotRunning,
   isLocalEngineDown,
   isLocalOutOfMemory,
@@ -773,9 +774,15 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       const localServer = engineDown ? null : classifyLocalServerError(event.error);
       const badRequest =
         localServer !== null && localServer.code !== LOCAL_SERVER_NOT_FOUND_CODE ? localServer : null;
+      // ATO-649: the daily cloud limit stopped the turn on purpose. Its
+      // sentence says what happened and what to change; the transport
+      // wording ("couldn't reach the provider") would not be true.
+      const spendLimit = findDailySpendLimitError(event.error);
       // ATO-334: the out-of-memory sentence is already plain and says
       // what to do; the transport wording around it would not.
-      const chatError = isLocalOutOfMemory(event.error)
+      const chatError = spendLimit !== null
+        ? spendLimit.message
+        : isLocalOutOfMemory(event.error)
         ? event.error.message
         : engineDown
         ? formatLocalEngineDownForChat()

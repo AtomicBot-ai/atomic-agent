@@ -4,6 +4,9 @@ import { describeReason } from "../llm/fallback/describe-reason.js";
 import { falloverCause } from "../llm/fallback/link-failure-kind.js";
 import { OpenAiHttpError } from "../llm/provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
+import { falloverSentence } from "../llm/fallback/fallover-sentence.js";
+import { classifyFailureCause } from "../llm/reliability/classify-failure-cause.js";
+import { DailySpendLimitError } from "../llm/reliability/spend-limit-error.js";
 import {
   classifyFalloverReason,
   formatFallbackStatusLine,
@@ -333,5 +336,30 @@ describe("formatFallbackStatusLine", () => {
         reason: "primary recovered",
       }),
     ).toBe("status: recovered primary openrouter");
+  });
+});
+
+describe("the daily cloud limit's switch notice (ATO-649, onDailyLimit: local)", () => {
+  it("says the switch happened over the limit and promises no recovery", () => {
+    const err = new DailySpendLimitError({
+      spentUsd: 5.1,
+      limitUsd: 5,
+      providerId: "openrouter",
+      onLimit: "local",
+    });
+    expect(falloverCause(err)).toBe("spend-limit");
+    const failure = classifyFailureCause(err).cause;
+    expect(failure).toBe("daily_limit_reached");
+    const text = formatProviderFalloverNotice(
+      "openrouter",
+      "local-llama",
+      describeReason(err),
+      falloverCause(err),
+      falloverSentence("openrouter", "local-llama", failure),
+    );
+    expect(text.split("\n")[0]).toContain("hit today's cloud spending limit, switched to");
+    expect(text).toContain("Daily cloud limit reached: $5.10 of $5.00");
+    expect(text).toContain("Cloud calls are paused until tomorrow");
+    expect(text).not.toMatch(/recovers|top it up/);
   });
 });

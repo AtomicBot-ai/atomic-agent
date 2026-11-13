@@ -9,6 +9,8 @@ Transport retry handles transient request/open failures: at most three attempts 
 
 The chain holds only links the person picked: the active provider plus `llm.fallback.chain`. The local llama-server provider is appended only when `llm.fallback.appendLocal` is true (default false, ATO-349/ATO-892): a cloud error must surface as its own reason (`failure-catalog.ts`: phrase plus one action, `fix-key` for a refused key) rather than a silent switch to, or a wait on, a local model nobody chose.
 
+The daily spend ceiling (`llm.costTracking.dailyLimitUsd`, ATO-649) refuses a paid link in the seam's per-attempt hook before anything is sent ([error](../reliability/spend-limit-error.ts)). `llm.costTracking.onDailyLimit` decides the rest: `"stop"` (default) does not advance, so the turn ends on "Daily cloud limit reached: $X of $Y. Cloud calls are paused until tomorrow." (failure cause `daily_limit_reached`) and every later paid call that day is refused the same way; `"local"` advances to the next link, the local model when the chain has one, and the switch notice says so (`cause: "spend-limit"`). Local and plan-billed links are never refused.
+
 The fallback breaker reads live chain configuration and partitions mutable state by session. Memory runners use distinct session identities; pinned worker turns bypass fallover. An appended local fallback is still omitted when no model weights are available, avoiding a wait for a daemon that cannot start; [availability](../../runtime/local-link-availability.ts) owns this check. Provider selection/probing is lazy and owns no periodic timer. A changed active provider affects subsequent resolution rather than a captured boot-time value.
 
 ## Streams and transport

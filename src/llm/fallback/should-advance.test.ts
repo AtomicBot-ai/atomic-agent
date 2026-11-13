@@ -13,8 +13,32 @@ import {
   SubscriptionCliAuthError,
   SubscriptionCliNotInstalledError,
 } from "../provider/subscription-cli/subscription-cli-errors.js";
+import { DailySpendLimitError } from "../reliability/spend-limit-error.js";
+import { classifyFailure } from "../reliability/classify-failure.js";
 
 describe("shouldAdvance", () => {
+  it("does not advance past the daily spend ceiling by default: the turn stops (ATO-649)", () => {
+    const err = new DailySpendLimitError({ spentUsd: 5.2, limitUsd: 5, providerId: "openrouter" });
+    expect(err.onLimit).toBe("stop");
+    expect(shouldAdvance(err)).toEqual({ advance: false, immediate: false });
+    // Wrapped by the step layer, the same answer.
+    expect(shouldAdvance(new Error("wrapped", { cause: err }))).toEqual({ advance: false, immediate: false });
+    expect(classifyFailure(err)).toBe("transport");
+    expect(err.message).toContain("Daily cloud limit reached: $5.20 of $5.00");
+    expect(err.message).toContain('onDailyLimit to "local"');
+  });
+
+  it("advances past the ceiling, not immediately, when onDailyLimit is \"local\" (ATO-649)", () => {
+    const err = new DailySpendLimitError({
+      spentUsd: 5.2,
+      limitUsd: 5,
+      providerId: "openrouter",
+      onLimit: "local",
+    });
+    expect(shouldAdvance(err)).toEqual({ advance: true, immediate: false });
+    expect(err.message).not.toContain("onDailyLimit");
+  });
+
   it("advances immediately on a cloud 429", () => {
     expect(shouldAdvance(new OpenAiHttpError("x", 429, "u"))).toEqual({
       advance: true,

@@ -55,6 +55,11 @@ export {
   findLocalPortTaken,
 } from "./local-port-taken.js";
 export {
+  DailySpendLimitError,
+  findDailySpendLimitError,
+  isDailySpendLimitError,
+} from "./spend-limit-error.js";
+export {
   LOCAL_OUT_OF_MEMORY_CODE,
   LocalOutOfMemoryError,
   isLocalOutOfMemory,

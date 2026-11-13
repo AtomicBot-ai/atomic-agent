@@ -220,6 +220,30 @@ export type UserLlmOpenRouterConfig = {
   preferCacheRoutes?: boolean;
 };
 
+/**
+ * What the agent tracks and caps of cloud spend (`llm.costTracking`).
+ * Every field is optional in the file; the runtime fills the rest
+ * (`enabled` and `showInStatusBar` off, the day starting at 00:00 UTC,
+ * no ceiling, `onDailyLimit: "stop"`).
+ */
+export type UserLlmCostTrackingConfig = {
+  enabled?: boolean;
+  showInStatusBar?: boolean;
+  dailyResetHourUtc?: number;
+  /** Daily spend ceiling in USD, all sessions together (ATO-649). */
+  dailyLimitUsd?: number;
+  /**
+   * What happens once today's spend reaches `dailyLimitUsd` (ATO-649):
+   * `"stop"` (default) pauses cloud calls and says so in the chat;
+   * `"local"` moves the turn on to the local model when the fallback
+   * chain has one.
+   */
+  onDailyLimit?: DailyLimitAction;
+};
+
+export const DAILY_LIMIT_ACTIONS = ["stop", "local"] as const;
+export type DailyLimitAction = (typeof DAILY_LIMIT_ACTIONS)[number];
+
 export type UserLlmFileConfig = {
   activeTextProvider: string;
   activeEmbeddingProvider: string;
@@ -230,6 +254,8 @@ export type UserLlmFileConfig = {
   runMode?: UserLlmRunModeConfig;
   /** Settings for every `openrouter` entry at once. */
   openrouter?: UserLlmOpenRouterConfig;
+  /** Cloud spend tracking and the daily ceiling (ATO-649). */
+  costTracking?: UserLlmCostTrackingConfig;
 };
 
 const PROVIDER_ID_RE = /^[a-z][a-z0-9-]{0,31}$/;
@@ -837,6 +863,10 @@ export function parseUserLlmFileConfig(
       : parseLlmRunModeConfig(obj.runMode, providers, "llm.runMode");
 
   const openrouter = parseLlmOpenRouterConfig(obj.openrouter, "llm.openrouter");
+  const costTracking =
+    obj.costTracking === undefined || obj.costTracking === null
+      ? undefined
+      : parseLlmCostTrackingConfig(obj.costTracking, "llm.costTracking");
 
   return {
     activeTextProvider,
@@ -846,7 +876,65 @@ export function parseUserLlmFileConfig(
     ...(fallback ? { fallback } : {}),
     ...(runMode ? { runMode } : {}),
     ...(openrouter ? { openrouter } : {}),
+    ...(costTracking ? { costTracking } : {}),
   };
+}
+
+/**
+ * `llm.costTracking` (ATO-649). Until this parser the block was never
+ * read from `config.json` at all, so `dailyLimitUsd` set by hand did
+ * nothing. An `onDailyLimit` a newer build added reads as unset
+ * (`"stop"`), the safe side: no paid call and no silent switch.
+ */
+export function parseLlmCostTrackingConfig(
+  raw: unknown,
+  field: string,
+): UserLlmCostTrackingConfig {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const out: UserLlmCostTrackingConfig = {};
+  for (const key of ["enabled", "showInStatusBar"] as const) {
+    if (obj[key] === undefined) continue;
+    if (typeof obj[key] !== "boolean") {
+      throw new ConfigValidationError(`${field}.${key}`, "expected boolean");
+    }
+    out[key] = obj[key] as boolean;
+  }
+  if (obj.dailyResetHourUtc !== undefined) {
+    const hour = obj.dailyResetHourUtc;
+    if (typeof hour !== "number" || !Number.isInteger(hour) || hour < 0 || hour > 23) {
+      throw new ConfigValidationError(
+        `${field}.dailyResetHourUtc`,
+        "expected an integer hour 0-23",
+      );
+    }
+    out.dailyResetHourUtc = hour;
+  }
+  if (obj.dailyLimitUsd !== undefined && obj.dailyLimitUsd !== null) {
+    const limit = obj.dailyLimitUsd;
+    if (typeof limit !== "number" || !Number.isFinite(limit) || limit <= 0) {
+      throw new ConfigValidationError(
+        `${field}.dailyLimitUsd`,
+        "expected a positive number of USD",
+      );
+    }
+    out.dailyLimitUsd = limit;
+  }
+  if (obj.onDailyLimit !== undefined && obj.onDailyLimit !== null) {
+    const action = obj.onDailyLimit;
+    if (!isSetAsideString(action, DAILY_LIMIT_ACTIONS, `${field}.onDailyLimit`, "stop")) {
+      if (action !== "stop" && action !== "local") {
+        throw new ConfigValidationError(
+          `${field}.onDailyLimit`,
+          "expected stop|local",
+        );
+      }
+      out.onDailyLimit = action as DailyLimitAction;
+    }
+  }
+  return out;
 }
 
 export function parseLlmOpenRouterConfig(

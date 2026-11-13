@@ -39,6 +39,8 @@ function whatHappened(failure: FailureCauseId | undefined): string {
       return "doesn't have this model";
     case "provider_setup":
       return "isn't installed or signed in";
+    case "daily_limit_reached":
+      return "hit today's cloud spending limit";
     case "provider_trouble":
     case "provider_timeout":
     case "provider_unreachable":
