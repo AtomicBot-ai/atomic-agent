@@ -13,7 +13,9 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import {
   createSkillEvalJudge,
+  findInstalledSkillTasksFile,
   findSkillTasksFile,
+  listInstalledSkillsWithTasks,
   listSkillsWithTasks,
   loadTaskSet,
   resolveJudgeConfig,
@@ -144,12 +146,25 @@ async function resolveTargets(parsed: SkillEvalArgs, config: AtomicAgentConfig):
   const roots = { starterDir: resolveStarterSkillsSourceDir(), globalSkillsDir: config.paths.globalSkillsDir };
   let files: Array<{ skill: string; tasksFile: string }>;
   if (parsed.all) {
+    // Only the packaged starters' tasks: an installed skill's tasks file
+    // is code from wherever the skill came from, and its command checks
+    // would run in a shell nobody approved.
     files = await listSkillsWithTasks(roots);
-    if (files.length === 0) return { error: "no skill has a tasks file (evals/tasks.yaml)" };
+    for (const left of await listInstalledSkillsWithTasks(roots)) {
+      process.stderr.write(`skipped ${left.skill}: an installed skill's tasks run only with --tasks (${left.tasksFile})\n`);
+    }
+    if (files.length === 0) return { error: "no starter skill has a tasks file (evals/tasks.yaml)" };
   } else {
     const skill = parsed.skill!;
     const tasksFile = parsed.tasksFile ?? findSkillTasksFile(skill, roots);
-    if (tasksFile === null) return { error: `no tasks file for ${skill}: pass --tasks <file> or add evals/tasks.yaml to the skill` };
+    if (tasksFile === null) {
+      const installed = findInstalledSkillTasksFile(skill, roots);
+      return {
+        error: installed
+          ? `${skill} is an installed skill: its tasks file runs shell commands, so it runs only when you name it. Read it, then pass --tasks ${installed}`
+          : `no tasks file for ${skill}: pass --tasks <file>`,
+      };
+    }
     files = [{ skill, tasksFile }];
   }
   const targets: EvalTarget[] = [];

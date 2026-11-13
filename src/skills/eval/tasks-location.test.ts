@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { findSkillTasksFile, listSkillsWithTasks } from "./tasks-location.js";
+import { findInstalledSkillTasksFile, findSkillTasksFile, listInstalledSkillsWithTasks, listSkillsWithTasks } from "./tasks-location.js";
 
 function skillDir(root: string, name: string, tasks?: string): void {
   mkdirSync(join(root, name), { recursive: true });
@@ -32,22 +32,35 @@ describe("tasks file location", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("prefers the packaged starter tree, then the installed skill folder", () => {
+  it("finds tasks on its own only in the packaged starter tree", () => {
     const roots = { starterDir, globalSkillsDir };
     expect(findSkillTasksFile("pdf", roots)).toBe(join(starterDir, "pdf", "evals", "tasks.yaml"));
-    expect(findSkillTasksFile("mine", roots)).toBe(join(globalSkillsDir, "mine", "tasks.yaml"));
-    expect(findSkillTasksFile("third", roots)).toBe(join(globalSkillsDir, "third", "evals", "tasks.yml"));
     expect(findSkillTasksFile("plain", roots)).toBeNull();
     expect(findSkillTasksFile("missing", roots)).toBeNull();
+    expect(findSkillTasksFile("pdf", { starterDir: null, globalSkillsDir })).toBeNull();
+  });
+
+  it("leaves a hub-installed skill's tasks out: they run only with --tasks", async () => {
+    // What `skill install <clawhub or tap skill>` leaves under the global
+    // skills dir: a folder with SKILL.md and, here, a tasks file whose
+    // command checks would run in an unapproved shell.
+    const roots = { starterDir, globalSkillsDir };
+    expect(findSkillTasksFile("mine", roots)).toBeNull();
+    expect(findSkillTasksFile("third", roots)).toBeNull();
+    expect((await listSkillsWithTasks(roots)).map((e) => e.skill)).toEqual(["pdf"]);
+    expect(findInstalledSkillTasksFile("mine", roots)).toBe(join(globalSkillsDir, "mine", "tasks.yaml"));
+    expect(findInstalledSkillTasksFile("third", roots)).toBe(join(globalSkillsDir, "third", "evals", "tasks.yml"));
+    expect((await listInstalledSkillsWithTasks(roots)).map((e) => e.skill)).toEqual(["mine", "third"]);
   });
 
   it("never looks outside a skill folder", () => {
     expect(findSkillTasksFile("../pdf", { starterDir, globalSkillsDir })).toBeNull();
     expect(findSkillTasksFile("acme:review", { starterDir, globalSkillsDir })).toBeNull();
+    expect(findInstalledSkillTasksFile("../mine", { starterDir, globalSkillsDir })).toBeNull();
   });
 
-  it("lists every skill with a tasks file once, sorted", async () => {
-    expect((await listSkillsWithTasks({ starterDir, globalSkillsDir })).map((e) => e.skill)).toEqual(["mine", "pdf", "third"]);
-    expect(await listSkillsWithTasks({ starterDir: null, globalSkillsDir: join(dir, "nope") })).toEqual([]);
+  it("lists nothing without a starter tree", async () => {
+    expect(await listSkillsWithTasks({ starterDir: null, globalSkillsDir })).toEqual([]);
+    expect(await listSkillsWithTasks({ starterDir: join(dir, "nope"), globalSkillsDir })).toEqual([]);
   });
 });

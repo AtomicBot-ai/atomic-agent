@@ -74,17 +74,14 @@ Judge calls are eval overhead: their tokens and cost are not counted in the runs
 
 ## Where the tasks file lives
 
-Without `--tasks`, `skill eval <skill>` looks in this order and takes the first file found (`findSkillTasksFile`):
+Without `--tasks`, `skill eval <skill>` runs only a tasks file the agent ships: `<starter-skills>/<skill>/evals/tasks.yaml` (or `evals/tasks.yml`, `tasks.yaml`, `tasks.yml`) in the packaged starter tree (`resolveStarterSkillsSourceDir`, `findSkillTasksFile`).
 
-1. `<starter-skills>/<skill>/evals/tasks.yaml` (or `.yml`): the packaged starter tree (`resolveStarterSkillsSourceDir`).
-2. `<stateDir>/skills/<skill>/evals/tasks.yaml`, `evals/tasks.yml`, `tasks.yaml`, `tasks.yml`: the installed skill folder.
+An installed skill (`<stateDir>/skills/<skill>/`, from ClawHub, a tap or a copied folder) is never evaluated from its own tasks file on its own. A tasks file is code: its `command` checks run in a shell that nobody approves, and the installer records no origin, so every installed skill is treated alike. `skill eval <skill>` then exits 2 and names the file (`findInstalledSkillTasksFile`); read it and pass it with `--tasks <file>` to run it. Project skills are not looked up either: the eval runtime works in a temp folder, so it never loads them.
 
-Project skills are not looked up: the eval runtime works in a temp folder, so it never loads them.
+The seeder leaves a starter's `evals/` folder out of the installed copy (`STARTER_EVALS_DIR_NAME` in `../seed-starter-skills.ts`). The model can read any file under a loaded skill's folder, and `evals/` holds the expected answers.
 
-The seeder leaves a starter's `evals/` folder out of the installed copy (`STARTER_EVALS_DIR_NAME` in `../seed-starter-skills.ts`). The model can read any file under a loaded skill's folder, and `evals/` holds the expected answers. A skill you write yourself can keep its tasks in its own folder; the same caveat applies to it.
-
-- `--all` runs every skill that has a tasks file, on one runtime, one result file per skill. A skill with tasks that is not installed is skipped and listed; the exit code is then 1.
-- `--check-tasks` runs nothing: it prints `<skill>\t<n> tasks\t<path>` per skill and exits 0, or exits 2 when there is no tasks file. A UI can use it to decide whether to offer the eval.
+- `--all` runs every packaged starter that has a tasks file, on one runtime, one result file per skill. Installed skills with a tasks file are skipped with a note on stderr (`listInstalledSkillsWithTasks`). A starter with tasks that is not installed (another OS, say) is skipped and listed; the exit code is then 1.
+- `--check-tasks` runs nothing: it prints `<skill>\t<n> tasks\t<path>` per skill and exits 0, or exits 2 when there is no tasks file it would run (an installed skill without `--tasks` included). A UI can use it to decide whether to offer the eval.
 - `command` checks get `SKILL_EVAL_TASKS_DIR`, the folder of the tasks file, so a check can call a helper script shipped next to it: `node "$SKILL_EVAL_TASKS_DIR/checks/x.mjs"`.
 
 ### Starter tasks (ATO-1163)

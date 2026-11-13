@@ -66,8 +66,8 @@ const HELP =
     "       [--judge-url <url>] [--judge-model <id>]   judge for `judge` checks (else skills.eval.judgeProvider, else the active cloud provider)",
     "                             Run each task with the skill and without it, check the answers, and save",
     "                             accuracy, time, tokens and cost to <stateDir>/skill-evals/<name>/ (Skill Lab).",
-    "                             Without --tasks the skill's own evals/tasks.yaml is used; --all runs every skill",
-    "                             that has one; --check-tasks only prints where the tasks file is",
+    "                             Without --tasks only a starter skill's packaged evals/tasks.yaml is used; --all runs",
+    "                             every starter that has one; --check-tasks only prints where the tasks file is",
   ].join("\n") + "\n";
 
 export async function skillCommand(args: string[]): Promise<number> {

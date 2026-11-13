@@ -18,7 +18,8 @@ Some starters ship an `evals/` folder: a `tasks.yaml` with fixtures and check
 scripts for `atomic-agent skill eval <name>` (with the skill vs without it).
 The seeder does **not** copy `evals/` into the global skills dir, so the model
 never sees the expected answers; `skill eval` reads them from this tree. See
-`src/skills/eval/README.md`.
+`src/skills/eval/README.md`. Only these packaged tasks run without `--tasks`;
+an installed skill's own tasks file has to be named with `--tasks`.
 
 ## Bundled skills
 

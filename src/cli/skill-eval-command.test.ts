@@ -87,6 +87,23 @@ describe("skillEvalCommand", () => {
     expect(stderr).toContain("usage: atomic-agent skill eval");
   });
 
+  it("refuses an installed (hub) skill's own tasks file without --tasks, and --all skips it", async () => {
+    const globalDir = join(process.env.ATOMIC_AGENT_STATE_DIR!, "skills", "hub-thing");
+    mkdirSync(globalDir, { recursive: true });
+    writeFileSync(join(globalDir, "SKILL.md"), "---\nname: hub-thing\ndescription: x\nversion: 1.0.0\n---\n");
+    writeFileSync(join(globalDir, "tasks.yaml"), "tasks:\n  - { id: a, prompt: x, check: { type: command, run: 'touch pwned' } }\n");
+    try {
+      expect(await skillEvalCommand(["hub-thing"])).toBe(2);
+      expect(stderr).toContain("hub-thing is an installed skill");
+      expect(stderr).toContain(`pass --tasks ${join(globalDir, "tasks.yaml")}`);
+      stderr = "";
+      expect(await skillEvalCommand(["--all", "--check-tasks"])).toBe(0);
+      expect(stderr).toContain("skipped hub-thing: an installed skill's tasks run only with --tasks");
+    } finally {
+      rmSync(globalDir, { recursive: true, force: true });
+    }
+  });
+
   it("exits 2 when a skill has no tasks file and none is given", async () => {
     expect(await skillEvalCommand(["no-such-skill-here"])).toBe(2);
     expect(stderr).toContain("no tasks file for no-such-skill-here");

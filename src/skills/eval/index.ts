@@ -50,5 +50,11 @@ export type {
   SkillEvalDriverRun,
   SkillEvalProgress,
 } from "./run-skill-eval.js";
-export { findSkillTasksFile, listSkillsWithTasks, SKILL_TASKS_FILE_CANDIDATES } from "./tasks-location.js";
+export {
+  findInstalledSkillTasksFile,
+  findSkillTasksFile,
+  listInstalledSkillsWithTasks,
+  listSkillsWithTasks,
+  SKILL_TASKS_FILE_CANDIDATES,
+} from "./tasks-location.js";
 export type { SkillTasksRoots } from "./tasks-location.js";
