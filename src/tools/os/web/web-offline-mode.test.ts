@@ -10,6 +10,7 @@ import {
   setOfflineNetwork,
 } from "../../../llm/offline-network.js";
 import { buildOsWebFetchTool } from "./web-fetch.js";
+import { buildOsWebCrawlTool } from "./web-crawl.js";
 import { buildOsHttpRequestTool } from "./http-request.js";
 import { runCurl } from "./run-curl.js";
 
@@ -45,6 +46,19 @@ describe("web tools in offline mode (ATO-1084)", () => {
     expect(run).not.toHaveBeenCalled();
     expect(lookup).not.toHaveBeenCalled();
     expect(egressSnapshot().requestsBlocked).toBe(1);
+  });
+
+  it("os.web.crawl refuses before DNS or curl", async () => {
+    setOfflineNetwork(true);
+    const run = neverRun();
+    const lookup = vi.fn(publicLookup);
+    const tool = buildOsWebCrawlTool({ runCommand: run, lookup });
+    const result = await tool.run({ url: "https://example.com/docs" }, ctx());
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("offline mode: example.com blocked");
+    expect(result.details.offline).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+    expect(lookup).not.toHaveBeenCalled();
   });
 
   it("os.http.request refuses before approval, DNS or curl", async () => {

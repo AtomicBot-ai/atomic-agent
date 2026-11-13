@@ -100,13 +100,13 @@ const KINDS_WITH_CLI_TEXT: ReadonlySet<SubscriptionCliFailureKind> = new Set([
  * word, it never changes what the user is told.
  */
 const LIMIT_PATTERNS = [
-  /usage limit/i,
-  /rate[ _-]?limit/i,
-  /limit reached/i,
-  /hit your (?:usage )?limit/i,
-  /quota/i,
-  /status 429/i,
-  /429 too many requests/i,
+  /\busage limit\b/i,
+  /\brate[ _-]?limit/i,
+  /\blimit reached\b/i,
+  /\bhit your (?:usage )?limit\b/i,
+  /\bquota\b/i,
+  /\bstatus 429\b/i,
+  /\b429 too many requests\b/i,
 ];
 
 export function looksLikeUsageLimit(text: string): boolean {

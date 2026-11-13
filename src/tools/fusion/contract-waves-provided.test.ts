@@ -109,7 +109,7 @@ describe("completedWaveNotes carries what a provider exposed", () => {
         ],
       ]),
     );
-    expect(note).toContain("[phys] failed: check failed");
+    expect(note).toContain("[phys] failed (js/bodies.js): check failed");
     expect(note).not.toContain("provided");
   });
 });
