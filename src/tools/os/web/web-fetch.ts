@@ -9,6 +9,7 @@ import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import { parseRetryAfterValueMs } from "./retry-after-header.js";
 import { explainCurlStderr, runCurl } from "./run-curl.js";
+import { getWebIdentity } from "../../browser/web-identity.js";
 import {
   assertHostAllowed,
   formatResolveEntry,
@@ -50,10 +51,6 @@ const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
 /** curl's "operation timed out" exit. The other exits are not transient. */
 const CURL_EXIT_TIMEOUT = 28;
-
-const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 /**
  * Marker appended to curl stdout via `-w` so the response body can be split
@@ -490,9 +487,10 @@ function buildCurlArgs(
     "-H",
     "Accept: text/markdown, text/html;q=0.9, */*;q=0.1",
     "-H",
-    `User-Agent: ${USER_AGENT}`,
+    // The same honest UA and language as the agent's browser (ATO-969).
+    `User-Agent: ${getWebIdentity().userAgent}`,
     "-H",
-    "Accept-Language: en-US,en;q=0.9",
+    `Accept-Language: ${getWebIdentity().acceptLanguage}`,
     "-w",
     // `%{header_json}` is last on purpose: it is multi-line JSON that can
     // itself contain `|`, so every pipe-delimited field must precede it.

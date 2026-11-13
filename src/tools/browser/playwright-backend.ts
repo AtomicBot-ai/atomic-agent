@@ -7,6 +7,7 @@ import { describeElementInPage, toRefDescription } from "./describe-element.js";
 import { searchUrlFor } from "./search-engines.js";
 import { planShot, type CssRect } from "./screenshot-geometry.js";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
+import { pinWebIdentityToBrowser } from "./web-identity.js";
 import { clearStaleChromeLocks } from "./clear-stale-chrome-locks.js";
 import {
   decorateChromeProfile,
@@ -497,11 +498,15 @@ export class PlaywrightBackend implements BrowserBackend {
     clearStaleChromeLocks(this.options.userDataDir);
     decorateChromeProfile(this.options.userDataDir);
     const cdpPort = await pickAvailableLoopbackPort();
+    // One identity for this browser and for curl (ATO-969).
+    const identity = pinWebIdentityToBrowser(executable);
     const args = buildChromeLaunchArgs({
       cdpPort,
       userDataDir: this.options.userDataDir,
       headless: this.options.headless,
       noSandbox: this.options.noSandbox ?? false,
+      userAgent: identity.versionKnown ? identity.userAgent : undefined,
+      lang: identity.locale,
     });
     const running = await spawnChrome({
       executablePath: executable.path,
