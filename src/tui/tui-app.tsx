@@ -109,6 +109,11 @@ import {
 import { Sidebar } from "./components/sidebar.js";
 import { railTailInView } from "./session-rail/index.js";
 import {
+  pickerQuery,
+  visiblePickerSessions,
+  type SessionPickerSearch,
+} from "./session-rail/session-search.js";
+import {
   countRunningTasks,
   selectSidebarTasks,
 } from "./sidebar-tasks-selector.js";
@@ -313,6 +318,11 @@ export interface TuiAppCallbacks {
   onRewindRequested?(turnIndex: number, expectText: string): void;
   /** Ask the orchestrator to swap to an existing persisted session. */
   onSessionSwitchRequested?(sessionId: string): void;
+  /**
+   * ATO-1153: narrow the open picker's list to the sessions whose title
+   * or message text holds the typed query. Without it only titles match.
+   */
+  searchSessions?: SessionPickerSearch;
   /**
    * Put a rail session on another slot (Shift+↑/↓ or a row drag).
    * `toIndex` indexes the list as displayed; the host persists the
@@ -1770,6 +1780,21 @@ export function TuiApp({
     [state.slashPaletteOpen],
   );
 
+  // ATO-1153: with the picker open the composer's text searches it. The
+  // picker, ↓ and Enter (`handleSessionPickerSubmit`) all read these rows,
+  // so the cursor indexes the same list everywhere.
+  const pickerSessions = visiblePickerSessions(state, callbacks.searchSessions);
+  const pickerSearchQuery = pickerQuery(state);
+  const pickerQueryRef = useRef(pickerSearchQuery);
+  useEffect(() => {
+    if (pickerQueryRef.current === pickerSearchQuery) return;
+    pickerQueryRef.current = pickerSearchQuery;
+    // A new query is a new list: start at its first match.
+    if (state.sessionPickerOpen && state.sessionPickerCursor !== 0) {
+      dispatch({ type: "session_picker_cursor_set", row: 0 });
+    }
+  }, [pickerSearchQuery, state.sessionPickerOpen, state.sessionPickerCursor]);
+
   const onEscape = useCallback(() => {
     if (state.themePickerOpen) {
       // Cancel: revert the live-preview swap to the theme active on open.
@@ -1953,6 +1978,10 @@ export function TuiApp({
       return;
     }
     if (state.sessionPickerOpen) {
+      // ATO-1153: a search shows fewer rows than the list; stop on its last.
+      if (state.sessionPickerCursor + 1 >= pickerSessions.length) {
+        if (pickerQuery(state).trim().length > 0) return;
+      }
       dispatch({ type: "session_picker_cursor_moved", delta: 1 });
       // The picker lists the page the rail has loaded; walking to the
       // foot of it fetches the next one. The re-emitted list reaches the
@@ -1983,6 +2012,9 @@ export function TuiApp({
     state.sessionPickerCursor,
     state.sessionPickerList,
     state.rewindPicker,
+    state.inputValue,
+    state.sessionPickerDraft,
+    pickerSessions,
     state.themePickerOpen,
     state.themePickerCursor,
     callbacks,
@@ -2571,7 +2603,8 @@ export function TuiApp({
                 {state.sessionPickerOpen ? (
                   <Box flexShrink={0}>
                     <SessionPicker
-                      sessions={state.sessionPickerList}
+                      sessions={pickerSessions}
+                      query={pickerQuery(state)}
                       cursor={state.sessionPickerCursor}
                       currentSessionId={state.session.sessionId}
                       morePages={state.recentSessionsMorePages}
