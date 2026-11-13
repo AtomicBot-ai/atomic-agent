@@ -162,10 +162,10 @@ function fn(name) {
 function prose() {
   const c = vm.createContext({});
   vm.runInContext(markedSource + "\n" + readFileSync(new URL("../renderer/md-render.js", import.meta.url), "utf8")
-    + "\nconst IS_WIN = false;\nconst esc = " + esc.toString() + ";\n"
+    + "\nconst IS_WIN = false;\nconst PLATFORM = 'darwin';\nconst BR = null;\nconst esc = " + esc.toString() + ";\n"
     + "function ic() { return ''; }\n"
     + "function replyPathChip(raw, shown) { return '<button class=\"filechip\" data-file=\"' + esc(raw) + '\">' + esc(raw) + '</button>'; }\n"
-    + fn("renderMarkdown") + fn("renderProseFresh") + fn("codeBlockFrame") + fn("codeSpanIsPath")
+    + fn("renderMarkdown") + fn("renderProseFresh") + fn("codeBlockFrame") + fn("codeBlockTerminalOk") + fn("codeSpanIsPath")
     + "globalThis.renderProseFresh = renderProseFresh;", c);
   return c.renderProseFresh;
 }

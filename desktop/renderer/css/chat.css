@@ -147,6 +147,7 @@
   background:none;color:inherit;font:inherit;cursor:pointer}
 .prose .mdcopy svg{width:12px;height:12px}
 .prose .mdcopy:hover{background:var(--hover);color:var(--ink-2)}
+.prose .mdbar .mdterm{margin-left:auto}   /* ATO-1426: sits right next to Copy, not mid-bar */
 /* ATO-1025: code colour (code-highlight.js), from the theme's own tokens so both themes carry it. */
 .prose .mdpre .hl-k{color:var(--reasoning)}
 .prose .mdpre .hl-s{color:var(--success)}

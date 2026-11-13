@@ -8032,6 +8032,19 @@ document.addEventListener('click', (e) => {
   // ATO-728: a CRLF reply's lines go out as plain \n, with no stray \r at their ends.
   const mdc = t.closest('[data-mdcopy]');
   if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\r\n?/g, '\n').replace(/\n$/, '') : '', 'Code copied'); return; }
+  // ATO-1426: the same text to Terminal, in the folder the chip names.
+  const mdterm = t.closest('[data-mdterm]');
+  if (mdterm) {
+    e.preventDefault();
+    const code = mdterm.closest('.mdblock')?.querySelector('pre code');
+    const text = code ? code.textContent.replace(/\r\n?/g, '\n').replace(/\n$/, '') : '';
+    const fail = (why) => toast("Couldn't open Terminal", typeof why === 'string' ? why : '', 'bad');
+    if (!text || !BR || typeof BR.terminalOpenWithCommand !== 'function') { fail(); return; }
+    // ATO-1424 answers {ok:true, cwd, usedHome} or {ok:false, error, message}.
+    Promise.resolve().then(() => BR.terminalOpenWithCommand({ command: text, cwd: workingDir() || null }))
+      .then((r) => { if (!r || r.ok !== true) fail(r && r.message); }, () => fail());
+    return;
+  }
   // ATO-1251: a table's Copy (TSV, pastes into a spreadsheet) and Markdown, read off the drawn cells.
   const mdt = t.closest('[data-mdtcopy]');
   if (mdt) {
@@ -22665,9 +22678,21 @@ function codeBlockFrame(pre) {
   const lit = typeof highlightCode === 'function'
     ? pre.replace(/(<code>)([\s\S]*)(<\/code><\/pre>)$/, (m, open, code, close) => open + highlightCode(code, lang) + close)
     : pre;
-  return '<div class="mdblock"><div class="mdbar"><span class="mdlang">' + lang + '</span>'
+  // ATO-1426: a finished shell block can also go to Terminal, typed there and not run.
+  const term = !/^<pre class="mdpre"[^>]*\sdata-open="1"/.test(pre) && codeBlockTerminalOk(lang)
+    ? '<button class="mdcopy mdterm" data-mdterm title="Open in Terminal" aria-label="Open in Terminal">' + ic('term') + '<span>Open in Terminal</span></button>'
+    : '';
+  return '<div class="mdblock"><div class="mdbar"><span class="mdlang">' + lang + '</span>' + term
     + '<button class="mdcopy" data-mdcopy title="Copy code" aria-label="Copy code">' + ic('copy') + '<span>Copy</span></button></div>'
     + lit + '</div>';
+}
+/** ATO-1426: whether a code block in `lang` gets "Open in Terminal". The
+    platforms are one list, macOS only until ATO-1422 says otherwise; an older
+    preload without the bridge shows no button. */
+function codeBlockTerminalOk(lang) {
+  const platforms = ['darwin'];
+  return platforms.includes(PLATFORM) && /^(?:bash|sh|zsh|shell|console)$/i.test(lang)
+    && !!(BR && typeof BR.terminalOpenWithCommand === 'function');
 }
 /** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
 function codeSpanIsPath(s) {
