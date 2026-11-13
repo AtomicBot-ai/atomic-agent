@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { registerSettingsReferenceIpc, parseSettingsJson, parseLegacyList, REMOTE_REFUSAL, OLDER_AGENT_NOTE } = require('../out/main/settings-reference.js');
+const { registerSettingsReferenceIpc, parseSettingsJson, parseLegacyList, maskSettingValue, REMOTE_REFUSAL, OLDER_AGENT_NOTE } = require('../out/main/settings-reference.js');
 const S = require('../renderer/all-settings.js');
 
 /* ATO-41: Settings › Diagnostics' All settings. */
@@ -51,6 +51,23 @@ test('an older agent prints `key = value` lines: keys and values, read-only, wit
     ['log.level', 'info', 'info', false],
     ['web.search.exa.apiKeyEnv', '***', '***', false],
   ]);
+});
+
+test('secrets inside a value never reach the screen, from a new or an older agent', async () => {
+  const servers = [{name: 'gh', env: {GITHUB_TOKEN: 'ghp_abc'}, transport: {kind: 'streamable_http', url: 'https://x.invalid', headers: {Authorization: 'Bearer sk-live'}}}];
+  // An older agent's plain `config list` prints the list whole.
+  const old = `mcp.servers = ${JSON.stringify(servers)}  (default [])\ntelegram.botToken = "123:abc"\nagent.tokenBudget = 3000\n`;
+  const legacy = await harness({ ok: true, stdout: old, stderr: '' }).call();
+  assert.equal(legacy.legacy, true);
+  assert.doesNotMatch(JSON.stringify(legacy.rows), /ghp_abc|sk-live|123:abc/);
+  assert.deepEqual(legacy.rows[0].value[0].env, {GITHUB_TOKEN: '***'});
+  assert.equal(legacy.rows[0].value[0].transport.url, 'https://x.invalid');
+  assert.equal(legacy.rows[1].value, '***');
+  assert.equal(legacy.rows[2].value, 3000);
+  // A JSON row that still carries one (an agent before the recursive mask) is masked here too.
+  const json = await harness({ ok: true, stdout: JSON.stringify([{key: 'mcp.servers', type: 'McpServerConfig[]', default: [], value: servers, description: '', envVar: null, settable: false}]), stderr: '' }).call();
+  assert.doesNotMatch(JSON.stringify(json.rows), /ghp_abc|sk-live/);
+  assert.deepEqual(maskSettingValue('some.headers', {'X-Key': 5, on: true}), {'X-Key': '***', on: true});
 });
 
 test('no answer is an error in the CLI words; a remote agent is refused without running', async () => {

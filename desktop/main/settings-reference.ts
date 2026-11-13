@@ -36,6 +36,46 @@ export interface SettingsReferenceDeps {
 export const REMOTE_REFUSAL = "This app runs on an agent on another computer; its settings are on that computer (atag config list --describe there).";
 export const OLDER_AGENT_NOTE = "This agent is older than the settings reference: keys and values only. Update the agent for types and descriptions.";
 
+/* Secrets never reach the screen, whatever the agent printed. The agent
+   masks them (`config list --json`, ATO-41 #1513), but an older agent's
+   plain `config list` prints a list like `mcp.servers` whole, with each
+   server's `env` tokens and `headers` in it. Same rules as the agent's
+   settings-value-mask.ts: strings at a secret-named key (token, secret,
+   password, apiKey, camelCase words) and every value under an `env` or
+   `headers` map become `***`. */
+const SECRET_WORDS = new Set(["secret", "token", "apikey", "password"]);
+const MASK_ALL_MAPS = new Set(["env", "headers"]);
+type MaskMode = "none" | "strings" | "all";
+
+function secretName(name: string): boolean {
+  const words = name.split(/(?=[A-Z])/).map((w) => w.toLowerCase());
+  return words.some((w, i) => SECRET_WORDS.has(w) || SECRET_WORDS.has(w + (words[i + 1] ?? "")));
+}
+
+function maskModeFor(name: string, parent: MaskMode): MaskMode {
+  if (parent === "all" || MASK_ALL_MAPS.has(name.toLowerCase())) return "all";
+  if (parent === "strings" || secretName(name)) return "strings";
+  return "none";
+}
+
+function maskNode(value: unknown, mode: MaskMode): unknown {
+  if (Array.isArray(value)) return value.map((item) => maskNode(item, mode));
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = maskNode(v, maskModeFor(k, mode));
+    return out;
+  }
+  if (mode === "none") return value;
+  if (typeof value === "string") return value.length > 0 ? "***" : value;
+  if (mode === "strings" || value === null || value === undefined || typeof value === "boolean") return value;
+  return "***";
+}
+
+/** A row's value with every secret in it masked, at any depth. */
+export function maskSettingValue(key: string, value: unknown): unknown {
+  return maskNode(value, maskModeFor(key.slice(key.lastIndexOf(".") + 1), "none"));
+}
+
 /** The rows `config list --json` printed, or null when stdout is not that. */
 export function parseSettingsJson(stdout: string): SettingRowWire[] | null {
   let parsed: unknown;
@@ -50,8 +90,8 @@ export function parseSettingsJson(stdout: string): SettingRowWire[] | null {
     .map((r) => ({
       key: r["key"] as string,
       type: typeof r["type"] === "string" ? r["type"] : "",
-      default: r["default"],
-      value: r["value"],
+      default: maskSettingValue(r["key"] as string, r["default"]),
+      value: maskSettingValue(r["key"] as string, r["value"]),
       description: typeof r["description"] === "string" ? r["description"] : "",
       envVar: typeof r["envVar"] === "string" ? r["envVar"] : null,
       settable: r["settable"] === true,
@@ -76,11 +116,11 @@ export function parseLegacyList(stdout: string): SettingRowWire[] {
   for (const line of stdout.split("\n")) {
     const m = /^([A-Za-z][\w.]*) = (.*?)(?:\s{2,}\(default (.*)\))?\s*$/.exec(line);
     if (!m) continue;
-    const value = legacyValue(m[2] ?? "");
+    const value = maskSettingValue(m[1]!, legacyValue(m[2] ?? ""));
     rows.push({
       key: m[1]!,
       type: "",
-      default: m[3] === undefined ? value : legacyValue(m[3]),
+      default: m[3] === undefined ? value : maskSettingValue(m[1]!, legacyValue(m[3])),
       value,
       description: "",
       envVar: null,
