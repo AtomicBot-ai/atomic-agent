@@ -5,14 +5,17 @@
    src/session/chat-export.ts), so the desktop and `atag export` write the
    same file. The person picks a place and a type in the system save
    dialog; the type comes from the extension they end up with. PDF is the
-   agent's HTML printed by Electron's printToPDF in a hidden window that
-   runs no script and is denied every network request — the HTML carries
+   agent's HTML, written to a temp file, printed by Electron's printToPDF
+   in a hidden window that runs no script and is denied every request but
+   that file — the HTML carries
    a CSP that loads nothing, and the window refuses requests on top of it.
 
    An agent from before the route answers 404: the window says to update. */
 
 import type { BrowserWindow, Dialog, IpcMain, SaveDialogOptions } from "electron";
-import { writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 
 export type ChatExportKind = "markdown" | "pdf" | "docx" | "html";
 
@@ -105,24 +108,41 @@ export async function exportChatToFile(deps: ChatExportDeps, id: unknown): Promi
   }
 }
 
-/** HTML to PDF in a hidden window with no script and no network. */
+/**
+ * HTML to PDF in a hidden window with no script and no network.
+ *
+ * The HTML goes through a temp file and `loadFile`, not a `data:` URL:
+ * Chromium caps URLs at 2 MiB, and a long chat's HTML passes that. The
+ * folder is private to this export and removed afterwards, printed or not.
+ */
 export async function printHtmlToPdf(html: string): Promise<Buffer> {
   const { BrowserWindow: Win } = require("electron") as typeof import("electron");
-  const w = new Win({
-    show: false,
-    width: 900,
-    height: 1200,
-    webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false, partition: "atag-chat-export" },
-  });
+  const dir = await mkdtemp(join(tmpdir(), "atag-chat-export-"));
+  const file = join(dir, "chat.html");
+  // The file's own URL, compared by its tail: drive letters and slashes are spelled differently per OS.
+  const own = `/${basename(dir)}/chat.html`.toLowerCase();
+  const isOwn = (url: string): boolean => {
+    if (!url.startsWith("file:")) return false;
+    try { return decodeURIComponent(url).replace(/\\/g, "/").toLowerCase().endsWith(own); } catch { return false; }
+  };
+  let w: InstanceType<typeof Win> | null = null;
   try {
-    // Nothing but the data: URL itself may load (the CSP already says so; this is the second lock).
-    w.webContents.session.webRequest.onBeforeRequest((details, cb) => cb({ cancel: !details.url.startsWith("data:") }));
+    await writeFile(file, html, { encoding: "utf8", mode: 0o600 });
+    w = new Win({
+      show: false,
+      width: 900,
+      height: 1200,
+      webPreferences: { javascript: false, sandbox: true, contextIsolation: true, nodeIntegration: false, partition: "atag-chat-export" },
+    });
+    // Only the export file itself may load (the CSP already says so; this is the second lock).
+    w.webContents.session.webRequest.onBeforeRequest((details, cb) => cb({ cancel: !isOwn(details.url) }));
     w.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     w.webContents.on("will-navigate", (event) => event.preventDefault());
-    await w.loadURL(`data:text/html;charset=utf-8;base64,${Buffer.from(html, "utf8").toString("base64")}`);
+    await w.loadFile(file);
     return await w.webContents.printToPDF({ printBackground: true, pageSize: "A4" });
   } finally {
-    w.destroy();
+    if (w) w.destroy();
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
