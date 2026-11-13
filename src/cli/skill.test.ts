@@ -27,6 +27,8 @@ vi.mock("../skills/hub/index.js", async (importOriginal) => ({
     entries: [],
     errors: [{ repo: "owner/repo", error: "boom" }],
   })),
+  // Never reach the real skills.sh from tests.
+  searchSkillsSh: vi.fn(async () => []),
 }));
 
 function writeSkill(globalDir: string, name: string): void {

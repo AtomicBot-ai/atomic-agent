@@ -32,7 +32,7 @@ export function SkillsHubCard(props: SkillsHubCardProps): ReactElement {
     installError = null,
     maxBodyLines = HUB_CARD_BODY_WINDOW,
   } = props;
-  const badge = card.source === "clawhub" ? "claw" : "gh";
+  const badge = card.source === "clawhub" ? "claw" : card.source === "skills.sh" ? "sh" : "gh";
   const badgeColor =
     card.source === "clawhub" ? theme.colors.accent : theme.colors.muted;
   return (
