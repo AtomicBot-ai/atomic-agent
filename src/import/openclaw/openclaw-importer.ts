@@ -6,6 +6,7 @@ import {
   type ImportItemResult,
   type ImportReport,
 } from "../import-report.js";
+import { groupHintFromCwd, withGroupHint } from "../grouping.js";
 import { reconcileImportedSession } from "../reconcile-session.js";
 import {
   OPENCLAW_DEFAULT_AGENT,
@@ -112,7 +113,12 @@ export class OpenclawImporter {
         messages,
         this.deps.workingDirFallback,
       );
-      items.push(this.reconcileSession(mapped, sourceLabel(meta), options));
+      items.push(
+        withGroupHint(
+          this.reconcileSession(mapped, sourceLabel(meta), options),
+          groupHintFromCwd(meta.cwd),
+        ),
+      );
     }
   }
 

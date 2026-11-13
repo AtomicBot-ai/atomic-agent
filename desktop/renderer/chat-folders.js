@@ -19,6 +19,12 @@
    moved (out of a folder too) is theirs and never sorted again; Settings ›
    Import's "Put imported chats into folders" turns the sorting off.
 
+   W2: the import itself now files chats by the project they had at the
+   source (src/import/grouping.ts): a Project when that folder exists here,
+   else a folder of that name. It writes those placements as the person's
+   (no `auto` mark; a chat in a Project gets `null` here), so this sorting
+   leaves them alone and only files what the import could not.
+
    ATO-1253: Claude Code chats go into a folder per PROJECT instead, the
    folder that Claude Code session ran in (its last path segment; a second
    project with the same name gets its parent's name too: "app (client)").
@@ -32,6 +38,8 @@
 const FOLDER_NAME_MAX = 80;
 const FOLDER_SOURCES = {
   'claude-code': 'Claude Code', codex: 'Codex', hermes: 'Hermes', openclaw: 'OpenClaw', pi: 'Pi', 'oh-my-pi': 'Oh My Pi',
+  // W2: Claude app chats the export filed in no project.
+  'claude-app': 'Claude',
 };
 
 function foldersEmpty() {
@@ -60,6 +68,9 @@ function foldersCoerce(raw) {
   for (const sid of Object.keys(auto)) if (auto[sid] === true && typeof out.chats[sid] === 'string') out.auto[sid] = true;
   // A file from before ATO-1253 has no `projectSort`: its Claude Code chats move to their project's folder once.
   out.projectSort = raw.projectSort === true;
+  // Folders the terminal's import grouping created (src/import/grouping.ts): kept so it never takes over or deletes one of the person's own.
+  const imported = raw.imported && typeof raw.imported === 'object' ? raw.imported : {};
+  for (const fid of Object.keys(imported)) if (imported[fid] === true && ids.has(fid)) (out.imported = out.imported || {})[fid] = true;
   return out;
 }
 
@@ -117,6 +128,7 @@ function folderRemove(state, id) {
   state.folders.splice(i, 1);
   for (const sid of Object.keys(state.chats)) if (state.chats[sid] === id) { state.chats[sid] = null; delete state.auto[sid]; }
   delete state.projects[id];
+  if (state.imported) delete state.imported[id];
   return true;
 }
 

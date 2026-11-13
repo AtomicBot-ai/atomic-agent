@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 /**
  * Read-only access to a `~/.claude` state directory (Claude Code). This
@@ -268,6 +268,19 @@ export class ClaudeCodeSource {
   }
 
   /**
+   * The working directory Claude Code encoded in a session's project dir
+   * name (`/Users/me/my.app` → `-Users-me-my-app`: every character that
+   * is not a letter or digit became `-`). The encoding loses which dashes
+   * were separators, so the name is decoded against the disk, joining
+   * segments greedily until each prefix is a directory that exists. Only
+   * a fallback for transcripts whose rows carry no `cwd`; `null` when no
+   * folder on this computer matches (the folder may be gone).
+   */
+  projectCwdOf(meta: ClaudeCodeSessionMeta): string | null {
+    return decodeProjectSlug(basename(dirname(meta.file)));
+  }
+
+  /**
    * Read one transcript into a neutral session. Meta rows (`system`,
    * `queue-operation`, attachments, …) are skipped; sidechain rows
    * (subagent transcripts interleaved into the same file) are skipped;
@@ -323,6 +336,56 @@ export class ClaudeCodeSource {
       title: customTitle ?? aiTitle,
       messages,
     };
+  }
+}
+
+/** See `ClaudeCodeSource.projectCwdOf`. POSIX paths only (a Windows slug starts with a drive letter). */
+export function decodeProjectSlug(
+  slug: string,
+  isDir: (path: string) => boolean = isDirectory,
+): string | null {
+  if (!slug.startsWith("-")) return null;
+  const tokens = slug.slice(1).split("-");
+  let dir = "";
+  let i = 0;
+  while (i < tokens.length) {
+    let found: string | null = null;
+    let next = i;
+    // Longest first: "my-app" before "my", so a folder named with dashes wins.
+    for (let j = tokens.length; j > i; j--) {
+      const words = tokens.slice(i, j);
+      for (const joiner of ["-", ".", "_", " "]) {
+        const candidate = `${dir}/${words.join(joiner)}`;
+        if (isDir(candidate)) {
+          found = candidate;
+          next = j;
+          break;
+        }
+        if (words.length === 1) break;
+      }
+      if (found) break;
+      // A dot-folder (".config") encodes as an empty token before its name.
+      if (tokens[i] === "" && j === i + 2) {
+        const dotted = `${dir}/.${tokens[i + 1] ?? ""}`;
+        if (isDir(dotted)) {
+          found = dotted;
+          next = j;
+          break;
+        }
+      }
+    }
+    if (!found) return null;
+    dir = found;
+    i = next;
+  }
+  return dir || null;
+}
+
+function isDirectory(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
   }
 }
 

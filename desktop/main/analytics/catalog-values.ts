@@ -97,7 +97,7 @@ export const APPROVAL_CATEGORIES = [
 export const SETTINGS_PANES = [
   "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "webhooks", "skills", "privacy", "import", "diagnostics",
 ] as const;
-export const IMPORT_SOURCES = ["tui", "hermes", "openclaw", "claude-code", "codex", "pi", "other"] as const;
+export const IMPORT_SOURCES = ["tui", "hermes", "openclaw", "claude-code", "codex", "pi", "claude-app", "atomic-agent", "other"] as const;
 export const IMPORT_PARTS = ["providers", "keys", "skills", "sessions", "memory"] as const;
 export const DAEMON_EFFECTS = [
   "started", "restarted", "start_failed", "stop_failed", "skipped", "superseded", "untouched", "stopped",

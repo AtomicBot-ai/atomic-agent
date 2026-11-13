@@ -10,6 +10,7 @@ import {
   type ImportItemResult,
   type ImportReport,
 } from "../import-report.js";
+import { groupHintFromCwd, withGroupHint } from "../grouping.js";
 import { reconcileImportedSession } from "../reconcile-session.js";
 import type { HermesSource } from "./hermes-source.js";
 import type { ImportOptionId } from "./import-options.js";
@@ -104,7 +105,12 @@ export class HermesImporter {
         messages,
         this.deps.workingDirFallback,
       );
-      items.push(this.reconcileSession(mapped, session.id, options));
+      items.push(
+        withGroupHint(
+          this.reconcileSession(mapped, session.id, options),
+          groupHintFromCwd(session.cwd),
+        ),
+      );
     }
   }
 

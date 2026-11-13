@@ -476,7 +476,7 @@ async function importPane(js: Js, check: Check): Promise<void> {
   const first = spots[0];
   check(
     "T49 (Д51): Preview import keeps one place on screen whatever the source, and stays in view at the end of the longest form",
-    !r.err && spots.length === 6 && !!first && spots.every((p) => !!p && p.inView && p.top === first?.top && p.left === first?.left && p.right === first?.right)
+    !r.err && spots.length === 8 && !!first && spots.every((p) => !!p && p.inView && p.top === first?.top && p.left === first?.left && p.right === first?.right)
       && !!r.scrolled && r.scrolled.inView && !r.oldRun,
     r.err ?? show({ pos: r.pos, scrolled: r.scrolled, oldRun: r.oldRun }),
   );
@@ -487,12 +487,12 @@ async function importPane(js: Js, check: Check): Promise<void> {
   );
   check(
     "T49 (Д52): the button is Preview import, and the limit says it is the sessions to import, All when empty",
-    !r.err && !!first && first.label === "Preview import" && r.label === "Sessions to import" && r.placeholder === "All",
+    !r.err && !!first && first.label === "Preview import" && r.label === "Chats to import" && r.placeholder === "All",
     r.err ?? show({ label: first?.label, limit: r.label, placeholder: r.placeholder }),
   );
   check(
     "T49 (Д54): every import source wears a mark — Pi its pi glyph, Oh-My-Pi its own MIT mark (13.10)",
-    !r.err && Object.values(r.marks).length === 6 && Object.values(r.marks).every(Boolean) && r.generic.length === 2 && r.generic.every(Boolean),
+    !r.err && Object.values(r.marks).length === 8 && Object.values(r.marks).every(Boolean) && r.generic.length === 2 && r.generic.every(Boolean),
     r.err ?? show({ marks: r.marks, generic: r.generic }),
   );
 

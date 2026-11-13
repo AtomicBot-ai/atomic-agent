@@ -12,6 +12,7 @@ import {
   OPENCLAW_DEFAULT_AGENT,
   PiImporter,
   PiSource,
+  groupImportReport,
   type ClaudeCodeOptionId,
   type CodexOptionId,
   type ImportAgentId,
@@ -52,6 +53,24 @@ export interface ImportRunner {
  * "import OpenClaw" to mean all of it.
  */
 export function buildImportRunner(
+  runtime: AgentRuntime,
+  id: ImportAgentId,
+  dir: string,
+): ImportRunner {
+  const inner = buildSourceRunner(runtime, id, dir);
+  // The chats keep the projects and folders they had at the source
+  // (src/import/grouping.ts), the same step `atag import` runs.
+  return {
+    run: async (input) =>
+      groupImportReport(await inner.run(input), {
+        stateDir: runtime.config.paths.stateDir,
+        execute: input.execute,
+      }),
+    close: () => inner.close(),
+  };
+}
+
+function buildSourceRunner(
   runtime: AgentRuntime,
   id: ImportAgentId,
   dir: string,

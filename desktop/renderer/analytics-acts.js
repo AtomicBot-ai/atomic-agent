@@ -102,7 +102,7 @@ const ANX_ACTS = (() => {
       push:{copy:L, enable:L, newTopic:L, refresh:L, setup:L, test:L},
       // ATO-328: Save on the Exa key card (chat) or its Settings row; never the key.
       exakey:{save:{chat:L, settings:L}},
-      import:{apply:L, field:L, focus:L, preview:L, reset:L, source:Object.assign(set(impSources), {tui:L}),
+      import:{apply:L, field:L, focus:L, pick:L, preview:L, reset:L, source:Object.assign(set(impSources), {tui:L}),
         toggle:set(impFields)},
     };
   }

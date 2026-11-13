@@ -139,8 +139,16 @@ describe("ImportOrchestrator", () => {
       summary: { migrated: number };
       items: unknown[];
     };
-    expect(report.summary.migrated).toBe(130);
-    expect(report.items).toHaveLength(130);
+    // 130 chats, plus the one group they came from: "/work" is not a folder
+    // on this computer, so it arrives as a chat folder named "work".
+    expect(report.summary.migrated).toBe(131);
+    expect(report.items).toHaveLength(131);
+    expect(report.items[130]).toMatchObject({
+      kind: "folders",
+      source: "work",
+      status: "migrated",
+      reason: "new folder; 130 chats; 130 added",
+    });
     expect(sessionStore.load("claude-code:s000")).not.toBeNull();
     expect(sessionStore.load("claude-code:s129")).not.toBeNull();
   });
@@ -167,7 +175,8 @@ describe("ImportOrchestrator", () => {
       executed: boolean;
     };
     expect(report.executed).toBe(false);
-    expect(report.summary.migrated).toBe(2);
+    // Two chats and the folder they would go into (grouping.ts).
+    expect(report.summary.migrated).toBe(3);
     expect(sessionStore.load("claude-code:s000")).toBeNull();
   });
 

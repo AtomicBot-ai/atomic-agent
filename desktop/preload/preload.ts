@@ -477,6 +477,8 @@ contextBridge.exposeInMainWorld("atomic", {
   configUnset: (key: string) => ipcRenderer.invoke("cli:configUnset", key),
   importRun: (input: Record<string, unknown>) => ipcRenderer.invoke("cli:importRun", input),
   importDefaults: () => ipcRenderer.invoke("app:importDefaults"),
+  /** W2: Import's Choose… (a folder, or the Claude export's .zip): {ok, path} or {ok:false, cancelled}. */
+  importPickSource: (source: string) => ipcRenderer.invoke("app:importPickSource", source),
   // ATO-1156: `atag handoff` — fresh Claude Code / Codex sessions, and continue one in a new chat.
   handoffList: (agent: string) => ipcRenderer.invoke("cli:handoffList", agent),
   handoffStart: (agent: string, id: string) => ipcRenderer.invoke("cli:handoffStart", agent, id),

@@ -225,6 +225,8 @@ import {
   modelsDevices,
   modelsUseDevice,
   importRun,
+  importSourceProblem,
+  defaultAtomicAgentSource,
   // r5 item 7 review fix: the argv builder, asserted on its own — see
   // the import checks in onboardingTest.
   importArgs,
@@ -3427,7 +3429,15 @@ function wireIpc(client: AgentClient): void {
       limit: typeof i["limit"] === "string" ? i["limit"] : "",
       execute: i["execute"] === true,
     };
-    return importRun(clean, client.status.workingDir).then((res) => (A.agentImportDone(source, clean.execute, res), res));
+    // W2: main decides what an import may read, not the renderer's string.
+    const problem = importSourceProblem(source, clean.dir, DESKTOP_STATE_DIR);
+    if (problem) return Promise.resolve({ ok: false, error: problem });
+    return importRun(clean, client.status.workingDir).then((res) => {
+      A.agentImportDone(source, clean.execute, res);
+      // The import may have made projects (projects.json): every window reads them again.
+      if (clean.execute && res.ok) send("projects:changed");
+      return res;
+    });
   });
   /* ---- r5 item 9: the desktop's own state directory ------------------
      `app:firstRun` is what makes a first launch unmissable rather than
@@ -3632,7 +3642,26 @@ function wireIpc(client: AgentClient): void {
     codex: importAgentDir("codex"),
     pi: importAgentDir("pi"),
     "oh-my-pi": importAgentDir("oh-my-pi"),
+    // The Claude export arrives as a download; there is no folder to guess.
+    "claude-app": "",
+    // Another Atomic Agent data folder: ~/.atomic-agent, unless that is this app's own (then null: pick one).
+    "atomic-agent": defaultAtomicAgentSource(DESKTOP_STATE_DIR),
   }));
+  /* W2: Import's "Choose…" beside the source folder. A folder for every
+     source; for the Claude app the export's .zip (or the folder it unpacks
+     to). Only a path comes back; what it may be is checked again by
+     cli:importRun (importSourceProblem). */
+  ipcMain.handle("app:importPickSource", async (_event, source: unknown) => {
+    if (!win) return { ok: false, cancelled: true };
+    const claude = source === "claude-app";
+    const picked = await dialog.showOpenDialog(win, {
+      properties: claude && process.platform === "darwin" ? ["openFile", "openDirectory"] : claude ? ["openFile"] : ["openDirectory", "showHiddenFiles"],
+      message: claude ? "Choose the .zip from Claude's Export data" : "Choose the folder to import from",
+      ...(claude ? { filters: [{ name: "Claude data export", extensions: ["zip"] }] } : {}),
+    });
+    if (picked.canceled || !picked.filePaths[0]) return { ok: false, cancelled: true };
+    return { ok: true, path: picked.filePaths[0] };
+  });
   /* r5 item 7 (setup wizard): the first-run import step's own scan —
      src/import/detect-import-agents.ts, shallow existsSync checks only. */
   ipcMain.handle("app:detectImportAgents", () => ({ ok: true, agents: detectImportAgents() }));
@@ -8781,14 +8810,14 @@ async function settingsTestPartC(
   // Release fix 49 (Д52): the limit field says what it limits ("Limit" before).
   // ATO-531: Overwrite carries an amber "Can replace your data" tag and says what it replaces.
   const impDrawn = impView.title === "Hermes → Atomic Agent"
-    // ATO-1034 (folders): "Put imported chats into folders" sits before Overwrite.
-    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Put imported chats into folders", "Overwrite Can replace your data", "Sessions to import"])
+    // ATO-1034 (folders): the folders switch sits before Overwrite. W2: the rows in plain words.
+    && same(impView.labels, ["Source", "Source folder", "Chats", "Scheduled jobs", "API keys", "Keep chats in their projects", "Overwrite Can replace your data", "Chats to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
     "import tab: the TUI form with its defaults, and no CLI run until Preview import",
     imp.runs === 0 && impDrawn && impBody.includes("Preview import") && !impBody.includes("↑↓ move")
-      && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("Replaces what you already have here") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
+      && impBody.includes("Your OpenRouter and AI/ML API keys") && impBody.includes("Choose…") && impBody.includes("Replaces what you already have here") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
     `runs=${imp.runs} dir=${imp.form.sourceDir}${impDrawn ? "" : " drawn " + JSON.stringify(impView)}`,
   );
   const dir = "/nonexistent-desktop-smoke-dir";
@@ -8808,7 +8837,7 @@ async function settingsTestPartC(
   );
   const pv = await reportView();
   const previewDrawn = pv.title === "Preview · 2 items" && pv.chip === "Nothing is changed yet" && same(pv.heads, ["Outcome", "Kind", "Item"])
-    && pv.rows.length === 2 && pv.rows.every((r) => r.outcome === "skipped") && pv.rows.some((r) => r.kind === "sessions" && r.reason === `(no state.db at ${dir}/state.db)`);
+    && pv.rows.length === 2 && pv.rows.every((r) => r.outcome === "skipped") && pv.rows.some((r) => r.kind === "chat" && r.reason === `(no state.db at ${dir}/state.db)`);
   // Release fix 49 (Д53): the summary in words, and Apply drawn but off when the preview found nothing to import.
   check(
     "import tab: Preview import runs atag import --dry-run and parses the report into the TUI rows",
@@ -12906,7 +12935,8 @@ async function onboardingTest(
     const argvHermes = argvOf("hermes", ["cron"], true);
     const argvPi = argvOf("pi", ["sessions", "cron"], true);
     const argvOmp = argvOf("oh-my-pi", ["mcp"], true);
-    const argvUnknown = argvOf("atomic-agent", [], false);
+    // W2: "atomic-agent" is a source now (another data folder), so the unknown one is made up.
+    const argvUnknown = argvOf("not-a-source", [], false);
     check(
       "wizard: the import argv excludes only domains the source understands, and gates the secrets flag",
       // `cron` is not a Claude Code domain, so it is dropped rather than
@@ -12920,7 +12950,7 @@ async function onboardingTest(
         argvPi.args?.join(" ") === "import pi --source /tmp/src --exclude sessions --dry-run" &&
         argvOmp.args?.join(" ") === "import oh-my-pi --source /tmp/src --exclude mcp --dry-run" &&
         argvUnknown.ok === false &&
-        argvUnknown.error === "source must be hermes, openclaw, claude-code, codex, pi or oh-my-pi",
+        argvUnknown.error === "source must be hermes, openclaw, claude-code, codex, pi, oh-my-pi, claude-app or atomic-agent",
       `claude=${JSON.stringify(argvClaude)} codex=${JSON.stringify(argvCodex)}` +
         ` openclaw=${JSON.stringify(argvOpenclaw)} hermes=${JSON.stringify(argvHermes)}` +
         ` pi=${JSON.stringify(argvPi)} omp=${JSON.stringify(argvOmp)}` +
