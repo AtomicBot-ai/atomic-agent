@@ -91,6 +91,7 @@ import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 import { createSetActiveLlmHandler } from "./route-llm-active.js";
 import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.js";
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
+import { createRestoreFileHandler } from "./route-fs-restore.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import {
   createDeleteMemoryNoteHandler,
@@ -258,6 +259,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/sessions/{id}/rewind/preview", handler: createRewindHandler(true) },
     { method: "POST", path: "/api/sessions/{id}/rewind", handler: createRewindHandler(false) },
     { method: "POST", path: "/api/sessions/{id}/fork", handler: createForkSessionHandler() },
+    // ATO-563: put back a file the agent replaced, from its saved copy (the desktop's Revert).
+    { method: "POST", path: "/api/sessions/{id}/fs/restore", handler: createRestoreFileHandler() },
     {
       method: "POST",
       path: "/api/sessions/{id}/steer",
