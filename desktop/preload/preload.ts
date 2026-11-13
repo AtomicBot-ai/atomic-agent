@@ -106,6 +106,8 @@ contextBridge.exposeInMainWorld("atomic", {
   renameSession: (id: string, title: string) => ipcRenderer.invoke("agent:renameSession", id, title),
   // ATO-1150: the chat archive flag, kept by the agent (POST /api/sessions/{id}/archived).
   setSessionArchived: (id: string, archived: boolean) => ipcRenderer.invoke("agent:setSessionArchived", id, archived),
+  // ATO-1054: save one chat as Markdown / PDF / Word / HTML (asks where in a save dialog)
+  exportSession: (id: string) => ipcRenderer.invoke("agent:exportSession", id),
   codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */

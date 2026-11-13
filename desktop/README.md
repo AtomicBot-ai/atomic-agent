@@ -53,6 +53,7 @@ window shows "Not while a turn is running".
 | Persisted sessions | `GET /api/sessions` |
 | Deleting one session | `DELETE /api/sessions/{id}` |
 | Renaming one session | `PATCH /api/sessions/{id}` |
+| Exporting one chat (Markdown / Word / HTML; PDF printed from the HTML) | `GET /api/sessions/{id}/export` |
 | One turn of the agent loop | `POST /v1/chat/completions` (SSE) |
 | Approval requests | `GET /api/events` (SSE) |
 | Approval verdicts | `POST /api/approval/resolve` |
