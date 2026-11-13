@@ -143,8 +143,9 @@ describe("ImportOrchestrator", () => {
     // on this computer, so it arrives as a chat folder named "work".
     expect(report.summary.migrated).toBe(131);
     expect(report.items).toHaveLength(131);
+    // Onboarding names the source on every row of its combined report.
     expect(report.items[130]).toMatchObject({
-      kind: "folders",
+      kind: "Claude Code folders",
       source: "work",
       status: "migrated",
       reason: "new folder; 130 chats; 130 added",
