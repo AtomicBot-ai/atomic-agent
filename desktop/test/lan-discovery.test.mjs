@@ -287,3 +287,12 @@ test("the check only reads: GET requests, never a chat completion", () => {
   assert.match(ipc, /\/v1\/models/);
   assert.match(ipc, /\/api\/tags/);
 });
+
+test("the mac build declares the Local Network prompt text and every browsed service type", () => {
+  const cfg = require("../electron-builder.cjs");
+  const info = cfg.mac.extendInfo;
+  assert.equal(typeof info.NSLocalNetworkUsageDescription, "string");
+  assert.ok(info.NSLocalNetworkUsageDescription.length > 20);
+  const declared = new Set(info.NSBonjourServices);
+  for (const type of MD.MDNS_SERVICE_TYPES) assert.ok(declared.has(type.replace(/\.local$/, "")), type);
+});

@@ -119,7 +119,13 @@ const config = {
     "extendInfo": {
       "LSMinimumSystemVersion": "14.0",
       "NSMicrophoneUsageDescription": "Atomic Agent records your voice only while you hold the microphone button in the composer, and transcribes it on this Mac.",
-      "NSSpeechRecognitionUsageDescription": "Atomic Agent transcribes what you dictate using the on-device speech model. Nothing is sent to Apple."
+      "NSSpeechRecognitionUsageDescription": "Atomic Agent transcribes what you dictate using the on-device speech model. Nothing is sent to Apple.",
+      /* ATO-1067: "Find on my network" sends an mDNS query and probes the
+         home subnet, which raises macOS's Local Network prompt. These give
+         the prompt our words and declare the service types we browse
+         (main/lan-mdns.ts MDNS_SERVICE_TYPES). */
+      "NSLocalNetworkUsageDescription": "Atomic Agent looks for model servers on your home network only when you press Find on my network, and checks the address you enter.",
+      "NSBonjourServices": ["_http._tcp", "_ollama._tcp", "_llm._tcp", "_openai._tcp", "_saturn._tcp"]
     },
     "extraResources": [
       {
