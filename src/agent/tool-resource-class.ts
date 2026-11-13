@@ -386,7 +386,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "github.issue.create": ["publish"],
     "github.issue.comment": ["publish"],
     "os.proc.kill": ["proc_kill"],
-    "os.http.request": ["http"],
+    // A GET asks as `http`, a POST as `http_write` (level 4, ATO-1462).
+    "os.http.request": ["http", "http_write"],
     "os.email.send": ["email"],
     // A screenshot asks below level 3 (`screen_capture`).
     "os.screen.capture": ["screen_capture"],

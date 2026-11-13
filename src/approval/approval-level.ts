@@ -23,6 +23,14 @@ export type ApprovalCategory =
   | "fs_write_home"
   | "fs_trash"
   | "http"
+  /**
+   * An `os.http.request` that sends data out: any method other than
+   * GET / HEAD / OPTIONS (a POST today). Level 4 beside `shell`: a POST
+   * can carry files or keys to any host, so it does not go quiet at the
+   * level where a GET does, and an `http` grant or saved rule never
+   * answers it (ATO-1462).
+   */
+  | "http_write"
   | "shell"
   /**
    * A shell command the guard's dangerous layer matched (`dangerous.*`
@@ -140,10 +148,12 @@ export type ApprovalCategory =
  *    session working directory (realpath containment).
  *  - level 3 (home): file writes anywhere under the home directory,
  *    moves to Trash, archive extraction, HTTP requests (the SSRF guard
- *    is not part of the gate and stays on), paid cloud generation,
+ *    is not part of the gate and stays on) that only read (GET), paid
+ *    cloud generation,
  *    browser navigation outside `browser.allowedDomains`, screenshots.
  *  - level 4 (operator): guarded shell commands (not the dangerous
- *    ones, `shell_dangerous`, which wait for level 5), skill scripts,
+ *    ones, `shell_dangerous`, which wait for level 5), HTTP requests
+ *    that send data (`http_write`, a POST), skill scripts,
  *    process kills, screen control (mouse and keyboard), and network git (`os.git.{push,pull,fetch,clone}`
  *    plus adding a remote) — the same rung as a guarded `git push`
  *    through the shell, so the dedicated tools are never looser or
@@ -168,6 +178,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fs_write_home: 3,
   fs_trash: 3,
   http: 3,
+  http_write: 4,
   paid_generation: 3,
   browser_offsite: 3,
   screen_capture: 3,
@@ -234,6 +245,9 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   fs_write_home: true,
   fs_trash: true,
   http: true,
+  // Grantable, but only by its own name (and per origin, `grantKey`):
+  // an `http` grant from a GET prompt never reaches a POST.
+  http_write: true,
   shell: true,
   // `rm -rf`, `git reset --hard`, `sudo`: each one is its own decision.
   // A `shell` or `[a]` grant never reaches this category either.
@@ -298,6 +312,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   fs_write_home: "file write · home",
   fs_trash: "move to Trash",
   http: "HTTP request",
+  http_write: "HTTP request · sends data",
   shell: "shell command",
   shell_dangerous: "dangerous shell command",
   script: "skill script",

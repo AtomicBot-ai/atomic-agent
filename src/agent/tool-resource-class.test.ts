@@ -61,7 +61,9 @@ describe("gated-call approval categories", () => {
     // verify.run starts commands too: a dangerous one waits for level 5 (ATO-1266).
     expect(gatedCallRunsUnattended("verify.run", { level: 4 })).toBe(false);
     expect(gatedCallRunsUnattended("verify.run", { level: 5 })).toBe(true);
-    expect(gatedCallRunsUnattended("os.http.request", { level: 3 })).toBe(true);
+    // A POST asks as http_write until level 4 (ATO-1462).
+    expect(gatedCallRunsUnattended("os.http.request", { level: 3 })).toBe(false);
+    expect(gatedCallRunsUnattended("os.http.request", { level: 4 })).toBe(true);
     expect(gatedCallRunsUnattended("os.email.send", { level: 4 })).toBe(false);
   });
 

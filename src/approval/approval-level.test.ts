@@ -19,6 +19,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "fs_write_home",
   "fs_trash",
   "http",
+  "http_write",
   "shell",
   "shell_dangerous",
   "script",
@@ -105,6 +106,8 @@ describe("approval ladder", () => {
       fs_write_home: 3,
       fs_trash: 3,
       http: 3,
+      // A POST can carry data anywhere: the shell rung (ATO-1462).
+      http_write: 4,
       shell: 4,
       // rm -rf, git reset --hard, sudo: only full trust runs them unasked.
       shell_dangerous: 5,
@@ -163,6 +166,9 @@ describe("approval ladder", () => {
     expect(formatApprovalCategory("trust_config")).toBe("agent trust config");
     expect(formatApprovalCategory("state_secret")).toBe("agent secret file");
     expect(formatApprovalCategory("shell")).toBe("shell command");
+    expect(formatApprovalCategory("http_write")).toBe(
+      "HTTP request · sends data",
+    );
     expect(formatApprovalCategory("git_remote")).toBe("git · remote");
     expect(formatApprovalCategory("screen_control")).toBe(
       "screen · click / type",
@@ -187,6 +193,7 @@ describe("approval ladder", () => {
       "fs_write_home",
       "fs_trash",
       "http",
+      "http_write",
       "shell",
       "script",
       "proc_kill",
