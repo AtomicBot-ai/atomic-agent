@@ -84,6 +84,43 @@ describe("default tool argsJsonSchema map", () => {
   // Issue #185: `paths` was a bare string[] with no upper bound, so
   // neither cloud schema validation nor grammar-constrained decoding
   // could hint the 4-image cap and the model learned it by failing.
+  // ATO-1493: the task schema is closed (`additionalProperties: false`),
+  // so a task field `parseDelegateArgs` reads but the schema omits can
+  // never be sent under strict schemas or grammar-constrained decoding.
+  // `etaSeconds` was such a field.
+  it("pins fusion.delegate task schema to every field parseDelegateArgs reads", () => {
+    const schema = getDefaultArgsJsonSchema("fusion.delegate") as {
+      properties: {
+        tasks: {
+          items: {
+            properties: Record<string, unknown>;
+            additionalProperties: boolean;
+          };
+        };
+      };
+    };
+    const task = schema.properties.tasks.items;
+    expect(task.additionalProperties).toBe(false);
+    expect(Object.keys(task.properties).sort()).toEqual(
+      [
+        "id",
+        "title",
+        "instructions",
+        "deliverable",
+        "files",
+        "etaSeconds",
+        "maxSteps",
+        "timeoutMs",
+        "role",
+        "model",
+      ].sort(),
+    );
+    expect(task.properties.etaSeconds).toEqual({
+      type: "integer",
+      minimum: 1,
+    });
+  });
+
   it("pins vision.describe schema (paths capped at maxItems 4)", () => {
     const schema = getDefaultArgsJsonSchema("vision.describe");
     expect(schema).toMatchObject({
