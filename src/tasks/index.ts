@@ -12,6 +12,12 @@ export type {
 export { TaskRunner } from "./task-runner.js";
 export { TASK_RUNS_KEPT_PER_TASK } from "./task-run-log.js";
 export type { TaskRunOutcome, TaskRunRecord } from "./task-run-log.js";
+export {
+  isPausedTask,
+  pauseRecurringTask,
+  resumeRecurringTask,
+} from "./task-pause.js";
+export type { TaskPauseRefusal, TaskPauseResult } from "./task-pause.js";
 export { planTaskResume, resumeNote, wasInterruptedFromOutside } from "./task-resume.js";
 export type { TaskResumePlan, TaskResumePolicy } from "./task-resume.js";
 export type {

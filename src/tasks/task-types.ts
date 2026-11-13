@@ -51,7 +51,7 @@ export type TaskStatus =
  * even when no live `runTurn` initiated it.
  */
 export type TaskOrigin =
-  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent";
+  "cli" | "tui" | "http" | "sidecar" | "scheduler" | "agent" | "telegram";
 
 /**
  * Who ultimately triggered the task. Informational only — used for
