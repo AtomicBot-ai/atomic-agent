@@ -90,6 +90,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "browser.extract": "browser",
   "browser.site_tools": "browser",
   "browser.debug": "browser",
+  "browser.annotate": "browser",
 
   // os.shell.* — always approval-gated when approvals are on
   "os.shell.run": "approval_gated",

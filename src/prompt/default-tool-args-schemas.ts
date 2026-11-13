@@ -176,6 +176,16 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
   [
+    "browser.annotate",
+    obj(
+      {
+        action: { type: "string", enum: ["start", "read", "stop"] },
+        crops: booleanSchema,
+      },
+      ["action"],
+    ),
+  ],
+  [
     "browser.scroll",
     obj(
       {
