@@ -1246,6 +1246,13 @@ export class AgentClient extends EventEmitter {
       { text },
     );
 
+  /* ATO-1040: the chat's goal, read and set / paused / resumed / cleared
+     (session-goal-ipc.ts). An agent from before the routes answers 404. */
+  sessionGoal = (sessionId: string) =>
+    this.json<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}/goal`);
+  sessionGoalAction = (sessionId: string, body: Record<string, unknown>) =>
+    this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/goal`, body);
+
   task = (id: string) => this.json<unknown>(`/api/tasks/${encodeURIComponent(id)}`);
   /** ATO-1113: `POST /api/tasks`, the overnight run (overnight-ipc.ts); `workingDir` opens its session in that folder. */
   createTask = (body: Record<string, unknown>) => this.request<unknown>("POST", "/api/tasks", body);

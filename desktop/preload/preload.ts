@@ -244,6 +244,10 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-532: other apps' windows for the composer's window picker, and one of them captured (main/window-snapshot-ipc.ts). */
   snapshotWindows: () => ipcRenderer.invoke("snapshot:windows"),
   snapshotCapture: (id: string) => ipcRenderer.invoke("snapshot:capture", id),
+  /** ATO-1040: the chat's goal, and set / pause / resume / clear (main/session-goal-ipc.ts). */
+  goalGet: (sessionId: string) => ipcRenderer.invoke("goal:get", { sessionId }),
+  goalAction: (sessionId: string, body: { action: string; criteria?: string[]; maxRounds?: number }) =>
+    ipcRenderer.invoke("goal:action", { sessionId, body }),
   /** A dropped File's path on disk ("" for one that has none); the sandboxed window cannot read it itself. */
   pathForFile: (file: File) => {
     try {

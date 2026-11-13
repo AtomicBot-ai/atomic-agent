@@ -4170,7 +4170,9 @@ function composer() {
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   const backend = selBackend();
   // ATO-486: the agent's live plan, above the queue (plan-bar.js).
-  return '<div class="composerwrap">' + status + fzLiveHTML() + planBarHTML(S.sessionId, {esc, ic}) + q
+  // ATO-1040: the chat's goal and the goal form, under the plan (goal-card.js).
+  const goalBits = typeof goalCardHTML === 'function' ? goalCardHTML(S.sessionId, {esc, ic, busy: !!(S.busy || S.pending)}) + goalFormHTML({esc, ic}) : '';
+  return '<div class="composerwrap">' + status + fzLiveHTML() + planBarHTML(S.sessionId, {esc, ic}) + goalBits + q
     // Item 2 (voice input): the strip is ALWAYS emitted, hidden and empty
     // when there is nothing to say, so refreshVoice() can repaint it by
     // outerHTML without a render() that would move the caret.
@@ -4198,7 +4200,7 @@ function composer() {
         + (running ? 'Send to steer this turn…'
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask Atomic Agent\u2026') + '"></textarea>'
-      + attButtonHTML() + (typeof wsnapButtonHTML === 'function' ? wsnapButtonHTML() : '') + micButton() + sendButton() + '</div>'
+      + attButtonHTML() + (typeof wsnapButtonHTML === 'function' ? wsnapButtonHTML() : '') + (typeof goalButtonHTML === 'function' ? goalButtonHTML({ic}) : '') + micButton() + sendButton() + '</div>'
       /* B.7, Soft Tactile: Backend · Provider · Model, a
          spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
          so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
@@ -10705,6 +10707,7 @@ function onChatEvent(ev) {
       queueTurnEnded(sid, ev.turnId);   // Backlog 26
       FIRST_TURNS.delete(ev.turnId);   // item 27: a turn that ended before its stream named a session
       if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
+      if (sid && typeof goalTurnEnded === 'function') void goalTurnEnded(sid);  // ATO-1040: a pause / clear asked of its goal has landed
       if (ev.kind === 'error' && sid) ATTN.add(sid);
       const endedSince = (LIVE_TURNS.get(ev.turnId) || {}).startedAt || 0;   // B01: closeChatApprovals, read before liveTurnEnded drops it
       const endedTools = turnToolNames(LIVE_TURNS.get(ev.turnId));          // ATO-203: and the calls it made
@@ -10749,6 +10752,12 @@ function onChatEvent(ev) {
   if (ev && ev.kind === 'plan_updated') {
     const sid = pick(ev.payload, 'session_id', 'sessionId') || turnSid;
     if (planSet(sid, ev.payload && ev.payload.plan) && sid === S.sessionId) render();
+    return;
+  }
+  // ATO-1040: the running goal's status and marks, per chat (goal-card.js).
+  if (ev && ev.kind === 'goal_progress') {
+    const sid = pick(ev.payload, 'session_id', 'sessionId') || turnSid;
+    if (typeof goalSet === 'function' && goalSet(sid, ev.payload && ev.payload.goal) && sid === S.sessionId) render();
     return;
   }
   // Item 38: what a turn draws while its rows are not on screen waits for its chat to be opened.
@@ -21018,6 +21027,8 @@ async function openSession(id) {
   const data = res.data;
   // ATO-486: the plan the agent stored with the chat (behind the stream while its turn runs).
   planRestore(id, data.plan, live);
+  // ATO-1040: the chat's stored goal (an agent without goal routes stores none).
+  if (typeof goalRestore === 'function') goalRestore(id, data.goal, live);
   const turns = Array.isArray(data.turns) ? data.turns : [];
   const log = sessionTurnsToLog(turns);
   /* Item 38: the stored transcript has nothing of a turn that is running
