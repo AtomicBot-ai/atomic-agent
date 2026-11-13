@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { parseSkillFile } from "./skill-manifest.js";
@@ -81,12 +83,74 @@ describe("the motion starter skill", () => {
     });
   }
 
+  const absOut = resolve(tmpdir(), "out.mp4");
+
   it("parses render options", async () => {
     const mod = await import(pathToFileURL(scriptPath).href);
-    const opts = mod.parseArgs(["release", "out.mp4", "--fps", "24", "--w", "1080", "--h", "1920", "--params", "version=v1"]);
-    expect(opts).toMatchObject({ template: "release", out: "out.mp4", fps: 24, w: 1080, h: 1920, params: "version=v1" });
+    const opts = mod.parseArgs(["release", absOut, "--fps", "24", "--w", "1080", "--h", "1920", "--params", "version=v1"]);
+    expect(opts).toMatchObject({ template: "release", out: absOut, fps: 24, w: 1080, h: 1920, params: "version=v1" });
     expect(() => mod.parseArgs(["release"])).toThrow(/usage/);
-    expect(() => mod.parseArgs(["release", "o.mp4", "--fps", "0"])).toThrow(/positive/);
+    expect(() => mod.parseArgs(["release", absOut, "--fps", "0"])).toThrow(/positive/);
+  });
+
+  it("refuses a relative output path, which would vanish with the skill folder", async () => {
+    const mod = await import(pathToFileURL(scriptPath).href);
+    for (const rel of ["out.mp4", "./videos/out.mp4", "../out.mp4"]) {
+      expect(() => mod.parseArgs(["release", rel])).toThrow(/output path must be absolute/);
+    }
+    expect(mod.parseArgs(["release", absOut]).out).toBe(absOut);
+  });
+
+  it("refuses a relative custom template path but accepts bundled names and absolute paths", async () => {
+    const mod = await import(pathToFileURL(scriptPath).href);
+    expect(() => mod.resolveTemplate("./mine.html")).toThrow(/custom template must be an absolute path/);
+    expect(() => mod.resolveTemplate("mine.html")).toThrow(/absolute/);
+    const abs = resolve(tmpdir(), "mine.html");
+    expect(mod.resolveTemplate(abs)).toBe(abs);
+  });
+
+  it("tells the agent to pass an absolute output path and a long timeoutMs", () => {
+    const example = body.match(/\{ "tool": "skill\.run_script".*"script": "render-frames\.mjs".*\}/);
+    expect(example).not.toBeNull();
+    const call = JSON.parse(example![0]);
+    expect(call.args.timeoutMs).toBeGreaterThanOrEqual(180_000);
+    expect(call.args.args[1].startsWith("/")).toBe(true);
+    expect(body).toMatch(/\*\*The output path must be absolute\*\*/);
+    expect(body).toMatch(/\*\*Always pass `timeoutMs`\.\*\*/);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "kills the browser when the render script dies without cleaning up",
+    async () => {
+      const watchdog = join(root, "scripts", "chrome-watchdog.mjs");
+      const forever = ["-e", "setInterval(() => {}, 1000)"];
+      const fakeChrome = spawn(process.execPath, forever, { stdio: "ignore" });
+      const fakeRender = spawn(process.execPath, forever, { stdio: "ignore" });
+      const dir = mkdtempSync(join(tmpdir(), "motion-frames-"));
+      const dog = spawn(process.execPath, [watchdog, String(fakeRender.pid), String(fakeChrome.pid), dir], { stdio: "ignore" });
+      const chromeGone = new Promise<void>((ok) => fakeChrome.once("exit", () => ok()));
+      try {
+        await new Promise((r) => setTimeout(r, 500));
+        expect(fakeChrome.exitCode).toBeNull();
+        fakeRender.kill("SIGKILL");
+        await Promise.race([
+          chromeGone,
+          new Promise((_, fail) => setTimeout(() => fail(new Error("browser still running")), 8_000)),
+        ]);
+        await new Promise((r) => setTimeout(r, 2_000));
+        expect(existsSync(dir)).toBe(false);
+      } finally {
+        for (const c of [fakeChrome, fakeRender, dog]) if (c.exitCode === null) c.kill("SIGKILL");
+      }
+    },
+    20_000,
+  );
+
+  it("stops Chrome and ffmpeg on SIGTERM and SIGINT", () => {
+    const source = readFileSync(scriptPath, "utf8");
+    expect(source).toMatch(/\["SIGTERM", 143\], \["SIGINT", 130\]/);
+    expect(source).toMatch(/stopAll\(\);/);
+    expect(source).toMatch(/startWatchdog\(child\.pid/);
   });
 
   it("resolves bundled template names and reads their duration", async () => {

@@ -80,11 +80,22 @@ user can also write their own template:
      Chromium, Edge) and `ffmpeg`:
 
      ```json
-     [{ "tool": "skill.run_script", "args": { "skill": "motion", "script": "render-frames.mjs", "args": ["release", "./release-v0.7.0.mp4", "--params", "version=v0.7.0&headline=Desktop%20and%20terminal%20in%20one&items=Faster%20replies%7CNew%20tools", "--w", "1920", "--h", "1080"] } }]
+     [{ "tool": "skill.run_script", "args": { "skill": "motion", "script": "render-frames.mjs", "timeoutMs": 600000, "args": ["release", "/Users/<user>/Movies/release-v0.7.0.mp4", "--params", "version=v0.7.0&headline=Desktop%20and%20terminal%20in%20one&items=Faster%20replies%7CNew%20tools", "--w", "1920", "--h", "1080"] } }]
      ```
 
+     - **The output path must be absolute**, in a folder the user keeps
+       (their project, Desktop or Movies). The script refuses a relative
+       path: it would land in this skill's folder, which is replaced on
+       every start, and the video would disappear.
+     - **Always pass `timeoutMs`.** The default is 30 seconds, far too short
+       for a render. Allow about 2 seconds per frame plus a minute:
+       frames = duration x fps, so release at 30 fps (180 frames) needs
+       about `420000`, logo reveal (120 frames) about `300000`. Use
+       `600000` when unsure, more for long or 4K videos. If the run is
+       stopped anyway, the script takes its headless Chrome down with it.
+
      The first argument is a template name (`release`, `big-number`,
-     `logo-reveal`) or a path to the user's own HTML file. Options:
+     `logo-reveal`) or an absolute path to the user's own HTML file. Options:
      `--params`, `--fps` [30], `--w`, `--h`, `--duration` (default: the
      template's meta tag), `--keep-frames`. It drives one headless Chrome
      over the DevTools protocol (or Playwright if it is installed), calls
@@ -96,7 +107,7 @@ user can also write their own template:
      set `CHROME_PATH`.
 4. **Check the result**: `ffprobe` the file for duration and size, and
    extract one frame near the end to look at it:
-   `ffmpeg -ss 4 -i out.mp4 -frames:v 1 check.png`.
+   `ffmpeg -ss 4 -i /absolute/path/out.mp4 -frames:v 1 /absolute/path/check.png`.
 
 Rendering takes a while (every frame is a screenshot). Tell the user
 before starting a long or high-resolution render.

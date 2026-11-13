@@ -19,7 +19,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -45,6 +45,11 @@ export function parseArgs(argv) {
   }
   if (rest.length !== 2) throw new Error("usage: render-frames.mjs <template> <out.mp4> [options]");
   [opts.template, opts.out] = rest;
+  if (!isAbsolute(opts.out)) {
+    throw new Error(
+      `the output path must be absolute (got "${opts.out}"): a relative path would land in the skill folder, which is replaced on every start`,
+    );
+  }
   for (const k of ["fps", "w", "h"]) {
     if (!Number.isFinite(opts[k]) || opts[k] <= 0) throw new Error(`--${k} must be a positive number`);
   }
@@ -53,7 +58,53 @@ export function parseArgs(argv) {
 
 export function resolveTemplate(name) {
   if (TEMPLATES.includes(name)) return join(HERE, "..", "templates", `${name}.html`);
-  return resolve(name);
+  if (!isAbsolute(name)) {
+    throw new Error(
+      `a custom template must be an absolute path (got "${name}"), or one of: ${TEMPLATES.join(", ")}`,
+    );
+  }
+  return name;
+}
+
+/** Child processes (Chrome, ffmpeg) and temp folders to clean up if we are stopped. */
+const live = new Set();
+let stopping = false;
+
+/** Kill every tracked child and drop temp profiles. Safe to call twice. */
+export function stopAll() {
+  for (const entry of live) {
+    try {
+      if (entry.child.exitCode === null) entry.child.kill("SIGKILL");
+    } catch {
+      // already gone
+    }
+    if (entry.profile) {
+      try {
+        rmSync(entry.profile, { recursive: true, force: true });
+      } catch {
+        // a leftover temp profile is harmless
+      }
+    }
+  }
+  live.clear();
+}
+
+/**
+ * A separate tiny process that kills Chrome if this script dies without a
+ * chance to clean up (the skill runner's timeout uses SIGKILL, which no
+ * handler can catch). It is spawned with the same binary that runs this
+ * script, so it works wherever the script itself does.
+ */
+function startWatchdog(childPid, dirs) {
+  try {
+    const dog = spawn(process.execPath, [join(HERE, "chrome-watchdog.mjs"), String(process.pid), String(childPid), ...dirs], {
+      detached: true,
+      stdio: "ignore",
+    });
+    dog.unref();
+  } catch {
+    // without the watchdog only an uncatchable kill can orphan Chrome
+  }
 }
 
 /** `<meta name="motion:duration" content="6">` in the template, in seconds. */
@@ -108,6 +159,9 @@ function findChrome() {
 function run(cmd, args) {
   return new Promise((res, rej) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const entry = { child };
+    live.add(entry);
+    child.on("close", () => live.delete(entry));
     let err = "";
     child.stderr.on("data", (d) => { err = (err + d).slice(-2000); });
     child.on("error", rej);
@@ -193,6 +247,9 @@ async function captureWithChromeCdp(chrome, opts, templatePath, times, framesDir
     `--user-data-dir=${profile}`, `--window-size=${opts.w},${opts.h}`,
     "--remote-debugging-port=0", "about:blank",
   ], { stdio: "ignore" });
+  const entry = { child, profile };
+  live.add(entry);
+  if (child.pid !== undefined) startWatchdog(child.pid, [profile, framesDir]);
   let client;
   try {
     const portFile = join(profile, "DevToolsActivePort");
@@ -224,6 +281,7 @@ async function captureWithChromeCdp(chrome, opts, templatePath, times, framesDir
     const exited = new Promise((r) => child.once("exit", r));
     if (child.exitCode === null) child.kill();
     await Promise.race([exited, sleep(3000)]);
+    live.delete(entry);
     try {
       rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     } catch {
@@ -241,6 +299,8 @@ async function main(argv) {
   const times = frameTimes(duration, opts.fps);
   const chrome = findChrome();
   const framesDir = mkdtempSync(join(tmpdir(), "motion-frames-"));
+  const framesEntry = { child: { exitCode: 0, kill() {} }, profile: opts.keepFrames ? undefined : framesDir };
+  live.add(framesEntry);
   try {
     const chromium = await loadPlaywright();
     if (chromium) {
@@ -251,16 +311,26 @@ async function main(argv) {
       process.stdout.write(`capturing ${times.length} frames with ${chrome}\n`);
       await captureWithChromeCdp(chrome, opts, templatePath, times, framesDir);
     }
-    await run(process.env.FFMPEG_PATH || "ffmpeg", ffmpegArgs(framesDir, opts.fps, resolve(opts.out)));
-    process.stdout.write(`video: ${resolve(opts.out)} (${duration}s, ${opts.fps} fps, ${opts.w}x${opts.h})\n`);
+    await run(process.env.FFMPEG_PATH || "ffmpeg", ffmpegArgs(framesDir, opts.fps, opts.out));
+    process.stdout.write(`video: ${opts.out} (${duration}s, ${opts.fps} fps, ${opts.w}x${opts.h})\n`);
     if (opts.keepFrames) process.stdout.write(`frames kept in ${framesDir}\n`);
   } finally {
+    live.delete(framesEntry);
     if (!opts.keepFrames) rmSync(framesDir, { recursive: true, force: true });
   }
 }
 
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
+  // Stopped by the user or a timeout: take Chrome and ffmpeg down with us.
+  for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130], ["SIGHUP", 129]]) {
+    process.on(signal, () => {
+      if (stopping) return;
+      stopping = true;
+      stopAll();
+      process.exit(code);
+    });
+  }
   main(process.argv.slice(2)).catch((err) => {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
