@@ -141,3 +141,88 @@ test('leaving the chat pauses a reply clip, and coming back does not start it ag
     globalThis.window = had.window; globalThis.document = had.document;
   }
 });
+
+// ATO-1166: a reply clip can be kept from the chat, without opening Studio.
+test('a reply clip has Save As… and Show in Finder under it, each naming the clip', () => {
+  const html = M.chatVideoActionsHTML('/w/a "b".mp4', (s) => String(s).replace(/"/g, '&quot;'));
+  assert.match(html, /data-vid-act="save" data-vid-path="\/w\/a &quot;b&quot;\.mp4">Save As…<\/button>/);
+  assert.match(html, /data-vid-act="reveal" data-vid-path="\/w\/a &quot;b&quot;\.mp4">Show in Finder<\/button>/);
+  const had = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = { STUDIO: { mediaUrl: (p) => 'file://' + p } };
+  globalThis.document = { createElement: () => ({ addEventListener() {} }) };
+  try {
+    const slot = M.chatVideoSlotHTML('/w/ato-1166.mp4');
+    assert.match(slot, /^<div class="chat-vid-box"><div class="chat-vid" data-chat-vid="\/w\/ato-1166\.mp4"[^>]*><\/div><div class="chat-vid-acts">/);
+  } finally {
+    globalThis.window = had.window; globalThis.document = had.document;
+  }
+});
+
+test('Save As… says where the copy went, keeps quiet on cancel, and explains a failure', () => {
+  assert.deepEqual(M.chatVideoActionNote('save', { ok: true, path: '/Users/n/Desktop/clip.mp4' }), { title: 'Saved', sub: '/Users/n/Desktop/clip.mp4' });
+  assert.equal(M.chatVideoActionNote('save', { ok: false, reason: 'canceled' }), null);
+  assert.equal(M.chatVideoActionNote('save', { ok: false, reason: 'missing' }).title, 'Could not save it');
+  assert.match(M.chatVideoActionNote('save', { ok: false, reason: 'outside' }).sub, /home folder/);
+  assert.equal(M.chatVideoActionNote('save', { ok: false, reason: 'failed', error: 'EACCES' }).sub, 'EACCES');
+  assert.equal(M.chatVideoActionNote('reveal', { ok: true }), null);
+  assert.equal(M.chatVideoActionNote('reveal', { ok: false, reason: 'missing' }).title, 'Could not show it');
+  assert.equal(M.chatVideoActionNote('save', null).title, 'Could not save it');
+});
+
+test('the actions go through the reply-file bridge routes, and an old bridge or a throw is a failure note', async () => {
+  const calls = [];
+  const api = {
+    replySaveAs: (p) => { calls.push(['save', p]); return { ok: true, path: '/d/copy.mp4' }; },
+    replyReveal: (p) => { calls.push(['reveal', p]); return Promise.resolve({ ok: true }); },
+  };
+  assert.deepEqual(await M.chatVideoAction('save', '/w/c.mp4', api), { title: 'Saved', sub: '/d/copy.mp4' });
+  assert.equal(await M.chatVideoAction('reveal', '/w/c.mp4', api), null);
+  assert.deepEqual(calls, [['save', '/w/c.mp4'], ['reveal', '/w/c.mp4']]);
+  assert.equal((await M.chatVideoAction('save', '/w/c.mp4', {})).title, 'Could not save it');
+  assert.equal((await M.chatVideoAction('reveal', '/w/c.mp4', { replyReveal: () => { throw new Error('x'); } })).title, 'Could not show it');
+  assert.equal((await M.chatVideoAction('save', '', api)).title, 'Could not save it');
+  assert.equal(calls.length, 2, 'no call without a path');
+});
+
+test('before it is played a reply clip shows the frame 0.5 s in, and the first Play starts from the top', () => {
+  assert.equal(M.chatPosterTime(8), 0.5);
+  assert.equal(M.chatPosterTime(0.6), 0.3);
+  assert.equal(M.chatPosterTime(NaN), 0.5);
+  const on = {};
+  const v = { paused: true, currentTime: 0, duration: 4, addEventListener(t, f) { (on[t] = on[t] || []).push(f); } };
+  const fire = (t) => (on[t] || []).forEach((f) => f());
+  const had = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = { STUDIO: { mediaUrl: (p) => 'file://' + p } };
+  globalThis.document = { createElement: () => v };
+  try {
+    M.chatVideo('/w/ato-1166-poster.mp4');
+    fire('loadedmetadata');
+    assert.equal(v.currentTime, 0.5, 'the poster frame');
+    fire('play');
+    assert.equal(v.currentTime, 0, 'the first Play rewinds');
+    v.currentTime = 2; fire('play');
+    assert.equal(v.currentTime, 2, 'later plays keep their place');
+    fire('loadedmetadata');
+    assert.equal(v.currentTime, 2, 'the poster is set once');
+  } finally {
+    globalThis.window = had.window; globalThis.document = had.document;
+  }
+});
+
+test('a scrub before the first Play is kept', () => {
+  const on = {};
+  const v = { paused: true, currentTime: 0, duration: 4, addEventListener(t, f) { (on[t] = on[t] || []).push(f); } };
+  const fire = (t) => (on[t] || []).forEach((f) => f());
+  const had = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = { STUDIO: { mediaUrl: (p) => 'file://' + p } };
+  globalThis.document = { createElement: () => v };
+  try {
+    M.chatVideo('/w/ato-1166-scrub.mp4');
+    fire('loadedmetadata');
+    v.currentTime = 3;          // the person drags the scrubber
+    fire('play');
+    assert.equal(v.currentTime, 3);
+  } finally {
+    globalThis.window = had.window; globalThis.document = had.document;
+  }
+});
