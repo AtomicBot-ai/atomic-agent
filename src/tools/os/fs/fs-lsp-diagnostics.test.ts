@@ -73,6 +73,8 @@ describe("after-edit language-server diagnostics in fs tools (ATO-503)", () => {
         change: "edit",
         before: "const n: number = 1;\n",
         after: "const n: number = 'x';\n",
+        sessionId: "test-session",
+        signal: expect.any(AbortSignal),
       },
     ]);
     expect(result.summary.startsWith(BLOCK)).toBe(true);
