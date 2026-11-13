@@ -9,6 +9,8 @@
 # SM_CLIENT_CERT_FILE_B64, SM_CLIENT_CERT_PASSWORD, SM_CODE_SIGNING_CERT_SHA1_HASH
 # Linux packages (the key is shared with atc / eye-cli): LINUX_PACKAGES_GPG_KEY (the armored
 # private key of packaging/atomic-chat.asc), LINUX_PACKAGES_GPG_PASSPHRASE
+# Release signature (optional until it is set): RELEASE_SIGNING_KEY, the PEM Ed25519 private key
+# whose public half is RELEASE_SIGNING_PUBLIC_KEY in src/update/release-signature.ts and install.sh.
 
 name: Release (SEA)
 
@@ -373,6 +375,10 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+      # Build provenance (ATO-680): the OIDC token the attestation is signed with, and the right
+      # to store it on the repository's attestations.
+      id-token: write
+      attestations: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
@@ -394,6 +400,46 @@ jobs:
           else
             echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           fi
+
+      # One digest list for every asset of the release (the `.sha256` files beside each asset stay
+      # for install.sh, install.ps1 and the AUR). This is what the release signature covers.
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd release-assets
+          rm -f SHA256SUMS SHA256SUMS.sig
+          find . -maxdepth 1 -type f ! -name '*.sha256' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
+
+      # Detached raw Ed25519 signature over SHA256SUMS, checked by `atomic-agent update`
+      # (src/update/release-signature.ts) and install.sh. Skipped until the RELEASE_SIGNING_KEY
+      # secret exists, so the release still goes out without it. Key setup and rotation:
+      # scripts/docs/bundling.md, "Release signature".
+      - name: Sign SHA256SUMS (Ed25519)
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::notice::RELEASE_SIGNING_KEY is not set; the release ships SHA256SUMS without a signature"
+            exit 0
+          fi
+          key="$RUNNER_TEMP/release-signing-key.pem"
+          (umask 077; printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key")
+          openssl pkeyutl -sign -inkey "$key" -rawin -in release-assets/SHA256SUMS -out release-assets/SHA256SUMS.sig
+          openssl pkey -in "$key" -pubout -out "$RUNNER_TEMP/release-signing-key.pub.pem"
+          openssl pkeyutl -verify -pubin -inkey "$RUNNER_TEMP/release-signing-key.pub.pem" -rawin \
+            -in release-assets/SHA256SUMS -sigfile release-assets/SHA256SUMS.sig
+          rm -f "$key"
+
+      # Signed SLSA build provenance for every asset, stored on the repository's attestations and
+      # checked with `gh attestation verify <file> --repo AtomicBot-ai/atomic-agent`. Needs no secret.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release-assets/atomic-agent*
+            release-assets/SHA256SUMS
 
       - name: Create draft release and upload assets
         env:
@@ -421,6 +467,11 @@ jobs:
               gh release upload "$TAG" "$f" --clobber
             fi
           done
+          # A re-run onto a draft that was signed before must not leave the old signature beside new
+          # digests: the updater would refuse the release.
+          if [[ ! -f SHA256SUMS.sig ]]; then
+            gh release delete-asset "$TAG" SHA256SUMS.sig --yes 2>/dev/null || true
+          fi
           echo "Draft release: $TAG (review and publish on GitHub)"
 
   # Each package of the draft, installed the way README.md says in a clean container of the distro:

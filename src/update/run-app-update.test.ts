@@ -54,6 +54,21 @@ describe("buildUpdateInvocation", () => {
     expect(inv.env.ATOMIC_AGENT_NO_PATH).toBe("1");
     expect(inv.env.ATOMIC_AGENT_REPO).toBe("AtomicBot-ai/atomic-agent");
     expect(inv.env.ATOMIC_AGENT_VERSION).toBeUndefined();
+    expect(inv.env.ATOMIC_AGENT_EXPECTED_SHA256).toBeUndefined();
+  });
+
+  it("hands the signed archive digest to the installer (ATO-680)", () => {
+    const sha = "a".repeat(64);
+    for (const platform of ["linux", "win32"] as const) {
+      const inv = buildUpdateInvocation({
+        platform,
+        repo: "AtomicBot-ai/atomic-agent",
+        installDir: "/opt/x",
+        expectedSha256: sha,
+        baseEnv: {},
+      });
+      expect(inv.env.ATOMIC_AGENT_EXPECTED_SHA256).toBe(sha);
+    }
   });
 
   it("builds a Windows powershell invocation against install.ps1", () => {

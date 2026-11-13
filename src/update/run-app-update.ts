@@ -5,6 +5,10 @@ import {
   detectInstallSource,
   packagedUpdateRefusal,
 } from "./install-source.js";
+import {
+  ReleaseSignatureError,
+  resolveSignedArchiveSha256,
+} from "./release-signature.js";
 
 export interface RunAppUpdateOptions {
   repo?: string;
@@ -13,6 +17,8 @@ export interface RunAppUpdateOptions {
   /** Streamed install-script output, one trimmed line at a time. */
   onLine?: (line: string) => void;
   signal?: AbortSignal;
+  /** Diagnostics that are not installer output (the release signature check). */
+  onDebug?: (line: string) => void;
 }
 
 export interface RunAppUpdateResult {
@@ -129,9 +135,15 @@ export function buildUpdateInvocation(params: {
   repo: string;
   installDir: string;
   version?: string;
+  /**
+   * Digest of the archive taken from the release's signed SHA256SUMS
+   * (release-signature.ts). The installer refuses an archive that hashes to
+   * anything else, on top of its own `.sha256` check.
+   */
+  expectedSha256?: string;
   baseEnv?: NodeJS.ProcessEnv;
 }): UpdateInvocation {
-  const { platform, repo, installDir, version } = params;
+  const { platform, repo, installDir, version, expectedSha256 } = params;
   const baseEnv = params.baseEnv ?? process.env;
   const env: NodeJS.ProcessEnv = {
     ...baseEnv,
@@ -140,6 +152,7 @@ export function buildUpdateInvocation(params: {
     // The PATH entry already exists on an upgrade; don't touch it.
     ATOMIC_AGENT_NO_PATH: "1",
     ...(version ? { ATOMIC_AGENT_VERSION: version } : {}),
+    ...(expectedSha256 ? { ATOMIC_AGENT_EXPECTED_SHA256: expectedSha256 } : {}),
   };
 
   if (platform === "win32") {
@@ -188,11 +201,31 @@ export async function runAppUpdate(
 
   const repo = opts?.repo ?? DEFAULT_REPO;
   const installDir = dirname(process.execPath);
+  // The per-asset `.sha256` sits in the same release as the archive, so
+  // whoever can replace one can replace both. A signed SHA256SUMS cannot be
+  // forged that way (ATO-680). Skipped while no key is embedded or the
+  // release carries no signature; see release-signature.ts.
+  let expectedSha256: string | null;
+  try {
+    expectedSha256 = await resolveSignedArchiveSha256({
+      repo,
+      ...(opts?.version ? { version: opts.version } : {}),
+      ...(opts?.signal ? { signal: opts.signal } : {}),
+      ...(opts?.onDebug ? { onDebug: opts.onDebug } : {}),
+    });
+  } catch (err) {
+    if (err instanceof ReleaseSignatureError) {
+      throw new AppUpdateError(err.message);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    throw new AppUpdateError(`release signature check failed: ${message}`);
+  }
   const invocation = buildUpdateInvocation({
     platform: process.platform,
     repo,
     installDir,
     ...(opts?.version ? { version: opts.version } : {}),
+    ...(expectedSha256 ? { expectedSha256 } : {}),
   });
 
   await runProcess(invocation, opts?.onLine, opts?.signal);
