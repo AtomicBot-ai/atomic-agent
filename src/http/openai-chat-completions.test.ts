@@ -119,6 +119,29 @@ describe("POST /v1/chat/completions (non-stream)", () => {
     const reloaded = harness.runtime.sessionStore.load(session.id);
     expect(reloaded?.turns.length).toBeGreaterThan(0);
   });
+
+  it("stamps the project's instructions on the session, keeps them when absent, clears them on null (ATO-42)", async () => {
+    const session = harness.runtime.createSession({ metadata: { source: "test-preload" } });
+    const send = (extra: Record<string, unknown>) =>
+      postChat(harness.baseUrl, { model: "atomic-agent", session_id: session.id, messages: [{ role: "user", content: "hello" }], ...extra });
+    expect((await send({ project_instructions: "Answer in French.", project_name: "Docs" })).status).toBe(200);
+    expect(harness.runtime.sessionStore.load(session.id)?.metadata.project).toEqual({ name: "Docs", instructions: "Answer in French." });
+    expect((await send({})).status).toBe(200);
+    expect(harness.runtime.sessionStore.load(session.id)?.metadata.project).toEqual({ name: "Docs", instructions: "Answer in French." });
+    expect((await send({ project_instructions: null })).status).toBe(200);
+    expect(harness.runtime.sessionStore.load(session.id)?.metadata.project).toBeUndefined();
+  });
+
+  it("refuses project_instructions that is not a string (ATO-42)", async () => {
+    const response = await postChat(harness.baseUrl, {
+      model: "atomic-agent",
+      messages: [{ role: "user", content: "hello" }],
+      project_instructions: { text: "x" },
+    });
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: { param?: string } };
+    expect(body.error.param).toBe("project_instructions");
+  });
 });
 
 describe("POST /v1/chat/completions concurrency contract", () => {

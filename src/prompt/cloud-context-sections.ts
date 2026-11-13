@@ -7,6 +7,7 @@ import type { BuildPromptInput } from "./build-prompt-types.js";
 import { formatToolForLoadedTail } from "./stable-prefix.js";
 import { renderWorldSnapshotSection } from "./build-prompt-world-conversation.js";
 import { renderTaskPolicy } from "./render-task-policy.js";
+import { renderSessionProjectBody } from "../session/session-project.js";
 
 /** Selection is unchanged; selected content has no presentation quota. */
 export function cloudContextSections(input: BuildPromptInput): Map<string, string> {
@@ -22,6 +23,8 @@ export function cloudContextSections(input: BuildPromptInput): Map<string, strin
     for (const rule of input.workspace.instructions) add(`project-instructions:${rule.scope}:${rule.path}`, `Source: ${rule.path}\nScope: ${rule.scope} (relative to workspace); priority: ${rule.priority}\n${rule.body}`);
     add("disabled-skills", input.workspace.skills.entries.filter(e => e.disabledReasons.length).map(e => `${e.record.manifest.name}: ${e.disabledReasons.join(", ")}; do not invoke this skill or reproduce it to bypass disabling.`).join("\n"));
   }
+  // ATO-42: the instructions of the client's project this chat is in, like a folder's AGENTS.md.
+  add("project", renderSessionProjectBody(state));
   for (const tool of state.loadedTools ?? []) add(`tool:${tool.name}`,
     formatToolForLoadedTail(tool.name, tool.summary, tool.argsSchema, tool.examples));
   add("session-facts", state.knownFacts.map((fact) => `- ${fact.text}`).join("\n"));
