@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CompletionResult } from "../llm/llama-server-client.js";
-import { SESSION_TITLE_SESSION_PREFIX } from "../session/session-title.js";
 
 import { EXTENSIONS_HEADER, QUESTIONS_HEADER } from "./openai-chat-completions.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
@@ -20,8 +19,7 @@ describe("ask_user over POST /v1/chat/completions", () => {
     prompts.length = 0;
     harness = await startTestHarness({
       llamaComplete: async (params): Promise<CompletionResult> => {
-        // The chat's own turn, not the session namer that runs after it.
-        if (!params.sessionId.startsWith(SESSION_TITLE_SESSION_PREFIX)) prompts.push(params.prompt);
+        prompts.push(params.prompt);
         return {
           content: JSON.stringify({ tool: "reply", args: { text: "ok" } }),
           reasoningContent: "",
@@ -48,8 +46,11 @@ describe("ask_user over POST /v1/chat/completions", () => {
     });
     expect(response.status).toBe(200);
     await response.json();
-    expect(prompts.length).toBeGreaterThan(0);
-    return prompts.at(-1)!;
+    // The chat turn's own prompt: the session namer and the memory
+    // extractor complete after it, without the tool list.
+    const turn = prompts.find((prompt) => prompt.includes("### tools"));
+    expect(turn).toBeDefined();
+    return turn!;
   }
 
   it("leaves ask_user out of a desktop (extensions) turn that does not declare questions", async () => {
