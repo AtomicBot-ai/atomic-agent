@@ -13,6 +13,7 @@ import {
 import { reportAnalyticsOptOut, resolveSurface } from "../analytics/index.js";
 import { getAppVersion } from "../version.js";
 import { HELP } from "./config-help.js";
+import { handleSecrets } from "./config-secrets-command.js";
 import {
   CONFIG_CHANGED_EXIT_CODE,
   CONFIG_CHANGED_MESSAGE,
@@ -60,6 +61,8 @@ export async function configCommand(
       case "path":
         process.stdout.write(`${getConfig().paths.userConfigFile}\n`);
         return 0;
+      case "secrets":
+        return handleSecrets(args.slice(1));
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);

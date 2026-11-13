@@ -243,6 +243,11 @@ jobs:
           $sqlite = Get-ChildItem -Path "node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
           foreach ($f in $sqlite) { $targets += $f.FullName }
 
+          # @napi-rs/keyring prebuild (opt-in OS keychain) — copied into node_modules/ later.
+          $keyring = Get-ChildItem -Path "node_modules\@napi-rs" -Directory -Filter "keyring-*" -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-ChildItem -Path $_.FullName -Filter "*.node" -ErrorAction SilentlyContinue }
+          foreach ($f in $keyring) { $targets += $f.FullName }
+
           # signtool is a native command, so a failure sets $LASTEXITCODE but does
           # not trip $ErrorActionPreference. Check it, or an unsigned binary ships
           # (v0.6.6's atomic-agent.exe did).

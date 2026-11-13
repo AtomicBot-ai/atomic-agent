@@ -96,6 +96,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "@mozilla/readability": "^0.6.0",
+    "@napi-rs/keyring": "^2.1.2",
     "@types/marked": "^5.0.2",
     "better-sqlite3": "^12.9.0",
     "chokidar": "^5.0.0",
