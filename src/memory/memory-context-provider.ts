@@ -16,6 +16,7 @@ import type {
   ProcedureStore,
 } from "./procedures/procedure-store.js";
 import type { RecallNameGuard } from "./recall-name-guard.js";
+import { SUPERSEDED_NOTE_TAG, isSupersededNote } from "./reconcile/note-reconcile-runner.js";
 
 /**
  * Configuration for the default memory context provider.
@@ -103,6 +104,12 @@ export interface DefaultMemoryContextProviderOptions {
    * `### lessons`. Unset: every row passes, as before.
    */
   nameGuard?: RecallNameGuard;
+  /**
+   * ATO-672. Leave notes tagged `superseded` (marked stale by note
+   * reconciliation) out of `### recalled` and `### memory-index`. Set
+   * when `memory.notes.reconcile` is on; unset keeps the old output.
+   */
+  hideSuperseded?: boolean;
 }
 
 /**
@@ -133,6 +140,7 @@ export function createDefaultMemoryContextProvider(
             k: opts.recall.k,
             query: buildRecallQuery(input),
             workingDir: opts.workingDir,
+            hideSuperseded: opts.hideSuperseded === true,
           })
         : [];
       const expanded = expandWithLinks({
@@ -140,6 +148,7 @@ export function createDefaultMemoryContextProvider(
         base: recalledBase,
         links: opts.links,
         metrics: opts.metrics,
+        hideSuperseded: opts.hideSuperseded === true,
       });
       // Ids held out by the name guard are still excluded from the
       // index below, which would hold them out too.
@@ -154,6 +163,7 @@ export function createDefaultMemoryContextProvider(
             limit: opts.index.limit,
             previewChars: opts.index.previewChars,
             workingDir: opts.workingDir,
+            hideSuperseded: opts.hideSuperseded === true,
             excludeIds: recalledIds,
             ...(guard ? { nameGuard: guard } : {}),
           })
@@ -271,6 +281,7 @@ interface LoadRecalledArgs {
   k: number;
   query: string;
   workingDir: string | null | undefined;
+  hideSuperseded: boolean;
 }
 
 /**
@@ -287,12 +298,13 @@ async function loadRecalled(
   const query = args.query.trim();
   if (query.length === 0) return [];
   try {
-    return await args.store.recallHybridAsync(query, {
+    const hits = await args.store.recallHybridAsync(query, {
       k: args.k,
       ...(args.workingDir !== undefined
         ? { scope: "project" as const, workingDir: args.workingDir }
         : {}),
     });
+    return args.hideSuperseded ? hits.filter((e) => !isSupersededNote(e)) : hits;
   } catch {
     return [];
   }
@@ -314,6 +326,7 @@ interface ExpandArgs {
   base: readonly MemoryEntry[];
   links: DefaultMemoryContextProviderOptions["links"];
   metrics: AgentMetrics | undefined;
+  hideSuperseded: boolean;
 }
 
 /**
@@ -349,6 +362,7 @@ function expandWithLinks(args: ExpandArgs): readonly MemoryEntry[] {
     if (seen.has(id)) continue;
     const entry = args.store.get(id);
     if (!entry) continue;
+    if (args.hideSuperseded && isSupersededNote(entry)) continue;
     hydrated.push(entry);
     seen.add(id);
   }
@@ -365,6 +379,7 @@ interface LoadIndexArgs {
   limit: number;
   previewChars: number;
   workingDir: string | null | undefined;
+  hideSuperseded: boolean;
   excludeIds: ReadonlySet<number>;
   nameGuard?: RecallNameGuard;
 }
@@ -383,6 +398,7 @@ function loadIndex(args: LoadIndexArgs): readonly MemoryIndexEntry[] {
       // is now distilled into a lesson. They remain readable by id
       // via `memory.notes.recall { id }` (cross-phase invariant 9).
       excludeArchived: true,
+      ...(args.hideSuperseded ? { excludeTags: [SUPERSEDED_NOTE_TAG] } : {}),
       ...(args.workingDir !== undefined
         ? { scope: "project" as const, workingDir: args.workingDir }
         : {}),

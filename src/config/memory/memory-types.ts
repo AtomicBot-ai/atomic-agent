@@ -81,6 +81,13 @@ export interface RuntimeMemoryConfig {
     maxContentChars: number;
     /** Default `k` when `memory.notes.recall` omits it. */
     recallDefaultK: number;
+    /**
+     * ATO-672. After reflection writes a note, one extra background
+     * model call compares it with similar older notes and marks the ones
+     * it replaces (or the new note, when it only repeats one) with the
+     * `superseded` tag, which keeps them out of the prompt. Default off.
+     */
+    reconcile: boolean;
   };
   /**
    * Pre-step recall injection: each turn, the agent-loop can pre-fetch
@@ -325,6 +332,7 @@ export interface UserMemoryConfig {
     maxEntries: number;
     maxContentChars: number;
     recallDefaultK: number;
+    reconcile: boolean;
   };
   recallInjection: {
     enabled: boolean;

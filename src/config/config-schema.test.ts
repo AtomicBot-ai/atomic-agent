@@ -582,6 +582,7 @@ describe("parseUserConfigFile", () => {
       maxEntries: 50,
       maxContentChars: 1_000,
       recallDefaultK: 3,
+      reconcile: false,
     });
   });
 
