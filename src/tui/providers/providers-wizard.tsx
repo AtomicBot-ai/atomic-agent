@@ -518,12 +518,19 @@ export function ProvidersWizard(props: {
   }
 
   if (w.phase === "base_url") {
+    // A per-account preset (Azure, Bedrock) says what to change in its
+    // prefilled template; every other URL step keeps the plain hint.
+    const endpointHint = w.presetId
+      ? findProviderPreset(w.presetId)?.perAccountEndpoint?.hint
+      : undefined;
     return renderLineField({
       title: "API base URL",
       value: w.baseUrlLine,
       placeholder: OPENAI_COMPAT_DEFAULT_BASE_URL,
       // ATO-1066: a model on another computer is this row too.
-      hint: "Enter to continue · Esc back · another computer: its address, e.g. 192.168.1.20:8080",
+      hint: endpointHint
+        ? `${endpointHint} · Enter to continue · Esc back`
+        : "Enter to continue · Esc back · another computer: its address, e.g. 192.168.1.20:8080",
       error: w.error,
     });
   }
