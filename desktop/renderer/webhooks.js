@@ -7,11 +7,20 @@
    from memory when the box is closed and never read back.
    An agent from before the routes says "Update the agent to manage
    webhooks" and changes nothing.
+   Outside services never post to the agent's own address: it stays on
+   127.0.0.1 behind this app's key. They reach a route only through the
+   webhook tunnel listener (`atag serve --tunnel`, ATO-625), signed with
+   the route's own secret. When the agent reports the tunnel up
+   (GET /api/webhooks `tunnel.publicUrl`, or a route's `publicUrl`) that
+   public address is the one shown and copied; otherwise the pane says how
+   to turn the tunnel on.
    Loaded before renderer.js; declares only. Shared by the renderer and the
    Node checks (test/webhooks.test.mjs). No DOM, no IPC of its own. */
 
 const WHK_OLD_AGENT = 'Update the agent to manage webhooks.';
 const WHK_EMPTY = 'No webhooks yet. Add one and each event becomes a task for the agent.';
+const WHK_TUNNEL_HOWTO = 'Outside services (GitHub, Stripe) reach these routes only through the webhook tunnel: start the agent with atag serve --tunnel (cloudflared must be installed). The public address then shows here. Each route is checked with its own secret.';
+const WHK_TUNNEL_UP = 'Outside services post to the public address through the webhook tunnel, which serves only webhook routes. Each route is checked with its own secret.';
 
 /* [preset, label, where the secret goes, the starting prompt, secret field: 'none' | 'optional' | 'required'] */
 const WHK_PRESETS = [
@@ -47,6 +56,24 @@ function whkSuggestName(preset, taken) {
 function whkUrl(baseUrl, path) {
   const b = String(baseUrl || '').replace(/\/+$/, '');
   return b ? b + path : path;
+}
+
+/** The tunnel as the agent reports it, or null (an agent without the tunnel, or a value that is not an https origin). */
+function whkTunnel(v) {
+  if (!v || typeof v !== 'object') return null;
+  const state = ['off', 'starting', 'up', 'failed'].includes(v.state) ? v.state : 'off';
+  const publicUrl = typeof v.publicUrl === 'string' && /^https:\/\/[^\s/]+\/?$/.test(v.publicUrl) ? v.publicUrl.replace(/\/+$/, '') : null;
+  return {state, publicUrl: state === 'up' ? publicUrl : null, error: typeof v.error === 'string' ? v.error : null};
+}
+
+/** The public address an outside sender posts to, or '' while there is none:
+    the route's own publicUrl, else the tunnel origin plus the route's path.
+    A route without a secret gets none: the tunnel turns it away. */
+function whkPublicUrl(st, w) {
+  if (!w || w.hasSecret === false) return '';
+  if (typeof w.publicUrl === 'string' && /^https:\/\//.test(w.publicUrl)) return w.publicUrl;
+  const t = st && st.data && st.data.tunnel;
+  return t && t.publicUrl && typeof w.path === 'string' ? t.publicUrl + w.path : '';
 }
 
 /** What is wrong with the form, in words, or '' when it can be sent. */
@@ -88,7 +115,7 @@ function createWebhooks(api) {
       st.error = null;
       st.baseUrl = typeof res.baseUrl === 'string' ? res.baseUrl : '';
       st.remote = !!res.remote;
-      st.data = {webhooks: whkList(d.webhooks), tasksEnabled: d.tasksEnabled !== false};
+      st.data = {webhooks: whkList(d.webhooks), tasksEnabled: d.tasksEnabled !== false, tunnel: whkTunnel(d.tunnel)};
       return st;
     },
     /* Another agent is on the wire: start over, and forget a secret still on screen. */
@@ -132,7 +159,9 @@ function createWebhooks(api) {
       const d = res.data || {};
       const hook = d.webhook && whkNameOk(d.webhook.name) ? d.webhook : {name: f.name, path: '/api/webhooks/' + f.name, verify: f.verify};
       if (st.data && !st.data.webhooks.some((w) => w.name === hook.name)) st.data.webhooks.push(hook);
-      st.created = {name: hook.name, verify: hook.verify || f.verify, url: whkUrl(st.baseUrl, hook.path || ('/api/webhooks/' + hook.name)),
+      const path = hook.path || ('/api/webhooks/' + hook.name);
+      st.created = {name: hook.name, verify: hook.verify || f.verify, path,
+        url: whkPublicUrl(st, {...hook, path, hasSecret: hook.hasSecret !== false}),
         secret: typeof d.secret === 'string' ? d.secret : ''};
       st.form = null;
       return {ok: true};
@@ -173,9 +202,11 @@ function webhooksHTML(st, deps) {
     return '<div class="set-pane set-whk">' + head() + (st.error ? err : note('<span class="tk-spin"></span> Loading webhooks…', 'set-whk-loading')) + '</div>';
   }
   const newBtn = st.form ? '' : '<button class="btn btn-p sm" data-act="whk:new" title="Add a webhook">New webhook</button>';
-  const reach = st.remote
-    ? 'Senders must also send this agent’s API key.'
-    : 'Outside services can’t deliver to this address yet: the agent only answers callers that hold this app’s key, and the address changes when the agent restarts.';
+  const t = st.data.tunnel;
+  const reach = t && t.state === 'up' && t.publicUrl ? WHK_TUNNEL_UP
+    : t && t.state === 'starting' ? 'The webhook tunnel is starting; the public address shows here when it is up.'
+    : t && t.state === 'failed' ? 'The webhook tunnel stopped' + (t.error ? ' (' + t.error + ')' : '') + '. ' + WHK_TUNNEL_HOWTO
+    : WHK_TUNNEL_HOWTO;
   const parts = [head(newBtn), note(esc('Each event a sender posts becomes a task with your prompt. ' + reach), 'set-whk-reach')];
   if (!st.data.tasksEnabled) parts.push('<div class="tk-help tk-help--warn set-privnote set-whk-tasksoff">Tasks are off in the agent’s config, so webhooks are turned away until they are on.</div>');
 
@@ -183,8 +214,11 @@ function webhooksHTML(st, deps) {
     const c = st.created;
     parts.push('<div class="tk-help set-whk-created" role="status">'
       + '<div class="t">“' + esc(c.name) + '” is ready. Copy the secret now: it is not shown again.</div>'
-      + '<div class="set-whk-kv"><span>Address</span><code>' + esc(c.url) + '</code>'
-        + '<button class="btn btn-s xs" data-act="whk:copyurl:' + esc(c.name) + '">Copy</button></div>'
+      + (c.url
+        ? '<div class="set-whk-kv"><span>Address</span><code>' + esc(c.url) + '</code>'
+          + '<button class="btn btn-s xs" data-act="whk:copyurl:' + esc(c.name) + '">Copy</button></div>'
+        : '<div class="set-whk-kv"><span>Path</span><code>' + esc(c.path) + '</code></div>'
+          + '<div class="d">The public address shows here once the webhook tunnel is up.</div>')
       + (c.secret ? '<div class="set-whk-kv"><span>Secret</span><code class="set-whk-secret">' + esc(c.secret) + '</code>'
         + '<button class="btn btn-s xs" data-act="whk:copysecret">Copy</button></div>' : '')
       + '<div class="d">' + esc(whkPreset(c.verify)[2]) + '</div>'
@@ -215,21 +249,21 @@ function webhooksHTML(st, deps) {
   }
 
   const rows = st.data.webhooks.map((w) => {
-    const url = whkUrl(st.baseUrl, w.path);
+    const url = whkPublicUrl(st, w);
     const asking = st.confirm === w.name;
     const busy = st.busy.has(w.name);
     const acts = asking
       ? '<span class="set-whk-ask">Delete “' + esc(w.name) + '”?</span>'
         + '<button class="btn btn-g sm" data-act="whk:keep">Keep</button>'
         + '<button class="btn btn-danger sm" data-act="whk:delyes:' + esc(w.name) + '"' + (busy ? ' disabled' : '') + '>Delete</button>'
-      : '<button class="btn btn-s sm" data-act="whk:copyurl:' + esc(w.name) + '" title="Copy the address">Copy address</button>'
+      : (url ? '<button class="btn btn-s sm" data-act="whk:copyurl:' + esc(w.name) + '" title="Copy the public address">Copy address</button>' : '')
         + '<button class="btn btn-s sm" data-act="whk:del:' + esc(w.name) + '" title="Delete this webhook">Delete</button>';
     const bits = [esc(whkPresetLabel(w.verify))];
-    if (w.hasSecret === false) bits.push('no secret');
+    if (w.hasSecret === false) bits.push('no secret, so the tunnel turns it away');
     if (w.live === false) bits.push('starts after the agent restarts');
     return '<div class="tk-setrow set-whk-row" data-whk="' + esc(w.name) + '">'
       + '<div class="body"><div class="t">' + esc(w.name) + ' <span class="d">' + bits.join(' · ') + '</span></div>'
-        + '<div class="d"><code>' + esc(url) + '</code></div></div>'
+        + '<div class="d"><code>' + esc(url || w.path) + '</code></div></div>'
       + acts + '</div>';
   });
   if (!rows.length && !st.form && !st.created) parts.push(note(esc(WHK_EMPTY), 'set-whk-empty'));
@@ -238,4 +272,4 @@ function webhooksHTML(st, deps) {
   return '<div class="set-pane set-whk">' + parts.join('') + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {WHK_OLD_AGENT, WHK_EMPTY, WHK_PRESETS, whkPreset, whkPresetLabel, whkNameOk, whkSuggestName, whkUrl, whkFormError, createWebhooks, webhooksHTML};
+if (typeof module !== 'undefined') module.exports = {WHK_OLD_AGENT, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_TUNNEL_UP, WHK_PRESETS, whkPreset, whkPresetLabel, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError, createWebhooks, webhooksHTML};

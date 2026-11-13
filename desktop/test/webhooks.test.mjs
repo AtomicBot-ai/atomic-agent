@@ -8,8 +8,9 @@ import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const {WHK_OLD_AGENT, WHK_EMPTY, whkPreset, whkNameOk, whkSuggestName, whkUrl, whkFormError,
+const {WHK_OLD_AGENT, WHK_EMPTY, WHK_TUNNEL_HOWTO, whkPreset, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError,
   createWebhooks, webhooksHTML} = require('../renderer/webhooks.js');
+const { readFileSync } = require('node:fs');
 const { cleanWebhookCreate, webhookNameOk } = require('../out/main/webhooks-ipc.js');
 const { AgentClient } = require('../out/main/agent-client.js');
 
@@ -60,8 +61,11 @@ test('list, add a route, the secret shows once, then it is gone', async () => {
   await w.load();
   assert.equal(w.state.data.webhooks.length, 1);
   let html = webhooksHTML(w.state, deps);
-  assert.match(html, /http:\/\/127\.0\.0\.1:4100\/api\/webhooks\/github/);
-  assert.match(html, /can’t deliver to this address yet/);
+  // No tunnel: the path only, never the agent's own loopback address, and how to turn the tunnel on.
+  assert.match(html, /<code>\/api\/webhooks\/github<\/code>/);
+  assert.doesNotMatch(html, /127\.0\.0\.1/);
+  assert.doesNotMatch(html, /whk:copyurl:github/);
+  assert.match(html, /atag serve --tunnel/);
 
   w.openForm('github');
   assert.equal(w.state.form.name, 'github-2');
@@ -148,8 +152,63 @@ test('an agent from before the routes, a read error, tasks off, a remote agent',
   const remote = createWebhooks(fakeApi({reads: [listAnswer([gh], {remote: true, baseUrl: 'https://vps.example:8080'})]}));
   await remote.load();
   const html = webhooksHTML(remote.state, deps);
-  assert.match(html, /https:\/\/vps\.example:8080\/api\/webhooks\/github/);
-  assert.match(html, /API key/);
+  // A remote agent's own address is not a webhook address either: only the tunnel is.
+  assert.doesNotMatch(html, /vps\.example/);
+  assert.match(html, /atag serve --tunnel/);
+});
+
+test('tunnel up: the public address is shown and copied; a route without a secret gets none', async () => {
+  const plain = {...gh, name: 'plain', path: '/api/webhooks/plain', verify: 'header', hasSecret: false};
+  const tunnel = {state: 'up', mode: 'quick', publicUrl: 'https://calm-words.trycloudflare.com', error: null};
+  const w = createWebhooks(fakeApi({reads: [listAnswer([gh, plain], {data: {webhooks: [gh, plain], tasksEnabled: true, tunnel}})],
+    creates: [{ok: true, data: {webhook: {name: 'github-2', path: '/api/webhooks/github-2', verify: 'github', hasSecret: true, live: true}, secret: 'abc'}}]}));
+  await w.load();
+  assert.equal(whkPublicUrl(w.state, gh), 'https://calm-words.trycloudflare.com/api/webhooks/github');
+  assert.equal(whkPublicUrl(w.state, plain), '');
+  // A route's own publicUrl (ATO-625's GET /api/webhooks) wins.
+  assert.equal(whkPublicUrl(w.state, {...gh, publicUrl: 'https://hooks.example.com/api/webhooks/github'}), 'https://hooks.example.com/api/webhooks/github');
+  const html = webhooksHTML(w.state, deps);
+  assert.match(html, /https:\/\/calm-words\.trycloudflare\.com\/api\/webhooks\/github/);
+  assert.match(html, /whk:copyurl:github"/);
+  assert.doesNotMatch(html, /whk:copyurl:plain/);
+  assert.match(html, /tunnel turns it away/);
+  assert.doesNotMatch(html, /atag serve --tunnel/);
+  w.openForm('github');
+  assert.equal((await w.create()).ok, true);
+  assert.equal(w.state.created.url, 'https://calm-words.trycloudflare.com/api/webhooks/github-2');
+  // Tunnel states and junk values.
+  assert.equal(whkTunnel(null), null);
+  assert.equal(whkTunnel({state: 'up', publicUrl: 'http://plain.example'}).publicUrl, null);
+  assert.equal(whkTunnel({state: 'starting', publicUrl: 'https://x.trycloudflare.com'}).publicUrl, null);
+  const failed = createWebhooks(fakeApi({reads: [listAnswer([gh], {data: {webhooks: [gh], tasksEnabled: true, tunnel: {state: 'failed', error: 'cloudflared exited'}}})]}));
+  await failed.load();
+  const fh = webhooksHTML(failed.state, deps);
+  assert.match(fh, /tunnel stopped \(cloudflared exited\)/);
+  assert.match(fh, /atag serve --tunnel/);
+});
+
+test('decision: no webhook text tells the user to use the API key or open the main port', async () => {
+  const states = [
+    listAnswer(),
+    listAnswer([gh], {remote: true, baseUrl: 'https://vps.example:8080'}),
+    listAnswer([gh], {data: {webhooks: [gh], tasksEnabled: false, tunnel: {state: 'failed', error: 'x'}}}),
+    listAnswer([gh], {data: {webhooks: [gh], tasksEnabled: true, tunnel: {state: 'up', publicUrl: 'https://a.trycloudflare.com'}}}),
+  ];
+  for (const answer of states) {
+    const w = createWebhooks(fakeApi({reads: [answer]}));
+    await w.load();
+    for (const verify of ['github', 'stripe', 'standard', 'header']) {
+      w.openForm(verify);
+      const html = webhooksHTML(w.state, deps);
+      assert.doesNotMatch(html, /API key|0\.0\.0\.0|--host|open (a|the) port/i);
+    }
+  }
+  assert.match(WHK_TUNNEL_HOWTO, /own secret/);
+  // The files this change adds never bind the agent anywhere but loopback.
+  for (const f of ['../renderer/webhooks.js', '../main/webhooks-ipc.ts']) {
+    const code = readFileSync(new URL(f, import.meta.url), 'utf8');
+    assert.doesNotMatch(code, /0\.0\.0\.0|--host|\.listen\(/);
+  }
 });
 
 test('names and template text are escaped', async () => {
@@ -163,6 +222,9 @@ test('names and template text are escaped', async () => {
 test('ipc: only known fields in known forms reach the agent', () => {
   assert.deepEqual(cleanWebhookCreate({name: 'gh', verify: 'github', userMessageTemplate: ' hi ', secret: '', extra: 1}),
     {ok: true, body: {name: 'gh', verify: 'github', userMessageTemplate: 'hi'}});
+  // A bind host or port never rides along to the agent.
+  assert.deepEqual(Object.keys(cleanWebhookCreate({name: 'gh', userMessageTemplate: 'x', host: '0.0.0.0', http: {host: '0.0.0.0'}, port: 80}).body).sort(),
+    ['name', 'userMessageTemplate', 'verify']);
   assert.deepEqual(cleanWebhookCreate({name: 'pay', verify: 'stripe', userMessageTemplate: 'x', secret: ' whsec_1 '}).body.secret, 'whsec_1');
   assert.equal(cleanWebhookCreate({name: 'gh', userMessageTemplate: 'x'}).body.verify, 'header');
   assert.equal(cleanWebhookCreate({name: 'a b', userMessageTemplate: 'x'}).ok, false);

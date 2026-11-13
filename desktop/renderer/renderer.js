@@ -6160,7 +6160,7 @@ async function webhooksAct(v) {
   else if (v.indexOf('copyurl:') === 0) {
     const name = arg('copyurl:');
     const w = (st.data && st.data.webhooks.find((x) => x.name === name)) || null;
-    const url = st.created && st.created.name === name ? st.created.url : w ? whkUrl(st.baseUrl, w.path) : '';
+    const url = st.created && st.created.name === name ? st.created.url : w ? whkPublicUrl(st, w) : '';
     if (url) copyText(url, 'Address copied');
     return;
   } else if (v === 'create') {
