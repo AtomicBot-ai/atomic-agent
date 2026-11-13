@@ -471,10 +471,13 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
  * `approval_gated` tools that must stay solo for a reason that has
  * nothing to do with a prompt. `fusion.delegate` runs several worker
  * turns concurrently inside one call, for minutes; no approval level
- * makes it safe to line it up behind other calls.
+ * makes it safe to line it up behind other calls. `ask_user` (ATO-489)
+ * waits for the person, not for an approval, so no grant lets it run
+ * unattended either.
  */
 const SOLO_REGARDLESS_OF_APPROVAL: ReadonlySet<string> = new Set([
   "fusion.delegate",
+  "ask_user",
 ]);
 
 /**
