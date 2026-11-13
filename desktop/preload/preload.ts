@@ -96,6 +96,10 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1087: GET/POST /api/offline-mode — {supported:false} against an agent without the route. */
   offlineMode: () => ipcRenderer.invoke("agent:offlineMode"),
   offlineModeSet: (enabled: boolean) => ipcRenderer.invoke("agent:offlineModeSet", enabled),
+  /** ATO-445: the agent's webhook routes: list, add (the reply holds the secret once), remove. */
+  webhooks: () => ipcRenderer.invoke("agent:webhooks"),
+  webhookCreate: (body: unknown) => ipcRenderer.invoke("agent:webhookCreate", body),
+  webhookDelete: (name: string) => ipcRenderer.invoke("agent:webhookDelete", name),
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
