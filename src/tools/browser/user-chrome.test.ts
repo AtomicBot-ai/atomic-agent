@@ -9,7 +9,12 @@ import {
   buildBrowserTypeTool,
 } from "./index.js";
 import type { BrowserDomainPolicy } from "./browser-domain-policy.js";
-import { findUserChromeCdpUrl } from "./attach-user-chrome.js";
+import {
+  findUserChromeCdpUrl,
+  macAppBundlePath,
+  openRemoteDebuggingPage,
+  REMOTE_DEBUGGING_PAGE,
+} from "./attach-user-chrome.js";
 import { PlaywrightBackend } from "./playwright-backend.js";
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
 import {
@@ -280,6 +285,76 @@ describe("findUserChromeCdpUrl", () => {
     await expect(
       findUserChromeCdpUrl({ cdpUrl: null, userDataDir: null, waitMs: 1_000, openRemoteDebuggingPage: () => false, resolve: notReady }),
     ).rejects.toThrow(/no Chrome, Chromium, Brave or Edge is installed/);
+  });
+});
+
+describe("openRemoteDebuggingPage (ATO-1450)", () => {
+  const MAC_CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+  /** Records each spawn call and hands back a child that does nothing. */
+  function recordingSpawn(fail = false) {
+    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    const spawn = ((command: string, args: readonly string[]) => {
+      if (fail) throw new Error("spawn failed");
+      calls.push({ command, args });
+      return { on: () => undefined, unref: () => undefined };
+    }) as unknown as typeof import("node:child_process").spawn;
+    return { calls, spawn };
+  }
+
+  it("on macOS opens the browser's .app bundle through `open -a`", () => {
+    const { calls, spawn } = recordingSpawn();
+    const ok = openRemoteDebuggingPage(
+      { channel: "chrome", executablePath: null },
+      { platform: "darwin", spawn, findExecutable: () => ({ kind: "chrome", path: MAC_CHROME }) },
+    );
+    expect(ok).toBe(true);
+    expect(calls).toEqual([
+      { command: "/usr/bin/open", args: ["-a", "/Applications/Google Chrome.app", REMOTE_DEBUGGING_PAGE] },
+    ]);
+  });
+
+  it("on macOS spawns a binary outside an .app bundle directly", () => {
+    const { calls, spawn } = recordingSpawn();
+    openRemoteDebuggingPage(
+      { channel: "chrome", executablePath: null },
+      { platform: "darwin", spawn, findExecutable: () => ({ kind: "custom", path: "/opt/chromium/chrome" }) },
+    );
+    expect(calls).toEqual([{ command: "/opt/chromium/chrome", args: [REMOTE_DEBUGGING_PAGE] }]);
+  });
+
+  it("on Linux spawns the browser binary as before", () => {
+    const { calls, spawn } = recordingSpawn();
+    const ok = openRemoteDebuggingPage(
+      { channel: "chrome", executablePath: null },
+      { platform: "linux", spawn, findExecutable: () => ({ kind: "chrome", path: "/usr/bin/google-chrome" }) },
+    );
+    expect(ok).toBe(true);
+    expect(calls).toEqual([{ command: "/usr/bin/google-chrome", args: [REMOTE_DEBUGGING_PAGE] }]);
+  });
+
+  it("returns false when the launch fails or no browser is installed", () => {
+    const failing = recordingSpawn(true);
+    expect(
+      openRemoteDebuggingPage(
+        { channel: "chrome", executablePath: null },
+        { platform: "darwin", spawn: failing.spawn, findExecutable: () => ({ kind: "chrome", path: MAC_CHROME }) },
+      ),
+    ).toBe(false);
+    const { calls, spawn } = recordingSpawn();
+    expect(
+      openRemoteDebuggingPage({ channel: "chrome", executablePath: null }, { platform: "darwin", spawn, findExecutable: () => null }),
+    ).toBe(false);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("finds the .app bundle only for a binary inside Contents/MacOS", () => {
+    expect(macAppBundlePath(MAC_CHROME)).toBe("/Applications/Google Chrome.app");
+    expect(macAppBundlePath("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser")).toBe(
+      "/Applications/Brave Browser.app",
+    );
+    expect(macAppBundlePath("/usr/bin/google-chrome")).toBeNull();
+    expect(macAppBundlePath("/Applications/Google Chrome.app")).toBeNull();
   });
 });
 

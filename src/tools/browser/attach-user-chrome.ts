@@ -99,22 +99,54 @@ export async function findUserChromeCdpUrl(
 }
 
 /**
+ * The `.app` bundle a macOS browser binary lives in
+ * (`/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` →
+ * `/Applications/Google Chrome.app`), or `null` when the path is not
+ * inside one.
+ */
+export function macAppBundlePath(executablePath: string): string | null {
+  const match = /^(.+\.app)\/Contents\/MacOS\/[^/]+$/.exec(executablePath);
+  return match?.[1] ?? null;
+}
+
+export interface OpenRemoteDebuggingPageDeps {
+  platform?: NodeJS.Platform;
+  spawn?: typeof spawn;
+  findExecutable?: typeof findChromeExecutable;
+}
+
+/**
  * Open the user's own browser (no flags, so their normal profile and
  * windows) on {@link REMOTE_DEBUGGING_PAGE}. A running Chrome takes the
  * URL into a new tab; a closed one starts. Detached: the agent never
  * owns or stops the user's browser process.
+ *
+ * On macOS the browser is started through `open -a <bundle>` (ATO-1450):
+ * launchd then starts it as its own responsible process, so Chrome's
+ * updater is not attributed to Atomic Agent and macOS does not show
+ * "Atomic Agent was prevented from modifying apps" (ATO-238). A binary
+ * outside an `.app` bundle is spawned directly, as on Windows and Linux.
  */
-export function openRemoteDebuggingPage(options: {
-  channel: BrowserChannel;
-  executablePath: string | null;
-}): boolean {
-  const executable = findChromeExecutable({
+export function openRemoteDebuggingPage(
+  options: {
+    channel: BrowserChannel;
+    executablePath: string | null;
+  },
+  deps: OpenRemoteDebuggingPageDeps = {},
+): boolean {
+  const find = deps.findExecutable ?? findChromeExecutable;
+  const run = deps.spawn ?? spawn;
+  const platform = deps.platform ?? process.platform;
+  const executable = find({
     executablePath: options.executablePath,
     channel: options.channel,
   });
   if (!executable) return false;
+  const bundle = platform === "darwin" ? macAppBundlePath(executable.path) : null;
+  const command = bundle ? "/usr/bin/open" : executable.path;
+  const args = bundle ? ["-a", bundle, REMOTE_DEBUGGING_PAGE] : [REMOTE_DEBUGGING_PAGE];
   try {
-    const child = spawn(executable.path, [REMOTE_DEBUGGING_PAGE], {
+    const child = run(command, args, {
       detached: true,
       stdio: "ignore",
       windowsHide: false,
