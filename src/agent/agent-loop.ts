@@ -170,6 +170,10 @@ export class AgentLoop {
     // the rest of the turn's automatic compaction triggers against it, so
     // history is compacted before the next refusal rather than after.
     let overflowWindow: number | null = null;
+    // Rows the prompt packer left out of the last built prompt. A change
+    // means older reads may have left the model's view, so the loop
+    // tracker forgets its read state (follow-up to #827).
+    let lastDroppedRows = 0;
     const compactionPlanInput = (input: BuildPromptInput): BuildPromptInput =>
       overflowWindow !== null && (lastPromptWindow === null || lastPromptWindow > overflowWindow)
         ? { ...input, contextWindow: overflowWindow, profileWindowApplies: false }
@@ -593,6 +597,12 @@ export class AgentLoop {
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
                 lastPromptWindow = event.prompt.contextWindow;
+                // The packer cut (more) history: a read it dropped renders
+                // in full again if the model re-reads the file, so that
+                // re-read is a recovery, not a repeat.
+                const droppedRows = event.prompt.droppedTurns;
+                if (droppedRows > 0 && droppedRows !== lastDroppedRows) loopTracker.forgetReads();
+                lastDroppedRows = droppedRows;
                 if (event.prompt.cloudContext && state.cloudContext !== event.prompt.cloudContext) {
                   state = { ...state, cloudContext: event.prompt.cloudContext };
                   stepContext.session = state;
@@ -629,6 +639,7 @@ export class AgentLoop {
           };
         refreshStepWorkspace(stepContext, stepDeps);
         if (this.deps.compaction) {
+          const compactionBefore = state.compaction;
           compactionInput = prepareStepPrompt(stepContext, stepDeps).promptInput;
           let maintenance = this.deps.compaction.beforeStep(compactionPlanInput(compactionInput), {
             signal: requestDeadline.signal,
@@ -658,6 +669,8 @@ export class AgentLoop {
               onSpend: (usd) => recordCompactionSpend(turn, usd),
             });
           }
+          // A compaction summarized away the reads it covered (#827).
+          if (state.compaction !== compactionBefore) loopTracker.forgetReads();
         }
         requestStartedAt = Date.now();
         // A task's time limit also ends a wait on an approval prompt
@@ -1036,6 +1049,7 @@ export class AgentLoop {
           }
           if (state.compaction !== before) {
             overflowCompacted = true;
+            loopTracker.forgetReads();
             overflowWindow = overflow.compactionWindow;
             // Learned only once the retry is certain: a learned window
             // would otherwise disarm the native-tools repack below.
