@@ -4,7 +4,12 @@ import {
   type ToolContext,
   type ToolDefinition,
 } from "./tool-registry.js";
-import { coerceToolArgs, normalizeKey } from "./coerce-tool-args.js";
+import {
+  coerceToolArgs,
+  normalizeArgKeys,
+  normalizeKey,
+  snakeToCamel,
+} from "./coerce-tool-args.js";
 
 const ctx: ToolContext = {
   workingDir: "/w",
@@ -296,5 +301,69 @@ describe("normalizeKey", () => {
     ["", null],
   ])("%j → %j", (raw, expected) => {
     expect(normalizeKey(raw)).toBe(expected);
+  });
+});
+
+describe("coerceToolArgs — snake_case keys (#901)", () => {
+  it("renames timeout_ms to the declared timeoutMs for os.shell.run", async () => {
+    const seen = await invokeWith("os.shell.run", {
+      cmd: "sleep",
+      args: ["1"],
+      timeout_ms: 5000,
+    });
+    expect(seen).toEqual({ cmd: "sleep", args: ["1"], timeoutMs: 5000 });
+  });
+
+  it("still coerces the value under the renamed key", async () => {
+    const seen = await invokeWith("os.shell.run", {
+      cmd: "ls",
+      timeout_ms: "5000",
+    });
+    expect(seen).toEqual({ cmd: "ls", timeoutMs: 5000 });
+  });
+
+  it("renames a quoted snake_case key too", async () => {
+    const seen = await invokeWith("os.shell.run", {
+      cmd: "ls",
+      '"timeout_ms"': 5000,
+    });
+    expect(seen).toEqual({ cmd: "ls", timeoutMs: 5000 });
+  });
+
+  it("never overwrites the camelCase key the model also sent", async () => {
+    const args = { cmd: "ls", timeoutMs: 1000, timeout_ms: 5000 };
+    expect(await invokeWith("os.shell.run", args)).toEqual(args);
+  });
+
+  it("leaves a snake_case key alone when its camelCase form is not declared", async () => {
+    const args = { cmd: "ls", no_such_key: 1 };
+    expect(await invokeWith("os.shell.run", args)).toEqual(args);
+  });
+
+  it("never renames a snake_case key the schema declares itself", () => {
+    const properties = { timeout_ms: {}, timeoutMs: {} };
+    const args = { timeout_ms: 5000 };
+    expect(normalizeArgKeys(args, properties)).toBe(args);
+  });
+
+  it("returns the same object for a call already in camelCase", () => {
+    const args = { cmd: "ls", timeoutMs: 5000 };
+    expect(coerceToolArgs("os.shell.run", args)).toBe(args);
+  });
+});
+
+describe("snakeToCamel", () => {
+  it.each([
+    ["timeout_ms", "timeoutMs"],
+    ["old_string", "oldString"],
+    ["line_numbers", "lineNumbers"],
+    ["a_b_c", "aBC"],
+    ["path", null],
+    ["timeoutMs", null],
+    ["__path", null],
+    ["timeout_", null],
+    ["Timeout_MS", null],
+  ])("%j → %j", (raw, expected) => {
+    expect(snakeToCamel(raw)).toBe(expected);
   });
 });
