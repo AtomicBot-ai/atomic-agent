@@ -1515,6 +1515,12 @@ function wireIpc(client: AgentClient): void {
   resource("tasks", () => client.tasks());
   resource("sessions", () => client.sessions());
   resource("models", () => client.models());
+  // W2 QA: one search for the whole window; the palette also finds words inside past chats.
+  ipcMain.handle("agent:searchSessions", (_event, q: unknown) =>
+    typeof q === "string" && q.trim() && q.length <= 500
+      ? client.searchSessions(q.trim()).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
+      : { ok: false, error: "query required" },
+  );
   ipcMain.handle("agent:session", (_event, id: unknown) =>
     typeof id === "string" ? client.session(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) })) : { ok: false, error: "id required" },
   );

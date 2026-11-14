@@ -1286,7 +1286,7 @@ if (typeof document !== 'undefined') {
     const t = e.target instanceof Element ? e.target : null;
     if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
     const inside = !!t.closest('#sidebar');
-    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-act^="pedit:"], [data-act="studio:menu"], [data-act^="chatsearch:"], [data-more], input, textarea')) return;
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-act^="pedit:"], [data-act="studio:menu"], [data-act^="chatsearch:"], .sb-top [data-act="palette"], [data-more], input, textarea')) return;
     if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -1298,12 +1298,12 @@ if (typeof document !== 'undefined') {
 /* 13.10 (owner's review): Search is a magnifier button beside the sidebar
    toggle, not a pill at the right of the toolbar. Same verb, same chord in the
    tooltip, same 32px icon button as the toggle. */
-function searchBtnHTML(chats) {
-  /* W2: the sidebar's own magnifier (expanded) opens the chat search over the
-     lists, as Claude desktop's does; ⌘ K is still the palette. */
-  if (chats) return '<button class="iconbtn chromesearch" data-act="chatsearch:open" title="Search chats" aria-label="Search chats"'
-    + ' aria-expanded="' + !!(CHATSEARCH.open || CHATSEARCH.q) + '">' + ic('search') + '</button>';
-  const title = kbdText('Search and commands (⌘ K)');
+function searchBtnHTML() {
+  /* W2 QA (owner): one search for the whole app, not a magnifier and a
+     separate "Search chats" field. The magnifier opens the ⌘ K palette, which
+     finds commands, settings, chats (titles and the words inside them), cron
+     jobs and skills. */
+  const title = kbdText('Search (⌘ K)');
   return '<button class="iconbtn chromesearch" data-act="palette" title="' + title + '" aria-label="' + title + '">' + ic('search') + '</button>';
 }
 /* r5 item 6 — "clicking new chat puts keyboard focus straight in the prompt
@@ -5334,7 +5334,36 @@ function palRows() {
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Cron job · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
   fuzzyFilter(q, SKILLS, (s) => s.t).slice(0, 3)
     .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:SK.workingDir ? 'skill:compose:' + s.t : 'room:skills', badge:'skill'}));
+  // W2 QA: words inside past chats (GET /api/sessions/search), after the rest; a chat already listed by title is not repeated.
+  palMsgAsk(q);
+  if (PALMSG.q === q) {
+    const listed = new Set(hits.filter((h) => h.badge === 'session' && h.act).map((h) => h.act));
+    PALMSG.hits.filter((h) => !listed.has('ses:' + h.sessionId)).slice(0, 8)
+      .forEach((h) => hits.push({ic:'chat', t:h.title || 'Chat', cx:palMsgSnippet(h.snippet), sc:'', act:'ses:' + h.sessionId, badge:'message'}));
+  }
   return hits;
+}
+
+/* The palette's search inside past chats: one request per query, 250 ms after
+   the last key, three letters or more. An agent without the route answers an
+   error and the group simply stays out. */
+const PALMSG = {q: '', hits: [], want: '', timer: null};
+function palMsgAsk(q) {
+  if (q.length < 3 || PALMSG.want === q || !BR || typeof BR.searchSessions !== 'function') return;
+  PALMSG.want = q;
+  clearTimeout(PALMSG.timer);
+  PALMSG.timer = setTimeout(() => {
+    BR.searchSessions(q).then((res) => {
+      if (PALMSG.want !== q) return;
+      const hits = res && res.ok && res.data && Array.isArray(res.data.hits) ? res.data.hits : [];
+      PALMSG.q = q;
+      PALMSG.hits = hits.filter((h) => h && typeof h.sessionId === 'string');
+      if (S.overlay === 'palette' && S.q.trim().toLowerCase() === q) refreshPalette();
+    }).catch(() => {});
+  }, 250);
+}
+function palMsgSnippet(s) {
+  return String(s || '').replace(/[«»]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
 }
 
 function bold(t, q) {
@@ -5383,7 +5412,7 @@ function paletteHTML() {
   } else {
     // Ranked commands first, then a header before the chats, tasks and skills that
     // match. Headers sit between rows only; data-palrow indexes stay the flat order.
-    const heads = {session:'Chats', task:'Cron jobs', skill:'Skills'};
+    const heads = {session:'Chats', task:'Cron jobs', skill:'Skills', message:'In chat messages'};
     let last = '';
     flat.forEach((r, i) => {
       if (r.badge && r.badge !== last) list += '<div class="palgroup">' + heads[r.badge] + '</div>';
@@ -5396,7 +5425,7 @@ function paletteHTML() {
     + '<div class="palin">' + ic('search')
       + (sc ? '<span class="palscope tk-chip tk-chip--blue tk-chip--sm">' + esc(sc.label)
         + '<span class="palscope-x" data-popscope="1" role="button" title="Back to all commands" aria-label="Back to all commands">' + ic('x') + '</span></span>' : '')
-      + '<input id="palq" autocomplete="off" spellcheck="false" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, chats, tasks and skills…') + '" value="' + esc(S.q) + '">'
+      + '<input id="palq" autocomplete="off" spellcheck="false" placeholder="' + (sc ? esc(sc.ph) : 'Search commands, settings, chats, cron jobs and skills…') + '" value="' + esc(S.q) + '">'
       + keycaps('esc') + '</div>'
     + '<div class="pallist' + (q ? ' q' : '') + '" id="pallist">' + list + '</div>'
     + '<div class="palfoot"><span>' + keycaps('↩') + ' ' + (S.scope ? 'Apply' : 'Go') + '</span>'

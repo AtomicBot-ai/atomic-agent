@@ -104,6 +104,7 @@ contextBridge.exposeInMainWorld("atomic", {
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
   session: (id: string) => ipcRenderer.invoke("agent:session", id),
+  searchSessions: (q: string) => ipcRenderer.invoke("agent:searchSessions", q),
   // item 6: DELETE /api/sessions/{id} — the sidebar's delete is a real one
   deleteSession: (id: string) => ipcRenderer.invoke("agent:deleteSession", id),
   // ATO-455: PATCH /api/sessions/{id} — rename a chat

@@ -150,20 +150,20 @@ export async function checks114(js: Js, check: Check): Promise<void> {
       const drawer = await js<{ drawer: boolean; btn: boolean; field: boolean; focused: boolean; still: boolean; toggles: number }>(`(async () => {
         if (!sidebarDrawerOpen()) act('toggle:sidebar');
         await new Promise((res) => setTimeout(res, 150));
-        const b = document.querySelector('#sidebar.drawer .sb-top [data-act="chatsearch:open"]');
+        const b = document.querySelector('#sidebar.drawer .sb-top [data-act="palette"]');
         const r = b ? b.getBoundingClientRect() : null;
         const h = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
         const btn = !!b && !!h && b.contains(h);
         if (b) b.click();
         await new Promise((res) => setTimeout(res, 50));
-        const f = document.getElementById('chat-search');
-        const out = {drawer: !!document.querySelector('#sidebar.drawer'), btn, field: !!f, focused: !!f && document.activeElement === f,
+        const f = document.getElementById('palq');
+        const out = {drawer: !!document.querySelector('#sidebar.drawer'), btn, field: S.overlay === 'palette' && !!f, focused: !!f && document.activeElement === f,
           still: sidebarDrawerOpen(), toggles: document.querySelectorAll('[data-act="toggle:sidebar"]').length};
-        CHATSEARCH.open = false; CHATSEARCH.q = ''; closeSidebarDrawer(); renderSidebar();
+        act('close'); closeSidebarDrawer(); renderSidebar();
         return out;
       })()`);
       check(
-        "T114b: on a narrow window the sidebar drawer carries the Search chats magnifier, and clicking it opens the field without closing the drawer",
+        "T114b: on a narrow window the sidebar drawer carries the Search magnifier, and clicking it opens the one search without closing the drawer",
         drawer.drawer && drawer.btn && drawer.field && drawer.focused && drawer.still && drawer.toggles === 1,
         show(drawer),
       );
@@ -185,10 +185,10 @@ export async function checks114(js: Js, check: Check): Promise<void> {
     const open = await chromeWhen(js, (c) => c.expanded && !!c.top && c.toolbar.open);
     const [s, t] = open.top ? open.top.buttons : [];
     check(
-      // W2: the sidebar's magnifier is chat search (like Claude desktop); ⌘ K is still the palette.
-      "T114c: expanded, the sidebar's top row carries Search chats then the sidebar toggle, and the toolbar carries neither",
-      open.expanded && !!open.top && open.top.buttons.length === 2 && s?.act === "chatsearch:open" && t?.act === "toggle:sidebar"
-        && open.toolbar.buttons.length === 0 && open.toolbar.open && open.pill === 0 && open.palettes === 0 && open.toggles === 1,
+      // W2 QA (owner): one search for the whole app; the sidebar's magnifier is the ⌘ K palette.
+      "T114c: expanded, the sidebar's top row carries Search then the sidebar toggle, and the toolbar carries neither",
+      open.expanded && !!open.top && open.top.buttons.length === 2 && s?.act === "palette" && t?.act === "toggle:sidebar"
+        && open.toolbar.buttons.length === 0 && open.toolbar.open && open.pill === 0 && open.palettes === 1 && open.toggles === 1,
       show({ top: open.top?.buttons.map((b) => b.act), toolbar: open.toolbar, pill: open.pill, palettes: open.palettes, toggles: open.toggles }),
     );
     check(
@@ -203,7 +203,7 @@ export async function checks114(js: Js, check: Check): Promise<void> {
       "T114c: both are 32px icon buttons a person can reach — named, titled, focusable, on top where they are drawn",
       [s, t].every((b) => !!b && b.box.width === 32 && b.box.height === 32 && b.svg && !!b.aria && b.aria === b.title
         && !b.disabled && b.tab >= 0 && b.hit)
-        && s!.title === "Search chats" && /^Hide sidebar \(/.test(t!.title ?? ""),
+        && /^Search \(/.test(s!.title ?? "") && /^Hide sidebar \(/.test(t!.title ?? ""),
       show([s, t]),
     );
     check(
@@ -267,25 +267,24 @@ export async function checks114(js: Js, check: Check): Promise<void> {
       tabRows.length === 4 && tabRows.every((t) => t["act"] === "insp:" + t["id"] && t["inside"] === true && t["clipped"] === false && t["reachable"] === true),
       show(tabs),
     );
-    /* W2: a real click on the magnifier brings up the chat search field over the
-       lists, focused; a second click puts the empty field away; ⌘ K still opens
-       Search and commands. There is no standing "Search chats" field. */
-    const clicked = await js<{ before: boolean; field: boolean; focused: boolean; after: boolean; overlay: string | null; chord: string | null }>(`(() => {
+    /* W2 QA (owner): one search. A real click on the magnifier opens the ⌘ K
+       palette; no "Search chats" field is drawn in the sidebar, before or after,
+       and the old chatsearch:open verb lands on the palette too. */
+    const clicked = await js<{ before: boolean; overlay: string | null; field: boolean; old: string | null; chord: string | null }>(`(() => {
       const before = !!document.getElementById('chat-search');
-      const b = document.querySelector('#sidebar .sb-top [data-act="chatsearch:open"]');
+      const b = document.querySelector('#sidebar .sb-top [data-act="palette"]');
       if (b) b.click();
-      const f = document.getElementById('chat-search');
-      const field = !!f, focused = !!f && document.activeElement === f, overlay = S.overlay;
-      const b2 = document.querySelector('#sidebar .sb-top [data-act="chatsearch:open"]');
-      if (b2) b2.click();
-      const after = !!document.getElementById('chat-search');
+      const overlay = S.overlay, field = !!document.getElementById('chat-search');
+      act('close');
+      act('chatsearch:open');
+      const old = S.overlay; act('close');
       document.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', code: 'KeyK', metaKey: IS_MAC, ctrlKey: !IS_MAC, bubbles: true, cancelable: true}));
       const chord = S.overlay; act('close');
-      return {before, field, focused, after, overlay, chord};
+      return {before, overlay, field, old, chord};
     })()`);
     check(
-      "T114c: the magnifier opens the chat search, a second click puts it away, and ⌘ K still opens Search and commands",
-      !clicked.before && clicked.field && clicked.focused && clicked.overlay === null && !clicked.after && clicked.chord === "palette",
+      "T114c: the magnifier, the old chat search verb and ⌘ K all open the one search, and the sidebar draws no Search chats field",
+      !clicked.before && clicked.overlay === "palette" && !clicked.field && clicked.old === "palette" && clicked.chord === "palette",
       show(clicked),
     );
 

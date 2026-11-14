@@ -147,15 +147,16 @@ test('New project is the Projects header button, drawn whenever the projects sto
   assert.ok(!sidebarNavItems(null, {projects: true}).some((n) => n.act === 'pnew:'), 'no New project row under New chat');
 });
 
-// W2: no standing "Search chats" field; the sidebar's magnifier opens it.
-test('the chat search field is drawn only once the magnifier opened it (or while it holds a query)', () => {
+// W2 QA (owner): one search for the whole app; the sidebar's magnifier opens the palette.
+test('the sidebar magnifier opens the one search and no Search chats field is opened', () => {
   const cs = readFileSync(new URL('../renderer/chat-search.js', import.meta.url), 'utf8');
   assert.match(cs, /if \(!has && !CHATSEARCH\.open\) return '';/);
-  assert.match(cs, /if \(v === 'open'\) \{/);
-  assert.match(cs, /else \{ CHATSEARCH\.open = false; e\.target\.blur\(\); renderSidebar\(\); \}/);
+  assert.match(cs, /if \(v === 'open'\) \{ CHATSEARCH\.open = false; CHATSEARCH\.q = ''; act\('palette'\); return true; \}/);
   const r = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
   assert.match(r, /'<div class="sb-top">' \+ searchBtnHTML\(true\) \+ sidebarToggleHTML\(\)/);
-  assert.match(r, /data-act="chatsearch:open" title="Search chats"/);
+  assert.match(r, /data-act="palette" title="' \+ title \+ '"/);
+  assert.match(r, /kbdText\('Search \(⌘ K\)'\)/);
+  assert.ok(!/data-act="chatsearch:open"/.test(r), 'no separate chat search button');
   // The narrow window's drawer draws the magnifier too (sidebarExpanded() is false there), and a click on it keeps the drawer.
   assert.match(r, /: drawer \? '<div class="sb-top">' \+ searchBtnHTML\(true\) \+ '<\/div>' : ''\)/);
   assert.match(r, /\[data-act\^="chatsearch:"\]/);

@@ -178,10 +178,10 @@ function chatArchiveAct(k, v, close) {
   if (k === 'archtoggle') { CHATSEARCH.archOpen = !CHATSEARCH.archOpen; render(); nameVisibleSessions(); return true; }
   if (k === 'chatsearch') {
     // W2: `open` (the sidebar's magnifier) brings the field up, or puts an empty one away; `clear` empties it.
-    if (v === 'open') {
-      if (CHATSEARCH.open && !CHATSEARCH.q) { CHATSEARCH.open = false; renderSidebar(); return true; }
-      CHATSEARCH.open = true;
-    } else CHATSEARCH.q = '';
+    /* W2 QA (owner): one search for the whole app. `open` (menus, older
+       hooks) goes to the ⌘ K palette; the sidebar field is no longer drawn. */
+    if (v === 'open') { CHATSEARCH.open = false; CHATSEARCH.q = ''; act('palette'); return true; }
+    CHATSEARCH.q = '';
     renderSidebar();
     const f = document.getElementById('chat-search');
     if (f) f.focus({preventScroll: true});
