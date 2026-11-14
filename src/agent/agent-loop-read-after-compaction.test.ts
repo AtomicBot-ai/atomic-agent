@@ -8,7 +8,8 @@ import type { ContextCompactionControl } from "./compaction-control.js";
 import { buildDefaultToolRegistry } from "../tools/index.js";
 import { compressToolResult } from "../compressor/result-compressor.js";
 import { SlotManager } from "../llm/slot-manager.js";
-import { createEmptySessionState, type SessionState } from "../session/session-state.js";
+import { createEmptySessionState, recordTurn, type SessionState } from "../session/session-state.js";
+import { assistantReplyTurn, userTurn } from "../session/conversation-turn.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import type { CapabilitiesSummary, ToolDescriptor } from "../prompt/stable-prefix.js";
@@ -53,19 +54,26 @@ const CAPS: CapabilitiesSummary = {
   hasNotifications: true,
 };
 
-/** Compacts once, right before the step numbered `atStep` (1-based). */
-function compactingBefore(atStep: number | null): ContextCompactionControl {
+/**
+ * Compacts right before each step `at` accepts (1-based), every time with
+ * a fresh checkpoint object that covers the transcript through row
+ * `coveredThrough` (exclusive).
+ */
+function compactingBefore(
+  at: (step: number) => boolean,
+  coveredThrough = 1,
+): ContextCompactionControl {
   let calls = 0;
   return {
     open() {},
     close() {},
     beforeStep(input: BuildPromptInput) {
       calls += 1;
-      if (calls !== atStep) return undefined;
+      if (!at(calls)) return undefined;
       const next: SessionState = {
         ...input.session,
         compaction: {
-          version: 1, summary: "read notes.txt several times", coveredThrough: 1, boundaryHash: "x",
+          version: 1, summary: "read notes.txt several times", coveredThrough, boundaryHash: "x",
           createdAt: Date.now(), reason: "threshold", model: null, kind: "extractive",
           tokensBefore: 9_000, tokensAfter: 1_000,
         },
@@ -87,7 +95,10 @@ describe("AgentLoop: a re-read after compaction is not a repeat (#827 follow-up)
     rmSync(workingDir, { recursive: true, force: true });
   });
 
-  async function readRunsWith(compaction: ContextCompactionControl): Promise<number> {
+  async function readRunsWith(
+    compaction: ContextCompactionControl,
+    earlierRows = 0,
+  ): Promise<number> {
     let readRuns = 0;
     let call = 0;
     const registry = buildDefaultToolRegistry();
@@ -116,7 +127,12 @@ describe("AgentLoop: a re-read after compaction is not a repeat (#827 follow-up)
       skillCatalog: [],
       compaction,
     });
-    await agent.runTurn(createEmptySessionState({ id: "s-read-after-compaction", workingDir }), {
+    let session = createEmptySessionState({ id: "s-read-after-compaction", workingDir });
+    // Rows an earlier turn wrote, before this turn's request.
+    for (let row = 0; row < earlierRows; row += 1) {
+      session = recordTurn(session, row % 2 === 0 ? userTurn("earlier question") : assistantReplyTurn("earlier answer"));
+    }
+    await agent.runTurn(session, {
       userMessage: "check the notes",
       maxSteps: 12,
       taskMaxSteps: 12,
@@ -126,10 +142,22 @@ describe("AgentLoop: a re-read after compaction is not a repeat (#827 follow-up)
   }
 
   it("still vetoes the identical read when nothing was compacted", async () => {
-    expect(await readRunsWith(compactingBefore(null))).toBeLessThan(READS);
+    expect(await readRunsWith(compactingBefore(() => false))).toBeLessThan(READS);
   });
 
   it("runs the recovery read once a compaction has summarized the earlier reads", async () => {
-    expect(await readRunsWith(compactingBefore(READS))).toBe(READS);
+    expect(await readRunsWith(compactingBefore((step) => step === READS))).toBe(READS);
+  });
+
+  it("still vetoes the read when the compaction covered only an earlier turn's rows", async () => {
+    // Rows 0 and 1 are the earlier turn; this turn starts at row 2, so a
+    // checkpoint through row 2 summarized nothing this turn read.
+    expect(await readRunsWith(compactingBefore((step) => step === READS, 2), 2)).toBeLessThan(READS);
+  });
+
+  it("forgets once per checkpoint, not once per step it is handed back", async () => {
+    // The same checkpoint, as a new object before every step: the reads
+    // after the first one are all still in view, so the loop is caught.
+    expect(await readRunsWith(compactingBefore(() => true))).toBeLessThan(READS);
   });
 });
