@@ -13,7 +13,7 @@ root ::= tool-call-array
 # and the sampler has to escape the quote instead. The args are strict
 # (`text`, then optional `attachments`) so the generic object cannot
 # carry a reply around the rule; `tool-name` does not list "reply".
-tool-call ::= reply-call | shell-call | fs-read-call | fs-write-call | fs-edit-call | fs-move-call | fs-list-call | fs-grep-call | fs-glob-call | web-search-call | web-fetch-call | http-request-call | skill-view-call | tool-view-call | tool-search-call | notes-store-call | notes-recall-call | other-call
+tool-call ::= reply-call | shell-call | fs-read-call | fs-write-call | fs-edit-call | fs-move-call | fs-list-call | fs-grep-call | fs-glob-call | web-search-call | web-fetch-call | http-request-call | skill-view-call | tool-view-call | tool-search-call | notes-store-call | notes-recall-call | finish-call | other-call
 reply-call ::= "{" ws "\"tool\"" ws ":" ws "\"reply\"" ws "," ws "\"args\"" ws ":" ws reply-args ws "}"
 other-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
 # `os.shell.run` has its own branch too: under the generic `object` rule its
@@ -81,6 +81,14 @@ tool-view-call ::= "{" ws "\"tool\"" ws ":" ws "\"tool.view\"" ws "," ws "\"args
 tool-search-call ::= "{" ws "\"tool\"" ws ":" ws "\"tool.search\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"query\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
 notes-store-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.store\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"content\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
 notes-recall-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.recall\"" ws "," ws "\"args\"" ws ":" ws "{" ws ( "\"query\"" ws ":" ws string | "\"id\"" ws ":" ws value ) ( ws "," ws pair )* ws "}" ws "}"
+# `finish` is the other terminal and its `summary` is prose too, so it
+# gets the same guard as the reply text (#681): under the generic string
+# a summary quoting a word ended at the merged ` "` token. `summary` comes
+# first (the tool refuses a call without it, so `{}` is gone too), then an
+# optional `text`, the only other key the args schema lists; both use
+# `reply-text`. `tool-name` does not list "finish".
+finish-call ::= "{" ws "\"tool\"" ws ":" ws "\"finish\"" ws "," ws "\"args\"" ws ":" ws finish-args ws "}"
+finish-args ::= "{" ws "\"summary\"" ws ":" ws reply-text ( ws "," ws "\"text\"" ws ":" ws reply-text )? ws "}"
 path-args ::= "{" ws "\"path\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
 url-args ::= "{" ws "\"url\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
 name-args ::= "{" ws "\"name\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
@@ -96,7 +104,7 @@ reply-pending ::= reply-hard reply-chars | reply-soft reply-pending
 reply-hard ::= [^"\\\x00-\x1f :(\[{=,] | "\\" escape
 reply-soft ::= [ :(\[{=,]
 tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
-tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | image-tool | fusion-tool | verify-tool | plan-tool | mcp-native-tool | "\"finish\""
+tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | image-tool | fusion-tool | verify-tool | plan-tool | mcp-native-tool
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
 os-tool ::= "\"os." ( "fs.read_document" | "fs.trash" | "fs.locate_project" | "fs.code_map" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" | "screen.point" | "screen.capture" | "screen.click" | "screen.type" | "screen.key" ) "\""
 discovery-tool ::= "\"skill.run_script\""

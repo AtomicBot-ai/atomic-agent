@@ -20,8 +20,9 @@ export const GRAMMAR_EXIT_TOOL = "reply";
  * `os.shell.run` needs a non-empty `cmd`, `os.fs.read` a non-empty
  * `path`, `os.fs.write` a non-empty `path` and a `content` string; the
  * rest (ATO-1114) are held to their own tool's check the same way, as
- * the grammar file lists. Listed in the order the branches appear in the
- * rule.
+ * the grammar file lists. `finish` is here for its prose `summary`: it
+ * uses the guarded `reply-text` rule, like the reply text (#681). Listed
+ * in the order the branches appear in the rule.
  */
 const DEDICATED_BRANCHES: ReadonlyArray<{ tool: string; rule: string }> = [
   { tool: "os.shell.run", rule: "shell-call" },
@@ -40,6 +41,7 @@ const DEDICATED_BRANCHES: ReadonlyArray<{ tool: string; rule: string }> = [
   { tool: "tool.search", rule: "tool-search-call" },
   { tool: "memory.notes.store", rule: "notes-store-call" },
   { tool: "memory.notes.recall", rule: "notes-recall-call" },
+  { tool: "finish", rule: "finish-call" },
 ];
 
 /**
