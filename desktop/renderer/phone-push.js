@@ -46,6 +46,15 @@ function pushIsSetUp(st) {
   return !!(st && st.enabled === true && st.subscribeUrl);
 }
 
+/* Step 2's words: tap +, paste the topic name, and what to do with
+   "Use another server" (off for ntfy.sh, on with the server's address otherwise). */
+function pushSubscribeHint(st, h) {
+  const own = st.server && !/^https:\/\/ntfy\.sh\/?$/.test(st.server);
+  return 'In ntfy, tap +, paste this topic name and tap Subscribe. '
+    + (own ? 'Turn on Use another server and enter <b class="sd-mono">' + h.esc(st.server) + '</b>.'
+      : 'Leave Use another server off.');
+}
+
 /* Who can read the notifications, in plain words. A server other than ntfy.sh is named. */
 function pushPrivacyText(st) {
   if (!st) return '';
@@ -77,8 +86,11 @@ function phonePushPaneHTML(p, h) {
     body = '<div class="tk-card sd-rows" data-push-steps>'
       + row('1. Install the free ntfy app', 'On your phone, from the App Store or Google Play.',
         ext('App Store', PUSH_APP_IOS) + ext('Google Play', PUSH_APP_ANDROID), ' data-push-step="1"')
-      + row('2. Add this address in the app', 'In ntfy, tap + and subscribe to the topic <b class="sd-mono">' + h.esc(st.topic || '') + '</b>, the last part of this address.'
-        + '<div class="sd-mono sd-push-url" data-push-url>' + h.esc(st.subscribeUrl) + '</div>',
+      /* W2 QA: the full address pasted into ntfy's "Use another server"
+         field answers 404. The app wants the topic name only, and the
+         server switch off for ntfy.sh; Copy copies the name. */
+      + row('2. Subscribe to this topic in the app', pushSubscribeHint(st, h)
+        + '<div class="sd-mono sd-push-url" data-push-url>' + h.esc(st.topic || '') + '</div>',
         '<button class="btn btn-s sm" data-act="push:copy">Copy</button>', ' data-push-step="2"')
       + row('3. Send a test notification', p.msg === PUSH_TEST_SENT ? h.esc(PUSH_TEST_SENT) : 'Sends one notification to this address now.',
         '<button class="btn btn-s sm" data-act="push:test"' + dis + '>' + (p.busy === 'test' ? 'Sending…' : 'Send a test notification') + '</button>', ' data-push-step="3"')
@@ -143,7 +155,7 @@ function phonePushAct(what) {
   if (verb === 'setup') { if (st && !pushIsSetUp(st)) phonePushRun('on'); return; }
   if (verb === 'enable') { if (st) phonePushRun(pushIsSetUp(st) ? 'off' : 'on'); return; }
   if (verb === 'test') { if (pushIsSetUp(st)) phonePushRun('test'); return; }
-  if (verb === 'copy') { if (pushIsSetUp(st) && typeof copyText === 'function') copyText(st.subscribeUrl, 'Address copied', 'Add it in the ntfy app'); return; }
+  if (verb === 'copy') { if (pushIsSetUp(st) && typeof copyText === 'function') copyText(st.topic, 'Topic copied', 'Paste it in the ntfy app'); return; }
   if (verb === 'newTopic') { if (!pushIsSetUp(st)) return; if (armed) phonePushRun('newTopic'); else { PUSH.confirmNew = true; render(); } return; }
   if (verb === 'refresh') phonePushRefresh();
 }

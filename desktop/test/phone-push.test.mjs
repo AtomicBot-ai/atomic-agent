@@ -52,8 +52,11 @@ test('off: one sentence and Set up, nothing else; set up: three steps, the switc
   assert.match(on, /1\. Install the free ntfy app/);
   assert.ok(on.includes('data-url="' + P.PUSH_APP_IOS + '"') && P.PUSH_APP_IOS === 'https://apps.apple.com/app/ntfy/id1625396347');
   assert.ok(on.includes('data-url="' + P.PUSH_APP_ANDROID + '"') && P.PUSH_APP_ANDROID === 'https://play.google.com/store/apps/details?id=io.heckel.ntfy');
-  assert.match(on, /2\. Add this address in the app/);
-  assert.match(on, /data-push-url>https:\/\/ntfy\.sh\/atag-abc</);
+  assert.match(on, /2\. Subscribe to this topic in the app/);
+  assert.match(on, /data-push-url>atag-abc</);
+  assert.match(on, /paste this topic name and tap Subscribe\. Leave Use another server off\./);
+  const own = P.phonePushPaneHTML({state: Object.assign({}, ON, {server:'https://ntfy.example.com', subscribeUrl:'https://ntfy.example.com/atag-abc'}), busy: null}, h);
+  assert.match(own, /Turn on Use another server and enter <b class="sd-mono">https:\/\/ntfy\.example\.com<\/b>\./);
   assert.match(on, /data-act="push:copy"/);
   assert.match(on, /3\. Send a test notification/);
   assert.match(on, /data-act="push:test"/);
