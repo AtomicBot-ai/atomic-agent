@@ -127,6 +127,11 @@ test('a chat belongs to the project it was put in, else to the deepest project f
   assert.equal(projectOf(st, wses('c', '/w/apple')).id, 'pouter00', 'a sibling with the same prefix is not inside /w/app');
   assert.equal(projectOf(st, wses('d', '/elsewhere')), null);
   assert.equal(projectOf(st, wses('e', null)), null);
+  // W2 QA: a project on the home folder keeps only chats run in the home folder itself.
+  const home = projectsCoerce({projects: [proj('phome000', '/Users/me')]});
+  assert.equal(projectOf(home, wses('f', '/Users/me'), '/Users/me').id, 'phome000');
+  assert.equal(projectOf(home, wses('g', '/Users/me/work/app'), '/Users/me'), null);
+  assert.equal(projectOf(home, wses('h', '/Users/me/work/app')).id, 'phome000', 'without a home folder given, nesting still counts');
 });
 
 test('the project kept for a folder is found by its key, so picking it again makes no second one', () => {

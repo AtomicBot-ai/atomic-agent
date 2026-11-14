@@ -214,8 +214,9 @@ function projectForFolder(state, dir) {
 }
 
 /** The project a chat row belongs to, or null (see above). */
-function projectOf(state, row) {
+function projectOf(state, row, home) {
   if (!state || !row || !row.id) return null;
+  const homeKey = home ? projectPathKey(home) : '';
   const projects = state.projects || [];
   const put = state.chats && state.chats[row.id];
   if (put) { const p = projects.find((x) => x.id === put); if (p) return p; }
@@ -224,7 +225,11 @@ function projectOf(state, row) {
   let best = null, bestLen = -1;
   for (const p of projects) {
     const pk = projectPathKey(p.folder);
-    const inside = key === pk || key.startsWith(pk === '/' ? '/' : pk + '/');
+    /* W2 QA: a project on the home folder took in every new chat under it,
+       so Chats stayed empty. A project on the home folder (or the root) holds
+       only chats that ran in that very folder. */
+    const broad = pk === '/' || (!!homeKey && pk === homeKey);
+    const inside = key === pk || (!broad && key.startsWith(pk + '/'));
     if (inside && pk.length > bestLen) { best = p; bestLen = pk.length; }
   }
   return best;
@@ -232,7 +237,7 @@ function projectOf(state, row) {
 
 /** Each project with its rows (in `rows` order), and the rows left for the
     folders and Chats. `folders` is ATO-1034's state: a chat it files stays there. */
-function projectGroups(state, rows, folders) {
+function projectGroups(state, rows, folders, home) {
   const projects = (state && state.projects) || [];
   const by = new Map(projects.map((p) => [p.id, []]));
   const folderIds = new Set(((folders && folders.folders) || []).map((f) => f.id));
@@ -240,7 +245,7 @@ function projectGroups(state, rows, folders) {
   const rest = [];
   for (const r of rows || []) {
     const fid = r && filed[r.id];
-    const p = fid && folderIds.has(fid) ? null : projectOf(state, r);
+    const p = fid && folderIds.has(fid) ? null : projectOf(state, r, home);
     if (p && by.has(p.id)) by.get(p.id).push(r); else rest.push(r);
   }
   return {groups: projects.map((p) => ({project: p, rows: by.get(p.id)})), rest};

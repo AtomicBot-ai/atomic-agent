@@ -2657,7 +2657,7 @@ function sidebarChats() {
      `visible` is every row on screen, for nameVisibleSessions. */
   /* ATO-1146: chats in a project are drawn under it (chat-projects.js); a chat
      a chat folder holds stays in that folder (chat-list.js projectGroups). */
-  const pg = projectGroups(PROJECTS.state, order.rest, FOLDERS.state);
+  const pg = projectGroups(PROJECTS.state, order.rest, FOLDERS.state, homeDir());
   const fg = folderGroups(FOLDERS.state, pg.rest);
   const all = order.pinned.concat(fg.loose);
   const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
