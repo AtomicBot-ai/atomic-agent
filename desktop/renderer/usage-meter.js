@@ -65,8 +65,10 @@ function usageCostText(u) {
   if (!u) return '';
   if (u.pricedCalls > 0) return usageUsd(u.costUsd) + (u.unpricedCalls > 0 ? '+' : '');
   if (u.unpricedCalls > 0) return 'cost n/a';
-  if (u.planCalls > 0) return 'plan';
-  if (u.localCalls > 0) return 'local';
+  /* W2 QA: a bare "local" (or "plan") beside the Cloud chips read as the
+     chat running locally; it meant "earlier calls cost nothing". With no
+     money to show the chip stays out; the tooltip lines and a plan limit
+     (usageHeadline) still speak when there is something to say. */
   return '';
 }
 
