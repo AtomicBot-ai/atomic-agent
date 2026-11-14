@@ -146,6 +146,35 @@ export class OfflineNetworkError extends Error {
   }
 }
 
+/**
+ * The offline-mode refusal in `err` or one of its causes, if any. A
+ * refused model request reaches the turn wrapped (undici's `fetch
+ * failed`, then the SDK's connection error), so the chain is walked.
+ */
+export function findOfflineNetworkError(err: unknown): OfflineNetworkError | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (current instanceof OfflineNetworkError) return current;
+    if (typeof current !== "object" || current === null) return null;
+    const next = (current as { cause?: unknown }).cause;
+    if (next === current) return null;
+    current = next;
+  }
+  return null;
+}
+
+/**
+ * W2 QA: what a turn says when offline mode refused its model request.
+ * It used to read as "no connection" and wait five minutes for a
+ * network the agent itself was blocking.
+ */
+export function offlineTurnSentence(host: string): string {
+  return (
+    `Offline mode is on, so ${host} can't be reached. ` +
+    "Pick a local model, or turn offline mode off in Settings › Privacy."
+  );
+}
+
 export function offlineBlockedMessage(host: string, what?: string): string {
   const subject = what ? `${what}: ` : "";
   return (

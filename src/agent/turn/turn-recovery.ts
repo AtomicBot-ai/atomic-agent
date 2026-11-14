@@ -1,5 +1,6 @@
 import { isSubscriptionCliSetupError } from "../../llm/provider/subscription-cli/subscription-cli-errors.js";
 import { isDailySpendLimitError } from "../../llm/reliability/spend-limit-error.js";
+import { findOfflineNetworkError, offlineTurnSentence } from "../../llm/offline-network.js";
 import type { AgentLoopDependencies, LocalEngineVerdict, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
@@ -80,6 +81,12 @@ export function recoverTurnStep(
   const modelMode = context.modelMode ?? "local";
   requestDeadline.dispose();
   let runError: Error | null = err instanceof Error ? err : new Error(String(err));
+  // W2 QA: offline mode refused the model request. Nothing to wait for:
+  // the turn ends at once and says why, instead of "no connection".
+  const offlineRefused = findOfflineNetworkError(err);
+  if (offlineRefused !== null) {
+    runError = new Error(offlineTurnSentence(offlineRefused.host), { cause: err });
+  }
   let category = classifyFailure(err);
   // The task's duration ceiling fired inside the request. It
   // surfaces as an abort — the same shape as Ctrl+C — but it is
@@ -934,6 +941,8 @@ function isWaitableOutage(err: unknown): boolean {
   // The day's spend ceiling (ATO-649): wrapped as a status-less
   // `TransportError` too, and no amount of waiting lifts it.
   if (isDailySpendLimitError(err)) return false;
+  // Offline mode refused the request: our own switch, not an outage.
+  if (findOfflineNetworkError(err) !== null) return false;
   // Our own clock ran out. Never evidence about the provider, so it is
   // decided before the status split rather than inside it: the shape
   // arrives as `status === null`, which is otherwise the strongest

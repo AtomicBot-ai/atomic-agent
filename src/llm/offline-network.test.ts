@@ -202,3 +202,16 @@ describe("the installed pool in offline mode", () => {
     }
   });
 });
+
+describe("W2 QA: a turn blocked by offline mode", () => {
+  it("finds the refusal under fetch failed and an SDK connection error", async () => {
+    const { OfflineNetworkError, findOfflineNetworkError, offlineTurnSentence } = await import("./offline-network.js");
+    const refusal = new OfflineNetworkError("openrouter.ai");
+    const wrapped = new Error("Connection error.", { cause: new TypeError("fetch failed", { cause: refusal }) });
+    expect(findOfflineNetworkError(wrapped)).toBe(refusal);
+    expect(findOfflineNetworkError(new TypeError("fetch failed", { cause: new Error("ECONNREFUSED") }))).toBeNull();
+    expect(offlineTurnSentence("openrouter.ai")).toBe(
+      "Offline mode is on, so openrouter.ai can't be reached. Pick a local model, or turn offline mode off in Settings › Privacy.",
+    );
+  });
+});
