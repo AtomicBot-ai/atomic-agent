@@ -26071,7 +26071,7 @@ function mcpAddModalHTML() {
 /** The add box's examples: a command, an address, and JSON laid out on lines the way a README shows it. */
 function mcpJsonExample() {
   return 'npx -y @modelcontextprotocol/server-filesystem ~/Documents\n\nhttps://mcp.example.com/mcp\n\n'
-    + '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@github/mcp-server"]\n    }\n  }\n}';
+    + '{\n  "mcpServers": {\n    "filesystem": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]\n    }\n  }\n}';
 }
 /* ATO-510: the box's text as mcp-smart-add.js reads it. A name typed in the
    review block wins over the made-up one until the text gives a new made-up
