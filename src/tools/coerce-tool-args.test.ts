@@ -344,6 +344,21 @@ describe("coerceToolArgs — snake_case keys (#901)", () => {
     const properties = { timeout_ms: {}, timeoutMs: {} };
     const args = { timeout_ms: 5000 };
     expect(normalizeArgKeys(args, properties)).toBe(args);
+    // A quoted spelling of the declared snake key goes to that key, not
+    // to its camelCase twin.
+    expect(normalizeArgKeys({ '"timeout_ms"': 5000 }, properties)).toEqual({
+      timeout_ms: 5000,
+    });
+  });
+
+  it("does not let two spellings of one key collapse into the last one", () => {
+    const properties = { cmd: {}, timeoutMs: {} };
+    expect(
+      normalizeArgKeys(
+        { cmd: "ls", timeout_ms: 1000, '"timeoutMs"': 5000 },
+        properties,
+      ),
+    ).toEqual({ cmd: "ls", timeoutMs: 1000, '"timeoutMs"': 5000 });
   });
 
   it("returns the same object for a call already in camelCase", () => {

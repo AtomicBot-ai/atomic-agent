@@ -53,8 +53,8 @@ export function coerceToolArgs(
  * camelCase key sent in snake_case (`timeout_ms` for `timeoutMs`, #901).
  *
  * Do-no-harm again: a key is renamed only when it is not itself in the
- * schema, its cleaned form (or that form in camelCase) is, and the model
- * did not also send that key. Anything else is left for the tool to
+ * schema, its cleaned form (or that form in camelCase) is, and neither
+ * the model nor an earlier rename in this pass already filled that key. Anything else is left for the tool to
  * report — or, for a key that is still unknown after this pass, for the
  * executor to refuse before dispatch (`unknown-argument-guard.ts`), which
  * is why this runs first there too.
@@ -69,7 +69,14 @@ export function normalizeArgKeys(
     const clean = normalizeKey(key);
     if (clean === null) continue;
     const target = schemaKeyFor(clean, properties);
-    if (target === null || target === key || Object.hasOwn(args, target)) {
+    // `fixed` too: two spellings of one key (`timeout_ms` beside a
+    // quoted `"timeoutMs"`) must not collapse into whichever came last.
+    // The second stays as sent, so the guard refuses the call.
+    if (
+      target === null ||
+      Object.hasOwn(args, target) ||
+      (fixed !== null && Object.hasOwn(fixed, target))
+    ) {
       continue;
     }
     fixed ??= { ...args };

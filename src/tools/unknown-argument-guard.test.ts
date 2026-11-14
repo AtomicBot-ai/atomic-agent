@@ -153,6 +153,16 @@ describe("findUnknownArguments — snake_case keys (#901)", () => {
     ).toEqual(["timeout_ms"]);
   });
 
+  it("refuses the second of two spellings that both normalise to one key", () => {
+    expect(
+      findUnknownArguments("os.shell.run", {
+        cmd: "ls",
+        timeout_ms: 1000,
+        '"timeoutMs"': 5000,
+      })!.unknownKeys,
+    ).toEqual(['"timeoutMs"']);
+  });
+
   it("still refuses a snake_case key whose camelCase form is not declared", () => {
     expect(
       findUnknownArguments("os.shell.run", { cmd: "ls", no_such_key: 1 })!
