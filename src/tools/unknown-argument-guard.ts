@@ -22,7 +22,8 @@ import { normalizeArgKeys } from "./coerce-tool-args.js";
  * What is checked: the TOP-LEVEL keys, against the tool's registered
  * args schema (`default-tool-args-schemas.ts`), after F33's key
  * normalisation (`normalizeArgKeys`: a key wrapped in its own quotes, a
- * key fused with a prompt fragment) has had its chance — a key that
+ * key fused with a prompt fragment, a snake_case spelling of a camelCase
+ * key) has had its chance — a key that
  * normalises into the schema is renamed at dispatch and is not unknown.
  * So has a tool's alias reading (`argument-aliases.ts`): `os.fs.move`
  * `{paths, destination}` is read as `{from, to}` at dispatch, so those
