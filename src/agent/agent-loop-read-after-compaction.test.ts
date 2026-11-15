@@ -57,11 +57,12 @@ const CAPS: CapabilitiesSummary = {
 /**
  * Compacts right before each step `at` accepts (1-based), every time with
  * a fresh checkpoint object that covers the transcript through row
- * `coveredThrough` (exclusive).
+ * `coveredThrough` (exclusive). Without one it covers every row written
+ * so far, the way a real compaction summarizes the history behind it.
  */
 function compactingBefore(
   at: (step: number) => boolean,
-  coveredThrough = 1,
+  coveredThrough?: number,
 ): ContextCompactionControl {
   let calls = 0;
   return {
@@ -73,7 +74,8 @@ function compactingBefore(
       const next: SessionState = {
         ...input.session,
         compaction: {
-          version: 1, summary: "read notes.txt several times", coveredThrough, boundaryHash: "x",
+          version: 1, summary: "read notes.txt several times",
+          coveredThrough: coveredThrough ?? input.session.turns.length, boundaryHash: "x",
           createdAt: Date.now(), reason: "threshold", model: null, kind: "extractive",
           tokensBefore: 9_000, tokensAfter: 1_000,
         },
@@ -156,8 +158,9 @@ describe("AgentLoop: a re-read after compaction is not a repeat (#827 follow-up)
   });
 
   it("forgets once per checkpoint, not once per step it is handed back", async () => {
-    // The same checkpoint, as a new object before every step: the reads
-    // after the first one are all still in view, so the loop is caught.
-    expect(await readRunsWith(compactingBefore(() => true))).toBeLessThan(READS);
+    // The same checkpoint (through the user's row and the first step),
+    // as a new object before every step: the reads after it are all
+    // still in view, so the loop is caught.
+    expect(await readRunsWith(compactingBefore(() => true, 2))).toBeLessThan(READS);
   });
 });
