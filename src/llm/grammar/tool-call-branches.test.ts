@@ -159,6 +159,39 @@ describe("per-request narrowing keeps or drops the fs branches", () => {
   });
 });
 
+describe("finish has its own branch, like reply (#681)", () => {
+  const finish = (args: Record<string, unknown>): string => call("finish", args);
+
+  it("keeps the branch when a request admits finish and drops it otherwise", async () => {
+    const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const kept = buildGrammarForTools(base, ["finish", "os.fs.hash"]);
+    expect(kept).toMatch(/^tool-call ::= reply-call \| finish-call \| other-call$/m);
+    expect(kept).toMatch(/^tool-name ::= "\\"os\.fs\.hash\\""$/m);
+    expect(grammarToolNames(kept)).toEqual(["finish", "os.fs.hash", "reply"]);
+    expect(gbnfAccepts(kept, "root", finish({ summary: "Done." }))).toBe(true);
+    const dropped = buildGrammarForTools(base, ["os.fs.hash"]);
+    expect(dropped).not.toMatch(/^tool-call ::= .*\bfinish-call\b/m);
+    expect(gbnfAccepts(dropped, "root", finish({ summary: "Done." }))).toBe(false);
+  });
+
+  it("the static grammar file names finish only through its branch", async () => {
+    const grammar = await readFile(GRAMMAR_FILE, "utf8");
+    const toolName = grammar.split("\n").find((l) => l.startsWith("tool-name ::=")) ?? "";
+    expect(toolName).not.toContain("finish");
+    expect(grammar).toMatch(/^tool-call ::= .* \| finish-call \| other-call$/m);
+    expect(gbnfAccepts(grammar, "root", finish({ summary: "Saved." }))).toBe(true);
+    expect(gbnfAccepts(grammar, "root", finish({ summary: "stored in memory:" }))).toBe(false);
+  });
+
+  it("a base from before the finish branch keeps finish on the generic branch", async () => {
+    const base = (await buildGrammar(PLAIN_INSTRUCT_PROFILE)).replace(/^finish-call ::= .*\n/m, "");
+    const g = buildGrammarForTools(base, ["finish"]);
+    expect(g).toMatch(/^tool-call ::= reply-call \| other-call$/m);
+    expect(g).toMatch(/^tool-name ::= "\\"finish\\""$/m);
+    expect(grammarToolNames(g)).toEqual(["finish", "reply"]);
+  });
+});
+
 /**
  * ATO-1114: the rest of the tools a small model reaches for in a coding or
  * file session. Each had only the generic `object`, so `{"args":{}}` was

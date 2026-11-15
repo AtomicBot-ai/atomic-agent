@@ -207,7 +207,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     vi.spyOn(owner.mcpManager, "listAllToolMeta").mockReturnValue([meta("first")]);
     await owner.createRefreshMcp()();
     expect(manager.getGrammar()).toContain('"\\"mcp.disabled.first\\""');
-    expect(manager.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-native-tool \| mcp-server-tool \|/m);
+    expect(manager.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-native-tool \| mcp-server-tool$/m);
     expect(manager.getGrammar()).toBe(owner.getGrammar());
     expect(mcpGrammarHookFor(undefined)).toEqual({});
   });
