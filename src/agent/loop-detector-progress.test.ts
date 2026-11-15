@@ -276,3 +276,75 @@ describe("read after a failed edit is not a no-progress repeat (ATO-1000, #827)"
     expect(tracker.checkReadRepeat(observed).count).toBe(2);
   });
 });
+
+describe("forgetReads: a re-read after compaction or packer eviction is a recovery (#827 follow-up)", () => {
+  const read: Call = { tool: "os.fs.read", args: { path: "service.py", offset: 1, limit: 50 } };
+  const sameText = () =>
+    mkResult({
+      tool: "os.fs.read",
+      summary: "1|def handler():\n2|    return 1",
+      details: {
+        [READ_COVERAGE_DETAIL_KEY]: {
+          path: "/repo/service.py",
+          contentHash: "v1",
+          startLine: 1,
+          endLine: 50,
+          totalLines: 80,
+          numbered: true,
+          truncated: false,
+        },
+      },
+    });
+  const observed = {
+    path: "/repo/service.py",
+    contentHash: "v1",
+    span: { start: 1, end: 50 },
+    totalLines: 80,
+    numbered: true,
+    truncated: false,
+  };
+
+  it("drops read coverage: read, forget, re-read is not a read_repeat (tracker level)", () => {
+    const tracker = new ToolLoopTracker();
+    tracker.recordRead(observed);
+    expect(tracker.checkReadRepeat(observed).repeat).toBe(true);
+    tracker.forgetReads();
+    expect(tracker.checkReadRepeat(observed)).toEqual({ repeat: false, count: 0, covered: "" });
+    tracker.recordRead(observed);
+    // Forgetting is not an amnesty: the next identical re-read is caught again.
+    expect(tracker.checkReadRepeat(observed)).toMatchObject({ repeat: true, count: 1 });
+  });
+
+  it("runs the recovery read that would otherwise be vetoed, with no warning", () => {
+    const tracker = new ToolLoopTracker();
+    for (let step = 0; step < 5; step += 1) {
+      expect(runStep(tracker, step, [read], "parallel", sameText).proceeded).toEqual([true]);
+    }
+    tracker.forgetReads();
+    const { proceeded, signals } = runStep(tracker, 5, [read], "parallel", sameText);
+    expect(proceeded).toEqual([true]);
+    expect(signals.filter((s) => s.tool === "os.fs.read")).toEqual([]);
+  });
+
+  it("clears a veto streak on the read but still vetoes it again once it loops after the forget", () => {
+    const tracker = new ToolLoopTracker();
+    let step = 0;
+    for (; step < 6; step += 1) runStep(tracker, step, [read], "parallel", sameText);
+    expect(tracker.vetoStreak(read.tool, read.args)).toBe(1);
+    tracker.forgetReads();
+    expect(tracker.vetoStreak(read.tool, read.args)).toBe(0);
+    for (let i = 0; i < 5; i += 1, step += 1) {
+      expect(runStep(tracker, step, [read], "parallel", sameText).proceeded).toEqual([true]);
+    }
+    expect(runStep(tracker, step, [read], "parallel", sameText).proceeded).toEqual([false]);
+  });
+
+  it("leaves other tools' repeat state alone", () => {
+    const tracker = new ToolLoopTracker();
+    const same: Call = { tool: "os.web.fetch", args: { url: "https://docs.test/dead" } };
+    const deadEnd = () => mkResult({ tool: "os.web.fetch", summary: "404 not found" });
+    for (let step = 0; step < 5; step += 1) runStep(tracker, step, [same], "parallel", deadEnd);
+    tracker.forgetReads();
+    expect(runStep(tracker, 5, [same], "parallel", deadEnd).proceeded).toEqual([false]);
+  });
+});
