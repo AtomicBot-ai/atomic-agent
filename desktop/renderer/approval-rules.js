@@ -34,6 +34,9 @@ function arulesSentence(rule, deps) {
   // ATO-1471: an HTTP rule saved for one site names it; one without `origin` covers every host.
   if (typeof r.origin === 'string' && r.origin) what += ' to ' + r.origin;
   else if (r.category === 'http' || r.tool === 'os.http.request') what += ' to any site';
+  // ATO-1612: an "always" from a prompt saved for no site was a bug; the agent no longer honours it.
+  if (r.decision === 'allow' && r.source === 'prompt' && !r.origin
+      && (r.category === 'http' || r.category === 'http_write')) what += ' (no longer applied, delete it)';
   if (r.path) what += ' in ' + (d.pathText ? d.pathText(r.path) : r.path);
   return what;
 }

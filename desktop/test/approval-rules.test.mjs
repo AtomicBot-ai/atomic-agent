@@ -187,3 +187,10 @@ test('client: list, delete, a missing rule, and an agent from before the route',
     assert.deepEqual(await old.client.deleteApprovalRule('r_1'), {supported: false});
   } finally { await old.close(); }
 });
+
+test('ATO-1612: a prompt-made POST allow with no site says it is no longer applied', () => {
+  const r = {decision: 'allow', tool: 'os.http.request', category: 'http_write', source: 'prompt'};
+  assert.match(arulesSentence(r), /to any site \(no longer applied, delete it\)$/);
+  assert.doesNotMatch(arulesSentence({...r, origin: 'https://httpbin.org'}), /no longer/);
+  assert.doesNotMatch(arulesSentence({...r, source: 'user'}), /no longer/);
+});
