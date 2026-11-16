@@ -19,7 +19,7 @@ import { openLoginTerminal } from "./subscription-cli-login.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { engineBusy, retryWhileEngineBusy } from "./engine-busy-retry.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
-import { readChatFolders, writeChatFolders } from "./chat-folders.js";
+import { folderForTurn, readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { assignChat, deleteProject, readProjects, saveProject, turnProject, updateProjects } from "./projects-store.js";
 import { newChatSessionId } from "./chat-session.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
@@ -1712,7 +1712,12 @@ function wireIpc(client: AgentClient): void {
       const pid = proj.project.id;
       updateProjects(DESKTOP_STATE_DIR, (d) => assignChat(d, chatId, pid), () => send("projects:changed"));
     }
-    void client.chat(turnId, clean, chatId, proj.workingDir, proj.instructions, reasoning, turnModel ?? undefined);
+    /* W2 QA: a chat in a project with no disk folder (a chat folder, which the
+       sidebar draws as a project, and where it wins over a project by path)
+       takes that one's instructions. */
+    const filed = folderForTurn(readChatFolders(DESKTOP_STATE_DIR), known, projectId);
+    const instructions = filed ? (filed.instructions ? { name: filed.name, text: filed.instructions } : null) : proj.instructions;
+    void client.chat(turnId, clean, chatId, proj.workingDir, instructions, reasoning, turnModel ?? undefined);
     return { ok: true, turnId };
   }
 
@@ -3919,8 +3924,8 @@ function wireIpc(client: AgentClient): void {
    W2: "Projects" follows Pinned whenever the projects store is there (its header carries
    New project now), which the app's bridge always is. */
 function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tasks: unknown[] }): string {
-  // ATO-1034: "Folders" sits between Pinned and Chats while there is a folder.
-  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Projects", ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Cron jobs"] : [])]);
+  // W2 QA (16.11): ATO-1034's chat folders are listed under Projects; there is no "Folders" section.
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Projects", "Chats", ...(sb.tasks.length > 0 ? ["Cron jobs"] : [])]);
 }
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js, studio/shell.js).
     W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header. */

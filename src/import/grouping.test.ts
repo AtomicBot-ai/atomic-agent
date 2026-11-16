@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  coerceFoldersFile,
   emptyFoldersFile,
   emptyProjectsFile,
   groupHintFromCwd,
@@ -399,5 +400,20 @@ describe("mergeGroupingFrom", () => {
       sessionIds: new Set(["s1", "s2", "s3"]),
     });
     expect(again.projectsChanged || again.foldersChanged).toBe(false);
+  });
+});
+
+describe("coerceFoldersFile", () => {
+  it("keeps a folder's instructions and creation time (the desktop draws it as a project)", () => {
+    const f = coerceFoldersFile({
+      folders: [
+        { id: "fa", name: "Marketing", instructions: "  Be brief ", createdAt: 7 },
+        { id: "fb", name: "B", instructions: 3, createdAt: "x" },
+      ],
+    });
+    expect(f.folders).toEqual([
+      { id: "fa", name: "Marketing", collapsed: false, instructions: "Be brief", createdAt: 7 },
+      { id: "fb", name: "B", collapsed: false },
+    ]);
   });
 });

@@ -141,7 +141,7 @@ test("the row menu offers Move to folder only for a stored chat", () => {
 
 test("renderer wiring: sidebar, palette, delete and boot use the folders", () => {
   const src = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
-  assert.match(src, /foldersSidebarHTML\(ch\.groups\)/);
+  assert.match(src, /projectsSidebarHTML\(ch\.projects, ch\.groups\)/);
   assert.match(src, /folderPaletteWord\(s\.id\)/);
   assert.match(src, /folderForget\(FOLDERS\.state, v\)/);
   assert.match(src, /loadFolders\(\);/);
@@ -166,6 +166,12 @@ test("main writes the file whole and reads back a checked value", { skip: !M && 
     autoSort: false, projects: { fa: "/src/A" }, auto: { s1: true }, projectSort: true });
   // A file from before ATO-1253 has no projectSort: its Claude Code chats are split into project folders once.
   assert.equal(M.coerceChatFolders({ folders: [] }).projectSort, false);
+  // W2 QA: a folder is a project with no disk folder: its instructions are kept, and a turn finds it.
+  const withText = M.coerceChatFolders({ folders: [{ id: "fm", name: "Marketing", instructions: " Be brief ", createdAt: 9 }], chats: { s9: "fm" } });
+  assert.deepEqual(withText.folders, [{ id: "fm", name: "Marketing", collapsed: false, instructions: "Be brief", createdAt: 9 }]);
+  assert.equal(M.folderForTurn(withText, "s9", undefined).name, "Marketing");
+  assert.equal(M.folderForTurn(withText, null, "fm").id, "fm");
+  assert.equal(M.folderForTurn(withText, "s0", "fm"), null, "a stored chat goes by its own filing");
   writeFileSync(M.chatFoldersPath(dir), "not json");
   assert.deepEqual(M.readChatFolders(dir).folders, []);
 });
@@ -174,11 +180,13 @@ test("review fixes: no Folders block without folders, Chats head offers New fold
   const src = readFileSync(new URL("../renderer/chat-folders.js", import.meta.url), "utf8");
   assert.match(src, /if \(!groups\.length\) return '';/);
   const r = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
-  assert.match(r, /sb-fnew" data-act="fnew:"/);
+  // W2 QA (16.11): folders are projects now; no Folders section, no New folder on the Chats head.
+  assert.doesNotMatch(r, /sb-fnew" data-act="fnew:"/);
+  assert.doesNotMatch(r, /\+ foldersSidebarHTML\(/);
   assert.match(r, /ch\.rows\.length \|\| ch\.filed \|\| ch\.archived\.length \? '' : '<div class="sb-empty">No chats yet<\/div>'/);   // archived chats too (ATO-1150)
   assert.match(r, /if \(fid && PREFS\.pinned\.includes\(sid\)\)/);
   const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
-  assert.match(main, /\(sb\.folders \?\? 0\) > 0 \? \["Folders"\]/);
+  assert.doesNotMatch(main, /\["Folders"\]/);
 });
 
 test("W2 QA: home, scratch, /tmp and worktree chats go to the Claude Code folder, and old sorted ones move", () => {

@@ -208,6 +208,9 @@ export interface ImportChatFolder {
   id: string;
   name: string;
   collapsed: boolean;
+  /** W2 QA: the desktop draws a folder as a project with no disk folder; its instructions and creation time are kept. */
+  instructions?: string;
+  createdAt?: number;
 }
 
 export interface ImportFoldersFile {
@@ -321,14 +324,32 @@ export function coerceFoldersFile(raw: unknown): ImportFoldersFile {
   if (Array.isArray(r.folders)) {
     for (const f of r.folders) {
       if (!f || typeof f !== "object") continue;
-      const { id, name, collapsed } = f as Record<string, unknown>;
+      const { id, name, collapsed, instructions, createdAt } = f as Record<
+        string,
+        unknown
+      >;
       if (typeof id !== "string" || !FOLDER_ID_RE.test(id) || ids.has(id)) {
         continue;
       }
       const nm = cleanName(name);
       if (!nm) continue;
       ids.add(id);
-      out.folders.push({ id, name: nm, collapsed: collapsed === true });
+      const folder: ImportChatFolder = {
+        id,
+        name: nm,
+        collapsed: collapsed === true,
+      };
+      if (typeof instructions === "string" && instructions.trim()) {
+        folder.instructions = instructions.trim().slice(0, 16000);
+      }
+      if (
+        typeof createdAt === "number" &&
+        Number.isFinite(createdAt) &&
+        createdAt > 0
+      ) {
+        folder.createdAt = createdAt;
+      }
+      out.folders.push(folder);
     }
   }
   if (r.chats && typeof r.chats === "object" && !Array.isArray(r.chats)) {

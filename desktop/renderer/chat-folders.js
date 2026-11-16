@@ -54,7 +54,11 @@ function foldersCoerce(raw) {
   for (const f of Array.isArray(raw.folders) ? raw.folders : []) {
     if (!f || typeof f.id !== 'string' || typeof f.name !== 'string' || ids.has(f.id) || !f.name.trim()) continue;
     ids.add(f.id);
-    out.folders.push({id: f.id, name: f.name.trim().slice(0, FOLDER_NAME_MAX), collapsed: f.collapsed === true});
+    const folder = {id: f.id, name: f.name.trim().slice(0, FOLDER_NAME_MAX), collapsed: f.collapsed === true};
+    // W2 QA: a folder is a project with no disk folder; it keeps its instructions and when it was made.
+    if (typeof f.instructions === 'string' && f.instructions.trim()) folder.instructions = f.instructions.trim();
+    if (typeof f.createdAt === 'number' && f.createdAt > 0) folder.createdAt = f.createdAt;
+    out.folders.push(folder);
   }
   const chats = raw.chats && typeof raw.chats === 'object' ? raw.chats : {};
   for (const sid of Object.keys(chats)) {
@@ -105,7 +109,7 @@ function folderFreeName(state, base) {
 /** Add a folder at the top of the list; returns its id. */
 function folderAdd(state, name) {
   const id = folderNewId(state);
-  state.folders.unshift({id, name: folderFreeName(state, name || 'New folder'), collapsed: false});
+  state.folders.unshift({id, name: folderFreeName(state, name || 'New folder'), collapsed: false, createdAt: Date.now()});
   return id;
 }
 
@@ -350,11 +354,9 @@ function folderMenuHTML() {
     ];
   } else {
     const sid = FMENU.id;
-    const here = FOLDERS.state.chats[sid] || '';
-    label = 'Move to folder';
-    items = FOLDERS.state.folders.map((f) => ({act: 'fput:' + f.id + ':' + sid, label: f.name, icon: 'folder', on: f.id === here}))
-      .concat(here ? [{act: 'fput::' + sid, label: 'No folder', icon: 'x'}] : [])
-      .concat([{act: 'fnew:' + sid, label: 'New folder…', icon: 'plus', sep: FOLDERS.state.folders.length > 0}]);
+    // W2 QA: projects and chat folders are one list, Projects (chat-projects.js).
+    label = 'Move to project';
+    items = projectPickItems(sid);
   }
   const w = typeof SESMENU_W === 'number' ? SESMENU_W : 220;
   const h = items.length * 34 + 21;

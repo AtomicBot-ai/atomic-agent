@@ -67,7 +67,7 @@ function rendererCss(): string {
 }
 
 /** The row menu's optional rows between Rename and Delete…, in their one order (T165a). */
-const MENU_MIDDLE: ReadonlyArray<readonly [string, string]> = [["fpick", "Move to folder…"], ["archive", "Archive"], ["export", "Export…"]];
+const MENU_MIDDLE: ReadonlyArray<readonly [string, string]> = [["fpick", "Move to project…"], ["archive", "Archive"], ["export", "Export…"]];
 function middleRowsInOrder(verbs: string[], labels: string[]): boolean {
   let at = 0;
   return verbs.every((v, i) => {
@@ -120,7 +120,7 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       const m = opened.menu;
       check(
         "T165a: the \"…\" opens the row menu — Pin/Unpin, Mark as read/unread, Rename (ATO-455), then Delete… under a rule — without opening the chat",
-        /* ATO-1034 (folders): a stored chat also has "Move to folder…" (fpick) before Delete…;
+        /* ATO-1034 (folders): a stored chat also has "Move to project…" (fpick, W2 QA) before Delete…;
            ATO-1150 (#1384): then "Archive" (archive); ATO-1054 (#1502): then "Export…" (export).
            Each of the three may be absent, but those drawn keep that order. */
         !!m && m.role === "menu" && m.overlay === "sesmenu" && m.id === a.id

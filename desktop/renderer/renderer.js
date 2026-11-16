@@ -1286,7 +1286,7 @@ if (typeof document !== 'undefined') {
     const t = e.target instanceof Element ? e.target : null;
     if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
     const inside = !!t.closest('#sidebar');
-    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-act^="pedit:"], [data-act="studio:menu"], [data-act^="chatsearch:"], .sb-top [data-act="palette"], [data-more], input, textarea')) return;
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ftoggle:"], [data-act^="pnew:"], [data-act^="pmore:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-act^="pedit:"], [data-act="studio:menu"], [data-act^="chatsearch:"], .sb-top [data-act="palette"], [data-more], input, textarea')) return;
     if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -1537,7 +1537,7 @@ const IMP_SOURCE_WORDS = {
 };
 function impToggleWords(source, t) { return (IMP_SOURCE_WORDS[source] && IMP_SOURCE_WORDS[source][t]) || IMP_TOGGLE_WORDS[t] || ''; }
 /* The report's Kind column, in the same words. */
-const IMP_KIND_WORDS = {sessions:'chat', skills:'skill', memory:'memory', mcp:'tool', providers:'cloud model', cron:'job', secrets:'API key', projects:'project', folders:'folder'};
+const IMP_KIND_WORDS = {sessions:'chat', skills:'skill', memory:'memory', mcp:'tool', providers:'cloud model', cron:'job', secrets:'API key', projects:'project', folders:'project'};   // W2 QA: a chat folder is a project with no disk folder
 const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
 /* Settings › Diagnostics (Д56/Д58): what each row's Copy takes, and the model
    server's log shown there — open or not, its last read, the poll's timer. */
@@ -2492,13 +2492,12 @@ function renderSidebar() {
           + ch.rows.slice(0, ch.pinned).map(chatRow).join('')
         + '</div>'
         : '')
-      // ATO-1146: the projects (chat-projects.js), ATO-1034: the folders (chat-folders.js), then the chats in none of them.
-      + projectsSidebarHTML(ch.projects)
-      + foldersSidebarHTML(ch.groups)
+      /* ATO-1146: the projects (chat-projects.js), then the chats in none of them.
+         W2 QA (16.11): the ATO-1034 chat folders are listed with the projects,
+         as projects with no disk folder; there is no Folders section. */
+      + projectsSidebarHTML(ch.projects, ch.groups)
       + '<div class="sb-list" data-list="chats">'
-        + '<div class="sb-list-head micro" data-fdrop=""><span>Chats</span>'
-          + (FOLDERS.state.folders.length ? '' : '<button class="iconbtn sb-add sb-fnew" data-act="fnew:" title="New folder" aria-label="New folder">' + ic('folder') + '</button>')
-        + '</div>'
+        + '<div class="sb-list-head micro" data-fdrop=""><span>Chats</span></div>'
         + (ch.rows.length > ch.pinned ? ch.rows.slice(ch.pinned).map(chatRow).join('')
            : ch.rows.length || ch.filed || ch.archived.length ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
@@ -5489,6 +5488,7 @@ function overlaysHTML() {
   if (S.overlay === 'rewind') html += rewindSheetHTML();   // ATO-1056/1058 (chat-rewind.js)
   if (S.overlay === 'bugrep') html += bugRepHTML();   // ATO-1466 (bug-report.js)
   if (S.overlay === 'pedit') html += projectEditHTML();   // ATO-1146 (chat-projects.js)
+  if (S.overlay === 'pnew') html += projectCreateHTML();   // W2 QA (chat-projects.js)
   if (S.overlay === 'deeplink') html += deeplinkSheetHTML(); else deeplinkWhenClosed();   // ATO-556 (deeplink.js): a waiting link opens once the card is closed
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
@@ -7750,7 +7750,9 @@ function act(a) {
                            f.collapsed = !f.collapsed; saveFolders(); render(); nameVisibleSessions(); return; }
   if (k === 'fnew')      { close(); folderCreate(v || null); return; }
   // ATO-1146: projects (chat-projects.js): New project, fold, remove.
-  if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel' || k === 'pedit' || k === 'psave') { close(); projectAct(k, v); return; }
+  if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel' || k === 'pedit' || k === 'psave' || k === 'pmore') { close(); projectAct(k, v); return; }
+  // W2 QA: the New project sheet's own buttons keep it open.
+  if (k === 'pnewpick' || k === 'pnewclear' || k === 'pnewsave') { projectAct(k, v); return; }
   if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }
   if (k === 'frename')   { close(); render(); renameStart(v, 'folder'); return; }
   if (k === 'fdel')      { close(); const f = folderById(FOLDERS.state, v);
@@ -7763,8 +7765,8 @@ function act(a) {
                            return; }
   if (k === 'fput')      { const cut = v.indexOf(':'); const fid = v.slice(0, cut), sid = v.slice(cut + 1);
                            close();
-                           if (cut >= 0 && folderPut(FOLDERS.state, sid, fid || null)) {
-                             saveFolders();
+                           // W2 QA: `fid` is a project's, of the store (p…) or a chat folder (f…), chat-projects.js.
+                           if (cut >= 0 && projectPutChat(sid, fid)) {
                              // A pinned chat is drawn under Pinned only: filed, it leaves Pinned, or it would seem to go nowhere.
                              if (fid && PREFS.pinned.includes(sid)) { PREFS.pinned = PREFS.pinned.filter((x) => x !== sid); savePrefs(); }
                            }
@@ -10275,7 +10277,8 @@ function startLiveTurn(text) {
   const session = S.agentSession || undefined;
   // ATO-1146: a new chat New project opened says its project, so main files it there before the turn.
   // ATO-490: the chat's reasoning level rides along (absent for Auto); ATO-1148: so does its project's cloud model.
-  BR.chat([{role:'user', content:text}], session, session ? undefined : projectForNewTurn(), reasoningTurnLevel(session), projectTurnModel(session)).then((res) => {
+  const forProject = session ? undefined : projectForNewTurn();
+  BR.chat([{role:'user', content:text}], session, forProject, reasoningTurnLevel(session), projectTurnModel(session)).then((res) => {
     if (!res || !res.ok) {
       S.busy = false; clearInterval(ticker);
       S.log.push({id:nid(), k:'system', text:'could not start the turn: ' + esc((res && res.error) || 'unknown error')});
@@ -10292,6 +10295,7 @@ function startLiveTurn(text) {
     // item 6: the sidebar's running dot follows the stream, not S.busy.
     RUNNING.set(res.turnId, session || null);
     if (opensChat) FIRST_TURNS.set(res.turnId, text);
+    projectNoteTurn(res.turnId, forProject);   // W2 QA: a new chat in a project with no disk folder is filed once it has an id
     liveTurnStarted(res.turnId, live, session || null);   // Item 38
     renderSidebar();
   });
@@ -11229,6 +11233,7 @@ function onChatEvent(ev) {
       // Backlog 26: a new chat's queue, waiting under its first turn, now goes by the chat's session.
       moveQueue('turn:' + ev.turnId, sid);
       noteFirstPrompt(ev.turnId, sid);   // item 27: a new chat is on the list from here
+      projectFileNewChat(ev.turnId, sid);
       renderSidebar();
     }
     if (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') {

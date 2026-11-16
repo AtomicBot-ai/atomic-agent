@@ -171,13 +171,14 @@ test('the sidebar wires the projects module: loaded before renderer.js, drawn ab
   const at = (s) => html.indexOf('<script src="' + s + '"></script>');
   assert.ok(at('chat-projects.js') > at('chat-list.js') && at('chat-projects.js') < at('renderer.js'));
   const r = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
-  assert.match(r, /projectsSidebarHTML\(ch\.projects\)\s*\n\s*\+ foldersSidebarHTML\(ch\.groups\)/);
-  assert.match(r, /projectGroups\(PROJECTS\.state, order\.rest, FOLDERS\.state\)/);
+  assert.match(r, /projectsSidebarHTML\(ch\.projects, ch\.groups\)/);
+  assert.match(r, /projectGroups\(PROJECTS\.state, order\.rest, FOLDERS\.state, homeDir\(\)\)/);
   assert.match(r, /folderGroups\(FOLDERS\.state, pg\.rest\)/);
   assert.match(r, /sidebarNavItems\(pane\)/);
   assert.match(r, /k === 'pnew' \|\| k === 'ptoggle' \|\| k === 'pdelask' \|\| k === 'pdel' \|\| k === 'pedit' \|\| k === 'psave'/);
   // A new chat New project opened sends its project with the first turn (ATO-42: main files it before the turn).
-  assert.match(r, /BR\.chat\(\[\{role:'user', content:text\}\], session, session \? undefined : projectForNewTurn\(\), reasoningTurnLevel\(session\), projectTurnModel\(session\)\)/);
+  assert.match(r, /const forProject = session \? undefined : projectForNewTurn\(\);/);
+  assert.match(r, /BR\.chat\(\[\{role:'user', content:text\}\], session, forProject, reasoningTurnLevel\(session\), projectTurnModel\(session\)\)/);
   assert.match(r, /S\.overlay === 'pedit'\) html \+= projectEditHTML\(\)/);
 });
 

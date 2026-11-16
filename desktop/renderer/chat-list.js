@@ -55,8 +55,8 @@ function chatMenuItems(opts) {
     ...(o.archived === true ? [] : [o.pinned ? {verb: 'unpin', label: 'Unpin', icon: 'pin'} : {verb: 'pin', label: 'Pin', icon: 'pin'}]),
     o.unread ? {verb: 'read', label: 'Mark as read', icon: 'check'} : {verb: 'unread', label: 'Mark as unread', icon: 'unread'},
     ...(o.renamable === false ? [] : [{verb: 'rename', label: 'Rename', icon: 'edit'}]),
-    // ATO-1034: "Move to folder…" opens the folder list (chat-folders.js), for a stored chat.
-    ...(o.folders === true ? [{verb: 'fpick', label: 'Move to folder…', icon: 'folder'}] : []),
+    // ATO-1034, W2 QA: "Move to project…" opens the projects list (chat-folders.js), for a stored chat.
+    ...(o.folders === true ? [{verb: 'fpick', label: 'Move to project…', icon: 'folder'}] : []),
     // ATO-1150: Archive hides a stored chat from the lists; Unarchive brings it back.
     ...(o.archivable === true ? [o.archived ? {verb: 'unarchive', label: 'Unarchive', icon: 'archive'} : {verb: 'archive', label: 'Archive', icon: 'archive'}] : []),
     // ATO-1054: "Export…" saves the chat as Markdown / PDF / Word (chat-export.js), for a stored chat.
@@ -199,7 +199,8 @@ function projectsCoerce(raw) {
     if (!projectPathKey(folder)) continue;
     const name = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : projectNameFromDir(folder);
     ids.add(p.id);
-    out.projects.push({id: p.id, name, folder, instructions: typeof p.instructions === 'string' ? p.instructions : ''});
+    out.projects.push({id: p.id, name, folder, instructions: typeof p.instructions === 'string' ? p.instructions : '',
+      createdAt: typeof p.createdAt === 'number' && p.createdAt > 0 ? p.createdAt : 0});
   }
   const chats = r.chats && typeof r.chats === 'object' && !Array.isArray(r.chats) ? r.chats : {};
   for (const sid of Object.keys(chats)) if (typeof chats[sid] === 'string' && ids.has(chats[sid])) out.chats[sid] = chats[sid];
@@ -251,6 +252,21 @@ function projectGroups(state, rows, folders, home) {
   return {groups: projects.map((p) => ({project: p, rows: by.get(p.id)})), rest};
 }
 
-if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace,
+/* W2 QA (16.11): one kind of group in the sidebar, Projects. A project with
+   a disk folder is the projects store's (`groups`, projectGroups above); one
+   without is a chat folder (`folders`, chat-folders.js folderGroups), which
+   import and the sorting make too. Both are listed together, the one with
+   the latest chat first (the way Claude orders its projects), a new empty
+   one by when it was made. Each item: {kind: 'project'|'folder', id, name,
+   rows, item} (item is the project or the folder itself). */
+function projectItems(groups, folders) {
+  const latest = (rows, made) => (rows || []).reduce((m, r) => Math.max(m, (r && r.updatedAt) || 0), made || 0);
+  const items = [];
+  for (const g of groups || []) items.push({kind: 'project', id: g.project.id, name: g.project.name, rows: g.rows, item: g.project, at: latest(g.rows, g.project.createdAt)});
+  for (const g of folders || []) items.push({kind: 'folder', id: g.folder.id, name: g.folder.name, rows: g.rows, item: g.folder, at: latest(g.rows, g.folder.createdAt)});
+  return items.map((it, i) => ({it, i})).sort((a, b) => (b.it.at - a.it.at) || (a.i - b.i)).map((x) => x.it);
+}
+
+if (typeof module !== 'undefined') module.exports = {orderChats, projectItems, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace,
   archiveSet, splitArchived, chatSearchQuery, chatSearch, CHAT_SEARCH_MAX, archivedIdsOf, agentKeepsArchive, archiveMigrationStep,
   projectPathKey, projectNameFromDir, projectsCoerce, projectForFolder, projectOf, projectGroups};

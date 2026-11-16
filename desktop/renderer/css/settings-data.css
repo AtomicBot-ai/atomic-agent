@@ -213,3 +213,9 @@ input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
 .sd-impgrp .body{min-width:0}
 .sd-impgrp .d{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sd-imp .set-sechead{margin-top:6px}
+
+/* W2 QA: the New project sheet (chat-projects.js projectCreateHTML). */
+.sd-opt{color:var(--ink-3);font-weight:400}
+.sd-pnew-folder{display:flex;align-items:center;gap:8px;min-width:0;padding:8px 10px;border:1px solid var(--bd);border-radius:8px}
+.sd-pnew-folder .mono{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-cap)}
+.sd-pnew-folder .sd-cap{display:block}
