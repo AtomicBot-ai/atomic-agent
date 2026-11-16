@@ -86,9 +86,10 @@ export interface UserToolsConfig {
      * environment even though they look like secrets. Without this, a
      * command gets the agent's environment minus anything named like a
      * KEY, TOKEN, SECRET or PASSWORD and the known provider keys (see
-     * `src/sandbox/command-env.ts`). Default `GITHUB_TOKEN` and
-     * `NOTION_API_KEY`: the bundled `github` and `notion` skills read
-     * them through the shell (`gh`, `printenv`). `[]` strips those too.
+     * `src/sandbox/command-env.ts`). Default `GITHUB_TOKEN`,
+     * `NOTION_API_KEY` and `MONID_API_KEY`: the bundled `github`,
+     * `notion` and `monid` skills read them through the shell (`gh`,
+     * `printenv`, `curl`). `[]` strips those too.
      * Matched without regard to case.
      */
     envPassthrough: string[];
@@ -127,11 +128,12 @@ export function createToolsDefaults(): UserToolsConfig {
       // Three concurrent jobs is a server, a watcher and a build; more
       // is a model that has stopped waiting for anything.
       maxJobs: 3,
-      // Only the two tokens the bundled skills read through the shell
-      // (`gh` in `github`, `printenv` in `notion`), both pasted by the
-      // operator for that purpose. Provider keys and bot tokens are not
-      // here, so a command the model runs never sees them (ATO-347).
-      envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
+      // Only the tokens the bundled skills read through the shell
+      // (`gh` in `github`, `printenv` in `notion`, `curl` in `monid`),
+      // each pasted by the operator for that purpose. Provider keys and
+      // bot tokens are not here, so a command the model runs never sees
+      // them (ATO-347).
+      envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY", "MONID_API_KEY"],
     },
     // Off until the operator asks for it: a model that can click and
     // type anywhere is not a default.

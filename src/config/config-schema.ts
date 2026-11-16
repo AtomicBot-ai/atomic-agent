@@ -1058,12 +1058,13 @@ export interface UserConfigFile {
 // rewrote `"writes"`), so it migrates to `"writes"`; `"always"` is kept.
 // From v79 an explicit `"never"` is honoured.
 // Unversioned, additive: `tools.shell.envPassthrough` (default
-// `["GITHUB_TOKEN", "NOTION_API_KEY"]`, ATO-347). `os.shell.run` and
+// `["GITHUB_TOKEN", "NOTION_API_KEY"]`, ATO-347; `"MONID_API_KEY"` added
+// for the bundled `monid` skill). `os.shell.run` and
 // `os.git.*` no longer inherit the agent's provider keys, bot tokens or
 // any variable named like a KEY, TOKEN, SECRET or PASSWORD
 // (`src/sandbox/command-env.ts`); the names listed here are passed to
-// shell commands anyway. The default keeps the bundled `github` and
-// `notion` skills working. An older file has no field and takes the
+// shell commands anyway. The default keeps the bundled `github`,
+// `notion` and `monid` skills working. An older file has no field and takes the
 // default. A DEFAULT-BEHAVIOUR CHANGE for a command that relied on any
 // other inherited key; the fix is one line in config.
 // Unversioned, additive: `localModels.drySampler` (default `false`,

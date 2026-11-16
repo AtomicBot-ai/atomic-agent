@@ -30,7 +30,7 @@ describe("outbound HTTP and tool configuration ownership", () => {
     const vision = createVisionDefaults();
     expect(http).toStrictEqual({ enabled: true, approvalMode: "writes", hostAllowlist: null, maxResponseBytes: 1_048_576, defaultTimeoutMs: 30_000 });
     expect(projects).toStrictEqual({ roots: [] });
-    expect(tools).toStrictEqual({ shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3, envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"] }, screen: { enabled: false, point: true } });
+    expect(tools).toStrictEqual({ shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3, envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY", "MONID_API_KEY"] }, screen: { enabled: false, point: true } });
     expect(vision).toStrictEqual({ enabled: true, autoDetect: true, maxImageBytes: 8 * 1024 * 1024, maxImagesPerCall: 4 });
     expect(Object.keys(http)).toEqual(["enabled", "approvalMode", "hostAllowlist", "maxResponseBytes", "defaultTimeoutMs"]);
     expect(projects.roots).not.toBe(createProjectsDefaults().roots);
@@ -98,7 +98,7 @@ describe("outbound HTTP and tool configuration ownership", () => {
 
   it("retains shell zero/no-default and independent time limits without introducing a runtime clamp", () => {
     expect(parseToolsConfig({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1 }, createToolsDefaults).shell)
-      .toStrictEqual({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1, envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"] });
+      .toStrictEqual({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1, envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY", "MONID_API_KEY"] });
     expect(parseToolsConfig({ defaultTimeoutMs: "2e3", jobMaxMs: 1 }, createToolsDefaults).shell.defaultTimeoutMs).toBe(2000);
     expect(schema.parseUserConfigFile({ tools: { shell: { defaultTimeoutMs: "2e3", jobMaxMs: 1 } } }).tools.shell.defaultTimeoutMs).toBe(2000);
   });

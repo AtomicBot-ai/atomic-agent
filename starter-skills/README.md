@@ -28,6 +28,7 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `apple-notes/` | Manage Apple Notes via the `memo` CLI | macOS + `brew install antoniorodr/memo/memo` + Automation permission |
 | `apple-reminders/` | Manage Apple Reminders via the `remindctl` CLI | macOS + `brew install steipete/tap/remindctl` + Reminders permission |
 | `notion/` | Notion REST API (pages, databases, blocks) | `NOTION_API_KEY` in `~/.atomic-agent/.env` + page sharing |
+| `monid/` | 3,100+ paid live-data tools through Monid (X, Reddit, leads, company and funding data, SEO, screenshots, video): discover, inspect the price, run | `MONID_API_KEY` in `~/.atomic-agent/.env` (key from app.monid.ai) + Monid wallet credit |
 | `gog-workspace/` | Google Workspace access through the `gog` CLI | `gog` installed + OAuth client JSON added with `gog auth credentials` / `gog auth add` |
 | `xurl/` | X (Twitter) API via the official `xurl` CLI | `xurl` installed + OAuth 2.0 set up by user out-of-band |
 | `pdf/` | Merge / split / extract / render / OCR PDFs | `brew install qpdf poppler` (`ocrmypdf` for OCR) |
