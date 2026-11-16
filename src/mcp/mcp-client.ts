@@ -5,9 +5,16 @@
  * in the runtime that imports `@modelcontextprotocol/sdk`.
  * Everything else operates on the neutral shapes from
  * `mcp-types.ts`. Future replacement of the SDK touches this file
- * and (potentially) `mcp-sampling-handler.ts` only.
+ * and (potentially) `mcp-sampling-handler.ts` only. The OAuth provider
+ * (`mcp-oauth-provider.ts`) takes one type from the SDK; the `auth()`
+ * call it needs is `runMcpOAuth` below.
  */
 
+import {
+  auth,
+  UnauthorizedError,
+  type OAuthClientProvider,
+} from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -20,10 +27,13 @@ import {
 
 import { resourceClassFor } from "../agent/tool-resource-class.js";
 import {
+  McpAuthRequiredError,
   McpConnectError,
   McpRequestError,
   scrubErrorMessage,
 } from "./mcp-errors.js";
+import { createMcpOAuthStore } from "./mcp-oauth-store.js";
+import { McpOAuthProvider, usesMcpOAuth } from "./mcp-oauth-provider.js";
 import {
   attachStderrTail,
   formatStderrTail,
@@ -65,6 +75,13 @@ export interface McpClientDeps {
    * tests; production uses `() => Date.now()`.
    */
   now?: () => number;
+  /**
+   * State dir holding OAuth sign-ins (`<stateDir>/mcp-oauth/`). When set,
+   * every remote server without a credential header gets an OAuth
+   * provider; a server that never answers 401 is unaffected by it.
+   * Omitted (tests, hosts without a state dir): no provider, as before.
+   */
+  oauthStateDir?: string;
 }
 
 /** Defaults — agent identity advertised to servers in `initialize`. */
@@ -98,6 +115,8 @@ export class McpClient {
   private readonly deps: McpClientDeps;
   private client: Client | null = null;
   private connecting = false;
+  /** OAuth provider of the transport last built, if any. */
+  private authProvider: McpOAuthProvider | null = null;
   /** Why the last `close()` happened, told to a call it cut short. */
   private closeReason: string | null = null;
   private catalog: McpServerCatalog = {
@@ -192,6 +211,9 @@ export class McpClient {
     err: unknown,
     stderrTail: StderrTail,
   ): Promise<McpConnectError> {
+    if (this.authProvider && isUnauthorized(err)) {
+      return new McpAuthRequiredError(this.config.name);
+    }
     const base =
       err instanceof McpConnectError ? err.message : scrubErrorMessage(err);
     await stderrTail.settle(STDERR_SETTLE_MS);
@@ -443,6 +465,7 @@ export class McpClient {
     StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
     const t = this.config.transport;
     if (t.kind === "stdio") {
+      this.authProvider = null;
       // Only service variables (PATH, HOME, SystemRoot, ...) from the
       // agent's environment, plus the server's own configured `env`.
       // Provider keys loaded from `<stateDir>/.env` stay with the agent.
@@ -461,13 +484,28 @@ export class McpClient {
         stderr: "pipe",
       });
     }
+    // Browser sign-in (OAuth) only for remote servers without a key in
+    // their headers: a configured `Authorization` header keeps working
+    // exactly as before. The provider never opens a browser itself.
+    this.authProvider =
+      this.deps.oauthStateDir && usesMcpOAuth(t)
+        ? new McpOAuthProvider({
+            store: createMcpOAuthStore(this.deps.oauthStateDir),
+            server: this.config.name,
+            url: t.url,
+            mode: "connect",
+          })
+        : null;
+    const authProvider = this.authProvider ?? undefined;
     if (t.kind === "streamable_http") {
       return new StreamableHTTPClientTransport(new URL(t.url), {
         requestInit: t.headers ? { headers: { ...t.headers } } : undefined,
+        ...(authProvider ? { authProvider } : {}),
       });
     }
     return new SSEClientTransport(new URL(t.url), {
       requestInit: t.headers ? { headers: { ...t.headers } } : undefined,
+      ...(authProvider ? { authProvider } : {}),
     });
   }
 
@@ -504,6 +542,38 @@ export function resolveStdioCommand(
       ? process.env.ComSpec
       : "cmd.exe";
   return { command: comSpec, args: ["/d", "/s", "/c", command, ...args] };
+}
+
+/**
+ * True when a connect failed because the server wants credentials: the
+ * SDK's `UnauthorizedError` (no token, sign-in needed) or an HTTP 401
+ * that survived the provider (a token the server no longer accepts).
+ */
+export function isUnauthorized(err: unknown): boolean {
+  if (err instanceof UnauthorizedError) return true;
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === 401
+  );
+}
+
+/**
+ * Run the SDK's OAuth step for a remote MCP server: discovery, dynamic
+ * client registration and the authorization URL (`"REDIRECT"`), or the
+ * code exchange / token refresh (`"AUTHORIZED"`). The sign-in flow in
+ * `mcp-oauth-flow.ts` calls this so SDK calls stay in this file.
+ */
+export async function runMcpOAuth(
+  provider: OAuthClientProvider,
+  options: { serverUrl: string; authorizationCode?: string },
+): Promise<"AUTHORIZED" | "REDIRECT"> {
+  return auth(provider, {
+    serverUrl: options.serverUrl,
+    ...(options.authorizationCode !== undefined
+      ? { authorizationCode: options.authorizationCode }
+      : {}),
+  });
 }
 
 /** Race a promise against a manual timeout + optional abort signal. */

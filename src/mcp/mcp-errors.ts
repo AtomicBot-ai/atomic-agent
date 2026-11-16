@@ -23,6 +23,21 @@ export class McpConnectError extends McpError {
   }
 }
 
+/** Plain message a server that wants a browser sign-in shows. */
+export const MCP_SIGN_IN_REQUIRED_MESSAGE = "Sign in required";
+
+/**
+ * The remote server answered 401 and has no usable token: the person has
+ * to sign in through the browser (`mcp-oauth-flow.ts`). The manager maps
+ * it to the `needs_auth` state instead of `down`.
+ */
+export class McpAuthRequiredError extends McpConnectError {
+  constructor(server: string, message: string = MCP_SIGN_IN_REQUIRED_MESSAGE) {
+    super(server, message);
+    this.name = "McpAuthRequiredError";
+  }
+}
+
 /** Server explicitly refused a request (4xx-equivalent, `isError: true`). */
 export class McpRequestError extends McpError {
   constructor(

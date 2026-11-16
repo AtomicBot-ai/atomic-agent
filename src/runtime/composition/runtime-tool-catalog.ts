@@ -410,12 +410,16 @@ export async function connectRuntimeMcpCatalog(input: {
           server: "*",
         })
       : undefined,
+    // Browser sign-ins of remote servers live in `<stateDir>/mcp-oauth/`.
+    oauthStateDir: config.paths.stateDir,
     ...(options.handlers?.onChannelStatus
       ? {
           onStatus: (status) =>
             options.handlers!.onChannelStatus!({
               channel: `mcp:${status.name}`,
-              state: status.state,
+              // The channel contract has no sign-in state; "down" with
+              // "Sign in required" as the error says the same thing.
+              state: status.state === "needs_auth" ? "down" : status.state,
               ...(status.lastError ? { lastError: status.lastError } : {}),
             }),
         }

@@ -747,6 +747,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onMcpRestartServer: (name) => orchestrator.mcp.restartServer(name),
         onMcpToggleServerEnabled: (name) =>
           orchestrator.mcp.toggleServerEnabled(name),
+        onMcpAuthRequested: (name, action) =>
+          action === "signin"
+            ? orchestrator.mcp.signIn(name)
+            : orchestrator.mcp.signOut(name),
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
         onIssueReportRequested: () => orchestrator.issueReport.open(),

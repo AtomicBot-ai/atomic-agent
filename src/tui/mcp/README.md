@@ -16,7 +16,7 @@ Inherit [TUI instructions](../AGENTS.md); read [MCP instructions](../../mcp/AGEN
 
 DebugPane mounts the panel, TuiState/TuiAction and the root reducer compose its state, and TuiApp/tui-command connect input/callbacks. ChatOrchestrator constructs and shuts down the MCP orchestrator. These callers import named files; no barrel or compatibility forwarding module is required.
 
-Writes run before live changes. Add/remove success closes the relevant dialog once config has been written; a subsequent connection failure is reported separately and does not pretend to roll back the file. Restart/toggle for the same server share a busy guard. The manager owns catalog discovery and dynamic registration; refreshMcp rebuilds the runtime's exposed tool catalog after live changes. Read [MCP client lifecycle](../../mcp/docs/client.md) before changing that boundary.
+Writes run before live changes. Add/remove success closes the relevant dialog once config has been written; a subsequent connection failure is reported separately and does not pretend to roll back the file. Restart/toggle for the same server share a busy guard. `/mcp auth <name>` and `/mcp signout <name>` run the shared [browser sign-in flow](../../mcp/mcp-oauth-flow.ts) from the orchestrator: it prints the page to open, tries the default browser through [open-url](../open-url.ts) and reconnects the server when the browser comes back. A server in `needs_auth` shows that command in its list row. The manager owns catalog discovery and dynamic registration; refreshMcp rebuilds the runtime's exposed tool catalog after live changes. Read [MCP client lifecycle](../../mcp/docs/client.md) before changing that boundary.
 
 ## Checks
 

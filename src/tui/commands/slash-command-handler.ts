@@ -32,6 +32,8 @@ export interface SlashDispatchResult {
   /** Text to inject into the chat log as a system confirmation. */
   readonly systemMessage?: string;
   readonly compactionVerb?: "run" | "show";
+  /** `/mcp auth <name>` / `/mcp signout <name>`: browser sign-in of a remote server. */
+  readonly mcpAuthVerb?: { action: "signin" | "signout"; name: string };
   /** `/goal …` (ATO-451): the orchestrator acts on the open chat's goal. */
   readonly goalCommand?: GoalCommand;
   /**
@@ -908,8 +910,18 @@ function dispatchMcpSub(rawArgs: string): SlashDispatchResult {
       { type: "mcp_remove_confirm_opened", name },
     ]);
   }
+  const authMatch = argPart.match(/^(auth|signout)\s+(\S+)\s*$/i);
+  if (authMatch) {
+    return pureActions([], {
+      mcpAuthVerb: {
+        action: authMatch[1]!.toLowerCase() === "auth" ? "signin" : "signout",
+        name: authMatch[2]!,
+      },
+    });
+  }
   return pureActions([], {
-    systemMessage: "usage: /mcp | /mcp add | /mcp remove <name>",
+    systemMessage:
+      "usage: /mcp | /mcp add | /mcp remove <name> | /mcp auth <name> | /mcp signout <name>",
   });
 }
 

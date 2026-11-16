@@ -28,7 +28,11 @@ import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 
 import { McpClient, type McpClientDeps } from "./mcp-client.js";
-import { McpConnectError, scrubErrorMessage } from "./mcp-errors.js";
+import {
+  McpAuthRequiredError,
+  McpConnectError,
+  scrubErrorMessage,
+} from "./mcp-errors.js";
 import { createMcpResourceClassResolver } from "./mcp-resource-class.js";
 import {
   createMcpToolDefinition,
@@ -108,12 +112,18 @@ export class McpManager {
         state: s.state,
         ts: Date.now(),
         ...(s.lastError ? { lastError: s.lastError } : {}),
+        ...(s.state === "needs_auth" ? { authRequired: true } : {}),
         toolCount: catalog.tools.length,
         resourceCount: catalog.resources.length,
         promptCount: catalog.prompts.length,
       });
     }
     return out;
+  }
+
+  /** The live config of one server (config, Composio or plugin). */
+  getServerConfig(server: string): McpServerConfig | undefined {
+    return this.servers.get(server)?.config;
   }
 
   /** Look up a client by server name. Returns `undefined` when absent. */
@@ -311,6 +321,14 @@ export class McpManager {
       const msg =
         err instanceof McpConnectError ? err.message : scrubErrorMessage(err);
       s.lastError = msg;
+      if (err instanceof McpAuthRequiredError) {
+        // Not a failure: the server waits for a browser sign-in.
+        this.transition(s, "needs_auth");
+        this.deps.logger?.info("mcp.server_needs_auth", {
+          server: s.config.name,
+        });
+        return;
+      }
       this.transition(s, "down");
       this.deps.logger?.warn("mcp.server_down", {
         server: s.config.name,
@@ -382,6 +400,7 @@ export class McpManager {
       state: next,
       ts: Date.now(),
       ...(s.lastError ? { lastError: s.lastError } : {}),
+      ...(next === "needs_auth" ? { authRequired: true } : {}),
       toolCount: catalog.tools.length,
       resourceCount: catalog.resources.length,
       promptCount: catalog.prompts.length,

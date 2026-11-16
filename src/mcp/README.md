@@ -11,6 +11,7 @@ This area owns mcp client and tool catalog. Read [AGENTS.md](AGENTS.md) before c
 - [mcp-manager.ts](mcp-manager.ts)
 - [mcp-resource-class.ts](mcp-resource-class.ts)
 - [mcp-sampling-handler.ts](mcp-sampling-handler.ts)
+- [mcp-oauth-flow.ts](mcp-oauth-flow.ts): browser sign-in for remote servers, see docs/client.md
 
 ## Ownership and dependencies
 
