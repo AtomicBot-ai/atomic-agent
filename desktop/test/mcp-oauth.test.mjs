@@ -33,6 +33,7 @@ test('the row view: needs_auth asks to sign in, pending waits, signed in offers 
   assert.equal(A.mcpAuthViewOf(remote, undefined, {state:'signed_out'}, false), null, 'a remote server that never asked stays quiet');
   assert.equal(A.mcpAuthViewOf(remote, {state:'needs_auth'}, {state:'pending'}, false), 'pending');
   assert.equal(A.mcpAuthViewOf(remote, {state:'up'}, {state:'signed_in'}, false), 'signed_in');
+  assert.equal(A.mcpAuthViewOf(remote, {state:'needs_auth'}, {state:'signed_in'}, false), 'needs', 'a refused refresh asks to sign in again');
   assert.equal(A.mcpAuthViewOf({...remote, enabled:false}, {state:'needs_auth'}, undefined, true), null, 'a turned-off server shows nothing');
   assert.equal(A.mcpAuthViewOf(keyed, {state:'needs_auth'}, undefined, false), null, 'a server with a key never signs in');
   assert.equal(A.mcpAuthViewOf(local, {state:'needs_auth'}, undefined, false), null);
@@ -63,6 +64,8 @@ test('the poll: every 2 s, stops on signed in, an error or after 5 minutes', () 
   const t0 = 1_000_000;
   assert.equal(A.mcpAuthPollStep({state:'pending'}, t0, t0 + 2000, A.MCP_AUTH.maxMs), 'wait');
   assert.equal(A.mcpAuthPollStep(null, t0, t0 + 2000, A.MCP_AUTH.maxMs), 'wait', 'a failed poll waits for the next one');
+  assert.equal(A.mcpAuthPollStep({state:'signed_out'}, t0, t0 + 2000, A.MCP_AUTH.maxMs), 'wait', 'the code exchange window is not a failure');
+  assert.equal(A.mcpAuthPollStep({state:'signed_out', error:'Sign-in was not completed: denied'}, t0, t0 + 2000, A.MCP_AUTH.maxMs), 'failed');
   assert.equal(A.mcpAuthPollStep({state:'signed_in'}, t0, t0 + 4000, A.MCP_AUTH.maxMs), 'done');
   assert.equal(A.mcpAuthPollStep({state:'signed_out', error:'Access denied.'}, t0, t0 + 4000, A.MCP_AUTH.maxMs), 'failed');
   assert.equal(A.mcpAuthPollStep({state:'pending'}, t0, t0 + A.MCP_AUTH.maxMs, A.MCP_AUTH.maxMs), 'timeout');

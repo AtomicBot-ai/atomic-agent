@@ -36,8 +36,10 @@ function mcpUsesOAuth(cfg) {
 function mcpAuthViewOf(cfg, live, auth, catalogOauth) {
   if (!cfg || cfg.enabled === false || !mcpUsesOAuth(cfg)) return null;
   if (auth && auth.state === 'pending') return 'pending';
-  if (auth && auth.state === 'signed_in') return 'signed_in';
+  // Review fix: the live state first. A refresh that failed leaves the
+  // tokens on disk while the server needs a new sign-in.
   if (live && live.state === 'needs_auth') return 'needs';
+  if (auth && auth.state === 'signed_in') return 'signed_in';
   if (auth && auth.state === 'signed_out' && catalogOauth) return 'needs';
   return null;
 }
@@ -70,7 +72,9 @@ function mcpAuthDetailControlHTML(name, view, h) {
 /* One poll answer -> what to do next: 'wait', 'done', 'failed' or 'timeout'. */
 function mcpAuthPollStep(answer, startedAt, now, maxMs) {
   if (answer && answer.state === 'signed_in') return 'done';
-  if (answer && answer.state === 'signed_out') return 'failed';
+  // signed_out with no error is the moment between the browser coming back
+  // and the tokens being saved: keep waiting; an error ends it.
+  if (answer && answer.state === 'signed_out' && answer.error) return 'failed';
   if (now - startedAt >= maxMs) return 'timeout';
   return 'wait';
 }
