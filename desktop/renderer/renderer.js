@@ -2316,7 +2316,8 @@ function providerWord(id) {
     ("Gemma 4 E4B QAT GGUF" → "Gemma 4 E4B"); otherwise the id as before. */
 function modelWord(id) {
   const s = String(id || '');
-  const m = (SEL.local || []).find((x) => x && x.id === s && x.name);
+  // W2 QA: Settings' own list too (LLMP.local), so a model the composer has not listed yet is named, not shown as its id.
+  const m = (SEL.local || []).find((x) => x && x.id === s && x.name) || (LLMP.local || []).find((x) => x && x.id === s && x.name);
   return m ? m.name.replace(/\s+(?:QAT\s+)?GGUF$/i, '') : shortModel(s);
 }
 /** Token counts for a tooltip: 7.5k, 131k, 1.0M — the exact figures live in the context popover. */
@@ -18800,7 +18801,7 @@ async function swxHoldIfBusy(label, want, seq) {
     SWX.hold = hold;
     hold.timer = setTimeout(look, SWX_HOLD.pollMs);
     // Settings and setup cover the composer, where the line and its buttons are.
-    if (S.settings || OB.open) toast('Waiting to switch', swxHoldLine() + '. The way out is under the message box.');
+    if (S.settings || OB.open) toast('Waiting to switch', swxHoldLine() + (S.settings ? '. Switch now or cancel under the cards in Models.' : '. The way out is under the message box.'));
     render();
   });
 }
@@ -18959,7 +18960,15 @@ async function swxExecute(label, want, run, refuse, current) {
         return res;
       }
     }
-    res = await run();
+    /* W2 QA (16.11): main's switch could leave its answer out for good, and
+       the watchdog never releases a queued switch, so messages sent meanwhile
+       waited forever. Past the switch's own limit it is given up: the queue
+       moves on and keeps those messages (swxMessageOutcome); a late answer
+       is ignored by the seq / current() checks. */
+    const limit = swxStartsModel(want) ? SWX_START_MAX_MS : SWX_MAX_MS * 2;
+    let giveUp = null;
+    res = await Promise.race([run(), new Promise((r) => { giveUp = setTimeout(() => r({ok:false, error:'the switch did not finish in time'}), limit); })]);
+    clearTimeout(giveUp);
     // The IPC has resolved. That is one of three things, not the end.
     await swxSettle(res, gen0);
     // A newer choice owns all completion feedback.
@@ -20874,6 +20883,16 @@ async function selChooseBackend(id) {
      replaces it the moment the switch lands. */
   const predicted = bswPredictedModel(id);
   const want = predicted ? {backend:id, model:predicted} : {backend:id};
+  /* W2 QA (16.11): the provider chip read the config being left, so a switch
+     to Cloud showed "Cloud · local-llama" until it landed. Main's rule
+     (backend-switch.ts pickCloudProvider): the active cloud provider, else
+     the first with a key, else the first. */
+  if (id === 'cloud') {
+    const cloud = selProviders().filter((p) => p && p.kind !== 'llama-server');
+    const cfg = LIVE_CONFIG && LIVE_CONFIG.llm ? LIVE_CONFIG.llm : {};
+    const pick = cloud.find((p) => p.id === cfg.activeTextProvider) || cloud.find((p) => BSW.readyIds.includes(p.id)) || cloud[0];
+    if (pick) want.providerId = pick.id;
+  }
   const res = await swxRun(BSW.line, want, () => SWXBR.switchBackend(id));
   if (res && res.superseded) return res;
   SEL.busy = false; BSW.line = '';
@@ -27980,16 +27999,27 @@ function llmRunModeHTML(status, tone) {
           + ' aria-pressed="' + on + '" title="' + esc(need ? need.title : on ? label + ': ' + line : what) + '">'
           + '<span class="llm-rm-ico">' + ic(icon) + '</span>'
           + '<span class="llm-rm-body"><span class="llm-rm-t">' + esc(label) + '</span>'
-          + '<span class="llm-rm-d">' + (on ? '<span class="tk-dot tk-dot--green" aria-hidden="true"></span>' : '') + esc(line) + '</span>'
+          + '<span class="llm-rm-d">' + (on && !(SWX.pending > 0) ? '<span class="tk-dot tk-dot--green" aria-hidden="true"></span>' : '') + esc(line) + '</span>'
           + '</span></button>';
       }).join('')
     + '</div>'
+    /* W2 QA (16.11): a switch held for a turn the agent still counts had its
+       way out (Switch now anyway, Cancel) under the message box only, which
+       Settings covers: a message sent meanwhile sat on "Sent · waiting". */
+    + (SWX.hold ? '<div class="tk-notice llm-rm-hold">' + ic('clock') + '<span class="grow">' + esc(swxHoldLine()) + '</span>'
+      + '<button class="btn btn-s xs" data-act="swx:holdnow">Switch now anyway</button>'
+      + '<button class="btn btn-g xs" data-act="swx:holdcancel">Cancel</button></div>' : '')
     // The local engine's own trouble is news in every view.
     + engfCardHTML() + cpufbCardHTML() + tpLlmFaultHTML()
     + '</section>';
 }
 /** The card in effect's line: what answers on it, in the words people see elsewhere. */
 function llmCardRunning(id) {
+  /* W2 QA (16.11): a switch on its way paints its card at once (llmCardActive),
+     but the line read the config still being left: Cloud said "Running:
+     custom-local-…" for as long as the switch took. The card on its way says so. */
+  const going = SWX.pending > 0 && SWX.want && SWX.want.backend;
+  if (going && (going === 'custom' ? 'local' : going) === id) return SWX.hold ? 'Waiting to switch' : 'Switching…';
   const rm = rmNow();
   if (id === 'fusion') {
     const orch = rm.orchestratorProviderId;
@@ -28000,6 +28030,8 @@ function llmCardRunning(id) {
     const model = p.defaultChatModel || p.model || '';
     return id === 'local' || !model ? 'Running on ' + providerWord(p.id) : 'Running: ' + modelWord(model);
   }
+  // The Cloud card never names a model this computer serves.
+  if (id === 'cloud') return 'Running';
   if (llmLocalModels().mode === 'external') return 'Running on your own server';
   const served = llmServedChatIds();
   const model = (served && served[0]) || (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId || '';
