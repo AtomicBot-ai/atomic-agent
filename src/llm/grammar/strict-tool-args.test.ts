@@ -148,7 +148,7 @@ describe("strict tool args (ATO-633): with the rest of the grammar pipeline", ()
     const narrowed = buildGrammarForTools(plain, ["os.git.log", "finish", "os.fs.read"]);
     const strict = applyStrictToolArgs(narrowed, ALL_TOOLS);
     parseGbnf(strict);
-    expect(strict).toMatch(/^tool-call ::= reply-call \| fs-read-call \| strict-args-call$/m);
+    expect(strict).toMatch(/^tool-call ::= reply-call \| fs-read-call \| finish-call \| strict-args-call$/m);
     expect(gbnfAccepts(strict, "root", call("os.git.log", { repo: "." }))).toBe(true);
     expect(gbnfAccepts(strict, "root", call("finish", { summary: "s" }))).toBe(true);
     expect(gbnfAccepts(strict, "root", call("finish", { reason: "s" }))).toBe(false);

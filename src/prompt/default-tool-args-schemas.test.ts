@@ -110,6 +110,9 @@ describe("default tool argsJsonSchema map", () => {
         "timeoutMs",
         "role",
         "model",
+        "outputTokens",
+        "outputLines",
+        "profile",
       ].sort(),
     );
     expect(task.properties.etaSeconds).toEqual({
