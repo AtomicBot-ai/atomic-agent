@@ -362,6 +362,8 @@ async function runStoppedTurn(app, model, n, chat) {
     if (Date.now() > closed) fatal('hang', `Stop on turn ${n} left the request to the model open`);
     await Promise.race([sleep(100), fatalSignal]);
   }
+  // The chat now ends with the stopped turn, and that is what reopening it must show.
+  chat.lastToken = '(stopped)';
   state.stops += 1;
   recordTurn(n, 'stop', chat.name, Date.now() - t0 - QUIET_MS);
 }
