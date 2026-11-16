@@ -40,11 +40,14 @@ export interface SessionNextStep {
 export const NEXT_STEP_MAX_CHARS = 120;
 
 /**
- * Output bound for the call (the issue's "≤40 tokens"). A suggestion is
- * one short sentence; a model that needs more than this is reasoning,
- * and the answer is dropped rather than paid for at length.
+ * Output bound for the call. A suggestion is one short sentence, but a
+ * reasoning model (DeepSeek through OpenRouter, say) spends its thinking
+ * out of the same budget: at 40 tokens it never reached the answer and
+ * every suggestion came back empty. Same bound as the session namer
+ * (`SESSION_TITLE_MAX_TOKENS`); the answer itself is still cut to
+ * `NEXT_STEP_MAX_CHARS`.
  */
-export const NEXT_STEP_MAX_TOKENS = 40;
+export const NEXT_STEP_MAX_TOKENS = 512;
 
 /** Deadline for the call; only here to free the side-call slot. */
 export const NEXT_STEP_TIMEOUT_MS = 15_000;
