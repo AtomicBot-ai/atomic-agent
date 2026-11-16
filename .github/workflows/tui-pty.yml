@@ -56,6 +56,11 @@ jobs:
       - name: Install the PTY test packages
         run: npm install --no-save --no-audit --no-fund node-pty@1.1.0 @xterm/headless@6.0.0
 
+      - name: Make node-pty's spawn helper executable
+        # The prebuilt spawn-helper comes without its exec bit, and every spawn
+        # then fails with "posix_spawnp failed" on macOS.
+        run: chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true
+
       - name: Confirm the packages load
         # The tests skip silently without them; here that would be a false green.
         run: node -e "require('node-pty'); require('@xterm/headless'); console.log('node-pty and @xterm/headless load')"

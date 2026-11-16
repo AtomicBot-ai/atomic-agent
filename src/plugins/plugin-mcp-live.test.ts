@@ -94,6 +94,9 @@ describe("plugin MCP live stop (ATO-1407)", () => {
     const { manager, stop } = start();
     const unwatch = stop.watch(20);
     try {
+      // watchFile takes its first stat on the first poll; a write before that
+      // becomes the baseline and is never reported as a change.
+      await new Promise((r) => setTimeout(r, 200));
       setPluginCodeAllowed(stateDir, "demo", false);
       await vi.waitFor(() => expect(manager.listServerNames()).toEqual(["demo-remote"]), { timeout: 3000, interval: 20 });
     } finally {

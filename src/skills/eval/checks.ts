@@ -165,7 +165,10 @@ function spawnShell(
       clearTimeout(timer);
       resolveResult(result);
     };
-    const child = spawn(command, { cwd: opts.cwd, env: opts.env, shell: true, stdio: ["pipe", "pipe", "pipe"] });
+    // Its own process group, so a timeout stops the command and not only the
+    // shell around it (on Linux `sh -c` leaves the command running otherwise).
+    const group = process.platform !== "win32";
+    const child = spawn(command, { cwd: opts.cwd, env: opts.env, shell: true, detached: group, stdio: ["pipe", "pipe", "pipe"] });
     const keep = (chunk: Buffer): void => {
       // The last few KB are what explains a failure; never hold more.
       output = (output + chunk.toString("utf8")).slice(-4096);
@@ -178,7 +181,13 @@ function spawnShell(
     child.stdin.end(opts.stdin);
     timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      try {
+        if (group && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch {
+        child.kill("SIGKILL");
+      }
+      done({ exitCode: null, output, timedOut: true, error: null });
     }, opts.timeoutMs);
   });
 }
