@@ -108,7 +108,11 @@ function SelectedEntry({ id }: { id: string }): ReactElement | null {
       <Text color={theme.colors.muted}>
         {transport}
         {entry.requires ? ` · needs ${entry.requires}` : ""}
-        {keys.length > 0 ? ` · needs ${keys.join(", ")}` : " · no key needed"}
+        {entry.auth === "oauth"
+          ? ` · sign in after adding: /mcp auth ${entry.id}`
+          : keys.length > 0
+            ? ` · needs ${keys.join(", ")}`
+            : " · no key needed"}
       </Text>
       {entry.note ? <Text color={theme.colors.muted}>{entry.note}</Text> : null}
       <Text color={theme.colors.muted}>{entry.homepage}</Text>

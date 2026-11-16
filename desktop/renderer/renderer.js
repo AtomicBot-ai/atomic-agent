@@ -26875,7 +26875,10 @@ async function mcpRefreshRun(quiet) {
   MCP.loading = false;
   // The time of a read that worked, as the other panes keep it: the status line says "Updated" at it (Д26).
   // ATO-204: B02's refusal goes once the route can run (dropGateNoticesIfCleared).
-  if (cfg && cfg.ok && cfg.data && cfg.data.config) { LIVE_CONFIG = cfg.data.config; MCP.lastRefreshedAt = Date.now(); dropGateNoticesIfCleared(); }
+  if (cfg && cfg.ok && cfg.data && cfg.data.config) {
+    LIVE_CONFIG = cfg.data.config; MCP.lastRefreshedAt = Date.now(); dropGateNoticesIfCleared();
+    if (typeof mcpAuthSync === 'function') mcpAuthSync();   // mcp-auth.js: which remote servers are signed in
+  }
   else MCP.lastError = 'mcp refresh failed: ' + ((cfg && cfg.error) || 'config unavailable');
   if (caps && caps.ok && caps.data) LIVE_CAPS = caps.data;
   if (quiet && (mcpTyping() || before === JSON.stringify(mcpRows()))) { settingsStatusRepaint(); return; }
@@ -27092,7 +27095,8 @@ async function mcpAddSubmit(json) {
   if (!res.ok) { m.error = res.error; render(); return {ok:false, error:m.error}; }
   MCP.addModal = null;
   const added = 'mcp: added ' + JSON.stringify(parsed.server.name) + ' (config.json updated, ' + (servers.length + 1) + ' total)';
-  MCP.msg = res.live ? {text:added + '. Press Restart on its row to connect it.'}
+  const oauthPick = m.catalogId && typeof mcpCatalogEntry === 'function' && (mcpCatalogEntry(m.catalogId) || {}).auth === 'oauth';
+  MCP.msg = res.live ? {text:added + (oauthPick ? '. Press Sign in on its row to connect your account.' : '. Press Restart on its row to connect it.')}
     : {text:added + ' — restart Atomic Agent for the new server to connect', restart:true};
   await mcpRefresh();
   return {ok:true, name:parsed.server.name};
@@ -27114,6 +27118,7 @@ async function mcpRemoveConfirm() {
   MCP.removeConfirm = null;
   ANX.mcpAction('remove');
   delete MCP_LIVE.status[c.name];
+  if (typeof MCP_AUTH !== 'undefined') delete MCP_AUTH.byName[c.name];
   if (MCP.mode === 'detail' && MCP.detailName === c.name) { MCP.mode = 'list'; MCP.detailName = null; }
   const removed = 'mcp: removed ' + JSON.stringify(c.name) + ' (config.json updated, ' + next.length + ' remaining)';
   MCP.msg = (off && off.ok) || servers[idx].enabled === false ? {text:removed + '.'}
@@ -27156,6 +27161,9 @@ function mcpAct(what) {
   if (verb === 'auto') { MCP.auto = !MCP.auto; render(); return; }
   // 0.6.6 live routes (mcp-live.js): R restart, e toggle on / off.
   if (verb === 'restart' || verb === 'enable' || verb === 'disable' || verb === 'toggle') { mcpLiveAct(verb, sel()); return; }
+  // Browser sign-in for remote servers (mcp-auth.js).
+  if (verb === 'signin') { mcpAuthSignIn(sel()); return; }
+  if (verb === 'signout') { mcpAuthSignOut(sel()); return; }
 }
 /* mcp-key-bindings.ts. The TUI's MultiLineEditor submits on Enter; in a
    window, a box for a pasted multi-line config is a text box like any other:

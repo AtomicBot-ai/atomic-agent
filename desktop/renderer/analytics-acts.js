@@ -75,7 +75,7 @@ const ANX_ACTS = (() => {
       appupd:{update:L, notnow:L, skip:L, cancel:L, install:L, later:L, check:L, auto:L},
       // the Manage panes' own verbs (renderer.js mcpAct / skillsAct / memoryAct / tasksAct / llmAct / telegramAct / composioAct / importAct)
       mcp:{add:L, addSubmit:L, addCancel:L, catalog:L, auto:L, back:L, detail:L, refresh:L, remove:L,
-        removeCancel:L, removeConfirm:L, restart:L, toggle:L, enable:L, disable:L,
+        removeCancel:L, removeConfirm:L, restart:L, toggle:L, enable:L, disable:L, signin:L, signout:L,
         dtab:Object.assign(set(mcpTabs), {cycle:L})},
       skills:{auto:L, back:L, card:L, cardScroll:UPDOWN, detail:L, filter:set(skillFilters), hub:L,
         hubPage:UPDOWN, hubSearch:L, install:L, installAck:L, installCancel:L, page:UPDOWN,

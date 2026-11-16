@@ -4,9 +4,12 @@
  *
  * Every entry was checked against its official README or npm page on
  * 2026-11-12: package name, command, URL, the env var or header that
- * carries the key and where the key comes from. Servers that sign in
- * only through OAuth are left out: `mcp.servers` has no OAuth flow yet.
- * Add an entry only with the same check; never guess a package name.
+ * carries the key and where the key comes from. A server that signs in
+ * only through OAuth carries `"auth": "oauth"` and no key input: it is
+ * added as is and signs in through the browser afterwards (Monid,
+ * checked 2026-11-16: its 401 names its OAuth metadata and it refuses
+ * API keys). Add an entry only with the same check; never guess a
+ * package name.
  *
  * `server` uses the Claude Desktop / Cursor shortcut shape (`command` +
  * `args` + `env`, or `url` + `headers`) that `parseAddServerJson`
@@ -284,6 +287,16 @@ export const MCP_CATALOG_DATA: McpCatalogData =
           "getUrl": "https://api-dashboard.search.brave.com/app/keys"
         }
       ]
+    },
+    {
+      "id": "monid",
+      "title": "Monid",
+      "description": "Pay-as-you-go access to data and automation tools for your agent. Sign in with your Monid account.",
+      "shelf": "web-growth",
+      "homepage": "https://monid.ai",
+      "auth": "oauth",
+      "server": { "url": "https://mcp.monid.ai/v1" },
+      "inputs": []
     }
   ]
 }

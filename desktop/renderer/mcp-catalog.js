@@ -277,6 +277,16 @@ const MCP_CATALOG = {
           "getUrl": "https://api-dashboard.search.brave.com/app/keys"
         }
       ]
+    },
+    {
+      "id": "monid",
+      "title": "Monid",
+      "description": "Pay-as-you-go access to data and automation tools for your agent. Sign in with your Monid account.",
+      "shelf": "web-growth",
+      "homepage": "https://monid.ai",
+      "auth": "oauth",
+      "server": { "url": "https://mcp.monid.ai/v1" },
+      "inputs": []
     }
   ]
 };
@@ -376,7 +386,8 @@ function mcpCatalogCardsHTML(q, h) {
   return items.map((e) => '<button class="sd-cat-card" data-act="mcp:catalog:' + h.esc(e.id) + '">'
     + '<span class="sd-cat-ic">' + (h.mark ? h.mark(e) : h.esc(e.title.slice(0, 1))) + '</span>'
     + '<span class="sd-cat-t">' + h.esc(e.title) + '</span>'
-    + '<span class="sd-cat-d">' + h.esc(e.description) + '</span></button>').join('');
+    + '<span class="sd-cat-d">' + h.esc(e.description) + '</span>'
+    + (e.auth === 'oauth' ? '<span class="sd-cat-d sd-cat-oauth">Sign in after adding</span>' : '') + '</button>').join('');
 }
 
 /* The short form for one server: what it does, its fields, the folded config. */
@@ -391,7 +402,9 @@ function mcpCatalogFormHTML(e, m, h) {
       + (m && m.submitting ? ' disabled' : '') + '></label>'
       + (i.getUrl ? '<p class="tk-help sd-cat-get"><a href="#" data-url="' + h.esc(i.getUrl) + '">Get it here</a></p>' : '');
   });
-  if (!e.inputs.length) html += '<p class="tk-help">Nothing to fill in.</p>';
+  /* "auth": "oauth": no key; the server row offers Sign in once it is added. */
+  if (e.auth === 'oauth') html += '<p class="tk-help sd-cat-oauth">Sign in after adding. Your browser opens to sign in with your account.</p>';
+  else if (!e.inputs.length) html += '<p class="tk-help">Nothing to fill in.</p>';
   if (MCP_REQUIRES[e.requires]) html += '<p class="tk-help">' + h.esc(MCP_REQUIRES[e.requires]) + '</p>';
   html += '<button class="sd-cat-cfgt" data-act="mcp:catalogConfig" aria-expanded="' + !!(m && m.showConfig) + '">'
     + (m && m.showConfig ? 'Hide config' : 'Show config') + '</button>'

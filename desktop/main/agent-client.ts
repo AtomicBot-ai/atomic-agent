@@ -1307,6 +1307,32 @@ export class AgentClient extends EventEmitter {
       undefined,
       60_000,
     );
+  /*
+   * Browser sign-in (OAuth) for a remote MCP server. `start` answers
+   * `{ state: "pending", authUrl }` for the browser, or `{ state:
+   * "signed_in" }` when a saved token was enough; it runs discovery and
+   * client registration, so it gets a longer timeout. An agent from before
+   * the routes answers 404.
+   */
+  mcpAuthStart = (name: string) =>
+    this.request<{ state: "pending" | "signed_in"; authUrl?: string }>(
+      "POST",
+      `/api/mcp/servers/${encodeURIComponent(name)}/auth/start`,
+      undefined,
+      60_000,
+    );
+  mcpAuthStatus = (name: string) =>
+    this.request<{ state: "signed_out" | "pending" | "signed_in"; error?: string }>(
+      "GET",
+      `/api/mcp/servers/${encodeURIComponent(name)}/auth`,
+    );
+  mcpAuthSignOut = (name: string) =>
+    this.request<{ state: "signed_out" }>(
+      "POST",
+      `/api/mcp/servers/${encodeURIComponent(name)}/auth/signout`,
+      undefined,
+      60_000,
+    );
   // Item 7 part B (Skills tab): GET /api/skills/{name} (manifest + SKILL.md
   // body; 404 for a disabled skill — the registry's filtered view) and
   // POST /api/skills/uninstall, which also runs runtime.refreshSkills().

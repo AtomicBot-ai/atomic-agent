@@ -13,16 +13,24 @@
 
 const MCP_LIVE = {status:{}, busy:null};
 
-const MCP_STATE_WORDS = {up:'running', starting:'starting', down:'failed', disabled:'disabled'};
+const MCP_STATE_WORDS = {up:'running', starting:'starting', down:'failed', disabled:'disabled', needs_auth:'sign in required'};
+
+/* Browser sign-in (mcp-auth.js, loaded after this file): its chip and
+   control, or null / '' when sign-in does not apply. */
+function mcpLiveAuthChip(name) { return typeof mcpAuthStateChip === 'function' ? mcpAuthStateChip(name) : null; }
+function mcpLiveAuthRow(name) { return typeof mcpAuthRowControl === 'function' ? mcpAuthRowControl(name) : ''; }
+function mcpLiveAuthDetail(name) { return typeof mcpAuthDetailControl === 'function' ? mcpAuthDetailControl(name) : ''; }
 
 /* The row's state chip: the config's `enabled:false` first, then the last
    status an action reported, else the unknown state. */
 function mcpStateChipHTML(name, cfgState) {
   if (MCP_LIVE.busy === name) return '<span class="tk-chip tk-chip--sm tk-chip--line" title="Working"><span class="tk-spin"></span>working</span>';
   if (cfgState === 'disabled') return '<span class="tk-chip tk-chip--sm tk-chip--line" title="Disabled in config.json">disabled</span>';
+  const auth = mcpLiveAuthChip(name);
+  if (auth) return auth;
   const st = MCP_LIVE.status[name];
   if (!st || st.state === 'disabled') return '<span class="tk-chip tk-chip--sm tk-chip--line" title="Unknown until the server is restarted here">state —</span>';
-  const cls = st.state === 'up' ? 'tk-chip--green' : st.state === 'down' ? 'tk-chip--red' : 'tk-chip--blue';
+  const cls = st.state === 'up' ? 'tk-chip--green' : st.state === 'down' ? 'tk-chip--red' : st.state === 'needs_auth' ? 'tk-chip--amber' : 'tk-chip--blue';
   const when = st.ts ? ' · as of ' + new Date(st.ts).toLocaleTimeString() : '';
   const title = (st.state === 'down' && st.lastError ? st.lastError : MCP_STATE_WORDS[st.state] || st.state) + when;
   return '<span class="tk-chip tk-chip--sm ' + cls + '" title="' + esc(title) + '">' + esc(MCP_STATE_WORDS[st.state] || st.state) + '</span>';
@@ -36,7 +44,7 @@ function mcpStateChipHTML(name, cfgState) {
    the same confirm as the detail's Remove and `d`. */
 function mcpRowControlsHTML(name, enabled) {
   const busy = MCP_LIVE.busy !== null;
-  return (enabled
+  return (enabled ? mcpLiveAuthRow(name) : '') + (enabled
       ? '<span class="iconbtn sm" role="button" data-act="mcp:restart:' + esc(name) + '" title="Restart (R)" aria-label="Restart ' + esc(name) + '"' + (busy ? ' aria-disabled="true"' : '') + '>' + ic('refresh') + '</span>'
       : '')
     + '<span class="iconbtn sm" role="button" data-act="mcp:remove:' + esc(name) + '" title="Remove (d)" aria-label="Remove ' + esc(name) + '">' + ic('trash') + '</span>'
@@ -46,7 +54,7 @@ function mcpRowControlsHTML(name, enabled) {
 /* The detail header's controls: the same two, as real buttons. */
 function mcpDetailControlsHTML(name, enabled) {
   const busy = MCP_LIVE.busy !== null;
-  return (enabled ? '<button class="btn btn-s sm" data-act="mcp:restart:' + esc(name) + '" title="Restart (R)"' + (busy ? ' disabled' : '') + '>' + ic('refresh') + 'Restart</button>' : '')
+  return (enabled ? mcpLiveAuthDetail(name) : '') + (enabled ? '<button class="btn btn-s sm" data-act="mcp:restart:' + esc(name) + '" title="Restart (R)"' + (busy ? ' disabled' : '') + '>' + ic('refresh') + 'Restart</button>' : '')
     + '<button class="tk-switch' + (enabled ? ' on' : '') + '" role="switch" aria-checked="' + enabled + '" aria-label="' + (enabled ? 'Disable ' : 'Enable ') + esc(name) + '" title="Turn ' + (enabled ? 'off' : 'on') + ' (e)" data-act="mcp:toggle:' + esc(name) + '"' + (busy ? ' disabled' : '') + '></button>';
 }
 
@@ -60,6 +68,7 @@ function mcpLiveSummary(name, op, st) {
   }
   if (st.state === 'down') return name + ' failed to start' + (st.lastError ? ': ' + st.lastError : '.');
   if (st.state === 'starting') return name + ' is starting.';
+  if (st.state === 'needs_auth') return name + ' needs you to sign in. Press Sign in on its row.';
   return name + ': ' + (MCP_STATE_WORDS[st.state] || st.state) + '.';
 }
 
@@ -90,6 +99,7 @@ async function mcpLiveAct(op, name) {
   }
   const st = res.data && typeof res.data === 'object' ? res.data : null;
   if (st) MCP_LIVE.status[name] = st; else delete MCP_LIVE.status[name];
+  if (typeof mcpAuthNoteLive === 'function') mcpAuthNoteLive(name, st);
   MCP.msg = {text:mcpLiveSummary(name, op, st)};
   await mcpRefresh(); // enable/disable rewrote config.json; the tool count moved with the connection
   return {ok:true, status:st};

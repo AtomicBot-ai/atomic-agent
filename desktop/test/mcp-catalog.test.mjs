@@ -64,7 +64,7 @@ test('an unfilled pick is refused with the placeholder named', () => {
 
 test('the Web & growth shelf (ATO-1133)', () => {
   assert.deepEqual(C.mcpCatalogList().filter((e) => e.shelf === 'web-growth').map((e) => e.id),
-    ['exa', 'firecrawl', 'apify', 'brightdata', 'tavily', 'brave-search']);
+    ['exa', 'firecrawl', 'apify', 'brightdata', 'tavily', 'brave-search', 'monid']);
 });
 
 test('the catalog block: a chip per server, and the picked one says what to replace and where', () => {
@@ -125,4 +125,20 @@ test('W2 QA: two steps: cards with a search, then only the fields a server needs
   assert.match(JSON.stringify(JSON.parse(json)), /ghp_a\\"b/);
   assert.doesNotMatch(C.mcpCatalogPreview('github', {[ph]: 'ghp_secret'}), /ghp_secret/, 'the preview hides the token');
   assert.deepEqual(C.mcpCatalogMissing('fetch', {}), [], 'a server with nothing to fill connects at once');
+});
+
+test('Monid signs in through the browser: no fields, a sign-in note on the card and the form', () => {
+  const monid = C.mcpCatalogEntry('monid');
+  assert.equal(monid.auth, 'oauth');
+  assert.deepEqual(monid.inputs, []);
+  assert.equal(monid.server.url, 'https://mcp.monid.ai/v1');
+  assert.deepEqual(C.mcpCatalogMissing('monid', {}), []);
+  assert.match(C.mcpCatalogCardsHTML('monid', {esc}), /Sign in after adding/);
+  const form = C.mcpCatalogFormHTML(monid, {vals: {}}, {esc});
+  assert.match(form, /Sign in after adding/);
+  assert.doesNotMatch(form, /Nothing to fill in/);
+  for (const e of C.MCP_CATALOG.entries) {
+    if (e.auth !== undefined) assert.ok(e.auth === 'oauth' && typeof e.server.url === 'string', e.id + ' auth only on a url server');
+  }
+  assert.doesNotMatch(C.mcpCatalogFormHTML(C.mcpCatalogEntry('fetch'), {vals: {}}, {esc}), /Sign in after adding/);
 });

@@ -41,6 +41,11 @@ export interface McpCatalogEntry {
   inputs: McpCatalogInput[];
   /** Short verified note: free tier, key optional, and so on. */
   note?: string;
+  /**
+   * `"oauth"`: the server takes no key; the person signs in through the
+   * browser after adding it (`mcp-oauth-flow.ts`). Only on `url` servers.
+   */
+  auth?: "oauth";
 }
 
 export interface McpCatalogData {
