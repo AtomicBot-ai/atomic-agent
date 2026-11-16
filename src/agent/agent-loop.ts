@@ -251,6 +251,22 @@ export class AgentLoop {
     // fails after one ran says so in its failure record, so "Try again"
     // never treats the turn as one that changed nothing.
     const toolsRan: string[] = [];
+    // Follow-up to #827: once history this turn wrote leaves the model's
+    // view (a compaction summarized it, or the packer cut it), a re-read
+    // of a file is how the model gets the content back, so the tracker
+    // forgets its read state. Rows before `turnFirstRow` were written by
+    // earlier turns and the tracker knows nothing about them: losing
+    // them is no reason to forget the reads still in view. Each point
+    // only moves forward, so a held cut or an unchanged checkpoint
+    // never forgets twice, and a cut moving back and forth cannot keep
+    // a read loop clear of its veto.
+    const turnFirstRow = state.turns.length;
+    let forgottenThrough = turnFirstRow;
+    const forgetReadsBefore = (row: number): void => {
+      if (row <= forgottenThrough) return;
+      forgottenThrough = row;
+      loopTracker.forgetReads();
+    };
 
     const {
       surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds,
@@ -676,6 +692,10 @@ export class AgentLoop {
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
                 lastPromptWindow = event.prompt.contextWindow;
+                // The packer cut into this turn's history: a read it
+                // dropped renders in full again if the model re-reads the
+                // file, so that re-read is a recovery, not a repeat.
+                forgetReadsBefore(event.prompt.conversationPackStart?.index ?? 0);
                 if (event.prompt.cloudContext && state.cloudContext !== event.prompt.cloudContext) {
                   state = { ...state, cloudContext: event.prompt.cloudContext };
                   stepContext.session = state;
@@ -759,6 +779,8 @@ export class AgentLoop {
               onSpend: (usd) => recordCompactionSpend(turn, usd),
             });
           }
+          // A compaction summarized away the reads it covered (#827).
+          forgetReadsBefore(state.compaction?.coveredThrough ?? 0);
         }
         requestStartedAt = Date.now();
         // A task's time limit also ends a wait on an approval prompt
@@ -1140,6 +1162,7 @@ export class AgentLoop {
           }
           if (state.compaction !== before) {
             overflowCompacted = true;
+            forgetReadsBefore(state.compaction?.coveredThrough ?? 0);
             overflowWindow = overflow.compactionWindow;
             // Learned only once the retry is certain: a learned window
             // would otherwise disarm the native-tools repack below.

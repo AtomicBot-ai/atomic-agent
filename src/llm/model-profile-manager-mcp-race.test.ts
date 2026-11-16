@@ -57,6 +57,6 @@ describe("ModelProfileManager: an MCP change during a hot-swap rebuild", () => {
     await refreshing;
     expect(mgr.getProfile().id).toBe("qwen-think");
     expect(mgr.getGrammar()).toContain(rule);
-    expect(mgr.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-server-tool \|/m);
+    expect(mgr.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-server-tool$/m);
   });
 });
