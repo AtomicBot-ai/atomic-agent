@@ -4,7 +4,7 @@ Scope: `src/mcp/`. Inherit the root instructions; read [README.md](README.md) to
 
 ## Constraints
 
-- Keep client lifecycle/catalog ownership in McpManager; detach dynamic tools on shutdown/restart. The SDK boundary is mcp-client and sampling type integration.
+- Keep client lifecycle/catalog ownership in McpManager; detach dynamic tools on shutdown/restart. The SDK boundary is mcp-client plus sampling and OAuth-provider type integration.
 - Preserve trust-based resource classification and approval policy. Dynamic MCP schemas must be validated without assuming built-in schema restrictions.
 - Sampling must use the documented isolated completion path and never take the user turn slot. Reject unsupported directions rather than silently implementing server behavior.
 - Elicitation never auto-accepts and never breaks the turn: `accept` only from the host's port, every failure is `decline` / `cancel`, answers never reach logs. Advertise the capability only when a port is wired. Wait by the port's surface: no cut-off for `interactive`, 5 minutes then decline for `remote-chat`, immediate decline for `none`; a pending elicitation holds the client's request deadlines.

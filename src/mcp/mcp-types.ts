@@ -140,8 +140,13 @@ export interface McpSseTransport {
   headers?: Record<string, string>;
 }
 
-/** Server lifecycle states observable from outside the manager. */
-export type McpServerState = "disabled" | "starting" | "up" | "down";
+/**
+ * Server lifecycle states observable from outside the manager.
+ * `needs_auth`: a remote server answered 401 and has no usable token;
+ * the person signs in through the browser (`mcp-oauth-flow.ts`).
+ */
+export type McpServerState =
+  "disabled" | "starting" | "up" | "down" | "needs_auth";
 
 /** Status snapshot emitted on every observable transition. */
 export interface McpServerStatus {
@@ -149,8 +154,13 @@ export interface McpServerStatus {
   state: McpServerState;
   /** Wall-clock timestamp (ms) of the transition. */
   ts: number;
-  /** Short, scrubbed error message — populated when `state === "down"`. */
+  /**
+   * Short, scrubbed error message — populated when `state === "down"`,
+   * and "Sign in required" when `state === "needs_auth"`.
+   */
   lastError?: string;
+  /** Present and true only in `needs_auth`: sign in through the browser. */
+  authRequired?: boolean;
   /** Number of tools discovered after the most recent successful connect. */
   toolCount?: number;
   /** Number of resources discovered after the most recent successful connect. */

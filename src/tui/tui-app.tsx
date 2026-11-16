@@ -746,6 +746,8 @@ export interface TuiAppCallbacks {
   onMcpRestartServer?(name: string): void;
   /** MCP tab: flip one server's `enabled` flag, persisted to config. */
   onMcpToggleServerEnabled?(name: string): void;
+  /** `/mcp auth <name>` / `/mcp signout <name>`: browser sign-in of a remote server. */
+  onMcpAuthRequested?(name: string, action: "signin" | "signout"): void;
   /** Providers tab: finish the add/configure wizard. */
   onProvidersWizardSubmit?(
     wizard: import("./providers/providers-wizard-state.js").ProvidersWizardState,

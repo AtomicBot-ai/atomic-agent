@@ -92,6 +92,7 @@ import { createGetOfflineModeHandler, createSetOfflineModeHandler } from "./rout
 import { createContextPreviewHandler } from "./route-context-preview.js";
 import { createPlainCompleteHandler } from "./route-complete.js";
 import {
+  createMcpOAuthHandlers,
   createRestartMcpServerHandler,
   createSetMcpServerEnabledHandler,
 } from "./route-mcp.js";
@@ -144,6 +145,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
   // Same reason: the last pairing window's outcome is per-process state
   // the GET reads back after the POST opened it.
   const telegramPairing = createTelegramPairingHandlers();
+  // Same again: MCP browser sign-ins in progress and their loopback
+  // listener belong to this server.
+  const mcpOAuth = createMcpOAuthHandlers();
   return [
     {
       method: "GET",
@@ -229,6 +233,10 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
       path: "/api/mcp/servers/{name}/disable",
       handler: createSetMcpServerEnabledHandler(false),
     },
+    // Browser sign-in (OAuth) for remote MCP servers.
+    { method: "POST", path: "/api/mcp/servers/{name}/auth/start", handler: mcpOAuth.start },
+    { method: "GET", path: "/api/mcp/servers/{name}/auth", handler: mcpOAuth.status },
+    { method: "POST", path: "/api/mcp/servers/{name}/auth/signout", handler: mcpOAuth.signOut },
     {
       method: "GET",
       path: "/api/sessions",
