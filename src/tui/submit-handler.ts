@@ -444,6 +444,9 @@ export function runSlashCommand(
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
   if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb, result.compactionInstructions);
+  if (result.mcpAuthVerb) {
+    callbacks.onMcpAuthRequested?.(result.mcpAuthVerb.name, result.mcpAuthVerb.action);
+  }
   if (result.goalCommand) callbacks.onGoalCommand?.(result.goalCommand);
   if (result.enhancePromptText !== undefined) {
     callbacks.onPromptEnhanceRequested?.(result.enhancePromptText);

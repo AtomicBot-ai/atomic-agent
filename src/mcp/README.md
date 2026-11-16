@@ -13,6 +13,7 @@ This area owns mcp client and tool catalog. Read [AGENTS.md](AGENTS.md) before c
 - [mcp-sampling-handler.ts](mcp-sampling-handler.ts)
 - [mcp-catalog.ts](mcp-catalog.ts) and [mcp-catalog-data.ts](mcp-catalog-data.ts): the built-in server catalog the add flows pick from
 - [mcp-elicitation-handler.ts](mcp-elicitation-handler.ts)
+- [mcp-oauth-flow.ts](mcp-oauth-flow.ts): browser sign-in for remote servers, see docs/client.md
 
 ## Ownership and dependencies
 

@@ -53,6 +53,20 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).not.toMatch(/\| token \|/);
   });
 
+  it("/mcp auth and /mcp signout start and end a browser sign-in", () => {
+    expect(dispatchSlashCommand("/mcp auth monid").mcpAuthVerb).toEqual({
+      action: "signin",
+      name: "monid",
+    });
+    expect(dispatchSlashCommand("/mcp signout monid").mcpAuthVerb).toEqual({
+      action: "signout",
+      name: "monid",
+    });
+    const bare = dispatchSlashCommand("/mcp auth");
+    expect(bare.mcpAuthVerb).toBeUndefined();
+    expect(bare.systemMessage).toContain("/mcp auth <name>");
+  });
+
   it("leaves no palette command without a dispatch case", () => {
     // The generic guard for the bug above: every command the palette
     // advertises must actually do something when typed.

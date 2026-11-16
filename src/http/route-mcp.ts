@@ -3,6 +3,12 @@ import type { ServerResponse } from "node:http";
 import { getConfig } from "../config/index.js";
 import type { McpServerConfig } from "../mcp/mcp-types.js";
 import { setMcpServerEnabled } from "../config/mcp-server-commands.js";
+import {
+  McpOAuthFlow,
+  McpOAuthFlowError,
+  type McpOAuthFlowErrorCode,
+} from "../mcp/mcp-oauth-flow.js";
+import type { AgentRuntime } from "../runtime/bootstrap.js";
 
 import { openaiError } from "./openai-errors.js";
 import {
@@ -83,4 +89,98 @@ function sendStatus(
     .listStatuses()
     .find((s) => s.name === name);
   sendJson(res, 200, { server: status ?? null });
+}
+
+export interface McpOAuthHandlers {
+  readonly start: HttpHandler;
+  readonly status: HttpHandler;
+  readonly signOut: HttpHandler;
+}
+
+/**
+ * `POST /api/mcp/servers/{name}/auth/start`, `GET .../auth` and
+ * `POST .../auth/signout`: browser sign-in (OAuth) for a remote MCP
+ * server, the same flow the TUI's `/mcp auth <name>` runs.
+ *
+ * - `start` answers `{ state: "pending", authUrl }`: the caller opens
+ *   `authUrl` in a browser (the agent never does). When a saved refresh
+ *   token was enough it answers `{ state: "signed_in" }` instead. The
+ *   browser lands on a loopback listener the agent opened on 127.0.0.1;
+ *   the server is reconnected once the sign-in finishes.
+ * - `status` answers `{ state: "signed_out" | "pending" | "signed_in",
+ *   error? }`.
+ * - `signout` deletes the saved sign-in, reconnects the server and
+ *   answers `{ state: "signed_out" }`.
+ *
+ * One flow per route table (like Telegram pairing): created on the first
+ * request, from that request's runtime.
+ */
+export function createMcpOAuthHandlers(): McpOAuthHandlers {
+  let flow: McpOAuthFlow | null = null;
+  const flowFor = (runtime: AgentRuntime): McpOAuthFlow => {
+    if (flow) return flow;
+    flow = new McpOAuthFlow({
+      stateDir: runtime.config.paths.stateDir,
+      findServer: (name) =>
+        runtime.mcpManager.getServerConfig(name) ?? findConfiguredServer(name),
+      reconnect: async (name) => {
+        const mgr = runtime.mcpManager;
+        if (!(await mgr.restartServer(name))) {
+          const cfg = findConfiguredServer(name);
+          if (cfg) await mgr.addServerLive(cfg);
+        }
+        await runtime.refreshMcp();
+      },
+    });
+    return flow;
+  };
+
+  return {
+    start: async (_req, res, ctx) => {
+      try {
+        const result = await flowFor(ctx.runtime).start(ctx.params.name ?? "");
+        sendJson(res, 200, result);
+      } catch (err) {
+        sendFlowError(res, err);
+      }
+    },
+    status: async (_req, res, ctx) => {
+      try {
+        sendJson(res, 200, flowFor(ctx.runtime).status(ctx.params.name ?? ""));
+      } catch (err) {
+        sendFlowError(res, err);
+      }
+    },
+    signOut: async (_req, res, ctx) => {
+      try {
+        await flowFor(ctx.runtime).signOut(ctx.params.name ?? "");
+        sendJson(res, 200, { state: "signed_out" });
+      } catch (err) {
+        sendFlowError(res, err);
+      }
+    },
+  };
+}
+
+const FLOW_ERROR_STATUS: Record<McpOAuthFlowErrorCode, number> = {
+  not_found: 404,
+  not_remote: 409,
+  uses_key: 409,
+  failed: 502,
+};
+
+function sendFlowError(res: ServerResponse, err: unknown): void {
+  if (err instanceof McpOAuthFlowError) {
+    sendError(
+      res,
+      FLOW_ERROR_STATUS[err.code],
+      openaiError(err.message, "invalid_request_error", null, `mcp_auth_${err.code}`),
+    );
+    return;
+  }
+  sendError(
+    res,
+    500,
+    openaiError("Sign-in failed because of an internal error.", "server_error"),
+  );
 }

@@ -343,6 +343,36 @@ describe("McpManager", () => {
     expect(statuses.get("bad")!.lastError).toContain("transport refused");
   });
 
+  it("maps a sign-in challenge to needs_auth instead of down", async () => {
+    const { McpAuthRequiredError } = await import("./mcp-errors.js");
+    const tools = new ToolRegistry();
+    FAKE_BY_NAME.set("monid", {
+      connect: async () => {
+        throw new McpAuthRequiredError("monid");
+      },
+      close: async () => {},
+      catalog: { server: "monid", tools: [], resources: [], prompts: [] },
+    });
+    const seen: McpServerStatus[] = [];
+    const mgr = new McpManager(
+      [
+        {
+          name: "monid",
+          enabled: true,
+          transport: { kind: "streamable_http", url: "https://mcp.example.com/v1" },
+        },
+      ],
+      { toolRegistry: tools, onStatus: (s) => seen.push(s) },
+    );
+    await mgr.start();
+    const status = mgr.listStatuses().find((s) => s.name === "monid")!;
+    expect(status.state).toBe("needs_auth");
+    expect(status.authRequired).toBe(true);
+    expect(status.lastError).toBe("Sign in required");
+    expect(seen.at(-1)).toMatchObject({ state: "needs_auth", authRequired: true });
+    expect(mgr.getServerConfig("monid")?.transport.kind).toBe("streamable_http");
+  });
+
   it("skips disabled servers entirely", async () => {
     const tools = new ToolRegistry();
     FAKE_BY_NAME.set("docs", {

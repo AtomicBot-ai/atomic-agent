@@ -65,6 +65,20 @@ export {
 } from "./mcp-prompt-tools.js";
 
 export {
+  McpOAuthFlow,
+  McpOAuthFlowError,
+  MCP_OAUTH_SIGNIN_TIMEOUT_MS,
+} from "./mcp-oauth-flow.js";
+export type {
+  McpOAuthFlowDeps,
+  McpOAuthSignInState,
+  McpOAuthStatus,
+  McpOAuthStartResult,
+} from "./mcp-oauth-flow.js";
+export { usesMcpOAuth } from "./mcp-oauth-provider.js";
+
+export {
+  McpAuthRequiredError,
   McpConnectError,
   McpError,
   McpRequestError,
