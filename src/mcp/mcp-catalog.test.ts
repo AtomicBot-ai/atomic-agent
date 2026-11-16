@@ -75,7 +75,24 @@ describe("built-in MCP catalog data", () => {
 
   it("carries the Web & growth shelf (ATO-1133)", () => {
     const web = listMcpCatalog().filter((e) => e.shelf === "web-growth").map((e) => e.id);
-    expect(web).toEqual(["exa", "firecrawl", "apify", "brightdata", "tavily", "brave-search"]);
+    expect(web).toEqual(["exa", "firecrawl", "apify", "brightdata", "tavily", "brave-search", "monid"]);
+  });
+
+  it("Monid signs in through the browser and takes no key", () => {
+    const monid = findMcpCatalogEntry("monid");
+    expect(monid?.auth).toBe("oauth");
+    expect(monid?.inputs).toEqual([]);
+    const server = parseAddServerJson(buildMcpCatalogJson(monid!));
+    expect(server.transport).toEqual({ kind: "streamable_http", url: "https://mcp.monid.ai/v1" });
+  });
+
+  it("allows browser sign-in on a url server only", () => {
+    expect(validateMcpCatalog(minimal({ auth: "oauth" })).join("\n")).toMatch(
+      /only a url server signs in/,
+    );
+    expect(
+      validateMcpCatalog(minimal({ auth: "oauth", server: { url: "https://example.com/mcp" } })),
+    ).toEqual([]);
   });
 
   it("lists entries grouped in shelf order", () => {

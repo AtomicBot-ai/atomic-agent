@@ -107,6 +107,12 @@ export function validateMcpCatalog(data: McpCatalogData): string[] {
     if (!isHttps(e.homepage)) problems.push(`${at}: homepage must be https`);
     problems.push(...checkServer(at, e.server));
     problems.push(...checkInputs(at, e));
+    if (e.auth !== undefined) {
+      if (e.auth !== "oauth") problems.push(`${at}: auth must be "oauth"`);
+      else if (typeof e.server.url !== "string") {
+        problems.push(`${at}: only a url server signs in through the browser`);
+      }
+    }
   }
   return problems;
 }
