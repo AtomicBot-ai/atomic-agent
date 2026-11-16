@@ -286,17 +286,16 @@ describe("formatFallbackStatusLine", () => {
       "This request requires more credits, or fewer max_tokens. You requested up to 96000 tokens (402).",
     );
     expect(line).toContain("failed over openrouter -> local-llama");
-    expect(line).toContain("openrouter is out of credit or quota");
-    expect(line).toContain("maxOutputTokens");
+    expect(line).toContain("openrouter is out of credit or quota. Top it up");
     expect(line).toContain("(402)");
     expect(line).not.toContain("96000");
+    expect(line).not.toContain("maxOutputTokens");
   });
 
-  it("names a key refusal and where the key lives", () => {
+  it("names a key refusal in plain words, without file or setting names", () => {
     const line = away("provider rejected the request (401).");
-    expect(line).toContain("openrouter refused the API key");
-    expect(line).toContain(".env");
-    expect(line).toContain("config.json");
+    expect(line).toContain("openrouter did not accept the API key. Update the key");
+    expect(line).not.toMatch(/\.env|config\.json|apiKey|stateDir/);
     expect(line).toContain("(401)");
     expect(line).not.toContain("provider rejected");
   });
