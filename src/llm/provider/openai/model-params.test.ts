@@ -93,6 +93,11 @@ describe("modelParamProfile — Claude models without sampling parameters (ATO-1
     "us.anthropic.claude-opus-5-5",
     "claude-sonnet-5-20260101",
     "Claude-Sonnet-5-5",
+    // The id forms from the #1554 report: dotted and bare, dashed with a
+    // date, and the dated major alone.
+    "claude-opus-5.5",
+    "claude-opus-5-5-20261101",
+    "claude-opus-5-20261101",
     // An unknown future version falls on the side of the line that omits.
     "claude-sonnet-6",
   ])("forbids temperature but keeps max_tokens for %s", (model) => {
@@ -110,6 +115,11 @@ describe("modelParamProfile — Claude models without sampling parameters (ATO-1
     "claude-sonnet-4-5-20250929",
     "claude-haiku-4-5",
     "anthropic/claude-haiku-4.5",
+    "claude-opus-4.6",
+    "claude-opus-4-6-20260205",
+    // A dated major-4 id: the date must not be read as a 4.20 minor.
+    "claude-opus-4-20250514",
+    "claude-sonnet-4-20250514",
     "claude-3-5-sonnet-20241022",
     // Names Claude but is not one: the rule is anchored at the id's start.
     "Qwen3-8B-Claude-Sonnet-5-Distill",

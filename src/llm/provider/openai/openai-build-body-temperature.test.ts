@@ -71,6 +71,23 @@ describe("buildOpenAiChatBody — Claude models without temperature (ATO-1397)",
     },
   );
 
+  // The ids an Anthropic provider entry carries for Opus 5.5 (#1554).
+  it.each(["claude-opus-5.5", "claude-opus-5-5-20261101"])(
+    "sends no temperature for %s, not even the 0.2 default",
+    (model) => {
+      expect(buildOpenAiChatBody({ prompt: "hi" }, model, false)).not.toHaveProperty(
+        "temperature",
+      );
+    },
+  );
+
+  it("still sends the caller's temperature to claude-opus-4.6", () => {
+    expect(
+      buildOpenAiChatBody({ prompt: "hi", temperature: 0.7 }, "claude-opus-4.6", false)
+        .temperature,
+    ).toBe(0.7);
+  });
+
   it("keeps the historical 0.2 default for claude-sonnet-4-6", () => {
     expect(
       buildOpenAiChatBody({ prompt: "hi" }, "claude-sonnet-4-6", false).temperature,
