@@ -61,6 +61,19 @@ describe("groupHintFromCwd", () => {
     )).toBeUndefined();
     expect(groupHintFromCwd("/Users/me/Desktop/site", home)).toMatchObject({ name: "site" });
   });
+
+  it("W2 QA: worktrees the apps keep in the home folder group by their repository's name", () => {
+    const home = "/Users/me";
+    expect(groupHintFromCwd("/Users/me/.codex/worktrees/a1b2/app/src", home))
+      .toEqual({ key: "worktree-repo:app", name: "app", cwd: null });
+    expect(groupHintFromCwd("/Users/me/.cursor/worktrees/app/feat-x", home))
+      .toEqual({ key: "worktree-repo:app", name: "app", cwd: null });
+    expect(groupHintFromCwd("/Users/me/conductor/workspaces/site/lisbon", home))
+      .toEqual({ key: "worktree-repo:site", name: "site", cwd: null });
+    expect(groupHintFromCwd("/Users/me/.claude/worktrees/amazing-colden", home)).toBeUndefined();
+    expect(groupHintFromCwd("/Users/me/src/app/.claude/worktrees/busy-wing", home))
+      .toMatchObject({ key: "/Users/me/src/app", name: "app" });
+  });
 });
 
 describe("planImportGrouping", () => {
@@ -264,6 +277,15 @@ describe("planImportGrouping", () => {
     expect(plan.off).toBeTruthy();
     expect(plan.outcomes).toEqual([]);
     expect(plan.projectsChanged || plan.foldersChanged).toBe(false);
+  });
+
+  it("W2 QA: makes no folder for a gone folder whose chats are all in a project already", () => {
+    const first = planImportGrouping({ ...base, projects: emptyProjectsFile(), folders: emptyFoldersFile(),
+      entries: [{ sessionId: "claude-code:a", group: hint("/src/app") }] });
+    const gone = planImportGrouping({ ...base, isDir: () => false, projects: first.projects, folders: first.folders,
+      entries: [{ sessionId: "claude-code:a", group: hint("/src/app") }] });
+    expect(gone.folders.folders).toHaveLength(0);
+    expect(gone.outcomes[0]).toMatchObject({ kind: "folder", added: 0, kept: 1 });
   });
 
   it("keeps a named group with no chats as an empty folder, once", () => {

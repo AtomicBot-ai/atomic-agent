@@ -181,7 +181,7 @@ test("review fixes: no Folders block without folders, Chats head offers New fold
   assert.match(main, /\(sb\.folders \?\? 0\) > 0 \? \["Folders"\]/);
 });
 
-test("W2 QA: home, scratch, /tmp and worktree chats stay under Chats, and old sorted ones leave", () => {
+test("W2 QA: home, scratch, /tmp and worktree chats go to the Claude Code folder, and old sorted ones move", () => {
   const st = F.foldersEmpty();
   const junk = [
     { id: "claude-code:h1", workingDir: "/Users/me" },
@@ -192,10 +192,10 @@ test("W2 QA: home, scratch, /tmp and worktree chats stay under Chats, and old so
     { id: "claude-code:w2", workingDir: "/Users/me/.claude-worktrees/busy-wing-9701f2" },
     { id: "claude-code:w3", workingDir: "C:\\Users\\me" },
   ];
-  assert.equal(F.folderAutoSort(st, junk.concat([{ id: "claude-code:r1", workingDir: "/Users/me/src/app" }])), 1);
-  for (const s of junk) assert.equal(F.folderOf(st, s.id), null, s.workingDir);
+  assert.equal(F.folderAutoSort(st, junk.concat([{ id: "claude-code:r1", workingDir: "/Users/me/src/app" }])), 8);
+  for (const s of junk) assert.equal(F.folderOf(st, s.id).name, "Claude Code", s.workingDir);
   assert.equal(F.folderOf(st, "claude-code:r1").name, "app");
-  assert.equal(st.folders.length, 1);
+  assert.equal(st.folders.length, 2);
 
   // A file an older build sorted: the home folder's chats leave, the emptied folder goes, the person's stays.
   const old = F.foldersEmpty();
@@ -204,7 +204,7 @@ test("W2 QA: home, scratch, /tmp and worktree chats stay under Chats, and old so
   old.chats["claude-code:h1"] = "fh"; old.auto["claude-code:h1"] = true;
   old.chats["claude-code:h2"] = "fp";   // put there by hand: stays
   F.folderAutoSort(old, junk);
-  assert.equal(F.folderOf(old, "claude-code:h1"), null);
+  assert.equal(F.folderOf(old, "claude-code:h1").name, "Claude Code");
   assert.equal(F.folderById(old, "fh"), null, "the emptied sorted folder is removed");
   assert.equal(F.folderOf(old, "claude-code:h2").id, "fp");
 });
@@ -216,4 +216,21 @@ test("W2 QA: a long folder list shows the first few and the open chat's folder",
   assert.equal(cut.hidden, 3);
   assert.equal(F.folderListCut(groups, null, true).hidden, 0);
   assert.equal(F.folderListCut(groups.slice(0, F.FOLDERS_SHOWN), null, false).hidden, 0);
+});
+
+test("W2 QA: agent worktrees are filed under their repository, as the import does", () => {
+  assert.equal(F.folderProjectDir("/Users/me/src/app/.claude/worktrees/busy-wing"), "/Users/me/src/app");
+  assert.equal(F.folderProjectDir("/Users/me/.codex/worktrees/a1b2/app/src"), "worktree-repo/app");
+  assert.equal(F.folderProjectDir("/Users/me/.cursor/worktrees/app/feat-x"), "worktree-repo/app");
+  assert.equal(F.folderProjectDir("/Users/me/conductor/workspaces/app/lisbon"), "worktree-repo/app");
+  assert.equal(F.folderProjectDir("/Users/me/.claude/worktrees/amazing-colden"), null);
+  assert.equal(F.folderProjectDir("/Users/me/.claude-worktrees/busy-wing"), null);
+  const st = F.foldersEmpty();
+  F.folderAutoSort(st, [
+    { id: "claude-code:a", workingDir: "/Users/me/src/app" },
+    { id: "claude-code:b", workingDir: "/Users/me/src/app/.claude/worktrees/x" },
+    { id: "claude-code:c", workingDir: "/Users/me/conductor/workspaces/site/lisbon" },
+  ]);
+  assert.equal(F.folderOf(st, "claude-code:b").id, F.folderOf(st, "claude-code:a").id, "a worktree joins its repo's folder");
+  assert.equal(F.folderOf(st, "claude-code:c").name, "site");
 });

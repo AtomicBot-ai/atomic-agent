@@ -199,17 +199,40 @@ function folderForProject(state, dir) {
 /* W2 QA (16.11): the import's own rule (src/import/grouping.ts) for a folder
    that is no project, so the sorting does not undo it. A Claude Code chat
    that ran in the home folder, the root, /tmp, a Claude app scratch
-   workspace or an agent worktree stays under Chats: it made folders named
-   after the home folder (678 chats), each scratch workspace and each
-   worktree ("amazing-colden-5dc37b"). Claude lists those chats in its plain
-   list the same way. */
+   workspace or an agent worktree goes to the one "Claude Code" folder, the
+   way the other apps' chats with no project go to theirs: it made folders
+   named after the home folder (678 chats), each scratch workspace and each
+   worktree ("amazing-colden-5dc37b"). */
 function folderNotAProject(dir) {
   const d = String(dir || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
   if (!d || /^(?:[a-zA-Z]:)?$/.test(d)) return true;
   if (/^\/(?:Users|home)\/[^/]+$/i.test(d) || /^[a-zA-Z]:\/Users\/[^/]+$/i.test(d) || d === '/root') return true;
   if (/^(?:\/private)?\/tmp(?:\/|$)/.test(d)) return true;
   if (/\/Claude\/scratch-workspaces(?:\/|$)/i.test(d)) return true;
-  return /\/\.(?:claude|codex|cursor)\/worktrees(?:\/|$)/i.test(d) || /\/\.claude-worktrees(?:\/|$)/i.test(d);
+  return folderProjectDir(d) === null;
+}
+
+/* The folder a Claude Code chat's project is, by the import's rule for agent
+   worktrees (src/import/grouping.ts agentWorktree, without its disk read):
+   `<repo>/.claude/worktrees/<name>` is <repo>; Codex's `~/.codex/worktrees/<hash>/<repo>`,
+   Cursor's `~/.cursor/worktrees/<repo>/<name>` and Conductor's
+   `~/conductor/workspaces/<repo>/<name>` keep the repository's name only;
+   Claude's worktrees in the home folder keep none (null). */
+function folderProjectDir(dir) {
+  const d = String(dir || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  const homeLike = (p) => /^\/(?:Users|home)\/[^/]+$/i.test(p) || /^[a-zA-Z]:\/Users\/[^/]+$/i.test(p) || p === '/root' || p === '';
+  const t = /^(.*?)\/\.(claude|codex|cursor)\/worktrees\/([^/]+)(?:\/([^/]+))?/i.exec(d);
+  if (t) {
+    const base = t[1], tool = t[2].toLowerCase(), a = t[3], b = t[4];
+    if (!homeLike(base)) return base;
+    if (tool === 'codex') return b ? 'worktree-repo/' + b : null;
+    if (tool === 'cursor') return 'worktree-repo/' + a;
+    return null;
+  }
+  if (/\/\.claude-worktrees(?:\/|$)/i.test(d)) return null;
+  const c = /\/conductor\/workspaces\/([^/]+)\/[^/]+/i.exec(d);
+  if (c) return 'worktree-repo/' + c[1];
+  return d;
 }
 
 function folderForApp(state, src) {
@@ -239,16 +262,12 @@ function folderAutoSort(state, sessions) {
     if (!src) continue;
     const placed = s.id in state.chats;
     if (placed && state.auto[s.id] !== true) continue;
-    if (src === 'claude-code' && typeof s.workingDir === 'string' && folderNotAProject(s.workingDir)) {
-      // Under Chats; one this sorting filed before leaves its folder.
-      if (placed) {
-        if (state.chats[s.id]) emptied.add(state.chats[s.id]);
-        delete state.chats[s.id]; delete state.auto[s.id]; moved++;
-      }
-      continue;
-    }
-    const f = src === 'claude-code' && typeof s.workingDir === 'string' && folderPathParts(s.workingDir).length
-      ? folderForProject(state, s.workingDir) : folderForApp(state, src);
+    // A Claude Code chat with no real project goes where every other app's does: the app's folder.
+    const byProject = src === 'claude-code' && typeof s.workingDir === 'string' && folderPathParts(s.workingDir).length
+      && !folderNotAProject(s.workingDir);
+    const was = state.chats[s.id];
+    const f = byProject ? folderForProject(state, folderProjectDir(s.workingDir)) : folderForApp(state, src);
+    if (placed && was && was !== f.id) emptied.add(was);
     if (state.chats[s.id] !== f.id || state.auto[s.id] !== true) moved++;
     state.chats[s.id] = f.id;
     state.auto[s.id] = true;
@@ -436,5 +455,5 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {FOLDER_SOURCES, foldersEmpty, foldersCoerce, folderImportSource, folderNameCheck, folderAdd, folderById,
-    folderRename, folderRemove, folderPut, folderOf, folderForget, folderGroups, folderAutoSort, folderFreeName, folderForProject, folderNotAProject, folderListCut, FOLDERS_SHOWN};
+    folderRename, folderRemove, folderPut, folderOf, folderForget, folderGroups, folderAutoSort, folderFreeName, folderForProject, folderNotAProject, folderProjectDir, folderListCut, FOLDERS_SHOWN};
 }
