@@ -1638,7 +1638,7 @@ describe("parseUserConfigFile", () => {
         defaultTimeoutMs: 600_000,
         jobMaxMs: 3_600_000,
         maxJobs: 3,
-        envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
+        envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY", "MONID_API_KEY"],
       },
       screen: { enabled: false, point: true },
     });
@@ -1648,6 +1648,7 @@ describe("parseUserConfigFile", () => {
     expect(USER_CONFIG_DEFAULTS.tools.shell.envPassthrough).toEqual([
       "GITHUB_TOKEN",
       "NOTION_API_KEY",
+      "MONID_API_KEY",
     ]);
     const none = parseUserConfigFile({
       version: USER_CONFIG_VERSION,
