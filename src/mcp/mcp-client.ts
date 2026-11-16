@@ -538,12 +538,13 @@ export class McpClient {
     // Review fix: the provider is attached only once a sign-in is saved
     // (it then refreshes tokens). Without one, connecting never registers a
     // client or probes `/register` on servers that do not use OAuth.
-    const oauthOk = !!this.deps.oauthStateDir && usesMcpOAuth(t);
-    this.oauthCandidate = oauthOk ? t.url : null;
+    const oauthDir = this.deps.oauthStateDir;
+    const oauthStore = oauthDir && usesMcpOAuth(t) ? createMcpOAuthStore(oauthDir) : null;
+    this.oauthCandidate = oauthStore ? t.url : null;
     this.authProvider =
-      oauthOk && createMcpOAuthStore(this.deps.oauthStateDir!).hasTokens(this.config.name, t.url)
+      oauthStore && oauthStore.hasTokens(this.config.name, t.url)
         ? new McpOAuthProvider({
-            store: createMcpOAuthStore(this.deps.oauthStateDir),
+            store: oauthStore,
             server: this.config.name,
             url: t.url,
             mode: "connect",
