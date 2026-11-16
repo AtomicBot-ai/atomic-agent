@@ -392,7 +392,7 @@ contextBridge.exposeInMainWorld("atomic", {
   interviewShown: (input: { busy: boolean; onboarding: boolean; error: boolean }) => ipcRenderer.invoke("interview:shown", input),
   interviewOpen: (via: "menu" | "card" | "slash") => ipcRenderer.invoke("interview:open", via),
   interviewDismiss: (reason: "later" | "never") => ipcRenderer.invoke("interview:dismiss", reason),
-  overnightPickFolder: (current?: string) => ipcRenderer.invoke("overnight:pickFolder", current),
+  overnightPickFolder: (current?: string, purpose?: "project") => ipcRenderer.invoke("overnight:pickFolder", current, purpose),
   overnightStart: (input: { message: string; folder: string; maxCostUsd: number | null; hours: number; notifyTelegram: boolean }) =>
     ipcRenderer.invoke("overnight:start", input),
   /** ATO-1091: `atag models fit-test` from Settings › Models (fit-test-ipc.ts). */

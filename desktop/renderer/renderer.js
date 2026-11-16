@@ -29796,7 +29796,10 @@ async function llmPrimary(row) {
    for that provider (the wizard's kind row by id, then by kind, else the
    custom row). */
 function llmOpenWizard(provider, baseUrl, scope) {
-  SEL.open = true; SEL.addOpen = false; SEL.err = null; WIZ.alone = false;
+  /* W2 QA (16.11): opened from Settings, the setup is the popover's only
+     content (`alone`), so Cancel closes the popover too. Left open, the
+     composer's Provider list stayed up under Settings after Cancel. */
+  SEL.open = true; SEL.addOpen = false; SEL.err = null; WIZ.alone = true;
   // Which providers the list offers (wizKindGroups): the cloud ones from Cloud, the apps from Local, all of them otherwise.
   WIZ.scope = scope || null; WIZ.kindQ = '';
   // Backlog 32: opened for a provider whose saved key the agent will not send — the screen says why.
@@ -31102,12 +31105,12 @@ function impGroups(report) {
 function impGroupSentence(report, executed) {
   const chats = ((report && report.items) || []).filter((it) => it.kind === 'sessions' && it.destination && it.status !== 'error').length;
   const groups = impGroups(report);
-  const nP = groups.filter((g) => g.kind === 'project').length, nF = groups.length - nP;
   const plural = (n, one, many) => n + ' ' + (n === 1 ? one : many);
   if (!chats && !groups.length) return '';
-  const where = [nP ? plural(nP, 'project', 'projects') : '', nF ? plural(nF, 'folder', 'folders') : ''].filter(Boolean).join(' and ');
+  // W2 QA (16.11): a chat folder is a project with no disk folder in the sidebar, so the report says projects only.
+  const where = groups.length ? plural(groups.length, 'project', 'projects') : '';
   const lead = plural(chats, 'chat', 'chats');
-  if (!where) return lead + (executed ? ' are here.' : ' found.') + ' They go into a folder per app.';
+  if (!where) return lead + (executed ? ' are here.' : ' found.') + ' They go into a project per app.';
   return lead + ' in ' + where + (executed ? '.' : ', kept as they were.');
 }
 function impGroupsHTML(report, executed) {
@@ -31116,7 +31119,7 @@ function impGroupsHTML(report, executed) {
   const rows = groups.slice(0, 40).map((g) => '<div class="tk-setrow sd-impgrp">'
     + '<span class="sd-impgic">' + ic('folder') + '</span>'
     + '<div class="body"><div class="t">' + esc(g.name)
-      + ' <span class="tk-chip tk-chip--sm tk-chip--line">' + (g.kind === 'project' ? 'project' : 'folder') + '</span>'
+      + ' <span class="tk-chip tk-chip--sm tk-chip--line">project</span>'
       + (g.created ? ' <span class="tk-chip tk-chip--sm tk-chip--green">' + (executed ? 'new' : 'will be new') + '</span>' : '') + '</div>'
       + '<div class="d">' + (g.path ? '<span class="mono" title="' + esc(g.path) + '">' + esc(homeTilde(g.path)) + '</span> · ' : '')
       + g.chats + (g.chats === 1 ? ' chat' : ' chats') + (g.added && g.added !== g.chats ? ', ' + g.added + (executed ? ' moved in' : ' to move in') : '') + '</div></div></div>').join('');

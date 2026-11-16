@@ -172,7 +172,7 @@ async function projectCreatePick() {
   const c = PROJECTS.create;
   if (!c || c.saving || typeof BR === 'undefined' || !BR || typeof BR.overnightPickFolder !== 'function') return;
   let dir = null;
-  try { dir = await BR.overnightPickFolder(c.folder || (typeof WORKSPACE === 'string' ? WORKSPACE : '')); } catch (e) { dir = null; }
+  try { dir = await BR.overnightPickFolder(c.folder || (typeof WORKSPACE === 'string' ? WORKSPACE : ''), 'project'); } catch (e) { dir = null; }
   if (PROJECTS.create !== c || typeof dir !== 'string' || !dir) return;
   projectCreateRedraw({folder: dir, name: c.name.trim() ? c.name : projectNameFromDir(dir), error: null});
 }

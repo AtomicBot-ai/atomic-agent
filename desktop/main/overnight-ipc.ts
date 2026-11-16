@@ -31,10 +31,11 @@ export interface OvernightIpcDeps {
 }
 
 export function wireOvernightIpc(deps: OvernightIpcDeps): void {
-  ipcMain.handle("overnight:pickFolder", async (_event, current: unknown) => {
+  ipcMain.handle("overnight:pickFolder", async (_event, current: unknown, purpose: unknown) => {
     const win = deps.window();
     const opts = {
-      title: "Folder for the overnight run",
+      // W2 QA: New project picks its folder with this dialog too, under its own title.
+      title: purpose === "project" ? "Folder for the project" : "Folder for the overnight run",
       properties: ["openDirectory", "createDirectory"] as Array<"openDirectory" | "createDirectory">,
       defaultPath: typeof current === "string" && current ? current : deps.client.status.workingDir,
     };
