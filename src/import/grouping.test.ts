@@ -55,8 +55,12 @@ describe("groupHintFromCwd", () => {
     expect(groupHintFromCwd("/Users/me/", home)).toBeUndefined();
     expect(groupHintFromCwd("/Users/me/.claude/worktrees/busy-wing-9701f2", home)).toBeUndefined();
     expect(groupHintFromCwd("/Users/me/.claude-worktrees/amazing-colden-5dc37b", home)).toBeUndefined();
-    expect(groupHintFromCwd("/private/tmp", home)).toBeUndefined();
-    expect(groupHintFromCwd("/tmp/build", home)).toBeUndefined();
+    // Where the system temp folder is /tmp itself (Linux) it holds the test
+    // fixtures, so /tmp is only ruled out on a Mac-style per-user temp folder.
+    if (!/^\/(?:private\/)?tmp(?:\/|$)/.test(tmpdir())) {
+      expect(groupHintFromCwd("/private/tmp", home)).toBeUndefined();
+      expect(groupHintFromCwd("/tmp/build", home)).toBeUndefined();
+    }
     expect(groupHintFromCwd(
       "/Users/me/Library/Application Support/Claude/scratch-workspaces/13c6/0645/scratch-2026-09-30-29eb57", home,
     )).toBeUndefined();

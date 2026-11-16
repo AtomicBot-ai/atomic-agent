@@ -6,7 +6,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { ImportItemResult, ImportReport } from "./import-report.js";
@@ -152,11 +152,13 @@ function underPath(dir: string, root: string): boolean {
 }
 
 /* Only the shared /tmp: the per-user temp folder (os.tmpdir(), /var/folders
-   on a Mac) also holds every test fixture, so it is not ruled out here. */
+   on a Mac) also holds every test fixture, so it is not ruled out here. Where
+   os.tmpdir() is /tmp itself (Linux), /tmp is that same folder and stays in. */
 function notAProjectFolder(dir: string, home: string): boolean {
   if (/^(?:[a-zA-Z]:)?[\\/]*$/.test(dir)) return true;
   if (samePath(dir, home)) return true;
   for (const t of ["/tmp", "/private/tmp"]) {
+    if (underPath(tmpdir(), t)) continue;
     if (underPath(dir, t)) return true;
   }
   return /[\\/]Claude[\\/]scratch-workspaces(?:[\\/]|$)/i.test(dir);

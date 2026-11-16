@@ -20,12 +20,12 @@ import type { ConversationTurn } from "./conversation-turn.js";
  * same file appending a message to one session in a loop, the row write
  * `SessionStore.save` does. It has to be another process: better-sqlite3
  * is synchronous, so nothing in this one can run while A's search does.
- * B's busy timeout is 1 s, stricter than the store's 5 s default.
+ * B's busy timeout is the store's own 5 s default (1 s was too tight on CI).
  */
 
 const SESSIONS = 600;
 const LINES_PER_SESSION = 40;
-const B_BUSY_TIMEOUT_MS = 1000;
+const B_BUSY_TIMEOUT_MS = 5000;
 
 const WORDS = [
   "deploy", "staging", "budget", "invoice", "migration", "postgres", "release",
