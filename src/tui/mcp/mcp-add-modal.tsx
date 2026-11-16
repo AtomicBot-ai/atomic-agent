@@ -85,7 +85,7 @@ export function McpAddModal({
           value={state.json}
           focus={!state.submitting}
           disabled={state.submitting}
-          placeholder='{"mcpServers":{"github":{"command":"npx","args":["-y","@github/mcp-server"]}}}'
+          placeholder='{"mcpServers":{"filesystem":{"command":"npx","args":["-y","@modelcontextprotocol/server-filesystem","."]}}}'
           onChange={onJsonChange}
           onSubmit={(buffer) => onSubmit(buffer)}
           onEscape={onCancel}
