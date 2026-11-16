@@ -96,9 +96,33 @@ test('renderer: the box shows the catalog, a chip fills it, a submit checks plac
   const helper = index.indexOf('<script src="mcp-catalog.js">');
   assert.ok(helper > 0 && helper < index.indexOf('<script src="renderer.js">'));
   const src = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
-  assert.ok(src.includes('mcpCatalogHTML(m, {esc})'));
+  assert.ok(src.includes('mcpCatalogCardsHTML(m.q'));
+  assert.ok(src.includes('mcpCatalogFormHTML(entry, m'));
   assert.ok(src.includes("if (verb === 'catalog')"));
   assert.ok(src.includes('mcpCatalogUnfilled(json)'));
   const acts = readFileSync(new URL('../renderer/analytics-acts.js', import.meta.url), 'utf8');
   assert.ok(acts.includes('catalog:L'), 'mcp:catalog:<id> is reported as mcp:catalog');
+});
+
+test('W2 QA: two steps: cards with a search, then only the fields a server needs', () => {
+  const cards = C.mcpCatalogCardsHTML('', {esc});
+  for (const e of C.MCP_CATALOG.entries) assert.ok(cards.includes('data-act="mcp:catalog:' + e.id + '"'), e.id);
+  const found = C.mcpCatalogFilter('brave');
+  assert.ok(found.some((e) => e.id === 'brave-search') && !found.some((e) => e.id === 'git'));
+  assert.match(C.mcpCatalogCardsHTML('zzzz-nothing', {esc}), /Add a custom server/);
+
+  const gh = C.mcpCatalogEntry('github');
+  const ph = gh.inputs[0].placeholder;
+  assert.deepEqual(C.mcpCatalogMissing('github', {}), [gh.inputs[0].label]);
+  const form = C.mcpCatalogFormHTML(gh, {vals: {}}, {esc});
+  assert.match(form, /type="password"/);
+  assert.match(form, /Show config/);
+  assert.doesNotMatch(form, /<pre/, 'the config is folded');
+
+  const json = C.mcpCatalogFill('github', {[ph]: 'ghp_a"b'});
+  assert.equal(C.mcpCatalogUnfilled(json), null);
+  assert.ok(JSON.parse(json).mcpServers.github, 'a typed quote stays valid JSON');
+  assert.match(JSON.stringify(JSON.parse(json)), /ghp_a\\"b/);
+  assert.doesNotMatch(C.mcpCatalogPreview('github', {[ph]: 'ghp_secret'}), /ghp_secret/, 'the preview hides the token');
+  assert.deepEqual(C.mcpCatalogMissing('fetch', {}), [], 'a server with nothing to fill connects at once');
 });

@@ -8727,6 +8727,16 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'skp-hubq') { SKP.hubQuery = e.target.value; return; }
   // ATO-510: the server name in the add box's review block.
   if (e.target.id === 'mcp-name') { if (MCP.addModal) { MCP.addModal.name = e.target.value; MCP.addModal.error = null; } return; }
+  // W2 QA: the add box's catalog search and a server's fields; only their part repaints, so the caret stays.
+  if (e.target.id === 'mcp-cat-q') { if (MCP.addModal) MCP.addModal.q = e.target.value; const box = $('#mcp-cat-list'); if (box) box.innerHTML = mcpCatalogCardsHTML(e.target.value, {esc, mark: mcpCatalogMark}); return; }
+  if (e.target.dataset && e.target.dataset.mcpin !== undefined) {
+    const m = MCP.addModal; const en = m && m.catalogId ? mcpCatalogEntry(m.catalogId) : null; const inp = en && en.inputs[+e.target.dataset.mcpin];
+    if (!inp) return;
+    m.vals = m.vals || {}; m.vals[inp.placeholder] = e.target.value; m.error = null;
+    const go = $('[data-act="mcp:catalogConnect"]'); if (go) go.disabled = !!m.submitting || mcpCatalogMissing(m.catalogId, m.vals).length > 0;
+    const cfg = $('#mcp-cat-cfg'); if (cfg) cfg.textContent = mcpCatalogPreview(m.catalogId, m.vals);
+    return;
+  }
   if (e.target.id === 'mcp-json') {
     if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; }
     // ATO-510: only the review block repaints (the caret stays in the box).
@@ -26948,25 +26958,48 @@ function mcpDetailHTML() {
 
     + '<div class="tk-bar">' + seg + '</div>' + body;
 }
+/* W2 QA (16.11): the add box in two steps, as Claude's Connectors page.
+   `step`: 'catalog' (cards and a search, mcp-catalog.js), 'form' (one
+   server's few fields, its config folded) or 'custom' (the paste box). */
 function mcpAddModalHTML() {
   const m = MCP.addModal;
-  return '<div class="tk-modal sd-modal" role="dialog" aria-label="Add MCP server">'
-    + '<div class="sd-mhead"><span class="tk-ico tk-ico--blue">' + ic('plug') + '</span><h4>Add MCP server</h4></div>'
-    /* Plain words (Danya, 30.09): the old line named two other products'
-       config "envelopes", and two more lines explained key chords and the
-       stdio auto-promotion. Every shape it listed is still accepted. */
-    /* ATO-510 (U-74): one box for JSON, a command or an address
-       (mcp-smart-add.js); what it understood shows under it for a check. */
-    + '<p>Paste the server\u2019s config (JSON), the command that starts it, or its address. It\u2019s usually in the server\u2019s README.</p>'
-    /* ATO-1131: the built-in catalog (mcp-catalog.js); a pick fills the box below. */
-    + (typeof mcpCatalogHTML === 'function' ? mcpCatalogHTML(m, {esc}) : '')
-    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc('Examples:\n' + mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
-    + '<div id="mcp-detect">' + mcpAddPreview() + '</div>'
-    + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
-    + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
-    + '<div class="acts"><span class="sd-grow"></span>'
+  // Add opens on the catalog; a box opened without a step (older callers, the smoke) is the paste box.
+  const step = m.step === 'catalog' && typeof mcpCatalogCardsHTML !== 'function' ? 'custom' : m.step || 'custom';
+  const entry = step === 'form' && m.catalogId && typeof mcpCatalogEntry === 'function' ? mcpCatalogEntry(m.catalogId) : null;
+  const back = step === 'catalog' ? '' : '<button class="iconbtn sm" data-act="mcp:catalogBack" title="Back" aria-label="Back">' + ic('chevL') + '</button>';
+  const head = '<div class="sd-mhead">' + back
+    + (entry ? '<span class="sd-cat-ic">' + mcpCatalogMark(entry) + '</span><h4>' + esc(entry.title) + '</h4>'
+      : '<span class="tk-ico tk-ico--blue">' + ic('plug') + '</span><h4>' + (step === 'custom' ? 'Add a custom server' : 'Add MCP server') + '</h4>')
+    + '</div>';
+  const err = (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
+    + (m.submitting ? '<p class="tk-help">writing config…</p>' : '');
+  const acts = (label, act, on) => '<div class="acts"><span class="sd-grow"></span>'
     + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel</button>'
-    + '<button class="btn btn-p sm" data-act="mcp:addSubmit" title="Add (\u2318 Enter)"' + (m.submitting || !String(m.json || '').trim() ? ' disabled' : '') + '>Add</button></div></div>';
+    + '<button class="btn btn-p sm" data-act="' + act + '"' + (on ? '' : ' disabled') + '>' + label + '</button></div>';
+  if (step === 'catalog') {
+    return '<div class="tk-modal sd-modal" role="dialog" aria-label="Add MCP server">' + head
+      + '<label class="tk-inpwrap sd-cat-search">' + ic('search')
+        + '<input id="mcp-cat-q" value="' + esc(m.q || '') + '" autocomplete="off" spellcheck="false" placeholder="Search servers" aria-label="Search servers"></label>'
+      + '<div class="sd-cat-grid" id="mcp-cat-list">' + mcpCatalogCardsHTML(m.q || '', {esc, mark: mcpCatalogMark}) + '</div>'
+      + '<button class="sd-cat-custom" data-act="mcp:custom">Add a custom server</button></div>';
+  }
+  if (entry) {
+    const missing = mcpCatalogMissing(entry.id, m.vals);
+    return '<div class="tk-modal sd-modal" role="dialog" aria-label="' + esc('Add ' + entry.title) + '">' + head
+      + mcpCatalogFormHTML(entry, m, {esc}) + err
+      + acts('Connect', 'mcp:catalogConnect', !m.submitting && missing.length === 0) + '</div>';
+  }
+  /* The paste box: JSON, a command or an address (ATO-510, mcp-smart-add.js). */
+  return '<div class="tk-modal sd-modal" role="dialog" aria-label="Add a custom server">' + head
+    + '<p>Paste the server\u2019s config (JSON), the command that starts it, or its address. It\u2019s usually in the server\u2019s README.</p>'
+    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc('Examples:\n' + mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    + '<div id="mcp-detect">' + mcpAddPreview() + '</div>' + err
+    + acts('Add', 'mcp:addSubmit', !m.submitting && !!String(m.json || '').trim()).replace('data-act="mcp:addSubmit"', 'data-act="mcp:addSubmit" title="Add (\u2318 Enter)"') + '</div>';
+}
+/* A catalog card's mark: the brand logo where the app has one, else the first letter. */
+function mcpCatalogMark(e) {
+  const logo = e && e.id === 'github' && typeof logoHTML === 'function' ? logoHTML('github', '') : '';
+  return logo || '<span class="sd-cat-letter">' + esc(String((e && e.title) || '?').slice(0, 1)) + '</span>';
 }
 /** The add box's examples: a command, an address, and JSON laid out on lines the way a README shows it. */
 function mcpJsonExample() {
@@ -27075,11 +27108,23 @@ function mcpAct(what) {
     else if (MCP_TAB_ORDER.includes(arg)) MCP.detailTab = arg;
     MCP.detailCursor = 0; render(); return;
   }
-  if (verb === 'add') { MCP.addModal = {json:'', error:null, submitting:false, name:null, auto:null}; MCP.removeConfirm = null; render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
+  if (verb === 'add') { MCP.addModal = {json:'', error:null, submitting:false, name:null, auto:null, step:'catalog', q:'', vals:{}, showConfig:false}; MCP.removeConfirm = null; render(); const n = $('#mcp-cat-q') || $('#mcp-json'); if (n) n.focus(); return; }
+  // W2 QA: the two-step add box (mcpAddModalHTML).
+  if (verb === 'custom') { if (!MCP.addModal || MCP.addModal.submitting) return; Object.assign(MCP.addModal, {step:'custom', catalogId:null, json:'', error:null, name:null, auto:null}); render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
+  if (verb === 'catalogBack') { if (!MCP.addModal || MCP.addModal.submitting) return; Object.assign(MCP.addModal, {step:'catalog', catalogId:null, vals:{}, showConfig:false, json:'', error:null, name:null, auto:null}); render(); const n = $('#mcp-cat-q'); if (n) n.focus(); return; }
+  if (verb === 'catalogConfig') { if (!MCP.addModal) return; MCP.addModal.showConfig = !MCP.addModal.showConfig; render(); return; }
+  if (verb === 'catalogConnect') {
+    const m = MCP.addModal;
+    if (!m || m.submitting || !m.catalogId) return;
+    const left = mcpCatalogMissing(m.catalogId, m.vals);
+    if (left.length) { m.error = 'Fill in ' + left.join(', ') + ' first.'; render(); return; }
+    mcpAddSubmit(mcpCatalogFill(m.catalogId, m.vals));
+    return;
+  }
   if (verb === 'addSubmit') { const n = $('#mcp-json'); mcpAddSubmit(n ? n.value : (MCP.addModal ? MCP.addModal.json : '')); return; }
   if (verb === 'addCancel') { MCP.addModal = null; render(); return; }
   // ATO-1131: a catalog chip puts that server's config in the box (mcp-catalog.js).
-  if (verb === 'catalog') { const j = typeof mcpCatalogJson === 'function' ? mcpCatalogJson(arg) : null; if (!j || !MCP.addModal || MCP.addModal.submitting) return; Object.assign(MCP.addModal, {json:j, catalogId:arg, error:null, name:null, auto:null}); render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
+  if (verb === 'catalog') { const j = typeof mcpCatalogJson === 'function' ? mcpCatalogJson(arg) : null; if (!j || !MCP.addModal || MCP.addModal.submitting) return; Object.assign(MCP.addModal, {step:'form', json:j, catalogId:arg, vals:{}, showConfig:false, error:null, name:null, auto:null}); render(); const n = $('#mcp-in-0'); if (n) n.focus(); return; }
   if (verb === 'remove') { const name = sel(); if (!name) return; MCP.removeConfirm = {name, error:null, submitting:false}; render(); return; }
   if (verb === 'removeConfirm') { mcpRemoveConfirm(); return; }
   if (verb === 'removeCancel') { MCP.removeConfirm = null; render(); return; }
@@ -27093,7 +27138,8 @@ function mcpAct(what) {
    Enter starts a new line, Add (or ⌘/Ctrl+Enter, routed in the keydown
    handler before the composer's own ⌘+Enter) adds the server. */
 function mcpKey(e, k, inText) {
-  if (e.target.id === 'mcp-json' || e.target.id === 'mcp-name') {
+  if (e.target.id === 'mcp-json' || e.target.id === 'mcp-name' || e.target.id === 'mcp-cat-q' || (e.target.dataset && e.target.dataset.mcpin !== undefined)) {
+    if (k === 'Enter' && e.target.dataset && e.target.dataset.mcpin !== undefined) { e.preventDefault(); mcpAct('catalogConnect'); return true; }
     if (k === 'Escape') { e.preventDefault(); MCP.addModal = null; render(); return true; }
     return false;
   }

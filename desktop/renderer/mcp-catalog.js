@@ -331,6 +331,87 @@ function mcpCatalogHTML(m, h) {
   return html + '</div>';
 }
 
+/* ---- W2 QA (16.11): the add box in two steps, the way Claude's Connectors page works.
+   Step 1 is the catalog as cards with a search; a card opens a short form
+   that asks only for the values that server needs (its `inputs`), with the
+   config itself folded under "Show config". "Add a custom server" keeps the
+   old paste box. Connect fills the placeholders and hands the same JSON to
+   mcpAddSubmit, which stays the only write path. */
+
+/* Entries whose title, description or shelf match the search, in shelf order. */
+function mcpCatalogFilter(q) {
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
+  const shelf = (id) => (MCP_CATALOG.shelves.find((x) => x.id === id) || {}).label || '';
+  return mcpCatalogList().filter((e) => {
+    const hay = (e.title + ' ' + e.description + ' ' + shelf(e.shelf) + ' ' + e.id).toLowerCase();
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+/* The entry's config with each placeholder replaced by what was typed (JSON-escaped). */
+function mcpCatalogFill(id, vals) {
+  const e = mcpCatalogEntry(id);
+  if (!e) return null;
+  let json = mcpCatalogJson(id);
+  for (const i of e.inputs) {
+    const v = String((vals && vals[i.placeholder]) || '').trim();
+    if (!v) continue;
+    json = json.split(i.placeholder).join(JSON.stringify(v).slice(1, -1));
+  }
+  return json;
+}
+
+/* The inputs still empty, by label. */
+function mcpCatalogMissing(id, vals) {
+  const e = mcpCatalogEntry(id);
+  return e ? e.inputs.filter((i) => !String((vals && vals[i.placeholder]) || '').trim()).map((i) => i.label) : [];
+}
+
+const MCP_REQUIRES = {node: 'Needs Node.js on this computer.', uv: 'Needs uv (Python) on this computer.'};
+
+/* One card per server, for the list under the search box. */
+function mcpCatalogCardsHTML(q, h) {
+  const items = mcpCatalogFilter(q);
+  if (!items.length) return '<p class="tk-help sd-cat-none">No server matches. <a href="#" data-act="mcp:custom">Add a custom server</a></p>';
+  return items.map((e) => '<button class="sd-cat-card" data-act="mcp:catalog:' + h.esc(e.id) + '">'
+    + '<span class="sd-cat-ic">' + (h.mark ? h.mark(e) : h.esc(e.title.slice(0, 1))) + '</span>'
+    + '<span class="sd-cat-t">' + h.esc(e.title) + '</span>'
+    + '<span class="sd-cat-d">' + h.esc(e.description) + '</span></button>').join('');
+}
+
+/* The short form for one server: what it does, its fields, the folded config. */
+function mcpCatalogFormHTML(e, m, h) {
+  const vals = (m && m.vals) || {};
+  let html = '<p class="sd-cat-desc">' + h.esc(e.description) + (e.note ? ' ' + h.esc(e.note) : '')
+    + ' <a href="#" data-url="' + h.esc(e.homepage) + '">About</a></p>';
+  e.inputs.forEach((i, n) => {
+    html += '<label class="sd-cat-field"><span class="sd-cat-label">' + h.esc(i.label) + '</span>'
+      + '<input class="tk-inp" id="mcp-in-' + n + '" data-mcpin="' + n + '" type="' + (i.secret ? 'password' : 'text') + '"'
+      + ' autocomplete="off" spellcheck="false" value="' + h.esc(vals[i.placeholder] || '') + '"'
+      + (m && m.submitting ? ' disabled' : '') + '></label>'
+      + (i.getUrl ? '<p class="tk-help sd-cat-get"><a href="#" data-url="' + h.esc(i.getUrl) + '">Get it here</a></p>' : '');
+  });
+  if (!e.inputs.length) html += '<p class="tk-help">Nothing to fill in.</p>';
+  if (MCP_REQUIRES[e.requires]) html += '<p class="tk-help">' + h.esc(MCP_REQUIRES[e.requires]) + '</p>';
+  html += '<button class="sd-cat-cfgt" data-act="mcp:catalogConfig" aria-expanded="' + !!(m && m.showConfig) + '">'
+    + (m && m.showConfig ? 'Hide config' : 'Show config') + '</button>'
+    + (m && m.showConfig ? '<pre class="tk-out sd-cat-cfg" id="mcp-cat-cfg">' + h.esc(mcpCatalogPreview(e.id, vals)) + '</pre>' : '');
+  return html;
+}
+
+/* The config as it will be written, secrets shown as dots. */
+function mcpCatalogPreview(id, vals) {
+  const e = mcpCatalogEntry(id);
+  if (!e) return '';
+  const masked = {};
+  for (const i of e.inputs) {
+    const v = String((vals && vals[i.placeholder]) || '').trim();
+    if (v) masked[i.placeholder] = i.secret ? '••••••••' : v;
+  }
+  return mcpCatalogFill(id, masked);
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = {MCP_CATALOG, mcpCatalogList, mcpCatalogEntry, mcpCatalogJson, mcpCatalogPlaceholders, mcpCatalogUnfilled, mcpCatalogHTML};
+  module.exports = {MCP_CATALOG, mcpCatalogList, mcpCatalogEntry, mcpCatalogJson, mcpCatalogPlaceholders, mcpCatalogUnfilled, mcpCatalogHTML,
+    mcpCatalogFilter, mcpCatalogFill, mcpCatalogMissing, mcpCatalogCardsHTML, mcpCatalogFormHTML, mcpCatalogPreview};
 }
