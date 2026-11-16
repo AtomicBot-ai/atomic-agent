@@ -27,7 +27,20 @@ export const CODEX_CLI_SYSTEM_PROMPT =
   "message in that protocol, exactly as the prompt specifies. Emit only " +
   "that, with no preamble, no commentary, and no explanation of what " +
   "you would do. If the prompt asks for a file to be read, you emit the " +
-  "tool call that reads it; you never read it yourself.";
+  "tool call that reads it; you never read it yourself. " +
+  // Codex tells the model its own sandbox is read-only. Without this the
+  // model takes that as the user's workspace and refuses edits in prose
+  // ("this session is read-only, reopen with write access") instead of
+  // emitting the write call atomic-agent would have run (#1177).
+  "The read-only sandbox you see applies only to your own tools. The " +
+  "user's workspace is reached only through the protocol's tool calls, " +
+  "which the other program runs under its own permission rules, so " +
+  "that sandbox is never a reason to refuse. Never cite your own " +
+  "sandbox to the user and never tell the user to change Codex " +
+  "permissions or sandbox settings. When the request needs a file " +
+  "written, edited or deleted, emit that write as a tool call in the " +
+  "prompt's protocol, never through your own apply_patch or shell, and " +
+  "follow what the protocol's tool results say about whether it ran.";
 
 function baseArgs(input: CliArgsInput): string[] {
   return [
