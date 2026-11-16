@@ -10988,6 +10988,11 @@ function turnFailureLine(ev) {
      at once, not after a wait, so no "gave up after". */
   const billing = billingFailureLine(ev, id);
   if (billing) return esc(billing);
+  /* W2 QA (16.11): offline mode refused the request before it left the Mac.
+     The agent says so (offlineTurnSentence, src/llm/offline-network.ts);
+     "OpenRouter is not answering" sent the person to their network. */
+  const offline = offlineTurnLine(ev);
+  if (offline) return esc(offline);
   /* Backlog 29: the agent names a key it could not use or that the provider
      refused ("… can't use its API key: …", "… rejected the API key (401) …").
      That sentence is the reason; "not answering" would send the person to
@@ -11010,6 +11015,22 @@ function turnFailureLine(ev) {
   /* Anything else is the turn going wrong rather than the endpoint. The
      agent's sentence is raw (codes, stack words), so the row says one short
      phrase and keeps the sentence under Details (turnFailure). */
+  return null;
+}
+/** The agent's offline-mode sentence out of a failed turn, or null. */
+function offlineTurnLine(ev) {
+  const said = String((ev && ev.error) || '');
+  const m = /Offline mode is on, so [^\n]*?Settings › Privacy\./.exec(said);
+  if (m) return m[0];
+  // An agent that words it otherwise: the switch this window turned on, and a request that never got an answer.
+  if (typeof OFFM !== 'undefined' && OFFM.state && OFFM.state.enabled === true && providerFailure(ev) && !providerReplied(ev)) {
+    const id = selActiveProviderId();
+    const entry = (selProviders() || []).find((p) => p.id === id);
+    const host = providerHost(entry) || (id ? providerWord(id) : 'the provider');
+    // A server on this Mac is allowed offline: its silence is its own.
+    if (/^(?:localhost|127\.|\[::1\]|0\.0\.0\.0)/i.test(host) || !id || (typeof rmNow === 'function' && rmNow().effective === 'local')) return null;
+    return 'Offline mode is on, so ' + host + " can't be reached. Pick a local model, or turn offline mode off in Settings › Privacy.";
+  }
   return null;
 }
 /** ATO-1458: the turn failed on a key: the agent's verdict (`failure.cause` /

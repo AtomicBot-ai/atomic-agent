@@ -18,7 +18,7 @@ function fn(name) {
 }
 
 const NAMES = [
-  "providerHost", "providerFailure", "providerReplied", "turnWaited", "turnFailureLine",
+  "providerHost", "providerFailure", "providerReplied", "turnWaited", "turnFailureLine", "offlineTurnLine",
   "turnKeyRejected", "turnFailureAct", "sysRowHTML",
   "selProviders", "selActiveProviderId", "llmBlock", "llmProviders", "llmProvider", "llmLocalModels",
 ];
@@ -31,6 +31,7 @@ const CONFIG = {
 
 function load(opts = {}) {
   const c = vm.createContext({
+    ...(opts.offline ? { OFFM: { state: { enabled: true } }, rmNow: () => ({ effective: opts.route || "cloud" }) } : {}),
     LIVE_CONFIG: CONFIG, S: { turnStartedAt: 0, log: [] }, SWX: {}, projectTurnModel: () => null, URL, DWATCH: null,
     esc: (s) => String(s), providerWord: (id) => (id === "openrouter" ? "OpenRouter" : String(id)),
     savedKeyInvalid: () => !!opts.badSavedKey, billingFailureLine: () => "",
@@ -92,4 +93,16 @@ test("both failed-turn rows take the button from turnFailureAct, and the buttons
   const llmAct = fn("llmAct");
   assert.match(llmAct, /verb === 'checkKey'\) \{\n\s+act\('settings:llm'\);[\s\S]*?llmOpenWizard\(p\); wizFocusKey\(\);/);
   assert.match(llmAct, /verb === 'fbOpen'\) \{ act\('settings:llm'\); llmSetMode\('fallback'\);/);
+});
+
+test("W2 QA: offline mode says so instead of \"OpenRouter is not answering\"", () => {
+  const sentence = "Offline mode is on, so openrouter.ai can't be reached. Pick a local model, or turn offline mode off in Settings › Privacy.";
+  // The agent's own sentence, as it ends the turn.
+  assert.equal(load().turnFailureLine({ kind: "error", category: "provider", error: sentence }), sentence);
+  // An agent that only says the request failed, with the switch on here.
+  const bare = { kind: "error", category: "provider", error: "fetch failed" };
+  const off = load({ offline: true });
+  assert.equal(off.turnFailureLine(bare), sentence);
+  // A local route is allowed offline: no offline line for it.
+  assert.equal(load({ offline: true, route: "local" }).offlineTurnLine(bare), null);
 });
