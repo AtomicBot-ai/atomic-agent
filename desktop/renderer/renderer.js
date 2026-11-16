@@ -20422,10 +20422,10 @@ function fzChipsHtml() {
   const label = fzSeats().works.label;
   // Item 11: a queued swap says what it waits for, and that a second press takes it back.
   const queued = FZ.swapQueued
-    ? 'Seats swapped — this takes effect once ' + fzQueuedWhen() + '. Press again to swap back' : '';
+    ? 'Seats swapped. This takes effect once ' + fzQueuedWhen() + '. Press again to swap back' : '';
   // ATO-136: a local model planning is the slow way round, said where the swap is.
   const slow = fzLocalPlannerHint();
-  const tip = (queued || 'Swap the seats — the orchestrator runs the workers and back') + (slow ? '. ' + slow : '');
+  const tip = (queued || 'Swap the seats: the orchestrator and the workers trade places') + (slow ? '. ' + slow : '');
   return '<button class="cchip fzswap' + (queued ? ' is-queued' : '') + '" data-act="runmode:swap"'
       + ' title="' + esc(tip) + '"'
       + ' aria-label="' + esc(queued || 'Swap orchestrator and workers') + '">'
