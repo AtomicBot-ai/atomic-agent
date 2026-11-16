@@ -172,7 +172,8 @@ const HARDENED_STRING_RULES = [
 ].join("\n");
 
 /**
- * The same F37 exclusion for the reply body (#681). `reply-text` is its
+ * The same F37 exclusion for the reply body (#681), which the `finish`
+ * summary shares (`finish-args` uses `reply-text` too). `reply-text` is its
  * own automaton (the string may not close right after a soft character,
  * see `grammars/tool-call.gbnf`), so it does not go through `chars` and
  * needs the `<|` / `|>` states folded into it. The states multiply: the
@@ -258,7 +259,8 @@ const perRequestGrammarCache = new Map<string, Map<string, string>>();
  * `reply` is always present: a grammar with no exit would trap the step in
  * the only thing it can still emit. It lives on its own `reply-call`
  * branch (#681), and the tools with required args (`os.shell.run`, the
- * `os.fs.*` file tools, web, discovery and notes tools: `DEDICATED_BRANCHES`
+ * `os.fs.*` file tools, web, discovery and notes tools, and `finish` with
+ * its guarded summary: `DEDICATED_BRANCHES`
  * in `tool-call-branches.ts`) keep theirs when the request admits them, so
  * `tool-name` gets the other names; when there are none, `tool-call` is
  * cut down to the dedicated branches. The rewritten rule is sorted and

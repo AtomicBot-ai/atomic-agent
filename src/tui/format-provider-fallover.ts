@@ -108,9 +108,9 @@ export function formatFallbackStatusLine(
   const evidence = status ? ` (${status})` : "";
   switch (classifyFalloverReason(reason)) {
     case "billing":
-      return `${head}${evidence} · ${from} is out of credit or quota: top it up or lower its maxOutputTokens`;
+      return `${head}${evidence} · ${from} is out of credit or quota. Top it up`;
     case "auth":
-      return `${head}${evidence} · ${from} refused the API key: check it in <stateDir>/.env or its apiKey in config.json`;
+      return `${head}${evidence} · ${from} did not accept the API key. Update the key`;
     default:
       return isSelfClearingFailure(reason)
         ? `${head} (${reason}) · retrying the primary automatically`

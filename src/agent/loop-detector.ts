@@ -35,6 +35,9 @@ const MAX_WARNING_KEYS = 200;
  */
 const MAX_TRACKED_READ_FILES = 200;
 
+/** The tool whose state `forgetReads` drops. */
+const READ_TOOL = "os.fs.read";
+
 /**
  * Tools whose repeated invocation with ever-changing arguments is a
  * "wandering" loop (probing endless distinct URLs / queries / pages
@@ -666,6 +669,29 @@ export class ToolLoopTracker {
     if (this.readCoverage.size > MAX_TRACKED_READ_FILES) {
       const oldest = this.readCoverage.keys().next();
       if (!oldest.done) this.readCoverage.delete(oldest.value);
+    }
+  }
+
+  /**
+   * The model's context lost earlier transcript rows: a compaction
+   * summarized them, or the prompt packer left them out (follow-up to
+   * #827). The file contents those reads returned are no longer in front
+   * of the model, so reading the file again is a recovery, not a repeat.
+   * Forget everything the tracker knows about reads -- coverage, the
+   * `os.fs.read` entries the repeat and no-progress walks count, their
+   * outcome fingerprints, and a veto streak on a read -- and nothing
+   * else: writes, tests, polls and wandering runs keep their state, and
+   * a read repeated after this is caught again as usual.
+   */
+  forgetReads(): void {
+    this.readCoverage.clear();
+    for (let i = this.history.length - 1; i >= 0; i -= 1) {
+      if (this.history[i]!.tool === READ_TOOL) this.history.splice(i, 1);
+    }
+    this.recentOutcomes.forget((key) => key.startsWith(`${READ_TOOL}|`));
+    if (this.consecutiveVetoSignature?.startsWith(`${READ_TOOL}:`)) {
+      this.consecutiveVetoSignature = null;
+      this.consecutiveVetoCount = 0;
     }
   }
 
