@@ -323,6 +323,17 @@ describe("Allow always", () => {
       expect(matchRules([saved], post("https://evil.example"), ctx)).toBeNull();
     });
 
+    it("ignores a prompt-made HTTP allow with no origin, the ATO-1612 leftover", () => {
+      const post = (grantKey?: string): ApprovalRequest => ({ ...http(grantKey), category: "http_write" });
+      const ctx = { workdir: "/w" };
+      const leftover = parseApprovalRule({ decision: "allow", tool: "os.http.request", category: "http_write", project: "/w", source: "prompt" });
+      if (typeof leftover === "string") throw new Error(leftover);
+      expect(matchRules([leftover], post("https://evil.example"), ctx)).toBeNull();
+      const written = parseApprovalRule({ decision: "allow", tool: "os.http.request", category: "http_write", project: "/w" });
+      if (typeof written === "string") throw new Error(written);
+      expect(matchRules([written], post("https://evil.example"), ctx)?.decision).toBe("allow");
+    });
+
     it("parses an origin field to its normal form and rejects a bad one", () => {
       const ok = parseApprovalRule({
         decision: "deny",

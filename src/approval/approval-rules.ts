@@ -351,6 +351,18 @@ export function ruleMatches(
   }
   if (rule.path !== undefined && !allPathsInside(request, rule.path)) return false;
   if (rule.origin !== undefined && rule.origin !== request.grantKey) return false;
+  // ATO-1612: before the fix, "Allow always" on a POST saved no origin, so
+  // the rule silenced every POST to every host. A prompt-made HTTP allow
+  // with no origin is that bug's leftover and is not honoured; the
+  // request asks again, and a new "always" saves the site.
+  if (
+    rule.decision === "allow" &&
+    rule.source === "prompt" &&
+    rule.origin === undefined &&
+    isHttpCategory(rule.category)
+  ) {
+    return false;
+  }
   if (rule.project !== undefined) {
     if (ctx.workdir === undefined) return rule.decision !== "allow";
     if (!isInside(rule.project, resolvePath(ctx.workdir))) return false;
@@ -465,7 +477,7 @@ function alwaysReadRoot(request: ApprovalRequest): string | undefined {
  * (`http_write`, a POST). QA 16.11: only `http` was keyed to its origin,
  * so "Allow always" on a POST saved a rule for every site.
  */
-function isHttpCategory(category: ApprovalRequest["category"]): boolean {
+function isHttpCategory(category: ApprovalRequest["category"] | undefined): boolean {
   return category === "http" || category === "http_write";
 }
 
