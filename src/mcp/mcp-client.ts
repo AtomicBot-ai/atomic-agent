@@ -12,6 +12,7 @@
 
 import {
   auth,
+  discoverOAuthProtectedResourceMetadata,
   UnauthorizedError,
   type OAuthClientProvider,
 } from "@modelcontextprotocol/sdk/client/auth.js";
@@ -141,6 +142,8 @@ export class McpClient {
   private connecting = false;
   /** OAuth provider of the transport last built, if any. */
   private authProvider: McpOAuthProvider | null = null;
+  /** Remote, keyless server: a 401 may mean "sign in" (checked against its OAuth metadata). */
+  private oauthCandidate: string | null = null;
   /** Why the last `close()` happened, told to a call it cut short. */
   private closeReason: string | null = null;
   /** `elicitation/create` requests from this server still waiting on a person. */
@@ -242,6 +245,13 @@ export class McpClient {
     stderrTail: StderrTail,
   ): Promise<McpConnectError> {
     if (this.authProvider && isUnauthorized(err)) {
+      return new McpAuthRequiredError(this.config.name);
+    }
+    // Review fix: with no saved sign-in the transport has no provider, so a
+    // keyless server's 401 is only "sign in" when the server advertises
+    // OAuth; any other 401 keeps its own error, as before.
+    if (!this.authProvider && this.oauthCandidate && isUnauthorized(err)
+        && (await advertisesMcpOAuth(this.oauthCandidate))) {
       return new McpAuthRequiredError(this.config.name);
     }
     const base =
@@ -498,6 +508,7 @@ export class McpClient {
     const t = this.config.transport;
     if (t.kind === "stdio") {
       this.authProvider = null;
+      this.oauthCandidate = null;
       // Only service variables (PATH, HOME, SystemRoot, ...) from the
       // agent's environment, plus the server's own configured `env`.
       // Provider keys loaded from `<stateDir>/.env` stay with the agent.
@@ -524,8 +535,13 @@ export class McpClient {
     // Browser sign-in (OAuth) only for remote servers without a key in
     // their headers: a configured `Authorization` header keeps working
     // exactly as before. The provider never opens a browser itself.
+    // Review fix: the provider is attached only once a sign-in is saved
+    // (it then refreshes tokens). Without one, connecting never registers a
+    // client or probes `/register` on servers that do not use OAuth.
+    const oauthOk = !!this.deps.oauthStateDir && usesMcpOAuth(t);
+    this.oauthCandidate = oauthOk ? t.url : null;
     this.authProvider =
-      this.deps.oauthStateDir && usesMcpOAuth(t)
+      oauthOk && createMcpOAuthStore(this.deps.oauthStateDir!).hasTokens(this.config.name, t.url)
         ? new McpOAuthProvider({
             store: createMcpOAuthStore(this.deps.oauthStateDir),
             server: this.config.name,
@@ -723,6 +739,21 @@ export function resolveStdioCommand(
  * SDK's `UnauthorizedError` (no token, sign-in needed) or an HTTP 401
  * that survived the provider (a token the server no longer accepts).
  */
+/** Whether `url` publishes OAuth protected-resource metadata (RFC 9728). Never throws. */
+export async function advertisesMcpOAuth(url: string): Promise<boolean> {
+  try {
+    const meta = await withTimeout(
+      discoverOAuthProtectedResourceMetadata(url),
+      5_000,
+      undefined,
+      () => new Error("timeout"),
+    );
+    return Array.isArray(meta?.authorization_servers) && meta.authorization_servers.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 export function isUnauthorized(err: unknown): boolean {
   if (err instanceof UnauthorizedError) return true;
   return (

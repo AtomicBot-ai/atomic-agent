@@ -109,6 +109,10 @@ export class McpOAuthFlow {
   /** Keyed by the `state` value handed to the authorization server. */
   private readonly pending = new Map<string, PendingSignIn>();
   private readonly lastErrors = new Map<string, string>();
+  /** Servers whose browser came back and whose code is being exchanged: still "pending" to a poller. */
+  private readonly exchanging = new Set<string>();
+  /** Sign-ins between `ensureListener` and `pending.set`: the listener must stay open for them. */
+  private starting = 0;
   private listener: Server | null = null;
   private listenerPort: number | null = null;
   private listening: Promise<number> | null = null;
@@ -124,6 +128,16 @@ export class McpOAuthFlow {
     const { url } = this.remoteServer(name);
     this.cancel(name);
     this.lastErrors.delete(name);
+    this.starting += 1;
+    try {
+      return await this.startWithListener(name, url);
+    } finally {
+      this.starting -= 1;
+      this.closeListenerIfIdle();
+    }
+  }
+
+  private async startWithListener(name: string, url: string): Promise<McpOAuthStartResult> {
     const port = await this.ensureListener();
     const provider = new McpOAuthProvider({
       store: this.store,
@@ -164,7 +178,7 @@ export class McpOAuthFlow {
     if (!server) throw notFound(name);
     const error = this.lastErrors.get(name);
     if (server.transport.kind === "stdio") return { state: "signed_out" };
-    if (this.pendingFor(name)) return { state: "pending" };
+    if (this.pendingFor(name) || this.exchanging.has(name)) return { state: "pending" };
     if (this.store.hasTokens(name, server.transport.url)) return { state: "signed_in" };
     return error ? { state: "signed_out", error } : { state: "signed_out" };
   }
@@ -259,7 +273,19 @@ export class McpOAuthFlow {
     }
     clearTimeout(entry.timer);
     this.pending.delete(state);
+    // Review fix: the exchange below takes up to a couple of seconds; a poll
+    // in that window must read "pending", not "signed_out" (which the window
+    // took as a failed sign-in).
+    this.exchanging.add(entry.server);
+    try {
+      await this.finishCallback(reqUrl, entry, res);
+    } finally {
+      this.exchanging.delete(entry.server);
+      this.closeListenerIfIdle();
+    }
+  }
 
+  private async finishCallback(reqUrl: URL, entry: PendingSignIn, res: ServerResponse): Promise<void> {
     const refused = reqUrl.searchParams.get("error");
     const code = reqUrl.searchParams.get("code");
     let failure: string | null = null;
@@ -326,7 +352,7 @@ export class McpOAuthFlow {
   }
 
   private closeListenerIfIdle(): void {
-    if (this.pending.size === 0) void this.closeListener();
+    if (this.pending.size === 0 && this.starting === 0 && this.exchanging.size === 0) void this.closeListener();
   }
 
   private async closeListener(): Promise<void> {

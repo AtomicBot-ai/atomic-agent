@@ -29,7 +29,7 @@ async function startOAuthOnlyServer(): Promise<{
   };
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const path = new URL(req.url ?? "/", base).pathname;
-    if (path.startsWith("/.well-known/oauth-protected-resource")) {
+    if (path === "/.well-known/oauth-protected-resource/mcp") {
       json(res, 200, { resource: `${base}/mcp`, authorization_servers: [base] });
       return;
     }
@@ -53,6 +53,13 @@ async function startOAuthOnlyServer(): Promise<{
         state.registrations += 1;
         json(res, 201, { ...(JSON.parse(body) as object), client_id: "client-1" });
       });
+      return;
+    }
+    if (path === "/plain") {
+      // A keyless server that wants something other than OAuth.
+      req.resume();
+      res.writeHead(401, { "content-type": "text/plain" });
+      res.end("missing key");
       return;
     }
     if (path === "/mcp") {
@@ -113,13 +120,24 @@ describe("McpClient OAuth", () => {
     const err = await client.connect().then(() => null, (e: unknown) => e);
     expect(err).toBeInstanceOf(McpAuthRequiredError);
     expect((err as Error).message).toBe("Sign in required");
-    // The client registered itself once; a connect never stores a
-    // verifier or URL that could clobber a sign-in in progress.
+    // A connect with no saved sign-in registers nothing and stores nothing:
+    // only the user's Sign in does that.
     const rec = createMcpOAuthStore(stateDir).load("monid", `${fixture.base}/mcp`);
-    expect(rec.clientInformation?.client_id).toBe("client-1");
+    expect(rec.clientInformation).toBeUndefined();
     expect(rec.codeVerifier).toBeUndefined();
     expect(rec.pendingAuthUrl).toBeUndefined();
-    expect(fixture.registrations).toBe(1);
+    expect(fixture.registrations).toBe(0);
+  });
+
+  it("a 401 from a server with no OAuth metadata keeps its own error", async () => {
+    const client = new McpClient(
+      { ...config(), transport: { kind: "streamable_http", url: `${fixture.base}/plain` } },
+      { oauthStateDir: stateDir },
+    );
+    const err = await client.connect().then(() => null, (e: unknown) => e);
+    expect(err).toBeInstanceOf(McpConnectError);
+    expect(err).not.toBeInstanceOf(McpAuthRequiredError);
+    expect(fixture.registrations).toBe(0);
   });
 
   it("sends the saved access token", async () => {
