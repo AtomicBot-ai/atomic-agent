@@ -312,6 +312,10 @@ function saveFolders() {
 /** Called each time the chat list lands (applySessions): imported chats find their folder. */
 function foldersAfterSessions() {
   if (!FOLDERS.loaded || typeof SESSIONS === 'undefined') return;
+  /* W2 QA: while an import writes chat-folders.json this window's copy is old,
+     and saving it whole would undo what the import filed; impRun reads the
+     file back when it ends (loadFolders), which sorts again. */
+  if (typeof IMP !== 'undefined' && IMP && IMP.busy && IMP.applying) return;
   if (folderAutoSort(FOLDERS.state, SESSIONS)) saveFolders();
 }
 
