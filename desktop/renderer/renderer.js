@@ -21111,10 +21111,10 @@ function fzChipsHtml() {
   const label = fzSeats().works.label;
   // Item 11: a queued swap says what it waits for, and that a second press takes it back.
   const queued = FZ.swapQueued
-    ? 'Seats swapped — this takes effect once ' + fzQueuedWhen() + '. Press again to swap back' : '';
+    ? 'Seats swapped. This takes effect once ' + fzQueuedWhen() + '. Press again to swap back' : '';
   // ATO-136: a local model planning is the slow way round, said where the swap is.
   const slow = fzLocalPlannerHint();
-  const tip = (queued || 'Swap the seats — the orchestrator runs the workers and back') + (slow ? '. ' + slow : '');
+  const tip = (queued || 'Swap the seats: the orchestrator and the workers trade places') + (slow ? '. ' + slow : '');
   return '<button class="cchip fzswap' + (queued ? ' is-queued' : '') + '" data-act="runmode:swap"'
       + ' title="' + esc(tip) + '"'
       + ' aria-label="' + esc(queued || 'Swap orchestrator and workers') + '">'
@@ -26949,7 +26949,7 @@ function mcpAddModalHTML() {
 /** The add box's examples: a command, an address, and JSON laid out on lines the way a README shows it. */
 function mcpJsonExample() {
   return 'npx -y @modelcontextprotocol/server-filesystem ~/Documents\n\nhttps://mcp.example.com/mcp\n\n'
-    + '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@github/mcp-server"]\n    }\n  }\n}';
+    + '{\n  "mcpServers": {\n    "filesystem": {\n      "command": "npx",\n      "args": ["-y", "@modelcontextprotocol/server-filesystem", "."]\n    }\n  }\n}';
 }
 /* ATO-510: the box's text as mcp-smart-add.js reads it. A name typed in the
    review block wins over the made-up one until the text gives a new made-up
