@@ -27351,6 +27351,13 @@ async function llmRefreshRun() {
   const seq = ++LLMP.seq;
   LLMP.localBusy = true; LLMP.localErr = null; LLMP.busy = true;
   llmRepaint();
+  /* W2 QA: the cloud list is asked for now, beside the local reads below, not
+     after them. It waited for all of them, /health included (up to 15 s while
+     the agent restarts after a model pick), so "Fetching the model list…" sat
+     there long after OpenRouter had answered in under a second. The call at
+     the end still runs: it is a no-op for the same provider and asks again
+     when the fresh config names another one. */
+  llmEnsureModels();
   const stateDir = memStateDir();
   const names = new Set(['TELEGRAM_BOT_TOKEN', 'ATOMIC_AGENT_LLAMA_API_KEY']);
   llmProviders().forEach((p) => llmKeyEnvNames(p).forEach((n) => names.add(n)));
