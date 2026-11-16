@@ -11,6 +11,7 @@ const edgeKey = ({ source, target }) => JSON.stringify([source, target]);
 const domains = new Set(['config', 'llm', 'local-llm', 'agent', 'prompt', 'session', 'memory', 'tools', 'mcp', 'skills', 'tasks', 'approval', 'tracing', 'compressor']);
 const compositionRoot = { source: 'src/cli/index.ts', target: 'src/tui/index.ts' };
 const localModelTypeOwners = new Set([
+  'src/local-llm/server/lora-adapter.ts',
   'src/local-llm/catalog/models-catalog.ts',
   'src/local-llm/backend/windows-backend-variant.ts',
   'src/local-llm/server/swa-full.ts',
@@ -21,6 +22,7 @@ const localModelDefaultOwners = new Set([
   'src/local-llm/catalog/huggingface-endpoint.ts',
 ]);
 const localModelParserOwners = new Set([
+  'src/config/local-models/lora-adapters-parser.ts',
   'src/config/local-models/local-models-types.ts',
   'src/config/config-primitives.ts', 'src/config/config-values.ts',
   'src/config/config-validation-error.ts', 'src/config/custom-models-schema.ts',
@@ -77,7 +79,7 @@ export function violation(edge) {
   const frontendConfigOwners = {
     'src/config/tui-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/session-rail-config.ts'],
     'src/config/channel-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts'],
-    'src/config/integration-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts', 'src/config/push-config.ts'],
+    'src/config/integration-config.ts': ['src/config/composio-accounts-config.ts', 'src/config/config-primitives.ts', 'src/config/config-validation-error.ts', 'src/config/config-values.ts', 'src/config/push-config.ts'],
     'src/config/push-config.ts': ['src/config/config-primitives.ts', 'src/config/config-validation-error.ts'],
   };
   if (frontendConfigOwners[source] && target.startsWith('src/') && !frontendConfigOwners[source].includes(target)) return 'frontend config depends outside concrete value owners';
