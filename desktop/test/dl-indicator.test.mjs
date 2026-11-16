@@ -66,6 +66,8 @@ test('the sidebar header carries the icon slot and the card no longer draws the 
   assert.match(src, /el\.innerHTML = dlCardHTML\(rows\);/);
   assert.doesNotMatch(src, /DLC\.collapsed \? dlCardBadgeHTML\(rows\) : dlCardHTML\(rows\)/);
   const css = readFileSync(new URL('../renderer/css/shell.css', import.meta.url), 'utf8');
-  assert.match(css, /#dlcard\{position:absolute;left:16px;top:96px;z-index:15;width:min\(288px/);
-  assert.match(css, new RegExp('min\\(' + DLI_POP_W + 'px'));
+  assert.match(css, /#dlcard\{position:absolute;left:16px;top:96px;z-index:15;width:min\(var\(--dlc-w,288px\)/);
+  assert.match(css, new RegExp('--dlc-w,' + DLI_POP_W + 'px'));
+  // A narrow window narrows the card (never under 220px) so it stays clear of the chat column.
+  assert.match(src, /Math\.max\(220, Math\.min\(DLI_POP_W, fit\)\)/);
 });

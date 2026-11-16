@@ -447,7 +447,7 @@
    icon rail, and --dlc-room to what is left down to the window's bottom; the
    list scrolls inside that. 288px: DLI_POP_W. z 15: under #overlays (20) and
    the toasts (29). */
-#dlcard{position:absolute;left:16px;top:96px;z-index:15;width:min(288px,calc(100% - 32px));
+#dlcard{position:absolute;left:16px;top:96px;z-index:15;width:min(var(--dlc-w,288px),calc(100% - 32px));
   display:flex;flex-direction:column;align-items:flex-start;pointer-events:none;-webkit-app-region:no-drag}
 #dlcard[hidden]{display:none}
 #dlcard > *{pointer-events:auto}

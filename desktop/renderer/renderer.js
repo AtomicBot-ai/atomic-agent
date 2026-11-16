@@ -14452,6 +14452,13 @@ function dlCardPlace(el) {
   if (el.style.top !== spot.top + 'px') el.style.top = spot.top + 'px';
   const room = spot.room + 'px';
   if (el.style.getPropertyValue('--dlc-room') !== room) el.style.setProperty('--dlc-room', room);
+  // In a narrow window the chat column starts close to the sidebar: the card
+  // narrows (down to 220px) so it never reaches over the chat's approval.
+  const col = rect(document.querySelector('#scroller > .col720'));
+  const winLeft = win.getBoundingClientRect().left;
+  const fit = col && col.width > 0 ? Math.floor(col.left - winLeft - spot.left - DLC_GAP) : DLI_POP_W;
+  const w = Math.max(220, Math.min(DLI_POP_W, fit)) + 'px';
+  if (el.style.getPropertyValue('--dlc-w') !== w) el.style.setProperty('--dlc-w', w);
   dlCardPublish(0, 0);
   dlCardFollow(sb);
 }

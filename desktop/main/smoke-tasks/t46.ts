@@ -322,7 +322,8 @@ async function composer(js: Js, check: Check): Promise<void> {
       live.off = {color: getComputedStyle(off).color, opacity: getComputedStyle(off).opacity};
       const offView = {aria: off.getAttribute('aria-disabled'), title: off.getAttribute('title'), hook: window.__voiceMic().disabled};
       off.click();   // a press with no mousedown before it: the keyboard's way in
-      await new Promise((res) => setTimeout(res, 60));
+      // Up to a second for the toast: 60 ms was too short on the Windows CI runners.
+      for (let i = 0; i < 20 && !S.toasts.some((t) => t.t === OFF); i += 1) await new Promise((res) => setTimeout(res, 50));
       return {live, off: offView, said: S.toasts.filter((t) => t.t === OFF).map((t) => t.t + ' / ' + t.s),
         reason: VOICE_REASONS['voice-helper-missing'], state: VOICE.state};
     } finally {
