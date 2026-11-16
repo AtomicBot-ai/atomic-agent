@@ -117,6 +117,9 @@ describe("modelParamProfile — Claude models without sampling parameters (ATO-1
     "anthropic/claude-haiku-4.5",
     "claude-opus-4.6",
     "claude-opus-4-6-20260205",
+    // A dated major-4 id: the date must not be read as a 4.20 minor.
+    "claude-opus-4-20250514",
+    "claude-sonnet-4-20250514",
     "claude-3-5-sonnet-20241022",
     // Names Claude but is not one: the rule is anchored at the id's start.
     "Qwen3-8B-Claude-Sonnet-5-Distill",
