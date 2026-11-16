@@ -7792,6 +7792,7 @@ function act(a) {
   if (k === 'unread')    { delete PREFS.seen[v]; ATTN.delete(v); savePrefs(); render(); return; }
   // ATO-165: the menu's other half — stamp the chat read without opening it (markSeen, as opening does).
   if (k === 'read')      { if (chatById(v)) markSeen(v); render(); return; }
+  if (k === 'more' && v === 'folders') { FOLDERS.showAll = FOLDERS.showAll !== true; render(); nameVisibleSessions(); return; }   // W2 QA: the long folder list
   if (k === 'more')      { if (PAGE[v] != null) PAGE[v]++; render(); nameVisibleSessions(); return; }
   // Opening a task = reading it. The Tasks tab is the only place with a task
   // detail on this tree, so the row lands there with that task selected.

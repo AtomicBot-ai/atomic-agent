@@ -180,3 +180,40 @@ test("review fixes: no Folders block without folders, Chats head offers New fold
   const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
   assert.match(main, /\(sb\.folders \?\? 0\) > 0 \? \["Folders"\]/);
 });
+
+test("W2 QA: home, scratch, /tmp and worktree chats stay under Chats, and old sorted ones leave", () => {
+  const st = F.foldersEmpty();
+  const junk = [
+    { id: "claude-code:h1", workingDir: "/Users/me" },
+    { id: "claude-code:h2", workingDir: "/Users/me/" },
+    { id: "claude-code:s1", workingDir: "/Users/me/Library/Application Support/Claude/scratch-workspaces/u1/u2/scratch-2026-09-30-29eb57" },
+    { id: "claude-code:t1", workingDir: "/private/tmp/x" },
+    { id: "claude-code:w1", workingDir: "/Users/me/.claude/worktrees/amazing-colden-5dc37b" },
+    { id: "claude-code:w2", workingDir: "/Users/me/.claude-worktrees/busy-wing-9701f2" },
+    { id: "claude-code:w3", workingDir: "C:\\Users\\me" },
+  ];
+  assert.equal(F.folderAutoSort(st, junk.concat([{ id: "claude-code:r1", workingDir: "/Users/me/src/app" }])), 1);
+  for (const s of junk) assert.equal(F.folderOf(st, s.id), null, s.workingDir);
+  assert.equal(F.folderOf(st, "claude-code:r1").name, "app");
+  assert.equal(st.folders.length, 1);
+
+  // A file an older build sorted: the home folder's chats leave, the emptied folder goes, the person's stays.
+  const old = F.foldersEmpty();
+  old.folders.push({ id: "fh", name: "me", collapsed: true }, { id: "fp", name: "Mine", collapsed: false });
+  old.projects.fh = "/Users/me";
+  old.chats["claude-code:h1"] = "fh"; old.auto["claude-code:h1"] = true;
+  old.chats["claude-code:h2"] = "fp";   // put there by hand: stays
+  F.folderAutoSort(old, junk);
+  assert.equal(F.folderOf(old, "claude-code:h1"), null);
+  assert.equal(F.folderById(old, "fh"), null, "the emptied sorted folder is removed");
+  assert.equal(F.folderOf(old, "claude-code:h2").id, "fp");
+});
+
+test("W2 QA: a long folder list shows the first few and the open chat's folder", () => {
+  const groups = Array.from({ length: 9 }, (_, i) => ({ folder: { id: "f" + i, name: "F" + i }, rows: [{ id: "c" + i }] }));
+  const cut = F.folderListCut(groups, "c7", false);
+  assert.deepEqual(cut.shown.map((g) => g.folder.id), ["f0", "f1", "f2", "f3", "f4", "f7"]);
+  assert.equal(cut.hidden, 3);
+  assert.equal(F.folderListCut(groups, null, true).hidden, 0);
+  assert.equal(F.folderListCut(groups.slice(0, F.FOLDERS_SHOWN), null, false).hidden, 0);
+});

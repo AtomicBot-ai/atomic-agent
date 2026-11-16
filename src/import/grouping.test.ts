@@ -53,6 +53,7 @@ describe("groupHintFromCwd", () => {
     expect(groupHintFromCwd("/Users/me", home)).toBeUndefined();
     expect(groupHintFromCwd("/Users/me/", home)).toBeUndefined();
     expect(groupHintFromCwd("/Users/me/.claude/worktrees/busy-wing-9701f2", home)).toBeUndefined();
+    expect(groupHintFromCwd("/Users/me/.claude-worktrees/amazing-colden-5dc37b", home)).toBeUndefined();
     expect(groupHintFromCwd("/private/tmp", home)).toBeUndefined();
     expect(groupHintFromCwd("/tmp/build", home)).toBeUndefined();
     expect(groupHintFromCwd(

@@ -196,6 +196,22 @@ function folderForProject(state, dir) {
   return f;
 }
 
+/* W2 QA (16.11): the import's own rule (src/import/grouping.ts) for a folder
+   that is no project, so the sorting does not undo it. A Claude Code chat
+   that ran in the home folder, the root, /tmp, a Claude app scratch
+   workspace or an agent worktree stays under Chats: it made folders named
+   after the home folder (678 chats), each scratch workspace and each
+   worktree ("amazing-colden-5dc37b"). Claude lists those chats in its plain
+   list the same way. */
+function folderNotAProject(dir) {
+  const d = String(dir || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!d || /^(?:[a-zA-Z]:)?$/.test(d)) return true;
+  if (/^\/(?:Users|home)\/[^/]+$/i.test(d) || /^[a-zA-Z]:\/Users\/[^/]+$/i.test(d) || d === '/root') return true;
+  if (/^(?:\/private)?\/tmp(?:\/|$)/.test(d)) return true;
+  if (/\/Claude\/scratch-workspaces(?:\/|$)/i.test(d)) return true;
+  return /\/\.(?:claude|codex|cursor)\/worktrees(?:\/|$)/i.test(d) || /\/\.claude-worktrees(?:\/|$)/i.test(d);
+}
+
 function folderForApp(state, src) {
   const name = FOLDER_SOURCES[src];
   let f = state.folders.find((x) => x.name === name && !(x.id in state.projects));
@@ -214,6 +230,7 @@ function folderAutoSort(state, sessions) {
   const legacy = !state.projectSort;
   const oldFolder = legacy ? state.folders.find((f) => f.name === FOLDER_SOURCES['claude-code'] && !(f.id in state.projects)) : null;
   let moved = 0;
+  const emptied = new Set();
   // Every Claude Code chat the old sorting filed there counts as sorted, also one the list does not carry today (past its 200 rows).
   if (oldFolder) for (const sid of Object.keys(state.chats)) if (state.chats[sid] === oldFolder.id && folderImportSource(sid) === 'claude-code') state.auto[sid] = true;
   for (const s of sessions || []) {
@@ -222,11 +239,23 @@ function folderAutoSort(state, sessions) {
     if (!src) continue;
     const placed = s.id in state.chats;
     if (placed && state.auto[s.id] !== true) continue;
+    if (src === 'claude-code' && typeof s.workingDir === 'string' && folderNotAProject(s.workingDir)) {
+      // Under Chats; one this sorting filed before leaves its folder.
+      if (placed) {
+        if (state.chats[s.id]) emptied.add(state.chats[s.id]);
+        delete state.chats[s.id]; delete state.auto[s.id]; moved++;
+      }
+      continue;
+    }
     const f = src === 'claude-code' && typeof s.workingDir === 'string' && folderPathParts(s.workingDir).length
       ? folderForProject(state, s.workingDir) : folderForApp(state, src);
     if (state.chats[s.id] !== f.id || state.auto[s.id] !== true) moved++;
     state.chats[s.id] = f.id;
     state.auto[s.id] = true;
+  }
+  // A project folder this sorting made and just emptied goes; one the person put a chat in stays.
+  for (const fid of emptied) {
+    if (fid in state.projects && !Object.values(state.chats).includes(fid)) { folderRemove(state, fid); moved++; }
   }
   if (legacy) {
     state.projectSort = true;
@@ -317,10 +346,26 @@ function folderMenuHTML() {
     + '</div></div>';
 }
 
+/* W2 QA (16.11): with dozens of folders the Chats list, new chats included,
+   sat below all of them. The way ChatGPT lists projects: the first few, then
+   "Show N more"; the folder holding the open chat is always shown. */
+const FOLDERS_SHOWN = 5;
+function folderListCut(groups, openSid, all) {
+  if (all || groups.length <= FOLDERS_SHOWN) return {shown: groups, hidden: 0};
+  const shown = groups.filter((g, i) => i < FOLDERS_SHOWN || (!!openSid && g.rows.some((r) => r && r.id === openSid)));
+  return {shown, hidden: groups.length - shown.length};
+}
+
 /** The folders block of the sidebar: a header with New folder, then each folder and its chats. */
 function foldersSidebarHTML(groups) {
   // No folders yet: nothing drawn here; New folder sits on the Chats heading then (renderSidebar).
   if (!groups.length) return '';
+  const openSid = typeof S !== 'undefined' && S ? S.sessionId : null;
+  const cut = folderListCut(groups, openSid, FOLDERS.showAll === true);
+  const toggle = cut.hidden > 0
+    ? '<button class="loadmore" data-more="folders">Show ' + cut.hidden + ' more ' + (cut.hidden === 1 ? 'folder' : 'folders') + '</button>'
+    : FOLDERS.showAll === true && groups.length > FOLDERS_SHOWN ? '<button class="loadmore" data-more="folders">Show fewer folders</button>' : '';
+  groups = cut.shown;
   return '<div class="sb-list sb-folders" data-list="folders">'
     + '<div class="sb-list-head micro"><span>Folders</span>'
       + '<button class="iconbtn sb-add" data-act="fnew:" title="New folder" aria-label="New folder">' + ic('plus') + '</button></div>'
@@ -339,6 +384,7 @@ function foldersSidebarHTML(groups) {
         + (f.collapsed ? '' : g.rows.length ? g.rows.map(chatRow).join('') : '<div class="sb-empty sb-fempty">Drag a chat here</div>')
         + '</div>';
     }).join('')
+    + toggle
     + '</div>';
 }
 
@@ -390,5 +436,5 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {FOLDER_SOURCES, foldersEmpty, foldersCoerce, folderImportSource, folderNameCheck, folderAdd, folderById,
-    folderRename, folderRemove, folderPut, folderOf, folderForget, folderGroups, folderAutoSort, folderFreeName, folderForProject};
+    folderRename, folderRemove, folderPut, folderOf, folderForget, folderGroups, folderAutoSort, folderFreeName, folderForProject, folderNotAProject, folderListCut, FOLDERS_SHOWN};
 }

@@ -108,7 +108,9 @@ function notAProjectFolder(dir: string, home: string): boolean {
   for (const t of ["/tmp", "/private/tmp"]) {
     if (underPath(dir, t)) return true;
   }
-  return /[\\/]Claude[\\/]scratch-workspaces(?:[\\/]|$)/i.test(dir);
+  if (/[\\/]Claude[\\/]scratch-workspaces(?:[\\/]|$)/i.test(dir)) return true;
+  // W2 QA: the Claude app's worktrees outside the repo (~/.claude-worktrees/<name>) do not say which repo they are.
+  return /[\\/]\.claude-worktrees(?:[\\/]|$)/i.test(dir);
 }
 
 /** A named group that is not a folder (a Claude app project, say). */
