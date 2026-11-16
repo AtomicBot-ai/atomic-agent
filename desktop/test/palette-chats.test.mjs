@@ -29,11 +29,13 @@ function fixture(chatCount, q = 'report') {
     SK: {workingDir: null},
     chatStatusWord: () => 'read', folderPaletteWord: () => '', chatDot: () => ['empty', ''], taskDot: () => ['empty', ''],
     ANX: {via() {}}, act: (a) => acted.push(a), refreshPalette: () => { repaints++; },
-    fuzzyRank, fuzzyFilter,
-    String, Array,
+    fuzzyRank, fuzzyFilter, BR: null,
+    String, Array, Set,
   });
   vm.runInContext(consts.get('PAL_CHATS_SHOWN'), c);
-  for (const n of ['palRows', 'flatPalRows', 'activatePal', 'palMoreChats']) vm.runInContext(functions.get(n), c);
+  // ATO-1555: palRows also asks past chats' text (palMsgAsk); no bridge here, so it stays quiet.
+  vm.runInContext(consts.get('PALMSG'), c);
+  for (const n of ['palRows', 'flatPalRows', 'activatePal', 'palMoreChats', 'palMsgAsk', 'palMsgSnippet']) vm.runInContext(functions.get(n), c);
   return {c, acted, repaints: () => repaints};
 }
 // Values made inside the vm context have its own prototypes, which deepStrictEqual tells apart.

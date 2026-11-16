@@ -55,7 +55,7 @@ test('the sidebar draws one Studio row first in the section rows, and its popove
   assert.match(r, /'<div class="sb-nav" role="group" aria-label="Sections">'\s*\n\s*\+ \(window\.STUDIO \? STUDIO\.sidebarHTML\(S\.room\) : ''\)\s*\n\s*\+ sidebarNavItems\(pane\)/);
   assert.doesNotMatch(r, /\+ sidebarNavHTML\(\)[^\n]*\n\s*\/\/ Studio: the Images and Video rows/);
   // A click on the Studio row in the narrow window's drawer keeps the drawer, its popover hangs off it.
-  assert.match(r, /\[data-act="studio:menu"\], \[data-act\^="chatsearch:"\], \[data-more\]/);
+  assert.match(r, /\[data-act="studio:menu"\], \[data-act\^="chatsearch:"\], \.sb-top \[data-act="palette"\], \[data-more\]/);
 });
 
 test('the View menu and the section rows name the same ⌘ 2 / ⌘ 3 places', () => {

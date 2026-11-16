@@ -2317,7 +2317,7 @@ function providerWord(id) {
 function modelWord(id) {
   const s = String(id || '');
   // W2 QA: Settings' own list too (LLMP.local), so a model the composer has not listed yet is named, not shown as its id.
-  const m = (SEL.local || []).find((x) => x && x.id === s && x.name) || (LLMP.local || []).find((x) => x && x.id === s && x.name);
+  const m = (SEL.local || []).find((x) => x && x.id === s && x.name) || ((typeof LLMP !== 'undefined' && LLMP.local) || []).find((x) => x && x.id === s && x.name);
   return m ? m.name.replace(/\s+(?:QAT\s+)?GGUF$/i, '') : shortModel(s);
 }
 /** Token counts for a tooltip: 7.5k, 131k, 1.0M — the exact figures live in the context popover. */
