@@ -309,6 +309,20 @@ describe("Allow always", () => {
       expect(matchRules([saved], http(), ctx)).toBeNull();
     });
 
+    it("keys a POST (http_write) to its origin too, never to every site", () => {
+      const post = (grantKey?: string): ApprovalRequest => ({ ...http(grantKey), category: "http_write" });
+      expect(canGrantAlways(post())).toBe(false);
+      expect(buildAlwaysRule(post())).toBeNull();
+      const rule = buildAlwaysRule(post("https://httpbin.org"));
+      expect(rule).toMatchObject({ category: "http_write", origin: "https://httpbin.org" });
+      expect(describeAlwaysRule(post("https://httpbin.org"))).toMatch(/to https:\/\/httpbin\.org in this project$/);
+      const saved = parseApprovalRule({ ...rule! });
+      if (typeof saved === "string") throw new Error(saved);
+      const ctx = { workdir: "/w" };
+      expect(matchRules([saved], post("https://httpbin.org"), ctx)?.decision).toBe("allow");
+      expect(matchRules([saved], post("https://evil.example"), ctx)).toBeNull();
+    });
+
     it("parses an origin field to its normal form and rejects a bad one", () => {
       const ok = parseApprovalRule({
         decision: "deny",

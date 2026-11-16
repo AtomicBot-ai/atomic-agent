@@ -461,12 +461,21 @@ function alwaysReadRoot(request: ApprovalRequest): string | undefined {
 }
 
 /**
+ * Both HTTP categories: a GET (`http`) and a request that sends data
+ * (`http_write`, a POST). QA 16.11: only `http` was keyed to its origin,
+ * so "Allow always" on a POST saved a rule for every site.
+ */
+function isHttpCategory(category: ApprovalRequest["category"]): boolean {
+  return category === "http" || category === "http_write";
+}
+
+/**
  * The origin an "Allow always" of an HTTP request covers: the one the
  * prompt was about (`grantKey`). Without it the rule would let any POST
  * to any host through, for good (ATO-1471).
  */
 function alwaysOrigin(request: ApprovalRequest): string | undefined {
-  if (request.category !== "http" || request.grantKey === undefined) return undefined;
+  if (!isHttpCategory(request.category) || request.grantKey === undefined) return undefined;
   return parseRuleOrigin(request.grantKey) ?? undefined;
 }
 
@@ -491,7 +500,7 @@ export function canGrantAlways(request: ApprovalRequest): boolean {
   // per site for the chat only (`site-grants.ts`, ATO-1181).
   if (isSiteScopedCategory(request.category)) return false;
   if (request.category === "fs_read_outside") return alwaysReadRoot(request) !== undefined;
-  if (request.category === "http") return alwaysOrigin(request) !== undefined;
+  if (isHttpCategory(request.category)) return alwaysOrigin(request) !== undefined;
   return true;
 }
 
