@@ -80,12 +80,63 @@ export function groupHintFromCwd(
   if (typeof cwd !== "string") return undefined;
   let dir = cwd.trim();
   if (!isAbsolutePath(dir)) return undefined;
-  const wt = /^(.*?)[\\/]\.(?:claude|codex|cursor)[\\/]worktrees[\\/][^\\/]+(?:[\\/].*)?$/.exec(dir);
-  if (wt) dir = wt[1] ?? "";
+  const wt = agentWorktree(dir, home);
+  if (wt) {
+    // The worktree's own `.git` file names its repository while it is still on disk.
+    const repo = (wt.root ? repoOfWorktree(wt.root) : null) ?? wt.repoDir;
+    if (repo) dir = repo;
+    else {
+      // Gone: the repository's name is all the path keeps (Codex, Cursor, Conductor).
+      const name = wt.repoName ? cleanName(wt.repoName) : "";
+      return name ? { key: `worktree-repo:${name.toLowerCase()}`, name, cwd: null } : undefined;
+    }
+  }
   if (!dir || !isAbsolutePath(dir) || notAProjectFolder(dir, home)) return undefined;
   const name = lastSegment(dir);
   if (!name) return undefined;
   return { key: dir, name, cwd: dir };
+}
+
+/**
+ * W2 QA (16.11): a worktree an agent made, and what its path says about the
+ * repository. Inside the repository (`<repo>/.claude|.codex|.cursor/worktrees/<name>`)
+ * the repository is the path's head. The apps that keep them in the home
+ * folder only keep the name: Codex `~/.codex/worktrees/<hash>/<repo>`,
+ * Cursor `~/.cursor/worktrees/<repo>/<name>`, Conductor
+ * `~/conductor/workspaces/<repo>/<name>`; Claude's `~/.claude/worktrees/<name>`
+ * and `~/.claude-worktrees/<name>` keep none. `root` is the worktree folder.
+ */
+export function agentWorktree(
+  dir: string,
+  home: string = homedir(),
+): { root: string | null; repoDir: string | null; repoName: string | null } | null {
+  const sep = "[\\\\/]";
+  const seg = "([^\\\\/]+)";
+  const inTool = new RegExp(`^(.*?)${sep}\\.(claude|codex|cursor)${sep}worktrees${sep}${seg}(?:${sep}${seg})?`).exec(dir);
+  if (inTool) {
+    const [, base = "", tool, a = "", b] = inTool;
+    const head = `${base}/.${tool}/worktrees/${a}`;
+    if (!samePath(base, home)) return { root: head, repoDir: base || null, repoName: null };
+    if (tool === "codex") return { root: b ? `${head}/${b}` : null, repoDir: null, repoName: b ?? null };
+    if (tool === "cursor") return { root: b ? `${head}/${b}` : null, repoDir: null, repoName: a };
+    return { root: head, repoDir: null, repoName: null };
+  }
+  const claudeApp = new RegExp(`^(.*?${sep}\\.claude-worktrees${sep}${seg})`).exec(dir);
+  if (claudeApp) return { root: claudeApp[1] ?? null, repoDir: null, repoName: null };
+  const conductor = new RegExp(`^(.*?${sep}conductor${sep}workspaces${sep}${seg}${sep}${seg})`).exec(dir);
+  if (conductor) return { root: conductor[1] ?? null, repoDir: null, repoName: conductor[2] ?? null };
+  return null;
+}
+
+/** The repository a git worktree belongs to, from its `.git` file ("gitdir: <repo>/.git/worktrees/<name>"), or null. */
+function repoOfWorktree(root: string): string | null {
+  try {
+    const text = readFileSync(join(root, ".git"), "utf8");
+    const m = /^gitdir:\s*(.+?)[\\/]\.git[\\/]worktrees[\\/][^\\/]+\s*$/m.exec(text);
+    return m && m[1] ? m[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 function samePath(a: string, b: string): boolean {
@@ -108,9 +159,7 @@ function notAProjectFolder(dir: string, home: string): boolean {
   for (const t of ["/tmp", "/private/tmp"]) {
     if (underPath(dir, t)) return true;
   }
-  if (/[\\/]Claude[\\/]scratch-workspaces(?:[\\/]|$)/i.test(dir)) return true;
-  // W2 QA: the Claude app's worktrees outside the repo (~/.claude-worktrees/<name>) do not say which repo they are.
-  return /[\\/]\.claude-worktrees(?:[\\/]|$)/i.test(dir);
+  return /[\\/]Claude[\\/]scratch-workspaces(?:[\\/]|$)/i.test(dir);
 }
 
 /** A named group that is not a folder (a Claude app project, say). */
@@ -516,6 +565,12 @@ export function planImportGrouping(
     }
 
     let folder = findFolderForKey(folders, hint);
+    // W2 QA: no new folder for a group whose chats all stay where they are
+    // (in a project from an earlier run, or placed by the person).
+    if (!folder && sessions.length > 0 && sessions.every((sid) => projects.chats[sid] !== undefined || placedByPerson(folders, sid))) {
+      outcome.kept += sessions.length;
+      continue;
+    }
     if (!folder) {
       // Only a folder this grouping made itself is taken over by name: a
       // folder of the person's own is never bound to a group key, or the

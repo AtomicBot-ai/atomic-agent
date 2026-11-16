@@ -366,7 +366,9 @@ export class ClaudeCodeImporter {
           });
           continue;
         }
-        mapped = mapClaudeCodeSession(session, this.deps.workingDirFallback);
+        // W2 QA: the decoded folder when the transcript names none, so the
+        // chat continues where its project is, not in the app's workspace.
+        mapped = mapClaudeCodeSession(session, cwd ?? this.deps.workingDirFallback);
       } catch (err) {
         items.push({
           kind: "sessions",
