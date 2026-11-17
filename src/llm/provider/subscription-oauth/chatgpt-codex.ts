@@ -348,6 +348,14 @@ export function createChatgptTokenRefresher(options: ChatgptRefresherOptions): T
     tokenUrl: CHATGPT_TOKEN_URL,
     clientId: CHATGPT_CLIENT_ID,
     fetch: options.fetch,
+    // Exactly as Codex refreshes (openai/codex ea6b64fd,
+    // codex-rs/login/src/auth/manager.rs `request_chatgpt_token_refresh` and
+    // codex-rs/login/src/oauth/client.rs `refresh`): a JSON body with
+    // client_id, grant_type, refresh_token and refresh_reason, and the
+    // client's `originator` header.
+    encoding: "json",
+    headers: { originator: CHATGPT_ORIGINATOR },
+    sendRefreshReason: true,
     ...(options.now ? { now: options.now } : {}),
   });
 }

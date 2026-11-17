@@ -225,9 +225,23 @@ describe("createChatgptTokenRefresher", () => {
     expect(store.current?.refreshToken).toBe("rt-old");
     const [url, init] = fetchImpl.mock.calls[0]!;
     expect(url).toBe(CHATGPT_TOKEN_URL);
-    const form = new URLSearchParams(init.body);
-    expect(form.get("grant_type")).toBe("refresh_token");
-    expect(form.get("client_id")).toBe(CHATGPT_CLIENT_ID);
+    // As Codex: a JSON body with these four fields, and the originator header.
+    expect(init.headers["content-type"]).toBe("application/json");
+    expect(init.headers.originator).toBe("atomic_agent");
+    expect(JSON.parse(init.body)).toEqual({
+      client_id: CHATGPT_CLIENT_ID,
+      grant_type: "refresh_token",
+      refresh_token: "rt-old",
+      refresh_reason: "proactive_expiry",
+    });
+  });
+
+  it("a refresh after a 401 says unauthorized_recovery, as Codex does", async () => {
+    const store = memory({ accessToken: "old", refreshToken: "rt-old", idToken: ID_TOKEN, expiresAt: 0 });
+    const fetchImpl = vi.fn<FetchLike>(async () => response(200, { access_token: ACCESS_TOKEN }));
+    const refresher = createChatgptTokenRefresher({ store, fetch: fetchImpl, now: () => 1_000 });
+    await refresher.refresh();
+    expect(JSON.parse(fetchImpl.mock.calls[0]![1].body).refresh_reason).toBe("unauthorized_recovery");
   });
 
   it("a refused refresh token asks for a new sign-in", async () => {
