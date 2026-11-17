@@ -1428,6 +1428,32 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1639: `PUT /api/secrets/{name}` — the running agent saves one key
+   * wherever it keeps keys (`.env`, or the OS keychain when that is on) and
+   * starts using it at once. The value goes only in the request body. Null
+   * when the route is not there (an older agent) or the agent did not
+   * answer, so the caller uses `atag config secrets set` instead.
+   */
+  async putSecret(name: string, value: string | null): Promise<
+    { ok: true; store: "env" | "keychain" } | { ok: false; error: string } | null
+  > {
+    try {
+      const res = await fetch(`${this.base()}/api/secrets/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        headers: this.headers(),
+        body: JSON.stringify({ value }),
+        signal: AbortSignal.timeout(120_000), // a macOS keychain dialog may be waiting for the person
+      });
+      if (res.status === 404) return null;
+      const body = (await res.json().catch(() => ({}))) as { store?: unknown; error?: { message?: string } };
+      if (res.ok) return { ok: true, store: body.store === "keychain" ? "keychain" : "env" };
+      return { ok: false, error: `the agent could not save the key: ${body.error?.message ?? `HTTP ${res.status}`}` };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * ATO-1024: `POST /api/memory/embeddings/reconnect` — have the running agent
    * attach the embedding server it did not find at boot. Null when the agent
    * has no such route or did not answer; never throws.

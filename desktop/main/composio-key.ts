@@ -157,8 +157,10 @@ export interface ComposioDeps {
   stateDir: string;
   /** This app's environment: a key set there wins over `.env` in the agent (load-dotenv.ts skips it). */
   env: NodeJS.ProcessEnv;
-  /** agent-cli.ts dotenvSet: atomic, 0600, null removes. */
-  dotenvSet: (stateDir: string, key: string, value: string | null) => { ok: boolean; error?: string };
+  /** agent-cli.ts dotenvSet (atomic, 0600, null removes), or ATO-1639's desktopSecretSet, which goes through the agent when it keeps keys in the OS keychain. */
+  dotenvSet: (stateDir: string, key: string, value: string | null) => { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }>;
+  /** ATO-1639: the value the agent keeps in the OS keychain for `key`, when `.env` has none. */
+  readSaved?: (key: string) => Promise<string | null>;
   /** The effective `composio` block (`atag config get composio`). */
   readComposio: () => Promise<{ ok: boolean; value?: unknown; error?: string }>;
   /** Writes `composio.<leaf>` for each entry, in one config write. */
@@ -211,7 +213,7 @@ export async function saveComposioKey(deps: ComposioDeps, value: unknown): Promi
   if ("error" in id) return { ok: false, verified: false, error: id.error, shadowed };
   const verdict = await (deps.check ?? checkComposioKey)({ apiKey, userId: id.userId });
   if (!verdict.ok && verdict.rejected) return { ok: false, verified: false, rejected: true, error: verdict.error, shadowed };
-  const wrote = deps.dotenvSet(deps.stateDir, COMPOSIO_API_KEY_ENV, apiKey);
+  const wrote = await deps.dotenvSet(deps.stateDir, COMPOSIO_API_KEY_ENV, apiKey);
   if (!wrote.ok) return { ok: false, verified: false, error: `Could not save the key: ${wrote.error ?? "unknown error"}`, shadowed };
   /* The session belongs to the key that made it. With COMPOSIO_API_KEY in
      this app's environment the agent loads that key, not this one, so the
@@ -228,7 +230,7 @@ export async function saveComposioKey(deps: ComposioDeps, value: unknown): Promi
 /** Remove the key from `.env` and forget the session it made; the user id stays (clearComposioSession). */
 export async function removeComposioKey(deps: ComposioDeps): Promise<ComposioKeyResult> {
   const shadowed = shadowedBy(deps.env);
-  const wrote = deps.dotenvSet(deps.stateDir, COMPOSIO_API_KEY_ENV, null);
+  const wrote = await deps.dotenvSet(deps.stateDir, COMPOSIO_API_KEY_ENV, null);
   if (!wrote.ok) return { ok: false, verified: false, error: `Could not remove the key: ${wrote.error ?? "unknown error"}`, shadowed };
   const persisted = await deps.writeComposio({ sessionId: null, mcpUrl: null });
   return {
@@ -246,7 +248,9 @@ export async function removeComposioKey(deps: ComposioDeps): Promise<ComposioKey
 export async function checkSavedComposioKey(deps: ComposioDeps): Promise<ComposioKeyResult> {
   const shadowed = shadowedBy(deps.env);
   const fromEnv = shadowed ? deps.env[COMPOSIO_API_KEY_ENV]!.trim() : "";
-  const apiKey = shadowed ? fromEnv : readDotenvValue(deps.stateDir, COMPOSIO_API_KEY_ENV);
+  const apiKey = shadowed
+    ? fromEnv
+    : readDotenvValue(deps.stateDir, COMPOSIO_API_KEY_ENV) ?? (await deps.readSaved?.(COMPOSIO_API_KEY_ENV)) ?? undefined;
   if (!apiKey) return { ok: false, verified: false, error: "No Composio API key is saved.", shadowed };
   const id = await userIdOf(deps);
   if ("error" in id) return { ok: false, verified: false, error: id.error, shadowed };
