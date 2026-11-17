@@ -155,8 +155,11 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
       // the prompt-bound details were masked on the way in (ATO-1077),
       // so the rest is masked here (ATO-1176). The state effects below
       // still read the result as the tool wrote it.
+      // An MCP App's page (`details.mcpApp`, ATO-1135, up to 4 MB) is
+      // for the live `tool_result` frame only; the session file does not
+      // need a copy of it.
       ...(result.details !== undefined
-        ? { details: maskSecretsDeep(result.details, knownSecretsFromEnv()) }
+        ? { details: maskSecretsDeep(withoutMcpAppPage(result.details), knownSecretsFromEnv()) }
         : {}),
     });
     nextSession = applyStateEffects(nextSession, result, modelMode);
@@ -562,4 +565,12 @@ export function applyStateEffects(
     }
   }
   return next;
+}
+
+/** `details` without `mcpApp` (an MCP App's page), for the session file. */
+export function withoutMcpAppPage(details: Record<string, unknown>): Record<string, unknown> {
+  if (!("mcpApp" in details)) return details;
+  const rest = { ...details };
+  delete rest.mcpApp;
+  return rest;
 }

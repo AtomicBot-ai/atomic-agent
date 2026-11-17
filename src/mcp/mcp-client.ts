@@ -56,6 +56,7 @@ import {
   type McpToolMeta,
 } from "./mcp-types.js";
 import { isMcpToolEnabled } from "./mcp-tool-filter.js";
+import { isModelVisibleTool, mcpAppsClientExtension, parseToolUiMeta } from "./mcp-apps.js";
 
 /**
  * Callback signature for sampling requests forwarded from the server.
@@ -100,6 +101,14 @@ export interface McpClientDeps {
    * Omitted (tests, hosts without a state dir): no provider, as before.
    */
   oauthStateDir?: string;
+  /**
+   * MCP Apps (ATO-1135): set only by a host that renders a server's
+   * `ui://` page (`details.mcpApp`). The client then advertises the
+   * `io.modelcontextprotocol/ui` extension in `initialize`, which servers
+   * check before offering UI tools. Absent: not advertised; a tool that
+   * names a page anyway still gets it fetched and attached.
+   */
+  appsUi?: boolean;
 }
 
 /** Defaults — agent identity advertised to servers in `initialize`. */
@@ -290,8 +299,14 @@ export class McpClient {
       description?: string;
       inputSchema?: unknown;
       annotations?: Record<string, unknown>;
+      _meta?: unknown;
     }>) {
       if (!MCP_TOOL_NAME_RE.test(t.name)) continue;
+      // MCP Apps (ATO-1135): a tool whose `_meta.ui.visibility` leaves out
+      // "model" is for the server's own page only; the spec says a host
+      // MUST NOT offer it to the agent.
+      const ui = parseToolUiMeta(t._meta);
+      if (!isModelVisibleTool(ui)) continue;
       // Turned off by the operator (`enabledTools` / `disabledTools`).
       if (!isMcpToolEnabled(this.config, t.name)) continue;
       const qualifiedName = qualifyMcpToolName(this.config.name, t.name);
@@ -309,6 +324,7 @@ export class McpClient {
             ? (t.inputSchema as Record<string, unknown>)
             : null,
         annotations: t.annotations,
+        ...(ui?.resourceUri !== undefined ? { ui } : {}),
         // Filled by the resolver at lookup time; we still stamp the
         // current best guess here so external consumers (TUI, logs)
         // can render the class without re-running the resolver.
@@ -701,11 +717,12 @@ class RequestDeadline {
  * handler is wired: `elicitation: {}` means form mode only.
  */
 export function clientCapabilities(
-  deps: Pick<McpClientDeps, "samplingHandler" | "elicitationHandler">,
+  deps: Pick<McpClientDeps, "samplingHandler" | "elicitationHandler" | "appsUi">,
 ): ClientCapabilities {
   return {
     ...(deps.samplingHandler ? { sampling: {} } : {}),
     ...(deps.elicitationHandler ? { elicitation: {} } : {}),
+    ...(deps.appsUi === true ? { extensions: mcpAppsClientExtension() } : {}),
   };
 }
 

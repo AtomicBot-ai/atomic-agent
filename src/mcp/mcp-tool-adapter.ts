@@ -36,6 +36,7 @@ import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tools/tool-registry.js";
 
 import { mcpToolPrompts, modeSkipsDefaultPrompt } from "./mcp-approval-mode.js";
+import { fetchMcpAppUi, MCP_APP_MAX_HTML_BYTES, type McpAppUi } from "./mcp-apps.js";
 import type { McpClient } from "./mcp-client.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
 import type {
@@ -216,12 +217,21 @@ export function createMcpToolDefinition(
           );
         }
         const res = await client.callTool(meta.rawName, args, ctx.signal);
+        const details = extractStructuredDetails(res);
+        // MCP Apps (ATO-1135): the server's page for this call, for a
+        // client to render. It goes into `details` only; the model reads
+        // the summary, which `output` alone feeds.
+        const resourceUri = meta.ui?.resourceUri;
+        if (resourceUri !== undefined) {
+          const app = await fetchMcpAppUi(client, resourceUri, ctx.signal);
+          if (app !== undefined) details.mcpApp = withToolCall(app, args, res);
+        }
         return compressToolResult(
           {
             tool: meta.qualifiedName,
             status: "ok",
             output: projectMcpResponseToText(res, ctx.modelMode === "cloud"),
-            details: extractStructuredDetails(res),
+            details,
           },
           MCP_COMPRESSOR_OPTIONS,
         );
@@ -384,6 +394,42 @@ export function extractStructuredDetails(
     details.meta = obj._meta;
   }
   return details;
+}
+
+/**
+ * `details.mcpApp`: the page plus what the host hands the page once it
+ * loads (`ui/notifications/tool-input` and `tool-result` in the spec):
+ * the call's arguments and its `CallToolResult`. The two are left out
+ * when they would not serialise or would outweigh the page cap.
+ */
+export function withToolCall(
+  app: McpAppUi,
+  args: Record<string, unknown>,
+  res: unknown,
+): McpAppUi & { toolInput?: Record<string, unknown>; toolResult?: Record<string, unknown> } {
+  const out: McpAppUi & { toolInput?: Record<string, unknown>; toolResult?: Record<string, unknown> } = { ...app };
+  if (fitsCap(args)) out.toolInput = args;
+  if (res && typeof res === "object") {
+    const r = res as Record<string, unknown>;
+    const toolResult: Record<string, unknown> = {
+      content: Array.isArray(r.content) ? r.content : [],
+      ...(r.structuredContent && typeof r.structuredContent === "object"
+        ? { structuredContent: r.structuredContent }
+        : {}),
+      ...(r._meta && typeof r._meta === "object" ? { _meta: r._meta } : {}),
+    };
+    if (fitsCap(toolResult)) out.toolResult = toolResult;
+  }
+  return out;
+}
+
+function fitsCap(value: unknown): boolean {
+  try {
+    const json = JSON.stringify(value);
+    return json !== undefined && Buffer.byteLength(json, "utf8") <= MCP_APP_MAX_HTML_BYTES;
+  } catch {
+    return false;
+  }
 }
 
 function clipOutput(text: string, full = false): string {
