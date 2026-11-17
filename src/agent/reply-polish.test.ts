@@ -446,6 +446,8 @@ describe("replyChannelForAnswer", () => {
     expect(replyChannelForAnswer("desktop")).toBe("desktop");
     expect(replyChannelForAnswer("telegram")).toBe("telegram");
     expect(replyChannelForAnswer("discord")).toBe("telegram");
+    expect(replyChannelForAnswer("slack")).toBe("telegram");
+    expect(replyChannelForAnswer("messenger")).toBe("telegram");
     expect(replyChannelForAnswer(undefined)).toBeUndefined();
   });
 });

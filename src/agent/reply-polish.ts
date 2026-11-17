@@ -38,8 +38,9 @@ export type ReplyChannel = "tui" | "desktop" | "telegram";
 
 /**
  * The polish channel for a turn's `answerChannel` (ATO-966), the one
- * field that names the surface a person reads the reply on. Discord has
- * no tables either, so it gets Telegram's pass. Absent: no polish.
+ * field that names the surface a person reads the reply on. Discord,
+ * Slack and the phone messengers (iMessage, Signal, Matrix) have no
+ * tables either, so they get Telegram's pass. Absent: no polish.
  */
 export function replyChannelForAnswer(channel: AnswerChannel | undefined): ReplyChannel | undefined {
   switch (channel) {
@@ -49,6 +50,8 @@ export function replyChannelForAnswer(channel: AnswerChannel | undefined): Reply
       return "desktop";
     case "telegram":
     case "discord":
+    case "slack":
+    case "messenger":
       return "telegram";
     default:
       return undefined;
