@@ -13,6 +13,11 @@ import {
   runCurl,
 } from "./run-curl.js";
 import { buildOsWebFetchTool } from "./web-fetch.js";
+import {
+  agentProxyFrom,
+  resetAgentProxyForTests,
+  setAgentProxy,
+} from "../../../llm/agent-proxy.js";
 import { executeGuardedHttpRequest } from "./http-request-fetch.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
 
@@ -68,6 +73,7 @@ function fakeCurl(known: readonly string[]) {
 
 afterEach(() => {
   resetCurlRevocationFlagForTests();
+  resetAgentProxyForTests();
 });
 
 describe("runCurl", () => {
@@ -166,6 +172,41 @@ describe("runCurl", () => {
     const argv = run.mock.calls[0]?.[1] ?? [];
     expect(argv).not.toContain("-k");
     expect(argv).not.toContain("--insecure");
+  });
+});
+
+describe("runCurl with the user's proxy (ATO-87)", () => {
+  const PROXY = "http://user:s3cret@10.0.0.2:3128";
+
+  it("passes the proxy as curl's variables, never in argv", async () => {
+    setAgentProxy(agentProxyFrom({ url: PROXY, noProxy: ["intra.lan"] }));
+    const run = fakeCurl([]);
+    await runCurl(run as unknown as typeof RunCommandType, ARGS, OPTIONS, {
+      platform: "linux",
+      baseEnv: () => ({ PATH: "/usr/bin" }),
+    });
+    const [, argv, options] = run.mock.calls[0]!;
+    expect(argv).toEqual(ARGS);
+    expect(argv.join(" ")).not.toContain("s3cret");
+    const env = (options as { env: NodeJS.ProcessEnv }).env;
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.https_proxy).toBe(PROXY);
+    expect(env.http_proxy).toBe(PROXY);
+    expect(env.no_proxy).toBe("localhost,127.0.0.1,::1,intra.lan");
+  });
+
+  it("keeps a caller env that already names a proxy (the verify sandbox)", async () => {
+    setAgentProxy(agentProxyFrom({ url: PROXY, noProxy: [] }));
+    const run = fakeCurl([]);
+    const options = { cwd: "/tmp", env: { HTTPS_PROXY: "http://127.0.0.1:9" } };
+    await runCurl(run as unknown as typeof RunCommandType, ARGS, options, { platform: "linux" });
+    expect(run).toHaveBeenCalledWith("curl", ARGS, options);
+  });
+
+  it("changes nothing without a proxy", async () => {
+    const run = fakeCurl([]);
+    await runCurl(run as unknown as typeof RunCommandType, ARGS, OPTIONS, { platform: "linux" });
+    expect(run).toHaveBeenCalledWith("curl", ARGS, OPTIONS);
   });
 });
 

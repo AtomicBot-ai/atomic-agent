@@ -1,9 +1,11 @@
+import { buildCommandEnv } from "../../../sandbox/command-env.js";
 import type {
   CommandOptions,
   CommandResult,
   runCommand as RunCommand,
 } from "../../../sandbox/command-runner.js";
 import { offlineRefusal } from "../../../llm/offline-network.js";
+import { curlProxyEnv, currentAgentProxy } from "../../../llm/agent-proxy.js";
 
 /**
  * Spawn the system `curl` for the HTTP/web tools, with the one Windows
@@ -45,6 +47,20 @@ let revocationFlag: RevocationFlag = REVOKE_BEST_EFFORT_FLAG;
 export interface RunCurlSeams {
   /** Platform override for deterministic tests. Defaults to process.platform. */
   platform?: NodeJS.Platform;
+  /** Base env when the caller passes none (tests). Defaults to the command runner's. */
+  baseEnv?: () => NodeJS.ProcessEnv;
+}
+
+/**
+ * The user's proxy (ATO-87) for this curl, as curl's own variables: the
+ * password stays out of argv (and `ps`). A caller env that already names
+ * a proxy keeps it.
+ */
+function withAgentProxy(options: CommandOptions, seams: RunCurlSeams): CommandOptions {
+  const extra = curlProxyEnv(currentAgentProxy(), options.env);
+  if (Object.keys(extra).length === 0) return options;
+  const base = options.env ?? (seams.baseEnv ?? (() => buildCommandEnv(process.env)))();
+  return { ...options, env: { ...base, ...extra } };
 }
 
 export async function runCurl(
@@ -61,6 +77,7 @@ export async function runCurl(
     const refused = offlineRefusal(arg, "curl");
     if (refused) throw refused;
   }
+  options = withAgentProxy(options, seams);
   const platform = seams.platform ?? process.platform;
   if (platform !== "win32") return runCommand("curl", args, options);
 

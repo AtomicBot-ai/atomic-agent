@@ -106,6 +106,7 @@ export const ENV_SETTINGS: readonly EnvSetting[] = [
   // Persona, network and server.
   env("ATOMIC_AGENT_PERSONA", null, "Persona name to use for this process, above every config.json setting."),
   env("ATOMIC_AGENT_OFFLINE", null, "Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process."),
+  env("ATOMIC_AGENT_PROXY", null, "Send the agent's web traffic through this HTTP(S) proxy, as `network.proxy.url` does. Wins over the config value when set.", "network.proxy.url"),
   env("ATOMIC_AGENT_ALLOWED_ORIGINS", null, "Comma-separated web origins that may call a keyless local `serve`, besides loopback ones."),
   env("ATOMIC_AGENT_MODEL_CATALOG_URL", null, "URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io."),
 
