@@ -58,6 +58,7 @@ import {
 } from "./route-approval.js";
 import { createAnswerQuestionHandler } from "./route-question.js";
 import {
+  createAddApprovalRuleHandler,
   createDeleteApprovalRuleHandler,
   createListApprovalRulesHandler,
 } from "./route-approval-rules.js";
@@ -316,6 +317,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/question/answer", handler: createAnswerQuestionHandler() },
     // ATO-1141: saved "always allow" / ask / deny rules.
     { method: "GET", path: "/api/approval-rules", handler: createListApprovalRulesHandler() },
+    // ATO-1011: a rule added by hand, like Claude Code's /permissions.
+    { method: "POST", path: "/api/approval-rules", handler: createAddApprovalRuleHandler() },
     { method: "DELETE", path: "/api/approval-rules/{id}", handler: createDeleteApprovalRuleHandler() },
     // The two routes the desktop needs and the TUI does not: the coding-mode
     // stance it projects onto the approval ladder, and the context figure it
