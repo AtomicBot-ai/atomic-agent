@@ -75,12 +75,7 @@ export function enforceAuth(
      constant-time, so the token cannot be read back from response timing. */
   const wait = throttle ? throttle.retryAfter(address) : 0;
   if (wait > 0) {
-    sendJson(
-      res,
-      429,
-      openaiError("Too many wrong API keys from this address; try again later", "invalid_request_error", null, "auth_throttled"),
-      { "retry-after": String(wait) },
-    );
+    sendAuthThrottled(res, wait);
     return false;
   }
   /* ATO-1080: Anthropic clients (Claude Code with ANTHROPIC_API_KEY) send
@@ -90,6 +85,22 @@ export function enforceAuth(
     return true;
   }
   throttle?.failed(address);
+  sendInvalidApiKey(res);
+  return false;
+}
+
+/** The 429 of an address that kept sending wrong keys (ATO-1126). */
+export function sendAuthThrottled(res: ServerResponse, waitSeconds: number): void {
+  sendJson(
+    res,
+    429,
+    openaiError("Too many wrong API keys from this address; try again later", "invalid_request_error", null, "auth_throttled"),
+    { "retry-after": String(waitSeconds) },
+  );
+}
+
+/** The 401 of a missing or unknown key. */
+export function sendInvalidApiKey(res: ServerResponse): void {
   sendJson(
     res,
     401,
@@ -100,7 +111,6 @@ export function enforceAuth(
       "invalid_api_key",
     ),
   );
-  return false;
 }
 
 export function sendJson(
