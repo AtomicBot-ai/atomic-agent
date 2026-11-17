@@ -3,6 +3,8 @@ import type { ReactElement } from "react";
 
 import { useTerminalSize } from "../../hooks/use-terminal-size.js";
 import { theme } from "../../theme/theme.js";
+import { BrandBadge } from "../../brand/brand-badge.js";
+import { integrationBrand } from "../../brand/brand-badges.js";
 import {
   SWARM_EDIT_FIELDS,
   aliveSwarmCount,
@@ -183,6 +185,8 @@ function AddWizard({ form }: { form: SwarmAddForm }): ReactElement {
           <Text color={theme.colors.muted}>
             {"  "}Where does it live?{"  "}
           </Text>
+          {/* ATO-1635: each choice wears its messenger's badge. */}
+          <BrandBadge brand={integrationBrand("telegram")} />
           <Text
             color={
               form.kind === "telegram"
@@ -192,6 +196,8 @@ function AddWizard({ form }: { form: SwarmAddForm }): ReactElement {
           >
             {form.kind === "telegram" ? "[ Telegram ]" : "  Telegram  "}
           </Text>
+          <Text> </Text>
+          <BrandBadge brand={integrationBrand("discord")} />
           <Text
             color={
               form.kind === "discord" ? theme.colors.accent : theme.colors.muted

@@ -48,8 +48,9 @@ describe("measureProvidersWizard", () => {
 
   it("stays inside the 100-column terminal the flow asks for", () => {
     // The cap the guess used to encode, now a consequence of measuring:
-    // everything deterministic fitted a 100-column terminal before this
-    // slice, and the measure must keep saying so.
+    // everything deterministic fits a 100-column terminal, and the
+    // measure must keep saying so. ATO-1635's brand badge counts too, so
+    // the preset notes are kept short enough to leave room for it.
     expect(measureProvidersWizard()).toBeLessThanOrEqual(100);
   });
 });

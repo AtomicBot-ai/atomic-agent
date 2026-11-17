@@ -14,6 +14,8 @@ import {
 } from "./llm-panel-state.js";
 import { isLocalModelsHfOpen } from "../local-models/local-models-hf-keys.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
+import { BrandBadge } from "../brand/brand-badge.js";
+import { providerRowBrand } from "../brand/brand-badges.js";
 import { LocalModelsHuggingFaceBranch } from "../local-models/local-models-hf-branch.js";
 import { LocalModelDetail } from "../local-models/local-models-panel.js";
 import { hasLlmModal, LlmPanelModals } from "./llm-panel-modals.js";
@@ -142,6 +144,7 @@ function CompactHeader({
   return (
     <Box flexDirection="column">
       <Text>
+        <ProviderBadge summary={summary} />
         <Text bold color={theme.colors.accentSoft}>
           {summary.providerLabel}
         </Text>
@@ -153,6 +156,21 @@ function CompactHeader({
       <StatusLines state={state} compact />
     </Box>
   );
+}
+
+/**
+ * The active provider's brand badge in front of its name (ATO-1635).
+ * A header line is not a column, so a provider with no brand (a custom
+ * endpoint, llama.cpp) simply has no badge rather than a blank one.
+ */
+function ProviderBadge({
+  summary,
+}: {
+  summary: ReturnType<typeof selectLlmActiveRouteSummary>;
+}): ReactElement | null {
+  const provider = summary.activeTextProvider;
+  const brand = provider ? providerRowBrand(provider) : null;
+  return brand ? <BrandBadge brand={brand} /> : null;
 }
 
 function RouteCard({
@@ -169,6 +187,7 @@ function RouteCard({
       </Text>
       <Text>
         current:{" "}
+        <ProviderBadge summary={summary} />
         <Text bold color={theme.colors.accentSoft}>
           {summary.providerLabel}
         </Text>

@@ -1081,6 +1081,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           stepIndex: null,
           line: formatFusionWorkerLine(event),
           color: fusionWorkerLineColor(event),
+          ...(event.model ? { brandModel: event.model } : {}),
         },
       );
     }

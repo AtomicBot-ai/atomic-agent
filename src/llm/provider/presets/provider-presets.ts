@@ -195,7 +195,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: "http://127.0.0.1:1337",
     envVar: "ATOMIC_CHAT_API_KEY",
     local: true,
-    note: "the Local API Server Atomic Chat runs on your machine; no API key needed",
+    note: "Atomic Chat's Local API Server on this machine; no API key needed",
   },
   {
     id: "azure-openai",
@@ -264,7 +264,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     // (`google/gemini-2.5-flash`). Project and region are the operator's.
     baseUrl: vertexOpenAiBaseUrl({ region: "us-central1", project: "your-project" }),
     envVar: "VERTEX_ACCESS_TOKEN",
-    note: "Gemini and partner models with your gcloud sign-in; project goes in the URL",
+    note: "Gemini and partner models via your gcloud sign-in; project in the URL",
     apiKeyCommand: vertexTokenCommand(),
     perAccountEndpoint: {
       hint: "Replace your-project with your Google Cloud project id (and us-central1 with your region, both places)",
@@ -305,7 +305,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: "http://localhost:13305",
     envVar: "LEMONADE_API_KEY",
     local: true,
-    note: "the server Lemonade runs on your machine (AMD GPUs, NPUs); no key needed",
+    note: "the Lemonade server on your machine (AMD GPUs, NPUs); no key needed",
   },
   {
     id: "mistral",
@@ -412,7 +412,7 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     // is 401 too, not 404; the routes are the documented ones.
     baseUrl: "https://api.inference.wandb.ai",
     envVar: "WANDB_API_KEY",
-    note: "CoreWeave Serverless Inference: open-weight models, W&B API key",
+    note: "CoreWeave Serverless Inference: open-weight models, W&B key",
   },
   {
     id: "xai",

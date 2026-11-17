@@ -40,6 +40,7 @@ This area owns terminal interface. Read [AGENTS.md](AGENTS.md) before changing i
 - [Telegram setup adapter](telegram/README.md)
 - [Swarm management](swarm/README.md)
 - [Plugins panel](plugins/README.md)
+- [Brand badges](brand/README.md)
 
 ## Ownership and dependencies
 

@@ -7,6 +7,7 @@ import type { ProviderRow } from "../providers/providers-panel-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import { createInitialTuiState, type TuiState } from "../tui-state.js";
 import { LlmModeRows } from "./llm-mode-rows.js";
+import { brandBadgeText } from "../brand/brand-badges.js";
 
 /** Prime the module-level `/v1/models` cache exactly like the picker does. */
 async function seedCompatCache(
@@ -127,7 +128,8 @@ describe("CloudRows inline model section", () => {
     expect(frame).toContain("filter: m-0");
     expect(frame).toContain("type to filter");
     // Current model row keeps its active mark and Current wording.
-    expect(frame).toContain("* nous/m-000 [text]");
+    // `m-000` has no brand, so its badge slot (ATO-1635) is blank.
+    expect(frame).toContain(`* ${brandBadgeText(null)} nous/m-000 [text]`);
     expect(frame).toContain("Current: nous/m-000");
     // x-002 is filtered out; counter reports filtered of total.
     expect(frame).not.toContain("x-002");
