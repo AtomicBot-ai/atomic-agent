@@ -19,8 +19,9 @@ import { SECRET_AUTOCOMPLETE_TOKENS } from "./redact-secret-fields.js";
  *
  * The overlay runs in an isolated world of the page's main frame (CDP
  * `Page.createIsolatedWorld`): it shares the DOM with the page but not
- * its JavaScript, so the page cannot read the saved pins or forge them
- * (it can see the keys while a comment is typed). A navigation
+ * its JavaScript, so the page cannot read the saved pins or forge them.
+ * Nothing is typed on the page: the user's words about each pin go
+ * through the agent's chat (ATO-1543). A navigation
  * or reload destroys that world, and the pins with it.
  */
 

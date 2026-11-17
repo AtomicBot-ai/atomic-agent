@@ -6,7 +6,6 @@ import { groupPins, renderPin, sanitizePins, type AnnotationPin } from "./annota
 function raw(id: number, path: string[], regionDepth: number, over: Record<string, unknown> = {}) {
   return {
     id,
-    comment: `change ${id}`,
     selector: path.slice(-2).join(" > "),
     tag: "button",
     text: "Buy now",
@@ -20,28 +19,35 @@ function raw(id: number, path: string[], regionDepth: number, over: Record<strin
 }
 
 describe("sanitizePins", () => {
-  it("keeps well-formed pins in id order and drops empty, duplicate or broken ones", () => {
+  it("keeps well-formed pins in id order and drops duplicate or broken ones", () => {
     const pins = sanitizePins([
       raw(2, ["body", "main"], 1),
       raw(1, ["body", "main"], 1),
       raw(1, ["body"], 0),
-      raw(3, ["body"], 0, { comment: "   " }),
+      raw(3, ["body"], 0),
       raw(0, ["body"], 0),
       "junk",
     ]);
-    expect(pins.map((pin) => pin.id)).toEqual([1, 2]);
+    expect(pins.map((pin) => pin.id)).toEqual([1, 2, 3]);
+  });
+
+  it("drops any comment a script sends back: the user's words come from chat (ATO-1543)", () => {
+    const [pin] = sanitizePins([raw(1, ["body"], 0, { comment: "typed on the page" })]);
+    expect(pin).toBeDefined();
+    expect(pin).not.toHaveProperty("comment");
+    expect(renderPin(pin as AnnotationPin).join("\n")).not.toContain("typed on the page");
   });
 
   it("caps text, drops odd style keys and clamps the region depth", () => {
     const [pin] = sanitizePins([
       raw(1, ["body", "div"], 9, {
-        comment: `a\nb ${"x".repeat(3_000)}`,
+        text: `a\nb ${"x".repeat(3_000)}`,
         styles: { color: "red", "BAD KEY": "x", "font-size": 12 },
         rect: { x: 1.6, y: "no", width: -5, height: 10 },
       }),
     ]);
-    expect(pin?.comment.startsWith("a b ")).toBe(true);
-    expect(pin?.comment.length).toBe(2_000);
+    expect(pin?.text.startsWith("a b ")).toBe(true);
+    expect(pin?.text.length).toBe(160);
     expect(pin?.styles).toEqual({ color: "red" });
     expect(pin?.rect).toEqual({ x: 2, y: 0, width: 0, height: 10 });
     expect(pin?.regionDepth).toBe(1);
@@ -82,11 +88,11 @@ describe("groupPins", () => {
 });
 
 describe("renderPin", () => {
-  it("shows the comment, element, selector, box, styles and crop", () => {
+  it("shows the pin number, element, selector, box, styles and crop", () => {
     const pin = sanitizePins([raw(7, ["#pricing", "button"], 0)])[0] as AnnotationPin;
     const text = renderPin(pin, "/tmp/shot.jpg").join("\n");
-    expect(text).toContain("[7] comment: change 7");
-    expect(text).toContain('<button> "Buy now"');
+    expect(text).toContain('[7] <button> "Buy now"');
+    expect(text).not.toContain("comment:");
     expect(text).toContain("selector: #pricing > button");
     expect(text).toContain("box: 120x40 at (10, 20)");
     expect(text).toContain("color: rgb(0, 0, 0)");

@@ -90,7 +90,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.annotate",
     summary:
-      "Let the user mark up the open page: start shows an overlay where they click elements and type what to change; read returns each pin's comment, selector, box and styles (crops adds element pictures), grouped by page area; stop removes it.",
+      "Let the user mark up the open page: start shows an overlay where they click elements to drop numbered pins (they say in chat what to change for each); read returns each pin's selector, box and styles (crops adds element pictures), grouped by page area; stop removes it.",
     argsSchema: `{ action: "start" | "read" | "stop", crops?: boolean }`,
   },
   {
