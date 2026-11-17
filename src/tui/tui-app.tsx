@@ -909,6 +909,8 @@ export interface TuiAppCallbacks {
   onImportPreview?(form: ImportFormState): void;
   /** Import tab: execute the import (write sessions / tasks / secrets). */
   onImportExecute?(form: ImportFormState): void;
+  /** Import tab: the "what I learned about you" step (ATO-1627). */
+  onImportFacts?(cmd: import("./import/import-facts-runner.js").ImportFactsCommand): void;
   /** Startup self-update: user accepted the offer — run `install.sh`. */
   onUpdateConfirmed?(): void;
   /** Startup folder trust question answered (ATO-298). */
