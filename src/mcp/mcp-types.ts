@@ -200,6 +200,12 @@ export interface McpToolMeta {
    * without re-fetching.
    */
   annotations?: Record<string, unknown>;
+  /**
+   * MCP Apps (SEP-1865, ATO-1010): the `ui://` page the tool's
+   * `_meta.ui.resourceUri` names, read from the same server after an ok
+   * call and shown in the chat. Absent for tools without an app.
+   */
+  uiResourceUri?: string;
   /** Computed resource class — drives batching / approval behaviour. */
   resourceClass: ResourceClass;
 }

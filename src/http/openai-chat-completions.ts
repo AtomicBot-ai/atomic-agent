@@ -52,6 +52,7 @@ import { PROJECT_SECTION_MAX_TOKENS } from "../prompt/build-prompt.js";
 import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { canvasRecordOf, type CanvasRecord } from "../tools/canvas/index.js";
+import { mcpAppRecordOf, type McpAppRecord } from "../mcp/mcp-app-resource.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
 import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import { claimScreenOverlay } from "../tools/os/screen/screen-overlay-hosts.js";
@@ -552,6 +553,8 @@ async function handleStream(
  *    only)
  *  - an ok `canvas.render` call's `tool_result` carries `canvas`: the
  *    file it wrote, for the chat to show (extensions opt-in only, ATO-1137)
+ *  - an ok MCP tool call whose tool names an MCP Apps page carries
+ *    `mcp_app`: that page, for the chat's sandboxed frame (ATO-1010)
  *  - `plan_updated` → `event: plan_updated` with the whole checklist
  *    (extensions opt-in only, ATO-486)
  *  - compaction lifecycle and `history_trimmed` → named frames of the
@@ -713,6 +716,8 @@ export function buildStreamEventHook(
           ...screenMarksFrame(inner.result),
           // ATO-1137: the canvas an ok `canvas.render` wrote, for the chat to show.
           ...canvasFrame(inner.result),
+          // ATO-1010: an MCP tool's app page (MCP Apps), for the chat to show.
+          ...mcpAppFrame(inner.result),
           ...diffstatFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
           // them (`tool_result.approvals`), so a live turn summary can list
@@ -1167,6 +1172,18 @@ function screenMarksFrame(
 function canvasFrame(result: CompressedToolResult): { canvas?: CanvasRecord } {
   const canvas = canvasRecordOf(result);
   return canvas === undefined ? {} : { canvas };
+}
+
+/**
+ * `mcp_app` on a `tool_result` frame (ATO-1010): the `ui://` page an ok
+ * MCP tool call's server ships for it (MCP Apps), as `{server, uri,
+ * title, html, bytes}`, so the chat can show it in its sandboxed frame.
+ * The frame is the only path: the page is never in the summary, and it
+ * sits on `details` non-enumerable, so no store or trace keeps it.
+ */
+function mcpAppFrame(result: CompressedToolResult): { mcp_app?: McpAppRecord } {
+  const app = mcpAppRecordOf(result);
+  return app === undefined ? {} : { mcp_app: app };
 }
 
 /** Tools whose ok result carries `details.diffstat` (ATO-1187). */

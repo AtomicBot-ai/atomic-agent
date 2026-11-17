@@ -35,6 +35,7 @@ import { compressToolResult } from "../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tools/tool-registry.js";
 
+import { attachMcpApp, readMcpAppResource } from "./mcp-app-resource.js";
 import { mcpToolPrompts, modeSkipsDefaultPrompt } from "./mcp-approval-mode.js";
 import type { McpClient } from "./mcp-client.js";
 import { scrubErrorMessage } from "./mcp-errors.js";
@@ -216,12 +217,26 @@ export function createMcpToolDefinition(
           );
         }
         const res = await client.callTool(meta.rawName, args, ctx.signal);
+        const details = extractStructuredDetails(res);
+        // MCP Apps (ATO-1010): the tool's own page, read from the same
+        // server for the chat to show. Kept out of the model's text; a
+        // failed read leaves the ok result exactly as it was.
+        if (meta.uiResourceUri !== undefined) {
+          const app = await readMcpAppResource(
+            client,
+            meta.server,
+            meta.uiResourceUri,
+            meta.rawName,
+            ctx.signal,
+          );
+          if (app !== undefined) attachMcpApp(details, app);
+        }
         return compressToolResult(
           {
             tool: meta.qualifiedName,
             status: "ok",
             output: projectMcpResponseToText(res, ctx.modelMode === "cloud"),
-            details: extractStructuredDetails(res),
+            details,
           },
           MCP_COMPRESSOR_OPTIONS,
         );

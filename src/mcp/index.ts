@@ -60,6 +60,15 @@ export {
   buildMcpResourceReadTool,
 } from "./mcp-resource-tools.js";
 export {
+  attachMcpApp,
+  mcpAppRecordOf,
+  mcpAppResourceUriOf,
+  readMcpAppResource,
+  MCP_APP_DETAIL,
+  MCP_APP_MAX_BYTES,
+} from "./mcp-app-resource.js";
+export type { McpAppRecord } from "./mcp-app-resource.js";
+export {
   buildMcpPromptListTool,
   buildMcpPromptGetTool,
 } from "./mcp-prompt-tools.js";

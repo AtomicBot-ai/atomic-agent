@@ -44,6 +44,7 @@ import {
   type StderrTail,
 } from "./mcp-stderr-tail.js";
 import type { McpElicitationHandler } from "./mcp-elicitation-handler.js";
+import { mcpAppResourceUriOf } from "./mcp-app-resource.js";
 import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
 import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
 import { offlineRefusal } from "../llm/offline-network.js";
@@ -290,6 +291,7 @@ export class McpClient {
       description?: string;
       inputSchema?: unknown;
       annotations?: Record<string, unknown>;
+      _meta?: unknown;
     }>) {
       if (!MCP_TOOL_NAME_RE.test(t.name)) continue;
       // Turned off by the operator (`enabledTools` / `disabledTools`).
@@ -299,6 +301,7 @@ export class McpClient {
       // splitMcpToolName cleanly. If not, drop — this is the same
       // fail-closed posture as `MCP_TOOL_NAME_RE`.
       if (!splitMcpToolName(qualifiedName)) continue;
+      const uiResourceUri = mcpAppResourceUriOf(t._meta);
       validTools.push({
         rawName: t.name,
         qualifiedName,
@@ -309,6 +312,8 @@ export class McpClient {
             ? (t.inputSchema as Record<string, unknown>)
             : null,
         annotations: t.annotations,
+        // MCP Apps: the tool's own page, kept so the adapter can fetch it.
+        ...(uiResourceUri !== undefined ? { uiResourceUri } : {}),
         // Filled by the resolver at lookup time; we still stamp the
         // current best guess here so external consumers (TUI, logs)
         // can render the class without re-running the resolver.

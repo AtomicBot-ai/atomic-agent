@@ -1,6 +1,7 @@
 import type { ApprovalDecision, ApprovalRequest } from "../approval/approval-gate.js";
 import { ApprovalDeniedError } from "../approval/dangerous-tool.js";
 import { compressToolResult, type CompressedToolResult } from "../compressor/result-compressor.js";
+import { carryMcpApp } from "../mcp/mcp-app-resource.js";
 import { loadAllHooks } from "./hook-config.js";
 import { claudeToolName, matcherMatches } from "./hook-matcher.js";
 import { combineVerdicts, interpretHookRun } from "./hook-output.js";
@@ -176,11 +177,12 @@ function withHookNotes(result: CompressedToolResult, feedback: string | undefine
   return {
     ...result,
     summary: feedback ? `${result.summary}\n\n[PostToolUse hook] ${feedback}` : result.summary,
-    details: {
+    // The spread drops an MCP app page (non-enumerable, ATO-1010); carry it over.
+    details: carryMcpApp(result.details, {
       ...result.details,
       ...(feedback ? { hookFeedback: feedback } : {}),
       ...(error ? { hookErrors: error } : {}),
-    },
+    }),
   };
 }
 

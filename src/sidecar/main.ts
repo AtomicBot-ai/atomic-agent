@@ -29,6 +29,7 @@ import { installLocalSkill, scanApprovalFromIds, uninstallSkill } from "../skill
 import { getAppVersion } from "../version.js";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { canvasRecordOf } from "../tools/canvas/index.js";
+import { mcpAppRecordOf } from "../mcp/mcp-app-resource.js";
 
 interface ActiveSession {
   session: SessionState;
@@ -123,6 +124,8 @@ export async function bootstrapSidecar(): Promise<{
               truncated: inner.result.truncated,
               // ATO-1137: the canvas an ok `canvas.render` wrote.
               ...canvasPayload(inner.result),
+              // ATO-1010: an MCP tool's app page (MCP Apps).
+              ...mcpAppPayload(inner.result),
               // ATO-1145: approval records, auto-approvals included.
               ...(inner.result.approvals !== undefined &&
               inner.result.approvals.length > 0
@@ -525,6 +528,11 @@ if (invokedDirectly) {
 }
 
 /** `canvas` on a `tool_call_result` (ATO-1137): the file an ok `canvas.render` wrote. */
+function mcpAppPayload(result: CompressedToolResult): { mcpApp?: NonNullable<ReturnType<typeof mcpAppRecordOf>> } {
+  const mcpApp = mcpAppRecordOf(result);
+  return mcpApp === undefined ? {} : { mcpApp };
+}
+
 function canvasPayload(result: CompressedToolResult): { canvas?: NonNullable<ReturnType<typeof canvasRecordOf>> } {
   const canvas = canvasRecordOf(result);
   return canvas === undefined ? {} : { canvas };
