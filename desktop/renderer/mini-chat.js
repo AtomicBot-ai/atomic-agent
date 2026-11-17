@@ -15,10 +15,16 @@
    - A reply is drawn with md-render.js (mdRender, mdSanitize), the same
      markdown as the main window, without its file chips.
 
+   ATO-561: the same page is a sidebar chat's own window ("Open in new
+   window", main/chat-popout-ipc.ts). It asks which chat it was opened for
+   (BR.chatPopoutMine), draws that chat's stored messages (mcHistory) and
+   goes on in it: the next message carries the chat's session id.
+
    The pure part (state and frames) is exported for test/mini-chat.test.mjs. */
 
 const MC_EARLY_MAX = 400;      // frames kept while BR.chat has not answered yet
 const MC_APPROVALS_MAX = 20;   // requests kept for a chat whose id is not known yet
+const MC_HISTORY_MAX = 200;    // stored rows drawn in a chat's own window, newest kept
 
 /* ---------- pure ---------- */
 
@@ -38,13 +44,16 @@ function mcState() {
     early: [],           // frames before the turn's id is known
     approvals: [],       // requests seen before this chat's id is known
     failed: null,        // a step's failure, the turn's if nothing follows it
+    loading: false,      // ATO-561: a stored chat's messages on their way
+    locked: false,       // ATO-561: a chat's own window that has no chat: nothing is sent from it
+    title: '',           // ATO-561: a stored chat's own title
   };
 }
 
 /** A message sent: its row and the reply row the turn will fill. False when it cannot be sent now. */
 function mcSend(st, raw) {
   const text = typeof raw === 'string' ? raw.trim() : '';
-  if (!text || st.busy) return false;
+  if (!text || st.busy || st.loading || st.locked) return false;
   st.rows.push({id: ++st.seq, k: 'user', text});
   st.reply = {id: ++st.seq, k: 'assistant', text: '', stepFrom: 0};
   st.rows.push(st.reply);
@@ -150,6 +159,45 @@ function mcFrame(st, ev) {
   }
 }
 
+/**
+ * ATO-561: a stored chat in its own window. `data` is GET /api/sessions/{id}
+ * (BR.session): its user messages and replies become rows, a run of tool
+ * calls one line; the newest MC_HISTORY_MAX rows are kept. The chat's id is
+ * the page's from here, so the next message continues it.
+ */
+function mcHistory(st, sessionId, data) {
+  st.loading = false;
+  if (!sessionId) return false;
+  st.sessionId = sessionId;
+  const d = data && typeof data === 'object' ? data : {};
+  st.title = typeof d.title === 'string' ? d.title.trim().slice(0, 200) : '';
+  const rows = [];
+  let tools = 0;
+  const flushTools = () => {
+    if (tools) rows.push({k: 'note', text: tools === 1 ? 'Used a tool.' : 'Used ' + tools + ' tools.'});
+    tools = 0;
+  };
+  for (const t of Array.isArray(d.turns) ? d.turns : []) {
+    if (!t || typeof t !== 'object') continue;
+    if (t.kind === 'assistant_tool_call') { tools++; continue; }
+    if (t.kind === 'user' && typeof t.text === 'string') { flushTools(); rows.push({k: 'user', text: t.text}); continue; }
+    if (t.kind === 'assistant_reply' && !t.progressNote) {
+      flushTools();
+      rows.push({k: 'assistant', text: t.stopped ? '(stopped)' : String(t.text || '')});
+    }
+  }
+  flushTools();
+  const kept = rows.length > MC_HISTORY_MAX ? rows.slice(rows.length - MC_HISTORY_MAX) : rows;
+  if (kept.length < rows.length) kept.unshift({k: 'note', text: 'Earlier messages are in the main window.'});
+  st.rows = kept.map((r) => Object.assign({id: ++st.seq}, r));
+  return true;
+}
+
+/** ATO-561: the page is a stored chat's own window (main/chat-popout.ts CHAT_POPOUT_QUERY), not the mini window. */
+function mcPopout(search) {
+  return /(?:^\?|&)window=chat(?:&|$)/.test(String(search || ''));
+}
+
 /** What the line about a waiting request says. */
 function mcApprovalView(payload) {
   return {
@@ -175,7 +223,7 @@ function mcApproval(st, payload) {
   return true;
 }
 
-const mcTitle = (st) => (st.rows.find((r) => r.k === 'user') || {}).text || '';   // the chat's first message
+const mcTitle = (st) => st.title || (st.rows.find((r) => r.k === 'user') || {}).text || '';   // the chat's title, or its first message
 function mcApprovalLine(a) {
   return 'The agent is asking to use ' + a.tool + '. Open the big window to approve or deny it.';
 }
@@ -200,7 +248,8 @@ function mcReplyHTML(text) {
 }
 
 function mcRowsHTML(st) {
-  if (!st.rows.length) return '<div class="mc-empty">Ask anything. This starts a new chat.</div>';
+  if (st.loading) return '<div class="mc-empty">Loading the chat…</div>';
+  if (!st.rows.length) return '<div class="mc-empty">' + (st.sessionId ? 'No messages in this chat yet.' : 'Ask anything. This starts a new chat.') + '</div>';
   return st.rows.map((r) => {
     if (r.k === 'user') return '<div class="mc-row mc-user"><div class="prose usr">' + mcEsc(r.text) + '</div></div>';
     if (r.k === 'note') return '<div class="mc-row mc-note' + (r.tone === 'bad' ? ' bad' : '') + '">' + mcEsc(r.text) + '</div>';
@@ -216,6 +265,9 @@ function mcBoot() {
   const st = mcState();
   let painting = false;
   let stick = true, told = null;   // told: the chat id given to main (mini:session), the big window keeps its approvals for it
+  // ATO-561: a stored chat's own window (main loads it with ?window=chat): nothing is sent before its chat is in.
+  const own = mcPopout(location.search);
+  if (own) st.loading = true;
 
   const paint = () => {
     painting = false;
@@ -230,7 +282,12 @@ function mcBoot() {
     const send = $('mc-send');
     send.textContent = st.busy ? 'Stop' : 'Send';
     send.classList.toggle('stop', st.busy);
-    send.disabled = st.busy ? !st.turnId : !$('mc-input').value.trim();
+    send.disabled = st.busy ? !st.turnId : (st.loading || st.locked || !$('mc-input').value.trim());
+    if (own) {
+      const name = mcTitle(st) || 'Chat';
+      $('mc-title').textContent = name;
+      document.title = name + ' · Atomic Agent';
+    }
     if (stick) log.scrollTop = log.scrollHeight;
   };
   const repaint = () => {
@@ -272,6 +329,7 @@ function mcBoot() {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!st.busy) submit(); }
   });
   document.addEventListener('keydown', (e) => {
+    if (own) return;   // ATO-561: a chat's own window closes with its close button, as any window
     if (e.key === 'Escape' && !e.defaultPrevented) window.close();
   });
   $('mc-open').addEventListener('click', async () => {
@@ -288,6 +346,23 @@ function mcBoot() {
   if (BR.miniChatAttach) BR.miniChatAttach().catch(() => {});
   paint();
   $('mc-input').focus();
+  // ATO-561: opened from the sidebar for a stored chat: its messages, then it goes on here.
+  if (own) {
+    $('mc-input').placeholder = 'Reply…';
+    const lost = (why) => { st.loading = false; st.rows.push({id: ++st.seq, k: 'note', tone: 'bad', text: why}); repaint(); };
+    const ask = typeof BR.chatPopoutMine === 'function' ? BR.chatPopoutMine() : Promise.resolve(null);
+    ask.then((mine) => {
+      const sid = mine && typeof mine.sessionId === 'string' ? mine.sessionId : null;
+      // Never a new chat in its place: a window that lost its chat sends nothing.
+      if (!sid) { st.locked = true; lost('This window has no chat. Close it and open the chat again from the sidebar.'); return; }
+      return BR.session(sid).then((res) => {
+        mcHistory(st, sid, res && res.ok ? res.data : null);
+        if (!res || !res.ok) st.rows.push({id: ++st.seq, k: 'note', tone: 'bad', text: 'Could not load this chat: ' + ((res && res.error) || 'unknown error')});
+        stick = true;
+        repaint();
+      }, () => { mcHistory(st, sid, null); repaint(); });
+    }).catch(() => { st.locked = true; lost('Could not load this chat.'); });
+  }
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined' && document.getElementById('mc-log')) {
@@ -295,6 +370,6 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined' && document
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {mcState, mcTitle, mcSend, mcStartFailed, mcStarted, mcFrame, mcApproval, mcApprovalLine, mcReplyHTML, mcRowsHTML, mcEsc,
+  module.exports = {mcState, mcTitle, mcSend, mcHistory, mcPopout, MC_HISTORY_MAX, mcStartFailed, mcStarted, mcFrame, mcApproval, mcApprovalLine, mcReplyHTML, mcRowsHTML, mcEsc,
     MC_EARLY_MAX};
 }

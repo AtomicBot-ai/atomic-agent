@@ -61,6 +61,8 @@ function chatMenuItems(opts) {
     ...(o.archivable === true ? [o.archived ? {verb: 'unarchive', label: 'Unarchive', icon: 'archive'} : {verb: 'archive', label: 'Archive', icon: 'archive'}] : []),
     // ATO-1054: "Export…" saves the chat as Markdown / PDF / Word (chat-export.js), for a stored chat.
     ...(o.exportable === true ? [{verb: 'export', label: 'Export…', icon: 'download'}] : []),
+    // ATO-561: "Open in new window" shows a stored chat in a window of its own (chat-popout.js).
+    ...(o.windowable === true ? [{verb: 'popout', label: 'Open in new window', icon: 'open'}] : []),
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }
