@@ -9,6 +9,7 @@ import {
   resolveAnalyticsDimensions,
   resolveDesktopVersion,
   resolveInstallChannel,
+  resolveInstallSource,
 } from "./resolve-analytics-dimensions.js";
 
 describe("analytics dimensions", () => {
@@ -66,6 +67,51 @@ describe("analytics dimensions", () => {
     ).toBe("unknown");
   });
 
+  it("reads the install source tag written by the install scripts", () => {
+    writeFileSync(join(dir, "install-source"), "reddit\n", "utf8");
+    expect(resolveInstallSource(dir, {})).toBe("reddit");
+    writeFileSync(join(dir, "install-source"), "\uFEFFHN\r\n", "utf8");
+    expect(resolveInstallSource(dir, {})).toBe("hn");
+  });
+
+  it("resolves a missing install source marker to unknown", () => {
+    expect(resolveInstallSource(dir, {})).toBe("unknown");
+  });
+
+  it("rejects an install source outside the allowlist", () => {
+    for (const value of [
+      "https://x.com/some/post",
+      "utm_source=x",
+      "newsletter",
+      "x reddit",
+    ]) {
+      writeFileSync(join(dir, "install-source"), `${value}\n`, "utf8");
+      expect(resolveInstallSource(dir, {})).toBe("unknown");
+    }
+    expect(
+      resolveInstallSource(dir, { ATOMIC_AGENT_INSTALL_SOURCE: "/Users/me" }),
+    ).toBe("unknown");
+  });
+
+  it("lets the env set by the desktop app win over the install source marker", () => {
+    writeFileSync(join(dir, "install-source"), "reddit\n", "utf8");
+    expect(
+      resolveInstallSource(dir, { ATOMIC_AGENT_INSTALL_SOURCE: "site" }),
+    ).toBe("site");
+    // An env value outside the allowlist falls through to the marker.
+    expect(
+      resolveInstallSource(dir, { ATOMIC_AGENT_INSTALL_SOURCE: "spam" }),
+    ).toBe("reddit");
+  });
+
+  it("puts the install source in the dimension set", () => {
+    writeFileSync(join(dir, "install-source"), "github\n", "utf8");
+    expect(
+      resolveAnalyticsDimensions({ stateDir: dir, surface: "tui", env: {} })
+        .installSource,
+    ).toBe("github");
+  });
+
   it("keeps only version-shaped desktop versions", () => {
     expect(resolveDesktopVersion({ ATOMIC_AGENT_DESKTOP_VERSION: "0.6.7" })).toBe(
       "0.6.7",
@@ -89,6 +135,7 @@ describe("analytics dimensions", () => {
       surface: "desktop",
       arch: process.arch,
       installChannel: "exe",
+      installSource: "unknown",
       desktopVersion: "0.6.7",
     });
   });
@@ -103,6 +150,7 @@ describe("analytics dimensions", () => {
       surface: "tui",
       arch: process.arch,
       installChannel: "unknown",
+      installSource: "unknown",
     });
   });
 

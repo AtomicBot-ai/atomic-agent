@@ -158,6 +158,18 @@ describe("MCP server configuration and shared values", () => {
     expect(thrownError(() => parsedServer({ name: "github", transport: STDIO, enabledTools: "get_issue" }))).toBeInstanceOf(ConfigValidationError);
   });
 
+  it("keeps a per-server approval mode and omits it when absent or null (ATO-1134)", () => {
+    for (const approval of ["ask", "ask_writes", "auto"] as const) {
+      expect(parsedServer({ name: "github", transport: STDIO, approval }).approval).toBe(approval);
+    }
+    expect("approval" in parsedServer({ name: "github", transport: STDIO })).toBe(false);
+    expect("approval" in parsedServer({ name: "github", transport: STDIO, approval: null })).toBe(false);
+    expect(thrownError(() => parsedServer({ name: "github", transport: STDIO, approval: "never" }))).toMatchObject({
+      field: "mcp.servers[0].approval",
+      reason: 'expected one of ask|ask_writes|auto, got "never"',
+    });
+  });
+
   it("wraps an indexed parser error through the existing add-server command", () => {
     const error = thrownError(() => parseAddServerJson(JSON.stringify({
       name: "args-fixture",

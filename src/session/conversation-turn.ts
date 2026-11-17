@@ -81,6 +81,14 @@ export type ConversationTurn =
        * handed, a reflection pair, a session's title — may take it for one.
        */
       stopped?: true;
+      /**
+       * A failed turn's record ({@link formatTurnFailedRecord}) when tools
+       * had already run in that turn (ATO-1476). Their effects stay, and
+       * the transcript may not show them (a step that failed after its
+       * batch ran is never committed), so the turn is never taken back
+       * for a retry that would run them again.
+       */
+      toolsRan?: true;
       at: number;
     };
 

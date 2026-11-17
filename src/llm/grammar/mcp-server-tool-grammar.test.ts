@@ -53,7 +53,7 @@ describe("mcp.* tool names follow the MCP catalog (ATO-1029)", () => {
       expect(gbnfAccepts(g, "root", call("mcp.example.toolkit")), profile.id).toBe(false);
       expect(gbnfAccepts(g, "root", call("mcp.resource.list")), profile.id).toBe(true);
       // Same tool-name rule as before ATO-1029 whenever MCP tools exist.
-      expect(g, profile.id).toMatch(/^tool-name ::= .*\| mcp-native-tool \| mcp-server-tool \| "\\"finish\\""$/m);
+      expect(g, profile.id).toMatch(/^tool-name ::= .*\| mcp-native-tool \| mcp-server-tool$/m);
     }
   });
 
@@ -63,7 +63,7 @@ describe("mcp.* tool names follow the MCP catalog (ATO-1029)", () => {
       expect(gbnfAccepts(off, "root", call(tool)), tool).toBe(false);
     }
     expect(off).not.toMatch(/^tool-name ::= .*mcp-native-tool/m);
-    expect(gbnfAccepts(off, "root", call("finish"))).toBe(true);
+    expect(gbnfAccepts(off, "root", JSON.stringify([{ tool: "finish", args: { summary: "Done." } }]))).toBe(true);
     // Turned back on (a server added live): the file's rule exactly.
     const file = await readFile(GRAMMAR_FILE, "utf8");
     const on = buildGrammar(PLAIN_INSTRUCT_PROFILE, undefined, { mcpNativeTools: true });

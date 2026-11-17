@@ -168,9 +168,11 @@ test("a snapshot goes through the composer's one attachment path (attAdd with a 
   assert.doesNotMatch(js, /attachSave|snapshot:save/, "it never saves on its own");
 });
 
-test("the window button sits beside \"+\" in the composer, and the act opens the picker", () => {
+test("the window is a row of the \"+\" menu (W2: no button of its own), and the act opens the picker", () => {
   const r = src("../renderer/renderer.js");
-  assert.match(r, /attButtonHTML\(\) \+ \(typeof wsnapButtonHTML === 'function' \? wsnapButtonHTML\(\) : ''\) \+ micButton\(\)/);
+  assert.match(r, /attButtonHTML\(\) \+ micButton\(\) \+ sendButton\(\)/);
+  assert.doesNotMatch(r, /wsnapButtonHTML/);
+  assert.match(src("../renderer/attachments.js"), /data-wsnap-open="1">' \+ ic\('appwin'\) \+ '<span>Window<\/span>/);
   assert.match(r, /if \(a === 'attach:window'\) \{ close\(\); render\(\); wsnapOpen\(\); return; \}/);
   assert.match(r, /appwin:'/);
   const html = src("../renderer/index.html");
@@ -208,3 +210,31 @@ for (const platform of ["darwin", "win32", "linux"]) {
     assert.deepEqual(sent, ["attach:window"]);
   });
 }
+
+/* ---------- W2: the permission card ---------- */
+
+test("no Screen Recording: the picker shows one sentence, Open System Settings and Try again", () => {
+  globalThis.ic = () => "<svg></svg>";
+  globalThis.BR = { snapshotOpenSettings: async () => ({ ok: true }) };
+  try {
+    const html = R.wsnapPermHTML();
+    assert.match(html, /Allow screen recording to attach a window/);
+    assert.match(html, /data-wsnap-settings="1">Open System Settings</);
+    assert.match(html, /data-wsnap-retry="1">Try again</);
+    globalThis.BR = {};
+    assert.doesNotMatch(R.wsnapPermHTML(), /data-wsnap-settings/, "no Settings button on a build without the route");
+    assert.match(R.wsnapPermHTML(), /data-wsnap-retry/);
+  } finally {
+    delete globalThis.ic; delete globalThis.BR;
+  }
+  const js = src("../renderer/window-snapshot.js");
+  assert.match(js, /\[data-wsnap-retry\]'\)\) \{ e\.preventDefault\(\); WSNAP\.message = ''; void wsnapList\(\); return; \}/);
+});
+
+test("Open System Settings goes to the Screen Recording pane, a fixed address in main", () => {
+  assert.equal(M.SCREEN_SETTINGS_URL, "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture");
+  const ipc = src("../main/window-snapshot-ipc.ts");
+  assert.match(ipc, /ipcMain\.handle\("snapshot:openSettings", async \(\)/);
+  assert.match(ipc, /shell\.openExternal\(SCREEN_SETTINGS_URL\)/);
+  assert.match(src("../preload/preload.ts"), /snapshotOpenSettings: \(\) => ipcRenderer\.invoke\("snapshot:openSettings"\)/);
+});

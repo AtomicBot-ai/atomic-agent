@@ -16,6 +16,7 @@ export {
   onAnalyticsEnabledChange,
   refreshRunMode,
   sendingAllowed,
+  supportId,
   track,
   trackFromRenderer,
 } from "./core.js";
@@ -35,7 +36,7 @@ export {
   windowCrashed,
   windowShown,
 } from "./lifecycle.js";
-export { ChatTurnTracker, type TurnSummary } from "./chat-turns.js";
+export { ChatTurnTracker, type TurnRoute, type TurnSummary } from "./chat-turns.js";
 export {
   configureDownloads,
   downloadCancelRequested,
@@ -58,6 +59,7 @@ export {
   shouldReportSwitch,
   switchBegin,
   switchEnd,
+  turnRoute,
 } from "./setup.js";
 export {
   agentImportDone,

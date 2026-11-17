@@ -133,6 +133,7 @@ describe("AgentLoop fusion seams", () => {
           toolCallAdapter: openAiToolCallAdapter,
           supportsSlotAffinity: false,
           supportsParallelTools: true,
+          strictTools: false,
         };
       },
       llmComplete: async (params) => {
@@ -187,6 +188,7 @@ describe("AgentLoop fusion seams", () => {
           toolCallAdapter: null,
           supportsSlotAffinity: true,
           supportsParallelTools: true,
+          strictTools: false,
         }),
         llmComplete: async () => {
           call += 1;

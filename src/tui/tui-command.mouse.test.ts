@@ -84,6 +84,8 @@ vi.mock("../runtime/bootstrap.js", () => ({
     skillCatalog: [],
     approvals: { resolve: () => {} },
     config: { telegram: { enabled: false } },
+    // The interview invite (ATO-1467) asks at startup whether a turn runs.
+    turnController: { busySessionIds: () => [] },
   }),
 }));
 

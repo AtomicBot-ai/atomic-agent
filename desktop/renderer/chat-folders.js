@@ -19,6 +19,12 @@
    moved (out of a folder too) is theirs and never sorted again; Settings ›
    Import's "Put imported chats into folders" turns the sorting off.
 
+   W2: the import itself now files chats by the project they had at the
+   source (src/import/grouping.ts): a Project when that folder exists here,
+   else a folder of that name. It writes those placements as the person's
+   (no `auto` mark; a chat in a Project gets `null` here), so this sorting
+   leaves them alone and only files what the import could not.
+
    ATO-1253: Claude Code chats go into a folder per PROJECT instead, the
    folder that Claude Code session ran in (its last path segment; a second
    project with the same name gets its parent's name too: "app (client)").
@@ -32,6 +38,8 @@
 const FOLDER_NAME_MAX = 80;
 const FOLDER_SOURCES = {
   'claude-code': 'Claude Code', codex: 'Codex', hermes: 'Hermes', openclaw: 'OpenClaw', pi: 'Pi', 'oh-my-pi': 'Oh My Pi',
+  // W2: Claude app chats the export filed in no project.
+  'claude-app': 'Claude',
 };
 
 function foldersEmpty() {
@@ -46,7 +54,11 @@ function foldersCoerce(raw) {
   for (const f of Array.isArray(raw.folders) ? raw.folders : []) {
     if (!f || typeof f.id !== 'string' || typeof f.name !== 'string' || ids.has(f.id) || !f.name.trim()) continue;
     ids.add(f.id);
-    out.folders.push({id: f.id, name: f.name.trim().slice(0, FOLDER_NAME_MAX), collapsed: f.collapsed === true});
+    const folder = {id: f.id, name: f.name.trim().slice(0, FOLDER_NAME_MAX), collapsed: f.collapsed === true};
+    // W2 QA: a folder is a project with no disk folder; it keeps its instructions and when it was made.
+    if (typeof f.instructions === 'string' && f.instructions.trim()) folder.instructions = f.instructions.trim();
+    if (typeof f.createdAt === 'number' && f.createdAt > 0) folder.createdAt = f.createdAt;
+    out.folders.push(folder);
   }
   const chats = raw.chats && typeof raw.chats === 'object' ? raw.chats : {};
   for (const sid of Object.keys(chats)) {
@@ -60,6 +72,9 @@ function foldersCoerce(raw) {
   for (const sid of Object.keys(auto)) if (auto[sid] === true && typeof out.chats[sid] === 'string') out.auto[sid] = true;
   // A file from before ATO-1253 has no `projectSort`: its Claude Code chats move to their project's folder once.
   out.projectSort = raw.projectSort === true;
+  // Folders the terminal's import grouping created (src/import/grouping.ts): kept so it never takes over or deletes one of the person's own.
+  const imported = raw.imported && typeof raw.imported === 'object' ? raw.imported : {};
+  for (const fid of Object.keys(imported)) if (imported[fid] === true && ids.has(fid)) (out.imported = out.imported || {})[fid] = true;
   return out;
 }
 
@@ -94,7 +109,7 @@ function folderFreeName(state, base) {
 /** Add a folder at the top of the list; returns its id. */
 function folderAdd(state, name) {
   const id = folderNewId(state);
-  state.folders.unshift({id, name: folderFreeName(state, name || 'New folder'), collapsed: false});
+  state.folders.unshift({id, name: folderFreeName(state, name || 'New folder'), collapsed: false, createdAt: Date.now()});
   return id;
 }
 
@@ -117,6 +132,7 @@ function folderRemove(state, id) {
   state.folders.splice(i, 1);
   for (const sid of Object.keys(state.chats)) if (state.chats[sid] === id) { state.chats[sid] = null; delete state.auto[sid]; }
   delete state.projects[id];
+  if (state.imported) delete state.imported[id];
   return true;
 }
 
@@ -184,6 +200,45 @@ function folderForProject(state, dir) {
   return f;
 }
 
+/* W2 QA (16.11): the import's own rule (src/import/grouping.ts) for a folder
+   that is no project, so the sorting does not undo it. A Claude Code chat
+   that ran in the home folder, the root, /tmp, a Claude app scratch
+   workspace or an agent worktree goes to the one "Claude Code" folder, the
+   way the other apps' chats with no project go to theirs: it made folders
+   named after the home folder (678 chats), each scratch workspace and each
+   worktree ("amazing-colden-5dc37b"). */
+function folderNotAProject(dir) {
+  const d = String(dir || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!d || /^(?:[a-zA-Z]:)?$/.test(d)) return true;
+  if (/^\/(?:Users|home)\/[^/]+$/i.test(d) || /^[a-zA-Z]:\/Users\/[^/]+$/i.test(d) || d === '/root') return true;
+  if (/^(?:\/private)?\/tmp(?:\/|$)/.test(d)) return true;
+  if (/\/Claude\/scratch-workspaces(?:\/|$)/i.test(d)) return true;
+  return folderProjectDir(d) === null;
+}
+
+/* The folder a Claude Code chat's project is, by the import's rule for agent
+   worktrees (src/import/grouping.ts agentWorktree, without its disk read):
+   `<repo>/.claude/worktrees/<name>` is <repo>; Codex's `~/.codex/worktrees/<hash>/<repo>`,
+   Cursor's `~/.cursor/worktrees/<repo>/<name>` and Conductor's
+   `~/conductor/workspaces/<repo>/<name>` keep the repository's name only;
+   Claude's worktrees in the home folder keep none (null). */
+function folderProjectDir(dir) {
+  const d = String(dir || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  const homeLike = (p) => /^\/(?:Users|home)\/[^/]+$/i.test(p) || /^[a-zA-Z]:\/Users\/[^/]+$/i.test(p) || p === '/root' || p === '';
+  const t = /^(.*?)\/\.(claude|codex|cursor)\/worktrees\/([^/]+)(?:\/([^/]+))?/i.exec(d);
+  if (t) {
+    const base = t[1], tool = t[2].toLowerCase(), a = t[3], b = t[4];
+    if (!homeLike(base)) return base;
+    if (tool === 'codex') return b ? 'worktree-repo/' + b : null;
+    if (tool === 'cursor') return 'worktree-repo/' + a;
+    return null;
+  }
+  if (/\/\.claude-worktrees(?:\/|$)/i.test(d)) return null;
+  const c = /\/conductor\/workspaces\/([^/]+)\/[^/]+/i.exec(d);
+  if (c) return 'worktree-repo/' + c[1];
+  return d;
+}
+
 function folderForApp(state, src) {
   const name = FOLDER_SOURCES[src];
   let f = state.folders.find((x) => x.name === name && !(x.id in state.projects));
@@ -202,6 +257,7 @@ function folderAutoSort(state, sessions) {
   const legacy = !state.projectSort;
   const oldFolder = legacy ? state.folders.find((f) => f.name === FOLDER_SOURCES['claude-code'] && !(f.id in state.projects)) : null;
   let moved = 0;
+  const emptied = new Set();
   // Every Claude Code chat the old sorting filed there counts as sorted, also one the list does not carry today (past its 200 rows).
   if (oldFolder) for (const sid of Object.keys(state.chats)) if (state.chats[sid] === oldFolder.id && folderImportSource(sid) === 'claude-code') state.auto[sid] = true;
   for (const s of sessions || []) {
@@ -210,11 +266,19 @@ function folderAutoSort(state, sessions) {
     if (!src) continue;
     const placed = s.id in state.chats;
     if (placed && state.auto[s.id] !== true) continue;
-    const f = src === 'claude-code' && typeof s.workingDir === 'string' && folderPathParts(s.workingDir).length
-      ? folderForProject(state, s.workingDir) : folderForApp(state, src);
+    // A Claude Code chat with no real project goes where every other app's does: the app's folder.
+    const byProject = src === 'claude-code' && typeof s.workingDir === 'string' && folderPathParts(s.workingDir).length
+      && !folderNotAProject(s.workingDir);
+    const was = state.chats[s.id];
+    const f = byProject ? folderForProject(state, folderProjectDir(s.workingDir)) : folderForApp(state, src);
+    if (placed && was && was !== f.id) emptied.add(was);
     if (state.chats[s.id] !== f.id || state.auto[s.id] !== true) moved++;
     state.chats[s.id] = f.id;
     state.auto[s.id] = true;
+  }
+  // A project folder this sorting made and just emptied goes; one the person put a chat in stays.
+  for (const fid of emptied) {
+    if (fid in state.projects && !Object.values(state.chats).includes(fid)) { folderRemove(state, fid); moved++; }
   }
   if (legacy) {
     state.projectSort = true;
@@ -252,6 +316,10 @@ function saveFolders() {
 /** Called each time the chat list lands (applySessions): imported chats find their folder. */
 function foldersAfterSessions() {
   if (!FOLDERS.loaded || typeof SESSIONS === 'undefined') return;
+  /* W2 QA: while an import writes chat-folders.json this window's copy is old,
+     and saving it whole would undo what the import filed; impRun reads the
+     file back when it ends (loadFolders), which sorts again. */
+  if (typeof IMP !== 'undefined' && IMP && IMP.busy && IMP.applying) return;
   if (folderAutoSort(FOLDERS.state, SESSIONS)) saveFolders();
 }
 
@@ -286,11 +354,9 @@ function folderMenuHTML() {
     ];
   } else {
     const sid = FMENU.id;
-    const here = FOLDERS.state.chats[sid] || '';
-    label = 'Move to folder';
-    items = FOLDERS.state.folders.map((f) => ({act: 'fput:' + f.id + ':' + sid, label: f.name, icon: 'folder', on: f.id === here}))
-      .concat(here ? [{act: 'fput::' + sid, label: 'No folder', icon: 'x'}] : [])
-      .concat([{act: 'fnew:' + sid, label: 'New folder…', icon: 'plus', sep: FOLDERS.state.folders.length > 0}]);
+    // W2 QA: projects and chat folders are one list, Projects (chat-projects.js).
+    label = 'Move to project';
+    items = projectPickItems(sid);
   }
   const w = typeof SESMENU_W === 'number' ? SESMENU_W : 220;
   const h = items.length * 34 + 21;
@@ -305,10 +371,26 @@ function folderMenuHTML() {
     + '</div></div>';
 }
 
+/* W2 QA (16.11): with dozens of folders the Chats list, new chats included,
+   sat below all of them. The way ChatGPT lists projects: the first few, then
+   "Show N more"; the folder holding the open chat is always shown. */
+const FOLDERS_SHOWN = 5;
+function folderListCut(groups, openSid, all) {
+  if (all || groups.length <= FOLDERS_SHOWN) return {shown: groups, hidden: 0};
+  const shown = groups.filter((g, i) => i < FOLDERS_SHOWN || (!!openSid && g.rows.some((r) => r && r.id === openSid)));
+  return {shown, hidden: groups.length - shown.length};
+}
+
 /** The folders block of the sidebar: a header with New folder, then each folder and its chats. */
 function foldersSidebarHTML(groups) {
   // No folders yet: nothing drawn here; New folder sits on the Chats heading then (renderSidebar).
   if (!groups.length) return '';
+  const openSid = typeof S !== 'undefined' && S ? S.sessionId : null;
+  const cut = folderListCut(groups, openSid, FOLDERS.showAll === true);
+  const toggle = cut.hidden > 0
+    ? '<button class="loadmore" data-more="folders">Show ' + cut.hidden + ' more ' + (cut.hidden === 1 ? 'folder' : 'folders') + '</button>'
+    : FOLDERS.showAll === true && groups.length > FOLDERS_SHOWN ? '<button class="loadmore" data-more="folders">Show fewer folders</button>' : '';
+  groups = cut.shown;
   return '<div class="sb-list sb-folders" data-list="folders">'
     + '<div class="sb-list-head micro"><span>Folders</span>'
       + '<button class="iconbtn sb-add" data-act="fnew:" title="New folder" aria-label="New folder">' + ic('plus') + '</button></div>'
@@ -327,6 +409,7 @@ function foldersSidebarHTML(groups) {
         + (f.collapsed ? '' : g.rows.length ? g.rows.map(chatRow).join('') : '<div class="sb-empty sb-fempty">Drag a chat here</div>')
         + '</div>';
     }).join('')
+    + toggle
     + '</div>';
 }
 
@@ -378,5 +461,5 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {FOLDER_SOURCES, foldersEmpty, foldersCoerce, folderImportSource, folderNameCheck, folderAdd, folderById,
-    folderRename, folderRemove, folderPut, folderOf, folderForget, folderGroups, folderAutoSort, folderFreeName, folderForProject};
+    folderRename, folderRemove, folderPut, folderOf, folderForget, folderGroups, folderAutoSort, folderFreeName, folderForProject, folderNotAProject, folderProjectDir, folderListCut, FOLDERS_SHOWN};
 }

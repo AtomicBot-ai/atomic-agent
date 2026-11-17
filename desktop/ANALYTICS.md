@@ -15,6 +15,9 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
 - `DO_NOT_TRACK=1` (also `true` / `yes` / `on`) in the environment turns
   analytics and crash reports off whatever the config says, and the agent
   the desktop spawns gets `ATOMIC_AGENT_ANALYTICS=off`.
+- `ATOMIC_AGENT_ANALYTICS=off` (also `0` / `false` / `no` / `disabled`), the
+  terminal agent's own kill switch, does the same for the desktop: no events,
+  no crash reports, and the agent inherits it.
 - Settings › Privacy applies live, no restart. Turning it off: the config
   write happens first; only if it succeeded is `analytics_disabled` sent and
   flushed (2 s at most), and then sending stops and the queue is dropped. A
@@ -52,7 +55,7 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
 | `ATOMIC_AGENT_SURFACE` | `desktop` |
 | `ATOMIC_AGENT_INSTALL_CHANNEL` | `dmg` / `exe` / `appimage` / `deb` |
 | `ATOMIC_AGENT_DESKTOP_VERSION` | the app version, when known |
-| `ATOMIC_AGENT_ANALYTICS` | `off` on a test or dev run, when the terminal opt-out is inherited, or under `DO_NOT_TRACK=1` |
+| `ATOMIC_AGENT_ANALYTICS` | `off` on a test or dev run, when the terminal opt-out is inherited, or under `DO_NOT_TRACK=1` / `ATOMIC_AGENT_ANALYTICS=off` |
 | `ATOMIC_AGENT_INSTALL_ID_FILE` | `<desktop state dir>/install-id` on a test or dev run; otherwise inherited unchanged |
 
 `ATOMIC_AGENT_TEAM` is not set here, it is inherited: with it (`1` / `true` / `yes` / `on`), or with a file `~/.atomic-agent-team`, the machine is one of ours (ATO-1247). The desktop and the agent still send their events, each tagged `test_run: true` with the person property `atomic_team: true`, so PostHog can leave them out of the metrics.
@@ -77,14 +80,27 @@ send `ui` events.
 
 | Group | Main process | Renderer |
 |---|---|---|
-| Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / setup_finished / workspace_change / import / telegram / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
+| Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / setup_finished / workspace_change / import / telegram / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled`, `interview_invite_shown` / `interview_invite_clicked` (via menu / card / slash) / `interview_invite_dismissed` (later / never), ATO-1467 | |
 | Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out / key_rejected / provider_error / agent_crashed / not_json / no_binary / list_failed; `provider_preset`, `kind` cloud / custom, as in `model_configured`), `custom_endpoint_tested`, `subscription_login_clicked`, `subscription_terminal_opened` (opened; terminal or reason), `subscription_login_succeeded` (seconds_to_sign_in) |
 | Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `local_backend_crashed`, `engine_recovery_shown`, `backend_switched`, `model_switched`, `fusion_configured` | |
-| Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |
+| Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure; `ms_to_first_activity`; `cancel_phase` waiting_first / provider_wait / approval / tool / generating / waiting_next and `cancel_by` user / app on a cancel; `prompt_tokens`, `completion_tokens`, `gen_tokens_per_s` (no-tool turns only); `provider`, `provider_kind` cloud / managed_local / lmstudio / ollama / atomic_chat / custom_server, `model_id`) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste), `suggestion_shown`, `suggestion_accepted` (ms_to_accept) |
 | Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `overnight_started` (has_budget, hours, notify_telegram), `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `composio_setup` (key_saved / key_removed / key_checked / enable / disable; ok / unverified / rejected / error), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
 | App updates | `update_available` (auto / manual), `update_accepted`, `update_dismissed` (not_now / cancel / later), `update_skipped`, `update_installed` | |
 
 Notes on specific properties:
+
+- `chat_turn_ui` (ATO-1026): `ms_to_first_activity` is the first sign of
+  work of any kind (reasoning, a tool call, a progress note, a token), so a
+  turn that thinks reads apart from one that hangs. The wait before it holds
+  both the model loading and the prefill: this stream does not tell them
+  apart. `prompt_tokens` / `completion_tokens` are the agent's `usage` frame
+  (the whole turn, every step; absent on a failed or cancelled turn).
+  `gen_tokens_per_s` is completion tokens over first activity to the end,
+  for a turn with no tool call only. `provider_kind` splits what `run_mode`
+  cloud lumps together; `model_id` is a catalogue id for the managed engine
+  and `custom` otherwise (the agent's own `message_sent` carries the cloud
+  model). `cancel_by` is `user` for the turn's own Stop and `app` when the
+  app ended every turn (a restart, a quit).
 
 - `ui_action.action`: the act's verb plus allowlisted tails only
   (`renderer/analytics-acts.js`); main accepts camelCase segments, at most
@@ -167,6 +183,13 @@ Notes on specific properties:
   `settings` (Settings' engine install or update, and Download again), or
   `launch` (the launch installing Atomic Core's backend before it starts the
   model, when Core is the engine and its backend is not on disk yet).
+
+- `suggestion_shown` / `suggestion_accepted` (ATO-1096): a next-step
+  suggestion appeared in the empty composer, and Tab took it into the field.
+  Sent only while Settings › General › "Suggest a next step"
+  (`tui.nextStepSuggestions`, off by default) is on. `ms_to_accept` is the
+  time from the suggestion appearing to Tab. The suggestion's text is never
+  sent.
 
 Transport: PostHog `/batch/` over `fetch`, batched in memory, flushed every
 10 s; at quit up to five batches of 100, bounded at 2 s in total (also when

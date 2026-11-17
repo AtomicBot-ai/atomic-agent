@@ -12,11 +12,14 @@ import {
   captureLocalEngineFailed,
   captureModelConfigured,
   captureOnboardingStep,
+  captureUiAction,
   createTelemetryToggle,
+  INTERVIEW_INVITE_EVENTS,
   detectOtherSurfaceInstalled,
   resolveAnalyticsDimensions,
   type AnalyticsDisabledVia,
   type LocalEngineFailedContext,
+  type UiActionVia,
 } from "../../analytics/index.js";
 import { getAppVersion } from "../../version.js";
 import { SENTRY_RATE_LIMIT_FILE } from "../../error-reporting/index.js";
@@ -153,7 +156,33 @@ export function createRuntimeObservability(
     const reportLocalEngineFailed = (context: LocalEngineFailedContext): void => {
       captureLocalEngineFailed(analytics, context);
     };
-    return { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed };
+    const reportUiAction = (action: string, via: UiActionVia): void => {
+      captureUiAction(analytics, action, via);
+    };
+    // ATO-1467: the interview invite reads the id and the install age
+    // only while analytics is on; its events carry fixed words only.
+    const interviewInviteIdentity = () => {
+      if (!analytics) return null;
+      return {
+        installId: analyticsStateStore.getSharedInstallId(true, analyticsDimensions.surface),
+        daysSinceInstall: analyticsStateStore.getDaysSinceInstall(),
+      };
+    };
+    const reportInterviewInvite = (
+      kind: keyof typeof INTERVIEW_INVITE_EVENTS,
+      props: { via?: string; reason?: string },
+    ): void => {
+      analytics?.capture(INTERVIEW_INVITE_EVENTS[kind], { ...props });
+    };
+    return {
+      setAnalyticsEnabled,
+      reportOnboardingStep,
+      reportModelConfigured,
+      reportLocalEngineFailed,
+      reportUiAction,
+      interviewInviteIdentity,
+      reportInterviewInvite,
+    };
   };
 
   return {

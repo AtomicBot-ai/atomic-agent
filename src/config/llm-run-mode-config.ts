@@ -189,6 +189,13 @@ export type UserLlmFusionConfig = {
    */
   mixLocalModels?: boolean;
   /**
+   * The outcome journal (ATO-949): every finished worker task leaves a
+   * row of counts and labels in `<stateDir>/fusion-outcomes.jsonl`, and
+   * the planner's `### fusion` block states what past runs showed.
+   * Default `true`; `false` writes no rows and states no summary.
+   */
+  outcomeJournal?: boolean;
+  /**
    * Branch isolation (ATO-946). `"worktree"`: every task of a fan-out
    * works in a workspace of its own (a detached git worktree inside a
    * git repo, a folder copy elsewhere); after its wave the changes are
@@ -612,6 +619,15 @@ function parseFusion(
       );
     }
     out.mixLocalModels = obj.mixLocalModels;
+  }
+  if (obj.outcomeJournal !== undefined) {
+    if (typeof obj.outcomeJournal !== "boolean") {
+      throw new ConfigValidationError(
+        `${field}.outcomeJournal`,
+        "expected boolean",
+      );
+    }
+    out.outcomeJournal = obj.outcomeJournal;
   }
   if (obj.taskTree !== undefined) {
     out.taskTree = parseTaskTree(obj.taskTree, `${field}.taskTree`);

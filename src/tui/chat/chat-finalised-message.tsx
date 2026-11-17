@@ -8,7 +8,9 @@ import { ChatLinkButtons } from "./chat-link-buttons.js";
 import { ChatTryAgainButton } from "./chat-try-again-button.js";
 import { PlanHandoff } from "../coding-mode/plan-handoff.js";
 import { ReasoningBubble } from "./reasoning-bubble.js";
+import { ChatCheckKeyButton } from "./chat-check-key-button.js";
 import { ChatConfigureFallbackButton } from "./chat-configure-fallback-button.js";
+import { ChatAddCloudProviderButton } from "./chat-add-cloud-provider-button.js";
 import { ChatSwitchBackButton } from "./chat-switch-back-button.js";
 import { SystemBubble } from "./system-bubble.js";
 import { ToolCard, ToolCardsAnnotationLine } from "./tool-card.js";
@@ -45,6 +47,8 @@ export interface FinalisedMessageProps {
   fold?: TurnFold | null;
   /** The operator opened the folded turn: its steps show under the line. */
   turnOpen?: boolean;
+  /** `/verbose` (ATO-34): a plain note under each tool card. */
+  verbose?: boolean;
 }
 
 /** One finalised chat message with its footer row, by role. */
@@ -55,6 +59,7 @@ export function FinalisedMessage({
   fusion = false,
   fold = null,
   turnOpen = false,
+  verbose = false,
 }: FinalisedMessageProps): ReactElement {
   if (message.role === "user") {
     const steered = message.steered === true;
@@ -102,6 +107,7 @@ export function FinalisedMessage({
                       // An opened fold keeps large output out of sight:
                       // only a failure shows its result line.
                       preview={fold ? "errors" : "always"}
+                      verbose={verbose}
                     />
                   ))}
                   <ToolCardsAnnotationLine cards={visible} />
@@ -123,7 +129,7 @@ export function FinalisedMessage({
             documentation, not a destination. */}
         <Box flexDirection="row">
           <ChatCopyButton text={message.text} />
-          <ChatLinkButtons text={message.text} />
+          <ChatLinkButtons text={message.text} toolCards={message.toolCards} />
         </Box>
         {planHandoff ? (
           <PlanHandoff
@@ -150,6 +156,13 @@ export function FinalisedMessage({
         ) : null}
         {message.action === "configure-fallback" ? (
           <ChatConfigureFallbackButton />
+        ) : null}
+        {message.action === "add-cloud-provider" ? (
+          <ChatAddCloudProviderButton />
+        ) : null}
+        {/* A refused key (ATO-1457): the failed turn, or a fallover away from it. */}
+        {message.action === "fix-key" || message.fixKeyProviderId !== undefined ? (
+          <ChatCheckKeyButton providerId={message.fixKeyProviderId} />
         ) : null}
         {/*
           The notices a mid-turn switch leaves behind name the thread

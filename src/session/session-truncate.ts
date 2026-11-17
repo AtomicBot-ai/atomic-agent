@@ -243,6 +243,12 @@ export function planLastTurnRollback(
     // Files delivered with a reply were made by a tool.
     return { ok: false, code: "turn_has_tools" };
   }
+  if (reply?.kind === "assistant_reply" && reply.toolsRan === true) {
+    // A failed turn whose tools ran (ATO-1476): the step that ran them
+    // may never have been stored, so the tail shows no tool row, but
+    // taking the turn back and sending it again would run them twice.
+    return { ok: false, code: "turn_has_tools" };
+  }
 
   const { state: next, compactionCovered } = truncateSessionAt(state, start);
   if (compactionCovered) return { ok: false, code: "turn_compacted" };

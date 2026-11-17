@@ -42,6 +42,13 @@ import {
   type RiskLevel,
   type RiskReviewer,
 } from "./risk-review.js";
+import {
+  formatTaintNote,
+  isTaintSensitive,
+  TAINT_REVIEW_LOW_REASON,
+  UntrustedTaint,
+} from "./untrusted-taint.js";
+import type { UserQuestion, UserQuestionAnswer } from "./user-question.js";
 
 export interface ApprovalRequest {
   approvalId: string;
@@ -134,6 +141,19 @@ export interface ApprovalRequest {
   riskNote?: string;
   /** The level behind `riskNote`; absent when the review gave no verdict. */
   riskLevel?: RiskLevel;
+  /**
+   * The reviewer's reason on its own (`installs a package`), so a surface
+   * can draw `Risk check: medium. Installs a package` (`formatRiskLine`)
+   * without parsing `riskNote`. Absent when there is no verdict or no reason.
+   */
+  riskReason?: string;
+  /**
+   * Set only on a `user_question` request (`ask_user`, ATO-489): the
+   * question and its options. A surface that knows it draws option cards
+   * and answers with `ApprovalDecision.answer`; one that does not still
+   * shows `reason` (the question) and `preview` (the numbered options).
+   */
+  question?: UserQuestion;
 }
 
 /**
@@ -185,6 +205,12 @@ export interface ApprovalDecision {
    * and by every tool that did not set `redirectablePath`.
    */
   pathOverride?: string;
+  /**
+   * The person's answer to a `user_question` request (ATO-489), checked
+   * by the surface with `validateUserQuestionAnswer`. Passed through
+   * untouched; `ask_user` checks it again. Ignored when denied.
+   */
+  answer?: UserQuestionAnswer;
 }
 
 export type ApprovalEmitter = (request: ApprovalRequest) => void;
@@ -377,6 +403,12 @@ export class ApprovalGate {
   private riskReviewer: RiskReviewer | undefined;
   /** Requests on their way back into `request` after a review (see `requestAfterReview`). */
   private readonly riskReviewed = new Set<string>();
+  /** Which sessions read outside content this turn (`untrusted-taint.ts`, ATO-618). */
+  private readonly taint = new UntrustedTaint();
+  /** Approval ids re-entering `request` after the taint check: no silent approval. */
+  private readonly taintHeld = new Set<string>();
+  /** `agent.taintReview`, read live; off until bootstrap wires it. */
+  private taintReview: () => boolean = () => false;
 
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
@@ -423,6 +455,40 @@ export class ApprovalGate {
    */
   setRiskReviewer(reviewer: RiskReviewer | undefined): void {
     this.riskReviewer = reviewer;
+  }
+
+  /**
+   * Live switch for the review after outside content (`agent.taintReview`,
+   * ATO-618). While it returns true, a request the level or a session
+   * grant would run silently, of a category `isTaintSensitive` names, on
+   * a session that read outside content this turn, goes to the risk
+   * reviewer and then the person instead.
+   */
+  setTaintReview(enabled: () => boolean): void {
+    this.taintReview = enabled;
+  }
+
+  /** Record that `sessionId` read outside content (`source`) in its running turn. */
+  noteUntrustedContent(sessionId: string, source: string): void {
+    this.taint.mark(sessionId, source);
+  }
+
+  /**
+   * Whether a `category` call on `sessionId` would be held for outside
+   * content right now (`agent.taintReview` on, category sensitive, session
+   * tainted). For tools that skip the gate on their own for a call they
+   * deem harmless, like a GET under `http.approvalMode: "writes"`: on a
+   * tainted session such a call can carry data out in its URL, so the
+   * tool requests approval anyway and the hold decides (ATO-618).
+   */
+  holdsForOutsideContent(sessionId: string, category: ApprovalCategory): boolean {
+    if (!isTaintSensitive(category) || !this.taintReview()) return false;
+    return this.taint.sources(sessionId).length > 0;
+  }
+
+  /** Forget the outside content of `sessionId`'s last turn; called when a turn starts. */
+  clearUntrustedContent(sessionId: string): void {
+    this.taint.clear(sessionId);
   }
 
   /** Remove the session's policy so its requests prompt again. */
@@ -535,8 +601,16 @@ export class ApprovalGate {
         automatic: true,
       });
     }
-    const auto = rule?.decision === "ask" ? null : this.autoApproval(request);
+    const auto =
+      rule?.decision === "ask" || this.taintHeld.has(approvalId)
+        ? null
+        : this.autoApproval(request);
     if (auto) {
+      // After outside content, a risky action is not run silently
+      // (ATO-618). A saved allow rule is the person's own narrow choice
+      // and still answers, so the hold only stands in for level and grant.
+      const sources = rule?.decision === "allow" ? null : this.taintedSources(request);
+      if (sources !== null) return this.requestAfterTaint(request, sources, signal);
       // A grant is logged for the turn summary; the standing level is not.
       if (!isAutoApprovedAt(this.level, request.category)) {
         recordAutoApproval("grant", request.category, auto.replace(/^auto-approved \((.*)\)$/, "$1"));
@@ -648,16 +722,101 @@ export class ApprovalGate {
       };
     }
     this.riskReviewed.add(request.approvalId);
+    // The verdict fields are the gate's alone: whatever a caller put in
+    // them is dropped, so the prompt never shows a level or reason the
+    // review did not give (ATO-1268 draws them on every surface).
+    const unreviewed: ApprovalRequest = { ...request };
+    delete unreviewed.riskNote;
+    delete unreviewed.riskLevel;
+    delete unreviewed.riskReason;
     try {
       return this.request(
         {
-          ...request,
+          ...unreviewed,
           riskNote: formatRiskNote(verdict),
           ...(verdict !== null ? { riskLevel: verdict.risk } : {}),
+          ...(verdict !== null && verdict.reason.length > 0
+            ? { riskReason: verdict.reason }
+            : {}),
         },
         signal ? { signal } : {},
       );
     } finally {
+      this.riskReviewed.delete(request.approvalId);
+    }
+  }
+
+  /** The outside sources that hold `request` back, or `null` to let the auto-approval stand. */
+  private taintedSources(request: ApprovalRequest): readonly string[] | null {
+    if (!isTaintSensitive(request.category) || !this.taintReview()) return null;
+    const sources = this.taint.sources(request.sessionId);
+    return sources.length > 0 ? sources : null;
+  }
+
+  /**
+   * A request held after outside content: the reviewer (when on, and the
+   * category is one it may settle) is asked whether the action serves the
+   * user's request; `low` runs it, anything else and every failure puts it
+   * to the person, skipping the level and grants. A session under a refuse
+   * policy gets its refusal, as for any prompt.
+   */
+  private async requestAfterTaint(
+    request: ApprovalRequest,
+    sources: readonly string[],
+    signal: AbortSignal | undefined,
+  ): Promise<ApprovalDecision> {
+    const reviewer = this.riskReviewer;
+    let consulted = false;
+    let verdict: Awaited<ReturnType<typeof runRiskReview>> = null;
+    if (
+      reviewer !== undefined &&
+      reviewer.enabled?.() !== false &&
+      isRiskReviewEligible(request.category) &&
+      !this.policiesBySession.has(request.sessionId)
+    ) {
+      consulted = true;
+      verdict = await runRiskReview(
+        reviewer,
+        { request, externalSources: sources },
+        signal ? { signal } : {},
+      );
+    }
+    if (signal?.aborted) {
+      throw new ApprovalGateError(
+        "approval aborted before a decision was made",
+        request.approvalId,
+      );
+    }
+    if (verdict?.risk === "low") {
+      recordAutoApproval(
+        "risk-review",
+        request.category,
+        verdict.reason.length > 0
+          ? `risk review after outside content: low (${verdict.reason})`
+          : "risk review after outside content: low",
+      );
+      return {
+        approvalId: request.approvalId,
+        approved: true,
+        reason: TAINT_REVIEW_LOW_REASON,
+      };
+    }
+    this.taintHeld.add(request.approvalId);
+    this.riskReviewed.add(request.approvalId);
+    try {
+      return this.request(
+        {
+          ...request,
+          riskNote: formatTaintNote(sources, consulted ? formatRiskNote(verdict) : null),
+          ...(verdict !== null ? { riskLevel: verdict.risk } : {}),
+          ...(verdict !== null && verdict.reason.length > 0
+            ? { riskReason: verdict.reason }
+            : {}),
+        },
+        signal ? { signal } : {},
+      );
+    } finally {
+      this.taintHeld.delete(request.approvalId);
       this.riskReviewed.delete(request.approvalId);
     }
   }
@@ -1125,6 +1284,27 @@ export function describeCategoryGrant(request: ApprovalRequest): string {
   const label = formatApprovalCategory(request.category);
   const host = siteGrantHost(request);
   return host !== null ? `${label} on ${host}` : label;
+}
+
+/**
+ * The prefix of an MCP tool's `grantKey` (`MCP tool <server>/<tool>`,
+ * built by `mcpGrantKey` in src/mcp). Server names cannot hold a `/`
+ * (`MCP_SERVER_NAME_RE`), so the first `/` splits the two.
+ */
+const MCP_TOOL_GRANT_PREFIX = "MCP tool ";
+
+/**
+ * What `[s]` grants for an MCP tool request, in the words a prompt
+ * shows after "allow": `create_issue from MCP server github`. `null`
+ * for any other request (ATO-1473).
+ */
+export function describeMcpToolGrant(request: ApprovalRequest): string | null {
+  const key = request.grantKey;
+  if (key === undefined || !key.startsWith(MCP_TOOL_GRANT_PREFIX)) return null;
+  const rest = key.slice(MCP_TOOL_GRANT_PREFIX.length);
+  const slash = rest.indexOf("/");
+  if (slash <= 0 || slash === rest.length - 1) return null;
+  return `${rest.slice(slash + 1)} from MCP server ${rest.slice(0, slash)}`;
 }
 
 function withSites(

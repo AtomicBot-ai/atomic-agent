@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { getConfig, LOCAL_PROVIDER_KIND, type AtomicAgentConfig } from "../config/index.js";
@@ -13,8 +13,12 @@ import {
   isHandoffAgent,
   listHandoffCandidates,
   readHandoffTranscript,
+  buildHandoffBrief,
+  parseHandoffTarget,
+  HANDOFF_TARGET_LABEL,
   type HandoffAgent,
   type HandoffCandidate,
+  type HandoffTarget,
 } from "../import/index.js";
 import { SessionStore } from "../session/index.js";
 
@@ -27,6 +31,7 @@ export const HANDOFF_HELP =
     "",
     "Usage:",
     "  atomic-agent handoff --from claude-code|codex [options]",
+    "  atomic-agent handoff --to claude|codex [--out <file>] [--session <id>]",
     "",
     "Options:",
     "  --from <agent>        claude-code or codex (required)",
@@ -45,10 +50,20 @@ export const HANDOFF_HELP =
     "  --json                Machine output; saves the chat but does not open it",
     "  --no-open             Save the chat and print how to open it",
     "",
+    "Back the other way (--to):",
+    "  --to <agent>          claude or codex: write a Markdown handoff of an Atomic",
+    "                        Agent chat (task, decisions, open items, changed files)",
+    "  --out <file>          Write it to this file (default: print it to stdout).",
+    "                        Nothing is written into ~/.claude or ~/.codex",
+    "  --session <id>        latest (default: the newest chat in this folder, else",
+    "                        the newest anywhere) or the chat id",
+    "  --cwd <dir>           Folder whose newest chat latest means (default: here)",
+    "",
     "Examples:",
     "  atag handoff --from claude-code",
     "  atag handoff --from codex --session 0199a1",
     "  atag handoff --from claude-code --list",
+    "  atag handoff --to claude --out handoff.md",
   ].join("\n") + "\n";
 
 /**
@@ -178,6 +193,137 @@ export function parseHandoffArgs(
   return { agent, session, sourceDir, cwd, note, context, list, limit, json, open };
 }
 
+interface HandoffToArgs {
+  to: HandoffTarget;
+  out: string | null;
+  session: string;
+  cwd: string | null;
+}
+
+/** `atag handoff --to …` (ATO-1158). */
+export function parseHandoffToArgs(
+  args: string[],
+): HandoffToArgs | { error: string } | { help: true } {
+  let to: string | null = null;
+  let out: string | null = null;
+  let session = "latest";
+  let cwd: string | null = null;
+  for (let i = 0; i < args.length; i += 1) {
+    const flag = args[i]!;
+    const value = (): string | null => {
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith("--")) return null;
+      i += 1;
+      return next;
+    };
+    switch (flag) {
+      case "-h":
+      case "--help":
+        return { help: true };
+      case "--to": {
+        const v = value();
+        if (!v) return { error: "--to needs claude or codex" };
+        to = v;
+        break;
+      }
+      case "--out": {
+        const v = value();
+        if (!v) return { error: "--out needs a file path" };
+        out = v;
+        break;
+      }
+      case "--session": {
+        const v = value();
+        if (!v) return { error: "--session needs latest or a chat id" };
+        session = v;
+        break;
+      }
+      case "--cwd":
+      case "--working-dir": {
+        const v = value();
+        if (!v) return { error: `${flag} needs a directory` };
+        cwd = resolve(v);
+        break;
+      }
+      case "--from":
+        return { error: "use either --from or --to, not both" };
+      default:
+        return { error: `unknown flag for --to: ${flag}` };
+    }
+  }
+  if (to === null) return { error: "--to is required (claude or codex)" };
+  const target = parseHandoffTarget(to);
+  if (target === null) return { error: `--to must be claude or codex, not ${to}` };
+  return { to: target, out, session, cwd };
+}
+
+/** The sessions the `--to` path reads; never written to. */
+export type HandoffToStore = Pick<SessionStore, "load" | "listByWorkingDir" | "listRecent">;
+
+/**
+ * `atag handoff --to claude|codex [--out file]`. Reads one chat and
+ * writes a Markdown brief to `--out` or stdout, and nothing else: no
+ * file in `~/.claude`, `~/.codex` or the session store.
+ * 0 done · 1 no chat to hand off · 2 usage error.
+ */
+export async function handoffToCommand(
+  args: string[],
+  deps: {
+    store?: HandoffToStore;
+    cwd?: string;
+    stdout?: (text: string) => void;
+    stderr?: (text: string) => void;
+    now?: Date;
+  } = {},
+): Promise<number> {
+  const stdout = deps.stdout ?? ((text: string) => void process.stdout.write(text));
+  const stderr = deps.stderr ?? ((text: string) => void process.stderr.write(text));
+  const parsed = parseHandoffToArgs(args);
+  if ("help" in parsed) {
+    stdout(HANDOFF_HELP);
+    return 0;
+  }
+  if ("error" in parsed) {
+    stderr(`${parsed.error}\n`);
+    return 2;
+  }
+  const cwd = parsed.cwd ?? deps.cwd ?? process.cwd();
+  const owned = deps.store === undefined;
+  const store: HandoffToStore & { close?: () => void } =
+    deps.store ?? new SessionStore({ dbFile: getConfig().paths.sessionsDbFile });
+  let session;
+  try {
+    session =
+      parsed.session === "latest"
+        ? (store.listByWorkingDir(cwd, 1)[0] ?? store.listRecent(1)[0] ?? null)
+        : store.load(parsed.session);
+  } finally {
+    if (owned) store.close?.();
+  }
+  if (!session) {
+    stderr(
+      parsed.session === "latest"
+        ? "No Atomic Agent chat to hand off yet.\n"
+        : `No Atomic Agent chat with id ${parsed.session}.\n`,
+    );
+    return 1;
+  }
+  const brief = buildHandoffBrief({
+    session,
+    to: parsed.to,
+    ...(deps.now ? { now: deps.now } : {}),
+  });
+  if (parsed.out === null) {
+    stdout(brief);
+    return 0;
+  }
+  // Relative to where the command ran, not to --cwd.
+  const outPath = resolve(deps.cwd ?? process.cwd(), parsed.out);
+  writeFileSync(outPath, brief, "utf8");
+  stderr(`Wrote the ${HANDOFF_TARGET_LABEL[parsed.to]} handoff for chat ${session.id} to ${outPath}\n`);
+  return 0;
+}
+
 /** `atag handoff`. 0 done · 1 nothing to continue / failed · 2 usage error. */
 export async function handoffCommand(
   args: string[],
@@ -186,6 +332,7 @@ export async function handoffCommand(
     isTty?: boolean;
   } = {},
 ): Promise<number> {
+  if (args.includes("--to")) return handoffToCommand(args);
   const parsed = parseHandoffArgs(args);
   if ("help" in parsed) {
     process.stdout.write(HANDOFF_HELP);

@@ -166,6 +166,16 @@ describe("local refusal tags (ATO-421, ATO-769)", () => {
     expect(JSON.stringify(odd)).not.toContain("someone");
   });
 
+  it("a lock held too long to be a real operation is its own word (ATO-1433)", () => {
+    expect(sanitizeLlmFailureTags({
+      localEngine: "atomic-core",
+      connectionRefused: true,
+      engineLiveness: "no_pid",
+      engineLivenessReason: "no_pid_file",
+      engineLock: "stale_too_old",
+    })).toMatchObject({ engine_liveness: "no_pid", engine_lock: "stale_too_old" });
+  });
+
   it("an external engine carries no liveness reason tags", () => {
     const tags = sanitizeLlmFailureTags({
       localEngine: "external",
@@ -315,5 +325,93 @@ describe("port_holder (ATO-1277)", () => {
   it("is absent otherwise", () => {
     expect(sanitizeLlmFailureTags({ providerId: "local-llama", daemonState: "alive" })?.port_holder).toBeUndefined();
     expect(sanitizeLlmFailureTags({ providerId: "local-llama", portHeldByOther: false })?.port_holder).toBeUndefined();
+  });
+});
+
+describe("sanitizeLlmFailureTags: the engine wait verdict (ATO-1432)", () => {
+  it("sends the last and first verdict with their reasons", () => {
+    expect(sanitizeLlmFailureTags({
+      localEngine: "atomic-core",
+      engineWaitVerdict: "unknown",
+      engineWaitReason: "lock_held",
+      engineWaitFirstVerdict: "dead",
+      engineWaitFirstReason: "pid_dead",
+    })).toMatchObject({
+      engine_wait_verdict: "unknown",
+      engine_wait_reason: "lock_held",
+      engine_wait_first_verdict: "dead",
+      engine_wait_first_reason: "pid_dead",
+    });
+  });
+
+  it.each(["not_local_link", "not_active_provider", "not_managed", "lock_held", "lock_probe_failed", "pid_unreadable"])(
+    "keeps the reason %s",
+    (reason) => {
+      expect(sanitizeLlmFailureTags({ engineWaitVerdict: "unknown", engineWaitReason: reason })?.engine_wait_reason).toBe(reason);
+    },
+  );
+
+  it("turns any other value into unknown", () => {
+    const tags = sanitizeLlmFailureTags({
+      localEngine: "atomic-core",
+      engineWaitVerdict: "pid 4242",
+      engineWaitReason: "EACCES /Users/someone/.atomic-agent",
+    });
+    expect(tags).toMatchObject({ engine_wait_verdict: "unknown", engine_wait_reason: "unknown" });
+    expect(JSON.stringify(tags)).not.toContain("someone");
+  });
+
+  it("a verdict with no reason sends the reason as unknown", () => {
+    expect(sanitizeLlmFailureTags({ engineWaitVerdict: "dead" })).toMatchObject({
+      engine_wait_verdict: "dead",
+      engine_wait_reason: "unknown",
+    });
+  });
+
+  it("sends nothing for an external engine", () => {
+    const tags = sanitizeLlmFailureTags({
+      localEngine: "external",
+      engineWaitVerdict: "unknown",
+      engineWaitReason: "not_managed",
+      engineWaitFirstVerdict: "unknown",
+      engineWaitFirstReason: "not_managed",
+    });
+    expect(tags?.engine_wait_verdict).toBeUndefined();
+    expect(tags?.engine_wait_reason).toBeUndefined();
+    expect(tags?.engine_wait_first_verdict).toBeUndefined();
+  });
+});
+
+describe("sanitizeLlmFailureTags: why the engine's process is gone (ATO-1435)", () => {
+  it.each(["out_of_memory", "model_file_missing", "model_file_corrupt", "gpu_driver", "port_in_use", "crashed_unknown", "no_log"])(
+    "sends %s for a refusal",
+    (reason) => {
+      expect(sanitizeLlmFailureTags({
+        localEngine: "llama-server",
+        connectionRefused: true,
+        engineLiveness: "dead",
+        engineExitReason: reason,
+      })?.engine_exit_reason).toBe(reason);
+    },
+  );
+
+  it("turns any other word into unknown", () => {
+    const tags = sanitizeLlmFailureTags({
+      localEngine: "atomic-core",
+      connectionRefused: true,
+      engineLiveness: "no_pid",
+      engineExitReason: "failed to open /Users/someone/model.gguf",
+    });
+    expect(tags?.engine_exit_reason).toBe("unknown");
+    expect(JSON.stringify(tags)).not.toContain("someone");
+  });
+
+  it("sends nothing for an external engine", () => {
+    expect(sanitizeLlmFailureTags({
+      localEngine: "external",
+      connectionRefused: true,
+      engineLiveness: "dead",
+      engineExitReason: "out_of_memory",
+    })?.engine_exit_reason).toBeUndefined();
   });
 });

@@ -1,0 +1,6 @@
+# monthly totals, one per line
+12
+7
+
+30
+# end

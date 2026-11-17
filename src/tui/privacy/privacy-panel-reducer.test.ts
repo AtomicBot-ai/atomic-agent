@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createInitialTuiState } from "../tui-state.js";
 import type { TuiSessionInfo } from "../tui-state.js";
+import type { PrivacyAction } from "./privacy-actions.js";
 import { reducePrivacyAction } from "./privacy-panel-reducer.js";
 
 function baseState() {
@@ -82,5 +83,41 @@ describe("reducePrivacyAction", () => {
     });
     expect(cleared?.privacyPanel.message).toBeNull();
     expect(cleared?.privacyPanel.lastError).toBeNull();
+  });
+
+  it("folds the offline snapshot and keeps the old one when it is omitted", () => {
+    const offline = {
+      supported: true,
+      enabled: true,
+      egress: {
+        bytesOut: 0,
+        requestsOut: 0,
+        requestsBlocked: 2,
+        since: "2026-11-12T10:00:00.000Z",
+      },
+    };
+    const withOffline: PrivacyAction = {
+      type: "privacy_synced",
+      analyticsEnabled: true,
+      sessionGrants: { categories: [], shapes: [] },
+      offline,
+    };
+    const synced = reducePrivacyAction(baseState(), withOffline);
+    expect(synced?.privacyPanel.offline).toEqual(offline);
+    const withoutOffline: PrivacyAction = {
+      type: "privacy_synced",
+      analyticsEnabled: false,
+      sessionGrants: { categories: [], shapes: [] },
+    };
+    const again = reducePrivacyAction(synced!, withoutOffline);
+    expect(again?.privacyPanel.offline).toEqual(offline);
+  });
+
+  it("starts with offline mode unsupported", () => {
+    expect(baseState().privacyPanel.offline).toEqual({
+      supported: false,
+      enabled: false,
+      egress: null,
+    });
   });
 });

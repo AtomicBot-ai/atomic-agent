@@ -1,6 +1,6 @@
 ---
 name: currency
-description: Currency exchange rates and conversion via the Frankfurter API (no key). Use for FX rates, "convert X to Y", or historical/time-series rates.
+description: Exchange rates and currency conversion via the Frankfurter API (no key).
 version: 1.0.0
 requires_tools:
   - os.http.request

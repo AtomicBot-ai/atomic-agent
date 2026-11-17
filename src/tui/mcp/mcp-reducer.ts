@@ -1,3 +1,8 @@
+import {
+  buildMcpCatalogJson,
+  findMcpCatalogEntry,
+  listMcpCatalog,
+} from "../../mcp/mcp-catalog.js";
 import type { TuiState } from "../tui-state.js";
 import { isMcpAction, type McpAction } from "./mcp-actions.js";
 import {
@@ -88,8 +93,42 @@ function reducePanel(panel: McpPanelState, action: McpAction): McpPanelState {
       if (panel.addModal !== null) return panel;
       return {
         ...panel,
-        addModal: { json: "", error: null, submitting: false },
+        addModal: {
+          json: "",
+          error: null,
+          submitting: false,
+          picker: { cursor: 0 },
+          catalogId: null,
+        },
       };
+    case "mcp_add_catalog_moved": {
+      const modal = panel.addModal;
+      if (modal === null || modal.picker === null) return panel;
+      const total = listMcpCatalog().length;
+      const cursor = clampCursor(modal.picker.cursor + action.delta, total);
+      if (cursor === modal.picker.cursor) return panel;
+      return { ...panel, addModal: { ...modal, picker: { cursor } } };
+    }
+    case "mcp_add_catalog_picked": {
+      const modal = panel.addModal;
+      const entry = findMcpCatalogEntry(action.id);
+      if (modal === null || entry === undefined) return panel;
+      return {
+        ...panel,
+        addModal: {
+          ...modal,
+          json: buildMcpCatalogJson(entry),
+          error: null,
+          picker: null,
+          catalogId: entry.id,
+        },
+      };
+    }
+    case "mcp_add_catalog_skipped":
+      if (panel.addModal === null || panel.addModal.picker === null) {
+        return panel;
+      }
+      return { ...panel, addModal: { ...panel.addModal, picker: null } };
     case "mcp_add_modal_closed":
       if (panel.addModal === null) return panel;
       return { ...panel, addModal: null };

@@ -14,6 +14,7 @@ export const ANALYTICS_EVENTS = {
   localEngineFailed: "local_engine_failed",
   imageGenerated: "image_generated",
   videoGenerated: "video_generated",
+  uiAction: "ui_action",
 } as const;
 
 /**
@@ -80,6 +81,12 @@ export interface AppInstalledContext {
  *  - `fallbackCalls` — how many of the turn's completions were served
  *                    by a fallback link rather than the provider the
  *                    turn was meant for. Omitted when unknown.
+ *  - `prefillMs` / `genMs` / `genTokensPerS` (ATO-1026)
+ *                  — for a local llama-server turn: milliseconds spent
+ *                    reading the prompt and generating, summed over the
+ *                    turn's completions, and tokens generated per second
+ *                    of generation. From llama.cpp's own `timings`.
+ *                    Omitted for cloud turns, which report no timings.
  *
  * `provider` and `model` name the link that actually served the turn
  * (its last completion), so after a fallover they are the fallback's.
@@ -96,6 +103,9 @@ export interface MessageEventContext {
   costUsd?: number;
   localEngine?: LocalEngine;
   fallbackCalls?: number;
+  prefillMs?: number;
+  genMs?: number;
+  genTokensPerS?: number;
 }
 
 /**
@@ -271,6 +281,13 @@ export function captureMessageSent(
     ...(context.fallbackCalls !== undefined
       ? { fallback_calls: context.fallbackCalls }
       : {}),
+    ...(context.prefillMs !== undefined
+      ? { prefill_ms: context.prefillMs }
+      : {}),
+    ...(context.genMs !== undefined ? { gen_ms: context.genMs } : {}),
+    ...(context.genTokensPerS !== undefined
+      ? { gen_tokens_per_s: context.genTokensPerS }
+      : {}),
   });
 }
 
@@ -373,5 +390,42 @@ export function captureVideoGenerated(
     duration_secs: Math.max(0, Math.trunc(context.durationSecs)),
     outcome,
     ...(context.errorCode !== undefined ? { error_code: fixedWord(context.errorCode.toLowerCase()) } : {}),
+  });
+}
+
+/**
+ * How a terminal `ui_action` was triggered. A subset of the desktop's
+ * `UI_VIA` list (desktop/main/analytics/catalog-values.ts), so the two
+ * surfaces' events union on `action` + `via`.
+ */
+export type UiActionVia = "slash" | "palette" | "menu";
+
+const UI_ACTION_VIA: readonly UiActionVia[] = ["slash", "palette", "menu"];
+
+/** A built-in slash command name: `/report`, `/discord`, `/runmode`. Nothing else. */
+const SLASH_ACTION = /^\/[a-z][a-z0-9-]{0,31}$/;
+
+/**
+ * Emit `ui_action` for a built-in terminal slash command (ATO-1465),
+ * typed, picked in the palette or reached through the menu. Same event
+ * name and property names as the desktop's `ui_action`; the client
+ * stamps `surface` (`tui` here, `desktop` there) on every event, so a
+ * dashboard can union both and split by surface.
+ *
+ * `action` is the command name only (`/report`), never its arguments.
+ * The caller passes only names from the built-in registry; anything that
+ * is not shaped like one is dropped here as a second guard. No-ops when
+ * analytics is disabled.
+ */
+export function captureUiAction(
+  client: AnalyticsClient | null,
+  action: string,
+  via: UiActionVia,
+): void {
+  if (!client) return;
+  if (!SLASH_ACTION.test(action)) return;
+  client.capture(ANALYTICS_EVENTS.uiAction, {
+    action,
+    via: UI_ACTION_VIA.includes(via) ? via : "slash",
   });
 }

@@ -17,10 +17,13 @@ export type {
   UserConfigFile,
   UserManagedLocalLlmConfig,
   WebFetchConfig,
+  WebCrawlConfig,
+  WebFetchExtractorName,
   WebSearchConfig,
   WebSearchProviderName,
   TuiNotifyConfig,
   WebhookConfig,
+  FileTriggerConfig,
   WhileBusySubmitMode,
 } from "./config-schema.js";
 export {
@@ -34,6 +37,8 @@ export {
   parseUserConfigFile,
   parseWhileBusySubmit,
 } from "./config-schema.js";
+/** `vision.maxAudioBytes` when nothing sets it (ATO-497). */
+export { DEFAULT_MAX_AUDIO_BYTES } from "./tool-config.js";
 export type { ConfigNoticeSink, UserConfigSnapshot } from "./config-file.js";
 export {
   ensureUserConfigFileSync,
@@ -49,6 +54,7 @@ export {
   writeUserConfigFileSync,
 } from "./config-file.js";
 export { loadConfig, resolveStateDir } from "./load-config.js";
+export { OFFLINE_ENV, type NetworkConfig } from "./network-config.js";
 export { getConfig, resetConfigCache, withFreshConfig } from "./config-cache.js";
 export {
   formatDotenvReadWarning,
@@ -87,8 +93,31 @@ export {
   type UserLlmFusionConfig,
   type UserLlmRunModeConfig,
 } from "./llm-run-mode-config.js";
+export {
+  parseLlmRouterConfig,
+  type UserLlmRouterConditions,
+  type UserLlmRouterConfig,
+  type UserLlmRouterRule,
+} from "./llm-router-config.js";
 export type { DotenvLoadResult, DotenvReadFailure } from "./load-dotenv.js";
 export { DotenvWriterError, setDotenvKey } from "./dotenv-writer.js";
+export {
+  readSecretsStoreState,
+  type SecretsStoreKind,
+  type SecretsStoreState,
+} from "./secret-store.js";
+export {
+  moveSecretsToEnv,
+  moveSecretsToKeychain,
+  type SecretsMigrationResult,
+} from "./secrets-migration.js";
+export {
+  DEFAULT_PUSH_SERVER,
+  createPushDefaults,
+  isValidPushTopic,
+  parsePushServer,
+  type PushNotifyConfig,
+} from "./push-config.js";
 export type { SetDotenvKeyResult } from "./dotenv-writer.js";
 export { addCustomModel, removeCustomModel } from "./custom-models-store.js";
 export {
@@ -98,3 +127,8 @@ export {
 
 /** Swarm units — extra Telegram / Discord bots (config v52). */
 export type { SwarmConfig, SwarmUnitConfig } from "./config-schema.js";
+export {
+  EMAIL_TRIGGER_DEFAULT_POLL_MS,
+  EMAIL_TRIGGER_MIN_POLL_MS,
+  type EmailTriggerConfig,
+} from "./email-trigger-config.js";

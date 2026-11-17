@@ -9,6 +9,7 @@ import { isSubscriptionCliSetupError } from "../provider/subscription-cli/subscr
 import { TransportError } from "../reliability/llm-failures.js";
 import { isNetworkError } from "../reliability/network-error.js";
 import { readProviderErrorVerdict } from "../reliability/provider-error-verdict.js";
+import { isDailySpendLimitError } from "../reliability/spend-limit-error.js";
 
 /**
  * Three questions the chain asks about a link that failed, beyond
@@ -59,6 +60,52 @@ export function isBillingRefusal(err: unknown): boolean {
 }
 
 /**
+ * Did the link answer "too many requests" for this key: a 429 that is
+ * not an empty account (`isBillingRefusal` reads OpenAI's
+ * `insufficient_quota` 429 as billing)?
+ *
+ * The third kind next to billing and auth, for the key pool (ATO-471):
+ * another key of the same provider usually has its own limit, so the
+ * pool tries it before the chain moves to another provider. Unlike the
+ * other two it heals by itself, so its cooldown is short.
+ */
+export function isRateLimitRefusal(err: unknown): boolean {
+  return (
+    err instanceof OpenAiHttpError &&
+    !err.timedOut &&
+    err.status === 429 &&
+    !isBillingRefusal(err)
+  );
+}
+
+/** Why one key of a provider was refused, when another key could help. */
+export type KeyRefusalKind = "rate_limit" | "auth" | "billing";
+
+/**
+ * Which key refusal this failure is, or undefined when a different key
+ * would not change the answer (a 5xx, a network error, a bad request,
+ * a moderation 403). Billing first: an empty account can answer 403 or
+ * 429, and that is neither a bad key nor a rate limit.
+ */
+export function keyRefusalKind(err: unknown): KeyRefusalKind | undefined {
+  if (isBillingRefusal(err)) return "billing";
+  if (isRateLimitRefusal(err)) return "rate_limit";
+  if (isCredentialRejection(err)) return "auth";
+  return undefined;
+}
+
+/**
+ * Did our own daily spend ceiling refuse the link (ATO-649)? Same
+ * standing as an empty account: the link answered nothing because it
+ * was never asked, waiting changes nothing until the day rolls over or
+ * the limit is raised, and it outranks a later link's outage when the
+ * chain runs out (`runWithFallback`).
+ */
+export function isSpendLimitRefusal(err: unknown): boolean {
+  return isDailySpendLimitError(err);
+}
+
+/**
  * Which reading the fallover notice gives this failure, judged on the
  * error rather than on its reason text: "billing" (top up), "auth" (fix
  * the key) or "other" (the chain's probe will see it clear).
@@ -85,7 +132,10 @@ export function isBillingRefusal(err: unknown): boolean {
  */
 export function falloverCause(
   err: unknown,
-): "billing" | "auth" | "other" | undefined {
+): "billing" | "auth" | "spend-limit" | "other" | undefined {
+  // Our own daily ceiling (ATO-649, `onDailyLimit: "local"`): cloud calls
+  // are paused for the day, so the notice must not promise a recovery.
+  if (isSpendLimitRefusal(err)) return "spend-limit";
   if (!(err instanceof OpenAiHttpError)) return undefined;
   if (isBillingRefusal(err)) return "billing";
   const { status } = err;
@@ -128,6 +178,8 @@ export function isCliSetupRefusal(err: unknown): boolean {
 export function isOutageFailure(err: unknown): boolean {
   // An empty account is a "no", even on a 429.
   if (isBillingRefusal(err)) return false;
+  // So is our own spend ceiling (ATO-649).
+  if (isSpendLimitRefusal(err)) return false;
   // So is a CLI that is not installed or signed out, whatever wraps it.
   if (isCliSetupRefusal(err)) return false;
   const status = statusOf(err);

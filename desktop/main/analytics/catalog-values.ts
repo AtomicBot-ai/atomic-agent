@@ -17,6 +17,7 @@ export const PROVIDER_PRESETS = [
   "openrouter", "openai", "anthropic", "gemini", "groq", "aimlapi", "atomic-chat", "cerebras", "deepseek",
   "fireworks", "hyperbolic", "lmstudio", "mistral", "moonshot", "nous", "novita", "ollama", "ollama-cloud",
   "perplexity", "dashscope", "sambanova", "sarvam", "together", "xai", "local-llama", "custom",
+  "wandb", "azure-openai", "bedrock", "lemonade", "foundry-local",
 ] as const;
 /**
  * ATO-1195 / ATO-816: presets for an app the user already runs on this
@@ -24,7 +25,7 @@ export const PROVIDER_PRESETS = [
  * `kind: custom` ("Custom" = any app or server you already run); `local`
  * is only the managed llama.cpp backend. Keep in step with renderer.js.
  */
-export const LOCAL_APP_PRESETS = ["atomic-chat", "ollama", "lmstudio"] as const;
+export const LOCAL_APP_PRESETS = ["atomic-chat", "ollama", "lmstudio", "lemonade"] as const;
 /** `model_configured.provider` as the agent runtime spells it: the managed local backend is `llama.cpp`. */
 export const CONFIGURED_PROVIDERS = [...PROVIDER_PRESETS, "llama.cpp"] as const;
 
@@ -51,6 +52,21 @@ export const FIT = ["comfortable", "tight", "over"] as const;
 /** `model_picked.host_ram_gb`: ≤12 → 8, ≤24 → 16, ≤48 → 32, else 64 (renderer/analytics.js ramBucket). */
 export const RAM_BUCKETS = ["8", "16", "32", "64"] as const;
 export const ERROR_CATEGORIES = ["transport", "grammar", "model", "tool", "cancelled"] as const;
+/**
+ * ATO-1026: `chat_turn_ui.cancel_phase`, what a cancelled turn was doing
+ * (chat-turns.ts phaseAfter): waiting for its first sign of work (the
+ * model loading and the prefill are one wait on this stream), waiting on a
+ * provider that failed, on an approval, in a tool, generating, or reading a
+ * tool's result before its next step.
+ */
+export const CANCEL_PHASES = ["waiting_first", "provider_wait", "approval", "tool", "generating", "waiting_next"] as const;
+/**
+ * ATO-1026: `chat_turn_ui.provider_kind`, the kind of route a turn went on
+ * (setup.ts turnRoute): a real cloud provider, the managed local engine, an
+ * app the person runs (LM Studio, Ollama, Atomic Chat) or another server of
+ * theirs (a custom URL, an external llama-server).
+ */
+export const TURN_PROVIDER_KINDS = ["cloud", "managed_local", "lmstudio", "ollama", "atomic_chat", "custom_server"] as const;
 export const NODE_SIGNALS = [
   "SIGTERM", "SIGKILL", "SIGINT", "SIGHUP", "SIGQUIT", "SIGABRT", "SIGSEGV", "SIGBUS", "SIGILL", "SIGFPE",
   "SIGPIPE", "SIGTRAP", "SIGSYS", "SIGUSR1", "SIGUSR2", "SIGBREAK",
@@ -64,7 +80,7 @@ export const SLASH_COMMANDS = [
   "dump", "report", "help", "tools", "theme", "onboarding", "setup", "clear", "abort", "quit", "debug", "chat",
   "runmode", "observe", "manage", "feed", "logs", "reasoning", "world", "expand", "collapse", "session",
   "sessions", "new", "skills", "skill", "memory", "llm", "mcp", "model", "tasks", "task", "telegram",
-  "import", "privacy", "analytics", "compact", "unknown",
+  "import", "privacy", "analytics", "compact", "feedback", "unknown",
 ] as const;
 /** Every approval category the agent can send (src/approval/approval-level.ts
     APPROVAL_CATEGORY_LABELS), not only the renderer's CATS (the ones the
@@ -75,12 +91,13 @@ export const APPROVAL_CATEGORIES = [
   "fs_write_workspace", "fs_write_home", "fs_trash", "http", "shell", "shell_dangerous", "script", "proc_kill", "publish",
   "git_remote", "fusion_fanout", "browser_nonweb", "browser_commit", "browser_secret", "browser_offsite",
   "trust_config", "state_secret", "email", "fs_read_outside", "paid_generation", "screen_control", "screen_capture",
-  "local_model_restart", "hook_ask", "other",
+  "local_model_restart", "hook_ask", "http_write", "browser_site_tool", "user_question",
+    "session_cross", "other",
 ] as const;
 export const SETTINGS_PANES = [
-  "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "skills", "privacy", "import", "diagnostics",
+  "general", "models", "mcp", "telegram", "composio", "memory", "tasks", "webhooks", "skills", "privacy", "import", "diagnostics",
 ] as const;
-export const IMPORT_SOURCES = ["tui", "hermes", "openclaw", "claude-code", "codex", "pi", "other"] as const;
+export const IMPORT_SOURCES = ["tui", "hermes", "openclaw", "claude-code", "codex", "pi", "claude-app", "atomic-agent", "other"] as const;
 export const IMPORT_PARTS = ["providers", "keys", "skills", "sessions", "memory"] as const;
 export const DAEMON_EFFECTS = [
   "started", "restarted", "start_failed", "stop_failed", "skipped", "superseded", "untouched", "stopped",

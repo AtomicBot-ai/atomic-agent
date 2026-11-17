@@ -14,6 +14,7 @@ import {
   type ImportReport,
 } from "../import-report.js";
 import { importSkillDirs } from "../import-skill-dirs.js";
+import { groupHintFromCwd, withGroupHint } from "../grouping.js";
 import { reconcileImportedSession } from "../reconcile-session.js";
 import type { OhMyPiOptionId } from "./import-options.js";
 import { mapOhMyPiMcpServer } from "./map-mcp.js";
@@ -178,6 +179,7 @@ export class OhMyPiImporter {
     }
     for (const meta of metas) {
       let mapped: SessionState;
+      let cwd: string | null = null;
       try {
         const session = this.deps.source.readSession(meta);
         if (session.messages.length === 0) {
@@ -192,6 +194,7 @@ export class OhMyPiImporter {
           continue;
         }
         mapped = mapOhMyPiSession(session, this.deps.workingDirFallback);
+        cwd = session.cwd;
       } catch (err) {
         items.push({
           kind: "sessions",
@@ -214,11 +217,16 @@ export class OhMyPiImporter {
         overwrite: options.overwrite,
         save: (state) => this.deps.sessionStore.save(state),
       });
-      items.push({
-        ...base,
-        status: outcome.status,
-        ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
-      });
+      items.push(
+        withGroupHint(
+          {
+            ...base,
+            status: outcome.status,
+            ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
+          },
+          groupHintFromCwd(cwd),
+        ),
+      );
     }
   }
 }

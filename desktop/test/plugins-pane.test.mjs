@@ -7,9 +7,12 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
-const { plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct } = require("../renderer/plugins-pane.js");
+const {
+  plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct, plgFolderName, plgSummaryText, PLG_INTRO, PLG_SOURCES,
+} = require("../renderer/plugins-pane.js");
 const {
   parsePluginSetRequest, pluginCliArgs, parsePluginListOutput, isUnsupportedPluginCli,
+  isInstallableFolderPath, pluginInstallArgs, parsePluginInstallResult,
 } = require("../out/main/plugins-cli.js");
 
 const plugin = (over = {}) => ({
@@ -79,6 +82,75 @@ test("list output: JSON, an older text table, garbage", () => {
   assert.equal(isUnsupportedPluginCli("plugin not installed: demo"), false);
 });
 
+test("install from folder: only an absolute one-line path, never a flag; --yes only after Install anyway", () => {
+  assert.equal(isInstallableFolderPath("/Users/me/plugins/demo"), true);
+  assert.equal(isInstallableFolderPath("relative/demo"), false);
+  assert.equal(isInstallableFolderPath("--force"), false);
+  assert.equal(isInstallableFolderPath("/x\n--yes"), false);
+  assert.equal(isInstallableFolderPath(""), false);
+  assert.equal(isInstallableFolderPath(42), false);
+  assert.deepEqual(pluginInstallArgs("/p/demo", false), ["plugin", "install", "/p/demo"]);
+  assert.deepEqual(pluginInstallArgs("/p/demo", true), ["plugin", "install", "/p/demo", "--yes"]);
+});
+
+test("install output: success, the scan's question, a dangerous refusal, the agent's own errors", () => {
+  const ok = parsePluginInstallResult({ ok: true, stderr: "", stdout: "demo: security scan ok\nInstalled demo@1.2.0: 2 skills, 1 MCP server\n  This plugin can run programs on this computer or receive your keys (local MCP servers: gh).\n" });
+  assert.deepEqual(ok, { ok: true, name: "demo", message: "Installed demo@1.2.0: 2 skills, 1 MCP server", runsCode: true, startsServers: true });
+  const plain = parsePluginInstallResult({ ok: true, stderr: "", stdout: "Installed notes@0.1.0: 1 skill\n" });
+  assert.equal(plain.runsCode, false);
+  assert.equal(plain.startsServers, false);
+
+  const caution = parsePluginInstallResult({ ok: false, stdout: "", stderr: "security scan: caution\n  [caution] curl-pipe  skills/x/SKILL.md:3  curl | sh\ninstall needs confirmation: the security scan flagged caution; re-run with --yes to install anyway\n" });
+  assert.equal(caution.ok, false);
+  assert.equal(caution.needsConfirmation, true);
+  assert.deepEqual(caution.findings, ["[caution] curl-pipe  skills/x/SKILL.md:3  curl | sh"]);
+
+  const danger = parsePluginInstallResult({ ok: false, stdout: "", stderr: "security scan: dangerous\n  [dangerous] rm-rf  hooks/x.sh:1  rm -rf ~\ninstall blocked: flagged dangerous by the security scan (1 dangerous; use --acknowledge-risk to override)\n" });
+  assert.equal(danger.blocked, true);
+  assert.equal(danger.needsConfirmation, undefined);
+  assert.equal(danger.findings.length, 1);
+
+  assert.match(parsePluginInstallResult({ ok: false, stdout: "", stderr: "plugin demo is already installed; use --force to replace it\n" }).error, /^demo is already installed\. Remove it first/);
+  assert.match(parsePluginInstallResult({ ok: false, stdout: "", stderr: "/x/y is not a plugin: no .claude-plugin/plugin.json, plugin.json, SKILL.md\n" }).error, /^This folder is not a plugin/);
+  assert.equal(parsePluginInstallResult({ ok: false, stdout: "", stderr: "not a folder: /x\n    at foo (/a/b.js:1:2)\n" }).error, "not a folder: /x");
+  assert.equal(parsePluginInstallResult({ ok: false, stdout: "", stderr: "unknown command: plugin\n" }).unsupported, true);
+});
+
+test("the screen says what plugins are and where they come from, and keeps the CLI to a footnote", () => {
+  assert.match(PLG_INTRO, /^Plugins add ready-made abilities to Atomic Agent: skills, tools \(MCP servers\) and commands, packed together\.$/);
+  assert.match(PLG_SOURCES, /GitHub/);
+  assert.match(PLG_SOURCES, /Claude Code/);
+  assert.equal(plgSummaryText(null), "");
+  assert.equal(plgSummaryText([]), "");
+  assert.equal(plgSummaryText([{ enabled: true }, { enabled: false }]), "2 installed · 1 on");
+  assert.equal(plgFolderName("/Users/me/plugins/demo/"), "demo");
+  assert.equal(plgFolderName("C:\\Users\\me\\demo"), "demo");
+  const pane = readFileSync(new URL("../renderer/plugins-pane.js", import.meta.url), "utf8");
+  assert.match(pane, /data-act="plugins:install"/);
+  assert.match(pane, />Install from folder…</);
+  assert.match(pane, /data-act="plugins:installAnyway"/);
+  assert.match(pane, /class="set-plgfoot">From a terminal: <span class="mono">atag plugin install &lt;folder&gt;/);
+  // The old view: counts on an empty list and the terminal-only instructions are gone.
+  assert.doesNotMatch(pane, /Install one from a terminal/);
+  assert.doesNotMatch(pane, /' installed · ' \+ on \+ ' on'/);
+  // Key hints read as words with the key after them, never the TUI's "[y] remove".
+  assert.doesNotMatch(pane, /title="\[[a-z]\]/);
+  assert.doesNotMatch(pane, / title="c"/);
+  assert.match(pane, /title="Remove \(Y\)"/);
+  assert.match(pane, /title="Allow code \(Y\)"/);
+  // Lucide "puzzle", thin stroke.
+  assert.match(pane, /viewBox="0 0 24 24"[^>]*stroke-width="1\.25"/);
+});
+
+test("main installs only a folder its own picker returned", () => {
+  const ipc = readFileSync(new URL("../main/plugins-ipc.ts", import.meta.url), "utf8");
+  assert.match(ipc, /ipcMain\.handle\("cli:pluginPickFolder"/);
+  assert.match(ipc, /properties: \["openDirectory"\]/);
+  assert.match(ipc, /ipcMain\.handle\("cli:pluginInstall"/);
+  assert.match(ipc, /if \(!isInstallableFolderPath\(folder\) \|\| !wasPickedFolder\(folder\)\) return \{ ok: false/);
+  assert.match(ipc, /atagRun\(pluginInstallArgs\(folder, confirmCaution\), 120_000\)/);
+});
+
 test("the screen is wired: section, pane, acts, keys, bridge, main", () => {
   const renderer = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
   assert.match(renderer, /\['plugins','Plugins','puzzle',\['plugins'\]\]/);
@@ -90,10 +162,13 @@ test("the screen is wired: section, pane, acts, keys, bridge, main", () => {
   assert.ok(html.indexOf('src="plugins-pane.js"') !== -1 && html.indexOf('src="plugins-pane.js"') < html.indexOf('src="renderer.js"'));
   const acts = readFileSync(new URL("../renderer/analytics-acts.js", import.meta.url), "utf8");
   assert.match(acts, /plugins:\{refresh:L,[^}]*removeConfirm:L/);
+  assert.match(acts, /plugins:\{refresh:L,[^}]*install:L, installAnyway:L, installDismiss:L\}/);
   const preload = readFileSync(new URL("../preload/preload.ts", import.meta.url), "utf8");
   assert.match(preload, /pluginList: \(\) => ipcRenderer\.invoke\("cli:pluginList"\)/);
   assert.match(preload, /ipcRenderer\.invoke\("cli:pluginSet", \{ name, op, part \}\)/);
   assert.match(preload, /pluginRemove: \(name: string\) => ipcRenderer\.invoke\("cli:pluginRemove", name\)/);
+  assert.match(preload, /pluginPickFolder: \(\) => ipcRenderer\.invoke\("cli:pluginPickFolder"\)/);
+  assert.match(preload, /ipcRenderer\.invoke\("cli:pluginInstall", \{ folder, confirmCaution \}\)/);
   const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
   assert.match(main, /wirePluginsIpc\(\);/);
 });

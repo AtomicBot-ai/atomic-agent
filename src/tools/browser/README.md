@@ -28,6 +28,10 @@ Owner: src/tools/browser/
   - `browser.read_aria` and the world snapshot of a blocked page, or of a page that frames one (AI-mode snapshots include iframe content): no page content reaches the model.
 - With a non-empty allow-list, navigate, tabs new, search, and a link or form target outside it ask first (`browser_offsite`, level 3).
 
+## Offline mode
+
+While offline mode is on (ATO-1084), navigate, tabs new and search refuse a URL that is not on this machine (`offline_mode`), a page that lands elsewhere is cleared, and a Chrome the agent starts gets a dead proxy for everything but loopback. An attached Chrome only gets the URL gate. See [offline mode](../../llm/docs/offline-network.md).
+
 ## Page text is outside data
 
 The page in `### world` and the summaries of `browser.navigate`, `browser.read_aria` and `browser.tabs` (page titles) are framed as external content in a nonce-fenced block, like a fetched page (ATO-1378, `../untrusted-text.ts`). The framing lowers the odds that a page steers the model; the approval gates above are what stop an action.
@@ -40,6 +44,58 @@ Saved under `<tmp>/atomic-agent-browser-shots/<session>/` (outside the working f
 
 A page on a blocked host is never captured. A capture is discarded, never saved, when the page or any of its frames is on a blocked host by the time the pixels are taken (a racing redirect, a blocked iframe).
 
+## More page actions
+
+`browser.act { action, … }` (`act.ts`, `page-action-args.ts`, `playwright-page-actions.ts`, ATO-957) holds the actions click / type do not cover, in one tool so the tool list and a local model's grammar stay small:
+
+- `select` (`ref`, `values`: option values or labels), `upload` (`ref`, `paths`: a file input, or a button that opens a file chooser), `back`, `forward`, `key` (`key` in Playwright's syntax from a closed set, e.g. `Enter`, `Escape`, `Shift+Tab`, `Control+a`; optional `ref`), `hover` (`ref`), `dialog` (`accept`, optional `text` for a prompt), `wait` (`text` to appear, or with `state: "hidden"` to go; a `ref`; or `ms`, at most 10 s; `timeoutMs` at most 30 s).
+- `dialog` answers the next alert / confirm / prompt on the active tab within 60 s, so it is called before the click that opens one. Without it Playwright dismisses every dialog, as before.
+- Gates, before the backend acts: any action on a blocked host is refused. `upload` asks as `browser_secret` every time, with each file's name, size and full path in the preview; its paths are also checked like reads (`../read-scope/read-scope-targets.ts`), so the agent's own secret files and files outside the read scope ask first. `key` Enter / Space on a `ref` goes through the click / type gate above (Enter like `type` with Enter, Space like a click); without a `ref` the focused element cannot be read, so Enter / Space ask as `browser_commit`. Accepting a dialog asks as `browser_commit` (it may confirm a delete or a payment); dismissing does not. In the user's own Chrome these `browser_commit` prompts ask as `browser_secret`. select, hover, back, forward, wait and other keys do not ask.
+- After select, key, back and forward the landed page is re-checked against the block list, like after a click.
+
+
+## Extracting data
+
+`browser.extract { schema, instruction? }` (`extract.ts`, `extract-request.ts`, ATO-699): structured data out of the active page in one call ("every plan's name and price") instead of a read / scroll chain. The page's full ARIA snapshot (cut to half of the window, 8k–200k chars; 48k when the window is unknown) and the caller's JSON Schema go to one side model call on the step's provider, outside the main slot:
+
+- a grammar (llama-server) link gets GBNF built from the schema (`../../llm/grammar/json-schema-gbnf.ts`): object keys in declared order, required ones always, no others; arrays, enums, consts, unions; parts it does not shape fall back to any JSON;
+- a native-tools link gets one `emit_extracted_data` function whose parameters are the schema (a non-object root rides under `data`).
+
+The answer is validated against the full schema (`validateJsonSchemaValue`); a mismatch is an error that shows what came back. The page goes through the same check as `read_aria` (`gate-page-read.ts`), sits in an untrusted block in the side call's prompt, and the result is framed as page content. The model is bound by bootstrap after the tools are registered (`BrowserExtractModelRef`); without it the tool says to use `read_aria`.
+
+
+## Site tools (WebMCP)
+
+`browser.site_tools { action: "list" | "call", name?, arguments?, timeoutMs? }` (`site-tools.ts`, ATO-521): tools the open page declares for agents through WebMCP (`document.modelContext.registerTool`, from the W3C Web Machine Learning draft, or the older `navigator.modelContext` with `provideContext` / `registerTool` / `unregisterTool` / `clearContext`). One agent tool covers every site's tools.
+
+- An init script (`site-tools-in-page.ts`) records the tools a page registers, before the page's own scripts run. A browser with its own `modelContext` keeps working (the methods are wrapped and still called); a browser without one gets a small stand-in, so a site written for WebMCP works today. In the agent's own browser it is installed on every page; in your own Chrome only on the agent's tabs. A page opened before the script was installed is asked with the browser's own `getTools` / `executeTool`, then Chrome's testing API (`navigator.modelContextTesting`).
+- Main frame only: an iframe (an ad, a widget) cannot offer tools.
+- Limits (`site-tools-sanitize.ts`): 32 tools shown (64 read), names `[A-Za-z0-9_.:-]` up to 64 characters, schema JSON up to 8000 characters, description up to 1000, arguments up to 16000 characters of JSON, answer up to 20000 characters, timeout 30 s by default (1–120 s). Tools that break a limit are listed as skipped with the reason.
+- `list` is a page read: a blocked page, or one framing a blocked site, is refused; in your own Chrome a site not opened this session asks first (`gate-page-read.ts`).
+- `call` re-reads the list, checks the arguments against the declared schema (required keys, top-level types, enums, `additionalProperties: false`), then asks as `browser_site_tool` (level 4 beside `browser_commit`; "allow in this chat" covers that one site, `src/approval/site-grants.ts`; never "always"). In your own Chrome it asks as `browser_secret`, every time. The site's `readOnlyHint` is shown, never trusted: every call asks. An answer is thrown away when the page moved to a blocked site.
+- Descriptions, schemas and answers are the site's own text and are framed as outside data, like a page (`untrustedOutput`).
+
+
+## Page debugging
+
+`browser.debug { action: "console" | "network", errorsOnly?, limit?, clear? }` (`debug.ts`, ATO-701): for "why does my site not load". `console` lists console messages and uncaught page errors; `network` lists finished requests with their status and failed ones with the reason (`errorsOnly`: HTTP 4xx/5xx and failures). Newest last, at most `limit` (default 50, at most 200); `clear` empties that list after reading.
+
+- Recorded by `PlaywrightBackend` from the attach on, from the context's `console`, `weberror`, `response` and `requestfailed` events (`watch-page-debug.ts`). In the user's own Chrome only the agent's own tabs are recorded.
+- Bounded (`page-debug-log.ts`): the last 200 entries of each kind, plus the last 100 errors in a ring of their own so ordinary traffic does not push a failure out.
+- Redacted on the way in: text through the secret detector (`../../error-reporting/secret-detector.ts`) and clipped; URLs lose user info, the values of query parameters whose name says secret (`token`, `api_key`, `sig`, `code`...) and any fragment with parameters. Headers and bodies are never kept.
+- On the way out, entries from a page on a blocked host, or in the user's own Chrome from a site not opened this session, are left out (counted, not shown). The text is the site's own, so the result is framed as page content.
+
+## Annotate
+
+`browser.annotate { action: "start" | "read" | "stop", crops? }` (`annotate.ts`, ATO-518): the user marks up the page in the agent's browser window and the agent gets the pins back.
+
+- `start` puts an overlay on the active page (`annotate-in-page.ts`). The user clicks an element, types what should change and saves; a numbered pin stays on it (click a pin to remove it). A floating "Annotate" toggle with a badge of the pin count comes with the overlay (after the first `start` on the page) and stays until `stop`: a click turns picking off, another turns it back on. Asking in chat (`start`) is the other way in. While picking, clicks on the page are swallowed, so a pin never presses a button; the agent should not click or type there until `read` or `stop`.
+- `read` returns each pin: the comment, a CSS selector (shortest unique path, ids preferred), the element's tag and text, its box in document pixels and key computed styles. With `crops: true` it also saves a JPEG of each pinned element (up to 12, at most 900 KB each, secret fields boxed over, the overlay hidden for the shot) under the screenshot folder, for `vision.describe`.
+- Pins are grouped by the DOM subtree they share (`annotate-pins.ts`): the nearest landmark around each element (main, section, article, header, footer, nav, aside, form, dialog or a matching role), else the first level under the root; nested regions merge. Each group can go to its own worker.
+- `stop` removes the overlay and forgets the pins.
+- The overlay runs in an isolated world of the main frame (CDP `Page.createIsolatedWorld`, `annotate-playwright.ts`) inside a closed shadow root, and only real input events count, so the page's scripts cannot read the saved pins or forge them. Known limit: the comment is typed into the page's document and key events are composed, so a page script listening on `window` in the capture phase sees each key as it is typed; the comment box tells the user not to type secrets there. It is styled through `element.style`, so strict CSP pages still show it. Elements inside iframes cannot be pinned. A navigation or reload drops the pins.
+- `start` and `read` are page reads (`gate-page-read.ts`): a blocked page is refused, and in your own Chrome a site not opened this session asks first. Nothing is clicked or typed on the site, so there is no other prompt. Element text, selectors and styles are the page's, so the result is framed as outside data.
+
 ## Page views
 
 `browser.read_aria` takes `mode` (`aria-view.ts`, `compact-aria.ts`, ATO-956):
@@ -50,6 +106,35 @@ A page on a blocked host is never captured. A capture is discarded, never saved,
 - `region` with `ref`: the subtree under one ref.
 
 Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; others get `full`. The same default applies to the world snapshot after navigate / search. The size budget is 4% of the window (2k–24k chars). Compact views read the whole tree before filtering; a name Playwright writes as a quoted YAML key (`- 'button "Pay: $5" [ref=e7]'`) is unquoted first, so such a control is never dropped. A blocked page, or one framing a blocked site (AI-mode snapshots include iframe content), is neither rendered nor remembered for `diff`.
+
+## Web identity
+
+One honest, fixed identity for the browser the agent launches and for the curl tools (`os.web.fetch`, `os.http.request`, web search), from `web-identity.ts` (ATO-969): Chrome's reduced User-Agent for this OS with the installed browser's major version (`chrome-version.ts`, else `FALLBACK_CHROME_MAJOR`), and Accept-Language from the system locale. The timezone is never overridden. Headless runs as `--headless=new` and gets that UA (only when the version is known), `--lang` and a 1440x900 window; a headed launch keeps Chrome's own. Fingerprints are never rotated or faked.
+
+
+## Background runs and throwaway profiles
+
+`browser.headless` in config.json (ATO-959, `browser-run-scope.ts`), default `"auto"`:
+
+- A turn nobody watches (a scheduled task, a Telegram or Discord message, a webhook or a plain HTTP client) starts the agent's own Chrome without a window. The TUI, the desktop app and a terminal `run` start it with a window, as before. The runtime sets who the turn is for around each turn (`runInBrowserScope`); a fusion worker counts as the turn that fanned it out.
+- One Chrome serves the whole process. A watched turn that finds the agent's Chrome running headless restarts it with a window and reopens its pages; a background turn that finds a window open uses it. A Chrome the agent did not start (`cdpUrl`, your own Chrome) is never restarted.
+- `true` / `false` (or env `ATOMIC_AGENT_BROWSER_HEADLESS`, which wins when set) always / never run headless.
+
+`browser.profile` (default `"agent"`, `temp-profiles.ts`): `"temp"` makes each chat browse in its own throwaway, logged-out profile: a separate browser context in the same Chrome, like an incognito window, with no cookies, storage or logins from the agent's profile and nothing written to disk. Per call, `browser.tabs { action: "new", profile: "temp" }` switches the chat to its throwaway profile and `profile: "agent"` back. A throwaway profile closes with its last tab, when more than four are open (oldest first), or with the browser. Not available in your own Chrome.
+
+## Fusion workers: parallel tabs
+
+`worker-tabs.ts` (ATO-961). The runtime marks a fusion worker's turn (`BrowserRunScope.workerOf`):
+
+- A worker browses only in tabs it opened (and their pop-ups), named by its session: `browser.tabs` lists, switches and closes only those, and its page reads and actions go to its own active tab. It never sees another worker's tabs, and the orchestrator's chat does not see the workers' tabs. Workers running at once each have a tab, so five shops can be read side by side.
+- When a worker's turn ends, its tabs close.
+- `browser.workerIsolation`: `"tabs"` (default) keeps the workers in the agent's profile, with its logins; `"context"` gives each worker its own throwaway browser context (no cookies or logins shared). In your own Chrome workers always use tabs.
+- `browser.maxTabs` (default 8, 1 to 50) caps the tabs the agent has open at once, throwaway profiles and workers included. One more fails with a plain error naming the setting, until a tab closes. Pop-ups a page opens are not refused.
+
+
+## Rendering for os.web.fetch
+
+`renderHtml` (`playwright-backend.ts`) and `render-page.ts` serve the `os.web.fetch` page-read ladder (ATO-968): a page that answered curl with a bot wall is loaded in a throwaway tab of the agent's own browser, its rendered HTML read once the challenge has cleared (polled, at most the fetch timeout) and the tab closed. The tab is left out of the tab list and is never the active page. It is not available with `browser.connect: "user-chrome"`, and the domain lists apply as for `browser.navigate` (a host outside a non-empty allow-list is skipped, not asked about).
 
 ## Your own Chrome
 

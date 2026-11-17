@@ -19,13 +19,13 @@ function fn(name) {
 
 const NAMES = [
   "providerHost", "providerFailure", "providerReplied", "turnWaited", "turnFailure",
-  "turnFailureLine", "localWrongServerLine", "localContextFullLine", "localRequestInvalidLine", "localFailureCode", "localFrameAdvice", "localServerHost", "waitIsLocalServer",
+  "turnFailureLine", "offlineTurnLine", "localWrongServerLine", "localContextFullLine", "localRequestInvalidLine", "localFailureCode", "localFrameAdvice", "localServerHost", "waitIsLocalServer",
   "selProviders", "selActiveProviderId", "llmBlock", "llmProviders", "llmProvider", "llmLocalModels",
 ];
 
 function window(config) {
   const c = vm.createContext({
-    LIVE_CONFIG: config, S: { turnStartedAt: 0 }, SWX: {}, URL,
+    LIVE_CONFIG: config, S: { turnStartedAt: 0 }, SWX: {}, projectTurnModel: () => null, URL,
     esc: (s) => String(s), providerWord: (id) => (id === "openrouter" ? "OpenRouter" : String(id)),
     savedKeyInvalid: () => false, billingFailureLine: () => "",
   });

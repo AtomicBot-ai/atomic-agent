@@ -77,7 +77,10 @@ async function main(): Promise<number> {
     // `Cannot find module '../../../package.json'` the first time a browser
     // tool runs. Externalise the package and ship its `node_modules/` tree
     // next to the binary (see `scripts/package-bundle.ts`).
-    external: ["better-sqlite3", "playwright-core"],
+    // `@napi-rs/keyring` (opt-in OS keychain, ATO-474) loads a per-platform
+    // `.node` prebuild the same way `better-sqlite3` does; it ships under
+    // `node_modules/` next to the binary (see `copyKeyringRuntime`).
+    external: ["better-sqlite3", "playwright-core", "@napi-rs/keyring"],
     // Bake the published version into the binary so `getAppVersion()`
     // (see src/version.ts) resolves without a shipped package.json.
     define: {

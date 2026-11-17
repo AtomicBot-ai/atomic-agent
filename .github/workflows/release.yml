@@ -9,6 +9,8 @@
 # SM_CLIENT_CERT_FILE_B64, SM_CLIENT_CERT_PASSWORD, SM_CODE_SIGNING_CERT_SHA1_HASH
 # Linux packages (the key is shared with atc / eye-cli): LINUX_PACKAGES_GPG_KEY (the armored
 # private key of packaging/atomic-chat.asc), LINUX_PACKAGES_GPG_PASSPHRASE
+# Release signature (optional until it is set): RELEASE_SIGNING_KEY, the PEM Ed25519 private key
+# whose public half is RELEASE_SIGNING_PUBLIC_KEY in src/update/release-signature.ts and install.sh.
 
 name: Release (SEA)
 
@@ -56,8 +58,13 @@ jobs:
           # available; BUNDLE_TARGETS / install.sh / fetch-assets already know
           # the slug. Without this job the one-line installer 404s on ARM Linux.
           - { slug: linux-arm64, os: ubuntu-24.04-arm }
-          # Still disabled (runner-availability / cost; out of scope for #43):
-          # - { slug: darwin-x64, os: macos-13 }
+          # Intel Macs (ATO-682). Built natively on GitHub's Intel image, like every other row: the
+          # SEA takes the runner's own Node and better-sqlite3 builds for the runner's arch, so an
+          # arm64 runner would produce an arm64 binary. macos-15-intel is the last Intel image
+          # GitHub offers. Signed and notarized by the same macOS steps (runner.os == 'macOS').
+          # Local models: Atomic Chat Core publishes an x86_64-apple-darwin build; the older managed
+          # llama.cpp backend has none (src/local-llm/backend/platform-assets.ts says so at runtime).
+          - { slug: darwin-x64, os: macos-15-intel }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     permissions:
@@ -243,6 +250,11 @@ jobs:
           $sqlite = Get-ChildItem -Path "node_modules\better-sqlite3\build\Release" -Filter "*.node" -ErrorAction SilentlyContinue
           foreach ($f in $sqlite) { $targets += $f.FullName }
 
+          # @napi-rs/keyring prebuild (opt-in OS keychain) — copied into node_modules/ later.
+          $keyring = Get-ChildItem -Path "node_modules\@napi-rs" -Directory -Filter "keyring-*" -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-ChildItem -Path $_.FullName -Filter "*.node" -ErrorAction SilentlyContinue }
+          foreach ($f in $keyring) { $targets += $f.FullName }
+
           # signtool is a native command, so a failure sets $LASTEXITCODE but does
           # not trip $ErrorActionPreference. Check it, or an unsigned binary ships
           # (v0.6.6's atomic-agent.exe did).
@@ -366,13 +378,102 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # One SHA256SUMS.txt for every file of the release, signed with the packages key into
+  # SHA256SUMS.txt.asc (the key in packaging/atomic-chat.asc that already signs the apt/dnf
+  # repository and the rpms), and a GitHub build-provenance attestation for each file, so
+  # `gh attestation verify <file> -R AtomicBot-ai/atomic-agent` proves it came from this workflow
+  # at the tagged commit (ATO-1035). Attestations are made only for runs that publish a draft; a
+  # run by hand with allow_unsigned writes the sums without a signature.
+  checksums:
+    name: checksums, signature, attestations
+    needs: [build, packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      ALLOW_UNSIGNED: ${{ github.ref_type != 'tag' && inputs.allow_unsigned && '1' || '0' }}
+      PUBLISHES: ${{ (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish == true)) && '1' || '0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download the release files
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: release-*
+          merge-multiple: true
+
+      # Every file but the per-file .sha256 digests, which only repeat what this lists.
+      - name: Write SHA256SUMS.txt
+        run: |
+          set -euo pipefail
+          mkdir -p sums
+          cd release-assets
+          find . -maxdepth 1 -type f ! -name '*.sha256' -printf '%f\n' | LC_ALL=C sort > ../sums/files.txt
+          if [ ! -s ../sums/files.txt ]; then echo "::error::no release files to sum"; exit 1; fi
+          xargs -d '\n' sha256sum -- < ../sums/files.txt > ../sums/SHA256SUMS.txt
+          rm ../sums/files.txt
+          cat ../sums/SHA256SUMS.txt
+
+      - name: Sign SHA256SUMS.txt with the packages key
+        if: env.ALLOW_UNSIGNED != '1'
+        env:
+          KEY: ${{ secrets.LINUX_PACKAGES_GPG_KEY }}
+          PASSPHRASE: ${{ secrets.LINUX_PACKAGES_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEY" ]; then echo "::error::the LINUX_PACKAGES_GPG_KEY secret is not set"; exit 1; fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          (umask 077; mkdir -p "$GNUPGHOME")
+          expected="$(gpg --show-keys --with-colons packaging/atomic-chat.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+          printf '%s\n' "$KEY" | gpg --batch --import
+          if ! gpg --list-secret-keys "$expected" >/dev/null 2>&1; then
+            echo "::error::LINUX_PACKAGES_GPG_KEY is not the key in packaging/atomic-chat.asc"; exit 1
+          fi
+          sign=(gpg --batch --yes --pinentry-mode loopback --local-user "$expected" --armor --detach-sign)
+          if [ -n "$PASSPHRASE" ]; then
+            printf '%s' "$PASSPHRASE" | "${sign[@]}" --passphrase-fd 0 --output sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          else
+            "${sign[@]}" --output sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          fi
+          # Check it the way README.md tells people to: against the published key only.
+          gpg --dearmor --output "$RUNNER_TEMP/atomic-chat.gpg" < packaging/atomic-chat.asc
+          gpgv --keyring "$RUNNER_TEMP/atomic-chat.gpg" sums/SHA256SUMS.txt.asc sums/SHA256SUMS.txt
+          rm -rf "$GNUPGHOME"
+
+      - name: Attest build provenance
+        if: env.PUBLISHES == '1'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release-assets/*
+            !release-assets/*.sha256
+            sums/SHA256SUMS.txt
+
+      # `release-*` like the bundles, so the release job's merged download picks them up.
+      - name: Upload the sums
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums
+          path: sums/SHA256SUMS.txt*
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: publish draft release
-    needs: [build, packages]
+    needs: [build, packages, checksums]
     if: success() && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+      # Build provenance (ATO-680): the OIDC token the attestation is signed with, and the right
+      # to store it on the repository's attestations.
+      id-token: write
+      attestations: write
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
@@ -394,6 +495,46 @@ jobs:
           else
             echo "tag=v$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           fi
+
+      # One digest list for every asset of the release (the `.sha256` files beside each asset stay
+      # for install.sh, install.ps1 and the AUR). This is what the release signature covers.
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd release-assets
+          rm -f SHA256SUMS SHA256SUMS.sig
+          find . -maxdepth 1 -type f ! -name '*.sha256' -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS
+          cat SHA256SUMS
+
+      # Detached raw Ed25519 signature over SHA256SUMS, checked by `atomic-agent update`
+      # (src/update/release-signature.ts) and install.sh. Skipped until the RELEASE_SIGNING_KEY
+      # secret exists, so the release still goes out without it. Key setup and rotation:
+      # scripts/docs/bundling.md, "Release signature".
+      - name: Sign SHA256SUMS (Ed25519)
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$RELEASE_SIGNING_KEY" ]; then
+            echo "::notice::RELEASE_SIGNING_KEY is not set; the release ships SHA256SUMS without a signature"
+            exit 0
+          fi
+          key="$RUNNER_TEMP/release-signing-key.pem"
+          (umask 077; printf '%s\n' "$RELEASE_SIGNING_KEY" > "$key")
+          openssl pkeyutl -sign -inkey "$key" -rawin -in release-assets/SHA256SUMS -out release-assets/SHA256SUMS.sig
+          openssl pkey -in "$key" -pubout -out "$RUNNER_TEMP/release-signing-key.pub.pem"
+          openssl pkeyutl -verify -pubin -inkey "$RUNNER_TEMP/release-signing-key.pub.pem" -rawin \
+            -in release-assets/SHA256SUMS -sigfile release-assets/SHA256SUMS.sig
+          rm -f "$key"
+
+      # Signed SLSA build provenance for every asset, stored on the repository's attestations and
+      # checked with `gh attestation verify <file> --repo AtomicBot-ai/atomic-agent`. Needs no secret.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release-assets/atomic-agent*
+            release-assets/SHA256SUMS
 
       - name: Create draft release and upload assets
         env:
@@ -421,6 +562,11 @@ jobs:
               gh release upload "$TAG" "$f" --clobber
             fi
           done
+          # A re-run onto a draft that was signed before must not leave the old signature beside new
+          # digests: the updater would refuse the release.
+          if [[ ! -f SHA256SUMS.sig ]]; then
+            gh release delete-asset "$TAG" SHA256SUMS.sig --yes 2>/dev/null || true
+          fi
           echo "Draft release: $TAG (review and publish on GitHub)"
 
   # Each package of the draft, installed the way README.md says in a clean container of the distro:

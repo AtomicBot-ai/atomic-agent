@@ -15,6 +15,13 @@ export interface GoalSpec {
   checks?: string[];
   /** Work rounds before the goal stops as `budget_limited`. */
   maxRounds?: number;
+  /**
+   * Token budget for the whole goal (ATO-1036): prompt plus completion
+   * tokens the rounds' model calls reported, summed across rounds and
+   * restarts. Reached, the goal stops as `budget_limited`. Absent or `0`,
+   * no token cap (rounds, time and money still bound the run).
+   */
+  maxTokens?: number;
 }
 
 /**
@@ -64,6 +71,20 @@ export interface GoalState {
   checks: string[];
   maxRounds: number;
   roundsUsed: number;
+  /** Token budget for the goal; `0` means no cap (ATO-1036). */
+  maxTokens: number;
+  /**
+   * Tokens the goal's rounds reported so far. A round whose provider
+   * reported no usage adds nothing, so this is a floor, not an exact sum.
+   */
+  tokensUsed: number;
+  /**
+   * Which agent process last made the goal `active` (ATO-1038). An
+   * `active` goal stamped by another process was cut off by a restart or
+   * a crash: it does not drive ordinary messages until the person says
+   * to go on (`/goal resume`). Absent on goals saved before this field.
+   */
+  owner?: string;
   /** Unreadable or failed judge replies in a row; reset by a readable one. */
   judgeFailures: number;
   /** Why the goal is not `active`, in words for the person. */
@@ -75,6 +96,8 @@ export interface GoalState {
 
 /** Default round limit when the spec names none. */
 export const GOAL_DEFAULT_MAX_ROUNDS = 10;
+/** Default token budget when the spec names none: `0`, no cap. */
+export const GOAL_DEFAULT_MAX_TOKENS = 0;
 /** Upper bound on `maxRounds`, so a typo cannot ask for a week of work. */
 export const GOAL_MAX_ROUNDS_CAP = 50;
 /**

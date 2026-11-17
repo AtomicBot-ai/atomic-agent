@@ -1,9 +1,13 @@
 ---
 name: docker
-description: Manage Docker containers, images, volumes, and Compose stacks via the `docker` CLI — list, inspect, logs, run, build, stop, remove, compose up/down. Use for local container ops.
+description: Manage Docker containers, images, volumes and Compose via the `docker` CLI.
 version: 1.0.1
 requires_tools:
   - os.shell.run
+requires_bins:
+  - "docker"
+install:
+  darwin: "brew install --cask docker"
 dangerous: true
 ---
 

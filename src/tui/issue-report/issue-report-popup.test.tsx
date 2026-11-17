@@ -75,6 +75,45 @@ describe("IssueReportPopup", () => {
     expect(frame).toContain("enter/y send");
   });
 
+  it("shows the support id and log tail checkboxes (ATO-1466)", () => {
+    const preview = {
+      level: "errors" as const,
+      zipPath: "/tmp/r.zip",
+      zipBytes: 10,
+      title: "t",
+      bodyChars: 1,
+      comments: 0,
+      overflow: [],
+    };
+    const on = popup({
+      ...BASE,
+      step: "confirm",
+      preview: {
+        ...preview,
+        supportId: "11111111-2222-4333-8444-555555555555",
+        includeSupportId: true,
+        includeLogs: true,
+      },
+    });
+    expect(on).toContain(
+      "[x] i  Include support ID (11111111-2222-4333-8444-555555555555)",
+    );
+    expect(on).toContain("[x] l  Include log tail");
+    expect(on).toContain("i/l toggle");
+    const off = popup({
+      ...BASE,
+      step: "confirm",
+      preview: {
+        ...preview,
+        supportId: null,
+        includeSupportId: false,
+        includeLogs: false,
+      },
+    });
+    expect(off).toContain("[ ] i  Include support ID (none on this machine)");
+    expect(off).toContain("[ ] l  Include log tail");
+  });
+
   it("shows the two waiting screens", () => {
     expect(popup({ ...BASE, step: "building" })).toContain(
       "Collecting logs and traces",

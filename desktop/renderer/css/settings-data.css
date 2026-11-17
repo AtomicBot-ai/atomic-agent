@@ -6,7 +6,7 @@
    ============================================================ */
 
 /* ---- Pane ---- */
-.sd-pane{display:flex;flex-direction:column;gap:14px;min-width:0;position:relative;container-type:inline-size;
+.sd-pane{display:flex;flex-direction:column;gap:14px;min-width:0;padding-top:2px;position:relative;container-type:inline-size;
   font-family:var(--font-ui);font-size:var(--fs-ui);line-height:1.45;white-space:normal;color:var(--ink)}
 .sd-pane .grow,.sd-grow{flex:1;min-width:0}
 .sd-pane > .tk-bar{min-height:34px}
@@ -38,6 +38,9 @@
 .sd-memtbl tbody tr.on td:first-child{color:var(--blue)}
 .sd-memtbl .tk-chip svg{width:12px;height:12px}
 .sd-memtbl th:nth-child(3),.sd-memtbl td:nth-child(3),.sd-memtbl th:nth-child(4),.sd-memtbl td:nth-child(4){width:1%}
+/* ATO-582: a note's text in an edit box (memory-edit.js). */
+.sd-memedit{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+textarea.tk-inp.sd-memedit-box{width:100%;min-height:140px;font-size:var(--fs-ui);line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;resize:vertical}
 .sd-memrow .sd-id{flex:none;min-width:44px;font:400 var(--fs-label)/1.3 var(--font-mono);color:var(--ink-2);white-space:nowrap}
 .sd-memrow.on .sd-id{color:var(--blue)}
 .sd-memrow .t{font-size:var(--fs-ui);font-weight:500}
@@ -99,6 +102,25 @@ textarea.tk-inp.sd-json::placeholder{color:var(--ink-3);opacity:.7}
 /* ATO-510: what the box understood (JSON, command or address), with an editable name. */
 .sd-detect dd{align-self:center}
 input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
+/* W2 QA (16.11): the add box's catalog as cards, and one server's short form. */
+.sd-cat-search.tk-inpwrap{width:100%}
+.sd-cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;max-height:min(46vh,380px);overflow-y:auto;padding:2px}
+.sd-cat-card{display:grid;grid-template-columns:24px minmax(0,1fr);grid-template-rows:auto auto;column-gap:8px;row-gap:2px;align-items:center;text-align:left;padding:10px 12px;border-radius:var(--r-card,10px);background:transparent;box-shadow:inset 0 0 0 1px var(--bd-2);cursor:pointer;color:var(--ink)}
+.sd-cat-card:hover,.sd-cat-card:focus-visible{background:var(--lift)}
+.sd-cat-card .sd-cat-ic{grid-row:1 / 3}
+.sd-cat-t{font-size:var(--fs-label);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sd-cat-d{grid-column:2;font-size:var(--fs-cap);line-height:1.35;color:var(--ink-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.sd-cat-ic{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;flex:none}
+.sd-cat-ic svg{width:20px;height:20px}
+.sd-cat-letter{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;background:var(--well);font-size:var(--fs-cap);font-weight:600;color:var(--ink-2)}
+.sd-cat-custom,.sd-cat-cfgt{align-self:flex-start;padding:0;border:0;background:none;color:var(--blue);font-weight:600;font-size:var(--fs-label);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.sd-cat-desc{margin:0;color:var(--ink-2)}
+.sd-cat-field{display:flex;flex-direction:column;gap:6px}
+.sd-cat-field .tk-inp{width:100%}
+.sd-cat-label{font-size:var(--fs-label);font-weight:600;color:var(--ink)}
+.sd-cat-get{margin-top:-6px}
+.sd-cat-cfg{margin:0;max-height:180px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.sd-modal .sd-mhead h4{margin:0}
 
 /* ---- Telegram · ST-28…30 ---- */
 .sd-tgcard.tk-card.pad{width:min(480px,100%);align-self:center;gap:12px;padding:28px;margin:10px 0 4px}
@@ -111,6 +133,8 @@ input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
 .sd-tokwrap input{font:400 var(--fs-ui)/1 var(--font-mono);letter-spacing:.06em}
 .sd-tokwrap.is-error{background:var(--lift);border-color:var(--critical);box-shadow:0 0 0 4px var(--critical-wash)}
 .sd-acts{display:flex;align-items:center;gap:8px;margin-top:2px}
+/* ATO-516: the pairing deep link, cut with an ellipsis rather than pushing the buttons out. */
+.sd-pair [data-tg-link] .sd-mono{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-cap)}
 .sd-well{display:flex;flex-direction:column;gap:8px;padding:16px 18px;border-radius:var(--r-card);background:var(--well)}
 .sd-pairhead{display:flex;align-items:center;gap:10px}
 .sd-pairhead b{font-size:var(--fs-lead);font-weight:600;color:var(--ink)}
@@ -126,10 +150,16 @@ input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
 .sd-rows .tk-setrow .body{flex:1 1 220px}
 .sd-rows .tk-setrow .d{overflow-wrap:anywhere}
 .sd-rows .tk-setrow .d.sd-mono{font-size:var(--fs-label)}
+/* Phone push step 2: the address on its own line under the words, whole and easy to select. */
+.sd-rows .sd-push-url{margin-top:6px;font-size:var(--fs-label);color:var(--ink);user-select:all;overflow-wrap:anywhere}
 
 /* ---- Composio (composio.js): the Telegram cards' shapes; the key field sits in the card, so it is not centred ---- */
 .sd-cmpcard.tk-card.pad{width:min(520px,100%)}
 .sd-cmpcard .sd-acts{flex-wrap:wrap}
+/* Layout pass: a form card between the status card and the rows (Replace the
+   API key, No key is saved) is as wide as they are, not a narrower centred
+   card over full-width rows; its text sits on their 16px text edge. */
+.sd-tgcard.sd-inlinecard.tk-card.pad{width:auto;align-self:stretch;margin:0;padding:16px}
 .sd-cmp .tk-notice .sd-cap{flex:none}
 .sd-steps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:4px;font-size:var(--fs-ui);line-height:1.5;color:var(--ink-2)}
 
@@ -169,3 +199,23 @@ input.tk-inp.sd-name{width:100%;font:400 var(--fs-label)/1.5 var(--font-mono)}
 .sd-imptbl th:nth-child(1),.sd-imptbl th:nth-child(2){width:112px}
 .sd-imptbl td.sd-path{font:400 var(--fs-label)/1.3 var(--font-mono);color:var(--ink);overflow:hidden;text-overflow:ellipsis}
 .sd-reason{color:var(--ink-2)}
+/* W2: the source chips wrap onto a second line instead of running past the pane;
+   the folder field carries its Choose… button; the group list after a preview. */
+.sd-form .tk-seg.sd-impsrc{display:flex;flex-wrap:wrap;height:auto;row-gap:4px;max-width:100%;border-radius:16px}
+.sd-form .tk-seg.sd-impsrc button{flex:none}
+.sd-imppath{display:flex;gap:8px;align-items:center;min-width:0}
+.sd-imppath .tk-inp{flex:1 1 auto;min-width:0}
+.sd-imppath .btn{flex:none}
+.sd-impwarn{display:flex;gap:6px;align-items:center;color:var(--ink-2)}
+.sd-impsent{color:var(--ink);font-size:var(--fs-label)}
+.sd-impgrp{display:flex;gap:10px;align-items:flex-start;padding:8px 12px}
+.sd-impgrp .sd-impgic{flex:none;color:var(--ink-2);margin-top:2px}
+.sd-impgrp .body{min-width:0}
+.sd-impgrp .d{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sd-imp .set-sechead{margin-top:6px}
+
+/* W2 QA: the New project sheet (chat-projects.js projectCreateHTML). */
+.sd-opt{color:var(--ink-3);font-weight:400}
+.sd-pnew-folder{display:flex;align-items:center;gap:8px;min-width:0;padding:8px 10px;border:1px solid var(--bd);border-radius:8px}
+.sd-pnew-folder .mono{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-cap)}
+.sd-pnew-folder .sd-cap{display:block}

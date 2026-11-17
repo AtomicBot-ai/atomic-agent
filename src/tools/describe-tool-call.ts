@@ -79,6 +79,7 @@ const V = {
   extracted: ["Extracted", "Extracting", "extract"],
   checked: ["Checked", "Checking", "check"],
   watched: ["Watched", "Watching", "watch"],
+  listenedTo: ["Listened to", "Listening to", "listen to"],
   found: ["Found", "Finding", "find"],
   ran: ["Ran", "Running", "run"],
   stopped: ["Stopped", "Stopping", "stop"],
@@ -92,6 +93,7 @@ const V = {
   recalled: ["Recalled", "Recalling", "recall"],
   forgot: ["Forgot", "Forgetting", "forget"],
   generated: ["Generated", "Generating", "generate"],
+  recorded: ["Recorded", "Recording", "record"],
   delegated: ["Delegated", "Delegating", "delegate"],
   scheduled: ["Scheduled", "Scheduling", "schedule"],
   cancelled: ["Cancelled", "Cancelling", "cancel"],
@@ -101,6 +103,7 @@ const V = {
   commented: ["Commented", "Commenting", "comment"],
   focused: ["Focused", "Focusing", "focus"],
   used: ["Used", "Using", "use"],
+  transcribed: ["Transcribed", "Transcribing", "transcribe"],
 } as const satisfies Record<string, Verb>;
 
 // ---------------------------------------------------------------------------
@@ -237,9 +240,15 @@ const FIXED: Readonly<Record<string, Phrase>> = {
   "tasks.list": P(V.listed, "tasks"),
   "tasks.show": P(V.lookedAt, "a task"),
   "tasks.cancel": P(V.cancelled, "a task"),
+  "sessions.list": P(V.listed, "chats"),
+  "sessions.read": P(V.read, "another chat"),
+  "sessions.send": P(V.sent, "a request to another chat"),
+  "sessions.check": P(V.checked, "another chat's answer"),
   "verify.run": P(V.ran, "a check"),
   "verify.syntax": P(V.checked, "the syntax"),
   "video.generate": P(V.generated, "a video"),
+  "canvas.render": P(V.created, "a canvas"),
+  "video.render_html": P(V.recorded, "a video from a page"),
   "github.whoami": P(V.checked, "the GitHub account"),
   "github.issue.list": P(V.listed, "GitHub issues"),
   "github.pr.list": P(V.listed, "pull requests"),
@@ -260,6 +269,12 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
       return P(a.mode === "append" ? V.addedTo : V.wrote, fileObject(a, "a file"));
     case "os.fs.edit":
       return P(V.edited, fileObject(a, "a file"));
+    case "os.fs.docx":
+    case "os.fs.xlsx":
+      return P(
+        a.op === "read" ? V.read : a.op === "create" ? V.created : V.edited,
+        fileObject(a, "a document"),
+      );
     case "os.fs.patch": {
       // An inline patch names its files in `+++ b/<path>` headers.
       const targets = typeof a.patch === "string" && !pathsOf(a).first ? patchTargets(a.patch) : [];
@@ -284,6 +299,8 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
       if (from && to) return P(V.moved, `${shortPath(from)} to ${shortPath(to)}`);
       return P(V.moved, moves > 1 ? plural(moves, "file") : "a file");
     }
+    case "os.fs.write_pptx":
+      return P(V.created, fileObject(a, "a presentation"));
     case "os.fs.trash":
       return P(V.moved, `${fileObject(a, "files")} to the Trash`);
     case "os.fs.diff": {
@@ -317,6 +334,7 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
       return P(V.focused, app ? clip(app, 40) : "a window");
     }
     case "os.web.fetch":
+    case "os.web.crawl":
     case "browser.navigate": {
       const u = str(a.url);
       return P(V.opened, u ? host(u) : "a web page");
@@ -331,6 +349,10 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
     }
     case "vision.describe":
       return P(V.lookedAt, fileObject(a, "an image"));
+    case "audio.transcribe":
+      return P(V.transcribed, fileObject(a, "a recording"));
+    case "audio.listen":
+      return P(V.listenedTo, fileObject(a, "a recording"));
     case "image.generate": {
       const n = typeof a.count === "number" && Number.isInteger(a.count) && a.count > 1 ? a.count : 1;
       const prompt = str(a.prompt);
@@ -440,12 +462,12 @@ export function describeToolCall(input: DescribeToolCallInput): ToolCallDescript
 type Bucket = "read" | "search" | "edit" | "command" | "web" | "page" | "memory" | "other";
 
 function bucketOf(name: string): Bucket {
-  if (/^os\.fs\.(read|read_document|archive\.read_entry)$/.test(name) || name === "vision.describe") return "read";
+  if (/^os\.fs\.(read|read_document|archive\.read_entry)$/.test(name) || name === "vision.describe" || name === "audio.listen") return "read";
   if (/^os\.fs\.(list|glob|grep|archive\.list)$/.test(name)) return "search";
   if (/^os\.fs\.(write|edit|patch|move|trash|restore|archive\.extract)$/.test(name)) return "edit";
   if (name === "os.shell.run" || name.startsWith("os.git.") || name === "skill.run_script" || name === "verify.run") return "command";
   if (WEB_SEARCH.has(name)) return "web";
-  if (name === "os.web.fetch" || name === "browser.navigate" || name === "os.http.request") return "page";
+  if (name === "os.web.fetch" || name === "os.web.crawl" || name === "browser.navigate" || name === "os.http.request") return "page";
   if (name.startsWith("memory.")) return "memory";
   return "other";
 }

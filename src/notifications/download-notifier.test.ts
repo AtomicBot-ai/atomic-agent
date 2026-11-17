@@ -278,4 +278,39 @@ describe("notifyDownloadOutcome", () => {
     ).toBe(true);
     expect(isDownloadNotifyChannelReady("email", verified, {})).toBe(false);
   });
+
+  it("pushes to the ntfy topic when push is on (ATO-1129)", async () => {
+    const push = {
+      enabled: true,
+      server: "https://ntfy.example.com",
+      topic: "atag-dl",
+      tokenEnv: "NTFY_TOKEN",
+    };
+    const bodies: Record<string, unknown>[] = [];
+    const urls: string[] = [];
+    const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      urls.push(String(url));
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response("{}", { status: 200 });
+    }) as unknown as typeof fetch;
+    const withPush = {
+      ...config,
+      notifications: { downloads: { channel: "push" as const }, push },
+    };
+    expect(isDownloadNotifyChannelReady("push", withPush, {})).toBe(true);
+    expect(isDownloadNotifyChannelReady("push", config, {})).toBe(false);
+    const result = await notifyDownloadOutcome({
+      channel: "push",
+      job: job(),
+      config: withPush,
+      env: {},
+      fetchImpl,
+    });
+    expect(result).toEqual({ outcome: "sent", channel: "push" });
+    expect(urls).toEqual(["https://ntfy.example.com/"]);
+    expect(bodies[0]).toMatchObject({ topic: "atag-dl", title: "✅ Model ready: Qwen 3.5 4B" });
+    expect(
+      await notifyDownloadOutcome({ channel: "push", job: job(), config, env: {}, fetchImpl }),
+    ).toMatchObject({ outcome: "not_configured", reason: "push is off" });
+  });
 });

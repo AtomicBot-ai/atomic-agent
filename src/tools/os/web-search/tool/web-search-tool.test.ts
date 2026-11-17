@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AtomicAgentConfig } from "../../../../config/index.js";
+import { USER_CONFIG_DEFAULTS, type AtomicAgentConfig } from "../../../../config/index.js";
 import type { runCommand as RunCommandType } from "../../../../sandbox/command-runner.js";
 import type { ToolContext } from "../../../tool-registry.js";
 import { buildOsWebSearchTool } from "./web-search-tool.js";
@@ -35,6 +35,7 @@ function makeConfig(
         brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
         ...overrides,
       },
+      fetch: USER_CONFIG_DEFAULTS.web.fetch,
     },
   };
 }

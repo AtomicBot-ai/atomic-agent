@@ -1,4 +1,5 @@
 import { Menu, shell, type MenuItemConstructorOptions } from "electron";
+import { KEEP_AWAKE_LABELS, KEEP_AWAKE_LID_NOTE, KEEP_AWAKE_MODES, type KeepAwakeMode } from "./keep-awake.js";
 
 /**
  * The native menu bar.
@@ -16,6 +17,8 @@ export function buildMenu(send: (command: string) => void, toggles: MenuToggles 
 export interface MenuToggles {
   keepRunning: boolean;
   startAtLogin: boolean;
+  /** ATO-592: Keep Computer Awake; absent reads as off. */
+  keepAwake?: KeepAwakeMode;
 }
 const NO_TOGGLES: MenuToggles = { keepRunning: false, startAtLogin: false };
 
@@ -100,7 +103,7 @@ export function menuTemplate(
       label: "View",
       submenu: [
         item("Chat", "room:chat", "CommandOrControl+1"),
-        item("Tasks", "room:tasks", "CommandOrControl+2"),
+        item("Cron jobs", "room:tasks", "CommandOrControl+2"),   // W2: the Tasks feature's visible name, as in the sidebar
         item("Skills", "room:skills", "CommandOrControl+3"),
         item("Memory", "settings:memory", "CommandOrControl+4"),
         sep,
@@ -123,6 +126,10 @@ export function menuTemplate(
         sep,
         // ATO-1046: each new reply read aloud with the system's voices (renderer tts.js).
         item("Read Replies Aloud", "tts:auto"),
+        // ATO-494: the voice per reply language and the speed (renderer tts-settings.js).
+        item("Reading Voice and Speed…", "tts:settings"),
+        // ATO-1047: listen, send, read the reply, listen again (renderer converse.js; macOS only for now).
+        item("Conversation Mode", "conv:toggle", "Shift+CommandOrControl+J"),
         sep,
         { label: "Appearance", submenu: [
           item("System", "theme:system"),
@@ -173,6 +180,20 @@ export function menuTemplate(
            the menu bar icon there. */
         { label: "Keep Running After the Window Closes", type: "checkbox", checked: toggles.keepRunning, click: () => send("bg:keepRunning") },
         { label: "Start at Login", type: "checkbox", checked: toggles.startAtLogin, click: () => send("bg:startAtLogin") },
+        /* ATO-592: main's own (`awake:*`, keep-awake.ts); off by default. */
+        {
+          label: "Keep Computer Awake",
+          submenu: [
+            ...KEEP_AWAKE_MODES.map((mode): MenuItemConstructorOptions => ({
+              label: KEEP_AWAKE_LABELS[mode],
+              type: "radio",
+              checked: (toggles.keepAwake ?? "off") === mode,
+              click: () => send(`awake:${mode}`),
+            })),
+            sep,
+            { label: KEEP_AWAKE_LID_NOTE, enabled: false },
+          ],
+        },
       ],
     },
     mac
@@ -191,6 +212,10 @@ export function menuTemplate(
            menu's report is counted (ui_action) and opens the same prefilled
            issue with a saved support report, not the bare issue list. */
         item("Report an Issue…", "help.report"),
+        /* ATO-1465: the renderer opens the invite (DISCORD_URL, renderer.js) and counts the click. */
+        item("Join Discord", "help.discord"),
+        /* ATO-1467: the interview invite's permanent entry, no limits. */
+        item("Talk to the Team ($50 Credits)…", "help.feedback"),
         ...(mac ? [] : [sep, { role: "about" } as MenuItemConstructorOptions]),
       ],
     },

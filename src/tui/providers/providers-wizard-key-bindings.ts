@@ -15,6 +15,7 @@ import {
   isListPhase,
   isWizardFirstScreen,
   kindRowAtCursor,
+  presetAsksBaseUrl,
   presetNeedsKeyScreen,
   visibleRowsForPhase,
 } from "./providers-wizard-phases.js";
@@ -23,6 +24,7 @@ import {
   apiKeyForWizard,
   apiKeyPhaseError,
   baseUrlForWizard,
+  baseUrlPhaseError,
 } from "./providers-wizard-target.js";
 import type { ProvidersWizardState } from "./providers-wizard-state.js";
 
@@ -173,6 +175,10 @@ export function handleProvidersWizardKey(
       if (wizard.phase === "chat_model_line") {
         return { handled: true, wizard, submit: true };
       }
+      const badUrl = baseUrlPhaseError(wizard);
+      if (badUrl) {
+        return { handled: true, wizard: { ...wizard, error: badUrl } };
+      }
       return {
         handled: true,
         wizard: advanceWizardPhase(wizard),
@@ -265,6 +271,9 @@ export function handleProvidersWizardKey(
         // Studio), skip the key screen too and land straight on the model
         // choice: asking for a key that does not exist is the dead end
         // presets exist to remove (#69).
+        // A per-account endpoint (Azure resource, AWS Region) is the one
+        // exception: its row opens on the URL step with the template
+        // prefilled, then walks the usual URL → key → model flow.
         const needsKey = presetNeedsKeyScreen(preset.id);
         return {
           handled: true,
@@ -273,7 +282,11 @@ export function handleProvidersWizardKey(
             kind: "openai-compatible",
             presetId: preset.id,
             baseUrlLine: preset.baseUrl,
-            phase: needsKey ? "api_key" : "chat_model_line",
+            phase: presetAsksBaseUrl(preset.id)
+              ? "base_url"
+              : needsKey
+                ? "api_key"
+                : "chat_model_line",
             cursor: 0,
             search: null,
           },

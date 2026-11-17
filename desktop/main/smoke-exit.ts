@@ -135,6 +135,25 @@ export function modelPortsOf(cfg: unknown): number[] {
   return [...new Set(ports)];
 }
 
+/**
+ * ATO-825, its follow-up: of the `taken` model ports, those held by a model
+ * server THIS run started. The QA stand starts the full smoke's model before
+ * the window opens (`atag models start` on the run's fresh state directory),
+ * and that server holds the run's own key, so it is no leftover. It is told
+ * from one by the run's pid files (`runPids`, read from the run's model data
+ * directory, which the stand recreates for every run): a pid that is alive,
+ * is a llama-server, and names `--port <p>` on its command line. A leftover
+ * from a stopped run is in no pid file of this run, so it still stops the run.
+ */
+export function portsHeldByRun(
+  taken: readonly number[],
+  runPids: readonly number[],
+  commandOf: (pid: number) => string | null,
+): number[] {
+  const commands = [...new Set(runPids)].map((pid) => commandOf(pid)).filter((c): c is string => !!c && /llama-server/i.test(c));
+  return taken.filter((p) => commands.some((c) => new RegExp(`(^|\\s)--port(\\s+|=)${p}(\\s|$)`).test(c)));
+}
+
 /** Which of `ports` are already taken. */
 export async function busyPorts(ports: readonly number[], taken: (port: number) => Promise<boolean> = portTaken): Promise<number[]> {
   const answers = await Promise.all(ports.map(async (p) => [p, await taken(p)] as const));

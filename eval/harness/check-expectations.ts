@@ -4,6 +4,11 @@ import { join } from "node:path";
 import type { EvalCase, EvalExpectation } from "./case-schema.js";
 import type { TraceMetrics } from "./parse-trace-metrics.js";
 import type { JudgeClient, JudgeVerdict } from "./judge-types.js";
+import type { MockHttpHit } from "./attack-schema.js";
+import {
+  checkNegativeExpectation,
+  isNegativeExpectation,
+} from "./check-negative-expectations.js";
 
 export interface ExpectationFailure {
   kind: EvalExpectation["kind"];
@@ -16,6 +21,10 @@ export interface ExpectationContext {
   reply: string;
   metrics: TraceMetrics;
   judge: JudgeClient | null;
+  /** The agent's state dir (for `file_not_matches` with `root: "state"`). */
+  stateDir?: string;
+  /** Requests the mock HTTP server recorded under `/collect/` during this case. */
+  httpHits?: readonly MockHttpHit[];
 }
 
 export interface JudgeRecord {
@@ -113,6 +122,15 @@ function checkSyncExpectation(
   expectation: Exclude<EvalExpectation, { kind: "judge" }>,
   ctx: ExpectationContext,
 ): ExpectationFailure | null {
+  if (isNegativeExpectation(expectation)) {
+    return checkNegativeExpectation(expectation, {
+      workingDir: ctx.workingDir,
+      stateDir: ctx.stateDir,
+      reply: ctx.reply,
+      toolInvocations: ctx.metrics.toolInvocations,
+      httpHits: ctx.httpHits,
+    });
+  }
   switch (expectation.kind) {
     case "reply_contains": {
       if (expectation.pattern.test(ctx.reply)) return null;

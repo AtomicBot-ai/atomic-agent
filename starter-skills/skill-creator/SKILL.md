@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Author or edit atomic-agent skills (SKILL.md + YAML). Use when creating, renaming, or tightening skills and their install layout.
+description: Create, edit or tighten atomic-agent skills (SKILL.md, YAML).
 version: 1.3.0
 requires_tools:
   - os.fs.read

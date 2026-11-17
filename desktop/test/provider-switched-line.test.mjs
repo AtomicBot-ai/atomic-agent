@@ -25,3 +25,16 @@ test('the frame draws into the turn and is handled by the chat event router', ()
   assert.match(renderer, /'provider_recovered', 'provider_switched',/);
   assert.match(renderer, /if \(ev\.kind === 'provider_switched'\) \{/);
 });
+
+// ATO-1459: the line carries a button: Fallback settings, or Check key when the provider refused the key.
+const actAt = renderer.indexOf('function providerSwitchedAct(p)');
+runInContext(renderer.slice(actAt, renderer.indexOf('\n}\n', actAt) + 3) + ';this.act = providerSwitchedAct;', ctx);
+
+test('a fallback that answered offers Fallback settings; a refused key offers Check key on the provider switched away from', () => {
+  assert.equal(ctx.act({ from: 'openrouter', to: 'gemini', cause: 'rate_limited' }).act, 'fallback-settings');
+  assert.equal(ctx.act({ from: 'openrouter', to: 'gemini' }).act, 'fallback-settings');
+  const key = ctx.act({ from: 'openrouter', to: 'gemini', cause: 'auth_rejected' });
+  assert.equal(key.act, 'fix-key');
+  assert.equal(key.keyFor, 'openrouter');
+  assert.match(renderer, /note:true, text: esc\(line\), \.\.\.providerSwitchedAct\(p\)\}/);
+});

@@ -9,6 +9,7 @@ import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 import type { SessionUsageState } from "../session/usage-meter.js";
+import type { StepSpeed } from "../llm/step-speed.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
@@ -68,6 +69,7 @@ import {
   type IntegrationsPanelState,
 } from "./integrations/integrations-panel-state.js";
 import type { IssueReportState } from "./issue-report/issue-report-state.js";
+import type { RewindPoint } from "../session/session-rewind.js";
 import {
   createInitialPluginsPanelState,
   type PluginsPanelState,
@@ -179,8 +181,21 @@ export interface ChatMessage {
    * `configure-fallback` is set on the notice a provider fallover
    * leaves in the chat: the switch changed which model answers, and the
    * pane that changes it back is one most operators have never opened.
+   * `add-cloud-provider` is set on the notice a cloud or Fusion pick
+   * leaves when no cloud provider exists yet: the agent stays on local,
+   * and the button opens the add-provider wizard (ATO-1460).
+   * `fix-key` is set on the "Turn failed" notice when the provider
+   * refused the API key (`auth_rejected`, ATO-1457): a refused key never
+   * fixes itself, and the button opens that provider's key field.
    */
-  action?: "configure-fallback";
+  action?: "configure-fallback" | "add-cloud-provider" | "fix-key";
+  /**
+   * The provider whose API key was refused, for the `[check key]`
+   * button. Set with `action: "fix-key"` when the error names it, and
+   * on a fallover notice whose cause was a refused key (that notice
+   * keeps `configure-fallback` and shows both buttons).
+   */
+  fixKeyProviderId?: string;
   /**
    * A session this notice offers to open, rendered as a `[switch back]`
    * button beside `[copy]`. Set on the notices that name a thread the
@@ -279,6 +294,13 @@ export interface RollingMetrics {
   totalTokens: number;
   toolsOk: number;
   toolsError: number;
+  /**
+   * The last model step's speed (ATO-631): decode rate, how much of the
+   * prompt the KV cache served, prefill time, draft acceptance. Drawn in
+   * the composer bar so a slow reply says why. Per-turn like the other
+   * `*Last` fields; optional so older fixtures need not spell it.
+   */
+  stepSpeedLast?: StepSpeed | null;
 }
 
 /**
@@ -354,6 +376,12 @@ export interface SessionPickerEntry {
    * an entry is built.
    */
   pinned: boolean;
+  /**
+   * The desktop chat folder this session is in (ATO-1180,
+   * `<stateDir>/chat-folders.json`), stamped by the rail orchestrator;
+   * absent when it is in none.
+   */
+  folder?: string;
 }
 
 /**
@@ -365,6 +393,13 @@ export interface SessionDeleteConfirm {
   sessionId: string;
   preview: string;
   cursor: "yes" | "cancel";
+}
+
+/** The open `/rewind` picker (ATO-1057). */
+export interface RewindPickerState {
+  readonly points: readonly RewindPoint[];
+  /** Highlighted row in `points`. */
+  readonly cursor: number;
 }
 
 export interface TuiState {
@@ -444,6 +479,13 @@ export interface TuiState {
    * page off screen to acknowledge a keystroke.
    */
   composerNotice: string | null;
+  /**
+   * The next-step suggestion for the composer (ATO-1095), from the
+   * agent's `next_step_suggestion` event. Shown greyed while the buffer
+   * is empty; Tab fills the buffer with it. Typing, a new turn or a
+   * session change drops it.
+   */
+  nextStepSuggestion: string | null;
   /**
    * Live provider outage, or `null` when the link is answering.
    *
@@ -627,12 +669,30 @@ export interface TuiState {
    * and flipped with `/steps on|off` (persisted).
    */
   showSteps: boolean;
+  /**
+   * Verbose steps (ATO-34): every finished tool card carries one plain
+   * line under its header: step number, the call with its args, and what
+   * came back. Flipped with `/verbose`; lives for this TUI run only.
+   */
+  verboseSteps: boolean;
+  /**
+   * Vim keys in the composer (ATO-662). Seeded from `tui.vimMode` and
+   * flipped with `/vim on|off` (persisted). The NORMAL / INSERT mode
+   * itself lives in the editor, not here.
+   */
+  vimMode: boolean;
   /** Is the session picker overlay visible? */
   sessionPickerOpen: boolean;
   /** Entries shown in the picker, newest first. */
   sessionPickerList: readonly SessionPickerEntry[];
   /** Highlighted row in the picker. */
   sessionPickerCursor: number;
+  /**
+   * ATO-1153: the composer's text when the picker opened (the menu opens
+   * it with the draft still there, ATO-37). What is typed after it is the
+   * picker's search; the draft is put back on Esc and before a switch.
+   */
+  sessionPickerDraft: string;
   /** Theme picker overlay open (interactive `/theme` selection). */
   themePickerOpen: boolean;
   /** Highlighted row in the theme picker (index into `THEME_NAMES`). */
@@ -663,7 +723,16 @@ export interface TuiState {
    * The bar hides it while an update is running or finished
    * (`updateStatus`), so no reducer case ever needs to null it.
    */
-  updateBanner: { current: string; latest: string } | null;
+  updateBanner: {
+    current: string;
+    latest: string;
+    /**
+     * ATO-1125: the latest release's policy lists the running version.
+     * `below-minimum` turns the offer into a warning; `broken` also
+     * blocks starting a new chat (`required-update.ts`).
+     */
+    required?: "broken" | "below-minimum" | null;
+  } | null;
   /**
    * Lifecycle of an accepted self-update. `running` while `install.sh`
    * executes; `done` / `failed` after it settles. Purely informational —
@@ -846,6 +915,12 @@ export interface TuiState {
    */
   codingModeMenu: { readonly cursor: number } | null;
   /**
+   * `/rewind` (ATO-1057): the chat's earlier questions, newest first,
+   * or `null`/absent when the picker is closed. Enter takes the chat
+   * back to just before the highlighted one.
+   */
+  rewindPicker?: RewindPickerState | null;
+  /**
    * A plan is on screen and nothing has been done with it yet.
    *
    * Set when a turn completes in plan mode, cleared the moment the next
@@ -897,6 +972,8 @@ export interface InitialTuiLayoutOptions {
   whileBusyMode?: WhileBusySubmitMode;
   /** Seeds {@link TuiState.showSteps} from `tui.showSteps`. */
   showSteps?: boolean;
+  /** Seeds {@link TuiState.vimMode} from `tui.vimMode`. */
+  vimMode?: boolean;
   /**
    * Seeds the local-models slice's config-derived facts (mode + chosen
    * model), so the composer's route controls are right on the home
@@ -937,6 +1014,7 @@ export function createInitialTuiState(
     approvalPreviewPage: null,
     composerHasSelection: false,
     composerNotice: null,
+    nextStepSuggestion: null,
     providerOutage: null,
     sessionDelete: null,
     uninstall: null,
@@ -956,6 +1034,7 @@ export function createInitialTuiState(
       totalTokens: 0,
       toolsOk: 0,
       toolsError: 0,
+      stepSpeedLast: null,
     },
     contextUsage: EMPTY_CONTEXT_USAGE,
     plan: null,
@@ -987,9 +1066,12 @@ export function createInitialTuiState(
     toolsExpandedById: {},
     turnsExpandedById: {},
     showSteps: layout?.showSteps ?? false,
+    verboseSteps: false,
+    vimMode: layout?.vimMode ?? false,
     sessionPickerOpen: false,
     sessionPickerList: [],
     sessionPickerCursor: 0,
+    sessionPickerDraft: "",
     themePickerOpen: false,
     themePickerCursor: 0,
     themePickerOriginal: "",
@@ -1036,6 +1118,7 @@ export function createInitialTuiState(
     abortArmed: false,
     codingMode: "default",
     codingModeMenu: null,
+    rewindPicker: null,
     planHandoff: false,
     // `session` is optional in practice: several reducer tests build a
     // state with no session info at all, and a seed that assumed one

@@ -6,6 +6,39 @@ export type {
   ImportReport,
 } from "./import-report.js";
 export { importSkillDirs } from "./import-skill-dirs.js";
+export {
+  coerceFoldersFile,
+  coerceProjectsFile,
+  emptyFoldersFile,
+  emptyProjectsFile,
+  foldersFilePath,
+  groupHintFromCwd,
+  groupImportReport,
+  ImportGroupingError,
+  mergeGroupingFrom,
+  namedGroupHint,
+  outcomeItem,
+  pathKey,
+  planImportGrouping,
+  projectsFilePath,
+  readFoldersFile,
+  readProjectsFile,
+  withGroupHint,
+  writeGroupingFile,
+} from "./grouping.js";
+export type {
+  GroupImportReportOptions,
+  ImportChatFolder,
+  ImportFoldersFile,
+  ImportGroupHint,
+  ImportGroupingEntry,
+  ImportGroupingPlan,
+  ImportGroupOutcome,
+  ImportProject,
+  ImportProjectsFile,
+  MergeGroupingInput,
+  PlanImportGroupingInput,
+} from "./grouping.js";
 export type { ImportSkillDirsInput } from "./import-skill-dirs.js";
 export { reconcileImportedSession } from "./reconcile-session.js";
 export type {
@@ -95,6 +128,28 @@ export type {
   ResolveClaudeCodeOptionsInput,
 } from "./claude-code/index.js";
 
+// Claude app source (claude.ai / Claude desktop data export).
+export {
+  CLAUDE_APP_IMPORT_OPTIONS,
+  CLAUDE_APP_MEMORY_TAG,
+  CLAUDE_APP_SESSION_ID_PREFIX,
+  ClaudeAppImporter,
+  ClaudeAppOptionError,
+  ClaudeAppSource,
+  ClaudeAppSourceError,
+  claudeAppProjectKey,
+  mapClaudeAppConversation,
+  resolveClaudeAppOptions,
+} from "./claude-app/index.js";
+export type {
+  ClaudeAppConversation,
+  ClaudeAppExport,
+  ClaudeAppImporterDeps,
+  ClaudeAppOptionId,
+  ClaudeAppProject,
+  ClaudeAppRunOptions,
+} from "./claude-app/index.js";
+
 // Codex source.
 export {
   CODEX_IMPORT_OPTIONS,
@@ -179,6 +234,19 @@ export type {
   AtomicDesktopImportTargets,
   ImportAtomicDesktopOptions,
 } from "./atomic-desktop/index.js";
+
+// Another Atomic Agent data folder ("import from another profile").
+export {
+  ATOMIC_AGENT_IMPORT_OPTIONS,
+  AtomicAgentImporter,
+  AtomicAgentOptionError,
+  resolveAtomicAgentOptions,
+} from "./atomic-agent/index.js";
+export type {
+  AtomicAgentImporterDeps,
+  AtomicAgentOptionId,
+  AtomicAgentRunOptions,
+} from "./atomic-agent/index.js";
 
 // Source detection (shared by the first-run flow and anything that
 // wants to name the sources without hard-coding their layouts).

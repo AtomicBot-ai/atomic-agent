@@ -14,6 +14,10 @@ export const CLAUDE_CLI_MODEL_ALIASES = [
 ] as const;
 
 export const CLAUDE_CLI_MODEL_IDS = [
+  "claude-opus-5-5",
+  "claude-sonnet-5-5",
+  "claude-haiku-5-5",
+  "claude-fable-5-2",
   "claude-opus-5",
   "claude-sonnet-5",
   "claude-haiku-4-5",

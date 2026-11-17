@@ -7,8 +7,11 @@
 import "./stdio-guard.js";
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
+import { printHtmlToPdf, registerChatExportIpc } from "./chat-export.js";
+import { cleanWebhookCreate, webhookNameOk } from "./webhooks-ipc.js";
+import { registerSettingsReferenceIpc } from "./settings-reference.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
@@ -16,10 +19,12 @@ import { openLoginTerminal } from "./subscription-cli-login.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { engineBusy, retryWhileEngineBusy } from "./engine-busy-retry.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
-import { readChatFolders, writeChatFolders } from "./chat-folders.js";
+import { folderForTurn, readChatFolders, writeChatFolders } from "./chat-folders.js";
+import { assignChat, deleteProject, readProjects, saveProject, turnProject, updateProjects } from "./projects-store.js";
+import { newChatSessionId } from "./chat-session.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
-import { busyPorts, modelPortsOf, onSmokeStopSignal, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
+import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
@@ -34,20 +39,33 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS, commandOf, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
+import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
+import { pushTurnNote, wirePushIpc } from "./push-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
+import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
+import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
+import { wireTaskControlsIpc } from "./task-controls-ipc.js";
+import { wireSessionGoalIpc } from "./session-goal-ipc.js";
+import { wireMiniChatIpc } from "./mini-chat-ipc.js";
+import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
+import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
+import { wireFitTestIpc } from "./fit-test-ipc.js";
+import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
 import { machineProfile } from "./studio-local.js";
 import { pickOpenRouterKey } from "./studio-key.js";
+import { removeProviderForgettingMedia } from "./studio-forget-key.js";
+import { isStudioCoreInstalled } from "./studio-core-install.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
 import { spellcheckEnabled, wireEditContextMenu } from "./edit-context-menu.js";
-import { logTail, redactSecrets, scrubText } from "./report-redact.js";
+import { lastLines, logTail, redactSecrets, scrubForIssue, scrubText } from "./report-redact.js";
 import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
 import {
   configGet,
@@ -76,6 +94,7 @@ import {
   chatModelsList,
   keyNamesAvailable,
   providerIsUsable,
+  isKeylessLocalProviderEntry,
   configSetWhole,
   explainConfigWriteFailure,
   managedDataDir,
@@ -98,6 +117,7 @@ import {
   // Item 7A — add a model from Hugging Face
   addCustomModelEntry,
   normaliseLlmBlock,
+  daemonPidsIn,
 } from "./agent-cli.js";
 // Item 7A — the vendored port of the agent's huggingface-* modules; the
 // renderer's CSP forbids it from reaching huggingface.co itself.
@@ -110,13 +130,17 @@ import {
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
+import { quantMachine, rateRepoChoices } from "./quant-fit.js";   // ATO-450: a badge, a speed estimate and the pick per quant
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
+import { LOCAL_MODEL_SHARED_NOTE, readProjectModels, turnModelFor, writeProjectModel, type ProjectModelPick } from "./project-model.js";
 import { probeLinuxSandbox, sandboxVerdict } from "./linux-sandbox.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
 import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
-import { localPickTakenLive, parseRecommendJson, upgradeStillWanted, upgradeVerdict, type UpgradeModel } from "./upgrade-model.js";
+import { localPickTakenLive, parseRecommendJson, parseUpgradeDeclined, upgradeDownloadLabel, upgradeStillWanted, upgradeVerdict, type UpgradeModel } from "./upgrade-model.js";
 import { cleanRemoteUrl, readRemoteAgent, writeRemoteAgent, type KeyBox } from "./remote-agent.js";
+import { createBinCache, envPath, fsIsExecutable, withSkillBins } from "./skill-bins.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
+import { blockerWanted, KEEP_AWAKE_MODES, KEEP_AWAKE_POLL_MS, KeepAwakeBlocker, readKeepAwakeMode, workRunning, writeKeepAwakeMode, type KeepAwakeMode } from "./keep-awake.js";
 import {
   activateProvider,
   agentStarting,
@@ -202,6 +226,8 @@ import {
   modelsDevices,
   modelsUseDevice,
   importRun,
+  importSourceProblem,
+  defaultAtomicAgentSource,
   // r5 item 7 review fix: the argv builder, asserted on its own — see
   // the import checks in onboardingTest.
   importArgs,
@@ -236,6 +262,8 @@ import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js
 import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type ComposioDeps, type ComposioKeyResult } from "./composio-key.js";
 // Item 2 (voice input): the on-device speech helper's supervisor.
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
+// ATO-1074: an audio file transcribed on this machine, with timestamps.
+import { FileTranscriber, appleSpeechEngine } from "./transcribe-file.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
@@ -256,19 +284,29 @@ import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import { appWindows, createScreenMarksOverlay } from "./screen-overlay-window.js";
+import { isQuickEntryWindow, wireQuickEntry } from "./quick-entry-window.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
+import { discoverLocalModels, registerDiscoveredModel } from "./local-models-found.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { AgentMemoryTracker } from "./agent-memory-sample.js";
+import { appMemoryBytes } from "./app-memory.js";
 import { lastErrorCategory, lastErrorSentence, reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
+// ATO-1136: HTML artifacts in the chat, served sandboxed from their own scheme (artifact-frame.ts).
+import { permissionFromSubframe, subframeNavAllowed } from "./artifact-frame.js";
+import { registerArtifactScheme, wireArtifactIpc } from "./artifact-frame-ipc.js";
+registerArtifactScheme();
+// ATO-556: atomicagent:// links (Add to Atomic Agent buttons): a card, then an install only on a click.
+import { shouldRegisterProtocol, wireDeeplinks } from "./deeplink.js";
+import { reasoningLevelFromWindow, type ReasoningLevel } from "./reasoning-level.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -359,6 +397,30 @@ const buildStamp = (): BuildStamp => (BUILD_STAMP ??= readBuildStamp(app.getAppP
 let win: BrowserWindow | null = null;
 /** When the window last went on screen — the probe's line between a frame painted and a frame seen. */
 let windowShownAt: number | null = null;
+/* ATO-556: at the top level, because macOS sends a cold start's link
+   (open-url) before `ready`. Only a packaged, ordinary launch takes the
+   handler (deeplink.ts shouldRegisterProtocol); a link waits in main until
+   the window takes it (app:deeplinkTake). `--deeplink-test=<link>` feeds
+   one link to any run, for checking the card without the OS. */
+const deeplinks = wireDeeplinks({
+  setAsDefaultProtocolClient: (p) => app.setAsDefaultProtocolClient(p),
+  requestSingleInstanceLock: () => app.requestSingleInstanceLock(),
+  exit: (code) => app.exit(code),
+  onOpenUrl: (fn) => { app.on("open-url", (event, url) => { event.preventDefault(); fn(url); }); },
+  onSecondInstance: (fn) => { app.on("second-instance", (_event, argv) => fn(argv)); },
+}, {
+  enabled: shouldRegisterProtocol({ packaged: app.isPackaged, argv: process.argv, env: process.env, stateDirFromEnv: STATE_DIR_FROM_ENV }),
+  argv: process.argv,
+  ready: () => app.isReady() && win !== null,
+  showWindow: () => openWindowAgain(),
+  notify: () => send("deeplink:new"),
+  log: (line) => console.error(line),
+});
+{
+  const testLink = process.argv.find((a) => a.startsWith("--deeplink-test="));
+  if (testLink) deeplinks.handle(testLink.slice("--deeplink-test=".length));
+}
+ipcMain.handle("app:deeplinkTake", () => deeplinks.take());
 let agent: AgentClient | null = null;
 /* A download in the one single-flight slot (`pull`, `pullUpdate`): its child,
    which job it is, and its last progress frame. Backlog 18 (review S5): every
@@ -376,6 +438,14 @@ let pull: DownloadSlot | null = null;
    handlers read `voice.armed`, and both quit paths have to be able to kill
    it — a helper outliving the window holds the microphone indicator on. */
 const voice = new VoiceSession();
+/* ATO-1074: the same helper in file mode. Its own child, never the voice
+   session's: a dictation and a file can run side by side. The engine is the
+   one place that knows it is Apple's (ATO-1076 adds a whisper.cpp one). */
+const fileTranscriber = new FileTranscriber(appleSpeechEngine({
+  command: speechHelperPath,
+  probe: () => voice.probe(),
+  chosen: () => readVoicePrefs().locales,
+}));
 
 /* Voice input exists only where the speech helper can run (macOS; see
    platform.ts voiceSupported). Answered synchronously so the preload can
@@ -878,16 +948,24 @@ function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia }
    file, not a place for one window's view state. So they live in Electron's
    userData as prefs.json, per machine and per viewer, and are honestly empty
    on first run — every historical chat then draws unread until it is opened.
-   Never write this through `atag config set`. */
-type SidebarPrefs = { pinned: string[]; seen: Record<string, number> };
+   Never write this through `atag config set`.
+   ATO-1150: `archived` is the fallback for the chat archive: the agent keeps
+   the flag in the session's metadata (POST /api/sessions/{id}/archived), and
+   only against an agent from before that route are archived ids kept here.
+   The renderer moves them to the agent once the route is there. An older
+   file without it reads as none. */
+type SidebarPrefs = { pinned: string[]; seen: Record<string, number>; archived: string[] };
 const PREFS_PATH = () => join(app.getPath("userData"), "prefs.json");
 
 function coercePrefs(raw: unknown): SidebarPrefs {
-  const out: SidebarPrefs = { pinned: [], seen: {} };
+  const out: SidebarPrefs = { pinned: [], seen: {}, archived: [] };
   if (!raw || typeof raw !== "object") return out;
-  const src = raw as { pinned?: unknown; seen?: unknown };
+  const src = raw as { pinned?: unknown; seen?: unknown; archived?: unknown };
   if (Array.isArray(src.pinned)) {
     for (const id of src.pinned) if (typeof id === "string" && id) out.pinned.push(id);
+  }
+  if (Array.isArray(src.archived)) {
+    for (const id of src.archived) if (typeof id === "string" && id && !out.archived.includes(id)) out.archived.push(id);
   }
   if (src.seen && typeof src.seen === "object") {
     for (const [id, at] of Object.entries(src.seen as Record<string, unknown>)) {
@@ -901,7 +979,7 @@ function readPrefs(): SidebarPrefs {
   try {
     return coercePrefs(JSON.parse(readFileSync(PREFS_PATH(), "utf8")));
   } catch {
-    return { pinned: [], seen: {} };
+    return { pinned: [], seen: {}, archived: [] };
   }
 }
 
@@ -1018,11 +1096,16 @@ function createWindow(): BrowserWindow {
   });
 
   // The renderer is local and must never navigate anywhere else.
+  // ATO-1136: an artifact page never gets here: its sandbox has no allow-popups.
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   window.webContents.on("will-navigate", (event) => event.preventDefault());
+  // ATO-1136: a frame in the window (an artifact, the file preview's) never goes to the web or the disk.
+  window.webContents.on("will-frame-navigate", (event) => {
+    if (!event.isMainFrame && !subframeNavAllowed(event.url)) event.preventDefault();
+  });
 
   /* Item 2 (voice input): until this feature there was no permission handler
      at all, and Electron's default grants everything — the renderer could
@@ -1039,10 +1122,13 @@ function createWindow(): BrowserWindow {
      boolean — returning nothing from it denies everything, the armed
      session included. */
   window.webContents.session.setPermissionRequestHandler((_wc, permission, callback, details) => {
+    // ATO-1136: nothing for a frame inside the window (an artifact page), whatever it asks.
+    if (permissionFromSubframe(details as { isMainFrame?: boolean; requestingUrl?: string })) { callback(false); return; }
     callback(voicePermissionVerdict(permission, details as { mediaTypes?: string[] } | undefined));
   });
   window.webContents.session.setPermissionCheckHandler((_wc, permission, _origin, details) =>
-    voicePermissionVerdict(permission, details as unknown as { mediaTypes?: string[] } | undefined),
+    !permissionFromSubframe(details as unknown as { isMainFrame?: boolean; requestingUrl?: string })
+      && voicePermissionVerdict(permission, details as unknown as { mediaTypes?: string[] } | undefined),
   );
 
   void window.loadFile(join(__dirname, "..", "renderer", "index.html"));
@@ -1250,6 +1336,7 @@ function wireUpdater(): void {
  */
 async function shutdownForUpdate(): Promise<boolean> {
   voice.kill();
+  fileTranscriber.kill();
   stopForQuit();
   const client = agent;
   agent = null;
@@ -1296,6 +1383,7 @@ function wireIpc(client: AgentClient): void {
     if (ev.kind === "done" || ev.kind === "aborted" || (ev.kind === "error" && !p)) {
       liveTurns.delete(rec.turnId);
       appUpdater()?.turnsChanged();   // ATO-229: a Restart that waits for this turn
+      void syncKeepAwake();   // ATO-592: and drops it after the last one
     }
   });
   liveTurnCount = () => liveTurns.size;
@@ -1327,6 +1415,8 @@ function wireIpc(client: AgentClient): void {
     },
     workingDirName: () => lastSegment(process.platform, client.status.workingDir),
     show: (note) => {
+      // ATO-1129: and the phone, when Settings › Phone push is on.
+      void pushTurnNote(note);
       if (!Notification.isSupported()) return;
       const n = new Notification({ title: note.title, body: note.body });
       n.on("click", () => {
@@ -1399,13 +1489,38 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:approvalRules", async (_event, sessionId: unknown) => {
     try { return await client.approvalRules(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
+  // ATO-1087: Settings › Privacy › Offline mode (renderer/offline-mode.js).
+  ipcMain.handle("agent:offlineMode", async () => {
+    try { return await client.offlineMode(); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:offlineModeSet", async (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
+    try { return await client.offlineMode(enabled); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
   ipcMain.handle("agent:approvalRuleDelete", async (_event, id: unknown) => {
     if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return { ok: false, error: "invalid rule id" };
     return client.deleteApprovalRule(id);
   });
+  // ATO-445: Settings › Tasks › Webhooks (renderer/webhooks.js); fields checked in webhooks-ipc.ts.
+  ipcMain.handle("agent:webhooks", async () => {
+    try { return await client.webhooks(); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:webhookCreate", async (_event, raw: unknown) => {
+    const clean = cleanWebhookCreate(raw);
+    return clean.ok ? client.createWebhook(clean.body) : { ok: false, error: clean.error };
+  });
+  ipcMain.handle("agent:webhookDelete", async (_event, name: unknown) => {
+    return webhookNameOk(name) ? client.deleteWebhook(name) : { ok: false, error: "invalid webhook name" };
+  });
   resource("tasks", () => client.tasks());
   resource("sessions", () => client.sessions());
   resource("models", () => client.models());
+  // W2 QA: one search for the whole window; the palette also finds words inside past chats.
+  ipcMain.handle("agent:searchSessions", (_event, q: unknown) =>
+    typeof q === "string" && q.trim() && q.length <= 500
+      ? client.searchSessions(q.trim()).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
+      : { ok: false, error: "query required" },
+  );
   ipcMain.handle("agent:session", (_event, id: unknown) =>
     typeof id === "string" ? client.session(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) })) : { ok: false, error: "id required" },
   );
@@ -1416,12 +1531,20 @@ function wireIpc(client: AgentClient): void {
       ? client.deleteSession(id).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
       : { ok: false, error: "id required" },
   );
+  // ATO-1150: archive / unarchive a chat in the agent's session metadata (agent-client setSessionArchived).
+  ipcMain.handle("agent:setSessionArchived", (_event, id: unknown, archived: unknown) =>
+    typeof id === "string" && id && id.length <= 256 && typeof archived === "boolean"
+      ? client.setSessionArchived(id, archived)
+      : { supported: true, ok: false, notFound: false, error: "id and archived required" },
+  );
   // ATO-455: rename a chat. The agent validates the title again (1-120 chars, one line); this only refuses what is not a string at all.
   ipcMain.handle("agent:renameSession", (_event, id: unknown, title: unknown) =>
     typeof id === "string" && id && id.length <= 256 && typeof title === "string" && title.length <= 1024
       ? client.renameSession(id, title).then((data) => ({ ok: true, data })).catch((e) => ({ ok: false, error: String(e) }))
       : { ok: false, error: "id and title required" },
   );
+  // ATO-1054: the chat row's Export… (chat-export.ts): Markdown, PDF, Word or HTML.
+  registerChatExportIpc({ ipcMain, dialog, window: () => win, fetchExport: (id, format) => client.exportSession(id, format), printPdf: printHtmlToPdf });
   /* Backlog 18 (its second review): the last coding mode the window set. A
      switch's restart puts it back on the new agent before the turns waiting
      for that restart go (restartsAgent below). */
@@ -1511,10 +1634,16 @@ function wireIpc(client: AgentClient): void {
   });
 
   ipcMain.handle("agent:chat", async (_event, payload: unknown) => {
-    const { messages, sessionId } = payload as {
+    const { messages, sessionId, projectId, reasoning: reasoningRaw, turnModel: askedModel } = payload as {
       messages?: Array<{ role: string; content: string }>;
       sessionId?: string;
+      /** ATO-42: the project a NEW chat starts in (a stored chat's own project wins). */
+      projectId?: string;
+      reasoning?: unknown;
+      /** ATO-1148: the chat's project cloud model (renderer/project-model.js). */
+      turnModel?: unknown;
     };
+    const reasoning = reasoningLevelFromWindow(reasoningRaw);
     if (!Array.isArray(messages) || messages.length === 0) {
       return { ok: false, error: "messages must be a non-empty array" };
     }
@@ -1527,9 +1656,13 @@ function wireIpc(client: AgentClient): void {
        with the chat model paused. A turn that needs the local model waits
        here, with its own line, until the generation ends and the model is on
        its way back; a cloud turn never asks. */
-    const held = chatRouteIsLocal() ? await gpuShare.chatTurn().catch(() => null) : null;
-    if (held) return holdForStudio(held, clean, sessionId, queuedAt);
-    return startTurn(randomUUID(), clean, sessionId, queuedAt, false);
+    // ATO-1148: checked against the config as it is now; a pick whose provider went (or is local) runs on the agent's own model.
+    const turnModel = askedModel === undefined || askedModel === null ? null
+      : turnModelFor(askedModel, (await readWholeConfig().catch(() => null))?.config?.llm?.providers, { remote: client.isRemote });
+    // A turn on a project's cloud model never needs the local model Studio holds.
+    const held = !turnModel && chatRouteIsLocal() ? await gpuShare.chatTurn().catch(() => null) : null;
+    if (held) return holdForStudio(held, clean, sessionId, queuedAt, projectId, reasoning);
+    return startTurn(randomUUID(), clean, sessionId, queuedAt, false, projectId, reasoning, turnModel);
   });
 
   async function startTurn(
@@ -1538,6 +1671,9 @@ function wireIpc(client: AgentClient): void {
     sessionId: string | undefined,
     queuedAt: number,
     listed: boolean,
+    projectId?: unknown,
+    reasoning?: ReasoningLevel,
+    turnModel: ProjectModelPick | null = null,
   ): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
     /* Backlog 18 (its second review): a restart a switch held back for the
        turns runs as the last one ends (backend-switch restartAfterSwitch), and
@@ -1554,17 +1690,34 @@ function wireIpc(client: AgentClient): void {
       return { ok: false, error: client.status.error ?? "the agent did not come back after the switch restarted it" };
     }
     turnNotifier.begin(turnId);
-    chatTurns.begin(turnId, Date.now() - queuedAt);
+    chatTurns.begin(turnId, Date.now() - queuedAt, A.turnRoute());   // ATO-1026: the route, read as the turn goes out
     const known = typeof sessionId === "string" && sessionId ? sessionId : null;
     if (!listed) {
       liveTurns.set(turnId, {
         turnId, sessionId: known, text: clean[clean.length - 1]!.content, startedAt: Date.now(), firstTurn: !known,
       });
       appUpdater()?.turnsChanged();
+      void syncKeepAwake();   // ATO-592: While Working holds from the turn's start
     }
     // ATO-731: a new chat opens in the folder the window shows; an existing one keeps its own.
     // A remote agent opens new chats in its own folder: this computer's path means nothing there.
-    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined, client.isRemote ? undefined : client.status.workingDir);
+    // ATO-42: a chat in a project opens in the project's folder and carries its instructions.
+    const proj = turnProject(readProjects(DESKTOP_STATE_DIR), {
+      sessionId: known, projectId, windowDir: client.status.workingDir, remote: client.isRemote,
+    });
+    let chatId = known ?? undefined;
+    if (!known && proj.project) {
+      // A new chat started in a project: its id is fixed here so it is in the project from its first turn.
+      chatId = newChatSessionId();
+      const pid = proj.project.id;
+      updateProjects(DESKTOP_STATE_DIR, (d) => assignChat(d, chatId, pid), () => send("projects:changed"));
+    }
+    /* W2 QA: a chat in a project with no disk folder (a chat folder, which the
+       sidebar draws as a project, and where it wins over a project by path)
+       takes that one's instructions. */
+    const filed = folderForTurn(readChatFolders(DESKTOP_STATE_DIR), known, projectId);
+    const instructions = filed ? (filed.instructions ? { name: filed.name, text: filed.instructions } : null) : proj.instructions;
+    void client.chat(turnId, clean, chatId, proj.workingDir, instructions, reasoning, turnModel ?? undefined);
     return { ok: true, turnId };
   }
 
@@ -1578,6 +1731,8 @@ function wireIpc(client: AgentClient): void {
     clean: Array<{ role: string; content: string }>,
     sessionId: string | undefined,
     queuedAt: number,
+    projectId?: unknown,
+    reasoning?: ReasoningLevel,
   ): { ok: true; turnId: string } {
     const turnId = randomUUID();
     const known = typeof sessionId === "string" && sessionId ? sessionId : null;
@@ -1602,7 +1757,7 @@ function wireIpc(client: AgentClient): void {
       heldForStudio.delete(turnId);
       if (dropped) return;
       client.emit("chat", { turnId, kind: "provider_recovered", payload: { waited_ms: Date.now() - queuedAt, studio: true } });
-      const res = await startTurn(turnId, clean, sessionId, queuedAt, true);
+      const res = await startTurn(turnId, clean, sessionId, queuedAt, true, projectId, reasoning);
       if (!res.ok) client.emit("chat", { turnId, kind: "error", error: res.error });
     });
     return { ok: true, turnId };
@@ -1633,10 +1788,31 @@ function wireIpc(client: AgentClient): void {
       return { ok: false, error: "decision must be allow-once, allow-in-chat, allow-always or deny" };
     }
     try {
-      return { ok: true, data: await client.resolveApproval(approvalId, known, reason) };
+      const data = await client.resolveApproval(approvalId, known, reason);
+      chatTurns.approvalAnswered({ approvalId, decision: known });   // ATO-1026: the turn leaves "approval"
+      return { ok: true, data };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
+  });
+
+  /* ATO-1148: a project's own cloud model, per working folder
+     (main/project-model.ts). The window reads the whole map once and after
+     each write; turns carry the pick themselves (agent:chat's turnModel). */
+  ipcMain.handle("app:projectModels", () => ({
+    ok: true, remote: client.isRemote, folders: readProjectModels(app.getPath("userData")), localNote: LOCAL_MODEL_SHARED_NOTE,
+  }));
+  ipcMain.handle("app:setProjectModel", async (_event, payload: unknown) => {
+    const { dir, providerId, model } = (payload ?? {}) as { dir?: unknown; providerId?: unknown; model?: unknown };
+    if (typeof dir !== "string" || !dir.trim() || dir.length > 4096) return { ok: false, error: "a folder is required" };
+    if (client.isRemote) return { ok: false, error: "A remote agent keeps one model for every chat" };
+    let pick: ProjectModelPick | null = null;
+    if (providerId !== null && providerId !== undefined) {
+      pick = turnModelFor({ providerId, model }, (await readWholeConfig().catch(() => null))?.config?.llm?.providers);
+      if (!pick) return { ok: false, error: LOCAL_MODEL_SHARED_NOTE + "; only a cloud model can be a project's own" };
+    }
+    const folders = writeProjectModel(app.getPath("userData"), dir, pick);
+    return folders ? { ok: true, folders } : { ok: false, error: "could not save the project's model" };
   });
 
   ipcMain.handle("app:chooseWorkspace", async (_event, sessionId: unknown) => {
@@ -1797,13 +1973,20 @@ function wireIpc(client: AgentClient): void {
   };
   /* ATO-1044: after the starter, the best model for this computer
      (upgrade-model.ts). The agent names it (`models recommend --json`,
-     ATO-1043); it downloads in the one pull slot, so the window's card and
-     the chat line follow it through `cli:pull`. On disk, the chat asks:
-     Switch now / Later (`app:upgradeModel`, phases downloading | ready |
-     switching | switched | failed). Never switched without the click. */
+     ATO-1043). ATO-1475: the chat asks first, Download (size) / Not now
+     (phase ask); only the click starts it, in the one pull slot, so the
+     window's card and the chat line follow it through `cli:pull`. Not now
+     is kept in upgrade-declined.json, so it is not asked again. On disk,
+     the chat asks: Switch now / Later (`app:upgradeModel`, phases ask |
+     downloading | ready | switching | switched | failed). Never switched
+     without the click. */
   let upgradeLast: Record<string, unknown> | null = null;
   let upgradeLaterId: string | null = null;   // Later: not asked again in this run of the app
   let upgradeModel: UpgradeModel | null = null;
+  const upgradeDeclinedFile = () => join(app.getPath("userData"), "upgrade-declined.json");
+  const upgradeDeclinedId = (): string | null => {
+    try { return parseUpgradeDeclined(readFileSync(upgradeDeclinedFile(), "utf8")); } catch { return null; }
+  };
   const upgradeSay = (ev: Record<string, unknown>) => { upgradeLast = ev; send("app:upgradeModel", ev); };
   ipcMain.handle("app:upgradeGet", () => upgradeLast);
   const upgradeState = async () => {
@@ -1832,12 +2015,19 @@ function wireIpc(client: AgentClient): void {
       ...now,
       downloadBusy: !!downloadRunning(),
       laterId: upgradeLaterId,
+      declinedId: upgradeDeclinedId(),
       starterId: STARTER_MODEL_ID,
     });
     if (verdict.act === "none") return;
     const model = verdict.model;
     if (verdict.act === "offer") { offerUpgrade(model); return; }
     upgradeModel = model;
+    upgradeSay({ id: model.id, name: model.name, sizeLabel: upgradeDownloadLabel(model), phase: "ask" });
+  };
+  // ATO-1475: the person's Download click is the only thing that starts the big pull.
+  ipcMain.handle("app:upgradeDownload", () => {
+    const model = upgradeModel;
+    if (!model) return { ok: false, error: "nothing to download" };
     const r = startModelPull(model.id, "upgrade", (res, projectorSkipped) => {
       if (quitting) return;
       if (!res.ok) { upgradeSay({ id: model.id, name: model.name, phase: "failed", error: res.error ?? null }); return; }
@@ -1847,8 +2037,20 @@ function wireIpc(client: AgentClient): void {
         offerUpgrade(model, projectorSkipped);
       }).catch(() => undefined);
     });
-    if (r.ok) upgradeSay({ id: model.id, name: model.name, sizeLabel: model.sizeLabel, phase: "downloading" });
-  };
+    const error = r.ok ? null : ((r as { error?: string }).error ?? null);
+    upgradeSay(r.ok
+      ? { id: model.id, name: model.name, sizeLabel: model.sizeLabel, phase: "downloading" }
+      : { id: model.id, name: model.name, phase: "failed", error });
+    return { ok: r.ok, error };
+  });
+  ipcMain.handle("app:upgradeNotNow", () => {
+    if (upgradeModel) {
+      try { writeFileSync(upgradeDeclinedFile(), `${JSON.stringify({ id: upgradeModel.id, at: Date.now() })}\n`); } catch { /* asked again next launch */ }
+    }
+    upgradeModel = null;
+    upgradeLast = null;
+    return true;
+  });
   ipcMain.handle("app:upgradeLater", () => {
     if (upgradeModel) upgradeLaterId = upgradeModel.id;
     upgradeLast = null;
@@ -1927,8 +2129,10 @@ function wireIpc(client: AgentClient): void {
     hfLookup = controller;
     try {
       syncHfEndpoint(hfMirrorSources());
-      const repo = await resolveHuggingFaceGgufChoices(ref, { signal: controller.signal });
+      const listed = await resolveHuggingFaceGgufChoices(ref, { signal: controller.signal });
       if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
+      // ATO-450: rated for this machine, the pick first (the list opens on it).
+      const repo = rateRepoChoices(listed, quantMachine(process.platform, FAKE_RAM_GB ? FAKE_RAM_GB * 1024 ** 3 : totalmem()));
       hfLookup = null;
       A.hfLookupDone({ choices: repo.choices.length });
       return { ok: true, repo };
@@ -2188,7 +2392,19 @@ function wireIpc(client: AgentClient): void {
   });
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
-    return removeProvider(id);
+    // ATO-1441: OpenRouter's key leaves Core too once none is left (studio-forget-key.ts), in the background.
+    return removeProviderForgettingMedia(id, {
+      remove: removeProvider,
+      installed: () => isStudioCoreInstalled(managedDataDirNow(), BUNDLED_CORE_VERSION),
+      keyLeft: async () => {
+        const read = await readWholeConfig();
+        // A config that could not be read is not "no key": Core keeps it (logged, never shown).
+        if (!read.ok) throw new Error(read.error ?? "could not read the config");
+        return pickOpenRouterKey(read.config?.llm?.providers ?? [], (entry) => resolveKeyValue(entry as ProviderEntry));
+      },
+      forget: () => studio.forgetOpenRouterKey(),
+      log: (line) => console.error(line),
+    });
   });
   /* Item 11: in its turn behind any start on its way, and not a second
      `models start` for a daemon that is already up (alreadyRunning). */
@@ -2214,6 +2430,15 @@ function wireIpc(client: AgentClient): void {
   // `--fake-ram=N` (test only, see FAKE_RAM_GB) is the one thing that can
   // stand between this window and os.totalmem().
   ipcMain.handle("app:hostRam", () => FAKE_RAM_GB ?? hostRamGb());
+  // ATO-1186: the app's own memory for the composer's status line ({bytes} | null; app-memory.ts).
+  ipcMain.handle("app:memory", () => {
+    try {
+      const bytes = appMemoryBytes(app.getAppMetrics());
+      return bytes === null ? null : { bytes };
+    } catch {
+      return null;
+    }
+  });
   // None on another computer's agent: its models are managed there, and a pull is refused (REMOTE_MODELS_HERE).
   ipcMain.handle("app:modelSpotlightIds", () => (client.isRemote ? [] : spotlightIds()));
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
@@ -2283,6 +2508,8 @@ function wireIpc(client: AgentClient): void {
     isRemote: () => client.isRemote,
     relaunch: () => { app.relaunch(); app.exit(0); },
   });
+  // ATO-41: Settings › Diagnostics' All settings list (main/settings-reference.ts).
+  registerSettingsReferenceIpc({ ipcMain, run: (args, timeoutMs) => atagRun(args, timeoutMs), isRemote: () => client.isRemote });
   // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
   ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));
   ipcMain.handle("app:gpuSet", (_event, on: unknown) => {
@@ -2296,6 +2523,22 @@ function wireIpc(client: AgentClient): void {
   // ATO-1034: chat folders, in the shared state dir so the terminal sees the same ones.
   ipcMain.handle("app:foldersGet", () => ({ ok: true, data: readChatFolders(DESKTOP_STATE_DIR) }));
   ipcMain.handle("app:foldersSet", (_event, value: unknown) => writeChatFolders(DESKTOP_STATE_DIR, value));
+  // ATO-42: projects (~/.atomic-agent/projects.json, main/projects-store.ts); every write says projects:changed.
+  const projectsChanged = () => send("projects:changed");
+  ipcMain.handle("projects:list", () => ({ ok: true, data: readProjects(DESKTOP_STATE_DIR) }));
+  ipcMain.handle("projects:save", (_event, input: unknown) => {
+    const res = updateProjects(DESKTOP_STATE_DIR, (d) => saveProject(d, input), projectsChanged);
+    return res.ok ? { ok: true, data: res.project } : res;
+  });
+  ipcMain.handle("projects:delete", (_event, id: unknown) => {
+    const res = updateProjects(DESKTOP_STATE_DIR, (d) => deleteProject(d, id), projectsChanged);
+    return res.ok ? { ok: true } : res;
+  });
+  ipcMain.handle("projects:assign", (_event, payload: unknown) => {
+    const { sessionId, projectId } = (payload ?? {}) as { sessionId?: unknown; projectId?: unknown };
+    const res = updateProjects(DESKTOP_STATE_DIR, (d) => assignChat(d, sessionId, projectId), projectsChanged);
+    return res.ok ? { ok: true } : res;
+  });
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
@@ -2439,6 +2682,31 @@ function wireIpc(client: AgentClient): void {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
     return switched(() => selectLocalModel(id));
   });
+  /* "If some model was downloaded before, it should just get picked up."
+     The GGUF models already on this computer (local-models-found.ts): our
+     own store and the default ~/.atomic-agent one, LM Studio, the Hugging
+     Face cache, Jan, llama.cpp's cache. Use registers the file where it lies
+     (no copy) and switches to it the way a finished starter download does.
+     `registerOnly`: the setup's Use, which hands the id to its own pull (that
+     pull fetches the llama.cpp runtime first when there is none yet). */
+  ipcMain.handle("cli:discoverLocalModels", (_event, opts: unknown) =>
+    discoverLocalModels({ fresh: !!opts && typeof opts === "object" && (opts as { fresh?: unknown }).fresh === true }));
+  ipcMain.handle("cli:useLocalModel", async (_event, path: unknown, opts: unknown) => {
+    const registerOnly = !!opts && typeof opts === "object" && (opts as { registerOnly?: unknown }).registerOnly === true;
+    const reg = await registerDiscoveredModel(path);
+    if (!reg.ok) return reg;
+    if (registerOnly) return { ok: true, id: reg.id };
+    let id = reg.id;
+    let sw = await switched(() => selectLocalModel(id));
+    // A catalogue folder holding a file the catalogue no longer names: run that file in place.
+    if (!sw.ok && (sw as { needsDownload?: boolean }).needsDownload && reg.wasRegistered && !reg.added) {
+      const again = await registerDiscoveredModel(path, { inPlace: true });
+      if (!again.ok) return again;
+      id = again.id;
+      sw = await switched(() => selectLocalModel(id));
+    }
+    return { ...sw, id };
+  });
   ipcMain.handle("cli:useManagedMode", () => useManagedMode());
   // Review fix (item 5): Settings › LLM › External writes mode + url + the
   // local-llama provider url in one whole-file write, as the TUI's
@@ -2487,6 +2755,25 @@ function wireIpc(client: AgentClient): void {
       typeof expectPriorQuestions === "number" ? expectPriorQuestions : undefined,
       expectUnanswered === true,
     );
+  });
+
+  // ATO-563: Revert under a reply puts a file back as it was before that reply.
+  ipcMain.handle("agent:fsRestore", (_event, payload: unknown) => {
+    const { sessionId, path, priorQuestions, expectText } = (payload ?? {}) as { sessionId?: unknown; path?: unknown; priorQuestions?: unknown; expectText?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
+    if (typeof path !== "string" || !isAbsoluteOn(process.platform, path) || path.includes("\0")) return { ok: false, supported: true, error: "Not a file path" };
+    // The reply whose starting point is put back (its question), never "the newest copy".
+    if (typeof priorQuestions !== "number" || !Number.isInteger(priorQuestions) || priorQuestions < 0 || typeof expectText !== "string") {
+      return { ok: false, supported: true, error: "This window could not tell which reply to revert" };
+    }
+    return client.restoreFile(sessionId, path, priorQuestions, expectText);
+  });
+
+  // ATO-448: "Continue" on a chat a restart cut off; only ever on the person's click.
+  ipcMain.handle("agent:resumeInterruptedTurn", (_event, payload: unknown) => {
+    const { sessionId, release } = (payload ?? {}) as { sessionId?: unknown; release?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
+    return client.resumeInterruptedTurn(sessionId, release === true);
   });
 
   // Files the agent produced: open, reveal, copy, save elsewhere.
@@ -2802,17 +3089,59 @@ function wireIpc(client: AgentClient): void {
   wireAgentLiveIpc(client);
   // ATO-954: Settings › Plugins, through `atag plugin` (plugins-ipc.ts).
   wirePluginsIpc();
+  // ATO-1102: "Test skill" on a skill card, through `atag skill eval` (skill-eval-ipc.ts).
+  wireSkillEvalIpc({ cwd: () => client.status.workingDir });
+  // ATO-1129: Settings › Connections › Phone push, through `atag push` (push-ipc.ts).
+  wirePushIpc();
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).
   wireWindowSnapshotIpc();
+  // ATO-606: the Fusion workers' reasoning level (Settings › Models, `/runmode reasoning`).
+  wireFusionReasoningIpc();
+  // ATO-1067: "Find on my network", model servers on other PCs of this network (view-only).
+  wireLanDiscoveryIpc();
+  // ATO-1040: the chat's goal (the TUI's /goal), read and controlled through the agent.
+  wireSessionGoalIpc(client);
+  // ATO-1136: HTML artifacts in the chat, sandboxed (artifact-frame-ipc.ts).
+  wireArtifactIpc();
+  // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".
+  wireMiniChatIpc(client, { mainWindow: () => win, showMainWindow: () => (openWindowAgain(), win) });
+  // ATO-1056/1058: Roll back here, Edit and Fork from here on a message (chat-rewind-ipc.ts).
+  wireChatRewindIpc(client);
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
   wireOvernightIpc({ window: () => win, client });
+  // ATO-1424: a code block's command typed (not run) into a new Terminal window (macOS).
+  wireTerminalOpenIpc();
+  // ATO-590: the Tasks tab's Pause / Resume and a task's past runs.
+  wireTaskControlsIpc({ client });
+  // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
+  wireFitTestIpc({
+    window: () => win,
+    isRemote: () => client.isRemote,
+    /* The test stops the chats' model and loads others on the server: in the
+       daemon's turn, held as during an update, and the server put back after
+       it when the agent left it down (finished, failed or cancelled). */
+    inTurn: async (run) => {
+      const held: { hold: UpdateHold | null } = { hold: null };
+      const res = await inDaemonTurn(
+        () => {
+          held.hold = updateBegins("[desktop] local-llm: the model fit-test stops and loads models on the model server; the chats' model is started again after it");
+          return run();
+        },
+        () => ({ ok: false, error: "The app is closing." }),
+      );
+      return held.hold ? afterUpdate(res, held.hold, { keptBackend: true }) : res;
+    },
+  });
+  wireInterviewInviteIpc({ stateDir: TUI_STATE_DIR });   // ATO-1467
   /* Studio (Images + Video): Core's media API for the Studio pages
      (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
      OpenRouter key goes to Core over loopback only, never to the window. */
   const studio = wireStudioIpc({
     window: () => win,
+    // ATO-875: Improve prompt asks the agent's POST /api/complete first.
+    plainComplete: (body) => client.plainComplete(body),
     gpu: gpuShare,
     stateDir: DESKTOP_STATE_DIR,
     dataDir: managedDataDirNow,
@@ -2845,6 +3174,16 @@ function wireIpc(client: AgentClient): void {
       client.status.workingDir,
     ).then((res) => (A.taskCreated(kind, res), res));
   });
+  /* ATO-526: each skill's external programs looked up on the PATH the agent's
+     shell gets (skill-bins.ts); a remote agent's computer is not this one. */
+  const skillBinCache = createBinCache(30_000);
+  const skillRowsWithBins = <T extends { requiresBins?: unknown; installHints?: unknown }>(rows: T[]) => {
+    const env = agentEnv();
+    const lookup = { platform: process.platform, path: envPath(env, process.platform),
+      pathext: process.platform === "win32" ? env.PATHEXT ?? process.env.PATHEXT : undefined,
+      isExecutable: fsIsExecutable(process.platform) };
+    return withSkillBins(rows, lookup, (bin) => skillBinCache.find(bin, lookup));
+  };
   // Cloud uses the same live snapshot as inference. Local retains the CLI's
   // installed/disabled list and its existing restart semantics.
   ipcMain.handle("cli:skillList", async (_event, sessionId: unknown) => {
@@ -2852,11 +3191,13 @@ function wireIpc(client: AgentClient): void {
       const data = await client.skills(skillSession(sessionId)) as {
         workingDir?: string; projectSkillsEnabled?: boolean; errors?: unknown[];
         skills: Array<{ name: string; version?: string; source: string; description: string;
-          disabled?: boolean; disabledReasons?: string[]; rootDir?: string; sources?: string[] }>;
+          disabled?: boolean; disabledReasons?: string[]; rootDir?: string; sources?: string[];
+          requiresBins?: string[]; installHints?: Record<string, string> }>;
       };
       if (!data.workingDir) return skillList(client.status.workingDir);
+      const rows = data.skills.map(row => ({ ...row, version: row.version || "—", enabled: !row.disabled }));
       return { ok: true, workingDir: data.workingDir, projectSkillsEnabled: data.projectSkillsEnabled,
-        errors: data.errors, rows: data.skills.map(row => ({ ...row, version: row.version || "—", enabled: !row.disabled })) };
+        errors: data.errors, rows: client.isRemote ? rows : skillRowsWithBins(rows) };
     } catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) }; }
   });
   ipcMain.handle("cli:configGetKey", (_event, key: unknown) =>
@@ -2954,6 +3295,8 @@ function wireIpc(client: AgentClient): void {
     if (!ownDir(stateDir) || typeof name !== "string") return { ok: false, error: "stateDir and name are required" };
     return memoryQuery(stateDir, name, Array.isArray(params) ? params : []);
   });
+  // ATO-582: edits and deletes go through the agent (its FTS and vectors stay in step), never SQL of ours.
+  ipcMain.handle("app:memoryWrite", (_event, op: unknown) => client.memoryWrite(op));
 
   // --- Item 7 part C (LLM / Telegram / Import tabs) ---
   ipcMain.handle("cli:modelsStatus", () => modelsStatus());
@@ -3098,7 +3441,15 @@ function wireIpc(client: AgentClient): void {
       limit: typeof i["limit"] === "string" ? i["limit"] : "",
       execute: i["execute"] === true,
     };
-    return importRun(clean, client.status.workingDir).then((res) => (A.agentImportDone(source, clean.execute, res), res));
+    // W2: main decides what an import may read, not the renderer's string.
+    const problem = importSourceProblem(source, clean.dir, DESKTOP_STATE_DIR);
+    if (problem) return Promise.resolve({ ok: false, error: problem });
+    return importRun(clean, client.status.workingDir).then((res) => {
+      A.agentImportDone(source, clean.execute, res);
+      // The import may have made projects (projects.json): every window reads them again.
+      if (clean.execute && res.ok) send("projects:changed");
+      return res;
+    });
   });
   /* ---- r5 item 9: the desktop's own state directory ------------------
      `app:firstRun` is what makes a first launch unmissable rather than
@@ -3154,6 +3505,35 @@ function wireIpc(client: AgentClient): void {
         log,
       ].join("\n"));
       A.debugReportSaved(kind, { ok: true });
+      return { ok: true, path: out };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  /* ATO-1466: Help › Report an Issue… and Settings › Diagnostics. The support
+     id (read only with analytics off), whether analytics is on (the issue's
+     "Include support ID" box starts unticked when it is off), how this copy
+     was installed, and the last 200 lines of agent.log with keys, tokens,
+     emails and home paths taken out — an issue is public. The conversation is
+     never read here. */
+  const issueLogTail = (): string => {
+    try { return scrubForIssue(lastLines(logTail(readFileSync(agentLogPath(), "utf8"), 400_000), 200), homedir()); } catch { return ""; }
+  };
+  ipcMain.handle("app:supportId", async () => ({ ok: true, supportId: A.supportId(), analyticsEnabled: A.analyticsEnabled() }));
+  ipcMain.handle("app:bugReportInfo", async () => ({
+    ok: true,
+    supportId: A.supportId(),
+    analyticsEnabled: A.analyticsEnabled(),
+    installChannel: A.installChannelFor(process.platform, process.env),
+    logTail: issueLogTail(),
+  }));
+  /* The link would be too long with the log in it: the same scrubbed tail goes to a file in Downloads too. */
+  ipcMain.handle("app:bugReportSaveLog", async () => {
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const out = join(app.getPath("downloads"), `atomic-agent-log-tail-${stamp}.txt`);
+      writeFileSync(out, `${issueLogTail()}\n`);
       return { ok: true, path: out };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -3274,7 +3654,26 @@ function wireIpc(client: AgentClient): void {
     codex: importAgentDir("codex"),
     pi: importAgentDir("pi"),
     "oh-my-pi": importAgentDir("oh-my-pi"),
+    // The Claude export arrives as a download; there is no folder to guess.
+    "claude-app": "",
+    // Another Atomic Agent data folder: ~/.atomic-agent, unless that is this app's own (then null: pick one).
+    "atomic-agent": defaultAtomicAgentSource(DESKTOP_STATE_DIR),
   }));
+  /* W2: Import's "Choose…" beside the source folder. A folder for every
+     source; for the Claude app the export's .zip (or the folder it unpacks
+     to). Only a path comes back; what it may be is checked again by
+     cli:importRun (importSourceProblem). */
+  ipcMain.handle("app:importPickSource", async (_event, source: unknown) => {
+    if (!win) return { ok: false, cancelled: true };
+    const claude = source === "claude-app";
+    const picked = await dialog.showOpenDialog(win, {
+      properties: claude && process.platform === "darwin" ? ["openFile", "openDirectory"] : claude ? ["openFile"] : ["openDirectory", "showHiddenFiles"],
+      message: claude ? "Choose the .zip from Claude's Export data" : "Choose the folder to import from",
+      ...(claude ? { filters: [{ name: "Claude data export", extensions: ["zip"] }] } : {}),
+    });
+    if (picked.canceled || !picked.filePaths[0]) return { ok: false, cancelled: true };
+    return { ok: true, path: picked.filePaths[0] };
+  });
   /* r5 item 7 (setup wizard): the first-run import step's own scan —
      src/import/detect-import-agents.ts, shallow existsSync checks only. */
   ipcMain.handle("app:detectImportAgents", () => ({ ok: true, agents: detectImportAgents() }));
@@ -3305,7 +3704,8 @@ function wireIpc(client: AgentClient): void {
     envPresent(Array.isArray(names) ? names.filter((n): n is string => typeof n === "string").slice(0, 64) : []),
   );
   // The keys the desktop writes into .env (DESKTOP_DOTENV_KEYS): the Telegram bot token (the TUI's
-  // telegram-settings.ts setToken) and the Exa key for web search (ATO-328). Never logged, never echoed back.
+  // telegram-settings.ts setToken), the Exa key for web search (ATO-328) and the Discord bot token
+  // (ATO-516, discord-settings.ts writeDiscordToken). Never logged, never echoed back.
   ipcMain.handle("app:dotenvSet", async (_event, payload: unknown) => {
     const { stateDir, key, value } = (payload ?? {}) as { stateDir?: unknown; key?: unknown; value?: unknown };
     if (!ownDir(stateDir)) return { ok: false, error: "state dir required" };
@@ -3378,6 +3778,17 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("voice:setLocales", (_event, locales: unknown) =>
     writeVoicePrefs(Array.isArray(locales) ? locales.filter((l): l is string => typeof l === "string") : []),
   );
+  /* ATO-1074: an audio file in the composer, transcribed on this machine.
+     Progress goes out on app:transcribe, named by the renderer's job id. */
+  ipcMain.handle("speech:fileAvailable", () => fileTranscriber.available());
+  ipcMain.handle("speech:transcribeFile", (_event, req: unknown) => {
+    const r = (req && typeof req === "object" ? req : {}) as { job?: unknown; path?: unknown };
+    return fileTranscriber.transcribe(
+      { job: typeof r.job === "string" ? r.job : "", path: typeof r.path === "string" ? r.path : "" },
+      (job, ev) => send("app:transcribe", { job, ...ev }),
+    );
+  });
+  ipcMain.handle("speech:transcribeCancel", (_event, job: unknown) => fileTranscriber.cancel(job));
 
   client.on("status", (status) => send("agent:status", status));
   /* ATO-767: an agent that exits on its own while running is started again,
@@ -3509,13 +3920,16 @@ function wireIpc(client: AgentClient): void {
 
 /** Item 6 (sidebar): what `window.__sidebar()` hands back. */
 /* ATO-165: the sidebar's section headers — "Pinned" first while a pinned
-   chat is on the list, then Chats, then Tasks when the agent holds any. */
+   chat is on the list, then Chats, then Tasks (W2: "Cron jobs") when the agent holds any.
+   W2: "Projects" follows Pinned whenever the projects store is there (its header carries
+   New project now), which the app's bridge always is. */
 function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tasks: unknown[] }): string {
-  // ATO-1034: "Folders" sits between Pinned and Chats while there is a folder.
-  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
+  // W2 QA (16.11): ATO-1034's chat folders are listed under Projects; there is no "Folders" section.
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Projects", "Chats", ...(sb.tasks.length > 0 ? ["Cron jobs"] : [])]);
 }
-/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js). */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Tasks", "Skills"]);
+/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js, studio/shell.js).
+    W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header. */
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Skills", "Plugins"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
@@ -3725,6 +4139,8 @@ async function smokeTest(): Promise<void> {
       bundledModel ? pre.window! > 0 && pre.window !== 128000 : pre.window === null || pre.window > 0,
       `window=${pre.window} (${pre.windowLabel || "unknown"}) provider=${activeForWindow?.kind ?? "none"}`,
     );
+    // W2 (owner feedback): no context ring and no status line under the composer, whatever the figure.
+    check("composer draws no context ring and no status line", (await js<boolean>("window.__ctxRingDrawn()")) === false);
     const dial = await js<boolean>("window.__ctxOpen()");
     check("panel opens with the dial before any turn", dial === true);
     const title = await js<string>("window.__ctxTitle()");
@@ -3754,7 +4170,8 @@ async function smokeTest(): Promise<void> {
     mkdirSync(noTraceDir, { recursive: true });
     try {
       const none = await js<PreCtx>(`window.__ctxEmpty(${JSON.stringify(noTraceDir)})`);
-      const noneChip = await js<boolean>("!!document.querySelector('.cfoot .ctxbtn')");
+      // W2: the ring left the composer; "chip hidden" is now "no figure to carry" (window.__ctxChip is null).
+      const noneChip = await js<boolean>("!!window.__ctxChip()");
       const noneOpen = await js<boolean>("window.__ctxOpen()");
       const noneTitle = await js<string>("window.__ctxTitle()");
       const noneLine = await js<boolean>(
@@ -4845,22 +5262,38 @@ async function voiceTest(
   // rather than asserting it in prose. Compared at the end of the sub-suite.
   const agentCfgBefore = JSON.stringify((await configGet()).config);
   try {
-    // Windows and Linux draw no mic button (platform.ts voiceSupported), and
-    // every step below clicks it: without this return the lane threw and the
-    // whole --smoke run stopped there, with every lane after it unrun.
-    if (!voiceSupported(process.platform)) {
-      const none = await js<Mic>("window.__voiceMic()");
-      check("no mic button where voice is not supported", !none.present, `platform=${process.platform}`);
+    // Windows and Linux dictate through whisper.cpp (ATO-1049): the button is
+    // there, enabled once whisper-cli and a model are found; until then a
+    // press downloads them (decision 75) or the tooltip says what to install.
+    // Every step below drives the macOS helper's flows (language installs,
+    // two analyzers), so the lane checks the button and its honesty and
+    // stops. It never presses it: that would start a real download.
+    if (process.platform !== "darwin") {
+      const mic = await js<Mic>("window.__voiceMic()");
+      const v = await js<V>("window.__voice()");
+      const reasons = await js<Record<string, string>>("window.__voiceReasons()");
+      const sentence = v.code === "voice-whisper-missing" && v.reason === reasons["voice-whisper-download"]
+        ? reasons["voice-whisper-download"] : reasons[v.code ?? ""];
+      check(
+        "the mic button is there and says why when whisper.cpp is missing",
+        voiceSupported(process.platform) && mic.present
+          && (v.available !== false || (mic.disabled && mic.title === sentence)),
+        `platform=${process.platform} available=${v.available} code=${v.code}`,
+      );
       return;
     }
     // --- the button ------------------------------------------------------
     const mic = await js<Mic>("window.__voiceMic()");
     const order = mic.order.split("|");
+    // W2: the row is "+", the dictation mic, send; nothing else. Conversation mode is a row of the mode chip
+    // (composer-mode.js), so the mic sits right beside send and no other button is left in the field.
     const iMic = order.findIndex((c) => c.split(" ").includes("micbtn"));
     const iSend = order.findIndex((c) => c.split(" ").includes("sendbtn"));
+    const buttons = order.filter((c) => /\b(attbtn|micbtn|sendbtn|wsnapbtn|goalbtn|convbtn)\b/.test(c));
     check(
-      "mic button sits next to send",
-      mic.present && iMic >= 0 && iSend === iMic + 1,
+      "mic button sits right next to send, and the field holds only +, mic and send",
+      mic.present && iMic >= 0 && iSend === iMic + 1
+        && buttons.length === 3 && buttons[0].split(" ").includes("attbtn"),
       `field children ${JSON.stringify(mic.order)}`,
     );
 
@@ -4871,12 +5304,13 @@ async function voiceTest(
     const sentences = named.map((k) => reasons[k]);
     check(
       "every disabled case has a sentence",
-      /* Nine since the AbortError case was named. The exact count is the
+      /* Nine since the AbortError case was named, twelve since the three
+         whisper.cpp ones (ATO-1049, decision 75). The exact count is the
          tripwire: a new disabled state must be added here deliberately,
          with a sentence a person can act on, rather than inheriting the
          generic "could not be opened" that sent the operator hunting
          through System Settings for a permission that was already on. */
-      named.length === 9 && sentences.every((s) => typeof s === "string" && s.length > 12)
+      named.length === 12 && sentences.every((s) => typeof s === "string" && s.length > 12)
         && reasons["voice-os-too-old"] === "Voice input needs macOS 26 or later"
         && reasons["voice-helper-missing"] === "Voice input needs the speech helper, which this build was packaged without"
         && reasons["voice-not-macos"] === "Voice input works only on macOS"
@@ -5813,7 +6247,7 @@ async function sidebarTest(
     );
     if (apiTasks.length === 0) {
       // Calm (S1): no tasks, no Tasks section — the list's absence is the empty state.
-      check("an empty tasks list is not drawn", !sb.headers.includes("Tasks") && sb.tasksEmpty === "", JSON.stringify(sb.headers));
+      check("an empty tasks list is not drawn", !sb.headers.includes("Cron jobs") && sb.tasksEmpty === "", JSON.stringify(sb.headers));
     } else {
       const first = sb.tasks[0];
       const src = apiTasks.find((t) => t.id === first.id);
@@ -5969,15 +6403,16 @@ async function settingsTest(
   // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
-  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "skills", "plugins", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];
-  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", composio: "connections", memory: "memory",
-    tasks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
+  // ATO-1129 (#1533): Phone push sits in Connections, after Discord.
+  const PANES = ["general", "llm", "mcp", "telegram", "discord", "push", "composio", "memory", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const LABELS = ["General", "Models", "Connections", "Memory", "Cron jobs", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];   // W2: Tasks reads "Cron jobs"
+  const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", discord: "connections", push: "connections", composio: "connections", memory: "memory",
+    tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
   const tabs = await js<string[]>("window.__settingsTabs()");
-  check("settings: the panes are General, Models, Connections (MCP, Telegram, Composio) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
+  check("settings: the panes are General, Models, Connections (MCP, Telegram, Discord, Phone push, Composio) … Diagnostics", same(tabs, PANES), JSON.stringify(tabs));
 
   // Every node of the menu tree, verbatim label and ctrl+g chord, in registry
   // order (src/tui/menu/menu-registry.ts:107-675) — except that Go, Observe and
@@ -6361,9 +6796,9 @@ async function settingsTest(
   await js<void>("window.__settingsOpen('general')");
   const gen = await js<string>("window.__settingsBody()");
   const genSwitches = await js<number>("document.querySelectorAll('#settings .setbody .tk-switch[data-act=\"privacy:analytics\"]').length");
-  const privacyCopy = ["Reading outside the working folder", "Ask first", "Read anywhere", "Anonymous usage analytics", "Never sent with analytics"]
+  const privacyCopy = ["Reading outside the working folder", "Ask first", "Read anywhere", "Share anonymous usage data", "Never sent:"]
     .every((s) => priv.includes(s)) && !priv.includes("Session grants") && !priv.includes("Open General")
-    && ["Appearance", "Working folder", "Anonymous usage analytics", "Crash reports and coarse usage counts"].every((s) => gen.includes(s));
+    && ["Appearance", "Working folder", "Share anonymous usage data", "When on, Atomic Agent sends:"].every((s) => gen.includes(s));
   const noLadder = !/Approvals|approval level|1-5: set approval level/.test(priv);
   check("privacy tab: TUI copy, no approval ladder; one analytics switch in General and one in Privacy", privacyCopy && noLadder && privSwitches === 1 && genSwitches === 1,
     privacyCopy ? (noLadder ? `switches privacy=${privSwitches} general=${genSwitches}` : "ladder text present") : "copy missing");
@@ -6893,6 +7328,7 @@ async function hfAndDeltaTest(
   type Hf = {
     open: boolean; step: string; reference: string; busy: boolean; error: string | null;
     repoId: string | null; revision: string | null; choices: number; first: string | null; filenames: string[];
+    firstRecommended?: boolean; badges?: number;
     mmproj: string | null; hidden: string | null; cursor: number; ram: number; pendingMmproj: string | null;
     rows: number; pulling: { id: string; phase?: string } | null; daemonPhase: string | null; confirm: string | null;
   };
@@ -6906,12 +7342,15 @@ async function hfAndDeltaTest(
     "[...document.querySelectorAll('#settings button[data-act=\"llm:hf\"]')].some((b) => b.textContent.trim() === 'Add from Hugging Face' && !b.disabled)",
   );
   /* Item 48 (Д34): the Ollama signpost under the lists ("Using Ollama? Add it
-     under Cloud…") read as an ad. One "Add Ollama" button in the Local models
-     header took its place, the sentence went to its tooltip, and it is drawn
-     only while no `ollama` provider is configured. */
-  const ollamaBtn = await js<{ text: string; title: string; disabled: boolean } | null>(
+     under Cloud…") read as an ad. One "Add Ollama" button took its place, the
+     sentence went to its tooltip, and it is drawn only while no `ollama`
+     provider is configured. 13.11: it sits under "Use an app you already
+     run" in the Local setup, among the Add buttons drawn while no app is
+     listed there; once one is, the section's Add app is the way to it. */
+  const ollamaBtn = await js<{ text: string; title: string; disabled: boolean; addApp: boolean } | null>(
     "(() => { const b = document.querySelector('#settings .setbody button[data-act=\"llm:ollama\"]');"
-    + " return b ? {text: b.textContent.trim(), title: b.title, disabled: b.disabled} : null; })()",
+    + " const addApp = !!document.querySelector('#settings .setbody .llm-apps-sec [data-act=\"llm:addApp\"]');"
+    + " return b ? {text: b.textContent.trim(), title: b.title, disabled: b.disabled, addApp} : addApp ? {text: '', title: '', disabled: false, addApp} : null; })()",
   );
   const ollamaAdded = await js<boolean>("!!llmProvider('ollama')");
   // Calm (S5): the hint row's "a add from hugging face" left; the section's own button is the mouse route (the `a` key still works).
@@ -6919,8 +7358,9 @@ async function hfAndDeltaTest(
     "llm tab: the Hugging Face button is live and the Local pane offers Add Ollama",
     rowLive && localBody0.includes("Add from Hugging Face") && !localBody0.includes("Using Ollama?")
       && (ollamaAdded
-        ? ollamaBtn === null
-        : !!ollamaBtn && ollamaBtn.text === "Add Ollama" && !ollamaBtn.disabled && ollamaBtn.title.includes("Nothing here downloads from Ollama")),
+        ? ollamaBtn === null || (ollamaBtn.addApp && ollamaBtn.text === "")
+        : !!ollamaBtn && (ollamaBtn.addApp && ollamaBtn.text === ""
+          || ollamaBtn.text === "Add Ollama" && !ollamaBtn.disabled && ollamaBtn.title.includes("Nothing here downloads from Ollama"))),
     `row enabled=${rowLive} · ollama ${ollamaAdded ? "is a provider already" : "is not a provider"} · button ${JSON.stringify(ollamaBtn)}`,
   );
   /* Review fix: the check above only proved the signpost's own text
@@ -6931,7 +7371,7 @@ async function hfAndDeltaTest(
      Item 48 (Д34): the path is a button now, so it is walked. A click on the
      drawn button (act('llm:ollama') itself when this config already has
      Ollama and draws none) opens the provider setup on that preset with its
-     address filled in, over the Cloud pane; and the Local pane drawn over
+     address filled in, over the Custom pane (ATO-1418); and the Local pane drawn over
      this config without and with an `ollama` provider has the button only
      without one. The config object, the wizard and the pane are put back. */
   const ollamaPreset = await js<{ id: string; label: string; baseUrl: string; kind: string; local: boolean } | null>(
@@ -6939,8 +7379,9 @@ async function hfAndDeltaTest(
   );
   type OllamaPath = { clicked: boolean; open: boolean; phase: string | null; row: string | null; baseUrl: string; mode: string; drawnWithout: boolean; drawnWith: boolean };
   const ollamaPath = await js<OllamaPath>(
-    "(() => { const keep = LIVE_CONFIG; const block = llmBlock(); const others = llmProviders().filter((p) => p.id !== 'ollama');"
-    + " const drawn = (providers) => { LIVE_CONFIG = Object.assign({}, keep || {}, {llm: Object.assign({}, block, {providers})});"
+    "(() => { const keep = LIVE_CONFIG; const block = llmBlock(); const others = llmProviders().filter((p) => p.id !== 'ollama' && !llmIsCustomEntry(p));"
+    // 13.11: drawn with no app listed and no server of your own, so the Add buttons are what the section shows.
+    + " const drawn = (providers) => { LIVE_CONFIG = Object.assign({}, keep || {}, {llm: Object.assign({}, block, {providers}), localModels: {mode: 'managed'}});"
     + " const box = document.createElement('div'); box.innerHTML = llmLocalHTML(); return !!box.querySelector('[data-act=\"llm:ollama\"]'); };"
     + " try {"
     + " const drawnWithout = drawn(others);"
@@ -6957,9 +7398,10 @@ async function hfAndDeltaTest(
     !!ollamaPreset && ollamaPreset.label === "Ollama (local)"
       && ollamaPreset.baseUrl === "http://localhost:11434"
       && ollamaPreset.kind === "openai-compatible" && ollamaPreset.local === true
-      && (ollamaAdded || (!!ollamaBtn && ollamaBtn.title.includes(ollamaPreset.baseUrl) && ollamaPath.clicked))
+      && (ollamaAdded || (!!ollamaBtn && (ollamaBtn.addApp && ollamaBtn.text === "" || ollamaBtn.title.includes(ollamaPreset.baseUrl))))
       && ollamaPath.open && ollamaPath.phase === "configure" && ollamaPath.row === ollamaPreset.id
-      && ollamaPath.baseUrl === ollamaPreset.baseUrl && ollamaPath.mode === "cloud"
+      // ATO-1418: Ollama's setup opens on the Custom tab (LLMP.mode "external"), as T48 (Д34) asserts.
+      && ollamaPath.baseUrl === ollamaPreset.baseUrl && ollamaPath.mode === "external"
       && ollamaPath.drawnWithout && !ollamaPath.drawnWith,
     `${JSON.stringify(ollamaPreset)} · ${JSON.stringify(ollamaPath)}`,
   );
@@ -7048,7 +7490,10 @@ async function hfAndDeltaTest(
     const rejects = /(^|[-_.])(?:f16|f32|bf16|fp16|fp32)(?=[-_.]|\.gguf$)|-\d{5}-of-\d{5}\.gguf$|(^|\/)mmproj[^/]*\.gguf$/i;
     check(
       "hf: choices are quant-ranked, windowed to 6, and hide what cannot be served",
-      qwen.step === "pick" && !!qwen.first && qwen.first.includes("Q4_K_XL")
+      // ATO-450: the pick for this machine may lead; Q4_K_XL then comes right after it.
+      qwen.step === "pick" && !!qwen.first
+        && (qwen.first.includes("Q4_K_XL") || (qwen.firstRecommended === true && (qwen.filenames[1] ?? "").includes("Q4_K_XL")))
+        && qwen.badges === painted
         && painted === Math.min(6, qwen.choices) && qwen.choices > 6
         && qwenBody.includes("↓ " + (qwen.choices - 6) + " more")
         && qwen.hidden === "1 more file hidden: 1 full-precision"
@@ -7915,6 +8360,7 @@ async function settingsTestPartC(
     activeText: string; providers: Array<{ id: string; kind: string; hasKey: boolean; active: boolean }>; customIds?: string[];
     fallback: { links: Array<{ providerId: string; isActive: boolean; isAppendedLocal: boolean }>; addableProviderIds: string[]; appendLocal: boolean };
     section: { provider: string | null; status: string; models: number; filtered: number }; flatRows: string[];
+    localScopeRows: number;
   };
   const pane = () => js<LlmPane>("window.__llmPane()");
   const readCfg = async () => ((await configGet()).config ?? {}) as Cfg;
@@ -7958,10 +8404,15 @@ async function settingsTestPartC(
     );
   } else {
   const expectedLocal = (listCli.models ?? []).filter((m) => !/embed|bge|nomic|jina/i.test(m.id)).length + (embCli.models ?? []).length;
+  /* 13.11: the Local setup also lists the apps you already run under its
+     catalogue (llmAppsHTML, data-llm-scope="external"), and a saved own
+     server or app there is a row too. Only the catalogue's own sections
+     (data-llm-scope="local") are what the CLI lists; the "Found on this
+     Mac" rows carry no data-llm-row. */
   check(
     "llm tab: Local pane rows come from atag models list + list-embeddings within 10 s",
-    local.mode === "local" && local.rows > 0 && local.rows === expectedLocal && local.localRows + local.embRows === expectedLocal && !local.localErr,
-    `${local.rows} rows painted, ${local.localRows}+${local.embRows} loaded, cli ${expectedLocal}${local.localErr ? " err=" + local.localErr : ""}`,
+    local.mode === "local" && local.localScopeRows > 0 && local.localScopeRows === expectedLocal && local.localRows + local.embRows === expectedLocal && !local.localErr,
+    `${local.localScopeRows} catalogue rows painted (${local.rows} in the pane), ${local.localRows}+${local.embRows} loaded, cli ${expectedLocal}${local.localErr ? " err=" + local.localErr : ""}`,
   );
   }
   /* ---- r7 models: the vendored catalogue metadata cannot rot in silence.
@@ -8032,12 +8483,13 @@ async function settingsTestPartC(
     + " for (const d of box.querySelectorAll('.llm-adv, .llm-details')) d.open = true;"
     + " const kv = [...box.querySelectorAll('.llm-route .llm-kv')].map((row) => { const k = ((row.querySelector('.llm-k') || {}).innerText || '').trim();"
     + " const all = (row.innerText || '').replace(/\\s+/g, ' ').trim(); return [k, all.startsWith(k) ? all.slice(k.length).trim() : all]; });"
-    + " return {modes: [...box.querySelectorAll('.llm-bar .llmmode')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-bar .llmmode.on')].map((b) => b.textContent.trim()), kv,"
+    + " return {modes: [...box.querySelectorAll('.llm-rm .llm-rm-t')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-rm.is-open .llm-rm-t')].map((b) => b.textContent.trim()), kv,"
     + " effects: [...box.querySelectorAll('[data-llm-row^=\"local-text:\"]')].map((r) => { const e = r.querySelector('.llm-effect'); return [e ? e.textContent.trim() : '', e ? e.title : '', r.hasAttribute('data-pull-local')]; })}; })()",
   );
-  const localCopy = ["Where chats run now", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
+  const localCopy = ["Where the agent runs now", "Local models", "Embedding models", "Add from Hugging Face", "Use an app you already run", "Advanced"];
   const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
-  if (!same(localView.modes, ["Local models", "Cloud providers", "Custom"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
+  // 13.11: the three cards are the setup switch (the Set up models tabs are gone); the Local card's setup is the one open.
+  if (!same(localView.modes, ["Local models", "Cloud", "Fusion"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode cards ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
   if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
   // A remote row's pill says Download with its size, and its tooltip is the TUI's "Enter: download"; a downloaded row never offers a download.
   const badPills = localView.effects.filter(([label, title, remote]) => remote
@@ -8074,8 +8526,10 @@ async function settingsTestPartC(
     : p.kind === "openai-compatible" || p.kind === "qwen-openai-compatible" ? ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"] : [];
   const dotenv = stateDir ? dotenvKeys(stateDir).keys : [];
   const realKey = (p: Provider) => p.kind === "subscription-cli" || !!(p.apiKey && p.apiKey.length) || keyNames(p).some((n) => envPresent([n]).length > 0 || dotenv.includes(n));
-  // A server on this Mac (Atomic Chat, Ollama, LM Studio, a loopback endpoint) has no key at all.
-  const keylessLocal = (p: Provider) => p.kind === "openai-compatible" && (["atomic-chat", "lmstudio", "ollama"].includes(p.id) || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:|\/|$)/i.test(p.baseUrl ?? ""));
+  // A server on this Mac (Atomic Chat, Ollama, LM Studio, a loopback endpoint) has no key at all, and (ATO-1066,
+  // ATO-1546) neither does one on another computer on this network added with no key variable of its own.
+  // The same rule the app uses (agent-cli.ts, mirroring the agent's provider-key.ts), not a copy of the old one.
+  const keylessLocal = (p: Provider) => isKeylessLocalProviderEntry(p);
   const expectKey = (p: Provider) => realKey(p) || keylessLocal(p);
   const misfiled = (cfg0.llm?.providers ?? []).filter((p) => keylessLocal(p) && !customIds.includes(p.id)).map((p) => p.id);
   // Each provider row as drawn (Calm S5): the preset's name, the id in mono only when the name differs, the key chip in words,
@@ -8096,12 +8550,13 @@ async function settingsTestPartC(
   });
   // The model filter is a search box, drawn with the provider's model list (Calm S5: the inert price facet is gone).
   const filterBox = await js<boolean>("(() => { const i = document.querySelector('#settings .setbody .llm-filter #llm-filter'); return !!i && i.getClientRects().length > 0 && !i.disabled; })()");
-  const cloudCopy = ["Cloud providers", "Add provider"].concat(cloudProviders.length ? ["Models on "] : []);
+  // 13.11: an empty list is the popular providers and More providers…; Add provider heads a list that has something in it.
+  const cloudCopy = ["Cloud providers"].concat(cloudProviders.length ? ["Add provider", "Models on "] : ["More providers"]);
   const cloudMissing: string[] = cloudCopy.filter((c) => !cloudBody.includes(c));
   if (cloudProviders.length && !filterBox) cloudMissing.push("the model filter box");
   check(
     "llm tab: Cloud providers rows carry the key status from the env ∪ .env names",
-    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && misfiled.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("No cloud providers yet.")),
+    cloud.mode === "cloud" && providersOk && cloudMissing.length === 0 && misfiled.length === 0 && (cloudProviders.length > 0 || cloudBody.includes("More providers")),
     `${cloud.providers.map((p) => `${p.id}:${p.hasKey ? "key ok" : "missing key"}`).join(", ") || "no cloud providers"}${misfiled.length ? " on this computer but under Cloud: " + misfiled.join(",") : ""}${cloudMissing.length ? " missing " + JSON.stringify(cloudMissing) : ""}${providersOk ? "" : " drawn " + JSON.stringify(cloudRows)}`,
   );
   const models = await until(pane, (p) => p.section.status !== "loading", 90_000);
@@ -8122,6 +8577,9 @@ async function settingsTestPartC(
   const extBody = await js<string>("window.__settingsBody()");
   const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:9931";
   const extActive = cfg0.localModels?.mode === "external" && activeText === "local-llama";
+  // 13.11: your own server is a row once it is set up (in use, or an address saved), and one of the Add buttons until then.
+  const extListed = cfg0.localModels?.mode === "external" || !!cfg0.localModels?.url;
+  const extTile = await js<boolean>("!!document.querySelector('#settings .setbody .llm-apps-sec [data-act=\"llm:external:edit\"]')");
   // The row as drawn: the "Server address" label, the URL, its status chip, and the action pill (the TUI's sentence as its tooltip).
   const extRow = await js<{ label: string; url: string; status: string; effect: string; title: string } | null>(
     "(() => { const r = document.querySelector('#settings .setbody [data-llm-row=\"external-url\"]'); if (!r) return null; const e = r.querySelector('.llm-effect');"
@@ -8129,12 +8587,14 @@ async function settingsTestPartC(
     + " effect: e ? e.textContent.trim() : '', title: e ? e.title : ''}; })()",
   );
   check(
-    // ATO-1418: the Custom pane also lists the apps you run (Atomic Chat, Ollama, LM Studio); the server-address row is its last.
-    "llm tab: Custom pane ends with the one server-address row and the way back to Local",
-    ext.rows >= 1 && !!extRow && extRow.label === "Server address" && extRow.url === extUrl && (extActive || extRow.status === "not active")
-      && extBody.includes("Your own llama.cpp server") && extBody.includes("Apps you already run") && extBody.includes("pick one under Local")
-      && extRow.effect === (extActive ? "Edit address" : "Use this server") && extRow.title === (extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp"),
-    `${ext.rows} row(s), active=${extActive}, drawn ${JSON.stringify(extRow)}`,
+    // ATO-1418, 13.11: the apps you run (Atomic Chat, Ollama, LM Studio) and your own server sit under the local models, in one section.
+    "llm tab: Use an app you already run lists your own server as its last row once it is set up, and offers it as an Add button before",
+    ext.rows >= 1 && extBody.includes("Use an app you already run") && !extBody.includes("pick one under Local")
+      && (extListed
+        ? !!extRow && extRow.label === "Server address" && extRow.url === extUrl && (extActive || extRow.status === "not active")
+          && extRow.effect === (extActive ? "Edit address" : "Use this server") && extRow.title === (extActive ? "Enter: edit the base URL" : "Enter: point the chat route at an external llama.cpp")
+        : !extRow && extTile),
+    `${ext.rows} row(s), active=${extActive}, listed=${extListed}, tile=${extTile}, drawn ${JSON.stringify(extRow)}`,
   );
   const cfgBeforeProbe = JSON.stringify((await configGet()).config);
   const probed = await js<LlmPane>("window.__llmExternalSave('127.0.0.1:1')");
@@ -8364,14 +8824,14 @@ async function settingsTestPartC(
   // Release fix 49 (Д52): the limit field says what it limits ("Limit" before).
   // ATO-531: Overwrite carries an amber "Can replace your data" tag and says what it replaces.
   const impDrawn = impView.title === "Hermes → Atomic Agent"
-    // ATO-1034 (folders): "Put imported chats into folders" sits before Overwrite.
-    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Put imported chats into folders", "Overwrite Can replace your data", "Sessions to import"])
+    // ATO-1034 (folders): the folders switch sits before Overwrite. W2: the rows in plain words.
+    && same(impView.labels, ["Source", "Source folder", "Chats", "Scheduled jobs", "API keys", "Keep chats in their projects", "Overwrite Can replace your data", "Chats to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
     "import tab: the TUI form with its defaults, and no CLI run until Preview import",
     imp.runs === 0 && impDrawn && impBody.includes("Preview import") && !impBody.includes("↑↓ move")
-      && impBody.includes("OPENROUTER_API_KEY / AIMLAPI_API_KEY") && impBody.includes("Replaces what you already have here") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
+      && impBody.includes("Your OpenRouter and AI/ML API keys") && impBody.includes("Choose…") && impBody.includes("Replaces what you already have here") && imp.form.source === "hermes" && imp.form.sessions && imp.form.cron && !imp.form.secrets && !imp.form.overwrite && imp.form.sourceDir.endsWith("/.hermes") && imp.mode === "configure",
     `runs=${imp.runs} dir=${imp.form.sourceDir}${impDrawn ? "" : " drawn " + JSON.stringify(impView)}`,
   );
   const dir = "/nonexistent-desktop-smoke-dir";
@@ -8391,7 +8851,7 @@ async function settingsTestPartC(
   );
   const pv = await reportView();
   const previewDrawn = pv.title === "Preview · 2 items" && pv.chip === "Nothing is changed yet" && same(pv.heads, ["Outcome", "Kind", "Item"])
-    && pv.rows.length === 2 && pv.rows.every((r) => r.outcome === "skipped") && pv.rows.some((r) => r.kind === "sessions" && r.reason === `(no state.db at ${dir}/state.db)`);
+    && pv.rows.length === 2 && pv.rows.every((r) => r.outcome === "skipped") && pv.rows.some((r) => r.kind === "chat" && r.reason === `(no state.db at ${dir}/state.db)`);
   // Release fix 49 (Д53): the summary in words, and Apply drawn but off when the preview found nothing to import.
   check(
     "import tab: Preview import runs atag import --dry-run and parses the report into the TUI rows",
@@ -8493,7 +8953,7 @@ async function uiTest(
   // --- item 1: the circles ---------------------------------------------------
   const probe = await js<{
     dots: Array<{ cls: string; w: number; h: number; border: number; bg: string; animation: string; shadow: string }>;
-    seat: { dotMid: number; capMid: number; xMid: number } | null;
+    seat: { dotMid: number; capMid: number; xMid: number; font?: string; fontLoaded?: boolean; rowH?: number } | null;
   } | null>("window.__dotProbe()");
   const dots = probe ? probe.dots : [];
   check(
@@ -8515,13 +8975,13 @@ async function uiTest(
   // wide) also accepted the row's plain flex centre — the misalignment the
   // whole item is about — so deleting `top:1px` from styles.css left the suite
   // green. The spec's own acceptance is the MIDPOINT of cap and x, ±0.5px,
-  // which the shipped dot hits exactly and an un-nudged one misses by 1px.
+  // which the shipped dot hits (on Figtree 14px the nudge is .5px, shell.css).
   const seatMid = seat ? (seat.capMid + seat.xMid) / 2 : 0;
   check(
     "item 1: the dot sits on the label's optical centre",
     !!seat && Math.abs(seat.dotMid - seatMid) <= 0.5,
     seat ? `dot ${seat.dotMid.toFixed(2)}, target ${seatMid.toFixed(2)}`
-      + ` (cap-mid ${seat.capMid.toFixed(2)}, x-mid ${seat.xMid.toFixed(2)})` : "no probe row",
+      + ` (cap-mid ${seat.capMid.toFixed(2)}, x-mid ${seat.xMid.toFixed(2)}; font ${seat.font ?? "?"}, loaded ${seat.fontLoaded ?? "?"}, row ${seat.rowH ?? "?"}px)` : "no probe row",
   );
   const ec = await js<{ found: boolean; display: string; strays: number }>("window.__emptyChatProbe()");
   check(
@@ -9551,6 +10011,12 @@ async function isolationAndSwitchTest(
     // call site and this check would never go green.
     .map((n) => [n, (rendererSrc.match(new RegExp(`(?<![\\w$])BR\\.${n}\\(`, "g")) ?? []).length] as const)
     .filter(([, n]) => n !== 1);
+  /* BR.useLocalModel (a model found on this computer) registers and switches,
+     so it is a switch too: named once in the funnel. The setup's
+     `registerOnly` call only adds the entry (its own pull starts the model)
+     and is the one exception. */
+  const useLocal = [...rendererSrc.matchAll(/(?<![\w$])BR\.useLocalModel\(([^)]*)\)/g)].filter((m) => !/registerOnly:\s*true/.test(m[1] ?? "")).length;
+  if (useLocal !== 1) onceOnly.push(["useLocalModel", useLocal]);
   check(
     "switch coverage: every switch goes through the wrapper",
     stray.length === 0 && onceOnly.length === 0 && swxRanges.length >= 12,
@@ -10572,6 +11038,7 @@ void app.whenReady().then(async () => {
      on the next launch (move-to-applications.ts). */
   if (shouldOfferMove({
     platform: process.platform, packaged: app.isPackaged, smoke: SMOKE || FIRST_RUN_PROBE, dev: DEV,
+    ownStateDir: STATE_DIR_FROM_ENV,
     inApplications: inApplicationsFolder(),
   })) {
     const moved = offerMove({
@@ -10618,7 +11085,24 @@ void app.whenReady().then(async () => {
   win.on("closed", () => voice.kill());
   rebuildMenu();
   if (!SMOKE && !FIRST_RUN_PROBE) void syncTray();
+  if (!SMOKE && !FIRST_RUN_PROBE) watchKeepAwake();
   wireIpc(agent);
+  /* ATO-523: the global hotkey and its one-line box (quick-entry-window.ts).
+     Never in a smoke run or the probe; given back at the quit. */
+  const quickEntry = wireQuickEntry({
+    userData: app.getPath("userData"),
+    platform: process.platform,
+    smoke: SMOKE,
+    probe: FIRST_RUN_PROBE,
+    modelsTest: MODELS_TEST,
+    showMainWindow: () => {
+      openWindowAgain();
+      if (process.platform === "darwin") app.focus({ steal: true });
+      return win;
+    },
+    log: (line) => console.error(line),
+  });
+  app.once("will-quit", () => quickEntry.dispose());
   wireUpdater();
   watchCoreUpdates();
   // ATO-229: the first update check waits for the window (then ~10 s more, updater.ts).
@@ -10696,8 +11180,8 @@ void app.whenReady().then(async () => {
   });
 
   app.on("activate", () => {
-    // ATO-1018: a marks overlay is not a window of the app.
-    if (appWindows().length === 0) openWindowAgain();
+    // ATO-1018: a marks overlay is not a window of the app. ATO-523: nor is the quick-entry box.
+    if (appWindows().filter((w) => !isQuickEntryWindow(w)).length === 0) openWindowAgain();
   });
 });
 
@@ -10734,6 +11218,12 @@ function rebuildMenu(): void {
       return;
     }
     if (command === "remote:open") { openRemoteConnect(); return; }
+    if (command.startsWith("awake:")) {
+      const mode = command.slice("awake:".length) as KeepAwakeMode;
+      if (KEEP_AWAKE_MODES.includes(mode)) { writeKeepAwakeMode(userData, mode); void syncKeepAwake(); }
+      rebuildMenu();
+      return;
+    }
     if (command === "bg:startAtLogin") {
       // A dev or unpackaged run would register the bare Electron binary, not the app.
       if (!app.isPackaged) { console.error("[desktop] start at login: only a packaged app registers itself"); rebuildMenu(); return; }
@@ -10743,7 +11233,38 @@ function rebuildMenu(): void {
       return;
     }
     send("app:menu", command);
-  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()) });
+  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()), keepAwake: readKeepAwakeMode(userData) });
+}
+
+/* ---- ATO-592: Keep Computer Awake (keep-awake.ts) ---- */
+const keepAwakeBlocker = new KeepAwakeBlocker(powerSaveBlocker);
+
+/** Hold or drop the blocker for the mode now and, in While Working, the turns and tasks running. */
+async function syncKeepAwake(): Promise<void> {
+  const mode = readKeepAwakeMode(app.getPath("userData"));
+  const client = agent;
+  let running: number | null = null;
+  if (mode === "while-working" && client && !client.isRemote) {
+    const [tasks, health] = await Promise.all([
+      client.runningTaskCount(),
+      client.turnsHealth().catch(() => null) as Promise<{ busyTurns?: unknown } | null>,
+    ]);
+    const busy = typeof health?.busyTurns === "number" && Number.isFinite(health.busyTurns) ? health.busyTurns : null;
+    running = workRunning(liveTurnCount(), tasks, busy);
+  }
+  // Read again: the mode may have changed while the agent answered.
+  const now = readKeepAwakeMode(app.getPath("userData"));
+  keepAwakeBlocker.sync(blockerWanted(now, now === mode ? running : null, agent?.isRemote ?? false));
+}
+
+function watchKeepAwake(): void {
+  void syncKeepAwake();
+  setInterval(() => { void syncKeepAwake(); }, KEEP_AWAKE_POLL_MS).unref();
+  // Woke up: tasks that fell due while the computer slept start now, not at the agent's next tick.
+  powerMonitor.on("resume", () => {
+    if (agent && !agent.isRemote) void agent.wakeTasks();
+    void syncKeepAwake();
+  });
 }
 
 /** The tray icon while Keep Running is on, none while it is off. */
@@ -10782,6 +11303,7 @@ app.on("window-all-closed", () => {
   // system microphone indicator lit, which is worse for trust than any bug
   // in the transcript.
   voice.kill();
+  fileTranscriber.kill();
   // ATO-598: unless Keep Running is on, closing the last window quits off macOS;
   // and with no tray icon to come back through, it quits anyway.
   if (quitsOnLastWindow(process.platform, readBackgroundPrefs(app.getPath("userData"))) || (process.platform !== "darwin" && !tray)) app.quit();
@@ -10850,6 +11372,7 @@ app.on("before-quit", (event) => {
   // the degraded state in which someone is most likely to be poking at the
   // microphone button.
   voice.kill();
+  fileTranscriber.kill();
   stopForQuit();
   // Analytics: app_closed and a last flush, bounded (2 s); idempotent across repeated Quits.
   const analyticsClosed = A.appClosing();
@@ -10969,7 +11492,18 @@ async function smokePortsFree(): Promise<boolean> {
   if (!smokeOwnsItsState({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV })) return true;
   try {
     const read = await settleWithin(readWholeConfig(), 8_000, null);
-    const taken = await busyPorts(modelPortsOf(read?.ok ? read.config : null));
+    const cfg = read?.ok ? read.config : null;
+    const busy = await busyPorts(modelPortsOf(cfg));
+    /* A server this run started itself (the QA stand's pre-start of the full
+       smoke's model, on this run's fresh directory) is the run's own, not a
+       leftover: its pid is in the run's own pid files (portsHeldByRun). */
+    const managed = (cfg as { localModels?: { managed?: { dataDirOverride?: string | null } } } | null)?.localModels?.managed;
+    const dataDir = managedDataDir(managed?.dataDirOverride);
+    const ours = busy.length && smokeMayStopModels({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV, dataDir })
+      ? portsHeldByRun(busy, daemonPidsIn(dataDir, true), commandOf)
+      : [];
+    if (ours.length) console.error(`[desktop] smoke: model port ${ours.join(", ")} is held by the model server this run started — using it`);
+    const taken = busy.filter((p) => !ours.includes(p));
     if (!taken.length) return true;
     process.stdout.write(
       `FAIL smoke: model port ${taken.join(", ")} is already taken by another process (a model server left by a stopped run?). Stop it and start the run again.\n`,
@@ -11948,13 +12482,16 @@ async function onboardingTest(
     await js<ObState>("window.__obKey('esc')");
     const keysList = await js<{ rows: string[] }>("(window.__obKey('2'), { rows: window.__wizList().rows })");
     await js<ObState>("window.__obKey('esc')");
-    const appRows = ["Atomic Chat (local)", "Ollama (local)", "LM Studio (local)"];
+    // ATO-626 (#1497): Lemonade is an app on this Mac too, listed first. ATO-1066 (#1488): a model on
+    // another computer on the network is the last Custom row, after any URL.
+    const appRows = ["Lemonade (local)", "Atomic Chat (local)", "Ollama (local)", "LM Studio (local)"];
+    const LAN_ROW = "Another computer on your network";
     check(
-      "wizard: Custom lists the apps on this Mac, a llama.cpp server and any URL; Cloud lists none of them",
+      "wizard: Custom lists the apps on this Mac, a llama.cpp server, any URL and another computer on the network; Cloud lists none of them",
       customList.step === "cloud" &&
-        JSON.stringify(customList.rows.slice(0, 4)) === JSON.stringify([...appRows, "llama.cpp server"]) &&
-        customList.rows.length === 5 && /custom base URL/.test(customList.rows[4] ?? "") &&
-        keysList.rows.length > 3 && !keysList.rows.some((r) => appRows.includes(r) || r === "llama.cpp server" || /custom base URL/.test(r)),
+        JSON.stringify(customList.rows.slice(0, 5)) === JSON.stringify([...appRows, "llama.cpp server"]) &&
+        customList.rows.length === 7 && /custom base URL/.test(customList.rows[5] ?? "") && customList.rows[6] === LAN_ROW &&
+        keysList.rows.length > 3 && !keysList.rows.some((r) => appRows.includes(r) || r === "llama.cpp server" || /custom base URL/.test(r) || r === LAN_ROW),
       `custom=${JSON.stringify(customList)} keys=${JSON.stringify(keysList.rows)}`,
     );
     const toCustom = await js<ObState>(
@@ -12413,7 +12950,8 @@ async function onboardingTest(
     const argvHermes = argvOf("hermes", ["cron"], true);
     const argvPi = argvOf("pi", ["sessions", "cron"], true);
     const argvOmp = argvOf("oh-my-pi", ["mcp"], true);
-    const argvUnknown = argvOf("atomic-agent", [], false);
+    // W2: "atomic-agent" is a source now (another data folder), so the unknown one is made up.
+    const argvUnknown = argvOf("not-a-source", [], false);
     check(
       "wizard: the import argv excludes only domains the source understands, and gates the secrets flag",
       // `cron` is not a Claude Code domain, so it is dropped rather than
@@ -12427,7 +12965,7 @@ async function onboardingTest(
         argvPi.args?.join(" ") === "import pi --source /tmp/src --exclude sessions --dry-run" &&
         argvOmp.args?.join(" ") === "import oh-my-pi --source /tmp/src --exclude mcp --dry-run" &&
         argvUnknown.ok === false &&
-        argvUnknown.error === "source must be hermes, openclaw, claude-code, codex, pi or oh-my-pi",
+        argvUnknown.error === "source must be hermes, openclaw, claude-code, codex, pi, oh-my-pi, claude-app or atomic-agent",
       `claude=${JSON.stringify(argvClaude)} codex=${JSON.stringify(argvCodex)}` +
         ` openclaw=${JSON.stringify(argvOpenclaw)} hermes=${JSON.stringify(argvHermes)}` +
         ` pi=${JSON.stringify(argvPi)} omp=${JSON.stringify(argvOmp)}` +
@@ -13201,7 +13739,7 @@ async function chromeTest(
     text: string; act: string; title: string; aria: string | null;
     classes: string; bg: string; fg: string;
     height: number; width: number; keycaps: number; labelVisible: boolean; iconVisible: boolean;
-    belowLists: boolean; oldRow: number;
+    belowLists: boolean; oldRow: number; rowWidth?: number; discordWidth?: number;
   };
   type Acts = {
     present: boolean; vis?: string; opacity?: string; events?: string; height?: number;
@@ -13210,6 +13748,7 @@ async function chromeTest(
     anchorRight?: number | null; insideBubble?: number;
     btnLeft?: number | null; anchorLeft?: number | null; dot?: boolean; dotLive?: boolean;
     acted?: boolean;
+    rowLeft?: number | null; rowRight?: number | null; lead?: string | null; rewind?: number;
   };
 
   /* r5 review fix — the two writes this lane makes to the WINDOW itself, put
@@ -13383,11 +13922,13 @@ async function chromeTest(
     );
     // #sidebar is 260px (8px window gutter + the 252px floating panel with 8px
     // side padding), so the button's full width is 236. Calm (S1): 34px, the
-    // height of every other sidebar row.
+    // height of every other sidebar row. ATO-1465 (#1363): the row is 236 wide and
+    // shares it with the 34px Join Discord button (4px gap), so Settings takes the rest.
+    const discordW = setBtn?.discordWidth ?? 0;
     check(
-      "item 8: it is 34px tall, full width, below the lists",
-      !!setBtn && setBtn.height === 34 && setBtn.width === 236 && setBtn.belowLists,
-      setBtn ? `${setBtn.width}×${setBtn.height}, belowLists=${setBtn.belowLists}` : "no button",
+      "item 8: it is 34px tall, full width (beside Join Discord), below the lists",
+      !!setBtn && setBtn.height === 34 && setBtn.rowWidth === 236 && discordW === 34 && setBtn.width === 236 - discordW - 4 && setBtn.belowLists,
+      setBtn ? `${setBtn.width}×${setBtn.height} in a ${setBtn.rowWidth}px row, Discord ${discordW}px, belowLists=${setBtn.belowLists}` : "no button",
     );
     const setDark = await js<SetBtn>("(() => { window.__theme('dark'); return window.__settingsBtn(); })()");
     const setLight = await js<SetBtn>("(() => { window.__theme('light'); return window.__settingsBtn(); })()");
@@ -13730,16 +14271,24 @@ async function chromeTest(
     /* ATO-168: a reply's actions moved to its LEFT, under the text they copy,
        after the dot the last reply carries (20px in); a user message keeps
        them at its bubble's right edge. */
+    /* ATO-1056/1058 (#1516): Edit and Roll back follow copy on a user message, so the row's LAST control (not copy) is
+       the one at the bubble's end, and copy stands right before them. ATO-1186 (#1434): the last reply's speed leads
+       its row, so the row's FIRST thing (the speed, else the first button) is the one after the dot. Read from the
+       row's own children, so dropping justify-content:flex-end still goes red. */
+    const userEnd = userActs?.rowRight ?? userActs?.btnRight;
+    const asstStart = asstActs?.rowLeft ?? asstActs?.btnLeft;
     check(
       "item 4: the actions sit at the user bubble's end and at the reply's start (after its dot), never inside the bubble",
       !!userActs && !!asstActs
-        && typeof userActs.btnRight === "number" && typeof asstActs.btnLeft === "number"
-        && Math.abs(userActs.btnRight - (userActs.anchorRight ?? -1)) <= 1
-        && Math.abs(asstActs.btnLeft - ((asstActs.anchorLeft ?? -100) + (asstActs.dot ? 20 : 0))) <= 1
+        && typeof userEnd === "number" && typeof asstStart === "number" && typeof userActs.btnRight === "number"
+        && Math.abs(userEnd - (userActs.anchorRight ?? -1)) <= 1
+        && (userActs.rewind ? userActs.btnRight < userEnd : userActs.btnRight === userEnd)
+        && Math.abs(asstStart - ((asstActs.anchorLeft ?? -100) + (asstActs.dot ? 20 : 0))) <= 1
+        && (asstActs.lead === "speed" || asstActs.lead === "button")
         && asstActs.dot === true && asstActs.dotLive === false
         && userActs.insideBubble === 0,
-      `user last button right ${userActs?.btnRight} vs bubble ${userActs?.anchorRight};`
-      + ` assistant first button left ${asstActs?.btnLeft} vs prose ${asstActs?.anchorLeft} (dot ${asstActs?.dot}, live ${asstActs?.dotLive});`
+      `user row right ${userEnd} (copy ${userActs?.btnRight}, ${userActs?.rewind ?? 0} rewind controls) vs bubble ${userActs?.anchorRight};`
+      + ` assistant row left ${asstStart} (${asstActs?.lead}; first button ${asstActs?.btnLeft}) vs prose ${asstActs?.anchorLeft} (dot ${asstActs?.dot}, live ${asstActs?.dotLive});`
       + ` (row boxes ${userActs?.right}/${asstActs?.right} span the whole column either way, so they are context only);`
       + ` .bubble .msgact count ${userActs?.insideBubble}`,
     );

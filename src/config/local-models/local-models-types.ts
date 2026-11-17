@@ -1,6 +1,7 @@
 import type { LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import type { BackendVariantPreference, CoreBackendVariant } from "../../local-llm/backend/windows-backend-variant.js";
 import type { SwaFullPreference } from "../../local-llm/server/swa-full.js";
+import type { LoraAdapter } from "../../local-llm/server/lora-adapter.js";
 
 export type LocalLlmMode = "external" | "managed";
 
@@ -156,6 +157,27 @@ export interface UserManagedLocalLlmConfig {
    * predate the key get `true`.
    */
   autoRestart: boolean;
+  /**
+   * LoRA adapters for the managed chat server, keyed by local model id
+   * (ATO-1106): `{ "<modelId>": { "path": "/abs/adapter.gguf", "scale": 0.8 } }`.
+   * The adapter of the model being launched is passed as `--lora` (or
+   * `--lora-scaled` when `scale` is not 1); a missing file fails that
+   * launch with its path. A running server launched with another adapter
+   * is restarted on the next start instead of adopted. Additive and
+   * unversioned: absent means no adapters, as before.
+   */
+  loraAdapters?: Record<string, LoraAdapter>;
+  /**
+   * Keep the chat daemon's prompt cache on disk between runs (ATO-456).
+   * `true`: the managed server starts with `--slot-save-path`, the cache
+   * of every idle slot is saved before a managed stop and the newest
+   * saves are loaded back after the next start, so a long conversation
+   * continues without the model reading it all again. A save is only
+   * loaded into a launch with the same model, engine build and cache
+   * flags; others are deleted. At most 8 GiB on disk, oldest first.
+   * `false` (default): nothing is written.
+   */
+  promptDiskCache: boolean;
 }
 
 /**
@@ -270,6 +292,11 @@ export interface RuntimeLocalModelsConfig {
    */
   drySampler?: boolean;
   /**
+   * Mirrors `UserConfigFile.localModels.strictToolArgs`. Optional so a
+   * hand-built runtime config that predates the field reads as off.
+   */
+  strictToolArgs?: boolean;
+  /**
    * Where `completionMaxTokens` and `requestTimeoutMs` came from
    * (ATO-922): the env override or `config.json`. Logged at start so a
    * file value the env silently beat is visible. Optional so a
@@ -361,6 +388,16 @@ export interface UserLocalModelsConfig {
    * an older file has no field and reads as off.
    */
   drySampler: boolean;
+  /**
+   * Hold a local model's tool ARGUMENTS to each tool's JSON Schema on
+   * the grammar path, not only its tool names (ATO-633): a key the
+   * schema does not know, a missing required key or a value outside an
+   * `enum` cannot be sampled. Applies to the tools on the generic call
+   * branch; a tool whose schema does not convert stays on the any-object
+   * path (`src/llm/grammar/strict-tool-args.ts`). Default `false`,
+   * unversioned and additive: an older file has no field and reads as off.
+   */
+  strictToolArgs: boolean;
   managed: UserManagedLocalLlmConfig;
   /**
    * Memory-v2 phase 1B. Optional second managed daemon for

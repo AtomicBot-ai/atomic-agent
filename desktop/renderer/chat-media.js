@@ -7,6 +7,13 @@
    paint (chatVideoHydrate), the way hydrateChatImages puts pictures in. The
    window's CSP allows `media-src file:`; the URL is STUDIO.mediaUrl's.
 
+   ATO-1166: under each reply clip, Save As… (a copy through main's save
+   dialog, app:replySaveAs) and Show in Finder (app:replyReveal), the same
+   home-folder routes Studio's "From chat" clip uses, so a clip can be kept
+   without opening Studio. Before it is played the player shows the frame
+   0.5 s in (Studio's poster time) rather than a black first frame; the first
+   Play starts it from the top.
+
    `video.generate` takes minutes. The agent sends `event: tool_update`
    (`{tool, fraction, elapsed_ms, label}`, at most one every 20 s) and the
    running card shows how far it got (toolUpdateTarget, toolUpdateApply,
@@ -132,7 +139,7 @@ function chatVideoUrl(path) {
 function chatVideo(path) {
   let st = CHAT_VID.get(path);
   if (st) return st;
-  st = {node: null, failed: false, playing: false};
+  st = {node: null, failed: false, playing: false, posterAt: null};
   CHAT_VID.set(path, st);
   const url = chatVideoUrl(path);
   if (!url || typeof document === 'undefined') { st.failed = true; return st; }
@@ -141,6 +148,16 @@ function chatVideo(path) {
   v.controls = true;
   v.preload = 'metadata';
   v.playsInline = true;
+  /* ATO-1166: the frame 0.5 s in as the poster; the first Play rewinds it unless the person scrubbed. */
+  v.addEventListener('loadedmetadata', () => {
+    if (st.posterAt != null || !v.paused || v.currentTime > 0) return;
+    st.posterAt = chatPosterTime(v.duration);
+    try { v.currentTime = st.posterAt; } catch (_) { st.posterAt = 0; }
+  });
+  v.addEventListener('play', () => {
+    if (st.posterAt > 0 && Math.abs(v.currentTime - st.posterAt) < 0.05) { try { v.currentTime = 0; } catch (_) { /* keep where it is */ } }
+    st.posterAt = 0;
+  });
   v.addEventListener('playing', () => { st.playing = true; });
   v.addEventListener('pause', () => { if (v.isConnected) st.playing = false; });
   v.addEventListener('ended', () => { st.playing = false; });
@@ -159,7 +176,65 @@ function chatVideoSlotHTML(path, escape) {
   if (st.failed) return null;
   const e = typeof escape === 'function' ? escape : (s) => String(s);
   const name = String(path).split(/[\\/]/).pop() || path;
-  return '<div class="chat-vid" data-chat-vid="' + e(path) + '" title="' + e(name) + '"></div>';
+  return '<div class="chat-vid-box"><div class="chat-vid" data-chat-vid="' + e(path) + '" title="' + e(name) + '"></div>'
+    + chatVideoActionsHTML(path, e) + '</div>';
+}
+
+/** The time the poster frame is shown at: 0.5 s in, or the middle of a shorter clip (studio/video.js posterTime). */
+function chatPosterTime(duration) {
+  return Number.isFinite(duration) && duration > 0 ? Math.min(0.5, duration / 2) : 0.5;
+}
+
+/* ---------- ATO-1166: Save As… and Show in Finder under a reply clip ---------- */
+
+function chatRevealLabel() {
+  return typeof fileManagerName === 'function' ? fileManagerName() : 'Show in Finder';
+}
+
+function chatIcon(name) {
+  return typeof ic === 'function' ? ic(name) : '';
+}
+
+/** The row under a reply clip (html). */
+function chatVideoActionsHTML(path, escape) {
+  const e = typeof escape === 'function' ? escape : (s) => String(s);
+  return '<div class="chat-vid-acts">'
+    + '<button class="btn btn-s sm" data-vid-act="save" data-vid-path="' + e(path) + '">' + chatIcon('download') + 'Save As…</button>'
+    + '<button class="btn btn-s sm" data-vid-act="reveal" data-vid-path="' + e(path) + '">' + chatIcon('folder') + e(chatRevealLabel()) + '</button>'
+    + '</div>';
+}
+
+/** What to tell the person after Save As… / Show in Finder: {title, sub} for a toast, or null to say nothing (shown, canceled). */
+function chatVideoActionNote(verb, r) {
+  if (verb === 'save') {
+    if (r && r.ok) return {title: 'Saved', sub: r.path || ''};
+    if (r && r.reason === 'canceled') return null;
+  } else if (r && r.ok) return null;
+  const why = r && r.reason === 'outside' ? 'Only a clip in your home folder can be saved or shown from a reply.'
+    : r && r.reason === 'failed' && r.error ? String(r.error)
+    : 'The clip may have been moved or deleted.';
+  return {title: verb === 'save' ? 'Could not save it' : 'Could not show it', sub: why};
+}
+
+/** Runs one action through the bridge; resolves to the note chatVideoActionNote gives (null: nothing to say). */
+function chatVideoAction(verb, path, api) {
+  const a = api || (typeof window !== 'undefined' ? window.atomic : null) || {};
+  const fn = verb === 'save' ? a.replySaveAs : verb === 'reveal' ? a.replyReveal : null;
+  if (typeof fn !== 'function' || !path) return Promise.resolve(chatVideoActionNote(verb, null));
+  return Promise.resolve().then(() => fn(path)).then((r) => chatVideoActionNote(verb, r), () => chatVideoActionNote(verb, null));
+}
+
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  // Capture: the window's own click handler never sees these buttons.
+  document.addEventListener('click', (ev) => {
+    const b = ev.target && ev.target.closest ? ev.target.closest('[data-vid-act]') : null;
+    if (!b) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    chatVideoAction(b.dataset.vidAct, b.dataset.vidPath).then((note) => {
+      if (note && typeof toast === 'function') toast(note.title, note.sub);
+    });
+  }, true);
 }
 
 /** Put each video's element into the slots the last paint left empty. */
@@ -193,5 +268,6 @@ if (typeof MutationObserver === 'function' && typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {chatMediaKind, videoModelName, videoModelRan, videoToolLine, toolUpdateTarget, toolUpdateApply, toolProgressText,
-    toolProgressHTML, VIDEO_PAID_WHY, VIDEO_DEFAULT_MODEL, chatVideo, chatVideoHydrate, pauseChatMedia};
+    toolProgressHTML, VIDEO_PAID_WHY, VIDEO_DEFAULT_MODEL, chatVideo, chatVideoHydrate, pauseChatMedia,
+    chatVideoSlotHTML, chatPosterTime, chatVideoActionsHTML, chatVideoActionNote, chatVideoAction};
 }

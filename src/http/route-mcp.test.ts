@@ -89,3 +89,84 @@ describe("/api/mcp/servers/{name}", () => {
     expect(allowed.status).toBe(200);
   });
 });
+
+// Port 9 (discard) refuses connections: the server lands in `down`
+// quickly without any network, which is all the sign-in routes need.
+const REMOTE: McpServerConfig = {
+  name: "remote",
+  enabled: false,
+  transport: { kind: "streamable_http", url: "http://127.0.0.1:9/mcp" },
+};
+const KEYED: McpServerConfig = {
+  name: "keyed",
+  enabled: false,
+  transport: {
+    kind: "streamable_http",
+    url: "http://127.0.0.1:9/mcp",
+    headers: { Authorization: "Bearer k" },
+  },
+};
+
+describe("/api/mcp/servers/{name}/auth", () => {
+  let harness: Harness | null = null;
+
+  afterEach(async () => {
+    await harness?.cleanup();
+    harness = null;
+  });
+
+  it("status reads signed_out, then signed_in once a token is saved", async () => {
+    harness = await startTestHarness({ mcpServers: [REMOTE] });
+    const res = await fetch(`${harness.baseUrl}/api/mcp/servers/remote/auth`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ state: "signed_out" });
+
+    const { createMcpOAuthStore } = await import("../mcp/mcp-oauth-store.js");
+    createMcpOAuthStore(harness.stateDir).update("remote", "http://127.0.0.1:9/mcp", {
+      tokens: { access_token: "tok" },
+    });
+    const after = await fetch(`${harness.baseUrl}/api/mcp/servers/remote/auth`);
+    expect(await after.json()).toEqual({ state: "signed_in" });
+  });
+
+  it("signout deletes the saved sign-in and restarts the server", async () => {
+    harness = await startTestHarness({ mcpServers: [REMOTE] });
+    const { createMcpOAuthStore, mcpOAuthFilePath } = await import("../mcp/mcp-oauth-store.js");
+    createMcpOAuthStore(harness.stateDir).update("remote", "http://127.0.0.1:9/mcp", {
+      tokens: { access_token: "tok" },
+    });
+    const spy = vi.spyOn(harness.runtime.mcpManager, "restartServer");
+    const res = await post(harness, "/api/mcp/servers/remote/auth/signout");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ state: "signed_out" });
+    expect(spy).toHaveBeenCalledWith("remote");
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(mcpOAuthFilePath(harness.stateDir, "remote"))).toBe(false);
+  });
+
+  it("start refuses a stdio server, a keyed server and an unknown name", async () => {
+    harness = await startTestHarness({ mcpServers: [DOCS, KEYED] });
+    const local = await post(harness, "/api/mcp/servers/docs/auth/start");
+    expect(local.status).toBe(409);
+    const localBody = (await local.json()) as { error: { code: string; message: string } };
+    expect(localBody.error.code).toBe("mcp_auth_not_remote");
+    expect(localBody.error.message).toMatch(/no browser sign-in/);
+
+    const keyed = await post(harness, "/api/mcp/servers/keyed/auth/start");
+    expect(keyed.status).toBe(409);
+    expect(((await keyed.json()) as { error: { code: string } }).error.code).toBe("mcp_auth_uses_key");
+
+    const missing = await post(harness, "/api/mcp/servers/nope/auth/start");
+    expect(missing.status).toBe(404);
+    const status = await fetch(`${harness.baseUrl}/api/mcp/servers/nope/auth`);
+    expect(status.status).toBe(404);
+  });
+
+  it("start on an unreachable server answers with a plain error", async () => {
+    harness = await startTestHarness({ mcpServers: [REMOTE] });
+    const res = await post(harness, "/api/mcp/servers/remote/auth/start");
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toMatch(/^Could not start sign-in/);
+  });
+});

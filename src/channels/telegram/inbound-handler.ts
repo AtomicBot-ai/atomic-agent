@@ -20,6 +20,8 @@ import {
   type AttachmentOutcome,
 } from "../attachments/inbox.js";
 import { runModelCommand } from "../model-command.js";
+import { runCronCommand } from "./cron-command.js";
+import { cronTaskServiceFromRuntime } from "./cron-task-service.js";
 import { formatTaskLiveStatus } from "./task-status-message.js";
 import {
   shouldAnnounceSender,
@@ -49,6 +51,11 @@ import {
   telegramChatKey,
   type TelegramSessionPointer,
 } from "./telegram-session-pointer.js";
+import { TelegramLiveReply } from "./telegram-live-reply.js";
+import {
+  shouldStreamReplies,
+  type TelegramStreamReplies,
+} from "./telegram-stream-mode.js";
 
 /**
  * Adapt the runtime's `StructuredLogger` to the narrow
@@ -223,6 +230,12 @@ export interface InboundContext {
    * `agentReplyParseMode`.
    */
   progressIndicator?: boolean;
+  /**
+   * Streamed replies (ATO-634, `telegram.streamReplies` resolved with its
+   * env override). Absent = off, so a context built without it keeps the
+   * one-message-at-the-end path.
+   */
+  streamReplies?: TelegramStreamReplies;
 }
 
 /** How long Telegram displays a `chatAction: "typing"` indicator. */
@@ -286,6 +299,7 @@ function helpText(ctx: InboundContext): string {
     "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
     "  /model — show the provider and model in use; /model <provider> [model-id] switches\n" +
+    "  /cron — list scheduled tasks; /cron add <cron> <task>, /cron pause|resume|delete <id> (/cron help)\n" +
     "  /cancel — abort this chat's current turn if one is running"
   );
 }
@@ -358,7 +372,7 @@ export async function handleInboundText(
   // then silently fill from `legacy`.
   adoptLegacyForDm(ref, ctx);
   if (text.startsWith("/")) {
-    await handleSlashCommand(text, ref, ctx);
+    await handleSlashCommand(text, ref, ctx, fromId);
     return;
   }
   // Who is speaking, and in which group/topic. Skipped in a DM: a
@@ -704,6 +718,7 @@ async function handleSlashCommand(
   text: string,
   ref: ChatRef,
   ctx: InboundContext,
+  fromId: number,
 ): Promise<void> {
   const [verb, ...rest] = text.split(/\s+/);
   switch (verb) {
@@ -732,6 +747,19 @@ async function handleSlashCommand(
           runtime: ctx.runtime,
           sessionId: ctx.sessionPointer.get(ref.key).current,
           code: (text) => text,
+        }),
+      );
+      return;
+    }
+    case "/cron": {
+      // ATO-21. Takes the raw remainder: a task's text keeps its spacing.
+      await sendText(
+        ctx,
+        ref.target,
+        runCronCommand(text.slice("/cron".length), {
+          service: cronTaskServiceFromRuntime(ctx.runtime),
+          senderId: fromId,
+          ownerUserId: ctx.ownerUserId,
         }),
       );
       return;
@@ -897,6 +925,19 @@ async function dispatchToRuntime(
   // The bubble that carries snapshots: the progress bubble when it is on,
   // otherwise one of its own, posted with the first snapshot.
   let snapshotBubble: TelegramProgressIndicator | null = progress;
+  // The reply itself, streamed while the model writes it (ATO-634).
+  const live =
+    shouldStreamReplies(ctx.streamReplies, ref.isPrivate) &&
+    TelegramLiveReply.supported(ctx.api)
+      ? new TelegramLiveReply({
+          api: ctx.api,
+          chatId: ref.target.chatId,
+          ...(ref.target.threadId === undefined
+            ? {}
+            : { threadId: ref.target.threadId }),
+          logger: toTelegramLogger(ctx.logger),
+        })
+      : null;
   const postSnapshotIfDue = (): void => {
     const state = tracker.state();
     const now = Date.now();
@@ -942,6 +983,7 @@ async function dispatchToRuntime(
     if (event.type === "loop_failed") {
       failure = { error: event.error, category: event.category };
     }
+    live?.onEvent(event);
     if (progress === null) return;
     const label = progressLabel(event);
     if (label !== null) progress.update(label);
@@ -994,6 +1036,11 @@ async function dispatchToRuntime(
     await snapshotBubble.remove();
   }
 
+  // A cancelled turn's half-written answer is deleted; a failed one's
+  // stays above the failure line.
+  if (controller.signal.aborted) await live?.discard();
+  else if (reply === null) await live?.close();
+
   // Only the agent's natural-language reply gets parse-mode
   // formatting. Cancellation acks, the empty-reply marker, and
   // failure envelopes are channel infrastructure and stay plain so
@@ -1003,7 +1050,13 @@ async function dispatchToRuntime(
   if (controller.signal.aborted) {
     await sendText(ctx, ref.target, "Turn cancelled.");
   } else if (reply !== null) {
-    await sendText(ctx, ref.target, reply, ctx.agentReplyParseMode ?? "plain");
+    const parseMode = ctx.agentReplyParseMode ?? "plain";
+    const streamed = await live?.finalize(reply, parseMode);
+    if (streamed?.delivered) {
+      if (streamed.messages > 0) ctx.onMessageSent?.(streamed.messages);
+    } else {
+      await sendText(ctx, ref.target, reply, parseMode);
+    }
     // Files follow the text, one message each. A file that could not
     // be delivered is announced in plain text — the operator asked for
     // the file, not for the sentence saying it was sent.

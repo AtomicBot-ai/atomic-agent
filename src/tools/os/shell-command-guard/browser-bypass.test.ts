@@ -20,7 +20,7 @@ beforeAll(async () => {
   await writeFile(join(cwd, "evil.sh"), 'osascript -e "tell application \\"Safari\\" to get URL of front document"\n');
   await writeFile(join(cwd, "s.applescript"), 'tell application "Google Chrome" to get URL of active tab of front window\n');
   await writeFile(join(cwd, "ok.applescript"), 'display notification "hi"\n');
-  // The lexer gives up on `$((`, so only the text rules read these two.
+  // `$((…))` is arithmetic: lifted before the lexer reads the rest of the file.
   await writeFile(join(cwd, "sign-in.sh"), "#!/bin/sh\ni=$((1+1))\necho 'To sign in, open https://example.test/device and enter ABCD-1234'\n");
   await writeFile(join(cwd, "opens.sh"), "#!/bin/sh\ni=$((1+1))\necho 'starting'\nopen https://x.com\n");
   await writeFile(join(cwd, "open.py"), 'import subprocess\nsubprocess.run(["open", "-a", "Safari", "https://x.com"])\n');
@@ -72,6 +72,12 @@ const CASES: [string, boolean][] = [
  [`python3 sign-in.py`, false],
  [`node sign-in.js`, false],
  [`osascript ok.applescript`, false],
+ // ATO-1468: substitutions that do not reach a browser.
+ [`cd "$(git rev-parse --show-toplevel)" && npm test`, false],
+ [`open -a Preview "$(ls *.pdf | head -1)"`, false],
+ [`echo "built at $(date)"`, false],
+ [`cmd /c dir`, false],
+ [`cmd /c "dir"`, false],
  [`osascript -e 'tell application "Google Chrome" to set URL of active tab of front window to "https://mail.google.com"'`, true],
  [`osascript -e 'tell application "Google Chrome" to make new tab at end of tabs of front window with properties {URL:"https://x.com"}'`, true],
  [`osascript -e 'tell application "Google Chrome" to get {URL, title} of active tab of front window'`, true],
@@ -108,6 +114,21 @@ const CASES: [string, boolean][] = [
  [`sudo -u me open https://x.com`, true],
  [`perl -e 'system("open", "https://x.com")'`, true],
  [`xdg-open https://x.com`, true],
+ // ATO-1468: the address comes from a command substitution or a variable.
+ [`open "$(python3 x.py)"`, true],
+ [`open \`python3 x.py\``, true],
+ [`open -a Safari "$(python3 x.py)"`, true],
+ [`xdg-open "$(node url.js)"`, true],
+ [`wslview $(cat url.txt)`, true],
+ [`start "$(python3 x.py)"`, true],
+ [`explorer.exe "$(python3 x.py)"`, true],
+ [`URL=$(python3 x.py); open "$URL"`, true],
+ [`cd "$(git rev-parse --show-toplevel)" && open "$(python3 x.py)"`, true],
+ [`x=$(sh -c 'open -a Safari https://x.com')`, true],
+ [`cmd /c start https://x.com`, true],
+ [`cmd.exe /C start "" "$(python3 x.py)"`, true],
+ [`cmd /c "start https://x.com"`, true],
+ [`cmd.exe /k "start \"\" https://x.com"`, true],
  [`echo 'open https://x.com' | sh`, true],
  [`echo 'open https://x.com' > run.sh`, true],
  [`echo hi; open https://x.com`, true],

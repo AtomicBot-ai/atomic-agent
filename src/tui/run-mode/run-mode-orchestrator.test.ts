@@ -159,6 +159,24 @@ describe("RunModeOrchestrator.setMode", () => {
     );
   });
 
+  it("cloud with no cloud provider stays local and offers [add cloud provider]", async () => {
+    // ATO-1460: the plain sentence, and a chat line that keeps the way
+    // out on screen after the composer notice times out.
+    seed({ ...BOTH_LEGS, providers: [BOTH_LEGS!.providers[0]!] });
+    const app = harness();
+    await app.orchestrator.setMode("cloud");
+    expect(getConfig().llm?.runMode).toBeUndefined();
+    expect(app.setActive).not.toHaveBeenCalled();
+    const chat = app.actions.find((a) => a.type === "system_message");
+    expect(chat).toMatchObject({
+      text: expect.stringMatching(/^Cloud mode needs a cloud model/),
+      action: "add-cloud-provider",
+    });
+    expect(app.actions.find((a) => a.type === "composer_notice")).toMatchObject(
+      { text: (chat as { text: string }).text },
+    );
+  });
+
   it("cloud out of fusion clears the mode and moves the provider in the same write", async () => {
     seed({
       ...BOTH_LEGS,
@@ -239,6 +257,34 @@ describe("RunModeOrchestrator.setMode", () => {
       line: string;
     };
     expect(line.line).toBe("fusion: 2 workers");
+  });
+
+  it("setWorkers keeps a slot count the user pinned and says so (ATO-1541)", () => {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        mode: "managed",
+        managed: {
+          ...USER_CONFIG_DEFAULTS.localModels.managed,
+          modelId: "qwen-3.5-4b" as never,
+          parallel: 2,
+        },
+      },
+      llm: BOTH_LEGS,
+    });
+    resetConfigCache();
+    const app = harness();
+    app.orchestrator.setWorkers(4);
+    expect(getConfig().llm?.runMode?.fusion?.workers).toBe(4);
+    expect(getConfig().localModels.managed.parallel).toBe(2);
+    const line = app.actions.find((a) => a.type === "runtime_info") as {
+      line: string;
+    };
+    expect(line.line).toMatch(
+      /^fusion: 4 workers\. The local model keeps the 2 parallel slots you set \(localModels\.managed\.parallel\)\.$/,
+    );
+    expect(line.line).not.toMatch(/--parallel 4/);
   });
 
   it("setWorkers refuses an out-of-range count with a notice, writing nothing", () => {

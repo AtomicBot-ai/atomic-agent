@@ -53,6 +53,7 @@ window shows "Not while a turn is running".
 | Persisted sessions | `GET /api/sessions` |
 | Deleting one session | `DELETE /api/sessions/{id}` |
 | Renaming one session | `PATCH /api/sessions/{id}` |
+| Exporting one chat (Markdown / Word / HTML; PDF printed from the HTML) | `GET /api/sessions/{id}/export` |
 | One turn of the agent loop | `POST /v1/chat/completions` (SSE) |
 | Approval requests | `GET /api/events` (SSE) |
 | Approval verdicts | `POST /api/approval/resolve` |
@@ -60,6 +61,7 @@ window shows "Not while a turn is running".
 | What a turn accepted but never read | `GET` / `DELETE /api/sessions/{id}/steer` |
 | Compacting a chat's context now | `POST /api/sessions/{id}/compact` |
 | "Trust this folder?" and Settings › Skills' folder-trust switch (ATO-1250) | `GET` / `POST /api/project-trust` |
+| The grey next-step suggestion in the empty composer, Tab takes it (ATO-1094; only while Settings › General › Suggest a next step, `tui.nextStepSuggestions`, is on; hidden on an agent without the route) | `GET /api/sessions/{id}/next-step` |
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
 plain OpenAI chunks to atomic's named frames — `session_id`,
@@ -142,6 +144,18 @@ is the agent's own: the FULL model id against the provider entry's
 `defaultChatModel ?? model`, the pair 0.5.5's `planModelRestore` tests — not
 the chip's display label and not the basename, which would read
 `openai/gpt-4.1` and `azure/gpt-4.1` as the same model.
+
+**A project's own cloud model (ATO-1148).** A project is a chat's working
+folder. On a cloud route, a cloud model picked in the composer's switcher is
+remembered for that folder (`<userData>/project-models.json`,
+[project-model.ts](main/project-model.ts)) instead of switching the agent:
+every turn of a chat in that folder, new chats included, sends
+`provider_id` + `provider_model` and the agent runs that turn on it without
+touching its config or active model, so other chats keep theirs and nothing
+waits or restarts. The chip and the chosen row show the project's model
+([project-model.js](renderer/project-model.js)). Local, Custom and Fusion
+stay one per agent, and the local model rows say "Local model is shared by
+all projects". A remote agent keeps one model for every chat.
 
 **Why not the NDJSON sidecar.** `dist/sidecar/main.js` exists only in a source
 checkout, and the shipped single-file binary has no `sidecar` subcommand. A
@@ -572,6 +586,14 @@ Honestly degraded, and labelled as such in the UI:
   Models, "prvcy" Privacy), then a one-typo match ("modles"). fuzzysort is
   vendored in `renderer/vendor/` because the renderer loads plain scripts.
   The chats still fold to five plus an "N more chats" row.
+- **Formulas and diagrams in replies.** `$…$`, `$$…$$`, `\(…\)` and `\[…\]`
+  are drawn with KaTeX and a closed ```mermaid fence with Mermaid
+  (`renderer/rich-blocks.js`, ATO-1140). Prices stay text: on Pandoc's rules
+  there is no space just inside either `$` and the closing one is not followed
+  by a digit or a letter. Both libraries are npm dependencies copied into
+  `out/renderer/vendor/` at build (`scripts/vendor-math.mjs`) and loaded the
+  first time a reply needs them; a drawn block is kept across stream frames by
+  its `data-morph-keep` key, and an open fence stays code until it closes.
 - **Settings is the TUI menu.** The bottom-left gear (and ⌘ , and Escape with
   nothing else on screen) opens the menu tree from
   `src/tui/menu/menu-registry.ts` with the Manage tabs on the right — minus the
@@ -640,6 +662,10 @@ Honestly degraded, and labelled as such in the UI:
   http(s) address (`/sse` paths are SSE, others streamable HTTP), shows what
   it understood with an editable name, and writes the same entry either way
   ([mcp-smart-add.js](renderer/mcp-smart-add.js), ATO-510).
+  Above the box, the built-in server catalog by shelf fills it with a
+  server's config and names the `<your ...>` values to replace
+  ([mcp-catalog.js](renderer/mcp-catalog.js), a copy of
+  `src/mcp/mcp-catalog-data.ts` checked by its test, ATO-1131).
 - **LLM** is the TUI's four panes. Local rows come from `atag models list`
   minus the ids `models list-embeddings` lists (the chat route never picks an
   embedding model, and which models those are is a fact the CLI publishes —
@@ -740,6 +766,13 @@ Honestly degraded, and labelled as such in the UI:
   mirror" field that writes the config key through the whole-file `config
   set`, refusing anything that is not an http(s) origin; empty writes the
   default. An unreachable huggingface.co says where that field is.
+  **Per-quant badges (ATO-450).** Main rates every listed quant with
+  `main/quant-fit.ts`, a port of the agent's `quant-fit.ts`: Fits well /
+  Tight fit / Too big, a speed line labelled "estimate" (Apple Silicon only,
+  from the chip's published memory bandwidth; off a Mac this process cannot
+  see the GPU, so the fit goes by RAM and no speed is shown), and the pick:
+  the most precise 4-bit-or-more quant that fits and answers at 20 tok/s or
+  more, moved to the front so both pick lists open on it as "Recommended".
   The pick list follows the TUI's `MouseListRow` contract rather than the
   Local pane's model rows: the first click on a file selects it, a second
   click on the selected one starts the download — the rows above it activate
@@ -805,7 +838,23 @@ Honestly degraded, and labelled as such in the UI:
   every 2 s until the code is claimed, and the claim shows as
   "Paired: @username is now the owner." A paired owner is replaced only from
   the Owner row's Replace, which takes a second click. The code lives in
-  memory while its window is open and is never logged.
+  memory while its window is open and is never logged. ATO-516: the waiting
+  card also shows the code as a `t.me/<bot>?start=<code>` deep link (the
+  agent's `link`, or built from `botUsername` on an older agent) with Copy
+  link and Open in Telegram, and how long the code has left, ticked each
+  second while the tab is on screen.
+- **Discord** (Settings › Connections, after Telegram; ATO-516,
+  `renderer/discord-settings.js`) sets up the agent's Discord channel
+  (`src/channels/discord/discord-settings.ts`): the bot token goes to
+  `<stateDir>/.env` as `DISCORD_BOT_TOKEN` through `app:dotenvSet` (main
+  checks it is one run of printable characters, 20 to 200 long), and
+  `discord.enabled` and `discord.ownerUserIds` (the Discord accounts the bot
+  answers, 15 to 25 digit user ids) through `configSetPath`. Discord has no
+  pairing step, so the owner's id is typed in. The first owner added with a
+  token in place (or a token saved with an owner in place) turns Discord on
+  too. Every change owes a restart; the tab's Restart agent works as on the
+  Telegram tab (an `agent_restarted` `manual` trigger). The token never
+  reaches state, markup or a message.
 - **Composio** (Settings › Connections, beside MCP servers and Telegram; the
   palette's Composio row) is the TUI Integrations tab's Composio row
   (`src/integrations/composio-integration.ts`, its setup walkthrough and
@@ -973,12 +1022,53 @@ Honestly degraded, and labelled as such in the UI:
   transcription was refused on purpose — every AIMLAPI speech model is a
   submit-and-poll job, so it could only ever produce text after you stop,
   never while you speak, and it would send your voice to a third party.
+- **An audio file can be transcribed on this Mac (ATO-1074).** Drop an
+  audio file on the composer (or pick it with `+` → Files, which has an
+  `Audio to transcribe` filter on macOS) and its chip carries a `Transcribe`
+  button instead of the old `Audio files are not supported yet`. The same
+  helper runs in file mode, `atomic-speech --file <path> <locale>`: it opens
+  the file with `AVAudioFile`, runs the same on-device `SpeechAnalyzer`, and
+  prints NDJSON `file-ready`, then a `segment` `{start, end, text}` (seconds
+  into the file, from each result's `range`) and a `progress` `{fraction}` per
+  finalized phrase, then `done`. Main (`main/transcribe-file.ts`, IPC
+  `speech:fileAvailable` / `speech:transcribeFile` / `speech:transcribeCancel`,
+  progress on `app:transcribe`) runs one file at a time, kills the child on
+  cancel or when the chip is removed, and answers with the segments and a
+  `[HH:MM:SS] text` transcript; the chip then becomes `<name> transcript.txt`,
+  saved to the inbox like any typed file, and the audio itself is never sent.
+  The language is the first voice-input language whose model is installed
+  (else en-US, else any installed one). Where the helper cannot run the chip
+  says why (`Transcribing audio needs macOS 26 or later`, no helper, no
+  language downloaded yet) and off macOS nothing changes. The engine sits
+  behind a small `TranscribeEngine` interface so a Windows whisper.cpp engine
+  (ATO-1076) can plug in without touching the IPC or the renderer.
 - **Voice input: what is and is not possible.** `SpeechAnalyzer` is macOS
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from
   macOS 14 (ATO-115: Electron 44 needs 13 and a 12.x Mac crashed at launch
-  on `_OBJC_CLASS_$_SMAppService`, so the floor is 14, not 12). Off macOS it says `Voice input works only on macOS`, and a
-  build without the helper says so too. 43 languages are available
+  on `_OBJC_CLASS_$_SMAppService`, so the floor is 14, not 12). A
+  build without the helper says so too.
+  **Windows and Linux (ATO-1049)** dictate through
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp). Binary: the path
+  `ATOMIC_AGENT_WHISPER_BIN` names, else the copy the agent downloaded into
+  `<models dir>/whisper/bin/<tag>/`, else `whisper-cli` (or `whisper-cpp`) on
+  PATH and the installer folders a GUI app misses. Model: a ggml file in
+  `<models dir>/whisper/` (the saved default from `settings.json` when there
+  is one, else `base` first) or `ATOMIC_AGENT_WHISPER_MODEL`. On first use
+  (decision 75) a press on the microphone runs the agent's
+  `atomic-agent whisper install --json`, which downloads the pinned upstream
+  whisper.cpp build (Windows and Linux, x64 and arm64) and the model, each
+  checked against its published SHA-256; the microphone's tooltip shows the
+  percentage and the next probe turns it on, no restart (a missing answer is
+  never cached). Where upstream ships no build, the tooltip names the
+  install. The renderer records exactly as on a Mac; main
+  keeps the take in memory, writes it once as a 16 kHz WAV into a private
+  temp folder on stop, runs whisper on it and deletes the folder
+  (`main/whisper-dictation.ts`). There is no live text: the words arrive
+  after the take ends, so the stop waits up to two minutes instead of 2.5 s.
+  With two languages chosen whisper detects the language itself. Reading
+  replies aloud uses the system voices through the renderer (`tts.js`), which
+  Chromium already serves on Windows and Linux. 43 languages are available
   on-device: 30 through `SpeechTranscriber`, which punctuates and cases,
   and 13 more — Russian, Arabic, Dutch, Turkish, Thai, Vietnamese, Hebrew,
   Danish, Finnish, Norwegian, Swedish, Malay and Flemish — only through
@@ -1534,7 +1624,9 @@ xattr -dr com.apple.quarantine "/Applications/Atomic Agent.app"
 The voice helper is compiled into `out/native/atomic-speech` by
 `scripts/build-speech-helper.mjs` on every `npm run build` (about two
 seconds; the step prints `speech helper: skipped` and the build carries on
-if there is no `swiftc`). It ships through `extraResources`, NOT through
+off macOS or if there is no `swiftc`; when `swiftc` is there and the compile
+fails, the build fails with the compiler output; `ATOMIC_SKIP_SPEECH_HELPER=1`
+leaves the helper out on purpose, e.g. with an Xcode older than 26). It ships through `extraResources`, NOT through
 `files` — `asar` is on, and a binary inside an asar archive cannot be
 executed, so `out/native/**` is excluded from the archive and the same file
 is copied to `Contents/Resources/native/atomic-speech`. `mac.extendInfo`
@@ -1648,6 +1740,17 @@ without a click.
   skipped version, last Not now, and the install in flight, which the new
   version reads once to send `update_installed`). Never in the agent's
   config.json.
+- Required updates (ATO-1125, `main/update-policy.ts`): the feed's update files
+  (`stable-mac.yml`, `stable.yml`, `stable-linux*.yml`, and the `beta*` copies)
+  may carry one hidden line in `releaseNotes`, the same one the terminal reads
+  from its GitHub release:
+  `<!-- atomic-agent-update-policy: {"minimum":"0.0.7","broken":["0.0.6"]} -->`.
+  Below `minimum` the toast and the empty chat warn, and a chat still starts.
+  A `broken` version shows "Update required" on the empty chat and starts no
+  new chat until it updates; an open chat and a running turn go on. Skip this
+  version does not hide a required update. No line, a bad line, or a failed
+  check: nothing changes. The line is added to the yml files by hand (or by
+  the release job) when a version is listed; no release carries one yet.
 
 ### What a build and a release need
 
@@ -1765,6 +1868,31 @@ gh release upload desktop-latest stable-mac.yml stable.yml stable-linux.yml stab
 The page's own downloads (DMG, .deb, .rpm, SHA256SUMS.txt) go up as before;
 the feed does not need them.
 
+**The workflow does all of the above (ATO-685).** `.github/workflows/desktop-feed.yml`
+("Desktop update feed", started by hand) takes the ID of a successful
+"Desktop packages" run, downloads its five artifacts, merges the two Windows
+`stable.yml`, takes the signed `SHA256SUMS.txt` and `SHA256SUMS.txt.asc` from
+the run's `desktop-checksums` artifact (it never sums the files itself, so
+there is one sums file and the signature verifies it), runs `feed-files.mjs --require-sums`
+(every yml, every file a yml names, both Windows arches, one version, every
+sum; a `.zip`/`.exe` without its `.blockmap` is only a warning), and refuses a
+version that is not newer than the one `desktop-latest` serves. It keeps the
+whole folder as the artifact `desktop-release-<version>` (the DMG, .deb and
+.rpm too, for the `desktop-v<version>` page release). With **publish** off,
+the default, nothing is uploaded; with it on, the feed files go to
+`desktop-latest`, installers and `SHA256SUMS.txt` (+ `.asc`) first, the `.yml` last.
+A run from before the checksums job (ATO-1035) has no `desktop-checksums` and stops.
+
+```bash
+gh workflow run desktop-feed.yml --repo AtomicBot-ai/atomic-agent --ref <branch> \
+  -f run_id=<Desktop packages run id>                 # check only
+gh workflow run desktop-feed.yml --repo AtomicBot-ai/atomic-agent --ref <branch> \
+  -f run_id=<Desktop packages run id> -f publish=true # publish: only after a separate "yes"
+```
+
+GitHub lists a workflow that only has `workflow_dispatch` once the file is on
+the default branch (`main`).
+
 Until the `desktop-latest` release exists, a check finds nothing (a failed
 automatic check shows nothing). A draft release does not work as a feed: its
 files need a GitHub login.
@@ -1802,6 +1930,45 @@ uses the default state (`~/.atomic-agent` since ATO-416, the terminal agent's ow
 `ATOMIC_AGENT_STATE_DIR` passed to A. Back both up before the test, or quit B
 as soon as it is up and open it again with the test state.
 
+## Flatpak
+
+`flatpak/io.atomicagent.desktop.yml` (ATO-687) packs the desktop app as a
+Flatpak with the app id `io.atomicagent.desktop`. It builds nothing from
+source: it takes the published `.deb` of a `desktop-v<version>` release
+(x86_64 and aarch64), moves `/opt/Atomic Agent` to `/app/atomic-agent` and
+starts Electron through zypak (`org.electronjs.Electron2.BaseApp`), which is
+how Chromium gets its sandbox inside Flatpak; the `.deb`'s setuid
+`chrome-sandbox` is removed.
+
+- Permissions: network, X11, sound, GPU (`--device=dri`, for local models),
+  notifications, the Secret Service (safeStorage keeps API keys there) and
+  `--filesystem=home`: the agent works on the user's files and shares
+  `~/.atomic-agent` with the terminal app. Narrowing that is a product call
+  and Flathub reviewers will ask about it.
+- Updates: the in-app updater only updates an AppImage, so inside Flatpak
+  Settings says the install is updated by the package manager; Flatpak
+  (`flatpak update`) does it.
+- Not working inside the sandbox as it is: "Open in Terminal" cannot start a
+  terminal on the host (that needs `flatpak-spawn --host` and the
+  `org.freedesktop.Flatpak` talk name, which Flathub does not grant lightly).
+- A new release: `node flatpak/bump.mjs <version>` (from `desktop/`) rewrites
+  the two `.deb` urls and sha256 from the release's `SHA256SUMS.txt` and adds
+  a `<release>` to the metainfo. `test/flatpak-manifest.test.mjs` pins the
+  manifest's shape.
+- Build locally: the commands in the manifest's header. In CI: the manual
+  "Desktop Flatpak" workflow (`.github/workflows/desktop-flatpak.yml`) lints
+  the manifest and metainfo and uploads a `.flatpak` bundle per arch as an
+  artifact. Nothing is published.
+
+**Flathub is a separate, manual step** (a public listing; only after a
+separate "yes"): fork `flathub/flathub`, open a PR on its `new-pr` branch
+with this manifest and its two files, answer the review, after which Flathub
+creates the `flathub/io.atomicagent.desktop` repository and the manifest
+lives there. Before submitting: screenshots in the metainfo
+(`<screenshots>`, Flathub requires them), a decision on `--filesystem=home`,
+and proof of the `atomicagent.io` domain for the verified badge (a token
+file under `https://atomicagent.io/.well-known/org.flathub.VerifiedApps.txt`).
+
 ## Layout
 
 ```
@@ -1815,7 +1982,7 @@ desktop/
   main/speech.ts         the one voice-input child: probe, start/stop, audio, install
   main/updater.ts        app updates (electron-updater), only ever on a click
   electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)
-  native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout
+  native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout (live, and --file for an audio file)
   preload/preload.ts     the window.atomic bridge
   renderer/              index.html · styles.css · renderer.js · voice-worklet.js
   scripts/copy-renderer.mjs

@@ -4,13 +4,16 @@ import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { describeToolCall } from "../../tools/describe-tool-call.js";
 import { formatToolArgsBlock } from "../render/tool-args-preview.js";
+import { ToolCardImages } from "../terminal-image/index.js";
 import { theme } from "../theme/theme.js";
+import { diffLineTone, diffToneColor, looksLikeUnifiedDiff } from "../diff-line-tone.js";
 import type { StreamingToolCall, ToolCardEntry } from "../tui-state.js";
 import { ToolCardPathChip, toolCardFilePath } from "./tool-card-path-chip.js";
 import {
   annotationTail,
   toolCardsAnnotationParts,
 } from "./tool-cards-annotation.js";
+import { ToolCardStepNote } from "./tool-card-step-note.js";
 
 interface ToolCardProps {
   card: ToolCardEntry | StreamingToolCall;
@@ -23,6 +26,8 @@ interface ToolCardProps {
    * a click. Stale-read notes are warnings and always stay.
    */
   preview?: "always" | "errors";
+  /** `/verbose` (ATO-34): a plain step note under a finished card. */
+  verbose?: boolean;
 }
 
 /**
@@ -45,6 +50,7 @@ export function ToolCard({
   card,
   expanded,
   preview = "always",
+  verbose = false,
 }: ToolCardProps): ReactElement {
   const isFinalised = "status" in card;
   const status = isFinalised ? card.status : "pending";
@@ -102,6 +108,7 @@ export function ToolCard({
     return (
       <Box flexDirection="column" marginBottom={1}>
         {header}
+        {verbose && isFinalised ? <ToolCardStepNote card={card} /> : null}
         {isFinalised ? (
           <SummaryLine
             summary={card.summary}
@@ -109,12 +116,17 @@ export function ToolCard({
             notesOnly={preview === "errors" && status !== "error"}
           />
         ) : null}
+        {preview === "always" ? <ToolCardImages card={card} /> : null}
       </Box>
     );
   }
+  // ATO-563: an ok edit's result is its unified diff; + and - lines are coloured.
+  const resultDiff =
+    "status" in card && card.status === "ok" && looksLikeUnifiedDiff(card.summary);
   return (
     <Box flexDirection="column" marginBottom={1}>
       {header}
+      {verbose && isFinalised ? <ToolCardStepNote card={card} /> : null}
       <Box flexDirection="column" marginLeft={2}>
         <Text color={theme.colors.muted}>
           tool <Text color={theme.colors.tool}>{card.tool}</Text>
@@ -127,7 +139,7 @@ export function ToolCard({
           <>
             <Text color={theme.colors.muted}>result</Text>
             {splitLines(card.summary).map((line, idx) => (
-              <Text key={`s-${idx}`} color={color}>
+              <Text key={`s-${idx}`} color={resultDiff ? diffToneColor(diffLineTone(line), theme.colors, color) : color}>
                 {"  "}
                 {line}
               </Text>
@@ -137,6 +149,7 @@ export function ToolCard({
           <Text color={theme.colors.muted}>(pending)</Text>
         )}
       </Box>
+      {preview === "always" ? <ToolCardImages card={card} /> : null}
     </Box>
   );
 }

@@ -29,6 +29,8 @@ export interface RunModeProvider {
   kind?: string;
   defaultChatModel?: string;
   model?: string;
+  /** A `subscription-cli` entry's vendor CLI (`claude`, `codex`); absent on every other kind. */
+  subscriptionCli?: { cli?: string };
 }
 
 export interface FusionPins {
@@ -167,8 +169,8 @@ export function resolveRunMode(cfg: RunModeConfig | null | undefined): ResolvedR
 export function describeRunModeDegradation(degraded: RunModeDegradation): string {
   if (degraded.reason === "no-cloud-provider") {
     return degraded.requested === "fusion"
-      ? "Fusion needs a cloud orchestrator — no cloud provider is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm)."
-      : "Cloud mode needs a cloud provider — none is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm).";
+      ? "Fusion needs a cloud model to plan the work. You don't have one yet, so answers come from the local model."
+      : "Cloud mode needs a cloud model. You don't have one yet, so answers come from the local model.";
   }
   return "Fusion needs two providers — one to orchestrate and one to run the workers. Only one is configured. Add another in Manage → LLM (or /llm).";
 }
@@ -260,7 +262,7 @@ export function describeFusionIntro(rm: ResolvedRunMode, seatWord: (providerId: 
 }
 
 export const RUN_MODE_USAGE =
-  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode status";
+  "usage: /runmode (opens the switch) · /runmode local|cloud|fusion · /runmode swap · /runmode workers N · /runmode reasoning low|medium|high|default · /runmode status";
 
 export interface RunModeCommand {
   openSwitch: boolean;
@@ -268,6 +270,8 @@ export interface RunModeCommand {
   status?: boolean;
   swap?: boolean;
   workers?: number;
+  /** ATO-606: `/runmode reasoning <level>`, desktop only (the TUI has no such verb yet). */
+  reasoning?: "low" | "medium" | "high" | "default";
   error?: string;
 }
 
@@ -284,6 +288,14 @@ export function parseRunModeCommand(rawArgs: string): RunModeCommand {
     }
     return { openSwitch: false, workers: n };
   }
+  const reasoning = /^reasoning(?:\s+(.+))?$/.exec(args);
+  if (reasoning) {
+    const level = reasoning[1];
+    if (level !== "low" && level !== "medium" && level !== "high" && level !== "default") {
+      return { openSwitch: false, error: `reasoning must be low, medium, high or default — ${RUN_MODE_USAGE}` };
+    }
+    return { openSwitch: false, reasoning: level };
+  }
   if ((RUN_MODE_NAMES as readonly string[]).includes(args)) return { openSwitch: false, mode: args as RunModeName };
   return { openSwitch: false, error: `unknown run mode "${rawArgs.trim()}" — ${RUN_MODE_USAGE}` };
 }
@@ -299,7 +311,7 @@ export interface RunModeVerdict {
   leg?: string;
   before: ResolvedRunMode;
   after?: ResolvedRunMode;
-  /** setWorkers' runtime_info line. */
+  /** setWorkers' runtime_info line; planEnterFusion's subscription-CLI worker warning (ATO-1489). */
   notice?: string;
   /**
    * swapLegs: the write only traded the seats of a Fusion already in force —
@@ -309,6 +321,20 @@ export interface RunModeVerdict {
    * wait on (backend-switch.ts starts a daemon that is down in the background).
    */
   seatsOnly?: boolean;
+}
+
+/**
+ * ATO-1489, the agent's describeSubscriptionCliWorker
+ * (src/llm/run-mode/subscription-cli-worker.ts, ATO-1431): a worker seat on a
+ * subscription CLI spends the subscription limit on every task, and a CLI
+ * that does not stream (Codex) shows no live progress. Claude Code streams.
+ * A warning, never a refusal: the switch goes ahead. Null for every other kind.
+ */
+export function describeSubscriptionCliWorker(p: RunModeProvider | undefined): string | null {
+  if (p?.kind !== "subscription-cli") return null;
+  return p.subscriptionCli?.cli === "claude"
+    ? "Workers on a subscription CLI: every task uses your subscription limit."
+    : "Workers on a subscription CLI: every task uses your subscription limit, and there is no live progress.";
 }
 
 function withoutUndefined<T extends object>(o: T): T {
@@ -365,7 +391,8 @@ export function planEnterFusion(
     activeTextProvider: leg,
     runMode: { ...llm.runMode, mode: "fusion", ...(Object.keys(fusion).length > 0 ? { fusion } : {}) },
   };
-  return { write: JSON.stringify(cfg) !== snapshot, leg, before, after: resolveRunMode(cfg) };
+  const notice = describeSubscriptionCliWorker(providers.find((p) => p.id === workerLeg));
+  return { write: JSON.stringify(cfg) !== snapshot, leg, before, after: resolveRunMode(cfg), ...(notice ? { notice } : {}) };
 }
 
 /** swapLegs: the orchestrator becomes the worker and back, model pins riding along. */
@@ -393,8 +420,23 @@ export function planSwapLegs(cfg: RunModeConfig, isKeyed: (p: RunModeProvider) =
 }
 
 /**
+ * ATO-336: is `localModels.managed.parallel` the user's own pin? Missing or
+ * "auto" is not. A number equal to the stored Fusion worker count is taken
+ * as Fusion's own earlier write (planFusionWorkers keeps the two equal), so
+ * it keeps following the worker count; any other number is a pin.
+ */
+export function isParallelPin(parallel: number | string | undefined, fusionWorkers: number | undefined): boolean {
+  if (parallel === undefined || parallel === null) return false;
+  if (typeof parallel === "string" && parallel.trim().toLowerCase() === "auto") return false;
+  const n = Number(parallel);
+  if (!Number.isInteger(n) || n < 1) return false;
+  return n !== fusionWorkers;
+}
+
+/**
  * setWorkers: `llm.runMode.fusion.workers` and `localModels.managed.parallel`
  * in one change — how many workers, and how many llama-server slots for them.
+ * A parallel the user pinned is not touched (isParallelPin).
  * Valid off the fusion route too: the count is remembered.
  */
 export function planFusionWorkers(cfg: RunModeConfig, workers: number): RunModeVerdict {
@@ -406,9 +448,13 @@ export function planFusionWorkers(cfg: RunModeConfig, workers: number): RunModeV
   const snapshot = JSON.stringify(cfg);
   const parallelBefore = cfg.localModels?.managed?.parallel;
   const llm = cfg.llm;
+  const workersBefore = llm.runMode?.fusion?.workers;
   cfg.llm = { ...llm, runMode: { ...llm.runMode, fusion: { ...llm.runMode?.fusion, workers } } };
-  cfg.localModels = { ...cfg.localModels, managed: { ...cfg.localModels?.managed, parallel: workers } };
-  const hint = cfg.localModels.mode === "managed" && parallelBefore !== workers
+  // ATO-336: a slot count the user set (Settings › Models › Local, or the
+  // terminal) wins over Fusion, so it is left as is.
+  const pinned = isParallelPin(parallelBefore, workersBefore);
+  if (!pinned) cfg.localModels = { ...cfg.localModels, managed: { ...cfg.localModels?.managed, parallel: workers } };
+  const hint = !pinned && cfg.localModels?.mode === "managed" && parallelBefore !== workers
     // The TUI's notice names its `s` chord and the `--parallel` flag; the
     // desktop says what to do in its own terms.
     ? ` — restart the local model (Settings › Models › Local) so it runs ${workers} at once`

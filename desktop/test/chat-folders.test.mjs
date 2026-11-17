@@ -141,7 +141,7 @@ test("the row menu offers Move to folder only for a stored chat", () => {
 
 test("renderer wiring: sidebar, palette, delete and boot use the folders", () => {
   const src = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
-  assert.match(src, /foldersSidebarHTML\(ch\.groups\)/);
+  assert.match(src, /projectsSidebarHTML\(ch\.projects, ch\.groups\)/);
   assert.match(src, /folderPaletteWord\(s\.id\)/);
   assert.match(src, /folderForget\(FOLDERS\.state, v\)/);
   assert.match(src, /loadFolders\(\);/);
@@ -166,6 +166,12 @@ test("main writes the file whole and reads back a checked value", { skip: !M && 
     autoSort: false, projects: { fa: "/src/A" }, auto: { s1: true }, projectSort: true });
   // A file from before ATO-1253 has no projectSort: its Claude Code chats are split into project folders once.
   assert.equal(M.coerceChatFolders({ folders: [] }).projectSort, false);
+  // W2 QA: a folder is a project with no disk folder: its instructions are kept, and a turn finds it.
+  const withText = M.coerceChatFolders({ folders: [{ id: "fm", name: "Marketing", instructions: " Be brief ", createdAt: 9 }], chats: { s9: "fm" } });
+  assert.deepEqual(withText.folders, [{ id: "fm", name: "Marketing", collapsed: false, instructions: "Be brief", createdAt: 9 }]);
+  assert.equal(M.folderForTurn(withText, "s9", undefined).name, "Marketing");
+  assert.equal(M.folderForTurn(withText, null, "fm").id, "fm");
+  assert.equal(M.folderForTurn(withText, "s0", "fm"), null, "a stored chat goes by its own filing");
   writeFileSync(M.chatFoldersPath(dir), "not json");
   assert.deepEqual(M.readChatFolders(dir).folders, []);
 });
@@ -174,9 +180,65 @@ test("review fixes: no Folders block without folders, Chats head offers New fold
   const src = readFileSync(new URL("../renderer/chat-folders.js", import.meta.url), "utf8");
   assert.match(src, /if \(!groups\.length\) return '';/);
   const r = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
-  assert.match(r, /sb-fnew" data-act="fnew:"/);
-  assert.match(r, /ch\.rows\.length \|\| ch\.filed \? '' : '<div class="sb-empty">No chats yet<\/div>'/);
+  // W2 QA (16.11): folders are projects now; no Folders section, no New folder on the Chats head.
+  assert.doesNotMatch(r, /sb-fnew" data-act="fnew:"/);
+  assert.doesNotMatch(r, /\+ foldersSidebarHTML\(/);
+  assert.match(r, /ch\.rows\.length \|\| ch\.filed \|\| ch\.archived\.length \? '' : '<div class="sb-empty">No chats yet<\/div>'/);   // archived chats too (ATO-1150)
   assert.match(r, /if \(fid && PREFS\.pinned\.includes\(sid\)\)/);
   const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
-  assert.match(main, /\(sb\.folders \?\? 0\) > 0 \? \["Folders"\]/);
+  assert.doesNotMatch(main, /\["Folders"\]/);
+});
+
+test("W2 QA: home, scratch, /tmp and worktree chats go to the Claude Code folder, and old sorted ones move", () => {
+  const st = F.foldersEmpty();
+  const junk = [
+    { id: "claude-code:h1", workingDir: "/Users/me" },
+    { id: "claude-code:h2", workingDir: "/Users/me/" },
+    { id: "claude-code:s1", workingDir: "/Users/me/Library/Application Support/Claude/scratch-workspaces/u1/u2/scratch-2026-09-30-29eb57" },
+    { id: "claude-code:t1", workingDir: "/private/tmp/x" },
+    { id: "claude-code:w1", workingDir: "/Users/me/.claude/worktrees/amazing-colden-5dc37b" },
+    { id: "claude-code:w2", workingDir: "/Users/me/.claude-worktrees/busy-wing-9701f2" },
+    { id: "claude-code:w3", workingDir: "C:\\Users\\me" },
+  ];
+  assert.equal(F.folderAutoSort(st, junk.concat([{ id: "claude-code:r1", workingDir: "/Users/me/src/app" }])), 8);
+  for (const s of junk) assert.equal(F.folderOf(st, s.id).name, "Claude Code", s.workingDir);
+  assert.equal(F.folderOf(st, "claude-code:r1").name, "app");
+  assert.equal(st.folders.length, 2);
+
+  // A file an older build sorted: the home folder's chats leave, the emptied folder goes, the person's stays.
+  const old = F.foldersEmpty();
+  old.folders.push({ id: "fh", name: "me", collapsed: true }, { id: "fp", name: "Mine", collapsed: false });
+  old.projects.fh = "/Users/me";
+  old.chats["claude-code:h1"] = "fh"; old.auto["claude-code:h1"] = true;
+  old.chats["claude-code:h2"] = "fp";   // put there by hand: stays
+  F.folderAutoSort(old, junk);
+  assert.equal(F.folderOf(old, "claude-code:h1").name, "Claude Code");
+  assert.equal(F.folderById(old, "fh"), null, "the emptied sorted folder is removed");
+  assert.equal(F.folderOf(old, "claude-code:h2").id, "fp");
+});
+
+test("W2 QA: a long folder list shows the first few and the open chat's folder", () => {
+  const groups = Array.from({ length: 9 }, (_, i) => ({ folder: { id: "f" + i, name: "F" + i }, rows: [{ id: "c" + i }] }));
+  const cut = F.folderListCut(groups, "c7", false);
+  assert.deepEqual(cut.shown.map((g) => g.folder.id), ["f0", "f1", "f2", "f3", "f4", "f7"]);
+  assert.equal(cut.hidden, 3);
+  assert.equal(F.folderListCut(groups, null, true).hidden, 0);
+  assert.equal(F.folderListCut(groups.slice(0, F.FOLDERS_SHOWN), null, false).hidden, 0);
+});
+
+test("W2 QA: agent worktrees are filed under their repository, as the import does", () => {
+  assert.equal(F.folderProjectDir("/Users/me/src/app/.claude/worktrees/busy-wing"), "/Users/me/src/app");
+  assert.equal(F.folderProjectDir("/Users/me/.codex/worktrees/a1b2/app/src"), "worktree-repo/app");
+  assert.equal(F.folderProjectDir("/Users/me/.cursor/worktrees/app/feat-x"), "worktree-repo/app");
+  assert.equal(F.folderProjectDir("/Users/me/conductor/workspaces/app/lisbon"), "worktree-repo/app");
+  assert.equal(F.folderProjectDir("/Users/me/.claude/worktrees/amazing-colden"), null);
+  assert.equal(F.folderProjectDir("/Users/me/.claude-worktrees/busy-wing"), null);
+  const st = F.foldersEmpty();
+  F.folderAutoSort(st, [
+    { id: "claude-code:a", workingDir: "/Users/me/src/app" },
+    { id: "claude-code:b", workingDir: "/Users/me/src/app/.claude/worktrees/x" },
+    { id: "claude-code:c", workingDir: "/Users/me/conductor/workspaces/site/lisbon" },
+  ]);
+  assert.equal(F.folderOf(st, "claude-code:b").id, F.folderOf(st, "claude-code:a").id, "a worktree joins its repo's folder");
+  assert.equal(F.folderOf(st, "claude-code:c").name, "site");
 });

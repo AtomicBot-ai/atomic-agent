@@ -11,6 +11,8 @@ import {
   SkillNotFoundError,
   uninstallSkill,
 } from "../skills/index.js";
+import type { SkillInstallHints } from "../skills/skill-bins.js";
+import type { SkillManifest } from "../skills/skill-manifest.js";
 
 import { openaiError } from "./openai-errors.js";
 import {
@@ -38,6 +40,14 @@ interface UninstallBody {
   source?: "global" | "project";
 }
 
+/** ATO-526: the external programs a row needs and the install line per platform, only when declared. */
+export function skillBinsRow(manifest: SkillManifest): { requiresBins?: string[]; installHints?: SkillInstallHints } {
+  return {
+    ...(manifest.requiresBins?.length ? { requiresBins: manifest.requiresBins } : {}),
+    ...(manifest.installHints ? { installHints: manifest.installHints } : {}),
+  };
+}
+
 /**
  * `GET /api/skills` — list installed skills with their source (global
  * vs project-local). Mirrors the catalog used by the prompt prefix so
@@ -63,6 +73,7 @@ export function createListSkillsHandler(): HttpHandler {
           disabledReasons: e.disabledReasons, sources: e.sources,
           dangerous: e.record.manifest.dangerous, requiresTools: e.record.manifest.requiresTools,
           requiresScripts: e.record.manifest.requiresScripts,
+          ...skillBinsRow(e.record.manifest),
         })),
         errors: workspace.diagnostics,
       });
@@ -79,6 +90,7 @@ export function createListSkillsHandler(): HttpHandler {
         dangerous: r.manifest.dangerous,
         requiresTools: r.manifest.requiresTools,
         requiresScripts: r.manifest.requiresScripts,
+        ...skillBinsRow(r.manifest),
       })),
       errors: runtime.skillRegistry.errors(),
     });

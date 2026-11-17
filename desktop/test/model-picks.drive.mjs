@@ -263,25 +263,24 @@ try {
            the sync, llmRefreshRun spends it). Read the strip before that and
            it still shows the default, Local — then flips to Cloud under the
            rows this leg is waiting for. Wait for the refresh; looking only. */
-        const early = await app.eval("(document.querySelector('#settings .llmmode.on') || {}).innerText || ''");
+        const early = await app.eval("(document.querySelector('#settings .llm-rm.is-open .llm-rm-t') || {}).innerText || ''");
         await app.waitFor('window.__llmPane && window.__llmPane().refreshed !== null', 'the LLM tab’s first refresh', { timeout: 90000, quiet: true });
         await sleep(500);
-        say(`  mode strip 2 s after opening: ${JSON.stringify(early.trim())}; after the first refresh: ${JSON.stringify((await app.eval("(document.querySelector('#settings .llmmode.on') || {}).innerText || ''")).trim())}`);
+        say(`  open card 2 s after opening: ${JSON.stringify(early.trim())}; after the first refresh: ${JSON.stringify((await app.eval("(document.querySelector('#settings .llm-rm.is-open .llm-rm-t') || {}).innerText || ''")).trim())}`);
       }
-      pane = await app.eval("(document.querySelector('#settings .llmmode.on') || {}).innerText || ''");
+      pane = await app.eval("(document.querySelector('#settings .llm-rm.is-open .llm-rm-t') || {}).innerText || ''");
       /* This state directory routes at a cloud provider, so the LLM tab
-         opens on Cloud. The mode strip is the way across — clicked by
-         selector, not by its text: the pane's footer hint also says the
-         word "Local" ("←/→ switch Local/Cloud/External/Fallback") and it is
-         clickable, and clicking THAT walks the mode on instead. */
+         opens on Cloud. 13.11: the cards are the run-mode switch too, so a
+         click on Local models would move chats; the Local setup is opened by
+         its own verb instead, which switches nothing. */
       if (pane && !/^local models$/i.test(pane.trim())) {
-        await app.clickSel('#settings .llmmode', { nth: 0 });
+        await app.eval("(act('llm:mode:local'), true)");
         await sleep(1500);
-        pane = await app.eval("(document.querySelector('#settings .llmmode.on') || {}).innerText || ''");
+        pane = await app.eval("(document.querySelector('#settings .llm-rm.is-open .llm-rm-t') || {}).innerText || ''");
       }
       if (!/^local models$/i.test(pane.trim())) await sleep(4000);
     }
-    check('the mode strip reaches the Local pane', /^local models$/i.test(pane.trim()), JSON.stringify(pane));
+    check('the Local card\'s setup opens', /^local models$/i.test(pane.trim()), JSON.stringify(pane));
     for (let i = 0; i < 60; i += 1) {
       if (await app.eval("document.querySelectorAll('#settings [data-llm-row^=\"local-text:\"]').length")) break;
       await sleep(500);

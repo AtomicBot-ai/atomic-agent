@@ -13,6 +13,7 @@ import {
   type UserConfigFile,
 } from "./config-schema.js";
 import { writeOwnerOnlyFileAtomicSync } from "./owner-only-file.js";
+import { SECRETS_STORE_FILE } from "./secret-store.js";
 
 /** Resolve the absolute path to the user config file inside a state dir. */
 export function getUserConfigPath(stateDir: string): string {
@@ -27,7 +28,8 @@ export function getDotenvPath(stateDir: string): string {
 /**
  * The agent's own trust surface: `config.json` (holds
  * `agent.approvalLevel`), `.env` (API keys / bot tokens loaded at
- * boot), `approval-rules.json` (saved "always allow" rules,
+ * boot), `secrets-store.json` (whether they load from the OS keychain
+ * instead), `approval-rules.json` (saved "always allow" rules,
  * `src/approval/approval-rules-store.ts`) and what the agent runs from
  * its own state with no further question: `hooks.json` (commands run
  * on every tool call, re-read on change), the plugin records
@@ -52,6 +54,8 @@ export function getTrustConfigPaths(paths: {
   return [
     paths.userConfigFile,
     getDotenvPath(paths.stateDir),
+    // Opt-in OS keychain switch and the names it holds (ATO-474).
+    join(paths.stateDir, SECRETS_STORE_FILE),
     join(paths.stateDir, "approval-rules.json"),
     join(paths.stateDir, "hooks.json"),
     join(paths.stateDir, "plugins", "plugins.json"),

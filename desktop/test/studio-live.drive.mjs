@@ -225,10 +225,12 @@ const unwrap = (r, what) => {
   throw new Error(`${what}: ${e.code || 'NO_ANSWER'} ${e.message || ''}`.trim());
 };
 
-/** Open a Studio page the way a person does: the sidebar row; the shell's own open() if the row is not there. */
+/** Open a Studio page the way a person does: the sidebar's Studio row, then Image or Video in its
+    popover (W2); the shell's own open() if the row is not there. */
 async function openStudio(kind) {
   try {
-    await app.clickSel(`[data-act="studio:open:${kind}"]`, { timeout: 10000 });
+    await app.clickSel('#sidebar [data-act="studio:menu"]', { timeout: 10000 });
+    await app.clickSel(`#sb-studio-pop [data-act="studio:open:${kind}"]`, { timeout: 10000 });
   } catch {
     log(`no sidebar row for ${kind}; opening through STUDIO.open`);
     await app.eval(`(window.STUDIO && window.STUDIO.open(${JSON.stringify(kind)}), true)`);

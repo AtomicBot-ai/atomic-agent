@@ -207,6 +207,7 @@ function stateToColor(state: string): string {
     case "down":
       return theme.colors.error;
     case "starting":
+    case "needs_auth":
       return theme.colors.warn;
     case "disabled":
       return theme.colors.muted;

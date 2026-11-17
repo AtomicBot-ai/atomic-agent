@@ -14,6 +14,7 @@ import { assistantReplyTurn, findCurrentMacroTurnStart, isFinalReplyTurn, isStop
 import type { ProfileFact } from "../../memory/profile-store.js";
 import { formatTurnFailedRecord } from "./parse-failure-recovery.js";
 import { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn-memory-context.js";
+import { isIncognitoSession } from "../../session/incognito.js";
 import { formatPauseDigest } from "./pause-digest.js";
 import { costCeilingHeadline } from "./turn-spend.js";
 
@@ -54,6 +55,12 @@ export interface FailedTurnFinalizationContext extends TurnCompletionState {
   category: LlmFailureCategory;
   runError: Error;
   creditRefused: boolean;
+  /**
+   * Non-terminal tools that ran in this turn before it failed (ATO-1476),
+   * recorded in the transcript or not. Named in the failure record so a
+   * retry does not take them for undone.
+   */
+  toolsRan?: readonly string[];
 }
 
 export function formatTaskStoppedReply(input: {
@@ -184,7 +191,10 @@ export function finalizeAgentTurn(
   // `max_steps` are filtered out (neither a success nor failure
   // signal). The `failed` branch already fired the hook above
   // before its early `return`.
-  if (!options.ephemeral && (reason === "reply" || reason === "finish")) {
+  // An incognito chat (ATO-586) writes nothing to memory: no lesson
+  // counters, no reflection below.
+  const writesMemoryHere = writesMemory(options) && !isIncognitoSession(state);
+  if (writesMemoryHere && (reason === "reply" || reason === "finish")) {
     invokeLessonLifecycle(deps, state.id, surfacedLessonIds, "success");
   }
 
@@ -208,10 +218,11 @@ export function finalizeAgentTurn(
   //
   // Never for an ephemeral turn: a fusion worker's transcript is the
   // orchestrator's scratch space, and reflecting on it would write
-  // half-context into the operator's long-term memory.
+  // half-context into the operator's long-term memory. Nor for an
+  // incognito chat: the user asked for it not to be remembered.
   if (
     deps.reflectionRunner &&
-    !options.ephemeral &&
+    writesMemoryHere &&
     (reason === "reply" || reason === "finish")
   ) {
     const segmentation = deps.reflectionSegmentation;
@@ -394,11 +405,15 @@ export function finalizeFailedAgentTurn(
   // surface already renders its own line from `loop_failed`, so
   // emitting an `assistant_reply` event here would post the text
   // twice.
+  const toolsRan = context.toolsRan ?? [];
+  const failedRecord = assistantReplyTurn(
+    formatTurnFailedRecord(category, runError.message, toolsRan),
+  );
   state = recordTurn(
     state,
-    assistantReplyTurn(
-      formatTurnFailedRecord(category, runError.message),
-    ),
+    failedRecord.kind === "assistant_reply" && toolsRan.length > 0
+      ? { ...failedRecord, toolsRan: true }
+      : failedRecord,
   );
   state = { ...state, status: "failed", lastError: runError.message };
   deps.onEvent?.({ type: "loop_completed", reason: "failed" });
@@ -417,7 +432,7 @@ export function finalizeFailedAgentTurn(
   // carries neither success nor failure signal). Nor is an account
   // that cannot pay (item 40): it says nothing about the lessons
   // recalled at turn start, as the paused path for it says nothing.
-  if (!options.ephemeral && !creditRefused) {
+  if (writesMemory(options) && !isIncognitoSession(state) && !creditRefused) {
     invokeLessonLifecycle(
       deps,
       state.id,
@@ -434,6 +449,14 @@ export function finalizeFailedAgentTurn(
   };
 }
 
+
+/**
+ * Whether the turn may write to long-term memory: not a fusion worker
+ * (`ephemeral`) and not a `memoryReadOnly` turn (a `skill eval` run).
+ */
+function writesMemory(options: Pick<RunTurnOptions, "ephemeral" | "memoryReadOnly">): boolean {
+  return options.ephemeral !== true && options.memoryReadOnly !== true;
+}
 
 /**
  * Phase 6 — fire the lesson lifecycle hook exactly once with the

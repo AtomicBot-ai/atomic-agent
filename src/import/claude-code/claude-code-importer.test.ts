@@ -14,7 +14,8 @@ import { join } from "node:path";
 import { ensureUserConfigFileSync } from "../../config/index.js";
 import { SessionStore } from "../../session/index.js";
 import { ClaudeCodeImporter } from "./claude-code-importer.js";
-import { ClaudeCodeSource } from "./claude-code-source.js";
+import { groupImportReport } from "../grouping.js";
+import { ClaudeCodeSource, decodeProjectSlug } from "./claude-code-source.js";
 import { resolveClaudeCodeOptions } from "./import-options.js";
 
 function line(obj: unknown): string {
@@ -355,5 +356,123 @@ describe("ClaudeCodeImporter", () => {
       ["sessions", "skipped"],
       ["secrets", "skipped"],
     ]);
+  });
+
+  // W2 (owner: "only flat chats were imported"): the project folders survive.
+  describe("projects and folders", () => {
+    function seedProjectSession(cwd: string, id: string, at: string, withCwd = true): void {
+      const slug = cwd.replace(/[^A-Za-z0-9]/g, "-");
+      const projectDir = join(sourceDir, "projects", slug);
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(
+        join(projectDir, `${id}.jsonl`),
+        [
+          line({ type: "ai-title", aiTitle: `title ${id}` }),
+          line({
+            type: "user",
+            ...(withCwd ? { cwd } : {}),
+            timestamp: at,
+            message: { role: "user", content: `question ${id}` },
+          }),
+          line({
+            type: "assistant",
+            ...(withCwd ? { cwd } : {}),
+            timestamp: at,
+            message: { role: "assistant", content: [{ type: "text", text: "answer" }] },
+          }),
+        ].join(""),
+      );
+    }
+
+    async function importOnce(execute: boolean) {
+      const report = await buildImporter().run({
+        options: resolveClaudeCodeOptions({ exclude: ["skills", "memory", "mcp"] }),
+        execute,
+        overwrite: false,
+      });
+      return groupImportReport(report, { stateDir, execute });
+    }
+
+    it("puts each project's chats into a Project for its folder, or a chat folder when the folder is gone", async () => {
+      const shop = join(home, "code", "shop");
+      const blog = join(home, "code", "blog");
+      mkdirSync(shop, { recursive: true });
+      mkdirSync(blog, { recursive: true });
+      seedProjectSession(shop, "s-shop-1", "2026-08-02T10:00:00Z");
+      seedProjectSession(shop, "s-shop-2", "2026-08-03T10:00:00Z");
+      seedProjectSession(blog, "s-blog-1", "2026-08-04T10:00:00Z");
+      seedProjectSession(join(home, "gone", "legacy"), "s-gone-1", "2026-08-05T10:00:00Z");
+
+      const report = await importOnce(true);
+      const groups = report.items.filter((i) => (i.kind as string) === "projects" || (i.kind as string) === "folders");
+      expect(groups.map((g) => [g.kind, g.source, g.reason])).toEqual(
+        expect.arrayContaining([
+          ["projects", "shop", "new project; 2 chats; 2 added"],
+          ["projects", "blog", "new project; 1 chat; 1 added"],
+          ["folders", "legacy", "new folder; 1 chat; 1 added"],
+        ]),
+      );
+      const projects = JSON.parse(readFileSync(join(stateDir, "projects.json"), "utf8"));
+      const shopProject = projects.projects.find((p: { folder: string }) => p.folder === shop);
+      expect(shopProject.name).toBe("shop");
+      expect(projects.chats["claude-code:s-shop-1"]).toBe(shopProject.id);
+      expect(projects.chats["claude-code:s-shop-2"]).toBe(shopProject.id);
+      const folders = JSON.parse(readFileSync(join(stateDir, "chat-folders.json"), "utf8"));
+      const legacy = folders.folders.find((f: { name: string }) => f.name === "legacy");
+      expect(folders.chats["claude-code:s-gone-1"]).toBe(legacy.id);
+      // Each chat keeps its own folder, titles and times: continuing it runs there.
+      const state = sessionStore.load("claude-code:s-shop-1")!;
+      expect(state.workingDir).toBe(shop);
+      expect(state.metadata.title).toBe("title s-shop-1");
+      expect(state.createdAt).toBe(Date.parse("2026-08-02T10:00:00Z"));
+    });
+
+    it("re-imports without a second project, folder or chat", async () => {
+      const shop = join(home, "code", "shop");
+      mkdirSync(shop, { recursive: true });
+      seedProjectSession(shop, "s-shop-1", "2026-08-02T10:00:00Z");
+      seedProjectSession(join(home, "gone", "legacy"), "s-gone-1", "2026-08-05T10:00:00Z");
+      await importOnce(true);
+      const projectsBefore = readFileSync(join(stateDir, "projects.json"), "utf8");
+      const foldersBefore = readFileSync(join(stateDir, "chat-folders.json"), "utf8");
+
+      const again = await importOnce(true);
+      expect(again.summary.migrated).toBe(0);
+      expect(again.items.filter((i) => i.kind === "sessions").every((i) => i.status === "skipped")).toBe(true);
+      expect(readFileSync(join(stateDir, "projects.json"), "utf8")).toBe(projectsBefore);
+      expect(readFileSync(join(stateDir, "chat-folders.json"), "utf8")).toBe(foldersBefore);
+    });
+
+    it("files chats imported flat before into their projects on the next run", async () => {
+      const shop = join(home, "code", "shop");
+      mkdirSync(shop, { recursive: true });
+      seedProjectSession(shop, "s-shop-1", "2026-08-02T10:00:00Z");
+      // The earlier import: the chats, and no grouping.
+      await buildImporter().run({
+        options: resolveClaudeCodeOptions({ exclude: ["skills", "memory", "mcp"] }),
+        execute: true,
+        overwrite: false,
+      });
+      const report = await importOnce(true);
+      expect(report.items.find((i) => i.kind === "sessions")).toMatchObject({ status: "skipped" });
+      expect(report.items.find((i) => (i.kind as string) === "projects")).toMatchObject({ status: "migrated", source: "shop" });
+    });
+
+    it("finds the folder from the project dir's name when no row carries a cwd", async () => {
+      const shop = join(home, "my.code", "shop-app");
+      mkdirSync(shop, { recursive: true });
+      seedProjectSession(shop, "s-1", "2026-08-02T10:00:00Z", false);
+      const report = await importOnce(false);
+      expect(report.items.find((i) => (i.kind as string) === "projects")).toMatchObject({ source: "shop-app", destination: shop });
+    });
+  });
+
+  it("decodes Claude Code's project dir names against the disk", () => {
+    const dirs = new Set(["/Users", "/Users/me", "/Users/me/my-app", "/Users/me/.config", "/Users/me/.config/x"]);
+    const isDir = (p: string) => dirs.has(p);
+    expect(decodeProjectSlug("-Users-me-my-app", isDir)).toBe("/Users/me/my-app");
+    expect(decodeProjectSlug("-Users-me--config-x", isDir)).toBe("/Users/me/.config/x");
+    expect(decodeProjectSlug("-Users-me-gone", isDir)).toBeNull();
+    expect(decodeProjectSlug("C--work", isDir)).toBeNull();
   });
 });

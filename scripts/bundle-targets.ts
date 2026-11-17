@@ -12,6 +12,11 @@ export interface BundleTarget {
   slug: string;
   executableName: string;
   archiveExt: "tar.gz" | "zip";
+  /**
+   * Built for the desktop app only (desktop.yml), not by the CLI release (release.yml), so
+   * no release archive, npm platform package or registry entry exists for it.
+   */
+  desktopOnly?: true;
 }
 
 export const BUNDLE_TARGETS: readonly BundleTarget[] = [
@@ -56,8 +61,12 @@ export const BUNDLE_TARGETS: readonly BundleTarget[] = [
     slug: "win32-arm64",
     executableName: "atomic-agent.exe",
     archiveExt: "zip",
+    desktopOnly: true,
   },
 ];
+
+/** The targets the CLI release builds and publishes: every bundle target but the desktop-only ones. */
+export const CLI_RELEASE_TARGETS: readonly BundleTarget[] = BUNDLE_TARGETS.filter((t) => !t.desktopOnly);
 
 export function currentTarget(): BundleTarget {
   const platform = process.platform as NodePlatform;

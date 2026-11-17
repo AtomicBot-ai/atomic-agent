@@ -6,7 +6,10 @@ import { summariseAriaSnapshot } from "./aria-compressor.js";
 import { describeElementInPage, toRefDescription } from "./describe-element.js";
 import { searchUrlFor } from "./search-engines.js";
 import { planShot, type CssRect } from "./screenshot-geometry.js";
+import { runPageAction } from "./playwright-page-actions.js";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
+import { pinWebIdentityToBrowser } from "./web-identity.js";
+import { isOfflineNetwork } from "../../llm/offline-network.js";
 import { clearStaleChromeLocks } from "./clear-stale-chrome-locks.js";
 import {
   decorateChromeProfile,
@@ -19,6 +22,31 @@ import {
   type UserChromeCdpTarget,
 } from "./attach-user-chrome.js";
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
+import { PageDebugLog } from "./page-debug-log.js";
+import { watchPageDebugEvents } from "./watch-page-debug.js";
+import {
+  callSiteToolOnPage,
+  installSiteToolCapture,
+  listSiteToolsOnPage,
+} from "./site-tools-playwright.js";
+import {
+  currentBrowserScope,
+  onBrowserWorkerEnd,
+  resolveLaunchHeadless,
+  type BrowserHeadlessSetting,
+} from "./browser-run-scope.js";
+import { TempProfiles, type BrowserProfileChoice } from "./temp-profiles.js";
+import {
+  BrowserTabLimitError,
+  DEFAULT_BROWSER_MAX_TABS,
+  MAX_BROWSER_MAX_TABS,
+  type BrowserWorkerIsolation,
+} from "./worker-tabs.js";
+import {
+  readAnnotationsOnPage,
+  startAnnotateOnPage,
+  stopAnnotateOnPage,
+} from "./annotate-playwright.js";
 import {
   collectSecretFieldValuesInPage,
   ONE_TIME_CODE_HINT,
@@ -31,16 +59,27 @@ import {
   stopChrome,
 } from "./spawn-chrome.js";
 import type {
+  AnnotateReadInput,
+  AnnotateReadResult,
+  AnnotateStartResult,
   AriaSnapshot,
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  PageActionInput,
+  PageActionResult,
   RefDescription,
+  RenderHtmlInput,
+  RenderHtmlResult,
   ScreenshotInput,
   ScreenshotResult,
   ScrollInput,
   ScrollResult,
   SearchInput,
+  SiteToolCallInput,
+  SiteToolCallResult,
+  SiteToolsListInput,
+  SiteToolsListing,
   TabInfo,
   TabsInput,
   TypeInput,
@@ -53,7 +92,27 @@ export interface PlaywrightBackendOptions {
   channel: BrowserChannel;
   /** Explicit path to a Chromium-family binary; overrides auto-detection. */
   executablePath?: string | null;
-  headless: boolean;
+  /**
+   * `true` / `false`: always / never headless. `"auto"` (ATO-959): a
+   * Chrome started for a turn nobody watches (a cron task, a Telegram or
+   * Discord message) is headless; a watched turn gets a window, and a
+   * headless Chrome the agent started is reopened with one when a watched
+   * turn needs it.
+   */
+  headless: BrowserHeadlessSetting;
+  /**
+   * `browser.profile` (default `"agent"`): the profile a session browses
+   * in until it picks another with `browser.tabs new` (`temp-profiles.ts`).
+   */
+  profile?: BrowserProfileChoice;
+  /**
+   * `browser.workerIsolation` (default `"tabs"`, ATO-961): fusion workers
+   * browse in tabs of their own in the agent's profile, or each in its own
+   * throwaway context (`"context"`; not in the user's own Chrome).
+   */
+  workerIsolation?: BrowserWorkerIsolation;
+  /** `browser.maxTabs`: tabs the agent may have open at once (default 8). */
+  maxTabs?: number;
   /** Overall budget for "spawn + CDP becomes reachable". */
   launchTimeoutMs: number;
   /** When set, attach to a running browser via CDP instead of launching. */
@@ -72,7 +131,12 @@ export interface PlaywrightBackendOptions {
   connectOverCdp?: (url: string, timeoutMs: number) => Promise<PwBrowser>;
   /** Test seam: where the user's Chrome listens. */
   findUserChrome?: () => Promise<UserChromeCdpTarget>;
+  /** Test seam: start the agent's own Chrome and return its CDP address. */
+  launchChrome?: (input: { headless: boolean }) => Promise<string>;
 }
+
+const TEMP_PROFILE_IN_USER_CHROME =
+  'a logged-out profile ("temp") works only in the agent\'s own browser, not in your own Chrome (browser.connect "user-chrome")';
 
 /**
  * How long attaching to the user's Chrome may take: Chrome shows its own
@@ -105,6 +169,8 @@ export class PlaywrightBackend implements BrowserBackend {
   private ready: Promise<void> | null = null;
   /** `"user-chrome"`: the tabs the agent opened, oldest first, active last. */
   private readonly ownedPages = new Set<Page>();
+  /** Throwaway tabs `renderHtml` has open; never the model's active page. */
+  private readonly renderPages = new Set<Page>();
   private userProfile = false;
   private openedRemoteDebugging = false;
   /**
@@ -113,8 +179,40 @@ export class PlaywrightBackend implements BrowserBackend {
    * Chrome it does not open the settings page or wait for the switch.
    */
   private lostConnection = false;
+  /** Whether the Chrome the agent started is headless; `null` when it started none. */
+  private launchedHeadless: boolean | null = null;
+  private relaunching: Promise<void> | null = null;
+  /** Per-session throwaway profiles (`browser.profile: "temp"`). */
+  private readonly tempProfiles = new TempProfiles();
+  /** `workerIsolation: "context"`: a throwaway context per fusion worker. */
+  private readonly workerContexts = new TempProfiles(MAX_BROWSER_MAX_TABS);
+  /** Fusion worker that opened a tab in the shared context (ATO-961). */
+  private readonly pageOwners = new WeakMap<Page, string>();
+  /**
+   * Tab opens run one at a time, so the `maxTabs` check and the new tab
+   * are one step: parallel opens cannot slip past the limit together,
+   * and a tab already listed by the context is not counted twice while
+   * `newPage` is still settling.
+   */
+  private tabOpens: Promise<unknown> = Promise.resolve();
+  private stopWorkerEnd: (() => void) | null = null;
+  /** Console and network events of the agent's pages (`browser.debug`, ATO-701). */
+  private readonly debug = new PageDebugLog();
 
   constructor(private readonly options: PlaywrightBackendOptions) {}
+
+  debugLog(): PageDebugLog {
+    return this.debug;
+  }
+
+  /** Record the context's console / network events; in the user's Chrome, the agent's tabs only. */
+  private watchDebug(context: PwBrowserContext): void {
+    try {
+      watchPageDebugEvents(context, this.debug, (page) => !this.userProfile || this.ownedPages.has(page));
+    } catch {
+      // A debug log is a convenience: never fail the attach over it.
+    }
+  }
 
   ensureReady(): Promise<void> {
     if (!this.ready) {
@@ -129,6 +227,10 @@ export class PlaywrightBackend implements BrowserBackend {
   }
 
   async shutdown(): Promise<void> {
+    this.stopWorkerEnd?.();
+    this.stopWorkerEnd = null;
+    await this.tempProfiles.closeAll();
+    await this.workerContexts.closeAll();
     if (this.context) {
       const browser = this.context.browser();
       // The user's own Chrome: disconnect only, never close their
@@ -155,6 +257,7 @@ export class PlaywrightBackend implements BrowserBackend {
     }
     this.ownedPages.clear();
     this.userProfile = false;
+    this.launchedHeadless = null;
     this.ready = null;
   }
 
@@ -343,15 +446,85 @@ export class PlaywrightBackend implements BrowserBackend {
     };
   }
 
-  async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {
+  async startAnnotate(): Promise<AnnotateStartResult> {
+    return startAnnotateOnPage(await this.requireActivePage());
+  }
+
+  async readAnnotations(input: AnnotateReadInput): Promise<AnnotateReadResult> {
+    return readAnnotationsOnPage(await this.requireActivePage(), input);
+  }
+
+  async stopAnnotate(): Promise<{ url: string; removed: number }> {
+    return stopAnnotateOnPage(await this.requireActivePage());
+  }
+
+  async act(input: PageActionInput): Promise<PageActionResult> {
+    return runPageAction(await this.requireActivePage(), input);
+  }
+
+  async listSiteTools(input: SiteToolsListInput): Promise<SiteToolsListing> {
+    return listSiteToolsOnPage(await this.requireActivePage(), input);
+  }
+
+  async callSiteTool(input: SiteToolCallInput): Promise<SiteToolCallResult> {
+    return callSiteToolOnPage(await this.requireActivePage(), input);
+  }
+
+  async renderHtml(input: RenderHtmlInput): Promise<RenderHtmlResult> {
+    // The user's own Chrome holds their signed-in sessions: a background
+    // read there is reading their account, which only the browser.*
+    // tools (with their per-site prompts) may do.
+    if (this.options.connect === "user-chrome") {
+      throw new Error("renderHtml is not available in the user's own Chrome");
+    }
     const context = await this.requireContext();
+    const page = await context.newPage();
+    this.renderPages.add(page);
+    const deadline = Date.now() + Math.max(1_000, input.timeoutMs);
+    try {
+      await page.goto(input.url, {
+        waitUntil: "domcontentloaded",
+        timeout: Math.max(1_000, input.timeoutMs),
+      });
+      await page
+        .waitForLoadState("networkidle", {
+          timeout: Math.max(0, Math.min(5_000, deadline - Date.now())),
+        })
+        .catch(() => undefined);
+      let html = await page.content();
+      // A JavaScript challenge solves itself and reloads the page a few
+      // seconds in; poll for that rather than sleeping a fixed time.
+      while (input.isStillWalled?.(html) && Date.now() + 1_000 < deadline) {
+        await page.waitForTimeout(1_000);
+        html = await page.content().catch(() => html);
+      }
+      return {
+        url: page.url(),
+        title: await page.title().catch(() => ""),
+        html,
+        frameUrls: page.frames().map((frame) => frame.url()),
+      };
+    } finally {
+      this.renderPages.delete(page);
+      await page.close().catch(() => undefined);
+    }
+  }
+
+  async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {
+    const scope = currentBrowserScope();
+    if (input.action === "new" && input.profile !== undefined && scope) {
+      if (input.profile === "temp" && this.options.connect === "user-chrome") {
+        throw new Error(`browser.tabs(new): ${TEMP_PROFILE_IN_USER_CHROME}`);
+      }
+      this.tempProfiles.choose(scope.sessionId, input.profile);
+    }
+    const context = await this.callerContext();
     const pages = this.visiblePages(context);
     switch (input.action) {
       case "list":
         return { tabs: await enumerateTabs(pages) };
       case "new": {
-        const page = await context.newPage();
-        this.adopt(page);
+        const page = await this.openTab(context);
         if (input.url) {
           await page.goto(input.url).catch(() => undefined);
         }
@@ -387,7 +560,10 @@ export class PlaywrightBackend implements BrowserBackend {
         }
         await target.close();
         this.ownedPages.delete(target);
-        return { tabs: await enumerateTabs(this.visiblePages(context)) };
+        const left = await enumerateTabs(this.visiblePages(context));
+        // The last tab of a throwaway profile takes the profile with it.
+        if (scope && left.length === 0) await this.tempProfiles.closeIfEmpty(scope.sessionId);
+        return { tabs: left };
       }
       default: {
         const exhaustive: never = input.action;
@@ -399,6 +575,9 @@ export class PlaywrightBackend implements BrowserBackend {
   }
 
   private async initialise(): Promise<void> {
+    this.stopWorkerEnd ??= onBrowserWorkerEnd((workerId) => {
+      void this.closeWorkerTabs(workerId);
+    });
     if (this.options.connect === "user-chrome") {
       await this.attachUserChrome();
       return;
@@ -407,6 +586,9 @@ export class PlaywrightBackend implements BrowserBackend {
     const browser = await this.connectOverCdp(cdpUrl, this.options.launchTimeoutMs);
     const contexts = browser.contexts();
     this.context = contexts[0] ?? (await browser.newContext());
+    // WebMCP: record the tools pages declare (ATO-521).
+    await installSiteToolCapture(this.context);
+    this.watchDebug(this.context);
   }
 
   private async connectOverCdp(url: string, timeoutMs: number): Promise<PwBrowser> {
@@ -457,22 +639,82 @@ export class PlaywrightBackend implements BrowserBackend {
     this.userProfile = true;
     this.context = context;
     this.lostConnection = false;
+    this.watchDebug(context);
   }
 
   /** Track a tab the agent opened in the user's Chrome, and its pop-ups. */
   private adopt(page: Page): void {
     if (!this.userProfile) return;
     this.ownedPages.add(page);
+    // Only the agent's own tabs record WebMCP tools, never the user's (ATO-521).
+    void installSiteToolCapture(page);
     page.on("popup", (popup) => this.adopt(popup));
     page.on("close", () => {
       this.ownedPages.delete(page);
     });
   }
 
-  /** Every tab, or in the user's Chrome only the agent's own. */
+  /**
+   * Every tab, or in the user's Chrome only the agent's own; in the shared
+   * context only the caller's: a fusion worker's own tabs, or for anyone
+   * else the tabs no worker opened (ATO-961).
+   */
   private visiblePages(context: PwBrowserContext): Page[] {
-    if (!this.userProfile) return context.pages();
-    return [...this.ownedPages].filter((page) => !page.isClosed());
+    if (context !== this.context) return context.pages();
+    const pages = this.userProfile
+      ? [...this.ownedPages].filter((page) => !page.isClosed())
+      : context.pages().filter((page) => !this.renderPages.has(page));
+    const owner = callerWorkerId();
+    return pages.filter((page) => this.pageOwners.get(page) === owner);
+  }
+
+  /**
+   * Open a tab for the caller in `context`, within `browser.maxTabs`. A
+   * worker's tab, and the pop-ups it opens, are named after the worker.
+   */
+  private openTab(context: PwBrowserContext): Promise<Page> {
+    const opened = this.tabOpens.then(() => this.openTabNow(context));
+    this.tabOpens = opened.catch(() => undefined);
+    return opened;
+  }
+
+  private async openTabNow(context: PwBrowserContext): Promise<Page> {
+    const max = this.options.maxTabs ?? DEFAULT_BROWSER_MAX_TABS;
+    const open = this.openTabCount();
+    if (open >= max) throw new BrowserTabLimitError(open, max);
+    const page = await context.newPage();
+    this.adopt(page);
+    const owner = callerWorkerId();
+    if (owner !== undefined && context === this.context) this.claim(page, owner);
+    return page;
+  }
+
+  private claim(page: Page, owner: string): void {
+    this.pageOwners.set(page, owner);
+    page.on("popup", (popup) => this.claim(popup, owner));
+  }
+
+  /** Tabs the agent has open: its own (not the user's), throwaway ones, workers'. */
+  private openTabCount(): number {
+    let count = this.tempProfiles.tabCount() + this.workerContexts.tabCount();
+    if (this.context) {
+      count += this.userProfile
+        ? [...this.ownedPages].filter((page) => !page.isClosed()).length
+        : this.context.pages().length;
+    }
+    return count;
+  }
+
+  /** A fusion worker's turn ended: its tabs and context go with it. */
+  private async closeWorkerTabs(workerId: string): Promise<void> {
+    const pages = this.context?.pages() ?? [];
+    await Promise.all(
+      pages
+        .filter((page) => this.pageOwners.get(page) === workerId)
+        .map((page) => page.close().catch(() => undefined)),
+    );
+    await this.workerContexts.close(workerId);
+    await this.tempProfiles.close(workerId);
   }
 
   /**
@@ -482,6 +724,12 @@ export class PlaywrightBackend implements BrowserBackend {
    * "spawn + attach" and "attach to user's browser" modes.
    */
   private async launchOwnChrome(): Promise<string> {
+    const headless = resolveLaunchHeadless(this.options.headless, currentBrowserScope());
+    if (this.options.launchChrome) {
+      const cdpUrl = await this.options.launchChrome({ headless });
+      this.launchedHeadless = headless;
+      return cdpUrl;
+    }
     const executable = findChromeExecutable({
       executablePath: this.options.executablePath ?? null,
       channel: this.options.channel,
@@ -497,11 +745,16 @@ export class PlaywrightBackend implements BrowserBackend {
     clearStaleChromeLocks(this.options.userDataDir);
     decorateChromeProfile(this.options.userDataDir);
     const cdpPort = await pickAvailableLoopbackPort();
+    // One identity for this browser and for curl (ATO-969).
+    const identity = pinWebIdentityToBrowser(executable);
     const args = buildChromeLaunchArgs({
       cdpPort,
       userDataDir: this.options.userDataDir,
-      headless: this.options.headless,
+      headless,
       noSandbox: this.options.noSandbox ?? false,
+      userAgent: identity.versionKnown ? identity.userAgent : undefined,
+      lang: identity.locale,
+      offline: isOfflineNetwork(),
     });
     const running = await spawnChrome({
       executablePath: executable.path,
@@ -512,6 +765,7 @@ export class PlaywrightBackend implements BrowserBackend {
     });
     this.spawnedProc = running.proc;
     this.spawnedUserDataDir = this.options.userDataDir;
+    this.launchedHeadless = headless;
     return running.cdpUrl;
   }
 
@@ -525,21 +779,96 @@ export class PlaywrightBackend implements BrowserBackend {
       this.lostConnection = true;
       await this.ensureReady();
     }
+    if (this.wantsWindowNow()) await this.relaunchWithWindow();
     if (!this.context) {
       throw new Error("browser backend is not initialised");
     }
     return this.context;
   }
 
+  /**
+   * The context the calling session browses in: the agent's profile, or
+   * its own throwaway one (`browser.profile` / `browser.tabs new profile`).
+   */
+  private async callerContext(): Promise<PwBrowserContext> {
+    const main = await this.requireContext();
+    const scope = currentBrowserScope();
+    if (!scope) return main;
+    if (this.tempProfiles.choiceFor(scope.sessionId, this.options.profile ?? "agent") === "temp") {
+      if (this.userProfile) throw new Error(TEMP_PROFILE_IN_USER_CHROME);
+      // Workers draw from their own pool, so parallel workers never push
+      // each other's profile out.
+      const pool = scope.workerOf !== undefined ? this.workerContexts : this.tempProfiles;
+      return pool.open(requireBrowser(main), scope.sessionId);
+    }
+    // A worker's own context where that is cheap: never in the user's
+    // Chrome, where the agent stays in the tabs it opened.
+    if (scope.workerOf !== undefined && this.options.workerIsolation === "context" && !this.userProfile) {
+      return this.workerContexts.open(requireBrowser(main), scope.sessionId);
+    }
+    return main;
+  }
+
+  /**
+   * `headless: "auto"`: the Chrome the agent started is headless (a
+   * background turn launched it) and a watched turn now needs it.
+   */
+  private wantsWindowNow(): boolean {
+    return (
+      this.options.headless === "auto" &&
+      this.launchedHeadless === true &&
+      currentBrowserScope()?.attended === true
+    );
+  }
+
+  /**
+   * Restart the agent's own Chrome with a window, reopening the pages it
+   * had (throwaway profiles are not carried over). A background turn
+   * still using the old pages sees them gone and reads the page again.
+   * A fusion worker's tab comes back as that worker's, so the chat does
+   * not see it and the worker's end still closes it (ATO-961).
+   */
+  private async relaunchWithWindow(): Promise<void> {
+    if (!this.relaunching) {
+      this.relaunching = (async () => {
+        const reopen = (this.context?.pages() ?? [])
+          .filter((page) => /^https?:/i.test(page.url()))
+          .map((page) => ({ url: page.url(), owner: this.pageOwners.get(page) }));
+        await this.shutdown();
+        await this.ensureReady();
+        const context = this.context as PwBrowserContext | null;
+        if (!context) return;
+        for (const { url, owner } of reopen) {
+          const page = await context.newPage();
+          if (owner !== undefined) this.claim(page, owner);
+          await page.goto(url).catch(() => undefined);
+        }
+      })().finally(() => {
+        this.relaunching = null;
+      });
+    }
+    await this.relaunching;
+  }
+
   private async requireActivePage(): Promise<Page> {
-    const context = await this.requireContext();
+    const context = await this.callerContext();
     const pages = this.visiblePages(context);
     const active = pages[pages.length - 1];
     if (active) return active;
-    const page = await context.newPage();
-    this.adopt(page);
-    return page;
+    return this.openTab(context);
   }
+}
+
+/** The calling fusion worker's id (its session), else `undefined`. */
+function callerWorkerId(): string | undefined {
+  const scope = currentBrowserScope();
+  return scope?.workerOf !== undefined ? scope.sessionId : undefined;
+}
+
+function requireBrowser(context: PwBrowserContext): PwBrowser {
+  const browser = context.browser();
+  if (!browser) throw new Error("browser backend has no browser to open a separate context in");
+  return browser;
 }
 
 /** The CDP connection behind `context` is gone (the browser quit). */

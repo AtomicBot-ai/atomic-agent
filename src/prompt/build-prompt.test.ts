@@ -329,7 +329,7 @@ describe("buildPrompt", () => {
     // The bad guess in issue #113 was `format: "text"`. The stable prefix
     // carries the closed set so the guess is never reachable.
     expect(prompt.stablePrefix).toContain(
-      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain'",
+      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'ods' | 'odp' | 'epub' | 'html' | 'eml' | 'mbox' | 'plain'",
     );
   });
 
@@ -2127,7 +2127,8 @@ describe("buildPrompt tool roles (F18)", () => {
     expect(line).toContain("tasks.schedule");
     expect(line).toContain("browser.navigate");
     expect(line).toContain("finish");
-    expect(line).not.toContain("os.fs.write");
+    // As a whole name: `os.fs.write_pptx` is a different tool on the line.
+    expect(line).not.toMatch(/[\s,]os\.fs\.write(?:,|$)/);
     // Exactly one such line, and it sits inside `### tools`.
     expect(stablePrefix.split(ALSO_AVAILABLE_VIA_TOOL_VIEW)).toHaveLength(2);
     expect(stablePrefix.indexOf(ALSO_AVAILABLE_VIA_TOOL_VIEW)).toBeGreaterThan(

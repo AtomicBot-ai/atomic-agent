@@ -35,13 +35,13 @@ test("an older agent sends nothing, and nothing is drawn", () => {
 test("an unknown price is never $0", () => {
   assert.equal(U.usageCostText({ costUsd: 0, pricedCalls: 0, unpricedCalls: 3, localCalls: 0, planCalls: 0 }), "cost n/a");
   assert.equal(U.usageCostText({ costUsd: 0.5, pricedCalls: 1, unpricedCalls: 1, localCalls: 0, planCalls: 0 }), "$0.50+");
-  assert.equal(U.usageCostText({ costUsd: 0, pricedCalls: 0, unpricedCalls: 0, localCalls: 4, planCalls: 0 }), "local");
-  assert.equal(U.usageCostText({ costUsd: 0, pricedCalls: 0, unpricedCalls: 0, localCalls: 0, planCalls: 2 }), "plan");
+  assert.equal(U.usageCostText({ costUsd: 0, pricedCalls: 0, unpricedCalls: 0, localCalls: 4, planCalls: 0 }), "");
+  assert.equal(U.usageCostText({ costUsd: 0, pricedCalls: 0, unpricedCalls: 0, localCalls: 0, planCalls: 2 }), "");
 });
 
 test("a reading past its reset time is gone", () => {
   const u = U.usageFromAgent({ planCalls: 1, limits: [{ scope: "subscription", name: "5h", used_percent: 99, resets_at: NOW - 1 }] }, NOW);
-  assert.equal(U.usageChipText(u, NOW), "plan");
+  assert.equal(U.usageChipText(u, NOW), "");
   assert.equal(U.usageUrgent(u, NOW), false);
 });
 

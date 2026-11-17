@@ -10,7 +10,9 @@ import type { ResolvedLlmConfig } from "../../llm/provider/registry/provider-typ
 import {
   describeRunMode,
   describeRunModeDegradation,
+  describeSubscriptionCliWorker,
   resolveRunMode,
+  type SubscriptionCliWorkerNotice,
   type ResolvedRunMode,
 } from "../../llm/run-mode/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -84,6 +86,7 @@ export class RunModeOrchestrator {
 
     let leg: string | null;
     let fusion: RunModeChangeOptions["fusion"] = opts.fusion;
+    let workerNotice: SubscriptionCliWorkerNotice | null = null;
     if (mode === "fusion") {
       // Cloud orchestrator is the DEFAULT, not the rule. An explicit pin
       // wins whatever its kind — a local orchestrator driving cloud
@@ -99,12 +102,7 @@ export class RunModeOrchestrator {
         rm.orchestratorProviderId ??
         resolved.activeTextProvider;
       if (leg === null || leg === undefined) {
-        this.refuse(
-          describeRunModeDegradation({
-            reason: "no-cloud-provider",
-            requested: mode,
-          }),
-        );
+        this.refuseNoCloudProvider(mode);
         return;
       }
       const workerLeg =
@@ -122,6 +120,15 @@ export class RunModeOrchestrator {
         );
         return;
       }
+      // A subscription CLI on the worker leg (ATO-1431): warn, or refuse
+      // when `SUBSCRIPTION_CLI_WORKER_POLICY` says so.
+      workerNotice = describeSubscriptionCliWorker(
+        resolved.providers.find((p) => p.id === workerLeg),
+      );
+      if (workerNotice?.policy === "refuse") {
+        this.refuse(workerNotice.line);
+        return;
+      }
       // Pin BOTH legs. Leaving either to the resolver's "first entry of
       // that kind" default lets the pair drift with the order of
       // `llm.providers` — and picked the wrong half outright when a
@@ -137,12 +144,7 @@ export class RunModeOrchestrator {
         ? resolved.activeTextProvider
         : rm.orchestratorProviderId;
       if (leg === null) {
-        this.refuse(
-          describeRunModeDegradation({
-            reason: "no-cloud-provider",
-            requested: mode,
-          }),
-        );
+        this.refuseNoCloudProvider(mode);
         return;
       }
     } else {
@@ -197,6 +199,13 @@ export class RunModeOrchestrator {
       type: "runtime_info",
       line: `run mode: ${describeRunMode(now)}`,
     });
+    if (workerNotice !== null) {
+      this.deps.bus.emit({ type: "composer_notice", text: workerNotice.line });
+      this.deps.bus.emit({
+        type: "runtime_info",
+        line: `fusion: ${workerNotice.line}`,
+      });
+    }
     // Only on the way IN. Re-applying fusion to change the orchestrator
     // is not a moment that needs the mode explained again.
     if (now.effective === "fusion" && rm.effective !== "fusion") {
@@ -264,7 +273,8 @@ export class RunModeOrchestrator {
    * that is already up keeps the slot count it was launched with, so the
    * notice says how to apply the new one — a silent write here would
    * leave N workers queueing on the old slots with nothing on screen to
-   * explain why.
+   * explain why. A slot count the user pinned is left as it is
+   * (ATO-1541), and the notice says so instead.
    */
   setWorkers(workers: number): void {
     const before = getConfig().localModels.managed.parallel;
@@ -276,8 +286,12 @@ export class RunModeOrchestrator {
     }
     this.deps.providers.refresh();
     const after = getConfig().localModels;
-    const applyHint =
-      after.mode === "managed" && before !== workers
+    const kept = after.managed.parallel !== workers;
+    const applyHint = after.mode !== "managed"
+      ? ""
+      : kept
+      ? `. The local model keeps the ${String(after.managed.parallel)} parallel slot${after.managed.parallel === 1 ? "" : "s"} you set (localModels.managed.parallel).`
+      : before !== workers
         ? ` — restart the local daemon (Manage › LLM › Local, \`s\`) to apply --parallel ${workers}`
         : "";
     this.deps.bus.emit({
@@ -301,6 +315,25 @@ export class RunModeOrchestrator {
       (p) => Boolean(resolveLlmProviderApiKey(p)) || usesExternalCliAuth(p),
     );
     return (keyed ?? cloud[0])?.id ?? null;
+  }
+
+  /**
+   * The cloud or Fusion pick that found no cloud provider (ATO-1460).
+   * Besides the usual notice it leaves one chat line with an
+   * `[add cloud provider]` button: the composer notice is gone in a few
+   * seconds, and the way out should stay on screen until it is taken.
+   */
+  private refuseNoCloudProvider(mode: RunModeName): void {
+    const line = describeRunModeDegradation({
+      reason: "no-cloud-provider",
+      requested: mode,
+    });
+    this.refuse(line);
+    this.deps.bus.emit({
+      type: "system_message",
+      text: line,
+      action: "add-cloud-provider",
+    });
   }
 
   private refuse(line: string): void {

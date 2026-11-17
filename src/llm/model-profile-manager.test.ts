@@ -447,11 +447,11 @@ describe("ModelProfileManager MCP tool names (ATO-1029)", () => {
     expect(mgr.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-server-tool/m);
     mgr.setMcpToolNameRule(RULE);
     expect(mgr.getGrammar()).toContain(RULE);
-    expect(mgr.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-server-tool \|/m);
+    expect(mgr.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-server-tool$/m);
     await mgr.refresh();
     expect(mgr.getProfile().id).toBe("qwen-think");
     expect(mgr.getGrammar()).toContain(RULE);
-    expect(mgr.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-server-tool \|/m);
+    expect(mgr.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-server-tool$/m);
     mgr.setMcpToolNameRule(null);
     expect(mgr.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-server-tool/m);
   });

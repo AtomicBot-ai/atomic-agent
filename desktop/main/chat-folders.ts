@@ -17,20 +17,30 @@
  *            again; the person's own placements are never in it
  *   projectSort: false in a file from before ATO-1253, whose one "Claude
  *            Code" folder is split into project folders once
+ *   imported: {folderId: true}   folders the terminal's import grouping
+ *            created (src/import/grouping.ts), the only ones it may reuse
+ *            or delete; kept as it is, absent when empty
+ *
+ * W2 QA (16.11): the sidebar has one kind of group, Projects. A folder here
+ * is a project with no folder on disk (the projects store keeps the ones
+ * with a disk folder), so a folder may carry `instructions` for every chat
+ * in it, as a project does, and `createdAt`, which orders a new one first.
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export interface ChatFolder { id: string; name: string; collapsed: boolean }
+export interface ChatFolder { id: string; name: string; collapsed: boolean; instructions?: string; createdAt?: number }
 export interface ChatFolders {
   version: 1; folders: ChatFolder[]; chats: Record<string, string | null>; autoSort: boolean;
   projects: Record<string, string>; auto: Record<string, true>; projectSort: boolean;
+  imported?: Record<string, true>;
 }
 
 const MAX_FOLDERS = 200;
 const MAX_CHATS = 20000;
 const MAX_NAME = 80;
 const MAX_PATH = 4096;
+const MAX_INSTRUCTIONS = 16000;
 const ID_RE = /^f[a-z0-9]{1,24}$/;
 
 export function chatFoldersPath(stateDir: string): string {
@@ -45,18 +55,22 @@ export function emptyChatFolders(): ChatFolders {
 export function coerceChatFolders(raw: unknown): ChatFolders {
   const out = emptyChatFolders();
   if (!raw || typeof raw !== "object") return out;
-  const r = raw as { folders?: unknown; chats?: unknown; autoSort?: unknown; projects?: unknown; auto?: unknown; projectSort?: unknown };
+  const r = raw as { folders?: unknown; chats?: unknown; autoSort?: unknown; projects?: unknown; auto?: unknown; projectSort?: unknown; imported?: unknown };
   const ids = new Set<string>();
   if (Array.isArray(r.folders)) {
     for (const f of r.folders.slice(0, MAX_FOLDERS)) {
       if (!f || typeof f !== "object") continue;
-      const { id, name, collapsed } = f as { id?: unknown; name?: unknown; collapsed?: unknown };
+      const { id, name, collapsed, instructions, createdAt } = f as { id?: unknown; name?: unknown; collapsed?: unknown; instructions?: unknown; createdAt?: unknown };
       if (typeof id !== "string" || !ID_RE.test(id) || ids.has(id)) continue;
       // Cut by characters, not UTF-16 units, as the renderer counts them: an emoji is never split.
       const nm = typeof name === "string" ? Array.from(name.replace(/\s*[\r\n\u2028\u2029]+\s*/g, " ").trim()).slice(0, MAX_NAME).join("") : "";
       if (!nm) continue;
       ids.add(id);
-      out.folders.push({ id, name: nm, collapsed: collapsed === true });
+      const folder: ChatFolder = { id, name: nm, collapsed: collapsed === true };
+      const text = typeof instructions === "string" ? instructions.trim().slice(0, MAX_INSTRUCTIONS) : "";
+      if (text) folder.instructions = text;
+      if (typeof createdAt === "number" && Number.isFinite(createdAt) && createdAt > 0) folder.createdAt = createdAt;
+      out.folders.push(folder);
     }
   }
   if (r.chats && typeof r.chats === "object" && !Array.isArray(r.chats)) {
@@ -80,7 +94,24 @@ export function coerceChatFolders(raw: unknown): ChatFolders {
     }
   }
   out.projectSort = r.projectSort === true;
+  if (r.imported && typeof r.imported === "object" && !Array.isArray(r.imported)) {
+    const imported: Record<string, true> = {};
+    for (const [fid, on] of Object.entries(r.imported as Record<string, unknown>)) {
+      if (on === true && ids.has(fid)) imported[fid] = true;
+    }
+    if (Object.keys(imported).length > 0) out.imported = imported;
+  }
   return out;
+}
+
+/**
+ * The folder (a project with no disk folder) one turn belongs to: a stored
+ * chat's by its id, a chat not stored yet by the id the window sent for it
+ * (New project opens a new chat in it). Null when it is in none.
+ */
+export function folderForTurn(data: ChatFolders, sessionId: string | null, folderId: unknown): ChatFolder | null {
+  const fid = sessionId ? data.chats[sessionId] : typeof folderId === "string" ? folderId : null;
+  return fid ? data.folders.find((f) => f.id === fid) ?? null : null;
 }
 
 /** The folders on disk, or empty ones. Never throws. */

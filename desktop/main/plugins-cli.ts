@@ -15,6 +15,8 @@
  * and switch the whole plugin.
  */
 
+import { isAbsolute } from "node:path";
+
 /** `PLUGIN_NAME_RE` in src/plugins/plugin-manifest.ts: kebab-case, at most 64. */
 export const PLUGIN_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 /** Part ids `setPluginPartEnabled` takes; `PART_ID_RE` in src/cli/plugin-command.ts. */
@@ -74,4 +76,71 @@ export function parsePluginListOutput(stdout: string): PluginListAnswer {
   } catch {
     return { ok: false, error: "The agent's plugin list could not be read." };
   }
+}
+
+/* ---- Install from folder (Settings › Plugins' "Install from folder…") ----
+   The window never names a path of its own: main opens the folder picker,
+   remembers what was picked, and installs only a remembered folder through
+   the same `atag plugin install <folder>` the terminal uses. So the copy,
+   the security scan and the runs-code rule are the agent's, unchanged:
+   without a terminal a caution finding needs `--yes` (the window's
+   "Install anyway"), a dangerous one is refused, and parts that run code
+   install switched off until "Allow code…". */
+
+/** A folder path main may hand to `plugin install`: absolute, one line, never read as a flag. */
+export function isInstallableFolderPath(p: unknown): p is string {
+  return typeof p === "string" && p.length > 0 && p.length <= 4096 && isAbsolute(p) && !p.startsWith("-") && !/[\0\r\n]/.test(p);
+}
+
+/** The argv for one install. `--yes` only after the user said "Install anyway" to a caution finding. */
+export function pluginInstallArgs(folder: string, confirmCaution: boolean): string[] {
+  const args = ["plugin", "install", folder];
+  if (confirmCaution) args.push("--yes");
+  return args;
+}
+
+export type PluginInstallAnswer =
+  | { ok: true; name: string | null; message: string; runsCode: boolean; startsServers: boolean }
+  | { ok: false; error: string; needsConfirmation?: boolean; blocked?: boolean; findings?: string[]; unsupported?: boolean };
+
+const SCAN_FINDING_RE = /^\s*\[(?:caution|dangerous|danger|warn|warning|info)\]\s+\S/i;
+
+/**
+ * Read what `atag plugin install <folder>` said. Success prints
+ * `Installed <name>@<version>: <what it brings>` first; a refusal ends
+ * stderr with one summary line (src/cli/plugin-command.ts reportError),
+ * after the scan's findings when the scan stopped it.
+ */
+export function parsePluginInstallResult(res: { ok: boolean; stdout: string; stderr: string; error?: string }): PluginInstallAnswer {
+  if (res.ok) {
+    const lines = res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const head = lines.find((l) => l.startsWith("Installed ")) ?? lines[0] ?? "Installed.";
+    const name = /^Installed ([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)@/.exec(head)?.[1] ?? null;
+    return {
+      ok: true,
+      name,
+      message: head,
+      runsCode: lines.some((l) => l.startsWith("This plugin can run programs")),
+      startsServers: /\bMCP servers?\b/.test(head),
+    };
+  }
+  const stderr = res.stderr ?? "";
+  if (isUnsupportedPluginCli(`${stderr}\n${res.error ?? ""}`)) {
+    return { ok: false, unsupported: true, error: "This agent has no plugin support yet. Update Atomic Agent to install plugins here." };
+  }
+  const lines = stderr.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const findings = lines.filter((l) => SCAN_FINDING_RE.test(l)).slice(0, 8);
+  const last = lines.filter((l) => !/^\s*at\s/.test(l) && !/^Node\.js v\d/.test(l)).pop() ?? res.error ?? "the agent did not answer";
+  if (/^install needs confirmation\b/i.test(last)) {
+    return { ok: false, needsConfirmation: true, findings, error: "The security scan flagged something in this plugin. Read what it found before you install it anyway." };
+  }
+  if (/^install blocked\b/i.test(last)) {
+    return { ok: false, blocked: true, findings, error: "Not installed: the security scan marked this plugin as dangerous." };
+  }
+  const already = /^plugin ([a-z0-9-]+) is already installed\b/.exec(last);
+  if (already) return { ok: false, error: `${already[1]} is already installed. Remove it first to install this copy.` };
+  if (/\bis not a plugin\b/.test(last)) {
+    return { ok: false, error: "This folder is not a plugin: it has no .claude-plugin/plugin.json, plugin.json, skills/ or commands/ inside." };
+  }
+  return { ok: false, error: last };
 }

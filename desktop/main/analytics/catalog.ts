@@ -23,7 +23,7 @@
 
 import { curatedMetaIds } from "../model-catalog.js";
 import {
-  APPROVAL_CATEGORIES, BACKEND_FAIL_REASONS, ENGINE_FAILURE_STAGES, ENGINE_FAULTS, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
+  APPROVAL_CATEGORIES, BACKEND_FAIL_REASONS, CANCEL_PHASES, TURN_PROVIDER_KINDS, ENGINE_FAILURE_STAGES, ENGINE_FAULTS, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
   DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
   NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RESTART_TRIGGERS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
   SUPERVISOR_KINDS, SWITCH_REFUSALS, uiActionOk, UI_VIA,
@@ -104,6 +104,10 @@ export const EVENTS: Record<string, EventSpec> = {
   app_closed: { owner: "main", props: { session_minutes: num({ decimals: 1 }), turns_in_session: int() } },
   debug_report_saved: { owner: "main", props: { kind: en(["dump", "report"]) } },
   analytics_disabled: { owner: "main", props: { via: en(["settings", "slash", "config"]), days_since_install: int() } },
+  /* ATO-1467: the "Talk to the team" interview invite (main/interview-invite-ipc.ts). */
+  interview_invite_shown: { owner: "main", props: { via: en(["card"]) } },
+  interview_invite_clicked: { owner: "main", props: { via: en(["menu", "card", "slash"]) } },
+  interview_invite_dismissed: { owner: "main", props: { reason: en(["later", "never"]) } },
 
   /* ---- onboarding and setup ---- */
   onboarding_step: {
@@ -289,6 +293,16 @@ export const EVENTS: Record<string, EventSpec> = {
       error_category: en(ERROR_CATEGORIES, { nullable: true }),
       http_status: { kind: "int", min: 100, max: 599, nullable: true },
       coding_mode: en(CODING_MODES, { nullable: true }),
+      /* ATO-1026: where the turn's time went (chat-turns.ts). */
+      ms_to_first_activity: int({ nullable: true }),
+      cancel_phase: en(CANCEL_PHASES, { nullable: true }),
+      cancel_by: en(["user", "app"], { nullable: true }),
+      prompt_tokens: int({ nullable: true }),
+      completion_tokens: int({ nullable: true }),
+      gen_tokens_per_s: num({ decimals: 1, nullable: true }),
+      provider: en(CONFIGURED_PROVIDERS, { fallback: "custom", nullable: true }),
+      provider_kind: en(TURN_PROVIDER_KINDS, { nullable: true }),
+      model_id: en(modelIds(), { fallback: "custom", nullable: true }),
     },
   },
   message_action: {
@@ -338,6 +352,12 @@ export const EVENTS: Record<string, EventSpec> = {
     },
   },
 
+  /* ATO-1096: the grey next-step suggestion in the composer (renderer/next-step.js).
+     Counts only: the suggestion's text is never sent. `ms_to_accept` is the
+     time from the suggestion appearing to Tab. */
+  suggestion_shown: { owner: "ui", props: {} },
+  suggestion_accepted: { owner: "ui", props: { ms_to_accept: int({ nullable: true }) } },
+
   /* ---- navigation and features ---- */
   /* `prefix`, `prefix:tail` or `runmode:workers:N` — the renderer keeps only enum tails; uiActionOk refuses anything id-like. */
   ui_action: {
@@ -364,7 +384,7 @@ export const EVENTS: Record<string, EventSpec> = {
     owner: "main",
     props: {
       result: en(["ok", "install_failed", "unavailable"]),
-      reason: en(["voice-not-macos", "voice-os-too-old", "voice-helper-missing", "voice-helper-failed"], { nullable: true }),
+      reason: en(["voice-not-macos", "voice-os-too-old", "voice-helper-missing", "voice-helper-failed", "voice-whisper-missing", "voice-whisper-model-missing"], { nullable: true }),
     },
   },
   task_created: { owner: "main", props: { kind: en(["cron", "interval", "at"]) } },

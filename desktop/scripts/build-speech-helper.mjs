@@ -3,10 +3,14 @@
  * out/native/atomic-speech. It takes about two seconds, so it runs on every
  * `npm run build` rather than in a separate step nobody remembers.
  *
- * The build must never fail for someone without Xcode or off macOS: no
- * swiftc means the binary is absent, and voice:probe then disables the mic
- * button with `Voice input needs the speech helper, which this build was
- * packaged without`. Nothing else in the app depends on it.
+ * Off macOS, or on a Mac with no swiftc at all, the step is skipped and the
+ * build carries on: the binary is absent, and voice:probe then disables the
+ * mic button with `Voice input needs the speech helper, which this build was
+ * packaged without`. When swiftc IS there and the compile fails, the build
+ * fails with the compiler output: a broken helper takes live dictation and
+ * file transcription down together, and a quiet "skipped" hid that.
+ * ATOMIC_SKIP_SPEECH_HELPER=1 skips it on purpose (an older Xcode). The
+ * decision lives in speech-helper-plan.mjs so it can be tested.
  *
  * `-swift-version 5` is deliberate. AVAudioConverter's input block is
  * @Sendable and the mutable `served` flag it captures is a hard error under
@@ -16,24 +20,32 @@
  * SpeechAnalyzer availability floor.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compileFailureMessage, speechHelperPlan } from "./speech-helper-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "native", "atomic-speech.swift");
 const outDir = join(here, "..", "out", "native");
 const out = join(outDir, "atomic-speech");
 
-if (process.platform !== "darwin") {
-  console.log("speech helper: skipped (not macOS)");
-  process.exit(0);
-}
+const plan = speechHelperPlan({
+  platform: process.platform,
+  env: process.env,
+  hasSource: existsSync(src),
+  hasSwiftc: () => {
+    try {
+      execFileSync("xcrun", ["-f", "swiftc"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+      return true;
+    } catch {
+      return false;
+    }
+  },
+});
 
-try {
-  execFileSync("xcrun", ["-f", "swiftc"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-} catch {
-  console.log("speech helper: skipped (no swiftc)");
+if (plan.action === "skip") {
+  console.log(`speech helper: skipped (${plan.reason})`);
   process.exit(0);
 }
 
@@ -49,7 +61,7 @@ try {
   );
   console.log(`speech helper → ${out}`);
 } catch (err) {
-  // A compile failure on an older SDK is not a reason to break the app's
-  // build; the button disables itself with the honest reason instead.
-  console.log(`speech helper: skipped (${err instanceof Error ? err.message.split("\n")[0] : String(err)})`);
+  // swiftc wrote its diagnostics straight to stderr (stdio inherit) above.
+  console.error(compileFailureMessage(err));
+  process.exit(1);
 }

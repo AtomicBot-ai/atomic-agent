@@ -8,6 +8,7 @@ import {
   detectInstallSource,
   detectShadowedPackage,
   packagedUpdateRefusal,
+  requiredUpdateText,
   shadowedPackageNotice,
 } from "../update/index.js";
 
@@ -205,6 +206,8 @@ export async function updateCommand(
         process.stdout.write(
           `update available: ${result.currentVersion} → ${result.latestVersion}\n`,
         );
+        const required = requiredUpdateText(result.requiredReason);
+        if (required) process.stdout.write(`${required}\n`);
       }
       return 0;
     }
@@ -224,6 +227,8 @@ export async function updateCommand(
     process.stdout.write(
       `current: ${result.currentVersion} → latest: ${result.latestVersion}\n`,
     );
+    const required = requiredUpdateText(result.requiredReason);
+    if (required) process.stdout.write(`${required}\n`);
     if (isTTY()) {
       const ok = await confirm(`update to ${result.latestVersion}? [y/N] `);
       if (!ok) {

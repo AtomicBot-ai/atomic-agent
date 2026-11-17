@@ -1,3 +1,4 @@
+import type { ChatExportWire } from "./chat-export.js";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -12,6 +13,9 @@ import { LineSplitter, lineLevel } from "./agent-output.js";
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
+import { runMemoryWrite, type MemoryWriteResult } from "./memory-write.js";
+import { projectBodyFields as projectFields } from "./projects-store.js";
+import { reasoningBodyField, type ReasoningLevel } from "./reasoning-level.js";
 import {
   pairingRequest,
   readPairingReply,
@@ -246,6 +250,16 @@ export interface ApprovalRulesList {
   globalPath: string;
   projectPath?: string;
   projectRules: ApprovalRule[];
+}
+
+/**
+ * ATO-1087: the agent's offline mode (network kill switch, ATO-1084) as
+ * `GET/POST /api/offline-mode` reports it. `egress` counts traffic to
+ * anything but this computer since `since` (reset when the mode turns on).
+ */
+export interface OfflineModeStatus {
+  enabled: boolean;
+  egress: { bytesOut: number; requestsOut: number; requestsBlocked: number; since: string } | null;
 }
 
 /** The `error.message` of an agent's JSON error body, else the HTTP status. */
@@ -583,6 +597,8 @@ export class AgentClient extends EventEmitter {
   private turns = new Map<string, AbortController>();
   /** turnId → the agent's `X-Atomic-Completion-Id`, once the stream opens. */
   private completions = new Map<string, string>();
+  /** ATO-1026: turns stopped by their own cancel(), not by stopNow (analytics' cancel_by). */
+  private readonly cancelledByUser = new Set<string>();
   /** Set by stop(), cleared as the next start begins: the turns stop() drops end no `idle`. */
   private stopping = false;
 
@@ -1158,12 +1174,17 @@ export class AgentClient extends EventEmitter {
   // chat could not be reached — or pinned — at all. 200 is the route's cap and
   // the TUI's own scan window (chat-orchestrator.ts RAIL_SCAN_LIMIT).
   // ATO-731: chats keep their own folders; an agent from before `scope` lists this folder's, as before.
-  sessions = () => this.json<unknown>("/api/sessions?limit=200&scope=all");
+  sessions = () => this.json<unknown>("/api/sessions?limit=1000&scope=all");
+  /** GET /api/sessions/search (ATO-1149): words in past chats, every folder. */
+  searchSessions = (q: string) => this.json<unknown>(`/api/sessions/search?q=${encodeURIComponent(q)}&limit=25&scope=all`);
   models = () => this.json<unknown>("/v1/models");
   session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
   /** `DELETE /api/sessions/{id}` — purge one session row (idempotent on 0.5.4). Harness-only today: the smoke removes the task fixtures' empty sessions. */
   deleteSession = (id: string) => this.request<unknown>("DELETE", `/api/sessions/${encodeURIComponent(id)}`);
   /** ATO-455: `PATCH /api/sessions/{id}` `{title}` — the operator's name for a chat; the agent's namer never replaces it. 404 "no route" on an agent from before it. */
+  /** ATO-1054: `GET /api/sessions/{id}/export?format=` — the chat as a document (main/chat-export.ts). 404 on an agent from before it. */
+  exportSession = (id: string, format: "markdown" | "html" | "docx") =>
+    this.json<ChatExportWire>(`/api/sessions/${encodeURIComponent(id)}/export?format=${format}`);
   renameSession = (id: string, title: string) =>
     this.request<{ id: string; title: string | null }>("PATCH", `/api/sessions/${encodeURIComponent(id)}`, { title });
 
@@ -1246,6 +1267,13 @@ export class AgentClient extends EventEmitter {
       { text },
     );
 
+  /* ATO-1040: the chat's goal, read and set / paused / resumed / cleared
+     (session-goal-ipc.ts). An agent from before the routes answers 404. */
+  sessionGoal = (sessionId: string) =>
+    this.json<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}/goal`);
+  sessionGoalAction = (sessionId: string, body: Record<string, unknown>) =>
+    this.request<unknown>("POST", `/api/sessions/${encodeURIComponent(sessionId)}/goal`, body);
+
   task = (id: string) => this.json<unknown>(`/api/tasks/${encodeURIComponent(id)}`);
   /** ATO-1113: `POST /api/tasks`, the overnight run (overnight-ipc.ts); `workingDir` opens its session in that folder. */
   createTask = (body: Record<string, unknown>) => this.request<unknown>("POST", "/api/tasks", body);
@@ -1253,6 +1281,13 @@ export class AgentClient extends EventEmitter {
   /** Runs one attempt synchronously — an agent turn — so it waits longer than a read. */
   runTask = (id: string) =>
     this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/run`, undefined, 180_000);
+  /* ATO-590 — schedule controls. An agent from before these routes answers
+     404 "no route"; task-controls-ipc.ts reports that as unsupported. */
+  pauseTask = (id: string) => this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/pause`, {});
+  resumeTask = (id: string) => this.request<unknown>("POST", `/api/tasks/${encodeURIComponent(id)}/resume`, {});
+  /** `{runs:[{id, attempt, sessionId, startedAt, endedAt, outcome, error, errorCategory}], available}`, newest first. */
+  taskRuns = (id: string, limit = 50) =>
+    this.request<unknown>("GET", `/api/tasks/${encodeURIComponent(id)}/runs?limit=${encodeURIComponent(String(limit))}`);
   health = () => this.json<unknown>("/health");
   /** ATO-134: /health without its llama probe (agent `?llama=0`; an older one ignores it and probes) — for busyTurns before a switch. */
   turnsHealth = () => this.json<unknown>("/health?llama=0");
@@ -1269,6 +1304,32 @@ export class AgentClient extends EventEmitter {
     this.request<{ server: unknown }>(
       "POST",
       `/api/mcp/servers/${encodeURIComponent(name)}/${op}`,
+      undefined,
+      60_000,
+    );
+  /*
+   * Browser sign-in (OAuth) for a remote MCP server. `start` answers
+   * `{ state: "pending", authUrl }` for the browser, or `{ state:
+   * "signed_in" }` when a saved token was enough; it runs discovery and
+   * client registration, so it gets a longer timeout. An agent from before
+   * the routes answers 404.
+   */
+  mcpAuthStart = (name: string) =>
+    this.request<{ state: "pending" | "signed_in"; authUrl?: string }>(
+      "POST",
+      `/api/mcp/servers/${encodeURIComponent(name)}/auth/start`,
+      undefined,
+      60_000,
+    );
+  mcpAuthStatus = (name: string) =>
+    this.request<{ state: "signed_out" | "pending" | "signed_in"; error?: string }>(
+      "GET",
+      `/api/mcp/servers/${encodeURIComponent(name)}/auth`,
+    );
+  mcpAuthSignOut = (name: string) =>
+    this.request<{ state: "signed_out" }>(
+      "POST",
+      `/api/mcp/servers/${encodeURIComponent(name)}/auth/signout`,
       undefined,
       60_000,
     );
@@ -1385,6 +1446,11 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  /** ATO-582: the Memory tab's edit or delete, through the agent's own memory routes (memory-write.ts). Never throws. */
+  memoryWrite(op: unknown): Promise<MemoryWriteResult> {
+    return runMemoryWrite(op, () => ({ base: this.base(), headers: this.headers() }));
+  }
+
   /**
    * The composer's coding mode, applied live on the runtime by
    * /api/coding-mode exactly as the TUI does — no config write, no
@@ -1462,6 +1528,104 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1094: the next-step suggestion the agent stored after this chat's last
+   * turn (ATO-1093), `GET /api/sessions/{id}/next-step` answering
+   * `{ sessionId, suggestion: string | null }`. `supported: false` on an agent
+   * without the route (its "No route for GET" 404), so the window stops asking;
+   * `text: null` when there is none yet, the chat is unknown, or the agent is
+   * not up. Never throws.
+   */
+  async nextStep(id: string): Promise<{ supported: true; text: string | null } | { supported: false }> {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(id)}/next-step`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { suggestion?: unknown; error?: { message?: unknown } }
+        | null;
+      if (!res.ok) {
+        const msg = body && body.error && typeof body.error.message === "string" ? body.error.message : "";
+        return res.status === 404 && /^No route for /.test(msg) ? { supported: false } : { supported: true, text: null };
+      }
+      const text = body && typeof body.suggestion === "string" ? body.suggestion.trim() : "";
+      return { supported: true, text: text || null };
+    } catch {
+      return { supported: true, text: null };
+    }
+  }
+
+  /**
+   * ATO-1150: archive or unarchive a chat in the agent's own session
+   * metadata (`POST /api/sessions/{id}/archived`), so the terminal sees it
+   * too. `supported: false` on an agent from before the route ("No route
+   * for"): the window then keeps the flag in prefs.json, as it did before.
+   * `notFound` for a chat the agent does not hold. Never throws.
+   */
+  async setSessionArchived(id: string, archived: boolean): Promise<
+    | { supported: false }
+    | { supported: true; ok: true; archived: boolean }
+    | { supported: true; ok: false; notFound: boolean; error: string }
+  > {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(id)}/archived`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ archived }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) {
+        let stored = archived;
+        try { stored = (JSON.parse(text) as { archived?: unknown }).archived === true; } catch { /* the asked value */ }
+        return { supported: true, ok: true, archived: stored };
+      }
+      let message = `HTTP ${res.status}`;
+      try { message = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? message; } catch { /* not JSON */ }
+      return { supported: true, ok: false, notFound: res.status === 404, error: message };
+    } catch (err) {
+      // Not reached (agent down, timeout): not a missing route, just not done now.
+      return { supported: true, ok: false, notFound: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * ATO-592: how many tasks the agent is running now (`GET /api/tasks?status=running`),
+   * for Keep Computer Awake. Null when the agent did not answer.
+   */
+  async runningTaskCount(): Promise<number | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/tasks?status=running`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { tasks?: unknown };
+      return Array.isArray(body.tasks) ? body.tasks.length : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ATO-592: the computer just woke up; ask the agent to run tasks that fell
+   * due during sleep now (`POST /api/tasks/wake`). An agent without the route
+   * answers 404 and simply runs them at its next tick.
+   */
+  async wakeTasks(): Promise<void> {
+    try {
+      await fetch(`${this.base()}/api/tasks/wake`, {
+        method: "POST",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+    } catch {
+      /* not running yet, or gone: its own scheduler catches up */
+    }
+  }
+
+  /**
    * ATO-731: move one chat to another folder (`POST /api/sessions/{id}/working-dir`),
    * no restart. `supported: false` on an agent without the route; `busy` while
    * that chat runs a turn. With no stored chat yet (`id` null or unknown) only
@@ -1486,6 +1650,43 @@ export class AgentClient extends EventEmitter {
       try { message = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? message; } catch { /* not JSON */ }
       return { supported: true, error: message };
     } catch {
+      return { supported: false };
+    }
+  }
+
+  /**
+   * ATO-875: `POST /api/complete` — one plain request to the agent's current
+   * model, no tools, no chat kept. The agent routes it the way a chat step
+   * goes (local / Core, cloud key, subscription, Fusion's base model).
+   * `supported: false` on an agent from before the route (404 "No route for",
+   * or 501 from a runtime without it) or when it cannot be reached, so the
+   * caller falls back. A timeout is an answer (504). Never throws.
+   */
+  async plainComplete(
+    body: { prompt: string; system?: string; max_tokens?: number },
+    timeoutMs = 70_000,
+  ): Promise<{ supported: false } | { supported: true; ok: true; text: string } | { supported: true; ok: false; status: number; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/complete`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await res.text();
+      if ((res.status === 404 && /No route for/.test(text)) || res.status === 501) return { supported: false };
+      // A named type, not `typeof parsed`: after `= null` that reads as `null` and narrows to never.
+      type CompleteReply = { text?: unknown; error?: { message?: unknown } };
+      let parsed: CompleteReply | null = null;
+      try { parsed = JSON.parse(text) as CompleteReply; } catch { /* not JSON */ }
+      if (res.ok && typeof parsed?.text === "string") return { supported: true, ok: true, text: parsed.text };
+      const message = typeof parsed?.error?.message === "string" ? parsed.error.message : `HTTP ${res.status}`;
+      return { supported: true, ok: false, status: res.status, error: message };
+    } catch (err) {
+      // A slow model is an answer, not an old agent: asking it again directly would wait twice.
+      if (err && typeof err === "object" && (err as { name?: unknown }).name === "TimeoutError") {
+        return { supported: true, ok: false, status: 504, error: "timed out" };
+      }
       return { supported: false };
     }
   }
@@ -1569,6 +1770,86 @@ export class AgentClient extends EventEmitter {
   async deleteApprovalRule(id: string): Promise<{ supported: false } | { ok: true } | { ok: false; notFound?: boolean; error: string }> {
     try {
       const res = await fetch(`${this.base()}/api/approval-rules/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) return { ok: true };
+      if (res.status === 404) return { ok: false, notFound: true, error: errorMessage(text, res.status) };
+      return { ok: false, error: errorMessage(text, res.status) };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1087: `GET /api/offline-mode`, or with `enabled` a `POST` that
+   * switches it (the agent persists `network.offline` and applies it live).
+   * An agent from before the route (ATO-1084) answers "No route for",
+   * reported as unsupported so Settings can say so. Never throws.
+   */
+  async offlineMode(enabled?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: OfflineModeStatus } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/offline-mode`, {
+        method: enabled === undefined ? "GET" : "POST",
+        headers: this.headers(),
+        ...(enabled === undefined ? {} : { body: JSON.stringify({ enabled }) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      const body = JSON.parse(text) as { enabled?: unknown; egress?: unknown };
+      if (typeof body.enabled !== "boolean") return { supported: true, ok: false, error: "the agent sent no offline mode state" };
+      return { supported: true, ok: true, data: { enabled: body.enabled, egress: (body.egress ?? null) as OfflineModeStatus["egress"] } };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-445: Settings › Tasks › Webhooks. `GET /api/webhooks` lists the saved
+   * routes (never their secrets); `baseUrl` is where this agent answers, so
+   * the screen can show the full address. An agent from before the route
+   * answers "No route for" and is reported as unsupported. Never throws.
+   */
+  async webhooks(): Promise<{ supported: false } | { supported: true; ok: true; data: unknown; baseUrl: string; remote: boolean } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/webhooks`, { headers: this.headers(), signal: AbortSignal.timeout(10_000) });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, data: JSON.parse(text) as unknown, baseUrl: this.base(), remote: this.isRemote };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /** ATO-445: `POST /api/webhooks`. The reply's `secret` is the only time it is shown. */
+  async createWebhook(body: Record<string, unknown>): Promise<{ supported: false } | { ok: true; data: unknown } | { ok: false; conflict?: boolean; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/webhooks`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) return { ok: true, data: JSON.parse(text) as unknown };
+      if (res.status === 409) return { ok: false, conflict: true, error: errorMessage(text, res.status) };
+      return { ok: false, error: errorMessage(text, res.status) };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /** ATO-445: `DELETE /api/webhooks/:name`. `notFound`: already gone. */
+  async deleteWebhook(name: string): Promise<{ supported: false } | { ok: true } | { ok: false; notFound?: boolean; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/webhooks/${encodeURIComponent(name)}`, {
         method: "DELETE",
         headers: this.headers(),
         signal: AbortSignal.timeout(10_000),
@@ -1781,6 +2062,115 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-563: put one file back as it was before one reply changed it,
+   * through the agent's `POST /api/sessions/{id}/fs/restore`, from the file
+   * checkpoint the agent took before that reply's first write (ATO-1056).
+   * The reply is named by its question: `priorQuestions` (questions before
+   * it, steers not counted) and `expectText`. The window asks the person
+   * first; this is the act. A 404 with no code is an agent without the route.
+   */
+  async restoreFile(sessionId: string, path: string, priorQuestions: number, expectText: string): Promise<{
+    ok: boolean; supported: boolean; code?: string; error?: string; action?: string;
+  }> {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/fs/restore`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ path, priorQuestions, expectText }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      let body: { action?: unknown; error?: { message?: unknown; code?: unknown } } | null = null;
+      try {
+        const raw = await res.text();
+        body = raw ? JSON.parse(raw) : null;
+      } catch {
+        /* not JSON */
+      }
+      if (res.ok) return { ok: true, supported: true, ...(typeof body?.action === "string" ? { action: body.action } : {}) };
+      const message = typeof body?.error?.message === "string" ? body.error.message : "";
+      const code = typeof body?.error?.code === "string" && body.error.code ? body.error.code : undefined;
+      if (res.status === 404 && !code) {
+        return { ok: false, supported: false, error: "This agent cannot put files back yet; update it, or ask it to restore the file" };
+      }
+      const words: Record<string, string> = {
+        session_not_found: "This chat is not saved yet",
+        no_snapshot: "The agent kept no copy of this file from before this reply",
+        changed_later: "A later reply changed this file too; revert it from the latest reply",
+        not_restorable: "The agent could not keep a copy of this file (too large or not plain text)",
+        point_mismatch: "The agent's chat no longer matches this window; reopen the chat and try again",
+        turn_in_progress: "The agent is still working in this chat; revert the file when it finishes",
+      };
+      return { ok: false, supported: true, ...(code ? { code } : {}), error: (code && words[code]) || message || `HTTP ${res.status}` };
+    } catch (err) {
+      return { ok: false, supported: true, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1056 / ATO-1058: one of the agent's rewind and fork routes of a chat
+   * (`/api/sessions/{id}/<path>`), answered as the status and the parsed JSON
+   * body (null when there is none). chat-rewind.ts words the answer; a request
+   * that never got one throws.
+   */
+  async sessionRoute(sessionId: string, path: string, method: "GET" | "POST", body?: unknown, timeoutMs = 60_000): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/${path}`, {
+      method,
+      headers: this.headers(),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    let parsed: unknown = null;
+    try {
+      const raw = await res.text();
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch {
+      /* not JSON */
+    }
+    return { status: res.status, body: parsed };
+  }
+
+  /**
+   * ATO-448: continue a chat whose last turn a restart cut off, through the
+   * agent's `POST /api/sessions/{id}/resume`. On success the agent hands back
+   * the continuing message (a note to check before repeating side effects,
+   * then the cut-off request), which the window sends as a normal turn; it is
+   * offered once. `release` gives it back when the window could not send it.
+   * A 409 carries the agent's `code` (`nothing_to_resume`, `turn_in_progress`).
+   * The route's own 404 is an unknown chat; an agent without the route answers
+   * its unknown-route 404 with no code and is reported as unsupported.
+   */
+  async resumeInterruptedTurn(sessionId: string, release = false): Promise<{
+    ok: boolean; supported: boolean; text?: string; code?: string; error?: string;
+  }> {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/resume`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(release ? { release: true } : {}),
+        signal: AbortSignal.timeout(30_000),
+      });
+      let body: { text?: unknown; released?: unknown; error?: { message?: unknown; code?: unknown } } | null = null;
+      try {
+        const raw = await res.text();
+        body = raw ? JSON.parse(raw) : null;
+      } catch {
+        /* not JSON */
+      }
+      const message = typeof body?.error?.message === "string" ? body.error.message : "";
+      const code = typeof body?.error?.code === "string" && body.error.code ? body.error.code : undefined;
+      if (res.status === 404) {
+        if (code === "session_not_found") return { ok: false, supported: true, code, error: "This chat is not saved yet" };
+        return { ok: false, supported: false, error: "This agent cannot continue a reply a restart cut off" };
+      }
+      if (res.ok && release) return { ok: true, supported: true };
+      if (res.ok && typeof body?.text === "string") return { ok: true, supported: true, text: body.text };
+      return { ok: false, supported: true, ...(code ? { code } : {}), error: message || `HTTP ${res.status}` };
+    } catch (err) {
+      return { ok: false, supported: true, error: requestErrorText(err) };
+    }
+  }
+
+  /**
    * Run one turn. Deltas are emitted as `chat` events rather than
    * returned, so the renderer can paint tokens as they arrive.
    */
@@ -1789,6 +2179,17 @@ export class AgentClient extends EventEmitter {
     messages: Array<{ role: string; content: string }>,
     sessionId?: string,
     workingDir?: string,
+    /**
+     * ATO-42: the instructions of the chat's project, re-sent every turn
+     * (`project_instructions` / `project_name`); null says the chat is in
+     * no project, so the agent drops any it stamped before. Undefined
+     * sends nothing (an agent from before the field ignores both anyway).
+     */
+    project?: { name: string; text: string } | null,
+    /** ATO-490: the chat's reasoning level; absent for Auto. */
+    reasoning?: ReasoningLevel,
+    /** ATO-1148: this turn runs on the chat's project cloud model (main/project-model.ts). */
+    turnModel?: { providerId: string; model: string },
   ): Promise<void> {
     const controller = new AbortController();
     this.turns.set(turnId, controller);
@@ -1817,9 +2218,17 @@ export class AgentClient extends EventEmitter {
           session_id: chatSessionIdFor(sessionId),
           // ATO-731: the folder a NEW session works in; the agent keeps an existing session's own.
           ...(workingDir ? { working_dir: workingDir } : {}),
+          ...projectFields(project),
+          ...reasoningBodyField(reasoning),
+          // ATO-1148: for this turn only; the agent's config and active model stay as they are.
+          ...(turnModel ? { provider_id: turnModel.providerId, provider_model: turnModel.model } : {}),
         }),
         signal: controller.signal,
       });
+      // An agent from before ATO-1148 ignores the fields and runs its own model; say so in the log.
+      if (turnModel && res.ok && !res.headers.get("x-atomic-turn-model")) {
+        console.warn(`[desktop] project model: the agent ran this turn on its own model, not ${turnModel.providerId}/${turnModel.model} (older agent)`);
+      }
       if (!res.ok || !res.body) {
         const detail = res.ok ? "no response body" : `HTTP ${res.status}`;
         // ATO-275: `transport` / `httpStatus` are for the turn's analytics (chat-turns.ts); the window reads `error`.
@@ -1915,10 +2324,14 @@ export class AgentClient extends EventEmitter {
         error: aborted ? null : err instanceof Error ? err.message : String(err),
         // ATO-275: the stream broke under the turn (analytics only, see above).
         ...(aborted ? {} : { transport: true }),
+        /* ATO-1026 (analytics only): the turn's own Stop (cancel), or the
+           app ending every turn (stopNow: a restart, a quit). */
+        ...(aborted ? { by: this.cancelledByUser.has(turnId) ? "user" : "app" } : {}),
       });
     } finally {
       const ended = this.turns.delete(turnId);
       this.completions.delete(turnId);
+      this.cancelledByUser.delete(turnId);
       /* The last turn has ended on its own (finished, failed, or stopped from
          the window) — not by stop(), which drops them all and is a restart
          already. A restart a switch held back for the turns runs now. */
@@ -1945,6 +2358,7 @@ export class AgentClient extends EventEmitter {
     if (!controller) return false;
     const completionId = this.completions.get(turnId);
     if (completionId) void this.cancelCompletion(completionId);
+    this.cancelledByUser.add(turnId);   // ATO-1026: chat_turn_ui's cancel_by
     controller.abort();
     return true;
   }

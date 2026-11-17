@@ -133,7 +133,7 @@ export interface SwitchResult {
   refusal?: string;
   /** Run-mode switches: the effective mode either side of the write, and the TUI's `run mode: …` line. */
   runMode?: { before: string; after: string; line: string; enteredFusion: boolean };
-  /** setFusionWorkers: the TUI's `fusion: N workers …` line. */
+  /** setFusionWorkers: the TUI's `fusion: N workers …` line; entering Fusion: the subscription-CLI worker warning (ATO-1489). */
   notice?: string;
 }
 
@@ -1134,6 +1134,8 @@ async function afterRunModeWrite(res: {
       line: `run mode: ${describeRunMode(now)}`,
       enteredFusion: now.effective === "fusion" && (v?.before.effective ?? now.effective) !== "fusion",
     },
+    // ATO-1489: a warning, not a refusal — the switch above went ahead.
+    ...(v?.notice ? { notice: v.notice } : {}),
   };
 }
 

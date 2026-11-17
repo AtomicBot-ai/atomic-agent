@@ -180,6 +180,16 @@ export function formatConfigValue(key: string, value: unknown): string {
   if (isSecretConfigKey(key) && typeof value === "string" && value.length > 0) {
     return "***";
   }
+  // A list under a secret name (`extraApiKeyEnvVars`, ATO-471) shows how
+  // many entries there are, never what they are: should a key be pasted
+  // where a name belongs, it still does not reach the terminal.
+  if (
+    isSecretConfigKey(key) &&
+    Array.isArray(value) &&
+    value.some((item) => typeof item === "string" && item.length > 0)
+  ) {
+    return JSON.stringify(value.map(() => "***"));
+  }
   return JSON.stringify(value);
 }
 

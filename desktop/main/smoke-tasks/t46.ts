@@ -87,7 +87,13 @@ async function startScreen(js: Js, check: Check): Promise<void> {
     return {scHeight: Math.round(s.height), scWidth: Math.round(s.width), width: Math.round(e.width),
       offCentre: Math.round((top + bottom) / 2 - (s.top + s.bottom) / 2), clearOfComposer: Math.round(s.bottom - bottom),
       meta: meta ? meta.textContent : null, metaTitle: meta ? meta.getAttribute('title') : null,
-      wd, label: workingDirLabel(wd), title: tb ? tb.textContent : null, roomTitle: roomTitle()};
+      wd, label: workingDirLabel(wd), title: tb ? tb.textContent : null, roomTitle: roomTitle(),
+      // The starter cards: four, each with a title and a hint, none past the column.
+      cards: [...ec.querySelectorAll('.ghost .ghostchip')].map((c) => {
+        const b = c.getBoundingClientRect();
+        return {t: (c.querySelector('.gc-t') || {}).textContent || null, hint: !!c.querySelector('.gc-d'),
+          inside: b.left >= e.left - 0.5 && b.right <= e.right + 0.5};
+      })};
   })()`);
   check(
     "T46 Д13: the empty chat's greeting stands in the middle of the transcript area, not on the composer",
@@ -101,6 +107,13 @@ async function startScreen(js: Js, check: Check): Promise<void> {
     q({ meta: r.meta, title: r.metaTitle, wd: r.wd }),
   );
   check("T46 Д15: a chat not yet named has no title in the toolbar", r.title === null && r.roomTitle === "", q({ title: r.title, roomTitle: r.roomTitle }));
+  const cards = Array.isArray(r.cards) ? (r.cards as Array<Record<string, unknown>>) : [];
+  check(
+    "T46: the start screen offers four starter cards (Summarise this folder, Create an image, Make a video, Write code), each with a hint, inside the column",
+    !r.err && cards.map((c) => c["t"]).join("|") === "Summarise this folder|Create an image|Make a video|Write code"
+      && cards.every((c) => c["hint"] === true && c["inside"] === true),
+    q({ cards: r.cards }),
+  );
 }
 
 /* Д29 — one helper, one way of writing the folder, three places. */
@@ -242,7 +255,7 @@ async function downloadCard(js: Js, check: Check): Promise<void> {
       const fold = document.querySelector('#dlcard .dlc-fold'); if (fold) fold.click();
       await tick(150);
       const folded = shot();
-      const badge = document.querySelector('#dlcard .dlc-badge'); if (badge) badge.click();
+      const badge = document.querySelector('#sidebar .sb-dl .dlc-badge'); if (badge) badge.click();
       await tick(150);
       const reopened = shot();
       window.__dlClear(); await tick(200);
@@ -259,9 +272,12 @@ async function downloadCard(js: Js, check: Check): Promise<void> {
     return;
   }
   const { plain, open, folded, reopened, gone } = r;
-  const within = (s: Shot | undefined) => !!s && !!s.appr && !!s.card && s.appr.bottom <= s.card.top && s.abort && s.allow && s.deny;
+  /* ATO-1185: the card hangs under the sidebar header; within reach means it
+     covers none of the approval and the three presses land on their buttons. */
+  const meet = (a: Box, b: Box) => !!a && !!b && a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+  const within = (s: Shot | undefined) => !!s && !!s.appr && !!s.card && !meet(s.appr, s.card) && s.abort && s.allow && s.deny;
   check(
-    "T46 Д19: with the download card open, a one-turn chat ending on an approval sits above it — Abort run, Allow once and Deny all within reach",
+    "T46 Д19: with the download card open, it covers none of a one-turn chat's approval — Abort run, Allow once and Deny all within reach",
     !!plain && plain.abort && within(open),
     q({ plain, open }),
   );
@@ -298,13 +314,19 @@ async function composer(js: Js, check: Check): Promise<void> {
     try {
       window.__voiceProbeSet({available: true});
       const on = document.querySelector('.composer .field .micbtn');
-      const live = {color: getComputedStyle(on).color, ink: getComputedStyle(document.body).color,
+      const live = {color: getComputedStyle(on).color, opacity: getComputedStyle(on).opacity,
         aria: on.getAttribute('aria-disabled'), disabled: on.disabled};
       window.__voiceProbeSet({available: false, reason: 'voice-helper-missing'});
       const off = document.querySelector('.composer .field .micbtn');
+      // The disabled look, as the window draws it (composer.css: --ink-3 at .55), to hold the working one against.
+      live.off = {color: getComputedStyle(off).color, opacity: getComputedStyle(off).opacity};
       const offView = {aria: off.getAttribute('aria-disabled'), title: off.getAttribute('title'), hook: window.__voiceMic().disabled};
+      // Where a speech model can be downloaded (Windows), a press opens that
+      // setup instead of saying why; this check is about the no-download case.
+      VOICE.canDownload = false;
       off.click();   // a press with no mousedown before it: the keyboard's way in
-      await new Promise((res) => setTimeout(res, 60));
+      // Up to a second for the toast: 60 ms was too short on the Windows CI runners.
+      for (let i = 0; i < 20 && !S.toasts.some((t) => t.t === OFF); i += 1) await new Promise((res) => setTimeout(res, 50));
       return {live, off: offView, said: S.toasts.filter((t) => t.t === OFF).map((t) => t.t + ' / ' + t.s),
         reason: VOICE_REASONS['voice-helper-missing'], state: VOICE.state};
     } finally {
@@ -318,8 +340,13 @@ async function composer(js: Js, check: Check): Promise<void> {
   const live = (mic.live ?? {}) as Record<string, unknown>;
   const off = (mic.off ?? {}) as Record<string, unknown>;
   check(
-    "T46 Д24: a microphone that works is drawn in the full ink, not the disabled grey",
-    live.color === live.ink && live.aria === null && live.disabled === false,
+    /* The W2 composer redesign draws its icons muted (--ink-2, --ink on
+       hover), so "works" is no longer the full ink: it is not the disabled
+       look (the --ink-3 grey at .55) and nothing marks it off. */
+    "T46 Д24: a microphone that works is not drawn in the disabled grey, and is not marked off",
+    typeof live.color === "string" && live.opacity === "1"
+      && !!live.off && (live.off as Record<string, unknown>).color !== live.color && Number((live.off as Record<string, unknown>).opacity) < 1
+      && live.aria === null && live.disabled === false,
     q(live),
   );
   check(

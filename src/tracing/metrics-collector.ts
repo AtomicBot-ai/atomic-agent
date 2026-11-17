@@ -1,8 +1,18 @@
+export type MetricKind = "counter" | "gauge" | "histogram";
+
 export interface MetricSample {
   name: string;
+  /**
+   * For a counter, the running total for this name and tag set; for a
+   * gauge, the reading; for a histogram, one observation.
+   */
   value: number;
   tags?: Record<string, string>;
   timestamp: number;
+  /** Which facade call produced the sample, so an aggregating sink (the `/metrics` exposition, ATO-646) knows how to fold it. */
+  kind?: MetricKind;
+  /** Counters only: what this call added to `value`. */
+  delta?: number;
 }
 
 export type MetricSink = (sample: MetricSample) => void;
@@ -31,6 +41,8 @@ export class MetricsCollector {
       value: next,
       ...(tags ? { tags } : {}),
       timestamp: Date.now(),
+      kind: "counter",
+      delta,
     });
   }
 
@@ -40,6 +52,7 @@ export class MetricsCollector {
       value,
       ...(tags ? { tags } : {}),
       timestamp: Date.now(),
+      kind: "gauge",
     });
   }
 
@@ -49,6 +62,7 @@ export class MetricsCollector {
       value,
       ...(tags ? { tags } : {}),
       timestamp: Date.now(),
+      kind: "histogram",
     });
   }
 

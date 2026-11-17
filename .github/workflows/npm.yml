@@ -1,0 +1,117 @@
+name: npm
+
+# Publishes a CLI release to npm: the launcher `atomic-agent` (commands `atag` and
+# `atomic-agent`) and one `@atomicbot/atag-<slug>` package per release bundle, made
+# from the published release's own archives (scripts/npm-packages.ts,
+# scripts/npm-packaging.ts, scripts/docs/npm.md). Publishing a vX.Y.Z release on
+# GitHub fires `release: published`, which runs this; desktop-v* releases, drafts
+# and releases without bundles change nothing. It also runs by hand:
+#
+#   gh workflow run npm.yml -f tag=v0.7.1                 # publish that release
+#   gh workflow run npm.yml -f tag=v0.7.1 -f dry_run=true # stage and `npm publish --dry-run`
+#
+# Secret: NPM_TOKEN, a granular npm token allowed to publish `atomic-agent` and the
+# `@atomicbot` scope. Without it a published release only logs a notice; nothing fails.
+# A version already on npm is skipped, so re-running after a partial failure is safe.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The published CLI release (vX.Y.Z)"
+        type: string
+        required: true
+      dry_run:
+        description: "Stage and run npm publish --dry-run only"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # npm provenance: the packages link back to this workflow run.
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ inputs.tag || github.event.release.tag_name }}
+      DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - name: Is this a published CLI release
+        id: release
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "$TAG is not a CLI release (vX.Y.Z); nothing to publish"
+            echo "go=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          if [ "$draft" = "true" ]; then
+            echo "$TAG is a draft; npm gets it once it is published"
+            echo "go=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if [ "$DRY_RUN" != "1" ] && [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::notice::NPM_TOKEN is not set; $TAG was not published to npm (scripts/docs/npm.md)"
+            echo "go=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "go=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.release.outputs.go == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.release.outputs.go == 'true'
+        with:
+          node-version: "25.7"
+          check-latest: true
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies (tsx only; no native builds)
+        if: steps.release.outputs.go == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Download the release bundles
+        if: steps.release.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dl \
+            -p 'atomic-agent-*.tar.gz' -p 'atomic-agent-*.tar.gz.sha256' \
+            -p 'atomic-agent-*.zip' -p 'atomic-agent-*.zip.sha256'
+          ls -la dl
+
+      - name: Stage the packages
+        if: steps.release.outputs.go == 'true'
+        run: npx tsx scripts/npm-packages.ts stage --version "${TAG#v}" --archives dl --out dist/npm
+
+      - name: Publish (platform packages first, the launcher last)
+        if: steps.release.outputs.go == 'true'
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          dist_tag=latest
+          if [[ "$version" == *-* ]]; then dist_tag=next; fi
+          while read -r dir; do
+            [ -n "$dir" ] || continue
+            name="$(node -p "require('./dist/npm/$dir/package.json').name")"
+            if [ "$DRY_RUN" = "1" ]; then
+              npm publish "dist/npm/$dir" --access public --tag "$dist_tag" --dry-run
+              continue
+            fi
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version is already on npm; skipping"
+              continue
+            fi
+            npm publish "dist/npm/$dir" --access public --tag "$dist_tag" --provenance
+          done < dist/npm/publish-order.txt

@@ -12,9 +12,9 @@ import { join } from "node:path";
 import { app } from "electron";
 
 import { validateEvent, type Props } from "./validate.js";
-import { daysSince, DesktopFlagsStore, resolveInstallId, seedDesktopFlags, sharedIdPath } from "./identity.js";
+import { daysSince, DesktopFlagsStore, readSupportId, resolveInstallId, seedDesktopFlags, sharedIdPath } from "./identity.js";
 import {
-  analyticsEnabledFor, desktopVersion, doNotTrackIn, explicitAnalyticsEnabled, inheritedOptOut, installChannelFor, isTestRun,
+  analyticsEnabledFor, analyticsOffByEnv, desktopVersion, explicitAnalyticsEnabled, inheritedOptOut, installChannelFor, isTestRun,
   readConfigFile, runModeIn, setAgentGate, teamRunIn,
 } from "./environment.js";
 import { writeAnalyticsSwitch } from "./opt-out.js";
@@ -73,8 +73,9 @@ function readGate(): boolean {
   const tuiCfg = readConfigFile(S.tuiStateDir);
   S.inheritedOff = inheritedOptOut(cfg, tuiCfg);
   S.tuiOptedOut = explicitAnalyticsEnabled(tuiCfg) === false;
-  // DO_NOT_TRACK=1 in the environment wins over both files (ATO-1189).
-  if (doNotTrackIn()) return false;
+  // DO_NOT_TRACK=1 or ATOMIC_AGENT_ANALYTICS=off in the environment wins
+  // over both files (ATO-1189, ATO-760).
+  if (analyticsOffByEnv()) return false;
   return analyticsEnabledFor(cfg, tuiCfg);
 }
 
@@ -126,6 +127,23 @@ export function installId(): string | null {
     S.installId = null;
   }
   return S.installId;
+}
+
+/**
+ * ATO-1466: the support id (Settings › Diagnostics, Help › Report an Issue…).
+ * With analytics on it is the install id itself; with it off, whatever id is
+ * already on disk, read only. Null before `initAnalytics` or on a machine
+ * that never had one.
+ */
+export function supportId(): string | null {
+  const live = installId();
+  if (live) return live;
+  if (!S.stateDir) return null;
+  try {
+    return readSupportId(sharedIdPath(), installIdSources(S.tuiStateDir, S.stateDir, S.tuiOptedOut));
+  } catch {
+    return null;
+  }
 }
 
 /** The desktop state dir analytics was set up with; empty before `initAnalytics`. */

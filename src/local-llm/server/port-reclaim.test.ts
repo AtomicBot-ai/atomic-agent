@@ -208,3 +208,52 @@ describe("isPortOpen", () => {
     expect(await isPortOpen(port)).toBe(false);
   });
 });
+
+describe("reclaimManagedPort with a LoRA adapter (ATO-1106)", () => {
+  const served = async () => ["qwen-3.8-27b-uncensored"];
+
+  it("adopts our own server launched with the adapter the launch wants", async () => {
+    const d = deps({
+      holder: holder(OWN, 61655),
+      servedModels: served,
+      launchedLoraAdapter: (dir, pid) => (dir === OWN && pid === 61655 ? "/a/style.gguf" : null),
+    });
+    expect(await reclaimManagedPort({ ...req, loraAdapter: "/a/style.gguf" }, d)).toEqual({ kind: "adopted", pid: 61655 });
+    expect(d.stopped).toEqual([]);
+  });
+
+  it("restarts our own server of the same model when the adapter changed, was added or was removed", async () => {
+    for (const [launched, wanted] of [
+      ["/a/style.gguf", "/a/other.gguf"],
+      ["/a/style.gguf", "/a/style.gguf:0.5"],
+      [null, "/a/style.gguf"],
+      ["/a/style.gguf", null],
+    ] as const) {
+      const d = deps({ holder: holder(OWN, 61655), servedModels: served, launchedLoraAdapter: () => launched });
+      const out = await reclaimManagedPort({ ...req, loraAdapter: wanted }, d);
+      expect(out).toMatchObject({ kind: "stopped", pid: 61655 });
+      expect(describeReclaim(out, "chat server", 19091)).toContain("launched with another LoRA adapter");
+      expect(d.stopped).toEqual([61655]);
+    }
+  });
+
+  it("does not compare adapters when the request names none (the embedding daemon)", async () => {
+    const d = deps({ holder: holder(OWN, 61655), servedModels: served, launchedLoraAdapter: () => "/a/style.gguf" });
+    expect(await reclaimManagedPort(req, d)).toEqual({ kind: "adopted", pid: 61655 });
+  });
+
+  it("unloads Atomic Core's session of the same model through Core when the adapter changed", async () => {
+    const open = new Set([19091]);
+    const unloaded: string[] = [];
+    const d = deps({
+      open,
+      coreSessionOnPort: () => ({ role: "chat", pid: 777, modelId: "qwen-3.8-27b-uncensored" }),
+      stopCoreRole: async (_dir, role) => { unloaded.push(role); open.delete(19091); return true; },
+      launchedLoraAdapter: () => null,
+    });
+    const out = await reclaimManagedPort({ ...req, loraAdapter: "/a/style.gguf" }, d);
+    expect(out).toMatchObject({ kind: "stopped", pid: 777 });
+    expect(unloaded).toEqual(["chat"]);
+    expect(d.stopped).toEqual([]);
+  });
+});

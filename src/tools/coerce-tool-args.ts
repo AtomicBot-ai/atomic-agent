@@ -46,17 +46,18 @@ export function coerceToolArgs(
 
 /**
  * Repairs argument *keys* that arrived mangled, the way models mangle
- * them: a key wrapped in its own quotes (`"\"path\""`), and a key fused
+ * them: a key wrapped in its own quotes (`"\"path\""`), a key fused
  * with a fragment of the prompt's markup (`<label>…</label>,limit`) —
  * both seen from a cloud worker, both rejected as "`path` must be a
- * non-empty string" while the value sat under the mangled key.
+ * non-empty string" while the value sat under the mangled key — and a
+ * camelCase key sent in snake_case (`timeout_ms` for `timeoutMs`, #901).
  *
  * Do-no-harm again: a key is renamed only when it is not itself in the
- * schema, its cleaned form is, and the model did not also send the
- * clean key. Anything else is left for the tool to report — or, for a
- * key that is still unknown after this pass, for the executor to refuse
- * before dispatch (`unknown-argument-guard.ts`), which is why this runs
- * first there too.
+ * schema, its cleaned form (or that form in camelCase) is, and neither
+ * the model nor an earlier rename in this pass already filled that key. Anything else is left for the tool to
+ * report — or, for a key that is still unknown after this pass, for the
+ * executor to refuse before dispatch (`unknown-argument-guard.ts`), which
+ * is why this runs first there too.
  */
 export function normalizeArgKeys(
   args: Record<string, unknown>,
@@ -66,15 +67,45 @@ export function normalizeArgKeys(
   for (const [key, value] of Object.entries(args)) {
     if (Object.hasOwn(properties, key)) continue;
     const clean = normalizeKey(key);
-    if (clean === null || clean === key) continue;
-    if (!Object.hasOwn(properties, clean) || Object.hasOwn(args, clean)) {
+    if (clean === null) continue;
+    const target = schemaKeyFor(clean, properties);
+    // `fixed` too: two spellings of one key (`timeout_ms` beside a
+    // quoted `"timeoutMs"`) must not collapse into whichever came last.
+    // The second stays as sent, so the guard refuses the call.
+    if (
+      target === null ||
+      Object.hasOwn(args, target) ||
+      (fixed !== null && Object.hasOwn(fixed, target))
+    ) {
       continue;
     }
     fixed ??= { ...args };
     delete fixed[key];
-    fixed[clean] = value;
+    fixed[target] = value;
   }
   return fixed ?? args;
+}
+
+/**
+ * The schema key a cleaned key names: itself when declared, else its
+ * camelCase form when that is declared (`timeout_ms` → `timeoutMs`).
+ * A declared snake_case key is never rewritten, since it matches first.
+ */
+function schemaKeyFor(clean: string, properties: Schema): string | null {
+  if (Object.hasOwn(properties, clean)) return clean;
+  const camel = snakeToCamel(clean);
+  return camel !== null && Object.hasOwn(properties, camel) ? camel : null;
+}
+
+const SNAKE_CASE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
+
+/**
+ * `timeout_ms` → `timeoutMs`; `null` for anything that is not plain
+ * lower snake_case (`__path`, `Timeout_MS`, `path` stay as they are).
+ */
+export function snakeToCamel(key: string): string | null {
+  if (!SNAKE_CASE.test(key)) return null;
+  return key.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
 }
 
 const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;

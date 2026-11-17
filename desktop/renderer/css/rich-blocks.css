@@ -1,0 +1,9 @@
+/* ATO-1140: formulas (KaTeX) and Mermaid diagrams in a reply (renderer/rich-blocks.js).
+   KaTeX's own stylesheet is loaded with KaTeX, the first time a formula is on screen.
+   Colours come from tokens only. */
+.prose .rb-math[data-rb-done="1"]{white-space:normal}
+.prose .rb-math.rb-display{display:block;margin:6px 0;overflow-x:auto;overflow-y:hidden;text-align:center}
+.prose .rb-math .katex{font-size:1.06em;color:inherit}
+.prose .rb-math .katex-display{margin:0}
+.prose .rb-mermaid .rb-diagram{white-space:normal;padding:8px 12px 12px;overflow-x:auto;text-align:center;background:var(--paper)}
+.prose .rb-mermaid .rb-diagram svg{max-width:100%;height:auto}

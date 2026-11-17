@@ -17,7 +17,7 @@ import {
 const ALL_ENABLED: ToolGateSourceConfig = {
   browser: { enabled: true },
   web: { search: { enabled: true } },
-  vision: { enabled: true },
+  vision: { enabled: true, audioInput: true },
   memory: {
     profile: { enabled: true },
     notes: { enabled: true },
@@ -25,7 +25,7 @@ const ALL_ENABLED: ToolGateSourceConfig = {
     procedures: { enabled: true },
   },
   atomicMail: { address: "atag-1@atomicmail.ai" },
-  tasks: { enabled: true, agentToolsEnabled: true },
+  tasks: { enabled: true, agentToolsEnabled: true, sessionToolsEnabled: true },
   mcp: { servers: [{}] },
   llm: { runMode: { mode: "fusion" } },
   tools: { screen: { enabled: true, point: true } },

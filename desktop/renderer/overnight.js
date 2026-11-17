@@ -4,7 +4,7 @@
    reads renderer.js globals (BR, WORKSPACE, selBackend, ic, esc, toast,
    openSession) only at run time, guarded, so the Node tests can load it.
 
-   The composer's "+" menu has a "Run overnight" row (attachments.js). It
+   The composer's mode chip has a "Run overnight" row (composer-mode.js). It
    opens a small dialog: the task, the folder (default: the chat's folder),
    a money budget (default `agent.task.maxCostUsd`, empty = no cap; hidden
    for local models, which cost $0), a time limit in hours (default 8) and

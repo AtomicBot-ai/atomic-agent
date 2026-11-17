@@ -82,6 +82,22 @@ export interface TuiConfig {
    * never reads it.
    */
   showSteps: boolean;
+  /**
+   * Next-step suggestions (ATO-1096, epic ATO-995): after a turn, one short
+   * model call proposes what to ask next, shown as grey text in the empty
+   * composer that Tab accepts. Off by default: the call costs a model request
+   * after every turn, so it is opt-in. Additive and unversioned, a file
+   * without it reads `false`. The agent's next-step call (ATO-1093) and both
+   * composers (desktop ATO-1094, terminal ATO-1095) read it.
+   */
+  nextStepSuggestions: boolean;
+  /**
+   * Vim keys in the terminal composer (ATO-662): NORMAL / INSERT modes
+   * with the core motions and operators. Off by default; `/vim` flips
+   * it. Additive and unversioned, a file without it reads `false`. A
+   * display/input preference only; the agent never reads it.
+   */
+  vimMode: boolean;
   onboarding: OnboardingState;
   sessionRail: SessionRailConfig;
   notify: TuiNotifyConfig;
@@ -93,6 +109,8 @@ export function createTuiDefaults(): TuiConfig {
     whileBusySubmit: "steer",
     mouse: true,
     showSteps: false,
+    nextStepSuggestions: false,
+    vimMode: false,
     notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
@@ -256,6 +274,14 @@ export function parseTuiConfig(
     showSteps: parseBool(
       tui.showSteps ?? readDefaults().showSteps,
       "tui.showSteps",
+    ),
+    nextStepSuggestions: parseBool(
+      tui.nextStepSuggestions ?? readDefaults().nextStepSuggestions,
+      "tui.nextStepSuggestions",
+    ),
+    vimMode: parseBool(
+      tui.vimMode ?? readDefaults().vimMode,
+      "tui.vimMode",
     ),
     onboarding: parseOnboardingStateWithDefaults(
       tui.onboarding,

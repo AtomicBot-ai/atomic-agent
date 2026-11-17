@@ -4,6 +4,7 @@ import {
   detectModelProfile,
   detectModelProfileWithMatch,
   extractTotalSlots,
+  detectAudioSupport,
   detectVisionSupport,
   GEMMA4_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
@@ -332,6 +333,26 @@ describe("detectModelProfile", () => {
       supported: true,
       source: "modalities.vision",
     });
+  });
+
+  it("detects audio input only from modalities.audio (ATO-497)", () => {
+    expect(detectAudioSupport({ modalities: { vision: false, audio: true } })).toEqual({
+      supported: true,
+      source: "modalities.audio",
+    });
+    // A projector that says nothing about audio is not an audio model.
+    expect(detectAudioSupport({ has_multimodal: true, mmproj: {} })).toEqual({
+      supported: false,
+      source: "absent",
+    });
+    expect(detectAudioSupport({})).toEqual({ supported: false, source: "absent" });
+  });
+
+  it("sets profile.audio only when /props says the model hears", () => {
+    expect(
+      detectModelProfile({ ...GEMMA4_PROPS, modalities: { vision: true, audio: true } }).audio,
+    ).toEqual({ supported: true, source: "modalities.audio" });
+    expect("audio" in detectModelProfile(QWEN3_PROPS)).toBe(false);
   });
 
   it("ignores modalities.audio when vision is false", () => {

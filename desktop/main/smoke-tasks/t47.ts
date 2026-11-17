@@ -352,10 +352,14 @@ async function run(js: Js, check: Check): Promise<void> {
 
   // Д28
   const g = await safe<Switches>(js, SWITCHES);
-  const named = ["Notify when a turn ends", "Anonymous usage analytics", "Name chats automatically"];
+  const named = ["Notify when a turn ends", "Share anonymous usage data", "Name chats automatically"];
   check(
     "T47 Д28: the General switches stand alone — no On / Off word beside them — and still say their state",
-    !g.err && named.every((n) => g.labels.includes(n)) && g.words.every((x) => x === "") && g.states.every((n) => n === 0)
+    /* ATO-523 (#1447): the Quick entry shortcut row also shows its chord and a Change… button beside its
+       switch: that is the shortcut, not an On / Off word, so it is held to that exact shape. */
+    !g.err && named.every((n) => g.labels.includes(n))
+      && g.words.every((x, i) => x === "" || (g.labels[i] === "Quick entry shortcut" && /^\S.* · Change…$/.test(x) && !/\b(On|Off)\b/.test(x)))
+      && g.states.every((n) => n === 0)
       && g.checked.every((c) => c === "true" || c === "false"),
     g.err ?? JSON.stringify({ labels: g.labels, words: g.words, states: g.states, checked: g.checked }),
   );

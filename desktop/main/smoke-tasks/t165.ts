@@ -66,6 +66,18 @@ function rendererCss(): string {
   return sheets.map((href) => { try { return readFileSync(join(dir, href), "utf8"); } catch { return ""; } }).join("\n");
 }
 
+/** The row menu's optional rows between Rename and Delete…, in their one order (T165a). */
+const MENU_MIDDLE: ReadonlyArray<readonly [string, string]> = [["fpick", "Move to project…"], ["archive", "Archive"], ["export", "Export…"]];
+function middleRowsInOrder(verbs: string[], labels: string[]): boolean {
+  let at = 0;
+  return verbs.every((v, i) => {
+    while (at < MENU_MIDDLE.length && MENU_MIDDLE[at]![0] !== v) at++;
+    if (at >= MENU_MIDDLE.length || MENU_MIDDLE[at]![1] !== labels[i]) return false;
+    at++;
+    return true;
+  });
+}
+
 const sel = (id: string) => `'.sesrow[data-ses="' + CSS.escape(${show(id)}) + '"]'`;
 
 export async function checks165(js: Js, check: Check): Promise<void> {
@@ -108,9 +120,11 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       const m = opened.menu;
       check(
         "T165a: the \"…\" opens the row menu — Pin/Unpin, Mark as read/unread, Rename (ATO-455), then Delete… under a rule — without opening the chat",
-        /* ATO-1034 (folders): a stored chat also has "Move to folder…" (fpick) before Delete…. */
+        /* ATO-1034 (folders): a stored chat also has "Move to project…" (fpick, W2 QA) before Delete…;
+           ATO-1150 (#1384): then "Archive" (archive); ATO-1054 (#1502): then "Export…" (export).
+           Each of the three may be absent, but those drawn keep that order. */
         !!m && m.role === "menu" && m.overlay === "sesmenu" && m.id === a.id
-          && (m.verbs.length === 4 || (m.verbs.length === 5 && m.verbs[3] === "fpick" && m.labels[3] === "Move to folder…"))
+          && m.verbs.length >= 4 && middleRowsInOrder(m.verbs.slice(3, -1), m.labels.slice(3, -1))
           && ["pin", "unpin"].includes(m.verbs[0]) && ["read", "unread"].includes(m.verbs[1])
           && m.verbs[2] === "rename" && m.labels[2] === "Rename" && m.verbs[m.verbs.length - 1] === "delask"
           && m.labels[m.labels.length - 1] === "Delete…" && m.sepBeforeDelete && show(m.danger) === show(["delask"])
@@ -232,7 +246,8 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       }))()`);
       check(
         "T165b: a Pinned section above Chats, the last pinned on top, and its chats not repeated under Chats",
-        pinnedView.headers[0] === "Pinned" && pinnedView.headers[1] === "Chats"
+        // W2: the Projects header (it carries New project) may stand between Pinned and Chats.
+        pinnedView.headers[0] === "Pinned" && pinnedView.headers.filter((h) => h !== "Projects" && h !== "Folders")[1] === "Chats"
           && pinnedView.pinned[0] === b.id && pinnedView.pinned[1] === a.id
           && !pinnedView.chats.includes(a.id) && !pinnedView.chats.includes(b.id),
         show(pinnedView),
@@ -246,7 +261,7 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       }))()`);
       check(
         "T165b: with nothing pinned the section is gone and the chat is back under Chats",
-        (keep.pinned.length > 0 || (!unpinnedView.section && unpinnedView.headers[0] === "Chats")) && unpinnedView.inChats,
+        (keep.pinned.length > 0 || (!unpinnedView.section && unpinnedView.headers.filter((h) => h !== "Projects" && h !== "Folders")[0] === "Chats")) && unpinnedView.inChats,
         show(unpinnedView) + (keep.pinned.length > 0 ? " (the operator has pins of their own; only the row's return is asserted)" : ""),
       );
     }

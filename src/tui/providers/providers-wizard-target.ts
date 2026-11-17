@@ -20,6 +20,10 @@ import {
 import { getCachedOpenAiCompatModelsForBaseUrl } from "../../llm/provider/openai/fetch-openai-compat-models.js";
 import { isAsciiOnly } from "../../llm/provider/openai/ascii-header-guard.js";
 import { normalizeOpenAiBaseUrl } from "../../llm/provider/openai/normalize-openai-base-url.js";
+import {
+  isOtherComputerOnNetworkUrl,
+  withAssumedScheme,
+} from "../../llm/provider/openai/network-server-address.js";
 import { openAiChatPathPrefix } from "../../llm/provider/openai/openai-chat-path.js";
 import {
   DEFAULT_OPENROUTER_BASE,
@@ -142,13 +146,20 @@ export function wizardKeyIsOptional(wizard: ProvidersWizardState): boolean {
     ? findProviderPreset(wizard.presetId)
     : undefined;
   if (preset && (preset.local || preset.listsModelsWithoutKey)) return true;
+  // The key comes from the preset's command (Vertex AI's gcloud token).
+  if (preset?.apiKeyCommand) return true;
   // A hand-added compat endpoint pointing at a loopback address is a
   // local server too, even without a matching preset. A raw
   // `llama-server` on `http://127.0.0.1:9931` needs no key, so an empty
   // one is valid there. The wizard collects the base URL before the key
   // screen for this kind, so the URL is known by the time this runs.
+  // ATO-1066: so is a server on another computer on this network (a GPU
+  // box running llama-server, LM Studio or Ollama): usually keyless, and
+  // one started with a key still takes it from this screen.
   return (
-    wizard.kind === "openai-compatible" && isLoopbackBaseUrl(wizard.baseUrlLine)
+    wizard.kind === "openai-compatible" &&
+    (isLoopbackBaseUrl(wizard.baseUrlLine) ||
+      isOtherComputerOnNetworkUrl(withAssumedScheme(wizard.baseUrlLine)))
   );
 }
 
@@ -194,6 +205,29 @@ export function apiKeyPhaseError(wizard: ProvidersWizardState): string | null {
   if (wizardKeyIsOptional(wizard)) return null;
   if (apiKeyForWizard(wizard)) return null;
   return `API key required — paste the key, or set ${envHintForWizard(wizard)} in .env first`;
+}
+
+/**
+ * Why the base URL step cannot be left yet, or `null` when it can. Only a
+ * per-account preset refuses anything: its prefilled URL is a template
+ * (`https://your-resource.openai.azure.com/openai`), and saving it as is
+ * would fail every request against a host nobody owns.
+ */
+export function baseUrlPhaseError(wizard: ProvidersWizardState): string | null {
+  if (wizard.phase !== "base_url" || !wizard.presetId) return null;
+  const endpoint = findProviderPreset(wizard.presetId)?.perAccountEndpoint;
+  if (!endpoint) return null;
+  const line = wizard.baseUrlLine.trim();
+  if (!/^https?:\/\/\S+$/i.test(line)) {
+    return "Enter the full URL, starting with https://";
+  }
+  if (
+    endpoint.placeholder &&
+    line.toLowerCase().includes(endpoint.placeholder.toLowerCase())
+  ) {
+    return endpoint.hint;
+  }
+  return null;
 }
 
 /**

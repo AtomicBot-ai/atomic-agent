@@ -6,6 +6,10 @@ import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
 import type { DelegateTask } from "./delegate-args.js";
 import type { DelegateContract } from "./contract.js";
+import {
+  readWorkerQuestion,
+  WORKER_NEEDS_INPUT_NOTE,
+} from "./worker-question.js";
 import type { CompletionUsage } from "../../llm/provider/completion-types.js";
 import type { FusionEscalationTarget } from "../../llm/run-mode/index.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
@@ -46,7 +50,7 @@ import { getConfig } from "../../config/index.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
   WORKER_TOOL_ROLE,
-  isWorkerVisibleTool,
+  workerToolFilterFor,
   workerRefusalFor,
 } from "./worker-tool-policy.js";
 import type { ToolRole } from "../tool-roles.js";
@@ -58,6 +62,8 @@ import {
   type LocalLegHealth,
 } from "./local-leg-health.js";
 import { hasSplitProposal, splitSteer } from "./task-tree.js";
+import { WrittenFilesTracker } from "./worker-files-written.js";
+import { estimatedOutputTokens } from "./worker-fit.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -90,6 +96,12 @@ export function estimateWorkerTimeoutMs(input: {
   declaredFiles: number;
   tokensPerSecond: number | null | undefined;
   ceilingMs: number;
+  /**
+   * The planner's own output estimate for the task (ATO-1363). Used in
+   * place of the per-file guess when it is larger, so a task stated as
+   * big is not sized as two files; never makes the limit shorter.
+   */
+  outputTokens?: number | null;
 }): number {
   const { tokensPerSecond, ceilingMs } = input;
   if (
@@ -100,9 +112,15 @@ export function estimateWorkerTimeoutMs(input: {
   ) {
     return ceilingMs;
   }
-  const tokens =
-    input.briefChars / 4 +
+  const perFile =
     WORKER_TOKENS_PER_DECLARED_FILE * Math.max(0, input.declaredFiles);
+  const stated =
+    typeof input.outputTokens === "number" &&
+    Number.isFinite(input.outputTokens) &&
+    input.outputTokens > 0
+      ? input.outputTokens
+      : 0;
+  const tokens = input.briefChars / 4 + Math.max(perFile, stated);
   const estimateMs =
     (tokens / tokensPerSecond) * WORKER_TIMEOUT_SAFETY_FACTOR * 1000;
   const floor = Math.min(WORKER_TIMEOUT_FLOOR_MS, ceilingMs);
@@ -785,6 +803,7 @@ async function runOneTask(
       phase: "failed",
       role: "worker",
       model: options.workerModel,
+      status: refused.status,
       stepCount: 0,
       durationMs: refused.durationMs,
       summary: summarise(refused),
@@ -832,6 +851,7 @@ async function runOneTask(
       role: "worker",
       model: options.workerModel,
       ...(task.etaSeconds === undefined ? {} : { etaSeconds: task.etaSeconds }),
+      ...(liveStepBudget === undefined ? {} : { stepBudget: liveStepBudget }),
     });
   };
 
@@ -877,8 +897,15 @@ async function runOneTask(
   // What this worker has spent so far, for its row: tokens always, $
   // when the worker model is priced, escalations folded in.
   let spentTokens = 0;
+  let spentTokensOut = 0;
   let spentUsd = 0;
   let priced = options.workerPricing !== undefined;
+  // Progress for the row (ATO-1364): steps against the budget, and the
+  // distinct files written. Declared here, ahead of the budget itself,
+  // so every announcer above can read them whenever it fires.
+  let liveStepBudget: number | undefined;
+  let liveSteps = 0;
+  const filesWritten = new WrittenFilesTracker();
   const announceUsage = (contextTokens: number, spendMoved = false): void => {
     const contextMoved =
       contextTokens > 0 && contextTokens !== lastContextTokens;
@@ -893,11 +920,20 @@ async function runOneTask(
       model: options.workerModel,
       ...(lastContextTokens > 0 ? { contextTokens: lastContextTokens } : {}),
       ...(spentTokens > 0 ? { tokens: spentTokens } : {}),
+      ...(spentTokensOut > 0 ? { tokensOut: spentTokensOut } : {}),
       ...(priced ? { spentUsd } : {}),
+      ...(liveStepBudget === undefined ? {} : { stepBudget: liveStepBudget }),
+      ...(liveSteps > 0 ? { stepCount: liveSteps } : {}),
+      ...(filesWritten.count > 0 ? { filesWritten: filesWritten.count } : {}),
     });
   };
-  const addSpend = (tokens: number, usd: number | null): void => {
+  const addSpend = (
+    tokens: number,
+    usd: number | null,
+    tokensOut = 0,
+  ): void => {
     spentTokens += Math.max(0, tokens);
+    spentTokensOut += Math.max(0, tokensOut);
     if (usd !== null) {
       spentUsd += usd;
       priced = true;
@@ -967,6 +1003,7 @@ async function runOneTask(
   // this install allows. A task that asked for nothing keeps the
   // configured defaults, byte for byte as before.
   const stepBudget = clampTaskBudget(task.maxSteps, options.workerMaxSteps);
+  liveStepBudget = stepBudget.value;
   const timeBudget = clampTaskBudget(task.timeoutMs, options.workerTimeoutMs);
   // A local worker gets at least the local floor, however small a
   // number the planner sized the task with (ATO-234).
@@ -1008,6 +1045,7 @@ async function runOneTask(
     declaredFiles,
     tokensPerSecond: options.localTokensPerSecond,
     ceilingMs: taskTimeMs,
+    outputTokens: estimatedOutputTokens(task),
   });
 
   // The worker's own clock, kept apart from the operator's signal: when
@@ -1360,7 +1398,7 @@ async function runOneTask(
       providerId: options.providerId,
       maxSteps: stepBudget.value,
       taskMaxDurationMs: timeoutMs + queueBudgetMs,
-      toolFilter: isWorkerVisibleTool,
+      toolFilter: workerToolFilterFor(task.agentProfile?.tools),
       toolRole: WORKER_TOOL_ROLE,
       ...(options.workerReasoning === undefined
         ? {}
@@ -1394,6 +1432,8 @@ async function runOneTask(
           currentFingerprints = [];
           currentBusy = false;
           stepsFinished += 1;
+          liveSteps = stepsFinished;
+          announceUsage(0, true);
           const stalled = detectStall(steps);
           if (stalled !== undefined) {
             autoEscalate({ kind: "stall", detail: stalled });
@@ -1409,6 +1449,7 @@ async function runOneTask(
           // a batched step, so the dedupe above earns its keep.
           announceStart();
           announceTool(event.event.call.tool);
+          filesWritten.observeParsed(event.event.call, event.event.batchIndex);
           try {
             options.onWorkerTool?.(task.id, event.event.call.tool);
           } catch {
@@ -1427,12 +1468,14 @@ async function runOneTask(
               options.workerPricing === undefined
                 ? null
                 : estimateUsageCostUsd(completed.usage, options.workerPricing),
+              completed.usage.completionTokens,
             );
           } else {
             addSpend(
               (completed.timing?.promptTokens ?? 0) +
                 (completed.timing?.predictedTokens ?? 0),
               null,
+              completed.timing?.predictedTokens ?? 0,
             );
           }
           announceUsage(completed.timing?.promptTokens ?? 0, true);
@@ -1466,6 +1509,9 @@ async function runOneTask(
           const result = event.event.result;
           if (result.status === "ok" && WRITE_TOOLS.has(result.tool)) {
             wroteSomething = true;
+          }
+          if (filesWritten.observeExecuted(result, event.event.batchIndex)) {
+            announceUsage(0, true);
           }
           currentFingerprints.push(fingerprintToolOutcome(result.tool, result));
           if (result.status === "ok" && !READ_ONLY_TOOLS.has(result.tool)) {
@@ -1607,7 +1653,7 @@ async function runOneTask(
           providerId: target.providerId,
           maxSteps: stepBudget.value,
           taskMaxDurationMs: timeoutMs,
-          toolFilter: isWorkerVisibleTool,
+          toolFilter: workerToolFilterFor(task.agentProfile?.tools),
           toolRole: WORKER_TOOL_ROLE,
           signal: AbortSignal.any([
             options.signal,
@@ -1617,6 +1663,16 @@ async function runOneTask(
           eventHook: (event) => {
             markNoteRead(replaceSession.id, event);
             replaceCollector.observe(event);
+            if (
+              event.type === "llm_event" &&
+              event.event.type === "tool_call_executed" &&
+              filesWritten.observeExecuted(
+                event.event.result,
+                event.event.batchIndex,
+              )
+            ) {
+              announceUsage(0, true);
+            }
             // The re-run's side effects reach the checkpoint as they
             // start, like the local worker's do (ATO-1316): a crash in
             // the middle of the re-run must not offer the task as safe
@@ -1625,6 +1681,10 @@ async function runOneTask(
               event.type === "llm_event" &&
               event.event.type === "tool_call_parsed"
             ) {
+              filesWritten.observeParsed(
+                event.event.call,
+                event.event.batchIndex,
+              );
               try {
                 options.onWorkerTool?.(task.id, event.event.call.tool);
               } catch {
@@ -1646,6 +1706,7 @@ async function runOneTask(
                 event.event.completion.usage.promptTokens +
                   event.event.completion.usage.completionTokens,
                 usd,
+                event.event.completion.usage.completionTokens,
               );
               announceUsage(0, true);
               if (
@@ -1875,6 +1936,21 @@ async function runOneTask(
   // its files are its children's, and the delegate checks them on the
   // parent once they ran.
   const proposedSplit = mayPropose && hasSplitProposal(result.reply);
+  // A worker that ended its own turn on a question (ATO-945) stopped by
+  // design: it is `needs_input`, not `ok`, and its declared files are not
+  // checked, because it was told to stop before writing them.
+  const question =
+    !proposedSplit && result.status === "ok"
+      ? readWorkerQuestion(result.reply)
+      : undefined;
+  if (question !== undefined) {
+    result = {
+      ...result,
+      status: "needs_input",
+      question,
+      notes: [...(result.notes ?? []), WORKER_NEEDS_INPUT_NOTE],
+    };
+  }
   if (
     !proposedSplit &&
     task.files !== undefined &&
@@ -1905,7 +1981,10 @@ async function runOneTask(
     phase: workerPhase(result),
     role: "worker",
     model: options.workerModel,
+    status: result.status,
     stepCount: result.stepCount,
+    stepBudget: stepBudget.value,
+    ...(filesWritten.count > 0 ? { filesWritten: filesWritten.count } : {}),
     durationMs: result.durationMs,
     summary: summarise(result),
   });
@@ -1923,6 +2002,11 @@ function workerPhase(
 /** One line for the operator's feed — never the whole reply. */
 function summarise(result: WorkerTaskResult): string {
   if (result.status === "needs_orchestrator") return "needs the orchestrator";
+  if (result.status === "needs_input" && result.question !== undefined) {
+    const cap = Math.min(120, WORKER_REPLY_CHAR_BUDGET);
+    const q = result.question;
+    return `asks: ${q.length > cap ? `${q.slice(0, cap)}…` : q}`;
+  }
   const text = (result.error ?? result.reply).replace(/\s+/g, " ").trim();
   if (text.length === 0) return result.status;
   const cap = Math.min(120, WORKER_REPLY_CHAR_BUDGET);

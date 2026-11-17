@@ -238,9 +238,12 @@ async function chatFromTop(js: Js, check: Check): Promise<void> {
       render(); await tick(80);
       const sc = document.querySelector('#scroller'), em = sc && sc.querySelector('.emptychat .emptyplate');
       const empty = sc && em ? (() => {
-        const s = sc.getBoundingClientRect(), e = em.getBoundingClientRect();
+        // The greeting and the starter cards under it are one centred group
+        // (smoke 46 measures it the same way): its middle, not the greeting's.
+        const g = sc.querySelector('.emptychat .ghost') || em;
+        const s = sc.getBoundingClientRect(), e = em.getBoundingClientRect(), b = g.getBoundingClientRect();
         return {flex: getComputedStyle(sc.querySelector('.emptychat')).display === 'flex',
-          off: Math.round((e.top + e.bottom) / 2 - (s.top + s.bottom) / 2), height: Math.round(s.height)};
+          off: Math.round((e.top + b.bottom) / 2 - (s.top + s.bottom) / 2), height: Math.round(s.height)};
       })() : null;
       return {plain, lifted, empty};
     } finally {
@@ -263,7 +266,7 @@ async function chatFromTop(js: Js, check: Check): Promise<void> {
     r.err ?? show({ plain: p, lifted: l }),
   );
   check(
-    "T105 06.10: the empty chat's greeting still stands in the middle",
+    "T105 06.10: the empty chat's greeting and its starter cards still stand in the middle",
     !r.err && !!e && e.flex && Math.abs(e.off) < e.height * 0.2,
     r.err ?? show(e),
   );

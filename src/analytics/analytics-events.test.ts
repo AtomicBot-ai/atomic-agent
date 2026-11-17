@@ -7,6 +7,7 @@ import {
   captureMessageSent,
   captureModelConfigured,
   captureOnboardingStep,
+  captureUiAction,
 } from "./analytics-events.js";
 import type { AnalyticsStateStore } from "./analytics-state-store.js";
 
@@ -176,6 +177,25 @@ describe("captureMessageSent", () => {
       model: "gpt",
       prompt_tokens: 100,
       completion_tokens: 50,
+    });
+  });
+
+  it("attaches prefill_ms / gen_ms / gen_tokens_per_s for a local turn (ATO-1026)", () => {
+    const client = fakeClient();
+    const store = fakeStore({ firstMessage: true });
+    captureMessageSent(client, store, {
+      provider: "local-llama",
+      model: "qwen",
+      prefillMs: 1500,
+      genMs: 5000,
+      genTokensPerS: 20,
+    });
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.messageSent, {
+      provider: "local-llama",
+      model: "qwen",
+      prefill_ms: 1500,
+      gen_ms: 5000,
+      gen_tokens_per_s: 20,
     });
   });
 
@@ -351,5 +371,29 @@ describe("captureModelConfigured", () => {
     const store = fakeStore();
     expect(() => captureModelConfigured(null, store, ctx)).not.toThrow();
     expect(store.markModelConfiguredSent).not.toHaveBeenCalled();
+  });
+});
+
+describe("captureUiAction (ATO-1465)", () => {
+  it("sends ui_action with the command name and the trigger only", () => {
+    const client = fakeClient();
+    captureUiAction(client, "/report", "slash");
+    expect(client.capture).toHaveBeenCalledWith(ANALYTICS_EVENTS.uiAction, {
+      action: "/report",
+      via: "slash",
+    });
+    expect(ANALYTICS_EVENTS.uiAction).toBe("ui_action");
+  });
+
+  it("drops anything that is not a bare command name", () => {
+    const client = fakeClient();
+    captureUiAction(client, "/discord foo bar", "slash");
+    captureUiAction(client, "report", "slash");
+    captureUiAction(client, "/x/../etc", "menu");
+    expect(client.capture).not.toHaveBeenCalled();
+  });
+
+  it("no-ops when analytics is disabled (null client)", () => {
+    expect(() => captureUiAction(null, "/report", "slash")).not.toThrow();
   });
 });

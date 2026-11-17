@@ -1,5 +1,6 @@
 import type { MetricSample } from "../tracing/metrics-collector.js";
 import type { LogRecord } from "../tracing/structured-logger.js";
+import { typedTextOf } from "./file-mentions/mention-block.js";
 import type {
   ChatMessage,
   FeedEntry,
@@ -10,6 +11,7 @@ import type {
   ToolCardEntry,
   TuiState,
 } from "./tui-state.js";
+import { collapseFusionLiveWorkers } from "./fusion-worker-summary.js";
 
 /** Push `next` onto `list`, dropping the oldest entry if the ring is full. */
 export function pushRing<T>(list: readonly T[], next: T, cap: number): T[] {
@@ -136,7 +138,10 @@ export function appendUserMessage(
     text,
     ...(options.steered ? { steered: true } : {}),
   });
-  const history = pushRing(state.inputHistory, text, state.ringBufferSize);
+  // Up-arrow recalls what was typed, not the files `@` inlined into it
+  // (file-mentions/); the message itself keeps them, since retry and
+  // rollback match it against the stored prompt.
+  const history = pushRing(state.inputHistory, typedTextOf(text), state.ringBufferSize);
   // History-navigation state is deliberately left alone: this event also
   // fires in the BACKGROUND when a parked queue message drains into a
   // turn, possibly while the operator is walking history in the live
@@ -218,6 +223,7 @@ export function startNewRun(state: TuiState): TuiState {
     // Whatever the next turn is — running the plan, or changing it —
     // the offer belongs to the plan that has just been superseded.
     planHandoff: false,
+    nextStepSuggestion: null,
     status: "running",
     currentStep: 0,
     stepStartedAt: null,
@@ -241,6 +247,7 @@ export function startNewRun(state: TuiState): TuiState {
       completionTokensLast: null,
       llmDurationMsLast: null,
       stepDurationMsLast: null,
+      stepSpeedLast: null,
     },
     lastRunStatus: null,
     inputValue: "",
@@ -265,13 +272,14 @@ export function finishTurn(
         ? "failed"
         : "cancelled"
       : "completed";
-  // A fan-out cannot outlive the turn that started it, so the readout
-  // goes with it — leaving it up would claim workers are still running.
-  const cleared = {
+  // A fan-out cannot outlive the turn that started it: its rows stay,
+  // collapsed to one outcome line per worker, so why a task came back is
+  // still on screen; nothing is left marked running.
+  const collapsed = {
     ...state,
-    fusionLiveWorkers: [] as TuiState["fusionLiveWorkers"],
+    fusionLiveWorkers: collapseFusionLiveWorkers(state.fusionLiveWorkers),
   };
-  const next = withRunHistoryEntry(cleared, {
+  const next = withRunHistoryEntry(collapsed, {
     outcome,
     reason,
     stepCount,
@@ -289,7 +297,11 @@ export function finishRun(
   state: TuiState,
   params: { outcome: RunOutcome; reason: string; lastRunStatus: string },
 ): TuiState {
-  return withRunHistoryEntry(state, {
+  const collapsed = {
+    ...state,
+    fusionLiveWorkers: collapseFusionLiveWorkers(state.fusionLiveWorkers),
+  };
+  return withRunHistoryEntry(collapsed, {
     outcome: params.outcome,
     reason: params.reason,
     stepCount: state.currentStep + 1,

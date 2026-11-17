@@ -565,6 +565,16 @@ describe("providerId pin — bypasses the chain", () => {
     expect(usage).toEqual(["local"]);
   });
 
+  it("streaming: hands the meter the stream's time from its first chunk (ATO-1186)", async () => {
+    const { deps } = pinnedFixture();
+    const times: Array<number | undefined> = [];
+    deps.recordStreamUsage = (_s, _r, _providerId, streamMs) => times.push(streamMs);
+    await drain(createFallbackStreamer(deps)({ ...baseParams, providerId: "local" }));
+    expect(times).toHaveLength(1);
+    expect(typeof times[0]).toBe("number");
+    expect(times[0]).toBeGreaterThanOrEqual(0);
+  });
+
   it("a pinned failure is rethrown as-is and never falls over", async () => {
     const served: string[] = [];
     const providers = new Map<string, LlmProvider>([

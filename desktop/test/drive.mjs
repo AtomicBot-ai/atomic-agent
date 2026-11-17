@@ -99,6 +99,8 @@ const KEYS = {
   Space:      { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
   y:          { key: 'y', code: 'KeyY', keyCode: 89, text: 'y' },
   n:          { key: 'n', code: 'KeyN', keyCode: 78, text: 'n' },
+  /* W2: ⌘K (Ctrl+K off macOS) is the palette; the expanded sidebar's magnifier is chat search. */
+  k:          { key: 'k', code: 'KeyK', keyCode: 75, text: 'k' },
   /* 05.10: ⌘. (Ctrl+. off macOS) denies the approval card on screen, ⌘↩
      allows it — press('.', [MOD_KEY]) and press('Enter', [MOD_KEY]). */
   '.':        { key: '.', code: 'Period', keyCode: 190, text: '.' },

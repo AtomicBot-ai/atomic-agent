@@ -11,14 +11,14 @@ import { recoverFromOutOfMemory } from "./turn/out-of-memory-recovery.js";
 import type { AgentLoopDependencies, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
 export type { AgentLoopDependencies, ReflectionSegmentationConfig, ResolvedTurnLlmSlice, MemoryContextProviderInput, MemoryContext, MemoryContextProvider, LessonLifecycleOutcome, LessonLifecycleHook, SteeringChannel, TaskStopCause, RunTurnOptions, AgentLoopReason, AgentLoopEvent, RunTurnResult } from "./agent-contract.js";
 import { prepareAgentTurn, prepareTurnPolicies, prepareTurnBudgets, createTurnLoopTracker } from "./turn/turn-preparation.js";
-import { refreshMemoryContext, createSurfacedMemoryTracker } from "./turn/turn-memory-context.js";
+import { refreshMemoryContext, createSurfacedMemoryTracker, profileFactsForPrompt } from "./turn/turn-memory-context.js";
 export { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn/turn-memory-context.js";
 import { finalizeAgentTurn, finalizeFailedAgentTurn } from "./turn/turn-finalization.js";
 import { armApprovalDeadline } from "./turn/approval-deadline.js";
-import { costCeilingNotice, costCeilingReached, recordCompactionSpend, recordStepSpend } from "./turn/turn-spend.js";
+import { budgetStepPlan, costCeilingNotice, recordCompactionSpend, recordStepSpend } from "./turn/turn-spend.js";
 export { formatTaskStoppedReply } from "./turn/turn-finalization.js";
 import { delegationProducedWork, recordDelegation, wouldRefuse as fusionGateWouldRefuse } from "./policies/fusion-orchestrator-mode.js";
-import { observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
+import { isRefusedResult, observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
 import { observeReplanStep, replanToolSet, takeReplanNotice } from "./fusion-replan.js";
 import type { StepToolSet } from "./policies/step-tool-set.js";
 
@@ -46,13 +46,16 @@ import { formatOutcomeRepeatNotice, formatReadRepeatNotice, formatRepeatNotice, 
 import type { BatchLoopSignal } from "./dispatch/batch-contract.js";
 import { composeSteerNotice } from "./steer-notice.js";
 import { planReminderNotice } from "./plan/plan-snapshot.js";
+import { countReplanCadenceStep, resetReplanCadence, takeReplanCadenceNotice } from "./plan/replan-cadence.js";
 
 import { getConfig } from "../config/index.js";
 
 import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.js";
 import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
 import { toolDisabledEvents } from "./tool-disabled-notice.js";
+import { PrefixDriftTracker, reportPrefixDrift } from "./prefix-drift-warning.js";
 import { CompactPromptLatch } from "../prompt/compact-prompt.js";
+import { PersonaLatch } from "../prompt/persona-latch.js";
 
 /**
  * What the user reads when the step loop ran out before the model
@@ -71,11 +74,14 @@ export class AgentLoop {
   private readonly profileClipWarnings = new ProfileClipWarnings();
   /** Once-per-cut notice that the packer left older history out (ATO-295). */
   private readonly historyTrimWarnings = new HistoryTrimWarnings();
+  /** Stable-prefix change between steps of a session, by section (ATO-316). */
+  private readonly prefixDrift = new PrefixDriftTracker();
   /**
    * Compact-prompt decision per session (ATO-1116): keeps the stable
    * prefix from flipping when a step cannot see the model's window.
    */
   private readonly compactPromptLatch = new CompactPromptLatch();
+  private readonly personaLatch = new PersonaLatch();
 
   constructor(private readonly deps: AgentLoopDependencies) {}
 
@@ -114,6 +120,7 @@ export class AgentLoop {
     // Like the fan-out grant: forgotten when a turn starts rather than
     // when it ends, so an aborted turn cannot carry a no into the next.
     this.deps.forgetDeclinedApprovals?.(session.id);
+    this.deps.clearUntrustedContent?.(session.id);
     try {
       return await this.runTurnInner(session, options);
     } finally {
@@ -174,8 +181,14 @@ export class AgentLoop {
       overflowWindow !== null && (lastPromptWindow === null || lastPromptWindow > overflowWindow)
         ? { ...input, contextWindow: overflowWindow, profileWindowApplies: false }
         : input;
-    const { legSteps, stepCeiling, durationCeilingMs, costCeilingUsd, taskStartedAt } =
-      prepareTurnBudgets(options);
+    const {
+      legSteps, stepCeiling, durationCeilingMs, costCeilingUsd, taskStartedAt, replanEveryNSteps,
+    } = prepareTurnBudgets(options);
+    // ATO-609: a new message starts the re-plan cadence over (the plan
+    // reminder above covers this boundary); a resumed task keeps it.
+    if (options.userMessage !== undefined) {
+      state = resetReplanCadence(state, replanEveryNSteps);
+    }
     // Provider-outage parking. A transport failure means "this link is
     // not answering", which is a state of the world, not a verdict on
     // the turn — so the turn waits for it rather than dying and taking
@@ -226,6 +239,34 @@ export class AgentLoop {
       return !boundaryRuns || turn.legMadeProgress;
     };
     const loopTracker = createTurnLoopTracker();
+    // What the model's own completions have cost (compaction excluded),
+    // and that figure at the previous step's start, so the next step can
+    // tell what one step costs (ATO-1472, the summary step's reserve).
+    let completionSpendUsd = 0;
+    let completionSpendBeforeLastStep = 0;
+    // Once the budget asked for the summary step it stays asked for: a
+    // cheap retry of that step must not read as room for more work.
+    let budgetSummaryDue = false;
+    // Non-terminal tools that ran in this turn (ATO-1476): a turn that
+    // fails after one ran says so in its failure record, so "Try again"
+    // never treats the turn as one that changed nothing.
+    const toolsRan: string[] = [];
+    // Follow-up to #827: once history this turn wrote leaves the model's
+    // view (a compaction summarized it, or the packer cut it), a re-read
+    // of a file is how the model gets the content back, so the tracker
+    // forgets its read state. Rows before `turnFirstRow` were written by
+    // earlier turns and the tracker knows nothing about them: losing
+    // them is no reason to forget the reads still in view. Each point
+    // only moves forward, so a held cut or an unchanged checkpoint
+    // never forgets twice, and a cut moving back and forth cannot keep
+    // a read loop clear of its veto.
+    const turnFirstRow = state.turns.length;
+    let forgottenThrough = turnFirstRow;
+    const forgetReadsBefore = (row: number): void => {
+      if (row <= forgottenThrough) return;
+      forgottenThrough = row;
+      loopTracker.forgetReads();
+    };
 
     const {
       surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds,
@@ -286,6 +327,19 @@ export class AgentLoop {
           await this.deps.profileManager.refreshIfStale();
         }
       }
+      // The spend ceiling's plan for this step (ATO-1472, a hard cap).
+      // When not even the summary fits, the task ends here, before any
+      // event or model call, and closes with a card from its records.
+      const lastStepUsd = completionSpendUsd - completionSpendBeforeLastStep;
+      completionSpendBeforeLastStep = completionSpendUsd;
+      let budgetPlan = budgetStepPlan(turn.spendUsd, lastStepUsd, costCeilingUsd);
+      if (budgetPlan === "work" && budgetSummaryDue) budgetPlan = "summary";
+      if (budgetPlan === "summary") budgetSummaryDue = true;
+      if (budgetPlan === "stop") {
+        turn.stopCause = "cost_ceiling";
+        turn.reason = "max_steps";
+        break;
+      }
       this.deps.onEvent?.({ type: "step_started", stepIndex: i });
       const started = Date.now();
       // Mid-turn steering: anything the user sent since the previous
@@ -329,12 +383,33 @@ export class AgentLoop {
       const outOfTime =
         turn.ceilingFiredMidRequest || elapsedMs >= durationCeilingMs;
       // The spend ceiling (ATO-1108) is read here too, after the last
-      // step's completion was priced and before this one starts.
-      const outOfBudget =
-        !outOfTime && costCeilingReached(turn.spendUsd, costCeilingUsd);
+      // step's completion was priced and before this one starts. The
+      // summary step is budgeted for (ATO-1472): it starts while the
+      // spend still has room for it, estimated at the last step's cost,
+      // and a cap already reached makes no further paid call at all.
+      const outOfBudget = !outOfTime && budgetPlan === "summary";
       if (outOfTime) turn.stopCause = "time_ceiling";
       else if (outOfBudget) turn.stopCause = "cost_ceiling";
       const finalizationStep = i === stepCeiling - 1 || outOfTime || outOfBudget;
+      // Re-plan cadence (ATO-609): every `replanEveryNSteps` completed
+      // steps the model is asked, in this step's `### notice`, to check
+      // its live plan against what it has found and resend it. No extra
+      // inference; off by default. Not on the reserved final step.
+      if (!finalizationStep) {
+        const cadence = takeReplanCadenceNotice(state, replanEveryNSteps);
+        state = cadence.state;
+        if (cadence.notice !== undefined) {
+          noticeForThisStep =
+            noticeForThisStep === undefined
+              ? cadence.notice
+              : `${noticeForThisStep}\n\n${cadence.notice}`;
+          this.deps.logger?.info("re-plan requested", {
+            sessionId: state.id,
+            stepIndex: i,
+            everyNSteps: replanEveryNSteps,
+          });
+        }
+      }
       // The stalled-review phase this step runs under, read before the
       // prompt is built (`review-stall.ts`): the notice joins the step's
       // `### notice` — inside `noticeForThisStep`, so a retry of the
@@ -415,7 +490,8 @@ export class AgentLoop {
         // classifies `tool` and fails the turn outright.
         let profileFacts: readonly ProfileFact[] | undefined;
         try {
-          profileFacts = this.deps.profileFactsProvider?.();
+          // None in an incognito chat (ATO-586, decision 8).
+          profileFacts = profileFactsForPrompt(this.deps.profileFactsProvider, state);
         } catch (err) {
           this.deps.logger?.warn("profile facts unavailable for this step", {
             sessionId: state.id,
@@ -478,6 +554,9 @@ export class AgentLoop {
             ...(options.reasoningEffort !== undefined
               ? { reasoningEffort: options.reasoningEffort }
               : {}),
+            ...(options.reasoningOverride !== undefined
+              ? { reasoningOverride: options.reasoningOverride }
+              : {}),
             ...(options.maxOutputTokens !== undefined
               ? { maxOutputTokens: options.maxOutputTokens }
               : {}),
@@ -494,6 +573,7 @@ export class AgentLoop {
             prepareWorkspace: this.deps.prepareWorkspace,
             registry: this.deps.registry,
             compactPromptLatch: this.compactPromptLatch,
+            personaLatch: this.personaLatch,
             commitSession: (next) => {
               state = next;
               stepContext.session = next;
@@ -538,6 +618,9 @@ export class AgentLoop {
             ...(this.deps.liveWorkerSlots
               ? { liveWorkerSlots: this.deps.liveWorkerSlots }
               : {}),
+            ...(this.deps.fusionPastRuns
+              ? { fusionPastRuns: this.deps.fusionPastRuns }
+              : {}),
             toolTransport: contextSlice?.toolTransport ?? effectiveTransport,
             ...(options.modelModePolicy ? {
               modelModePolicy: options.modelModePolicy,
@@ -558,6 +641,9 @@ export class AgentLoop {
             ...(options.providerId !== undefined
               ? { providerId: options.providerId }
               : {}),
+            ...(options.providerId !== undefined && options.model !== undefined
+              ? { model: options.model }
+              : {}),
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }
@@ -574,6 +660,17 @@ export class AgentLoop {
               : {}),
             onEvent: (event) => {
               this.deps.onEvent?.({ type: "llm_event", event });
+              // A tool that ran this turn (ATO-1476), not one the runtime
+              // refused before dispatch: a failure record names it.
+              if (
+                event.type === "tool_call_executed" &&
+                event.durationMs !== undefined &&
+                event.result.tool !== "reply" &&
+                event.result.tool !== "finish" &&
+                !isRefusedResult(event.result)
+              ) {
+                toolsRan.push(event.result.tool);
+              }
               // Every completion the provider bills is priced (ATO-1108),
               // not only the one a step commits: a repair attempt, an
               // answer continuation, and a completion that is then
@@ -581,7 +678,9 @@ export class AgentLoop {
               // all cost money, and they are the runaway cases the
               // spend ceiling exists for.
               if (event.type === "llm_completed") {
+                const spendBefore = turn.spendUsd;
                 recordStepSpend(turn, event.completion, contextProviderId, this.deps.priceCompletion);
+                completionSpendUsd += turn.spendUsd - spendBefore;
                 for (const disabled of toolDisabledEvents(
                   event.completion.droppedTools,
                   announcedDroppedTools,
@@ -593,6 +692,10 @@ export class AgentLoop {
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
                 lastPromptWindow = event.prompt.contextWindow;
+                // The packer cut into this turn's history: a read it
+                // dropped renders in full again if the model re-reads the
+                // file, so that re-read is a recovery, not a repeat.
+                forgetReadsBefore(event.prompt.conversationPackStart?.index ?? 0);
                 if (event.prompt.cloudContext && state.cloudContext !== event.prompt.cloudContext) {
                   state = { ...state, cloudContext: event.prompt.cloudContext };
                   stepContext.session = state;
@@ -620,6 +723,24 @@ export class AgentLoop {
                   prompt: event.prompt,
                   ...(this.deps.logger ? { logger: this.deps.logger } : {}),
                   emit: (trimmed) => this.deps.onEvent?.(trimmed),
+                });
+                // ATO-316: a prefix that moved between steps throws the
+                // KV cache away; say so now, not only in `trace replay`.
+                const mode = event.prompt.modelMode;
+                reportPrefixDrift({
+                  tracker: this.prefixDrift,
+                  sessionId: state.id,
+                  stepIndex: i,
+                  stablePrefix: event.prompt.stablePrefix,
+                  shapeKey: [
+                    options.providerId ?? mode?.providerId ?? "",
+                    mode?.modelId ?? "",
+                    mode?.mode ?? "",
+                    this.deps.isFusionMode?.() === true ? "fusion" : "",
+                  ].join("|"),
+                  ...(this.deps.prefixInvalidations ? { ledger: this.deps.prefixInvalidations } : {}),
+                  ...(this.deps.logger ? { logger: this.deps.logger } : {}),
+                  emit: (drift) => this.deps.onEvent?.(drift),
                 });
               }
             },
@@ -658,6 +779,8 @@ export class AgentLoop {
               onSpend: (usd) => recordCompactionSpend(turn, usd),
             });
           }
+          // A compaction summarized away the reads it covered (#827).
+          forgetReadsBefore(state.compaction?.coveredThrough ?? 0);
         }
         requestStartedAt = Date.now();
         // A task's time limit also ends a wait on an approval prompt
@@ -692,8 +815,11 @@ export class AgentLoop {
           turn.awaitingRecovery = false;
           turn.outageWaitedMs = 0;
           turn.outageAttempts = 0;
+          turn.engineWaitVerdicts = null;
+          turn.lockNoProcessSinceWaitedMs = null;
         }
         state = outcome.nextSession;
+        state = countReplanCadenceStep(state, replanEveryNSteps, outcome.toolResults);
         turn.stepsTaken += 1;
         // A step that came back ends a run of out-of-memory restarts.
         turn.oomRestarts = 0;
@@ -1036,6 +1162,7 @@ export class AgentLoop {
           }
           if (state.compaction !== before) {
             overflowCompacted = true;
+            forgetReadsBefore(state.compaction?.coveredThrough ?? 0);
             overflowWindow = overflow.compactionWindow;
             // Learned only once the retry is certain: a learned window
             // would otherwise disarm the native-tools repack below.
@@ -1115,7 +1242,7 @@ export class AgentLoop {
           return finalizeFailedAgentTurn({
             state, options, cancelled: false, category: failed.category,
             runError: failed.runError, creditRefused: false,
-            stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+            stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds, toolsRan,
             ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
           }, this.deps, (sessionId) => this.flushSteering(sessionId));
         }
@@ -1130,7 +1257,7 @@ export class AgentLoop {
         return finalizeFailedAgentTurn({
           state, options, cancelled: decision.cancelled, category: decision.category,
           runError: decision.runError, creditRefused: decision.creditRefused,
-          stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+          stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds, toolsRan,
           ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
         }, this.deps, (sessionId) => this.flushSteering(sessionId));
 

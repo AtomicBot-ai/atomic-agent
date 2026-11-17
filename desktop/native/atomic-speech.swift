@@ -23,12 +23,21 @@
 //   <locale> [<locale2>]    transcribe; with two locales both analyzers are
 //                           fed the same audio and the better-scoring one
 //                           wins the session (see `replace` below).
+//   --file <path> <locale>  ATO-1074: transcribe an audio file the person
+//                           already has (AVAudioFile reads it). Prints
+//                           file-ready, then one `segment` {start,end,text}
+//                           per finalized phrase (seconds from the start of
+//                           the file) followed by a `progress` {fraction},
+//                           then done. Stdin is not read. Live dictation
+//                           above is untouched by this mode.
 //
-// Events: ready | partial | final | replace | install | installed | error | done.
+// Events: ready | partial | final | replace | install | installed | error | done
+//         (file mode: file-ready | segment | progress | error | done).
 
 import Foundation
 import Speech
 import AVFoundation
+import CoreMedia
 
 func emit(_ o: [String: Any]) {
   if let d = try? JSONSerialization.data(withJSONObject: o),
@@ -72,6 +81,22 @@ enum Engine {
                                            transcriptionOptions: [],
                                            reportingOptions: [.volatileResults],
                                            attributeOptions: [.transcriptionConfidence]))
+  }
+
+  /// File mode (ATO-1074): nothing is shown while it runs, so no volatile
+  /// results; the time range is what the transcript's timestamps come from.
+  static func makeForFile(_ locale: Locale, speechLocales: Set<String>) -> Engine {
+    if speechLocales.contains(locale.identifier(.bcp47)) {
+      return .speech(SpeechTranscriber(locale: locale,
+                                       transcriptionOptions: [],
+                                       reportingOptions: [],
+                                       attributeOptions: [.audioTimeRange]))
+    }
+    return .dictation(DictationTranscriber(locale: locale,
+                                           contentHints: [],
+                                           transcriptionOptions: [],
+                                           reportingOptions: [],
+                                           attributeOptions: [.audioTimeRange]))
   }
 
   var module: any SpeechModule {
@@ -366,6 +391,73 @@ func transcribe(_ localeIds: [String]) async {
   emit(["type": "done"])
 }
 
+// ---------------------------------------------------------------- file (ATO-1074)
+
+/// One finalized phrase of a file, with where it sits in the file.
+@available(macOS 26.0, *)
+func emitSegment(_ range: CMTimeRange, _ text: AttributedString, duration: Double) {
+  let s = String(text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
+  if s.isEmpty { return }
+  let start = range.start.isNumeric ? max(0, range.start.seconds) : 0
+  let endTime = CMTimeRangeGetEnd(range)
+  let end = endTime.isNumeric ? max(start, endTime.seconds) : start
+  emit(["type": "segment", "start": start, "end": end, "text": s])
+  if duration > 0 {
+    emit(["type": "progress", "fraction": min(1.0, max(0.0, end / duration))])
+  }
+}
+
+@available(macOS 26.0, *)
+func transcribeFile(_ path: String, _ localeId: String) async {
+  let speechLocales = Set(await SpeechTranscriber.supportedLocales.map { $0.identifier(.bcp47) })
+  let file: AVAudioFile
+  do {
+    file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+  } catch {
+    emit(["type": "error", "code": "open-file", "message": "\(error)"])
+    return
+  }
+  let rate = file.processingFormat.sampleRate
+  let duration = rate > 0 ? Double(file.length) / rate : 0
+  let engine = Engine.makeForFile(Locale(identifier: localeId), speechLocales: speechLocales)
+  let analyzer = SpeechAnalyzer(modules: [engine.module])
+  emit(["type": "file-ready", "locale": localeId, "engine": engine.kind, "duration": duration])
+
+  let consumer: Task<Void, Never>
+  switch engine {
+  case .speech(let t):
+    consumer = Task {
+      do {
+        for try await r in t.results where r.isFinal { emitSegment(r.range, r.text, duration: duration) }
+      } catch { emit(["type": "error", "code": "results", "locale": localeId, "message": "\(error)"]) }
+    }
+  case .dictation(let t):
+    consumer = Task {
+      do {
+        for try await r in t.results where r.isFinal { emitSegment(r.range, r.text, duration: duration) }
+      } catch { emit(["type": "error", "code": "results", "locale": localeId, "message": "\(error)"]) }
+    }
+  }
+
+  // The pattern from Apple's SpeechAnalyzer file sample: analyze the whole
+  // file, then finalize through its last sample so the final phrase is
+  // emitted rather than dropped.
+  do {
+    if let last = try await analyzer.analyzeSequence(from: file) {
+      try await analyzer.finalizeAndFinish(through: last)
+    } else {
+      await analyzer.cancelAndFinishNow()
+    }
+  } catch {
+    emit(["type": "error", "code": "analyze", "locale": localeId, "message": "\(error)"])
+    await analyzer.cancelAndFinishNow()
+    _ = await consumer.value
+    return
+  }
+  _ = await consumer.value
+  emit(["type": "done", "duration": duration])
+}
+
 // ---------------------------------------------------------------- entry
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -376,6 +468,10 @@ Task {
       await probe()
     } else if args.first == "--install", args.count > 1 {
       await install(args[1])
+    } else if args.first == "--file", args.count > 1 {
+      await transcribeFile(args[1], args.count > 2 ? args[2] : "en-US")
+    } else if args.first == "--file" {
+      emit(["type": "error", "code": "no-file"])
     } else {
       let locales = args.filter { !$0.hasPrefix("--") }
       await transcribe(locales.isEmpty ? ["en-US"] : Array(locales.prefix(3)))

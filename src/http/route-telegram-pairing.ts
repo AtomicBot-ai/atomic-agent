@@ -2,6 +2,7 @@ import {
   DEFAULT_PAIRING_TIMEOUT_MS,
   OwnerAlreadyPairedError,
   pairedOwnerLine,
+  pairingDeepLink,
   pairingInstruction,
   type OpenedPairingWindow,
   type PairingOutcome,
@@ -22,8 +23,8 @@ import {
  * ATO-859).
  *
  * - `POST` opens a window through `TelegramChannel.startPairing` and
- *   answers with the one-time code. This response is the only place the
- *   code ever leaves the process: it is not logged, not stored here and
+ *   answers with the one-time code and its `t.me/<bot>?start=<code>` deep
+ *   link. This response is the only place the code ever leaves the process: it is not logged, not stored here and
  *   not part of the `GET` snapshot. While an owner is paired the POST is
  *   refused with `409 owner_already_paired` until the caller repeats it
  *   with `{ "replaceOwner": true }`, the operator's confirmation.
@@ -244,6 +245,9 @@ export function createTelegramPairingHandlers(): TelegramPairingHandlers {
         expiresAt: openedWindow.expiresAt,
         timeoutMs: DEFAULT_PAIRING_TIMEOUT_MS,
         botUsername,
+        // ATO-516: the same code as a t.me link the desktop can open or
+        // show; `null` while the bot's @username is unknown.
+        link: pairingDeepLink(botUsername, openedWindow.code),
         instruction: pairingInstruction({
           code: openedWindow.code,
           botUsername,

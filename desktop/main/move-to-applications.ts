@@ -11,9 +11,11 @@
  * one quits). Not now asks again on the next launch only: the question is
  * put once per launch, never on a window reopen, so nothing is stored.
  *
- * Never asked on other platforms, in a smoke run, in a dev run or from an
+ * Never asked on other platforms, in a smoke run, in a dev run, from an
  * unpackaged app (`electron .` runs from the checkout, which a move would
- * break).
+ * break), or in a launch pointed at its own state folder: the relaunch
+ * after a move drops that environment, so the moved copy would replace the
+ * installed app and open on the person's real data.
  *
  * Pure: no Electron import, so the unit suite can load it from `out/main`.
  */
@@ -24,13 +26,15 @@ export interface MoveOfferInput {
   packaged: boolean;
   smoke: boolean;
   dev: boolean;
+  /** STATE_DIR_FROM_ENV: a test launch with its own state folder. */
+  ownStateDir: boolean;
   /** app.isInApplicationsFolder(); null when it could not be read. */
   inApplications: boolean | null;
 }
 
 /** Whether this launch should ask. An unknown location never asks. */
 export function shouldOfferMove(o: MoveOfferInput): boolean {
-  return o.platform === "darwin" && o.packaged && !o.smoke && !o.dev && o.inApplications === false;
+  return o.platform === "darwin" && o.packaged && !o.smoke && !o.dev && !o.ownStateDir && o.inApplications === false;
 }
 
 /** The question, as handed to dialog.showMessageBoxSync. Button 0 is Move. */

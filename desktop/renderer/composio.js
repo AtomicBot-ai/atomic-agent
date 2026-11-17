@@ -160,12 +160,12 @@ function composioPaneHTML(st, h) {
   else {
     body = composioStatusHTML(status, st, h);
     if (st.mode === 'key') {
-      body += '<div class="tk-card pad sd-tgcard sd-cmpcard"><h3 class="sd-title">Replace the API key</h3>'
+      body += '<div class="tk-card pad sd-tgcard sd-cmpcard sd-inlinecard"><h3 class="sd-title">Replace the API key</h3>'
         + '<p>The new key is checked with Composio before it replaces the saved one.</p>'
         + composioKeyFieldHTML(st, h, 'replace') + '</div>';
     }
     if (st.hasKey !== false) body += composioRowsHTML(st, h);
-    else body += '<div class="tk-card pad sd-tgcard sd-cmpcard"><p>No key is saved. Paste a new one to connect again.</p>' + composioKeyFieldHTML(st, h, 'setup') + '</div>';
+    else body += '<div class="tk-card pad sd-tgcard sd-cmpcard sd-inlinecard"><p>No key is saved. Paste a new one to connect again.</p>' + composioKeyFieldHTML(st, h, 'setup') + '</div>';
   }
   return '<div class="sd-pane sd-cmp">' + body + composioNoticesHTML(st, h) + '</div>';
 }

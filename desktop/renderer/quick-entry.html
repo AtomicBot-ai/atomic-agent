@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>Ask Atomic Agent</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="css/quick-entry.css">
+</head>
+<body class="qe">
+  <form id="qe-form" class="qe-box" autocomplete="off">
+    <input id="qe-text" class="qe-input" type="text" spellcheck="true" maxlength="20000"
+           placeholder="Ask Atomic Agent…" aria-label="Message for a new chat">
+    <span id="qe-hint" class="qe-hint" aria-hidden="true">↩ new chat · esc</span>
+  </form>
+  <script src="quick-entry.js"></script>
+</body>
+</html>

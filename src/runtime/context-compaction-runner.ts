@@ -14,6 +14,10 @@ import { buildExtractiveSummary } from "./compaction-extractive.js";
 import { compactFromRolling } from "./compaction-rolling.js";
 import { chooseCompactionMethod, type CompactionRouteFacts } from "./compaction-mode.js";
 import { modelSummaryFailure, summarizeWithModel, type ModelSummaryRoute, type ModelSummaryTally } from "./context-compaction-model.js";
+import { flushMemoryBeforeCompaction, type MemoryFlushNotes } from "./compaction-memory-flush.js";
+
+/** An extractive checkpoint copies records; it cannot follow what the user asked to keep. */
+export const NOT_APPLIED = "Your compaction instructions were not applied: the checkpoint was extracted without a model call.";
 
 export interface CompactionRunnerDependencies {
   complete(params: LlmStreamParams): Promise<CompletionResult>;
@@ -22,12 +26,23 @@ export interface CompactionRunnerDependencies {
   costOf?(result: CompletionResult, providerId: string): number | undefined;
   persist(state: SessionState, inTurn: boolean): void;
   emit(event: CompactionEvent): void;
+  /**
+   * Where `agent.compaction.memoryFlush` stores its dated observations
+   * (ATO-676). Absent, or the flag off, no flush call is made.
+   */
+  memoryNotes?: MemoryFlushNotes;
 }
 
 export interface CompactionRunOptions extends CompactionStepOptions {
   inTurn: boolean;
   /** Under `auto`, skip the model: a model summary on this route already ran out of time. */
   preferExtractive?: boolean;
+  /**
+   * What the user asked a manual compaction to keep (ATO-661), already
+   * normalized. Only a model summary can follow it, so it skips the rolling
+   * summary; an extractive checkpoint says it was not applied.
+   */
+  instructions?: string;
 }
 
 /**
@@ -88,9 +103,24 @@ export async function runContextCompaction(
     };
     // A summary made between turns makes this checkpoint without a model call,
     // unless its cut does not reach the target; then the usual methods run.
-    let rolled = config.mode === "auto" ? compactFromRolling(state, plan) : null;
+    let rolled = config.mode === "auto" && !options.instructions ? compactFromRolling(state, plan) : null;
     if (rolled && !reduced(checkpointed(rolled.summary, rolled.through, { model: null }))) rolled = null;
     const through = rolled?.through ?? plan.through;
+    // ATO-676: dated observations about the span go to memory before it is
+    // folded away. A private side call; it never fails or changes the checkpoint.
+    if (config.memoryFlush === true && deps.memoryNotes && !options.ephemeral) {
+      const flushed = await flushMemoryBeforeCompaction({
+        input, from: plan.from, through, route, notes: deps.memoryNotes,
+        window: Math.min(route.contextWindow ?? Infinity, prompt.contextWindow ?? prompt.conversationCapEffective),
+        reasoningReserveTokens: config.reasoningReserveTokens, timeoutMs: config.timeoutMs, signal: options.signal,
+        complete: deps.complete, sideCallSlotId: deps.sideCallSlotId, ...(deps.costOf ? { costOf: deps.costOf } : {}),
+      });
+      const flushCost = "costUsd" in flushed ? flushed.costUsd : undefined;
+      if (flushCost !== undefined && Number.isFinite(flushCost) && flushCost > 0) {
+        try { options.onSpend?.(flushCost); } catch { /* Spend accounting must not fail a compaction. */ }
+      }
+      options.signal.throwIfAborted();
+    }
     const method = rolled ? "rolling" : options.preferExtractive && config.mode === "auto"
       ? "extractive"
       : chooseCompactionMethod(config.mode, { ...route, contextWindow: prompt.contextWindow },
@@ -107,6 +137,7 @@ export async function runContextCompaction(
       try {
         ({ summary, model } = await summarizeWithModel({
           input, prompt, plan, config, route, previous, source: source(), signal: options.signal, tally, emit,
+          ...(options.instructions ? { instructions: options.instructions } : {}),
           complete: deps.complete, sideCallSlotId: deps.sideCallSlotId,
           ...(deps.costOf ? { costOf: deps.costOf } : {}),
         }));
@@ -130,9 +161,13 @@ export async function runContextCompaction(
     next.contextUsage = contextUsageFromPrompt(rebuilt);
     options.signal.throwIfAborted();
     if (!options.ephemeral) deps.persist(next, options.inTurn);
+    const notes = [
+      ...(fellBack && modelFailure ? [`The model summary failed (${modelFailure.message.replace(/[.!?]+$/, "")}); an extractive summary was used instead.`] : []),
+      ...(options.instructions && kind === "extractive" ? [NOT_APPLIED] : []),
+    ];
     const result: CompactionResult = { status: "compacted", reason: plan.reason, tokensBefore: plan.tokensBefore, tokensAfter: after,
       ...(costUsd !== undefined ? { costUsd } : {}),
-      ...(fellBack && modelFailure ? { message: `The model summary failed (${modelFailure.message.replace(/[.!?]+$/, "")}); an extractive summary was used instead.` } : {}),
+      ...(notes.length ? { message: notes.join(" ") } : {}),
     };
     reportSpend();
     emit({ type: "compaction_completed", sessionId: state.id, result, usage, calls, contextUsage: next.contextUsage });

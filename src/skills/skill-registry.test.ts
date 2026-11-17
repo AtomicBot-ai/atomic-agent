@@ -207,3 +207,20 @@ describe("SkillRegistry disabled filtering", () => {
     expect(new SkillNotFoundError("x").message).toBe("skill not installed: x");
   });
 });
+
+describe("SkillRegistry shared ~/.agents/skills folder (ATO-706)", () => {
+  let base: string;
+  beforeEach(async () => { base = await mkdtemp(join(tmpdir(), "atomic-skill-registry-shared-")); });
+  afterEach(async () => { await rm(base, { recursive: true, force: true }); });
+
+  it("lists shared skills, applies disabled names, and is not gated by project trust", async () => {
+    await writeSkill(join(base, "home", ".agents", "skills"), "everywhere");
+    const registry = new SkillRegistry({ globalDir: join(base, "skills"), projectDir: null, homeDir: join(base, "home") }, [], () => () => "pending");
+    await registry.refresh();
+    expect(registry.get("everywhere").shared).toBe(true);
+    expect(registry.listAll()[0]?.trust).toBeUndefined();
+    registry.setDisabledNames(["everywhere"]);
+    expect(registry.has("everywhere")).toBe(false);
+    expect(registry.listAll()[0]).toMatchObject({ disabled: true });
+  });
+});

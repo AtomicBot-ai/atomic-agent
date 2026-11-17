@@ -7,12 +7,16 @@ import type { WhileBusySubmitMode } from "../../config/index.js";
 import type { TuiAction } from "../tui-action.js";
 import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js";
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
+import { DISCORD_INVITE_URL } from "../community-links.js";
 import { parseRunModeCommand } from "./dispatch-run-mode.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS, type SlashCommandDef } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
+import { renderSettingsOverview, renderSettingsSearch } from "./settings-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
+import { compactionInstructionsError, normalizeCompactionInstructions } from "../../runtime/compaction-instructions.js";
+import { parsePersonaCommand, type PersonaCommand } from "./persona-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -32,19 +36,36 @@ export interface SlashDispatchResult {
   /** Text to inject into the chat log as a system confirmation. */
   readonly systemMessage?: string;
   readonly compactionVerb?: "run" | "show";
+  /** `/compact <text>` (ATO-661): what the summary must keep. */
+  readonly compactionInstructions?: string;
+  /** `/mcp auth <name>` / `/mcp signout <name>`: browser sign-in of a remote server. */
+  readonly mcpAuthVerb?: { action: "signin" | "signout"; name: string };
   /** `/goal …` (ATO-451): the orchestrator acts on the open chat's goal. */
   readonly goalCommand?: GoalCommand;
+  /** `/persona …` (ATO-54): the submit path writes the config and reports. */
+  readonly personaCommand?: PersonaCommand;
   /**
    * `/enhance <text>`: the draft to rewrite. The buffer is left holding
    * the draft itself, and the caller hands the rewrite back to it.
    */
   readonly enhancePromptText?: string;
   /**
+   * `/btw <question>` (ATO-1152): ask the model a side question with the
+   * chat as context. The caller runs it; nothing lands in the session.
+   */
+  readonly sideQuestionText?: string;
+  /**
    * Bare `/enhance` (typed, from the palette or from the menu): enhance
    * whatever draft the composer holds, if it holds one. Only the caller
    * can see the composer, so it decides; the buffer is never cleared.
    */
   readonly enhanceCurrentDraft?: boolean;
+  /**
+   * `/edit` (ATO-655): open the composer draft, or `text` when given, in
+   * the operator's `$VISUAL` / `$EDITOR`. Only the caller can see the
+   * composer and hand the terminal over, so it does the rest.
+   */
+  readonly externalEdit?: { readonly text?: string };
   /** When true the editor buffer should be cleared after dispatch. */
   readonly clearBuffer: boolean;
   /** When true the caller should invoke `onAbort`. */
@@ -53,8 +74,14 @@ export interface SlashDispatchResult {
   readonly triggerQuit: boolean;
   /** When true the caller should ask the orchestrator to open the session picker. */
   readonly triggerSessionPicker: boolean;
+  /** `/rewind` (ATO-1057): ask the orchestrator to open the rewind picker. */
+  readonly triggerRewindPicker?: boolean;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
+  /** With `triggerSessionNew`: start the session in its own git worktree (`/new worktree`). */
+  readonly sessionNewWorktree?: boolean;
+  /** `/incognito` (ATO-586): start a fresh incognito chat. */
+  readonly triggerIncognitoSession?: boolean;
   /** When true the caller should open a new OS terminal window (`/window`). */
   readonly triggerNewWindow: boolean;
   /** When true the caller should ask the orchestrator to dump the user profile. */
@@ -65,6 +92,13 @@ export interface SlashDispatchResult {
   readonly triggerDebugBundleDump: boolean;
   /** When true the caller should open the issue-report popup (`/report`). */
   readonly triggerIssueReport: boolean;
+  /** An http(s) URL the caller should open in the OS browser (`/discord`). */
+  readonly openUrl?: string;
+  /**
+   * `/feedback` (ATO-1467): `open` opens the interview form, `never`
+   * hides the rare invite for good. The caller owns both.
+   */
+  readonly feedbackVerb?: "open" | "never";
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
@@ -149,6 +183,17 @@ export interface SlashDispatchResult {
    */
   readonly showStepsVerb?: "on" | "off" | "toggle";
   /**
+   * `/verbose [on|off]` (ATO-34): one plain note per finished step. Bare
+   * `/verbose` is `toggle`; the caller sets `TuiState.verboseSteps`.
+   */
+  readonly verboseStepsVerb?: "on" | "off" | "toggle";
+  /**
+   * `/vim [on|off]` — vim keys in the composer (ATO-662). Bare `/vim` is
+   * `toggle`. The caller sets `TuiState.vimMode` and writes
+   * `tui.vimMode` through `onVimModePersistRequested`.
+   */
+  readonly vimVerb?: "on" | "off" | "toggle";
+  /**
    * `/uninstall`: measure the install and feed the result back as
    * `uninstall_plan_loaded`. Nothing is removed on this path — the
    * dialog it opens is what eventually asks for that.
@@ -176,6 +221,11 @@ export interface SlashDispatchResult {
    */
   readonly triggerStatusSnapshot?: boolean;
   /**
+   * `/why` (ATO-34): explain the last step. Built from `TuiState`, so
+   * the caller (`submit-handler.ts`) formats it.
+   */
+  readonly triggerWhySnapshot?: boolean;
+  /**
    * `/worker stop|escalate <id>` and `/worker steer <id> <text>`: act on
    * one running fusion worker of the current session (ATO-66, ATO-568).
    * Needs the runtime, so the caller runs it. `text` is set for `steer`
@@ -191,6 +241,11 @@ export interface SlashDispatchResult {
     action: "list" | "resume" | "discard";
     runId?: string;
   };
+  /**
+   * `/resume`: continue the current session's last turn when a restart
+   * cut it off (ATO-448). Needs the runtime, so the caller runs it.
+   */
+  readonly resumeInterruptedTurn?: true;
 }
 
 export type FusionWorkerAction =
@@ -273,6 +328,15 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       // The popup is the feedback; a system line here would be noise
       // behind a modal.
       return pureActions([], { triggerIssueReport: true });
+    case "discord":
+      // ATO-1465: the browser opens it, and the line in the chat is the
+      // fallback over SSH, where there is no browser to open.
+      return pureActions([], {
+        openUrl: DISCORD_INVITE_URL,
+        systemMessage: `Join us on Discord: ${DISCORD_INVITE_URL}`,
+      });
+    case "feedback":
+      return dispatchFeedbackSub(parsed.args);
     case "dump":
       return pureActions([], {
         triggerDebugBundleDump: true,
@@ -297,6 +361,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return dispatchQueueSub(parsed.args);
     case "status":
       return pureActions([], { triggerStatusSnapshot: true });
+    case "why":
+      return pureActions([], { triggerWhySnapshot: true });
     case "steer":
       return dispatchSteerSub(parsed.args);
     case "worker": {
@@ -323,6 +389,13 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         fusionRunAction: { action, ...(runId === undefined ? {} : { runId }) },
       });
     }
+    case "resume":
+      if (parsed.args.trim().length > 0) {
+        return pureActions([], {
+          systemMessage: "usage: /resume (continues the last reply a restart cut off; takes no arguments)",
+        });
+      }
+      return pureActions([], { resumeInterruptedTurn: true });
     case "abort":
       return pureActions([{ type: "abort_requested" }], {
         triggerAbort: true,
@@ -346,16 +419,28 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerOnboardingRerun: true });
     case "debug":
       return pureActions([{ type: "ui_mode_toggled" }]);
-    case "compact":
-      return parsed.args === "" || parsed.args === "show"
-        ? pureActions([], { compactionVerb: parsed.args === "show" ? "show" : "run" })
-        : pureActions([], { systemMessage: "Usage: /compact [show]" });
+    case "compact": {
+      if (parsed.args === "show") return pureActions([], { compactionVerb: "show" });
+      // Any other text says what the summary must keep, like `/compact keep the failing test names`.
+      const invalid = compactionInstructionsError(parsed.args);
+      if (invalid) return pureActions([], { systemMessage: `Usage: /compact [show | what to keep]; ${invalid}.` });
+      const instructions = normalizeCompactionInstructions(parsed.args);
+      return pureActions([], { compactionVerb: "run", ...(instructions ? { compactionInstructions: instructions } : {}) });
+    }
     case "goal": {
       const goal = parseGoalCommand(parsed.args);
       return goal.kind === "error"
         ? pureActions([], { systemMessage: goal.message })
         : pureActions([], { goalCommand: goal });
     }
+    case "btw": {
+      const question = parsed.args.trim();
+      return question.length === 0
+        ? pureActions([], { systemMessage: SIDE_QUESTION_USAGE })
+        : pureActions([], { sideQuestionText: question });
+    }
+    case "persona":
+      return pureActions([], { personaCommand: parsePersonaCommand(parsed.args) });
     case "enhance":
       // Opt-in and never sends: the draft goes back into the composer
       // right away, and the rewrite replaces it there for review.
@@ -365,6 +450,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
             enhancePromptText: parsed.args,
             clearBuffer: false,
           });
+    case "edit":
+      // The buffer is the caller's to replace with what the editor saved.
+      return pureActions([], {
+        externalEdit: parsed.args === "" ? {} : { text: parsed.args },
+        clearBuffer: false,
+      });
     case "context":
       return pureActions([{ type: "context_panel_toggled" }]);
     case "usage":
@@ -412,6 +503,10 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       ]);
     case "steps":
       return dispatchStepsSub(parsed.args);
+    case "verbose":
+      return dispatchVerboseSub(parsed.args);
+    case "vim":
+      return dispatchVimSub(parsed.args);
     case "session":
       return pureActions([], {
         systemMessage: "use /sessions to switch, /new to start fresh",
@@ -419,7 +514,15 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
     case "sessions":
       return pureActions([], { triggerSessionPicker: true });
     case "new":
+      // `/new worktree`: the session gets a git worktree of its own (ATO-576).
+      if (/^(--)?worktree$/i.test(parsed.args.trim())) {
+        return pureActions([], { triggerSessionNew: true, sessionNewWorktree: true });
+      }
       return pureActions([], { triggerSessionNew: true });
+    case "rewind":
+      return pureActions([], { triggerRewindPicker: true });
+    case "incognito":
+      return pureActions([], { triggerIncognitoSession: true });
     case "window":
       return pureActions([], { triggerNewWindow: true });
     case "sidebar":
@@ -429,6 +532,13 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([{ type: "sidebar_collapse_toggled" }]);
     case "tools":
       return dispatchToolsSub(parsed.args);
+    case "settings": {
+      // ATO-41: every config.json key with its default and description.
+      const query = parsed.args.trim();
+      return pureActions([], {
+        systemMessage: query.length === 0 ? renderSettingsOverview() : renderSettingsSearch(query),
+      });
+    }
     case "skills":
       return dispatchSkillsSub(parsed.args);
     case "skill":
@@ -606,6 +716,20 @@ function dispatchModeSub(args: string): SlashDispatchResult {
 export const ENHANCE_USAGE =
   "Usage: /enhance <your prompt>, or type a prompt and pick Enhance prompt from the menu. Rewrites it in the composer for you to review; nothing is sent.";
 
+export const SIDE_QUESTION_USAGE =
+  "Usage: /btw <question>. Asks a quick side question about this chat; the model runs no tools and nothing is saved to the session.";
+
+export const FEEDBACK_USAGE =
+  "usage: `/feedback` opens the form for a 15 min call with the team · `/feedback never` hides the invite for good";
+
+/** `/feedback` and `/feedback never`; anything else prints the usage. */
+function dispatchFeedbackSub(args: string): SlashDispatchResult {
+  const verb = args.trim().toLowerCase();
+  if (verb === "") return pureActions([], { feedbackVerb: "open" });
+  if (verb === "never") return pureActions([], { feedbackVerb: "never" });
+  return pureActions([], { systemMessage: FEEDBACK_USAGE });
+}
+
 function pureActions(
   actions: readonly TuiAction[],
   overrides: Partial<
@@ -690,6 +814,32 @@ function dispatchStepsSub(rawArgs: string): SlashDispatchResult {
   if (verb === "off") return pureActions([], { showStepsVerb: "off" });
   return pureActions([], {
     systemMessage: `usage: /steps [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
+/** `/verbose` toggles the per-step notes; `on` / `off` set them. */
+function dispatchVerboseSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { verboseStepsVerb: "toggle" });
+  if (verb === "on" || verb === "off") {
+    return pureActions([], { verboseStepsVerb: verb });
+  }
+  return pureActions([], {
+    systemMessage: `usage: /verbose [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
+/**
+ * `/vim` flips the composer's vim keys (`tui.vimMode`); `on` / `off`
+ * set them. Same shape as `/steps`: the toggle needs the live value, so
+ * the caller applies and persists it.
+ */
+function dispatchVimSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { vimVerb: "toggle" });
+  if (verb === "on" || verb === "off") return pureActions([], { vimVerb: verb });
+  return pureActions([], {
+    systemMessage: `usage: /vim [on|off] (got "${rawArgs.trim()}")`,
   });
 }
 
@@ -908,8 +1058,18 @@ function dispatchMcpSub(rawArgs: string): SlashDispatchResult {
       { type: "mcp_remove_confirm_opened", name },
     ]);
   }
+  const authMatch = argPart.match(/^(auth|signout)\s+(\S+)\s*$/i);
+  if (authMatch) {
+    return pureActions([], {
+      mcpAuthVerb: {
+        action: authMatch[1]!.toLowerCase() === "auth" ? "signin" : "signout",
+        name: authMatch[2]!,
+      },
+    });
+  }
   return pureActions([], {
-    systemMessage: "usage: /mcp | /mcp add | /mcp remove <name>",
+    systemMessage:
+      "usage: /mcp | /mcp add | /mcp remove <name> | /mcp auth <name> | /mcp signout <name>",
   });
 }
 

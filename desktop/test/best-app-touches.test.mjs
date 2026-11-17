@@ -1,4 +1,4 @@
-// ATO-1032: the cheap habits of the best desktop apps — one suggestion on
+// ATO-1032: the cheap habits of the best desktop apps — starter cards on
 // an empty chat, the Stop chord as the platform presses it, the New chat
 // chord on its row, and a short age on each chat row.
 import { test } from "node:test";
@@ -46,9 +46,57 @@ test("the row carries the age only where nothing is queued", () => {
   assert.match(row, /data-m="' \+ queued \+ ' queued" data-queued=/);
 });
 
-test("one suggestion, the platform's Stop chord, New chat's chord on the row", () => {
-  assert.match(fn("emptyChat"), /\['Summarise the files in this folder'\]/);
+test("the platform's Stop chord, New chat's chord on the row", () => {
   assert.doesNotMatch(source, /title="Stop \(Ctrl\+\.\)"/);
   assert.match(source, /kbdText\('Stop \(⌘ \.\)'\)/);
   assert.match(source, /class="sb-new" data-act="session:new" data-kbd=/);
+});
+
+// The empty chat's four starter cards (EMPTY_STARTERS): a card fills the
+// composer, never sends; Images and Video open their Studio page when it is
+// registered and fill the composer when it is not.
+function starters(studioPages) {
+  const at = source.indexOf("\nconst EMPTY_STARTERS = [");
+  assert.ok(at >= 0, "EMPTY_STARTERS is a top-level const in renderer.js");
+  const list = source.slice(at + 1, source.indexOf("\n];\n", at) + 4);
+  const esc = (x) => String(x).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+  const c = vm.createContext({ esc, window: {}, STUDIO: undefined });
+  if (studioPages) { c.STUDIO = { pages: studioPages }; c.window.STUDIO = c.STUDIO; }
+  vm.runInContext(list.replace("const EMPTY_STARTERS", "globalThis.EMPTY_STARTERS") + fn("starterCardHTML")
+    + "globalThis.card = starterCardHTML;", c);
+  return c.EMPTY_STARTERS.map((s) => c.card(s));
+}
+
+test("the empty chat draws four starter cards, each with an icon, a title and a hint", () => {
+  assert.match(fn("emptyChat"), /'<div class="ghost">' \+ EMPTY_STARTERS\.map\(starterCardHTML\)\.join\(''\)/);
+  const cards = starters(null);
+  assert.equal(cards.length, 4);
+  for (const h of cards) {
+    assert.match(h, /^<button class="ghostchip" /);
+    assert.match(h, /<span class="gc-ic"><svg [^>]*stroke-width="1\.5"/);
+    assert.match(h, /<span class="gc-t">[^<]+<\/span><span class="gc-d">[^<]+<\/span><\/button>$/);
+  }
+  // cards is an array from the vm context: Array.from makes it this realm's, or deepStrictEqual sees two prototypes.
+  assert.deepEqual(Array.from(cards, (h) => h.match(/class="gc-t">([^<]+)</)[1]),
+    ["Summarise this folder", "Create an image", "Make a video", "Write code"]);
+});
+
+test("a card fills the composer; Images and Video open Studio when its page is there", () => {
+  const plain = starters(null);
+  assert.ok(plain.every((h) => /data-fill="[^"]+"/.test(h) && !/data-act=/.test(h)), "no Studio: every card fills the composer");
+  assert.match(plain[0], /data-fill="Summarise the files in this folder: /);
+  const studio = starters({ images: {}, video: {} });
+  assert.match(studio[1], /data-act="studio:open:images"/);
+  assert.match(studio[2], /data-act="studio:open:video"/);
+  assert.match(studio[0], /data-fill=/);
+  assert.match(studio[3], /data-fill="Help me write code that "/);
+  // The fill puts the caret at the end of the starter, ready to type on.
+  assert.match(source, /if \(fill\) \{ S\.draft = fill\.dataset\.fill; render\(\); const en = \$\('#entry'\); if \(en\) \{ en\.focus\(\); en\.setSelectionRange\(en\.value\.length, en\.value\.length\);/);
+});
+
+test("Join Discord in the sidebar foot is a quiet 16px icon with only a hover wash", () => {
+  const css = readFileSync(new URL("../renderer/css/shell.css", import.meta.url), "utf8");
+  assert.match(css, /\.sb-discord\{flex:none;width:34px;height:34px;background:transparent;color:var\(--ink-2\)\}/);
+  assert.match(css, /\.sb-discord:hover\{background:var\(--hover\);color:var\(--ink\)\}/);
+  assert.match(css, /\.sb-discord svg\{width:16px;height:16px;stroke-width:1\.5\}/);
 });

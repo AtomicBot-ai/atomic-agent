@@ -56,6 +56,11 @@ export interface ToolContext {
    */
   userGroundingTexts?: readonly string[];
   /**
+   * True when the call runs in an incognito chat (ATO-586): memory write
+   * tools refuse (`tools/memory/incognito-guard.ts`). Absent otherwise.
+   */
+  incognito?: boolean;
+  /**
    * The provider id this step's completions are pinned to
    * (`StepDependencies.providerId` — a fusion worker runs on the local
    * leg). Absent ⇒ the step runs on the active text provider. Read by
@@ -82,6 +87,13 @@ export interface ToolDefinition {
    * data, not instructions (`untrusted-tool-output.ts`).
    */
   untrustedOutput?: string;
+  /**
+   * Set when the result carries outside text the tool already frames
+   * itself (the mail inbox): the source label. The registry does not frame
+   * it again, but reports it like `untrustedOutput` to
+   * `ToolRegistryOptions.onUntrustedOutput` (ATO-618).
+   */
+  externalSource?: string;
   run: (
     args: Record<string, unknown>,
     ctx: ToolContext,
@@ -116,6 +128,25 @@ export interface ToolRegistryOptions {
    * `.env`.
    */
   knownSecrets?: () => readonly KnownSecret[];
+  /**
+   * Told each time a tool returns outside text on a session: the tool's
+   * `untrustedOutput` or `externalSource` label, or the label of the
+   * untrusted tool whose spill file `os.fs.read` read back. The approval
+   * gate uses it to hold risky silent approvals for the rest of the turn
+   * (`approval/untrusted-taint.ts`, ATO-618). Absent ⇒ nobody is told.
+   */
+  onUntrustedOutput?: (sessionId: string, source: string) => void;
+  /**
+   * Runs before every call, with the arguments the tool will get. The
+   * runtime saves what a file tool is about to change here
+   * (`fs-checkpoint-targets.ts`, ATO-1056). It must not throw; a throw
+   * is ignored and the call goes ahead. Absent => nothing runs.
+   */
+  beforeInvoke?: (
+    name: string,
+    args: Record<string, unknown>,
+    ctx: ToolContext,
+  ) => Promise<void>;
 }
 
 export class ToolRegistry {
@@ -124,10 +155,14 @@ export class ToolRegistry {
     | (Pick<ToolOutputSpill, "spill"> & Partial<Pick<ToolOutputSpill, "spilledToolStem">>)
     | undefined;
   private readonly knownSecrets: () => readonly KnownSecret[];
+  private readonly onUntrustedOutput: ToolRegistryOptions["onUntrustedOutput"];
+  private readonly beforeInvoke: ToolRegistryOptions["beforeInvoke"];
 
   constructor(options: ToolRegistryOptions = {}) {
     this.outputSpill = options.outputSpill;
     this.knownSecrets = options.knownSecrets ?? (() => knownSecretsFromEnv());
+    this.onUntrustedOutput = options.onUntrustedOutput;
+    this.beforeInvoke = options.beforeInvoke;
   }
 
   register(definition: ToolDefinition): void {
@@ -178,7 +213,15 @@ export class ToolRegistry {
       // number as "200000", an array as "[\"a.png\"]"). Unwrap those
       // before dispatch; anything that cannot be coerced is passed
       // through untouched so the tool reports its own error.
-      result = await tool.run(coerceToolArgs(name, aliased?.args ?? args), ctx);
+      const callArgs = coerceToolArgs(name, aliased?.args ?? args);
+      if (this.beforeInvoke !== undefined) {
+        try {
+          await this.beforeInvoke(name, callArgs, ctx);
+        } catch {
+          // A hook never stops the call.
+        }
+      }
+      result = await tool.run(callArgs, ctx);
     } catch (err) {
       // Same error object (its class matters to callers), one more line.
       // A message that cannot be set (a getter-only DOMException) is left
@@ -202,6 +245,8 @@ export class ToolRegistry {
     const untrusted =
       tool.untrustedOutput ?? this.spilledUntrustedSource(name, args, ctx);
     if (untrusted !== undefined) result = markUntrustedResult(result, untrusted);
+    const outside = untrusted ?? tool.externalSource;
+    if (outside !== undefined) this.onUntrustedOutput?.(ctx.sessionId, outside);
     return ctx.modelMode === "cloud"
       ? fullToolResult(result)
       : this.outputSpill

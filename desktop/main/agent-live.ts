@@ -1,7 +1,8 @@
-import { ipcMain } from "electron";
+import { ipcMain, shell } from "electron";
 
 import type { AgentClient } from "./agent-client.js";
 import { withConfigLock } from "./agent-cli.js";
+import { isSafeSignInUrl } from "./mcp-auth-url.js";
 import { isTelegramPairingOp } from "./telegram-pairing.js";
 
 /**
@@ -77,6 +78,39 @@ export function wireAgentLiveIpc(client: AgentClient): void {
     return op === "restart" ? run() : withConfigLock(run);
   });
 
+  /* MCP browser sign-in (mcp-auth-url.ts, renderer/mcp-auth.js). The agent
+     prepares the sign-in and answers the authorization server's page; this
+     opens it in the person's browser after checking it is plain https. The
+     browser then returns to the agent's own loopback page, never to here.
+     No config lock: the agent keeps sign-ins in its own state folder. */
+  const authCall = async <T>(name: unknown, call: (n: string) => Promise<T>): Promise<LiveResult<T>> => {
+    if (typeof name !== "string" || !MCP_NAME_RE.test(name)) return { ok: false, error: "server name required" };
+    try {
+      return { ok: true, data: await call(name) };
+    } catch (err) {
+      const text = message(err);
+      if (/^No route for /.test(text)) return { ok: false, unsupported: true, error: text };
+      return { ok: false, error: text };
+    }
+  };
+  ipcMain.handle("mcp:authStart", async (_event, name: unknown): Promise<LiveResult<{ state: string }>> => {
+    const res = await authCall(name, (n) => client.mcpAuthStart(n));
+    if (!res.ok) return res;
+    const data = res.data ?? { state: "pending" };
+    if (data.state === "signed_in") return { ok: true, data: { state: "signed_in" } };
+    if (!isSafeSignInUrl(data.authUrl)) {
+      return { ok: false, error: "The sign-in page address is not a plain https link, so it was not opened." };
+    }
+    try {
+      await shell.openExternal(data.authUrl);
+    } catch (err) {
+      return { ok: false, error: "Could not open your browser: " + message(err) };
+    }
+    return { ok: true, data: { state: "pending" } };
+  });
+  ipcMain.handle("mcp:authStatus", (_event, name: unknown) => authCall(name, (n) => client.mcpAuthStatus(n)));
+  ipcMain.handle("mcp:authSignOut", (_event, name: unknown) => authCall(name, (n) => client.mcpAuthSignOut(n)));
+
   /* ATO-859: Telegram pairing (main/telegram-pairing.ts). The agent writes
      the new owner itself when the code is claimed, so this takes no config
      lock. The answer carries the one-time code to the window; nothing here
@@ -88,4 +122,10 @@ export function wireAgentLiveIpc(client: AgentClient): void {
   });
   // ATO-758: why the bot does not answer, when another poller holds it off.
   ipcMain.handle("agent:telegramChannel", () => client.telegramChannel());
+  /* ATO-1094: the grey next-step suggestion for the composer (renderer/next-step.js).
+     Read-only, so no config lock; the text goes to the window and nowhere else. */
+  ipcMain.handle("agent:nextStep", (_event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId || sessionId.length > 200) return { supported: true, text: null };
+    return client.nextStep(sessionId);
+  });
 }

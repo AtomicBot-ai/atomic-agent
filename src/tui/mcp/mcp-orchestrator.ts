@@ -10,8 +10,11 @@
 
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import { getConfig } from "../../config/index.js";
+import { describeUnfilledPlaceholders } from "../../mcp/mcp-catalog.js";
 import type { McpServerConfig } from "../../mcp/mcp-types.js";
+import { McpOAuthFlow } from "../../mcp/mcp-oauth-flow.js";
 import type { TuiEventBusEmitter } from "../make-event-bus.js";
+import { openUrlInBrowser } from "../open-url.js";
 import {
   McpAddServerError,
   McpRemoveServerError,
@@ -50,6 +53,8 @@ export class McpOrchestrator {
   private openDetailKey: string | null = null;
   /** Server names with a restart / enable toggle in flight. */
   private readonly busyServers = new Set<string>();
+  /** Browser sign-ins (`/mcp auth`), created on first use. */
+  private oauthFlow: McpOAuthFlow | null = null;
 
   constructor(
     private readonly runtime: McpOrchestratorRuntime,
@@ -87,6 +92,64 @@ export class McpOrchestrator {
       clearInterval(this.refreshTimer);
       this.refreshTimer = null;
     }
+    void this.oauthFlow?.dispose();
+    this.oauthFlow = null;
+  }
+
+  /**
+   * `/mcp auth <name>`: start a browser sign-in for a remote server,
+   * print the page to open and try to open it in the default browser.
+   * The server reconnects on its own once the browser comes back.
+   */
+  signIn(name: string): void {
+    void (async () => {
+      try {
+        const result = await this.oauth().start(name);
+        if (result.state === "signed_in") {
+          this.say(`mcp: ${JSON.stringify(name)} is signed in`);
+          return;
+        }
+        this.say(`mcp: to sign in to ${JSON.stringify(name)}, open ${result.authUrl}`);
+        const opened = await openUrlInBrowser(result.authUrl);
+        if (!opened.ok) this.say(`mcp: could not open the browser (${opened.reason}); open the link above by hand`);
+      } catch (err) {
+        this.say(`mcp: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
+  /** `/mcp signout <name>`: forget a server's browser sign-in. */
+  signOut(name: string): void {
+    void (async () => {
+      try {
+        await this.oauth().signOut(name);
+        this.say(`mcp: signed out of ${JSON.stringify(name)}`);
+      } catch (err) {
+        this.say(`mcp: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
+  private oauth(): McpOAuthFlow {
+    if (this.oauthFlow) return this.oauthFlow;
+    this.oauthFlow = new McpOAuthFlow({
+      stateDir: getConfig().paths.stateDir,
+      findServer: (name) => readConfiguredServers().find((s) => s.name === name),
+      reconnect: async (name) => {
+        const mgr = this.runtime.mcpManager;
+        const cfg = readConfiguredServers().find((s) => s.name === name);
+        if (!(await mgr.restartServer(name)) && cfg) await mgr.addServerLive(cfg);
+        await this.runtime.refreshMcp();
+        this.refresh();
+        const state = mgr.listStatuses().find((s) => s.name === name)?.state;
+        this.say(`mcp: ${JSON.stringify(name)} is ${state ?? "not connected"}`);
+      },
+    });
+    return this.oauthFlow;
+  }
+
+  private say(text: string): void {
+    this.bus.emit({ type: "system_message", text });
   }
 
   /** Public snapshot path — also runs on every interval tick. */
@@ -140,6 +203,13 @@ export class McpOrchestrator {
 
   private async addServerFromJsonAsync(json: string): Promise<void> {
     this.bus.emit({ type: "mcp_add_submitting_started" });
+    // ATO-1131: a catalog pick leaves `<your ...>` placeholders for keys
+    // and paths; never write one to config as if it were the value.
+    const unfilled = describeUnfilledPlaceholders(json);
+    if (unfilled !== null) {
+      this.bus.emit({ type: "mcp_add_validation_failed", error: unfilled });
+      return;
+    }
     let parsed;
     try {
       parsed = parseAddServerJson(json);

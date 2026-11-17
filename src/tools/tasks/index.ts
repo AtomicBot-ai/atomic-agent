@@ -1,4 +1,4 @@
-import type { ToolRegistry } from "../tool-registry.js";
+import type { ToolDefinition, ToolRegistry } from "../tool-registry.js";
 import type { TaskRunner, TaskStore } from "../../tasks/index.js";
 import type { SessionState } from "../../session/index.js";
 
@@ -7,6 +7,7 @@ import { buildTasksCronTool } from "./tasks-cron.js";
 import { buildTasksListTool } from "./tasks-list.js";
 import { buildTasksCancelTool } from "./tasks-cancel.js";
 import { buildTasksShowTool } from "./tasks-show.js";
+import { INCOGNITO_TASK_REFUSAL, refuseInIncognito } from "../memory/incognito-guard.js";
 
 export { buildTasksScheduleTool } from "./tasks-schedule.js";
 export { buildTasksCronTool } from "./tasks-cron.js";
@@ -29,6 +30,13 @@ export interface RegisterTaskToolsOptions {
   defaultMaxAttempts: number;
   /** Default `limit` for `tasks.list`. */
   defaultListLimit: number;
+  /**
+   * ATO-586. `tasks.schedule` and `tasks.cron` refuse in an incognito
+   * chat: always when the call says so (`ToolContext.incognito`), and
+   * also when this answers true for the call's session. Listing, showing
+   * and cancelling tasks stay allowed: they keep nothing from the chat.
+   */
+  isIncognitoSession?: (sessionId: string) => boolean;
 }
 
 /**
@@ -42,14 +50,16 @@ export function registerTaskTools(
   options: RegisterTaskToolsOptions,
 ): void {
   if (!options.agentToolsEnabled) return;
+  const guarded = (tool: ToolDefinition): ToolDefinition =>
+    refuseInIncognito(tool, options.isIncognitoSession, INCOGNITO_TASK_REFUSAL);
   registry.register(
-    buildTasksScheduleTool({
+    guarded(buildTasksScheduleTool({
       taskRunner: options.taskRunner,
       createSession: options.createSession,
       defaultMaxAttempts: options.defaultMaxAttempts,
-    }),
+    })),
   );
-  registry.register(buildTasksCronTool({ taskRunner: options.taskRunner }));
+  registry.register(guarded(buildTasksCronTool({ taskRunner: options.taskRunner })));
   registry.register(
     buildTasksListTool({
       taskStore: options.taskStore,

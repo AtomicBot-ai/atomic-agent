@@ -25,6 +25,20 @@ export {
 } from "./skill-hub-catalog.js";
 export type { HubSkillEntry } from "./skill-hub-catalog.js";
 
+export {
+  formatSkillsShIdentifier,
+  looksLikeSkillsShIdentifier,
+  parseSkillsShResponse,
+  searchSkillsSh,
+  SKILLS_SH_API_BASE,
+  SKILLS_SH_PREFIX,
+  SkillsShClient,
+  SkillsShError,
+} from "./skills-sh-client.js";
+export type { SkillsShClientOptions, SkillsShSkill } from "./skills-sh-client.js";
+export { resolveSkillsShIdentifier, stageSkillFromSkillsSh } from "./skills-sh-install.js";
+export type { StageSkillsShOptions } from "./skills-sh-install.js";
+
 export { scanSkillFiles, summarizeScan } from "./skill-security-scanner.js";
 export type {
   ScannableFile,
@@ -55,3 +69,10 @@ export type {
   StagedSkillInstall,
   StageSkillOptions,
 } from "./install-from-hub.js";
+
+export {
+  computeSkillDigest,
+  readSkillLock,
+  SKILL_LOCK_FILE,
+} from "./skill-lock.js";
+export type { SkillLock, SkillLockSource, SkillOrigin } from "./skill-lock.js";

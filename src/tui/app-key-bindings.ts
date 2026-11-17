@@ -2,6 +2,7 @@ import { handleUpdateKey } from "./update/update-key-bindings.js";
 import { handleProjectTrustKey } from "./project-trust/project-trust-key-bindings.js";
 import { CODING_MODES, type CodingMode } from "./coding-mode/coding-mode.js";
 import type { IssueReportLevel } from "./issue-report/report-levels.js";
+import type { IssueReportToggle } from "./issue-report/issue-report-state.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
 import type { ComposerSwitchRow } from "./composer-switch/composer-switch-rows.js";
 import { handleContextPanelKey } from "./context/context-panel-keys.js";
@@ -9,6 +10,7 @@ import type { Key } from "ink";
 import {
   canGrantCategory,
   canGrantShape,
+  describeMcpToolGrant,
   type ApprovalGrantScope,
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
@@ -80,6 +82,8 @@ export interface AppKeyCallbacks {
   onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
   /** Issue-report popup: the operator confirmed sending. */
   onIssueReportSendRequested?(): void;
+  /** Issue-report popup: `i` / `l` flipped a checkbox on the confirm step. */
+  onIssueReportToggleRequested?(option: IssueReportToggle): void;
   /** Issue-report popup: dismissed on any step. */
   onIssueReportCloseRequested?(): void;
   onApprovalDecision(
@@ -166,6 +170,13 @@ export interface AppKeyContext {
   onPlanExecute?: (mode: CodingMode) => void;
   /** Decline the plan on offer without leaving plan mode. */
   onPlanDismiss?: () => void;
+  /**
+   * Vim (ATO-662) spends an Esc right now: the composer is live in
+   * INSERT, has a half-typed command, or just spent the Esc being
+   * handled. None of the global Esc meanings may fire on such an Esc
+   * (`components/vim/vim-esc-claim.ts`). Absent means vim is off.
+   */
+  vimClaimsEsc?: boolean;
 }
 
 /**
@@ -286,6 +297,26 @@ export function isPanelModalOpen(state: TuiState): boolean {
 }
 
 /**
+ * Tab would accept the next-step suggestion (ATO-1095): there is one,
+ * the composer is empty and focused, no plan is on offer (its own hint
+ * owns the field then), and nothing else claims Tab — the slash
+ * palette, an approval, a menu or the context panel.
+ */
+export function canAcceptNextStepSuggestion(state: TuiState): boolean {
+  return (
+    state.nextStepSuggestion !== null &&
+    state.inputValue.length === 0 &&
+    !state.planHandoff &&
+    state.uiMode === "chat" &&
+    state.chatFocus === "editor" &&
+    !state.slashPaletteOpen &&
+    !state.pendingApproval &&
+    !state.menuOpen &&
+    !state.contextPanelOpen
+  );
+}
+
+/**
  * True when this Ctrl+C will be seen by the composer as "copy": a live
  * selection AND a focused editor. The conditions after the flag mirror
  * the states of `editorFocus` (tui-app.tsx) a selection can coexist
@@ -302,6 +333,21 @@ function composerOwnsCtrlC(state: TuiState, menuLeaderArmed: boolean): boolean {
     !state.contextPanelOpen &&
     !menuLeaderArmed
   );
+}
+
+/**
+ * The keys the coding-mode menu acts on while it is up: ↑↓ move its
+ * cursor, Enter applies the row, Esc closes it.
+ *
+ * The menu leaves the composer focused on purpose (any other key closes
+ * it and types through), so the composer's `claimKey` consults this to
+ * stand down for exactly these four. Without it the same ↑ also walked
+ * the input history behind the menu, and the same Enter applied the
+ * mode *and* sent whatever that walk had put in the buffer.
+ */
+export function codingModeMenuOwnsKey(state: TuiState, key: Key): boolean {
+  if (!state.codingModeMenu) return false;
+  return key.upArrow || key.downArrow || key.return || key.escape;
 }
 
 export function handleAppKey(
@@ -465,6 +511,7 @@ export function handleAppKey(
         !state.pendingApproval &&
         !state.themePickerOpen &&
         !state.sessionPickerOpen &&
+        !state.rewindPicker &&
         !isPanelModalOpen(state),
     })
   ) {
@@ -546,19 +593,26 @@ export function handleAppKey(
     return true;
   }
   // Esc aborts a turn in flight — the binding the hint strip advertises
-  // for the whole time `status === "running"`. It has to be claimed here
-  // rather than in the editor's own Esc handler because the editor is
-  // `disabled` while a turn runs, which switches its `useInput` off and
-  // makes the abort branch over there unreachable. Overlays that own Esc
-  // themselves keep it; a pending approval already returned above.
-  // Between turns Esc can cancel context maintenance without arming an
-  // agent-turn abort: no completed steps are being discarded then.
+  // for the whole time `status === "running"`. It is claimed here, not
+  // in the editor's own Esc handler, because the editor runs its own
+  // `useInput` subscription (it stays live mid-turn so the next message
+  // can be drafted) and its Esc ladder deliberately leaves abort to this
+  // layer, so the key aborts once whichever subscription fires first.
+  // Overlays that own Esc themselves keep it; a pending approval already
+  // returned above. Between turns Esc can cancel context maintenance
+  // without arming an agent-turn abort: no completed steps are being
+  // discarded then. With vim on (ATO-662), the Esc that leaves INSERT or
+  // drops a half-typed command is vim's alone: typing `x`, Esc, `1`
+  // mid-turn must not abort, and leaving INSERT must not stop a
+  // compaction. A bare Esc in NORMAL still arms the abort.
   if (
     key.escape &&
+    !ctx.vimClaimsEsc &&
     (state.status === "running" || Boolean(state.contextCompactions[state.session.sessionId ?? ""])) &&
     !state.slashPaletteOpen &&
     !state.themePickerOpen &&
     !state.sessionPickerOpen &&
+    !state.rewindPicker &&
     // A panel modal / confirm / wizard / focused field owns Esc for its
     // own cancel; aborting the run out from under it would make one
     // keypress do two unrelated things (and some of those surfaces run
@@ -594,12 +648,13 @@ export function handleAppKey(
   // make the chord work or not depending on how fast it was typed. So
   // `meta+1` on a running turn completes it on its own, and a `1` after
   // a reported Esc completes it too. `ctrl` is still excluded: ctrl+1
-  // belongs to tab switching.
+  // belongs to tab switching. In vim INSERT that Alt-prefixed `1` is the
+  // Esc vim takes to leave INSERT, so it does not count (ATO-662).
   if (
     state.status === "running" &&
     input === "1" &&
     !key.ctrl &&
-    (state.abortArmed || key.meta)
+    (state.abortArmed || (key.meta && !ctx.vimClaimsEsc))
   ) {
     callbacks.onAbort();
     dispatch({ type: "abort_requested" });
@@ -665,6 +720,18 @@ export function handleAppKey(
   ) {
     const next = cycleNavSlot(state, 1);
     applyNavSlot(dispatch, next);
+    return true;
+  }
+  // Tab on an empty composer takes the greyed next-step suggestion
+  // (ATO-1095). Ahead of the routing below, which would otherwise move
+  // focus to the rail; the slash palette keeps its own Tab.
+  if (
+    !debugTabBusy &&
+    key.tab &&
+    !key.shift &&
+    canAcceptNextStepSuggestion(state)
+  ) {
+    dispatch({ type: "next_step_suggestion_accepted" });
     return true;
   }
   // Tab / Shift+Tab routing:
@@ -744,6 +811,7 @@ function shouldTreatArrowAsChatScroll(
   if (input.length > 0) return false;
   if (state.chatFocus !== "editor") return false;
   if (state.sessionPickerOpen) return false;
+  if (state.rewindPicker) return false;
   if (state.themePickerOpen) return false;
   if (state.inputValue.length > 0) return false;
   if (state.inputHistoryCursor !== null) return false;
@@ -894,6 +962,8 @@ function grantConfirmation(
   if (scope === "shape" && request.commandShape) {
     return `granted: ${request.commandShape} commands for this session`;
   }
+  const mcpTool = describeMcpToolGrant(request);
+  if (mcpTool !== null) return `granted: ${mcpTool} for this session`;
   if (request.grantKey !== undefined) {
     return `granted: ${formatApprovalCategory(request.category)} to ${request.grantKey} for this session`;
   }
@@ -1026,6 +1096,7 @@ export function approvalHotkey(
   state: TuiState,
   input: string,
   key: Key,
+  vimClaimsEsc = false,
 ): ApprovalHotkey | null {
   const request = state.pendingApproval;
   if (!request) return null;
@@ -1039,12 +1110,19 @@ export function approvalHotkey(
   // editor's "clear the draft" key too, so only an empty buffer lets it
   // abort the run. Unlike the letters it was never a *decision* — the
   // worst a misread Esc does is throw away a half-typed message.
-  if (key.escape) return state.inputValue.length > 0 ? null : "abort";
+  // With vim on, an Esc that only leaves INSERT (or drops a half-typed
+  // command) is never the answer either (ATO-662).
+  if (key.escape) {
+    return vimClaimsEsc || state.inputValue.length > 0 ? null : "abort";
+  }
   // Everything else is a chord. `meta` is excluded rather than ignored:
   // alt+y on a Mac terminal is a character, not a verdict.
   if (!key.ctrl || key.meta) return null;
   const lower = input.toLowerCase();
-  if (lower === APPROVAL_CHORDS.approve) return "approve";
+  // A question (ATO-489) is answered from the composer, never approved.
+  if (lower === APPROVAL_CHORDS.approve) {
+    return request.category === "user_question" ? null : "approve";
+  }
   if (lower === APPROVAL_CHORDS.deny) return "deny";
   if (lower === APPROVAL_CHORDS.grantCategory && canGrantCategory(request)) {
     return "grant_category";
@@ -1161,7 +1239,7 @@ function handleApprovalKey(
     ctx.dispatch({ type: "abort_requested" });
     return true;
   }
-  switch (approvalHotkey(ctx.state, input, key)) {
+  switch (approvalHotkey(ctx.state, input, key, ctx.vimClaimsEsc)) {
     case "approve":
       decideApproval(request, true, ctx);
       return true;

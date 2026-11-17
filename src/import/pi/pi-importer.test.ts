@@ -343,4 +343,21 @@ describe("PiImporter", () => {
     expect(report.items[0]!.reason).toMatch(/no skills found in /);
     expect(report.items[1]!.reason).toMatch(/no sessions dir at /);
   });
+
+  // W2: every session item carries the folder it ran in, for grouping.ts.
+  it("tags each session with the folder it ran in", async () => {
+    seedSession();
+    const report = await buildImporter().run({
+      options: resolvePiOptions({ exclude: ["skills"] }),
+      execute: false,
+      overwrite: false,
+    });
+    const sessions = report.items.filter(
+      (item) => item.kind === "sessions" && item.destination,
+    );
+    expect(sessions.length).toBeGreaterThan(0);
+    for (const item of sessions) {
+      expect(item.group).toEqual({ key: "/work", name: "work", cwd: "/work" });
+    }
+  });
 });

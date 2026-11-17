@@ -9,7 +9,16 @@ Transport retry handles transient request/open failures: at most three attempts 
 
 The chain holds only links the person picked: the active provider plus `llm.fallback.chain`. The local llama-server provider is appended only when `llm.fallback.appendLocal` is true (default false, ATO-349/ATO-892): a cloud error must surface as its own reason (`failure-catalog.ts`: phrase plus one action, `fix-key` for a refused key) rather than a silent switch to, or a wait on, a local model nobody chose.
 
+The daily spend ceiling (`llm.costTracking.dailyLimitUsd`, ATO-649) refuses a paid link in the seam's per-attempt hook before anything is sent ([error](../reliability/spend-limit-error.ts)). `llm.costTracking.onDailyLimit` decides the rest: `"stop"` (default) does not advance, so the turn ends on "Daily cloud limit reached: $X of $Y. Cloud calls are paused until tomorrow." (failure cause `daily_limit_reached`) and every later paid call that day is refused the same way; `"local"` advances to the next link, the local model when the chain has one, and the switch notice says so (`cause: "spend-limit"`). Local and plan-billed links are never refused.
+
+
+A turn the model router routed (`llm.router`, ATO-483) runs on that session's chain with the routed provider put first for the turn (`setTurnPrimary`), the configured links after it: a failure of the routed provider falls over to the next link like any primary's. Changing that head drops the session's sticky override, as a new primary does.
+
 The fallback breaker reads live chain configuration and partitions mutable state by session. Memory runners use distinct session identities; pinned worker turns bypass fallover. An appended local fallback is still omitted when no model weights are available, avoiding a wait for a daemon that cannot start; [availability](../../runtime/local-link-availability.ts) owns this check. Provider selection/probing is lazy and owns no periodic timer. A changed active provider affects subsequent resolution rather than a captured boot-time value.
+
+## Several keys per provider
+
+A provider entry may hold more keys besides `apiKey` (ATO-471). Like `apiKeyEnvVar`, they are referenced by env var name in `extraApiKeyEnvVars` and their values live in `<stateDir>/.env`; config.json never holds a key value, and a value that is not an env var name is refused. When `apiKey` is blank the first extra key is the one sent. The [key pool](../fallback/key-pool.ts) is one more level inside a chain link: when the service refuses a key (`keyRefusalKind`: a rate limit, a refused key, an empty account) the same request goes out with the next key of that provider, and only when every key was refused does the error reach the chain. The pool stays on the key that last served until it is refused, so a turn does not hop between keys. Each refused key cools down on the breaker ladder (rate limit 1/5/15 min or the provider's longer `Retry-After`; refused key or empty account 30 min). That state is process-wide, keyed by provider id and a hash of the key, because a limit belongs to the key, not to a session. A stream's shared attempt budget still bounds one completion. One distinct key means no pool, and the single-key path is unchanged. Keys never appear in logs; the notice names a key by position.
 
 ## Streams and transport
 
@@ -19,6 +28,7 @@ Fallback completions and chunks carry servedTransport. Parsing and live reasonin
 
 ## Sources and tests
 
+- [Key pool](../fallback/key-pool.ts) and [its tests](../fallback/key-pool.test.ts), [HTTP rotation tests](../provider/openai/openai-http-key-rotation.test.ts).
 - [Breaker](../fallback/provider-fallback-chain.ts), [advance policy](../fallback/should-advance.ts), [config](../fallback/fallback-config.ts).
 - [Runtime seam](../../runtime/llm-fallback-seam.ts), [stream implementation](../provider/openai/openai-provider.ts), [stream retry tests](../provider/openai/openai-stream-retry.test.ts).
 - [Fallback seam tests](../../runtime/llm-fallback-seam.test.ts), [fallback integration](../fallback/fallback-e2e.integration.test.ts).

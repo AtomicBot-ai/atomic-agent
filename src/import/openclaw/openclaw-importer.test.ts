@@ -354,4 +354,26 @@ describe("OpenclawImporter", () => {
       status: "skipped",
     });
   });
+
+  // W2: every session item carries the folder it ran in, for grouping.ts.
+  it("tags each session with the folder it ran in", async () => {
+    writeSession(sourceDir, "main", "gaia-1", [
+      messageEvent("user", [{ type: "text", text: "hi" }], 1_700_000_000_000),
+      messageEvent("assistant", [{ type: "text", text: "hello" }], 1_700_000_002_000),
+    ]);
+    const report = await Promise.resolve(
+      buildImporter().run({
+        options: resolveOpenclawOptions({ exclude: ["cron"] }),
+        execute: false,
+        overwrite: false,
+      }),
+    );
+    const sessions = report.items.filter(
+      (item) => item.kind === "sessions" && item.destination,
+    );
+    expect(sessions.length).toBeGreaterThan(0);
+    for (const item of sessions) {
+      expect(item.group).toEqual({ key: "/work", name: "work", cwd: "/work" });
+    }
+  });
 });

@@ -78,7 +78,7 @@ export function prepareAgentTurn(
   // below describe the ACTIVE provider, which is the wrong one here.
   const pinnedSlice =
     options.providerId !== undefined && deps.resolveLlmSlice
-      ? deps.resolveLlmSlice(options.providerId)
+      ? deps.resolveLlmSlice(options.providerId, options.model)
       : null;
   const visibleToolDescriptors = (): readonly ToolDescriptor[] => {
     const filter = options.toolFilter;
@@ -238,9 +238,15 @@ export function prepareTurnBudgets(options: RunTurnOptions) {
     options.taskMaxCostUsd,
     taskCfg.maxCostUsd,
   );
+  // Re-plan cadence (ATO-609): `0`, the default, is off.
+  const replanEveryNSteps = Math.max(
+    0,
+    Math.floor(options.replanEveryNSteps ?? taskCfg.replanEveryNSteps ?? 0),
+  );
   const taskStartedAt = Date.now();
   return {
     legSteps, autoContinue, stepCeiling, durationCeilingMs, costCeilingUsd, taskStartedAt,
+    replanEveryNSteps,
   };
 }
 

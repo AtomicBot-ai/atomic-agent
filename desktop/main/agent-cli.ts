@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 
 import { commandOf, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
-import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
+import { AGENT_HOME_DIRNAME, agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor, managedDataDir } from "./local-llama-key.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 
@@ -119,6 +119,10 @@ let remoteModels: RemoteModels | null = null;
 export function useRemoteModels(route: RemoteModels | null): void {
   remoteModels = route;
 }
+/** True while the app runs chats on another computer (its models are managed there). */
+export function remoteModelsActive(): boolean {
+  return remoteModels !== null;
+}
 /** Said for a models command while the app runs chats on another computer. */
 export const REMOTE_MODELS_HERE =
   "This app is connected to an agent on another computer: its models are managed there (atag models … on that computer).";
@@ -132,9 +136,9 @@ async function remoteModelsCall(route: RemoteModels, args: string[]): Promise<Cl
     : { ok: true, stdout: text, stderr: "" };
 }
 
-/** ATO-577/579: `atag doctor` and `atag data`, whose stdout counts even when they exit non-zero. */
-export function atagRun(args: string[], timeout: number): Promise<CliResult> {
-  return cli(args, timeout);
+/** ATO-577/579: `atag doctor` and `atag data`, whose stdout counts even when they exit non-zero. ATO-1102: `skill eval` also passes a cwd and a stop signal. */
+export function atagRun(args: string[], timeout: number, cwd?: string, signal?: AbortSignal): Promise<CliResult> {
+  return cli(args, timeout, cwd, signal);
 }
 
 /** What `cli` says when there is no agent binary to run (ATO-1195 reads it as `no_binary`). */
@@ -643,6 +647,48 @@ export function modelsPull(
           : { ok: false, stdout, stderr, error: `download exited with code ${code ?? "null"}` },
       ),
     );
+    child.on("error", (err) => resolve({ ok: false, stdout, stderr, error: err.message }));
+  });
+  return { done, cancel: () => child.kill("SIGTERM") };
+}
+
+/**
+ * ATO-1049 / decision 75: `atomic-agent whisper install --json`, the agent's
+ * first-use download of whisper.cpp (Windows/Linux) and the speech model
+ * into the shared models folder, verified against the published SHA-256.
+ * One JSON object per stdout line (`progress` / `done` / `error`), relayed
+ * to `onLine`. The model is the saved default unless `model` names one.
+ */
+export function whisperInstall(
+  onLine: (line: string) => void,
+  model?: string,
+): { done: Promise<CliResult>; cancel: () => void } {
+  const binary = resolveBinary();
+  if (!binary || (model !== undefined && !/^[a-z0-9.-]{1,32}$/.test(model))) {
+    return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "cannot start the download" }), cancel: () => {} };
+  }
+  const child = spawn(binary, ["whisper", "install", "--json", ...(model ? ["--model", model] : [])], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  let stdout = "";
+  let stderr = "";
+  let pending = "";
+  child.stdout.on("data", (c: Buffer) => {
+    const text = c.toString("utf8");
+    stdout += text;
+    pending += text;
+    let nl = pending.indexOf("\n");
+    while (nl >= 0) {
+      const line = pending.slice(0, nl).trim();
+      pending = pending.slice(nl + 1);
+      if (line) onLine(line);
+      nl = pending.indexOf("\n");
+    }
+  });
+  child.stderr.on("data", (c: Buffer) => { stderr = (stderr + c.toString("utf8")).slice(-4000); });
+  const done = new Promise<CliResult>((resolve) => {
+    child.on("exit", (code) => {
+      if (pending.trim()) onLine(pending.trim());
+      resolve(code === 0 ? { ok: true, stdout, stderr } : { ok: false, stdout, stderr, error: `whisper install exited with code ${code ?? "null"}` });
+    });
     child.on("error", (err) => resolve({ ok: false, stdout, stderr, error: err.message }));
   });
   return { done, cancel: () => child.kill("SIGTERM") };
@@ -1540,6 +1586,17 @@ function chatPathPrefix(root: string): string {
  * it leaves this function only inside an Authorization header, or (Studio,
  * studio-key.ts) in the body of Core's loopback `PUT /cloud/providers`.
  */
+/**
+ * The agent's resolve-llm-api-key.ts rule: a compat entry falls back to the shared
+ * OPENAI_COMPAT_API_KEY / OPENAI_API_KEY / ATOMIC_AGENT_OPENAI_API_KEY, except (ATO-1066)
+ * one for a server on another computer on this network. Those variables usually hold
+ * the user's real cloud key, and it would go out as a Bearer over plain http:// to that box.
+ */
+export function readsSharedCompatKey(entry: ProviderEntry): boolean {
+  if (entry.kind !== "openai-compatible" && entry.kind !== "qwen-openai-compatible") return false;
+  return !isOtherComputerOnNetworkUrl(entry.baseUrl ?? "");
+}
+
 export function resolveKeyValue(entry: ProviderEntry): string | null {
   if (entry.apiKey && entry.apiKey.length > 0) return entry.apiKey;
   const names: string[] = [];
@@ -1547,7 +1604,7 @@ export function resolveKeyValue(entry: ProviderEntry): string | null {
   if (entry.kind === "openrouter") names.push("OPENROUTER_API_KEY");
   if (entry.kind === "aimlapi") names.push("AIMLAPI_API_KEY");
   if (entry.kind === "gemini") names.push("GEMINI_API_KEY");
-  if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+  if (readsSharedCompatKey(entry)) {
     names.push("OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY");
   }
   for (const name of names) {
@@ -1819,12 +1876,16 @@ export async function providerKeyPresent(
   return { ok: true, present: !!saved && resolveKeyValue(saved) !== null };
 }
 
-/** Drop a provider entry by id — the rollback for a key that did not verify. */
-export function removeProvider(id: string): Promise<CliResult> {
+/**
+ * Drop a provider entry by id — the rollback for a key that did not verify.
+ * `removedKind` names the kind of the entry taken out (ATO-1441: removing
+ * OpenRouter also forgets its key in Core, studio-forget-key.ts).
+ */
+export function removeProvider(id: string): Promise<CliResult & { removedKind?: string }> {
   return withConfigLock(() => removeProviderNow(id));
 }
 
-async function removeProviderNow(id: string): Promise<CliResult> {
+async function removeProviderNow(id: string): Promise<CliResult & { removedKind?: string }> {
   if (!/^[\w.-]{1,48}$/.test(id)) return { ok: false, stdout: "", stderr: "", error: `not a provider id: ${id}` };
   const current = await configGet();
   if (!current.ok || !current.config) {
@@ -1833,10 +1894,11 @@ async function removeProviderNow(id: string): Promise<CliResult> {
   const config = current.config as { llm?: { providers?: ProviderEntry[] } };
   const providers = config.llm?.providers;
   if (!providers) return { ok: true, stdout: "", stderr: "" };
-  const kept = providers.filter((p) => p.id !== id);
-  if (kept.length === providers.length) return { ok: true, stdout: "", stderr: "" };
-  config.llm!.providers = kept;
-  return writeWholeConfig(config);
+  const removed = providers.find((p) => p.id === id);
+  if (!removed) return { ok: true, stdout: "", stderr: "" };
+  config.llm!.providers = providers.filter((p) => p.id !== id);
+  const written = await writeWholeConfig(config);
+  return written.ok ? { ...written, removedKind: removed.kind } : written;
 }
 
 /* ---------------------------------------------------------------
@@ -2679,7 +2741,7 @@ export function keyNamesAvailable(): KeyEnvNames {
  * here exactly as it is for the agent.
  */
 /** Preset ids with `local: true` in src/tui/providers/provider-presets.ts. */
-const LOCAL_PRESET_IDS = new Set(["atomic-chat", "lmstudio", "ollama"]);
+const LOCAL_PRESET_IDS = new Set(["atomic-chat", "foundry-local", "lemonade", "lmstudio", "ollama"]);
 
 /**
  * src/tui/local-backend-readiness.ts isKeylessLocalProviderEntry: a server
@@ -2690,7 +2752,27 @@ const LOCAL_PRESET_IDS = new Set(["atomic-chat", "lmstudio", "ollama"]);
 export function isKeylessLocalProviderEntry(entry: ProviderEntry): boolean {
   if (entry.kind !== "openai-compatible") return false;
   if (LOCAL_PRESET_IDS.has(entry.id)) return true;
-  return isLocalProviderUrl(entry.baseUrl ?? "");
+  if (isLocalProviderUrl(entry.baseUrl ?? "")) return true;
+  // ATO-1066: the agent's provider-key.ts rule — a server on another computer on this
+  // network, added by hand with no key variable of its own, needs no key either.
+  return !entry.apiKeyEnvVar && isOtherComputerOnNetworkUrl(entry.baseUrl ?? "");
+}
+
+/** src/llm/provider/openai/network-server-address.ts isOtherComputerOnNetworkUrl: a
+    private-network address (RFC 1918, link-local, unique-local, .local/.lan/.internal/
+    .home.arpa or a single-label name) that is not this machine. */
+export function isOtherComputerOnNetworkUrl(url: string): boolean {
+  let host: string;
+  try { host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, ""); } catch { return false; }
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "0.0.0.0") return false;
+  const v4 = host.split(".");
+  if (v4.length === 4 && v4.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)) {
+    const [a, b] = v4.map(Number) as [number, number];
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  }
+  if (host.includes(":")) return /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]?:/.test(host);
+  if (!host.includes(".")) return true;
+  return [".local", ".lan", ".internal", ".home.arpa"].some((suffix) => host.endsWith(suffix));
 }
 
 /** Ready to route to: a key, or a keyless local server (isCloudTextProviderReady) — and never a key the agent will refuse to send (backlog 32). */
@@ -2714,7 +2796,7 @@ export function providerKeyInvalid(entry: ProviderEntry, names: KeyEnvNames = ke
   else if (entry.kind === "openrouter") name = "OPENROUTER_API_KEY";
   else if (entry.kind === "aimlapi") name = "AIMLAPI_API_KEY";
   else if (entry.kind === "gemini") name = "GEMINI_API_KEY";
-  else if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+  else if (readsSharedCompatKey(entry)) {
     name = ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"].find((n) => names.present.has(n));
   }
   return !!name && names.badChars.has(name);
@@ -2730,7 +2812,7 @@ export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNam
   if (entry.kind === "openrouter") return names.nonEmpty.has("OPENROUTER_API_KEY");
   if (entry.kind === "aimlapi") return names.nonEmpty.has("AIMLAPI_API_KEY");
   if (entry.kind === "gemini") return names.nonEmpty.has("GEMINI_API_KEY");
-  if (entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible") {
+  if (readsSharedCompatKey(entry)) {
     const first = ["OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"].find((n) => names.present.has(n));
     return first !== undefined && names.nonEmpty.has(first);
   }
@@ -3116,14 +3198,15 @@ export async function skillProjectEnabled(enabled: boolean, workspace: string): 
 
 export interface HubSkillRow {
   identifier: string;
-  source: "clawhub" | "github";
+  /** ATO-608 (#1419): `skills.sh` rows, the `[sh]` badge, sit between ClawHub's and the taps'. */
+  source: "clawhub" | "skills.sh" | "github";
   downloads: number | null;
   description: string;
 }
 
 /**
  * `atag skill browse` / `atag skill search <q>`: one row per hub entry,
- * `[claw]|[gh]\t<identifier>\t↓N|-\t<description>` (src/cli/skill.ts
+ * `[claw]|[sh]|[gh]\t<identifier>\t↓N|-\t<description>` (src/cli/skill.ts
  * printHubEntries), "(no skills found)" when empty; every `WARN: <repo>:
  * <err>` on stderr becomes the TUI's hubError note. A browse whose every
  * source failed exits 1 with nothing found — reported, not swallowed.
@@ -3145,7 +3228,7 @@ export async function skillBrowse(
   for (const line of res.stdout.split("\n")) {
     if (!line.trim() || line.startsWith("(no skills found)")) continue;
     const cells = line.split("\t");
-    if (cells.length < 3 || (cells[0] !== "[claw]" && cells[0] !== "[gh]")) {
+    if (cells.length < 3 || (cells[0] !== "[claw]" && cells[0] !== "[sh]" && cells[0] !== "[gh]")) {
       // A description is printed raw, newlines included (ClawHub summaries carry them): the line continues the previous row.
       const prev = rows[rows.length - 1];
       if (prev && cells.length === 1) { prev.description += "\n" + line; continue; }
@@ -3154,7 +3237,7 @@ export async function skillBrowse(
     const dl = cells[2] ?? "-";
     rows.push({
       identifier: cells[1]!,
-      source: cells[0] === "[claw]" ? "clawhub" : "github",
+      source: cells[0] === "[claw]" ? "clawhub" : cells[0] === "[sh]" ? "skills.sh" : "github",
       downloads: dl.startsWith("↓") && /^\d+$/.test(dl.slice(1)) ? Number(dl.slice(1)) : null,
       description: cells.slice(3).join("\t"),
     });
@@ -3787,7 +3870,7 @@ export async function modelsUseDevice(id: string): Promise<CliResult> {
    the import-options.ts files under src/import — with one whitelist for all four an
    unticked `skills` on Claude Code was dropped from --exclude and the dry
    run previewed more than the operator ticked. */
-export type ImportSourceId = "hermes" | "openclaw" | "claude-code" | "codex" | "pi" | "oh-my-pi";
+export type ImportSourceId = "hermes" | "openclaw" | "claude-code" | "codex" | "pi" | "oh-my-pi" | "claude-app" | "atomic-agent";
 /** Domain ids each source's resolver understands, from its import-options.ts. */
 export const IMPORT_DOMAINS: Record<ImportSourceId, readonly string[]> = {
   hermes: ["sessions", "cron", "secrets"],
@@ -3797,9 +3880,17 @@ export const IMPORT_DOMAINS: Record<ImportSourceId, readonly string[]> = {
   // agent 0.6.2 (#457): src/import/pi/import-options.ts, src/import/oh-my-pi/import-options.ts.
   pi: ["skills", "sessions"],
   "oh-my-pi": ["skills", "mcp", "sessions"],
+  // W2: the Claude app's data export (src/import/claude-app) and another
+  // Atomic Agent data folder (src/import/atomic-agent).
+  "claude-app": ["sessions", "memory"],
+  "atomic-agent": ["sessions", "memory", "skills", "mcp", "providers", "cron", "secrets"],
+};
+/** Domains a source leaves out unless asked (`--include`): the Atomic Agent source's scheduled jobs. */
+const IMPORT_OPT_IN: Partial<Record<ImportSourceId, readonly string[]>> = {
+  "atomic-agent": ["cron"],
 };
 /** Sources whose CLI leg accepts `--migrate-secrets` (import-command.ts:128, :332, :446). */
-const IMPORT_SECRET_SOURCES: readonly ImportSourceId[] = ["hermes", "claude-code", "codex"];
+const IMPORT_SECRET_SOURCES: readonly ImportSourceId[] = ["hermes", "claude-code", "codex", "atomic-agent"];
 
 export interface ImportRunInput {
   source: ImportSourceId;
@@ -3813,6 +3904,43 @@ export interface ImportRunInput {
 export interface ImportItem { kind: string; status: string; source: string | null; destination: string | null; reason: string | null }
 export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: number; skipped: number; conflict: number; error: number } }
 
+/** The folder an Atomic Agent source would be read from when none is typed: ~/.atomic-agent, unless that is this app's own. */
+export function defaultAtomicAgentSource(ownStateDir: string, home: string = homedir()): string | null {
+  const dir = join(home, AGENT_HOME_DIRNAME);
+  return sameFolder(dir, ownStateDir) ? null : dir;
+}
+
+function sameFolder(a: string, b: string): boolean {
+  if (a.replace(/[\\/]+$/, "") === b.replace(/[\\/]+$/, "")) return true;
+  // The same inode: a symlink, `..`, or another letter case on a case-insensitive disk ("~/.Atomic-Agent").
+  try { const x = statSync(a), y = statSync(b); if (x.ino !== 0 && x.dev === y.dev && x.ino === y.ino) return true; } catch { /* compare names */ }
+  try { return realpathSync.native(a) === realpathSync.native(b); } catch { return false; }
+}
+
+/**
+ * W2: the main side's own check of the folder (or file) an import reads,
+ * before any `atag import` runs. The renderer's path is only a string:
+ * this decides what may be read. An Atomic Agent source must be a folder
+ * other than this app's own state dir (importing yourself into yourself
+ * would only re-read what is there); a Claude export must be the .zip as
+ * downloaded or the folder it unpacks to.
+ */
+export function importSourceProblem(source: ImportSourceId, dir: string, ownStateDir: string): string | null {
+  const path = dir.trim();
+  if (!path) return null;   // the CLI's default folder
+  if (!isAbsolute(path)) return "Choose the folder with Choose…, or type its full path.";
+  let st: ReturnType<typeof statSync>;
+  try { st = statSync(path); } catch { return source === "claude-app" ? "That file or folder is not there." : null; }
+  if (source === "atomic-agent") {
+    if (!st.isDirectory()) return "Choose the Atomic Agent data folder, not a file.";
+    if (sameFolder(path, ownStateDir)) return "That is this app's own data folder. Choose another Atomic Agent folder.";
+  }
+  if (source === "claude-app" && !st.isDirectory() && !/\.zip$/i.test(path)) {
+    return "Choose the .zip from Claude's Export data, or the folder it unpacks to.";
+  }
+  return null;
+}
+
 /**
  * `atag import <hermes|openclaw|claude-code|codex> --source <dir>
  * [--exclude a,b] [--migrate-secrets] [--overwrite] [--limit N]
@@ -3825,15 +3953,18 @@ export interface ImportReportParsed { items: ImportItem[]; summary: { migrated: 
  */
 export function importArgs(input: ImportRunInput): { ok: true; args: string[] } | { ok: false; error: string } {
   const domains = IMPORT_DOMAINS[input.source as ImportSourceId];
-  if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code, codex, pi or oh-my-pi" };
+  if (!domains) return { ok: false, error: "source must be hermes, openclaw, claude-code, codex, pi, oh-my-pi, claude-app or atomic-agent" };
   const dir = input.dir.trim();
   if (!dir) return { ok: false, error: "source dir is empty" };
   const args = ["import", input.source, "--source", dir];
-  const exclude = input.exclude.filter((x) => domains.includes(x));
+  const optIn = IMPORT_OPT_IN[input.source] ?? [];
+  const exclude = input.exclude.filter((x) => domains.includes(x) && !optIn.includes(x));
   if (exclude.length) args.push("--exclude", exclude.join(","));
+  const include = optIn.filter((x) => !input.exclude.includes(x));
+  if (include.length) args.push("--include", include.join(","));
   if (input.secrets && IMPORT_SECRET_SOURCES.includes(input.source)) args.push("--migrate-secrets");
   if (input.overwrite) args.push("--overwrite");
-  const limit = input.limit.trim();
+  const limit = input.source === "atomic-agent" ? "" : input.limit.trim();
   if (limit) {
     if (!/^\d+$/.test(limit)) return { ok: false, error: "limit must be a non-negative integer" };
     args.push("--limit", limit);
@@ -3850,6 +3981,17 @@ export function importArgs(input: ImportRunInput): { ok: true; args: string[] } 
  * `  migrated=… skipped=… conflict=… error=…`) is parsed into the TUI's
  * rows; `state` names what the run did.
  */
+/** Index of the "(" that the string's final ")" closes, or -1 when it does not end in a balanced group. */
+export function trailingParenStart(s: string): number {
+  if (!s.endsWith(")")) return -1;
+  let depth = 0;
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (s[i] === ")") depth++;
+    else if (s[i] === "(" && --depth === 0) return i;
+  }
+  return -1;
+}
+
 export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
   ok: boolean; state?: "preview" | "applied" | "nothing" | "non-interactive"; report?: ImportReportParsed; stdout?: string; stderr?: string; error?: string;
 }> {
@@ -3873,7 +4015,11 @@ export async function importRun(input: ImportRunInput, cwd?: string): Promise<{
       if (!m) continue;
       let rest = m[3]!.trim();
       let reason: string | null = null;
-      if (rest.startsWith("(") && rest.endsWith(")")) { reason = rest.slice(1, -1); rest = ""; }
+      // The reason is the LAST parenthesised group: a name can carry its own ("app (client)", grouping.ts).
+      const open = trailingParenStart(rest);
+      if (open === 0) { reason = rest.slice(1, -1); rest = ""; }
+      else if (open > 0 && rest[open - 1] === " ") { reason = rest.slice(open + 1, -1); rest = rest.slice(0, open - 1); }
+      else if (rest.startsWith("(") && rest.endsWith(")")) { reason = rest.slice(1, -1); rest = ""; }
       else { const r = rest.match(/^(.*?)\s\((.*)\)$/); if (r) { rest = r[1]!; reason = r[2]!; } }
       let source: string | null = null;
       let destination: string | null = null;
@@ -4073,7 +4219,8 @@ export function dotenvSet(stateDir: string, key: string, value: string | null): 
    since ATO-328, the Exa key web search reads (`web.search.exa.apiKeyEnv`,
    default EXA_API_KEY; the agent has no config.json field for it, so its
    environment, loaded from this file at start, is the only way in). */
-export const DESKTOP_DOTENV_KEYS: readonly string[] = ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY"];
+// ATO-516: DISCORD_BOT_TOKEN for Settings › Connections › Discord (the TUI's discord-settings.ts writeDiscordToken).
+export const DESKTOP_DOTENV_KEYS: readonly string[] = ["TELEGRAM_BOT_TOKEN", "EXA_API_KEY", "DISCORD_BOT_TOKEN"];
 
 /* Why an Exa key cannot be written as given, or null. One line of printable
    ASCII with no spaces, 8 to 256 characters: the renderer's exaKeyClean rule
@@ -4092,12 +4239,21 @@ export function exaKeyValueError(value: string): string | null {
    that is, a second variable the agent loads. */
 export function desktopDotenvError(key: unknown, value: unknown): string | null {
   if (typeof key !== "string" || !DESKTOP_DOTENV_KEYS.includes(key)) {
-    return `only ${DESKTOP_DOTENV_KEYS.join(" and ")} may be written from the desktop`;
+    return `only ${DESKTOP_DOTENV_KEYS.join(", ")} may be written from the desktop`;
   }
   if (value !== null && typeof value !== "string") return "value must be a string or null";
   if (value !== null && /[\r\n\0]/.test(value)) return "value must be one line";
   if (key === "EXA_API_KEY" && value !== null) return exaKeyValueError(value);
+  if (key === "DISCORD_BOT_TOKEN" && value !== null) return discordTokenValueError(value);
   return null;
+}
+
+/* ATO-516: why a Discord bot token cannot be written as given, or null. One
+   run of printable ASCII with no spaces, 20 to 200 characters: the renderer's
+   dcTokenClean rule (renderer/discord-settings.js), checked again here because
+   the value crosses IPC. Never quoted back. */
+export function discordTokenValueError(value: string): string | null {
+  return /^[\x21-\x7e]{20,200}$/.test(value) ? null : "That does not look like a Discord bot token.";
 }
 
 function applyDotenvMutation(original: string, key: string, value: string | null): string | null {
@@ -4218,16 +4374,21 @@ function bodyLooksLikeLlamaLoading(text: string): boolean {
 function describeLlamaHealthFailure(kind: LlamaProbeResult["kind"], error: string | null, url: string): string {
   switch (kind) {
     case "openai-compat":
+      /* ATO-1445: since ATO-816 / ATO-1418 the apps you run yourself (Ollama,
+         LM Studio, Atomic Chat) and any OpenAI-compatible URL are added under
+         "Custom" — the first-run wizard's Custom list and Settings › Models ›
+         Custom alike — never under Cloud. The same sentence reaches both
+         screens, so it names only what both call "Custom". */
       if (looksLikeOllamaUrl(url)) {
         return isLocalProviderUrl(url)
-          ? `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › Ollama (local), base URL ${url}.`
-          : `${url} answers like Ollama (its default port), not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url} (any API key value passes — a stock Ollama has no auth).`;
+          ? `${url} answers like Ollama (its default port), not llama.cpp. Add it as Ollama under Custom instead, base URL ${url}.`
+          : `${url} answers like Ollama (its default port), not llama.cpp. Add it under Custom as an OpenAI-compatible API instead, base URL ${url} (any API key value passes, a stock Ollama has no auth).`;
       }
       // Same reasoning as Ollama: the preset row saves its own 127.0.0.1:1337, so name it only for a server on this machine.
       if (looksLikeAtomicChatUrl(url) && isLocalProviderUrl(url)) {
-        return `${url} answers like Atomic Chat's Local API Server, not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › Atomic Chat (local), base URL ${url}.`;
+        return `${url} answers like Atomic Chat's Local API Server, not llama.cpp. Add it as Atomic Chat under Custom instead, base URL ${url}.`;
       }
-      return `${url} answers like an OpenAI-compatible server, not llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › n › openai-compatible, base URL ${url}.`;
+      return `${url} answers like an OpenAI-compatible server, not llama.cpp. Add it under Custom as an OpenAI-compatible API instead, base URL ${url}.`;
     case "llama-loading":
       return `${url} is a llama.cpp server still loading its model. Give it a minute and save the URL again.`;
     case "llama-auth":
@@ -4658,6 +4819,8 @@ const IMPORT_AGENT_LABELS: Record<ImportSourceId, string> = {
   codex: "Codex",
   pi: "Pi",
   "oh-my-pi": "Oh-My-Pi",
+  "claude-app": "Claude",
+  "atomic-agent": "Atomic Agent",
 };
 
 export function importAgentDir(id: ImportSourceId, home = homedir(), env = process.env): string {
@@ -4675,6 +4838,11 @@ export function importAgentDir(id: ImportSourceId, home = homedir(), env = proce
       return env["PI_STATE_DIR"] ?? join(home, ".pi", "agent");
     case "oh-my-pi":
       return env["OMP_STATE_DIR"] ?? join(home, ".omp", "agent");
+    // Picked by the person (an export .zip, or another data folder): no fixed home.
+    case "claude-app":
+      return "";
+    case "atomic-agent":
+      return join(home, AGENT_HOME_DIRNAME);
   }
 }
 
@@ -4701,6 +4869,10 @@ function hasImportableState(id: ImportSourceId, dir: string): boolean {
       return existsSync(join(dir, "skills")) || existsSync(join(dir, "sessions"));
     case "oh-my-pi":
       return existsSync(join(dir, "skills")) || existsSync(join(dir, "sessions")) || existsSync(join(dir, "mcp.json"));
+    // Never auto-detected: the Claude export and another Atomic Agent folder are picked by hand.
+    case "claude-app":
+    case "atomic-agent":
+      return false;
   }
 }
 

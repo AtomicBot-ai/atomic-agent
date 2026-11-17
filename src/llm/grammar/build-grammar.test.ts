@@ -185,9 +185,56 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
       for (const call of [
         '[{"tool":"os.fs.write","args":{"path":"a.py","content":"def f():"}}]',
         '[{"tool":"os.shell.run","args":{"cmd":"ls "}}]',
-        '[{"tool":"finish","args":{"summary":"done:"}}]',
       ]) {
         expect(gbnfAccepts(grammar, "root", call), `${id} ${call}`).toBe(true);
+      }
+    }
+  });
+
+  it("guards the finish summary the same way: no close right after a soft character", async () => {
+    const FINISH = (summary: string, extra = ""): string =>
+      `[{"tool":"finish","args":{"summary":"${summary}"${extra}}}]`;
+    for (const [id, grammar] of await grammars()) {
+      for (const text of TRAPS) {
+        expect(gbnfAccepts(grammar, "root", FINISH(text)), `${id} ${text}`).toBe(false);
+        // The optional `text` is prose as well and shares the rule.
+        expect(gbnfAccepts(grammar, "root", FINISH("ok", `,"text":"${text}"`)), `${id} text ${text}`).toBe(false);
+      }
+      for (const text of CLEAN) {
+        expect(gbnfAccepts(grammar, "root", FINISH(text)), `${id} ${text}`).toBe(true);
+      }
+      expect(gbnfAccepts(grammar, "root", FINISH("Done.", ',"text":"Bye."')), id).toBe(true);
+      expect(gbnfAccepts(grammar, "root", FINISH("Done.", ' , "text" : "Bye." ')), id).toBe(true);
+    }
+  });
+
+  it("makes finish args strict: summary first, optional text, nothing else", async () => {
+    for (const [id, grammar] of await grammars()) {
+      for (const bad of [
+        '[{"tool":"finish","args":{}}]',
+        '[{"tool":"finish","args":{"summary":""}}]',
+        '[{"tool":"finish","args":{"text":"x"}}]',
+        '[{"tool":"finish","args":{"text":"x","summary":"y"}}]',
+        '[{"tool":"finish","args":{"summary":"x","format":"md"}}]',
+        '[{"tool":"finish","args":{"summary":5}}]',
+      ]) {
+        expect(gbnfAccepts(grammar, "root", bad), `${id} ${bad}`).toBe(false);
+      }
+      // The generic branch cannot carry `finish` around the guarded rule.
+      expect(
+        gbnfAccepts(grammar, "other-call", '{"tool":"finish","args":{"summary":"my "}}'),
+        id,
+      ).toBe(false);
+    }
+  });
+
+  it("keeps F37 in the finish summary under gemma and qwen", async () => {
+    for (const profile of [GEMMA4_THINK_PROFILE, QWEN_THINK_PROFILE]) {
+      const base = await buildGrammar(profile);
+      for (const grammar of [base, buildGrammarForTools(base, ["finish"])]) {
+        expect(gbnfAccepts(grammar, "finish-args", '{"summary":"x <|channel> y"}'), profile.id).toBe(false);
+        expect(gbnfAccepts(grammar, "finish-args", '{"summary":"a: "}'), profile.id).toBe(false);
+        expect(gbnfAccepts(grammar, "finish-args", '{"summary":"a<b, a|b, <b>"}'), profile.id).toBe(true);
       }
     }
   });
@@ -607,7 +654,7 @@ describe("the reasoning budget (F49)", () => {
       // the rewrite touches tool-name and, for the shell branch, tool-call
       const strip = (g: string): string => g.replace(/^tool-name ::= .*$/m, "").replace(/^tool-call ::= .*$/m, "");
       expect(strip(narrowed)).toBe(strip(variant));
-      expect(narrowed).toMatch(/^tool-call ::= reply-call \| other-call$/m);
+      expect(narrowed).toMatch(/^tool-call ::= reply-call \| finish-call$/m);
     }
   });
 });
@@ -733,6 +780,25 @@ describe("os-tool names the local-model grammar admits", () => {
     ).toBe(true);
   });
 
+  it("includes os.fs.write_pptx, so a local model can build a deck (ATO-537)", () => {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const grammar = readFileSync(
+      resolve(__dirname, "../../../grammars/tool-call.gbnf"),
+      "utf8",
+    );
+    const osToolLine =
+      grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
+    expect(osToolLine).toContain('"fs.write_pptx"');
+    expect(
+      gbnfAccepts(
+        grammar,
+        "root",
+        '[{"tool":"os.fs.write_pptx","args":{"path":"deck.pptx","slides":[{"title":"Hello","bullets":["One","  Two"],"notes":"Say hi"}]}}]',
+      ),
+    ).toBe(true);
+  });
+
   it("includes the git WRITE tools, not just the read half", () => {
     // Same class of bug as the missing `fusion.delegate`: the local-first
     // git tools were registered and described, and the grammar still only
@@ -826,7 +892,8 @@ describe("buildGrammarForTools — the per-request grammar", () => {
     const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
     const finish = buildGrammarForTools(base, ["finish"]);
     expect(grammarToolNames(finish)).toEqual(["finish", "reply"]);
-    expect(finish).toContain("tool-call ::= reply-call | other-call");
+    // `finish` has its own branch (#681), so no generic branch is left.
+    expect(finish).toMatch(/^tool-call ::= reply-call \| finish-call$/m);
     expect(gbnfAccepts(finish, "root", '[{"tool":"reply","args":{"text":"ok"}}]')).toBe(true);
     expect(gbnfAccepts(finish, "root", '[{"tool":"finish","args":{"summary":"ok"}}]')).toBe(true);
     expect(gbnfAccepts(finish, "root", '[{"tool":"os.fs.read","args":{"path":"a"}}]')).toBe(false);
@@ -942,7 +1009,9 @@ describe("the base grammar's vocabulary", () => {
   // Older gaps, listed so the check below stays strict for anything new.
   // Remove a name here when the grammar learns it.
   const NOT_YET_IN_GRAMMAR = new Set([
+    "browser.annotate",
     "browser.screenshot",
+    "browser.site_tools",
     "github.issue.comment",
     "github.issue.create",
     "github.issue.list",

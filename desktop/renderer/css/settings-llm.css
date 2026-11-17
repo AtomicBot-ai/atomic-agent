@@ -9,7 +9,7 @@
       ("gemma-4-e4b remote ★ best fit for this machine"). Every child of a flex
       or grid box starts a new innerText line, so the id and its chips are laid
       out inline or inline-block (.llm-ib); the route card's label and value
-      (.llm-kv) and the mode segment (.llm-seg) keep the same inline layout.
+      (.llm-kv) keep the same inline layout.
    2. Rules here outrank the 0.5.5 LLM rules that css/settings.css may still
       carry (.tuirow 24px lines, #llm-filter underline, .llmmode) — every
       selector is scoped under .llm-pane, and the two ids keep their id.
@@ -19,16 +19,6 @@
   font:400 var(--fs-ui)/1.45 var(--font-ui);letter-spacing:-.003em;color:var(--ink);white-space:normal;padding-bottom:4px;
   container:llmpane / inline-size}
 
-/* ---- The setup tabs (Д30): a heading and the segment, under where chats run ---- */
-.llm-pane .llm-bar{gap:10px;min-height:34px}
-.llm-pane .llm-srcbar{flex-wrap:wrap;gap:8px 14px;margin-top:6px}
-.llm-pane .llm-seg{display:inline-block;white-space:nowrap;font-size:0;line-height:0;vertical-align:middle}
-.llm-pane .llm-seg .llmmode{display:inline-flex;align-items:center;vertical-align:top;height:28px;padding:0 13px;border-radius:var(--r-pill);
-  background:transparent;color:var(--ink-2);font:600 var(--fs-cap)/1 var(--font-ui);letter-spacing:0;white-space:nowrap;box-shadow:none;
-  transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
-.llm-pane .llm-seg .llmmode + .llmmode{margin-left:2px}
-.llm-pane .llm-seg .llmmode:hover{background:transparent;color:var(--ink)}
-.llm-pane .llm-seg .llmmode.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-soft)}
 .llm-pane .llm-status{display:inline-flex;align-items:center;gap:7px;min-width:0;font-size:var(--fs-cap);color:var(--ink-2)}
 .llm-pane .llm-status .tk-spin{width:12px;height:12px}
 
@@ -67,8 +57,26 @@
 .llm-pane .llm-sh-t{font-weight:600;color:var(--ink);white-space:nowrap}
 .llm-pane .llm-sh .btn .logo{margin-left:-4px}
 .llm-pane .llm-ram{margin:-6px 2px 2px;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
-/* ATO-1401: "Use an app you already run" on the Custom server pane: one Add button per app. */
-.llm-pane .llm-apps{display:flex;flex-wrap:wrap;gap:8px;margin:2px 2px 6px}
+/* A section's one line under its header, on the header's left edge. */
+.llm-pane .llm-sec-note{margin:-4px 2px 2px}
+/* 13.11: the Add buttons of an empty section (the apps you run, the popular
+   cloud providers): one row of equal tiles, an icon and a name each, that
+   wraps on a narrow window. */
+.llm-pane .llm-tiles{display:grid;grid-template-columns:repeat(auto-fill, minmax(176px, 1fr));gap:8px;margin:0 2px}
+.llm-pane .llm-tile{justify-content:flex-start;gap:9px;height:40px;min-width:0;padding:0 12px;border-radius:var(--r-row);
+  font:500 var(--fs-cap)/1.2 var(--font-ui);text-align:left}
+.llm-pane .llm-tile > span:last-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.llm-pane .llm-tile > :is(.logo, .tk-ico){flex:none}
+.llm-pane .llm-tile > svg{flex:none;width:15px;height:15px;color:var(--ink-2)}
+.llm-pane .llm-tile--more{color:var(--ink-2)}
+/* What a card that is not ready needs, at the top of its setup. */
+.llm-pane .llm-need{margin:0}
+/* Models found on this computer: a row with its own Use button (the row itself is not a button). */
+.llm-pane .llm-found-row{cursor:default}
+.llm-pane .llm-found-row .btn{flex:none}
+.llm-pane .llm-found-row .btn .tk-spin{width:12px;height:12px}
+.llm-pane .llm-fz-need{display:flex;flex-direction:column;align-items:flex-start;gap:0}
+.llm-pane .llm-fusion > .llm-empty-acts{margin:0 2px}
 .llm-pane .llm-list{padding:4px}
 .llm-pane .llm-empty{padding:14px 16px;border-radius:var(--r-card);background:var(--well);color:var(--ink-2);font-size:var(--fs-cap);font-weight:400;white-space:normal}
 .llm-pane .llm-empty.is-strong{color:var(--ink);font-weight:500}
@@ -134,15 +142,16 @@
 .llm-pane .llm-name{font-size:var(--fs-ui);line-height:20px;font-weight:600;color:var(--ink)}
 .llm-pane .llm-name + .llm-id{font-size:var(--fs-label);font-weight:400;color:var(--ink-2)}
 
-/* ---- Where chats run (ST-20, ST-22; Д30: the pane's first and main choice) ----
-   Three cards, a title and a line each; the one in effect wears the brand
-   ring, as the first-run route cards do. Under them, the model answering and
-   its server's Start / Stop (Д35). The pane's refresh heads the section. */
+/* ---- Where the agent runs (ST-20, ST-22; Д30; 13.11: the pane's one switch) ----
+   Three cards, a title and a line each. The card whose setup is shown under
+   them wears the brand ring (.is-open); the one chats run on says so on its
+   line, after a green dot (.on). A card not ready yet reads "Needs setup",
+   muted. Side by side on a wide window, one under another on a narrow one. */
 .llm-pane .llm-runmode{gap:10px}
 .llm-pane .llm-rm-head{min-height:30px}
 .llm-pane .llm-rm-head .iconbtn{margin-right:-4px}
 .llm-pane .llm-rm-grid{display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:8px}
-@container llmpane (max-width:560px){.llm-pane .llm-rm-grid{grid-template-columns:minmax(0, 1fr)}}
+@container llmpane (max-width:520px){.llm-pane .llm-rm-grid{grid-template-columns:minmax(0, 1fr)}}
 .llm-pane .llm-rm{display:flex;align-items:flex-start;gap:10px;min-width:0;padding:11px 12px;border-radius:var(--r-row);text-align:left;
   background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink);font:400 var(--fs-cap)/1.35 var(--font-ui);
   transition:background-color var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease),color var(--t-state) var(--ease)}
@@ -150,17 +159,15 @@
 .llm-pane .llm-rm-ico > svg{width:15px;height:15px}
 .llm-pane .llm-rm-body{display:flex;flex-direction:column;gap:2px;min-width:0}
 .llm-pane .llm-rm-t{font-size:var(--fs-ui);font-weight:600;line-height:1.3;color:var(--ink)}
-.llm-pane .llm-rm-d{font-size:var(--fs-label);line-height:1.35;color:var(--ink-2)}
+.llm-pane .llm-rm-d{font-size:var(--fs-label);line-height:1.35;color:var(--ink-2);overflow:hidden;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}
+.llm-pane .llm-rm-d .tk-dot{display:inline-block;width:6px;height:6px;margin:0 6px 1px 0;vertical-align:middle}
+.llm-pane .llm-rm.on .llm-rm-d{color:var(--ink)}
 .llm-pane .llm-rm:hover{background:var(--hover)}
-.llm-pane .llm-rm.on{background:var(--lift);box-shadow:0 0 0 1.5px var(--brand)}
-.llm-pane .llm-rm.on .llm-rm-ico{background:var(--brand-wash);color:var(--blue)}
-/* A choice that needs something first (Д31): it reads as waiting, and its line says what for. */
-.llm-pane .llm-rm.blocked .llm-rm-t{color:var(--ink-2)}
-.llm-pane .llm-rm.blocked .llm-rm-d{color:var(--amber-text)}
-/* ATO-504: the need line is the card's action: an arrow, underlined on hover. */
-.llm-pane .llm-rm-need{display:inline-flex;align-items:center;gap:4px}
-.llm-pane .llm-rm-need > svg{flex:none;width:12px;height:12px}
-.llm-pane .llm-rm.blocked:hover .llm-rm-need{text-decoration:underline;text-underline-offset:2px}
+.llm-pane .llm-rm.is-open{background:var(--lift);box-shadow:0 0 0 1.5px var(--brand)}
+.llm-pane .llm-rm.is-open .llm-rm-ico{background:var(--brand-wash);color:var(--blue)}
+.llm-pane .llm-rm:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.llm-pane .llm-rm.blocked .llm-rm-d{color:var(--ink-3)}
 .llm-pane .llm-now{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:30px;margin:0;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
 .llm-pane .llm-now b{font-weight:600;color:var(--ink)}
 .llm-pane .llm-nowst{display:inline-flex;align-items:center;gap:6px;margin-left:4px;color:var(--ink-2)}

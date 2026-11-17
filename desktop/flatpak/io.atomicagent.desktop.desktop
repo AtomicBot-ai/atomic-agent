@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Atomic Agent
+Comment=Local AI agent with a chat window
+Exec=atomic-agent-desktop %U
+Icon=io.atomicagent.desktop
+Terminal=false
+Categories=Development;Utility;
+StartupWMClass=Atomic Agent

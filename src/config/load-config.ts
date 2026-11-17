@@ -16,7 +16,11 @@ import {
   readUserConfigFileSync,
 } from "./config-file.js";
 import type { DotenvLoadResult } from "./load-dotenv.js";
-import { setCustomLocalModels } from "../local-llm/catalog/models-catalog.js";
+import {
+  setCustomLocalModels,
+  setExternalLocalModels,
+} from "../local-llm/catalog/models-catalog.js";
+import { loadExternalCatalog } from "../local-llm/catalog/external-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/downloads/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/catalog/huggingface-endpoint.js";
 import {
@@ -28,6 +32,9 @@ import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
 import { emitConfigNoticeOnce } from "./config-primitives.js";
+import { cloneExtraChannelsConfig } from "./extra-channel-config.js";
+import { OFFLINE_ENV } from "./network-config.js";
+import { DEFAULT_MAX_AUDIO_BYTES } from "./tool-config.js";
 import type {
   LocalModelsValueSource,
   LocalModelsValueSources,
@@ -121,6 +128,12 @@ function readBoundedPositiveInt(
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
+}
+
+/** `ATOMIC_AGENT_PERSONA` (ATO-54): a persona name above every file setting. */
+function readPersonaOverride(): { personaOverride?: string } {
+  const name = readEnv("ATOMIC_AGENT_PERSONA")?.trim();
+  return name ? { personaOverride: name } : {};
 }
 
 function readBool(key: string, fallback: boolean): boolean {
@@ -220,6 +233,10 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
     // `getLocalModelDef` and `isKnownLocalModelId` resolve them everywhere
     // a curated id already works.
     setCustomLocalModels(user.localModels.customModels);
+    // ATO-27: rows from an opt-in external catalog (a file in the state
+    // dir, or the cached answer of a URL the operator named). Bad entries
+    // are dropped; `atomic-agent models catalog` says why.
+    setExternalLocalModels(loadExternalCatalog(stateDir).entries);
     // Same push-in pattern: the backend-zip variant preference has to be
     // visible to `resolveDownloadAsset`, which runs deep inside the
     // config-free local-llm layer.
@@ -320,6 +337,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       thinking: user.localModels.thinking,
       reasoningBudgetTokens: user.localModels.reasoningBudgetTokens,
       drySampler: user.localModels.drySampler,
+      strictToolArgs: user.localModels.strictToolArgs,
       valueSources: localModelsValueSources(user.localModels),
       managed: { ...user.localModels.managed },
       embeddings: { ...user.localModels.embeddings },
@@ -343,11 +361,13 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       maxSteps: user.agent.maxSteps,
       providerWait: user.agent.providerWait,
       task: user.agent.task,
+      ...(user.agent.goal === undefined ? {} : { goal: user.agent.goal }),
       toolTimeoutMs: user.agent.toolTimeoutMs,
       readScope: user.agent.readScope,
       approvalLevel: user.agent.approvalLevel,
       smartApproval: user.agent.smartApproval,
       smartApprovalModel: user.agent.smartApprovalModel,
+      taintReview: user.agent.taintReview,
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
@@ -360,6 +380,8 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
       prompt: user.agent.prompt,
       ...(user.agent.tools ? { tools: user.agent.tools } : {}),
+      ...(user.agent.personas ? { personas: user.agent.personas } : {}),
+      ...readPersonaOverride(),
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",
         ENV_DEFAULTS.LOADED_TOOLS_CAP,
@@ -446,10 +468,18 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
         ENV_DEFAULTS.BROWSER_ENABLED,
       ),
       channel: browserChannel,
+      // An explicit choice wins: the env var when set, else a `true` /
+      // `false` in config.json; `"auto"` picks per turn (ATO-959).
       headless: readBool(
         "ATOMIC_AGENT_BROWSER_HEADLESS",
-        ENV_DEFAULTS.BROWSER_HEADLESS,
+        user.browser.headless === true || ENV_DEFAULTS.BROWSER_HEADLESS,
       ),
+      headlessSetting: readEnv("ATOMIC_AGENT_BROWSER_HEADLESS")
+        ? readBool("ATOMIC_AGENT_BROWSER_HEADLESS", false)
+        : user.browser.headless,
+      profile: user.browser.profile,
+      maxTabs: user.browser.maxTabs,
+      workerIsolation: user.browser.workerIsolation,
       // Env wins over the file, as before the file key existed. Only the
       // file value is held to loopback (browser-config.ts): the env var
       // is the operator's own shell, the file can be written over HTTP.
@@ -487,6 +517,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       projectTrust: user.skills.projectTrust,
       taps: user.skills.taps,
       clawhub: user.skills.clawhub,
+      ...(user.skills.eval ? { eval: user.skills.eval } : {}),
     },
     http: {
       enabled: user.http.enabled,
@@ -498,6 +529,14 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
     web: {
       search: { ...user.web.search },
       fetch: { ...user.web.fetch },
+      ...(user.web.crawl
+        ? {
+            crawl: {
+              ...user.web.crawl,
+              robotsExemptHosts: [...user.web.crawl.robotsExemptHosts],
+            },
+          }
+        : {}),
     },
     projects: {
       roots: [...user.projects.roots],
@@ -510,6 +549,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
         envPassthrough: [...user.tools.shell.envPassthrough],
       },
       screen: { enabled: user.tools.screen.enabled, point: user.tools.screen.point },
+      lsp: { enabled: user.tools.lsp.enabled },
     },
     log: { level: logLevel },
     tasks: {
@@ -553,6 +593,10 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
         "ATOMIC_AGENT_TASKS_AGENT_TOOLS_ENABLED",
         ENV_DEFAULTS.TASKS_AGENT_TOOLS_ENABLED,
       ),
+      sessionToolsEnabled: readBool(
+        "ATOMIC_AGENT_SESSION_TOOLS_ENABLED",
+        ENV_DEFAULTS.SESSION_TOOLS_ENABLED,
+      ),
       minIntervalMs: readInt(
         "ATOMIC_AGENT_TASKS_MIN_INTERVAL_MS",
         ENV_DEFAULTS.TASKS_MIN_INTERVAL_MS,
@@ -560,6 +604,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       report: {
         quietHours: readEnv("ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS") ?? null,
       },
+      keepAwake: readEnv("ATOMIC_AGENT_TASKS_KEEP_AWAKE") ?? null,
     },
     statusSnapshot: {
       everySteps: Math.max(
@@ -597,6 +642,17 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
         dir: resolve(stateDir, "traces"),
         maxBytesPerSession: user.tracing.trace.maxBytesPerSession,
       },
+      otel: {
+        enabled: user.tracing.otel.enabled,
+        endpoint: user.tracing.otel.endpoint,
+        headers: { ...user.tracing.otel.headers },
+        captureContent: user.tracing.otel.captureContent,
+      },
+    },
+    // ATO-1084: the env var can only turn the kill switch on, never
+    // off: a file that says offline stays offline whatever the shell has.
+    network: {
+      offline: user.network.offline || readBool(OFFLINE_ENV, false),
     },
     memory: {
       profile: {
@@ -627,6 +683,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
         maxEntries: user.memory.notes.maxEntries,
         maxContentChars: user.memory.notes.maxContentChars,
         recallDefaultK: user.memory.notes.recallDefaultK,
+        reconcile: user.memory.notes.reconcile,
       },
       recallInjection: {
         enabled: user.memory.recallInjection.enabled,
@@ -716,17 +773,23 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       },
     },
     webhooks: user.webhooks,
+    fileTriggers: user.fileTriggers,
     vision: {
       enabled: user.vision.enabled,
       autoDetect: user.vision.autoDetect,
       maxImageBytes: user.vision.maxImageBytes,
       maxImagesPerCall: user.vision.maxImagesPerCall,
+      // Unset = auto (ATO-497 decision 62): local model that reports audio only.
+      ...(user.vision.audioInput === undefined ? {} : { audioInput: user.vision.audioInput }),
+      maxAudioBytes: user.vision.maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
     },
     tui: {
       theme: user.tui.theme,
       whileBusySubmit: user.tui.whileBusySubmit,
       mouse: user.tui.mouse,
       showSteps: user.tui.showSteps,
+      nextStepSuggestions: user.tui.nextStepSuggestions,
+      vimMode: user.tui.vimMode,
       notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {
@@ -742,11 +805,15 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       ownerUserId: user.telegram.ownerUserId,
       parseMode: user.telegram.parseMode,
       progressIndicator: user.telegram.progressIndicator,
+      ...(user.telegram.streamReplies !== undefined
+        ? { streamReplies: user.telegram.streamReplies }
+        : {}),
     },
     discord: {
       enabled: user.discord.enabled,
       ownerUserIds: user.discord.ownerUserIds,
     },
+    channels: cloneExtraChannelsConfig(user.channels),
     swarm: {
       units: user.swarm.units.map((u) => ({ ...u })),
     },
@@ -754,6 +821,7 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       downloads: {
         channel: user.notifications.downloads.channel,
       },
+      push: { ...user.notifications.push },
     },
     atomicMail: {
       address: user.atomicMail.address,
@@ -771,6 +839,8 @@ export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
       userId: user.composio.userId,
       sessionId: user.composio.sessionId,
       mcpUrl: user.composio.mcpUrl,
+      accounts: user.composio.accounts.map((a) => ({ ...a })),
+      sessionPins: user.composio.sessionPins,
     },
     mcp: {
       // Servers are owned by the user-config file. Deep clone the
@@ -805,5 +875,24 @@ function mapUserLlmToRuntime(
     // Without this `llm.openrouter.preferCacheRoutes: false` never
     // reached the provider factory, which fell back to `true`.
     ...(llm.openrouter ? { openrouter: { ...llm.openrouter } } : {}),
+    // ATO-649: `llm.costTracking` never reached the runtime before, so a
+    // hand-set `dailyLimitUsd` did nothing.
+    ...(llm.costTracking
+      ? {
+          costTracking: {
+            enabled: llm.costTracking.enabled ?? false,
+            showInStatusBar: llm.costTracking.showInStatusBar ?? false,
+            dailyResetHourUtc: llm.costTracking.dailyResetHourUtc ?? 0,
+            ...(llm.costTracking.dailyLimitUsd !== undefined
+              ? { dailyLimitUsd: llm.costTracking.dailyLimitUsd }
+              : {}),
+            ...(llm.costTracking.onDailyLimit !== undefined
+              ? { onDailyLimit: llm.costTracking.onDailyLimit }
+              : {}),
+          },
+        }
+      : {}),
+    // Without this the router block (ATO-483) never reached the runtime.
+    ...(llm.router ? { router: llm.router } : {}),
   };
 }

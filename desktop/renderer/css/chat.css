@@ -29,14 +29,9 @@
   -webkit-mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px);
   mask-image:linear-gradient(to bottom,transparent 0,var(--on-strong) 18px)}
 #scroller > .col720{flex:none;width:100%;max-width:720px;margin:0 auto;padding:22px 28px 16px;display:flex;flex-direction:column;gap:14px}
-/* Backlog 18 review: the download card floats over the bottom-right of the
-   transcript. --dlcard-chat (renderer dlCardOverChat) is how far up it reaches
-   over this column, so the column's end — the newest reply, an approval's
-   buttons — scrolls clear of it. 0 while the card is away or beside the
-   column. A chat too short to scroll takes it too; it starts at the top
-   (06.10), so the room only counts once the chat reaches down to the card,
-   and the folded badge keeps the open card's room. The empty chat has no
-   column: its greeting stays as it is. */
+/* Backlog 18 review: room under the column's end for a card over it,
+   --dlcard-chat (renderer dlCardPublish). ATO-1185: the download card hangs
+   from the sidebar header now and covers no conversation, so it stays 0. */
 #scroller > .col720{padding-bottom:max(16px, var(--dlcard-chat, 0px))}
 #scroller > .col720 > *{min-width:0}
 
@@ -79,11 +74,23 @@
 .emptymeta .em-it > span{min-width:0;overflow-wrap:anywhere}
 .emptymeta .em-it > svg{width:14px;height:14px;flex:none;color:var(--ink-3)}
 .emptymeta .em-sep{color:var(--ink-3)}
-.ghost{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:560px}
-.ghostchip{display:inline-flex;align-items:center;height:32px;padding:0 14px;border-radius:var(--r-pill);
-  background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink-2);font-size:var(--fs-cap);
+/* The starter cards (renderer.js EMPTY_STARTERS): 2x2, one row of four once
+   the column has the room, as ChatGPT and Claude draw their empty state. A
+   thin outline icon, a short title and a muted hint; a hairline border and a
+   hover wash, no fill at rest. */
+.emptychat{container-type:inline-size}
+.ghost{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:min(560px,100%)}
+@container (min-width:640px){.ghost{grid-template-columns:repeat(4,minmax(0,1fr));width:100%}}
+.ghostchip{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;padding:14px 14px 13px;
+  border:0;border-radius:var(--r-well);background:transparent;box-shadow:inset 0 0 0 1px var(--bd);
+  color:var(--ink);font:inherit;text-align:left;cursor:pointer;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
-.ghostchip:hover{background:var(--hover);color:var(--ink)}
+.ghostchip:hover{background:var(--hover)}
+.ghostchip .gc-ic{display:flex;margin-bottom:8px;color:var(--ink-2)}
+.ghostchip .gc-ic svg{width:20px;height:20px}
+.ghostchip:hover .gc-ic{color:var(--ink)}
+.ghostchip .gc-t{max-width:100%;font-size:var(--fs-ui);line-height:20px;font-weight:500;color:var(--ink)}
+.ghostchip .gc-d{max-width:100%;font-size:var(--fs-label);line-height:16px;color:var(--ink-2)}
 
 /* ---------------- user bubble ----------------
    "Messages from user should be sticky to the right side of the dialogue
@@ -147,6 +154,7 @@
   background:none;color:inherit;font:inherit;cursor:pointer}
 .prose .mdcopy svg{width:12px;height:12px}
 .prose .mdcopy:hover{background:var(--hover);color:var(--ink-2)}
+.prose .mdbar .mdterm{margin-left:auto}   /* ATO-1426: sits right next to Copy, not mid-bar */
 /* ATO-1025: code colour (code-highlight.js), from the theme's own tokens so both themes carry it. */
 .prose .mdpre .hl-k{color:var(--reasoning)}
 .prose .mdpre .hl-s{color:var(--success)}
@@ -366,6 +374,9 @@
 .appr .ttl{font-size:var(--fs-lead);line-height:1.4;font-weight:600;letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere}
 .appr .ttl code,.apprwhy code{padding:1px 6px;border-radius:var(--r-kbd);background:var(--hover);font:500 .9em/1.4 var(--font-mono);color:var(--ink)}
 .apprwhy{font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere}
+/* ATO-1268: smart approval's verdict, "Risk check: medium. …"; high in the critical red */
+.apprrisk{font-size:var(--fs-cap);line-height:1.5;font-weight:500;color:var(--amber-text);overflow-wrap:anywhere}
+.apprrisk.high{color:var(--critical)}
 .apprres{padding-top:4px}
 .pathchip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;max-width:100%;min-height:24px;padding:2px 10px 2px 8px;
   border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font-size:var(--fs-label);line-height:1.4}
@@ -501,6 +512,20 @@
 .attach-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;min-width:0}
 .attach .filechip{vertical-align:0}
 
+/* ---------------- ATO-1187: Changed files card, and the Results tab ----------------
+   One row per file the turn wrote or edited, its lines added and removed on
+   the right. The rows are .filechip buttons, so a click previews or opens. */
+.cf-card{margin-top:10px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.cf-head{font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2)}
+.cf-list{display:flex;flex-direction:column;gap:4px;min-width:0}
+.cf-row{display:flex;align-items:center;gap:6px;max-width:100%;min-width:0;text-align:left}
+.cf-row .cf-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cf-counts{flex:none;font-size:var(--fs-label)}
+.cf-add{color:var(--success)}
+.cf-del{color:var(--critical)}
+.cf-none{color:var(--ink-2)}
+.cf-pane .cf-list{padding:0 6px}
+
 /* ---------------- plan hand-off (item 1) ----------------
    Under the last assistant message of a finished plan turn, below its action
    row. The button text is compared verbatim by the smoke (`▶ run it · auto`),
@@ -616,6 +641,23 @@
   line-height:0;box-shadow:inset 0 0 0 1px var(--line-hair)}
 .chat-vid:empty{width:320px;height:180px}
 .chat-vid-player{display:block;width:100%;max-height:360px;background:#000}
+/* ATO-1166: Save As… / Show in Finder under the clip */
+.chat-vid-box{display:flex;flex-direction:column;gap:6px;max-width:min(100%,560px);min-width:0}
+.chat-vid-acts{display:flex;flex-wrap:wrap;gap:6px}
+/* ATO-1136: a page the reply runs in a sandboxed frame (chat-artifact.js puts the one <iframe> in) */
+.replyfiles-arts{display:flex;flex-direction:column;gap:8px;min-width:0}
+.chat-art{display:flex;flex-direction:column;min-width:0;border-radius:var(--r-well);overflow:hidden;
+  background:var(--well);box-shadow:inset 0 0 0 1px var(--line-hair)}
+.mdblock .chat-art{margin:0 8px 8px}
+.chat-art-bar{display:flex;align-items:center;gap:6px;min-width:0;padding:6px 10px;color:var(--ink-2);font-size:var(--fs-label)}
+.chat-art-bar svg{flex:none}
+.chat-art-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-art-file{flex:none}
+.chat-art-box{line-height:0;min-height:80px;background:var(--paper)}
+.chat-art-frame{display:block;width:100%;border:0;background:transparent}
+@media (prefers-reduced-motion:no-preference){
+  .chat-art.loading .chat-art-box{animation:chat-img-wait 1.2s ease-in-out infinite}
+}
 @media (prefers-reduced-motion:no-preference){
   .chat-img.loading{animation:chat-img-wait 1.2s ease-in-out infinite}
 }
@@ -648,3 +690,6 @@
 .exak-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .exak-row .exak-inp{margin-top:8px;max-width:420px}
 .exak-row .exak-acts{margin-top:8px}
+
+/* ATO-1186: the last reply's speed, quiet, before its buttons (status-line.js replySpeedHTML). */
+.msgtps{font-size:var(--fs-label);color:var(--ink-3);padding:0 6px;font-variant-numeric:tabular-nums;white-space:nowrap}

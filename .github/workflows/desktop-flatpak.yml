@@ -1,0 +1,51 @@
+# Flatpak bundle of the desktop app (ATO-687), built by hand, never published.
+#
+# Builds desktop/flatpak/io.atomicagent.desktop.yml (which repackages the
+# published .deb of the release it names) with flatpak-builder, lints the
+# manifest and metainfo the way Flathub does, and uploads the .flatpak bundle
+# as a workflow artifact for testing:
+#   flatpak install --user ./atomic-agent-desktop-<arch>.flatpak
+#
+# A Flathub submission is a separate manual step (desktop/README.md "Flatpak").
+
+name: Desktop Flatpak
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  flatpak:
+    name: flatpak (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, os: ubuntu-24.04 }
+          - { arch: aarch64, os: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+
+      # Reported, not blocking: Flathub's linter also flags what a submission
+      # still needs (screenshots, the broad --filesystem=home), see the README.
+      - name: Lint the manifest and metainfo
+        continue-on-error: true
+        run: |
+          flatpak install -y --noninteractive flathub org.flatpak.Builder
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest desktop/flatpak/io.atomicagent.desktop.yml
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder appstream desktop/flatpak/io.atomicagent.desktop.metainfo.xml
+
+      - name: Build the bundle
+        uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
+        with:
+          manifest-path: desktop/flatpak/io.atomicagent.desktop.yml
+          bundle: atomic-agent-desktop-${{ matrix.arch }}.flatpak
+          arch: ${{ matrix.arch }}
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('desktop/flatpak/**') }}

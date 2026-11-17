@@ -2,6 +2,9 @@ import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
 import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
 import { LocalOutOfMemoryError } from "../llm/index.js";
+import { failureVerdict } from "../llm/reliability/failure-catalog.js";
+import { TransportError } from "../llm/reliability/llm-failures.js";
+import { DailySpendLimitError } from "../llm/reliability/spend-limit-error.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
 import { providerRow } from "./composer-switch/composer-switch-fixtures.js";
@@ -185,6 +188,56 @@ describe("reduceTuiState fusion worker progress", () => {
     });
     expect(after.feed).toEqual(started.feed);
     expect(after.fusionLiveWorkers[0]?.contextTokens).toBe(9_000);
+  });
+
+  it("keeps one collapsed outcome row per worker after the turn ends, until the next turn", () => {
+    const worker = (taskId: string, extra: Record<string, unknown>) => ({
+      type: "agent_event" as const,
+      event: {
+        type: "fusion_worker" as const,
+        taskId,
+        title: taskId,
+        role: "worker" as const,
+        model: "qwen-3.5-4b",
+        ...extra,
+      } as never,
+    });
+    const ended = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      worker("a", { phase: "started", stepBudget: 8 }),
+      worker("a", { phase: "tool", tool: "os.fs.write" }),
+      worker("b", { phase: "started", stepBudget: 8 }),
+      worker("c", { phase: "started", stepBudget: 8 }),
+      worker("a", { phase: "finished", status: "needs_orchestrator", stepCount: 4, stepBudget: 8 }),
+      worker("b", { phase: "finished", status: "timeout", stepCount: 6, stepBudget: 8 }),
+      // `c` never reported an end line: the turn took it down.
+      {
+        type: "agent_event",
+        event: { type: "turn_finished", turnIndex: 0, reason: "reply", stepCount: 2, durationMs: 10 },
+      },
+    ]);
+    expect(ended.status).not.toBe("running");
+    expect(ended.fusionLiveWorkers.map((w) => w.taskId)).toEqual(["a", "b", "c"]);
+    expect(ended.fusionLiveWorkers.every((w) => w.collapsed === true && w.done)).toBe(true);
+    expect(ended.fusionLiveWorkers.map((w) => w.outcome)).toEqual([
+      "needs_orchestrator",
+      "timeout",
+      "cancelled",
+    ]);
+
+    // The next turn starts clean: collapsed rows do not pile up.
+    const next = reduceTuiState(ended, { type: "message_submitted" });
+    expect(next.fusionLiveWorkers).toEqual([]);
+    // A fan-out that arrives without a submit (another origin) replaces
+    // them too, rather than mixing with them.
+    const reused = apply(ended, [worker("d", { phase: "started" })]);
+    expect(reused.fusionLiveWorkers.map((w) => w.taskId)).toEqual(["d"]);
+    expect(reused.fusionLiveWorkers[0]?.collapsed).toBeUndefined();
+    // And a new thread does not inherit them.
+    expect(
+      reduceTuiState(ended, { type: "session_created", sessionId: "s2" }).fusionLiveWorkers,
+    ).toEqual([]);
   });
 
   it("does not disturb the turn's own status or step counter", () => {
@@ -488,6 +541,37 @@ describe("reduceTuiState", () => {
       expect(next.contextUsage.tokens).toBe(12_000);
     });
 
+    it("records the step's speed for the composer bar (ATO-631)", () => {
+      const next = apply(createInitialTuiState(fakeSession()), [
+        promptBuilt(),
+        {
+          type: "agent_event",
+          event: {
+            type: "llm_event",
+            event: {
+              type: "llm_completed",
+              completion: {
+                timing: {
+                  promptMs: 41_000,
+                  predictedMs: 2_000,
+                  promptTokens: 32_000,
+                  predictedTokens: 24,
+                  predictedPerSecond: 12,
+                },
+                cacheHitTokens: 2_000,
+              } as never,
+            },
+          },
+        },
+      ]);
+      expect(next.metrics.stepSpeedLast).toMatchObject({
+        decodeTokensPerSecond: 12,
+        promptTokens: 32_000,
+        cachedTokens: 2_000,
+        prefillMs: 41_000,
+      });
+    });
+
     /**
      * The regression this slice exists to avoid: `startNewRun` wipes
      * every per-turn metric, and the window is emphatically not a
@@ -655,6 +739,25 @@ describe("reduceTuiState", () => {
       "Turn failed: couldn't get a reply from the provider.",
       'Details: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
     ]);
+  });
+
+  it("says the daily cloud limit stopped the turn, not that the provider is unreachable (ATO-649)", () => {
+    const limit = new DailySpendLimitError({ spentUsd: 5.1, limitUsd: 5, providerId: "openrouter" });
+    const error = new TransportError(limit.message, null, "", { cause: limit });
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: { type: "loop_failed", error, category: "transport" },
+      },
+    ]);
+    const errMsg = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(errMsg?.text).toContain(
+      "Daily cloud limit reached: $5.10 of $5.00. Cloud calls are paused until tomorrow.",
+    );
+    expect(errMsg?.text).not.toContain("couldn't get a reply");
   });
 
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {
@@ -2590,6 +2693,15 @@ it("keeps compaction notices scoped to the visible session after switching chats
   expect(JSON.stringify(visible.messages)).toContain("1000 → ~400");
 });
 
+it("shows a completed compaction's note, such as instructions that were not applied (ATO-661)", () => {
+  const state = createInitialTuiState(fakeSession({ sessionId: "visible" }));
+  const note = "Your compaction instructions were not applied: the checkpoint was extracted without a model call.";
+  const next = reduceTuiState(state, { type: "agent_event", sessionId: "visible", event: { type: "compaction_completed", sessionId: "visible",
+    result: { status: "compacted", reason: "manual", tokensBefore: 1000, tokensAfter: 400, message: note },
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0 } });
+  expect(JSON.stringify(next.messages)).toContain(note);
+});
+
 describe("context compaction activity", () => {
   const started = (sessionId: string): TuiAction => ({ type: "agent_event", sessionId,
     event: { type: "compaction_started", sessionId, reason: "manual", tokensBefore: 10100 },
@@ -2789,5 +2901,106 @@ describe("reduceTuiState session usage (ATO-569)", () => {
     const last = state.messages[state.messages.length - 1];
     expect(last?.role).toBe("system");
     expect(last?.text).toContain("$0.31 over 1 priced call");
+  });
+});
+
+/* ATO-1457: a turn that failed because the provider refused the API key
+   offers `[check key]`, which opens that provider's key field. */
+describe("a refused API key offers the key field", () => {
+  const refused = (error: Error) =>
+    apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error,
+          category: "transport",
+          failure: failureVerdict("auth_rejected"),
+        },
+      },
+    ]);
+
+  it("sets fix-key and names the provider the error was raised for", () => {
+    const error = Object.assign(new Error("openai provider 401: "), {
+      providerLabel: "openrouter",
+    });
+    const msg = refused(error).messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(msg?.action).toBe("fix-key");
+    expect(msg?.fixKeyProviderId).toBe("openrouter");
+  });
+
+  it("finds the provider through a wrapping error", () => {
+    const inner = Object.assign(new Error("401"), { providerLabel: "anthropic" });
+    const outer = new Error("all providers failed", { cause: inner });
+    const msg = refused(outer).messages.find((m) => m.variant === "warn");
+    expect(msg?.action).toBe("fix-key");
+    expect(msg?.fixKeyProviderId).toBe("anthropic");
+  });
+
+  it("still sets fix-key when the error names no provider", () => {
+    const msg = refused(new Error("401 unauthorized")).messages.find(
+      (m) => m.variant === "warn",
+    );
+    expect(msg?.action).toBe("fix-key");
+    expect(msg?.fixKeyProviderId).toBeUndefined();
+  });
+
+  it("leaves other failures without the button", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("boom"),
+          category: "transport",
+          failure: failureVerdict("provider_unreachable"),
+        },
+      },
+    ]);
+    const msg = next.messages.find((m) => m.variant === "warn");
+    expect(msg?.action).toBeUndefined();
+    expect(msg?.fixKeyProviderId).toBeUndefined();
+  });
+
+  it("adds the key button to a fallover away from a refused key, keeping configure-fallback", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: {
+          type: "provider_switched",
+          direction: "away",
+          from: "openrouter",
+          to: "local-llama",
+          reason: "provider rejected the request (401).",
+          cause: "auth",
+          failure: "auth_rejected",
+        },
+      },
+    ]);
+    const system = next.messages.filter((m) => m.role === "system");
+    expect(system).toHaveLength(1);
+    expect(system[0]?.action).toBe("configure-fallback");
+    expect(system[0]?.fixKeyProviderId).toBe("openrouter");
+  });
+
+  it("does not add it to a fallover for any other reason", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: {
+          type: "provider_switched",
+          direction: "away",
+          from: "openrouter",
+          to: "local-llama",
+          reason: "503",
+          cause: "other",
+        },
+      },
+    ]);
+    expect(next.messages[0]?.fixKeyProviderId).toBeUndefined();
   });
 });

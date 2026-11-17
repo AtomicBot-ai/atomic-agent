@@ -8,17 +8,21 @@ import type { BuildPromptInput } from "../../prompt/build-prompt-types.js";
 import { formatCurrentDate } from "../../prompt/current-date.js";
 import { buildPrompt, resolvePromptContextWindow } from "../../prompt/build-prompt.js";
 import { decideCompactPrompt } from "../../prompt/compact-prompt.js";
+import { resolvePersona } from "../../config/agent/persona-resolve.js";
 import { hashPrefix } from "../../llm/slot-manager.js";
 import { checkProfilePromptAligned } from "../../llm/profile-invariants.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
 import type { CompletionResult, StreamChunk } from "../../llm/llama-server-client.js";
 import { estimateReasoningTokens } from "../../llm/reasoning-budget.js";
+import { LOCAL_REASONING_BUDGET_TOKENS, withReasoningBudget } from "../../llm/reasoning-levels.js";
 import { localReplyCapEnvSet, thinkingReplyCap } from "./thinking-reply-cap.js";
 import { parseDepsFor } from "./step-parsing.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { refusedToolNames } from "../policies/fusion-orchestrator-mode.js";
 import { withoutReasoningPrelude, withUnboundedReasoningPrelude } from "../../llm/grammar/reasoning-prelude.js";
 import { buildGrammarForTools } from "../../llm/grammar/build-grammar.js";
+import { applyStrictToolArgs } from "../../llm/grammar/strict-tool-args.js";
+import { getDefaultArgsJsonSchema } from "../../prompt/default-tool-args-schemas.js";
 import type { PromptMessages, ToolCallTransport } from "../../llm/provider/completion-types.js";
 import { openAiToolCallAdapter } from "../../llm/provider/openai/openai-tool-call-adapter.js";
 import { hasStrictFunctionTools } from "../../llm/provider/adapters/tool-call-adapter.js";
@@ -108,6 +112,9 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     } : {}),
     ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
     fusionTokensPerSecond: deps.fusionTokensPerSecond?.() ?? null,
+    ...(deps.fusionPastRuns !== undefined
+      ? { fusionPastRuns: deps.fusionPastRuns(ctx.session.id) }
+      : {}),
     // The prefix must match the request shape: a native-tools link gets
     // native function-calling guidance instead of the text-JSON array
     // mandate (issue #285). Configured transport, not `servedTransport`:
@@ -154,17 +161,33 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
   const compactDecision = deps.compactPromptLatch
     ? deps.compactPromptLatch.resolve(ctx.session.id, compactMode, promptWindow)
     : decideCompactPrompt(compactMode, promptWindow);
+  // The user's persona (ATO-54), latched per session by the loop: a
+  // switch applies to the next session, never to this prefix.
+  const personaResolution = deps.personaLatch?.resolve(ctx.session.id, () => {
+    const agent = getConfig().agent;
+    return resolvePersona(agent.personas, ctx.session.workingDir, agent.personaOverride);
+  });
+  const persona = personaResolution?.persona;
   const promptInput: BuildPromptInput = {
     ...basePromptInput,
     compactPrompt: compactDecision.compact,
     compactPromptWindow: compactDecision.contextWindow,
+    ...(persona !== undefined
+      ? {
+          persona: {
+            name: persona.name,
+            instructions: persona.instructions,
+            ...(persona.style !== undefined ? { style: persona.style } : {}),
+          },
+        }
+      : {}),
   };
-  return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision };
+  return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision, personaResolution };
 }
 
 export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   if (!ctx.workspace) refreshStepWorkspace(ctx, deps);
-  const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision } = prepareStepPrompt(ctx, deps);
+  const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision, personaResolution } = prepareStepPrompt(ctx, deps);
   const prompt = buildPrompt(promptInput);
   if (prompt.cloudContext) ctx.session = { ...ctx.session, cloudContext: prompt.cloudContext };
   // A grammar (llama-server) fallback link behind a native-tools primary
@@ -206,7 +229,15 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       compact: compactDecision.compact,
       reason: compactDecision.reason,
       stablePrefixTokens: prompt.tokens.stablePrefix,
+      persona: personaResolution?.persona?.name ?? null,
     });
+    if (personaResolution?.unknown) {
+      deps.logger?.warn("persona not defined, running without one", {
+        sessionId: ctx.session.id,
+        persona: personaResolution.requested,
+        source: personaResolution.source,
+      });
+    }
     const promptViolations = checkProfilePromptAligned(
       deps.profile,
       prompt.text,
@@ -323,6 +354,9 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       : {}),
     ...(ctx.reasoningEffort !== undefined
       ? { reasoningEffort: ctx.reasoningEffort }
+      : {}),
+    ...(ctx.reasoningOverride !== undefined
+      ? { reasoningOverride: ctx.reasoningOverride }
       : {}),
   };
   if (deps.modelModePolicy) {
@@ -505,26 +539,42 @@ export function stepGrammarToolNames(
  * marker, so the completion starts on the call); unbounded on the forced
  * final step — a `reply` / `finish` is never cut mid-thought; the base
  * grammar's configured bound (`localModels.reasoningBudgetTokens`)
- * otherwise. Then the tool names (`stepGrammarToolNames`). An
- * unrestricted, non-final step under `thinking: on|auto` sends the base
- * grammar byte-identical.
+ * otherwise, or the chat's level's budget when a person picked one
+ * (ATO-490, `LOCAL_REASONING_BUDGET_TOKENS`). Then the tool names (`stepGrammarToolNames`). Last, with
+ * `localModels.strictToolArgs` on (ATO-633, default off), each admitted
+ * tool's args are held to its JSON Schema (`strict-tool-args.ts`). An
+ * unrestricted, non-final step under `thinking: on|auto` with the flag
+ * off sends the base grammar byte-identical.
  */
 export function resolveStepGrammar(
   ctx: Pick<
     StepContext,
-    "terminalOnly" | "toolSet" | "toolFilter" | "toolRole"
+    "terminalOnly" | "toolSet" | "toolFilter" | "toolRole" | "reasoningOverride"
   >,
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator" | "grammar">,
   descriptors: readonly ToolDescriptor[],
   thinkingOff: boolean,
+  strictToolArgs: boolean = getConfig().localModels.strictToolArgs === true,
 ): string {
   const base = thinkingOff
     ? withoutReasoningPrelude(deps.grammar)
     : ctx.terminalOnly
       ? withUnboundedReasoningPrelude(deps.grammar)
-      : deps.grammar;
+      : ctx.reasoningOverride !== undefined
+        ? withReasoningBudget(deps.grammar, LOCAL_REASONING_BUDGET_TOKENS[ctx.reasoningOverride])
+        : deps.grammar;
   const names = stepGrammarToolNames(ctx, deps, descriptors);
-  return names === null ? base : buildGrammarForTools(base, names);
+  const narrowed = names === null ? base : buildGrammarForTools(base, names);
+  if (!strictToolArgs) return narrowed;
+  // The descriptor's own schema first (an MCP tool's `inputSchema`),
+  // else the built-in one, as the native-tools adapter reads them.
+  return applyStrictToolArgs(
+    narrowed,
+    descriptors.map((d) => ({
+      name: d.name,
+      schema: d.argsJsonSchema ?? getDefaultArgsJsonSchema(d.name),
+    })),
+  );
 }
 
 
@@ -538,6 +588,7 @@ export function buildLlmStreamParams(args: {
     | "supportsParallelTools"
     | "strictTools"
     | "providerId"
+    | "model"
     | "modelModePolicy"
   >;
   /** The grammar for this request — see `resolveStepGrammar`. */
@@ -557,6 +608,7 @@ export function buildLlmStreamParams(args: {
     // The pin rides on every completion of the step: the repair retry
     // spreads `llmParams`, so it inherits without a second wiring point.
     ...(args.deps.providerId ? { providerId: args.deps.providerId } : {}),
+    ...(args.deps.providerId && args.deps.model ? { model: args.deps.model } : {}),
   };
   if (args.deps.toolTransport !== "native_tools") {
     return base;

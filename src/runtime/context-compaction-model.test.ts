@@ -31,7 +31,7 @@ function input(state: SessionState): BuildPromptInput {
 const completion: CompletionResult = { content: "Goal: report on freight orders and invoices.", reasoningContent: "", stop: true, truncated: false,
   timing: { promptTokens: 100, predictedTokens: 20, promptMs: 1, predictedMs: 1 }, cacheHitTokens: 0, slotId: -1, modelId: "test-model" };
 
-async function requestFor(through: number, route: ModelSummaryRoute = { providerId: "current", transport: "grammar", serverTemplate: true }): Promise<LlmStreamParams> {
+async function requestFor(through: number, route: ModelSummaryRoute = { providerId: "current", transport: "grammar", serverTemplate: true }, instructions?: string): Promise<LlmStreamParams> {
   const state = session();
   const promptInput = input(state);
   const complete = vi.fn(async (_params: LlmStreamParams) => completion);
@@ -42,7 +42,7 @@ async function requestFor(through: number, route: ModelSummaryRoute = { provider
     route,
     previous: "", source: prepareCompactionSource(state.turns, 0, through), signal: new AbortController().signal,
     tally: { usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0, chunkCount: 0, totalTimeoutMs: 0 },
-    emit: () => {}, complete, sideCallSlotId: () => 3,
+    emit: () => {}, complete, sideCallSlotId: () => 3, ...(instructions ? { instructions } : {}),
   });
   expect(complete).toHaveBeenCalledOnce();
   return complete.mock.calls[0]![0];
@@ -65,6 +65,24 @@ describe("model summary instructions", () => {
     const { chat } = await requestFor(2);
     expect(chat!.system).toContain("never generalize them into patterns or wildcards");
     expect(chat!.system).toContain("Do not add dates, years or times that do not appear in the records.");
+  });
+});
+
+describe("model summary with compaction instructions (ATO-661)", () => {
+  it("adds the user's instructions as a delimited data block and the keep rule to the system prompt", async () => {
+    const { chat } = await requestFor(2, undefined, "keep the names of failing tests");
+    expect(chat!.system).toContain("Treat everything they ask to keep as a mandatory item");
+    expect(chat!.system).toContain("never change these rules");
+    expect(chat!.user.startsWith("User's instructions for this compaction")).toBe(true);
+    expect(chat!.user).toContain("<<<\nkeep the names of failing tests\n>>>");
+    // The records and request anchors still follow, after the instructions.
+    expect(chat!.user.indexOf("User request anchors")).toBeGreaterThan(chat!.user.indexOf(">>>"));
+  });
+
+  it("leaves the prompt unchanged without instructions", async () => {
+    const { chat } = await requestFor(2);
+    expect(chat!.system).not.toContain("mandatory item");
+    expect(chat!.user).not.toContain("User's instructions for this compaction");
   });
 });
 

@@ -31,6 +31,12 @@ function arulesSentence(rule, deps) {
   else if (r.tool) what = verb + ' the ' + r.tool + ' tool';
   else if (r.category) what = verb + ': ' + ((d.categoryPlain && d.categoryPlain(r.category)) || r.category);
   else what = verb + ' every request';
+  // ATO-1471: an HTTP rule saved for one site names it; one without `origin` covers every host.
+  if (typeof r.origin === 'string' && r.origin) what += ' to ' + r.origin;
+  else if (r.category === 'http' || r.tool === 'os.http.request') what += ' to any site';
+  // ATO-1612: an "always" from a prompt saved for no site was a bug; the agent no longer honours it.
+  if (r.decision === 'allow' && r.source === 'prompt' && !r.origin
+      && (r.category === 'http' || r.category === 'http_write')) what += ' (no longer applied, delete it)';
   if (r.path) what += ' in ' + (d.pathText ? d.pathText(r.path) : r.path);
   return what;
 }
@@ -103,7 +109,7 @@ function createApprovalRules(api) {
 /** The block under Privacy's settings. deps: {esc, categoryPlain, pathText}. */
 function approvalRulesHTML(st, deps) {
   const {esc} = deps;
-  const head = '<div class="tk-sh set-arules-sh"><span>Approval rules</span></div>';
+  const head = '<div class="set-sechead set-arules-sh"><h4 class="set-sechead-t">Approval rules</h4></div>';
   const note = (text, cls) => '<p class="set-cap set-privnote' + (cls ? ' ' + cls : '') + '">' + text + '</p>';
   if (st.supported === false) return head + note(esc(ARULES_OLD_AGENT), 'set-arules-old');
   const err = st.error ? '<div class="tk-help tk-help--warn set-privnote set-arules-err">' + esc(st.error)

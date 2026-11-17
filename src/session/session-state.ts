@@ -101,6 +101,11 @@ export interface SessionState {
   id: string;
   /** Working directory for OS tools and relative paths. */
   workingDir: string;
+  /**
+   * Set when the session runs in a git worktree of its own (ATO-576,
+   * `/new worktree`); `workingDir` then points inside `worktree.path`.
+   */
+  worktree?: import("./session-worktree.js").SessionWorktreeBinding;
   status: SessionStatus;
   knownFacts: KnownFact[];
   latestResult: LatestResult | null;
@@ -171,6 +176,15 @@ export interface SessionState {
    */
   plan?: PlanSnapshot;
   /**
+   * Steps since the model last re-planned (ATO-609): counted by the
+   * agent loop only while `agent.task.replanEveryNSteps` is on, reset by
+   * a successful `plan.update`, a re-plan notice or a new user message
+   * (`src/agent/plan/replan-cadence.ts`). Persisted with the session so
+   * a task resumed from its checkpoint keeps its cadence. Absent when
+   * the feature is off or has never counted.
+   */
+  stepsSinceReplan?: number;
+  /**
    * What the session has spent and the account limits last seen
    * (ATO-569). Stamped by `executeTurn` beside `contextUsage`, for the
    * same reason: a reopened session shows its spend at once, and its
@@ -179,10 +193,16 @@ export interface SessionState {
    */
   sessionUsage?: SessionUsageState;
   /**
+   * Set when the chat was opened incognito (ATO-586): no memory is
+   * written from it, no list shows it, and it is deleted when closed.
+   * Fixed at creation; see `incognito.ts`.
+   */
+  incognito?: import("./incognito.js").IncognitoMark;
+  /**
    * Free-form session metadata. Reserved keys (set by the runtime, not
    * the agent — agents may read but must not overwrite them):
    *
-   *   - `wakeReason: { source: "user" | "scheduler" | "webhook" | "agent",
+   *   - `wakeReason: { source: "user" | "scheduler" | "webhook" | "agent" | "file",
    *                    taskId?: string, webhookName?: string, at: number }`
    *     Stamped by `TaskRunner.runOne` right before `runTurn` and
    *     survives restarts. Audit-only in this milestone — not rendered
@@ -251,6 +271,8 @@ export function createEmptySessionState(params: {
   id: string;
   workingDir: string;
   metadata?: Record<string, unknown>;
+  /** ATO-586: open the chat incognito (`SessionStore.newIncognitoMark`). */
+  incognito?: import("./incognito.js").IncognitoMark;
 }): SessionState {
   const now = Date.now();
   return {
@@ -270,6 +292,7 @@ export function createEmptySessionState(params: {
     updatedAt: now,
     lastError: null,
     metadata: params.metadata ?? {},
+    ...(params.incognito !== undefined ? { incognito: params.incognito } : {}),
   };
 }
 
