@@ -1467,6 +1467,14 @@ function wireIpc(client: AgentClient): void {
     return value;
   };
   ipcMain.handle("agent:skills", (_event, sessionId: unknown) => wrap(() => client.skills(skillSession(sessionId))));
+  // ATO-1461: the one-time last-resort fallback question (renderer/append-local-question.js).
+  ipcMain.handle("agent:appendLocalQuestion", async () => {
+    try { return await client.appendLocalQuestion(); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:appendLocalQuestionAnswer", async (_event, answer: unknown) => {
+    if (answer !== "keep" && answer !== "off") return { ok: false, error: "answer must be keep or off" };
+    try { return await client.answerAppendLocalQuestion(answer); } catch (err) { return { ok: false, error: String(err) }; }
+  });
   // ATO-1250: the project-trust question (renderer/project-trust.js). Every field is checked here; the agent checks them again.
   ipcMain.handle("agent:projectTrust", async (_event, sessionId: unknown) => {
     try { return await client.projectTrust(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
