@@ -83,15 +83,20 @@ export interface RuntimeSkillsConfig {
 }
 
 export interface UserSkillsConfig {
+  /** Per-folder skill policies keyed by canonical `workingDir`: `projectSkillsEnabled` turns that folder's project skills off, `disabled` lists skill names hidden only there. Written when a skill is toggled for a workspace; default empty. */
   cloudWorkspaces: CloudWorkspaceSkillsPolicy[];
   projectTrust: ProjectTrustRecord[];
   catalogTokenBudget: number;
   disabled: string[];
   taps: string[];
   clawhub: {
+    /** Include the ClawHub registry when browsing or searching the skill hub. With `false` no ClawHub request is made. Default `true`. */
     enabled: boolean;
+    /** Base URL of the ClawHub registry API. Default `https://clawhub.ai`. */
     apiBase: string;
+    /** Most ClawHub skills one browse or search returns. Default `100`. */
     browseLimit: number;
+    /** Ask ClawHub to leave out skills it flags as suspicious when browsing or searching. Default `true`. */
     nonSuspiciousOnly: boolean;
   };
   /** Skill Lab settings; absent when config.json has no `skills.eval`. */

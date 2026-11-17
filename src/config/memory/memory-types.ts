@@ -256,6 +256,7 @@ export interface RuntimeMemoryConfig {
 
 export interface UserMemoryConfig {
   profile: {
+    /** Keep a durable profile of facts about the user, rendered into the prompt as `### profile`. With `false` the profile section, its tools and end-of-turn reflection are off. Default `true`. */
     enabled: boolean;
     maxTokens: number;
     contextualKeywordGate: boolean;
@@ -263,6 +264,7 @@ export interface UserMemoryConfig {
     maxEntries: number;
   };
   reflection: {
+    /** After each turn, run a background model call that pulls durable facts and notes out of the exchange and stores them. Needs `memory.profile.enabled`. Default `true`. */
     enabled: boolean;
     timeoutMs: number;
     maxFactsPerCall: number;
@@ -310,6 +312,7 @@ export interface UserMemoryConfig {
      */
     anySpeaker: boolean;
     segmentation: {
+      /** Run reflection once every `triggerEveryTurns` turns over the last `windowTurns` exchanges instead of after every turn; the session's final turn always reflects. Default `false`. */
       enabled: boolean;
       /**
        * Trigger reflection every N turns. Must be a positive
@@ -328,6 +331,7 @@ export interface UserMemoryConfig {
     };
   };
   notes: {
+    /** Keep the freeform notes store: the notes tools, recall of notes into the prompt and the memory index. With `false` all of them are off. Default `true`. */
     enabled: boolean;
     maxEntries: number;
     maxContentChars: number;
@@ -335,12 +339,14 @@ export interface UserMemoryConfig {
     reconcile: boolean;
   };
   recallInjection: {
+    /** Before each turn, recall the notes most relevant to the user message and render them as `### recalled` in the prompt tail. Needs `memory.notes.enabled`. Default `true`. */
     enabled: boolean;
     k: number;
     previewChars: number;
     maxTokens: number;
   };
   index: {
+    /** Render the `### memory-index` section: short pointers to the most recent notes, so the agent knows what exists without loading the bodies. Needs `memory.notes.enabled`. Default `true`. */
     enabled: boolean;
     limit: number;
     previewChars: number;
@@ -351,7 +357,9 @@ export interface UserMemoryConfig {
    * older files transparently upgraded with the defaults below.
    */
   dedup: {
+    /** Before storing a note, look for a near-identical existing one and merge into it instead of adding a duplicate. Default `true`. */
     enabled: boolean;
+    /** Token-overlap similarity, 0 to 1, at which a new note is merged into an existing one; higher is stricter. Default `0.85`. */
     fts5Threshold: number;
   };
   /**
@@ -359,7 +367,9 @@ export interface UserMemoryConfig {
    * config v11.
    */
   eviction: {
+    /** When the notes store is full, evict the least recalled notes first instead of the oldest by update time. Default `true`. */
     utilityWeighted: boolean;
+    /** Age limit in milliseconds, default `2592000000` (30 days). Passed to the notes store but not used for eviction today. */
     maxAgeMs: number;
   };
   /**
@@ -369,9 +379,13 @@ export interface UserMemoryConfig {
    * available.
    */
   embeddings: {
+    /** Hybrid recall: blend keyword search with embedding similarity. Also needs `localModels.embeddings.enabled` and an embedding model; otherwise recall stays keyword-only. Default `false`. */
     enabled: boolean;
+    /** Weight of the keyword (BM25) score in hybrid recall, 0 to 1. Default `0.5`. */
     fts5Weight: number;
+    /** Weight of the embedding similarity score in hybrid recall, 0 to 1. Default `0.5`. */
     vectorWeight: number;
+    /** Most stored vectors one hybrid recall scans; above it, the newest this many plus the keyword hits are scored. Default `2000`. */
     bruteForceCeiling: number;
     /**
      * Embed, in the background, the notes that have no vector for the
@@ -516,12 +530,19 @@ export interface UserMemoryConfig {
     deprecationAgeMs: number;
   };
   consolidation: {
+    /** Run the background consolidator, which periodically distills clusters of related memories into lessons. Needs `memory.lessons.enabled`. Default `true`. */
     enabled: boolean;
+    /** Time between consolidator runs, in milliseconds. Default `21600000` (6 hours). */
     intervalMs: number;
+    /** How old a memory must be before the consolidator may distill it, in milliseconds. Default `86400000` (24 hours). */
     cooldownMs: number;
+    /** Fewest related memories a cluster needs before it is distilled. Default `3`. */
     minClusterSize: number;
+    /** Most clusters one consolidator run distills. Default `5`. */
     maxClustersPerTick: number;
+    /** Only cluster memories that each share at least one tag with every other member. Default `true`. */
     requireSharedTag: boolean;
+    /** Timeout of the model call that distills one cluster, in milliseconds. Default `45000`. */
     distillTimeoutMs: number;
   };
   /**
@@ -603,12 +624,18 @@ export interface UserMemoryConfig {
    */
   retrieve: {
     rewriter: {
+      /** Before recall, rewrite a referential follow-up (short, with pronouns) into a self-contained query with one side model call. Default `true`. */
       enabled: boolean;
+      /** Timeout of one rewrite call, in milliseconds; the call holds up the turn. Default `10000`. */
       timeoutMs: number;
+      /** Trailing user and assistant pairs fed into the rewrite prompt. Default `3`. */
       historyTurns: number;
+      /** Which messages get rewritten: `heuristic` (default) checks for short, referential wording, `embedding` compares the message with referential exemplars, `always` rewrites every one. */
       gateMode: RewriterGateMode;
       embeddingGate: {
+        /** Cosine similarity to the closest exemplar at or above which the `embedding` gate rewrites a message. Default `0.65`. */
         threshold: number;
+        /** Referential phrases the `embedding` gate compares messages with. `null` (default) uses the built-in English set. */
         exemplars: string[] | null;
       };
     };
