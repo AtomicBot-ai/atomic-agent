@@ -55,7 +55,9 @@
 # feed is a separate release step, not done here (desktop/README.md
 # "App updates"). Each Windows job (package win32-x64, package-win32-arm64)
 # writes its own stable.yml; the feed needs the two merged into one
-# (desktop/scripts/merge-update-yml.mjs, ATO-252). Before the upload,
+# (desktop/scripts/merge-update-yml.mjs, ATO-252). The two Mac jobs
+# (darwin-arm64, darwin-x64 for Intel Macs, ATO-1506) likewise each write a
+# stable-mac.yml, merged with `merge-update-yml.mjs --mac`. Before the upload,
 # desktop/scripts/feed-files.mjs checks the folder holds every platform's yml
 # and every file they name (ATO-1230: the 0.0.7 feed went up without the
 # Linux ymls, and no AppImage could update).
@@ -115,6 +117,11 @@ jobs:
           # correct", run 37017546119). macos-15 carries Xcode 26.x too, which
           # the Select Xcode 26 step picks.
           - { slug: darwin-arm64, os: macos-15, builder: "--mac --arm64", artifacts: "desktop/release/*.dmg\ndesktop/release/*.zip\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          # ATO-1506: Intel Macs, on GitHub's Intel macOS 15 image (as the CLI's
+          # darwin-x64 build in release.yml). Same steps as darwin-arm64:
+          # Developer ID signing, notarization, the voice helper. electron-builder
+          # puts the app under release/mac/ (arm64: release/mac-arm64/).
+          - { slug: darwin-x64, os: macos-15-intel, builder: "--mac --x64", artifacts: "desktop/release/*.dmg\ndesktop/release/*.zip\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           # win32-arm64 is not a row here: it is built by agent-win32-arm64 and
           # package-win32-arm64 below (see the header).
@@ -141,9 +148,9 @@ jobs:
       # Developer ID; Windows: the publisherName in electron-builder.cjs). An
       # unsigned build with a feed would offer updates it can never install.
       - name: A build with an update feed must be signed
-        if: (matrix.slug == 'darwin-arm64' || startsWith(matrix.slug, 'win32-')) && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
+        if: (startsWith(matrix.slug, 'darwin-') || startsWith(matrix.slug, 'win32-')) && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
         run: |
-          if [[ "${{ matrix.slug }}" == "darwin-arm64" && "$HAS_MAC_SIGNING" != "true" ]] \
+          if [[ "${{ matrix.slug }}" == darwin-* && "$HAS_MAC_SIGNING" != "true" ]] \
             || [[ "${{ matrix.slug }}" == win32-* && "$HAS_WIN_SIGNING" != "true" ]]; then
             echo "::error::An update feed is set but the signing secrets are missing; refusing to build an app that cannot update."
             exit 1
@@ -289,7 +296,7 @@ jobs:
       # SDK; the runner's default Xcode is older. This picks the newest Xcode 26
       # and fails loudly if the image has none.
       - name: Select Xcode 26 (macOS)
-        if: matrix.slug == 'darwin-arm64'
+        if: startsWith(matrix.slug, 'darwin-')
         run: |
           set -euo pipefail
           xc=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1 || true)
@@ -313,7 +320,7 @@ jobs:
       # compile fails; it still skips quietly with no swiftc at all or with
       # ATOMIC_SKIP_SPEECH_HELPER=1. CI must not ship a Mac DMG without it.
       - name: Check the voice helper was built (macOS)
-        if: matrix.slug == 'darwin-arm64'
+        if: startsWith(matrix.slug, 'darwin-')
         run: |
           set -euo pipefail
           test -x desktop/out/native/atomic-speech || { echo "::error::desktop/out/native/atomic-speech was not built — voice input would be missing from the DMG."; exit 1; }
@@ -333,7 +340,7 @@ jobs:
       # under the hardened runtime, notarizes it with the App Store Connect API
       # key (APPLE_API_*) and staples the ticket, then signs the DMG.
       - name: Write notary API key to file (macOS)
-        if: matrix.slug == 'darwin-arm64' && env.HAS_MAC_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'darwin-') && env.HAS_MAC_SIGNING == 'true'
         env:
           NOTARYTOOL_KEY_CONTENT: ${{ secrets.NOTARYTOOL_KEY }}
         run: |
@@ -377,10 +384,10 @@ jobs:
           SM_CLIENT_CERT_PASSWORD: ${{ startsWith(matrix.slug, 'win32-') && secrets.SM_CLIENT_CERT_PASSWORD || '' }}
           SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ startsWith(matrix.slug, 'win32-') && secrets.SM_CODE_SIGNING_CERT_SHA1_HASH || '' }}
           SM_HOST: https://clientauth.one.digicert.com
-          CSC_LINK: ${{ matrix.slug == 'darwin-arm64' && secrets.MACOS_CSC_LINK || '' }}
-          CSC_KEY_PASSWORD: ${{ matrix.slug == 'darwin-arm64' && secrets.MACOS_CSC_KEY_PASSWORD || '' }}
-          APPLE_API_KEY_ID: ${{ matrix.slug == 'darwin-arm64' && secrets.NOTARYTOOL_KEY_ID || '' }}
-          APPLE_API_ISSUER: ${{ matrix.slug == 'darwin-arm64' && secrets.NOTARYTOOL_ISSUER || '' }}
+          CSC_LINK: ${{ startsWith(matrix.slug, 'darwin-') && secrets.MACOS_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ startsWith(matrix.slug, 'darwin-') && secrets.MACOS_CSC_KEY_PASSWORD || '' }}
+          APPLE_API_KEY_ID: ${{ startsWith(matrix.slug, 'darwin-') && secrets.NOTARYTOOL_KEY_ID || '' }}
+          APPLE_API_ISSUER: ${{ startsWith(matrix.slug, 'darwin-') && secrets.NOTARYTOOL_ISSUER || '' }}
           # ATO-229: empty unless the repository variable is set; then the app checks this feed for updates.
           # The dispatch inputs (test builds) win over the repository variables.
           ATAG_UPDATE_FEED_URL: ${{ inputs.feed_url || vars.ATAG_UPDATE_FEED_URL }}
@@ -390,9 +397,9 @@ jobs:
           ATAG_BUILD_RUN_ID: ${{ github.run_id }}
         run: |
           mac_signing=()
-          if [[ "${{ matrix.slug }}" == "darwin-arm64" && "$HAS_MAC_SIGNING" == "true" ]]; then
+          if [[ "${{ matrix.slug }}" == darwin-* && "$HAS_MAC_SIGNING" == "true" ]]; then
             mac_signing=(-c.mac.identity="AtomicMail Systems OU (MU9G7XKJUL)" -c.dmg.sign=true)
-          elif [[ "${{ matrix.slug }}" == "darwin-arm64" ]]; then
+          elif [[ "${{ matrix.slug }}" == darwin-* ]]; then
             echo "::warning::Apple signing secrets are missing; the macOS app is ad-hoc signed and not notarized."
           fi
           npx electron-builder ${{ matrix.builder }} "${mac_signing[@]}" --publish never
@@ -400,7 +407,7 @@ jobs:
       # electron-builder notarizes and staples the .app, not the DMG around it.
       # Notarizing the DMG too lets Gatekeeper clear a downloaded DMG offline.
       - name: Notarize and staple the DMG (macOS)
-        if: matrix.slug == 'darwin-arm64' && env.HAS_MAC_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'darwin-') && env.HAS_MAC_SIGNING == 'true'
         env:
           NOTARYTOOL_KEY_ID: ${{ secrets.NOTARYTOOL_KEY_ID }}
           NOTARYTOOL_ISSUER: ${{ secrets.NOTARYTOOL_ISSUER }}
@@ -438,10 +445,10 @@ jobs:
       # hardened runtime, and that Gatekeeper accepts the app as a notarized
       # Developer ID app and the DMG as a notarized disk image.
       - name: Verify macOS signatures
-        if: matrix.slug == 'darwin-arm64' && env.HAS_MAC_SIGNING == 'true'
+        if: startsWith(matrix.slug, 'darwin-') && env.HAS_MAC_SIGNING == 'true'
         run: |
           set -euo pipefail
-          app="desktop/release/mac-arm64/Atomic Agent.app"
+          if [[ "${{ matrix.slug }}" == "darwin-arm64" ]]; then app="desktop/release/mac-arm64/Atomic Agent.app"; else app="desktop/release/mac/Atomic Agent.app"; fi
           dmg=$(ls desktop/release/*.dmg)
           codesign --verify --deep --strict --verbose=2 "$app"
           codesign -dv "$app" 2>&1 | grep -E "^(Identifier|Authority|TeamIdentifier|Runtime Version)="
@@ -509,6 +516,7 @@ jobs:
           expected=$(node --input-type=module -e "import('./desktop/scripts/fetch-core.mjs').then((m) => console.log(m.bundledCoreVersion()))")
           case "${{ matrix.slug }}" in
             darwin-arm64) core="desktop/release/mac-arm64/Atomic Agent.app/Contents/Resources/core/atomic-chat-core" ;;
+            darwin-x64)   core="desktop/release/mac/Atomic Agent.app/Contents/Resources/core/atomic-chat-core" ;;
             win32-x64)    core="desktop/release/win-unpacked/resources/core/atomic-chat-core.exe" ;;
             linux-x64)    core="desktop/release/linux-unpacked/resources/core/atomic-chat-core" ;;
             linux-arm64)  core="desktop/release/linux-arm64-unpacked/resources/core/atomic-chat-core" ;;
@@ -527,7 +535,7 @@ jobs:
 
       # ATO-229: with a feed set, the update files must be there to upload.
       - name: Check the update files (macOS, with a feed)
-        if: matrix.slug == 'darwin-arm64' && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
+        if: startsWith(matrix.slug, 'darwin-') && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
         shell: bash
         run: |
           set -euo pipefail

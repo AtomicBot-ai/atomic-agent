@@ -16,14 +16,15 @@
  * @Sendable and the mutable `served` flag it captures is a hard error under
  * the Swift 6 language mode; the buffer itself already travels in an
  * explicit @unchecked Sendable box, so this pin is the only thing keeping
- * the compile silent. `-target arm64-apple-macos26.0` matches the
- * SpeechAnalyzer availability floor.
+ * the compile silent. `-target <arch>-apple-macos26.0` (speechHelperTarget:
+ * arm64, or x86_64 on an Intel Mac) matches the SpeechAnalyzer availability
+ * floor.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compileFailureMessage, speechHelperPlan } from "./speech-helper-plan.mjs";
+import { compileFailureMessage, speechHelperPlan, speechHelperTarget } from "./speech-helper-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "native", "atomic-speech.swift");
@@ -56,7 +57,7 @@ try {
   // library for target arm64-apple-macos26.0".
   execFileSync(
     "xcrun",
-    ["swiftc", "-O", "-swift-version", "5", "-target", "arm64-apple-macos26.0", src, "-o", out],
+    ["swiftc", "-O", "-swift-version", "5", "-target", speechHelperTarget(), src, "-o", out],
     { stdio: ["ignore", "inherit", "inherit"] },
   );
   console.log(`speech helper → ${out}`);

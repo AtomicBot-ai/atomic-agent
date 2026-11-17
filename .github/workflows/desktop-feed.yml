@@ -107,14 +107,17 @@ jobs:
         run: |
           set -euo pipefail
           win_yml="$CHANNEL.yml"
+          mac_yml="$CHANNEL-mac.yml"
           mkdir -p release
-          for slug in darwin-arm64 win32-x64 win32-arm64 linux-x64 linux-arm64; do
+          for slug in darwin-arm64 darwin-x64 win32-x64 win32-arm64 linux-x64 linux-arm64; do
             dir="artifacts/desktop-$slug"
             [[ -d "$dir" ]] || { echo "::error::run $RUN_ID has no desktop-$slug artifact"; exit 1; }
             for f in "$dir"/*; do
               name=$(basename "$f")
               # The two Windows jobs' update files are merged below, never copied.
               if [[ "$slug" == win32-* && "$name" == "$win_yml" ]]; then continue; fi
+              # The two Mac jobs' update files too (ATO-1506).
+              if [[ "$slug" == darwin-* && "$name" == "$mac_yml" ]]; then continue; fi
               if [[ -e "release/$name" ]]; then
                 cmp -s "$f" "release/$name" || { echo "::error::two different files named $name ($slug and an earlier platform)"; exit 1; }
                 continue
@@ -127,6 +130,11 @@ jobs:
           done
           (cd desktop && node scripts/merge-update-yml.mjs \
             "../artifacts/desktop-win32-x64/$win_yml" "../artifacts/desktop-win32-arm64/$win_yml" "../release/$win_yml")
+          for slug in darwin-arm64 darwin-x64; do
+            [[ -f "artifacts/desktop-$slug/$mac_yml" ]] || { echo "::error::desktop-$slug has no $mac_yml"; exit 1; }
+          done
+          (cd desktop && node scripts/merge-update-yml.mjs --mac \
+            "../artifacts/desktop-darwin-arm64/$mac_yml" "../artifacts/desktop-darwin-x64/$mac_yml" "../release/$mac_yml")
           ls -la release
 
       # The sums come from desktop.yml's checksums job: one file, signed there.

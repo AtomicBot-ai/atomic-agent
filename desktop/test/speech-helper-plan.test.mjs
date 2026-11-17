@@ -3,7 +3,7 @@
 // Run: npm run test:unit (no build needed: the module is plain ESM).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { compileFailureMessage, speechHelperPlan } from "../scripts/speech-helper-plan.mjs";
+import { compileFailureMessage, speechHelperPlan, speechHelperTarget } from "../scripts/speech-helper-plan.mjs";
 
 const yes = () => true;
 const no = () => false;
@@ -48,4 +48,9 @@ test("the failure message names the opt-out and the first error line", () => {
   assert.match(msg, /swiftc failed \(Command failed: xcrun swiftc\)/);
   assert.match(msg, /ATOMIC_SKIP_SPEECH_HELPER=1/);
   assert.doesNotMatch(msg, /more/);
+});
+
+test("the helper is compiled for the Mac it is built on (ATO-1506)", () => {
+  assert.equal(speechHelperTarget("arm64"), "arm64-apple-macos26.0");
+  assert.equal(speechHelperTarget("x64"), "x86_64-apple-macos26.0");
 });
