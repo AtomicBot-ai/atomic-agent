@@ -369,6 +369,10 @@ contextBridge.exposeInMainWorld("atomic", {
   pauseTask: (id: string) => ipcRenderer.invoke("agent:pauseTask", id),
   resumeTask: (id: string) => ipcRenderer.invoke("agent:resumeTask", id),
   taskRuns: (id: string) => ipcRenderer.invoke("agent:taskRuns", id),
+  /** ATO-458: suggested tasks for the empty chat screen (main/ideas-ipc.ts). */
+  ideasRefresh: () => ipcRenderer.invoke("agent:ideasRefresh"),
+  ideaAccept: (id: string) => ipcRenderer.invoke("agent:ideaAccept", id),
+  ideaDismiss: (id: string) => ipcRenderer.invoke("agent:ideaDismiss", id),
   health: () => ipcRenderer.invoke("agent:health"),
   /** ATO-134: whether the agent runs a turn this window does not stream (a scheduled task, Telegram), for a switch to wait on. */
   agentBusyAnywhere: () => ipcRenderer.invoke("agent:busyAnywhere"),
