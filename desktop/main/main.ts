@@ -260,6 +260,7 @@ import {
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
 import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type ComposioDeps, type ComposioKeyResult } from "./composio-key.js";
+import { registerComposioAccountsIpc } from "./composio-accounts-ipc.js";
 // Item 2 (voice input): the on-device speech helper's supervisor.
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // ATO-1074: an audio file transcribed on this machine, with timestamps.
@@ -3744,6 +3745,12 @@ function wireIpc(client: AgentClient): void {
     A.composioStep("key_removed", res.ok ? "ok" : "error");
     return res;
   });
+  // ATO-1494: the card's account switcher; writes composio.accounts, a restart applies it.
+  registerComposioAccountsIpc({ ipcMain, ownDir, deps: {
+    env: process.env,
+    readComposio: () => configGetKey("composio"),
+    writeAccounts: (accounts) => configSetPaths([["composio.accounts", accounts]]),
+  } });
   ipcMain.handle("composio:check", async (_event, stateDir: unknown) => {
     if (!ownDir(stateDir)) return { ok: false, verified: false, shadowed: false, error: "state dir required" };
     const res = await checkSavedComposioKey(composioDeps(stateDir));

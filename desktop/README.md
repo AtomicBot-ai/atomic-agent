@@ -887,6 +887,19 @@ Honestly degraded, and labelled as such in the UI:
   Gmail" with a sign-in link. The key never comes back to the window, and
   no message, log or analytics event (`composio_setup`: step and outcome)
   carries it. `app:dotenvSet` writes only the Telegram token and `EXA_API_KEY`.
+  **Accounts** (ATO-1494, `renderer/composio-accounts.js`,
+  `main/composio-accounts.ts`, `main/composio-accounts-ipc.ts`) is the card
+  under the rows once a key is saved: every account Composio has signed in
+  for this install (`GET /connected_accounts`), a short name for the ones
+  you keep, and one default per app that every call for that app goes
+  through, as the Claude and ChatGPT connectors and Raycast list accounts.
+  `composio:listAccounts` / `addAccount` / `removeAccount` / `setDefault`
+  read `composio.accounts`, apply the core's rules (ATO-548) and write the
+  whole list in one config write; the first named account of an app becomes
+  its default. The agent pins the defaults when it starts, so each change
+  owes a restart. Save and Check again pin the same defaults on the session
+  they cache and write its `sessionPins` stamp, so the agent reuses that
+  session only while the defaults are unchanged.
 - **Web search key (Exa)** (ATO-328). When a search ran without a key and
   Exa could not serve it, the agent's `event: tool_result` frame carries
   `key_required` (`provider`, `reason`: `rate_limited` / `unreachable` /
