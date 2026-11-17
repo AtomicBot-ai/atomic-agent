@@ -110,6 +110,7 @@ import { INTERRUPTED_TURN_NOTICE } from "./interrupted-turn-notice.js";
 import { isInterruptedTurnResumeMessage } from "../session/interrupted-chat-turn.js";
 import { createHeapGuard } from "../runtime/heap-guard.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
+import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 
 const DEBUG_BUNDLE_TRACE_LIMIT = 10;
 const DEBUG_BUNDLE_DIR_NAME = "atomic-agent-debug";
@@ -1893,6 +1894,10 @@ export class ChatOrchestrator {
     // reply that beat the abort to the finish is still a reply.
     let stopped = false;
     let dispatched = false;
+    // ATO-1001: ask a local model how far it has read the prompt, so the
+    // indicator can say "reading prompt · 40%" instead of a bare
+    // "thinking" during a long prefill. Released when the turn ends.
+    const releasePromptProgress = claimTurnProgress(turnSessionId);
     try {
       if (waitingForModel || (fromQueue && gateFacts.activeProviderIsLocal && gateFacts.managedMode)) {
         this.waitingModelMessages.set(turnSessionId, text);
@@ -2013,6 +2018,7 @@ export class ChatOrchestrator {
         return;
       }
     } finally {
+      releasePromptProgress();
       this.waitingModelMessages.delete(turnSessionId);
       if (this.currentController === controller) this.currentController = null;
       // The turn saved its session, which answers for the transcript
