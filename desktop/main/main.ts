@@ -51,6 +51,7 @@ import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireMiniChatIpc } from "./mini-chat-ipc.js";
+import { chatPopoutTurnRefused, isChatPopout, wireChatPopoutIpc } from "./chat-popout-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
@@ -1643,6 +1644,8 @@ function wireIpc(client: AgentClient): void {
       /** ATO-1148: the chat's project cloud model (renderer/project-model.js). */
       turnModel?: unknown;
     };
+    // ATO-561: a chat open in its own window takes turns from that window only.
+    { const owned = chatPopoutTurnRefused(sessionId, _event.sender); if (owned) return { ok: false, error: owned }; }
     const reasoning = reasoningLevelFromWindow(reasoningRaw);
     if (!Array.isArray(messages) || messages.length === 0) {
       return { ok: false, error: "messages must be a non-empty array" };
@@ -3107,6 +3110,8 @@ function wireIpc(client: AgentClient): void {
   wireArtifactIpc();
   // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".
   wireMiniChatIpc(client, { mainWindow: () => win, showMainWindow: () => (openWindowAgain(), win) });
+  // ATO-561: "Open in new window" on a chat row (chat-popout-ipc.ts); a chat being written is not popped out.
+  wireChatPopoutIpc({ mainWindow: () => win, liveSessionIds: () => [...liveTurns.values()].map((t) => t.sessionId) });
   // ATO-1056/1058: Roll back here, Edit and Fork from here on a message (chat-rewind-ipc.ts).
   wireChatRewindIpc(client);
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
@@ -11181,7 +11186,8 @@ void app.whenReady().then(async () => {
 
   app.on("activate", () => {
     // ATO-1018: a marks overlay is not a window of the app. ATO-523: nor is the quick-entry box.
-    if (appWindows().filter((w) => !isQuickEntryWindow(w)).length === 0) openWindowAgain();
+    // ATO-561: nor is a chat in its own window: the Dock click brings the main window back.
+    if (appWindows().filter((w) => !isQuickEntryWindow(w) && !isChatPopout(w)).length === 0) openWindowAgain();
   });
 });
 
