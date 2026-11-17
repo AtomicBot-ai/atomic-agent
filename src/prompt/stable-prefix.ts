@@ -1,5 +1,10 @@
 import type { ToolCallTransport } from "../llm/provider/completion-types.js";
-import { COMPOSIO_GUIDANCE, isComposioActive } from "./composio-guidance.js";
+import {
+  COMPOSIO_GUIDANCE,
+  buildComposioAccountsGuidance,
+  isComposioActive,
+  type ComposioAccountHint,
+} from "./composio-guidance.js";
 import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
 import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
 import {
@@ -164,6 +169,12 @@ export interface StablePrefixInput {
    * byte-stable. Omitted or `false` keeps the full prefix byte-identical.
    */
   compact?: boolean;
+  /**
+   * `composio.accounts` (ATO-1494): which named account each app acts
+   * through, one line under the Composio guidance. Read only while
+   * Composio is mounted; omitted or empty adds nothing.
+   */
+  composioAccounts?: readonly ComposioAccountHint[];
 }
 
 /** Header of the out-of-role names line — pinned by tests, read by the model. */
@@ -367,8 +378,12 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   // Same contract for GitHub: the `github.*` descriptors are only in
   // the catalog while the hub holds a token.
   const githubActive = isGithubActive(input.toolDescriptors);
+  const composioAccountsLine = composioActive
+    ? buildComposioAccountsGuidance(input.composioAccounts)
+    : null;
   const integrationsBlock = [
     ...(composioActive ? [COMPOSIO_GUIDANCE] : []),
+    ...(composioAccountsLine !== null ? [composioAccountsLine] : []),
     ...(githubActive ? [GITHUB_GUIDANCE] : []),
   ];
   // Same contract as the Composio block: present only while the tool it

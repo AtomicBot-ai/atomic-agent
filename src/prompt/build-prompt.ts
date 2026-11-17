@@ -237,6 +237,9 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? undefined
       : input.profile?.reasoningSystemToken,
     maxParallelToolCalls: config.agent.maxParallelToolCalls,
+    // Config, like `fusion` below: moves only when the operator edits the
+    // account list, which also remounts Composio.
+    composioAccounts: config.composio.accounts,
     // Only read when the `### fusion` block actually renders. Config
     // values, so they move only when the operator writes the config
     // file — the same event that already flips the fusion descriptor

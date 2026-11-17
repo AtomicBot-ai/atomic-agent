@@ -31,6 +31,7 @@ import { dataCommand } from "./data-command.js";
 import { idCommand } from "./id-command.js";
 import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
+import { composioCommand } from "./composio-command.js";
 import { whisperCommand } from "./whisper-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
@@ -197,6 +198,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "providers",
     summary: "Check the Claude Code / Codex subscription CLIs: installed, signed in, version (status)",
     run: providersCommand,
+  },
+  {
+    name: "composio",
+    summary: "Several Composio accounts per app, one default each (accounts list|add|remove|default)",
+    run: composioCommand,
   },
   {
     name: "whisper",
