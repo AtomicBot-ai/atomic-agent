@@ -1,9 +1,17 @@
+import { createInterface } from "node:readline/promises";
+
 import { getConfig, resolveStateDir } from "../config/index.js";
 import { SUBSCRIPTION_OAUTH_KIND } from "../config/provider-auth-mode.js";
-import { upsertLlmProvider } from "../config/llm-provider-commands.js";
 import {
-  CHATGPT_DEFAULT_MODEL,
+  setActiveTextProviderInConfig,
+  setProviderDefaultChatModelInConfig,
+  upsertLlmProvider,
+} from "../config/llm-provider-commands.js";
+import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
+import { isLocalLinkWithoutModel } from "../runtime/local-link-availability.js";
+import {
   ChatgptNoAccountError,
+  codexDefaultModel,
   OAuthFlowError,
   chatgptAccountId,
   chatgptCredentialStore,
@@ -28,10 +36,17 @@ import { openUrlInBrowser } from "../tui/open-url.js";
  * machine without a browser (SSH): a link and a one-time code, the same
  * flow `codex login --device-auth` uses.
  *
- * On success the tokens go to `<stateDir>/auth/chatgpt.json` (0600) and
- * a `subscription-oauth` provider entry is added to config.json if there
- * is none, without making it the active one. Nothing printed here ever
- * contains a token.
+ * On success the tokens go to `<stateDir>/auth/chatgpt.json` (0600; a
+ * new sign-in overwrites the old one) and a `subscription-oauth` provider
+ * entry is added to config.json if there is none. Nothing printed here
+ * ever contains a token.
+ *
+ * Nadya's answers (18.11):
+ *  - The entry's model is Codex's current default, read from the same
+ *    catalog Codex reads (`codexDefaultModel`), not a name pinned here.
+ *  - If ChatGPT is the only provider the person has, it becomes the
+ *    active one at once. With other providers it asks "Use ChatGPT now?"
+ *    in a terminal; without a terminal it only says how to switch.
  */
 
 const LOGIN_HELP = [
@@ -68,17 +83,30 @@ export interface LoginCommandDeps {
   requestDevice?: (signal: AbortSignal) => Promise<ChatgptDeviceCode>;
   completeDevice?: (code: ChatgptDeviceCode, signal: AbortSignal) => Promise<OAuthTokens>;
   /** Adds the provider entry when missing; returns its id and whether it was added. */
-  ensureProviderEntry?: () => { id: string; added: boolean };
+  ensureProviderEntry?: (model: string) => { id: string; added: boolean };
+  /** Codex's current default model for this sign-in (`codexDefaultModel`). */
+  defaultModel?: (tokens: OAuthTokens) => Promise<{ model: string; source: "backend" | "fallback" }>;
+  /** Whether the entry is active already, the only provider, or one of several. */
+  activation?: (id: string) => Activation;
+  setActive?: (id: string) => void;
+  /** A y/n question in the terminal; absent when there is no terminal. */
+  ask?: ((question: string) => Promise<string>) | null;
   now?: () => number;
 }
+
+export type Activation = "already-active" | "only-provider" | "has-others";
 
 const jsonFetch: JsonFetchLike = (url, init) =>
   globalThis.fetch(url, init) as unknown as ReturnType<JsonFetchLike>;
 
-function defaultEnsureProviderEntry(): { id: string; added: boolean } {
+function defaultEnsureProviderEntry(model: string): { id: string; added: boolean } {
   const providers = getConfig().llm?.providers ?? [];
   const existing = providers.find((p) => p.kind === SUBSCRIPTION_OAUTH_KIND);
-  if (existing) return { id: existing.id, added: false };
+  if (existing) {
+    // A model the person picked stays; an entry with none gets Codex's default.
+    if (!existing.defaultChatModel) setProviderDefaultChatModelInConfig(existing.id, model);
+    return { id: existing.id, added: false };
+  }
   const taken = new Set(providers.map((p) => p.id));
   let id = CHATGPT_PROVIDER_ID;
   for (let n = 2; taken.has(id); n++) id = `${CHATGPT_PROVIDER_ID}-${n}`;
@@ -86,9 +114,34 @@ function defaultEnsureProviderEntry(): { id: string; added: boolean } {
     id,
     kind: SUBSCRIPTION_OAUTH_KIND,
     subscriptionOauth: { service: "chatgpt" },
-    defaultChatModel: CHATGPT_DEFAULT_MODEL,
+    defaultChatModel: model,
   });
   return { id, added: true };
+}
+
+/**
+ * Other providers are every entry but this one, except the built-in local
+ * model while no model is downloaded for it: a fresh install has that
+ * entry, and there is nothing to choose between yet.
+ */
+export function defaultActivation(id: string): Activation {
+  const config = getConfig();
+  const llm = resolveLlmConfig(config);
+  if (llm.activeTextProvider === id) return "already-active";
+  const others = llm.providers.filter((p) => p.id !== id && !isLocalLinkWithoutModel(llm, p.id, config));
+  return others.length === 0 ? "only-provider" : "has-others";
+}
+
+function terminalAsk(): ((question: string) => Promise<string>) | null {
+  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return null;
+  return async (question) => {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      return await rl.question(question);
+    } finally {
+      rl.close();
+    }
+  };
 }
 
 /** One sentence per failure, never the server's own text or a token. */
@@ -187,20 +240,51 @@ export async function loginCommand(args: string[], deps: LoginCommandDeps = {}):
       tokens = await login.tokens;
     }
     await store.save(tokens);
-    const entry = (deps.ensureProviderEntry ?? defaultEnsureProviderEntry)();
+    const picked = await (deps.defaultModel ?? ((t) => codexDefaultModel({ tokens: t, signal: abort.signal })))(tokens);
+    const entry = (deps.ensureProviderEntry ?? defaultEnsureProviderEntry)(picked.model);
     const plan = chatgptPlanType(tokens);
     write(
       `Signed in${plan ? ` (ChatGPT ${plan})` : ""}.${expiryLine(tokens)}\n` +
         (entry.added
-          ? `Added provider "${entry.id}" (ChatGPT subscription, experimental). Pick it in the Providers panel to use it.\n`
+          ? `Added provider "${entry.id}" (ChatGPT subscription, experimental), model ${picked.model} (${picked.source === "backend" ? "Codex's current default" : "Codex's default; the live list could not be read"}).\n`
           : `Provider "${entry.id}" now uses this sign-in.\n`),
     );
+    await offerActivation(entry.id, deps, write);
     return 0;
   } catch (err) {
     write(`${describeLoginFailure(err)}\n`);
     return 1;
   } finally {
     process.off("SIGINT", onSigint);
+  }
+}
+
+async function offerActivation(id: string, deps: LoginCommandDeps, write: (t: string) => void): Promise<void> {
+  const state = (deps.activation ?? defaultActivation)(id);
+  if (state === "already-active") return;
+  const setActive = deps.setActive ?? setActiveTextProviderInConfig;
+  const activate = (): void => {
+    try {
+      setActive(id);
+      write(`"${id}" is now the active provider.\n`);
+    } catch {
+      write(`Signed in, but "${id}" could not be made active. Pick it in the Providers panel.\n`);
+    }
+  };
+  if (state === "only-provider") {
+    activate();
+    return;
+  }
+  const ask = deps.ask === undefined ? terminalAsk() : deps.ask;
+  if (ask === null) {
+    write(`To use it, pick "${id}" in the Providers panel.\n`);
+    return;
+  }
+  const answer = await ask("Use ChatGPT now? [y/N] ");
+  if (/^y(es)?$/i.test(answer.trim())) {
+    activate();
+  } else {
+    write(`Kept your current provider. To switch later, pick "${id}" in the Providers panel.\n`);
   }
 }
 

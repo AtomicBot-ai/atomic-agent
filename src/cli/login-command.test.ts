@@ -34,13 +34,19 @@ describe("atomic-agent login / logout chatgpt (ATO-1454)", () => {
   const write = (t: string) => {
     out += t;
   };
-  const ensureProviderEntry = vi.fn(() => ({ id: "chatgpt-sub", added: true }));
+  const ensureProviderEntry = vi.fn((_model: string) => ({ id: "chatgpt-sub", added: true }));
+  // No network and no real config in these tests.
+  const defaultModel = vi.fn(async () => ({ model: "codex-default-x", source: "backend" as const }));
+  const setActive = vi.fn((_id: string) => {});
+  const quiet = { defaultModel, setActive, activation: () => "already-active" as const };
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "login-cmd-"));
     store = createFileTokenStore({ path: subscriptionTokenPath(dir, "chatgpt") });
     out = "";
     ensureProviderEntry.mockClear();
+    defaultModel.mockClear();
+    setActive.mockClear();
   });
 
   afterEach(() => {
@@ -72,6 +78,7 @@ describe("atomic-agent login / logout chatgpt (ATO-1454)", () => {
       startBrowser: async () => login,
       openUrl,
       ensureProviderEntry,
+      ...quiet,
     });
     expect(code).toBe(0);
     expect(openUrl).toHaveBeenCalledWith(login.authorizationUrl);
@@ -96,6 +103,7 @@ describe("atomic-agent login / logout chatgpt (ATO-1454)", () => {
       }),
       openUrl,
       ensureProviderEntry,
+      ...quiet,
     });
     expect(openUrl).not.toHaveBeenCalled();
     expect(out).toContain("https://auth.openai.com/oauth/authorize?y=2");
@@ -113,6 +121,7 @@ describe("atomic-agent login / logout chatgpt (ATO-1454)", () => {
       }),
       completeDevice: async () => TOKENS,
       ensureProviderEntry,
+      ...quiet,
     });
     expect(code).toBe(0);
     expect(out).toContain("https://auth.openai.com/codex/device");
@@ -129,11 +138,70 @@ describe("atomic-agent login / logout chatgpt (ATO-1454)", () => {
         throw new OAuthFlowError("callback_port_unavailable");
       },
       ensureProviderEntry,
+      ...quiet,
     });
     expect(code).toBe(1);
     expect(out).toMatch(/1455 and 1457/);
     await expect(store.load()).resolves.toBeNull();
     expect(ensureProviderEntry).not.toHaveBeenCalled();
+  });
+
+  const browser = (): BrowserLogin => ({
+    authorizationUrl: "https://auth.openai.com/oauth/authorize?z=3",
+    redirectUri: "",
+    tokens: Promise.resolve(TOKENS),
+    cancel: vi.fn(),
+  });
+
+  it("writes Codex's current default model into the new entry (Nadya 18.11)", async () => {
+    await loginCommand(["chatgpt", "--no-browser"], { write, store, startBrowser: async () => browser(), ensureProviderEntry, ...quiet });
+    expect(defaultModel).toHaveBeenCalledWith(TOKENS);
+    expect(ensureProviderEntry).toHaveBeenCalledWith("codex-default-x");
+    expect(out).toContain("model codex-default-x (Codex's current default)");
+  });
+
+  it("makes ChatGPT active at once when it is the only provider", async () => {
+    await loginCommand(["chatgpt", "--no-browser"], {
+      write, store, startBrowser: async () => browser(), ensureProviderEntry, ...quiet,
+      activation: () => "only-provider",
+      ask: vi.fn(async () => "n"),
+    });
+    expect(setActive).toHaveBeenCalledWith("chatgpt-sub");
+    expect(out).toContain('"chatgpt-sub" is now the active provider.');
+  });
+
+  it("asks 'Use ChatGPT now?' when other providers exist, and follows the answer", async () => {
+    const ask = vi.fn(async () => "y");
+    await loginCommand(["chatgpt", "--no-browser"], {
+      write, store, startBrowser: async () => browser(), ensureProviderEntry, ...quiet,
+      activation: () => "has-others", ask,
+    });
+    expect(ask).toHaveBeenCalledWith("Use ChatGPT now? [y/N] ");
+    expect(setActive).toHaveBeenCalledWith("chatgpt-sub");
+
+    setActive.mockClear();
+    out = "";
+    await loginCommand(["chatgpt", "--no-browser"], {
+      write, store, startBrowser: async () => browser(), ensureProviderEntry, ...quiet,
+      activation: () => "has-others", ask: vi.fn(async () => ""),
+    });
+    expect(setActive).not.toHaveBeenCalled();
+    expect(out).toContain("Kept your current provider.");
+  });
+
+  it("without a terminal it does not switch and says how to", async () => {
+    await loginCommand(["chatgpt", "--no-browser"], {
+      write, store, startBrowser: async () => browser(), ensureProviderEntry, ...quiet,
+      activation: () => "has-others", ask: null,
+    });
+    expect(setActive).not.toHaveBeenCalled();
+    expect(out).toContain('pick "chatgpt-sub" in the Providers panel');
+  });
+
+  it("a new sign-in overwrites the stored one", async () => {
+    await store.save({ ...TOKENS, refreshToken: "old_refresh" });
+    await loginCommand(["chatgpt", "--no-browser"], { write, store, startBrowser: async () => browser(), ensureProviderEntry, ...quiet });
+    await expect(store.load()).resolves.toEqual(TOKENS);
   });
 
   it("status says signed in or not, without the token", async () => {
