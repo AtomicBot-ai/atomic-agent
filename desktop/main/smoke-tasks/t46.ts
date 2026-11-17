@@ -321,6 +321,9 @@ async function composer(js: Js, check: Check): Promise<void> {
       // The disabled look, as the window draws it (composer.css: --ink-3 at .55), to hold the working one against.
       live.off = {color: getComputedStyle(off).color, opacity: getComputedStyle(off).opacity};
       const offView = {aria: off.getAttribute('aria-disabled'), title: off.getAttribute('title'), hook: window.__voiceMic().disabled};
+      // Where a speech model can be downloaded (Windows), a press opens that
+      // setup instead of saying why; this check is about the no-download case.
+      VOICE.canDownload = false;
       off.click();   // a press with no mousedown before it: the keyboard's way in
       // Up to a second for the toast: 60 ms was too short on the Windows CI runners.
       for (let i = 0; i < 20 && !S.toasts.some((t) => t.t === OFF); i += 1) await new Promise((res) => setTimeout(res, 50));
