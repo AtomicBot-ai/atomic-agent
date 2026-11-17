@@ -174,26 +174,6 @@ export interface WebSearchConfig {
   };
 }
 
-/**
- * Declarative binding between an inbound webhook URL path and the task
- * it materialises. Per-webhook config lets operators point external
- * systems (e.g. a GitHub hook, a cron-like SaaS) at atomic-agent
- * without writing code — the HTTP layer turns each hit into a task.
- *
- * `sessionMode` drives session continuity across repeated hits:
- *  - `ephemeral`   — fresh ephemeral session per hit (default when no
- *    schedule is set; matches CLI one-shot behaviour)
- *  - `persistent`  — a single session created on the first hit and
- *    reused forever; sessionId persisted in
- *    `<stateDir>/webhook-sessions.json` keyed by webhook name
- *  - `named`       — explicit `sessionId` supplied by the operator; no
- *    persistence file, no auto-creation
- *
- * `userMessageTemplate` supports `{{body.<json.path>}}` placeholders
- * against the parsed JSON request body. `secret`, when set, is
- * matched against the `x-webhook-secret` request header in addition
- * to the global API-key check.
- */
 export function createWebSearchDefaults(): WebSearchConfig {
   return {
     enabled: true,
