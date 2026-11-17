@@ -10864,6 +10864,7 @@ function turnFailure(ev) {
     return {text: esc("Couldn't get a reply from " + (id ? providerWord(id) : 'the provider') + '.'
       + (turnWaited() ? ' The turn gave up' + turnWaited() + '.' : '')), detail: String(ev.error)};
   }
+  if (turnEmptyTwice(ev)) return {text: esc(String(ev.payload.failure.phrase || 'The model sent back an empty answer twice. Try another model.')), detail: String(ev.error || '')};
   const cat = String((ev && ev.category) || '');
   return {text: esc((cat === 'empty' || cat === 'model' ? "The model didn't give a usable answer" : 'This turn could not be completed') + turnWaited() + '.'),
     detail: String((ev && ev.error) || '') || 'the agent gave no reason'};
@@ -11059,9 +11060,16 @@ function turnKeyRejected(ev) {
   if (entry && savedKeyInvalid(entry)) return true;
   return /can't use its API key|rejected the API key|did not accept your API key|needs an API key and none is set/i.test(String((ev && ev.error) || ''));
 }
+/** ATO-1578: the agent's verdict for a cloud model that answered empty twice in a row. */
+function turnEmptyTwice(ev) {
+  const f = (ev && ev.payload && ev.payload.failure) || {};
+  return f.cause === 'empty_response_repeated';
+}
 /** The failed turn's button: Check key on a refused key, else Switch provider when the provider failed. */
 function turnFailureAct(ev) {
   if (turnKeyRejected(ev)) return {act:'fix-key', keyFor: selActiveProviderId() || ''};
+  // ATO-1578: a cloud model answered empty twice; another model, in this chat, instead of Try again.
+  if (turnEmptyTwice(ev)) return {act:'switch-model', noRetry: true};
   return {act: providerFailure(ev) ? 'switch-provider' : null};
 }
 
@@ -23234,6 +23242,7 @@ function sysRowHTML(m, times) {
     ? ' <button class="btn xs btn-s sysact" data-sel-open="provider">Switch provider</button>' : '')
     // ATO-1458 / ATO-1459: a refused key, and a fallback that answered.
     + (m.act === 'fix-key' ? ' <button class="btn xs btn-s sysact" data-act="llm:checkKey:' + esc(m.keyFor || '') + '">Check key</button>' : '')
+    + (m.act === 'switch-model' ? ' <button class="btn xs btn-s sysact" data-sel-open="model">Switch model</button>' : '')
     + (m.act === 'fallback-settings' ? ' <button class="btn xs btn-s sysact" data-act="llm:fbOpen">Fallback settings</button>' : '')
     + (m.act === 'start-model' ? deadEngineActHTML(m) : '')
     // ATO-448: a chat a restart cut off; continued only on this click.
