@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as configuration from "../../config/index.js";
@@ -7,6 +8,7 @@ import type { AtomicAgentConfig } from "../../config/index.js";
 import * as sessions from "../../session/index.js";
 import { SessionStore } from "../../session/session-store.js";
 import { StructuredLogger, type LogRecord } from "../../tracing/structured-logger.js";
+import { FileCheckpointStore } from "../../tools/os/fs/fs-checkpoint-store.js";
 import { createRuntimeSessionFactories, installRuntimeSessionDelete, prepareRuntimeSessionStore } from "./runtime-session-services.js";
 
 describe("runtime session phases", () => {
@@ -88,6 +90,34 @@ describe("runtime session phases", () => {
     );
     store.delete("one");
     expect(events).toEqual(["trace:one", "shell:one", "outputs:one", "store:one"]);
+  });
+
+  it("delete wrapper removes the chat's file checkpoints with it (ATO-1501)", async () => {
+    const root = join(dir, "file-checkpoints");
+    const checkpoints = new FileCheckpointStore(root);
+    const file = join(dir, "notes.txt");
+    await writeFile(file, "what the file said before");
+    await checkpoints.capture("s-gone", file, "os.fs.write");
+    await checkpoints.capture("s-kept", file, "os.fs.write");
+    expect(existsSync(checkpoints.sessionDir("s-gone"))).toBe(true);
+
+    const store = { delete: (_id: string) => undefined };
+    installRuntimeSessionDelete(store, () => undefined, { endSession: () => [] }, undefined, checkpoints);
+    store.delete("s-gone");
+
+    await vi.waitFor(() => expect(existsSync(checkpoints.sessionDir("s-gone"))).toBe(false));
+    expect(existsSync(checkpoints.sessionDir("s-kept"))).toBe(true);
+  });
+
+  it("a checkpoint removal that fails never stops the delete", () => {
+    const events: string[] = [];
+    const store = { delete: (id: string) => { events.push(`store:${id}`); } };
+    installRuntimeSessionDelete(
+      store, () => undefined, { endSession: () => [] }, undefined,
+      { removeSession: () => { throw new Error("busy"); } },
+    );
+    expect(() => store.delete("one")).not.toThrow();
+    expect(events).toEqual(["store:one"]);
   });
 
   it("delete wrapper retains failure precedence before the original deletion", () => {
