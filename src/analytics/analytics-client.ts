@@ -1,5 +1,7 @@
 import { PostHog } from "posthog-node";
 
+import { isOfflineNetwork } from "../llm/offline-network.js";
+
 import {
   POSTHOG_HOST,
   POSTHOG_PLACEHOLDER_KEY,
@@ -108,6 +110,11 @@ export class AnalyticsClient {
   }
 
   capture(event: string, properties: Record<string, unknown> = {}): void {
+    // ATO-1085: offline mode switched on while this client was alive.
+    // Drop the event here instead of queueing it for the HTTP pool to
+    // refuse: nothing is sent, nothing is counted as a blocked request,
+    // and nothing is replayed once the mode goes off.
+    if (isOfflineNetwork()) return;
     try {
       this.posthog.capture(this.message(event, properties));
     } catch (err) {
@@ -137,6 +144,8 @@ export class AnalyticsClient {
     event: string,
     properties: Record<string, unknown> = {},
   ): Promise<boolean> {
+    // ATO-1085: not delivered, so the caller keeps its "send later" flag.
+    if (isOfflineNetwork()) return false;
     const posthog = this.posthog;
     if (!posthog.captureImmediate || !posthog.on) {
       this.capture(event, properties);
