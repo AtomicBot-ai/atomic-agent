@@ -16,7 +16,15 @@
  * The button only appears when both hold:
  *  - the agent's `skill --help` lists an `eval` subcommand (an older agent
  *    answers `unknown subcommand: eval`, so no button instead of an error);
- *  - the skill has a task set next to its SKILL.md (`tasks.yaml`, `tasks.yml` or `tasks.json`).
+ *  - the skill has a task set next to its SKILL.md (`tasks.yaml`, `tasks.yml` or `tasks.json`),
+ *    or it is a built-in skill whose task set ships with the agent (ATO-1608).
+ *
+ * Built-in skills keep their task set in the agent's packaged
+ * `starter-skills/<name>/evals/tasks.yaml`, which is not copied next to the
+ * installed SKILL.md (src/skills/eval/tasks-location.ts: the model must not
+ * read the expected answers). For those the app asks the agent itself:
+ * `atag skill eval <name> --check-tasks` resolves only packaged task sets,
+ * starts no model and prints `<name>\t<n> tasks\t<path>`.
  */
 import { dirname, join } from "node:path";
 
@@ -42,6 +50,26 @@ export function skillEvalTasksFile(skillMdPath: string, exists: (path: string) =
   for (const name of SKILL_EVAL_TASK_FILES) {
     const file = join(dir, name);
     if (exists(file)) return file;
+  }
+  return null;
+}
+
+/** The argv that asks the agent for a built-in skill's packaged task set without running it. */
+export function skillEvalCheckArgs(name: string): string[] {
+  return ["skill", "eval", name, "--check-tasks"];
+}
+
+/**
+ * The task-set path from `skill eval <name> --check-tasks` output
+ * (`<name>\t<n> tasks\t<path>`), or null when the line is not about this skill.
+ */
+export function parseSkillEvalCheckTasks(stdout: string, name: string): string | null {
+  for (const line of stdout.replace(/\r\n/g, "\n").split("\n")) {
+    const parts = line.split("\t");
+    if (parts.length >= 3 && parts[0] === name && /^\d+ tasks?$/.test(parts[1] ?? "")) {
+      const path = parts.slice(2).join("\t").trim();
+      if (path) return path;
+    }
   }
   return null;
 }

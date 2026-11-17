@@ -4,8 +4,10 @@ import { app, ipcMain } from "electron";
 import { atagRun, plainCliError, skillShow } from "./agent-cli.js";
 import {
   SKILL_EVAL_NAME_RE,
+  parseSkillEvalCheckTasks,
   parseSkillEvalOutput,
   skillEvalArgs,
+  skillEvalCheckArgs,
   skillEvalSupported,
   skillEvalTasksFile,
 } from "./skill-eval-cli.js";
@@ -42,8 +44,19 @@ type Probe = { ok: true; available: false; reason: "agent" | "tasks" } | { ok: t
 async function probe(name: string, cwd: string | undefined): Promise<Probe> {
   if (!(await evalSupported())) return { ok: true, available: false, reason: "agent" };
   const shown = await skillShow(name, cwd);
-  const tasksFile = shown.ok && shown.path ? skillEvalTasksFile(shown.path, existsSync) : null;
+  const beside = shown.ok && shown.path ? skillEvalTasksFile(shown.path, existsSync) : null;
+  const tasksFile = beside ?? (await builtinTasksFile(name, cwd));
   return tasksFile ? { ok: true, available: true, tasksFile } : { ok: true, available: false, reason: "tasks" };
+}
+
+/**
+ * ATO-1608: a built-in skill's task set ships inside the agent, not next to
+ * its installed SKILL.md. The agent names it (`--check-tasks` reads only the
+ * packaged starter tree and starts no model); any failure means no button.
+ */
+async function builtinTasksFile(name: string, cwd: string | undefined): Promise<string | null> {
+  const res = await atagRun(skillEvalCheckArgs(name), 30_000, cwd);
+  return res.ok ? parseSkillEvalCheckTasks(res.stdout, name) : null;
 }
 
 export function wireSkillEvalIpc(deps: { cwd: () => string | undefined }): void {
@@ -65,7 +78,7 @@ export function wireSkillEvalIpc(deps: { cwd: () => string | undefined }): void 
       const cwd = deps.cwd();
       const found = await probe(name, cwd);
       if (!found.available) {
-        return { ok: false, error: found.reason === "agent" ? "This agent cannot test skills yet. Update Atomic Agent." : "This skill has no tasks.yaml next to its SKILL.md." };
+        return { ok: false, error: found.reason === "agent" ? "This agent cannot test skills yet. Update Atomic Agent." : "This skill has no tasks.yaml next to its SKILL.md, and the agent ships none for it." };
       }
       if (controller.signal.aborted) return { ok: false, cancelled: true, error: "Test stopped." };
       const res = await atagRun(skillEvalArgs(name, found.tasksFile), RUN_TIMEOUT_MS, cwd, controller.signal);
