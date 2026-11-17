@@ -112,3 +112,24 @@ test('the smoke driver decides "no key needed" by the app\'s rule, not a copy of
   assert.match(line, /isKeylessLocalProviderEntry\(p\)/);
   assert.doesNotMatch(line, /localhost/);
 });
+
+test('a server on another computer does not count the shared OpenAI key as its key (ATO-1550)', () => {
+  // The renderer's key rule, with lanIsOtherComputerUrl beside it.
+  const at = renderer.indexOf('\nfunction llmKeyEnvNames(');
+  const fnSrc = renderer.slice(at + 1, renderer.indexOf('\n}\n', at) + 2);
+  const c = load();
+  runInNewContext(fnSrc, c);
+  assert.deepEqual(Array.from(c.llmKeyEnvNames({id:'custom-192-168-1-20-8080', kind:'openai-compatible', baseUrl:'http://192.168.1.20:8080'})), []);
+  // Its own variable still counts.
+  assert.deepEqual(Array.from(c.llmKeyEnvNames({id:'lan', kind:'openai-compatible', baseUrl:'http://192.168.1.20:8080', apiKeyEnvVar:'LAN_KEY'})), ['LAN_KEY']);
+  // A cloud or loopback compat endpoint keeps the shared variables.
+  for (const baseUrl of ['https://api.example.com/v1', 'http://127.0.0.1:1234']) {
+    assert.deepEqual(Array.from(c.llmKeyEnvNames({id:'x', kind:'openai-compatible', baseUrl})),
+      ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'], baseUrl);
+  }
+  // The smoke driver uses the app's rule, not its own list.
+  const main = readFileSync(new URL('../main/main.ts', import.meta.url), 'utf8');
+  const k = main.indexOf('const keyNames = (p: Provider)');
+  assert.ok(k >= 0, 'the Settings smoke still has its keyNames');
+  assert.match(main.slice(k, main.indexOf(': [];', k)), /readsSharedCompatKey\(p\)/);
+});
