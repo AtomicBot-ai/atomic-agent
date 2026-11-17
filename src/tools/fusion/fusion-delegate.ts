@@ -63,6 +63,7 @@ import {
 } from "./task-tree.js";
 import type { FusionRunRecorder, FusionRunStore } from "./run-checkpoint.js";
 import { outcomeRowFor, type FusionOutcomeLog } from "./outcome-log.js";
+import { workerInheritsWorkspace } from "./worker-workspace.js";
 import {
   planResume,
   readResumeRequest,
@@ -1029,7 +1030,20 @@ export function buildFusionDelegateTool(
           // Workers run in the parent's folder in every model mode, so a
           // live folder switch reaches them too (#1121). Only cloud
           // workers inherit the parent's workspace.
-          { ...workerDeps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
+          {
+            ...workerDeps,
+            workingDir: ctx.workingDir,
+            // A cloud worker inherits the parent's workspace; a local one
+            // gets its own folder's skills once the session left the
+            // startup folder (ATO-1601).
+            ...(workerInheritsWorkspace({
+              modelMode: ctx.modelMode,
+              sessionDir: ctx.workingDir,
+              startupDir: deps.workingDir,
+            })
+              ? { inheritWorkspace: true }
+              : {}),
+          },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
@@ -1089,7 +1103,20 @@ export function buildFusionDelegateTool(
         );
         const onlyRole = roles.size === 1 ? [...roles][0] : "-";
         return runWorkerTasks(
-          { ...workerDeps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
+          {
+            ...workerDeps,
+            workingDir: ctx.workingDir,
+            // A cloud worker inherits the parent's workspace; a local one
+            // gets its own folder's skills once the session left the
+            // startup folder (ATO-1601).
+            ...(workerInheritsWorkspace({
+              modelMode: ctx.modelMode,
+              sessionDir: ctx.workingDir,
+              startupDir: deps.workingDir,
+            })
+              ? { inheritWorkspace: true }
+              : {}),
+          },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
