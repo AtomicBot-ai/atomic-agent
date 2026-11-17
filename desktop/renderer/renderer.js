@@ -11751,6 +11751,8 @@ function drainQueued() {
   if (!S.queued.length) { DRAIN_OWED = false; return; }
   if (swxWaitsForRoute() || S.live.state !== 'connected' || openHoldsComposer()) { DRAIN_OWED = true; return; }
   if (SWX.sendError) { DRAIN_OWED = true; return; }
+  // ATO-1545: a model test has the local server; queued messages wait for it like typed ones (fit-test.js).
+  if (typeof fitHoldsSend === 'function' && fitHoldsSend()) { DRAIN_OWED = true; return; }
   const gate = localTurnGate();
   if (gate.kind === 'pending') { DRAIN_OWED = true; bswSnapshot().then(() => { if (localTurnGate().kind !== 'pending') drainOwed(); }); return; }
   if (gate.kind === 'block') {
