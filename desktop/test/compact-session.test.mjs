@@ -10,7 +10,7 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { AgentClient, requestErrorText } = require("../out/main/agent-client.js");
+const { AgentClient, requestErrorText, compactBody } = require("../out/main/agent-client.js");
 
 /** An agent stand-in answering one route; the client is pointed at it. */
 async function standIn(answer) {
@@ -104,6 +104,26 @@ test("the compaction does not go through fetch and its five-minute deadline", as
     globalThis.fetch = realFetch;
     await s.close();
   }
+});
+
+// ATO-661: `/compact <what to keep>` sends the text as `instructions`.
+test("what to keep goes to the agent as instructions; none keeps the body empty", async () => {
+  const s = await standIn(() => [200, { status: "compacted", tokensBefore: 2000, tokensAfter: 500,
+    message: "Your compaction instructions were not applied: the checkpoint was extracted without a model call." }]);
+  try {
+    const r = await s.client.compactSession("s1", "  keep the API design ");
+    assert.equal(r.status, "compacted");
+    assert.match(r.message, /not applied/);
+    assert.deepEqual(JSON.parse(s.seen[0].body), { instructions: "keep the API design" });
+    await s.client.compactSession("s1", "   ");
+    assert.equal(s.seen[1].body, "{}");
+  } finally { await s.close(); }
+});
+
+test("compactBody sends instructions only when there are some", () => {
+  assert.equal(compactBody(), "{}");
+  assert.equal(compactBody(""), "{}");
+  assert.equal(compactBody("keep names"), JSON.stringify({ instructions: "keep names" }));
 });
 
 test("an answer that is not JSON is a failure with its HTTP status", async () => {

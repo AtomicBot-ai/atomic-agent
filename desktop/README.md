@@ -126,7 +126,9 @@ the agent could not compact and left older history out, `history_trimmed`
 adds one line saying so and pointing at `/compact`. `/compact` in the composer
 and "Compact now" in the context popover call the compact route through main
 (`agent:compactSession`); both are off while a turn runs, while a compaction
-is going, and before the chat is saved. Words and rules:
+is going, and before the chat is saved. `/compact <what to keep>` (ATO-661)
+sends the text as `instructions`, so the summary keeps it (at most 2000
+characters). Words and rules:
 [context-compaction.js](renderer/context-compaction.js). The route answers
 only when the summary is written, which can take longer than five minutes on
 a local model, so main sends it over `node:http` and not `fetch`: Node's fetch

@@ -43,9 +43,11 @@ function compactionResultLine(p) {
   const after = Number(p && p.tokens_after);
   const said = String((p && p.message) || '').trim().replace(/[.!?\s]+$/, '');
   if (status === 'compacted') {
-    return {sev: '', text: before > 0 && after > 0
+    const head = before > 0 && after > 0
       ? 'Conversation compacted: ~' + compactTokens(before) + ' → ~' + compactTokens(after) + ' tokens'
-      : 'Conversation compacted'};
+      : 'Conversation compacted';
+    // ATO-661: the agent's note, e.g. that the "keep" text could not be applied.
+    return {sev: '', text: said ? head + '. ' + said : head};
   }
   if (status === 'noop') return {sev: '', text: 'Nothing to compact: there is no older history that can be safely summarized'};
   if (status === 'busy') return {sev: '', text: 'This chat is already being compacted'};
@@ -67,6 +69,31 @@ function compactBlockedReason(st) {
   return '';
 }
 
+/* ATO-661: `/compact <what to keep>`, as Claude Code's `/compact [instructions]`.
+   The text after the command goes to the agent as `instructions`
+   (POST /api/sessions/{id}/compact, core PR #1359): what the summary must
+   keep. The agent's own limit is 2000 characters; a longer text is refused
+   here so the person sees why before anything runs. */
+const COMPACT_INSTRUCTIONS_MAX = 2000;
+const COMPACT_USAGE = 'usage: /compact [what to keep], e.g. /compact keep the API design';
+
+/** The "keep" text from the words after `/compact`: {ok, text} ('' for none) or {ok:false, error}. */
+function compactInstructionsFrom(words) {
+  const text = (Array.isArray(words) ? words.join(' ') : String(words || '')).trim();
+  if (text.length > COMPACT_INSTRUCTIONS_MAX) {
+    return {ok: false, error: 'What to keep is too long (' + text.length + ' characters, at most ' + COMPACT_INSTRUCTIONS_MAX + '). ' + COMPACT_USAGE};
+  }
+  return {ok: true, text};
+}
+
+/** The running row's line: what the person asked to keep follows it, clipped. */
+function compactingLineFor(instructions) {
+  const keep = String(instructions || '').replace(/\s+/g, ' ').trim();
+  if (!keep) return COMPACTING_LINE;
+  return COMPACTING_LINE + ' Keeping: ' + (keep.length > 120 ? keep.slice(0, 119).trimEnd() + '…' : keep);
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = {COMPACTING_LINE, HISTORY_TRIMMED_LINE, compactTokens, compactionProgressLine, compactionResultLine, compactBlockedReason};
+  module.exports = {COMPACTING_LINE, HISTORY_TRIMMED_LINE, COMPACT_INSTRUCTIONS_MAX, COMPACT_USAGE, compactTokens, compactionProgressLine,
+    compactionResultLine, compactBlockedReason, compactInstructionsFrom, compactingLineFor};
 }
