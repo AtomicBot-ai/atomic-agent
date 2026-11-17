@@ -12,6 +12,7 @@ import {
   type ChainEditResult,
 } from "./fallback-chain-edits.js";
 import { buildFallbackChainView } from "./fallback-panel-selectors.js";
+import { rememberAppendLocalChosen } from "../../../runtime/append-local-question.js";
 
 /**
  * The only TUI module that writes `llm.fallback.chain` /
@@ -81,6 +82,9 @@ export class FallbackOrchestrator {
       .filter((l) => !l.isAppendedLocal)
       .map((l) => l.providerId);
     this.persist(declared, !view.appendLocal);
+    // Turned on by hand in this version: that is the answer to the
+    // one-time last-resort question (ATO-1461), so it is never asked.
+    if (!view.appendLocal) rememberAppendLocalChosen(getConfig().paths.stateDir);
   }
 
   private currentLinks() {

@@ -75,6 +75,7 @@ import { LocalModelsOrchestrator } from "./local-models/local-models-orchestrato
 import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
 import { SkillsOrchestrator } from "./skills/skills-orchestrator.js";
 import { ProjectTrustOrchestrator } from "./project-trust/project-trust-orchestrator.js";
+import { AppendLocalQuestionOrchestrator } from "./append-local-question/append-local-question-orchestrator.js";
 import { MemoryOrchestrator } from "./memory/memory-orchestrator.js";
 import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
 import { ImportOrchestrator } from "./import/import-orchestrator.js";
@@ -323,6 +324,7 @@ export class ChatOrchestrator {
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
   public readonly projectTrust: ProjectTrustOrchestrator;
+  public readonly appendLocalQuestion: AppendLocalQuestionOrchestrator;
   public readonly memory: MemoryOrchestrator;
   public readonly mcp: McpOrchestrator;
   public readonly import: ImportOrchestrator;
@@ -364,6 +366,11 @@ export class ChatOrchestrator {
     });
     this.providers = new ProvidersOrchestrator(runtime, bus);
     this.fallback = new FallbackOrchestrator(bus);
+    this.appendLocalQuestion = new AppendLocalQuestionOrchestrator({
+      config: () => runtime.config,
+      emit: (action) => bus.emit(action),
+      refreshFallback: () => this.fallback.refresh(),
+    });
     this.llmHealth = new LlmHealthPoller(bus, options.llamaUrl);
     this.localModels = new LocalModelsOrchestrator(bus, {
       onManagedModelSelected: (modelId) => {

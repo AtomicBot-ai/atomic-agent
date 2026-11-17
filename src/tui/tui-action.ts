@@ -1,5 +1,6 @@
 import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
+import type { AppendLocalPrompt } from "./append-local-question/append-local-question-state.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
@@ -413,6 +414,10 @@ export type TuiAction =
   | { type: "project_trust_asked"; prompt: ProjectTrustPrompt }
   /** The trust question was answered or put off. */
   | { type: "project_trust_closed" }
+  /** ATO-1461: the old "local model as last resort" switch is on and nobody answered the question yet. */
+  | { type: "append_local_asked"; prompt: AppendLocalPrompt }
+  /** That question was answered or put off. */
+  | { type: "append_local_closed" }
   /** User accepted: the install script is now running. */
   | { type: "update_started" }
   /** The install script settled. */

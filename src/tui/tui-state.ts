@@ -1,4 +1,5 @@
 import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
+import type { AppendLocalPrompt } from "./append-local-question/append-local-question-state.js";
 import {
   clampApprovalLevel,
   type ApprovalLevel,
@@ -716,6 +717,11 @@ export interface TuiState {
    */
   projectTrustPrompt: ProjectTrustPrompt | null;
   /**
+   * Startup question about the old "local model as the last-resort
+   * fallback" switch (ATO-1461). Drives the AppendLocalQuestionModal.
+   */
+  appendLocalPrompt: AppendLocalPrompt | null;
+  /**
    * Persistent "a newer release exists" fact behind the status-bar
    * banner. Set alongside {@link updatePrompt} and — unlike the prompt —
    * NOT cleared by `update_dismissed`: skipping the modal means "not
@@ -1078,6 +1084,7 @@ export function createInitialTuiState(
     aborting: false,
     updatePrompt: null,
     projectTrustPrompt: null,
+    appendLocalPrompt: null,
     updateBanner: null,
     updateStatus: "idle",
     ringBufferSize,
