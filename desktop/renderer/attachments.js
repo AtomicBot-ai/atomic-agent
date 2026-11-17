@@ -22,9 +22,10 @@
    longest edge, WebP re-encoded). */
 
 const ATT_IMAGE_EXTENSIONS = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif']);
-// Audio is not sent as a file: on macOS 26 it can be transcribed (ATO-1074, transcribe.js),
-// elsewhere the chip says it is not supported. The list is what AVAudioFile opens.
-const ATT_AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'm4a', 'aac', 'aif', 'aiff', 'caf']);
+// Audio is not sent as a file: it can be transcribed on this computer (ATO-1074, transcribe.js;
+// Apple's speech on macOS 26, whisper.cpp on Windows and Linux, ATO-1076). The list is what
+// AVAudioFile opens plus what whisper.cpp hears through ffmpeg; main refuses a type its engine cannot read.
+const ATT_AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'm4a', 'aac', 'aif', 'aiff', 'caf', 'flac', 'ogg', 'oga', 'opus', 'wma']);
 const ATT_DOCUMENT_EXTENSIONS = new Set([
   // Documents
   'pdf', 'docx', 'txt', 'md', 'csv', 'xlsx', 'xls', 'ods', 'pptx', 'html', 'htm',

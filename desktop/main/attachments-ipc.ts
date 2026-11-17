@@ -25,7 +25,7 @@ import { basename } from "node:path";
 
 import { discardAttachment, inboxDir, readPickedImage, saveAttachment, type AttachmentSource } from "./attachments.js";
 import { replyPathVerdict } from "./reply-paths.js";
-import { TRANSCRIBE_AUDIO_EXTS } from "./transcribe-file.js";
+import { TRANSCRIBE_AUDIO_EXTS, WHISPER_TRANSCRIBE_EXTS } from "./transcribe-file.js";
 
 /** The open dialog's two filters, mirroring renderer/attachments.js. */
 const IMAGE_EXTS = ["jpg", "jpeg", "png", "webp", "gif"];
@@ -77,8 +77,9 @@ export function wireAttachmentIpc(opts: { window: () => BrowserWindow | null; st
         ? [{ name: "Images", extensions: IMAGE_EXTS }]
         : [
           { name: "Documents and code", extensions: FILE_EXTS },
-          // ATO-1074: audio is transcribed on this Mac (macOS 26+), never sent as a file.
-          ...(process.platform === "darwin" ? [{ name: "Audio to transcribe", extensions: [...TRANSCRIBE_AUDIO_EXTS] }] : []),
+          // ATO-1074: audio is transcribed on this computer, never sent as a file
+          // (Apple's speech on macOS 26+, whisper.cpp on Windows and Linux, ATO-1076).
+          { name: "Audio to transcribe", extensions: [...(process.platform === "darwin" ? TRANSCRIBE_AUDIO_EXTS : WHISPER_TRANSCRIBE_EXTS)] },
           { name: "All files", extensions: ["*"] },
         ],
     });

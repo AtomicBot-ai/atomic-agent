@@ -6,9 +6,10 @@
    and replaces the audio chip with a `<name> transcript.txt` attachment, so
    the agent reads it like any other file. The audio itself is never sent.
 
-   Offered only where the helper can run: macOS with the voice helper
-   (BR.voiceSupported), and main's speech:fileAvailable says why not
-   otherwise (older macOS, no helper, no language model on this Mac).
+   Offered only where the helper can run: macOS with the voice helper, or
+   Windows/Linux with whisper.cpp (ATO-1076) (BR.voiceSupported), and main's
+   speech:fileAvailable says why not otherwise (older macOS, no helper, no
+   language model, whisper.cpp or its model not downloaded yet).
 
    Loaded after attachments.js and before renderer.js; it reads their globals
    (ATT, attRepaint, attFail, attLive, attPrepare, BR, esc, ic, toast) only
@@ -28,6 +29,8 @@ function trxReasonText(reason) {
     case 'voice-helper-missing': return 'This build has no speech helper, so audio cannot be transcribed';
     case 'voice-model-missing': return 'Add a language in voice input first, then transcribe';
     case 'voice-not-macos': return 'Audio files are not supported yet';
+    // ATO-1076: Windows and Linux hear the file with whisper.cpp, the same as voice input.
+    case 'voice-whisper-missing': case 'voice-whisper-model-missing': return 'Press the microphone once to download the speech model, then transcribe';
     default: return 'Audio cannot be transcribed on this computer';
   }
 }
@@ -38,7 +41,9 @@ function trxErrorText(error) {
     case 'not-audio': return 'This file type cannot be transcribed';
     case 'busy': return 'Another file is being transcribed. Try again when it is done';
     case 'open-file': return 'This audio file could not be opened';
-    case 'voice-model-missing': case 'voice-os-too-old': case 'voice-helper-missing': return trxReasonText(error);
+    case 'needs-ffmpeg': return 'This audio format needs ffmpeg. Install ffmpeg, or save the recording as WAV or MP3';
+    case 'voice-model-missing': case 'voice-os-too-old': case 'voice-helper-missing':
+    case 'voice-whisper-missing': case 'voice-whisper-model-missing': return trxReasonText(error);
     default: return 'The transcription stopped before it finished';
   }
 }
