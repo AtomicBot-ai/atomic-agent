@@ -155,6 +155,8 @@ function mcApprovalView(payload) {
   return {
     tool: mcPick(payload, 'tool') || 'a tool',
     reason: (mcPick(payload, 'reason') || '').slice(0, 200),
+    // ATO-1502: an ask_user question, answered on its card in the big window.
+    question: payload.category === 'user_question',
   };
 }
 
@@ -177,6 +179,7 @@ function mcApproval(st, payload) {
 
 const mcTitle = (st) => (st.rows.find((r) => r.k === 'user') || {}).text || '';   // the chat's first message
 function mcApprovalLine(a) {
+  if (a.question) return 'The agent is asking you a question. Open the big window to answer it.';
   return 'The agent is asking to use ' + a.tool + '. Open the big window to approve or deny it.';
 }
 
