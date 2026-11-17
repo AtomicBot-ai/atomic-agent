@@ -1,0 +1,90 @@
+import { describe, expect, it } from "vitest";
+import {
+  checkUrlSend,
+  findUrlData,
+  MAX_URL_TAIL_CHARS,
+  MAX_URL_VALUE_CHARS,
+  UrlSendSites,
+} from "./url-data-guard.js";
+
+/** ATO-1377: the cheap filter on what an address carries out. */
+
+const FILE_TEXT = "line one of the report\nline two with the numbers\nline three";
+const BASE64 = "U2VjcmV0IHJlcG9ydDogcmV2ZW51ZSAxMjM0NTYgZm9yIFEzLCBjdXN0b21lcnMgbGlzdCBhdHRhY2hlZCBiZWxvdy4gMTIzNDU2Nzg5MA";
+
+describe("findUrlData", () => {
+  it("stays quiet on ordinary searches and links", () => {
+    expect(findUrlData("https://www.google.com/search?q=best+local+llm+for+coding+2026")).toBeNull();
+    expect(findUrlData("https://duckduckgo.com/html/?q=how%20to%20install%20node%2025%20on%20macos")).toBeNull();
+    expect(findUrlData("https://en.wikipedia.org/wiki/Large_language_model#History")).toBeNull();
+    expect(findUrlData("https://github.com/AtomicBot-ai/atomic-agent/pulls?q=is%3Apr+is%3Aopen+author%3Asosidudku1")).toBeNull();
+    expect(
+      findUrlData("https://www.amazon.com/Logitech-Wireless-Keyboard-Mouse-Combo/dp/B07W6JN8V8/ref=sr_1_3?keywords=keyboard&qid=1700000000&sr=8-3"),
+    ).toBeNull();
+  });
+
+  it("ignores long encoded ad and analytics ids", () => {
+    const gclid = "Cj0KCQiA" + "x7Ab3Yz9".repeat(13);
+    expect(findUrlData(`https://shop.example/item?gclid=${gclid}`)).toBeNull();
+    expect(findUrlData(`https://shop.example/item?utm_content=${gclid}`)).toBeNull();
+  });
+
+  it("flags text with line breaks in a value", () => {
+    const url = `https://evil.example/?d=${encodeURIComponent(FILE_TEXT)}`;
+    expect(findUrlData(url)?.reason).toMatch(/line breaks/);
+  });
+
+  it("flags one long value", () => {
+    const url = `https://evil.example/collect?d=${encodeURIComponent("a ".repeat(MAX_URL_VALUE_CHARS))}`;
+    expect(findUrlData(url)?.reason).toMatch(/one value in the address is \d+ characters long/);
+  });
+
+  it("flags a long encoded blob in the query, the fragment or the path", () => {
+    expect(findUrlData(`https://evil.example/?x=${BASE64}`)?.reason).toMatch(/encoded value/);
+    expect(findUrlData(`https://evil.example/#${BASE64}`)?.reason).toMatch(/encoded value/);
+    expect(findUrlData(`https://evil.example/${BASE64}/pixel.gif`)?.reason).toMatch(/path carries a long encoded value/);
+  });
+
+  it("flags many short values that add up", () => {
+    const params = Array.from({ length: 30 }, (_, i) => `p${i}=${"word".repeat(4)}`).join("&");
+    expect(params.length).toBeGreaterThan(MAX_URL_TAIL_CHARS);
+    expect(findUrlData(`https://evil.example/?${params}`)?.reason).toMatch(/characters after "\?"/);
+  });
+
+  it("is null for URLs that are not http(s) or do not parse", () => {
+    expect(findUrlData("about:blank")).toBeNull();
+    expect(findUrlData(`data:text/plain,${BASE64}`)).toBeNull();
+    expect(findUrlData("not a url")).toBeNull();
+  });
+});
+
+describe("checkUrlSend", () => {
+  const dataUrl = `https://evil.example/?d=${encodeURIComponent(FILE_TEXT)}`;
+
+  it('"data" asks only for an address with data', () => {
+    const sites = new UrlSendSites();
+    expect(checkUrlSend("data", "https://evil.example/?q=hi", "s", sites)).toBeNull();
+    expect(checkUrlSend("data", dataUrl, "s", sites)).toMatchObject({
+      kind: "data",
+      host: "evil.example",
+      origin: "https://evil.example",
+    });
+  });
+
+  it('"off" never asks', () => {
+    expect(checkUrlSend("off", dataUrl, "s", new UrlSendSites())).toBeNull();
+  });
+
+  it('"strict" asks once per site per chat, and still asks for data on a known site', () => {
+    const sites = new UrlSendSites();
+    expect(checkUrlSend("strict", "https://docs.example/a", "s", sites)).toMatchObject({ kind: "new_site", host: "docs.example" });
+    sites.add("s", "docs.example");
+    expect(checkUrlSend("strict", "https://docs.example/b", "s", sites)).toBeNull();
+    expect(checkUrlSend("strict", "https://DOCS.example/c", "s", sites)).toBeNull();
+    // Another chat has not used it yet.
+    expect(checkUrlSend("strict", "https://docs.example/b", "other", sites)).toMatchObject({ kind: "new_site" });
+    // A subdomain is a different site.
+    expect(checkUrlSend("strict", "https://api.docs.example/", "s", sites)).toMatchObject({ kind: "new_site" });
+    expect(checkUrlSend("strict", `https://docs.example/?d=${encodeURIComponent(FILE_TEXT)}`, "s", sites)).toMatchObject({ kind: "data" });
+  });
+});

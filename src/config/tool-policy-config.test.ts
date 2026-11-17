@@ -28,11 +28,11 @@ describe("outbound HTTP and tool configuration ownership", () => {
     const projects = createProjectsDefaults();
     const tools = createToolsDefaults();
     const vision = createVisionDefaults();
-    expect(http).toStrictEqual({ enabled: true, approvalMode: "writes", hostAllowlist: null, maxResponseBytes: 1_048_576, defaultTimeoutMs: 30_000 });
+    expect(http).toStrictEqual({ enabled: true, approvalMode: "writes", hostAllowlist: null, maxResponseBytes: 1_048_576, defaultTimeoutMs: 30_000, urlDataGuard: "data" });
     expect(projects).toStrictEqual({ roots: [] });
     expect(tools).toStrictEqual({ shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3, envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"] }, screen: { enabled: false, point: true }, lsp: { enabled: false } });
     expect(vision).toStrictEqual({ enabled: true, autoDetect: true, maxImageBytes: 8 * 1024 * 1024, maxImagesPerCall: 4, maxAudioBytes: 16 * 1024 * 1024 });
-    expect(Object.keys(http)).toEqual(["enabled", "approvalMode", "hostAllowlist", "maxResponseBytes", "defaultTimeoutMs"]);
+    expect(Object.keys(http)).toEqual(["enabled", "approvalMode", "hostAllowlist", "maxResponseBytes", "defaultTimeoutMs", "urlDataGuard"]);
     expect(projects.roots).not.toBe(createProjectsDefaults().roots);
     expect(tools.shell).not.toBe(createToolsDefaults().shell);
     expect(vision).not.toBe(createVisionDefaults());
@@ -72,7 +72,7 @@ describe("outbound HTTP and tool configuration ownership", () => {
     let lookups = 0;
     let modeReads = 0;
     Object.defineProperty(defaults, "approvalMode", { get() { modeReads += 1; return "always"; } });
-    const input = { enabled: false, approvalMode: raw, hostAllowlist: [], maxResponseBytes: 1, defaultTimeoutMs: 1 };
+    const input = { enabled: false, approvalMode: raw, hostAllowlist: [], maxResponseBytes: 1, defaultTimeoutMs: 1, urlDataGuard: "data" };
     try {
       schema.USER_CONFIG_DEFAULTS.http = defaults;
       expect(parseHttpConfig(input, version, () => { lookups += 1; return defaults; }).approvalMode).toBe(expected);
@@ -82,6 +82,14 @@ describe("outbound HTTP and tool configuration ownership", () => {
       expect(schema.parseUserConfigFile({ version, http: input }).http.approvalMode).toBe(expected);
       expect(modeReads).toBe(reads);
     } finally { schema.USER_CONFIG_DEFAULTS.http = original; }
+  });
+
+  it("reads http.urlDataGuard: data by default, off and strict as written, anything else refused (ATO-1377)", () => {
+    expect(parseHttpConfig({}, 80, createHttpDefaults).urlDataGuard).toBe("data");
+    expect(parseHttpConfig({ urlDataGuard: "off" }, 80, createHttpDefaults).urlDataGuard).toBe("off");
+    expect(parseHttpConfig({ urlDataGuard: "strict" }, 80, createHttpDefaults).urlDataGuard).toBe("strict");
+    expect(schema.parseUserConfigFile({}).http.urlDataGuard).toBe("data");
+    expect(() => schema.parseUserConfigFile({ http: { urlDataGuard: "always" } })).toThrow(/http\.urlDataGuard/);
   });
 
   it("preserves host/root list bytes, order, duplicates and null/default versus explicit-empty behavior", () => {
@@ -127,7 +135,7 @@ describe("outbound HTTP and tool configuration ownership", () => {
 
   it("short-circuits explicit scalar defaults in all four owners", () => {
     const noDefaults = () => { throw new Error("explicit fields must not read defaults"); };
-    const http = { enabled: false, approvalMode: "never", hostAllowlist: [], maxResponseBytes: 1, defaultTimeoutMs: 1 };
+    const http = { enabled: false, approvalMode: "never", hostAllowlist: [], maxResponseBytes: 1, defaultTimeoutMs: 1, urlDataGuard: "strict" };
     const vision = { enabled: false, autoDetect: false, maxImageBytes: 1, maxImagesPerCall: 1, audioInput: false, maxAudioBytes: 1 };
     expect(parseHttpConfig(http, 79, noDefaults)).toStrictEqual(http);
     expect(parseProjectsConfig({ roots: [] }, noDefaults)).toStrictEqual({ roots: [] });

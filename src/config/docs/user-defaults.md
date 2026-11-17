@@ -83,6 +83,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `http.hostAllowlist` (default `null`).
 - `http.maxResponseBytes` (default `1048576`).
 - `http.defaultTimeoutMs` (default `30000`).
+- `http.urlDataGuard` (default `"data"`: a GET or a page the browser opens asks first when its address carries a lot of data; `"strict"` also asks once per site per chat; `"off"` never asks; ATO-1377).
 
 ## web
 
