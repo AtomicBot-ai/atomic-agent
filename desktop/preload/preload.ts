@@ -538,6 +538,13 @@ contextBridge.exposeInMainWorld("atomic", {
   transcribeFile: (req: { job: string; path: string }) => ipcRenderer.invoke("speech:transcribeFile", req),
   transcribeCancel: (job: string) => ipcRenderer.invoke("speech:transcribeCancel", job),
   onTranscribe: (cb: (payload: unknown) => void) => on("app:transcribe", cb),
+  /** ATO-1167: the neural reading voice through Atomic Core (main/core-speech.ts). */
+  ttsCoreStatus: (model: string) => ipcRenderer.invoke("tts:coreStatus", model),
+  ttsCorePrepare: (model: string) => ipcRenderer.invoke("tts:corePrepare", model),
+  ttsCorePrepareCancel: () => ipcRenderer.invoke("tts:corePrepareCancel"),
+  ttsCoreSpeak: (req: { text: string; model: string }) => ipcRenderer.invoke("tts:coreSpeak", req),
+  ttsCoreCancel: () => ipcRenderer.invoke("tts:coreCancel"),
+  onTtsCore: (cb: (payload: unknown) => void) => on("app:ttsCore", cb),
 
   /** Lane B — backend switch: whole-file config writes + agent restart, main-process side. */
   switchBackend: (kind: "cloud" | "local") => ipcRenderer.invoke("cli:switchBackend", kind),
