@@ -47,12 +47,24 @@ describe("applyOfflineModeFromConfigFile (ATO-1084)", () => {
     expect(applyOfflineModeFromConfigFile(stateDir)).toBe(true);
     expect(isOfflineNetwork()).toBe(true);
 
+    // ATO-1085: the update check no longer even asks; nothing is sent
+    // and nothing needs blocking.
     const failure = await checkForAppUpdate({ force: true }).then(
       () => null,
       (err: unknown) => err,
     );
     expect(failure).toBeInstanceOf(Error);
-    const cause = (failure as Error & { cause?: unknown }).cause;
+    expect((failure as Error).message).toMatch(/offline mode is on/i);
+    expect(egressSnapshot().requestsBlocked).toBe(0);
+    expect(egressSnapshot().requestsOut).toBe(0);
+
+    // Any other request of such a command still meets the dispatcher.
+    const refused = await fetch("https://api.github.com/").then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(refused).toBeInstanceOf(Error);
+    const cause = (refused as Error & { cause?: unknown }).cause;
     expect(cause).toBeInstanceOf(OfflineNetworkError);
     expect(egressSnapshot().requestsBlocked).toBe(1);
     expect(egressSnapshot().requestsOut).toBe(0);
