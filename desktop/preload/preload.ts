@@ -572,7 +572,9 @@ contextBridge.exposeInMainWorld("atomic", {
   contextPreview: (sessionId: string | null, message: string) =>
     ipcRenderer.invoke("agent:contextPreview", { sessionId, message }),
   /** ATO-259: summarize the chat's older history now (POST /api/sessions/{id}/compact). */
-  compactSession: (sessionId: string) => ipcRenderer.invoke("agent:compactSession", { sessionId }),
+  /** ATO-661: `instructions` is what the summary must keep (`/compact <what to keep>`). */
+  compactSession: (sessionId: string, instructions?: string) =>
+    ipcRenderer.invoke("agent:compactSession", { sessionId, ...(instructions ? { instructions } : {}) }),
   /** ATO-1299: remove the chat's last question and answer (POST /api/sessions/{id}/rollback-last-turn). */
   rollbackLastTurn: (sessionId: string, expectText?: string, expectPriorQuestions?: number, expectUnanswered?: boolean) =>
     ipcRenderer.invoke("agent:rollbackLastTurn", { sessionId, expectText, expectPriorQuestions, expectUnanswered }),
