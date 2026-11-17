@@ -256,6 +256,24 @@ function plgPuzzleSVG(size) {
 const PLG_INTRO = 'Plugins add ready-made abilities to Atomic Agent: skills, tools (MCP servers) and commands, packed together.';
 const PLG_SOURCES = 'A plugin is a folder. Get one from GitHub or from someone who shared it with you, then install it from that folder. Plugins made for Claude Code, Codex or Cursor work too.';
 
+/* ATO-1633: the marks of the places plugins come from (renderer.js LOGO_FILES keys). A plugin's
+   manifest format says which app it was made for; Cursor has no mark in renderer/logos/. */
+const PLG_FORMAT_LOGOS = {claude: 'claudecode', codex: 'codex'};
+const PLG_FORMAT_WORDS = {claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor'};
+
+/** The mark keys a plugin row wears: the app its manifest is for, then GitHub when it was installed from there. */
+function plgLogoKeys(p) {
+  const keys = [];
+  if (p && PLG_FORMAT_LOGOS[p.format]) keys.push(PLG_FORMAT_LOGOS[p.format]);
+  if (p && /github\.com/i.test(String(p.sourceLabel || ''))) keys.push('github');
+  return keys;
+}
+function plgMarksHTML(keys, title) {
+  if (typeof logoHTML !== 'function') return '';
+  const html = keys.map((k) => logoHTML(k, 'xs')).join('');
+  return html ? '<span class="set-plgmarks"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + html + '</span>' : '';
+}
+
 /* The install's own line: picking, copying and scanning, the scan's question, or why it stopped. */
 function plgInstallHTML() {
   const st = PLG.install;
@@ -295,7 +313,7 @@ function plgRowHTML(p, i) {
     + '<button class="body set-plgbody" data-act="plugins:expand:' + esc(p.name) + '" aria-expanded="' + open + '">'
       + '<span class="t"><span class="mono">' + esc(p.name) + '</span> <span class="m">' + esc(p.version || '') + '</span></span>'
       + (p.description ? '<span class="d">' + esc(p.description) + '</span>' : '')
-      + '<span class="set-plgmeta">' + '<span class="sec">' + esc(plgCountsText(p.counts)) + '</span>'
+      + '<span class="set-plgmeta">' + plgMarksHTML(plgLogoKeys(p), PLG_FORMAT_WORDS[p.format] ? 'Made for ' + PLG_FORMAT_WORDS[p.format] : '') + '<span class="sec">' + esc(plgCountsText(p.counts)) + '</span>'
         + '<span class="sec" title="' + esc(p.sourceLabel || '') + '">' + esc(p.sourceLabel || '') + '</span>'
         + plgBadges(p).map(plgChipHTML).join('') + '</span>'
     + '</button>'
@@ -356,7 +374,7 @@ function pluginsTab() {
   const canInstall = !PLG.unsupported;
   // What plugins are first, always; then the list's own row: label and counts left, actions right.
   const about = '<div class="set-plgabout"><p class="set-plgintro">' + esc(PLG_INTRO) + '</p>'
-    + '<p class="set-plgintro set-plgintro--2">' + esc(PLG_SOURCES) + '</p></div>';
+    + '<p class="set-plgintro set-plgintro--2">' + esc(PLG_SOURCES) + plgMarksHTML(['github', 'claudecode', 'codex']) + '</p></div>';
   const head = '<div class="set-plghead">'
     + '<h4 class="set-plgtitle">Installed</h4>'
     + (summary ? '<span class="set-counts">' + esc(summary) + '</span>' : '')
@@ -383,4 +401,4 @@ function pluginsTab() {
   return '<div class="set-pane set-plugins">' + about + head + plgInstallHTML() + err + msg + body + foot + overlay + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct, plgFolderName, plgSummaryText, PLG_INTRO, PLG_SOURCES};
+if (typeof module !== 'undefined') module.exports = {plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct, plgFolderName, plgSummaryText, PLG_INTRO, PLG_SOURCES, PLG_FORMAT_LOGOS, plgLogoKeys};
