@@ -56,4 +56,28 @@ describe("resolveSelectedOptions", () => {
       ImportOptionError,
     );
   });
+
+  it("adds plugins only when at least one plugin is trusted", () => {
+    expect(resolveSelectedOptions({ trustedPlugins: [] })).toEqual([
+      "sessions",
+      "cron",
+    ]);
+    expect(resolveSelectedOptions({ trustedPlugins: ["  "] })).toEqual([
+      "sessions",
+      "cron",
+    ]);
+    expect(
+      resolveSelectedOptions({
+        trustedPlugins: ["calculator"],
+        exclude: ["sessions", "cron"],
+      }),
+    ).toEqual(["plugins"]);
+  });
+
+  it("never selects plugins via preset or --include", () => {
+    expect(resolveSelectedOptions({ preset: "full" })).not.toContain("plugins");
+    expect(() => resolveSelectedOptions({ include: ["plugins"] })).toThrow(
+      ImportOptionError,
+    );
+  });
 });
