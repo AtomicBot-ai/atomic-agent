@@ -279,6 +279,12 @@ export interface FeedEntry {
   /** Ink `color` prop — controls the left gutter glyph colouring. */
   color: "green" | "red" | "yellow" | "blue" | "gray" | "magenta" | "white";
   timestamp: number;
+  /**
+   * The model a fusion leg's line is about, when the runtime named one.
+   * The feed draws its brand badge in front of the line (ATO-1635); the
+   * line text itself is unchanged.
+   */
+  brandModel?: string;
 }
 
 export interface RollingMetrics {

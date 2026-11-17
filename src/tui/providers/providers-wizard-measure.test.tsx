@@ -8,6 +8,7 @@ import {
   measureProvidersWizard,
 } from "./providers-wizard-measure.js";
 import { ProvidersWizard } from "./providers-wizard.js";
+import { BRAND_SLOT_WIDTH } from "../brand/brand-badges.js";
 
 const strip = (s: string): string => s.replace(/\[[0-9;]*m/g, "");
 
@@ -46,10 +47,15 @@ describe("measureProvidersWizard", () => {
     expect(widest).toBe(width);
   });
 
-  it("stays inside the 100-column terminal the flow asks for", () => {
+  it("stays inside the 100-column terminal the flow asks for, plus the brand slot", () => {
     // The cap the guess used to encode, now a consequence of measuring:
     // everything deterministic fitted a 100-column terminal before this
-    // slice, and the measure must keep saying so.
-    expect(measureProvidersWizard()).toBeLessThanOrEqual(100);
+    // slice. ATO-1635 put a brand badge in front of every provider row,
+    // which the measure counts; on a terminal narrower than that, the
+    // two longest notes lose their tail to `truncate-end`, as any row
+    // already did below 100 columns.
+    expect(measureProvidersWizard()).toBeLessThanOrEqual(
+      100 + BRAND_SLOT_WIDTH,
+    );
   });
 });

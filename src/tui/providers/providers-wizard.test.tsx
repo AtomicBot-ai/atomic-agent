@@ -12,6 +12,10 @@ import type {
 } from "./providers-wizard-state.js";
 import { ProvidersWizard } from "./providers-wizard.js";
 import { checkSubscriptionCli } from "../../llm/provider/subscription-cli/subscription-cli-status.js";
+import { BRANDS, brandBadgeText } from "../brand/brand-badges.js";
+
+/** A pick-list row as drawn: cursor mark, brand slot (ATO-1635), label. */
+const blankRow = (label: string): string => `> ${brandBadgeText(null)} ${label}`;
 
 // The wizard reads the configured binPath through getConfig (ATO-1204 fix
 // round): one codex entry has a custom path, nothing touches a real state dir.
@@ -95,7 +99,7 @@ describe("ProvidersWizard chat model step", () => {
     const text = stripAnsi(lastFrame() ?? "");
     expect(text).toContain("30 from https://many.example/v1/models");
     // ids are listed sorted; cursor 20 lands on the 21st of them
-    expect(text).toContain("> model-28");
+    expect(text).toContain(blankRow("model-28"));
     // The counter opens the hint, right after the movement keys.
     expect(text).toContain("↑/↓ move (21/30) · PgUp/PgDn jump");
     expect(text).not.toContain("model-10");
@@ -324,7 +328,9 @@ describe("ProvidersWizard search box", () => {
       <ProvidersWizard wizard={providerList("cli", 9)} />,
     );
     const text = stripAnsi(lastFrame() ?? "");
-    expect(text).toContain("> OpenAI Codex subscription");
+    expect(text).toContain(
+      `> ${brandBadgeText(BRANDS.codex)} OpenAI Codex subscription`,
+    );
     expect(text).toContain("(2/2)");
   });
 });
@@ -353,7 +359,7 @@ describe("ProvidersWizard cloud model pickers", () => {
       <ProvidersWizard wizard={cloudPickStep("openrouter", 150)} />,
     );
     const text = stripAnsi(lastFrame() ?? "");
-    expect(text).toContain("> vendor/model-150");
+    expect(text).toContain(blankRow("vendor/model-150"));
     expect(text).toContain("(151/305)");
     expect(countRows(text, "vendor/model-")).toBeLessThanOrEqual(12);
     expect(text).not.toContain("vendor/model-000");
@@ -460,7 +466,7 @@ describe("ProvidersWizard cloud model pickers", () => {
     );
     const text = stripAnsi(lastFrame() ?? "");
     // The cursor at the tail still sits inside a 12-row viewport.
-    expect(text).toContain("> vendor/model-336");
+    expect(text).toContain(blankRow("vendor/model-336"));
     expect(text).toContain("(337/337)");
     expect(countRows(text, "vendor/model-")).toBeLessThanOrEqual(12);
     expect(text).not.toContain("vendor/model-000");

@@ -15,6 +15,7 @@ import { createInitialTuiState } from "../tui-state.js";
 import type { TuiAction } from "../tui-action.js";
 import { fakeSession } from "../test-fixtures.js";
 import { renderAtSize } from "../test-sized-render.js";
+import { BRANDS, brandBadgeText } from "../brand/brand-badges.js";
 
 vi.mock("../../llm/llama-server-health.js", () => ({
   checkLlamaServer: vi.fn(async () => ({
@@ -513,8 +514,11 @@ describe("OnboardingScreen", () => {
       const { view } = renderFlow("import_pick");
       const frame = strip(view.lastFrame() ?? "");
       expect(frame).toContain("bring your data · one last step");
-      expect(frame).toContain("[x] Claude Code");
-      expect(frame).toContain("[ ] Codex");
+      // Each agent wears its brand badge after the checkbox (ATO-1635).
+      expect(frame).toContain(
+        `[x] ${brandBadgeText(BRANDS.claudecode)} Claude Code`,
+      );
+      expect(frame).toContain(`[ ] ${brandBadgeText(BRANDS.codex)} Codex`);
       // The old flow pitched a dry-run here; the ticks are the
       // confirmation now, so neither the copy nor the footer may
       // promise a screen that no longer exists.
