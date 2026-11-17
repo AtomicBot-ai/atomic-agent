@@ -616,6 +616,12 @@ export interface AtomicAgentConfig {
         streaming?: boolean;
         maxBudgetUsd?: number;
       };
+      /**
+       * EXPERIMENTAL (ATO-1448): a `subscription-oauth` entry's service.
+       * The sign-in tokens are kept in `<stateDir>/auth/<service>.json`
+       * (owner-only), never in this file.
+       */
+      subscriptionOauth?: { service: "chatgpt" };
       userModels?: ReadonlyArray<{
         id: string;
         kind: "chat" | "embedding";

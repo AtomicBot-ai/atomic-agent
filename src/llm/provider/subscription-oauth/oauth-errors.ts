@@ -55,6 +55,25 @@ export class SignInRequiredError extends Error {
   }
 }
 
+/**
+ * EXPERIMENTAL ChatGPT sign-in (ATO-1453): the stored sign-in is
+ * missing, expired or refused. A setup failure, not an outage:
+ * `isSubscriptionCliSetupError` treats it like a signed-out Codex CLI,
+ * so the turn says what to do instead of waiting for a recovery.
+ */
+export class ChatgptSignInRequiredError extends Error {
+  readonly reason: string;
+
+  constructor(reason: string, options?: { cause?: unknown }) {
+    super(
+      "ChatGPT sign-in (experimental) is missing or has expired. Run `atag login chatgpt` to sign in again.",
+    );
+    this.name = "ChatgptSignInRequiredError";
+    this.reason = reason;
+    if (options?.cause !== undefined) (this as { cause?: unknown }).cause = options.cause;
+  }
+}
+
 const SAFE_OAUTH_ERROR = /^[A-Za-z0-9_.-]{1,64}$/;
 
 /**
