@@ -21,6 +21,8 @@ export interface ServeArgs {
   reapOnly: boolean;
   /** ATO-625: open a Cloudflare tunnel to the webhook routes, or `null`. */
   tunnel: TunnelRequest | null;
+  /** ATO-693: serve the A2A agent card and JSON-RPC endpoint (needs an API key). */
+  a2a: boolean;
 }
 
 export const HELP =
@@ -52,6 +54,10 @@ export const HELP =
     "                      is reachable through it, every other route stays on this machine",
     "  --tunnel-name <n>   Use your named Cloudflare tunnel <n> instead (cloudflared login done),",
     "  --tunnel-hostname <h>  with the public hostname routed to it, e.g. hooks.example.com",
+    "  --a2a               Let other agents send this one tasks over the A2A protocol (off by default,",
+    "                      or ATOMIC_AGENT_SERVE_A2A=1). Needs an API key; adds the public",
+    "                      GET /.well-known/agent-card.json and the authenticated POST /api/a2a.",
+    "                      ATOMIC_AGENT_A2A_PUBLIC_URL=<https://…> sets the address the card names",
     "",
     "Remote channels:",
     "  serve boots the same runtime the TUI does, so an enabled Telegram or Discord",
@@ -103,6 +109,7 @@ export function parseArgs(
   let quickTunnel = false;
   let tunnelName: string | null = null;
   let tunnelHostname: string | null = null;
+  let a2a = process.env.ATOMIC_AGENT_SERVE_A2A === "1";
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -162,6 +169,9 @@ export function parseArgs(
       case "--tunnel":
         quickTunnel = true;
         break;
+      case "--a2a":
+        a2a = true;
+        break;
       case "--tunnel-name": {
         const value = args[++i];
         if (!value || value.startsWith("-")) return { error: `${flag} requires a value` };
@@ -204,6 +214,14 @@ export function parseArgs(
         `Use at least ${MIN_NETWORK_KEY_LENGTH} (for example: export ATOMIC_AGENT_API_KEY=$(openssl rand -hex 24)).`,
     };
   }
+  // ATO-693: A2A hands the agent and its tools to other programs; never without a key, even on loopback.
+  if (!reapOnly && a2a && apiKey === null) {
+    return {
+      error:
+        "--a2a lets other agents run tasks here and needs an API key: set --api-key <token> or ATOMIC_AGENT_API_KEY " +
+        "(for example: export ATOMIC_AGENT_API_KEY=$(openssl rand -hex 24))",
+    };
+  }
   let tunnel: TunnelRequest | null = null;
   if (tunnelName !== null || tunnelHostname !== null) {
     if (tunnelName === null || tunnelHostname === null) {
@@ -226,6 +244,7 @@ export function parseArgs(
     noParentExit,
     reapOnly,
     tunnel,
+    a2a,
   };
 }
 

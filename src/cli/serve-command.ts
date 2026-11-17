@@ -124,7 +124,11 @@ export async function serveCommand(args: string[]): Promise<number> {
       host: parsed.host,
       port: parsed.port,
       apiKey: parsed.apiKey,
-      routes: buildRouteTable({ metricsRegistry }),
+      routes: buildRouteTable({
+        metricsRegistry,
+        // ATO-693: off unless --a2a; parseArgs already refused it without a key.
+        a2a: parsed.a2a ? { publicUrl: a2aPublicUrl() } : null,
+      }),
       approvalBus,
       completionRegistry,
     });
@@ -132,6 +136,11 @@ export async function serveCommand(args: string[]): Promise<number> {
     process.stderr.write(
       `[atomic-agent] serve listening on http://${handle.host}:${handle.port} (${authNote}, cwd=${parsed.workingDir})\n`,
     );
+    if (parsed.a2a) {
+      process.stderr.write(
+        "[atomic-agent] a2a: agent card at /.well-known/agent-card.json, tasks on POST /api/a2a (bearer auth)\n",
+      );
+    }
     const authWarning = serveAuthWarning(parsed);
     if (authWarning) process.stderr.write(authWarning);
     // ATO-1126: on every interface, say where another device reaches it (the desktop's remote agent, a phone).
@@ -205,6 +214,12 @@ export async function serveCommand(args: string[]): Promise<number> {
     // invisible stray this module exists to prevent.
     releaseRecord?.();
   }
+}
+
+/** ATO-693: `ATOMIC_AGENT_A2A_PUBLIC_URL`, the address the agent card names; unset or blank is none. */
+function a2aPublicUrl(): string | null {
+  const raw = process.env.ATOMIC_AGENT_A2A_PUBLIC_URL?.trim();
+  return raw ? raw : null;
 }
 
 interface OrphanWatch {

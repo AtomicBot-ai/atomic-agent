@@ -37,6 +37,7 @@ import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
 import { createHttpServer, type HttpServerHandle } from "./http-server.js";
 import { buildRouteTable } from "./route-table.js";
+import type { A2aOptions } from "./route-a2a.js";
 
 /**
  * Inert browser backend — the HTTP tests never actually drive a
@@ -141,6 +142,8 @@ export interface HarnessOptions {
   webhooks?: Record<string, WebhookConfig>;
   /** MCP servers persisted into `<stateDir>/config.json` before boot. */
   mcpServers?: McpServerConfig[];
+  /** ATO-693: mount the A2A routes, as `serve --a2a` does. */
+  a2a?: A2aOptions | null;
 }
 
 export interface Harness {
@@ -251,9 +254,10 @@ export async function startTestHarness(
     host: "127.0.0.1",
     port: 0,
     apiKey: options.apiKey ?? null,
-    routes: buildRouteTable(
-      options.metricsRegistry ? { metricsRegistry: options.metricsRegistry } : {},
-    ),
+    routes: buildRouteTable({
+      ...(options.metricsRegistry ? { metricsRegistry: options.metricsRegistry } : {}),
+      ...(options.a2a ? { a2a: options.a2a } : {}),
+    }),
     approvalBus,
     completionRegistry,
   });
