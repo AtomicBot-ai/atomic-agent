@@ -24,10 +24,15 @@ export interface RuntimeHttpConfig {
 }
 
 export interface UserHttpConfig {
+  /** Turns the `os.http.request` tool on. With `false` every call fails as disabled by config. Default `true`. */
   enabled: boolean;
+  /** When `os.http.request` asks for approval: `writes` (default) gates a request that sends data but not a GET, `always` gates every call, `never` gates none. */
   approvalMode: HttpApprovalMode;
+  /** Hosts `os.http.request` may call. `null` (default) allows any host; a list refuses every other host, and `*.example.com` covers `example.com` and its subdomains. */
   hostAllowlist: string[] | null;
+  /** Cap on the response body `os.http.request` returns, in bytes. Default `1048576` (1 MiB). */
   maxResponseBytes: number;
+  /** Timeout of an `os.http.request` call that sets no `timeoutMs` of its own, in milliseconds. Default `30000`. */
   defaultTimeoutMs: number;
 }
 

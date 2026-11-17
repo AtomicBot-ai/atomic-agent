@@ -62,16 +62,24 @@ export const WHILE_BUSY_SUBMIT_MODES: readonly WhileBusySubmitMode[] = ["steer",
 
 
 export interface OnboardingState {
+  /** When the first-run flow configured a backend and handed over to the agent, as an ISO timestamp. `null` (default) means not yet. */
   completedAt: string | null;
+  /** When the first-run splash was dismissed, as an ISO timestamp. `null` (default) means never. */
   introSeenAt: string | null;
+  /** When the operator escaped out of the first-run flow, as an ISO timestamp; the flow does not reopen by itself afterwards. `null` (default) means never. */
   skippedAt: string | null;
+  /** When the first run offered to set up the other backend too, as an ISO timestamp, so the offer is never made twice. `null` (default) means not offered. */
   proposedSecondBackendAt: string | null;
+  /** When the first run reached the local model list, whether or not a model was chosen, as an ISO timestamp. `null` (default) means never. */
   localSetupSeenAt: string | null;
+  /** When the first run offered to bring data over from another agent, as an ISO timestamp; a declined offer does not come back. `null` (default) means not offered. */
   importOfferedAt: string | null;
 }
 
 export interface TuiConfig {
+  /** TUI color theme: `auto` (default) detects the terminal background and picks the matching classic theme, or a registered theme name such as `khorne-red`. Set by the `/theme` picker. */
   theme: string;
+  /** What Enter does while a turn is running: `steer` (default) folds the message into the running turn at the next step, `queue` runs it as its own turn once the current one ends. */
   whileBusySubmit: WhileBusySubmitMode;
   mouse: boolean;
   /**
