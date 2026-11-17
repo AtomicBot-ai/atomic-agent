@@ -213,6 +213,8 @@ function mcRowsHTML(st) {
 function mcBoot() {
   const BR = window.atomic;
   const $ = (id) => document.getElementById(id);
+  // ATO-1609: the theme the main window was set to (renderer.js atag.theme), as the one-line box read it; System follows the OS.
+  try { const t = localStorage.getItem('atag.theme'); if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t); } catch (e) { /* follow the OS */ }
   const st = mcState();
   let painting = false;
   let stick = true, told = null;   // told: the chat id given to main (mini:session), the big window keeps its approvals for it
@@ -256,6 +258,7 @@ function mcBoot() {
     const text = input.value;
     if (!mcSend(st, text)) return;
     input.value = '';
+    if (BR.quickEntryDraft) BR.quickEntryDraft('');
     stick = true;
     repaint();
     BR.chat([{role: 'user', content: text.trim()}], st.sessionId || undefined).then((res) => {
@@ -267,7 +270,11 @@ function mcBoot() {
   const stop = () => { if (st.busy && st.turnId) BR.cancel(st.turnId); };
 
   $('mc-send').addEventListener('click', () => (st.busy ? stop() : submit()));
-  $('mc-input').addEventListener('input', repaint);
+  $('mc-input').addEventListener('input', () => {
+    // ATO-1609: what was typed and not sent comes back next time the hotkey opens this window (main keeps it).
+    if (BR.quickEntryDraft) BR.quickEntryDraft($('mc-input').value);
+    repaint();
+  });
   $('mc-input').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); if (!st.busy) submit(); }
   });
@@ -288,6 +295,13 @@ function mcBoot() {
   if (BR.miniChatAttach) BR.miniChatAttach().catch(() => {});
   paint();
   $('mc-input').focus();
+  if (BR.quickEntryOpened) BR.quickEntryOpened().then((opened) => {
+    const input = $('mc-input');
+    if (!opened || typeof opened.draft !== 'string' || !opened.draft || input.value || st.rows.length) return;
+    input.value = opened.draft;
+    input.setSelectionRange(input.value.length, input.value.length);
+    repaint();
+  }, () => {});
 }
 
 if (typeof window !== 'undefined' && typeof document !== 'undefined' && document.getElementById('mc-log')) {

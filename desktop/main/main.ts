@@ -11102,7 +11102,8 @@ void app.whenReady().then(async () => {
     },
     log: (line) => console.error(line),
   });
-  app.once("will-quit", () => quickEntry.dispose());
+  showMiniChat = quickEntry.show;
+  app.once("will-quit", () => { showMiniChat = null; quickEntry.dispose(); });
   wireUpdater();
   watchCoreUpdates();
   // ATO-229: the first update check waits for the window (then ~10 s more, updater.ts).
@@ -11206,6 +11207,8 @@ const loginHost = (): LoginItemHost => ({
   setLoginItemSettings: (s) => app.setLoginItemSettings(s),
 });
 let tray: Tray | null = null;
+/** ATO-1609: opens the mini chat window (quick-entry-window.ts), for the menu and the tray; set once it is wired. */
+let showMiniChat: (() => void) | null = null;
 
 /** The menu bar, with the Agent menu's two checkboxes as they are now; `bg:*` commands are main's own. */
 function rebuildMenu(): void {
@@ -11218,6 +11221,7 @@ function rebuildMenu(): void {
       return;
     }
     if (command === "remote:open") { openRemoteConnect(); return; }
+    if (command === "mini:open") { showMiniChat?.(); return; }
     if (command.startsWith("awake:")) {
       const mode = command.slice("awake:".length) as KeepAwakeMode;
       if (KEEP_AWAKE_MODES.includes(mode)) { writeKeepAwakeMode(userData, mode); void syncKeepAwake(); }
@@ -11291,6 +11295,7 @@ async function syncTray(): Promise<void> {
   tray.setToolTip("Atomic Agent");
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "Open Atomic Agent", click: () => openWindowAgain() },
+    { label: "New Mini Chat", click: () => showMiniChat?.() },
     { type: "separator" },
     { label: "Quit Atomic Agent", click: () => app.quit() },
   ]));
