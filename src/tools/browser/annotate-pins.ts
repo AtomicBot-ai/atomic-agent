@@ -2,6 +2,10 @@
  * Pins read back from the annotate overlay (ATO-518): checked, grouped by
  * the part of the page they sit in, and rendered for the model.
  *
+ * A pin has no comment (ATO-1543): text typed on the page can be read by
+ * the page, so the user says what to change for each pin number in the
+ * agent's chat instead. Any `comment` a script sends back is dropped.
+ *
  * Grouping: each pin carries the selector path from the top of the page
  * (or the nearest element with a unique id) down to its element, and the
  * depth of its "region", the nearest landmark around it (main, section,
@@ -20,8 +24,6 @@ export interface PinRect {
 
 export interface AnnotationPin {
   id: number;
-  /** The user's own words, typed in the overlay. */
-  comment: string;
   selector: string;
   tag: string;
   /** Visible text of the element, cut short (page text). */
@@ -45,7 +47,6 @@ export interface PinGroup {
 
 const CAPS = {
   pins: 50,
-  comment: 2_000,
   selector: 500,
   tag: 40,
   text: 160,
@@ -77,8 +78,7 @@ export function sanitizePins(raw: readonly unknown[]): AnnotationPin[] {
     if (pins.length >= CAPS.pins) break;
     if (!isRecord(entry)) continue;
     const id = num(entry.id);
-    const comment = text(entry.comment, CAPS.comment);
-    if (id <= 0 || seen.has(id) || comment.length === 0) continue;
+    if (id <= 0 || seen.has(id)) continue;
     seen.add(id);
     const rect = isRecord(entry.rect) ? entry.rect : {};
     const styles: Record<string, string> = {};
@@ -92,7 +92,6 @@ export function sanitizePins(raw: readonly unknown[]): AnnotationPin[] {
       : [];
     pins.push({
       id,
-      comment,
       selector: text(entry.selector, CAPS.selector),
       tag: text(entry.tag, CAPS.tag).toLowerCase(),
       text: text(entry.text, CAPS.text),
@@ -159,8 +158,7 @@ export function renderPin(pin: AnnotationPin, crop?: string): string[] {
     .map((key) => `${key}: ${pin.styles[key]}`)
     .join("; ");
   const lines = [
-    `  [${pin.id}] comment: ${pin.comment}`,
-    `      element: <${pin.tag || "?"}>${label}${pin.attached ? "" : " (no longer on the page; details as when pinned)"}`,
+    `  [${pin.id}] <${pin.tag || "?"}>${label}${pin.attached ? "" : " (no longer on the page; details as when pinned)"}`,
     `      selector: ${pin.selector || "(none)"}`,
     `      box: ${pin.rect.width}x${pin.rect.height} at (${pin.rect.x}, ${pin.rect.y}) in the document`,
   ];

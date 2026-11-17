@@ -362,7 +362,7 @@ export interface BrowserBackend {
   debugLog?(): PageDebugLog;
   /**
    * Annotate mode (ATO-518): put the pin overlay on the active page so the
-   * user can click elements and comment on them, read the pins back, or
+   * user can click elements to pin them (the words go in chat), read the pins back, or
    * take the overlay off. Optional: a backend without it cannot annotate.
    */
   startAnnotate?(): Promise<AnnotateStartResult>;

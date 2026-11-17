@@ -15,7 +15,6 @@ import { ANNOTATE_SOURCE, buildBrowserAnnotateTool, type BrowserAnnotateDeps } f
 function pin(id: number, path: string[], regionDepth: number) {
   return {
     id,
-    comment: `make ${id} bigger`,
     selector: path.join(" > "),
     tag: "h2",
     text: "Pricing",
@@ -82,6 +81,8 @@ describe("browser.annotate", () => {
     expect(backend.started).toBe(1);
     expect(result.summary).toContain('"action": "read"');
     expect(result.summary).toContain("do not click");
+    // ATO-1543: the user's words go in the chat, not on the page.
+    expect(result.summary).toContain("here in the chat, not on the page");
     expect(prompts).toHaveLength(0);
     const again = await tool.run({ action: "start" }, GATE_CTX);
     expect(again.summary).toContain("already on");
@@ -96,7 +97,9 @@ describe("browser.annotate", () => {
     expect(result.summary).toContain("2 pin(s)");
     expect(result.summary).toContain("Area 1: #pricing (pins 1)");
     expect(result.summary).toContain("Area 2: body > footer (pins 2)");
-    expect(result.summary).toContain("[1] comment: make 1 bigger");
+    expect(result.summary).toContain('[1] <h2> "Pricing"');
+    expect(result.summary).toContain("in the user's chat messages");
+    expect(result.summary).not.toContain("comment:");
     expect(result.summary).toContain("selector: #pricing > h2");
     expect(result.summary).toContain("font-size: 20px");
     expect(result.details).toMatchObject({ groups: [{ region: "#pricing", pinIds: [1] }, { region: "body > footer", pinIds: [2] }] });
@@ -147,7 +150,7 @@ describe("browser.annotate", () => {
       memoryDisk().deps,
     ).run({ action: "read" }, GATE_CTX);
     expect(framed.details).toMatchObject({ reason: "blocked_domain", host: "bank.example" });
-    expect(framed.summary).not.toContain("make 1 bigger");
+    expect(framed.summary).not.toContain("#pricing > h2");
   });
 
   it("in the user's own Chrome a site not opened this session asks first", async () => {
