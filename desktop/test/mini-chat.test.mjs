@@ -323,3 +323,38 @@ test("the mini page loads the markdown renderer before its own script, under the
   assert.ok(!html.includes("renderer.js"), "the whole renderer is not loaded");
   for (const id of ["mc-log", "mc-input", "mc-send", "mc-open", "mc-wait", "mc-wait-text"]) assert.ok(html.includes(`id="${id}"`), id);
 });
+
+/* ---------- ATO-1609: the mini chat window is reachable ---------- */
+
+test("ATO-1609: the hotkey window loads the mini chat page at its own size, not the one-line box", () => {
+  const qw = src("../main/quick-entry-window.ts");
+  assert.match(qw, /import \{ MINI_CHAT_SIZE, miniChatPagePath \} from "\.\/mini-chat\.js";/);
+  assert.match(qw, /win\.loadFile\(miniChatPagePath\(__dirname\)\)/);
+  assert.ok(!qw.includes('"quick-entry.html"'), "the one-line box page is no longer loaded");
+  assert.match(qw, /quickEntryBounds\(cursor, [^\n]*, MINI_CHAT_SIZE\)/);
+  assert.match(qw, /dispose: \(\) => \{[\s\S]*?\},\n    show,\n  \};/, "wireQuickEntry hands back show for the menu and the tray");
+});
+
+test("ATO-1609: show brings an open window up instead of toggling it away", () => {
+  const qw = src("../main/quick-entry-window.ts");
+  const at = qw.indexOf("const show = () => {");
+  assert.ok(at > 0);
+  const body = qw.slice(at, qw.indexOf("\n  };", at));
+  assert.match(body, /box\.show\(\);\s*box\.focus\(\);\s*return;/);
+  assert.match(body, /open\(\);/);
+});
+
+test("ATO-1609: File › New Mini Chat and the tray open the same window", () => {
+  const main = src("../main/main.ts");
+  assert.match(main, /showMiniChat = quickEntry\.show;/);
+  assert.match(main, /if \(command === "mini:open"\) \{ showMiniChat\?\.\(\); return; \}/);
+  assert.match(main, /\{ label: "New Mini Chat", click: \(\) => showMiniChat\?\.\(\) \}/);
+});
+
+test("ATO-1609: the mini page keeps the unsent draft and the theme as the box did", () => {
+  const js = src("../renderer/mini-chat.js");
+  assert.match(js, /BR\.quickEntryDraft\(\$\('mc-input'\)\.value\)/, "typing is kept in main");
+  assert.match(js, /BR\.quickEntryDraft\(''\)/, "a sent message is not put back");
+  assert.match(js, /BR\.quickEntryOpened\(\)\.then\(/, "the draft comes back on open");
+  assert.match(js, /localStorage\.getItem\('atag\.theme'\)/);
+});

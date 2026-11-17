@@ -56,8 +56,8 @@ function quickEntryRowHTML(st, h) {
   const desc = st.recording
     ? 'Press the new combination now. Esc cancels.'
     : on && label
-      ? 'Press ' + h.esc(label) + ' in any app to open a small box. Enter sends what you type to a new chat here; Esc closes it.'
-      : 'A key combination that opens a small box over any app. Enter sends what you type to a new chat here.';
+      ? 'Press ' + h.esc(label) + ' in any app to open a small chat window that stays in front. It starts a new chat; Esc closes it.'
+      : 'A key combination that opens a small chat window over any app. It starts a new chat.';
   const err = st.error || (info && info.error) || '';
   return '<div class="tk-setrow">'
     + '<div class="body"><div class="t">Quick entry shortcut</div>'

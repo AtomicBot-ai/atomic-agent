@@ -121,3 +121,16 @@ test("the page maps ⌘\\ to the sidebar and leaves ⌘0 to Actual Size", async 
   assert.match(src, /Backslash: '\\\\'/);
   assert.doesNotMatch(src, /sidebar[^\n]*⌘ 0/, "no tooltip, palette row or sheet row names ⌘ 0 for the sidebar");
 });
+
+// ATO-1609: the mini chat window from the menu, on every platform; no chord (the hotkey is the user's own).
+for (const platform of ["darwin", "win32", "linux"]) {
+  test(`File › New Mini Chat sends mini:open (${platform})`, () => {
+    const sent = [];
+    const file = menuTemplate((c) => sent.push(c), platform).find((m) => m.label === "File");
+    const it = file.submenu.find((i) => i.label === "New Mini Chat");
+    assert.ok(it, "the File menu has New Mini Chat");
+    assert.equal(it.accelerator, undefined, "no chord of its own");
+    it.click();
+    assert.deepEqual(sent, ["mini:open"]);
+  });
+}
