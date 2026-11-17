@@ -5496,6 +5496,7 @@ function overlaysHTML() {
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
   if (S.alert) html += alertHTML();
   if (ptOnScreen()) html += projectTrustHTML();   // ATO-1250
+  else if (alqOnScreen()) html += appendLocalQuestionHTML();   // ATO-1461 (append-local-question.js)
   if (OB.open) html = obHTML();
   return html;
 }
@@ -6363,6 +6364,45 @@ async function projectTrustAct(v) {
   if (res && res.ok) { await skpReloadRows(); toast(kind === 'trust' ? 'Folder trusted' : 'Folder not trusted',
     kind === 'trust' ? 'Its project skills and instructions load from the next message' : 'Nothing from this folder is loaded'); }
   else if (res && res.conflict) toast('The folder changed', 'Something new appeared in it; the question shows what is there now');
+}
+/* ATO-1461: "Local model is set as your last-resort fallback. Keep it?" —
+   asked once by the agent for people who had the switch on before v0.7.0
+   (renderer/append-local-question.js). Read when an agent connects; an
+   agent without /api/fallback/local-question shows nothing. */
+const ALQ = createAppendLocalQuestion({
+  read: () => BR && BR.appendLocalQuestion ? BR.appendLocalQuestion() : {supported: false},
+  answer: (a) => BR && BR.appendLocalQuestionAnswer ? BR.appendLocalQuestionAnswer(a) : {supported: false},
+});
+async function appendLocalQuestionCheck() {
+  ALQ.reset();
+  await ALQ.check();
+  if (ALQ.state.question) renderOverlays();
+}
+/* Waits like the folder-trust dialog, and behind it. */
+function alqOnScreen() {
+  return !!ALQ.state.question && !S.overlay && !S.alert && !SEL.open && !WIZ.phase && !OB.open && !S.settings;
+}
+function appendLocalQuestionHTML() {
+  const q = ALQ.state.question;
+  const busy = ALQ.state.busy ? ' disabled' : '';
+  return '<div class="sheetwrap alertwrap ptrustwrap"><div class="alertbox ptrust" role="alertdialog" aria-label="' + esc(q.question) + '">'
+    + '<span class="alertmark">' + MARK_COLOR.replace('width="16" height="16"', 'width="44" height="44"') + '</span>'
+    + '<div class="ttl">' + esc(q.question) + '</div>'
+    + (q.detail ? '<p class="alertmsg">' + esc(q.detail) + '</p>' : '')
+    + (ALQ.state.error ? '<p class="alertmsg tuierr">' + esc(ALQ.state.error) + '</p>' : '')
+    + '<div class="alertacts">'
+      + '<button class="btn btn-s" data-act="alq:off"' + busy + '>Turn off</button>'
+      + '<button class="btn btn-df" data-act="alq:keep"' + busy + ' autofocus>Keep</button></div></div></div>';
+}
+async function appendLocalQuestionAct(v) {
+  if (v === 'later') { ALQ.dismiss(); render(); return; }
+  const pending = ALQ.answer(v);
+  render();
+  const res = await pending;
+  if (res && res.ok && v === 'off') await refreshLiveConfig();
+  render();
+  if (res && res.ok) toast(v === 'keep' ? 'Local fallback kept' : 'Local fallback turned off',
+    v === 'keep' ? 'When your cloud model fails, the chat switches to your local model' : 'A cloud failure no longer switches the chat to your local model');
 }
 /* ATO-1144: Settings › Privacy › Approval rules (renderer/approval-rules.js).
    Read on every entry to Privacy, for the chat's own folder; an agent
@@ -7400,6 +7440,7 @@ function act(a) {
   if (k === 'dlc') { dlCardAct(v); return; }
   // ATO-1250: the folder-trust dialog and Settings › Skills' switch.
   if (k === 'ptrust') { projectTrustAct(v || ''); return; }
+  if (k === 'alq') { appendLocalQuestionAct(v || ''); return; }
   if (k === 'arules') { approvalRulesAct(v || ''); return; }
   if (k === 'offline') { offlineModeAct(v || ''); return; }
   if (k === 'whk') { webhooksAct(v || ''); return; }
@@ -8236,7 +8277,7 @@ function apprChordOf(e, k) {
    underneath. */
 function apprOnScreen() {
   const req = S.pending;
-  if (!approvalOpen(req) || S.settings || S.overlay || ptOnScreen()) return null;
+  if (!approvalOpen(req) || S.settings || S.overlay || ptOnScreen() || alqOnScreen()) return null;
   if (S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open) return null;
   const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(req.approvalId || '') + '"]');
   return card ? req : null;
@@ -8244,7 +8285,7 @@ function apprOnScreen() {
 /* ATO-224: whether a dialog, a popover, a sheet, Settings or the menu is
    open over the chat — the layers ⌘↩ must not send the composer from under. */
 function layerOverChat() {
-  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open || ptOnScreen());
+  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open || ptOnScreen() || alqOnScreen());
 }
 /** 05.10: the keys named on the card's buttons and in the shortcuts sheet. */
 function apprKeyLabel(which) {
@@ -9891,6 +9932,8 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     // ATO-1250: Escape is "not now" on the folder-trust dialog: nothing recorded, asked again at the next start.
     if (ptOnScreen()) { act('ptrust:later'); return; }
+    // ATO-1461: the same "not now" on the last-resort fallback question.
+    if (alqOnScreen()) { act('alq:later'); return; }
     /* ATO-167 review: with Done gone from the model and mode popovers, Escape
        is a keyboard way out of them — so an open popover closes FIRST, before
        the scroll-to-bottom and before Escape's stop of a running turn (which
@@ -10012,6 +10055,7 @@ function applyStatus(st) {
     AGENT_GEN++;
     appSay('Connected · ' + S.live.workingDir);
     loadResources();
+    appendLocalQuestionCheck();   // ATO-1461
     if (typeof ProjectModels !== 'undefined') ProjectModels.load(BR).then((ok) => { if (ok) render(); });   // ATO-1148
     drainOwed();   // Backlog 26: a queue owed while the agent was down
   }
@@ -29916,6 +29960,8 @@ async function llmFallbackPersist(chain, appendLocal) {
   LLMP.busy = false;
   if (!res || res.ok === false) { llmReport(llmFail('fallback write failed', res), 'cloud'); LLMP.msg = {text:'! ' + ((res && res.error) || 'fallback write failed')}; llmRepaint(); return; }
   await refreshLiveConfig();
+  // ATO-1461: turned on by hand here, so the one-time "Keep it?" question is answered.
+  if (appendLocal && (llm.fallback || {}).appendLocal !== true) ALQ.answer('keep');
   llmRestartMsg('llm.fallback saved: chain [' + chain.join(', ') + '], appendLocal ' + (appendLocal ? 'on' : 'off'));
   llmClampCursors();
   llmRepaint();
