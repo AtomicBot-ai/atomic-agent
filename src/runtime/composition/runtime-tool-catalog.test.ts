@@ -24,7 +24,7 @@ import * as mcp from "../../mcp/index.js";
 import type { McpToolMeta, McpSamplingHandler } from "../../mcp/index.js";
 import * as composio from "../../composio/index.js";
 import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets } from "./runtime-tool-catalog.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets, isForeignLlamaServer } from "./runtime-tool-catalog.js";
 import { ModelProfileManager } from "../../llm/model-profile-manager.js";
 import { createApiKeyCommandSource, resetCommandIssuedSecrets } from "../../llm/provider/openai/api-key-command.js";
 import { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
@@ -479,5 +479,14 @@ describe("runtimeKnownSecrets (ATO-1077)", () => {
     } finally {
       resetCommandIssuedSecrets();
     }
+  });
+});
+
+describe("isForeignLlamaServer (ATO-1562)", () => {
+  it("is a llama-server entry on a server other than the main local one", () => {
+    expect(isForeignLlamaServer({ kind: "llama-server", url: "http://127.0.0.1:8080" }, "http://127.0.0.1:19091")).toBe(true);
+    expect(isForeignLlamaServer({ kind: "llama-server", url: "http://127.0.0.1:19091/" }, "http://127.0.0.1:19091")).toBe(false);
+    expect(isForeignLlamaServer({ kind: "llama-server" }, "http://127.0.0.1:19091")).toBe(false);
+    expect(isForeignLlamaServer({ kind: "openai-compatible", url: "http://127.0.0.1:1234" }, "http://127.0.0.1:19091")).toBe(false);
   });
 });
