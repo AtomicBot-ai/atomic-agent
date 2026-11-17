@@ -24792,6 +24792,7 @@ async function tasksRefresh(quiet) {
   TK.loading = false;
   if (res && res.ok && res.data && Array.isArray(res.data.tasks)) {
     TK.rows = res.data.tasks.slice(0, 200).map(tkRow);
+    if (typeof emailTasksTake === 'function') emailTasksTake(res.data.tasks);   // ATO-601
     TK.lastRefreshedAt = Date.now();
     // The sidebar's Tasks list reads TASKS; keep it in step with what the tab shows.
     TASKS_ERR = null;
@@ -24831,7 +24832,8 @@ function tasksTab() {
   ensureTasksPoll();
   if (TK.mode === 'create') return tkFormHTML();
   if (TK.mode === 'detail') return tkDetailHTML();
-  return tkListHTML();
+  // ATO-601: the tasks that came in by e-mail, as cards above the list (email-tasks.js).
+  return (typeof emailTasksHTML === 'function' ? emailTasksHTML() : '') + tkListHTML();
 }
 
 /* ATO-236: a cancelled, completed or failed task fires no more, whatever
