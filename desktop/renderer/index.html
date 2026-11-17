@@ -23,6 +23,7 @@
 <link rel="stylesheet" href="css/task-schedule-picker.css">
 <link rel="stylesheet" href="css/fit-test.css">
 <link rel="stylesheet" href="css/file-preview.css">
+<link rel="stylesheet" href="css/canvas-pane.css">
 <link rel="stylesheet" href="css/onboarding.css">
 <link rel="stylesheet" href="css/settings.css">
 <link rel="stylesheet" href="css/settings-data.css">
@@ -45,6 +46,8 @@
         <section id="content"></section>
         <!-- ATO-1053: a file previewed beside the chat (file-preview.js draws it, render() never does). -->
         <aside id="fpreview" hidden></aside>
+        <!-- ATO-1055: an artifact opened larger beside the chat (canvas-pane.js draws it, render() never does). -->
+        <aside id="canvaspane" hidden></aside>
         <aside id="inspector"></aside>
       </div>
       <div id="console" class="hide"></div>
@@ -195,6 +198,8 @@
 <!-- ATO-1138: the window's own charts, tables and KPI cards for those frames. -->
 <script src="dashboard-templates.js"></script>
 <script src="chat-artifact.js"></script>
+<!-- ATO-1055: Expand on an artifact opens it in a canvas beside the chat. -->
+<script src="canvas-pane.js"></script>
 <script src="tool-failures.js"></script>
 <!-- ATO-1249: the side panel's Steps and Reasoning, newest first, with a switch. -->
 <script src="insp-order.js"></script>
