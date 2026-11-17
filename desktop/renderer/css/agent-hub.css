@@ -1,0 +1,7 @@
+/* ATO-1157: the Agents sheet (agent-hub.js). Rows reuse the handoff sheet's
+   .handoffrows layout; this adds the group headings and the state dot. */
+.sheet-hub .hubgroup + .hubgroup{margin-top:10px}
+.sheet-hub .hubgroup-h{margin:0 12px 4px;font-size:var(--fs-label);font-weight:600;color:var(--ink-2);text-transform:uppercase;letter-spacing:.04em}
+.sheet-hub .hubgroup-n{font-weight:400;color:var(--ink-3)}
+.sheet-hub .hubrow > .tk-dot{margin-left:2px}
+.sheet-hub .hubrow .btn{flex:none}

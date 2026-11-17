@@ -54,6 +54,7 @@ import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
+import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -3113,6 +3114,8 @@ function wireIpc(client: AgentClient): void {
   wireOvernightIpc({ window: () => win, client });
   // ATO-1424: a code block's command typed (not run) into a new Terminal window (macOS).
   wireTerminalOpenIpc();
+  // ATO-1157: the Agents sheet, Claude Code and Codex sessions waiting for the person (agent-hub-scan.ts).
+  wireAgentHubIpc({ isRemote: () => client.isRemote });
   // ATO-590: the Tasks tab's Pause / Resume and a task's past runs.
   wireTaskControlsIpc({ client });
   // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
