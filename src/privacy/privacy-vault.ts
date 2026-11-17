@@ -103,10 +103,14 @@ export class PrivacyVault {
     this.requestSeen = null;
   }
 
-  /** `text` with every private value replaced by its placeholder. */
-  mask(text: string): string {
+  /**
+   * `text` with every private value replaced by its placeholder. `known`
+   * defaults to the vault's own source; {@link maskDeep} reads it once
+   * for a whole request.
+   */
+  mask(text: string, known: readonly KnownSecret[] = this.known()): string {
     if (text.length === 0) return text;
-    const spans = findPrivateSpans(text, this.known());
+    const spans = findPrivateSpans(text, known);
     let out = text;
     if (spans.length > 0) {
       const parts: string[] = [];
@@ -147,7 +151,8 @@ export class PrivacyVault {
 
   /** {@link mask} on every string inside plain objects and arrays. Keys are not masked. */
   maskDeep<T>(value: T): T {
-    return mapStrings(value, (s) => this.mask(s)) as T;
+    const known = this.known();
+    return mapStrings(value, (s) => this.mask(s, known)) as T;
   }
 
   /** {@link unmask} on every string inside plain objects and arrays. */

@@ -5,14 +5,30 @@
  * feed the "masked N" line of the Privacy tab and Settings › Privacy.
  */
 
-import type { KnownSecret } from "../error-reporting/secret-detector.js";
+import { knownSecretsFromEnv, type KnownSecret } from "../error-reporting/secret-detector.js";
 import { PrivacyVault } from "./privacy-vault.js";
 
 /** Requests without a session id (one-off sub-calls) share this vault. */
 export const SHARED_VAULT_KEY = "*";
 
 const vaults = new Map<string, PrivacyVault>();
-let knownSecrets: () => readonly KnownSecret[] = () => [];
+/** The agent's own keys (its `.env` is loaded into `process.env`). */
+let knownSecrets: () => readonly KnownSecret[] = () => knownSecretsFromEnv();
+let shieldEnabled = false;
+
+/**
+ * Whether Privacy Shield is on for this process. Read per request by
+ * the cloud provider adapters, so a toggle applies to the next request
+ * without rebuilding a provider; set from `privacy.shield.enabled` at
+ * startup and by the live toggle. Same shape as `isOfflineNetwork`.
+ */
+export function isPrivacyShieldEnabled(): boolean {
+  return shieldEnabled;
+}
+
+export function setPrivacyShieldEnabled(enabled: boolean): void {
+  shieldEnabled = enabled;
+}
 
 /** Exact values every new vault treats as secret (the agent's own keys). */
 export function setPrivacyKnownSecrets(source: () => readonly KnownSecret[]): void {
@@ -55,5 +71,6 @@ export function privacyShieldTotals(): PrivacyShieldTotals {
 /** Tests only. */
 export function resetPrivacyVaults(): void {
   vaults.clear();
-  knownSecrets = () => [];
+  knownSecrets = () => knownSecretsFromEnv();
+  shieldEnabled = false;
 }

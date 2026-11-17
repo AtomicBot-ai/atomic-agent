@@ -14,10 +14,12 @@ export {
 export { createStreamUnmasker, partialPlaceholderStart, type StreamUnmasker } from "./stream-unmasker.js";
 export {
   forgetPrivacyVault,
+  isPrivacyShieldEnabled,
   privacyShieldTotals,
   privacyVaultFor,
   resetPrivacyVaults,
   setPrivacyKnownSecrets,
+  setPrivacyShieldEnabled,
   SHARED_VAULT_KEY,
   type PrivacyShieldTotals,
 } from "./privacy-vault-registry.js";
