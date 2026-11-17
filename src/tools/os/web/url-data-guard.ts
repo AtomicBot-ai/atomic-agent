@@ -37,7 +37,7 @@ export const DEFAULT_URL_DATA_GUARD: UrlDataGuardMode = "data";
 /**
  * Thresholds of the cheap filter, counted on the percent-decoded text.
  *
- * No agent we compared publishes a fixed number for this, so they follow
+ * There is no published threshold to copy from comparable agents, so they follow
  * the usual DLP / DNS-exfiltration heuristics (long fields, long
  * encoded-looking runs, multi-line values) set above what ordinary
  * addresses carry: a search query typed by a person is well under 200
