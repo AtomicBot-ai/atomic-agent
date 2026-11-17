@@ -22,9 +22,48 @@ test('an AppImage on Ubuntu 24.04 (userns restricted, no setuid helper) runs wit
   assert.match(v.reason, /apparmor_restrict_unprivileged_userns=1/);
 });
 
-test('a .deb is never touched: its install gives it a profile or the setuid helper', () => {
-  assert.deepEqual(S.sandboxVerdict({ ...UBUNTU_2404_APPIMAGE, env: {} }), { noSandbox: false });
-  assert.deepEqual(S.sandboxVerdict({ ...UBUNTU_2404_APPIMAGE, env: { APPIMAGE: '  ' } }), { noSandbox: false });
+/** ATO-1193: the .deb on Ubuntu 24.04, as /usr/bin/atomic-agent-desktop. */
+const UBUNTU_2404_DEB = {
+  ...UBUNTU_2404_APPIMAGE,
+  env: {},
+  argv: ['/opt/Atomic Agent/atomic-agent-desktop'],
+  apparmorLabel: 'atomic-agent-desktop (unconfined)\n',
+};
+
+test('a .deb with its AppArmor profile attached keeps the sandbox', () => {
+  assert.deepEqual(S.sandboxVerdict(UBUNTU_2404_DEB), { noSandbox: false });
+  assert.deepEqual(S.sandboxVerdict({ ...UBUNTU_2404_DEB, env: { APPIMAGE: '  ' } }), { noSandbox: false });
+});
+
+test('a .deb with no profile attached and no setuid helper runs without the sandbox', () => {
+  const v = S.sandboxVerdict({ ...UBUNTU_2404_DEB, apparmorLabel: 'unconfined\n' });
+  assert.equal(v.noSandbox, true);
+  assert.match(v.reason, /no AppArmor profile attached/);
+  assert.match(v.reason, /installed package/);
+  // Some kernels end the label with a NUL.
+  assert.equal(S.sandboxVerdict({ ...UBUNTU_2404_DEB, apparmorLabel: 'unconfined\0' }).noSandbox, true);
+});
+
+test('a .deb whose AppArmor label cannot be read is left alone', () => {
+  assert.deepEqual(S.sandboxVerdict({ ...UBUNTU_2404_DEB, apparmorLabel: null }), { noSandbox: false });
+  assert.deepEqual(S.sandboxVerdict({ ...UBUNTU_2404_DEB, apparmorLabel: undefined }), { noSandbox: false });
+});
+
+test('a .deb with a setuid chrome-sandbox (the install fallback) keeps the sandbox', () => {
+  assert.deepEqual(
+    S.sandboxVerdict({ ...UBUNTU_2404_DEB, apparmorLabel: 'unconfined', chromeSandbox: { uid: 0, mode: 0o104755 } }),
+    { noSandbox: false },
+  );
+});
+
+test('a .deb where namespaces work is never touched', () => {
+  assert.deepEqual(S.sandboxVerdict({ ...UBUNTU_2404_DEB, apparmorLabel: 'unconfined', restrictUserns: null }), { noSandbox: false });
+});
+
+test('a .deb on a kernel that blocks namespaces another way and no setuid helper runs without the sandbox', () => {
+  const v = S.sandboxVerdict({ ...UBUNTU_2404_DEB, restrictUserns: null, usernsClone: '0\n', apparmorLabel: null });
+  assert.equal(v.noSandbox, true);
+  assert.match(v.reason, /unprivileged_userns_clone=0/);
 });
 
 test('macOS and Windows are never touched', () => {

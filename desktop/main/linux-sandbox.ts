@@ -22,8 +22,19 @@
  * `--no-sandbox`, and says so once in the log. Chromium sets its sandbox up
  * very early, so the switch is appended at the top of main.ts, before the
  * app is ready (the only time Electron reads it); it is a second line behind
- * AppRun, not a replacement for it. A .deb, macOS and Windows are never
- * touched, and nothing changes where namespaces work.
+ * AppRun, not a replacement for it. macOS and Windows are never touched, and
+ * nothing changes where namespaces work.
+ *
+ * ATO-1193 — a .deb whose install did not leave a working sandbox. The
+ * install script loads the AppArmor profile or makes chrome-sandbox setuid,
+ * but the restriction can be switched on after the install (a sysctl change,
+ * a release upgrade to 24.04), and a profile copied in a chroot only loads at
+ * boot. Then Electron had no sandbox it could use and the app did not start.
+ * A .deb now gets the same `--no-sandbox` when user namespaces are blocked,
+ * chrome-sandbox is not setuid, and, where the block is AppArmor's, this
+ * process runs with no AppArmor profile attached (`/proc/self/attr/current`
+ * reads plain "unconfined"). When the label cannot be read nothing changes.
+ * It is the decision electron-builder's AppRun already takes for an AppImage.
  *
  * `sandboxVerdict` is pure (the /proc reads and the stat are handed in);
  * `probeLinuxSandbox` does the reads.
@@ -44,6 +55,12 @@ export interface SandboxFacts {
   maxUserNamespaces: string | null;
   /** Owner and mode of the chrome-sandbox next to the executable, or null when there is none. */
   chromeSandbox: { uid: number; mode: number } | null;
+  /**
+   * This process's AppArmor label (`/proc/self/attr/apparmor/current`, else
+   * `/proc/self/attr/current`), or null when neither can be read. "unconfined"
+   * means no profile is attached; "<name> (unconfined)" means ours is.
+   */
+  apparmorLabel?: string | null;
 }
 
 export type SandboxVerdict = { noSandbox: false } | { noSandbox: true; reason: string };
@@ -63,15 +80,24 @@ export function usernsBlockedReason(facts: Pick<SandboxFacts, "restrictUserns" |
   return null;
 }
 
+/** True when the label says no AppArmor profile is attached to this process. */
+export function noApparmorProfile(label: string | null | undefined): boolean {
+  return typeof label === "string" && label.replace(/\0/g, "").trim() === "unconfined";
+}
+
 export function sandboxVerdict(facts: SandboxFacts): SandboxVerdict {
   if (facts.platform !== "linux") return { noSandbox: false };
-  const appImage = typeof facts.env.APPIMAGE === "string" && facts.env.APPIMAGE.trim().length > 0;
-  if (!appImage) return { noSandbox: false };
   if (facts.argv.includes("--no-sandbox")) return { noSandbox: false };
+  const appImage = typeof facts.env.APPIMAGE === "string" && facts.env.APPIMAGE.trim().length > 0;
   const blocked = usernsBlockedReason(facts);
   if (!blocked) return { noSandbox: false };
   if (setuidHelperReady(facts.chromeSandbox)) return { noSandbox: false };
-  return { noSandbox: true, reason: `${blocked} and no setuid chrome-sandbox` };
+  if (appImage) return { noSandbox: true, reason: `${blocked} and no setuid chrome-sandbox` };
+  // An installed package (.deb, .rpm): only when nothing else gives it a sandbox.
+  const apparmorBlock = facts.restrictUserns?.trim() === "1";
+  if (apparmorBlock && !noApparmorProfile(facts.apparmorLabel)) return { noSandbox: false };
+  const profileNote = apparmorBlock ? ", no AppArmor profile attached" : "";
+  return { noSandbox: true, reason: `${blocked}${profileNote} and no setuid chrome-sandbox (installed package)` };
 }
 
 function readProc(path: string): string | null {
@@ -102,5 +128,6 @@ export function probeLinuxSandbox(execPath: string = process.execPath): SandboxF
     usernsClone: linux ? readProc("/proc/sys/kernel/unprivileged_userns_clone") : null,
     maxUserNamespaces: linux ? readProc("/proc/sys/user/max_user_namespaces") : null,
     chromeSandbox,
+    apparmorLabel: linux ? (readProc("/proc/self/attr/apparmor/current") ?? readProc("/proc/self/attr/current")) : null,
   };
 }
