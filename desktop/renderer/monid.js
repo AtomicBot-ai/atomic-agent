@@ -1,7 +1,7 @@
 /* ---------------- Settings › Connections › Monid (ATO-1630) ----------------
    Loaded BEFORE renderer.js and after mcp-auth.js / mcp-catalog.js, so it
    only declares: BR, MCP_AUTH, MCP_LIVE, LIVE_CAPS, render, mcpServers,
-   mcpRefresh, mcpAuthSignIn, mcpCatalogJson, mcpParseAddInput, configPatchOr
+   mcpRefresh, mcpAuthSignIn, mcpAuthSignOut, mcpCatalogJson, mcpParseAddInput, configPatchOr
    and homeDir are read when a function runs, never at load time. Shared
    with the Node checks (test/monid.test.mjs): the server lookup, the status
    and the markup are pure.
@@ -88,9 +88,11 @@ function monidPaneHTML(st, h) {
   const acts = '<div class="sd-acts">'
     + '<button class="btn btn-s sm" data-url="' + h.esc(MONID_HOME_URL) + '" title="Opens monid.ai in your browser">' + h.ic('globe') + 'About Monid</button>'
     + '<span class="sd-grow"></span>'
-    + (st.busy ? '<span class="sd-cap"><span class="tk-spin"></span>Starting sign-in…</span>' : '')
+    + (st.busy ? '<span class="sd-cap"><span class="tk-spin"></span>' + (st.busy === 'signout' ? 'Disconnecting…' : 'Starting sign-in…') + '</span>' : '')
     + (signIn ? '<button class="btn btn-p sm" data-act="monid:signin"' + (busy ? ' disabled' : '') + '>' + h.esc(label) + '</button>' : '')
     + (status.level === 'signed_in' || status.level === 'off' ? '<button class="btn btn-s sm" data-act="settings:mcp" title="Settings › MCP servers">Manage in MCP servers</button>' : '')
+    // Like Composio's Remove key: forget the saved sign-in. The server entry stays, so Sign in brings it back.
+    + (status.level === 'signed_in' || status.level === 'expired' ? '<button class="btn btn-danger sm" data-act="monid:disconnect" title="Forget the saved Monid sign-in"' + (busy ? ' disabled' : '') + '>Disconnect</button>' : '')
     + '</div>';
   const head = '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
     + monidMarkHTML(h)
@@ -173,8 +175,26 @@ async function monidSignIn() {
   }
 }
 
+/* Disconnect: the MCP tab's own Sign out (mcp-auth.js), so both places forget the same token. */
+async function monidDisconnect() {
+  if (!BR || MONID.busy) return {ok:false, error:'busy'};
+  const s = monidServerOf(mcpServers());
+  if (!s) return {ok:false, error:'no server'};
+  MONID.busy = 'signout'; MONID.lastError = null; MONID.msg = null; render();
+  try {
+    const res = await mcpAuthSignOut(s.name);
+    if (!res || !res.ok) { MONID.lastError = (res && res.error) || 'Could not disconnect Monid.'; return {ok:false, error:MONID.lastError}; }
+    MONID.msg = 'Disconnected. The agent stops using Monid\'s tools until you sign in again.';
+    return {ok:true};
+  } finally {
+    MONID.busy = false;
+    render();
+  }
+}
+
 function monidAct(what) {
   if (what === 'signin') { monidSignIn(); return; }
+  if (what === 'disconnect') { monidDisconnect(); return; }
 }
 
 if (typeof module !== 'undefined') {

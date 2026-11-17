@@ -63,7 +63,7 @@ test('status: not connected, not signed in, waiting, signed in, sign-in expired,
   assert.equal(M.monidStatus(server, null, {state:'signed_out', error:'Sign-in timed out. Start it again.'}).line, 'Sign-in timed out. Start it again.');
 });
 
-test('markup: no key field; Sign in where it applies; the Monid mark', () => {
+test('markup: no key field; Sign in and Disconnect where they apply; the Monid mark', () => {
   const server = {name:'monid', url:M.MONID_SERVER_URL, enabled:true};
   const html = (over) => M.monidPaneHTML(Object.assign({server:null, live:null, auth:null, busy:false, lastError:null, msg:null}, over), h);
   const none = html({});
@@ -81,6 +81,13 @@ test('markup: no key field; Sign in where it applies; the Monid mark', () => {
   assert.match(expired, /Sign in again/);
   const pending = html({server, auth:{state:'pending'}});
   assert.match(pending, /data-act="monid:signin" disabled/);
+  // Disconnect, like Composio's Remove key: only once there is a sign-in to forget.
+  assert.match(signedIn, /data-act="monid:disconnect"[^>]*>Disconnect</);
+  assert.match(expired, /data-act="monid:disconnect"/);
+  assert.doesNotMatch(none, /monid:disconnect/);
+  assert.doesNotMatch(pending, /monid:disconnect/);
+  assert.match(html({server, auth:{state:'signed_in'}, busy:'signout'}), /Disconnecting…/);
+  assert.match(html({server, auth:{state:'signed_in'}, busy:'signout'}), /data-act="monid:disconnect"[^>]*disabled/);
   assert.match(html({lastError:'<boom>'}), /&lt;boom&gt;/);
   // With the shared logo table (ATO-1634), its mark is used instead.
   assert.match(M.monidPaneHTML({server:null}, {...h, logo: () => '<span class="logo">T</span>'}), /<span class="logo">T<\/span>/);
