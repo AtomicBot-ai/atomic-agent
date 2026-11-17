@@ -76,7 +76,7 @@ import { createInterviewInviteController } from "./interview-invite/interview-in
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
-import { createSessionPickerSearch } from "./session-rail/session-search.js";
+import { createIndexedSessionPickerSearch, INDEXED_SEARCH_LIMIT } from "./session-rail/session-search.js";
 import { createHerdrReporter } from "./herdr-reporter.js";
 import {
   detectTerminalBackground,
@@ -574,9 +574,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onRewindRequested: (turnIndex, expectText) =>
           orchestrator.rewindTo(turnIndex, expectText),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
-        // ATO-1153: the picker's search reads message text from the store.
-        searchSessions: createSessionPickerSearch((id) =>
-          runtime.sessionStore.listChatLines(id),
+        // ATO-1153: the picker's search reads message text from the store;
+        // ATO-1510: and asks the FTS5 index for sessions not loaded yet.
+        searchSessions: createIndexedSessionPickerSearch(
+          (query) =>
+            runtime.sessionStore.searchTranscripts({ query, limit: INDEXED_SEARCH_LIMIT }).hits,
+          (id) => runtime.sessionStore.listChatLines(id),
         ),
         onSessionPinToggled: (id) => orchestrator.togglePinned(id),
         onSessionMoveRequested: (id, toIndex) =>
