@@ -173,7 +173,10 @@ export function composeEmptyCompletionNotice(
  * design), so the rewritten sentence above only ever reaches the
  * operator's terminal.
  */
-export function repeatedEmptyCompletionError(err: ModelError): ModelError {
+export function repeatedEmptyCompletionError(
+  err: ModelError,
+  opts: { cloud?: boolean } = {},
+): ModelError {
   return new ModelError(
     err.reason,
     `the model returned an empty completion twice in a row (no text, no reasoning, no tool call); last attempt: ${err.message}`,
@@ -181,6 +184,8 @@ export function repeatedEmptyCompletionError(err: ModelError): ModelError {
       cause: err,
       ...(err.transport !== undefined ? { transport: err.transport } : {}),
       ...(err.stage !== undefined ? { stage: err.stage } : {}),
+      // ATO-1578: on a cloud link the failure offers another model, not "Retry".
+      ...(opts.cloud === true ? { repeatedOnCloud: true } : {}),
     },
   );
 }
