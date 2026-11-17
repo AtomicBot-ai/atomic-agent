@@ -31,7 +31,8 @@
  *
  * Off by default. Turned on with `ATOMIC_AGENT_SANDBOX=workspace`; the
  * network inside it is off unless `ATOMIC_AGENT_SANDBOX_NETWORK=on`.
- * A config key and a desktop/TUI switch come next (ATO-1078).
+ * A config key and a desktop/TUI switch come next (ATO-1078). Stdio MCP
+ * servers go through the same wrapper when the mode is on (ATO-620).
  */
 import { existsSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -79,6 +80,11 @@ export interface OsSandboxPolicyInput {
   /** The agent's state directory (`config.paths.stateDir`). */
   stateDir?: string;
   network: boolean;
+  /**
+   * Folders that must stay readable though they sit under a denied one
+   * (an MCP server installed under the state directory). Not writable.
+   */
+  keepReadable?: readonly string[];
   home?: string;
   tmp?: string;
 }
@@ -162,8 +168,9 @@ export function buildOsSandboxPolicy(
   // A working folder inside a denied one (a workspace under the state
   // directory) stays readable: the deny would break the command's own
   // work. The rest of that folder stays hidden.
+  const keep = [...work, ...(input.keepReadable ?? []).map((p) => real(resolve(p)))];
   const denyRead = unique(
-    secret.filter((dir) => !work.some((w) => isInside(w, dir))),
+    secret.filter((dir) => !keep.some((w) => isInside(w, dir))),
   );
   return { writableRoots, denyRead, network: input.network };
 }

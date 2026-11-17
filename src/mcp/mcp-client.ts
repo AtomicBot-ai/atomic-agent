@@ -29,6 +29,9 @@ import {
   type CreateMessageResult,
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute } from "node:path";
+
 import { resourceClassFor } from "../agent/tool-resource-class.js";
 import {
   McpAuthRequiredError,
@@ -46,6 +49,13 @@ import {
 import type { McpElicitationHandler } from "./mcp-elicitation-handler.js";
 import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
 import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
+import {
+  buildOsSandboxPolicy,
+  formatSandboxUnavailable,
+  readOsSandboxSettings,
+  wrapWithOsSandbox,
+  type OsSandboxSettings,
+} from "../sandbox/os-sandbox.js";
 import { offlineRefusal } from "../llm/offline-network.js";
 import {
   MCP_TOOL_NAME_RE,
@@ -100,6 +110,12 @@ export interface McpClientDeps {
    * Omitted (tests, hosts without a state dir): no provider, as before.
    */
   oauthStateDir?: string;
+  /**
+   * Safe Mode's switch (ATO-620), read at each connect. Omitted ⇒ read
+   * from `ATOMIC_AGENT_SANDBOX`. The state dir hidden from a sandboxed
+   * server is `oauthStateDir` (it is `config.paths.stateDir`).
+   */
+  sandbox?: () => OsSandboxSettings;
 }
 
 /** Defaults — agent identity advertised to servers in `initialize`. */
@@ -503,6 +519,44 @@ export class McpClient {
     return this.client;
   }
 
+  /**
+   * The stdio spawn, wrapped in Safe Mode's OS sandbox when it is on and
+   * the server did not opt out (ATO-620). The server may write only in
+   * its `cwd`, temp and tool caches, and cannot read credential folders
+   * or the agent's state; the folder its command lives in stays
+   * readable. Network stays on: most servers exist to call an API.
+   * No sandbox on this machine ⇒ the server is not started.
+   */
+  private sandboxedSpawn(
+    command: string,
+    args: string[],
+    cwd: string | undefined,
+  ): { command: string; args: string[] } {
+    const settings = (this.deps.sandbox ?? (() => readOsSandboxSettings()))();
+    if (settings.mode === "off" || this.config.sandbox === false) {
+      return { command, args };
+    }
+    const policy = buildOsSandboxPolicy({
+      cwd: cwd ?? tmpdir(),
+      ...(this.deps.oauthStateDir === undefined
+        ? {}
+        : { stateDir: this.deps.oauthStateDir }),
+      keepReadable: isAbsolute(command) ? [dirname(command)] : [],
+      network: true,
+    });
+    const wrapped = wrapWithOsSandbox(command, args, policy);
+    if (!wrapped.ok) {
+      throw new McpConnectError(
+        this.config.name,
+        formatSandboxUnavailable(wrapped.reason).replace(
+          "The command was not run.",
+          "The server was not started; to run only this one outside the sandbox, set its `sandbox` to false.",
+        ),
+      );
+    }
+    return { command: wrapped.command, args: wrapped.args };
+  }
+
   private buildTransport():
     StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
     const t = this.config.transport;
@@ -519,9 +573,10 @@ export class McpClient {
       // `cmd.exe /c` so PATHEXT resolution kicks in; absolute paths and
       // commands with an explicit extension are spawned directly.
       const resolved = resolveStdioCommand(t.command, t.args ?? []);
+      const spawn = this.sandboxedSpawn(resolved.command, resolved.args, t.cwd);
       return new StdioClientTransport({
-        command: resolved.command,
-        args: resolved.args,
+        command: spawn.command,
+        args: spawn.args,
         env,
         ...(t.cwd ? { cwd: t.cwd } : {}),
         stderr: "pipe",
@@ -529,7 +584,8 @@ export class McpClient {
     }
     // ATO-1084: a remote server is refused before any connection while
     // offline; one on this machine still connects. A stdio server is a
-    // separate program and is not network-isolated (no OS sandbox).
+    // separate program; with Safe Mode on it runs in the OS sandbox
+    // (`sandboxedSpawn`), which keeps its network on.
     const offline = offlineRefusal(t.url, `MCP server "${this.config.name}"`);
     if (offline) throw new McpConnectError(this.config.name, offline.message);
     // Browser sign-in (OAuth) only for remote servers without a key in

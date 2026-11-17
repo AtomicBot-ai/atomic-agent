@@ -70,6 +70,16 @@ export interface McpServerConfig {
    */
   env?: Record<string, string>;
   /**
+   * Safe Mode's OS sandbox for a `stdio` server (ATO-620). When Safe
+   * Mode is on (`ATOMIC_AGENT_SANDBOX=workspace`) every stdio server runs
+   * inside it: writes only in its `cwd`, temp and tool caches, no reads
+   * of credential folders or the agent's state; network stays on, since
+   * most servers call an API. `false` opts this one server out (a
+   * filesystem server that must write across the disk). Ignored for
+   * HTTP / SSE transports and while Safe Mode is off.
+   */
+  sandbox?: boolean;
+  /**
    * Raw tool names to offer from this server. Absent: every tool the
    * server lists. Present (even empty): only these. See
    * `mcp-tool-filter.ts`.

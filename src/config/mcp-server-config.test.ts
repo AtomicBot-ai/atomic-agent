@@ -245,3 +245,15 @@ describe("MCP server configuration and shared values", () => {
     });
   });
 });
+
+describe("MCP server sandbox opt-out (ATO-620)", () => {
+  it("keeps sandbox: false, omits an absent or null one, rejects a non-boolean", () => {
+    expect(parsedServer({ name: "a", transport: STDIO, sandbox: false }).sandbox).toBe(false);
+    expect("sandbox" in parsedServer({ name: "b", transport: STDIO })).toBe(false);
+    expect("sandbox" in parsedServer({ name: "c", transport: STDIO, sandbox: null })).toBe(false);
+    expect(thrownError(() => parsedServer({ name: "d", transport: STDIO, sandbox: "no" }))).toBeInstanceOf(
+      ConfigValidationError,
+    );
+  });
+});
+

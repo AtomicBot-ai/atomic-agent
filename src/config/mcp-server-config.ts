@@ -219,6 +219,10 @@ export function parseMcpServers(
       cfg.env === undefined || cfg.env === null
         ? undefined
         : parseMcpEnv(cfg.env, `${field}[${i}].env`);
+    const sandbox =
+      cfg.sandbox === undefined || cfg.sandbox === null
+        ? undefined
+        : parseBool(cfg.sandbox, `${field}[${i}].sandbox`);
     const enabledTools = parseStringArrayOrNull(
       cfg.enabledTools,
       `${field}[${i}].enabledTools`,
@@ -235,6 +239,7 @@ export function parseMcpServers(
       ...(trust ? { trust } : {}),
       ...(approval ? { approval } : {}),
       ...(env ? { env } : {}),
+      ...(sandbox === undefined ? {} : { sandbox }),
       ...(enabledTools ? { enabledTools } : {}),
       ...(disabledTools ? { disabledTools } : {}),
     });
