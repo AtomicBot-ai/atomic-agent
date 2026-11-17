@@ -336,6 +336,12 @@ contextBridge.exposeInMainWorld("atomic", {
   projectsAssign: (payload: { sessionId: string; projectId: string | null }) =>
     ipcRenderer.invoke("projects:assign", payload),
   onProjectsChanged: (cb: () => void) => on("projects:changed", () => cb()),
+  // ATO-1173: worker chats, each in its own copy of the project folder (main/project-workers-ipc.ts).
+  projectsStartWorkers: (payload: { coordinatorSid: string; projectId: string; tasks: string[] }) =>
+    ipcRenderer.invoke("projects:startWorkers", payload),
+  projectsWorkers: () => ipcRenderer.invoke("projects:workers"),
+  onWorkersStarted: (cb: (payload: unknown) => void) => on("projects:workersStarted", cb),
+  onWorkersChanged: (cb: (payload: unknown) => void) => on("projects:workersChanged", cb),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
   /* ATO-523: the global hotkey's one-line box (main/quick-entry-window.ts).
      The box's page: what it opened with, the draft kept while it is away,
