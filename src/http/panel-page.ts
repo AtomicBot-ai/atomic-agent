@@ -9,6 +9,14 @@ export const PANEL_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Atomic Agent</title>
+<link rel="manifest" href="/panel/manifest.webmanifest">
+<link rel="icon" href="/panel/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/panel/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Atomic Agent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#006aff">
 <style>
 :root{color-scheme:light dark;--ink:#16181c;--ink2:#5b616b;--line:#d9dce1;--paper:#fff;--well:#f3f4f6;--acc:#2f6bff;--bad:#c4342f}
 @media (prefers-color-scheme:dark){:root{--ink:#eceef1;--ink2:#9aa1ab;--line:#2c3038;--paper:#15171b;--well:#1e2127;--acc:#6a95ff;--bad:#ff6a5c}}
