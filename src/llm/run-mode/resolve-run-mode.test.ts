@@ -293,6 +293,44 @@ describe("fusion escalation target (ATO-942)", () => {
     expect(rm.escalation).toBeNull();
   });
 
+  it("escalates to the orchestrator's model when both legs share one provider with two models (ATO-1561)", () => {
+    const rm = resolveRunMode(
+      llm("openrouter", {
+        mode: "fusion",
+        fusion: {
+          workerProvider: "openrouter",
+          orchestratorModel: "model-a",
+          workerModel: "model-b",
+          escalation: "advisor",
+        },
+      }),
+    );
+    expect(rm.escalation).toMatchObject({
+      providerId: "openrouter",
+      model: "model-a",
+      turnModel: "model-a",
+      auto: true,
+    });
+    expect(rm.workerTurnModel).toBe("model-b");
+  });
+
+  it("is still null when the shared provider runs the same model on both legs (ATO-1561)", () => {
+    const rm = resolveRunMode(
+      llm("openrouter", {
+        mode: "fusion",
+        fusion: { workerProvider: "openrouter", escalation: "advisor" },
+      }),
+    );
+    expect(rm.escalation).toBeNull();
+    const pinnedSame = resolveRunMode(
+      llm("openrouter", {
+        mode: "fusion",
+        fusion: { workerProvider: "openrouter", orchestratorModel: "model-a", workerModel: "model-a" },
+      }),
+    );
+    expect(pinnedSame.escalation).toBeNull();
+  });
+
   it("honours a pinned provider, the advisor switch, the replace flag and the cap", () => {
     const rm = resolveRunMode(
       llm("openrouter", {
