@@ -578,7 +578,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
         // ATO-1510: and asks the FTS5 index for sessions not loaded yet.
         searchSessions: createIndexedSessionPickerSearch(
           (query) =>
-            runtime.sessionStore.searchTranscripts({ query, limit: INDEXED_SEARCH_LIMIT }).hits,
+            runtime.sessionStore
+              .searchTranscripts({ query, limit: INDEXED_SEARCH_LIMIT })
+              // Archived chats stay out of search, as they stay off the rail.
+              .hits.filter((hit) => !runtime.sessionStore.isArchived(hit.sessionId)),
           (id) => runtime.sessionStore.listChatLines(id),
         ),
         onSessionPinToggled: (id) => orchestrator.togglePinned(id),

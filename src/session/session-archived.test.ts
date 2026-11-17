@@ -67,6 +67,16 @@ describe("session archive flag", () => {
     expect(readSessionArchived(store.load("s-1")?.metadata)).toBe(false);
   });
 
+  it("isArchived reads the flag in SQL (ATO-1510)", () => {
+    const { store } = fresh();
+    expect(store.isArchived("s-1")).toBe(false);
+    store.setSessionArchived("s-1", true, 5_000);
+    expect(store.isArchived("s-1")).toBe(true);
+    store.setSessionArchived("s-1", false, 6_000);
+    expect(store.isArchived("s-1")).toBe(false);
+    expect(store.isArchived("missing")).toBe(false);
+  });
+
   it("the summary page lists the flag", () => {
     const { store } = fresh();
     expect(store.listSummaryPage({ limit: 25 })[0]?.archived).toBe(false);
