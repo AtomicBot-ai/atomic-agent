@@ -1,5 +1,6 @@
 import { createSessionCompactionHandler } from "./route-compaction.js";
 import { createRollbackLastTurnHandler } from "./route-rollback-last-turn.js";
+import { createListPreviousRepliesHandler, createRestorePreviousReplyHandler } from "./route-previous-replies.js";
 import { createForkSessionHandler, createListRewindPointsHandler, createRewindHandler } from "./route-session-rewind.js";
 import { createResumeInterruptedTurnHandler } from "./route-resume-interrupted-turn.js";
 import type { RouteDefinition } from "./http-server.js";
@@ -272,6 +273,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/sessions/{id}/archived", handler: createSetSessionArchivedHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
     { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
+    // ATO-864: the earlier answers a regenerate kept, and putting one back.
+    { method: "GET", path: "/api/sessions/{id}/previous-replies", handler: createListPreviousRepliesHandler() },
+    { method: "POST", path: "/api/sessions/{id}/restore-previous-reply", handler: createRestorePreviousReplyHandler() },
     // ATO-1056 / ATO-1058: roll a chat back to a question with its files, or fork it there.
     { method: "GET", path: "/api/sessions/{id}/rewind-points", handler: createListRewindPointsHandler() },
     { method: "POST", path: "/api/sessions/{id}/rewind/preview", handler: createRewindHandler(true) },

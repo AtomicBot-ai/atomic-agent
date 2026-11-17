@@ -38,7 +38,7 @@ describe("POST /api/sessions/{id}/rollback-last-turn (ATO-1298)", () => {
     ], [2, 4]);
     const res = await post("rb-1");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id: "rb-1", text: "Hello" });
+    expect(await res.json()).toEqual({ id: "rb-1", text: "Hello", previousReplies: 1 });
     const after = harness.runtime.sessionStore.load("rb-1");
     expect(after?.turns.map((t) => t.kind)).toEqual(["user", "assistant_reply"]);
     expect(after?.turnCount).toBe(1);

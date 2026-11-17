@@ -1,5 +1,12 @@
 import { compactionBoundaryHash } from "./session-compaction.js";
-import type { SessionState } from "./session-state.js";
+import { incrementTurnCount, type SessionState } from "./session-state.js";
+import {
+  countQuestions,
+  isKeepableReply,
+  isRecordFor,
+  withPreviousReply,
+  type PreviousReply,
+} from "./session-previous-replies.js";
 import { LIVE_SESSION_STATUSES } from "./session-retention.js";
 
 /**
@@ -83,6 +90,15 @@ export function truncateSessionAt(
   }
   // The gauge is the last turn's prompt, and the last turn is gone.
   delete next.contextUsage;
+  // Earlier answers (ATO-864) belong to one question. They stay only when
+  // that question is the next one the kept rows lead to (the cut is at it,
+  // as a regenerate's is); a cut further back leaves them for nothing.
+  if (
+    next.previousReplies !== undefined &&
+    countQuestions(next.turns) !== next.previousReplies.priorQuestions
+  ) {
+    delete next.previousReplies;
+  }
   if (next.cloudContext !== undefined && next.cloudContext.turnsThrough > cut) {
     next.cloudContext = {
       ...next.cloudContext,
@@ -132,7 +148,14 @@ export type LastTurnRollbackPlan =
       start: number;
       /** What the person typed, to send again. */
       text: string;
+      /**
+       * The state with `turns[0, start)`. When the turn ended on a real
+       * answer, that answer is kept in `previousReplies` (ATO-864) so the
+       * person can go back to it if the new try fails or is worse.
+       */
       state: SessionState;
+      /** Earlier answers the question now has (0 when none was kept). */
+      previousReplies: number;
     }
   | { ok: false; code: LastTurnRollbackRefusal };
 
@@ -250,7 +273,141 @@ export function planLastTurnRollback(
     return { ok: false, code: "turn_has_tools" };
   }
 
-  const { state: next, compactionCovered } = truncateSessionAt(state, start);
+  const { state: cut, compactionCovered } = truncateSessionAt(state, start);
   if (compactionCovered) return { ok: false, code: "turn_compacted" };
-  return { ok: true, start, text: prompt.text, state: next };
+  // Keep the answer being replaced (ATO-864), beside the transcript.
+  const priorQuestions = countQuestions(turns.slice(0, start));
+  const next = isKeepableReply(reply, state.status)
+    ? withPreviousReply(cut, prompt, priorQuestions, reply)
+    : cut;
+  const record = next.previousReplies;
+  return {
+    ok: true,
+    start,
+    text: prompt.text,
+    state: next,
+    previousReplies: isRecordFor(record, prompt, priorQuestions) ? record.replies.length : 0,
+  };
+}
+
+/** Why an earlier answer cannot be put back. */
+export type RestorePreviousReplyRefusal =
+  /** No earlier answer is kept for the chat's last question. */
+  | "no_previous_reply"
+  /** `index` is not one of the kept answers. */
+  | "bad_index"
+  /** The last question's current turn cannot be taken back (see {@link planLastTurnRollback}). */
+  | Exclude<LastTurnRollbackRefusal, "nothing_to_undo" | "turn_mismatch">;
+
+export type RestorePreviousReplyPlan =
+  | {
+      ok: true;
+      /** The answer now in the transcript. */
+      text: string;
+      state: SessionState;
+      /** Earlier answers the question has after the swap. */
+      previousReplies: number;
+    }
+  | { ok: false; code: RestorePreviousReplyRefusal };
+
+/**
+ * The earlier answers kept for the chat's last question, oldest first,
+ * and whether that question is in the transcript (`false` after a
+ * regenerate whose new try never reached the store). Empty when the kept
+ * answers are for a question the chat has moved past.
+ */
+export function listPreviousReplies(state: SessionState): {
+  question: string | null;
+  questionStored: boolean;
+  replies: readonly PreviousReply[];
+} {
+  const record = state.previousReplies;
+  if (record === undefined) return { question: null, questionStored: false, replies: [] };
+  const total = countQuestions(state.turns);
+  if (total === record.priorQuestions) {
+    return { question: record.prompt.text, questionStored: false, replies: record.replies };
+  }
+  if (total === record.priorQuestions + 1) {
+    const last = lastQuestionRow(state);
+    if (last !== undefined && isRecordFor(record, last, record.priorQuestions)) {
+      return { question: record.prompt.text, questionStored: true, replies: record.replies };
+    }
+  }
+  return { question: null, questionStored: false, replies: [] };
+}
+
+/**
+ * Put an earlier answer to the chat's last question back (ATO-864).
+ *
+ * Two cases. The question is in the transcript (the new try answered,
+ * or failed with its record stored): its current turn is taken back
+ * under every rule of {@link planLastTurnRollback} (no tools, no steer,
+ * not stopped, not compacted), its answer, when a real one, joins the
+ * kept ones, and the question goes back with the chosen answer, closed
+ * as a turn the way the loop closes one. Or the question is not in the
+ * transcript (the new try never reached the store): the kept question
+ * row and the chosen answer are appended.
+ *
+ * `index` is into the kept answers, oldest first; default the newest.
+ * The chosen answer leaves the kept list. Only the transcript changes,
+ * so the model then reads the chosen answer as if it had been the only
+ * one.
+ */
+export function planRestorePreviousReply(
+  state: SessionState,
+  index?: number,
+): RestorePreviousReplyPlan {
+  if (LIVE_SESSION_STATUSES.includes(state.status)) {
+    return { ok: false, code: "turn_in_progress" };
+  }
+  const listed = listPreviousReplies(state);
+  const record = state.previousReplies;
+  if (listed.replies.length === 0 || record === undefined) {
+    return { ok: false, code: "no_previous_reply" };
+  }
+  const at = index ?? listed.replies.length - 1;
+  if (!Number.isInteger(at) || at < 0 || at >= listed.replies.length) {
+    return { ok: false, code: "bad_index" };
+  }
+  const chosen = listed.replies[at]!;
+
+  let base: SessionState;
+  let prompt = record.prompt;
+  if (listed.questionStored) {
+    const rollback = planLastTurnRollback(state, {
+      expectText: record.prompt.text,
+      expectPriorQuestions: record.priorQuestions,
+    });
+    if (!rollback.ok) {
+      // Both were checked above, so neither can be the reason now.
+      if (rollback.code === "nothing_to_undo" || rollback.code === "turn_mismatch") {
+        return { ok: false, code: "no_previous_reply" };
+      }
+      return { ok: false, code: rollback.code };
+    }
+    base = rollback.state;
+    const row = state.turns[rollback.start];
+    if (row?.kind === "user") prompt = row;
+  } else {
+    base = state;
+  }
+
+  const kept = (base.previousReplies?.replies ?? []).filter((entry) => entry !== chosen);
+  let next: SessionState = { ...base, turns: [...base.turns, prompt, chosen.reply] };
+  if (kept.length > 0) {
+    next.previousReplies = { prompt, priorQuestions: record.priorQuestions, replies: kept };
+  } else {
+    delete next.previousReplies;
+  }
+  next = incrementTurnCount(next);
+  next = { ...next, status: "pending", lastError: null, updatedAt: Date.now() };
+  return { ok: true, text: chosen.reply.text, state: next, previousReplies: kept.length };
+}
+
+function lastQuestionRow(state: SessionState) {
+  for (let i = state.turns.length - 1; i >= 0; i -= 1) {
+    const row = state.turns[i];
+    if (row?.kind === "user" && row.steered !== true) return row;
+  }
+  return undefined;
 }
