@@ -3004,3 +3004,43 @@ describe("a refused API key offers the key field", () => {
     expect(next.messages[0]?.fixKeyProviderId).toBeUndefined();
   });
 });
+
+describe("prompt reading progress (ATO-1001)", () => {
+  const progress = (processed: number, total: number, stepIndex = 0): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "llm_event",
+      event: { type: "prompt_progress", stepIndex, processed, total, cached: 0, elapsedMs: 100 },
+    },
+  });
+  const firstToken: TuiAction = {
+    type: "agent_event",
+    event: { type: "llm_event", event: { type: "first_token", stepIndex: 0 } },
+  };
+
+  it("keeps the latest reading until the first token", () => {
+    const reading = apply(createInitialTuiState(fakeSession()), [
+      { type: "agent_event", event: { type: "turn_started", turnIndex: 0 } },
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      progress(2_048, 8_000),
+      progress(4_096, 8_000),
+    ]);
+    expect(reading.promptProgress).toEqual({ processed: 4_096, total: 8_000 });
+    expect(apply(reading, [firstToken]).promptProgress).toBeNull();
+  });
+
+  it("clears at the next step and the next turn", () => {
+    const reading = apply(createInitialTuiState(fakeSession()), [progress(10, 100)]);
+    expect(
+      apply(reading, [{ type: "agent_event", event: { type: "step_started", stepIndex: 1 } }]).promptProgress,
+    ).toBeNull();
+    expect(
+      apply(reading, [{ type: "agent_event", event: { type: "turn_started", turnIndex: 1 } }]).promptProgress,
+    ).toBeNull();
+  });
+
+  it("ignores a reading with no total", () => {
+    const state = createInitialTuiState(fakeSession());
+    expect(apply(state, [progress(0, 0)])).toBe(state);
+  });
+});

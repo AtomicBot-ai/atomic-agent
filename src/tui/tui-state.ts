@@ -412,6 +412,13 @@ export interface TuiState {
   /** Timestamp of the running loop start, used to compute a live duration. */
   runStartedAt: number | null;
   /**
+   * How far a local model has read the current step's prompt before its
+   * first token (ATO-1001), from llama-server's `prompt_progress`. Null
+   * once output starts, at every step start, and on a server that does
+   * not report progress (cloud, external).
+   */
+  promptProgress?: { processed: number; total: number } | null;
+  /**
    * Legs of the fusion fan-out running right now, for the chat's own
    * readout. Empty off fusion and between turns. See
    * `fusion-live-workers.ts`.
@@ -1001,6 +1008,7 @@ export function createInitialTuiState(
     currentStep: 0,
     stepStartedAt: null,
     runStartedAt: null,
+    promptProgress: null,
     fusionLiveWorkers: [],
     feed: [],
     messages: [],

@@ -605,6 +605,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         status: "running",
         currentTurnToolSteps: 0,
         runStartedAt: Date.now(),
+        promptProgress: null,
       };
     case "turn_finished": {
       // `waiting` and `retrying` are claims about a turn that is still
@@ -653,6 +654,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           status: "running",
           currentStep: event.stepIndex,
           stepStartedAt: Date.now(),
+          promptProgress: null,
         },
         event.stepIndex,
       );
@@ -1482,12 +1484,18 @@ function reduceStepEvent(
       // The trace recorder wants them; the chat feed would drown in
       // them. Listed so the exhaustiveness check holds.
       return state;
-    case "first_token":
     case "prompt_progress":
-      // ATO-1027: the wait before the first token, for an HTTP host's
-      // status line. The TUI's own streaming tail already shows output
-      // the moment it starts. Listed so the exhaustiveness check holds.
-      return state;
+      // ATO-1001: how far a local model has read the prompt, for the
+      // thinking indicator ("reading prompt · 40%"). A long prefill used
+      // to show only "thinking" for a minute, and people cancelled.
+      if (event.total <= 0) return state;
+      return {
+        ...state,
+        promptProgress: { processed: Math.max(0, event.processed), total: event.total },
+      };
+    case "first_token":
+      // Output has started: the streaming tail takes over from here.
+      return state.promptProgress == null ? state : { ...state, promptProgress: null };
     default: {
       const unhandled: never = event;
       void unhandled;
