@@ -15,6 +15,8 @@ Personas are named instructions you add to the agent's own: define them under `a
 
 `/vim` turns on vim keys in the composer (off by default, saved as `tui.vimMode`; `/vim on` and `/vim off` set it). A message starts in INSERT, shown next to Send. Esc goes to NORMAL, where `h j k l w b e 0 $ ^ gg G` move, `i a I A o O` go back to typing, `x dd dw cw cc D C yy p P` edit (operators take any of those motions, and counts work: `3w`, `d2w`, `2dd`) and `u` undoes. In NORMAL, Enter still sends. A single Esc there does nothing (it still closes the palette and, during a turn, arms the abort), and Esc Esc clears the draft into prompt history, so Up brings it back. The Esc that leaves INSERT never aborts a turn, stops context maintenance or answers an approval. Arrows, Tab, Ctrl chords and pastes behave as without vim.
 
+The interface language is set by `tui.language` in the config file: `auto` (default), `en` or `ru`. With `auto` the TUI uses the `ATOMIC_AGENT_LANG` environment variable, then the system locale (`LC_ALL`, `LC_MESSAGES`, `LANG`, so `ru_RU.UTF-8` gives Russian), then English. For example `atomic-agent config set tui.language ru`, or `ATOMIC_AGENT_LANG=ru atomic-agent tui` for one run. It takes effect at the next start. Only the first-run setup screens are translated so far; the rest of the TUI is in English.
+
 The keyboard and mouse share the same UI transitions. Terminal size/capabilities affect layout and modified keys. The runtime restores terminal modes when the interface exits.
 
 For engineering work read [TUI ownership/input](../../src/tui/README.md) and [interface contracts](../../src/tui/docs/interface.md). The previous onboarding QA campaign is [historical](../archive/2026-10-06/TESTING.md), not a current development checklist.
