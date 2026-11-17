@@ -45,6 +45,7 @@ import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
 import { pushTurnNote, wirePushIpc } from "./push-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
+import { wireFileMentionsIpc } from "./file-mentions-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
@@ -1680,6 +1681,10 @@ function wireIpc(client: AgentClient): void {
        a message queued behind that turn goes out at that very moment. A turn
        asked for while a switch's restart runs waits for it, and runs on the
        agent it brings up rather than on one being stopped. */
+    // ATO-1595: the last message's @file mentions, read from the chat's folder (file-mentions-ipc.ts); awaited before the wait below.
+    const sid = typeof sessionId === "string" && sessionId ? sessionId : null;
+    const sent = await fileMentions.expand(clean, sid, () => turnProject(readProjects(DESKTOP_STATE_DIR), {
+      sessionId: sid, projectId, windowDir: client.status.workingDir, remote: client.isRemote }).workingDir);
     // One restart can follow another; the turn starts with no await after the last look.
     let waited = false;
     for (let r = switchRestartOnItsWay(); r; r = switchRestartOnItsWay()) {
@@ -1717,7 +1722,7 @@ function wireIpc(client: AgentClient): void {
        takes that one's instructions. */
     const filed = folderForTurn(readChatFolders(DESKTOP_STATE_DIR), known, projectId);
     const instructions = filed ? (filed.instructions ? { name: filed.name, text: filed.instructions } : null) : proj.instructions;
-    void client.chat(turnId, clean, chatId, proj.workingDir, instructions, reasoning, turnModel ?? undefined);
+    void client.chat(turnId, sent, chatId, proj.workingDir, instructions, reasoning, turnModel ?? undefined);
     return { ok: true, turnId };
   }
 
@@ -3095,6 +3100,9 @@ function wireIpc(client: AgentClient): void {
   wirePushIpc();
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
+  // ATO-1593/1595: the composer's @file palette and the mentions inlined on send (file-mentions-ipc.ts).
+  const fileMentions = wireFileMentionsIpc({ isRemote: () => client.isRemote, defaultDir: () => client.status.workingDir,
+    sessionDir: async (s) => ((await client.skills(s)) as { workingDir?: string }).workingDir });
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).
   wireWindowSnapshotIpc();
   // ATO-606: the Fusion workers' reasoning level (Settings › Models, `/runmode reasoning`).

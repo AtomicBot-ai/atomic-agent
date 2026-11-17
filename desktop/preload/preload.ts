@@ -286,6 +286,10 @@ contextBridge.exposeInMainWorld("atomic", {
   attachDiscard: (path: string) => ipcRenderer.invoke("attachments:discard", path),
   attachCheck: (path: string) => ipcRenderer.invoke("attachments:check", path),
   attachOpen: (path: string) => ipcRenderer.invoke("attachments:open", path),
+  /** ATO-1594: the composer's @ file palette (main/file-mentions-ipc.ts). The folder is the chat's,
+   *  chosen in main. Answers {ok:true, paths:string[]} (best 50; [] for a remote agent) | {ok:false, error}. */
+  mentionsSearch: (sessionId: string | null, query: string) =>
+    ipcRenderer.invoke("mentions:search", { sessionId, query }),
   /** ATO-532: other apps' windows for the composer's window picker, and one of them captured (main/window-snapshot-ipc.ts). */
   snapshotWindows: () => ipcRenderer.invoke("snapshot:windows"),
   snapshotCapture: (id: string) => ipcRenderer.invoke("snapshot:capture", id),
