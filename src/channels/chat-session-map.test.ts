@@ -214,3 +214,96 @@ describe("ChatSessionMap — history cap on /switch", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("ChatSessionMap — prune policy (ATO-1509)", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  let dir: string;
+  let path: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-chat-session-prune-"));
+    path = join(dir, "slack-session.json");
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function seed(chats: Record<string, { current: string; updatedAt?: number }>): void {
+    writeFileSync(path, JSON.stringify({ version: 2, chats }), "utf8");
+  }
+
+  it("drops entries older than maxAgeMs on the next write, keeps fresh ones", () => {
+    const now = Date.now();
+    seed({
+      "C1:old": { current: "s-old", updatedAt: now - 40 * DAY },
+      "C1:recent": { current: "s-recent", updatedAt: now - 2 * DAY },
+    });
+    const map = new ChatSessionMap(path, { prune: { maxAgeMs: 30 * DAY } });
+    map.setCurrent("C1:new", "s-new");
+    expect(Object.keys(map.read().chats).sort()).toEqual(["C1:new", "C1:recent"]);
+  });
+
+  it("never drops kept keys, even when old", () => {
+    const now = Date.now();
+    seed({
+      "dm:D1": { current: "s-dm", updatedAt: now - 400 * DAY },
+      C2: { current: "s-chan", updatedAt: now - 400 * DAY },
+      "C2:t1": { current: "s-thread", updatedAt: now - 400 * DAY },
+    });
+    const map = new ChatSessionMap(path, {
+      prune: { maxAgeMs: 30 * DAY, keep: (k) => k.startsWith("dm:") || !k.includes(":") },
+    });
+    map.setCurrent("C2:t2", "s-t2");
+    expect(Object.keys(map.read().chats).sort()).toEqual(["C2", "C2:t2", "dm:D1"]);
+  });
+
+  it("past maxEntries drops the oldest first and keeps the one just written", () => {
+    const now = Date.now();
+    seed({
+      a: { current: "s-a", updatedAt: now - 3000 },
+      b: { current: "s-b", updatedAt: now - 1000 },
+      c: { current: "s-c", updatedAt: now - 2000 },
+    });
+    const map = new ChatSessionMap(path, { prune: { maxEntries: 2 } });
+    map.setCurrent("d", "s-d");
+    expect(Object.keys(map.read().chats).sort()).toEqual(["b", "d"]);
+  });
+
+  it("does not drop an entry without updatedAt for age", () => {
+    seed({ legacy: { current: "s-l" } });
+    const map = new ChatSessionMap(path, { prune: { maxAgeMs: 1 } });
+    map.setCurrent("x", "s-x");
+    expect(map.get("legacy").current).toBe("s-l");
+  });
+
+  it("touch refreshes updatedAt so an active chat survives the age prune", () => {
+    const start = Date.now() - 29 * DAY;
+    seed({ "C1:busy": { current: "s-busy", updatedAt: start } });
+    let now = Date.now();
+    const map = new ChatSessionMap(path, { prune: { maxAgeMs: 30 * DAY }, now: () => now });
+    map.touch("C1:busy");
+    expect(map.get("C1:busy").updatedAt).toBe(now);
+    now += 2 * DAY; // 31 days after the session was first set
+    map.setCurrent("C1:other", "s-other");
+    expect(map.get("C1:busy").current).toBe("s-busy");
+  });
+
+  it("touch skips the write inside the interval and ignores unknown chats", () => {
+    const now = Date.now();
+    seed({ k: { current: "s-k", updatedAt: now - 1000 } });
+    const map = new ChatSessionMap(path, { now: () => now });
+    const before = readFileSync(path, "utf8");
+    map.touch("k");
+    map.touch("missing");
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  it("a map without a policy keeps every entry (Telegram, Discord unchanged)", () => {
+    const now = Date.now();
+    seed({ old: { current: "s-old", updatedAt: now - 4000 * DAY } });
+    const map = new ChatSessionMap(path);
+    map.setCurrent("new", "s-new");
+    expect(map.get("old").current).toBe("s-old");
+  });
+});
