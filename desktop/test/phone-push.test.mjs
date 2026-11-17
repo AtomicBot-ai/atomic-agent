@@ -25,7 +25,7 @@ function load(bridge) {
 
 test('Phone push sits next to Telegram in Connections, in the tab list and the palette', () => {
   // Discord (ATO-516) sits between Telegram and Phone push.
-  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','composio'\]\]/);
+  assert.match(source, /\['connections','Connections','plug',\['mcp','telegram','discord','push','composio','monid'\]\]/);
   assert.match(source, /\['telegram','Telegram'\],\['discord','Discord'\],\['push','Phone push'\],\['composio','Composio'\]/);
   assert.match(source, /\['bell','Phone push','Settings · Connections','','settings:push'\]/);
   for (const hook of ["pane === 'push') phonePushTabEntered()", "p === 'push') return pushTab()",
