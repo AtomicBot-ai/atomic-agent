@@ -8702,6 +8702,7 @@ document.addEventListener('input', (e) => {
   if (e.target.dataset && e.target.dataset.whkField) { WHK.type(e.target.dataset.whkField, e.target.value); return; }
   // ATO-568: a worker's Steer field keeps its text across repaints.
   if (typeof fzpInput === 'function' && fzpInput(e)) return;
+  if (typeof deeplinkRecipeInput === 'function' && deeplinkRecipeInput(e)) return;   // ATO-1615: a recipe card's fields (deeplink.js)
   if (typeof allSettingsInput === 'function' && allSettingsInput(e, esc)) return;   // ATO-41
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);

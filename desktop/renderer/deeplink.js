@@ -12,7 +12,11 @@
      which checks for a duplicate name and lets the agent validate the entry;
    - a skill: `atag skill install` (BR.skillInstall) with its security scan.
      A CAUTION verdict asks again here; a DANGEROUS one is refused from a
-     link (the Skills Hub in Settings can still install it on purpose). */
+     link (the Skills Hub in Settings can still install it on purpose).
+   ATO-1615: a recipe (atomicagent://recipe/open) shows its task text in full
+   and a field per parameter; "Open in new chat" puts the filled text in a new
+   chat's box, as handoff.js does. Nothing is sent: the person presses Enter.
+   The model, tools and permissions never come from the link. */
 
 /** A command line as the card prints it: arguments with spaces are quoted. */
 function deeplinkCommandLine(command, args) {
@@ -45,8 +49,24 @@ function deeplinkSkillIdentifier(req, detail) {
   return owner && /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/.test(owner) ? '@' + owner + '/' + req.slug : null;
 }
 
+/** `{{ key }}`, as main/deeplink.ts RECIPE_PLACEHOLDER_RE (the Goose placeholder shape). */
+const DEEPLINK_RECIPE_PLACEHOLDER_RE = /\{\{\s*([^{}\s]*)\s*\}\}/g;
+
+/** The recipe text with each `{{key}}` replaced by its value; a value is text only. */
+function deeplinkRecipeFill(prompt, values) {
+  const v = values && typeof values === 'object' ? values : {};
+  return String(prompt || '').replace(DEEPLINK_RECIPE_PLACEHOLDER_RE, (whole, key) => (Object.prototype.hasOwnProperty.call(v, key) ? String(v[key]) : whole));
+}
+
+/** The parameters still empty, by key. */
+function deeplinkRecipeMissing(req, values) {
+  const v = values && typeof values === 'object' ? values : {};
+  return ((req && req.params) || []).filter((p) => !String(v[p.key] == null ? '' : v[p.key]).trim()).map((p) => p.key);
+}
+
 function deeplinkTitle(req) {
   if (!req) return '';
+  if (req.route === 'recipe-open') return 'Use this recipe?';
   if (req.route === 'mcp-install') return 'Add this MCP server?';
   if (req.route === 'skill-install') return 'Install this skill?';
   if (req.route === 'error') return 'This link can’t be opened';
@@ -56,7 +76,7 @@ function deeplinkTitle(req) {
 /* ---- renderer side (globals from renderer.js, read at call time) ---- */
 
 const DLINK = {req: null, busy: false, error: null, confirm: null, detail: null, detailLoading: false, seq: 0,
-  queue: [], showTimer: null, armAt: 0, armTimer: null};
+  queue: [], showTimer: null, armAt: 0, armTimer: null, values: {}};
 
 /* A link that comes in while a card is open waits for it to close (review F08-7):
    swapping the card in place would put link B's Install under a click aimed at A.
@@ -65,8 +85,56 @@ const DLINK = {req: null, busy: false, error: null, confirm: null, detail: null,
 const DLINK_ARM_MS = 1000;
 const DLINK_QUEUE_MAX = 5;
 
-/** Other cards (ATO-1071 recipes) draw through this: route → {html(req), install(req)}. */
+/** Other cards draw through this: route → {html(req), install(req), ready(req)?, label?}. */
 const DLINK_CARDS = {};
+
+/* ---- ATO-1615: the recipe card ---- */
+
+function deeplinkRecipeHTML(req) {
+  let h = '<p class="sd-cap">A website or another app sent this task. Nothing runs from the link: the button puts the text in a new chat, and nothing is sent until you press Enter there. The model and tools stay as you set them.</p>';
+  const rows = [['recipe', req.title]];
+  if (req.description) rows.push(['about', req.description]);
+  h += deeplinkRowsHTML(rows);
+  h += deeplinkNotices(req.warnings, 'tk-notice--amber');
+  h += '<p class="sd-cap">The task text, in full:</p>'
+    + '<div class="sd-mono dlink-recipe-text" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto">' + esc(req.prompt) + '</div>';
+  for (const p of req.params || []) {
+    const val = DLINK.values[p.key] == null ? '' : DLINK.values[p.key];
+    h += '<label class="sd-cap" style="display:block;margin-top:8px">' + esc(p.label) + ' <span class="sd-mono">{{' + esc(p.key) + '}}</span>'
+      + '<input class="tk-inp" type="text" data-dlink-param="' + esc(p.key) + '" value="' + esc(val) + '" spellcheck="false" style="display:block;width:100%"></label>';
+  }
+  return h;
+}
+
+async function deeplinkRecipeOpen(req) {
+  const missing = deeplinkRecipeMissing(req, DLINK.values);
+  if (missing.length) return {ok:false, error:'Fill in ' + missing.join(', ') + ' first.'};
+  const text = deeplinkRecipeFill(req.prompt, DLINK.values);
+  act('session:new');   // the shared New chat: closes the card's overlay, leaves the chat that was open as it is
+  // The draft is set once the new chat is on screen, as handoff.js does.
+  S.draft = text;
+  render();
+  const entry = $('#entry');
+  if (entry) { entry.value = text; autosize(entry); entry.focus(); }
+  return {ok:true, title:'Recipe ready', text:'The task is in the box. Read it, pick the model and press Enter to send.'};
+}
+
+DLINK_CARDS['recipe-open'] = {
+  html: deeplinkRecipeHTML,
+  install: deeplinkRecipeOpen,
+  ready: (req) => deeplinkRecipeMissing(req, DLINK.values).length === 0,
+  label: 'Open in new chat',
+};
+
+/** renderer.js's input listener: a recipe field keeps its text across repaints. True when handled. */
+function deeplinkRecipeInput(e) {
+  const key = e && e.target && e.target.dataset ? e.target.dataset.dlinkParam : undefined;
+  if (key === undefined || !DLINK.req || DLINK.req.route !== 'recipe-open') return false;
+  DLINK.values[key] = e.target.value;
+  const go = typeof document !== 'undefined' ? document.querySelector('[data-act="dlink:install"]') : null;
+  if (go) go.disabled = DLINK.busy || !deeplinkArmed() || deeplinkRecipeMissing(DLINK.req, DLINK.values).length > 0;
+  return true;
+}
 
 function deeplinkWire() {
   if (!BR || !BR.deeplinkTake) return;
@@ -106,6 +174,8 @@ async function deeplinkPull() {
 
 function deeplinkShow(req) {
   DLINK.req = req; DLINK.error = null; DLINK.confirm = null; DLINK.detail = null; DLINK.detailLoading = false;
+  DLINK.values = {};
+  for (const p of (req && req.params) || []) DLINK.values[p.key] = p.default || '';   // ATO-1615: a recipe's fields start at the link's defaults
   const seq = ++DLINK.seq;
   deeplinkArm();
   S.overlay = 'deeplink';
@@ -158,7 +228,7 @@ function deeplinkSheetHTML() {
       + '<p class="sd-cap">Nothing was installed or changed.</p>';
   } else if (custom && typeof custom.html === 'function') {
     body += custom.html(req);
-    canInstall = !!custom.install;
+    canInstall = !!custom.install && (typeof custom.ready !== 'function' || !!custom.ready(req));
   } else {
     body += '<p class="sd-cap">A website or another app asked Atomic Agent to install this. Nothing is installed unless you press Install. Only go on if you trust where the link came from.</p>';
     if (req.route === 'mcp-install') {
@@ -181,7 +251,7 @@ function deeplinkSheetHTML() {
   if (DLINK.confirm) body += '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(DLINK.confirm.message || 'The security scan asks for a confirmation.') + '</span></div>';
   if (DLINK.error) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(DLINK.error) + '</span></div>';
   if (req.link) body += '<p class="sd-cap">Link: <span class="sd-mono">' + esc(req.link) + '</span></p>';
-  const installLabel = DLINK.confirm ? 'Install anyway' : (req.route === 'mcp-install' ? 'Add server' : 'Install');
+  const installLabel = DLINK.confirm ? 'Install anyway' : (req.route === 'mcp-install' ? 'Add server' : (custom && custom.label) || 'Install');
   const foot = '<span class="grow"></span>'
     + '<button class="btn btn-s sm" data-act="close">' + (req.route === 'error' ? 'Close' : 'Cancel') + '</button>'
     + (req.route === 'error' ? '' : '<button class="btn btn-p sm" data-act="dlink:install"' + (canInstall && !DLINK.busy && deeplinkArmed() ? '' : ' disabled') + '>'
@@ -256,4 +326,4 @@ function deeplinkAct(v) {
   if (v === 'install') { deeplinkInstall(); return; }
 }
 
-if (typeof module !== 'undefined') module.exports = {deeplinkCommandLine, deeplinkMcpRows, deeplinkSkillIdentifier, deeplinkTitle};
+if (typeof module !== 'undefined') module.exports = {deeplinkCommandLine, deeplinkMcpRows, deeplinkSkillIdentifier, deeplinkTitle, deeplinkRecipeFill, deeplinkRecipeMissing};
