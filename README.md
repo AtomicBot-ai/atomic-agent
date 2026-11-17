@@ -371,6 +371,8 @@ Switch modes with `/mode`, `ctrl+g M`, or the composer chip. On an approval prom
 
 Full TUI guide: [TUI.md](docs/user/tui.md).
 
+Keep the agent running while your laptop is closed: [run it on your own server](docs/user/self-host.md) (Docker or `atag serve --no-parent-exit`).
+
 </details>
 
 <details>

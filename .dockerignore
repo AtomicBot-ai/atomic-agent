@@ -1,0 +1,13 @@
+# Keep the build context small and free of local state and secrets.
+.git
+node_modules
+dist
+desktop
+docs
+eval
+eval-agents
+eval-memory
+packaging
+**/.env
+**/.env.*
+*.log
