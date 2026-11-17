@@ -54,6 +54,7 @@ describe("FAILURE_CATALOG", () => {
     expect(FAILURE_CATALOG.context_too_long.action).toBe("new-chat-summary");
     expect(FAILURE_CATALOG.rate_limited.action).toBe("retry");
     expect(FAILURE_CATALOG.empty_response.action).toBe("retry");
+    expect(FAILURE_CATALOG.empty_response_repeated.action).toBe("switch-model");
     expect(FAILURE_CATALOG.web_search_needs_key.action).toBe("add-search-key");
     expect(FAILURE_CATALOG.out_of_credit.action).toBe("switch-model");
   });

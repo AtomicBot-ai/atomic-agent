@@ -142,6 +142,27 @@ describe("turn recovery decisions and shared state", () => {
     expect(turn.stepsTaken).toBe(1);
   });
 
+  it("two empty answers in a row from a cloud model offer another model, not Retry (ATO-1578)", async () => {
+    const turn = createTurnLoopState();
+    const asked: Array<string | undefined> = [];
+    const deps: TurnRecoveryDependencies = { isCloudLink: (id) => { asked.push(id); return true; } };
+    expect(recoverTurnStep(empty(), context(), deps, turn)).toEqual({ kind: "retry_next" });
+    const repeated = recoverTurnStep(empty(), context({ stepIndex: 1 }), deps, turn);
+    if (repeated.kind !== "failure") throw new Error("expected failure");
+    expect(repeated.runError).toBeInstanceOf(ModelError);
+    expect((repeated.runError as ModelError).repeatedOnCloud).toBe(true);
+    expect(asked).toEqual([undefined]);
+  });
+
+  it("two empty answers in a row from a local model keep Retry (ATO-1578)", async () => {
+    const turn = createTurnLoopState();
+    const deps: TurnRecoveryDependencies = { isCloudLink: () => false };
+    expect(recoverTurnStep(empty(), context(), deps, turn)).toEqual({ kind: "retry_next" });
+    const repeated = recoverTurnStep(empty(), context({ stepIndex: 1 }), deps, turn);
+    if (repeated.kind !== "failure") throw new Error("expected failure");
+    expect((repeated.runError as ModelError).repeatedOnCloud).toBeUndefined();
+  });
+
   it("truncation retries before the finalization guard and a raised-cap rejection returns the original cause", async () => {
     const turn = createTurnLoopState();
     const error = truncated();

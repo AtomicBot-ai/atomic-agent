@@ -229,3 +229,12 @@ describe("EMPTY_COMPLETION_RECOVERY_BUDGET", () => {
     expect(EMPTY_COMPLETION_RECOVERY_BUDGET).toBe(1);
   });
 });
+
+describe("repeatedEmptyCompletionError on a cloud link (ATO-1578)", () => {
+  it("marks the error only when the link is cloud", () => {
+    const first = new ModelError("empty", "model returned empty content", { transport: "native_tools", stage: "initial" });
+    expect(repeatedEmptyCompletionError(first, { cloud: true }).repeatedOnCloud).toBe(true);
+    expect(repeatedEmptyCompletionError(first, { cloud: false }).repeatedOnCloud).toBeUndefined();
+    expect(repeatedEmptyCompletionError(first).repeatedOnCloud).toBeUndefined();
+  });
+});
