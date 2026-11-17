@@ -4,6 +4,9 @@ import {
   StepSpeedReadout,
   stepSpeedReadoutLabel,
 } from "./context/step-speed-readout.js";
+import { ThinkReadout } from "./context/think-readout.js";
+import { thinkReadoutLabel } from "./commands/think-command.js";
+import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type {
@@ -321,6 +324,11 @@ export interface TuiAppCallbacks {
     mode: CodingMode,
     resolved: { approvalLevel: ApprovalLevel; planMode: boolean },
   ): void;
+  /**
+   * `/think <level>` (ATO-490): the reasoning level the next turns of
+   * this window ask for (`auto` sends none).
+   */
+  onReasoningLevelChanged?(level: ReasoningLevel): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
   /**
@@ -2432,8 +2440,16 @@ export function TuiApp({
         fusion={promptBackend.kind === "fusion"}
       />
     ) : null;
+  // ATO-490: the `/think` level, when one is picked.
+  const thinkReadout =
+    thinkReadoutLabel(state.reasoningLevel) !== null ? (
+      <ThinkReadout
+        level={state.reasoningLevel}
+        fusion={promptBackend.kind === "fusion"}
+      />
+    ) : null;
   const promptContextSlot =
-    composerContextUsage || usageReadout || stepSpeedReadout ? (
+    composerContextUsage || usageReadout || stepSpeedReadout || thinkReadout ? (
       <Box flexDirection="row" flexShrink={0}>
         {composerContextUsage ? (
           <ContextChip
@@ -2443,6 +2459,7 @@ export function TuiApp({
           />
         ) : null}
         {stepSpeedReadout}
+        {thinkReadout}
         {usageReadout}
       </Box>
     ) : null;

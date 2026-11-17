@@ -264,6 +264,9 @@ export function reduceUiAction(
       };
     case "goal_changed":
       return { ...state, goalLine: action.goal === null ? null : goalSummaryLine(action.goal) };
+    case "reasoning_level_set":
+      // Display only; the submit path hands the level to the orchestrator.
+      return state.reasoningLevel === action.level ? state : { ...state, reasoningLevel: action.level };
     case "plan_handoff_dismissed":
       // Mode untouched: dismissing a plan is declining this one, not
       // leaving the mode you are planning in.
