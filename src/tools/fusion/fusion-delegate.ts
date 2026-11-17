@@ -62,7 +62,12 @@ import {
   renderSplitInstructions,
 } from "./task-tree.js";
 import type { FusionRunRecorder, FusionRunStore } from "./run-checkpoint.js";
-import { outcomeRowFor, type FusionOutcomeLog } from "./outcome-log.js";
+import {
+  cleanModelLabel,
+  outcomeRowFor,
+  type FusionOutcomeLog,
+} from "./outcome-log.js";
+import { renderLegSpeedLine, workerSpeedSample } from "./leg-speed.js";
 import {
   planResume,
   readResumeRequest,
@@ -951,6 +956,17 @@ export function buildFusionDelegateTool(
             breaker.observe(result);
             checkpoint.onTaskFinished?.(result);
             logOutcome(result);
+            // What this leg really did, for the next plan (ATO-1583).
+            const sample = awaitsExpansion(result)
+              ? null
+              : workerSpeedSample(result);
+            if (sample !== null) {
+              turnBudget.noteSpeed(
+                ctx.sessionId,
+                `${leg} ${cleanModelLabel(result.model ?? model)}`,
+                sample,
+              );
+            }
           },
         };
       };
@@ -1730,7 +1746,7 @@ export function buildFusionDelegateTool(
             roleSpendUsd > 0
               ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
               : ""
-          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
+          }${renderLegSpeedLine(turnBudget.speeds(ctx.sessionId))}${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
           details: {
             tasks: results,
             outcome,
