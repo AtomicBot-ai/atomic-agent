@@ -40,3 +40,14 @@ export {
   readExaSearchSetup,
 } from "./exa-integration.js";
 export type { ExaSearchSetup } from "./exa-integration.js";
+export {
+  MONID_CATALOG_ID,
+  MONID_INTEGRATION_ID,
+  MONID_SIGNIN_ACTION,
+  findMonidServer,
+  monidAddServerJson,
+  monidIntegration,
+  monidServerUrl,
+  monidStatus,
+} from "./monid-integration.js";
+export type { MonidServerRef } from "./monid-integration.js";

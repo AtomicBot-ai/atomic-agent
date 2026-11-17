@@ -263,6 +263,11 @@ function hint(panel: IntegrationsPanelState): string {
   if (panel.mode === "detail") {
     const row = panel.rows[panel.selected];
     const field = row?.fields[panel.selectedField];
+    // ATO-1630: nothing to edit on a row without fields; its verbs are listed above.
+    if (!field) {
+      const first = (row?.actions ?? [])[0];
+      return first ? `enter ${first.label} · esc back` : "esc back";
+    }
     const verb =
       field?.kind === "boolean"
         ? "enter toggle"

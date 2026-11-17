@@ -452,6 +452,10 @@ export class ChatOrchestrator {
       runtime,
       bus,
       this.telegram,
+      undefined,
+      undefined,
+      // ATO-1630: Monid's row signs in through the MCP tab's own flow.
+      { startSignIn: (name) => this.mcp.startSignIn(name) },
     );
     this.swarm = new SwarmOrchestrator(runtime, bus);
     this.plugins = new PluginsOrchestrator(bus);
