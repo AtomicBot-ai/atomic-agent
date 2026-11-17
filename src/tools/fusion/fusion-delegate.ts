@@ -111,9 +111,11 @@ import {
   delegateOutcome,
   fanoutSpend,
   formatDelegateOutput,
+  taskSpendUsd,
   type WorkerPricing,
   type WorkerTaskResult,
 } from "./worker-result.js";
+import { describeCostEstimate, estimateTaskCostUsd } from "./cost-estimate.js";
 
 export const FUSION_DELEGATE_TOOL = "fusion.delegate";
 
@@ -1604,6 +1606,43 @@ export function buildFusionDelegateTool(
             : { ...r, notes: [...(r.notes ?? []), warning] };
         });
       }
+      // The cost forecast beside the actual spend (ATO-1585), for every
+      // task with an output estimate on a priced leg. Advisory only.
+      const pricingFor = (taskId: string): WorkerPricing | undefined => {
+        const leg = taskLegs.get(taskId);
+        if (leg === undefined || leg.isWorkerLeg) return workerPricing;
+        return rolePricing.get(leg.providerId);
+      };
+      const costEstimates: {
+        id: string;
+        estimateUsd: number;
+        actualUsd: number | null;
+      }[] = [];
+      const taskById = new Map(parsed.tasks.map((t) => [t.id, t]));
+      results = results.map((r) => {
+        const task = taskById.get(r.id);
+        const pricing = pricingFor(r.id);
+        if (task === undefined || pricing === undefined) return r;
+        const estimateUsd = estimateTaskCostUsd(
+          {
+            ...task,
+            briefChars:
+              task.instructions.length + (task.deliverable?.length ?? 0),
+          },
+          pricing,
+        );
+        if (estimateUsd === null) return r;
+        const actualUsd =
+          r.usage === undefined ? null : taskSpendUsd(r, pricing);
+        costEstimates.push({ id: r.id, estimateUsd, actualUsd });
+        return {
+          ...r,
+          notes: [
+            ...(r.notes ?? []),
+            describeCostEstimate(estimateUsd, actualUsd),
+          ],
+        };
+      });
       const estimates = estimateRows(
         parsed.tasks,
         results,
@@ -1746,6 +1785,7 @@ export function buildFusionDelegateTool(
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
             ...(roleSpendUsd > 0 ? { roleSpendUsd } : {}),
             ...(estimates.length === 0 ? {} : { estimates }),
+            ...(costEstimates.length === 0 ? {} : { costEstimates }),
             ...(fit.oversized.length === 0
               ? {}
               : { oversizedTasks: fit.oversized }),
