@@ -6725,6 +6725,7 @@ function diagnosticsPane() {
       + '<a class="msglink" href="#" data-url="' + DISCORD_URL + '">Discord</a> or in a '
       + '<a class="msglink" href="#" data-url="https://github.com/AtomicBot-ai/atomic-agent/issues/new">GitHub issue</a>.</p>'
     + doctorDataHTML(DOCD, {esc, ic})
+    + traceViewHTML(TRV, {esc, ic, sessionId: S.agentSession || ''})   // ATO-639 (trace-view.js)
     + allSettingsHTML(ALLSET, {esc, ic})   // ATO-41 (all-settings.js)
     + diagLogHTML()
     + '</div>';
@@ -7639,6 +7640,8 @@ function act(a) {
   if (k === 'exakey') { exaKeyAct(v); return; }
   // ATO-577 / ATO-579: Diagnostics' Doctor and Data buttons (doctor-data.js).
   if (k === 'doctor') { doctorDataAct(v, BR, () => location.reload()); return; }
+  // ATO-639: Diagnostics' Timeline (trace-view.js), the open chat's trace from main.
+  if (k === 'trace') { traceViewAct(v, BR, {stateDir: (LIVE_CAPS && LIVE_CAPS.paths && LIVE_CAPS.paths.stateDir) || '', sessionId: S.agentSession || '', repaint: diagRepaint}); return; }
   // ATO-41: Diagnostics' All settings (all-settings.js); a value is written like every other setting (config-patch.js).
   if (k === 'allset') { allSettingsAct(v, BR, {write: (key, value, patch) => configPatchOr(patch, () => BR.configSet(key, String(value), 'settings')), unset: (key) => BR.configUnset(key)}); return; }
   if (k === 'import') { close(); importAct(a.slice(7)); return; }
