@@ -335,6 +335,8 @@ contextBridge.exposeInMainWorld("atomic", {
   projectsDelete: (id: string) => ipcRenderer.invoke("projects:delete", id),
   projectsAssign: (payload: { sessionId: string; projectId: string | null }) =>
     ipcRenderer.invoke("projects:assign", payload),
+  // ATO-1012: {ok, file: {path, name, exists, head, also}} for the Edit project sheet.
+  projectsInstructionsFile: (id: string) => ipcRenderer.invoke("projects:instructionsFile", id),
   onProjectsChanged: (cb: () => void) => on("projects:changed", () => cb()),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
   /* ATO-523: the global hotkey's one-line box (main/quick-entry-window.ts).

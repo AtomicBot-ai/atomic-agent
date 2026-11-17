@@ -101,6 +101,29 @@ export function writeProjectModel(userData: string, dir: string, pick: ProjectMo
   const clean = pick ? validPick(pick) : null;
   if (pick && !clean) return null;
   if (clean) all[key] = clean;
+  return writeAll(userData, all);
+}
+
+/**
+ * ATO-1012: a project moved to another folder (Edit project › Change
+ * folder…) takes its model along: the old folder's pick is stored under the
+ * new folder, replacing whatever that folder had, and the old key goes.
+ * Null when the old folder had no pick (nothing is written) or the write
+ * failed; else the whole map as written.
+ */
+export function moveProjectModel(userData: string, fromDir: string, toDir: string): ProjectModels | null {
+  if (!fromDir.trim() || !toDir.trim()) return null;
+  const all = readProjectModels(userData);
+  const from = folderKey(fromDir), to = folderKey(toDir);
+  const pick = all[from];
+  if (!pick || from === to) return null;
+  delete all[from];
+  delete all[to];
+  all[to] = pick;
+  return writeAll(userData, all);
+}
+
+function writeAll(userData: string, all: ProjectModels): ProjectModels | null {
   // Newest last; the oldest folders go first past the cap.
   const keys = Object.keys(all);
   for (const old of keys.slice(0, Math.max(0, keys.length - MAX_FOLDERS))) delete all[old];
