@@ -112,6 +112,44 @@ describe("shouldAdvance", () => {
     ).toEqual({ advance: false, immediate: false });
   });
 
+  it("does NOT advance on a cloud 400 that refuses a sampling setting (ATO-1218)", () => {
+    // Nadya's decision (17.11): an invalid parameter stops with a clear
+    // error; it never moves the turn to the next link.
+    expect(
+      shouldAdvance(
+        new OpenAiHttpError(
+          'openai provider 400: {"error":{"message":"invalid temperature: only 1 is allowed for this model"}}',
+          400,
+          "https://api.moonshot.ai/v1/chat/completions",
+          false,
+          null,
+          "kimi",
+        ),
+      ),
+    ).toEqual({ advance: false, immediate: false });
+    expect(
+      shouldAdvance(
+        new TransportError('"kimi" rejected the request (400).', 400, "u", {
+          cause: new OpenAiHttpError("openai provider 400: top_p must be between 0 and 1", 400, "u"),
+        }),
+      ),
+    ).toEqual({ advance: false, immediate: false });
+    expect(
+      shouldAdvance(
+        new OpenAiHttpError("openai provider 422: presence_penalty is out of range", 422, "u"),
+      ),
+    ).toEqual({ advance: false, immediate: false });
+  });
+
+  it("still advances on a 429 or 5xx that mentions temperature: the provider is down (ATO-1218)", () => {
+    expect(
+      shouldAdvance(new OpenAiHttpError("openai provider 429: invalid temperature", 429, "u")),
+    ).toEqual({ advance: true, immediate: true });
+    expect(
+      shouldAdvance(new OpenAiHttpError("openai provider 500: invalid temperature", 500, "u")),
+    ).toEqual({ advance: true, immediate: true });
+  });
+
   it("still advances on any other cloud 400 — the body may be wrong for this vendor only", () => {
     expect(
       shouldAdvance(
