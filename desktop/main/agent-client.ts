@@ -56,6 +56,7 @@ import {
  *   POST /v1/chat/completions       the agent loop, streamed as SSE
  *   GET  /api/events                SSE stream of approval requests
  *   POST /api/approval/resolve      allow-once | allow-in-chat | allow-always | deny
+ *   POST /api/question/answer       an ask_user question's answer (ATO-1502)
  *
  * The server is bound to 127.0.0.1 on an ephemeral port and gated by a
  * bearer token generated per launch, so nothing outside this app can
@@ -2206,6 +2207,10 @@ export class AgentClient extends EventEmitter {
              computer's screen, so only its own agent is told it can. A
              remote agent's points belong to another machine. */
           ...(this.remote ? {} : { "x-atomic-screen-overlay": "1" }),
+          /* ATO-1502: this window draws the agent's ask_user question card
+             (renderer/question-card.js), so its turns are offered the tool.
+             An agent without ask_user ignores the header. */
+          "x-atomic-questions": "1",
         },
         // `session_id` continues the session the agent already holds, and is
         // ALWAYS sent: without one the agent derives the id from the first
@@ -2375,6 +2380,25 @@ export class AgentClient extends EventEmitter {
       // Agent gone or not answering: it has no turn to stop, and the
       // dropped stream is all that is left to do.
     }
+  }
+
+  /**
+   * ATO-1502: `POST /api/question/answer` — the answer to an ask_user
+   * question: `{ selected, other? }`, or `{ skip: true }`. The agent checks
+   * it against the question (400 and still open when it does not fit,
+   * 404 once it is no longer pending); the body comes back as is.
+   */
+  async answerQuestion(
+    approvalId: string,
+    answer: { selected?: string[]; other?: string; skip?: boolean },
+  ): Promise<unknown> {
+    const res = await fetch(`${this.base()}/api/question/answer`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ approvalId, ...answer }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    return res.json();
   }
 
   async resolveApproval(

@@ -1796,6 +1796,28 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
+  /* ATO-1502: an ask_user question's answer (renderer/question-card.js):
+     option labels and/or the person's own words, or a skip. Checked for
+     shape here; the agent checks it against the question itself. */
+  ipcMain.handle("agent:answerQuestion", async (_event, payload: unknown) => {
+    const p = (payload ?? {}) as { approvalId?: unknown; selected?: unknown; other?: unknown; skip?: unknown };
+    if (typeof p.approvalId !== "string" || !p.approvalId) return { ok: false, error: "approvalId required" };
+    let answer: { selected?: string[]; other?: string; skip?: boolean };
+    if (p.skip === true) answer = { skip: true };
+    else {
+      const selected = Array.isArray(p.selected) ? p.selected.filter((x): x is string => typeof x === "string").slice(0, 8) : [];
+      const other = typeof p.other === "string" ? p.other.slice(0, 2_000) : undefined;
+      answer = { selected, ...(other !== undefined ? { other } : {}) };
+    }
+    try {
+      const data = await client.answerQuestion(p.approvalId, answer);
+      chatTurns.approvalAnswered({ approvalId: p.approvalId, decision: answer.skip ? "deny" : "allow-once" });   // ATO-1026: the turn leaves "approval"
+      return { ok: true, data };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   /* ATO-1148: a project's own cloud model, per working folder
      (main/project-model.ts). The window reads the whole map once and after
      each write; turns carry the pick themselves (agent:chat's turnModel). */

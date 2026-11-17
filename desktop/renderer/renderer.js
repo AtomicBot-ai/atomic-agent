@@ -4039,6 +4039,8 @@ function toolShotHTML(m, st) {
 }
 
 function apprCard(m) {
+  // ATO-1502: an ask_user question is its own card (question-card.js).
+  if (m.question && typeof qcCardHTML === 'function') return qcCardHTML(m, {esc, ic, keyLabel: apprKeyLabel}, m === S.pending);
   if (m.state) {
     const ok = m.state === 'approved';
     /* ATO-227: the deny-with-words path and its `denying` / `undelivered`
@@ -12284,6 +12286,8 @@ function onApprovalEvent(payload) {
        widens its read roots to when this is approved (read-scope-approval.ts
        `affectedResources: [root]`) — allow-once over HTTP still widens it. */
     readRoot: payload.category === 'fs_read_outside' ? String(first) : '',
+    // ATO-1502: an ask_user question (category user_question) is drawn and answered as one (question-card.js).
+    question: payload.category === 'user_question' && typeof qcQuestion === 'function' ? qcQuestion(payload.question) : null,
     // item 6: which chat is waiting. The agent's ApprovalRequest carries it,
     // and it is the one attention signal that works for a turn this window did
     // not start (a scheduled task's, say).
@@ -12483,6 +12487,8 @@ function apprAlwaysSavedNote(req, data) {
     text:'Rule saved: ' + (label ? esc(label) : what) + '. Atomic Agent won\u2019t ask about it again. You can remove it in Settings, Privacy.'};
 }
 function answerLive(req, key) {
+  // ATO-1502: a question is answered with a choice, never Allow; Abort run (esc) stays as below.
+  if (req && req.question && key !== 'esc' && typeof qcKey === 'function') { qcKey(req, key); return; }
   const approve = key === 'y' || key === 's' || key === 'a' || key === 'c' || key === 'w';
   const inChat = key === 'c' && apprChatOk(req);
   const always = key === 'w' && apprAlwaysOk(req);
