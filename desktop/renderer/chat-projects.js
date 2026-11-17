@@ -434,7 +434,7 @@ function projectsSidebarHTML(groups, folders) {
         + head
           + ' title="' + esc(g.name + where + ' · ' + g.rows.length + (g.rows.length === 1 ? ' chat' : ' chats')) + '">'
           + '<span class="sb-fchev">' + ic(shut ? 'chevR' : 'chevD') + '</span>'
-          + '<span class="sb-fic">' + ic('folder') + '</span>'
+          + '<span class="sb-fic">' + (folder && typeof folderGlyphHTML === 'function' ? folderGlyphHTML(g.item, g.rows) : ic('folder')) + '</span>'
           + '<span class="sb-fname">' + esc(g.name) + '</span>'
           + (g.rows.length ? '<span class="ct tnum">' + g.rows.length + '</span>' : '')
           + '<span class="sesmore iconbtn" data-act="pedit:' + esc(g.id) + '" title="Edit project" aria-label="Edit project" role="button">' + ic('edit') + '</span>'

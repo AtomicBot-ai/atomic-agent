@@ -100,7 +100,10 @@ function composioSetupHTML(st, h) {
   return '<div class="tk-card pad sd-tgcard sd-cmpcard">'
     + '<div class="sd-pairhead"><span class="tk-ico tk-ico--blue">' + h.ic('link') + '</span><h3 class="sd-title">Connect apps with Composio</h3></div>'
     // The TUI's summary ("~1500 SaaS toolkits … with OAuth handled for you"), plus where the calls go.
-    + '<p>Composio connects Atomic Agent to 1,500+ apps like Gmail, Slack, Notion, Linear and GitHub, and handles each app\'s sign-in for you. '
+    // ATO-1633: GitHub, the one of these apps with a mark in renderer/logos/, wears it.
+    + '<p>Composio connects Atomic Agent to 1,500+ apps like Gmail, Slack, Notion, Linear and '
+    + (typeof h.logo === 'function' && h.logo('github', 'xs') ? '<span class="sd-inlmark">' + h.logo('github', 'xs') + '</span>' : '')
+    + 'GitHub, and handles each app\'s sign-in for you. '
     + 'Requests to those apps go through Composio\'s servers.</p>'
     + '<ol class="sd-steps">' + COMPOSIO_SETUP_STEPS.map((t) => '<li>' + h.esc(t) + '</li>').join('') + '</ol>'
     + composioKeyFieldHTML(st, h, 'setup')

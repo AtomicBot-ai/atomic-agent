@@ -98,6 +98,8 @@
 
 /* ATO-1156: Continue from Claude Code / Codex: agent switch, then session rows with a Continue button each. */
 .sheet-handoff .seg{margin:0 6px 8px}
+/* ATO-1633: the agent's mark leads its choice. */
+.sheet-handoff .handoffseg .logo{margin-left:-6px}
 .sheet-handoff .sd-cap{margin:0 12px 8px;font-size:var(--fs-cap);color:var(--ink-2)}
 .handoffrows > .row{display:flex;align-items:center;gap:12px;padding:7px 12px}
 .handoffrows > .row .main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
