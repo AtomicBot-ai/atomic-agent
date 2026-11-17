@@ -59,9 +59,18 @@ export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => bo
   });
   // ATO-1030: Windows logging off or shutting down ends the session without a quit.
   win.on("session-end", () => noteSessionTrouble("os_shutdown"));
+  // ATO-921: when it comes back, say how long it was gone, so the log tells
+  // a freeze of the main process (seconds) from a window that never returns.
+  let unresponsiveSince: number | null = null;
   win.on("unresponsive", () => {
+    unresponsiveSince = Date.now();
     windowCrashed("unresponsive", null, null);
     reportError({ source: "unresponsive", name: "WindowUnresponsive", level: "warning", tags: { kind: "unresponsive" } });
+  });
+  win.on("responsive", () => {
+    if (unresponsiveSince === null) return;
+    console.error(`[desktop] the window is responding again after ${Math.round((Date.now() - unresponsiveSince) / 1000)} s`);
+    unresponsiveSince = null;
   });
   wc.on("did-fail-load", (_e, errorCode, _description, _url, isMainFrame) => {
     // The code is Chromium's net error number; the description and the URL are never read.
