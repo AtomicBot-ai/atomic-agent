@@ -448,6 +448,8 @@ export interface WorkerRunnerDeps {
     options: {
       origin?: TurnOrigin;
       providerId?: string;
+      /** The worker leg's model for this turn (`RunWorkerTasksOptions.turnModel`). */
+      model?: string;
       maxSteps?: number;
       taskMaxDurationMs?: number;
       toolFilter?: (name: string) => boolean;
@@ -545,6 +547,13 @@ export interface RunWorkerTasksOptions {
    * never invent a name it cannot stand behind.
    */
   workerModel: string;
+  /**
+   * The model every worker turn asks `providerId` for (ATO-1560), when it
+   * is not the entry's own chat model: `ResolvedRunMode.workerTurnModel`,
+   * or a role's `turnModel`. Absent, the provider's configured model
+   * answers, as before. Never set for a `llama-server` leg.
+   */
+  turnModel?: string;
   workerMaxSteps: number;
   /**
    * Wall-clock ceiling per worker turn. With `localTokensPerSecond` it
@@ -1396,6 +1405,7 @@ async function runOneTask(
     const turn = await deps.runTurn(session, brief, {
       origin: "fusion",
       providerId: options.providerId,
+      ...(options.turnModel === undefined ? {} : { model: options.turnModel }),
       maxSteps: stepBudget.value,
       taskMaxDurationMs: timeoutMs + queueBudgetMs,
       toolFilter: workerToolFilterFor(task.agentProfile?.tools),
@@ -1651,6 +1661,7 @@ async function runOneTask(
         {
           origin: "fusion",
           providerId: target.providerId,
+          ...(target.turnModel === undefined ? {} : { model: target.turnModel }),
           maxSteps: stepBudget.value,
           taskMaxDurationMs: timeoutMs,
           toolFilter: workerToolFilterFor(task.agentProfile?.tools),

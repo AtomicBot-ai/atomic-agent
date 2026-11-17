@@ -40,10 +40,26 @@ export type ResolvedRunMode = {
   orchestratorProviderId: string | null;
   /** Display/pricing label for the orchestrator model; the provider's default chat model unless pinned. */
   orchestratorModel: string | null;
+  /**
+   * The model the orchestrator leg is asked for on the wire, present
+   * only when `fusion.orchestratorModel` names one other than the
+   * entry's chat model on a provider that serves more than one (not
+   * `llama-server`). See `turnModelFor`.
+   */
+  orchestratorTurnModel?: string;
   /** The local leg (fusion's workers), or `null` when none is configured. */
   workerProviderId: string | null;
   /** Display label for the worker model; the managed daemon's model unless pinned. */
   workerModel: string | null;
+  /**
+   * The model every worker turn on the worker leg asks for (ATO-1560),
+   * present only when it differs from the entry's chat model, or when
+   * the worker leg is the orchestrator's provider and that one is asked
+   * for another model (the workers then name their own, so they do not
+   * inherit the orchestrator's). Never on a `llama-server` leg, which
+   * serves the one model it loaded.
+   */
+  workerTurnModel?: string;
   /**
    * Default fan-out width for a `fusion.delegate` call that names no
    * `maxWorkers`. Not a ceiling — see `UserLlmFusionConfig.workers`.
@@ -81,7 +97,7 @@ export type ResolvedRunMode = {
    * The judge's model when `llm.runMode.fusion.judge` is `"on"` (ATO-944);
    * `null` when it is off or no provider resolves. Optional for fixtures.
    */
-  judge?: { providerId: string; model: string | null } | null;
+  judge?: { providerId: string; model: string | null; turnModel?: string } | null;
   /**
    * Models by role (ATO-943), present only when `llm.runMode.fusion.roles`
    * names at least one provider that exists. Optional for fixtures.
@@ -123,6 +139,8 @@ export type FusionEscalationTarget = {
   providerId: string;
   /** Display and pricing label; `null` when the entry names no model. */
   model: string | null;
+  /** The model the call asks for on the wire (ATO-1560); see `turnModelFor`. */
+  turnModel?: string;
   /** Automatic advisor escalation on stuck triggers. */
   auto: boolean;
   /** The replacement path (`escalationReplace`). */
@@ -135,6 +153,8 @@ export type FusionRoleModel = {
   providerId: string;
   /** Display and pricing label; `null` when the entry names no model. */
   model: string | null;
+  /** The model the role's turns ask for on the wire (ATO-1560); see `turnModelFor`. */
+  turnModel?: string;
   /** A `llama-server` entry: a local model that needs room on this machine. */
   local: boolean;
 };
@@ -157,6 +177,27 @@ export type ResolveRunModeOptions = {
 
 function isLocalKind(entry: LlmProviderConfigEntry | undefined): boolean {
   return entry?.kind === LOCAL_PROVIDER_KIND;
+}
+
+/**
+ * The model a Fusion role asks `entry` for on the wire (ATO-1560), or
+ * undefined when the entry's own chat model already is that model.
+ *
+ * A role's model used to be only a label: every request went out with
+ * the entry's `defaultChatModel`, so a worker shown as model B ran on
+ * model A. A provider that serves several models (a cloud API, LM
+ * Studio, Ollama) now gets the role's model per turn; the request runs
+ * on a copy of the provider built for it (`ProviderRegistry.modelVariant`).
+ * A `llama-server` entry serves the one model it loaded and ignores the
+ * name, so it never gets one.
+ */
+function turnModelFor(
+  entry: LlmProviderConfigEntry | undefined,
+  model: string | null | undefined,
+): string | undefined {
+  if (entry === undefined || isLocalKind(entry)) return undefined;
+  if (model === null || model === undefined || model.trim().length === 0) return undefined;
+  return model === (entry.defaultChatModel ?? entry.model) ? undefined : model;
 }
 
 /**
@@ -254,23 +295,37 @@ export function resolveRunMode(
     (worker !== undefined && isLocalKind(worker)
       ? (opts.managedModelId ?? worker.model ?? null)
       : (worker?.defaultChatModel ?? worker?.model ?? null));
+  // What each leg asks for on the wire (ATO-1560). The orchestrator's
+  // model is applied to every request its unpinned turns send to that
+  // provider (`fusionLinkModel`), so workers sharing the provider name
+  // their own model, the entry's when nothing else is chosen.
+  const orchestratorTurnModel = turnModelFor(orchestrator, fusion?.orchestratorModel);
+  const workerTurnModel =
+    turnModelFor(worker, workerModelLabel) ??
+    (orchestratorTurnModel !== undefined && worker !== undefined && worker.id === orchestrator?.id
+      ? (worker.defaultChatModel ?? worker.model)
+      : undefined);
   const byRole: Partial<Record<FusionRole, FusionRoleModel>> = {};
   for (const role of FUSION_ROLES) {
     const entry = byId(fusion?.roles?.[role]);
     if (entry === undefined) continue;
+    const model =
+      entry.id === worker?.id
+        ? workerModelLabel
+        : entry.id === orchestrator?.id
+          ? (fusion?.orchestratorModel ??
+            entry.defaultChatModel ??
+            entry.model ??
+            null)
+          : isLocalKind(entry)
+            ? (entry.model ?? entry.defaultChatModel ?? null)
+            : (entry.defaultChatModel ?? entry.model ?? null);
+    const turnModel =
+      entry.id === worker?.id ? workerTurnModel : turnModelFor(entry, model);
     byRole[role] = {
       providerId: entry.id,
-      model:
-        entry.id === worker?.id
-          ? workerModelLabel
-          : entry.id === orchestrator?.id
-            ? (fusion?.orchestratorModel ??
-              entry.defaultChatModel ??
-              entry.model ??
-              null)
-            : isLocalKind(entry)
-              ? (entry.model ?? entry.defaultChatModel ?? null)
-              : (entry.defaultChatModel ?? entry.model ?? null),
+      model,
+      ...(turnModel === undefined ? {} : { turnModel }),
       local: isLocalKind(entry),
     };
   }
@@ -295,18 +350,23 @@ export function resolveRunMode(
     byId(fusion?.judgeProvider) ??
     byId(fusion?.roles?.review) ??
     orchestrator;
+  const judgeModel =
+    judgeEntry === undefined
+      ? null
+      : ((judgeEntry.id === orchestrator?.id
+          ? fusion?.orchestratorModel
+          : undefined) ??
+        judgeEntry.defaultChatModel ??
+        judgeEntry.model ??
+        null);
+  const judgeTurnModel = turnModelFor(judgeEntry, judgeModel);
   const judge =
     fusion?.judge !== "on" || judgeEntry === undefined
       ? null
       : {
           providerId: judgeEntry.id,
-          model:
-            (judgeEntry.id === orchestrator?.id
-              ? fusion?.orchestratorModel
-              : undefined) ??
-            judgeEntry.defaultChatModel ??
-            judgeEntry.model ??
-            null,
+          model: judgeModel,
+          ...(judgeTurnModel === undefined ? {} : { turnModel: judgeTurnModel }),
         };
 
   // Escalation only ever goes to a provider the operator configured, and
@@ -314,18 +374,23 @@ export function resolveRunMode(
   // orchestrator leg is the default: it is the model already paid for.
   const escalationEntry =
     byId(fusion?.escalationProvider) ?? orchestrator ?? undefined;
+  const escalationModel =
+    escalationEntry === undefined
+      ? null
+      : ((escalationEntry.id === orchestrator?.id
+          ? fusion?.orchestratorModel
+          : undefined) ??
+        escalationEntry.defaultChatModel ??
+        escalationEntry.model ??
+        null);
+  const escalationTurnModel = turnModelFor(escalationEntry, escalationModel);
   const escalation: FusionEscalationTarget | null =
     escalationEntry === undefined || escalationEntry.id === workerProviderId
       ? null
       : {
           providerId: escalationEntry.id,
-          model:
-            (escalationEntry.id === orchestrator?.id
-              ? fusion?.orchestratorModel
-              : undefined) ??
-            escalationEntry.defaultChatModel ??
-            escalationEntry.model ??
-            null,
+          model: escalationModel,
+          ...(escalationTurnModel === undefined ? {} : { turnModel: escalationTurnModel }),
           auto: fusion?.escalation === "advisor",
           replace: fusion?.escalationReplace === true,
           maxUsd: fusion?.escalationMaxUsd ?? DEFAULT_FUSION_ESCALATION_MAX_USD,
@@ -340,6 +405,7 @@ export function resolveRunMode(
       orchestrator?.defaultChatModel ??
       orchestrator?.model ??
       null,
+    ...(orchestratorTurnModel === undefined ? {} : { orchestratorTurnModel }),
     workerProviderId,
     // `managedModelId` is the model the LOCAL daemon serves, so it only
     // describes the worker leg while that leg is the local one. With the
@@ -347,6 +413,7 @@ export function resolveRunMode(
     // every surface that shows it — the composer strip, the LLM pane —
     // would be naming a model that runs nothing.
     workerModel: workerModelLabel,
+    ...(workerTurnModel === undefined ? {} : { workerTurnModel }),
     workers: fusion?.workers ?? DEFAULT_FUSION_WORKERS,
     cloudWorkers: fusion?.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
     ...(fusion?.workerReasoning === undefined

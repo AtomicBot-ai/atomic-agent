@@ -214,6 +214,29 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.00002);
   });
 
+  it("in Fusion, an unpinned request on the orchestrator leg runs on the orchestrator's chosen model (ATO-1560)", async () => {
+    const fixture = fallback();
+    const variant = { complete: vi.fn(async () => completion("orchestrator-model")) };
+    const asked: Array<[string, string]> = [];
+    const registry = { modelVariant: async (id: string, model: string) => { asked.push([id, model]); return variant as never; } };
+    const cloud = providers.providerRegistry.getProvider("cloud");
+    if (!cloud) throw new Error("cloud fixture missing");
+    const base = vi.spyOn(cloud, "complete").mockResolvedValue(completion("cloud-model"));
+    const wired = connectRuntimeFallback({}, { ...fixture.deps, providerRegistry: registry });
+
+    // Outside Fusion the orchestrator pin is not read: the entry's model answers.
+    config.llm = { ...config.llm!, runMode: { mode: "cloud", fusion: { orchestratorModel: "orchestrator-model" } } };
+    await wired.llmComplete(params);
+    expect(asked).toEqual([]);
+    expect(base).toHaveBeenCalledTimes(1);
+
+    config.llm = { ...config.llm!, runMode: { mode: "fusion", fusion: { orchestratorProvider: "cloud", workerProvider: "local", orchestratorModel: "orchestrator-model" } } };
+    await wired.llmComplete(params);
+    expect(asked).toEqual([["cloud", "orchestrator-model"]]);
+    expect(variant.complete).toHaveBeenCalledTimes(1);
+    expect(base).toHaveBeenCalledTimes(1);
+  });
+
   // ATO-277: message_sent reads the served link from the meter.
   it("a fallover records the link that actually served, and counts it as a fallback", async () => {
     const fixture = fallback();

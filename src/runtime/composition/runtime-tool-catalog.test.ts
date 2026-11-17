@@ -297,7 +297,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous, declaredInputs: new osTools.DeclaredInputsRegistry(),
       resolveOriginalRequest, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
       prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
-      providerRegistry: { getProvider: () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
+      providerRegistry: { getProvider: () => undefined, modelVariant: async () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
     const wired = builder.mock.calls[0]?.[0]; const protectedReads = confinement.mock.calls[0]?.[1];
     if (!wired || !protectedReads) throw new Error("late tool phase missing");
     expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);
@@ -327,7 +327,7 @@ describe("fusion escalation calls in the session readout (ATO-1388)", () => {
       registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous: { approvals, approvalRequired: false }, declaredInputs: new osTools.DeclaredInputsRegistry(),
         resolveOriginalRequest: () => undefined, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
         prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
-        providerRegistry: { getProvider: () => provider as never }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
+        providerRegistry: { getProvider: () => provider as never, modelVariant: async () => provider as never }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
         slotManager: { poolSize: () => 2 }, workingDir: directory, logger, sessionUsage: { record } });
       const wired = builder.mock.calls.at(-1)?.[0];
       if (!wired?.escalationComplete) throw new Error("escalation seam missing");
@@ -337,6 +337,42 @@ describe("fusion escalation calls in the session readout (ATO-1388)", () => {
       expect(record).toHaveBeenCalledWith("s-1", expect.objectContaining({ providerId: "cloud", modelId: "big", usage, local: false }));
       await wired.escalationComplete({ providerId: "cloud", prompt: "p", maxOutputTokens: 100, signal });
       expect(record).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.restoreAllMocks();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("fusion escalation and judge calls on their own model (ATO-1560)", () => {
+  it("asks the provider's copy built for the target's model, and the provider itself without one", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "catalog-turn-model-"));
+    try {
+      const config = getConfig(); const toolRegistry = new ToolRegistry();
+      const approvals = new ApprovalGate({ emit: () => {}, level: 5 });
+      const builder = vi.spyOn(fusionTools, "buildFusionDelegateTool");
+      const base = { complete: vi.fn(async () => ({ content: "base", modelId: "model-a" })) };
+      const variant = { complete: vi.fn(async () => ({ content: "variant", modelId: "model-b" })) };
+      const asked: Array<[string, string]> = [];
+      registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous: { approvals, approvalRequired: false }, declaredInputs: new osTools.DeclaredInputsRegistry(),
+        resolveOriginalRequest: () => undefined, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
+        prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
+        providerRegistry: {
+          getProvider: () => base as never,
+          modelVariant: async (id: string, model: string) => { asked.push([id, model]); return variant as never; },
+        },
+        llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
+        slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
+      const wired = builder.mock.calls.at(-1)?.[0];
+      if (!wired?.escalationComplete) throw new Error("escalation seam missing");
+      const signal = new AbortController().signal;
+      const withModel = await wired.escalationComplete({ providerId: "cloud", model: "model-b", prompt: "p", maxOutputTokens: 100, signal });
+      const without = await wired.escalationComplete({ providerId: "cloud", prompt: "p", maxOutputTokens: 100, signal });
+      expect(asked).toEqual([["cloud", "model-b"]]);
+      expect(withModel.content).toBe("variant");
+      expect(without.content).toBe("base");
+      expect(variant.complete).toHaveBeenCalledTimes(1);
+      expect(base.complete).toHaveBeenCalledTimes(1);
     } finally {
       vi.restoreAllMocks();
       await rm(directory, { recursive: true, force: true });
@@ -358,7 +394,7 @@ describe("fusion escalation calls in llm.costTracking (ATO-1497)", () => {
       registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous: { approvals, approvalRequired: false }, declaredInputs: new osTools.DeclaredInputsRegistry(),
         resolveOriginalRequest: () => undefined, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
         prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
-        providerRegistry: { getProvider: () => provider as never }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
+        providerRegistry: { getProvider: () => provider as never, modelVariant: async () => provider as never }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const },
         slotManager: { poolSize: () => 2 }, workingDir: directory, logger, sessionUsage: { record: vi.fn() }, costAccumulator });
       const wired = builder.mock.calls.at(-1)?.[0];
       if (!wired?.escalationComplete) throw new Error("escalation seam missing");

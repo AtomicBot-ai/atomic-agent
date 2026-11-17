@@ -213,7 +213,7 @@ export function createRuntimeTurnService(
    * active provider inside `resolveActiveLlmSlice` — for a fusion worker
    * that means silently running on the cloud leg.
    */
-  const assertKnownProvider = (providerId: string | undefined, model?: string): void => {
+  const assertKnownProvider = (providerId: string | undefined, model?: string, origin?: TurnOrigin): void => {
     if (providerId === undefined) {
       if (model !== undefined) {
         throw new Error("a per-turn model needs the provider it runs on (providerId)");
@@ -229,7 +229,13 @@ export function createRuntimeTurnService(
     // ATO-1148: a project's own model is a cloud choice. A local model
     // is one per agent (one server, one loaded GGUF), so a per-turn
     // model on a local link is refused rather than silently ignored.
-    const refusal = perTurnModelRefusal(resolveLlmConfig(getConfig()), providerId, model);
+    // A Fusion turn's role model may be on LM Studio / Ollama (ATO-1560).
+    const refusal = perTurnModelRefusal(
+      resolveLlmConfig(getConfig()),
+      providerId,
+      model,
+      origin === "fusion" ? { localServer: "allow" } : {},
+    );
     if (refusal !== null) throw new Error(refusal);
   };
 
@@ -435,7 +441,7 @@ export function createRuntimeTurnService(
       questions?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
-    assertKnownProvider(runOptions.providerId, runOptions.model);
+    assertKnownProvider(runOptions.providerId, runOptions.model, runOptions.origin);
     // A fusion worker session is throwaway: no recorder, no trace pin, no
     // memory, and — at the end — no save. The parent session's turn
     // owns the durable record of what the worker did.
@@ -828,7 +834,7 @@ export function createRuntimeTurnService(
     }
     // Before the queue, so a bad pin rejects now rather than after
     // waiting behind whatever is running on the session.
-    assertKnownProvider(runOptions.providerId, runOptions.model);
+    assertKnownProvider(runOptions.providerId, runOptions.model, runOptions.origin);
     const origin = runOptions.origin ?? "cli";
     const submission = {
       sessionId: session.id,
