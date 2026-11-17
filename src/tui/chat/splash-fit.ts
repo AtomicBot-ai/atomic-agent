@@ -116,6 +116,15 @@ export const SPLASH_TIPS: readonly SplashTip[] = [
     short: "Hermes import",
     command: "/import",
   },
+  {
+    // Last, so it is the first tip a short window drops. Setup itself
+    // stays lean (the onboarding theme key was turned down in #651), so
+    // the start page right after setup is where the palette is offered.
+    label: "/theme",
+    description: "switch the UI theme",
+    short: "UI theme",
+    command: "/theme",
+  },
 ];
 
 interface LogoMetrics {

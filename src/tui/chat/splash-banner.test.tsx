@@ -41,6 +41,8 @@ describe("SplashBanner", () => {
     expect(frame).toContain("/model");
     expect(frame).toContain("/tasks");
     expect(frame).toContain("/import");
+    // Setup stays lean, so the start page is where the palette is offered.
+    expect(frame).toContain("/theme");
     // The two plain-hotkey rows (Enter, Ctrl+C x2) are gone: every row
     // is now a command a click can put in the composer, and the hint
     // strip carries both keys at the foot of the screen anyway.
