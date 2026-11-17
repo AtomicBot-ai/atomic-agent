@@ -14198,7 +14198,7 @@ function dlCardRows() {
     if (rows.some((r) => r.kind === f.kind && r.id === f.id)) return;
     rows.push({src:'failed', kind: f.kind, id: f.id, state:'failed', error: f.error, n: f.n});
   });
-  return rows;
+  return typeof dlPauseMark === 'function' ? dlPauseMark(rows) : rows;   // ATO-1503 (dl-pause.js)
 }
 
 /** Whose pull the XPULL slot follows — never the setup queue's own. */
@@ -14259,6 +14259,7 @@ function dlCardLine(r) {
   if (r.state === 'queued') return lead + 'Queued';
   if (r.state === 'cancelling') return 'Cancelling…';
   if (r.state === 'starting') return lead + 'Starting…';
+  if (r.state === 'paused' || r.state === 'pausing') return lead + dlPausedLine(r, dlCardPercent(r), dlBytesPair);
   const t = r.track;
   const parts = [];
   if (t.totalBytes > 0) parts.push(dlBytesPair(t.transferredBytes, t.totalBytes));
@@ -14295,7 +14296,8 @@ function dlCardRowHTML(r, i) {
     ? '<button class="btn btn-t xs dlc-retry" data-act="dlc:retry:' + r.n + '">' + ic('retry') + 'Retry</button>'
       + '<button class="iconbtn sm dlc-x" data-act="dlc:dismiss:' + r.n + '" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button>'
     : r.state === 'cancelling' ? ''
-    : '<button class="iconbtn sm dlc-x" data-act="' + esc(r.cancel) + '" aria-label="Cancel the download of ' + esc(name) + '"'
+    : (typeof dlPauseBtnHTML === 'function' ? dlPauseBtnHTML(r, name, ic, esc) : '')
+      + '<button class="iconbtn sm dlc-x" data-act="' + esc(r.cancel) + '" aria-label="Cancel the download of ' + esc(name) + '"'
       + ' title="Cancel download">' + ic('x') + '</button>';
   const line = dlCardLine(r);
   return '<li class="dlc-row is-' + r.state + '" data-dlc-row="' + i + '">'
@@ -14635,6 +14637,7 @@ function dlCardAct(verb) {
     return;
   }
   if (v === 'cancel') { dlCancel(); return; }
+  if (v === 'pause' || v === 'resume') { dlPauseAct(v, BR, renderDlcard); return; }   // ATO-1503
   // ATO-1373: the serving model's projector landed. Restart on a press only; Later leaves it for the next start.
   if (v === 'visionRestart') { void visionRestart(); return; }
   if (v === 'visionLater') { VISION.restart = null; render(); return; }
@@ -18162,6 +18165,7 @@ if (BR) {
   /* The one pull subscriber the flow needs. The LLM pane keeps its own —
      `dlOnPull` is inert unless this flow started the download. */
   BR.onPull((ev) => { if (ev) dlOnPull(ev); });
+  if (typeof dlPauseInit === 'function') dlPauseInit(BR, renderDlcard);   // ATO-1503
   // ATO-1042: the starter model's download and arrival (starter-chat.js).
   if (BR.onStarterModel) BR.onStarterModel((ev) => starterOnEvent(ev));
   if (typeof starterCatchUp === 'function') starterCatchUp();

@@ -270,6 +270,8 @@ import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMeta, curatedMetaIds, spotlightIds } from "./model-catalog.js";
 import { catalogPullWantsProjector, weightsOnDisk, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
+import { DOWNLOAD_CANCELLED, pausablePull, pauseFrame, removePartialDownloads, type PausablePull } from "./download-pause.js";
+import { registerDownloadPauseIpc } from "./download-pause-ipc.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, LEGACY_DESKTOP_STATE_DIR, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
@@ -431,6 +433,8 @@ type DownloadSlot = {
   kind: "weights" | "embedding" | "runtime";
   id: string;
   last: Record<string, unknown> | null;
+  /** ATO-1503: a weights pull's Pause / Resume, and its Cancel that deletes the partial. */
+  ctl?: PausablePull<CliResult>;
 };
 let pull: DownloadSlot | null = null;
 /* Item 2 (voice input): at most one live speech helper, for the whole app.
@@ -1907,16 +1911,29 @@ function wireIpc(client: AgentClient): void {
        projector_only so it does not read as a new model download. */
     const projectorOnly = withProjector && !client.isRemote && weightsOnDisk(join(modelsDirOf(managedDataDirNow()), id));
     A.downloadStarted(id, trigger, projectorOnly);
-    const whole = withProjector ? wholePullProgress(id, projectorOnly) : null;
-    const started = modelsPull(id, (line) => {
-      const parsed = parsePullProgress(line, "weights");
-      const progress = whole ? whole(line, parsed) : parsed;
-      A.downloadProgress(id, progress);
-      pullFrame(slot, { id, line, ...progress });
-    }, withProjector);
-    pull = slot = { ...started, kind: "weights", id, last: null };
+    const modelDir = join(modelsDirOf(managedDataDirNow()), id);
+    /* ATO-1503: pausable. A resume is the same `models pull`, which the agent
+       continues from its partial file; the bar is rebuilt for what is left. */
+    const started: PausablePull<CliResult> = pausablePull<CliResult>((resumed) => {
+      const whole = !withProjector ? null
+        : resumed ? wholePullProgress(id, !client.isRemote && weightsOnDisk(modelDir))
+        : wholePullProgress(id, projectorOnly);
+      return modelsPull(id, (line) => {
+        const parsed = parsePullProgress(line, "weights");
+        const progress = whole ? whole(line, parsed) : parsed;
+        A.downloadProgress(id, progress);
+        pullFrame(slot, { id, line, ...progress });
+      }, withProjector);
+    }, {
+      removePartial: () => { if (!client.isRemote) removePartialDownloads(modelsDirOf(managedDataDirNow()), id); },
+      cancelled: (): CliResult => ({ ok: false, stdout: "", stderr: "", error: DOWNLOAD_CANCELLED }),
+      onPause: () => send("cli:pullPaused", pauseFrame(id, started.state())),
+    });
+    pull = slot = { ...started, kind: "weights", id, last: null, ctl: started };
+    send("cli:pullPaused", pauseFrame(id, started.state()));
     void started.done.then((res) => {
       pull = null;
+      send("cli:pullPaused", pauseFrame(null, null));
       /* `models pull --mmproj` exits 0 when only the projector failed, and says
          so on stderr (src/cli/models-downloads.ts describeProjectorSkipped). */
       const projectorSkipped = withProjector && res.ok && /^note: projector download failed/m.test(res.stderr);
@@ -2105,9 +2122,12 @@ function wireIpc(client: AgentClient): void {
     }
     if (!pull) return false;
     if (pull.kind === "weights") A.downloadCancelRequested();
-    pull.cancel();
+    // ATO-1503: the person's Cancel deletes the partial, as `models downloads cancel` does.
+    if (pull.ctl) pull.ctl.discard();
+    else pull.cancel();
     return true;
   });
+  registerDownloadPauseIpc(ipcMain, { slot: () => (pull?.ctl ? pull : null), quitting: () => quitting });
 
   /* ---- Item 7A: add a model from Hugging Face ------------------------
      The desktop owns exactly two steps the agent exposes nowhere —
