@@ -84,6 +84,8 @@ test('Claude Code model aliases wear the Claude mark', () => {
   assert.equal(img(ctx.modelMark('sonnet', 'xs')), 'claude-color.svg');
   // Not every id that happens to contain the letters.
   assert.equal(ctx.modelLogoKey('magnumopus-7b'), '');
+  assert.equal(ctx.modelLogoKey('magnum-opus-72b'), '');
+  assert.equal(ctx.modelLogoKey('Helsinki-NLP/opus-mt-en-de'), '');
   assert.equal(ctx.modelLogoKey('llama-3.1-8b'), '');
   assert.match(ctx.modelMark('llama-3.1-8b'), /tk-ico--mark/);
 });

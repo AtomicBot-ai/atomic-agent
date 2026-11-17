@@ -1876,8 +1876,9 @@ function modelLogoKey(id) {
   if (s.includes('sonar')) return 'perplexity';
   if (s.includes('hermes')) return 'nous';
   if (s.startsWith('openrouter/')) return 'openrouter';
-  // Claude Code's own aliases ("sonnet" is its preset's default model).
-  if (/(^|[^a-z])(sonnet|opus|haiku)([^a-z]|$)/.test(s)) return 'claude';
+  // Claude Code's own aliases ("sonnet" is its preset's default model): the whole
+  // id, maybe with a version or context suffix, not a word inside another model's id.
+  if (/^(anthropic\/)?(sonnet|opus|haiku)(-[\d.]+)?(\[[^\]]*\])?$/.test(s)) return 'claude';
   return '';
 }
 const PROVIDER_LOGO_KEYS = {

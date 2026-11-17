@@ -30,7 +30,8 @@ function load(WIZ, providerModels) {
     ANX: { providerFailed() {} },
     esc: (s) => String(s),
     providerMark: () => '',
-    wizKindMark: () => '',
+    // The sliced wizKindMark asks it whether a row is a subscription (ATO-1632).
+    subscriptionLogoKey: () => '',
     // 13.11: the provider list's search field, groups and group rows.
     ic: () => '',
     logoHTML: () => '',
