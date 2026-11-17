@@ -22,6 +22,9 @@ export default defineConfig({
       // promptfoo provider helpers and the shape of the regression set;
       // hermetic, the promptfoo runs themselves are `npm run eval:promptfoo`.
       "eval/promptfoo/**/*.test.ts",
+      // The TypeScript SDK (sdk/typescript): its own package, tested here
+      // against a fake sidecar process so it needs no install of its own.
+      "sdk/typescript/src/**/*.test.ts",
     ],
     environment: "node",
     testTimeout: 15_000,

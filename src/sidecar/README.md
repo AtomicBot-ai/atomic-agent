@@ -5,7 +5,7 @@ Owner: src/sidecar/
 
 Owns stdin/stdout transport and host event forwarding. Preserve protocol shapes, request/session ownership and the already-acquired turn lock seam.
 
-Entry point: [main.ts](main.ts). Read the root instruction route and the underlying domain instructions before cross-domain changes.
+Entry point: [main.ts](main.ts). A typed host-side client lives in [sdk/typescript](../../sdk/typescript/README.md); keep its mirrored types in step with `sidecar-events.ts`. Read the root instruction route and the underlying domain instructions before cross-domain changes.
 
 `skill_list` uses the active cloud session's workspace and includes disabled reasons and selected source paths. Independent local sessions retain their existing registry. See [cloud workspace](../runtime/docs/cloud-workspace.md).
 
