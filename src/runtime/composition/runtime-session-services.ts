@@ -53,8 +53,9 @@ export function prepareRuntimeSessionStore(
     });
   }
   // An incognito chat (ATO-586) whose process died before closing it is
-  // deleted now, trace and all. Ones a live window still holds stay.
-  sweepOrphanIncognitoSessions(sessionStore, config.paths.tracesDir, logger);
+  // deleted now, trace and tasks and all (ATO-1547). Ones a live window
+  // still holds stay.
+  sweepOrphanIncognitoSessions(sessionStore, config.paths.tracesDir, logger, config.paths.tasksDbFile);
   // `sessions.sqlite` and the traces beside it are the only state this
   // runtime never shrinks (§"Session retention"). One bounded pass here,
   // opt-in, and wrapped so that a prune can never be the reason a
