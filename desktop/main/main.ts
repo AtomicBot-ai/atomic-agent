@@ -307,6 +307,7 @@ registerArtifactScheme();
 // ATO-556: atomicagent:// links (Add to Atomic Agent buttons): a card, then an install only on a click.
 import { shouldRegisterProtocol, wireDeeplinks } from "./deeplink.js";
 import { reasoningLevelFromWindow, type ReasoningLevel } from "./reasoning-level.js";
+import { followOfflineAnswer, offlineInStateDir, setDesktopOffline } from "./offline-state.js";
 
 const DEV = process.argv.includes("--dev");
 /** `--smoke` boots, waits for first paint, writes a screenshot, and exits. */
@@ -1490,12 +1491,14 @@ function wireIpc(client: AgentClient): void {
     try { return await client.approvalRules(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
   // ATO-1087: Settings › Privacy › Offline mode (renderer/offline-mode.js).
+  // ATO-1085: every answer also sets the shell's own switch (offline-state.ts).
+  const followAnswer = <T>(res: T): T => { followOfflineAnswer(res); return res; };
   ipcMain.handle("agent:offlineMode", async () => {
-    try { return await client.offlineMode(); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+    try { return followAnswer(await client.offlineMode()); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
   ipcMain.handle("agent:offlineModeSet", async (_event, enabled: unknown) => {
     if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
-    try { return await client.offlineMode(enabled); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+    try { return followAnswer(await client.offlineMode(enabled)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
   ipcMain.handle("agent:approvalRuleDelete", async (_event, id: unknown) => {
     if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return { ok: false, error: "invalid rule id" };
@@ -10962,6 +10965,8 @@ async function firstRunProbe(): Promise<void> {
 
 /* Analytics and error reporting, before the agent is spawned (the install id
    is resolved here). Gated live on analytics.enabled; a test run sends nothing. */
+// ATO-1085: before the first event, so an offline start sends nothing at all.
+setDesktopOffline(offlineInStateDir(DESKTOP_STATE_DIR));
 A.initAnalytics({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, freshState: DESKTOP_STATE_WAS_FRESH });
 A.configureDownloads({ stateDir: DESKTOP_STATE_DIR, hostRamGb: () => FAKE_RAM_GB ?? hostRamGb() });
 A.configureSetup({ stateDir: DESKTOP_STATE_DIR });

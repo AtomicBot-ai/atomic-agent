@@ -22,6 +22,11 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
   write happens first; only if it succeeded is `analytics_disabled` sent and
   flushed (2 s at most), and then sending stops and the queue is dropped. A
   failed write changes nothing and sends nothing.
+- Offline mode (ATO-1085): while the agent's `network.offline` is on (read
+  from the desktop state dir's `config.json` at start, then from every
+  `/api/offline-mode` answer) or `ATOMIC_AGENT_OFFLINE=1` is set, nothing is
+  sent: no events, no crash reports, no update check. What was queued when it
+  went on is dropped, not sent later.
 - With analytics off, the analytics code reads no config files.
 - Test and dev runs send nothing and write nothing to the real home: VITEST,
   `NODE_ENV=test|development`, `--dev`, `--smoke*`, `--first-run-probe`,
