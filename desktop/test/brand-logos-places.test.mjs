@@ -137,10 +137,13 @@ test('Studio\'s image models wear their family\'s mark, never a letter, once ren
   assert.equal(img(ctx.simgvLogo({ id: 'x-ai/grok-2-image', name: 'Grok 2 Image' })), 'xai.svg');
   assert.equal(img(ctx.simgvLogo({ id: 'z-ai/glm-image', name: 'GLM Image' })), 'zhipu-color.svg');
   assert.equal(img(ctx.simgvLogo({ id: 'openrouter/some-image', name: 'Some image' })), 'openrouter.svg');
-  const none = ctx.simgvLogo({ id: 'black-forest-labs/flux-1', name: 'FLUX.1', group: 'cloud' });
+  // ATO-1634: FLUX now wears Black Forest Labs; a maker with no mark still gets the badge.
+  assert.equal(img(ctx.simgvLogo({ id: 'black-forest-labs/flux-1', name: 'FLUX.1', group: 'cloud' })), 'bfl.svg');
+  const none = ctx.simgvLogo({ id: 'kwaivgi/kling-image', name: 'Kling Image', group: 'cloud' });
   assert.doesNotMatch(none, /st-mlogo/);
   assert.match(none, /tk-ico--mark/);
-  assert.match(ctx.simgvLogo({ id: 'sdxl-turbo', name: 'SDXL Turbo', group: 'local' }), /<i:cpu>/);
+  assert.equal(img(ctx.simgvLogo({ id: 'sdxl-turbo', name: 'SDXL Turbo', group: 'local' })), 'stability-color.svg');
+  assert.match(ctx.simgvLogo({ id: 'tiny-sd', name: 'Tiny SD', group: 'local' }), /<i:cpu>/);
 });
 
 test('the fit test marks the judge, the local apps and each model, and keeps its words', () => {
@@ -156,7 +159,7 @@ test('the fit test marks the judge, the local apps and each model, and keeps its
   assert.match(R.fitEntryHTML({ supported: true, phase: 'idle', judges, judge: 'ollama' }, 3, ctx, marked), /fit-mark"><span class="logo logo--xs"[^>]*><img src="logos\/ollama\.svg"/);
 });
 
-test('the GitHub webhook preset wears the GitHub mark, the others do not', () => {
+test('the GitHub and Stripe webhook presets wear their marks, the others do not', () => {
   const W = require('../renderer/webhooks.js');
   const st = {
     supported: true, error: null, created: null, confirm: null, busy: new Set(), creating: false, formError: null,
@@ -167,9 +170,10 @@ test('the GitHub webhook preset wears the GitHub mark, the others do not', () =>
   const esc = (s) => String(s);
   const html = W.webhooksHTML(st, { esc, logo: H.logoHTML });
   assert.match(html, /data-act="whk:preset:github"><span class="logo logo--xs"><img src="logos\/github\.svg"/);
-  assert.match(html, /data-act="whk:preset:stripe">Stripe</);
+  assert.match(html, /data-act="whk:preset:stripe"><span class="logo logo--xs"><img src="logos\/stripe\.svg"/);
+  assert.match(html, /data-act="whk:preset:secret">Shared secret</);
   assert.match(html, /data-whk="gh"><span class="logo logo--sm"><img src="logos\/github\.svg"/);
-  assert.match(html, /data-whk="pay"><div class="body">/);
+  assert.match(html, /data-whk="pay"><span class="logo logo--sm"><img src="logos\/stripe\.svg"/);
   assert.doesNotMatch(W.webhooksHTML(st, { esc }), /logos\//, 'no logo dep: no marks');
 });
 
@@ -185,6 +189,6 @@ test('Composio\'s GitHub mention and the plugins pane wear their marks', () => {
   const P = require('../renderer/plugins-pane.js');
   assert.deepEqual(P.plgLogoKeys({ format: 'claude', sourceLabel: 'folder /x' }), ['claudecode']);
   assert.deepEqual(P.plgLogoKeys({ format: 'codex', sourceLabel: 'git https://github.com/a/b' }), ['codex', 'github']);
-  assert.deepEqual(P.plgLogoKeys({ format: 'cursor', sourceLabel: 'marketplace local' }), []);
+  assert.deepEqual(P.plgLogoKeys({ format: 'cursor', sourceLabel: 'marketplace local' }), ['cursor']);
   assert.deepEqual(P.plgLogoKeys({ format: null, sourceLabel: 'git git@github.com:a/b.git' }), ['github']);
 });

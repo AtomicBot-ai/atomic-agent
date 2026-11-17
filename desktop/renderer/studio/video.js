@@ -1248,7 +1248,7 @@
       if (!m) return '<button class="studio-model" data-vact="picker">Pick a model</button>';
       const local = isLocal(m);
       const meta = local ? 'On ' + machine() + (m.local && m.local.developer ? ' · ' + m.local.developer : '') : 'via OpenRouter';
-      return '<button class="studio-model' + (S.pickerOpen ? ' open' : '') + '" data-vact="picker" aria-haspopup="listbox" aria-expanded="' + S.pickerOpen + '">'
+      return '<button class="studio-model' + (S.pickerOpen ? ' open' : '') + '" data-vact="picker" aria-haspopup="listbox" aria-expanded="' + S.pickerOpen + '">' + vMark(m)
         + '<span class="studio-sp"><span class="studio-mname">' + escHtml(m.name) + '</span><span class="studio-mmeta">' + escHtml(meta) + '</span></span>'
         + '<span class="studio-tag ' + (local ? 'local' : 'cloud') + '">' + icon(local ? 'cpu' : 'cloud') + (local ? escHtml(machineCap()) : 'Cloud') + '</span>'
         + icon('chevD') + '</button>';
@@ -1297,11 +1297,20 @@
       return h + (follow ? '<div class="studio-video-ds studio-video-follow">' + icon('info') + escHtml(follow) + '</div>' : '');
     }
 
+    /* ATO-1634: the model's maker mark (renderer.js modelLogoKey / providerLogoKey / logoHTML): its family by id
+       or name, else OpenRouter's vendor prefix ("bytedance/…", "minimax/…"); '' for none or without renderer.js. */
+    function vMark(m) {
+      if (!m || typeof logoHTML !== 'function' || typeof modelLogoKey !== 'function') return '';
+      const id = String(m.id || ''), vendor = id.includes('/') ? id.split('/')[0] : '';
+      const key = modelLogoKey(id) || modelLogoKey(m.name) || (vendor && typeof providerLogoKey === 'function' ? providerLogoKey(vendor) : '');
+      return logoHTML(key, 'xs', 'image');
+    }
+
     function optRow(m, right, disabled, extra, dim) {
       const on = m.id === S.form.modelId;
       const labels = modelLabels(m, S.form.mode).map((l) => '<span class="studio-tag ' + l.cls + '">' + escHtml(l.text) + '</span>').join('');
       return '<button class="studio-opt' + (on ? ' on' : '') + (disabled || dim ? ' dim' : '') + '" role="option" aria-selected="' + on + '"'
-        + (disabled ? ' disabled' : '') + ' data-vact="model" data-v="' + escHtml(m.id) + '">'
+        + (disabled ? ' disabled' : '') + ' data-vact="model" data-v="' + escHtml(m.id) + '">' + vMark(m)
         + '<span class="studio-sp"><span class="studio-mname">' + escHtml(m.name) + '</span>'
         + '<span class="studio-mmeta">' + extra + labels + '</span></span>'
         + (right ? '<span class="studio-price">' + escHtml(right) + '</span>' : '') + '</button>';

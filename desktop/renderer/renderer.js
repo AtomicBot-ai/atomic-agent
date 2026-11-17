@@ -1844,7 +1844,7 @@ const MARK_COLOR = '<svg width="16" height="16" viewBox="0 0 64 64" aria-hidden=
    from aimlapi.com), shipped as local files under renderer/logos/ — the CSP
    allows img-src 'self' only. Always drawn on a white round badge (.logo) so a
    black mark stays visible in the dark theme; never recoloured. Anything with
-   no mark (llama.cpp, a custom OpenAI-compatible endpoint, local-llama) gets
+   no mark (a custom OpenAI-compatible endpoint) gets
    the server icon for a provider and the CPU icon for a model instead — never
    a monogram. */
 const LOGO_FILES = {
@@ -1856,6 +1856,15 @@ const LOGO_FILES = {
   ollama:'ollama.svg', lmstudio:'lmstudio.svg', huggingface:'huggingface-color.svg', nvidia:'nvidia-color.svg', zhipu:'zhipu-color.svg',
   codex:'codex-color.svg', claudecode:'claudecode-color.svg', hermes:'hermesagent.svg', openclaw:'openclaw-color.svg', github:'github.svg',
   atomicchat:'atomicchat.png',
+  // ATO-1634: the brands named in Connections, the MCP catalog, the provider list, Webhooks, Plugins and Studio.
+  telegram:'telegram.svg', discord:'discord.svg', ntfy:'ntfy.svg', composio:'composio.png', monid:'monid.svg', exa:'exa-color.svg',
+  slack:'slack.svg', gmail:'gmail.png', notion:'notion.svg', linear:'linear.svg', playwright:'playwright.svg', context7:'context7.png',
+  firecrawl:'firecrawl-color.svg', apify:'apify.svg', brightdata:'brightdata.png', tavily:'tavily-color.svg', brave:'brave-color.svg',
+  wandb:'wandb-color.svg', lemonade:'lemonade.png', llamacpp:'llamacpp.png', azure:'azure-color.svg', bedrock:'bedrock-color.svg',
+  microsoft:'microsoft-color.svg', alibabacloud:'alibabacloud-color.svg', meta:'meta-color.svg', baai:'baai.svg', jina:'jina.svg',
+  nomic:'nomic.svg', stripe:'stripe.svg', svix:'svix.png', cloudflare:'cloudflare-color.svg', cursor:'cursor.svg', bfl:'bfl.svg',
+  bytedance:'bytedance-color.svg', stability:'stability-color.svg', recraft:'recraft.svg', ideogram:'ideogram.svg',
+  minimax:'minimax-color.svg', lightricks:'lightricks.svg', krea:'krea.svg',
 };
 /** Model id → the family whose mark it wears ('' when there is none). */
 function modelLogoKey(id) {
@@ -1873,6 +1882,21 @@ function modelLogoKey(id) {
   if (s.includes('mistral') || s.includes('devstral') || s.includes('magistral') || s.includes('codestral')) return 'mistral';
   if (s.includes('grok')) return 'xai';
   if (s.includes('kimi')) return 'moonshot';
+  // ATO-1634: more families. Short names match as whole words, so "dolphin" is not Phi and "swan" is not Wan.
+  if (!s.includes('hermes') && !/local-llama|llama\.cpp|llama-server/.test(s) && (/(^|[\/_-])(code)?llama([\d._-]|$)|meta-llama|(^|\/)muse([\d._-]|$)/.test(s))) return 'meta';
+  if (/(^|[\/_-])phi-?\d/.test(s)) return 'microsoft';
+  if (/(^|[\/_-])bge([\d._-]|$)|(^|\/)baai\//.test(s)) return 'baai';
+  if (s.includes('jina')) return 'jina';
+  if (s.includes('nomic')) return 'nomic';
+  if (/(^|[\/_-])flux([\d._-]|$)|black-forest-labs/.test(s)) return 'bfl';
+  if (s.includes('seedream') || s.includes('seedance') || s.startsWith('bytedance')) return 'bytedance';
+  if (s.includes('stable-diffusion') || s.includes('sdxl') || s.startsWith('stabilityai/') || s.startsWith('stability-ai/')) return 'stability';
+  if (s.includes('recraft')) return 'recraft';
+  if (s.includes('ideogram')) return 'ideogram';
+  if (s.includes('minimax') || s.includes('hailuo')) return 'minimax';
+  if (/(^|[\/_-])ltx/.test(s) || s.startsWith('lightricks/')) return 'lightricks';
+  if (/(^|[\/_-])wan[\d._-]/.test(s) || s.startsWith('wan-ai/')) return 'alibabacloud';
+  if (s.includes('krea')) return 'krea';
   if (s.includes('sonar')) return 'perplexity';
   if (s.includes('hermes')) return 'nous';
   if (s.startsWith('openrouter/')) return 'openrouter';
@@ -1887,9 +1911,22 @@ const PROVIDER_LOGO_KEYS = {
   'lm studio':'lmstudio', 'lm studio (local)':'lmstudio', openai:'openai', huggingface:'huggingface', 'hugging face':'huggingface',
   github:'github', 'claude code':'claudecode', 'claude-code':'claudecode', codex:'codex', hermes:'hermes', openclaw:'openclaw',
   'atomic-chat':'atomicchat', 'atomic chat':'atomicchat', 'atomic chat (local)':'atomicchat',
-  dashscope:'qwen', 'qwen (dashscope)':'qwen', 'dashscope (qwen)':'qwen',
+  // ATO-1634: DashScope is Alibaba Cloud's service, so it wears Alibaba Cloud's mark (Qwen models keep Qwen's).
+  dashscope:'alibabacloud', 'qwen (dashscope)':'alibabacloud', 'dashscope (qwen)':'alibabacloud',
+  wandb:'wandb', 'w&b inference':'wandb', 'w&b inference (coreweave)':'wandb', lemonade:'lemonade', 'lemonade (local)':'lemonade',
+  'llamacpp-server':'llamacpp', 'llama-server':'llamacpp', 'llama.cpp':'llamacpp', 'llama.cpp server':'llamacpp',
+  'azure-openai':'azure', 'azure openai':'azure', bedrock:'bedrock', 'amazon bedrock':'bedrock', 'foundry-local':'microsoft', 'foundry local':'microsoft',
+  // Integrations and MCP servers by name (also the tool cards of an MCP server so named, toolLogoKey).
+  telegram:'telegram', discord:'discord', ntfy:'ntfy', composio:'composio', monid:'monid', exa:'exa', slack:'slack', gmail:'gmail',
+  notion:'notion', linear:'linear', playwright:'playwright', context7:'context7', firecrawl:'firecrawl', apify:'apify',
+  brightdata:'brightdata', 'bright data':'brightdata', tavily:'tavily', brave:'brave', 'brave-search':'brave', 'brave search':'brave',
+  stripe:'stripe', svix:'svix', cloudflared:'cloudflare', cursor:'cursor',
+  // Studio: OpenRouter's maker slugs (images-view.js simgvLogoKey reads the vendor prefix).
+  'black-forest-labs':'bfl', bytedance:'bytedance', 'bytedance-seed':'bytedance', stabilityai:'stability', 'stability-ai':'stability',
+  recraft:'recraft', ideogram:'ideogram', minimax:'minimax', 'meta-llama':'meta', lightricks:'lightricks', 'wan-ai':'alibabacloud',
+  'x-ai':'xai', 'z-ai':'zhipu', google:'google', krea:'krea',
 };
-/** Provider id or label → its mark ('' for llama.cpp, local-llama and custom endpoints). */
+/** Provider id or label → its mark ('' for custom endpoints; local-llama wears llama.cpp through its kind). */
 function providerLogoKey(p) {
   const s = String(p || '').toLowerCase().trim();
   return PROVIDER_LOGO_KEYS[s] || PROVIDER_LOGO_KEYS[s.split(' (')[0]] || PROVIDER_LOGO_KEYS[s.split(/[\s(]/)[0]] || '';
@@ -2087,7 +2124,7 @@ const PAL = [
     ['download','Save report for support','','','dump'],
     ['flag','Report an issue…','','/bug','help.report'],
     // ATO-1465: the community server, the same act as Help › Join Discord and the sidebar button.
-    ['discord','Join Discord','','','help.discord'],
+    ['logo:discord','Join Discord','','','help.discord'],   // ATO-1634: Discord's mark
     ['chat','Talk to the team ($50 credits)…','','/feedback','help.feedback'],   // ATO-1467
     ['x','Quit','','⌘ Q','quit'],
   ]],
@@ -2525,7 +2562,7 @@ function renderSidebar() {
         + '<span class="sb-settings-lb">Settings</span>'
       + '</button>'
       // ATO-1465: our Discord, one click from anywhere (help.discord, counted as a ui_action).
-      + '<button class="iconbtn sb-discord" data-act="help.discord" title="Join Discord" aria-label="Join Discord">' + ic('discord') + '</button></div>'
+      + '<button class="iconbtn sb-discord" data-act="help.discord" title="Join Discord" aria-label="Join Discord">' + (logoHTML('discord', 'xs', 'discord') || ic('discord')) + '</button></div>'
     ;
   if (keepScroll) {
     const lists = $('#sidebar').querySelector('.sb-lists');
@@ -6218,10 +6255,13 @@ function settingsNavHTML(current) {
 }
 /* A section with more than one pane (Connections) switches between them
    with a segmented control beside its title. */
+/* ATO-1634: the brand a Connections pane is named after (LOGO_FILES key); Phone push sends through ntfy. */
+const SETTINGS_PANE_LOGOS = {telegram:'telegram', discord:'discord', push:'ntfy', composio:'composio', monid:'monid'};
 function settingsSubnavHTML(sec, cur) {
   if (sec[3].length < 2) return '';
   return '<span class="tk-seg set-subseg" role="tablist" aria-label="' + esc(sec[1]) + '">'
     + sec[3].map((p) => '<button class="' + (p === cur ? 'on' : '') + '" role="tab" aria-selected="' + (p === cur) + '" data-act="settings:' + p + '">'
+      + (SETTINGS_PANE_LOGOS[p] ? logoHTML(SETTINGS_PANE_LOGOS[p], 'xs') : '')   // ATO-1634
       + esc((SETTINGS_TABS.find((t) => t[0] === p) || [p, p])[1]) + '</button>').join('')
     + '</span>';
 }
@@ -6655,7 +6695,7 @@ function generalPane() {
       + nameChatsRowHTML()
       + nextStepRowHTML()   // ATO-1096 (next-step.js)
       // ATO-328: the Exa key for web search, the field the chat card offers too (exa-key.js).
-      + exaKeySettingsRowHTML(exaKeyState('settings'), {esc, ic})
+      + exaKeySettingsRowHTML(exaKeyState('settings'), {esc, ic, logo: logoHTML})
       // ATO-229: automatic update checks, the version, Check now (app-update.js).
       + appUpdRowsHTML()
     + '</div>'
@@ -23140,7 +23180,7 @@ function exaKeyTurnHTML(m) {
   const st = exaKeyState('chat');
   st.saved = EXA.savedFor === m.id || st.restartOwed;
   return '<div class="turn tk-step exak-turn" id="exak-' + m.id + '"><div></div><div>'
-    + exaKeyCardHTML(m.keyReq, st, {esc, ic}) + '</div></div>';
+    + exaKeyCardHTML(m.keyReq, st, {esc, ic, logo: logoHTML}) + '</div></div>';
 }
 /* Is a key there already? <stateDir>/.env and this app's environment, by name. */
 async function exaKeyRefresh() {
@@ -27054,7 +27094,8 @@ function mcpAddModalHTML() {
 }
 /* A catalog card's mark: the brand logo where the app has one, else the first letter. */
 function mcpCatalogMark(e) {
-  const logo = e && e.id === 'github' && typeof logoHTML === 'function' ? logoHTML('github', '') : '';
+  const key = e && typeof MCP_CATALOG_LOGOS !== 'undefined' ? MCP_CATALOG_LOGOS[e.id] : '';   // ATO-1634 (mcp-catalog.js)
+  const logo = key && typeof logoHTML === 'function' ? logoHTML(key, '') : '';
   return logo || '<span class="sd-cat-letter">' + esc(String((e && e.title) || '?').slice(0, 1)) + '</span>';
 }
 /** The add box's examples: a command, an address, and JSON laid out on lines the way a README shows it. */
@@ -30475,7 +30516,7 @@ function telegramTab() {
   else if (!hasToken) {
     // setup-state.ts not_connected (no token). ST-28: one card, one action.
     body += '<div class="tk-card pad sd-tgcard sd-center">'
-      + '<span class="tk-ico tk-ico--lg tk-ico--blue">' + ic('send') + '</span>'
+      + (logoHTML('telegram', 'lg', 'send') || '<span class="tk-ico tk-ico--lg tk-ico--blue">' + ic('send') + '</span>')   // ATO-1634
       + '<h3 class="sd-title">Connect Telegram</h3>'
       + '<p>Create a bot with @BotFather, copy the token, and paste it here. The token is stored only on this machine.</p>'
       + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token</button></div>';
@@ -30513,7 +30554,7 @@ function tgStatusHTML(enabled, owner) {
     : 'Waiting for a restart: the agent loads the token and these settings when it starts. Press Restart agent below; the app stays open.';
   // The tab is read on entry and after its own writes; Check again reads it once more (the `R` key), e.g. after pairing elsewhere.
   return '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
-    + '<span class="tk-ico tk-ico--blue">' + ic('send') + '</span>'
+    + (logoHTML('telegram', '', 'send') || '<span class="tk-ico tk-ico--blue">' + ic('send') + '</span>')   // ATO-1634
     + '<div class="body"><div class="t">Telegram</div><div class="d">' + esc(line) + '</div></div>'
     + '<span class="tk-chip tk-chip--sm ' + (on ? 'tk-chip--green' : 'tk-chip--amber') + '" data-tg-status="' + (on ? 'connected' : 'not-connected') + '">'
       + (on ? 'Connected' : 'Not connected') + '</span>'
@@ -31015,7 +31056,7 @@ const DC = createDiscordSettings({
   agentGen: () => AGENT_GEN,
 });
 function discordVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'discord'; }
-function discordTab() { return discordPaneHTML(DC.state, {owed:DC.restartOwed(), stale:DC.state.msgGen !== AGENT_GEN}, {esc, ic}); }
+function discordTab() { return discordPaneHTML(DC.state, {owed:DC.restartOwed(), stale:DC.state.msgGen !== AGENT_GEN}, {esc, ic, logo: logoHTML}); }
 function dcRepaint() { if (discordVisible()) paneRepaintKeepFocus(discordTab()); }
 function discordTabEntered() { DC.entered().then(dcRepaint); dcRepaint(); }
 async function discordAct(what) {
