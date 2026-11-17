@@ -27312,13 +27312,19 @@ function llmManaged() { return llmLocalModels().managed || {}; }
 function llmEmbCfg() { return llmLocalModels().embeddings || {}; }
 /* src/config/resolve-llm-api-key.ts: the entry's own key, its
    apiKeyEnvVar, else the kind's shared variable(s); a subscription-CLI
-   entry authenticates through its CLI. */
+   entry authenticates through its CLI. ATO-1550: a server on another
+   computer on this network never gets the shared compat variables
+   (ATO-1066, agent-cli.ts readsSharedCompatKey), so they do not count as
+   its key either. */
 function llmKeyEnvNames(p) {
   if (p.apiKeyEnvVar) return [p.apiKeyEnvVar];
   if (p.kind === 'openrouter') return ['OPENROUTER_API_KEY'];
   if (p.kind === 'aimlapi') return ['AIMLAPI_API_KEY'];
   if (p.kind === 'gemini') return ['GEMINI_API_KEY'];
-  if (p.kind === 'openai-compatible' || p.kind === 'qwen-openai-compatible') return ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'];
+  if (p.kind === 'openai-compatible' || p.kind === 'qwen-openai-compatible') {
+    if (typeof lanIsOtherComputerUrl === 'function' && lanIsOtherComputerUrl(p.baseUrl)) return [];
+    return ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'];
+  }
   return [];
 }
 function llmKeyNamesPresent() { return new Set([].concat(LLMP.envKeys || [], LLMP.dotenvKeys || [])); }
