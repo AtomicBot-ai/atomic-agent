@@ -36,6 +36,7 @@ import type { McpServerConfig } from "../mcp/mcp-types.js";
 import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
 import { createHttpServer, type HttpServerHandle } from "./http-server.js";
+import type { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { buildRouteTable } from "./route-table.js";
 
 /**
@@ -141,6 +142,8 @@ export interface HarnessOptions {
   webhooks?: Record<string, WebhookConfig>;
   /** MCP servers persisted into `<stateDir>/config.json` before boot. */
   mcpServers?: McpServerConfig[];
+  /** ATO-1492: wired as `onMcpElicitation` and handed to the server, as serve does. */
+  elicitations?: McpElicitationBroker;
 }
 
 export interface Harness {
@@ -231,6 +234,7 @@ export async function startTestHarness(
         approvalBus.publish(request);
         options.onApprovalRequest?.(request);
       },
+      ...(options.elicitations ? { onMcpElicitation: options.elicitations } : {}),
     },
     overrides: {
       browserBackend: new FakeBrowserBackend(),
@@ -256,6 +260,7 @@ export async function startTestHarness(
     ),
     approvalBus,
     completionRegistry,
+    ...(options.elicitations ? { elicitations: options.elicitations } : {}),
   });
 
   return {

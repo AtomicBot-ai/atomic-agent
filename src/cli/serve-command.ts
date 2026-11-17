@@ -1,6 +1,7 @@
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
+import { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
 import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
@@ -71,6 +72,13 @@ export async function serveCommand(args: string[]): Promise<number> {
 
   const approvalBus = new ApprovalBus();
   const completionRegistry = new CompletionRegistry();
+  // ATO-1492: MCP servers' questions to the person ("confirm?", a small
+  // form). A window shows them only when it opens /api/events with
+  // `?elicitation=1`; with none open the surface is `none` and every
+  // question is declined at once, which is what an unattended serve
+  // must do. Never routed through the approval gate: that one can
+  // answer by itself, a server's question must not be.
+  const elicitations = new McpElicitationBroker();
   // ATO-646: what `GET /metrics` reports, folded in memory from the
   // runtime's metric samples.
   const metricsRegistry = new PrometheusRegistry();
@@ -117,6 +125,7 @@ export async function serveCommand(args: string[]): Promise<number> {
           if (live) approvalBus.prune((r) => live.approvals.isPending(r.approvalId));
           approvalBus.publish(request);
         },
+        onMcpElicitation: elicitations,
       },
     });
     handle = await createHttpServer({
@@ -127,6 +136,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       routes: buildRouteTable({ metricsRegistry }),
       approvalBus,
       completionRegistry,
+      elicitations,
     });
     const authNote = parsed.apiKey ? "auth=bearer" : "auth=none";
     process.stderr.write(
@@ -195,6 +205,7 @@ export async function serveCommand(args: string[]): Promise<number> {
     return 1;
   } finally {
     orphanWatch?.stop();
+    elicitations.closeAll();
     // The public address goes first, before the API it fronts.
     if (tunnel) await tunnel.stop().catch(() => {});
     if (handle) await handle.close();

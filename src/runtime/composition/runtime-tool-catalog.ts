@@ -579,8 +579,8 @@ export async function connectRuntimeMcpCatalog(input: {
           server: "*",
         })
       : undefined,
-    // ATO-704: no host wires a port yet, so servers see no elicitation
-    // capability until one does (see docs/client.md).
+    // ATO-704 / ATO-1492: only a host that wires a port (serve does)
+    // makes servers see the elicitation capability (see docs/client.md).
     ...(options.handlers?.onMcpElicitation
       ? { elicitationPort: options.handlers.onMcpElicitation }
       : {}),

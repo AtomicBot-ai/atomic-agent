@@ -5,6 +5,7 @@ import type { ApprovalBus } from "./approval-bus.js";
 import type { CompletionRegistry } from "./completion-registry.js";
 import type { UndeliveredSteerStore } from "./undelivered-steers.js";
 import type { AuthThrottle } from "./auth-throttle.js";
+import type { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { secretEquals } from "./secret-equal.js";
 
 /**
@@ -31,6 +32,12 @@ export interface HandlerContext {
    * `GET /api/sessions/{id}/steer`.
    */
   undeliveredSteers: UndeliveredSteerStore;
+  /**
+   * ATO-1492: open MCP elicitation questions (a server asking the person
+   * to confirm or fill a small form). Set only by a host that wired the
+   * broker into the runtime as `onMcpElicitation` (serve does).
+   */
+  elicitations?: McpElicitationBroker;
 }
 
 export type HttpHandler = (
