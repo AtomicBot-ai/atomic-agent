@@ -30,6 +30,7 @@ function load(WIZ, providerModels) {
     ANX: { providerFailed() {} },
     esc: (s) => String(s),
     providerMark: () => '',
+    wizKindMark: () => '',
     // 13.11: the provider list's search field, groups and group rows.
     ic: () => '',
     logoHTML: () => '',

@@ -1876,6 +1876,8 @@ function modelLogoKey(id) {
   if (s.includes('sonar')) return 'perplexity';
   if (s.includes('hermes')) return 'nous';
   if (s.startsWith('openrouter/')) return 'openrouter';
+  // Claude Code's own aliases ("sonnet" is its preset's default model).
+  if (/(^|[^a-z])(sonnet|opus|haiku)([^a-z]|$)/.test(s)) return 'claude';
   return '';
 }
 const PROVIDER_LOGO_KEYS = {
@@ -1886,6 +1888,9 @@ const PROVIDER_LOGO_KEYS = {
   'nous research':'nous', novita:'novita', 'novita ai':'novita', ollama:'ollama', 'ollama (local)':'ollama', lmstudio:'lmstudio',
   'lm studio':'lmstudio', 'lm studio (local)':'lmstudio', openai:'openai', huggingface:'huggingface', 'hugging face':'huggingface',
   github:'github', 'claude code':'claudecode', 'claude-code':'claudecode', codex:'codex', hermes:'hermes', openclaw:'openclaw',
+  pi:'pi', 'oh-my-pi':'ohmypi',
+  // The subscription rows (KIND_ROWS): the agent runs on the CLI's plan, so it wears the CLI's mark.
+  'claude-cli':'claudecode', 'codex-cli':'codex', 'claude code subscription':'claudecode', 'codex subscription':'codex',
   'atomic-chat':'atomicchat', 'atomic chat':'atomicchat', 'atomic chat (local)':'atomicchat',
   dashscope:'qwen', 'qwen (dashscope)':'qwen', 'dashscope (qwen)':'qwen',
 };
@@ -15920,7 +15925,7 @@ function obWizardHTML() {
       '<button class="prow' + (n === cur ? ' on' : '') + '"'
       + ' data-obwiz="' + n + '" tabindex="' + (n === cur ? '0' : '-1')
       + '" aria-selected="' + (n === cur ? 'true' : 'false') + '">'
-      + providerMark(k.custom ? '' : k.id)
+      + wizKindMark(k)
       + '<span class="col"><span class="nm">' + esc(k.label.split(' (')[0]) + '</span>'
       + '<span class="ds">' + esc(OB_WIZ_BLURB[k.id] || (k.baseUrl ? hostOf(k.baseUrl) : k.kind)) + '</span></span>'
       + (k.id === 'atomic-chat' && OB_ATOMIC_CHAT.running ? '<span class="ann lit">Running</span>' : '')
@@ -15965,7 +15970,7 @@ function obWizardHTML() {
   if (k.subscriptionCli) {
     return '<div class="ob-wiz">'
       + '<div class="ob-kicker">Subscription</div>'
-      + '<div class="ob-h">' + providerMark(k.id) + esc(wizService(k)) + '</div>'
+      + '<div class="ob-h">' + wizKindMark(k) + esc(wizService(k)) + '</div>'
       + wizSubscriptionLines(k).map((l) => wizSubLineHTML(l, 'div', 'is-warn')).join('')
       + (WIZ.error ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(WIZ.error) + '</span></div>'
           + (wizErrDetail() ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '') : '')
@@ -22114,7 +22119,8 @@ const WIZ_KIND_POPULAR = ['openrouter', 'gemini', 'aimlapi', 'anthropic'];
 function wizKindKey(k) { return !k ? '' : k.lan ? 'lan' : k.custom ? 'custom' : k.id; }
 /** A provider row's mark: a subscription wears its CLI's (Claude Code, Codex), a custom address the server icon. */
 function wizKindMark(k, size) {
-  if (k && k.subscriptionCli) return logoHTML(k.subscriptionCli === 'claude' ? 'claudecode' : 'codex', size) || providerMark('', size);
+  const sub = subscriptionLogoKey(k);
+  if (sub) return logoHTML(sub, size, 'server');
   return providerMark(!k || k.custom ? '' : k.id, size);
 }
 /** A provider row's plain name ("OpenRouter", "Claude Code subscription"). */
@@ -22183,7 +22189,7 @@ function wizardHTML() {
       '<button class="btn btn-g xs" data-act="wiz:cancel">Cancel</button>');
   }
   const k = WIZ.row;
-  const lead = providerMark(k.custom ? '' : k.id, 'sm');
+  const lead = wizKindMark(k, 'sm');
   const verifying = WIZ.phase === 'verifying';
   const unchecked = WIZ.uncheckedFor;
   /* Soft Tactile (MP-06…09): the field takes the tone of the line under it —
@@ -27972,10 +27978,21 @@ function llmMsgHTML(text) {
     (m, pre, c) => pre + (/^$|[.!?…]\s+$/.test(pre) ? c.toUpperCase() : c)).replace(/^[a-z]/, (c) => c.toUpperCase());
   return '<div class="tk-notice ' + (bad ? 'tk-notice--red' : 'llm-msg') + '">' + ic(bad ? 'alert' : 'info') + '<span class="grow">' + esc(shown) + '</span></div>';
 }
-/* A provider entry's mark: its id's logo, else its kind's, else the server icon. */
+/* A provider entry's mark: a subscription entry wears its CLI's (Claude Code,
+   Codex) whatever its id; else its id's logo, else its kind's, else the server icon. */
 function llmProviderMark(p, size) {
   if (!p) return providerMark('', size);
+  const sub = subscriptionLogoKey(p);
+  if (sub) return logoHTML(sub, size, 'server');
   return providerMark(providerLogoKey(p.id) ? p.id : (p.kind || p.id), size);
+}
+/** 'claudecode' or 'codex' for a subscription entry or row (`subscriptionCli` a name or {cli}), '' otherwise. */
+function subscriptionLogoKey(p) {
+  if (!p) return '';
+  const cli = typeof p.subscriptionCli === 'string' ? p.subscriptionCli : p.subscriptionCli && p.subscriptionCli.cli;
+  if (!cli && p.kind !== 'subscription-cli') return '';
+  const name = String(cli || p.id || '').toLowerCase();
+  return name.includes('codex') ? 'codex' : name.includes('claude') ? 'claudecode' : '';
 }
 /* A local catalogue model's human name ("Gemma 4 E4B"), else its id. */
 function llmModelName(m) {
