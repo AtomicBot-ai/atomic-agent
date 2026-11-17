@@ -73,6 +73,22 @@ export function clampRowsForLegacyConhost(
 }
 
 /**
+ * ATO-249: the mouse-reporting default for this host. The classic
+ * conhost does not deliver VT mouse reports reliably, and with reporting
+ * on it also stops turning the wheel into arrow keys, so the wheel no
+ * longer scrolls the chat either. There reporting starts off; `--mouse`
+ * and `/mouse on` still turn it on, and every other host keeps the
+ * configured value. Windows Terminal, VS Code and mintty are not a
+ * legacy conhost (see `isLegacyConhost`).
+ */
+export function mouseDefaultForHost(
+  configured: boolean,
+  options: LegacyConhostOptions = {},
+): boolean {
+  return isLegacyConhost(options) ? false : configured;
+}
+
+/**
  * The one-time startup line for the transcript, or `null` off a legacy
  * conhost. Worded as a recommendation, not an error: the guard already
  * has the rendering handled — this is where the operator learns that a
@@ -86,6 +102,7 @@ export function legacyConhostStartupHint(
   if (!isLegacyConhost(options)) return null;
   return (
     "Tip: this is the classic Windows console. The UI works here, but " +
-    "looks better in Windows Terminal (run `wt`)."
+    "looks better in Windows Terminal (run `wt`). The mouse is off here " +
+    "and works in Windows Terminal; `/mouse on` tries it anyway."
   );
 }
