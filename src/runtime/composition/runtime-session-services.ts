@@ -6,6 +6,7 @@ import { WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
+import type { FileCheckpointStore } from "../../tools/os/fs/fs-checkpoint-store.js";
 import type { createRuntimeTraces } from "./runtime-traces.js";
 import { sweepOrphanIncognitoSessions } from "../incognito-sessions.js";
 
@@ -103,6 +104,7 @@ export function installRuntimeSessionDelete(
   dropRecorder: ReturnType<typeof createRuntimeTraces>["dropRecorder"],
   shellJobs: Pick<ShellJobRegistry, "endSession">,
   outputSpill?: Pick<ToolOutputSpill, "removeSession">,
+  fileCheckpoints?: Pick<FileCheckpointStore, "removeSession">,
 ) {
   // Drop a session's trace recorder — and stop its detached shell jobs,
   // kept ones included — when the session itself is deleted, so the map
@@ -116,10 +118,17 @@ export function installRuntimeSessionDelete(
     // The full outputs its clipped results were saved to (ATO-663).
     // Best effort and never throws.
     outputSpill?.removeSession(id);
+    // The copies of files taken before the chat's edits (ATO-1501): they
+    // can hold what the user's files said before, so they leave with the
+    // chat instead of waiting for the 30-day sweep. Best effort, async,
+    // and never throws into the delete.
+    if (fileCheckpoints) {
+      void Promise.resolve()
+        .then(() => fileCheckpoints.removeSession(id))
+        .catch(() => undefined);
+    }
     deleteSession(id);
   };
-
-
 }
 
 export function createRuntimeSessionFactories(
