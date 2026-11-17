@@ -154,7 +154,8 @@ function chatArtifactSlotHTML(key, opts) {
       + artIcon('file') + '<span>' + e(String(o.path).split(/[\\/]/).pop() || o.path) + '</span></button>'
     : '';
   return '<div class="chat-art' + (st.state === 'ok' ? '' : ' loading') + '" data-art="' + e(key) + '">'
-    + '<div class="chat-art-bar">' + artIcon('globe') + '<span class="chat-art-title">' + e(title) + '</span>' + file + '</div>'
+    + '<div class="chat-art-bar">' + artIcon('globe') + '<span class="chat-art-title">' + e(title) + '</span>' + file
+      + (o.path && typeof publishSiteButtonHTML === 'function' ? publishSiteButtonHTML(o.path, e) : '') + '</div>'   // ATO-594 (publish-site.js)
     + '<div class="chat-art-box" data-chat-art="' + e(key) + '" data-morph-keep="art:' + e(key) + '"></div>'
     + '</div>';
 }
