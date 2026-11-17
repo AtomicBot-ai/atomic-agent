@@ -701,6 +701,27 @@ The other client cannot show Atomic Agent's approval prompt, so with `--allow-ex
 </details>
 
 <details>
+<summary><b>ACP: use Atomic Agent as the agent in Zed, JetBrains or Neovim</b></summary>
+
+`atag acp` runs Atomic Agent as an [Agent Client Protocol](https://agentclientprotocol.com) server over stdio. The editor starts it and shows its replies, tool calls and plan in its own agent panel; approval prompts appear there as permission buttons.
+
+Zed, in `settings.json`:
+
+```json
+{ "agent_servers": { "Atomic Agent": { "type": "custom", "command": "atag", "args": ["acp"] } } }
+```
+
+JetBrains IDEs (AI Chat, "Add Custom Agent"), in `~/.jetbrains/acp.json`, with the full path to the binary:
+
+```json
+{ "agent_servers": { "Atomic Agent": { "command": "/full/path/to/atag", "args": ["acp"] } } }
+```
+
+The agent uses your configured model, tools, memory, skills and approval level, with the editor's project folder as the working folder. `atag acp --setup` runs first-time setup in a terminal; editors that support terminal sign-in offer it as the agent's auth method. Not yet supported: reopening an earlier chat (`session/load`), MCP servers passed by the editor (configure them in Atomic Agent instead) and the editor's unsaved buffers.
+
+</details>
+
+<details>
 <summary><b>Overnight runs, handoff and plugins</b></summary>
 
 **Overnight runs.** `atomic-agent overnight` (shown under TUI and CLI above) runs one long task with a money cap and a time cap and nobody there to answer. [overnight.md](docs/user/overnight.md) covers what happens at each limit, what the Telegram report says, how a crashed background task resumes and how `/goal` works.
