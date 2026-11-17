@@ -19,7 +19,7 @@ function fn(name) {
 
 const NAMES = [
   "providerHost", "providerFailure", "providerReplied", "turnWaited", "turnFailureLine", "offlineTurnLine",
-  "turnKeyRejected", "turnFailureAct", "sysRowHTML",
+  "turnKeyRejected", "turnEmptyTwice", "turnFailureAct", "sysRowHTML",
   "selProviders", "selActiveProviderId", "llmBlock", "llmProviders", "llmProvider", "llmLocalModels",
 ];
 
@@ -105,4 +105,19 @@ test("W2 QA: offline mode says so instead of \"OpenRouter is not answering\"", (
   assert.equal(off.turnFailureLine(bare), sentence);
   // A local route is allowed offline: no offline line for it.
   assert.equal(load({ offline: true, route: "local" }).offlineTurnLine(bare), null);
+});
+
+test("ATO-1578: a cloud model that answered empty twice gets Switch model, not Try again", () => {
+  const c = load();
+  const ev = { kind: "error", category: "model", error: "the model returned an empty completion twice in a row",
+    payload: { failure: { cause: "empty_response_repeated", phrase: "The model sent back an empty answer twice. Try another model.", action: "switch-model" } } };
+  const a = c.turnFailureAct(ev);
+  assert.equal(a.act, "switch-model");
+  assert.equal(a.noRetry, true);
+  const html = c.sysRowHTML({ id: 1, k: "system", sev: "err", text: "x", ...a }, 1);
+  assert.match(html, /data-sel-open="model">Switch model<\/button>/);
+  assert.doesNotMatch(html, /Switch provider|Check key/);
+  // One empty answer keeps the old row.
+  const once = { kind: "error", category: "model", error: "empty", payload: { failure: { cause: "empty_response", action: "retry" } } };
+  assert.notEqual(c.turnFailureAct(once).act, "switch-model");
 });
