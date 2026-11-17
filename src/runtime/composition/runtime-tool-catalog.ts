@@ -6,7 +6,7 @@ import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { SessionStore } from "../../session/session-store.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
-import type { LlamaServerClient } from "../../llm/llama-server-client.js";
+import { LlamaServerClient } from "../../llm/llama-server-client.js";
 import { renewTransportPool } from "../../llm/transport-deadlines.js";
 import type { ProviderRegistry } from "../../llm/provider/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
@@ -49,7 +49,7 @@ import { registerVideoTools, VIDEO_GENERATE_TOOL, VIDEO_RENDER_HTML_TOOL } from 
 import { AUDIO_TRANSCRIBE_TOOL, registerAudioListenTools, registerAudioTools } from "../../tools/audio/index.js";
 import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
-import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } from "../../tools/fusion/index.js";
+import { buildFusionDelegateTool, readSlotOccupancy, servedModelName, type FusionDelegateDeps } from "../../tools/fusion/index.js";
 import { confineReads } from "../../tools/read-scope/index.js";
 import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpResourceListTool, buildMcpResourceReadTool, buildMcpToolDescriptors, createMcpSamplingHandler, mergeMcpDescriptors, applyMcpToolNameRule, buildMcpToolNameRule } from "../../mcp/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
@@ -929,6 +929,19 @@ export function registerRuntimeFusionAndReadScope(input: {
           ? () => llama.probeHealth()
           : undefined;
       },
+      // ATO-1562: a llama.cpp server that is not this agent's own serves
+      // whatever it loaded; its worker rows are labelled with that name.
+      // Asked per fan-out, bounded by the client's probe timeout. The
+      // main local server (`localModels.url`) is ours and keeps its label.
+      servedModelOf: async (providerId) => {
+        const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+        if (entry === undefined || !isForeignLlamaServer(entry, getConfig().localModels.url)) return null;
+        const client = new LlamaServerClient({
+          baseUrl: entry.url!,
+          ...(entry.apiKey === undefined ? {} : { apiKey: entry.apiKey }),
+        });
+        return servedModelName(await client.fetchProps());
+      },
       // The turn's $ / time caps (ATO-947), reset at each fusion turn's
       // start by the loop; read only when a cap is configured.
       ...(turnBudget === undefined ? {} : { turnBudget }),
@@ -1084,4 +1097,18 @@ function safePluginMcpServers(
     logger.warn("plugin MCP servers unavailable", { error: err instanceof Error ? err.message : String(err) });
     return { servers: [], owners: {} };
   }
+}
+
+/**
+ * A `llama-server` entry on a server other than the main local one
+ * (`localModels.url`): somebody else's llama.cpp, which serves the model
+ * it loaded (ATO-1562).
+ */
+export function isForeignLlamaServer(
+  entry: { kind: string; url?: string },
+  mainUrl: string,
+): boolean {
+  if (entry.kind !== "llama-server" || entry.url === undefined) return false;
+  const norm = (u: string): string => u.trim().replace(/\/+$/, "");
+  return norm(entry.url) !== norm(mainUrl);
 }
