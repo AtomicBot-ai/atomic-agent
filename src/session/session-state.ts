@@ -176,6 +176,13 @@ export interface SessionState {
    */
   plan?: PlanSnapshot;
   /**
+   * Earlier answers to the chat's last question, kept by "Regenerate"
+   * so the person can go back to one (ATO-864). Never part of the
+   * prompt: the model reads only the answer in {@link turns}. See
+   * `session-previous-replies.ts`. Absent until a regenerate kept one.
+   */
+  previousReplies?: import("./session-previous-replies.js").PreviousReplies;
+  /**
    * Steps since the model last re-planned (ATO-609): counted by the
    * agent loop only while `agent.task.replanEveryNSteps` is on, reset by
    * a successful `plan.update`, a re-plan notice or a new user message
