@@ -68,10 +68,17 @@ export const WINDOWS_ARM64_COMPAT_BACKEND_ASSET =
  * What a Windows on ARM machine is told when no engine release carries
  * an arm64 build it can run: the app itself runs, only local
  * models do not. One sentence for the CLI, the TUI and the desktop (which
- * finds it in `models update`'s stderr), so they cannot drift apart.
+ * finds it in `models update`'s stderr), so they cannot drift apart. The
+ * desktop matches on the first sentence (agent-cli.ts NO_LOCAL_MODELS_HERE,
+ * engine-failure.ts): keep it word for word.
+ *
+ * ATO-443: the second sentence names the local servers that already run on
+ * Windows on ARM and its NPUs and have presets here (`foundry-local`,
+ * `lmstudio` in provider-presets.ts), the way AnythingLLM reaches the NPU:
+ * through a vendor's OpenAI-compatible server rather than its own build.
  */
 export const WINDOWS_ARM64_NO_BACKEND_MESSAGE =
-  "Local models are not available yet for Windows on ARM. Use a cloud model instead.";
+  "Local models are not available yet for Windows on ARM. Use a cloud model, or add a local server that runs on ARM and NPUs, such as Foundry Local or LM Studio, as a provider.";
 
 /** True for the one platform whose engine build may not be published yet. */
 export function isWindowsArm64(
