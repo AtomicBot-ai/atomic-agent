@@ -5,8 +5,12 @@
  * Playwright drives whichever Chromium-family browser the host has
  * (`config.browser.channel` / `executablePath`, else the first found,
  * else a Playwright-managed Chromium if one is installed) — always
- * headless. When none launches the run fails with `no browser
- * available: …`. It never passes for want of a browser.
+ * headless. On macOS with no explicit browser setting the
+ * Playwright-managed Chromium goes first: launching the system Google
+ * Chrome from the agent can wake Chrome's updater, which macOS then
+ * blames on Atomic Agent ("prevented from modifying apps", ATO-238).
+ * When none launches the run fails with `no browser available: …`.
+ * It never passes for want of a browser.
  */
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -45,37 +49,70 @@ const LIST_CAP = 50;
 const STEP_TIMEOUT_MS = 5_000;
 const LOAD_TIMEOUT_MS = 30_000;
 
-/** The host's browser first, then a Playwright-managed one; else a clear error. */
+export interface BrowserLauncherDeps {
+  readonly platform?: NodeJS.Platform;
+  readonly loadPlaywright?: () => Promise<Pick<Awaited<ReturnType<typeof loadPlaywrightCore>>, "chromium">>;
+  readonly findExecutable?: typeof findChromeExecutable;
+}
+
+function firstLine(err: unknown): string {
+  return err instanceof Error ? (err.message.split("\n")[0] ?? "") : String(err);
+}
+
+/**
+ * The host's browser first, then a Playwright-managed one; else a clear
+ * error. On macOS without an explicit `executablePath` or a non-default
+ * `channel`, the Playwright-managed Chromium is tried before the host's.
+ */
 export function defaultBrowserLauncher(
   config: Pick<AtomicAgentConfig, "browser">,
+  deps: BrowserLauncherDeps = {},
 ): BrowserLauncher {
+  const platform = deps.platform ?? process.platform;
+  const loadPlaywright = deps.loadPlaywright ?? loadPlaywrightCore;
+  const findExecutable = deps.findExecutable ?? findChromeExecutable;
   return async () => {
-    const pw = await loadPlaywrightCore();
+    const pw = await loadPlaywright();
     const reasons: string[] = [];
     const args = config.browser.noSandbox ? ["--no-sandbox"] : [];
+    const explicit = config.browser.executablePath !== null || config.browser.channel !== "chrome";
+    const bundledFirst = platform === "darwin" && !explicit;
+    const tryBundled = async (): Promise<Browser | null> => {
+      try {
+        return await pw.chromium.launch({ headless: true, args });
+      } catch (err) {
+        reasons.push(`playwright chromium: ${firstLine(err)}`);
+        return null;
+      }
+    };
+    if (bundledFirst) {
+      const browser = await tryBundled();
+      if (browser !== null) return browser;
+    }
     let executable: string | null = null;
+    let lookupFailed = false;
     try {
       executable =
-        findChromeExecutable({
+        findExecutable({
           executablePath: config.browser.executablePath,
           channel: config.browser.channel,
         })?.path ?? null;
     } catch (err) {
+      lookupFailed = true;
       reasons.push(err instanceof Error ? err.message : String(err));
     }
     if (executable !== null) {
       try {
         return await pw.chromium.launch({ executablePath: executable, headless: true, args });
       } catch (err) {
-        reasons.push(`${executable}: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
+        reasons.push(`${executable}: ${firstLine(err)}`);
       }
-    } else if (reasons.length === 0) {
+    } else if (!lookupFailed) {
       reasons.push("no Chromium-family browser found (Chrome, Edge, Brave, Chromium)");
     }
-    try {
-      return await pw.chromium.launch({ headless: true, args });
-    } catch (err) {
-      reasons.push(`playwright chromium: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`);
+    if (!bundledFirst) {
+      const browser = await tryBundled();
+      if (browser !== null) return browser;
     }
     throw new Error(`no browser available: ${reasons.join("; ")}`);
   };
