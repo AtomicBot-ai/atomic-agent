@@ -30,6 +30,8 @@ export const MONID_INTEGRATION_ID = "monid";
 /** The MCP catalog card this row shares its server with. */
 export const MONID_CATALOG_ID = "monid";
 export const MONID_SIGNIN_ACTION = "signin";
+/** Forget the saved sign-in, like Composio's "d clears" on its key. */
+export const MONID_DISCONNECT_ACTION = "disconnect";
 
 /** The catalog card. Throws if the catalog lost it: the row would have nothing to add. */
 export function monidCatalogEntry(): McpCatalogEntry {
@@ -112,6 +114,12 @@ function configuredServers(ctx: IntegrationStatusContext): readonly unknown[] | 
  * - saved sign-in and the server answers: signed in
  * - saved sign-in but the server asks for a sign-in again: sign-in expired
  */
+/** True when a Monid server is configured and the token store holds a sign-in for it. */
+export function monidHasSignIn(ctx: IntegrationStatusContext): boolean {
+  const server = findMonidServer(configuredServers(ctx));
+  return !!server && (ctx.mcpSignedIn?.has(server.name) ?? false);
+}
+
 export function monidStatus(ctx: IntegrationStatusContext): IntegrationStatus {
   const server = findMonidServer(configuredServers(ctx));
   if (!server) {
@@ -151,6 +159,10 @@ export const monidIntegration: IntegrationDescriptor = {
   ],
   // Monid's server refuses an API key; browser sign-in is the whole setup.
   fields: [],
-  actions: [{ key: "s", id: MONID_SIGNIN_ACTION, label: "sign in with Monid" }],
+  actions: [
+    { key: "s", id: MONID_SIGNIN_ACTION, label: "sign in with Monid" },
+    // Only once there is a sign-in to forget. The server entry stays, so s brings it back.
+    { key: "x", id: MONID_DISCONNECT_ACTION, label: "disconnect", available: monidHasSignIn },
+  ],
   status: monidStatus,
 };

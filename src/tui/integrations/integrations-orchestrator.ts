@@ -23,6 +23,7 @@ import {
   GITHUB_INTEGRATION_ID,
   GITHUB_TOKEN_FIELD,
   IntegrationSecretError,
+  MONID_DISCONNECT_ACTION,
   MONID_INTEGRATION_ID,
   MONID_SIGNIN_ACTION,
   displayFieldValue,
@@ -64,6 +65,7 @@ export type { GithubHubDeps } from "./integrations-orchestrator-github.js";
 
 import {
   readMcpSignedIn,
+  runMonidDisconnect,
   runMonidSignIn,
   type MonidHubDeps,
 } from "./integrations-orchestrator-monid.js";
@@ -290,6 +292,9 @@ export class IntegrationsOrchestrator {
     }
     if (integrationId === MONID_INTEGRATION_ID && actionId === MONID_SIGNIN_ACTION) {
       return runMonidSignIn(this.runtime, this.monid);
+    }
+    if (integrationId === MONID_INTEGRATION_ID && actionId === MONID_DISCONNECT_ACTION) {
+      return runMonidDisconnect(this.monid);
     }
     if (integrationId === "atomic-mail") {
       return runAtomicMailAction(this.atomicMail, actionId, this.registration, {

@@ -5,9 +5,11 @@ import { buildMcpCatalogJson, findMcpCatalogEntry } from "../mcp/mcp-catalog.js"
 import type { IntegrationStatusContext } from "./integration-descriptor.js";
 import { findIntegration, listIntegrations } from "./integration-registry.js";
 import {
+  MONID_DISCONNECT_ACTION,
   MONID_SIGNIN_ACTION,
   findMonidServer,
   monidAddServerJson,
+  monidHasSignIn,
   monidIntegration,
   monidServerUrl,
   monidStatus,
@@ -36,10 +38,11 @@ describe("Monid integration (ATO-1630)", () => {
     expect(findIntegration("monid")).toBe(monidIntegration);
   });
 
-  it("asks for no key: no fields, one sign-in verb", () => {
+  it("asks for no key: no fields, a sign-in verb and a disconnect verb", () => {
     expect(monidIntegration.fields).toEqual([]);
-    expect(monidIntegration.actions).toEqual([
+    expect(monidIntegration.actions?.map(({ key, id, label }) => ({ key, id, label }))).toEqual([
       { key: "s", id: MONID_SIGNIN_ACTION, label: "sign in with Monid" },
+      { key: "x", id: MONID_DISCONNECT_ACTION, label: "disconnect" },
     ]);
     // The verb must not shadow the detail view's built-in keys.
     for (const a of monidIntegration.actions ?? []) {
@@ -160,5 +163,17 @@ describe("Monid integration (ATO-1630)", () => {
       );
       expect(s.level).toBe("connected");
     });
+  });
+});
+
+describe("monidHasSignIn (the disconnect verb's availability)", () => {
+  it("is true only with a Monid server and a saved sign-in for it", () => {
+    expect(monidHasSignIn(ctx({}))).toBe(false);
+    expect(monidHasSignIn(ctx({ servers: [CATALOG_SERVER] }))).toBe(false);
+    expect(monidHasSignIn(ctx({ servers: [CATALOG_SERVER], mcpSignedIn: new Set(["monid"]) }))).toBe(true);
+    expect(monidHasSignIn(ctx({ servers: [CATALOG_SERVER], mcpSignedIn: new Set(["other"]) }))).toBe(false);
+    const action = monidIntegration.actions?.find((a) => a.id === MONID_DISCONNECT_ACTION);
+    expect(action?.available?.(ctx({ servers: [CATALOG_SERVER] }))).toBe(false);
+    expect(action?.available?.(ctx({ servers: [CATALOG_SERVER], mcpSignedIn: new Set(["monid"]) }))).toBe(true);
   });
 });

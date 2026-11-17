@@ -51,15 +51,18 @@ function makeHub(
     opts.start ?? (async (): Promise<McpOAuthStartResult> => ({ state: "pending", authUrl: AUTH_URL })),
   );
   const openUrl = vi.fn(async () => ({ ok: true as const }));
+  const signOut = vi.fn(async (name: string) => {
+    createMcpOAuthStore(getConfig().paths.stateDir).clear(name);
+  });
   const hub = new IntegrationsOrchestrator(
     runtime,
     bus,
     undefined,
     undefined,
     undefined,
-    opts.withoutSignIn ? {} : { startSignIn, openUrl },
+    opts.withoutSignIn ? {} : { startSignIn, openUrl, signOut },
   );
-  return { hub, bus, addServerLive, refreshMcp, startSignIn, openUrl };
+  return { hub, bus, addServerLive, refreshMcp, startSignIn, openUrl, signOut };
 }
 
 function monidRow(bus: ReturnType<typeof makeBus>): IntegrationRow {
@@ -205,5 +208,31 @@ describe("IntegrationsOrchestrator — Monid (ATO-1630)", () => {
     expired.hub.refresh();
     expect(monidRow(expired.bus).level).toBe("error");
     expect(monidRow(expired.bus).detail).toMatch(/sign-in expired/);
+  });
+
+  it("disconnect shows only when signed in, forgets the sign-in and keeps the server", async () => {
+    persistMcpServer(parseAddServerJson(buildMcpCatalogJson(findMcpCatalogEntry("monid")!)));
+    const before = makeHub();
+    before.hub.refresh();
+    expect(monidRow(before.bus).actions.map((a) => a.id)).toEqual(["signin"]);
+
+    saveToken(stateDir, "monid");
+    const { hub, bus, signOut } = makeHub({ states: [{ name: "monid", state: "up" }] });
+    hub.refresh();
+    expect(monidRow(bus).actions).toContainEqual({ key: "x", id: "disconnect", label: "disconnect" });
+
+    await hub.runAction("monid", "disconnect");
+    expect(signOut).toHaveBeenCalledWith("monid");
+    expect(settled(bus).error).toBeUndefined();
+    expect(settled(bus).message).toMatch(/Disconnected from Monid/);
+    expect(monidServers()).toHaveLength(1);
+    expect(readMcpSignedIn(stateDir, getConfig().mcp?.servers)).toEqual(new Set());
+    expect(monidRow(bus).actions.map((a) => a.id)).toEqual(["signin"]);
+  });
+
+  it("disconnect without the MCP tab's sign-out says so", async () => {
+    const { hub, bus } = makeHub({ withoutSignIn: true });
+    await hub.runAction("monid", "disconnect");
+    expect(settled(bus).error).toMatch(/\/mcp signout monid/);
   });
 });

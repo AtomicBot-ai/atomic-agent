@@ -23,6 +23,11 @@ export interface MonidHubDeps {
    * in the app, so the MCP tab and this row share one sign-in in flight.
    */
   startSignIn?: (name: string) => Promise<McpOAuthStartResult>;
+  /**
+   * Forget one MCP server's saved sign-in and reconnect it.
+   * `McpOrchestrator.forgetSignIn` in the app, the same as `/mcp signout`.
+   */
+  signOut?: (name: string) => Promise<void>;
   /** Test seam; the default opens the system browser. */
   openUrl?: (url: string) => Promise<OpenUrlResult>;
 }
@@ -76,6 +81,17 @@ export async function runMonidSignIn(
     return `${prefix}Open this link to sign in to Monid: ${result.authUrl}`;
   }
   return `${prefix}Your browser opened to sign in to Monid. Press r here once it says you are signed in.`;
+}
+
+/** The row's Disconnect: forget the saved sign-in; the server entry stays. */
+export async function runMonidDisconnect(deps: MonidHubDeps): Promise<string> {
+  if (!deps.signOut) {
+    throw new Error("Signing out is not available here. Use /mcp signout monid instead.");
+  }
+  const server = findMonidServer(getConfig().mcp?.servers);
+  if (!server) return "Monid is not connected";
+  await deps.signOut(server.name);
+  return "Disconnected from Monid. Its tools stop until you sign in again (press s).";
 }
 
 /**

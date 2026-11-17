@@ -43,9 +43,11 @@ export type { ExaSearchSetup } from "./exa-integration.js";
 export {
   MONID_CATALOG_ID,
   MONID_INTEGRATION_ID,
+  MONID_DISCONNECT_ACTION,
   MONID_SIGNIN_ACTION,
   findMonidServer,
   monidAddServerJson,
+  monidHasSignIn,
   monidIntegration,
   monidServerUrl,
   monidStatus,

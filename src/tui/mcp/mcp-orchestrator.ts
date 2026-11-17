@@ -127,6 +127,15 @@ export class McpOrchestrator {
     return this.oauth().start(name);
   }
 
+  /**
+   * Forget a server's browser sign-in and wait for it, for a caller that
+   * reports the result itself (the Integrations hub's Monid Disconnect,
+   * ATO-1630). Same flow as `/mcp signout`.
+   */
+  forgetSignIn(name: string): Promise<void> {
+    return this.oauth().signOut(name);
+  }
+
   /** `/mcp signout <name>`: forget a server's browser sign-in. */
   signOut(name: string): void {
     void (async () => {
