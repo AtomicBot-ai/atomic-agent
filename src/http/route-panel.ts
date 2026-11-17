@@ -1,3 +1,4 @@
+import { PANEL_ICON_PNG_BASE64, PANEL_ICON_SVG, PANEL_MANIFEST } from "./panel-assets.js";
 import { PANEL_HTML, PANEL_JS } from "./panel-page.js";
 import type { HttpHandler } from "./request-context.js";
 
@@ -15,7 +16,7 @@ const HEADERS = {
   "x-content-type-options": "nosniff",
   "referrer-policy": "no-referrer",
   "content-security-policy":
-    "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; manifest-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 };
 
 export function createPanelPageHandler(): HttpHandler {
@@ -29,5 +30,43 @@ export function createPanelScriptHandler(): HttpHandler {
   return (_req, res) => {
     res.writeHead(200, { ...HEADERS, "content-type": "text/javascript; charset=utf-8" });
     res.end(PANEL_JS);
+  };
+}
+
+/**
+ * ATO-1130: the manifest and icon that let the panel be added to a
+ * phone's home screen and open full screen. No auth, same as the page:
+ * they hold no data. Cached for a day; they change only with a release.
+ */
+const ASSET_HEADERS = {
+  "cache-control": "public, max-age=86400",
+  "x-content-type-options": "nosniff",
+};
+
+const PANEL_ICON_PNG = Buffer.from(PANEL_ICON_PNG_BASE64, "base64");
+
+export function createPanelManifestHandler(): HttpHandler {
+  return (_req, res) => {
+    res.writeHead(200, { ...ASSET_HEADERS, "content-type": "application/manifest+json; charset=utf-8" });
+    res.end(PANEL_MANIFEST);
+  };
+}
+
+export function createPanelIconSvgHandler(): HttpHandler {
+  return (_req, res) => {
+    res.writeHead(200, {
+      ...ASSET_HEADERS,
+      "content-type": "image/svg+xml",
+      // An SVG opened on its own is a document: let it run nothing.
+      "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
+    });
+    res.end(PANEL_ICON_SVG);
+  };
+}
+
+export function createPanelIconPngHandler(): HttpHandler {
+  return (_req, res) => {
+    res.writeHead(200, { ...ASSET_HEADERS, "content-type": "image/png", "content-length": PANEL_ICON_PNG.length });
+    res.end(PANEL_ICON_PNG);
   };
 }
