@@ -54,6 +54,25 @@ export interface SchedulerOptions {
    * `tickOnce()` is never gated — it is an operator asking for a drain.
    */
   leadership?: SchedulerLeadership;
+  /**
+   * Told when this process starts or stops leading (ATO-441: file
+   * triggers watch only in the leader). Called on the first interval
+   * tick (with or without a gate), on every hand-over, and with `false`
+   * from `stop()` before the lock is released. A rejection is logged.
+   */
+  onLeadershipChange?: (leading: boolean) => void | Promise<void>;
+  /**
+   * Extra periodic work that must run in the same single process as the
+   * drain — today the mail trigger (ATO-601), which turns new inbox
+   * messages into tasks. Called on every interval tick this process
+   * leads, after the leadership check and without waiting; each sidecar
+   * throttles itself and must not throw.
+   */
+  sidecars?: readonly SchedulerSidecar[];
+}
+
+export interface SchedulerSidecar {
+  tick(now: number, signal: AbortSignal): Promise<void>;
 }
 
 const DEFAULT_CLOCK: SchedulerClock = {
@@ -106,8 +125,24 @@ export class Scheduler {
     const handler = () => {
       if (!this.leads()) return;
       void this.tickOnce();
+      this.tickSidecars();
     };
     this.timer = this.clock.setInterval(handler, this.options.tickMs);
+  }
+
+  /**
+   * Run a tick now instead of at the next interval: the computer just
+   * woke up (the desktop's `powerMonitor` "resume", ATO-592), so tasks
+   * that fell due while it slept start at once. Unlike `tickOnce` this
+   * respects leadership and does nothing before `start()` or after
+   * `stop()`. Returns whether a tick was started.
+   */
+  poke(): boolean {
+    if (this.timer === null || this.stopping) return false;
+    if (this.running) return false;
+    if (!this.leads()) return false;
+    void this.tickOnce();
+    return true;
   }
 
   /**
@@ -133,6 +168,10 @@ export class Scheduler {
     try {
       await this.settleInFlight(graceMs);
     } finally {
+      if (this.leading === true) {
+        this.leading = false;
+        await this.notifyLeadership(false);
+      }
       // After the drain, so the other process takes over only once this
       // one has stopped claiming (or the grace ran out).
       this.options.leadership?.release();
@@ -168,25 +207,52 @@ export class Scheduler {
    */
   private leads(): boolean {
     const leadership = this.options.leadership;
-    if (!leadership) return true;
-    let leader: boolean;
-    try {
-      leader = leadership.isLeader();
-    } catch (err) {
-      this.options.logger?.warn("scheduler leadership check failed; running", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      leader = true;
+    let leader = true;
+    if (leadership) {
+      try {
+        leader = leadership.isLeader();
+      } catch (err) {
+        this.options.logger?.warn("scheduler leadership check failed; running", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        leader = true;
+      }
     }
     if (leader !== this.leading) {
       this.leading = leader;
-      this.options.logger?.info(
-        leader
-          ? "scheduler: running due tasks in this process"
-          : "scheduler: another process runs due tasks; standing by",
-      );
+      if (leadership) {
+        this.options.logger?.info(
+          leader
+            ? "scheduler: running due tasks in this process"
+            : "scheduler: another process runs due tasks; standing by",
+        );
+      }
+      void this.notifyLeadership(leader);
     }
     return leader;
+  }
+
+  private async notifyLeadership(leading: boolean): Promise<void> {
+    const hook = this.options.onLeadershipChange;
+    if (!hook) return;
+    try {
+      await hook(leading);
+    } catch (err) {
+      this.options.logger?.warn("scheduler leadership listener failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  private tickSidecars(): void {
+    const now = this.clock.now();
+    for (const sidecar of this.options.sidecars ?? []) {
+      void sidecar.tick(now, this.stopController.signal).catch((err: unknown) => {
+        this.options.logger?.warn("scheduler sidecar failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
   }
 
   /**

@@ -1,0 +1,21 @@
+skill: pdf
+description: Read and slice a small PDF. The page-extract task needs qpdf or poppler on the machine, and its check uses poppler (pdfinfo, pdftotext).
+defaults:
+  maxSteps: 20
+  fixtures: fixtures
+tasks:
+  - id: page-count
+    prompt: How many pages does report.pdf have? Answer with the number only.
+    check:
+      type: exact
+      expected: "3"
+  - id: find-the-figure
+    prompt: By how many percent did revenue grow, according to report.pdf? Answer with the number only.
+    check:
+      type: exact
+      expected: "12"
+  - id: extract-page-two
+    prompt: Save page 2 of report.pdf as a new file page2.pdf in this folder.
+    check:
+      type: command
+      run: pdfinfo page2.pdf | grep -Eq "^Pages:[[:space:]]+1$" && pdftotext page2.pdf - | grep -q "Revenue grew 12 percent"

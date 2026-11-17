@@ -7,7 +7,7 @@ import { inspectProjectTrust } from "../../runtime/project-trust.js";
 import { ProjectTrustOrchestrator } from "./project-trust-orchestrator.js";
 
 describe("ProjectTrustOrchestrator", () => {
-  let base: string; let repo: string; let actions: Array<{ type: string; [key: string]: unknown }>; let refresh: ReturnType<typeof vi.fn>;
+  let base: string; let repo: string; let actions: Array<{ type: string; [key: string]: unknown }>; let refresh: ReturnType<typeof vi.fn<() => Promise<void>>>;
   beforeEach(() => {
     base = realpathSync(mkdtempSync(join(tmpdir(), "tui-project-trust-"))); repo = join(base, "repo");
     vi.stubEnv("ATOMIC_AGENT_STATE_DIR", join(base, "state")); resetConfigCache();

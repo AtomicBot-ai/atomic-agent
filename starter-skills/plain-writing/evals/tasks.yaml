@@ -1,0 +1,16 @@
+skill: plain-writing
+description: "Rewrite text so it reads human: no long dashes, no stock phrases, every fact kept."
+defaults:
+  maxSteps: 20
+tasks:
+  - id: edit-landing-copy
+    prompt: Edit draft.md in place so it reads like a person wrote it. Keep every fact, number and name.
+    fixtures: fixtures
+    check:
+      type: command
+      run: node "$SKILL_EVAL_TASKS_DIR/checks/plain-check.mjs" file draft.md 2019 Tallinn 1,240 30 12 14 Billfold
+  - id: rewrite-one-sentence
+    prompt: "Rewrite this sentence so it reads human and reply with the new sentence only: Unlock the power of seamless collaboration — our robust platform empowers teams to delve into their data."
+    check:
+      type: command
+      run: node "$SKILL_EVAL_TASKS_DIR/checks/plain-check.mjs" answer team data

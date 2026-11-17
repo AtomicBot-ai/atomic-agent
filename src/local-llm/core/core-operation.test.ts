@@ -1,9 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { coreOperationInProgress, readCoreOperationLock, writtenBeforeBoot } from "./core-operation.js";
+import {
+  CORE_OPERATION_STALE_MS,
+  coreOperationInProgress,
+  coreOperationLooksActive,
+  readCoreOperationLock,
+  readCoreOperationLockForTurn,
+  writtenBeforeBoot,
+} from "./core-operation.js";
 
 /**
  * ATO-1275: a lock its owner left behind must not read as an engine
@@ -88,5 +95,86 @@ describe("writtenBeforeBoot", () => {
     expect(writtenBeforeBoot(boot - 10_000, boot)).toBe(false);
     expect(writtenBeforeBoot(boot + 1, boot)).toBe(false);
     expect(writtenBeforeBoot(boot - 60_000, Number.NaN)).toBe(false);
+  });
+});
+
+/**
+ * ATO-1433: a lock that reads held for longer than any honest operation
+ * (a pid reused on Windows, an owner stuck forever) must not keep every
+ * turn waiting. Read only: the file is never touched.
+ */
+describe("readCoreOperationLockForTurn / coreOperationLooksActive", () => {
+  let dataDir: string;
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "core-op-turn-"));
+  });
+  afterEach(() => {
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  const lockPath = (): string => join(dataDir, "core", "operation.lock");
+  const writeLock = (content: string, ageMs = 0): void => {
+    mkdirSync(join(dataDir, "core"), { recursive: true });
+    writeFileSync(lockPath(), content);
+    if (ageMs > 0) {
+      const then = new Date(Date.now() - ageMs);
+      utimesSync(lockPath(), then, then);
+    }
+  };
+  /** Boot long ago, so the reboot rule never decides these. */
+  const longUp = { bootTimeMs: () => Date.now() - 30 * 24 * 3_600_000 };
+
+  it("a fresh lock held by another live process is an operation under way", () => {
+    writeLock(String(process.ppid));
+    expect(readCoreOperationLockForTurn(dataDir, longUp)).toBe("held");
+    expect(coreOperationLooksActive(dataDir)).toBe(true);
+  });
+
+  it("the same lock older than the ceiling is not", () => {
+    writeLock(String(process.ppid), CORE_OPERATION_STALE_MS + 60_000);
+    expect(readCoreOperationLockForTurn(dataDir, longUp)).toBe("stale_too_old");
+    expect(coreOperationLooksActive(dataDir)).toBe(false);
+    // The plain reading, which nothing else changed, still says held.
+    expect(readCoreOperationLock(dataDir, longUp)).toBe("held");
+  });
+
+  it("a lock this process holds goes stale the same way", () => {
+    writeLock(String(process.pid));
+    expect(readCoreOperationLockForTurn(dataDir, longUp)).toBe("held_self");
+    writeLock(String(process.pid), CORE_OPERATION_STALE_MS + 60_000);
+    expect(readCoreOperationLockForTurn(dataDir, longUp)).toBe("stale_too_old");
+  });
+
+  it("the ceiling is measured from the given clock", () => {
+    writeLock(String(process.ppid));
+    const mtime = statSync(lockPath()).mtimeMs;
+    expect(coreOperationLooksActive(dataDir, mtime + CORE_OPERATION_STALE_MS - 1_000)).toBe(true);
+    expect(coreOperationLooksActive(dataDir, mtime + CORE_OPERATION_STALE_MS + 1_000)).toBe(false);
+  });
+
+  it("the bare-pid format is read as before: a dead owner is stale", () => {
+    writeLock(String(spawnSync(process.execPath, ["-e", ""]).pid!));
+    expect(readCoreOperationLockForTurn(dataDir, longUp)).toBe("stale_dead_owner");
+    expect(coreOperationLooksActive(dataDir)).toBe(false);
+  });
+
+  it("garbage in the file is not an operation under way once past the write window", () => {
+    writeLock("not a pid", 60_000);
+    expect(readCoreOperationLockForTurn(dataDir, longUp)).toBe("stale_no_owner");
+    expect(coreOperationLooksActive(dataDir)).toBe(false);
+  });
+
+  it("no lock is free", () => {
+    expect(readCoreOperationLockForTurn(dataDir)).toBe("free");
+    expect(coreOperationLooksActive(dataDir)).toBe(false);
+  });
+
+  it("never changes or removes the lock file", () => {
+    writeLock(String(process.ppid), CORE_OPERATION_STALE_MS + 60_000);
+    const before = statSync(lockPath()).mtimeMs;
+    coreOperationLooksActive(dataDir);
+    readCoreOperationLockForTurn(dataDir);
+    expect(readFileSync(lockPath(), "utf8")).toBe(String(process.ppid));
+    expect(statSync(lockPath()).mtimeMs).toBe(before);
   });
 });

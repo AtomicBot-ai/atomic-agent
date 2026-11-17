@@ -44,7 +44,7 @@ export function buildTasksScheduleTool(
   return {
     name: "tasks.schedule",
     description:
-      'Schedule a one-shot task for the agent to run later. Args: { userMessage, at? (Unix ms), inSeconds?, newSession?, notify? }. Defaults to inheriting the current session; set newSession=true for an independent thread. Set notify: "telegram" to send the final result to the paired Telegram chat.',
+      'Schedule a one-shot task for the agent to run later. Args: { userMessage, at? (Unix ms), inSeconds?, newSession?, notify? }. Defaults to inheriting the current session; set newSession=true for an independent thread. Set notify: "telegram" to send the final result to the paired Telegram chat, or notify: "push" for a short phone push (ntfy).',
     readonly: false,
     async run(rawArgs, ctx) {
       const userMessage = rawArgs.userMessage;
@@ -57,11 +57,11 @@ export function buildTasksScheduleTool(
         });
       }
       const notify = rawArgs.notify;
-      if (notify !== undefined && notify !== "telegram") {
+      if (notify !== undefined && notify !== "telegram" && notify !== "push") {
         return compressToolResult({
           tool: "tasks.schedule",
           status: "error",
-          output: 'validation: notify must be "telegram" when provided',
+          output: 'validation: notify must be "telegram" or "push" when provided',
           details: { field: "notify" },
         });
       }
@@ -99,7 +99,7 @@ export function buildTasksScheduleTool(
           triggerSource: "agent",
           maxAttempts: options.defaultMaxAttempts,
           maxSteps: null,
-          ...(notify === "telegram" ? { notify } : {}),
+          ...(notify === "telegram" || notify === "push" ? { notify } : {}),
           ...(schedule ? { schedule } : {}),
         });
         return compressToolResult({

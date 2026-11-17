@@ -58,7 +58,7 @@ const FAMILY_ALIASES: ReadonlyMap<string, string> = new Map([
 export interface ToolGateSourceConfig {
   readonly browser: { readonly enabled: boolean };
   readonly web: { readonly search: { readonly enabled: boolean } };
-  readonly vision: { readonly enabled: boolean };
+  readonly vision: { readonly enabled: boolean; readonly audioInput?: boolean };
   readonly memory: {
     readonly profile: { readonly enabled: boolean };
     readonly notes: { readonly enabled: boolean };
@@ -69,6 +69,7 @@ export interface ToolGateSourceConfig {
   readonly tasks: {
     readonly enabled: boolean;
     readonly agentToolsEnabled: boolean;
+    readonly sessionToolsEnabled?: boolean;
   };
   readonly mcp: { readonly servers: readonly unknown[] };
   /** `tools.screen.enabled`; optional so hand-built test configs need not name it. */
@@ -107,6 +108,9 @@ export function effectiveToolDescriptors(
       enabled: config.vision.enabled,
       providerAvailable: config.vision.enabled,
     },
+    // Approximated like vision: `true` lists it; unset (auto) depends on
+    // the loaded model's `/props`, invisible here, so it is not listed.
+    audio: { enabled: config.vision.audioInput === true },
     email: {
       available:
         readAtomicMailApiKey() !== null && config.atomicMail.address !== null,
@@ -119,6 +123,9 @@ export function effectiveToolDescriptors(
     },
     tasks: {
       agentToolsEnabled: config.tasks.enabled && config.tasks.agentToolsEnabled,
+    },
+    sessions: {
+      agentToolsEnabled: config.tasks.enabled && config.tasks.sessionToolsEnabled === true,
     },
     mcp: { enabled: config.mcp.servers.length > 0 },
     // `/tools` reads the same env the runtime does, so this gate is

@@ -36,12 +36,24 @@ export interface BuildPromptInput {
   skillCatalogDropped?: number;
   systemPersona?: string;
   /**
+   * The session's latched user persona (ATO-54), forwarded into
+   * `buildStablePrefix` as `### persona`. Omitted: no block.
+   */
+  persona?: import("./persona-block.js").PersonaPromptInput;
+  /**
    * Single-stream decode speed of the local worker daemon (tokens per
    * second), measured once at daemon start and held on the model profile
    * manager. Rendered into the `### fusion` machine facts as "~N tok/s";
    * `null` / absent says nothing. Read only when that block renders.
    */
   fusionTokensPerSecond?: number | null;
+  /**
+   * What past fusion runs on this machine showed (ATO-949), from the
+   * outcome log's summary, held per session. Rendered into the
+   * `### fusion` block as "Past runs here: …"; absent or empty says
+   * nothing.
+   */
+  fusionPastRuns?: readonly string[] | null;
   /**
    * Transport the serving link uses for tool calls. Forwarded into
    * `buildStablePrefix`, where `"native_tools"` swaps the text-JSON
@@ -304,4 +316,11 @@ export interface BuiltPrompt {
    * `### profile` (issue #407). Counts, never values.
    */
   profileClip?: ProfileClipStats;
+  /**
+   * ATO-42: the `### project` block of the local prompt, when the chat is
+   * in a project with instructions. `tokens` is the full text's estimate,
+   * `truncated` says the block was cut to `PROJECT_SECTION_MAX_TOKENS`.
+   * Absent on the cloud prompt, which carries the whole text.
+   */
+  project?: { name: string | null; tokens: number; truncated: boolean };
 }

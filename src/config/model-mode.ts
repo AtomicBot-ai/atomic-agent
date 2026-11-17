@@ -2,7 +2,7 @@ import { isSetAsideString } from "./config-primitives.js";
 import { ConfigValidationError } from "./config-validation-error.js";
 import type { UserLlmProviderEntry } from "./llm-config.js";
 import { usesExternalCliAuth } from "./provider-auth-mode.js";
-import { PROVIDER_PRESETS } from "../llm/provider/presets/provider-presets.js";
+import { cloudPresetForUrl } from "../llm/provider/presets/provider-presets.js";
 
 /** Runtime policy, independent of provider location and tool transport. */
 export type ModelMode = "local" | "cloud";
@@ -20,11 +20,12 @@ export function defaultProviderModelMode(
   try {
     // Match a known service, not a user-chosen entry id or arbitrary remote URL.
     // URL parsing handles casing, trailing slashes and /v1 API roots alike.
+    // Per-account endpoints (an Azure resource, a Bedrock Region) match
+    // by their preset's host pattern instead (`cloudPresetForUrl`).
     const origin = new URL(entry.baseUrl).origin;
     if (
       origin === "https://api.openai.com" ||
-      PROVIDER_PRESETS.some((preset) =>
-        !preset.local && new URL(preset.baseUrl).origin === origin)
+      cloudPresetForUrl(entry.baseUrl) !== undefined
     ) return "cloud";
   } catch {
     // Unknown/custom endpoints keep the conservative local policy.

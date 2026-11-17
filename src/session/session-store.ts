@@ -9,6 +9,13 @@ import {
   type SessionStatus,
 } from "./session-state.js";
 import { normalizeSessionState } from "./normalize-session-state.js";
+import {
+  SESSION_ARCHIVED_METADATA_KEY,
+  SESSION_ARCHIVED_SET_AT_KEY,
+  readSessionArchivedSetAt,
+  withArchivedMetadata,
+  withSessionArchived,
+} from "./session-archived.js";
 import { LIVE_SESSION_STATUSES } from "./session-retention.js";
 import type { SessionSummary } from "./session-summary.js";
 import {
@@ -56,6 +63,20 @@ import {
   turnArchiveTableExists,
   type TurnArchiveStatements,
 } from "./turn-archive.js";
+import {
+  SessionSearchIndex,
+  forgetSessionSearchRows,
+  searchableSessionSource,
+  type SessionSearchOptions,
+  type SessionSearchResult,
+} from "./session-search.js";
+import {
+  isIncognitoSession,
+  newIncognitoMark,
+  orphanIncognitoSessionIds,
+  storedSessionIsIncognito,
+  type IncognitoMark,
+} from "./incognito.js";
 
 // `turn_owner` names the process running a turn on the row (see
 // `beginTurn`) and is null otherwise — a shutdown's stand-in keeps it
@@ -202,6 +223,10 @@ interface StoredRow {
   turnOwner: string | null;
   /** How many leading turns the row keeps in the archive; 0 for none. */
   archivedCount: number;
+  /** ATO-1150: whether the operator archived the chat (`session-archived.ts`). */
+  chatArchived: boolean;
+  /** When the operator last archived or unarchived it, `null` when never. */
+  chatArchivedSetAt: number | null;
 }
 
 /**
@@ -387,6 +412,8 @@ export class SessionStore {
    * mark, never one another process put there since.
    */
   private readonly ownTurns = new Map<string, string>();
+  /** Built on the first search (ATO-1149); see `session-search.ts`. */
+  private searchIndex: SessionSearchIndex | null = null;
 
   constructor(options: SessionStoreOptions = {}) {
     const config = getConfig();
@@ -438,7 +465,9 @@ export class SessionStore {
       `SELECT status, ${turnOwnerColumn} AS turnOwner,
               json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title,
               json_extract(payload, '$.metadata.${SESSION_TITLE_USER_SET_AT_KEY}') AS titleSetByUserAt,
-              json_extract(payload, '$.${ARCHIVED_TURNS_KEY}.count') AS archivedCount
+              json_extract(payload, '$.${ARCHIVED_TURNS_KEY}.count') AS archivedCount,
+              json_extract(payload, '$.metadata.${SESSION_ARCHIVED_METADATA_KEY}') AS chatArchived,
+              json_extract(payload, '$.metadata.${SESSION_ARCHIVED_SET_AT_KEY}') AS chatArchivedSetAt
        FROM sessions WHERE id = ?`,
     );
     this.selectStoredBareStmt = this.db.prepare(
@@ -632,7 +661,7 @@ export class SessionStore {
         warnArchivedWriteSkipped(state.id);
         throw ROLLBACK;
       }
-      const row = this.serialize(withStoredTitle(state, stored), archive);
+      const row = this.serialize(withStoredArchive(withStoredTitle(state, stored), stored), archive);
       const result = progressStatements.checkpoint.run({
         id: state.id,
         owner,
@@ -828,7 +857,7 @@ export class SessionStore {
         this.insertStmt.run(this.serialize(next, archive));
         return;
       }
-      next = withStoredTitle(next, stored);
+      next = withStoredArchive(withStoredTitle(next, stored), stored);
       const update = endsTurn ? this.finishTurnStmt : this.updateStmt;
       update.run(this.serialize(next, archive));
     }, undefined);
@@ -892,6 +921,8 @@ export class SessionStore {
           title?: unknown;
           titleSetByUserAt?: unknown;
           archivedCount?: unknown;
+          chatArchived?: unknown;
+          chatArchivedSetAt?: unknown;
         }
       | undefined;
     try {
@@ -918,6 +949,13 @@ export class SessionStore {
         row.archivedCount > 0
           ? row.archivedCount
           : 0,
+      // json_extract hands a JSON `true` back as 1.
+      chatArchived: row.chatArchived === 1 || row.chatArchived === true,
+      chatArchivedSetAt:
+        typeof row.chatArchivedSetAt === "number" &&
+        Number.isFinite(row.chatArchivedSetAt)
+          ? row.chatArchivedSetAt
+          : null,
     };
   }
 
@@ -971,6 +1009,25 @@ export class SessionStore {
     const current = this.load(id);
     if (current === null) return null;
     const next = withUserSessionTitle(current, title, now);
+    this.save(next);
+    return next;
+  }
+
+  /**
+   * ATO-1150: archive (`archived: true`) or unarchive a stored session,
+   * stamped so a copy read before this cannot put the old flag back (see
+   * `withStoredArchive`). Returns the saved state, or `null` when there is
+   * no such session. `updatedAt` is left as it was, as for a rename:
+   * putting a chat away is not activity in it.
+   */
+  setSessionArchived(
+    id: string,
+    archived: boolean,
+    now: number = Date.now(),
+  ): SessionState | null {
+    const current = this.load(id);
+    if (current === null) return null;
+    const next = withSessionArchived(current, archived, now);
     this.save(next);
     return next;
   }
@@ -1049,6 +1106,30 @@ export class SessionStore {
     return stmt.all({ id }) as SessionChatLine[];
   }
 
+  /**
+   * Full-text search over the user messages and closing replies of every
+   * stored session (ATO-1149). The index is created on the first call and
+   * brought up to date by each one; see `session-search.ts`. Throws
+   * `SessionSearchUnavailableError` when the index cannot be created.
+   */
+  searchTranscripts(options: SessionSearchOptions): SessionSearchResult {
+    this.searchIndex ??= new SessionSearchIndex(this.db, (id) =>
+      this.listChatLines(id),
+    );
+    return this.searchIndex.search(options);
+  }
+
+  /**
+   * `listChatLines` for a session search may show, and nothing for one it
+   * may not (incognito, a Fusion worker, an internal session; see
+   * `classifySessionForSearch`) or one that is not stored. What the agent's
+   * `memory.sessions.search` reads a hit through.
+   */
+  listSearchableChatLines(id: string): SessionChatLine[] {
+    if (searchableSessionSource(this.db, id) === null) return [];
+    return this.listChatLines(id);
+  }
+
   /** Rows whose payload is not valid JSON — the ones every reader skips. */
   countUnreadable(): number {
     const row = this.countUnreadableStmt.get() as { n: number };
@@ -1071,10 +1152,41 @@ export class SessionStore {
     return this.listRecentDirsStmt.all(limit) as RecentWorkingDirRow[];
   }
 
+  /**
+   * The mark a new incognito chat carries (ATO-586), owned by this
+   * process in this database file — what `sweepOrphanIncognito` judges.
+   */
+  newIncognitoMark(now: number = Date.now()): IncognitoMark {
+    return newIncognitoMark(this.turnOwnerProbe, now, this.dbIdentity);
+  }
+
+  /** Whether the stored row `id` is an incognito chat. */
+  isIncognito(id: string): boolean {
+    return storedSessionIsIncognito(this.db, id);
+  }
+
+  /**
+   * Delete the incognito chats whose owning process is gone — the app
+   * was killed or crashed before it could close them. Boot only, before
+   * this process opens one of its own (see `orphanIncognitoSessionIds`).
+   * Returns the deleted ids so the caller can remove their trace files.
+   */
+  sweepOrphanIncognito(): string[] {
+    const ids = orphanIncognitoSessionIds(
+      this.db,
+      this.turnOwnerProbe,
+      this.dbIdentity,
+    );
+    for (const id of ids) this.delete(id);
+    return ids;
+  }
+
   delete(id: string): void {
     this.db.transaction(() => {
       this.deleteStmt.run(id);
       this.archiveStatements?.clear.run(id);
+      // A deleted chat's text leaves the search index with it.
+      forgetSessionSearchRows(this.db, id);
     })();
   }
 
@@ -1147,7 +1259,9 @@ export class SessionStore {
     const states: SessionState[] = [];
     for (const row of rows) {
       const state = this.readPayload(row, archive);
-      if (state) states.push(state);
+      // An incognito chat (ATO-586) is never listed; `load` by id still
+      // answers for it.
+      if (state && !isIncognitoSession(state)) states.push(state);
     }
     return states;
   }
@@ -1262,6 +1376,29 @@ function ensureTurnOwnerColumn(db: Database.Database): string | null {
     const message = err instanceof Error ? err.message : String(err);
     return /duplicate column/i.test(message) ? null : message;
   }
+}
+
+/**
+ * ATO-1150: `next` with the stored archive flag where `next` should not
+ * replace it: the stored row was archived or unarchived (it has a stamp)
+ * and `next` carries no stamp or an older one, so it is a copy read
+ * before that. Shared by every write that replaces a row's payload.
+ */
+function withStoredArchive(
+  next: SessionState,
+  stored: StoredRow | undefined,
+): SessionState {
+  if (stored === undefined || stored.chatArchivedSetAt === null) return next;
+  const nextAt = readSessionArchivedSetAt(next.metadata);
+  if (nextAt !== null && nextAt >= stored.chatArchivedSetAt) return next;
+  return {
+    ...next,
+    metadata: withArchivedMetadata(
+      next.metadata,
+      stored.chatArchived,
+      stored.chatArchivedSetAt,
+    ),
+  };
 }
 
 /**

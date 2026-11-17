@@ -95,4 +95,88 @@ describe("PrivacyOrchestrator", () => {
     await orchestrator.toggleAnalytics();
     expect(setAnalyticsEnabled).toHaveBeenLastCalledWith(true, "settings");
   });
+
+  it("refresh() reports offline mode unsupported on a runtime without the switch", () => {
+    const { actions, bus } = makeBus();
+    const runtime = {
+      getApprovalLevel: () => 1,
+      approvals: { sessionGrants: () => ({ categories: [], shapes: [] }) },
+    } as unknown as AgentRuntime;
+    new PrivacyOrchestrator(runtime, bus).refresh();
+    const synced = actions.find((a) => a.type === "privacy_synced");
+    expect(synced?.offline).toEqual({
+      supported: false,
+      enabled: false,
+      egress: null,
+    });
+  });
+
+  it("toggleOffline() does nothing to a runtime without the switch", async () => {
+    const { actions, bus } = makeBus();
+    const runtime = {
+      getApprovalLevel: () => 1,
+      approvals: { sessionGrants: () => ({ categories: [], shapes: [] }) },
+    } as unknown as AgentRuntime;
+    await new PrivacyOrchestrator(runtime, bus).toggleOffline();
+    expect(actions.some((a) => a.type === "privacy_action_started")).toBe(false);
+    const settled = actions.find((a) => a.type === "privacy_action_settled");
+    expect(settled?.error).toContain("not available");
+  });
+
+  it("toggleOffline() flips the agent's switch and re-reads its counter", async () => {
+    const { actions, bus } = makeBus();
+    let enabled = false;
+    const setEnabled = vi.fn(async (on: boolean) => {
+      enabled = on;
+    });
+    const runtime = {
+      getApprovalLevel: () => 1,
+      approvals: { sessionGrants: () => ({ categories: [], shapes: [] }) },
+      offlineMode: {
+        isEnabled: () => enabled,
+        setEnabled,
+        egress: () => ({
+          bytesOut: 0,
+          requestsOut: 0,
+          requestsBlocked: 1,
+          since: "2026-11-12T10:00:00.000Z",
+        }),
+      },
+    } as unknown as AgentRuntime;
+    await new PrivacyOrchestrator(runtime, bus).toggleOffline();
+    expect(setEnabled).toHaveBeenCalledWith(true);
+    const settled = actions.find((a) => a.type === "privacy_action_settled");
+    expect(settled?.message).toBe("offline mode on");
+    const synced = actions.filter((a) => a.type === "privacy_synced").pop();
+    expect(synced?.offline).toEqual({
+      supported: true,
+      enabled: true,
+      egress: {
+        bytesOut: 0,
+        requestsOut: 0,
+        requestsBlocked: 1,
+        since: "2026-11-12T10:00:00.000Z",
+      },
+    });
+  });
+
+  it("toggleOffline() shows the agent's error and still re-reads", async () => {
+    const { actions, bus } = makeBus();
+    const runtime = {
+      getApprovalLevel: () => 1,
+      approvals: { sessionGrants: () => ({ categories: [], shapes: [] }) },
+      offlineMode: {
+        isEnabled: () => false,
+        setEnabled: async () => {
+          throw new Error("config is read-only");
+        },
+        egress: () => ({ bytesOut: 10, requestsOut: 1, requestsBlocked: 0, since: "2026-11-12T10:00:00.000Z" }),
+      },
+    } as unknown as AgentRuntime;
+    await new PrivacyOrchestrator(runtime, bus).toggleOffline();
+    const settled = actions.find((a) => a.type === "privacy_action_settled");
+    expect(settled?.error).toBe("offline mode toggle failed: config is read-only");
+    const synced = actions.filter((a) => a.type === "privacy_synced").pop();
+    expect((synced?.offline as { enabled: boolean }).enabled).toBe(false);
+  });
 });

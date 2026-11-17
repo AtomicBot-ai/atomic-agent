@@ -9,6 +9,7 @@ import {
   isSoloRegardlessOfApproval,
   listApprovalCategoriesByTool,
   listKnownToolResourceClasses,
+  memoryReadOnlyToolFilter,
   resourceClassFor,
   setDynamicResourceClassResolver,
   type ResourceClass,
@@ -61,7 +62,9 @@ describe("gated-call approval categories", () => {
     // verify.run starts commands too: a dangerous one waits for level 5 (ATO-1266).
     expect(gatedCallRunsUnattended("verify.run", { level: 4 })).toBe(false);
     expect(gatedCallRunsUnattended("verify.run", { level: 5 })).toBe(true);
-    expect(gatedCallRunsUnattended("os.http.request", { level: 3 })).toBe(true);
+    // A POST asks as http_write until level 4 (ATO-1462).
+    expect(gatedCallRunsUnattended("os.http.request", { level: 3 })).toBe(false);
+    expect(gatedCallRunsUnattended("os.http.request", { level: 4 })).toBe(true);
     expect(gatedCallRunsUnattended("os.email.send", { level: 4 })).toBe(false);
   });
 
@@ -166,6 +169,9 @@ describe("tool-resource-class", () => {
       "os.fs.patch",
       "os.fs.restore",
       "os.fs.move",
+      "os.fs.write_pptx",
+      "os.fs.docx",
+      "os.fs.xlsx",
       "os.fs.archive.extract",
       "os.git.init",
       "os.git.add",
@@ -260,5 +266,24 @@ describe("bookkeeping tools (a reply batched only with these ends the turn)", ()
     ]) {
       expect(isBookkeepingTool(name), name).toBe(false);
     }
+  });
+});
+
+describe("memoryReadOnlyToolFilter (skill eval turns)", () => {
+  it("hides every memory write tool and keeps the recalls", () => {
+    const filter = memoryReadOnlyToolFilter();
+    for (const name of ["memory.notes.store", "memory.notes.forget", "memory.profile.set", "memory.profile.remove"]) {
+      expect(filter(name), name).toBe(false);
+    }
+    for (const name of ["memory.notes.recall", "memory.lessons.recall", "memory.profile.list", "os.fs.read", "reply"]) {
+      expect(filter(name), name).toBe(true);
+    }
+  });
+
+  it("composes with the caller's own filter", () => {
+    const filter = memoryReadOnlyToolFilter((name) => name !== "os.fs.read");
+    expect(filter("os.fs.read")).toBe(false);
+    expect(filter("memory.notes.store")).toBe(false);
+    expect(filter("memory.notes.recall")).toBe(true);
   });
 });

@@ -10,6 +10,8 @@ import {
 import { ClawHubClient } from "./clawhub-client.js";
 import { looksLikeClawHubIdentifier } from "./clawhub-source.js";
 import { stageSkillFromClawHub } from "./install-from-clawhub.js";
+import { looksLikeSkillsShIdentifier } from "../hub/skills-sh-client.js";
+import { stageSkillFromSkillsSh } from "../hub/skills-sh-install.js";
 
 /**
  * Unified install router across the two skill sources. A staged install
@@ -20,9 +22,10 @@ import { stageSkillFromClawHub } from "./install-from-clawhub.js";
  * Routing precedence:
  *  1. explicit `source` (TUI rows carry it — a ClawHub browse row may be
  *     a bare slug that does not start with `@`).
- *  2. otherwise infer: `@owner/slug` → ClawHub, else GitHub tap.
+ *  2. otherwise infer: `@owner/slug` → ClawHub, `skills.sh/owner/repo/skill`
+ *     → skills.sh (resolved to its GitHub folder), else GitHub tap.
  */
-export type SkillSourceKind = "github" | "clawhub";
+export type SkillSourceKind = "github" | "clawhub" | "skills.sh";
 
 export interface StageSkillOptions {
   identifier: string;
@@ -35,6 +38,7 @@ export function resolveSkillSource(
   source?: SkillSourceKind,
 ): SkillSourceKind {
   if (source) return source;
+  if (looksLikeSkillsShIdentifier(identifier)) return "skills.sh";
   return looksLikeClawHubIdentifier(identifier) ? "clawhub" : "github";
 }
 
@@ -47,6 +51,9 @@ export async function stageSkill(
       identifier: options.identifier,
       client: options.clawHubClient,
     });
+  }
+  if (source === "skills.sh") {
+    return stageSkillFromSkillsSh({ identifier: options.identifier });
   }
   return stageSkillFromHub({ identifier: options.identifier });
 }

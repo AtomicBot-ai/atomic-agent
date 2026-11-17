@@ -10,6 +10,7 @@ import { SlotManager } from "../llm/slot-manager.js";
 import { TransportError } from "../llm/reliability/llm-failures.js";
 import { LlamaServerError } from "../llm/llama-server-client.js";
 import { SubscriptionCliNotInstalledError } from "../llm/provider/subscription-cli/subscription-cli-errors.js";
+import { DailySpendLimitError } from "../llm/reliability/spend-limit-error.js";
 import {
   humanizeOpenAiHttpError,
   OpenAiHttpError,
@@ -1485,6 +1486,41 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(failures[0]).toContain(
       "Claude Code isn't installed (the `claude` command was not found).",
     );
+  });
+
+  it("does not wait out the daily spend ceiling, and says so (ATO-649)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const waits: unknown[] = [];
+    const failures: string[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new DailySpendLimitError({ spentUsd: 5.1, limitUsd: 5, providerId: "openrouter" });
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        if (event.type === "provider_waiting") waits.push(event);
+        if (event.type === "loop_failed") failures.push(event.error.message);
+      },
+    });
+    const started = Date.now();
+    const result = await loop.runTurn(
+      createEmptySessionState({ id: "s-over-budget", workingDir }),
+      {
+        userMessage: "hi",
+        maxSteps: 5,
+        taskMaxSteps: 5,
+        signal: new AbortController().signal,
+      },
+    );
+    expect(result.reason).toBe("failed");
+    expect(waits).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(failures[0]).toContain("Daily cloud limit reached: $5.10 of $5.00");
   });
 
   it("waits out a 503, which is exactly the kind that fixes itself", async () => {
@@ -4586,7 +4622,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     // off the operator has swapped the loaded model to Gemma. The
     // turn-start `/props` probe must pick that up before step 0 builds
     // its prompt.
-    const fetchProps = vi.fn<[], Promise<Record<string, unknown>>>();
+    const fetchProps = vi.fn<() => Promise<Record<string, unknown>>>();
     fetchProps.mockResolvedValue(GEMMA4_PROPS);
     const fakeLlama = { fetchProps } as unknown as LlamaServerClient;
 
@@ -4652,7 +4688,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
 
     // Turn-start probe still sees the original Qwen model — the swap
     // happens only between step 0 and step 1.
-    const fetchProps = vi.fn<[], Promise<Record<string, unknown>>>();
+    const fetchProps = vi.fn<() => Promise<Record<string, unknown>>>();
     fetchProps.mockResolvedValueOnce(QWEN3_PROPS);
     fetchProps.mockResolvedValue(GEMMA4_PROPS);
     const fakeLlama = { fetchProps } as unknown as LlamaServerClient;

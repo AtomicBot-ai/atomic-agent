@@ -99,7 +99,7 @@ describe("turn preparation ownership", () => {
     const prepared = await prepareAgentTurn(session(), input, deps);
     expect(prepared.pinnedSlice).toBe(slice);
     expect(resolveLlmSlice).toHaveBeenCalledTimes(1);
-    expect(resolveLlmSlice).toHaveBeenCalledWith("pinned");
+    expect(resolveLlmSlice).toHaveBeenCalledWith("pinned", undefined);
     expect(prepared.visibleToolDescriptors()).toBe(deps.toolDescriptors);
     deps.toolDescriptors = [first, second];
     input.toolFilter = (name: string) => name === "second";
@@ -137,6 +137,19 @@ describe("turn preparation ownership", () => {
       const second = prepareTurnBudgets({ ...options(), maxSteps: 0, taskMaxSteps: 900 });
       expect(first).toMatchObject({ legSteps: 4, autoContinue: true, stepCeiling: 18, durationCeilingMs: 100 });
       expect(second).toMatchObject({ legSteps: 1, autoContinue: false, stepCeiling: 1, durationCeilingMs: 200 });
+    } finally { config.agent.task = original; }
+  });
+
+  it("reads the re-plan cadence from config, an explicit option winning (ATO-609)", () => {
+    const config = getConfig();
+    const original = config.agent.task;
+    try {
+      config.agent.task = { ...original, replanEveryNSteps: 0 };
+      expect(prepareTurnBudgets(options()).replanEveryNSteps).toBe(0);
+      config.agent.task = { ...original, replanEveryNSteps: 12 };
+      expect(prepareTurnBudgets(options()).replanEveryNSteps).toBe(12);
+      expect(prepareTurnBudgets({ ...options(), replanEveryNSteps: 3 }).replanEveryNSteps).toBe(3);
+      expect(prepareTurnBudgets({ ...options(), replanEveryNSteps: 0 }).replanEveryNSteps).toBe(0);
     } finally { config.agent.task = original; }
   });
 

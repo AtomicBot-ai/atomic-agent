@@ -71,6 +71,10 @@ it("correlates compaction controls and reloads the checkpoint inside send_messag
     expect(runtime.getSessionCompaction(state.id)?.summary).toBe(summary);
     expect(runtime.sessionStore.load(state.id)?.turns.slice(0, state.turns.length)).toEqual(state.turns);
     expect((await request("bad", "compact_session", {})).ok).toBe(false);
+    // ATO-661: instructions must be a string of at most 2000 characters.
+    expect(await request("bad-instructions", "compact_session", { sessionId: state.id, instructions: "x".repeat(2001) }))
+      .toMatchObject({ ok: false });
+    expect((await request("bad-type", "compact_session", { sessionId: state.id, instructions: 5 })).ok).toBe(false);
   } finally {
     const streams = [process.stdin, process.stdin, process.stdout, process.stdout];
     ["data", "end", "error", "close"].forEach((event, i) => {

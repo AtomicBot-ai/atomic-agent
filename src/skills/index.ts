@@ -86,11 +86,17 @@ export {
   scanIdOf,
   scanSkillDir,
   scanSkillFiles,
+  looksLikeSkillsShIdentifier,
   searchHub,
+  searchSkillsSh,
   SkillHubInstallError,
+  SkillsShClient,
   SkillIdentifierError,
   stageSkillFromHub,
   summarizeScan,
+  computeSkillDigest,
+  readSkillLock,
+  SKILL_LOCK_FILE,
 } from "./hub/index.js";
 export type {
   DownloadedSkillFile,
@@ -108,6 +114,8 @@ export type {
   SkillScanVerdict,
   SkillTap,
   StagedSkillInstall,
+  SkillLock,
+  SkillOrigin,
 } from "./hub/index.js";
 
 export {
@@ -124,6 +132,10 @@ export {
   searchClawHub,
   stageSkill,
   stageSkillFromClawHub,
+  applySkillUpdate,
+  checkSkillUpdates,
+  rollbackSkillUpdate,
+  SkillUpdateError,
 } from "./clawhub/index.js";
 export type {
   ClawHubBrowseOptions,
@@ -136,4 +148,26 @@ export type {
   InstallSkillRoutedOptions,
   SkillSourceKind,
   StageSkillOptions,
+  ApplySkillUpdateResult,
+  SkillUpdatePreview,
+  SkillUpdateStatus,
 } from "./clawhub/index.js";
+
+export {
+  archiveSkill,
+  listSkillVersions,
+  readSkillChanges,
+  restoreSkill,
+  runSkillCurator,
+  selectCuratorActions,
+  SKILL_CURATOR_LIMITS,
+  SkillChangeRecorder,
+  skillCuratorAutoRunEnabled,
+  skillCuratorPaths,
+} from "./curator/index.js";
+export type {
+  CuratorVerdict,
+  RunSkillCuratorResult,
+  SkillChangeEntry,
+  SkillCuratorPaths,
+} from "./curator/index.js";

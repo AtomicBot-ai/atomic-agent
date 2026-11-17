@@ -131,6 +131,24 @@ describe("WorkerRunCollector", () => {
     expect(result.tools).toMatchObject({ calls: 5, errors: 2, writes: 2 });
   });
 
+  it("does not count a dry-run patch as a write (ATO-1491)", () => {
+    const c = new WorkerRunCollector();
+    // `os.fs.patch` without `apply: true` previews and leaves the file alone.
+    c.observe(toolExecuted("os.fs.patch", "ok", "patch dry-run:", { mode: "dry-run" }));
+    expect(
+      c.finish({ id: "t", title: "T", reason: "reply", stepCount: 1, durationMs: 1 })
+        .tools,
+    ).toMatchObject({ calls: 1, errors: 0, writes: 0 });
+
+    const applied = new WorkerRunCollector();
+    applied.observe(toolExecuted("os.fs.patch", "ok", "patch dry-run:", { mode: "dry-run" }));
+    applied.observe(toolExecuted("os.fs.patch", "ok", "patch applied:", { mode: "applied" }));
+    expect(
+      applied.finish({ id: "t", title: "T", reason: "reply", stepCount: 2, durationMs: 1 })
+        .tools,
+    ).toMatchObject({ calls: 2, errors: 0, writes: 1 });
+  });
+
   it("keeps the last reply when an auto-continued turn emits several", () => {
     const c = new WorkerRunCollector();
     c.observe(reply("first leg"));
@@ -322,6 +340,35 @@ describe("WorkerRunCollector — replaced inputs (F43)", () => {
     const result = c.finish({ id: "t1", title: "T", reason: "reply", stepCount: 1, durationMs: 1 });
     expect(result.replacedInputs).toBeUndefined();
     expect("replacedInputs" in result).toBe(false);
+  });
+});
+
+describe("formatDelegateOutput — an out-of-credit row (ATO-309)", () => {
+  const credit =
+    '"openrouter" is out of credit: This request would exceed your available credits given your current balance. To increase, visit https://openrouter.ai/settings/credits and add more credits.';
+
+  it("keeps the provider's whole sentence on the table row, with the action beside it", () => {
+    const out = formatDelegateOutput(
+      [row({ id: "t1", title: "Build", status: "failed", error: credit, hint: WORKER_HINT_QUOTA })],
+      8000,
+    );
+    const line = out.split("\n")[1]!;
+    expect(line).toContain(`error: ${credit}`);
+    expect(line).not.toContain("…");
+    expect(line).toContain(`hint: ${WORKER_HINT_QUOTA}`);
+    expect(WORKER_HINT_QUOTA).toMatch(/top up/);
+    expect(WORKER_HINT_QUOTA).toMatch(/another provider or a local model/);
+  });
+
+  it("still clips an ordinary failure on the table row", () => {
+    const long = `tests failed: ${"x".repeat(300)}`;
+    const out = formatDelegateOutput(
+      [row({ id: "t1", title: "Build", status: "failed", error: long })],
+      8000,
+    );
+    const line = out.split("\n")[1]!;
+    expect(line).toContain("…");
+    expect(line.length).toBeLessThan(long.length);
   });
 });
 

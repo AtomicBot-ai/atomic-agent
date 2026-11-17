@@ -17,6 +17,12 @@ import {
   type TraceRecorder,
   type TraceSink,
 } from "../../tracing/trace/index.js";
+import {
+  createOtlpTraceSink,
+  resolveOtlpExportSettings,
+  type OtlpTraceSink,
+} from "../../tracing/otel/index.js";
+import { getAppVersion } from "../../version.js";
 import { captureError, type SentryClient } from "../../error-reporting/index.js";
 import { isExpectedProviderLimit } from "../../llm/index.js";
 import { describeLlmFailure } from "./llm-failure-context.js";
@@ -33,14 +39,23 @@ export function createRuntimeTraces(
     config.tracing.trace.enabled,
     options.traceDefault,
   );
-  const traceBus = traceEnabled
+  // OpenTelemetry export (ATO-496): off unless an OTLP endpoint is known.
+  // It rides the same bus as the NDJSON files but does not need them on.
+  const otlp = buildOtlpSink(config, logger);
+  const traceBus = traceEnabled || otlp
     ? buildTraceBus({
-        extraSinks: options.handlers?.traceSinks ?? [],
+        ndjson: traceEnabled,
+        extraSinks: traceEnabled ? (options.handlers?.traceSinks ?? []) : [],
         dir: config.tracing.trace.dir,
         maxBytesPerSession: config.tracing.trace.maxBytesPerSession,
         logger,
+        otlpSink: otlp?.sink ?? null,
       })
     : null;
+  /** Send the spans still queued; part of runtime shutdown. Never rejects. */
+  const shutdownTraceExport = async (): Promise<void> => {
+    await otlp?.shutdown();
+  };
   /**
    * Trace recorders keyed by session id, bounded so a long-lived runtime
    * that serves many sessions (sidecar, HTTP server, background tasks)
@@ -276,6 +291,7 @@ export function createRuntimeTraces(
 
   return {
     traceBus,
+    shutdownTraceExport,
     turnContext,
     touchRecorder,
     dropRecorder,
@@ -304,21 +320,52 @@ function resolveTraceEnabled(
 
 
 /**
- * Wire trace sinks into a fan-out bus. Always includes the on-disk
- * NDJSON sink so `atomic-agent trace show` can read the session back —
- * callers append additional sinks (sidecar relay, sentry, …) via
- * `handlers.traceSinks`.
+ * Wire trace sinks into a fan-out bus. With traces on, the on-disk
+ * NDJSON sink is always first so `atomic-agent trace show` can read the
+ * session back, followed by the host's `handlers.traceSinks` (sidecar
+ * relay, …). The OTLP exporter, when configured, comes last and works
+ * with traces on or off.
  */
 function buildTraceBus(args: {
+  ndjson: boolean;
   extraSinks: TraceSink[];
   dir: string;
   maxBytesPerSession: number;
   logger: StructuredLogger;
+  otlpSink: TraceSink | null;
 }): TraceBus {
-  const ndjsonSink = createNdjsonTraceSink({
-    dir: args.dir,
-    maxBytesPerSession: args.maxBytesPerSession,
-    logger: args.logger,
+  const sinks: TraceSink[] = [];
+  if (args.ndjson) {
+    sinks.push(createNdjsonTraceSink({
+      dir: args.dir,
+      maxBytesPerSession: args.maxBytesPerSession,
+      logger: args.logger,
+    }));
+    sinks.push(...args.extraSinks);
+  }
+  if (args.otlpSink) sinks.push(args.otlpSink);
+  return createTraceBus(sinks);
+}
+
+/**
+ * The OTLP span exporter, when `tracing.otel` or the standard
+ * `OTEL_EXPORTER_OTLP_*` variables name an endpoint. A bad setting is
+ * logged and leaves export off; it never stops the runtime from starting.
+ */
+function buildOtlpSink(
+  config: AtomicAgentConfig,
+  logger: StructuredLogger,
+): OtlpTraceSink | null {
+  const resolved = resolveOtlpExportSettings(config.tracing.otel);
+  if (resolved.kind === "invalid") {
+    logger.warn("otel: span export left off", { reason: resolved.reason });
+    return null;
+  }
+  if (resolved.kind === "off") return null;
+  return createOtlpTraceSink({
+    settings: resolved.settings,
+    version: getAppVersion(),
+    knownSecrets: () => runtimeKnownSecrets(config),
+    logger,
   });
-  return createTraceBus([ndjsonSink, ...args.extraSinks]);
 }

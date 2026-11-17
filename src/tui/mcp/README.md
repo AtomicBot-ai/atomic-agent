@@ -8,6 +8,7 @@ Inherit [TUI instructions](../AGENTS.md); read [MCP instructions](../../mcp/AGEN
 ## Entry points and state
 
 - [Panel](mcp-panel.tsx) composes [list](mcp-list.tsx), [detail](mcp-detail.tsx), [add editor](mcp-add-modal.tsx) and [remove confirmation](mcp-remove-modal.tsx).
+- The add editor opens on the [catalog picker](mcp-catalog-picker.tsx) (ATO-1131): the built-in [server catalog](../../mcp/mcp-catalog.ts) by shelf. Enter fills the editor with the entry's JSON and lists the `<your ...>` values to replace; `p` skips to pasting. The orchestrator refuses a submit that still holds a placeholder.
 - [Panel state](mcp-panel-state.ts) and [actions](mcp-actions.ts) define the UI projection; [reducer](mcp-reducer.ts) changes it without external work.
 - [Keys](mcp-key-bindings.ts) own list/detail/modal routing. List mouse activation uses the same handler. Add-modal keys fall through to the shared MultiLineEditor; remove confirmation retains its own target even if the list cursor changes.
 - [Orchestrator](mcp-orchestrator.ts) reads current config and live manager catalogs, emits actions and owns the refresh interval and same-server busy guard. Its typed dependency surface derives only the six used manager methods and runtime.refreshMcp from AgentRuntime. It owns neither manager transports nor inference resources.
@@ -16,7 +17,7 @@ Inherit [TUI instructions](../AGENTS.md); read [MCP instructions](../../mcp/AGEN
 
 DebugPane mounts the panel, TuiState/TuiAction and the root reducer compose its state, and TuiApp/tui-command connect input/callbacks. ChatOrchestrator constructs and shuts down the MCP orchestrator. These callers import named files; no barrel or compatibility forwarding module is required.
 
-Writes run before live changes. Add/remove success closes the relevant dialog once config has been written; a subsequent connection failure is reported separately and does not pretend to roll back the file. Restart/toggle for the same server share a busy guard. The manager owns catalog discovery and dynamic registration; refreshMcp rebuilds the runtime's exposed tool catalog after live changes. Read [MCP client lifecycle](../../mcp/docs/client.md) before changing that boundary.
+Writes run before live changes. Add/remove success closes the relevant dialog once config has been written; a subsequent connection failure is reported separately and does not pretend to roll back the file. Restart/toggle for the same server share a busy guard. `/mcp auth <name>` and `/mcp signout <name>` run the shared [browser sign-in flow](../../mcp/mcp-oauth-flow.ts) from the orchestrator: it prints the page to open, tries the default browser through [open-url](../open-url.ts) and reconnects the server when the browser comes back. A server in `needs_auth` shows that command in its list row. The manager owns catalog discovery and dynamic registration; refreshMcp rebuilds the runtime's exposed tool catalog after live changes. Read [MCP client lifecycle](../../mcp/docs/client.md) before changing that boundary.
 
 ## Checks
 

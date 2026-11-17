@@ -16,7 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // hardware the test describes, not from whatever the host has. By default
 // it is missing (Vulkan), as on the machines these tests run on.
 const execSyncMock = vi.hoisted(() => vi.fn());
-vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
+const execFileSyncMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({
+  execSync: execSyncMock,
+  execFileSync: execFileSyncMock,
+}));
 
 import {
   checkForBackendUpdate,
@@ -32,6 +36,7 @@ import {
   resetWindowsBackendAssetCache,
   setConfiguredBackendVariant,
 } from "./windows-backend-variant.js";
+import { resetWindowsArm64CpuCache } from "./windows-arm64-backend-variant.js";
 
 /** Minimal GitHub releases-list payload for the macOS arm64 asset. */
 function releasesResponse(
@@ -956,26 +961,39 @@ describe("Windows CUDA runtime guard (ATO-244)", () => {
   });
 });
 
-// ATO-252: Windows on ARM installs its one CPU build, whatever the GPU
+// ATO-252: Windows on ARM installs an arm64 CPU build, whatever the GPU
 // probe or a configured variant would say on x64, and says in words that
-// local models are not available yet when no release carries it.
+// local models are not available yet when no release carries one.
+// ATO-253: which of its two builds depends on the CPU feature register.
 describe("downloadBackend on Windows arm64", () => {
   let dir: string;
   let prevFetch: typeof fetch;
   let platformSpy: { mockRestore: () => void };
   let archSpy: { mockRestore: () => void };
   const ARM64_ASSET = "llama-turboquant-windows-arm64-cpu.zip";
+  const COMPAT_ASSET = "llama-turboquant-windows-arm64-cpu-compat.zip";
+
+  /** `reg query` printing ID_AA64ISAR1_EL1 with or without I8MM+BF16. */
+  function cpu(armv87: boolean): void {
+    const value = 0x100001n | (armv87 ? (1n << 44n) | (1n << 52n) : 0n);
+    execFileSyncMock.mockReturnValue(
+      Buffer.from(`    CP 4031    REG_QWORD    0x${value.toString(16)}\r\n`),
+    );
+  }
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "local-llm-win-arm64-"));
     prevFetch = globalThis.fetch;
     resetLatestReleaseCache();
     resetWindowsBackendAssetCache();
+    resetWindowsArm64CpuCache();
     setConfiguredBackendVariant("auto");
     execSyncMock.mockReset();
     execSyncMock.mockImplementation(() => {
       throw new Error("nvidia-smi: not found");
     });
+    execFileSyncMock.mockReset();
+    cpu(true);
     platformSpy = vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     archSpy = vi.spyOn(process, "arch", "get").mockReturnValue("arm64");
   });
@@ -984,6 +1002,7 @@ describe("downloadBackend on Windows arm64", () => {
     globalThis.fetch = prevFetch;
     resetLatestReleaseCache();
     resetWindowsBackendAssetCache();
+    resetWindowsArm64CpuCache();
     setConfiguredBackendVariant("auto");
     platformSpy.mockRestore();
     archSpy.mockRestore();
@@ -1027,11 +1046,15 @@ describe("downloadBackend on Windows arm64", () => {
     return zip.generateAsync({ type: "nodebuffer" });
   }
 
-  it("installs the arm64 CPU zip, flattened from build/bin", async () => {
+  it("installs the fast arm64 zip on a CPU with I8MM, flattened from build/bin", async () => {
     const downloaded: string[] = [];
     const zip = await nestedZip();
     serve(
-      { [ARM64_ASSET]: zip, [WINDOWS_BACKEND_ASSETS.vulkan]: zip },
+      {
+        [ARM64_ASSET]: zip,
+        [COMPAT_ASSET]: zip,
+        [WINDOWS_BACKEND_ASSETS.vulkan]: zip,
+      },
       downloaded,
     );
 
@@ -1045,6 +1068,91 @@ describe("downloadBackend on Windows arm64", () => {
     expect(execSyncMock).not.toHaveBeenCalled();
   });
 
+  it("installs the compat zip on a CPU without I8MM (8cx Gen 1-3)", async () => {
+    cpu(false);
+    const downloaded: string[] = [];
+    const zip = await nestedZip();
+    serve({ [ARM64_ASSET]: zip, [COMPAT_ASSET]: zip }, downloaded);
+
+    await downloadBackend(dir);
+
+    expect(downloaded).toEqual([COMPAT_ASSET]);
+    expect(readBackendVersion(dir)?.asset).toBe(COMPAT_ASSET);
+  });
+
+  it("installs the compat zip when the CPU register cannot be read", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("reg: access denied");
+    });
+    const downloaded: string[] = [];
+    const zip = await nestedZip();
+    serve({ [ARM64_ASSET]: zip, [COMPAT_ASSET]: zip }, downloaded);
+
+    await downloadBackend(dir);
+
+    expect(downloaded).toEqual([COMPAT_ASSET]);
+  });
+
+  it("falls back to compat on an I8MM CPU when the release has only compat", async () => {
+    const downloaded: string[] = [];
+    serve({ [COMPAT_ASSET]: await nestedZip() }, downloaded);
+
+    await downloadBackend(dir);
+
+    expect(downloaded).toEqual([COMPAT_ASSET]);
+  });
+
+  it("takes a fast-only release when the CPU register cannot be read", async () => {
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("reg: access denied");
+    });
+    const downloaded: string[] = [];
+    serve({ [ARM64_ASSET]: await nestedZip() }, downloaded);
+
+    await downloadBackend(dir);
+
+    expect(downloaded).toEqual([ARM64_ASSET]);
+  });
+
+  it("never installs the fast-only release on a CPU without I8MM", async () => {
+    cpu(false);
+    const downloaded: string[] = [];
+    serve({ [ARM64_ASSET]: await nestedZip() }, downloaded);
+
+    await expect(downloadBackend(dir)).rejects.toThrow(
+      "Local models are not available yet for Windows on ARM. Use a cloud model instead.",
+    );
+    expect(downloaded).toEqual([]);
+  });
+
+  it("flags the fast build already on disk of a CPU without I8MM as an update", async () => {
+    cpu(false);
+    const zip = await nestedZip();
+    serve({ [ARM64_ASSET]: zip, [COMPAT_ASSET]: zip });
+    writeBackendVersion(dir, {
+      tag: "turboquant-arm64-1",
+      downloadedAt: "2026-10-06T01:00:00Z",
+      asset: ARM64_ASSET,
+      releasedAt: "2026-10-06T00:00:00Z",
+    });
+
+    const check = await checkForBackendUpdate(dir);
+    expect(check.updateAvailable).toBe(true);
+  });
+
+  it("keeps a compat install when the release has no fast build to offer", async () => {
+    serve({ [COMPAT_ASSET]: await nestedZip() });
+    writeBackendVersion(dir, {
+      tag: "turboquant-arm64-1",
+      downloadedAt: "2026-10-06T01:00:00Z",
+      asset: COMPAT_ASSET,
+      releasedAt: "2026-10-06T00:00:00Z",
+    });
+
+    const check = await checkForBackendUpdate(dir);
+    expect(check.updateAvailable).toBe(false);
+  });
+
   it("ignores a configured backendVariant", async () => {
     setConfiguredBackendVariant("cuda-12.4");
     const downloaded: string[] = [];
@@ -1055,7 +1163,7 @@ describe("downloadBackend on Windows arm64", () => {
     expect(downloaded).toEqual([ARM64_ASSET]);
   });
 
-  it("says local models are not available yet when no release has the arm64 zip", async () => {
+  it("says local models are not available yet when no release has an arm64 zip", async () => {
     serve({ [WINDOWS_BACKEND_ASSETS.vulkan]: await nestedZip() });
 
     await expect(downloadBackend(dir)).rejects.toThrow(

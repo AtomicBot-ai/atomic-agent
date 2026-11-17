@@ -15,6 +15,10 @@ import {
   type ParsedLink,
 } from "./link-generator-parser.js";
 import { LinkStore, LinkValidationError } from "./link-store.js";
+import {
+  createLinkGeneratorBackoff,
+  type LinkGeneratorBackoffOptions,
+} from "./link-generator-backoff.js";
 
 /**
  * Memory-v2 phase 2. Fire-and-forget runner that turns a recent
@@ -114,6 +118,12 @@ export interface LinkGeneratorRunnerDeps {
   emitTrace?: (event: LinkGeneratorTraceEvent) => void;
   /** Injectable clock for tests. */
   now?: () => number;
+  /**
+   * ATO-205. After a timeout the session skips the next few calls
+   * instead of retrying on the very next turn. See
+   * `link-generator-backoff.ts`. `{ baseCalls: 0 }` turns it off.
+   */
+  timeoutBackoff?: LinkGeneratorBackoffOptions;
 }
 
 export function createLinkGeneratorRunner(
@@ -123,6 +133,7 @@ export function createLinkGeneratorRunner(
   const pending = new Map<string, AbortController>();
   const maxLinksPerCall = deps.maxLinksPerCall ?? 4;
   const minCandidates = deps.minCandidates ?? 2;
+  const backoff = createLinkGeneratorBackoff(deps.timeoutBackoff);
 
   const finish = (
     outcome: LinkGeneratorOutcome,
@@ -134,6 +145,11 @@ export function createLinkGeneratorRunner(
     },
   ): void => {
     const tookMs = Math.max(0, now() - context.startedAt);
+    if (outcome === "ok" || outcome === "none") {
+      backoff.onHealthy(context.sessionId);
+    }
+    const skipNext =
+      outcome === "timeout" ? backoff.onTimeout(context.sessionId) : 0;
     deps.metrics?.recordLinkGenerator({
       sessionId: context.sessionId,
       outcome,
@@ -169,7 +185,9 @@ export function createLinkGeneratorRunner(
         deps.logger?.info("link_generator.ok", logContext);
         return;
       case "none":
-        deps.logger?.debug("link_generator.none", logContext);
+        // Info, not debug: with `ok` and `timeout` this is the timing
+        // log for how long the background call takes on a given model.
+        deps.logger?.info("link_generator.none", logContext);
         return;
       case "skipped":
         deps.logger?.debug("link_generator.skipped", logContext);
@@ -178,7 +196,11 @@ export function createLinkGeneratorRunner(
         deps.logger?.debug("link_generator.aborted", logContext);
         return;
       case "timeout":
-        deps.logger?.warn("link_generator.timeout", logContext);
+        deps.logger?.warn("link_generator.timeout", {
+          ...logContext,
+          timeoutMs: deps.timeoutMs,
+          skipNextCalls: skipNext,
+        });
         return;
       case "failed":
         deps.logger?.warn("link_generator.failed", logContext);
@@ -192,6 +214,15 @@ export function createLinkGeneratorRunner(
         sessionId: input.sessionId,
         startedAt: now(),
         reason: `candidates=${input.candidates.length} < minCandidates=${minCandidates}`,
+      });
+      return 0;
+    }
+    const backoffLeft = backoff.take(input.sessionId);
+    if (backoffLeft > 0) {
+      finish("skipped", {
+        sessionId: input.sessionId,
+        startedAt: now(),
+        reason: `backoff after timeout (${backoffLeft} call(s) left)`,
       });
       return 0;
     }

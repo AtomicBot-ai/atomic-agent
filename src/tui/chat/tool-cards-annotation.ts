@@ -155,6 +155,7 @@ const READ_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.diff",
   "os.fs.hash",
   "vision.describe",
+  "audio.listen",
 ]);
 
 const SEARCH_TOOLS: ReadonlySet<string> = new Set([
@@ -164,6 +165,7 @@ const SEARCH_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.watch",
   "os.fs.locate_project",
   "os.fs.code_map",
+  "os.code.search",
   "os.fs.archive.list",
 ]);
 
@@ -172,6 +174,7 @@ const EDIT_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.edit",
   "os.fs.patch",
   "os.fs.restore",
+  "os.code.rewrite",
 ]);
 
 function bucketOf(tool: string): BucketId {
@@ -192,7 +195,7 @@ function bucketOf(tool: string): BucketId {
   }
   if (tool.startsWith("memory.")) return "memory";
   if (tool === "image.generate") return "image";
-  if (tool === "video.generate") return "video";
+  if (tool === "video.generate" || tool === "video.render_html") return "video";
   return "other";
 }
 

@@ -5,10 +5,11 @@ import type { ProjectTrustRecord } from "../config/skills-config.js";
 import { instructionTrust, projectTrustHint, skillTrust, trustKey, type ProjectItemTrust } from "../skills/project-trust.js";
 import { loadWorkspaceSkills } from "../skills/workspace-skills.js";
 import { loadProjectInstructions } from "./project-instructions.js";
+import { listProjectAgentProfilePaths } from "../agent-profiles/profile-loader.js";
 
 /**
- * The one-time question about a folder's project skills and instruction
- * files (ATO-298 soft trust), shared by the TUI, the HTTP routes and the
+ * The one-time question about a folder's project skills, instruction
+ * files and subagent profile files (ATO-298 soft trust, ATO-566), shared by the TUI, the HTTP routes and the
  * CLI. Nothing here decides on its own: without an answer every item
  * stays unloaded.
  */
@@ -55,7 +56,9 @@ function inventory(config: AtomicAgentConfig, workingDir: string): Inventory {
     configFile: config.paths.userConfigFile, defaults: config.skills }, true);
   const skills = scan.projectSkillsEnabled ? scan.entries.filter(e => e.record.source === "project").map(e => e.record.manifest.name) : [];
   // Discovery only: nothing is allowed, so no instruction body is read for the question.
-  const instructions = loadProjectInstructions(scan.workingDir, undefined, { allow: () => false }).found;
+  // Subagent profile files (ATO-566) are asked about like instruction files, by path.
+  const instructions = [...loadProjectInstructions(scan.workingDir, undefined, { allow: () => false }).found,
+    ...listProjectAgentProfilePaths(scan.workingDir, config.paths.stateDir)];
   return { workingDir: trustKey(scan.workingDir) ?? scan.workingDir, skills, instructions, record: scan.projectTrust };
 }
 

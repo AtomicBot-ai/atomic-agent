@@ -43,6 +43,24 @@ export interface McpServerConfig {
    */
   trust?: McpTrustLevel;
   /**
+   * Per-server approval mode (ATO-1134). Absent: the prompt follows
+   * `trust`, exactly as before. Set, it decides whether this server's
+   * tools ask before a call (`trust` still decides batching):
+   *
+   *  - `ask`: every call asks, except a stdio tool's own
+   *    `readOnlyHint: true` (the default `approval_gated` behaviour,
+   *    also on a `pure_read` server).
+   *  - `ask_writes`: on a stdio server, a tool that advertised
+   *    `readOnlyHint: true` at discovery runs without asking; every
+   *    other tool asks, and every tool of a remote HTTP / SSE server
+   *    asks (ATO-1178).
+   *  - `auto`: no prompt for this server's tools.
+   *
+   * A saved deny or ask rule still applies to a call the mode lets
+   * through. See `mcp-approval-mode.ts`.
+   */
+  approval?: McpApprovalMode;
+  /**
    * Optional environment variables for a `stdio` server, overlaid on
    * the allowlisted service variables (PATH, HOME, ...) taken from the
    * agent's environment; per-server entries win on key collision. This
@@ -81,6 +99,15 @@ export interface McpServerConfig {
  */
 export type McpTrustLevel = "approval_gated" | "pure_read";
 
+/** See `McpServerConfig.approval`. */
+export type McpApprovalMode = "ask" | "ask_writes" | "auto";
+
+export const MCP_APPROVAL_MODES: readonly McpApprovalMode[] = [
+  "ask",
+  "ask_writes",
+  "auto",
+];
+
 export type McpTransport =
   McpStdioTransport | McpStreamableHttpTransport | McpSseTransport;
 
@@ -113,8 +140,13 @@ export interface McpSseTransport {
   headers?: Record<string, string>;
 }
 
-/** Server lifecycle states observable from outside the manager. */
-export type McpServerState = "disabled" | "starting" | "up" | "down";
+/**
+ * Server lifecycle states observable from outside the manager.
+ * `needs_auth`: a remote server answered 401 and has no usable token;
+ * the person signs in through the browser (`mcp-oauth-flow.ts`).
+ */
+export type McpServerState =
+  "disabled" | "starting" | "up" | "down" | "needs_auth";
 
 /** Status snapshot emitted on every observable transition. */
 export interface McpServerStatus {
@@ -122,8 +154,13 @@ export interface McpServerStatus {
   state: McpServerState;
   /** Wall-clock timestamp (ms) of the transition. */
   ts: number;
-  /** Short, scrubbed error message — populated when `state === "down"`. */
+  /**
+   * Short, scrubbed error message — populated when `state === "down"`,
+   * and "Sign in required" when `state === "needs_auth"`.
+   */
   lastError?: string;
+  /** Present and true only in `needs_auth`: sign in through the browser. */
+  authRequired?: boolean;
   /** Number of tools discovered after the most recent successful connect. */
   toolCount?: number;
   /** Number of resources discovered after the most recent successful connect. */

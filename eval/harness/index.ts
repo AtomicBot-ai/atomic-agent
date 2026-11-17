@@ -7,6 +7,7 @@ export type {
   JudgeExpectation,
 } from "./case-schema.js";
 export { runCase } from "./run-case.js";
+export { loadFitTaskSet } from "./load-fit-task-set.js";
 export type { RunCaseResult, RunCaseDependencies } from "./run-case.js";
 export { appendReportRow } from "./append-report-row.js";
 export { appendJsonlRow } from "./append-jsonl-row.js";

@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="motion:duration" content="6">
+<meta name="motion:fps" content="30">
+<title>Release announcement</title>
+<!--
+  Release announcement, 6 s. Frame contract: see ../SKILL.md.
+  Params (URL query): product, version, headline, items (separated by |),
+  cta, accent, ink, bg (2 or 3 hex colours separated by commas, no #),
+  w, h, t.
+-->
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; }
+  body { background: #fdf6ec; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+  #stage { position: relative; overflow: hidden; }
+  .blob { position: absolute; border-radius: 50%; filter: blur(6rem); opacity: .75; }
+  .content { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; padding: 0 9%; box-sizing: border-box; }
+  .chip { align-self: flex-start; font-size: 3rem; font-weight: 600; padding: 1rem 2.6rem; border-radius: 99rem; background: rgba(255,255,255,.75); }
+  .version { font-size: 17rem; font-weight: 800; letter-spacing: -.01em; line-height: 1; margin: 2.4rem 0 1rem; }
+  .headline { font-size: 5.6rem; font-weight: 700; line-height: 1.15; margin-bottom: 3.4rem; max-width: 80%; }
+  .items { display: flex; flex-direction: column; gap: 1.6rem; }
+  .item { display: flex; align-items: center; gap: 2rem; font-size: 4rem; font-weight: 500; }
+  .dot { width: 2rem; height: 2rem; border-radius: 50%; flex: none; }
+  .cta { position: absolute; right: 9%; bottom: 8%; font-size: 3.4rem; font-weight: 700; padding: 1.4rem 3rem; border-radius: 1.6rem; color: #fff; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="blob" id="b0"></div><div class="blob" id="b1"></div><div class="blob" id="b2"></div>
+  <div class="content">
+    <div class="chip" id="chip"></div>
+    <div class="version" id="version"></div>
+    <div class="headline" id="headline"></div>
+    <div class="items" id="items"></div>
+  </div>
+  <div class="cta" id="cta"></div>
+</div>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  function P(k, d) { var v = q.get(k); return v === null || v === "" ? d : v; }
+  function hex(v, d) { v = String(v || "").replace(/^#/, ""); return /^[0-9a-fA-F]{3,8}$/.test(v) ? "#" + v : d; }
+  var W = +P("w", 1920) || 1920, H = +P("h", 1080) || 1080;
+  var DURATION = 6;
+  var accent = hex(P("accent", ""), "#ff5a5f");
+  var ink = hex(P("ink", ""), "#1f2547");
+  var bg = P("bg", "ffe3ec,dfeaff,fff2c9").split(",").map(function (c, i) { return hex(c, ["#ffe3ec", "#dfeaff", "#fff2c9"][i % 3]); });
+  while (bg.length < 3) bg.push(bg[bg.length - 1]);
+
+  var stage = document.getElementById("stage");
+  stage.style.width = W + "px"; stage.style.height = H + "px";
+  document.documentElement.style.fontSize = (Math.min(W, H) / 108) + "px";
+  document.body.style.background = "linear-gradient(135deg," + bg[0] + "," + bg[1] + ")";
+  stage.style.background = "linear-gradient(135deg," + bg[0] + " 0%," + bg[1] + " 60%," + bg[2] + " 100%)";
+  stage.style.color = ink;
+
+  document.getElementById("chip").textContent = P("product", "Atomic Agent");
+  document.getElementById("version").textContent = P("version", "v1.0");
+  document.getElementById("headline").textContent = P("headline", "A new release is out");
+  var cta = document.getElementById("cta");
+  cta.textContent = P("cta", "atomicagent.io");
+  cta.style.background = accent;
+  document.getElementById("version").style.color = accent;
+  var list = P("items", "Faster replies|New tools|Fewer clicks").split("|").filter(Boolean).slice(0, 5);
+  var itemsEl = document.getElementById("items");
+  var itemEls = list.map(function (text, i) {
+    var row = document.createElement("div"); row.className = "item";
+    var dot = document.createElement("span"); dot.className = "dot"; dot.style.background = [accent, "#4f8cff", "#ffb020", "#2ec4a6", "#a46cff"][i % 5];
+    var label = document.createElement("span"); label.textContent = text;
+    row.appendChild(dot); row.appendChild(label); itemsEl.appendChild(row);
+    return row;
+  });
+  var blobs = [0, 1, 2].map(function (i) {
+    var b = document.getElementById("b" + i);
+    b.style.width = b.style.height = (Math.max(W, H) * [0.55, 0.45, 0.5][i]) + "px";
+    b.style.background = [accent, "#7aa7ff", "#ffd36e"][i];
+    return b;
+  });
+
+  function clamp(x) { return Math.min(1, Math.max(0, x)); }
+  function prog(t, s, e) { return clamp((t - s) / (e - s)); }
+  function easeOut(p) { return 1 - Math.pow(1 - p, 3); }
+  function back(p) { var c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2); }
+  function show(el, p, dx, dy, s) {
+    el.style.opacity = p;
+    el.style.transform = "translate(" + (dx * (1 - p)) + "rem," + (dy * (1 - p)) + "rem) scale(" + (s === undefined ? 1 : s) + ")";
+  }
+
+  function render(t) {
+    t = Math.max(0, Math.min(DURATION, +t || 0));
+    blobs.forEach(function (b, i) {
+      var a = t * 0.5 + i * 2.1;
+      b.style.left = (W * [0.62, -0.1, 0.3][i] + Math.sin(a) * W * 0.05) + "px";
+      b.style.top = (H * [-0.25, 0.45, 0.7][i] + Math.cos(a * 0.8) * H * 0.06) + "px";
+      b.style.opacity = 0.35 + 0.35 * easeOut(prog(t, 0, 0.8));
+    });
+    show(document.getElementById("chip"), easeOut(prog(t, 0.2, 0.8)), -6, 0);
+    var v = prog(t, 0.5, 1.2);
+    show(document.getElementById("version"), clamp(v * 2), 0, 3, 0.8 + 0.2 * back(v));
+    show(document.getElementById("headline"), easeOut(prog(t, 1.0, 1.7)), 0, 3);
+    itemEls.forEach(function (row, i) { show(row, easeOut(prog(t, 1.8 + i * 0.35, 2.4 + i * 0.35)), -5, 0); });
+    var c = prog(t, 3.6 + list.length * 0.2, 4.3 + list.length * 0.2);
+    show(cta, clamp(c * 2), 0, 2, 0.85 + 0.15 * back(c));
+  }
+
+  window.__duration = DURATION;
+  window.__fps = 30;
+  window.__setTime = render;
+  render(0);
+  function ready() { window.__ready = true; document.documentElement.setAttribute("data-ready", "1"); }
+  if (q.has("t")) { render(+q.get("t")); ready(); return; }
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(ready);
+  if (q.get("autoplay") === "0") return;
+  var start = null;
+  function loop(now) {
+    if (window.__frozen) return;
+    if (start === null) start = now;
+    render(((now - start) / 1000) % (DURATION + 1));
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+  var setTime = render;
+  window.__setTime = function (t) { window.__frozen = true; setTime(t); };
+})();
+</script>
+</body>
+</html>

@@ -51,6 +51,12 @@ export interface ComposerSwitchRow {
    * row and the control it opens from read as the same thing.
    */
   readonly emphasis?: "fusion";
+  /**
+   * Set when the row cannot be chosen right now, with the one plain
+   * reason shown for it (ATO-1088: "Offline mode is on"). The popup
+   * greys the row out and Enter on it only says the reason.
+   */
+  readonly disabled?: string;
 }
 
 /** Cloud providers the operator has actually added, in config order. */

@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
-import { resetConfigCache } from "../config/index.js";
+import {
+  DEFAULT_FUSION_WORKER_MAX_STEPS,
+  DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+  resetConfigCache,
+} from "../config/index.js";
 import { workerSlotFootprint } from "../local-llm/server/worker-slots.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { buildPrompt } from "./build-prompt.js";
@@ -71,7 +75,30 @@ describe("resolveFusionMachineFacts", () => {
       workerTokenBudget: workerSlotFootprint(),
       workerModel: "qwen3-4b",
       tokensPerSecond: null,
+      // A local worker's limits, at their defaults (ATO-1363).
+      workerMaxSteps: DEFAULT_FUSION_WORKER_MAX_STEPS,
+      workerTimeoutMs: DEFAULT_FUSION_WORKER_TIMEOUT_MS,
     });
+  });
+
+  it("states the configured worker limits for a local leg only (ATO-1363)", () => {
+    const local = config({}) as unknown as {
+      llm: { runMode: { fusion: Record<string, unknown> } };
+    };
+    local.llm.runMode.fusion.workerMaxSteps = 30;
+    local.llm.runMode.fusion.workerTimeoutMs = 1_200_000;
+    expect(
+      resolveFusionMachineFacts(local as unknown as AtomicAgentConfig),
+    ).toMatchObject({ workerMaxSteps: 30, workerTimeoutMs: 1_200_000 });
+    const providers = [
+      { id: "local-llama", kind: "llama-server", model: "entry-3b" },
+      { id: "openrouter", kind: "openai-compatible", defaultChatModel: "gpt-x" },
+    ] as unknown as Providers;
+    const cloud = resolveFusionMachineFacts(
+      config({ workerProvider: "openrouter", providers }),
+    );
+    expect(cloud).not.toHaveProperty("workerMaxSteps");
+    expect(cloud).not.toHaveProperty("workerTimeoutMs");
   });
 
   it("states no slot count for an external server", () => {

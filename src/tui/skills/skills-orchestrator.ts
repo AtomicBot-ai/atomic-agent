@@ -18,6 +18,8 @@ import {
   listStarterSkillNames,
   parseClawHubIdentifier,
   searchClawHub,
+  searchSkillsSh,
+  SkillsShClient,
   stageSkill,
   uninstallSkill,
   type HubSkillEntry,
@@ -84,6 +86,7 @@ export class SkillsOrchestrator {
   private pluginCommandsError: string | null = null;
   /** Memoised ClawHub client, rebuilt when the configured apiBase changes. */
   private clawHub: { client: ClawHubClient; apiBase: string } | null = null;
+  private readonly skillsSh = new SkillsShClient();
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -107,8 +110,12 @@ export class SkillsOrchestrator {
   /** Validate live policy; the model still loads the body through skill.view. */
   prepareInvocation(name: string, input: string): string {
     const workspace = this.workspace();
-    if (!workspace) throw new Error("Skill slash commands require cloud mode");
-    workspace.skills.assertAvailable(name);
+    if (workspace) workspace.skills.assertAvailable(name);
+    else {
+      // Local mode: the boot registry is what the local prompt and skill.view see.
+      if (this.runtime.skillRegistry.isDisabled(name)) throw new Error(`skill ${name} is disabled`);
+      this.runtime.skillRegistry.get(name);
+    }
     return `Use the ${JSON.stringify(name)} skill. Load its instructions with skill.view(${JSON.stringify({ name })}) before proceeding.`
       + (input ? `\n\n${input}` : "");
   }
@@ -443,6 +450,11 @@ export class SkillsOrchestrator {
       );
       return [] as HubSkillEntry[];
     });
+    // skills.sh has no browse, only search. Its failure is a warning in
+    // the log line, never a hub error.
+    const shEntries = await searchSkillsSh(this.skillsSh, trimmed, {
+      warn: (line) => this.bus.emit({ type: "runtime_info", line }),
+    });
 
     let githubEntries: HubSkillEntry[] = [];
     try {
@@ -459,7 +471,7 @@ export class SkillsOrchestrator {
       );
     }
 
-    const merged = [...clawEntries, ...githubEntries];
+    const merged = [...clawEntries, ...shEntries, ...githubEntries];
     if (merged.length === 0 && errors.length > 0) {
       this.bus.emit({
         type: "skills_hub_results",
@@ -549,7 +561,9 @@ export class SkillsOrchestrator {
           downloads: row.downloads,
           body: null,
           bodyError:
-            "preview unavailable for GitHub taps (SKILL.md is pulled at install)",
+            row.source === "skills.sh"
+              ? "preview unavailable for skills.sh rows (SKILL.md is pulled from GitHub at install)"
+              : "preview unavailable for GitHub taps (SKILL.md is pulled at install)",
         },
       });
       return;

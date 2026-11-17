@@ -5,32 +5,48 @@
  * in the runtime that imports `@modelcontextprotocol/sdk`.
  * Everything else operates on the neutral shapes from
  * `mcp-types.ts`. Future replacement of the SDK touches this file
- * and (potentially) `mcp-sampling-handler.ts` only.
+ * and (potentially) `mcp-sampling-handler.ts` only. The OAuth provider
+ * (`mcp-oauth-provider.ts`) takes one type from the SDK; the `auth()`
+ * call it needs is `runMcpOAuth` below.
  */
 
+import {
+  auth,
+  discoverOAuthProtectedResourceMetadata,
+  UnauthorizedError,
+  type OAuthClientProvider,
+} from "@modelcontextprotocol/sdk/client/auth.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
   CreateMessageRequestSchema,
+  ElicitRequestSchema,
+  type ClientCapabilities,
   type CreateMessageRequest,
   type CreateMessageResult,
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { resourceClassFor } from "../agent/tool-resource-class.js";
 import {
+  McpAuthRequiredError,
   McpConnectError,
   McpRequestError,
   scrubErrorMessage,
 } from "./mcp-errors.js";
+import { createMcpOAuthStore } from "./mcp-oauth-store.js";
+import { McpOAuthProvider, usesMcpOAuth } from "./mcp-oauth-provider.js";
 import {
   attachStderrTail,
   formatStderrTail,
   type StderrTail,
 } from "./mcp-stderr-tail.js";
+import type { McpElicitationHandler } from "./mcp-elicitation-handler.js";
 import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
 import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
+import { offlineRefusal } from "../llm/offline-network.js";
 import {
   MCP_TOOL_NAME_RE,
   type McpPromptMeta,
@@ -61,10 +77,29 @@ export interface McpClientDeps {
    */
   samplingHandler?: McpSamplingHandler;
   /**
+   * Elicitation handler (`mcp-elicitation-handler.ts`). Optional: only
+   * when a way to ask a person is wired does the client advertise
+   * `elicitation` (form mode only); without it a server sees no such
+   * capability and must not send `elicitation/create`.
+   */
+  elicitationHandler?: McpElicitationHandler;
+  /**
+   * Test seam: build the transport instead of deriving it from
+   * `config.transport`. Production never sets it.
+   */
+  transportFactory?: (config: McpServerConfig) => Transport;
+  /**
    * Wall-clock for connect deadlines / debounce timers. Override in
    * tests; production uses `() => Date.now()`.
    */
   now?: () => number;
+  /**
+   * State dir holding OAuth sign-ins (`<stateDir>/mcp-oauth/`). When set,
+   * every remote server without a credential header gets an OAuth
+   * provider; a server that never answers 401 is unaffected by it.
+   * Omitted (tests, hosts without a state dir): no provider, as before.
+   */
+  oauthStateDir?: string;
 }
 
 /** Defaults — agent identity advertised to servers in `initialize`. */
@@ -74,6 +109,13 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 /** Grace for a dying child's stderr to arrive after the transport closes. */
 const STDERR_SETTLE_MS = 250;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 60_000;
+/**
+ * Timeout handed to the SDK for our own requests. Our `RequestDeadline`
+ * is the real one (it can be held during an elicitation); the SDK's
+ * fixed 60 s default would otherwise fail a call whose server is still
+ * waiting on the person. This is the largest delay `setTimeout` takes.
+ */
+const SDK_REQUEST_TIMEOUT_MS = 2_147_483_647;
 
 /**
  * Thin wrapper around `@modelcontextprotocol/sdk`'s `Client`. One
@@ -98,8 +140,16 @@ export class McpClient {
   private readonly deps: McpClientDeps;
   private client: Client | null = null;
   private connecting = false;
+  /** OAuth provider of the transport last built, if any. */
+  private authProvider: McpOAuthProvider | null = null;
+  /** Remote, keyless server: a 401 may mean "sign in" (checked against its OAuth metadata). */
+  private oauthCandidate: string | null = null;
   /** Why the last `close()` happened, told to a call it cut short. */
   private closeReason: string | null = null;
+  /** `elicitation/create` requests from this server still waiting on a person. */
+  private pendingElicitations = 0;
+  /** Deadlines of this client's in-flight requests; held while an elicitation is pending. */
+  private readonly deadlines = new Set<RequestDeadline>();
   private catalog: McpServerCatalog = {
     server: "",
     tools: [],
@@ -139,7 +189,8 @@ export class McpClient {
     this.connecting = true;
     let stderrTail: StderrTail = { read: () => "", settle: async () => {} };
     try {
-      const transport = this.buildTransport();
+      const transport =
+        this.deps.transportFactory?.(this.config) ?? this.buildTransport();
       // Attached before `client.connect()` starts the child: the SDK hands
       // out a PassThrough up front precisely so early output is not lost.
       stderrTail = attachStderrTail(
@@ -147,13 +198,14 @@ export class McpClient {
       );
       const client = new Client(
         { name: CLIENT_NAME, version: CLIENT_VERSION },
-        {
-          capabilities: this.deps.samplingHandler ? { sampling: {} } : {},
-        },
+        { capabilities: clientCapabilities(this.deps) },
       );
 
       if (this.deps.samplingHandler) {
         this.installSamplingHandler(client);
+      }
+      if (this.deps.elicitationHandler) {
+        this.installElicitationHandler(client);
       }
 
       await withTimeout(
@@ -192,6 +244,16 @@ export class McpClient {
     err: unknown,
     stderrTail: StderrTail,
   ): Promise<McpConnectError> {
+    if (this.authProvider && isUnauthorized(err)) {
+      return new McpAuthRequiredError(this.config.name);
+    }
+    // Review fix: with no saved sign-in the transport has no provider, so a
+    // keyless server's 401 is only "sign in" when the server advertises
+    // OAuth; any other 401 keeps its own error, as before.
+    if (!this.authProvider && this.oauthCandidate && isUnauthorized(err)
+        && (await advertisesMcpOAuth(this.oauthCandidate))) {
+      return new McpAuthRequiredError(this.config.name);
+    }
     const base =
       err instanceof McpConnectError ? err.message : scrubErrorMessage(err);
     await stderrTail.settle(STDERR_SETTLE_MS);
@@ -314,8 +376,9 @@ export class McpClient {
   ): Promise<Record<string, unknown>> {
     const client = this.requireClient();
     try {
-      const res = await withTimeout(
-        client.callTool({ name: rawName, arguments: args }),
+      const res = await this.request(
+        (options) =>
+          client.callTool({ name: rawName, arguments: args }, undefined, options),
         timeoutMs,
         signal,
         () =>
@@ -359,8 +422,8 @@ export class McpClient {
   ): Promise<Record<string, unknown>> {
     const client = this.requireClient();
     try {
-      const res = await withTimeout(
-        client.readResource({ uri }),
+      const res = await this.request(
+        (options) => client.readResource({ uri }, options),
         DEFAULT_TOOL_CALL_TIMEOUT_MS,
         signal,
         () =>
@@ -387,8 +450,9 @@ export class McpClient {
   ): Promise<Record<string, unknown>> {
     const client = this.requireClient();
     try {
-      const res = await withTimeout(
-        client.getPrompt({ name, ...(args ? { arguments: args } : {}) }),
+      const res = await this.request(
+        (options) =>
+          client.getPrompt({ name, ...(args ? { arguments: args } : {}) }, options),
         DEFAULT_TOOL_CALL_TIMEOUT_MS,
         signal,
         () =>
@@ -443,6 +507,8 @@ export class McpClient {
     StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
     const t = this.config.transport;
     if (t.kind === "stdio") {
+      this.authProvider = null;
+      this.oauthCandidate = null;
       // Only service variables (PATH, HOME, SystemRoot, ...) from the
       // agent's environment, plus the server's own configured `env`.
       // Provider keys loaded from `<stateDir>/.env` stay with the agent.
@@ -461,13 +527,39 @@ export class McpClient {
         stderr: "pipe",
       });
     }
+    // ATO-1084: a remote server is refused before any connection while
+    // offline; one on this machine still connects. A stdio server is a
+    // separate program and is not network-isolated (no OS sandbox).
+    const offline = offlineRefusal(t.url, `MCP server "${this.config.name}"`);
+    if (offline) throw new McpConnectError(this.config.name, offline.message);
+    // Browser sign-in (OAuth) only for remote servers without a key in
+    // their headers: a configured `Authorization` header keeps working
+    // exactly as before. The provider never opens a browser itself.
+    // Review fix: the provider is attached only once a sign-in is saved
+    // (it then refreshes tokens). Without one, connecting never registers a
+    // client or probes `/register` on servers that do not use OAuth.
+    const oauthDir = this.deps.oauthStateDir;
+    const oauthStore = oauthDir && usesMcpOAuth(t) ? createMcpOAuthStore(oauthDir) : null;
+    this.oauthCandidate = oauthStore ? t.url : null;
+    this.authProvider =
+      oauthStore && oauthStore.hasTokens(this.config.name, t.url)
+        ? new McpOAuthProvider({
+            store: oauthStore,
+            server: this.config.name,
+            url: t.url,
+            mode: "connect",
+          })
+        : null;
+    const authProvider = this.authProvider ?? undefined;
     if (t.kind === "streamable_http") {
       return new StreamableHTTPClientTransport(new URL(t.url), {
         requestInit: t.headers ? { headers: { ...t.headers } } : undefined,
+        ...(authProvider ? { authProvider } : {}),
       });
     }
     return new SSEClientTransport(new URL(t.url), {
       requestInit: t.headers ? { headers: { ...t.headers } } : undefined,
+      ...(authProvider ? { authProvider } : {}),
     });
   }
 
@@ -478,6 +570,143 @@ export class McpClient {
       return handler(req.params, signal);
     });
   }
+
+  private installElicitationHandler(client: Client): void {
+    const handler = this.deps.elicitationHandler!;
+    client.setRequestHandler(ElicitRequestSchema, async (req, extra) => {
+      // The SDK aborts `extra.signal` when the server cancels this
+      // request or the connection closes, so even an open-ended wait
+      // on a person ends with the server.
+      const signal = extra.signal ?? new AbortController().signal;
+      this.holdDeadlines();
+      try {
+        return await handler(req.params, signal);
+      } finally {
+        this.releaseDeadlines();
+      }
+    });
+  }
+
+  /**
+   * While the server waits on the person, the call that is waiting on
+   * the server must not time out. Elicitations are not tied to a
+   * specific call here, so every in-flight request of this client is
+   * held; the person answering is progress for all of them.
+   */
+  private holdDeadlines(): void {
+    this.pendingElicitations += 1;
+    if (this.pendingElicitations > 1) return;
+    for (const d of this.deadlines) d.pause();
+  }
+
+  /** Last pending elicitation settled: every held request gets a fresh full window. */
+  private releaseDeadlines(): void {
+    this.pendingElicitations -= 1;
+    if (this.pendingElicitations > 0) return;
+    for (const d of this.deadlines) d.start();
+  }
+
+  /**
+   * Send one SDK request under our own deadline and the caller's
+   * signal. The deadline is held while an elicitation from this server
+   * is pending (see `holdDeadlines`). On our timeout or the caller's
+   * abort the SDK request is aborted too, so it tells the server
+   * (`notifications/cancelled`) and drops its response handler.
+   */
+  private request<T>(
+    send: (options: { signal: AbortSignal; timeout: number }) => Promise<T>,
+    timeoutMs: number,
+    signal: AbortSignal | undefined,
+    onTimeout: () => Error,
+  ): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const sdkAbort = new AbortController();
+      let settled = false;
+      const finalize = (cb: () => void) => {
+        if (settled) return;
+        settled = true;
+        deadline.clear();
+        this.deadlines.delete(deadline);
+        if (signal) signal.removeEventListener("abort", onAbort);
+        cb();
+      };
+      const deadline = new RequestDeadline(timeoutMs, () => {
+        const err = onTimeout();
+        finalize(() => reject(err));
+        sdkAbort.abort(err);
+      });
+      const onAbort = () => {
+        finalize(() => reject(new Error("aborted")));
+        sdkAbort.abort();
+      };
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.deadlines.add(deadline);
+      if (this.pendingElicitations === 0) deadline.start();
+      let sent: Promise<T>;
+      try {
+        sent = send({ signal: sdkAbort.signal, timeout: SDK_REQUEST_TIMEOUT_MS });
+      } catch (err) {
+        finalize(() => reject(err));
+        return;
+      }
+      sent.then(
+        (v) => finalize(() => resolve(v)),
+        (err) => finalize(() => reject(err)),
+      );
+    });
+  }
+}
+
+/**
+ * A request deadline that can be held. `start()` (re)starts a full
+ * window, `pause()` stops the clock, `clear()` ends it for good.
+ */
+class RequestDeadline {
+  private timer: ReturnType<typeof setTimeout> | undefined;
+  private done = false;
+
+  constructor(
+    private readonly ms: number,
+    private readonly onExpire: () => void,
+  ) {}
+
+  start(): void {
+    if (this.done) return;
+    this.pause();
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      this.done = true;
+      this.onExpire();
+    }, this.ms);
+  }
+
+  pause(): void {
+    if (this.timer === undefined) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+
+  clear(): void {
+    this.done = true;
+    this.pause();
+  }
+}
+
+/**
+ * Capabilities advertised in `initialize`. Each one only when its
+ * handler is wired: `elicitation: {}` means form mode only.
+ */
+export function clientCapabilities(
+  deps: Pick<McpClientDeps, "samplingHandler" | "elicitationHandler">,
+): ClientCapabilities {
+  return {
+    ...(deps.samplingHandler ? { sampling: {} } : {}),
+    ...(deps.elicitationHandler ? { elicitation: {} } : {}),
+  };
 }
 
 /**
@@ -504,6 +733,53 @@ export function resolveStdioCommand(
       ? process.env.ComSpec
       : "cmd.exe";
   return { command: comSpec, args: ["/d", "/s", "/c", command, ...args] };
+}
+
+/**
+ * True when a connect failed because the server wants credentials: the
+ * SDK's `UnauthorizedError` (no token, sign-in needed) or an HTTP 401
+ * that survived the provider (a token the server no longer accepts).
+ */
+/** Whether `url` publishes OAuth protected-resource metadata (RFC 9728). Never throws. */
+export async function advertisesMcpOAuth(url: string): Promise<boolean> {
+  try {
+    const meta = await withTimeout(
+      discoverOAuthProtectedResourceMetadata(url),
+      5_000,
+      undefined,
+      () => new Error("timeout"),
+    );
+    return Array.isArray(meta?.authorization_servers) && meta.authorization_servers.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function isUnauthorized(err: unknown): boolean {
+  if (err instanceof UnauthorizedError) return true;
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === 401
+  );
+}
+
+/**
+ * Run the SDK's OAuth step for a remote MCP server: discovery, dynamic
+ * client registration and the authorization URL (`"REDIRECT"`), or the
+ * code exchange / token refresh (`"AUTHORIZED"`). The sign-in flow in
+ * `mcp-oauth-flow.ts` calls this so SDK calls stay in this file.
+ */
+export async function runMcpOAuth(
+  provider: OAuthClientProvider,
+  options: { serverUrl: string; authorizationCode?: string },
+): Promise<"AUTHORIZED" | "REDIRECT"> {
+  return auth(provider, {
+    serverUrl: options.serverUrl,
+    ...(options.authorizationCode !== undefined
+      ? { authorizationCode: options.authorizationCode }
+      : {}),
+  });
 }
 
 /** Race a promise against a manual timeout + optional abort signal. */

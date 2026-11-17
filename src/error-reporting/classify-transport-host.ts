@@ -62,6 +62,13 @@ export function classifyTransportHost(
   if (isLoopback(host)) return "localhost";
   if (isPrivate(host)) return "private";
   if (KNOWN_CLOUD_HOSTS.has(host)) return "known_cloud";
+  // A per-account endpoint (`my-team.openai.azure.com`) is a known cloud
+  // service too; only the class leaves the machine, never the host.
+  const perAccount = (p: (typeof PROVIDER_PRESETS)[number]): boolean =>
+    p.perAccountEndpoint?.hostPattern?.test(host) === true;
+  if (PROVIDER_PRESETS.some(perAccount)) {
+    return "known_cloud";
+  }
   return "other";
 }
 

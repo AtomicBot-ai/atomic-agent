@@ -9,7 +9,13 @@
  * The cross-tool `DO_NOT_TRACK=1` convention (consoledonottrack.com)
  * does the same (ATO-1189): a user who set it once for every CLI gets no
  * analytics and no crash reports from the agent either.
+ *
+ * Offline mode (`ATOMIC_AGENT_OFFLINE=1` or `network.offline`, ATO-1084)
+ * does too: a client built while it is on is never created. One built
+ * before it was turned on at run time is refused by the HTTP pool.
  */
+import { isOfflineNetwork } from "../llm/offline-network.js";
+
 export const ANALYTICS_KILL_SWITCH_ENV = "ATOMIC_AGENT_ANALYTICS";
 export const DO_NOT_TRACK_ENV = "DO_NOT_TRACK";
 
@@ -29,6 +35,7 @@ export function isAnalyticsKilledByEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   if (isDoNotTrackSet(env)) return true;
+  if (isOfflineNetwork(env)) return true;
   const raw = env[ANALYTICS_KILL_SWITCH_ENV];
   if (typeof raw !== "string") return false;
   return OFF_VALUES.has(raw.trim().toLowerCase());

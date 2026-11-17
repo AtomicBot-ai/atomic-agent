@@ -2,10 +2,17 @@ import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
+import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
 import { HELP, lanUrls, parseArgs, serveAuthWarning } from "./serve-args.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
+import {
+  startWebhookTunnel,
+  tunnelPreflight,
+  type TunnelPreflight,
+  type WebhookTunnel,
+} from "./serve-webhook-tunnel.js";
 import {
   formatReapOutcomes,
   registerServe,
@@ -46,13 +53,33 @@ export async function serveCommand(args: string[]): Promise<number> {
     return 0;
   }
 
+  // ATO-625: refuse the tunnel before anything boots, so a missing
+  // cloudflared or a webhook set with no secret never opens a public address.
+  let tunnelCheck: Extract<TunnelPreflight, { ok: true }> | null = null;
+  if (parsed.tunnel) {
+    const config = getConfig();
+    const check = tunnelPreflight({
+      webhooks: config.webhooks,
+      tasksEnabled: config.tasks.enabled,
+    });
+    if (!check.ok) {
+      process.stderr.write(`serve: ${check.error}\n`);
+      return 1;
+    }
+    tunnelCheck = check;
+  }
+
   const approvalBus = new ApprovalBus();
   const completionRegistry = new CompletionRegistry();
+  // ATO-646: what `GET /metrics` reports, folded in memory from the
+  // runtime's metric samples.
+  const metricsRegistry = new PrometheusRegistry();
 
   let runtime: AgentRuntime | null = null;
   let handle: HttpServerHandle | null = null;
   let releaseRecord: (() => void) | null = null;
   let orphanWatch: OrphanWatch | null = null;
+  let tunnel: WebhookTunnel | null = null;
   try {
     runtime = await createAgentRuntime({
       workingDir: parsed.workingDir,
@@ -82,6 +109,7 @@ export async function serveCommand(args: string[]): Promise<number> {
         // factory's parameter makes that a compile error now, and
         // `serve-command.test.ts` reads what is passed here.
         logSinks: [createStderrSink()],
+        metricSinks: [metricsRegistry.sink],
         onApprovalRequest: (request) => {
           // ATO-1111: drop mirrored prompts whose turn was aborted, so a
           // window that never reconnects /api/events does not keep them.
@@ -96,7 +124,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       host: parsed.host,
       port: parsed.port,
       apiKey: parsed.apiKey,
-      routes: buildRouteTable(),
+      routes: buildRouteTable({ metricsRegistry }),
       approvalBus,
       completionRegistry,
     });
@@ -109,6 +137,23 @@ export async function serveCommand(args: string[]): Promise<number> {
     // ATO-1126: on every interface, say where another device reaches it (the desktop's remote agent, a phone).
     for (const url of lanUrls(parsed.host, handle.port)) {
       process.stderr.write(`[atomic-agent] serve reachable at ${url}\n`);
+    }
+    if (parsed.tunnel && tunnelCheck) {
+      tunnel = await startWebhookTunnel({
+        runtime,
+        request: parsed.tunnel,
+        preflight: tunnelCheck,
+        approvalBus,
+        completionRegistry,
+        write: (line) => process.stderr.write(line),
+      });
+      process.stderr.write(
+        `[atomic-agent] tunnel: starting cloudflared (${parsed.tunnel.mode}) for webhooks only, gateway on 127.0.0.1:${tunnel.gatewayPort}\n`,
+      );
+      // Not awaited: the public address can take a few seconds, and the
+      // local API serves meanwhile. The outcome is logged and shown on
+      // GET /api/webhooks.
+      void tunnel.ready;
     }
 
     releaseRecord = registerServe(stateDir, {
@@ -150,6 +195,8 @@ export async function serveCommand(args: string[]): Promise<number> {
     return 1;
   } finally {
     orphanWatch?.stop();
+    // The public address goes first, before the API it fronts.
+    if (tunnel) await tunnel.stop().catch(() => {});
     if (handle) await handle.close();
     if (runtime) await runtime.shutdown();
     // Released last, and only once the port and the databases are

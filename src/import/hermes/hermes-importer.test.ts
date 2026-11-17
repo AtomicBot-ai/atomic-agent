@@ -554,4 +554,26 @@ describe("HermesImporter", () => {
       expect(secretItem?.status).toBe("skipped");
     });
   });
+
+  // W2: every session item carries the folder it ran in, for grouping.ts.
+  it("tags each session with the folder it ran in", async () => {
+    seedStateDb(
+      sourceDir,
+      [{ id: "s-1", cwd: "/work", title: "t1" }],
+      [
+        { sessionId: "s-1", role: "user", content: "hi", timestamp: 1_700_000_000 },
+        { sessionId: "s-1", role: "assistant", content: "hello", timestamp: 1_700_000_002 },
+      ],
+    );
+    const report = await Promise.resolve(
+      buildImporter().run({ options: ["sessions"], execute: false, overwrite: false }),
+    );
+    const sessions = report.items.filter(
+      (item) => item.kind === "sessions" && item.destination,
+    );
+    expect(sessions.length).toBeGreaterThan(0);
+    for (const item of sessions) {
+      expect(item.group).toEqual({ key: "/work", name: "work", cwd: "/work" });
+    }
+  });
 });

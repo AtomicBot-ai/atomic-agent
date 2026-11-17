@@ -7,6 +7,7 @@ import {
   buildAnswerStyleGuidance,
   type AnswerStyleInput,
 } from "./answer-style.js";
+import { buildPersonaBlock, PERSONA_HEADER, type PersonaPromptInput } from "./persona-block.js";
 import type { FusionMachineFacts } from "./fusion-machine-facts.js";
 import {
   formatSkillCatalogLine,
@@ -148,6 +149,14 @@ export interface StablePrefixInput {
    * to before the block existed.
    */
   answerStyle?: AnswerStyleInput;
+  /**
+   * The user's active persona (ATO-54, `persona-block.ts`): rendered as
+   * `### persona` after `### rules` / `### answer-style`, added to the
+   * built-in system text rather than replacing it. Latched per session
+   * by the caller, so stable within a session. Omitted, no block and
+   * the prefix is byte-identical to before personas existed.
+   */
+  persona?: PersonaPromptInput;
   /**
    * Render the compact scaffold (`compact-prompt.ts`): authored short
    * tool forms, compact tiers, shorter persona / rules / instructions.
@@ -448,6 +457,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     ``,
     ...(input.answerStyle !== undefined
       ? [ANSWER_STYLE_HEADER, buildAnswerStyleGuidance(input.answerStyle), ``]
+      : []),
+    ...(input.persona !== undefined
+      ? [PERSONA_HEADER, buildPersonaBlock(input.persona), ``]
       : []),
     `### skills`,
     skills,

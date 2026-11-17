@@ -54,6 +54,12 @@ export interface RuntimeToolsConfig {
     /** Registers `os.screen.{capture,point}` (macOS only). Mirrors `UserToolsConfig.screen.point`. */
     point: boolean;
   };
+  /**
+   * After-edit language-server diagnostics. Mirrors `UserToolsConfig.lsp`;
+   * optional so hand-built configs (embedders, tests) need not name it,
+   * and absent reads as off.
+   */
+  lsp?: { enabled: boolean };
 }
 
 export interface UserToolsConfig {
@@ -112,6 +118,20 @@ export interface UserToolsConfig {
      */
     point: boolean;
   };
+  lsp: {
+    /**
+     * After-edit diagnostics from language servers (ATO-503): after
+     * `os.fs.write` / `edit` / `patch` change a TypeScript, JavaScript
+     * or Python file inside a git repository, the result lists the
+     * compiler and type errors the change added. Uses only
+     * `typescript-language-server` / `pyright-langserver` already on
+     * PATH (never installs one), started on the first such edit. Default
+     * `false`: each server costs memory and start-up time next to a
+     * local model, and it runs the project's own toolchain. Read at
+     * start.
+     */
+    enabled: boolean;
+  };
 }
 
 export function createToolsDefaults(): UserToolsConfig {
@@ -137,18 +157,23 @@ export function createToolsDefaults(): UserToolsConfig {
     // type anywhere is not a default.
     // Pointing only draws, so it is on; clicking and typing stay off.
     screen: { enabled: false, point: true },
+    // Off until asked for: a language server per repository is memory
+    // and start-up time a small machine running a local model may lack.
+    lsp: { enabled: false },
   };
 }
 
 /**
  * `raw` is the `tools.shell` block (the historical signature);
- * `rawScreen` the `tools.screen` block. A file without either takes the
- * defaults — `tools.screen` is unversioned and additive.
+ * `rawScreen` the `tools.screen` block, `rawLsp` the `tools.lsp` one. A
+ * file without any of them takes the defaults — `tools.screen` and
+ * `tools.lsp` are unversioned and additive.
  */
 export function parseToolsConfig(
   raw: Record<string, unknown>,
   readDefaults: () => UserToolsConfig,
   rawScreen: Record<string, unknown> = {},
+  rawLsp: Record<string, unknown> = {},
 ): UserToolsConfig {
   return {
     shell: {
@@ -187,6 +212,12 @@ export function parseToolsConfig(
         "tools.screen.point",
       ),
     },
+    lsp: {
+      enabled: parseBool(
+        rawLsp.enabled ?? readDefaults().lsp.enabled,
+        "tools.lsp.enabled",
+      ),
+    },
   };
 }
 
@@ -199,6 +230,17 @@ export interface RuntimeVisionConfig {
   maxImageBytes: number;
   /** Hard upper bound on the number of images per `vision.describe` call. */
   maxImagesPerCall: number;
+  /**
+   * Tri-state (ATO-497, decision 62) for `audio.listen`, which sends a
+   * wav/mp3 file straight to a chat model that takes audio input.
+   * Unset (the default) is auto: offered only while a LOCAL model that
+   * reports audio (`/props` `modalities.audio`) is loaded. `true` also
+   * offers it on cloud models (the file is uploaded); `false` never.
+   * Otherwise audio stays a file on disk for the `audio-transcribe` skill.
+   */
+  audioInput?: boolean;
+  /** Hard upper bound on one `audio.listen` file, in bytes. */
+  maxAudioBytes?: number;
 }
 
 export interface UserVisionConfig {
@@ -206,7 +248,13 @@ export interface UserVisionConfig {
   autoDetect: boolean;
   maxImageBytes: number;
   maxImagesPerCall: number;
+  /** Unset = auto (local model that reports audio only); see RuntimeVisionConfig. */
+  audioInput?: boolean;
+  maxAudioBytes?: number;
 }
+
+/** `vision.maxAudioBytes` when nothing sets it. */
+export const DEFAULT_MAX_AUDIO_BYTES = 16 * 1024 * 1024;
 
 export function createVisionDefaults(): UserVisionConfig {
   return {
@@ -214,6 +262,9 @@ export function createVisionDefaults(): UserVisionConfig {
     autoDetect: true,
     maxImageBytes: 8 * 1024 * 1024,
     maxImagesPerCall: 4,
+    // `audioInput` is left unset: auto (decision 62).
+    // OpenAI caps a request body near 25 MB and base64 adds a third.
+    maxAudioBytes: DEFAULT_MAX_AUDIO_BYTES,
   };
 }
 
@@ -237,6 +288,19 @@ export function parseVisionConfig(
     maxImagesPerCall: parsePositiveInt(
       raw.maxImagesPerCall ?? readDefaults().maxImagesPerCall,
       "vision.maxImagesPerCall",
+    ),
+    // Unset stays unset (auto); only an explicit boolean overrides it.
+    ...(raw.audioInput === undefined && readDefaults().audioInput === undefined
+      ? {}
+      : {
+          audioInput: parseBool(
+            raw.audioInput ?? readDefaults().audioInput,
+            "vision.audioInput",
+          ),
+        }),
+    maxAudioBytes: parsePositiveInt(
+      raw.maxAudioBytes ?? readDefaults().maxAudioBytes ?? DEFAULT_MAX_AUDIO_BYTES,
+      "vision.maxAudioBytes",
     ),
   };
 }

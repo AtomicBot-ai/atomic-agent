@@ -115,10 +115,7 @@ export function parseOpenAiSseEvent(
     const modelId = typeof payload.model === "string" ? payload.model : null;
     const id = typeof payload.id === "string" && payload.id.length > 0 ? payload.id : null;
     const error = readStreamError(payload.error);
-    const usage =
-      payload.usage && typeof payload.usage === "object"
-        ? (payload.usage as Record<string, unknown>)
-        : null;
+    const usage = readUsage(payload.usage) ?? readUsage(choice?.usage);
     const toolCalls = delta.tool_calls as
       | Array<{
           index?: number;
@@ -202,6 +199,19 @@ export function parseOpenAiSseEvent(
       error: null,
     };
   }
+}
+
+/**
+ * The chunk's `usage` block. OpenAI and most services put it at the top
+ * level of the last chunk; Moonshot (Kimi) also documents it inside the
+ * choice (`choices[0].usage`), so the choice is read when the top level
+ * has none. Missing it there left the whole call out of the token and
+ * spend tally (ATO-912).
+ */
+function readUsage(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function readStreamError(

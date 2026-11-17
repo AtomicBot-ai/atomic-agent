@@ -105,6 +105,29 @@ function callback(
 }
 
 describe("ApprovalBridge.dispatch", () => {
+  it("puts smart approval's verdict in the plain-text prompt (ATO-1268)", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(
+      {
+        ...req("abc"),
+        riskNote: "risk check: high (pushes <b>main</b> & tags)",
+        riskLevel: "high",
+        riskReason: "pushes <b>main</b> & tags",
+      },
+      7,
+    );
+    const args = h.api.sendMessage.mock.calls[0]!;
+    // Plain text, no parse_mode: the reason goes out as written.
+    expect(args[1] as string).toContain("Risk check: high. Pushes <b>main</b> & tags");
+    expect((args[2] as { parse_mode?: string }).parse_mode).toBeUndefined();
+  });
+
+  it("has no risk line when no review ran", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(req("abc"), 7);
+    expect(h.api.sendMessage.mock.calls[0]![1] as string).not.toContain("Risk check");
+  });
+
   it("sends a 2-button inline keyboard with the right callback_data", async () => {
     const h = makeHarness();
     await h.bridge.dispatch(req("abc"), 7);

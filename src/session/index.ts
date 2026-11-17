@@ -2,8 +2,10 @@ export { SessionStore, INTERRUPTED_TURN_ENDING } from "./session-store.js";
 export type {
   SessionStoreOptions,
   RecentWorkingDirRow,
+  SessionChatLine,
   TurnEnding,
 } from "./session-store.js";
+export { readRecentWorkingDirs } from "./recent-working-dirs.js";
 export {
   currentTurnOwnerProbe,
   hostIdentity,
@@ -16,7 +18,38 @@ export {
 } from "./turn-owner.js";
 export type { TurnOwner, TurnOwnerProbe } from "./turn-owner.js";
 export { parseTurnProgress, serializeTurnProgress } from "./turn-progress.js";
+export { isIncognitoSession, newIncognitoMark } from "./incognito.js";
+export type { IncognitoMark } from "./incognito.js";
 export type { TurnProgress, TurnResumeOptions } from "./turn-progress.js";
+export {
+  INTERRUPTED_TURN_RESUME_NOTE,
+  interruptedChatTurn,
+  interruptedTurnResumeMessage,
+  isInterruptedTurnResumeMessage,
+} from "./interrupted-chat-turn.js";
+export type { InterruptedChatTurn } from "./interrupted-chat-turn.js";
+export {
+  bindSessionWorktree,
+  createSessionWorktree,
+  findRepoRoot,
+  isWorktreeBranchMerged,
+  listSessionWorktreeMarkers,
+  NOT_GIT_MESSAGE,
+  removeSessionWorktree,
+  SessionWorktreeError,
+  unbindSessionWorktree,
+  worktreeRemovalPreflight,
+} from "./session-worktree.js";
+export type {
+  RemovalPreflight,
+  SessionGitExec,
+  SessionWorktreeBinding,
+  SessionWorktreeErrorCode,
+  SessionWorktreeMarker,
+  SessionWorktreeOptions,
+} from "./session-worktree.js";
+export { cleanupIdleSessionWorktrees, DEFAULT_WORKTREE_IDLE_MS } from "./session-worktree-cleanup.js";
+export type { WorktreeCleanupOptions, WorktreeCleanupResult } from "./session-worktree-cleanup.js";
 export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";
 export type {
   PruneSessionsOptions,
@@ -141,6 +174,16 @@ export {
   SESSION_TITLE_USER_SET_AT_KEY,
 } from "./session-title.js";
 export {
+  NEXT_STEP_TIMEOUT_MS,
+  SESSION_NEXT_STEP_METADATA_KEY,
+  generateNextStep,
+  nextStepSuggestionsEnabled,
+  readSessionNextStep,
+  shouldSuggestNextStep,
+  turnInFlight,
+  type SessionNextStep,
+} from "./session-next-step.js";
+export {
   SESSION_USER_TITLE_MAX_CHARS,
   readUserTitleSetAt,
   validateUserSessionTitle,
@@ -149,3 +192,37 @@ export {
 } from "./session-title-user.js";
 
 export type { SessionCompaction, RollingCompactionSummary, CompactionResult, CompactionReason } from "./session-compaction.js";
+
+export {
+  createDatasetScrubber,
+  exportDataset,
+  totalRedactions,
+} from "./dataset-export/index.js";
+export type {
+  DatasetRedactionCounts,
+  ExportDatasetResult,
+} from "./dataset-export/index.js";
+// ATO-1054: one chat as Markdown / HTML / DOCX.
+export {
+  CHAT_EXPORT_MIME,
+  chatExportFilename,
+  chatExportTitle,
+  parseChatExportFormat,
+  renderChatHtml,
+  renderChatMarkdown,
+} from "./chat-export.js";
+export type {
+  ChatExportFormat,
+  ChatExportOptions,
+  DescribeExportedToolCall,
+} from "./chat-export.js";
+export { markdownToDocumentXml, renderMarkdownDocx } from "./chat-export-docx.js";
+export { exportChat } from "./chat-export-render.js";
+export type { ChatExportFile } from "./chat-export-render.js";
+export {
+  SESSION_ARCHIVED_METADATA_KEY,
+  SESSION_ARCHIVED_SET_AT_KEY,
+  readSessionArchived,
+  readSessionArchivedSetAt,
+  withSessionArchived,
+} from "./session-archived.js";

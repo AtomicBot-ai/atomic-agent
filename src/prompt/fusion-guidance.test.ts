@@ -118,6 +118,9 @@ describe("the ### fusion prefix section", () => {
   it("says the call is solo and that results must be verified", () => {
     expect(FUSION_GUIDANCE).toMatch(/on its own, never alongside/i);
     expect(FUSION_GUIDANCE).toContain("needs_orchestrator");
+    // ATO-945: a worker's question is answered by the orchestrator and the task re-sent.
+    expect(FUSION_GUIDANCE).toContain("`needs_input`: answer its question, re-send.");
+    expect(FUSION_GUIDANCE).not.toContain("cannot ask");
   });
 
   it("says a task that replaced a user's file is not done until it is restored or the replacement was wanted (F43)", () => {
@@ -137,12 +140,15 @@ describe("the ### fusion prefix section", () => {
     // what the orchestrator needed and could not see when a four-worker
     // fan-out overflowed its server; ~100 tokens is what that costs.
     // F43's restore line was paid for by shortening the others — the
-    // budget is the budget.
-    expect(FUSION_GUIDANCE.length).toBeLessThan(1400);
+    // budget is the budget. ATO-945's `needs_input` clause paid for most
+    // of itself by dropping "and cannot ask"; the rest is 31 chars, which
+    // takes the measured-speed block (speed and `etaSeconds` lines) past
+    // 1,900 to about 1,925.
+    expect(FUSION_GUIDANCE.length).toBeLessThan(1425);
     expect(buildFusionGuidance(FACTS).length).toBeLessThan(1900);
     expect(
       buildFusionGuidance({ ...FACTS, tokensPerSecond: 6.4 }).length,
-    ).toBeLessThan(1900);
+    ).toBeLessThan(1950);
   });
 });
 
@@ -245,5 +251,44 @@ describe("the machine facts in the ### fusion block", () => {
     expect(FUSION_GUIDANCE).toMatch(/only makes sense with this conversation/i);
     // And the width is stated as the model's own call.
     expect(FUSION_GUIDANCE).toMatch(/You choose `maxWorkers`/);
+  });
+});
+
+describe("a local worker's limits in the ### fusion block (ATO-1363)", () => {
+  const LIMITS: FusionMachineFacts = {
+    ...FACTS,
+    workerMaxSteps: 60,
+    workerTimeoutMs: 2_700_000,
+  };
+
+  it("states the step budget and the time limit, and the late guards", () => {
+    const block = buildFusionGuidance(LIMITS);
+    expect(block).toContain("Each local worker gets 60 steps and 45 min");
+    expect(block).toContain("`maxSteps` / `timeoutMs`");
+    expect(block).toContain("no write by half its steps is handed back");
+    expect(block).toContain("split big files first");
+    // No measured speed: nothing to check an estimate against, so no ask.
+    expect(block).not.toContain("outputTokens");
+  });
+
+  it("asks for an output estimate once the speed is measured", () => {
+    const block = buildFusionGuidance({ ...LIMITS, tokensPerSecond: 6.4 });
+    expect(block).toContain("Set `outputTokens` (or `outputLines`)");
+    expect(block).toContain("is flagged on its row");
+    // The estimate line never refuses a task (the base block's "Tools that
+    // change things are refused for you" is about the orchestrator).
+    const estimateLine = block.split("\n").find((line) => line.includes("outputTokens"));
+    expect(estimateLine).not.toContain("refused");
+  });
+
+  it("renders as before when the limits are absent", () => {
+    expect(buildFusionGuidance(FACTS)).not.toContain("Each local worker gets");
+    expect(buildFusionGuidance(NO_FUSION_MACHINE_FACTS)).toBe(FUSION_GUIDANCE);
+  });
+
+  it("stays inside the prefix budget with every fact known", () => {
+    expect(
+      buildFusionGuidance({ ...LIMITS, tokensPerSecond: 6.4 }).length,
+    ).toBeLessThan(2400);
   });
 });

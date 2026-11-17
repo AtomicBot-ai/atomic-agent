@@ -39,6 +39,25 @@ export interface TurnUsageSnapshot {
    * Present only when that provider was given and a completion landed.
    */
   fallbackCalls?: number;
+  /**
+   * How long the turn's streamed completions spent generating, and the
+   * output tokens those same completions produced (ATO-1186). Read as a
+   * pair: `completionTokens / durationMs` is the turn's reply speed. Only
+   * completions with a measured generation time count, so a sub-call that
+   * was not timed never skews the speed. Absent when none was timed.
+   */
+  generation?: { completionTokens: number; durationMs: number };
+  /**
+   * ATO-1026: for a local llama-server turn, the time its completions
+   * spent reading the prompt (`prefillMs`, llama.cpp `timings.prompt_ms`)
+   * and generating (`genMs`, `timings.predicted_ms`), summed over the
+   * turn, and the generation speed (`genTokensPerS`: tokens generated per
+   * second of `genMs`). Present only when a completion reported timings:
+   * cloud providers report none, so their turns carry none of the three.
+   */
+  prefillMs?: number;
+  genMs?: number;
+  genTokensPerS?: number;
 }
 
 interface TurnBucket {
@@ -52,6 +71,12 @@ interface TurnBucket {
   intendedProviderId: string | undefined;
   servedProviderId: string | undefined;
   fallbackCalls: number;
+  generatedTokens: number;
+  generationMs: number;
+  sawTiming: boolean;
+  prefillMs: number;
+  genMs: number;
+  genTokens: number;
 }
 
 /**
@@ -93,6 +118,12 @@ export class TurnUsageMeter {
       intendedProviderId,
       servedProviderId: undefined,
       fallbackCalls: 0,
+      generatedTokens: 0,
+      generationMs: 0,
+      sawTiming: false,
+      prefillMs: 0,
+      genMs: 0,
+      genTokens: 0,
     });
   }
 
@@ -114,6 +145,28 @@ export class TurnUsageMeter {
   }
 
   /**
+   * ATO-1026: fold one completion's llama.cpp timings into the open turn
+   * for `sessionId`. Only a completion with no `usage` block counts: that
+   * is a local llama-server, whose `timings` are llama.cpp's own. A cloud
+   * or OpenAI-compatible completion reports zeros, and a subscription CLI's
+   * one figure is its whole run (usage block present), so both are left
+   * out and absent data stays absent. No-ops when that session has no turn
+   * open.
+   */
+  recordTiming(sessionId: string, result: { usage?: CompletionUsage; timing?: CompletionTiming }): void {
+    const bucket = this.buckets.get(sessionId);
+    const timing = result.timing;
+    if (!bucket || !timing || result.usage) return;
+    const promptMs = finiteNonNegative(timing.promptMs);
+    const predictedMs = finiteNonNegative(timing.predictedMs);
+    if (promptMs <= 0 && predictedMs <= 0) return;
+    bucket.sawTiming = true;
+    bucket.prefillMs += promptMs;
+    bucket.genMs += predictedMs;
+    bucket.genTokens += finiteNonNegative(timing.predictedTokens);
+  }
+
+  /**
    * Fold one completion's usage into the open turn for `sessionId`.
    * No-ops when that session has no turn open, or when the provider
    * reported no usage block at all — absent data must stay absent
@@ -123,6 +176,12 @@ export class TurnUsageMeter {
     sessionId: string;
     usage?: CompletionUsage;
     model?: ResolvedModel;
+    /**
+     * How long this completion spent generating (`generationMsFor`).
+     * Only a positive figure with output tokens counts toward the turn's
+     * reply speed (ATO-1186).
+     */
+    generationMs?: number;
   }): void {
     const bucket = this.buckets.get(params.sessionId);
     if (!bucket) return;
@@ -132,6 +191,15 @@ export class TurnUsageMeter {
     bucket.sawUsage = true;
     bucket.promptTokens += usage.promptTokens;
     bucket.completionTokens += usage.completionTokens;
+    if (
+      params.generationMs !== undefined &&
+      Number.isFinite(params.generationMs) &&
+      params.generationMs > 0 &&
+      usage.completionTokens > 0
+    ) {
+      bucket.generationMs += params.generationMs;
+      bucket.generatedTokens += usage.completionTokens;
+    }
     if (usage.cachedTokens !== undefined) {
       bucket.sawCachedUsage = true;
       bucket.cachedTokens += usage.cachedTokens;
@@ -185,15 +253,60 @@ export class TurnUsageMeter {
               ? { fallbackCalls: bucket.fallbackCalls }
               : {}),
           };
-    if (!bucket.sawUsage) return served;
+    const timed = timingSnapshot(bucket);
+    if (!bucket.sawUsage) return { ...served, ...timed };
     return {
       promptTokens: bucket.promptTokens,
       completionTokens: bucket.completionTokens,
       ...(bucket.sawCachedUsage ? { cachedTokens: bucket.cachedTokens } : {}),
       ...(bucket.sawPricedUsage ? { costUsd: bucket.costUsd } : {}),
+      ...(bucket.generationMs > 0
+        ? {
+            generation: {
+              completionTokens: bucket.generatedTokens,
+              durationMs: Math.round(bucket.generationMs),
+            },
+          }
+        : {}),
       ...served,
+      ...timed,
     };
   }
+}
+
+function finiteNonNegative(n: number | undefined): number {
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** ATO-1026: the turn's prefill / generation time and speed, rounded; `{}` when no completion reported timings. */
+function timingSnapshot(bucket: TurnBucket): Pick<TurnUsageSnapshot, "prefillMs" | "genMs" | "genTokensPerS"> {
+  if (!bucket.sawTiming) return {};
+  const genMs = Math.round(bucket.genMs);
+  return {
+    prefillMs: Math.round(bucket.prefillMs),
+    genMs,
+    ...(bucket.genMs > 0 && bucket.genTokens > 0
+      ? { genTokensPerS: Math.round((bucket.genTokens / (bucket.genMs / 1000)) * 10) / 10 }
+      : {}),
+  };
+}
+
+/**
+ * How long one streamed completion spent generating its output
+ * (ATO-1186). A local llama-server measures its own decode time
+ * (`timing.predictedMs`), which leaves out prompt processing, so that
+ * figure wins. Every other provider reports none; the time from the
+ * stream's first chunk to its end (`streamMs`, measured by the
+ * streaming seam) stands in. `undefined` when neither is known.
+ */
+export function generationMsFor(
+  result: { timing?: CompletionTiming },
+  streamMs: number | undefined,
+): number | undefined {
+  const predicted = result.timing?.predictedMs ?? 0;
+  if (Number.isFinite(predicted) && predicted > 0) return predicted;
+  if (streamMs !== undefined && Number.isFinite(streamMs) && streamMs > 0) return streamMs;
+  return undefined;
 }
 
 /**

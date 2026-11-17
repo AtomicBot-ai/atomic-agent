@@ -28,6 +28,16 @@ export interface ProjectTrustRecord {
   declinedInstructions: string[];
 }
 
+/**
+ * Skill Lab settings (`skills.eval`, ATO-1101). `judgeProvider` names the
+ * configured provider (an id from `llm.providers`) that grades `judge`
+ * checks in `atomic-agent skill eval`. Unset: the active text provider,
+ * when it is a cloud one. Never a built-in paid endpoint.
+ */
+export interface SkillsEvalConfig {
+  judgeProvider?: string;
+}
+
 export interface RuntimeSkillsConfig {
   cloudWorkspaces: CloudWorkspaceSkillsPolicy[];
   /** Per-folder trust answers for project skills and instruction files. Mirrors `UserConfigFile.skills.projectTrust`. */
@@ -68,6 +78,8 @@ export interface RuntimeSkillsConfig {
     browseLimit: number;
     nonSuspiciousOnly: boolean;
   };
+  /** Skill Lab settings; absent when config.json has no `skills.eval`. */
+  eval?: SkillsEvalConfig;
 }
 
 export interface UserSkillsConfig {
@@ -82,6 +94,8 @@ export interface UserSkillsConfig {
     browseLimit: number;
     nonSuspiciousOnly: boolean;
   };
+  /** Skill Lab settings; absent when config.json has no `skills.eval`. */
+  eval?: SkillsEvalConfig;
 }
 
 /**
@@ -248,7 +262,20 @@ export function parseSkillsConfig(
       "skills.taps",
     ),
     clawhub: parseClawHubConfigWithDefaults(skills.clawhub, () => readDefaults().clawhub),
+    ...parseSkillsEvalConfig(skills.eval),
   };
+}
+
+/** `skills.eval` (unversioned, additive): absent or `{}` leaves the key out. */
+function parseSkillsEvalConfig(raw: unknown): { eval?: SkillsEvalConfig } {
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new ConfigValidationError("skills.eval", "expected an object");
+  const judge = (raw as Record<string, unknown>).judgeProvider;
+  if (judge === undefined || judge === null) return {};
+  if (typeof judge !== "string" || judge.trim() === "") {
+    throw new ConfigValidationError("skills.eval.judgeProvider", `expected a provider id, got ${JSON.stringify(judge)}`);
+  }
+  return { eval: { judgeProvider: judge.trim() } };
 }
 
 function parseCloudWorkspaces(raw: unknown): CloudWorkspaceSkillsPolicy[] {

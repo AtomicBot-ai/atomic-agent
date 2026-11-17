@@ -77,26 +77,26 @@ export function describeLlamaHealthFailure(
         // for the URL and so keeps the host.
         return isLocalProviderUrl(url)
           ? `${url} answers like Ollama (its default port), not llama.cpp. ` +
-              `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +
+              `Add it as Ollama instead: LLM tab › Cloud › n › ` +
               `Ollama (local), base URL ${url}.`
           : `${url} answers like Ollama (its default port), not llama.cpp. ` +
-              `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +
-              `openai-compatible, base URL ${url} (any API key value ` +
-              `passes — a stock Ollama has no auth).`;
+              `Add it as an OpenAI-compatible API instead: LLM tab › Cloud › ` +
+              `n › OpenAI-compatible API, base URL ${url} (any API key ` +
+              `value passes, a stock Ollama has no auth).`;
       }
       // Same reasoning as Ollama: the preset row saves its own
       // 127.0.0.1:1337, so name it only for a server on this machine.
       if (looksLikeAtomicChatUrl(url) && isLocalProviderUrl(url)) {
         return (
           `${url} answers like Atomic Chat's Local API Server, not ` +
-          `llama.cpp. Add it as a cloud provider instead: LLM tab › Cloud › ` +
-          `n › Atomic Chat (local), base URL ${url}.`
+          `llama.cpp. Add it as Atomic Chat instead: LLM tab › Cloud › n › ` +
+          `Atomic Chat (local), base URL ${url}.`
         );
       }
       return (
         `${url} answers like an OpenAI-compatible server, not llama.cpp. ` +
-        `Add it as a cloud provider instead: LLM tab › Cloud › n › ` +
-        `openai-compatible, base URL ${url}.`
+        `Add it as an OpenAI-compatible API instead: LLM tab › Cloud › n › ` +
+        `OpenAI-compatible API, base URL ${url}.`
       );
     case "llama-loading":
       return (
@@ -126,7 +126,7 @@ export function describeLlamaHealthFailure(
         );
       }
       return (
-        `${url}: ${health.error ?? "http 401 — API key required"}. ` +
+        `${url}: ${health.error ?? "http 401, API key required"}. ` +
         `Set ATOMIC_AGENT_LLAMA_API_KEY in the state dir's .env and retry. ` +
         `For a server started by atomic-agent, the key is in ` +
         `<models dir>/llama-server.key.`

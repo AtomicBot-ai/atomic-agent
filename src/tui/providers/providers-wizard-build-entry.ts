@@ -159,6 +159,8 @@ export function buildProviderEntryFromWizard(input: {
           apiKeyEnvVar: preset.envVar,
           ...(preset.apiKeyHeader ? { apiKeyHeader: preset.apiKeyHeader } : {}),
           ...(preset.headers ? { headers: { ...preset.headers } } : {}),
+          // A short-lived token printed per request (Vertex AI's gcloud).
+          ...(preset.apiKeyCommand ? { apiKeyCommand: [...preset.apiKeyCommand] } : {}),
         }
       : {}),
   };

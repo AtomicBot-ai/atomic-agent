@@ -113,8 +113,12 @@ export {
   LlamaServerProvider,
   VisionUnsupportedError,
   ModelCannotSeeError,
+  AudioUnsupportedError,
 } from "./provider/index.js";
 export type {
+  AudioInputFormat,
+  AudioRequest,
+  AudioSource,
   LlmProvider,
   ProviderCapabilities,
   VisionImage,

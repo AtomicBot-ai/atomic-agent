@@ -33,6 +33,13 @@ export interface ToolGateConfig {
   browser: { enabled: boolean };
   web: { search: { enabled: boolean } };
   vision: { enabled: boolean; providerAvailable: boolean };
+  /**
+   * Audio input gate (ATO-497, decision 62): the runtime passes the live
+   * `audioRouteAvailable` answer (unset `vision.audioInput` = a local
+   * model that reports audio only; `true` also cloud). Absent or `false`
+   * drops `audio.listen`.
+   */
+  audio?: { enabled: boolean };
   memory: {
     profile: { enabled: boolean };
     notes: { enabled: boolean };
@@ -40,6 +47,14 @@ export interface ToolGateConfig {
     procedures: { enabled: boolean };
   };
   tasks: { agentToolsEnabled: boolean };
+  /**
+   * Cross-chat tools (ATO-570): `tasks.enabled` and
+   * `tasks.sessionToolsEnabled`, default off. Absent means off, so a
+   * hand-built gate set never advertises them; every runtime caller
+   * passes it. The tools are not registered while it is off either
+   * (`registerSessionTools`).
+   */
+  sessions?: { agentToolsEnabled: boolean };
   /**
    * The agent's own inbox. Without a registered Atomic Mail inbox the
    * `os.email.*` tools can only answer "set one up", so they leave the
@@ -111,9 +126,15 @@ const GATED_TOOLS = {
     "browser.tabs",
     "browser.scroll",
     "browser.screenshot",
+    "browser.act",
+    "browser.extract",
+    "browser.site_tools",
+    "browser.debug",
+    "browser.annotate",
   ],
   webSearch: ["os.web.search"],
   vision: ["vision.describe"],
+  audio: ["audio.listen"],
   memoryProfile: [
     "memory.profile.set",
     "memory.profile.remove",
@@ -133,6 +154,12 @@ const GATED_TOOLS = {
     "tasks.list",
     "tasks.cancel",
     "tasks.show",
+  ],
+  sessions: [
+    "sessions.list",
+    "sessions.read",
+    "sessions.send",
+    "sessions.check",
   ],
   fusion: ["fusion.delegate"],
   mcp: [
@@ -187,6 +214,9 @@ export function filterToolDescriptorsByConfig(
   if (!gates.vision.enabled || !gates.vision.providerAvailable) {
     for (const name of GATED_TOOLS.vision) disabled.add(name);
   }
+  if (gates.audio?.enabled !== true) {
+    for (const name of GATED_TOOLS.audio) disabled.add(name);
+  }
   if (!gates.memory.profile.enabled) {
     for (const name of GATED_TOOLS.memoryProfile) disabled.add(name);
   }
@@ -201,6 +231,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.tasks.agentToolsEnabled) {
     for (const name of GATED_TOOLS.tasks) disabled.add(name);
+  }
+  if (gates.sessions?.agentToolsEnabled !== true) {
+    for (const name of GATED_TOOLS.sessions) disabled.add(name);
   }
   if (!gates.mcp.enabled) {
     for (const name of GATED_TOOLS.mcp) disabled.add(name);

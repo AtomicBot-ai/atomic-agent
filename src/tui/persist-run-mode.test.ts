@@ -12,6 +12,7 @@ import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import {
   RunModePersistError,
+  isManagedParallelPin,
   setFusionWorkersInConfig,
   setRunModeInConfig,
 } from "./persist-run-mode.js";
@@ -250,6 +251,61 @@ describe("setRunModeInConfig", () => {
       fusion: { orchestratorProvider: "openrouter", workers: 6 },
     });
     expect(getConfig().llm?.activeTextProvider).toBe("openrouter");
+  });
+
+  describe("a slot count the user pinned (ATO-1541)", () => {
+    function pinParallel(parallel: number, workers?: number) {
+      const stored = file();
+      const local = stored.localModels as { managed: Record<string, unknown> };
+      local.managed.parallel = parallel;
+      if (workers !== undefined) {
+        (stored.llm as { runMode?: unknown }).runMode = {
+          fusion: { workers },
+        };
+      }
+      writeFileSync(getUserConfigPath(stateDir), JSON.stringify(stored));
+      resetConfigCache();
+    }
+
+    it("keeps a pinned parallel when the worker count changes", () => {
+      pinParallel(2);
+      setFusionWorkersInConfig(5);
+      expect(getConfig().llm?.runMode?.fusion?.workers).toBe(5);
+      expect(getConfig().localModels.managed.parallel).toBe(2);
+    });
+
+    it("keeps a pinned parallel that differs from the stored worker count", () => {
+      pinParallel(3, 4);
+      setFusionWorkersInConfig(6);
+      expect(getConfig().llm?.runMode?.fusion?.workers).toBe(6);
+      expect(getConfig().localModels.managed.parallel).toBe(3);
+    });
+
+    it("still follows the workers when parallel is Fusion's own earlier write", () => {
+      setFusionWorkersInConfig(3);
+      setFusionWorkersInConfig(5);
+      expect(getConfig().localModels.managed.parallel).toBe(5);
+    });
+
+    it("keeps a pinned parallel on a run-mode write that carries the mirror", () => {
+      pinParallel(2);
+      setRunModeInConfig({
+        mode: "fusion",
+        activeTextProvider: "openrouter",
+        fusion: { workers: 5 },
+        managedParallel: 5,
+      });
+      expect(getConfig().llm?.runMode?.fusion?.workers).toBe(5);
+      expect(getConfig().localModels.managed.parallel).toBe(2);
+    });
+
+    it("tells a pin from auto and from Fusion's own value", () => {
+      expect(isManagedParallelPin("auto", 4)).toBe(false);
+      expect(isManagedParallelPin(undefined, 4)).toBe(false);
+      expect(isManagedParallelPin(4, 4)).toBe(false);
+      expect(isManagedParallelPin(2, 4)).toBe(true);
+      expect(isManagedParallelPin(2, undefined)).toBe(true);
+    });
   });
 
   it("refuses a count outside 1..8 without writing", () => {

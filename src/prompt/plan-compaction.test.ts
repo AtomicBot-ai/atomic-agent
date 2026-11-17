@@ -8,7 +8,7 @@ import { createEmptySessionState, recordTurn, type SessionState } from "../sessi
 import { assistantToolCallTurn, toolResultTurn, userTurn } from "../session/conversation-turn.js";
 import { renderPackedConversation } from "./build-prompt-world-conversation.js";
 import type { BuiltPrompt } from "./build-prompt-types.js";
-import { decideCompaction, NO_PREFIX_REUSE_TARGET_RATIO } from "./plan-compaction.js";
+import { decideCompaction, EXACT_COUNT_TRIGGER_BAND, exactCountCandidate, NO_PREFIX_REUSE_TARGET_RATIO } from "./plan-compaction.js";
 import { estimateTokens } from "./token-budget.js";
 
 let dir: string;
@@ -70,5 +70,57 @@ describe("planning on a small window without prefix reuse (ATO-257, ATO-1117)", 
     const prompt = promptWithCap(Math.ceil(newestStep / 0.3));
     const lower = { ...config, targetRatio: 0.3 };
     expect(decideCompaction(state, prompt, lower, undefined, { prefixReuse: "none" }).plan).toBeNull();
+  });
+});
+
+describe("exact token count at the automatic trigger (ATO-656)", () => {
+  const config = createCompactionDefaults();
+  /** A prompt whose heuristic history size is `share` of the automatic trigger. */
+  function promptAt(share: number, cap = 20_000, extra: Partial<BuiltPrompt> = {}): BuiltPrompt {
+    const activeTokens = Math.ceil(cap * config.triggerRatio * share);
+    return { compactionBudget: { cap, activeTokens, activePairs: 1 }, conversationPairsCap: 200, ...extra } as unknown as BuiltPrompt;
+  }
+
+  it("asks for the history text only when the estimate is near the trigger", () => {
+    const state = session();
+    const text = exactCountCandidate(state, promptAt(1.05), config);
+    expect(text).toBe(renderPackedConversation({ visibleTurns: state.turns, droppedSummary: null }));
+    expect(exactCountCandidate(state, promptAt(EXACT_COUNT_TRIGGER_BAND.low), config)).not.toBeNull();
+    expect(exactCountCandidate(state, promptAt(EXACT_COUNT_TRIGGER_BAND.high - 0.01), config)).not.toBeNull();
+    expect(exactCountCandidate(state, promptAt(EXACT_COUNT_TRIGGER_BAND.low - 0.05), config)).toBeNull();
+    expect(exactCountCandidate(state, promptAt(EXACT_COUNT_TRIGGER_BAND.high + 0.05), config)).toBeNull();
+  });
+
+  it("leaves requested, disabled, pair-capped and cloud decisions to the heuristic", () => {
+    const state = session();
+    expect(exactCountCandidate(state, promptAt(1), config, "manual")).toBeNull();
+    expect(exactCountCandidate(state, promptAt(1), config, "overflow")).toBeNull();
+    expect(exactCountCandidate(state, promptAt(1), { ...config, auto: false })).toBeNull();
+    expect(exactCountCandidate(state, promptAt(1, 20_000, { conversationPairsCap: 0 }), config)).toBeNull();
+    expect(exactCountCandidate(state, promptAt(1, 20_000, { cloudContext: {} } as unknown as Partial<BuiltPrompt>), config)).toBeNull();
+    expect(exactCountCandidate(state, { conversationPairsCap: 200 } as unknown as BuiltPrompt, config)).toBeNull();
+  });
+
+  it("skips a compaction the over-counting estimate made due", () => {
+    const state = session();
+    const prompt = promptAt(1.05);
+    expect(decideCompaction(state, prompt, config).plan).not.toBeNull();
+    const exact = Math.floor(prompt.compactionBudget!.activeTokens * 0.88);
+    expect(decideCompaction(state, prompt, config, undefined, { measuredActiveTokens: exact })).toEqual({ plan: null });
+  });
+
+  it("compacts when the exact count reaches the trigger the estimate missed", () => {
+    const state = session();
+    const prompt = promptAt(0.9);
+    expect(decideCompaction(state, prompt, config)).toEqual({ plan: null });
+    const exact = Math.ceil(prompt.compactionBudget!.activeTokens * 1.15);
+    const decision = decideCompaction(state, prompt, config, undefined, { measuredActiveTokens: exact });
+    expect(decision.plan).toMatchObject({ reason: "threshold", tokensBefore: prompt.compactionBudget!.activeTokens });
+  });
+
+  it("does not let a measured size stop a requested compaction", () => {
+    const state = session();
+    const prompt = promptAt(1.05);
+    expect(decideCompaction(state, prompt, config, "overflow", { measuredActiveTokens: 1 }).plan).toMatchObject({ reason: "overflow" });
   });
 });

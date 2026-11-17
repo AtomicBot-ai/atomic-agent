@@ -1,0 +1,17 @@
+skill: pandoc
+description: Convert Markdown to Word and to a standalone HTML page. Needs pandoc on the machine (both variants need it).
+defaults:
+  maxSteps: 20
+  fixtures: fixtures
+tasks:
+  - id: markdown-to-docx
+    prompt: Convert notes.md to a Word document named notes.docx in this folder.
+    check:
+      type: command
+      run: node "$SKILL_EVAL_TASKS_DIR/checks/docx-check.mjs"
+  - id: markdown-to-html-page
+    prompt: Convert notes.md to a complete standalone HTML page named notes.html (with html, head and title), in this folder.
+    check:
+      type: command
+      run: |-
+        node -e "const s=require('fs').readFileSync('notes.html','utf8'); process.exit(/<html/i.test(s) && /<title>[^<]+<\/title>/i.test(s) && /<h1[^>]*>[^<]*Quarterly plan/i.test(s) && /<table/i.test(s) ? 0 : 1)"

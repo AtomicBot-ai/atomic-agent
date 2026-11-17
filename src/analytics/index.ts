@@ -19,6 +19,7 @@ export {
   captureMessageSent,
   captureModelConfigured,
   captureOnboardingStep,
+  captureUiAction,
 } from "./analytics-events.js";
 export type {
   AnalyticsDisabledVia,
@@ -26,6 +27,7 @@ export type {
   LocalEngine,
   LocalEngineFailedContext,
   MessageEventContext,
+  UiActionVia,
 } from "./analytics-events.js";
 export { reportLocalEngineFailed } from "./report-local-engine-failed.js";
 export {
@@ -40,15 +42,21 @@ export {
   INSTALL_CHANNEL_ENV,
   INSTALL_CHANNEL_FILE,
   INSTALL_CHANNELS,
+  INSTALL_SOURCE_ENV,
+  INSTALL_SOURCE_FILE,
+  INSTALL_SOURCE_TAGS,
   otherSurfaceAnalyticsExists,
   parseInstallChannel,
+  parseInstallSourceTag,
   resolveAnalyticsDimensions,
   resolveDesktopVersion,
   resolveInstallChannel,
+  resolveInstallSource,
 } from "./resolve-analytics-dimensions.js";
 export type {
   AnalyticsDimensions,
   InstallChannel,
+  InstallSourceTag,
 } from "./resolve-analytics-dimensions.js";
 export {
   INSTALL_ID_FILE_ENV,
@@ -56,12 +64,14 @@ export {
   resolveSharedInstallId,
   resolveSharedInstallIdPath,
 } from "./resolve-shared-install-id.js";
+export { readSupportId } from "./read-support-id.js";
 export {
   ANALYTICS_KILL_SWITCH_ENV,
   DO_NOT_TRACK_ENV,
   isAnalyticsKilledByEnv,
   isDoNotTrackSet,
 } from "./read-analytics-kill-switch.js";
+export { CI_ENV_VARS, isCiEnvironment } from "./read-ci-environment.js";
 export { reportAnalyticsOptOut } from "./report-analytics-opt-out.js";
 export {
   buildRuntimeTelemetry,
@@ -71,6 +81,47 @@ export type {
   RuntimeTelemetry,
   RuntimeTelemetryFactories,
 } from "./toggle-runtime-telemetry.js";
-export { TurnUsageMeter, completionUsageForTurn } from "./turn-usage-meter.js";
+export { TurnUsageMeter, completionUsageForTurn, generationMsFor } from "./turn-usage-meter.js";
 export type { TurnUsageSnapshot } from "./turn-usage-meter.js";
 export { sanitizeModelAlias } from "./sanitize-model-alias.js";
+export {
+  buildInterviewFormUrl,
+  emptyInterviewInviteState,
+  INTERVIEW_FORM_URL,
+  INTERVIEW_INVITE_EVENTS,
+  INTERVIEW_INVITE_FILE,
+  INTERVIEW_INVITE_FLAG,
+  interviewInviteBlockedBy,
+  INVITE_COOLDOWN_DAYS,
+  INVITE_MAX_SHOWS,
+  INVITE_MIN_DAYS_AFTER_INSTALL,
+  mayShareInstallId,
+  mergeInterviewInviteStates,
+  parseFeatureFlagReply,
+  parseInterviewInviteState,
+  recordInviteNever,
+  recordInviteShown,
+  shouldShowInterviewInvite,
+  TERMINAL_INVITE_LINE,
+} from "./interview-invite.js";
+export type {
+  InterviewInviteBlock,
+  InterviewInviteContext,
+  InterviewInviteDismissReason,
+  InterviewInviteEventKind,
+  InterviewInviteSource,
+  InterviewInviteState,
+  InterviewInviteVia,
+} from "./interview-invite.js";
+export {
+  interviewInvitePath,
+  readInterviewInviteState,
+  updateInterviewInviteState,
+} from "./interview-invite-store.js";
+export {
+  cachedFeatureFlag,
+  FEATURE_FLAG_TIMEOUT_MS,
+  fetchFeatureFlag,
+  resetFeatureFlagCache,
+} from "./fetch-feature-flag.js";
+export type { FetchFeatureFlagOptions } from "./fetch-feature-flag.js";

@@ -18,6 +18,7 @@ import type { RateLimitWindow } from "../rate-limits.js";
 import type { ToolCallAdapter } from "../adapters/tool-call-adapter.js";
 import type { CliAdapterDescriptor } from "./cli-adapter-descriptor.js";
 import { resolveCliBinary } from "./resolve-cli-binary.js";
+import { offlineRefusalFor } from "../../offline-network.js";
 import { runCliCommand, type CliRunner } from "./run-cli-completion.js";
 import {
   streamCliCommand,
@@ -131,6 +132,7 @@ export class SubscriptionCliProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
+    this.refuseWhenOffline();
     const staged = await this.stageSchema(request);
     try {
       const args = this.descriptor.completeArgs(
@@ -182,6 +184,7 @@ export class SubscriptionCliProvider implements LlmProvider {
       return result;
     }
 
+    this.refuseWhenOffline();
     const args = this.descriptor.streamArgs(this.argsInput(request));
     const lines = this.streamCli(this.runOptions(args, request));
     let final: string | null = null;
@@ -221,6 +224,19 @@ export class SubscriptionCliProvider implements LlmProvider {
     return result;
   }
 
+  /**
+   * ATO-1084: the CLI is a separate program that talks to its vendor's
+   * cloud, which the agent's HTTP pool cannot see, so offline mode
+   * refuses it before it is started.
+   */
+  private refuseWhenOffline(): void {
+    const refused = offlineRefusalFor(
+      `${this.descriptor.productName} cloud`,
+      this.descriptor.productName,
+    );
+    if (refused) throw refused;
+  }
+
   async describeImage(_request: VisionRequest): Promise<VisionResult> {
     throw new VisionUnsupportedError(this.id);
   }
@@ -228,6 +244,7 @@ export class SubscriptionCliProvider implements LlmProvider {
   async health(): Promise<ProviderHealthResult> {
     const started = Date.now();
     try {
+      this.refuseWhenOffline();
       await this.runCli({
         binary: this.binary,
         args: this.descriptor.healthArgs(),

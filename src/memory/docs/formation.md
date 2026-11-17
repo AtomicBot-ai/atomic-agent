@@ -9,11 +9,13 @@ Reflection forms bounded profile facts and notes from completed turn observation
 
 Reflection skips probe-only and one-off instruction turns and rejects ungrounded user names, assistant identity and instruction-as-preference writes. [Grounding](../reflection/reflection-grounding.ts) checks actual user messages. At boot, [name verification](../name-grounding.ts) walks stored user messages without blocking startup; `ProfileStore.listForPrompt()` omits unchecked or ungrounded name-like facts while retaining their history.
 
-ProfileStore retains temporal history; note content is not rewritten by tag evolution. Link generation, neighbor evolution and vote curation operate through their stores and bounded runners. Consolidation distills durable lessons/procedures and manages lifecycle/deprecation; its timer has explicit shutdown ownership.
+ProfileStore retains temporal history; note content is not rewritten by tag evolution. Link generation, neighbor evolution and vote curation operate through their stores and bounded runners. After a link-generation timeout the session skips the next few link calls (doubling on repeat timeouts, reset by a call that completes) instead of retrying on the next turn. Consolidation distills durable lessons/procedures and manages lifecycle/deprecation; its timer has explicit shutdown ownership.
 
 Sub-runners must isolate errors, cancellation, provider/session identity and slots from the main turn. Credentials and other secrets must not become durable facts. Preserve dedup, utility eviction, capacity caps and leases; config controls the actual limits.
 
 Repeated failures/timeouts are observed per session and sub-call kind by the memory health tracker. Runtime emits the operator warning once for the affected streak; these fire-and-forget calls do not turn the main agent step into an infrastructure failure. Keep the session attribution when wiring a runner or forwarding its warning.
+
+With `memory.notes.reconcile` on (off by default), [note reconciliation](../reconcile/index.ts) runs after reflection: one bounded background call compares the first new note with a few similar older notes and tags the ones it replaces (or the new note, when it only repeats one) `superseded`; the context provider then leaves those out of recall and the index. No candidates means no call; a timeout gives up.
 
 ## Sources
 

@@ -6,6 +6,7 @@ import {
   type TuiState,
 } from "./tui-state.js";
 import type { TuiAppCallbacks } from "./tui-app.js";
+import type { ExternalEditResult } from "./editor/index.js";
 
 function fakeSession(overrides: Partial<TuiSessionInfo> = {}): TuiSessionInfo {
   return {
@@ -225,6 +226,23 @@ describe("handleEditorSubmit", () => {
       stubCallbacks({ onIssueReportRequested }),
     );
     expect(onIssueReportRequested).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the Discord invite in the browser for /discord (ATO-1465)", () => {
+    const state = createInitialTuiState(fakeSession());
+    const onOpenUrlRequested = vi.fn();
+    const texts: string[] = [];
+    const dispatch = (a: { type: string; text?: string }): void => {
+      if (a.type === "system_message" && a.text) texts.push(a.text);
+    };
+    handleEditorSubmit(
+      "/discord",
+      state,
+      dispatch as never,
+      stubCallbacks({ onOpenUrlRequested }),
+    );
+    expect(onOpenUrlRequested).toHaveBeenCalledWith("https://discord.gg/DCqtG8WZX8");
+    expect(texts.some((t) => t.includes("https://discord.gg/DCqtG8WZX8"))).toBe(true);
   });
 
   it("invokes onDebugBundleExportRequested for /dump", () => {
@@ -692,6 +710,8 @@ describe("Enter in the session picker", () => {
       inputValue: "draft for s1",
       sessionPickerOpen: true,
       sessionPickerCursor: 0,
+      // The reducer keeps the composer's text when the picker opens.
+      sessionPickerDraft: "draft for s1",
       sessionPickerList: [
         {
           sessionId: "s2",
@@ -721,6 +741,41 @@ describe("Enter in the session picker", () => {
     expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
   });
 
+  it("switches to the searched row and puts the draft back first (ATO-1153)", () => {
+    const onSessionSwitchRequested = vi.fn();
+    const dispatched: Array<{ type: string; value?: string }> = [];
+    const state = pickerState();
+    handleEditorSubmit(
+      "draft for s1third",
+      {
+        ...state,
+        inputValue: "draft for s1third",
+        sessionPickerList: [
+          ...state.sessionPickerList,
+          { ...state.sessionPickerList[0]!, sessionId: "s3", preview: "third thread" },
+        ],
+      },
+      (a) => dispatched.push(a as { type: string; value?: string }),
+      stubCallbacks({ onSessionSwitchRequested }),
+    );
+    // Cursor 0 of the narrowed list is s3, not the list's first row.
+    expect(onSessionSwitchRequested).toHaveBeenCalledWith("s3");
+    expect(dispatched).toEqual([{ type: "input_changed", value: "draft for s1" }]);
+  });
+
+  it("keeps the picker open when the search matches no row", () => {
+    const onSessionSwitchRequested = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "draft for s1zzz",
+      { ...pickerState(), inputValue: "draft for s1zzz" },
+      (a) => dispatched.push(a),
+      stubCallbacks({ onSessionSwitchRequested }),
+    );
+    expect(onSessionSwitchRequested).not.toHaveBeenCalled();
+    expect(dispatched).toEqual([]);
+  });
+
   it("still closes and clears when there is nothing to switch to", () => {
     const dispatched: Array<{ type: string }> = [];
     handleEditorSubmit(
@@ -733,6 +788,56 @@ describe("Enter in the session picker", () => {
       "session_picker_closed",
       "input_changed",
     ]);
+  });
+});
+
+describe("Enter in the rewind picker (ATO-1057)", () => {
+  function pickerState(): TuiState {
+    return {
+      ...createInitialTuiState(fakeSession()),
+      rewindPicker: {
+        points: [
+          { turnIndex: 4, text: "second", at: 3, ordinal: 2 },
+          { turnIndex: 0, text: "first", at: 1, ordinal: 1 },
+        ],
+        cursor: 1,
+      },
+    };
+  }
+
+  it("closes the picker and asks to rewind to the highlighted question", () => {
+    const onRewindRequested = vi.fn();
+    const dispatched: Array<{ type: string }> = [];
+    handleEditorSubmit(
+      "",
+      pickerState(),
+      (a) => dispatched.push(a),
+      stubCallbacks({ onRewindRequested, onMessageSubmitted: vi.fn() }),
+    );
+    expect(onRewindRequested).toHaveBeenCalledWith(0, "first");
+    expect(dispatched.map((a) => a.type)).toEqual(["rewind_picker_closed"]);
+  });
+
+  it("never sends the buffer as a message while the picker is open", () => {
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit(
+      "typed text",
+      pickerState(),
+      () => undefined,
+      stubCallbacks({ onMessageSubmitted, onRewindRequested: vi.fn() }),
+    );
+    expect(onMessageSubmitted).not.toHaveBeenCalled();
+  });
+
+  it("/rewind asks the host for the picker", () => {
+    const onRewindPickerRequested = vi.fn();
+    handleEditorSubmit(
+      "/rewind",
+      createInitialTuiState(fakeSession()),
+      () => undefined,
+      stubCallbacks({ onRewindPickerRequested }),
+    );
+    expect(onRewindPickerRequested).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -764,5 +869,222 @@ describe("bare /enhance", () => {
     runSlashCommand("/enhance", state, (a) => dispatched.push(a as { type: string; value?: string }), stubCallbacks());
     expect(dispatched.some((a) => a.type === "system_message")).toBe(true);
     expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
+  });
+});
+
+describe("ui_action for built-in slash commands (ATO-1465)", () => {
+  const noop = (): void => {};
+
+  it("counts /report by name only", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "/report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction, onIssueReportRequested: vi.fn() }),
+    );
+    expect(onUiAction).toHaveBeenCalledTimes(1);
+    expect(onUiAction).toHaveBeenCalledWith("/report", "slash");
+  });
+
+  it("sends /discord without its arguments", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "/discord foo bar",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction, onOpenUrlRequested: vi.fn() }),
+    );
+    expect(onUiAction).toHaveBeenCalledTimes(1);
+    expect(onUiAction).toHaveBeenCalledWith("/discord", "slash");
+    expect(JSON.stringify(onUiAction.mock.calls)).not.toMatch(/foo|bar/);
+  });
+
+  it("sends nothing for an unknown command", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "/definitely-not-a-command secret",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction }),
+    );
+    expect(onUiAction).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing for a plain message", () => {
+    const onUiAction = vi.fn();
+    handleEditorSubmit(
+      "hello /report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction }),
+    );
+    expect(onUiAction).not.toHaveBeenCalled();
+  });
+
+  it("reports an alias as its canonical command", () => {
+    const onUiAction = vi.fn();
+    runSlashCommand(
+      "/cost",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction }),
+    );
+    expect(onUiAction).toHaveBeenCalledWith("/usage", "slash");
+  });
+
+  it("passes the menu as the trigger when the menu runs the command", () => {
+    const onUiAction = vi.fn();
+    runSlashCommand(
+      "/report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({ onUiAction, onIssueReportRequested: vi.fn() }),
+      "menu",
+    );
+    expect(onUiAction).toHaveBeenCalledWith("/report", "menu");
+  });
+
+  it("still runs the command when analytics throws", () => {
+    const onIssueReportRequested = vi.fn();
+    runSlashCommand(
+      "/report",
+      createInitialTuiState(fakeSession()),
+      noop as never,
+      stubCallbacks({
+        onUiAction: () => {
+          throw new Error("boom");
+        },
+        onIssueReportRequested,
+      }),
+    );
+    expect(onIssueReportRequested).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("/edit (ATO-655)", () => {
+  type Dispatched = { type: string; value?: string; text?: string };
+
+  it("opens the composer draft when run from the menu and puts the saved text back", () => {
+    const onExternalEditorRequested = vi.fn<(draft: string) => ExternalEditResult>(() => ({
+      kind: "edited",
+      text: "a much longer prompt",
+      editor: "nano",
+    }));
+    const dispatched: Dispatched[] = [];
+    const state = { ...createInitialTuiState(fakeSession()), inputValue: "short draft" };
+    runSlashCommand("/edit", state, (a) => dispatched.push(a as Dispatched), stubCallbacks({ onExternalEditorRequested }));
+    expect(onExternalEditorRequested).toHaveBeenCalledWith("short draft");
+    expect(dispatched).toContainEqual({ type: "input_changed", value: "a much longer prompt" });
+    expect(dispatched.some((a) => a.type === "system_message")).toBe(true);
+  });
+
+  it("starts empty when the buffer holds the typed command itself", () => {
+    const onExternalEditorRequested = vi.fn<(draft: string) => ExternalEditResult>(() => ({
+      kind: "unchanged",
+      editor: "vim",
+    }));
+    const dispatched: Dispatched[] = [];
+    const state = { ...createInitialTuiState(fakeSession()), inputValue: "/edit" };
+    runSlashCommand("/edit", state, (a) => dispatched.push(a as Dispatched), stubCallbacks({ onExternalEditorRequested }));
+    expect(onExternalEditorRequested).toHaveBeenCalledWith("");
+    expect(dispatched).toContainEqual({ type: "input_changed", value: "" });
+  });
+});
+
+describe("/why and /verbose (ATO-34)", () => {
+  function run(input: string, state: TuiState): Array<{ type: string; text?: string; on?: boolean }> {
+    const dispatched: Array<{ type: string; text?: string; on?: boolean }> = [];
+    handleEditorSubmit(
+      input,
+      state,
+      ((a: { type: string; text?: string; on?: boolean }) => dispatched.push(a)) as never,
+      stubCallbacks(),
+    );
+    return dispatched;
+  }
+
+  it("/why prints the last step from the state into the chat", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(fakeSession()),
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          text: "done",
+          timestamp: 0,
+          toolCards: [
+            {
+              id: "c1",
+              stepIndex: 1,
+              tool: "os.fs.read",
+              args: { path: "a.ts" },
+              status: "ok",
+              summary: "hello",
+              truncated: false,
+              startedAt: 0,
+              finishedAt: 5,
+            },
+          ],
+        },
+      ],
+    };
+    const messages = run("/why", state).filter((a) => a.type === "system_message");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.text).toContain("Last step: step 2");
+    expect(messages[0]?.text).toContain("os.fs.read");
+  });
+
+  it("/verbose flips the live value and says so", () => {
+    const off = createInitialTuiState(fakeSession());
+    const first = run("/verbose", off);
+    expect(first.find((a) => a.type === "verbose_steps_set")?.on).toBe(true);
+    const second = run("/verbose", { ...off, verboseSteps: true });
+    expect(second.find((a) => a.type === "verbose_steps_set")?.on).toBe(false);
+    expect(run("/verbose off", off).find((a) => a.type === "verbose_steps_set")?.on).toBe(false);
+  });
+});
+
+describe("@ file mentions on submit (ATO-665)", () => {
+  it("sends the expanded message on an idle submit", () => {
+    const onMessageSubmitted = vi.fn();
+    const expandFileMentions = vi.fn((text: string) => `${text}\n\n[expanded]`);
+    handleEditorSubmit(
+      "  explain @src/app.ts  ",
+      createInitialTuiState(fakeSession()),
+      () => {},
+      stubCallbacks({ onMessageSubmitted, expandFileMentions }),
+    );
+    expect(expandFileMentions).toHaveBeenCalledWith("explain @src/app.ts");
+    expect(onMessageSubmitted).toHaveBeenCalledWith("explain @src/app.ts\n\n[expanded]");
+  });
+
+  it("sends the text as typed when expansion is not wired", () => {
+    const onMessageSubmitted = vi.fn();
+    handleEditorSubmit("explain @src/app.ts", createInitialTuiState(fakeSession()), () => {}, stubCallbacks({ onMessageSubmitted }));
+    expect(onMessageSubmitted).toHaveBeenCalledWith("explain @src/app.ts");
+  });
+
+  it("does not expand a slash command", () => {
+    const expandFileMentions = vi.fn((text: string) => text);
+    handleEditorSubmit("/help", createInitialTuiState(fakeSession()), () => {}, stubCallbacks({ expandFileMentions }));
+    expect(expandFileMentions).not.toHaveBeenCalled();
+  });
+});
+
+describe("/vim (ATO-662)", () => {
+  it("flips the composer's vim keys from the live value and asks to persist", () => {
+    const onVimModePersistRequested = vi.fn();
+    const dispatched: Array<{ type: string; on?: boolean }> = [];
+    const push = (a: unknown) => dispatched.push(a as { type: string; on?: boolean });
+    const off = createInitialTuiState(fakeSession());
+    runSlashCommand("/vim", off, push, stubCallbacks({ onVimModePersistRequested }));
+    expect(dispatched).toContainEqual({ type: "vim_mode_set", on: true });
+    expect(onVimModePersistRequested).toHaveBeenLastCalledWith(true);
+    const on = { ...off, vimMode: true };
+    runSlashCommand("/vim", on, push, stubCallbacks({ onVimModePersistRequested }));
+    expect(onVimModePersistRequested).toHaveBeenLastCalledWith(false);
+    runSlashCommand("/vim on", on, push, stubCallbacks({ onVimModePersistRequested }));
+    expect(onVimModePersistRequested).toHaveBeenLastCalledWith(true);
   });
 });

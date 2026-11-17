@@ -15,6 +15,8 @@ import type {
   ProcedureIndexEntry,
   ProcedureStore,
 } from "./procedures/procedure-store.js";
+import type { RecallNameGuard } from "./recall-name-guard.js";
+import { SUPERSEDED_NOTE_TAG, isSupersededNote } from "./reconcile/note-reconcile-runner.js";
 
 /**
  * Configuration for the default memory context provider.
@@ -96,6 +98,18 @@ export interface DefaultMemoryContextProviderOptions {
    * means "any project". Matches `memory.notes.recall`'s semantics.
    */
   workingDir?: string | null;
+  /**
+   * ATO-321. Keeps notes and lessons that claim a user name nobody
+   * typed ("I am Alex") out of `### recalled`, `### memory-index` and
+   * `### lessons`. Unset: every row passes, as before.
+   */
+  nameGuard?: RecallNameGuard;
+  /**
+   * ATO-672. Leave notes tagged `superseded` (marked stale by note
+   * reconciliation) out of `### recalled` and `### memory-index`. Set
+   * when `memory.notes.reconcile` is on; unset keeps the old output.
+   */
+  hideSuperseded?: boolean;
 }
 
 /**
@@ -126,22 +140,32 @@ export function createDefaultMemoryContextProvider(
             k: opts.recall.k,
             query: buildRecallQuery(input),
             workingDir: opts.workingDir,
+            hideSuperseded: opts.hideSuperseded === true,
           })
         : [];
-      const recalled = expandWithLinks({
+      const expanded = expandWithLinks({
         store: opts.store,
         base: recalledBase,
         links: opts.links,
         metrics: opts.metrics,
+        hideSuperseded: opts.hideSuperseded === true,
       });
-      const recalledIds = new Set(recalled.map((e) => e.id));
+      // Ids held out by the name guard are still excluded from the
+      // index below, which would hold them out too.
+      const recalledIds = new Set(expanded.map((e) => e.id));
+      const guard = opts.nameGuard;
+      const recalled = guard
+        ? expanded.filter((e) => guardAllows(guard, e.content))
+        : expanded;
       const index = opts.index.enabled
         ? loadIndex({
             store: opts.store,
             limit: opts.index.limit,
             previewChars: opts.index.previewChars,
             workingDir: opts.workingDir,
+            hideSuperseded: opts.hideSuperseded === true,
             excludeIds: recalledIds,
+            ...(guard ? { nameGuard: guard } : {}),
           })
         : [];
       // Memory-v2 phase 5/7b: include `lessons` / `procedures`
@@ -153,6 +177,7 @@ export function createDefaultMemoryContextProvider(
         out.lessons = loadLessons({
           lessons: opts.lessons,
           query: buildRecallQuery(input),
+          ...(guard ? { nameGuard: guard } : {}),
         });
       }
       if (opts.procedures && opts.procedures.enabled) {
@@ -213,6 +238,7 @@ function loadProcedures(
 interface LoadLessonsArgs {
   lessons: DefaultMemoryContextProviderOptions["lessons"];
   query: string;
+  nameGuard?: RecallNameGuard;
 }
 
 /**
@@ -234,7 +260,11 @@ function loadLessons(args: LoadLessonsArgs): readonly LessonIndexEntry[] {
   if (query.length === 0) return [];
   try {
     const hits = cfg.store.recall({ query, k: cfg.k });
-    return hits.map((l) => ({
+    const guard = args.nameGuard;
+    const allowed = guard
+      ? hits.filter((l) => guardAllows(guard, `${l.activation}\n${l.principle}`))
+      : hits;
+    return allowed.map((l) => ({
       id: l.id,
       activation: l.activation,
       tags: l.tags,
@@ -251,6 +281,7 @@ interface LoadRecalledArgs {
   k: number;
   query: string;
   workingDir: string | null | undefined;
+  hideSuperseded: boolean;
 }
 
 /**
@@ -267,12 +298,13 @@ async function loadRecalled(
   const query = args.query.trim();
   if (query.length === 0) return [];
   try {
-    return await args.store.recallHybridAsync(query, {
+    const hits = await args.store.recallHybridAsync(query, {
       k: args.k,
       ...(args.workingDir !== undefined
         ? { scope: "project" as const, workingDir: args.workingDir }
         : {}),
     });
+    return args.hideSuperseded ? hits.filter((e) => !isSupersededNote(e)) : hits;
   } catch {
     return [];
   }
@@ -294,6 +326,7 @@ interface ExpandArgs {
   base: readonly MemoryEntry[];
   links: DefaultMemoryContextProviderOptions["links"];
   metrics: AgentMetrics | undefined;
+  hideSuperseded: boolean;
 }
 
 /**
@@ -329,6 +362,7 @@ function expandWithLinks(args: ExpandArgs): readonly MemoryEntry[] {
     if (seen.has(id)) continue;
     const entry = args.store.get(id);
     if (!entry) continue;
+    if (args.hideSuperseded && isSupersededNote(entry)) continue;
     hydrated.push(entry);
     seen.add(id);
   }
@@ -345,7 +379,9 @@ interface LoadIndexArgs {
   limit: number;
   previewChars: number;
   workingDir: string | null | undefined;
+  hideSuperseded: boolean;
   excludeIds: ReadonlySet<number>;
+  nameGuard?: RecallNameGuard;
 }
 
 function loadIndex(args: LoadIndexArgs): readonly MemoryIndexEntry[] {
@@ -362,13 +398,32 @@ function loadIndex(args: LoadIndexArgs): readonly MemoryIndexEntry[] {
       // is now distilled into a lesson. They remain readable by id
       // via `memory.notes.recall { id }` (cross-phase invariant 9).
       excludeArchived: true,
+      ...(args.hideSuperseded ? { excludeTags: [SUPERSEDED_NOTE_TAG] } : {}),
       ...(args.workingDir !== undefined
         ? { scope: "project" as const, workingDir: args.workingDir }
         : {}),
     });
     const filtered = raw.filter((row) => !args.excludeIds.has(row.id));
-    return filtered.slice(0, args.limit);
+    const guard = args.nameGuard;
+    if (!guard) return filtered.slice(0, args.limit);
+    const out: MemoryIndexEntry[] = [];
+    for (const row of filtered) {
+      if (out.length >= args.limit) break;
+      // The preview is only the first line; check the whole note.
+      const content = args.store.get(row.id)?.content ?? row.preview;
+      if (guardAllows(guard, content)) out.push(row);
+    }
+    return out;
   } catch {
     return [];
+  }
+}
+
+/** A guard that throws must not take the whole recall down: fail open. */
+function guardAllows(guard: RecallNameGuard, text: string): boolean {
+  try {
+    return guard.allows(text);
+  } catch {
+    return true;
   }
 }

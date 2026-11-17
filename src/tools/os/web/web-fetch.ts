@@ -3,12 +3,22 @@ import {
   runCommand as defaultRunCommand,
   type CommandResult,
 } from "../../../sandbox/command-runner.js";
+import {
+  requireApproval,
+  type DangerousToolOptions,
+} from "../../../approval/dangerous-tool.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import type { AtomicAgentConfig, WebFetchConfig } from "../../../config/index.js";
-import { extractWebContent, type ExtractMode } from "./web-fetch-extract.js";
+import {
+  extractWebContentAsync,
+  type DefuddleRunner,
+  type ExtractMode,
+} from "./web-fetch-extract.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import { parseRetryAfterValueMs } from "./retry-after-header.js";
 import { explainCurlStderr, runCurl } from "./run-curl.js";
+import { getWebIdentity } from "../../browser/web-identity.js";
+import { offlineRefusal } from "../../../llm/offline-network.js";
 import {
   assertHostAllowed,
   formatResolveEntry,
@@ -21,6 +31,12 @@ const TOOL_NAME = "os.web.fetch";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 import { describeChallenge, detectChallenge } from "./web-fetch-challenge.js";
+import {
+  describeReadVia,
+  readPastWall,
+  type PageRenderer,
+  type ReadVia,
+} from "./web-fetch-ladder.js";
 
 const MAX_RESPONSE_BYTES = 2_000_000;
 const MAX_REDIRECTS = 3;
@@ -37,6 +53,11 @@ const DEFAULT_FETCH_CONFIG: WebFetchConfig = {
   maxRetries: 2,
   retryBaseDelayMs: 500,
   retryMaxDelayMs: 5_000,
+  extractor: "readability",
+  renderWithBrowser: true,
+  jinaReader: false,
+  jinaApiKeyEnv: "JINA_API_KEY",
+  firecrawlApiKeyEnv: "FIRECRAWL_API_KEY",
 };
 
 /**
@@ -50,10 +71,6 @@ const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
 /** curl's "operation timed out" exit. The other exits are not transient. */
 const CURL_EXIT_TIMEOUT = 28;
-
-const USER_AGENT =
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
 /**
  * Marker appended to curl stdout via `-w` so the response body can be split
@@ -75,6 +92,21 @@ export interface OsWebFetchOptions {
   config?: Pick<AtomicAgentConfig, "web">;
   /** Injectable sleep so retry-backoff tests do not wait in real time. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /**
+   * The approval gate. A fetch never asks on its own; it is only put to
+   * the gate on a session the review after outside content holds
+   * (`ApprovalGate.holdsForOutsideContent`, ATO-618). Absent: never asks.
+   */
+  dangerous?: DangerousToolOptions;
+  /** Injectable Defuddle runner so extractor tests need no real package. */
+  runDefuddle?: DefuddleRunner;
+  /**
+   * Step 2 of the page-read ladder (ATO-968): renders a walled page in the
+   * agent's own browser. Absent ⇒ the ladder goes straight to the readers.
+   */
+  renderPage?: PageRenderer;
+  /** Environment the reader keys are read from. Defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
 }
 
 interface WebFetchArgs {
@@ -94,13 +126,18 @@ interface CurlResponse {
   retryAfterMs: number | null;
 }
 
-interface FetchOutcome {
+export interface FetchOutcome {
   finalUrl: string;
   status: number;
   contentType: string;
   body: string;
   truncated: boolean;
   redirectChain: string[];
+  /**
+   * Set when `hooks.allowRedirect` refused the next hop: the redirect target
+   * that was not requested. `finalUrl`/`status` are then the redirecting page.
+   */
+  refusedRedirect?: string;
 }
 
 export function buildOsWebFetchTool(
@@ -128,6 +165,34 @@ export function buildOsWebFetchTool(
     untrustedOutput: "a web page",
     async run(rawArgs, ctx) {
       const args = parseArgs(rawArgs, fetchCfg.timeoutMs);
+      // ATO-1084: nothing is resolved or spawned while offline. The SSRF
+      // guard already refuses this machine, so there is no local case.
+      const offline = offlineRefusal(args.url, TOOL_NAME);
+      if (offline) {
+        return compressToolResult({
+          tool: TOOL_NAME,
+          status: "error",
+          output: offline.message,
+          details: { url: args.url, blocked: true, offline: true, host: offline.host },
+        });
+      }
+      // After outside content a GET's URL alone can carry data out
+      // (`https://x/?d=<secret>`), so a held session asks first (ATO-618).
+      const gate = options.dangerous;
+      if (gate?.approvals.holdsForOutsideContent(ctx.sessionId, "http") === true) {
+        await requireApproval(
+          gate,
+          {
+            sessionId: ctx.sessionId,
+            tool: TOOL_NAME,
+            category: "http",
+            reason: `GET ${args.url}`,
+            affectedResources: [args.url],
+            grantKey: urlOrigin(args.url),
+          },
+          ctx.signal,
+        );
+      }
       let outcome: FetchOutcome;
       try {
         outcome = await fetchWithGuard(args.url, {
@@ -159,35 +224,83 @@ export function buildOsWebFetchTool(
         contentType: outcome.contentType,
         body: outcome.body,
       });
+      let readVia: ReadVia = "curl";
+      let ladderTitle: string | undefined;
       if (challenge.challenged) {
-        return compressToolResult({
-          tool: TOOL_NAME,
-          status: "error",
-          output: describeChallenge(
-            outcome.finalUrl,
-            outcome.status,
-            challenge.marker ?? "",
-          ),
-          details: {
-            url: args.url,
-            finalUrl: outcome.finalUrl,
-            status: outcome.status,
-            challenge: challenge.marker,
-            retryWith: "browser.navigate",
+        // ATO-968: the agent's own browser, then the readers the user
+        // turned on. Only a page they actually read replaces the wall.
+        const ladder = await readPastWall({
+          url: outcome.finalUrl,
+          timeoutMs: args.timeoutMs,
+          cwd: ctx.workingDir,
+          signal: ctx.signal,
+          renderWithBrowser: fetchCfg.renderWithBrowser ?? true,
+          readers: {
+            jinaReader: fetchCfg.jinaReader ?? false,
+            jinaApiKeyEnv: fetchCfg.jinaApiKeyEnv ?? "JINA_API_KEY",
+            firecrawlApiKeyEnv:
+              fetchCfg.firecrawlApiKeyEnv ?? "FIRECRAWL_API_KEY",
           },
+          runCommand,
+          ...(options.renderPage ? { renderPage: options.renderPage } : {}),
+          ...(options.lookup ? { lookup: options.lookup } : {}),
+          ...(options.env ? { env: options.env } : {}),
         });
+        if (ladder.page === null) {
+          const tried =
+            ladder.attempts.length > 0
+              ? ` Also tried: ${ladder.attempts.join("; ")}.`
+              : "";
+          return compressToolResult({
+            tool: TOOL_NAME,
+            status: "error",
+            output:
+              describeChallenge(
+                outcome.finalUrl,
+                outcome.status,
+                challenge.marker ?? "",
+              ) + tried,
+            details: {
+              url: args.url,
+              finalUrl: outcome.finalUrl,
+              status: outcome.status,
+              challenge: challenge.marker,
+              retryWith: "browser.navigate",
+              ...(ladder.attempts.length > 0
+                ? { ladderAttempts: ladder.attempts }
+                : {}),
+            },
+          });
+        }
+        readVia = ladder.page.via;
+        ladderTitle = ladder.page.title;
+        outcome = {
+          ...outcome,
+          finalUrl: ladder.page.finalUrl,
+          status: 200,
+          contentType: ladder.page.contentType,
+          body: ladder.page.body,
+          truncated: false,
+        };
       }
 
-      const extracted = extractWebContent({
+      const extracted = await extractWebContentAsync({
         body: outcome.body,
         contentType: outcome.contentType,
         url: outcome.finalUrl,
         mode: args.mode,
+        // `?? "readability"`: configs built by hand (tests, embedders)
+        // may predate the field.
+        preferred: fetchCfg.extractor ?? "readability",
+        ...(options.runDefuddle ? { runDefuddle: options.runDefuddle } : {}),
       });
+      // Past step 1 the page opens with a line naming the step that read
+      // it, so the model knows it came through the browser or a reader.
+      const lead = readVia === "curl" ? "" : `${describeReadVia(readVia)}\n\n`;
       const capped = (ctx.modelMode !== "cloud" || rawArgs.maxChars !== undefined) && extracted.text.length > args.maxChars;
       const text = capped
-        ? `${extracted.text.slice(0, args.maxChars)}\n… [truncated]`
-        : extracted.text;
+        ? `${lead}${extracted.text.slice(0, args.maxChars)}\n… [truncated]`
+        : `${lead}${extracted.text}`;
       // ATO-913: in local mode a capped page hands the compressor the
       // whole extracted text, so the summary is still cut at `maxChars`
       // while the registry's output spill saves the full page to a file
@@ -209,8 +322,12 @@ export function buildOsWebFetchTool(
         finalUrl: outcome.finalUrl,
         status: outcome.status,
         contentType: outcome.contentType,
-        extractor: extracted.extractor,
-        title: extracted.title,
+        extractor:
+          readVia === "jina" || readVia === "firecrawl"
+            ? readVia
+            : extracted.extractor,
+        title: extracted.title ?? ladderTitle,
+        readVia,
         redirectChain: outcome.redirectChain,
         extractMode: args.mode,
         truncated: outcome.truncated || capped,
@@ -224,7 +341,7 @@ export function buildOsWebFetchTool(
           output: isHttpError
             ? `HTTP ${outcome.status} for ${outcome.finalUrl}`
             : spillable
-              ? extracted.text
+              ? `${lead}${extracted.text}`
               : text,
           details,
         },
@@ -235,6 +352,15 @@ export function buildOsWebFetchTool(
       );
     },
   };
+}
+
+/** The origin a session grant on this fetch covers, as for `os.http.request`. */
+function urlOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
 }
 
 function parseArgs(
@@ -284,6 +410,52 @@ interface FetchWithGuardOptions {
   /** Effective per-attempt budget (per-call arg, else `fetchCfg.timeoutMs`). */
   timeoutMs: number;
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+  /** Pacing hooks for callers that limit their own traffic (`os.web.crawl`). */
+  hooks?: FetchRequestHooks;
+}
+
+/**
+ * Called around every real request, redirect hops and retries included, so a
+ * caller can hold a per-host request rate (ATO-970). `beforeRequest` runs
+ * before the SSRF check, so the address is still resolved fresh after a wait.
+ */
+export interface FetchRequestHooks {
+  beforeRequest?: (url: URL, signal: AbortSignal) => Promise<void>;
+  afterResponse?: (url: URL, status: number, retryAfterMs: number | null) => void;
+  /** Asked before a redirect hop is requested; `false` stops there (robots.txt in `os.web.crawl`). */
+  allowRedirect?: (url: URL) => boolean;
+}
+
+export interface FetchRawPageOptions {
+  cwd: string;
+  signal: AbortSignal;
+  runCommand?: typeof defaultRunCommand;
+  lookup?: HostLookup;
+  config?: Pick<AtomicAgentConfig, "web">;
+  timeoutMs?: number;
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  hooks?: FetchRequestHooks;
+}
+
+/**
+ * The fetch pipeline without extraction: same SSRF guard on every hop, same
+ * redirect and retry rules, raw body back. `os.web.crawl` reads links from it.
+ */
+export function fetchRawPage(
+  rawUrl: string,
+  options: FetchRawPageOptions,
+): Promise<FetchOutcome> {
+  const fetchCfg = options.config?.web.fetch ?? DEFAULT_FETCH_CONFIG;
+  return fetchWithGuard(rawUrl, {
+    runCommand: options.runCommand ?? defaultRunCommand,
+    lookup: options.lookup,
+    cwd: options.cwd,
+    signal: options.signal,
+    fetchCfg,
+    timeoutMs: options.timeoutMs ?? fetchCfg.timeoutMs,
+    sleep: options.sleep ?? defaultSleep,
+    hooks: options.hooks,
+  });
 }
 
 /** Thrown by `curlOnce` when curl itself failed (non-zero exit). */
@@ -322,7 +494,19 @@ async function fetchWithGuard(
           `${TOOL_NAME}: too many redirects (> ${MAX_REDIRECTS})`,
         );
       }
-      currentUrl = parseHttpUrl(res.redirectUrl);
+      const nextUrl = parseHttpUrl(res.redirectUrl);
+      if (opts.hooks?.allowRedirect?.(nextUrl) === false) {
+        return {
+          finalUrl: currentUrl.toString(),
+          status: res.status,
+          contentType: res.contentType,
+          body: res.body,
+          truncated: res.truncated,
+          redirectChain: chain,
+          refusedRedirect: nextUrl.toString(),
+        };
+      }
+      currentUrl = nextUrl;
       continue;
     }
     return {
@@ -356,6 +540,7 @@ async function fetchHopWithRetry(
 ): Promise<CurlResponse> {
   const { maxRetries } = opts.fetchCfg;
   for (let attempt = 0; ; attempt++) {
+    await opts.hooks?.beforeRequest?.(url, opts.signal);
     // Re-resolve on every attempt: the guard must pin a freshly verified IP
     // rather than trusting one resolved before an arbitrary backoff wait.
     const pinnedIps = await assertHostAllowed(url, { lookup: opts.lookup });
@@ -364,6 +549,7 @@ async function fetchHopWithRetry(
     let failure: unknown = null;
     try {
       res = await curlOnce(url, pinnedIps, opts);
+      opts.hooks?.afterResponse?.(url, res.status, res.retryAfterMs);
     } catch (err) {
       // Only a curl timeout is worth another attempt; a missing curl binary or
       // an aborted run must surface immediately.
@@ -490,9 +676,10 @@ function buildCurlArgs(
     "-H",
     "Accept: text/markdown, text/html;q=0.9, */*;q=0.1",
     "-H",
-    `User-Agent: ${USER_AGENT}`,
+    // The same honest UA and language as the agent's browser (ATO-969).
+    `User-Agent: ${getWebIdentity().userAgent}`,
     "-H",
-    "Accept-Language: en-US,en;q=0.9",
+    `Accept-Language: ${getWebIdentity().acceptLanguage}`,
     "-w",
     // `%{header_json}` is last on purpose: it is multi-line JSON that can
     // itself contain `|`, so every pipe-delimited field must precede it.

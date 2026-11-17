@@ -78,6 +78,63 @@ describe("tool schemas sent to Gemini's OpenAI-compatible endpoint (ATO-1282)", 
   });
 });
 
+type SentResponseFormat = { type: string; json_schema: { name: string; strict?: boolean; schema: Record<string, unknown> } };
+
+/** A strict helper-call schema, as the memory sub-runners send one. */
+const HELPER_FORMAT = {
+  name: "vote",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: { ids: { type: "array", items: { type: "string" } } },
+    required: ["ids"],
+  },
+};
+
+describe("helper-call response_format sent to Gemini's endpoint (ATO-1444)", () => {
+  it("leaves out additionalProperties for a gemini entry", async () => {
+    const { fetchImpl, bodies } = capturingFetch();
+    const provider = new GeminiProvider({ id: "gemini", apiKey: "k", fetchImpl });
+    await provider.complete({ prompt: "pick ids as JSON", responseFormat: HELPER_FORMAT });
+    const sent = bodies[0]!.response_format as SentResponseFormat;
+    expect(sent.type).toBe("json_schema");
+    expect(sent.json_schema.name).toBe("vote");
+    expect(sent.json_schema.schema).toEqual({
+      type: "object",
+      properties: { ids: { type: "array", items: { type: "string" } } },
+      required: ["ids"],
+    });
+    // The caller's schema is untouched.
+    expect(HELPER_FORMAT.schema).toHaveProperty("additionalProperties");
+  });
+
+  it("does the same for an openai-compatible entry pointed at Google's host", async () => {
+    const { fetchImpl, bodies } = capturingFetch();
+    const provider = new OpenAiProvider({
+      id: "my-gemini",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      apiKey: "k",
+      defaultChatModel: "gemini-2.5-flash",
+      fetchImpl,
+    });
+    await provider.complete({ prompt: "pick ids as JSON", responseFormat: HELPER_FORMAT });
+    expect((bodies[0]!.response_format as SentResponseFormat).json_schema.schema).not.toHaveProperty("additionalProperties");
+  });
+
+  it("sends other services the schema as it was", async () => {
+    const { fetchImpl, bodies } = capturingFetch();
+    const provider = new OpenAiProvider({
+      id: "test",
+      baseUrl: "https://example.invalid",
+      apiKey: "",
+      defaultChatModel: "qwen-test",
+      fetchImpl,
+    });
+    await provider.complete({ prompt: "pick ids as JSON", responseFormat: HELPER_FORMAT });
+    expect((bodies[0]!.response_format as SentResponseFormat).json_schema.schema).toEqual(HELPER_FORMAT.schema);
+  });
+});
+
 describe("Gemini's 404 for a model it does not serve (ATO-1282)", () => {
   it("names the model instead of a raw 404", async () => {
     const body =

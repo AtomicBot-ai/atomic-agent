@@ -217,3 +217,20 @@ describe("background rolling summary", () => {
     for (const each of [cloud, local, full, off]) each.shutdown();
   });
 });
+
+describe("rolling summary and compaction instructions (ATO-661)", () => {
+  it("skips a valid rolling summary so the model can follow what the user asked to keep", async () => {
+    const f = fixture({ facts: { local: true, prefixReuse: "partial" } });
+    f.control.close("chat");
+    await quiesce(f);
+    expect(f.stored().rollingSummary).toBeDefined();
+    f.set(history(6, f.stored()));
+    f.complete.mockClear();
+    f.complete.mockResolvedValue(completion("Goal: preserve the green button. Kept on request: test names."));
+    expect(await f.compactSession("chat", { instructions: "keep the failing test names" })).toMatchObject({ status: "compacted" });
+    expect(f.complete).toHaveBeenCalled();
+    expect(f.complete.mock.calls[0]![0].chat!.user).toContain("keep the failing test names");
+    expect(f.stored().compaction).not.toHaveProperty("kind");
+    expect(f.stored()).not.toHaveProperty("rollingSummary");
+  });
+});

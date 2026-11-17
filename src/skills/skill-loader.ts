@@ -1,6 +1,6 @@
 import { platform as osPlatform } from "node:os";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { basename, join, relative, resolve } from "node:path";
 import type { PluginSkillDir } from "../plugins/plugin-runtime.js";
 import {
   parseSkillFile,
@@ -8,6 +8,7 @@ import {
   type SkillManifest,
   type SkillPlatform,
 } from "./skill-manifest.js";
+import { sharedAgentSkillsDir } from "./shared-skills-dir.js";
 
 export type SkillSource = "global" | "project";
 
@@ -20,6 +21,8 @@ export interface SkillRecord {
   source: SkillSource;
   /** Set for a skill an installed plugin contributes; its name is `plugin:skill`. */
   plugin?: string;
+  /** Read from the shared `~/.agents/skills` folder other agents install into (ATO-706). */
+  shared?: true;
 }
 
 export interface LoadSkillsOptions {
@@ -38,6 +41,12 @@ export interface LoadSkillsOptions {
    * `plugin:skill`; a skill the user installed directly keeps its name.
    */
   pluginSkills?: () => readonly PluginSkillDir[];
+  /**
+   * Home folder whose `.agents/skills` is read as the shared skills folder
+   * (see {@link sharedAgentSkillsDir}). Omitted: the env override or the
+   * user's home; `null` turns the shared folder off.
+   */
+  homeDir?: string | null;
 }
 
 /**
@@ -118,6 +127,20 @@ export async function loadSkills(
     }
     merged.set(s.manifest.name, s);
   }
+  // Skills installed "for all agents" (~/.agents/skills) only fill names
+  // nothing else provides: Atomic global, plugin and project copies win.
+  const sharedDir = sharedAgentSkillsDir(options.homeDir);
+  if (sharedDir && resolve(sharedDir) !== resolve(options.globalDir)) {
+    for (const s of await loadSharedSkills(sharedDir, errors)) {
+      if (!isSkillEligibleForPlatform(s.manifest, platform)) continue;
+      const existing = merged.get(s.manifest.name);
+      if (existing) {
+        errors.push({ path: s.rootDir, error: `skill ${s.manifest.name}: using ${existing.manifestPath}; the shared copy is ignored` });
+        continue;
+      }
+      merged.set(s.manifest.name, s);
+    }
+  }
 
   return {
     skills: Array.from(merged.values()).sort((a, b) =>
@@ -171,6 +194,34 @@ async function loadFromDir(
             ? err.message
             : String(err);
       errors.push({ path: rootDir, error: message });
+    }
+  }
+  return records;
+}
+
+/**
+ * The shared folder is written by other tools, and `npx skills` links
+ * skill folders into it, so a skill folder may be a symlink to a folder
+ * elsewhere. As for cloud discovery, each skill is confined to its own
+ * resolved folder: a SKILL.md that resolves outside it is refused.
+ */
+async function loadSharedSkills(
+  dir: string,
+  errors: Array<{ path: string; error: string }>,
+): Promise<SkillRecord[]> {
+  const records: SkillRecord[] = [];
+  for (const found of await loadFromDir(dir, "global", errors)) {
+    try {
+      const rootDir = await realpath(found.rootDir);
+      const manifestPath = await realpath(found.manifestPath);
+      const rel = relative(rootDir, manifestPath);
+      if (rel !== "SKILL.md") {
+        errors.push({ path: found.rootDir, error: `skill ${found.manifest.name}: SKILL.md resolves outside its folder; the shared copy is ignored` });
+        continue;
+      }
+      records.push({ ...found, rootDir, manifestPath, shared: true });
+    } catch (err) {
+      errors.push({ path: found.rootDir, error: err instanceof Error ? err.message : String(err) });
     }
   }
   return records;

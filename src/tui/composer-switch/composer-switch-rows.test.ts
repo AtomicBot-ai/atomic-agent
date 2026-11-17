@@ -12,6 +12,7 @@ import {
   fusionState,
   localModelDef,
   localState,
+  providerRow,
 } from "./composer-switch-fixtures.js";
 import {
   backendSwitchRow,
@@ -119,6 +120,28 @@ describe("the switch rows", () => {
     expect(fusion?.active).toBe(true);
     expect(fusion?.detail).toBe("cloud plans · 3 local workers");
     expect(rows.filter((row) => row.active)).toHaveLength(1);
+  });
+
+  it("names the subscription-limit cost when the workers run on a Codex CLI", () => {
+    const base = fusionState({ workerProviderId: "codex" });
+    const state = {
+      ...base,
+      providersPanel: {
+        ...base.providersPanel,
+        rows: [
+          ...base.providersPanel.rows,
+          providerRow({
+            id: "codex",
+            kind: "subscription-cli",
+            subscriptionCli: { cli: "codex" },
+          }),
+        ],
+      },
+    };
+    const rows = selectComposerSwitchRows(state, "backend");
+    expect(rows.find((row) => row.label === "fusion")?.detail).toBe(
+      "workers use your subscription limit · no live progress",
+    );
   });
 
   it("puts the pre-flight blocker in the fusion row's detail column", () => {

@@ -10,6 +10,8 @@ import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
 import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
+import { OS_FS_WRITE_PPTX_CONTRACT } from "../tools/os/pptx/pptx-contract.js";
+import { OS_FS_DOCX_CONTRACT, OS_FS_XLSX_CONTRACT } from "../tools/os/office/office-contracts.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 /**
  * Per-tool JSON Schemas for the cloud `native_tools` transport.
@@ -44,6 +46,8 @@ import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-
 
 import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import { OS_FS_CODE_MAP_CONTRACT } from "../tools/os/code-map/code-map-contract.js";
+import { OS_CODE_SEARCH_CONTRACT } from "../tools/os/code/code-search-contract.js";
+import { OS_CODE_REWRITE_CONTRACT } from "../tools/os/code/code-rewrite-contract.js";
 import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
 import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
@@ -116,11 +120,71 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         action: { type: "string", enum: ["list", "switch", "close", "new"] },
         index: integerSchema,
         url: stringSchema,
+        profile: { type: "string", enum: ["agent", "temp"] },
       },
       ["action"],
     ),
   ],
   ["browser.screenshot", obj({ ref: stringSchema, fullPage: booleanSchema })],
+  [
+    "browser.act",
+    obj(
+      {
+        action: {
+          type: "string",
+          enum: ["select", "upload", "back", "forward", "key", "hover", "dialog", "wait"],
+        },
+        ref: stringSchema,
+        values: { type: "array", items: stringSchema },
+        paths: { type: "array", items: stringSchema },
+        key: stringSchema,
+        accept: booleanSchema,
+        text: stringSchema,
+        state: { type: "string", enum: ["visible", "hidden"] },
+        ms: numberSchema,
+        timeoutMs: numberSchema,
+      },
+      ["action"],
+    ),
+  ],
+  [
+    "browser.extract",
+    obj({ schema: { type: "object" }, instruction: stringSchema }, ["schema"]),
+  ],
+  [
+    "browser.site_tools",
+    obj(
+      {
+        action: { type: "string", enum: ["list", "call"] },
+        name: stringSchema,
+        arguments: { type: "object" },
+        timeoutMs: numberSchema,
+      },
+      ["action"],
+    ),
+  ],
+  [
+    "browser.debug",
+    obj(
+      {
+        action: { type: "string", enum: ["console", "network"] },
+        errorsOnly: booleanSchema,
+        limit: integerSchema,
+        clear: booleanSchema,
+      },
+      ["action"],
+    ),
+  ],
+  [
+    "browser.annotate",
+    obj(
+      {
+        action: { type: "string", enum: ["start", "read", "stop"] },
+        crops: booleanSchema,
+      },
+      ["action"],
+    ),
+  ],
   [
     "browser.scroll",
     obj(
@@ -163,11 +227,14 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   [OS_FS_WRITE_CONTRACT.name, OS_FS_WRITE_CONTRACT.argsJsonSchema],
   [OS_FS_RESTORE_CONTRACT.name, OS_FS_RESTORE_CONTRACT.argsJsonSchema],
   [OS_FS_MOVE_CONTRACT.name, OS_FS_MOVE_CONTRACT.argsJsonSchema],
+  [OS_FS_WRITE_PPTX_CONTRACT.name, OS_FS_WRITE_PPTX_CONTRACT.argsJsonSchema],
   [OS_FS_TRASH_CONTRACT.name, OS_FS_TRASH_CONTRACT.argsJsonSchema],
   [OS_FS_LIST_CONTRACT.name, OS_FS_LIST_CONTRACT.argsJsonSchema],
   [OS_FS_GLOB_CONTRACT.name, OS_FS_GLOB_CONTRACT.argsJsonSchema],
   [OS_FS_LOCATE_PROJECT_CONTRACT.name, OS_FS_LOCATE_PROJECT_CONTRACT.argsJsonSchema],
   [OS_FS_CODE_MAP_CONTRACT.name, OS_FS_CODE_MAP_CONTRACT.argsJsonSchema],
+  [OS_CODE_SEARCH_CONTRACT.name, OS_CODE_SEARCH_CONTRACT.argsJsonSchema],
+  [OS_CODE_REWRITE_CONTRACT.name, OS_CODE_REWRITE_CONTRACT.argsJsonSchema],
   [OS_FS_GREP_CONTRACT.name, OS_FS_GREP_CONTRACT.argsJsonSchema],
   [OS_FS_EDIT_CONTRACT.name, OS_FS_EDIT_CONTRACT.argsJsonSchema],
   [
@@ -194,6 +261,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["path"],
     ),
   ],
+  [OS_FS_DOCX_CONTRACT.name, OS_FS_DOCX_CONTRACT.argsJsonSchema],
+  [OS_FS_XLSX_CONTRACT.name, OS_FS_XLSX_CONTRACT.argsJsonSchema],
   [
     "os.fs.archive.list",
     obj(
@@ -411,6 +480,21 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["url"],
     ),
   ],
+  [
+    "os.web.crawl",
+    obj(
+      {
+        url: stringSchema,
+        maxPages: numberSchema,
+        maxDepth: numberSchema,
+        pathPrefix: stringSchema,
+        useSitemap: booleanSchema,
+        extractMode: { type: "string", enum: ["markdown", "text"] },
+        maxCharsPerPage: numberSchema,
+      },
+      ["url"],
+    ),
+  ],
 
   // ── os.clipboard / os.window / os.notify ─────────────────────────────────
   ["os.clipboard.read", obj({})],
@@ -466,7 +550,54 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["items"],
     ),
   ],
+  // ATO-489. `minItems` is a real bound here and, as for plan.update, it
+  // keeps a schema whose items nest an object off the strict path. The
+  // runtime still checks the count, labels and lengths
+  // (`normalizeUserQuestion`).
+  [
+    "ask_user",
+    obj(
+      {
+        question: stringSchema,
+        options: {
+          type: "array",
+          minItems: 2,
+          items: obj({ label: stringSchema, description: stringSchema }, ["label"]),
+        },
+        multiSelect: booleanSchema,
+        allowOther: booleanSchema,
+      },
+      ["question", "options"],
+    ),
+  ],
   ["tool.search", obj({ query: stringSchema, limit: numberSchema }, ["query"])],
+  // ATO-1137. `series` nests an object, so its bound keeps the schema off
+  // the strict path like `plan.update`; the tool's parser owns the rest
+  // (one value per label, `html` or `chart`, numbers sent as strings).
+  [
+    "canvas.render",
+    obj(
+      {
+        title: stringSchema,
+        chart: { type: "string", enum: ["bar", "line", "area", "pie", "table"] },
+        labels: stringArraySchema,
+        series: {
+          type: "array",
+          minItems: 1,
+          maxItems: 8,
+          items: obj(
+            { name: stringSchema, values: { type: "array", items: numberSchema } },
+            ["name", "values"],
+          ),
+        },
+        values: { type: "array", items: numberSchema },
+        html: stringSchema,
+        subtitle: stringSchema,
+        name: stringSchema,
+      },
+      ["title"],
+    ),
+  ],
   [
     "skill.run_script",
     obj(
@@ -523,6 +654,17 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     "memory.procedures.recall",
     obj({ id: numberSchema, query: stringSchema, k: numberSchema }),
   ],
+  [
+    "memory.sessions.search",
+    obj({
+      query: stringSchema,
+      scope: { type: "string", enum: ["all", "project"] },
+      limit: numberSchema,
+      sessionId: stringSchema,
+      line: numberSchema,
+      radius: numberSchema,
+    }),
+  ],
 
   // ── tasks ────────────────────────────────────────────────────────────────
   [
@@ -561,6 +703,25 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ["tasks.cancel", obj({ id: stringSchema }, ["id"])],
   ["tasks.show", obj({ id: stringSchema }, ["id"])],
 
+  // ── sessions (ATO-570) ───────────────────────────────────────────────────
+  ["sessions.list", obj({ query: stringSchema, limit: numberSchema })],
+  [
+    "sessions.read",
+    obj({ sessionId: stringSchema, limit: numberSchema }, ["sessionId"]),
+  ],
+  [
+    "sessions.send",
+    obj(
+      {
+        message: stringSchema,
+        sessionId: stringSchema,
+        newSession: booleanSchema,
+      },
+      ["message"],
+    ),
+  ],
+  ["sessions.check", obj({ taskId: stringSchema }, ["taskId"])],
+
   // ── vision ───────────────────────────────────────────────────────────────
   [
     "vision.describe",
@@ -578,6 +739,8 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["prompt"],
     ),
   ],
+  // ── audio (ATO-497; gated by `vision.audioInput`, unset = local model that hears) ──
+  ["audio.listen", obj({ path: stringSchema, prompt: stringSchema }, ["path"])],
 
   // ── image ────────────────────────────────────────────────────────────────
   // Plain types only, so the schema stays strict-convertible: the tool's
@@ -613,6 +776,35 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         model: stringSchema,
       },
       ["prompt"],
+    ),
+  ],
+  [
+    "audio.transcribe",
+    obj(
+      {
+        path: stringSchema,
+        language: stringSchema,
+        model: stringSchema,
+        translate: booleanSchema,
+        make_default: booleanSchema,
+      },
+      ["path"],
+    ),
+  ],
+  // ATO-1164: one of `path` / `html`, checked by `parseRenderHtmlArgs`.
+  [
+    "video.render_html",
+    obj(
+      {
+        path: stringSchema,
+        html: stringSchema,
+        duration: numberSchema,
+        fps: integerSchema,
+        width: integerSchema,
+        height: integerSchema,
+        output: stringSchema,
+      },
+      [],
     ),
   ],
 
@@ -661,12 +853,21 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
               instructions: stringSchema,
               deliverable: stringSchema,
               files: { ...stringArraySchema, maxItems: 32 },
+              // The planner's time estimate (ATO-1363). Lower bound only,
+              // like the budgets: `readEtaSeconds` drops an estimate over
+              // a day silently, and a schema maximum would turn that
+              // cosmetic guess into a refused fan-out.
+              etaSeconds: { type: "integer", minimum: 1 },
               // Per-task budgets. No upper bound here: the runner
               // clamps them to a multiple of the configured default and
               // says so in the result, because a number too big is the
               // planner's estimate of the work, not a malformed call.
               maxSteps: { type: "integer", minimum: 1 },
               timeoutMs: { type: "integer", minimum: 1 },
+              // The planner's output-size estimate (ATO-1363), checked
+              // against the worker's time limit (`worker-fit.ts`).
+              outputTokens: { type: "integer", minimum: 1, maximum: 1_000_000 },
+              outputLines: { type: "integer", minimum: 1, maximum: 100_000 },
               // Models by role (ATO-943): the task runs on that role's
               // model, or on the named one from the `### fusion` list.
               role: {
@@ -674,6 +875,9 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
                 enum: ["plan", "build", "review", "explore", "utility"],
               },
               model: stringSchema,
+              // A subagent profile by name (ATO-566): explore, review,
+              // research, or one the user defined.
+              profile: stringSchema,
             },
             ["id", "instructions"],
           ),
@@ -715,6 +919,12 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
                 // Names match without meanings matching; this is the
                 // only part of a provide that carries semantics.
                 shape: stringSchema,
+                // One small call and a condition over its result `r`,
+                // run after the fan-out (ATO-1362). `page` for browser code.
+                example: obj(
+                  { call: stringSchema, expect: stringSchema, page: stringSchema },
+                  ["call", "expect"],
+                ),
               },
               ["task", "kind", "name"],
             ),

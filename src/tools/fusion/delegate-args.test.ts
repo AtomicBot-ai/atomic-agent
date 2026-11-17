@@ -619,3 +619,57 @@ describe("parseDelegateArgs role and model (ATO-943)", () => {
     expect(parsed.error).toContain("tasks[1].model must be a non-empty string");
   });
 });
+
+describe("parseDelegateArgs output estimate (ATO-1363)", () => {
+  it("keeps outputTokens and outputLines, accepting a numeric string", () => {
+    const parsed = parseDelegateArgs({
+      tasks: [
+        { id: "a", instructions: "x", outputTokens: 18_000.7 },
+        { id: "b", instructions: "y", outputLines: "1500" },
+        { id: "c", instructions: "z" },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.tasks[0]).toMatchObject({ outputTokens: 18_000 });
+    expect(parsed.tasks[1]).toMatchObject({ outputLines: 1500 });
+    // Absent stays absent: an existing planner's call parses as before.
+    expect(parsed.tasks[2]).not.toHaveProperty("outputTokens");
+    expect(parsed.tasks[2]).not.toHaveProperty("outputLines");
+  });
+
+  it("refuses a non-positive or over-bound estimate, naming each", () => {
+    const parsed = parseDelegateArgs({
+      tasks: [
+        { id: "a", instructions: "x", outputTokens: 0 },
+        { id: "b", instructions: "y", outputLines: "lots" },
+        { id: "c", instructions: "z", outputTokens: 5_000_000 },
+        { id: "d", instructions: "w", outputLines: 200_000 },
+      ],
+    });
+    const error = expectError(parsed);
+    expect(error).toContain("tasks[0].outputTokens must be a positive number");
+    expect(error).toContain("tasks[1].outputLines must be a positive number");
+    expect(error).toContain("tasks[2].outputTokens is 5,000,000; at most 1,000,000");
+    expect(error).toContain("tasks[3].outputLines is 200,000; at most 100,000");
+  });
+});
+
+describe("parseDelegateArgs profile (ATO-566)", () => {
+  it("keeps a profile name, refuses an empty one, and never reads agentProfile off the wire", () => {
+    const parsed = parseDelegateArgs({
+      tasks: [
+        { id: "a", instructions: "x", profile: " review " },
+        { id: "b", instructions: "y", agentProfile: { name: "x", prompt: "smuggled", tools: [] } },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.tasks[0]).toMatchObject({ profile: "review" });
+    expect(parsed.tasks[1]).not.toHaveProperty("agentProfile");
+    const bad = parseDelegateArgs({ tasks: [{ id: "a", instructions: "x", profile: 3 }] });
+    expect(bad.ok).toBe(false);
+    if (bad.ok) return;
+    expect(bad.error).toContain("tasks[0].profile must be a non-empty string");
+  });
+});

@@ -98,6 +98,9 @@ const UNRESOLVED_ALLOWLIST: readonly string[] = [
   // against — every key defaults at its own read site. Out of scope
   // here rather than silently skipped; see UNRESOLVED_PREFIXES.
   "workers",
+  // Optional Telegram key (ATO-634): absent from the defaults table on
+  // purpose, so an unset file keeps streaming "private" without writing it.
+  "telegram.streamReplies",
 ];
 
 /**
@@ -132,6 +135,7 @@ const ENV_KEY_BY_DOC_KEY: Readonly<Record<string, keyof typeof ENV_DEFAULTS>> =
     "tasks.schedulerTickMs": "TASKS_SCHEDULER_TICK_MS",
     "tasks.schedulerBatch": "TASKS_SCHEDULER_BATCH",
     "tasks.agentToolsEnabled": "TASKS_AGENT_TOOLS_ENABLED",
+    "tasks.sessionToolsEnabled": "SESSION_TOOLS_ENABLED",
     "tasks.minIntervalMs": "TASKS_MIN_INTERVAL_MS",
   };
 

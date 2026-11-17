@@ -229,6 +229,24 @@ const HINT_LINE =
   "The files are saved locally: read them with os.fs.read or os.fs.read_document; use vision.describe for images; open archives with os.fs.archive.list or os.fs.archive.extract.";
 
 /**
+ * Said when a voice message or audio file landed: the recording is not
+ * text the model can read, and `audio.transcribe` (whisper.cpp, ATO-702)
+ * is the tool that turns it into some.
+ */
+export const AUDIO_HINT_LINE =
+  "Voice messages and audio files: transcribe them with audio.transcribe { \"path\": \"<the saved path>\" } and answer what was said.";
+
+const AUDIO_EXT = /\.(ogg|oga|opus|mp3|m4a|aac|wav|flac|webm|amr|wma)$/i;
+
+/** A saved file that holds speech the agent would want transcribed. */
+export function isAudioAttachment(saved: { path: string; mimeType: string | null }): boolean {
+  if (saved.mimeType?.toLowerCase().startsWith("audio/")) return true;
+  // `.webm` and `.mp4` are video containers too: with a MIME type that
+  // says otherwise, only the Ogg family still counts as speech.
+  return saved.mimeType === null ? AUDIO_EXT.test(saved.path) : /\.(ogg|oga|opus)$/i.test(saved.path);
+}
+
+/**
  * The block appended to the user message so the agent sees every file
  * that arrived, where it landed, and which ones did not make it.
  */
@@ -261,5 +279,6 @@ export function buildAttachmentUserMessage(
       : `The user sent ${items.length === 1 ? "a file" : `${items.length} files`} without a message.`;
   const parts = [head, "", formatAttachmentsBlock(items)];
   if (savedCount > 0) parts.push(HINT_LINE);
+  if (items.some((i) => i.status === "saved" && isAudioAttachment(i.saved))) parts.push(AUDIO_HINT_LINE);
   return parts.join("\n");
 }

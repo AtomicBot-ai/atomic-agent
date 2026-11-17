@@ -1,4 +1,7 @@
-import { catalogForProvider } from "../llm/provider/catalog-for-provider.js";
+import {
+  catalogForProvider,
+  modelsDevEntryForProvider,
+} from "../llm/provider/catalog-for-provider.js";
 import {
   resolveModel,
   type ModelCatalogEntry,
@@ -7,14 +10,16 @@ import {
 import type { LlmProviderConfigEntry } from "../llm/provider/registry/provider-types.js";
 import type { ResolvedLlmConfig } from "../llm/provider/registry/index.js";
 import { getCachedOpenRouterChatPicks } from "../llm/provider/openrouter/fetch-openrouter-chat-catalog.js";
+import { isLocalServerUrl } from "../llm/provider/openai/local-server-url.js";
 
 /**
  * Pricing for a model id on one provider, when any is known.
  *
- * Two sources, in `resolveModel`'s own precedence: a hand-configured
- * `userModels[].pricing` first, then the provider's bundled catalog.
- * The catalog is what makes cost work out of the box on OpenRouter and
- * aimlapi, whose published prices ship with the agent; without it only
+ * Sources, first that knows the model wins: a hand-configured
+ * `userModels[]` row, then the provider's bundled catalog (OpenRouter,
+ * aimlapi), then the bundled models.dev snapshot (ATO-647), which prices
+ * and sizes the direct presets (Anthropic, Groq, DeepSeek, Moonshot,
+ * Mistral, xAI, …) and the `gemini` kind. Without the last two only
  * operators who priced their models by hand ever saw a `cost_usd`.
  *
  * `providerId` is the link that SERVED the completion — the fallback
@@ -36,6 +41,8 @@ export function resolveModelPricingFor(
   if (!entry) return undefined;
   const model = resolveModel(entry, modelId, catalogForProvider(entry));
   if (model.source !== "default") return model;
+  const modelsDev = modelsDevEntryForProvider(entry, modelId);
+  if (modelsDev !== undefined) return { ...modelsDev, source: "catalog" };
   // Nothing configured and nothing bundled: OpenRouter's live model list
   // (fetched for the picker, cached for an hour) still knows the row's
   // `context_length` and prices. Better than the nominal 128k default,
@@ -51,4 +58,22 @@ function liveOpenRouterEntry(
   if (entry.kind !== "openrouter") return undefined;
   return getCachedOpenRouterChatPicks()?.find((pick) => pick.id === modelId)
     ?.entry;
+}
+
+/**
+ * Is any configured cloud link billed per token at a price we know
+ * (ATO-649)? The readout shows today's spend only then: with only local
+ * models, plan-billed CLIs or cloud models with no known price, a
+ * `today $0.00` would be a number that can never move. A link counts
+ * when its chat model resolves to a price, or any of its `userModels`
+ * has one.
+ */
+export function hasPricedCloudLink(resolved: ResolvedLlmConfig): boolean {
+  return resolved.providers.some((entry) => {
+    if (entry.kind === "llama-server" || entry.kind === "subscription-cli") return false;
+    if (isLocalServerUrl(entry.baseUrl ?? entry.url)) return false;
+    if (entry.userModels?.some((m) => m.pricing !== undefined)) return true;
+    const modelId = entry.defaultChatModel ?? entry.model ?? null;
+    return resolveModelPricingFor(resolved, modelId, entry.id)?.pricing !== undefined;
+  });
 }

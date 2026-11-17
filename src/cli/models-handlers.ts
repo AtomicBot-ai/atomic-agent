@@ -44,6 +44,7 @@ import {
   readBackendVersion,
   readDownloadJob,
   readLaunchRecord,
+  loraAdapterForModel,
   DEFAULT_HF_ENDPOINT,
   huggingFaceEndpointHost,
   readPartialDownload,
@@ -73,6 +74,7 @@ import {
   stopChatAndEmbeddingDaemons,
   stopDaemon,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
+  wantedAssetForInstalled,
   type DownloadJobKind,
   type DownloadJobMode,
   type DownloadNotifyChannel,
@@ -364,7 +366,7 @@ export function positionalArgs(args: readonly string[]): string[] {
 }
 
 /**
- * `--notify telegram|discord|email` (or `--notify=…`): where the worker
+ * `--notify telegram|discord|email|push` (or `--notify=…`): where the worker
  * reports when the job ends. Absent leaves whatever is already armed.
  */
 function parseNotifyFlag(
@@ -375,9 +377,16 @@ function parseNotifyFlag(
   if (!joined && i < 0) return undefined;
   const raw = joined ? joined.slice("--notify=".length) : args[i + 1];
   if (raw === "off" || raw === "none") return null;
-  if (raw === "telegram" || raw === "discord" || raw === "email") return raw;
+  if (
+    raw === "telegram" ||
+    raw === "discord" ||
+    raw === "email" ||
+    raw === "push"
+  ) {
+    return raw;
+  }
   throw new Error(
-    `--notify expects telegram, discord, email or off; got ${raw === undefined ? "nothing" : JSON.stringify(raw)}`,
+    `--notify expects telegram, discord, email, push or off; got ${raw === undefined ? "nothing" : JSON.stringify(raw)}`,
   );
 }
 
@@ -418,7 +427,8 @@ function startBackgroundPull(input: {
       ping +
       `  progress: atomic-agent models downloads\n` +
       `  follow:   atomic-agent models pull${input.kind === "embedding" ? "-embedding" : ""} ${input.modelId}\n` +
-      `  stop:     atomic-agent models downloads cancel ${input.modelId}\n` +
+      `  pause:    atomic-agent models downloads pause ${input.modelId}\n` +
+      `  cancel:   atomic-agent models downloads cancel ${input.modelId}\n` +
       `  log:      ${logPath}\n` +
       `the download keeps running after this terminal closes.\n`,
   );
@@ -480,7 +490,7 @@ function describeComputeBackend(installed: string | undefined): string {
   }
   let want: string;
   try {
-    want = resolveDownloadAsset().assetName;
+    want = wantedAssetForInstalled(resolveDownloadAsset(), installed);
   } catch {
     return installed;
   }
@@ -759,6 +769,9 @@ export async function runLocalModelsStart(
         parallel: cfg.localModels.managed.parallel,
         localLegRole,
         swaFull: cfg.localModels.managed.swaFull,
+        ...(loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid)
+          ? { loraAdapter: loraAdapterForModel(cfg.localModels.managed.loraAdapters, mid) }
+          : {}),
         ...(tpl ? { chatTemplateFile: tpl } : {}),
         ...(mmprojFile ? { mmprojFile } : {}),
         ...(dev ? { device: dev } : {}),

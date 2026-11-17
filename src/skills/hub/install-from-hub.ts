@@ -14,6 +14,12 @@ import {
 } from "./skill-hub-source.js";
 import { scanSkillDir } from "./scan-skill-dir.js";
 import {
+  computeSkillDigest,
+  removeSkillLock,
+  writeSkillLock,
+  type SkillOrigin,
+} from "./skill-lock.js";
+import {
   summarizeScan,
   type SkillScanResult,
 } from "./skill-security-scanner.js";
@@ -56,6 +62,12 @@ export interface StagedSkillInstall {
   scan: SkillScanResult;
   /** Temp directory holding the downloaded skill (SKILL.md at root). */
   sourceDir: string;
+  /**
+   * Source and exact version that was downloaded and scanned. Committing
+   * a staged install with an origin writes the skill's lock file
+   * (`skill-lock.ts`), which `skill update` reads.
+   */
+  origin?: SkillOrigin;
 }
 
 export interface StageSkillOptions {
@@ -80,6 +92,15 @@ export async function stageSkillFromHub(
 
   const client = options.client ?? new GithubSkillClient();
   const ref = id.ref ?? (await client.resolveDefaultBranch(id.owner, id.repo));
+  // Pin the download to one commit so the bytes scanned here are the
+  // version recorded in the lock, even if the branch moves meanwhile.
+  const pinned = await resolvePinnedRevision(client, id, ref);
+  const origin: SkillOrigin = {
+    source: "github",
+    identifier: options.identifier,
+    version: pinned?.commit ?? "",
+    ...(pinned?.tree ? { revision: pinned.tree } : {}),
+  };
 
   const tmpBase = options.tmpRoot ?? tmpdir();
   const sourceDir = await mkdtemp(join(tmpBase, "atomic-skill-"));
@@ -87,7 +108,7 @@ export async function stageSkillFromHub(
     const files = await client.downloadSkillDir(
       id.owner,
       id.repo,
-      ref,
+      pinned?.commit ?? ref,
       id.path,
       sourceDir,
     );
@@ -107,10 +128,29 @@ export async function stageSkillFromHub(
       manifest,
       scan,
       sourceDir,
+      origin,
     };
   } catch (err) {
     await discardDir(sourceDir);
     throw err;
+  }
+}
+
+/**
+ * Commit sha + skill folder tree sha for `ref`, or null when the client
+ * cannot resolve them (test stubs, or the lookup failed). Failing soft
+ * keeps installs working; the lock then has no version, only a digest.
+ */
+async function resolvePinnedRevision(
+  client: SkillHubClient,
+  id: SkillIdentifier,
+  ref: string,
+): Promise<{ commit: string; tree: string | null } | null> {
+  if (!client.resolveSkillRevision) return null;
+  try {
+    return await client.resolveSkillRevision(id.owner, id.repo, ref, id.path);
+  } catch {
+    return null;
   }
 }
 
@@ -221,11 +261,24 @@ export async function commitStagedInstall(
   options: CommitInstallOptions,
 ): Promise<InstallSkillResult> {
   try {
-    return await installSkill({
+    // A lock file shipped inside the download is never trusted.
+    await removeSkillLock(staged.sourceDir);
+    const result = await installSkill({
       sourceDir: staged.sourceDir,
       targetRoot: options.targetRoot,
       force: options.force,
     });
+    if (staged.origin) {
+      await writeSkillLock(result.installedAt, {
+        schema: 1,
+        ...staged.origin,
+        digest: await computeSkillDigest(result.installedAt),
+        scanId: scanIdOf(staged.scan),
+        verdict: staged.scan.verdict,
+        installedAt: new Date().toISOString(),
+      });
+    }
+    return result;
   } finally {
     await discardDir(staged.sourceDir);
   }

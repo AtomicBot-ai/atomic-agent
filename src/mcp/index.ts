@@ -38,6 +38,24 @@ export {
 export { createMcpSamplingHandler } from "./mcp-sampling-handler.js";
 
 export {
+  createMcpElicitationHandler,
+  DEFAULT_ELICITATION_TIMEOUT_MS,
+} from "./mcp-elicitation-handler.js";
+export type {
+  McpElicitationHandler,
+  McpElicitationPort,
+  McpElicitationQuestion,
+  McpElicitationReply,
+  McpElicitationResult,
+  McpElicitationSurface,
+} from "./mcp-elicitation-handler.js";
+export type {
+  McpElicitationField,
+  McpElicitationOption,
+  McpElicitationValue,
+} from "./mcp-elicitation-schema.js";
+
+export {
   buildMcpResourceListTool,
   buildMcpResourceReadTool,
 } from "./mcp-resource-tools.js";
@@ -47,6 +65,20 @@ export {
 } from "./mcp-prompt-tools.js";
 
 export {
+  McpOAuthFlow,
+  McpOAuthFlowError,
+  MCP_OAUTH_SIGNIN_TIMEOUT_MS,
+} from "./mcp-oauth-flow.js";
+export type {
+  McpOAuthFlowDeps,
+  McpOAuthSignInState,
+  McpOAuthStatus,
+  McpOAuthStartResult,
+} from "./mcp-oauth-flow.js";
+export { usesMcpOAuth } from "./mcp-oauth-provider.js";
+
+export {
+  McpAuthRequiredError,
   McpConnectError,
   McpError,
   McpRequestError,
@@ -72,4 +104,21 @@ export type {
   McpResourceMeta,
   McpPromptMeta,
   McpTrustLevel,
+  McpApprovalMode,
 } from "./mcp-types.js";
+
+export {
+  buildMcpCatalogJson,
+  describeUnfilledPlaceholders,
+  findCatalogPlaceholders,
+  findMcpCatalogEntry,
+  listMcpCatalog,
+  mcpCatalogShelves,
+  validateMcpCatalog,
+} from "./mcp-catalog.js";
+export type {
+  McpCatalogEntry,
+  McpCatalogInput,
+  McpCatalogShelf,
+  McpCatalogShelfId,
+} from "./mcp-catalog.js";

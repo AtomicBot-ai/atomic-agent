@@ -10,6 +10,8 @@ import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
 import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
+import { OS_FS_WRITE_PPTX_CONTRACT } from "../tools/os/pptx/pptx-contract.js";
+import { OS_FS_DOCX_CONTRACT, OS_FS_XLSX_CONTRACT } from "../tools/os/office/office-contracts.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
@@ -47,7 +49,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.tabs",
     summary: "List, switch, close, or open browser tabs.",
-    argsSchema: `{ action: "list" | "switch" | "close" | "new", index?: number, url?: string }`,
+    argsSchema: `{ action: "list" | "switch" | "close" | "new", index?: number, url?: string, profile?: "agent" | "temp" }`,
   },
   {
     name: "browser.scroll",
@@ -60,6 +62,36 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     summary:
       "JPEG of the page (viewport), the whole page (fullPage) or one element (ref); returns a path for vision.describe or reply.attachments.",
     argsSchema: "{ ref?: string, fullPage?: boolean }",
+  },
+  {
+    name: "browser.act",
+    summary:
+      "More page actions by `action`: select (choose `values` in a <select> ref), upload (local `paths` into a file input ref; always asks), back, forward, key (press `key`, e.g. Enter, Escape, Tab, ArrowDown, optionally on a ref), hover (ref), dialog (answer the NEXT alert/confirm/prompt: `accept`, optional `text`; call it before the click that opens it), wait (`text` to appear, or with state \"hidden\" to go; a `ref`; or `ms`, at most 10000).",
+    argsSchema: `{ action: "select" | "upload" | "back" | "forward" | "key" | "hover" | "dialog" | "wait", ref?: string, values?: string[], paths?: string[], key?: string, accept?: boolean, text?: string, state?: "visible" | "hidden", ms?: number, timeoutMs?: number }`,
+  },
+  {
+    name: "browser.extract",
+    summary:
+      "Extract structured data from the whole page into JSON matching `schema` (a JSON Schema) in one call, e.g. every plan's name and price. Returns validated JSON; use instead of read_aria + scroll chains when you need data, not controls.",
+    argsSchema: "{ schema: object /* JSON Schema */, instruction?: string }",
+  },
+  {
+    name: "browser.site_tools",
+    summary:
+      "Tools the open page declares for agents (WebMCP): list them, or call one by name with arguments (asks first). Prefer a site tool over clicking when the page offers one.",
+    argsSchema: `{ action: "list" | "call", name?: string, arguments?: object, timeoutMs?: number }`,
+  },
+  {
+    name: "browser.debug",
+    summary:
+      "Debug the open pages: action console (recent console messages and page errors) or network (recent requests with status, failed ones with the reason). errorsOnly for failures only; clear empties the list after reading.",
+    argsSchema: `{ action: "console" | "network", errorsOnly?: boolean, limit?: number, clear?: boolean }`,
+  },
+  {
+    name: "browser.annotate",
+    summary:
+      "Let the user mark up the open page: start shows an overlay where they click elements and type what to change; read returns each pin's comment, selector, box and styles (crops adds element pictures), grouped by page area; stop removes it.",
+    argsSchema: `{ action: "start" | "read" | "stop", crops?: boolean }`,
   },
   {
     name: "os.shell.run",
@@ -91,10 +123,12 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     // preemptively never sees the runtime hint.
     name: "os.fs.read_document",
     summary:
-      "Extract plain text from documents — PDF, Office, ODF, RTF (markers in output). NOT for source code: use os.fs.read. Read-only.",
+      "Extract plain text from documents — PDF, Office, ODF, RTF, EPUB, HTML, email (markers in output). NOT for source code: use os.fs.read. Read-only.",
     argsSchema:
-      "{ path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
+      "{ path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'ods' | 'odp' | 'epub' | 'html' | 'eml' | 'mbox' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
   },
+  OS_FS_DOCX_CONTRACT.descriptor,
+  OS_FS_XLSX_CONTRACT.descriptor,
   {
     name: "os.fs.archive.list",
     summary: "List archive entries (zip, tar, tar.gz, gz) without extracting.",
@@ -305,9 +339,21 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
       '{"url":"https://docs.example.com/guide","extractMode":"text","maxChars":20000}',
     ],
   },
+  {
+    name: "os.web.crawl",
+    summary:
+      "Read several pages of one site: same-site links from the start URL (breadth first) plus its sitemap.xml, each page as markdown/text. Polite: about one request per second per site, backs off on 429, obeys robots.txt. Use for 'read the whole docs' or 'find every page about X on this site'; for one page use os.web.fetch.",
+    argsSchema: `{ url: string, maxPages?: number, maxDepth?: number, pathPrefix?: string, useSitemap?: boolean, extractMode?: "markdown" | "text", maxCharsPerPage?: number }`,
+    examples: [
+      '{"url":"https://docs.example.com/","pathPrefix":"/guide/","maxPages":30}',
+      '{"url":"https://example.com/pricing","maxDepth":1}',
+    ],
+    tier: "rare",
+  },
   // Appended rather than placed beside the other os.fs entries: the
   // frozen Git duplicates above are pinned by catalog position
   // (`tool-contract-conformance.test.ts`), and a rare tool renders as
   // one line in `# extras` wherever it sits.
   OS_FS_MOVE_CONTRACT.descriptor,
+  OS_FS_WRITE_PPTX_CONTRACT.descriptor,
 ];

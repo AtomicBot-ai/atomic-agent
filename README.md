@@ -36,16 +36,34 @@ A local-first AI agent that runs the control loop and all state on your machine.
 macOS / Linux:
 
 ```bash
-curl -fsSL https://atomicagent.io/install | sh
+curl -fsSL "https://atomicagent.io/install?from=github" | sh
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://atomicagent.io/install.ps1 | iex
+irm "https://atomicagent.io/install.ps1?from=github" | iex
 ```
 
 The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart. Outside the TUI, run `atomic-agent update` (or `atag update`) to check for a newer release and re-run the installer in place; `atomic-agent update --check` probes without installing, and `--version <tag>` pins a specific release. Only the installed binary can self-update; a dev checkout updates via git, and a Linux package (below) updates with the package manager.
+
+### Verify a download
+
+CLI releases carry `SHA256SUMS.txt` (releases up to v0.7.0 have only a `.sha256` beside each file), the SHA-256 of each file in the release, signed with the packages key in [`packaging/atomic-chat.asc`](packaging/atomic-chat.asc) (fingerprint `1047 F119 58C6 442D D472  E497 E4C3 D361 FB7F F123`) as `SHA256SUMS.txt.asc`. Check the signature, then the file you downloaded:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AtomicBot-ai/atomic-agent/main/packaging/atomic-chat.asc | gpg --import
+gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
+sha256sum --check --ignore-missing SHA256SUMS.txt     # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS.txt
+```
+
+Each file also has a GitHub build-provenance attestation, which shows it was built by this repository's release workflow from the tagged commit:
+
+```bash
+gh attestation verify atomic-agent-linux-x64.tar.gz --repo AtomicBot-ai/atomic-agent
+```
+
+The macOS binary is also signed with an Apple Developer ID and notarized, and the Windows binaries are Authenticode-signed.
 
 ### Linux packages
 
@@ -101,8 +119,21 @@ Arch Linux: `yay -S atomic-agent-desktop-bin`, or any other AUR helper.
 
 Installed as a package, the app is updated with the rest of the system (`sudo apt upgrade`, `sudo dnf upgrade` or `yay -Syu`) and its Settings say so instead of offering an in-app update; the AppImage from the [releases page](https://github.com/AtomicBot-ai/atomic-agent/releases) updates itself. `sudo apt remove atomic-agent-desktop`, `sudo dnf remove atomic-agent-desktop` or `sudo pacman -R atomic-agent-desktop-bin` removes the app and leaves your data.
 
+### mise and aqua
+
+[mise](https://mise.jdx.dev) installs the CLI straight from the GitHub releases, on macOS, Linux and Windows. Add it to `mise.toml` (or `~/.config/mise/config.toml` for every project):
+
+```toml
+[tools."github:AtomicBot-ai/atomic-agent"]
+version = "latest"
+matching_regex = "^atomic-agent-"    # the release archive, not the deb or rpm
+version_regex = '^v\d+\.\d+\.\d+$'  # CLI releases only; desktop-v* tags are the desktop app's
+```
+
+then run `mise install`. [aqua](https://aquaproj.github.io) reads the registry entry in [`packaging/aqua/registry.yaml`](packaging/aqua/registry.yaml); its header shows the `aqua.yaml` lines. Both check each download against its `.sha256`. Update with `mise upgrade` or by raising the version in `aqua.yaml`, not with `atomic-agent update`, which would replace the binary behind the tool manager's back.
+
 > [!NOTE]
-> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64. Intel Macs are not supported yet; Windows on ARM runs the x64 build under emulation.
+> Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon and Intel), Linux x64 / arm64, and Windows x64. Windows on ARM runs the x64 build under emulation.
 
 ### Run
 
@@ -271,7 +302,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 |---|---|
 | **Browser** | Navigate, click, type, search, manage tabs, scroll, and read compact ARIA state via `playwright-core` (Chrome / Edge / Brave / Chromium). |
 | **Web & HTTP** | Web search with configurable providers (Exa, DuckDuckGo, Brave, SearXNG); fetch and extract pages or make arbitrary HTTP requests, both SSRF-guarded, separate from the browser. |
-| **Filesystem & shell** | Read, write, edit, patch, glob, grep, diff, watch, hash, list, archive extract, run approved shell commands, and inspect or kill processes. |
+| **Filesystem & shell** | Read, write, edit, patch, glob, grep, diff, watch, hash, list, archive extract, create editable PowerPoint decks, run approved shell commands, and inspect or kill processes. |
 | **Desktop** | Clipboard read/write, desktop notifications, and window list/focus. |
 | **Documents** | Extract text locally from PDF, DOC, DOCX, XLSX, PPTX, ODT, RTF, and plain text. |
 | **Git** | Read-only status, log, diff, show, blame, and branch inspection, plus local write tools (init, add, commit, checkout, merge) behind the same approval ladder as file writes. Remote sync (clone, fetch, pull, push, remote) is off by default; turn on `git.remoteSync` in the Integrations tab and every sync is approval-gated. |
@@ -280,12 +311,13 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Verify** | `verify.syntax` checks files by type and never reports an unchecked file as passing; `verify.run` runs a command, a service or a page against a throwaway copy of the working directory (off macOS, build and dependency folders are linked rather than copied, and a tree over 2 GB runs in place), with checks like `exit 0` or `status 200`. |
 | **Memory** | Profile facts, notes with hybrid recall, links, lessons, procedures, voting, and reflection. |
 | **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. A background task saves a checkpoint after every step and, after a crash or restart, continues from the last finished step (up to 3 times). Resuming an `overnight` run after a crash is not tested yet. |
-| **Overnight runs** | `atomic-agent overnight "<task>"` runs one long task with nobody watching, capped by `--budget` (dollars, estimated) and `--hours` (8 by default, up to 24). Actions that need approval are denied, printed as they happen and counted in the summary. With `--notify telegram` the report lists what was done, what failed and what needs you. In the desktop app, **Run overnight** in the composer's + menu takes a task, a folder and a time limit; keep the app open while it runs. `/goal` in the TUI keeps working on a checklist, round after round, until every item passes. Guide: [overnight.md](docs/user/overnight.md). |
+| **Overnight runs** | `atomic-agent overnight "<task>"` runs one long task with nobody watching, capped by `--budget` (dollars, estimated) and `--hours` (8 by default, up to 24). Actions that need approval are denied, printed as they happen and counted in the summary. With `--notify telegram` the report lists what was done, what failed and what needs you. In the desktop app, **Run overnight** in the composer's mode chip takes a task, a folder and a time limit; keep the app open while it runs. `/goal` in the TUI keeps working on a checklist, round after round, until every item passes. Guide: [overnight.md](docs/user/overnight.md). |
 | **Plugins** | Install Claude Code, Codex and Cursor plugin packages from a folder or a marketplace with `atomic-agent plugin install`. Their skills show up as `plugin:skill`, their MCP servers join the agent behind approval, their commands become TUI slash commands, and their PreToolUse and PostToolUse command hooks can block or annotate a tool call. A plugin's local programs and hooks run only after you allow its code. Installing stays in the terminal; the desktop app loads a plugin's skills, MCP servers and hooks, and manages installed plugins in Settings › Plugins. |
 | **Handoff** | When Claude Code or Codex stops in the middle of a task, `atag handoff --from claude-code` (or `codex`) saves its latest session in the current folder as an Atomic Agent chat and opens the TUI with a message to carry on. A long session is shortened to fit a local model's window (the local model's configured context, else 32k tokens). The desktop app has the same thing as **Continue from Claude Code / Codex**. |
+| **Share a chat** | `atag share` saves a chat as one HTML file (or Markdown with `--format md`) to send a colleague: your messages and the agent's replies only, with tool output and reasoning left out and keys, local paths, emails and IP addresses replaced. `atag share --gist` then shows what would go up and, only after you type yes, uploads it as a secret GitHub gist through `gh`. |
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
-| **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
+| **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. `atag mcp-server` works the other way round: Claude Code, Codex or Cursor can search Atomic Agent's memory and read its skills (read-only by default). |
 | **Fusion** | One model plans and hands the independent bulk of a job (wide reads, drafts, tests) to a pool of workers via `fusion.delegate`, then checks and merges their results. Usually a cloud orchestrator with local workers; either side can be any configured provider. You can stop, steer or escalate one running worker without stopping the rest, resume a run cut off by a crash with `/fusion resume`, and cap one Fusion turn's spend and time. Models by role, a task tree, a git worktree per worker, a judge, automatic replanning and escalation to a stronger model are options, all off by default. |
 | **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, plus one-click presets for Anthropic, Groq, DeepSeek, Mistral, xAI, Together, Ollama, LM Studio, Atomic Chat and more, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. Model pickers for OpenRouter, AI/ML API, Gemini and the Claude CLI start with Cheap, Balanced and Best. When a cloud provider fails you see the reason instead of a silent move to a local model; on a 429 or 503 the agent tries up to 3 times in total, a `Retry-After` longer than 5 seconds is waited out or handed to the fallback, and with a fallback chain set it says which provider it switched to. `atomic-agent models recommend` names the best local models this machine can run. |
 | **Telegram & Discord** | Remote control from your phone: a session per chat, approval buttons, files both ways, and opt-in scheduled-task reports on Telegram. Run several bots at once from the Swarm tab (`/swarm`), each with its own token and owner. |
@@ -413,10 +445,12 @@ Big models can download in the background, detached from the terminal that start
 atomic-agent models pull --background qwen-3.5-35b   # returns at once; keeps running after the terminal closes
 atomic-agent models downloads                        # list background downloads, progress, interrupted ones
 atomic-agent models pull qwen-3.5-35b                # follow a running download in the foreground (Ctrl+C detaches)
-atomic-agent models downloads cancel qwen-3.5-35b    # stop it; what was fetched stays on disk
+atomic-agent models downloads pause qwen-3.5-35b     # stop it; what was fetched stays on disk
+atomic-agent models downloads resume qwen-3.5-35b    # continue a paused download from where it stopped
+atomic-agent models downloads cancel qwen-3.5-35b    # stop it and delete what was fetched
 ```
 
-The TUI runs every model download through the same worker. Quit mid-download (Ctrl+C, closing the window) and the download continues; open the TUI again and the chip picks it up where it is, and when the file lands the model is activated and the daemon started as if you had waited. A worker that died mid-way is resumed automatically on the next launch; one you cancelled is not. On the LLM tab's Local pane, `x` stops the download in flight and keeps what it fetched, and Enter on the row resumes it.
+The TUI runs every model download through the same worker. Quit mid-download (Ctrl+C, closing the window) and the download continues; open the TUI again and the chip picks it up where it is, and when the file lands the model is activated and the daemon started as if you had waited. A worker that died mid-way is resumed automatically on the next launch; one you paused or cancelled is not. On the LLM tab's Local pane, `p` pauses the download in flight and keeps what it fetched (Enter on the row resumes it, even after a restart), and `x` cancels it and deletes the partial file.
 
 The worker is a detached copy of the CLI writing its progress to `<stateDir>/models/downloads/<job>.json` and its log next to it, the same arrangement as the managed `llama-server` daemon. A worker that dies mid-way (a reboot, a `kill -9`) shows as `interrupted` in `models downloads`, and running the same `pull` again, with or without `--background`, resumes from the partial file. `pull --mmproj` also fetches a vision model's projector; `pull-embedding --background` works the same way for embedding models. `pull --run` does the whole job in the foreground: it downloads the model (with the projector on a vision model), makes it active and starts it, replacing a chat model that is already running.
 
@@ -512,9 +546,9 @@ atomic-agent serve \
   --api-key "$ATOMIC_AGENT_API_KEY"
 ```
 
-Without a key, anyone who reaches the port can run the agent and its tools, so `serve` refuses to start on a host other than loopback (`0.0.0.0`, a LAN address) unless `--api-key` or `ATOMIC_AGENT_API_KEY` is set. On loopback it still starts without one and prints a one-line warning.
+Without a key, anyone who reaches the port can run the agent and its tools, so `serve` refuses to start on a host other than loopback (`0.0.0.0`, a LAN address) unless `--api-key` or `ATOMIC_AGENT_API_KEY` is set. On loopback it still starts without one and prints a one-line warning. Without a key it answers only requests that name a loopback host (`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, this machine's name) and come from no web page or a page on one of those hosts, and it wants request bodies as `application/json`, so a website open in your browser cannot drive it (ATO-1495). To let a specific web origin in, list it in `ATOMIC_AGENT_ALLOWED_ORIGINS` (comma-separated, a trailing `*` matches a prefix, for example `chrome-extension://*`).
 
-`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
+`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. `POST /v1/messages` (Anthropic Messages, for Claude Code: `ANTHROPIC_BASE_URL=http://127.0.0.1:8787`) and `POST /v1/responses` (OpenAI Responses, for Codex and the Agents SDK) run the same turn and answer in their own format; the agent uses its own tools, not the client's ([details](src/http/README.md)). Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
 `serve` boots the same runtime the TUI does, so enabled Telegram and Discord bots, and every enabled Swarm bot that has a token, come up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. Each bot runs in one process at a time; see Channels below.
 
@@ -565,7 +599,7 @@ TELEGRAM_BOT_TOKEN=123456789:AA-your-bot-token
 DISCORD_BOT_TOKEN=your-discord-bot-token
 ```
 
-Both can be set up from the Integrations tab in the TUI. Each bot answers only its owner: in a DM, or in a group or server channel when you @mention it or reply to it. Every chat, forum topic, Discord channel and thread gets its own session, and both bots understand `/status`, `/sessions`, `/switch <id>`, `/new`, `/model [provider] [model-id]` and `/cancel`. Approvals arrive as buttons in the chat the turn came from; only an owner can press them. Messages and files pass through Telegram's or Discord's servers.
+Both can be set up from the Integrations tab in the TUI. Each bot answers only its owner: in a DM, or in a group or server channel when you @mention it or reply to it. Every chat, forum topic, Discord channel and thread gets its own session, and both bots understand `/status`, `/sessions`, `/switch <id>`, `/new`, `/model [provider] [model-id]` and `/cancel`. In Telegram, `/cron` lists, adds, pauses, resumes and deletes scheduled tasks (`/cron add 0 9 * * * morning digest`); their results come back to the bot. Approvals arrive as buttons in the chat the turn came from; only an owner can press them. Messages and files pass through Telegram's or Discord's servers.
 
 Channels belong to the runtime, not to the TUI: `atomic-agent serve` boots them the same way, so the bots keep answering with no terminal UI open. Each bot is guarded by its own lockfile in the state dir; a second process that tries to start the same bot leaves it down with `already running in another atomic-agent (pid N)` and does not retry, so start bots from `serve` or from the TUI, not from both.
 
@@ -635,7 +669,34 @@ Configure MCP servers in `config.json`, and their tools join the same registry a
 
 To offer only some of a server's tools, list their raw names: `"enabledTools": ["get_issue", "list_issues"]` keeps just those, and `"disabledTools": ["delete_repository"]` drops tools on top of that (or on its own, from the full list). Turned-off tools never reach the prompt and cannot be called; a change applies when the server reconnects.
 
+To change how a server's tools ask before a call, set `"approval"` on the server: `"ask"` asks before every call (a stdio tool marked read-only by its server still runs unasked, as by default), `"ask_writes"` lets the tools a local (stdio) server marks read-only run without asking and asks for the rest (a remote HTTP / SSE server's tools always ask, whatever they say about themselves), and `"auto"` never asks for that server. Leave it out to keep the default (`trust` decides). A saved deny or ask rule still applies to a call the mode lets through.
+
 The TUI MCP panel supports live add / remove without restarting the process. When a stdio server fails to connect, the tail of its stderr is surfaced in the error instead of a bare disconnect message.
+
+</details>
+
+<details>
+<summary><b>MCP server: use the agent's memory and skills from Claude Code, Codex or Cursor</b></summary>
+
+`atag mcp-server` runs Atomic Agent as an MCP server over stdio. Add it to any MCP client:
+
+```bash
+claude mcp add atomic-agent -- atag mcp-server           # Claude Code
+codex mcp add atomic-agent -- atag mcp-server            # Codex
+```
+
+For Cursor or Claude Desktop, put `{"command": "atag", "args": ["mcp-server"]}` in the client's MCP config.
+
+By default every tool is read-only: `memory_notes_recall`, `memory_lessons_recall`, `memory_procedures_recall`, `memory_profile_list`, `skills_list` and `skill_view`. No model is started; the server reads the same data folder as the terminal and the desktop app.
+
+```bash
+atag mcp-server --allow-write                    # also memory_notes_store and memory_profile_set
+atag mcp-server --allow-exec                     # also os_shell_run, still behind approvals
+atag mcp-server --tool memory_notes_recall       # only this tool (repeatable)
+atag mcp-server --cwd ~/code/project             # working folder for project skills and shell commands
+```
+
+The other client cannot show Atomic Agent's approval prompt, so with `--allow-exec` a command that would ask is refused and the client is told to ask you. Only your approval level and saved "always allow" rules can let a command run; the hardline shell guard still blocks the worst ones.
 
 </details>
 
@@ -685,14 +746,16 @@ Everything Atomic Agent does is inspectable and interruptible:
 - **Failure taxonomy:** transport, grammar, model, tool, and cancellation failures classified across events, traces, metrics, TUI, sidecar, and HTTP.
 - **Allow always:** where a rule can be saved, every place that asks (TUI, CLI, Telegram, Discord, the desktop app) offers a third answer that saves it, for example `Always allow "git status" in this project` (`ctrl+n` in the TUI, `w` in the CLI). Rules live in `<stateDir>/approval-rules.json` (allow, ask, deny) and in a project's `.atomic-agent/approval-rules.json`, where only ask and deny count, so a project cannot grant itself anything. Deny wins over ask, and ask wins over allow. A shell allow rule covers simple commands only (no pipes, `&&` or redirects), while deny and ask rules apply to every command in a chain. Shell rules are saved by program and subcommand. Dangerous commands and secret files never get an allow rule. The desktop app lists saved rules in Settings › Privacy.
 - **Dangerous commands ask every time:** `rm -rf`, `git reset --hard`, force pushes (including `--force-with-lease` and `git push origin +main`), `git clean -fdx`, `git checkout -- .`, `git branch -D`, `find -delete`, `sudo`, `bash -c`, `eval`, `chmod 777` and similar fall in the `shell_dangerous` category. A session grant for the shell never covers them, and approving a Fusion fan-out does not let workers run them; only the top approval level skips the question.
-- **HTTP requests ask per host:** "allow for this session" on an `os.http.request` prompt covers that origin (scheme, host and port) only, so a POST to another host asks again. A redirect that would carry a POST body to another host is not followed; the agent has to make a new request there. Credential headers (`Authorization`, `Cookie`, API keys) are masked in the prompt and are not sent on a redirect to another host. A GET runs without asking by default (`http.approvalMode: "writes"`), and a GET can still carry data out in its URL and headers; set `http.approvalMode` to `"always"` or use `http.hostAllowlist` if that matters to you.
+- **HTTP requests ask per host:** "allow for this session" on an `os.http.request` prompt covers that origin (scheme, host and port) only, so a POST to another host asks again. A redirect that would carry a POST body to another host is not followed; the agent has to make a new request there. Credential headers (`Authorization`, `Cookie`, API keys) are masked in the prompt and are not sent on a redirect to another host. Keys in the URL (`?api_key=`, `token=`, `sig=` and the like) and secrets in the body are masked in the prompt too. "Allow always" on an HTTP prompt is saved for that origin only, so a POST to another host still asks. A POST asks as its own category, `http_write`, until approval level 4, and an "allow" given for a GET never covers it. A GET runs without asking by default (`http.approvalMode: "writes"`), and a GET can still carry data out in its URL and headers; set `http.approvalMode` to `"always"` or use `http.hostAllowlist` if that matters to you.
 - **Risk check (opt-in):** with `agent.smartApproval` set to `true` in `config.json` (off by default), a small model rates actions you could grant for the whole session before you are asked. Low-risk actions run; the rest come to you as usual. Categories that cannot be granted, such as `trust_config`, and reads outside the working scope are not rated and always ask. If the check does not answer in 8 seconds, you are asked.
+- **Check after outside content (opt-in):** with `agent.taintReview` set to `true` (off by default), once a turn has read a web page, an MCP answer, an HTTP response or the mail inbox, actions your level or a chat grant would normally run silently, and that could send data out or act outward (HTTP, shell, scripts, writes outside the project, git push, mail, browser submits, MCP tools), are not run silently. With the risk check on, it is asked whether the action matches what you asked for and runs it only on a low rating; otherwise, or with the risk check off, you are asked.
 - **No-progress guard:** repeated identical tool calls draw a warning at 3 repeats and a hard veto at 5; after 3 consecutive vetoes the agent is forced into a graceful reply. Calls are judged on the recent window and on what changed since: re-running the tests after an edit or re-reading a log after a wait is a new question, not a repeat. A deliberate poll (`sleep 60 && tail build.log`, waiting on a background job) is refused only after 20 identical answers.
 - **Per-session FIFO:** every surface enters the same `TurnController`; one session stays ordered while different sessions run concurrently.
 - **Explicit state:** sessions, memory, tasks, skills, browser profile, MCP config, and traces are ordinary local files or SQLite databases.
 - **Replaced files come back:** before a write replaces a file the agent did not create this session, the previous content is copied to `<stateDir>/restore/` (the last 20 copies per working directory, files up to 5 MB), and `os.fs.restore` puts it back.
 - **Deletes go to the Trash:** `os.fs.trash` moves files to the system Trash or Recycle Bin instead of deleting them, behind approval.
 - **Moves without the shell:** `os.fs.move` moves or renames files and folders, creating missing folders, as one approval for a whole batch; it never replaces an existing file unless asked, and its result lists the moves to undo it.
+- **Word and Excel without extra installs:** `os.fs.docx` creates a `.docx` from paragraphs and headings, appends to one, or finds and replaces text in it keeping the formatting; `os.fs.xlsx` creates a `.xlsx`, writes values and formulas into a sheet, or reads a range with its formulas. Both are built in (no Python, pandoc or office app), ask like any file write, and save the previous version for `os.fs.restore`.
 - **Long commands detach:** a shell command still running after 10 minutes becomes a background job the agent can wait on or kill; it stops when the turn ends unless kept (1-hour cap from start, 3 jobs per session).
 - **Reads stay in the workspace:** with `agent.readScope` at its default, `working-dir`, a read outside the working directory asks first; `unrestricted` turns this off.
 
@@ -703,7 +766,7 @@ Everything Atomic Agent does is inspectable and interruptible:
 
 By default, Atomic Agent does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
 
-Anonymous usage analytics is on by default. Every event carries a random install id shared by the terminal and desktop apps on the same machine (stored in `~/.atomic-agent-install-id`; the desktop app reuses the terminal's existing id unless analytics is off in the terminal's config), your OS platform and CPU architecture, the app version, the desktop app version when it comes from the desktop app, which surface sent it (terminal UI, command line, or desktop), and the install channel (the install script, a Linux `deb`, `rpm` or AUR package, or the desktop `dmg`, `exe`, `AppImage`, or `deb` package). It sends the provider and model names exactly as configured, including a custom provider's name and, for a model added from Hugging Face, its repository id, plus turn-shape numbers (latency, step count, outcome, token counts, estimated cost). It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up: the provider name and whether it is local or cloud, never the key, the URL, or the host. The desktop app adds these event groups: launch and health (startup timings, agent start failures and restarts, window crashes, app close), onboarding screens, model downloads and backend start, chat turn timing, approval answers, button and menu usage by action id only, and feature usage counts (settings panes, sessions, voice, tasks, skills, MCP servers, Telegram setup, import). If you turn analytics off, one last event records that it was switched off and how many days after install. Message content, file paths, tool arguments, full URLs, keys, and your IP address are never sent.
+Anonymous usage analytics is on by default. Every event carries a random install id shared by the terminal and desktop apps on the same machine (stored in `~/.atomic-agent-install-id`; the desktop app reuses the terminal's existing id unless analytics is off in the terminal's config), your OS platform and CPU architecture, the app version, the desktop app version when it comes from the desktop app, which surface sent it (terminal UI, command line, or desktop), and the install channel (the install script, a Linux `deb`, `rpm` or AUR package, or the desktop `dmg`, `exe`, `AppImage`, or `deb` package), and the install source: one word from a fixed list (`x`, `reddit`, `github`, `email`, `site`, `discord`, `hn`, `youtube`, `other`) taken from the `?from=` tag on the install link you used, or `unknown` when the link had none. It sends the provider and model names exactly as configured, including a custom provider's name and, for a model added from Hugging Face, its repository id, plus turn-shape numbers (latency, step count, outcome, token counts, estimated cost). It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up: the provider name and whether it is local or cloud, never the key, the URL, or the host. The desktop app adds these event groups: launch and health (startup timings, agent start failures and restarts, window crashes, app close), onboarding screens, model downloads and backend start, chat turn timing, approval answers, button and menu usage by action id only, and feature usage counts (settings panes, sessions, voice, tasks, skills, MCP servers, Telegram setup, import). If you turn analytics off, one last event records that it was switched off and how many days after install. Message content, file paths, tool arguments, full URLs, keys, and your IP address are never sent.
 
 Crash reports go to Sentry on the same switch. They carry path-stripped stack frames, the error type and category, safe scalar codes, a bounded tool name, the surface, install channel and app versions as tags, and, for a failed connection, only the class of the endpoint host (`localhost`, `private`, `known_cloud`, or `other`), never the host itself. A failed model turn also reports the provider id when it is a built-in one, which local engine served it (`atomic-core`, `llama-server`, or `external`), how long and how many times the turn waited for the provider, and, for the engine the agent manages, whether its process was alive (`alive`, `dead`, `no_pid`, or `unknown`). No native memory dumps are sent. Turn both off with `/privacy analytics off` in the TUI, the Privacy switch in the desktop app, or `"analytics": { "enabled": false }` in `config.json`. The TUI toggle applies live; an edit to `config.json` applies to processes started after it. In the desktop app the switch stops the app's own reporting at once, and the bundled agent stops after its runtime restarts. Setting `ATOMIC_AGENT_ANALYTICS=off` or the standard `DO_NOT_TRACK=1` in the environment turns both off for that process whatever the config says.
 
@@ -720,7 +783,7 @@ Local-first bounds where control lives, not where packets go. Network egress hap
 - the agent's e-mail integration reads or sends mail;
 - the GitHub tools open issues or pull requests, or `git.remoteSync` is on and a repository syncs;
 - managed mode downloads a model from Hugging Face or the `llama.cpp` backend from GitHub Releases;
-- you install a skill from ClawHub or a GitHub skill repo;
+- you search for or install a skill from ClawHub, skills.sh or a GitHub skill repo (a search sends the query to ClawHub and skills.sh);
 - the TUI checks GitHub Releases for a newer version at startup (set `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP=false` to skip), or `atomic-agent update` fetches the installer;
 - analytics or crash reporting is enabled, as described above.
 
@@ -811,7 +874,7 @@ Useful environment variables:
 - `ATOMIC_AGENT_BROWSER_CHANNEL`: `chrome`, `msedge`, or `chromium`.
 - `ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH`: explicit Chromium-family executable path.
 - `ATOMIC_AGENT_BROWSER_CDP_URL`: attach to an already-running browser via CDP.
-- `ATOMIC_AGENT_BROWSER_HEADLESS`: `1` to run the browser headless.
+- `ATOMIC_AGENT_BROWSER_HEADLESS`: `1` to always run the browser headless, `0` to always show its window. Unset: `browser.headless` in `config.json` decides (default `"auto"`: no window for scheduled tasks and Telegram / Discord, a window for the TUI and the desktop app).
 - `ATOMIC_AGENT_BROWSER_NO_SANDBOX`: `1` to launch the browser with `--no-sandbox` (containers and CI only).
 - `ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP`: `false` to skip the TUI's update check.
 

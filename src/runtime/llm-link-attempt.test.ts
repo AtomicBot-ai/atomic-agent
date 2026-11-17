@@ -184,3 +184,35 @@ describe("a thinking profile's lifted reply cap (ATO-1031)", () => {
     expect(requests[0]).not.toHaveProperty("maxTokens");
   });
 });
+
+describe("llm-link-attempt — a per-turn model (ATO-1148)", () => {
+  it("asks the pinned link's slice for the turn's model, unary and streamed", async () => {
+    const base = recording("native_tools");
+    const variant = recording("native_tools");
+    const asked: Array<[string, string | undefined]> = [];
+    const deps = {
+      resolveSlice: async (id: string, model?: string) => {
+        asked.push([id, model]);
+        return { provider: model === "project-model" ? variant.provider : base.provider, transport: "native_tools" as const };
+      },
+    };
+    const pinned: LlmStreamParams = { ...params, providerId: "cloud", model: "project-model" };
+
+    await completeOnLink(deps, pinned, "cloud");
+    const { primed } = await openStreamOnLink(deps, pinned, "cloud");
+    for (;;) if ((await primed.rest.next()).done) break;
+
+    expect(asked).toEqual([["cloud", "project-model"], ["cloud", "project-model"]]);
+    expect(variant.requests).toHaveLength(2);
+    expect(base.requests).toHaveLength(0);
+  });
+
+  it("gives no model to a link the request is not pinned to", async () => {
+    const { provider } = recording("native_tools");
+    const asked: Array<string | undefined> = [];
+    const deps = { resolveSlice: (_id: string, model?: string) => { asked.push(model); return { provider, transport: "native_tools" as const }; } };
+    await completeOnLink(deps, { ...params, model: "project-model" }, "chain-pick");
+    await completeOnLink(deps, { ...params, providerId: "cloud", model: "project-model" }, "other");
+    expect(asked).toEqual([undefined, undefined]);
+  });
+});

@@ -204,4 +204,32 @@ describe("LLM tab Local pane: model keys (#546)", () => {
     expect(onCancel).toHaveBeenCalledWith("chat");
     unmount();
   });
+
+  it("p pauses the download in flight instead of cancelling it", async () => {
+    const onPause = vi.fn();
+    const onCancel = vi.fn();
+    const { stdin, bus, unmount } = await openLocalPane({
+      onLocalModelsPullPauseRequested: onPause,
+      onLocalModelsPullCancelRequested: onCancel,
+    });
+    bus.emit({
+      type: "local_models_pull_started",
+      pull: {
+        kind: "chat",
+        modelId: "custom-remote",
+        label: "custom-remote",
+        percent: 10,
+        transferredBytes: 100,
+        totalBytes: 1000,
+        error: null,
+      },
+    });
+    await settle();
+
+    stdin.write("p");
+    await settle();
+    expect(onPause).toHaveBeenCalledWith("chat");
+    expect(onCancel).not.toHaveBeenCalled();
+    unmount();
+  });
 });

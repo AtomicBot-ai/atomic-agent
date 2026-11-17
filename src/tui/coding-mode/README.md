@@ -13,4 +13,4 @@ Read the inherited [TUI instructions](../AGENTS.md) and [interface contract](../
 
 ## Checks and limits
 
-`npx vitest run src/tui/coding-mode/ src/tui/coding-mode-menu.test.tsx src/tui/plan-handoff.test.tsx src/tui/plan-handoff-keys.test.tsx`. Composition suites stay beside the global app, with retargeted imports. Run `npm run lint`, `npm run typecheck:tests` and `npm run imports:check` after changing interfaces; `npm run docs:check` for navigation.
+`npx vitest run src/tui/coding-mode/ src/tui/coding-mode-menu.test.tsx src/tui/coding-mode-menu-keys.test.tsx src/tui/plan-handoff.test.tsx src/tui/plan-handoff-keys.test.tsx`. Composition suites stay beside the global app, with retargeted imports. Run `npm run lint`, `npm run typecheck:tests` and `npm run imports:check` after changing interfaces; `npm run docs:check` for navigation.

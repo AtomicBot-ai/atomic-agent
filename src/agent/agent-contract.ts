@@ -1,6 +1,7 @@
 import type { ContextCompactionControl, CompactionEvent } from "./compaction-control.js";
 import type { SessionUsageState } from "../session/usage-meter.js";
 import type { ToolRole } from "../tools/tool-roles.js";
+import type { WorkerTaskStatus } from "../tools/fusion/worker-result.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
 import type { ReasoningEffort, ToolCallTransport } from "../llm/provider/completion-types.js";
@@ -26,6 +27,7 @@ import type { TruncationRetry } from "./turn/truncation-recovery.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { ProfileClippedEvent } from "./profile-clip-warning.js";
+import type { PrefixDriftEvent, PrefixInvalidationLedger } from "./prefix-drift-warning.js";
 import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
 import type { ToolDisabledEvent } from "./tool-disabled-notice.js";
 import type { ReviewStallSignal } from "./review-stall.js";
@@ -35,6 +37,33 @@ import type { ReviewStallSignal } from "./review-stall.js";
  * is served by the Atomic Chat desktop app, a process nothing here starts.
  */
 export type LocalEngineState = "alive" | "dead" | "unknown" | "atomic_chat_app";
+
+/**
+ * A `LocalEngineState` with the fixed word for why it reads so (ATO-1432):
+ * the liveness branch (`lock_held`, `pid_dead`, `pid_unreadable`, ...) or
+ * why the engine was not looked at (`not_local_link`, `not_active_provider`,
+ * `not_managed`). Fixed words only: it travels in error reports.
+ */
+export interface LocalEngineVerdict {
+  state: LocalEngineState;
+  reason?: string;
+  /**
+   * Whether a model process exists, read from the pid file alone, when the
+   * engine reads `unknown` because its operation lock is held (ATO-1434).
+   * `none` under a held lock for `LOCAL_ENGINE_NO_PROCESS_CEILING_MS` ends
+   * the turn. Absent: not asked.
+   */
+  modelProcess?: "none" | "running" | "unknown";
+}
+
+/**
+ * The verdicts the outage wait decided "wait or not" on in one outage: the
+ * first and the latest (ATO-1432). Reported with `loop_failed`'s `outage`.
+ */
+export interface EngineWaitVerdicts {
+  first: LocalEngineVerdict;
+  last: LocalEngineVerdict;
+}
 
 /**
  * The answers to "the local model ran out of memory" (ATO-334): restart
@@ -112,6 +141,13 @@ export interface AgentLoopDependencies {
    */
   isFusionMode?: () => boolean;
   /**
+   * What the runtime rebuilt on purpose (skills refreshed, MCP catalog
+   * rebuilt), so a prefix change it explains is labelled expected
+   * rather than warned about (ATO-316). Absent: every change that is
+   * not a model or route switch reads as unexpected.
+   */
+  prefixInvalidations?: PrefixInvalidationLedger;
+  /**
    * Drop the fan-out approval a previous turn on this session earned.
    * See `approval/fanout-scope.ts`: the answer is scoped to one job.
    */
@@ -122,6 +158,12 @@ export interface AgentLoopDependencies {
    * for the rest of the turn, and a new turn or a steer is a new answer.
    */
   forgetDeclinedApprovals?: (sessionId: string) => void;
+  /**
+   * Forget the outside content the session read in its last turn
+   * (`ApprovalGate.clearUntrustedContent`, ATO-618). Called when a turn
+   * starts only: a steer leaves the outside text in the context.
+   */
+  clearUntrustedContent?: (sessionId: string) => void;
   /**
    * Deny every approval `sessionId` is waiting on, as nobody's decision
    * (`ApprovalGate.denyPendingForSession`). The loop calls it once a
@@ -161,6 +203,12 @@ export interface AgentLoopDependencies {
    */
   liveWorkerSlots?: () => number | null;
   /**
+   * What past fusion runs on this machine showed (ATO-949): the outcome
+   * log's summary as `sessionId` started with it, for the `### fusion`
+   * facts. Held per session, so stable for that session's prefix.
+   */
+  fusionPastRuns?: (sessionId: string) => readonly string[];
+  /**
    * The model server just revealed its real context window: a reply
    * stopped `context_window`-truncated after this many prompt + reply
    * tokens. Bootstrap records it per provider/model so the next prompt
@@ -196,6 +244,12 @@ export interface AgentLoopDependencies {
    */
   localEngineState?: (providerId: string | undefined) => LocalEngineState;
   /**
+   * `localEngineState` with the reason as a fixed word (ATO-1432). Asked
+   * in its place by the outage wait when given, so the turn can report
+   * what it decided on. Absent: the plain state, with no reason.
+   */
+  explainLocalEngineState?: (providerId: string | undefined) => LocalEngineVerdict;
+  /**
    * The managed local model ran out of memory (ATO-334). A server error
    * from it is then not an outage to wait out: the turn restarts the
    * model with half the context window (asking first when
@@ -230,7 +284,7 @@ export interface AgentLoopDependencies {
    * orchestrator's. Resolved once per pinned turn. Absent, a pinned turn
    * falls back to the global fields (test / legacy wiring).
    */
-  resolveLlmSlice?: (providerId: string) => ResolvedTurnLlmSlice;
+  resolveLlmSlice?: (providerId: string, model?: string) => ResolvedTurnLlmSlice;
   /** Sticky fallback expected to serve this session; an explicit turn pin wins. */
   contextProviderId?: (sessionId: string) => string | undefined;
   /**
@@ -528,6 +582,12 @@ export interface RunTurnOptions {
    */
   taskMaxCostUsd?: number;
   /**
+   * Re-plan cadence in steps (ATO-609). Defaults to
+   * `config.agent.task.replanEveryNSteps`; `0` is off. See
+   * `src/agent/plan/replan-cadence.ts`.
+   */
+  replanEveryNSteps?: number;
+  /**
    * Carry on past a leg boundary while the work progresses. Defaults to
    * `config.agent.task.autoContinue`; `false` restores the historical
    * "stop at `maxSteps`" behaviour for a caller that wants one leg only.
@@ -572,6 +632,14 @@ export interface RunTurnOptions {
    */
   reasoningEffort?: ReasoningEffort;
   /**
+   * The reasoning level a person picked for this chat (ATO-490, the
+   * desktop composer's switch). Beats `reasoningEffort` and the model's
+   * `params` on a cloud model that reasons, and sets the think budget of
+   * a local grammar-served one (`reasoning-levels.ts`). Absent ("Auto"),
+   * every completion is built as before.
+   */
+  reasoningOverride?: ReasoningEffort;
+  /**
    * Output ceiling for every completion of this turn, below the
    * provider's own. A fusion worker's `workerMaxOutputTokens`; the
    * truncation retry's per-step cap still wins over it.
@@ -587,6 +655,15 @@ export interface RunTurnOptions {
    */
   providerId?: string;
   /**
+   * With `providerId`: the chat model this turn asks that provider for,
+   * instead of the one its config entry names (ATO-1148: a project's own
+   * cloud model). Cloud links only; the runtime refuses it on a local
+   * one, whose model is one per agent. Nothing is written to the config
+   * and the active provider does not move, so chats running at the same
+   * time keep their own model. Ignored without `providerId`.
+   */
+  model?: string;
+  /**
    * The turn leaves no durable trace in the memory fabric: no recall or
    * per-step memory refresh, no end-of-turn reflection, no lesson
    * lifecycle bump. For fusion worker sessions — throwaway state whose
@@ -595,6 +672,15 @@ export interface RunTurnOptions {
    * long-term memory. Mid-turn steering is unaffected.
    */
   ephemeral?: boolean;
+  /**
+   * Memory is read as usual (recall, the profile in the prompt) but the
+   * turn writes nothing to it: no end-of-turn reflection (notes, lessons,
+   * procedures), no lesson lifecycle bump, and the `memory.*` write tools
+   * are hidden (`memoryReadOnlyToolFilter`, applied by the runtime turn
+   * service). For `skill eval` (ATO-1098): a run with a skill and a run
+   * without it must not reach each other through the person's memory.
+   */
+  memoryReadOnly?: boolean;
   /**
    * Hide tools from this turn. Applied to the descriptors handed to every
    * step, composed with the finalization-step filter, so under native
@@ -636,7 +722,8 @@ export interface RunTurnOptions {
    * acceptance list is green. Not read by the loop itself: the runtime
    * wraps the loop's turns in the goal controller (`./goal/`), which runs
    * `checks` after each round, asks a judge about `criteria`, and starts
-   * the next round with what is still open, up to `maxRounds`.
+   * the next round with what is still open, up to `maxRounds` rounds and
+   * `maxTokens` tokens (ATO-1036; `0` or absent, no token cap).
    */
   goal?: import("./goal/goal-types.js").GoalSpec;
 }
@@ -673,6 +760,12 @@ export type AgentLoopEvent =
    */
   | { type: "steer_applied"; text: string; stepIndex: number }
   | { type: "turn_started"; turnIndex: number }
+  /**
+   * A one-line guess at what the user will want next, written after the
+   * turn ended (ATO-995). Surfaces show it greyed in an empty composer;
+   * Tab puts it in the buffer. Never sent to the model by itself.
+   */
+  | { type: "next_step_suggestion"; text: string }
   | {
       type: "turn_finished";
       turnIndex: number;
@@ -930,6 +1023,29 @@ export type AgentLoopEvent =
        */
       tokens?: number;
       spentUsd?: number;
+      /**
+       * `phase: "usage"`: the reply part of `tokens` — what this worker
+       * generated, every completion summed (ATO-78). The prompt part is
+       * re-read on every step, so `tokens` alone mostly measures context.
+       */
+      tokensOut?: number;
+      /**
+       * The step budget this worker runs under (`maxSteps`, clamped), on
+       * `started`, `usage` and the end line, so the row can say
+       * `12/40 steps` (ATO-1364).
+       */
+      stepBudget?: number;
+      /**
+       * Distinct files this worker has written so far, on `usage` and
+       * the end line (ATO-1364, `worker-files-written.ts`).
+       */
+      filesWritten?: number;
+      /**
+       * End lines (`finished` / `failed` / `cancelled`): the task's own
+       * status, so the row can say why it came back — `needs_orchestrator`,
+       * `max_steps`, `timeout` — where the phase only says it ended.
+       */
+      status?: WorkerTaskStatus;
       /** `phase: "tool"` only: the tool this leg just started. */
       tool?: string;
       /**
@@ -939,6 +1055,7 @@ export type AgentLoopEvent =
        * slow. Nothing is scheduled or timed out against it.
        */
       etaSeconds?: number;
+      /** Steps completed: the end line's total, and live on `usage`. */
       stepCount?: number;
       durationMs?: number;
       /** One line about the outcome; the worker's reply, clipped. */
@@ -951,6 +1068,11 @@ export type AgentLoopEvent =
     }
   /** `### profile` was clipped at `memory.profile.maxTokens` (issue #407). */
   | ProfileClippedEvent
+  /**
+   * The stable prefix differs from the previous step of the same
+   * session (ATO-316): which sections, and whether the runtime caused it.
+   */
+  | PrefixDriftEvent
   /** The packer left older history out of the prompt (ATO-295). */
   | HistoryTrimmedEvent
   /**
@@ -1034,7 +1156,9 @@ export type AgentLoopEvent =
    * LLM-failure taxonomy (see `src/llm/reliability/`); downstream
    * consumers never need to classify the error themselves.
    * `outage` is the provider-outage wait the turn had spent when it
-   * failed (zero when it never parked); error reporting tags it.
+   * failed (zero when it never parked); error reporting tags it. Its
+   * `engineVerdicts` are the local engine readings the wait decided on,
+   * first and last (ATO-1432), when it read any.
    * `failure` is the shared failure-catalog entry (ATO-384): a stable
    * `cause` id, a plain `phrase` to show, and the `action` button that
    * helps. Set by the agent loop on every failure; optional only so an
@@ -1044,7 +1168,7 @@ export type AgentLoopEvent =
       type: "loop_failed";
       error: Error;
       category: LlmFailureCategory;
-      outage?: { waitedMs: number; attempts: number };
+      outage?: { waitedMs: number; attempts: number; engineVerdicts?: EngineWaitVerdicts };
       failure?: FailureVerdict;
     }
   /**
@@ -1061,7 +1185,7 @@ export type AgentLoopEvent =
       to: string;
       reason: string;
       /** The failure's kind, read off the error (`falloverCause`). */
-      cause?: "billing" | "auth" | "other";
+      cause?: "billing" | "auth" | "spend-limit" | "other";
       /** The failure-catalog cause behind an "away" (ATO-483). */
       failure?: FailureCauseId;
       /** The fallback link's model, when its entry names one. */
@@ -1107,7 +1231,16 @@ export interface RunTurnResult {
    * provider reported usage; absent on scheduler and fusion turns and
    * when no call reported any, so a missing figure never reads as zero.
    */
-  usage?: { promptTokens: number; completionTokens: number };
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    /**
+     * The turn's streamed generation time and the output tokens it
+     * produced (`TurnUsageSnapshot.generation`, ATO-1186): the reply
+     * speed. Absent when no completion was timed.
+     */
+    generation?: { completionTokens: number; durationMs: number };
+  };
   /**
    * Estimated USD the turn's own step completions cost (ATO-1108),
    * priced through `AgentLoopDependencies.priceCompletion`. `0` when

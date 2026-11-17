@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { STARTER_LOCAL_MODEL_ID, getLocalModelDef } from "../../local-llm/index.js";
 import type { StartedUpgrade } from "../../local-llm/model-upgrade-runner.js";
 import { upgradeAfterStarter } from "./starter-upgrade.js";
+
+const runner = vi.hoisted(() => ({ startModelUpgrade: vi.fn() }));
+vi.mock("../../local-llm/model-upgrade-runner.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  startModelUpgrade: runner.startModelUpgrade,
+}));
 
 const machine = { ramGb: 32, gpuBudgetGb: 24, freeDiskGb: 200, cpuOnly: false };
 const tiers = { fast: null, balanced: null, quality: null };
@@ -12,14 +18,16 @@ function started(decision: StartedUpgrade["snapshot"]["decision"], job: StartedU
   return async () => ({ snapshot: { machine, tiers, decision, activeModelId: STARTER_LOCAL_MODEL_ID }, job });
 }
 
-/** ATO-1045: the starter lands, the best model follows in the background. */
+/** ATO-1045 / ATO-1475: the starter lands, the best model is suggested, never pulled unasked. */
 describe("upgradeAfterStarter", () => {
-  it("starts the download and says what follows", async () => {
+  it("names the model, its size and the command, without starting a download", async () => {
     const line = await upgradeAfterStarter(starter, {
-      start: started({ action: "download", model: big }, { id: "chat-gemma-4-26b-a4b", pid: 42, started: true }),
+      start: started({ action: "download", model: big }, null),
     });
     expect(line).toContain(big.name);
-    expect(line).toContain("in the background");
+    expect(line).toContain(big.sizeLabel);
+    expect(line).toContain(`/models pull ${big.id}`);
+    expect(line).not.toContain("in the background");
   });
 
   it("points at /models when the best model is already on disk", async () => {
@@ -51,5 +59,15 @@ describe("upgradeAfterStarter", () => {
     );
     expect(line).toBeNull();
     expect(asked).toBe(false);
+  });
+
+  it("by default only decides: the runner is asked for a dry run (ATO-1475)", async () => {
+    runner.startModelUpgrade.mockResolvedValueOnce({
+      snapshot: { machine, tiers, decision: { action: "download", model: big }, activeModelId: STARTER_LOCAL_MODEL_ID },
+      job: null,
+    });
+    const line = await upgradeAfterStarter(starter);
+    expect(runner.startModelUpgrade).toHaveBeenCalledWith({ dryRun: true });
+    expect(line).toContain(`/models pull ${big.id}`);
   });
 });

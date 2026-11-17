@@ -1,0 +1,15 @@
+skill: skill-creator
+description: Write a new skill that the agent can actually load.
+defaults:
+  maxSteps: 20
+tasks:
+  - id: release-notes-skill
+    prompt: "Create a new atomic-agent skill named release-notes that turns a list of merged pull request titles into short release notes grouped as Features and Fixes. Write it to ./skills/release-notes/SKILL.md inside this folder, not to the global skills folder."
+    check:
+      type: command
+      run: node "$SKILL_EVAL_TASKS_DIR/checks/skill-file-check.mjs" release-notes
+  - id: meeting-notes-skill
+    prompt: "Create a skill named meeting-notes whose description is exactly this text: Use when: summarizing a meeting transcript into decisions and action items. Write it to ./skills/meeting-notes/SKILL.md in this folder."
+    check:
+      type: command
+      run: node "$SKILL_EVAL_TASKS_DIR/checks/skill-file-check.mjs" meeting-notes

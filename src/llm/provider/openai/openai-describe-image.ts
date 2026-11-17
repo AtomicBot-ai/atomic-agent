@@ -24,10 +24,7 @@ export async function describeImageViaOpenAi(
   providerPreferences?: Record<string, unknown>,
   bodyOptions: DescribeImageBodyOptions = {},
 ): Promise<VisionResult> {
-  const userContent: Array<
-    | { type: "image_url"; image_url: { url: string } }
-    | { type: "text"; text: string }
-  > = [];
+  const userContent: OpenAiUserContentPart[] = [];
   for (const img of request.images) {
     const b64 = Buffer.from(img.bytes).toString("base64");
     userContent.push({
@@ -36,6 +33,38 @@ export async function describeImageViaOpenAi(
     });
   }
   userContent.push({ type: "text", text: request.prompt });
+  return postUserPartsViaOpenAi(
+    deps,
+    defaultChatModel,
+    userContent,
+    request,
+    apiPathPrefix,
+    providerPreferences,
+    bodyOptions,
+  );
+}
+
+/** One part of the single user message a describe-style call sends. */
+export type OpenAiUserContentPart =
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "input_audio"; input_audio: { data: string; format: string } }
+  | { type: "text"; text: string };
+
+/**
+ * POST one user message of `userContent` parts as a non-streamed chat
+ * completion and return its text. Shared by the image describe call
+ * above and the audio one (`openai-describe-audio.ts`): same per-model
+ * parameter rules, same routing preferences, same passthrough.
+ */
+export async function postUserPartsViaOpenAi(
+  deps: OpenAiHttpDeps,
+  defaultChatModel: string,
+  userContent: OpenAiUserContentPart[],
+  request: Pick<VisionRequest, "maxTokens" | "temperature" | "signal">,
+  apiPathPrefix = "/v1",
+  providerPreferences?: Record<string, unknown>,
+  bodyOptions: DescribeImageBodyOptions = {},
+): Promise<VisionResult> {
   // Same per-model rules as a turn (`model-params.ts`): OpenAI's
   // reasoning models get no temperature and `max_completion_tokens`,
   // the newer Claude models get no temperature, Kimi K3.1 gets its one

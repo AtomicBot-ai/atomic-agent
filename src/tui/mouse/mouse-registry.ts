@@ -206,6 +206,14 @@ export function absoluteRect(node: DOMElement | null): MouseRect | null {
   let parent = node.parentNode;
   while (parent?.yogaNode) {
     const layout = parent.yogaNode.getComputedLayout();
+    // Ink 8's `contentOffsetX/Y` shift a box's children when they are
+    // drawn without moving them in Yoga's layout (the scrolled chat log
+    // uses it). Apply it before the clip: the clip is the box's own
+    // rectangle, which the offset does not move.
+    const scroll = contentOffsetOf(parent);
+    if (scroll.x !== 0 || scroll.y !== 0) {
+      rect = { ...rect, left: rect.left - scroll.x, top: rect.top - scroll.y };
+    }
     if (clipsOverflow(parent)) {
       const clipped = intersect(rect, {
         left: 0,
@@ -224,6 +232,21 @@ export function absoluteRect(node: DOMElement | null): MouseRect | null {
     parent = parent.parentNode;
   }
   return rect;
+}
+
+/** Same normalisation Ink's renderer applies: whole cells, non-finite is 0. */
+function contentOffsetOf(node: DOMElement): { x: number; y: number } {
+  const style = node.style as {
+    contentOffsetX?: unknown;
+    contentOffsetY?: unknown;
+  };
+  return { x: cells(style.contentOffsetX), y: cells(style.contentOffsetY) };
+}
+
+function cells(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.trunc(value)
+    : 0;
 }
 
 function clipsOverflow(node: DOMElement): boolean {

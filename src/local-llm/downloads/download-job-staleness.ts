@@ -12,7 +12,9 @@ export const STALE_RUNNING_MS = 5 * 60 * 1_000;
 /**
  * A `running` record nobody has written for `STALE_RUNNING_MS`. The pid
  * may still answer — after a reboot the number can belong to anything —
- * but the worker that owned this job is not reporting.
+ * but the worker that owned this job is not reporting. Only `running`
+ * can be stale: a `paused` record is silent on purpose, and its partial
+ * waits for the operator however long that takes.
  */
 export function isDownloadJobStale(
   job: DownloadJob,

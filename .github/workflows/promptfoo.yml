@@ -1,0 +1,93 @@
+# Prompt regression and red team (ATO-641).
+#
+# Runs the promptfoo suites in eval/promptfoo/ against the real agent. Each
+# run spends model tokens, so it never runs on its own:
+#   - Actions -> "Prompt regression" -> Run workflow (pick the suite), or
+#   - add the `run-promptfoo` label to a PR (re-runs on each push while the
+#     label stays).
+# Needs the OPENROUTER_API_KEY repository secret. Without it (forks, or the
+# secret not set yet) the job prints a notice and ends green.
+# Model under test: repository variable PROMPTFOO_AGENT_MODEL, else
+# openai/gpt-4o-mini.
+
+name: Prompt regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Which suite to run"
+        type: choice
+        options: [regression, redteam, both]
+        default: regression
+  pull_request:
+    types: [labeled, synchronize]
+    branches: [main]
+
+concurrency:
+  group: promptfoo-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  promptfoo:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-promptfoo')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      PROMPTFOO_AGENT_MODEL: ${{ vars.PROMPTFOO_AGENT_MODEL || 'openai/gpt-4o-mini' }}
+      PROMPTFOO_DISABLE_TELEMETRY: "1"
+      PROMPTFOO_DISABLE_REMOTE_GENERATION: "true"
+      SUITE: ${{ github.event.inputs.suite || 'regression' }}
+    steps:
+      - name: Check for the API key
+        id: key
+        run: |
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo "::notice::OPENROUTER_API_KEY is not set for this run; promptfoo suites skipped."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.key.outputs.present == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        if: steps.key.outputs.present == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+          cache: npm
+
+      - name: Install dependencies
+        if: steps.key.outputs.present == 'true'
+        run: npm ci
+
+      - name: Build the agent
+        if: steps.key.outputs.present == 'true'
+        run: npm run build
+
+      - name: Regression and injection set
+        if: steps.key.outputs.present == 'true' && (env.SUITE == 'regression' || env.SUITE == 'both')
+        run: npm run eval:promptfoo -- -o eval/reports/promptfoo-regression.json
+
+      - name: Red team
+        if: always() && steps.key.outputs.present == 'true' && (env.SUITE == 'redteam' || env.SUITE == 'both')
+        run: npm run eval:redteam -- -o eval/reports/promptfoo-redteam.json
+
+      - name: Upload results
+        if: always() && steps.key.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-results
+          path: eval/reports/promptfoo-*.json
+          if-no-files-found: ignore
+          retention-days: 90

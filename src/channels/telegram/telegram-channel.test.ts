@@ -409,6 +409,7 @@ describe("TelegramChannel", () => {
       "switch",
       "new",
       "model",
+      "cron",
       "cancel",
     ]);
   });
