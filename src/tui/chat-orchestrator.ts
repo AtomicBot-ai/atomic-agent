@@ -603,6 +603,12 @@ export class ChatOrchestrator {
       const result = await checkForAppUpdate({
         repo: this.runtime.config.update.repo,
       });
+      // ATO-1007: share of installs on the current version.
+      this.runtime.reportUpdateChecked?.({
+        latestVersion: result.latestVersion,
+        updateAvailable: result.updateAvailable,
+        requiredReason: result.requiredReason,
+      });
       if (!result.updateAvailable) return;
       this.pendingUpdateVersion = result.latestVersion;
       this.requiredUpdate = result.requiredReason;
