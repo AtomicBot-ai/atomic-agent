@@ -1,3 +1,4 @@
+import { CHATGPT_FALLBACK_DEFAULT_MODEL } from "./chatgpt-default-model.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -52,9 +53,17 @@ import type { TokenRefresher } from "./token-refresh.js";
  */
 
 export const SUBSCRIPTION_OAUTH_DISPLAY_NAME = "ChatGPT subscription (sign in, experimental)";
-/** The Codex catalog's first listed model (codex-rs/models-manager/models.json, priority 1). */
-export const CHATGPT_DEFAULT_MODEL = "gpt-6.1-sol";
-/** That model's `context_window` in the same file. */
+/**
+ * The model used when an entry names none: Codex's bundled default
+ * (`chatgpt-default-model.ts`). `atag login chatgpt` writes Codex's live
+ * default into the entry instead, so this is only the offline fallback.
+ */
+export const CHATGPT_DEFAULT_MODEL = CHATGPT_FALLBACK_DEFAULT_MODEL;
+/**
+ * The smallest `context_window` among the picker-visible models of
+ * Codex's catalog (codex-rs/models-manager/models.json), so the window
+ * stays safe whichever model Codex currently defaults to.
+ */
 const CHATGPT_CONTEXT_WINDOW = 272_000;
 const DEFAULT_TIMEOUT_MS = 600_000;
 const MAX_ERROR_BODY = 2_000;

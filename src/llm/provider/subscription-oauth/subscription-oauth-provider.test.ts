@@ -183,13 +183,17 @@ describe("SubscriptionOAuthProvider", () => {
     expect(isOutageFailure(err)).toBe(false);
   });
 
-  it("a refused refresh token asks for a new sign-in", async () => {
-    const { provider } = setup([fail(401)], {
+  it("a refused refresh token asks for a new sign-in and keeps the stored tokens, as Codex does", async () => {
+    const { provider, store } = setup([fail(401)], {
       refresh: async () => {
         throw new SignInRequiredError("refresh_refused");
       },
     });
-    await expect(provider.complete({ prompt: "x" })).rejects.toBeInstanceOf(ChatgptSignInRequiredError);
+    const err = await provider.complete({ prompt: "x" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ChatgptSignInRequiredError);
+    expect((err as Error).message).toMatch(/^Sign in again/);
+    // Nadya 18.11: nothing is deleted; the next `atag login chatgpt` overwrites the file.
+    await expect(store.load()).resolves.not.toBeNull();
   });
 
   it("a 401 from the token endpoint asks for a new sign-in, as in Codex", async () => {

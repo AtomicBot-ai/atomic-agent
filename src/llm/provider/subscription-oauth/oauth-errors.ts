@@ -66,7 +66,7 @@ export class ChatgptSignInRequiredError extends Error {
 
   constructor(reason: string, options?: { cause?: unknown }) {
     super(
-      "ChatGPT sign-in (experimental) is missing or has expired. Run `atag login chatgpt` to sign in again.",
+      "Sign in again: the ChatGPT sign-in (experimental) is missing or has expired. Run `atag login chatgpt`.",
     );
     this.name = "ChatgptSignInRequiredError";
     this.reason = reason;

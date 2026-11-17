@@ -44,6 +44,7 @@ export {
 } from "./credential-store.js";
 export { ChatgptSignInRequiredError } from "./oauth-errors.js";
 export * from "./chatgpt-codex.js";
+export * from "./chatgpt-default-model.js";
 export {
   SubscriptionOAuthProvider,
   SUBSCRIPTION_OAUTH_DISPLAY_NAME,
