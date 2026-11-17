@@ -9,7 +9,12 @@ import {
 import { ScreenGeometryStore } from "./screen-geometry.js";
 import { buildOsScreenPointTool } from "./screen-point.js";
 import { screenOverlayAvailable } from "./screen-overlay-hosts.js";
-import { resolveScreenDeps, type ScreenDeps } from "./screen-host.js";
+import {
+  resolveScreenDeps,
+  screenCaptureSupported,
+  screenControlSupported,
+  type ScreenDeps,
+} from "./screen-host.js";
 
 export {
   buildOsScreenCaptureTool,
@@ -47,6 +52,8 @@ export {
   parseScreenProbe,
   parseWindow,
   resolveScreenDeps,
+  screenCaptureSupported,
+  screenControlSupported,
   screenRecordingMessage,
 } from "./screen-host.js";
 export type {
@@ -57,6 +64,22 @@ export type {
   ScreenRunner,
 } from "./screen-host.js";
 export { buildScreenInvocation, SCREEN_PAYLOAD_ENV, screenChildEnv } from "./screen-jxa.js";
+export {
+  chooseDesktopCaptureBackend,
+  DESKTOP_CAPTURE_MAX_BYTES,
+  desktopChildEnv,
+  LINUX_CAPTURE_TOOLS,
+  linuxCaptureArgs,
+  linuxCaptureCandidates,
+  linuxMissingToolMessage,
+  linuxSessionKind,
+  parsePngSize,
+  parseWindowsCaptureReport,
+  takeDesktopScreenshot,
+  WINDOWS_CAPTURE_SCRIPT,
+  windowsCaptureInvocation,
+} from "./screen-capture-win-linux.js";
+export type { DesktopCaptureBackend, DesktopCaptureReport, LinuxCaptureTool } from "./screen-capture-win-linux.js";
 export {
   describeWindows,
   parseWindowQuery,
@@ -113,7 +136,7 @@ export interface RegisterOsScreenToolsOptions extends DangerousToolOptions {
   point?: boolean;
   /** Test seam: whether a session's host draws marks (`screen-overlay-hosts.ts`). */
   overlayAvailable?: (sessionId: string) => boolean;
-  /** Host platform; the tools exist on macOS only (other OSes: ATO-527). */
+  /** Host platform: all five tools on macOS, `os.screen.capture` alone on Windows and Linux (ATO-527). */
   platform?: NodeJS.Platform;
   /** Test seam: runner, clock and file helpers. */
   deps?: Partial<ScreenDeps>;
@@ -122,7 +145,10 @@ export interface RegisterOsScreenToolsOptions extends DangerousToolOptions {
 /**
  * Register `os.screen.{capture,click,type,key}` when the operator turned
  * them on and the host is macOS, and `os.screen.{capture,point}` when
- * pointing is on; otherwise register nothing (the descriptor gate drops
+ * pointing is on there. On Windows and Linux `enabled` registers
+ * `os.screen.capture` alone (ATO-527: look first, control later), and
+ * pointing registers nothing, since the overlay is the macOS desktop
+ * app's. Otherwise register nothing (the descriptor gate drops
  * them from the prompt the same way). They share one geometry store, so
  * a click or a mark maps the pixels of the capture the same session
  * took last.
@@ -131,13 +157,15 @@ export function registerOsScreenTools(
   registry: ToolRegistry,
   options: RegisterOsScreenToolsOptions,
 ): void {
-  const point = options.point === true;
-  if (!options.enabled && !point) return;
   const deps = resolveScreenDeps({
     ...options.deps,
     ...(options.platform === undefined ? {} : { platform: options.platform }),
   });
-  if (deps.platform !== "darwin") return;
+  if (!screenCaptureSupported(deps.platform)) return;
+  // Windows and Linux (ATO-527, first slice): capture only, and only with `enabled`.
+  const control = screenControlSupported(deps.platform);
+  const point = options.point === true && control;
+  if (!options.enabled && !point) return;
   const geometry = new ScreenGeometryStore();
   const input = {
     approvals: options.approvals,
@@ -150,7 +178,7 @@ export function registerOsScreenTools(
   registry.register(
     buildOsScreenCaptureTool(options.enabled ? input : { ...input, onlyWithOverlay: overlayAvailable }),
   );
-  if (options.enabled) {
+  if (options.enabled && control) {
     registry.register(buildOsScreenClickTool(input));
     registry.register(buildOsScreenTypeTool(input));
     registry.register(buildOsScreenKeyTool(input));

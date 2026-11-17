@@ -1,4 +1,4 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, open, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { runCommand } from "../../../sandbox/command-runner.js";
 import { buildScreenInvocation, type ScreenOp } from "./screen-jxa.js";
@@ -31,6 +31,8 @@ export interface ScreenDeps {
   /** The agent's environment: names the host app in permission messages. */
   env: NodeJS.ProcessEnv;
   fileSize: (path: string) => Promise<number>;
+  /** The first `bytes` of a file (a PNG header on Windows/Linux captures). */
+  readHead: (path: string, bytes: number) => Promise<Uint8Array>;
   ensureDir: (path: string) => Promise<void>;
   /** Saves a window's text next to its snapshot. */
   writeText: (path: string, text: string) => Promise<void>;
@@ -53,6 +55,18 @@ export function resolveScreenDeps(overrides: Partial<ScreenDeps> = {}): ScreenDe
     platform: overrides.platform ?? platform(),
     env: overrides.env ?? process.env,
     fileSize: overrides.fileSize ?? (async (path) => (await stat(path)).size),
+    readHead:
+      overrides.readHead ??
+      (async (path, bytes) => {
+        const file = await open(path, "r");
+        try {
+          const buffer = Buffer.alloc(bytes);
+          const { bytesRead } = await file.read(buffer, 0, bytes, 0);
+          return buffer.subarray(0, bytesRead);
+        } finally {
+          await file.close();
+        }
+      }),
     ensureDir:
       overrides.ensureDir ??
       (async (path) => {
@@ -221,6 +235,26 @@ export function screenRecordingMessage(env: NodeJS.ProcessEnv): string {
   );
 }
 
+/**
+ * Hosts where `os.screen.capture` works (ATO-527 first slice: Windows
+ * and Linux take whole-screen pictures). Everything else in `os.screen.*`
+ * needs `screenControlSupported`.
+ */
+export function screenCaptureSupported(os: NodeJS.Platform): boolean {
+  return os === "darwin" || os === "win32" || os === "linux";
+}
+
+/** Hosts where clicking, typing, keys, window snapshots and pointing work: macOS only for now. */
+export function screenControlSupported(os: NodeJS.Platform): boolean {
+  return os === "darwin";
+}
+
 export function macOnlyMessage(tool: string, os: NodeJS.Platform): string {
+  if (screenCaptureSupported(os) && os !== "darwin") {
+    return (
+      `${tool} works on macOS only for now (this is ${os}). os.screen.capture works here and takes a picture of the whole screen, ` +
+      "but clicking, typing, keys and pointing are macOS-only until the next part of ATO-527. Tell the user what to click or type instead."
+    );
+  }
   return `${tool} works on macOS only (this is ${os}); Windows and Linux support is tracked in ATO-527.`;
 }

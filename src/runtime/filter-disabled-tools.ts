@@ -105,8 +105,10 @@ export interface ToolGateConfig {
    * the tools are then not registered either (`registerOsScreenTools`).
    * `point` (`tools.screen.point`, ATO-1018) keeps `os.screen.point` and
    * `os.screen.capture` without `enabled`: drawing marks is not control.
+   * `control: false` (Windows and Linux, ATO-527) keeps only
+   * `os.screen.capture` under `enabled`; omitted means `true`.
    */
-  screen: { enabled: boolean; point?: boolean };
+  screen: { enabled: boolean; point?: boolean; control?: boolean };
 }
 
 /**
@@ -253,13 +255,14 @@ export function filterToolDescriptorsByConfig(
   if (!gates.video.available) {
     for (const name of GATED_TOOLS.video) disabled.add(name);
   }
-  const screenPoint = gates.screen.point === true;
+  const screenControl = gates.screen.control !== false;
+  const screenPoint = gates.screen.point === true && screenControl;
   for (const name of GATED_TOOLS.screen) {
     const kept =
       name === "os.screen.point"
         ? screenPoint
         : SCREEN_CONTROL_TOOLS.has(name)
-          ? gates.screen.enabled
+          ? gates.screen.enabled && screenControl
           : gates.screen.enabled || screenPoint;
     if (!kept) disabled.add(name);
   }

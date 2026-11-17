@@ -249,8 +249,9 @@ export function registerRuntimeCoreTools(input: {
     // (ATO-503). Read live, like the skill gate.
     isTrustedProject: (dir) => isProjectFolderTrusted(config.paths.userConfigFile, config.skills.projectTrust, dir),
   });
-  // Computer use (ATO-525): screenshot, click, type, key — macOS only and
-  // opt-in (`tools.screen.enabled`, default off). A screenshot asks as
+  // Computer use (ATO-525): screenshot, click, type, key — macOS, and
+  // the screenshot alone on Windows and Linux (ATO-527); opt-in
+  // (`tools.screen.enabled`, default off). A screenshot asks as
   // `screen_capture`, every input action as `screen_control`; the
   // descriptors follow the same gate below.
   registerOsScreenTools(toolRegistry, {
@@ -702,10 +703,14 @@ export async function connectRuntimeMcpCatalog(input: {
       // Same key, same reason: every clip is made on OpenRouter.
       video: { available: openRouterImageKey(getConfig()) !== undefined },
       // Boot-time, like the registration above: the tools exist only when
-      // they were switched on before start and the host is a Mac.
+      // they were switched on before start. All of them on a Mac; capture
+      // alone on Windows and Linux (ATO-527).
       screen: {
-        enabled: config.tools.screen.enabled && process.platform === "darwin",
+        enabled:
+          config.tools.screen.enabled &&
+          (process.platform === "darwin" || process.platform === "win32" || process.platform === "linux"),
         point: config.tools.screen.point && process.platform === "darwin",
+        control: process.platform === "darwin",
       },
     });
     if (!liveMcpEnabled) return base;
