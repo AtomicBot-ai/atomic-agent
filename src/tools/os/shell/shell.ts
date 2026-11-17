@@ -9,6 +9,13 @@ import {
 } from "../../../sandbox/command-job.js";
 import { buildCommandEnv } from "../../../sandbox/command-env.js";
 import { withToolchainEnv } from "../../../sandbox/command-toolchain-env.js";
+import {
+  buildOsSandboxPolicy,
+  formatSandboxUnavailable,
+  readOsSandboxSettings,
+  wrapWithOsSandbox,
+  type OsSandboxSettings,
+} from "../../../sandbox/os-sandbox.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
@@ -113,6 +120,18 @@ export interface OsShellToolOptions extends DangerousToolOptions {
    * none, so embedders and tests get the filtered environment too.
    */
   envPassthrough?: readonly string[];
+  /**
+   * Safe Mode's OS sandbox switch (ATO-469), read per call so a switch
+   * flipped mid-session applies to the next command. Omitted ⇒ read
+   * from `ATOMIC_AGENT_SANDBOX` / `ATOMIC_AGENT_SANDBOX_NETWORK`.
+   */
+  sandbox?: () => OsSandboxSettings;
+  /**
+   * `config.paths.stateDir`: hidden from a sandboxed command (its
+   * `.env`, config and tokens). Omitted ⇒ only the home credential
+   * folders are hidden.
+   */
+  stateDir?: string;
   /** Test seam: the prompt watch's poll and quiet intervals. */
   promptWatch?: { pollMs?: number; quietMs?: number };
   /** Test seam: how long a `background: true` command is watched. */
@@ -356,6 +375,40 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       gog: isGogCommand(gogProbe),
       guard: guardVerdict,
     };
+    // Safe Mode (ATO-469/472): the same spawn, wrapped so the kernel
+    // keeps writes in the work folders, hides credential folders and the
+    // agent's state, and (unless allowed) blocks the network. Without a
+    // sandbox on this machine the command is refused, never run bare.
+    const sandbox = (options.sandbox ?? (() => readOsSandboxSettings()))();
+    let spawnCommand = spawnSpec.command;
+    let spawnArgs = spawnSpec.args;
+    let sandboxNotice: string | null = null;
+    if (sandbox.mode === "workspace") {
+      const wrapped = wrapWithOsSandbox(
+        spawnSpec.command,
+        spawnSpec.args,
+        buildOsSandboxPolicy({
+          cwd,
+          workspaceRoots: [ctx.workingDir],
+          ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
+          network: sandbox.network,
+        }),
+      );
+      if (!wrapped.ok) {
+        return compressToolResult({
+          tool: "os.shell.run",
+          status: "error",
+          output: formatSandboxUnavailable(wrapped.reason),
+        });
+      }
+      spawnCommand = wrapped.command;
+      spawnArgs = wrapped.args;
+      sandboxNotice = (
+        "Safe Mode sandbox: writes outside the working folder and temp, reads of credential folders" +
+          (sandbox.network ? "" : " and network access") +
+          " are blocked. An `Operation not permitted` error comes from that, not from the command."
+      );
+    }
     // Its own process group, so a stop reaches what the command
     // started too (`sleep 30 &` behind a subshell used to outlive the
     // shell and hold the result until it ended).
@@ -363,7 +416,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // mid-session is filtered the same way. The toolchain additions
     // (non-interactive switches, PATH folders) are fixed values applied
     // after the filter, never read from the call.
-    const job = startCommandJob(spawnSpec.command, spawnSpec.args, {
+    const job = startCommandJob(spawnCommand, spawnArgs, {
       cwd,
       env: withToolchainEnv(
         buildCommandEnv(process.env, options.envPassthrough ?? []),
@@ -378,6 +431,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // on that exit code claims a check that never ran.
     const checkNotice = nodeCheckMultiFileNotice(commandLine, cwd);
     const notices = checkNotice === null ? [] : [checkNotice];
+    if (sandboxNotice !== null) notices.push(sandboxNotice);
 
     // `background: true` (a dev server, a watcher): watched briefly for
     // an early failure, then handed back as a kept job. It went through
