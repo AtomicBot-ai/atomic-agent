@@ -46,3 +46,51 @@ export function makeEscalatingSignalHandler(
     options.exit(130);
   };
 }
+
+export interface SignalQuitOptions {
+  /** Stops the work in flight: the orchestrator's `quit()`. */
+  readonly stopWork: () => void;
+  /** Tells the app it is quitting, so it shows that state (`quit_requested`). */
+  readonly announce: () => void;
+}
+
+export interface SignalQuit {
+  /** The graceful path for {@link makeEscalatingSignalHandler}. */
+  readonly quit: () => void;
+  /** Hands over the rendered Ink app; a quit that came first unmounts it now. */
+  readonly attach: (ink: { unmount(): void }) => void;
+}
+
+/**
+ * The graceful quit a signal asks for (ATO-1614).
+ *
+ * `orchestrator.quit()` alone only aborts the turn and clears the queue.
+ * What ends the TUI is Ink unmounting: that resolves `waitUntilExit()`,
+ * and the `finally` after it restores the terminal and shuts the runtime
+ * down. The keyboard and `/quit` paths get there through the reducer's
+ * `quit_requested`, which makes `TuiApp` call `app.exit()`. The signal
+ * path never dispatched it, so the first SIGTERM stopped the work and
+ * then the process sat on the alternate screen until a second signal or
+ * a SIGKILL (the real-terminal CI test waited 30 s for an exit that never
+ * came). So the signal quit also unmounts Ink itself: the bus drops
+ * actions while the app has not subscribed yet, and a signal can land
+ * before the first render, in which case the unmount happens on
+ * {@link SignalQuit.attach}.
+ */
+export function makeSignalQuit(options: SignalQuitOptions): SignalQuit {
+  let ink: { unmount(): void } | undefined;
+  let requested = false;
+  return {
+    quit: () => {
+      requested = true;
+      options.stopWork();
+      if (!ink) return;
+      options.announce();
+      ink.unmount();
+    },
+    attach: (rendered) => {
+      ink = rendered;
+      if (requested) rendered.unmount();
+    },
+  };
+}

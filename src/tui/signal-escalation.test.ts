@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeEscalatingSignalHandler } from "./signal-escalation.js";
+import { makeEscalatingSignalHandler, makeSignalQuit } from "./signal-escalation.js";
 
 interface Recorded {
   quits: number;
@@ -44,5 +44,39 @@ describe("makeEscalatingSignalHandler", () => {
     expect(seen.quits).toBe(1);
     expect(seen.restores).toBe(2);
     expect(seen.exits).toEqual([130, 130]);
+  });
+});
+
+describe("makeSignalQuit (ATO-1614)", () => {
+  function setup() {
+    const calls: string[] = [];
+    const signalQuit = makeSignalQuit({
+      stopWork: () => calls.push("stop"),
+      announce: () => calls.push("announce"),
+    });
+    const ink = { unmount: () => calls.push("unmount") };
+    return { calls, signalQuit, ink };
+  }
+
+  it("stops the work and unmounts Ink, so waitUntilExit resolves", () => {
+    // orchestrator.quit() alone left the TUI on the alternate screen.
+    const { calls, signalQuit, ink } = setup();
+    signalQuit.attach(ink);
+    signalQuit.quit();
+    expect(calls).toEqual(["stop", "announce", "unmount"]);
+  });
+
+  it("unmounts on attach when the signal came before the first render", () => {
+    const { calls, signalQuit, ink } = setup();
+    signalQuit.quit();
+    expect(calls).toEqual(["stop"]);
+    signalQuit.attach(ink);
+    expect(calls).toEqual(["stop", "unmount"]);
+  });
+
+  it("does nothing on attach without a signal", () => {
+    const { calls, signalQuit, ink } = setup();
+    signalQuit.attach(ink);
+    expect(calls).toEqual([]);
   });
 });
