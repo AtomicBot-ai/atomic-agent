@@ -279,6 +279,8 @@ import { readConfigFile, readStateDirsRecord, recordStateDirRun, sharedSetupNoti
 import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
 // ATO-1156 — "Continue from Claude Code / Codex" (`atag handoff`).
 import { handoffList, handoffStart } from "./handoff.js";
+// ATO-1014 — the way back: "Hand off to Claude Code / Codex" (`atag handoff --to`).
+import { registerHandoffOutIpc } from "./handoff-out.js";
 // Backlog 03 — the first-run probe's frame log, summarised.
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
@@ -3425,6 +3427,8 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:handoffList", (_event, agent: unknown) => handoffList(atagRun, agent, client.isRemote));
   ipcMain.handle("cli:handoffStart", (_event, agent: unknown, id: unknown) =>
     handoffStart(atagRun, agent, id, client.isRemote));
+  // ATO-1014: write a brief of a chat for Claude Code / Codex, and reveal it (handoff-out.ts).
+  registerHandoffOutIpc({ ipcMain, run: atagRun, remote: () => client.isRemote, dir: () => join(app.getPath("userData"), "handoffs"), platform: process.platform, reveal: (p) => shell.showItemInFolder(p) });
   ipcMain.handle("cli:importRun", (_event, input: unknown) => {
     const i = (input ?? {}) as Record<string, unknown>;
     // r5 item 7: all four sources `atag import` accepts, not two.

@@ -487,6 +487,9 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1156: `atag handoff` — fresh Claude Code / Codex sessions, and continue one in a new chat.
   handoffList: (agent: string) => ipcRenderer.invoke("cli:handoffList", agent),
   handoffStart: (agent: string, id: string) => ipcRenderer.invoke("cli:handoffStart", agent, id),
+  // ATO-1014: the way back, a Markdown brief of a chat for Claude Code / Codex.
+  handoffTo: (to: string, sessionId: string) => ipcRenderer.invoke("cli:handoffTo", to, sessionId),
+  handoffReveal: (path: string) => ipcRenderer.invoke("cli:handoffReveal", path),
   // ATO-556: atomicagent:// links — main keeps what came in until the window takes it; `deeplink:new` says there is more.
   deeplinkTake: () => ipcRenderer.invoke("app:deeplinkTake"),
   onDeeplink: (cb: () => void) => on("deeplink:new", () => cb()),
