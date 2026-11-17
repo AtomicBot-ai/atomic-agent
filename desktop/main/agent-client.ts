@@ -393,11 +393,43 @@ export function commandOf(pid: number): string | null {
   }
 }
 
+/**
+ * ATO-921: `commandOf` without blocking the main process. On Windows the
+ * probe is a cold PowerShell with a CIM query (often 1-3 s, up to the 10 s
+ * timeout on a slow or scanned machine); run synchronously on Electron's main
+ * process it froze the window long enough for Windows to call it
+ * unresponsive. Every caller on a path the window waits on uses this one.
+ */
+export function commandOfAsync(pid: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      const probe = commandLineProbe(process.platform, pid, process.env.SystemRoot);
+      if (probe.kind === "procfs") {
+        resolve(procCmdline(readFileSync(probe.file, "utf8")).trim() || null);
+        return;
+      }
+      execFile(
+        probe.command,
+        probe.args,
+        { encoding: "utf8", timeout: process.platform === "win32" ? 10_000 : 4000, windowsHide: true },
+        (err, stdout) => resolve(err ? null : String(stdout).trim() || null),
+      );
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
 /** True when `pid` really is the `atag serve` we recorded on `port`. */
 function looksLikeOurServe(pid: number, port: number): boolean {
   const cmd = commandOf(pid);
   if (!cmd) return false;
   return looksLikeServeCommand(cmd, port);
+}
+
+async function looksLikeOurServeAsync(pid: number, port: number): Promise<boolean> {
+  const cmd = await commandOfAsync(pid);
+  return cmd ? looksLikeServeCommand(cmd, port) : false;
 }
 
 /** A short blocking pause. `/bin/sleep` on macOS, as it always was; there is
@@ -499,6 +531,54 @@ export function reapOrphanedServe(
         sleepSync(100);
       }
       if (looksLikeOurServe(rec.pid, rec.port)) process.kill(rec.pid, "SIGKILL");
+      killed = true;
+    }
+  } catch {
+    /* it exited between the check and the signal — the good outcome */
+  }
+  forgetServeRecord(path);
+  return { pid: rec.pid, killed };
+}
+
+/**
+ * ATO-921: `reapOrphanedServe` for an agent start, which runs while the
+ * window is up. Same decisions in the same order; the probe, the Windows tree
+ * kill and the POSIX wait no longer block the main process. The synchronous
+ * one stays for the boot-time state-dir step, before any window exists.
+ */
+export async function reapOrphanedServeAsync(
+  path: string = serveRecordPath(),
+  own: ReadonlySet<number> = new Set(),
+): Promise<{ pid: number; killed: boolean } | null> {
+  let rec: ServeRecord;
+  try {
+    rec = JSON.parse(readFileSync(path, "utf8")) as ServeRecord;
+  } catch {
+    return null;
+  }
+  if (!rec || typeof rec.pid !== "number" || typeof rec.port !== "number") {
+    forgetServeRecord(path);
+    return null;
+  }
+  if (own.has(rec.pid)) return null;
+  if (!(await looksLikeOurServeAsync(rec.pid, rec.port))) {
+    forgetServeRecord(path);
+    return null;
+  }
+  let killed = false;
+  try {
+    if (process.platform === "win32") {
+      // Awaited before the replacement is spawned: two agents on one state
+      // directory is worse than a slow launch, but the window keeps painting.
+      await taskkillTree(rec.pid);
+      killed = true;
+    } else {
+      process.kill(rec.pid, "SIGTERM");
+      const until = Date.now() + 3000;
+      while (Date.now() < until && (await looksLikeOurServeAsync(rec.pid, rec.port))) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      if (await looksLikeOurServeAsync(rec.pid, rec.port)) process.kill(rec.pid, "SIGKILL");
       killed = true;
     }
   } catch {
@@ -859,7 +939,7 @@ export class AgentClient extends EventEmitter {
        a crash, a SIGKILL — and would otherwise sit there for ever. A child
        this client let go of is not that, and is left alone (reapOrphanedServe). */
     const own = new Set([...this.lingering].map((c) => c.pid).filter((pid): pid is number => pid !== undefined));
-    const orphan = reapOrphanedServe(this.recordPath, own);
+    const orphan = await reapOrphanedServeAsync(this.recordPath, own);
     if (orphan) {
       // Both places a person might look: the Diagnostics pane, and the
       // terminal when the app was started from one.
