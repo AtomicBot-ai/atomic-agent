@@ -15,6 +15,11 @@ import {
   type SessionNextStep,
   type SessionState,
 } from "../../session/index.js";
+import {
+  generateNextStepViaEndpoint,
+  readNextStepEndpoint,
+  type NextStepEndpoint,
+} from "../../session/next-step-endpoint.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { TurnOrigin } from "../turn-controller.js";
 
@@ -39,6 +44,14 @@ export interface NextStepSuggesterDeps {
    * `turn_finished`. Optional; without it the suggestion is only stored.
    */
   emitEvent?: (sessionId: string, event: AgentLoopEvent) => void;
+  /**
+   * A separate model for the suggestion (ATO-1097). Defaults to
+   * `readNextStepEndpoint(process.env)`, read on every call; `null`
+   * keeps the chat model.
+   */
+  nextStepEndpoint?: () => NextStepEndpoint | null;
+  /** For tests; the separate-model call's `fetch`. */
+  fetchImpl?: typeof fetch;
   logger: StructuredLogger;
 }
 
@@ -55,24 +68,34 @@ export function createNextStepSuggester(deps: NextStepSuggesterDeps) {
     const timer = setTimeout(() => abort.abort(), NEXT_STEP_TIMEOUT_MS);
     timer.unref?.();
     deps.pending.add(abort);
-    try {
-      const text = await generateNextStep(state, {
-        complete: async (params) => {
-          const result = await deps.llmComplete({ ...params, signal: abort.signal });
-          return {
-            content: result.content,
-            ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}),
-          };
-        },
-        slotId: () => deps.slotManager.sideCallSlotId(),
-        toolTransport: deps.resolveTransport(),
-        serverTemplate: deps.getConfig().localModels.useServerTemplate !== "off",
-        onError: (err: unknown) =>
-          deps.logger.debug("next-step suggestion failed", {
-            sessionId: state.id,
-            error: err instanceof Error ? err.message : String(err),
-          }),
+    const onError = (err: unknown) =>
+      deps.logger.debug("next-step suggestion failed", {
+        sessionId: state.id,
+        error: err instanceof Error ? err.message : String(err),
       });
+    try {
+      const endpoint = (deps.nextStepEndpoint ?? (() => readNextStepEndpoint(process.env)))();
+      // A separate small model, when one is set, so the chat model's
+      // side-call slot stays free for the next turn (ATO-1097).
+      const text = endpoint !== null
+        ? await generateNextStepViaEndpoint(state, endpoint, {
+            signal: abort.signal,
+            onError,
+            ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+          })
+        : await generateNextStep(state, {
+            complete: async (params) => {
+              const result = await deps.llmComplete({ ...params, signal: abort.signal });
+              return {
+                content: result.content,
+                ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}),
+              };
+            },
+            slotId: () => deps.slotManager.sideCallSlotId(),
+            toolTransport: deps.resolveTransport(),
+            serverTemplate: deps.getConfig().localModels.useServerTemplate !== "off",
+            onError,
+          });
       if (text === null || deps.isShutdown()) return;
       const current = deps.sessionStore.load(state.id) ?? state;
       // A newer turn already ran (or is running): this suggestion is for

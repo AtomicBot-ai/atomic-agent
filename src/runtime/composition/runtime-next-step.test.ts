@@ -49,6 +49,7 @@ function rig(overrides: Partial<NextStepSuggesterDeps> = {}) {
     pending: new Set(),
     isShutdown: () => false,
     emitEvent: (id, event) => { events.push([id, event]); },
+    nextStepEndpoint: () => null,
     logger: new StructuredLogger({ level: "debug", sinks: [] }),
     ...overrides,
   };
@@ -126,5 +127,43 @@ describe("createNextStepSuggester", () => {
     await flush();
     expect(failing.rows.get(state.id)?.metadata?.nextStep).toBeUndefined();
     expect(failing.deps.pending.size).toBe(0);
+  });
+
+  it("sends the call to the separate model when one is set and leaves the chat model alone (ATO-1097)", async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: "Run the parser on last week's export" } }] }),
+    })) as unknown as typeof fetch;
+    const { suggester, rows, events, llmComplete, deps } = rig({
+      nextStepEndpoint: () => ({ url: "http://127.0.0.1:8081/v1/chat/completions", model: "qwen3.5-0.8b", apiKey: null }),
+      fetchImpl,
+    });
+    const state = answered();
+    rows.set(state.id, state);
+    suggester.maybeSuggest(state, "tui");
+    await flush();
+    expect(llmComplete).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = (fetchImpl as unknown as { mock: { calls: Array<[string, RequestInit]> } }).mock.calls[0]!;
+    expect(url).toBe("http://127.0.0.1:8081/v1/chat/completions");
+    expect(JSON.parse(String(init.body))).toMatchObject({ model: "qwen3.5-0.8b", stream: false });
+    expect(rows.get(state.id)?.metadata?.nextStep).toMatchObject({ text: "Run the parser on last week's export" });
+    expect(events).toHaveLength(1);
+    expect(deps.pending.size).toBe(0);
+  });
+
+  it("stores nothing when the separate model fails, and does not fall back to the chat model", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
+    const { suggester, rows, llmComplete } = rig({
+      nextStepEndpoint: () => ({ url: "http://127.0.0.1:8081/v1/chat/completions", model: null, apiKey: null }),
+      fetchImpl,
+    });
+    const state = answered();
+    rows.set(state.id, state);
+    suggester.maybeSuggest(state, "tui");
+    await flush();
+    expect(llmComplete).not.toHaveBeenCalled();
+    expect(rows.get(state.id)?.metadata?.nextStep).toBeUndefined();
   });
 });
