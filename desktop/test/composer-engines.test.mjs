@@ -80,3 +80,26 @@ test('a config with no engine named runs Atomic Chat Core, the default',()=>{
   }
   assert.equal(fixture('llama-server').context.composerEngineId(),'llama-server');
 });
+test('a seat on a llama.cpp server that is not the built-in one offers one unpickable row (ATO-1563)',()=>{
+  const {context:c,rm}=fixture();
+  rm.workerProviderId='my-llama';
+  c.LIVE_CONFIG={llm:{providers:[{id:'my-llama',kind:'llama-server',url:'http://192.168.1.20:8080',model:'qwen-loaded'}]}};
+  let rows=c.composerSeatModelRows();
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].label,'Loaded on the server: qwen-loaded'); assert.equal(rows[0].active,true);
+  assert.match(rows[0].disabled,/Change the model on the server/);
+  c.LIVE_CONFIG.llm.providers[0].model=undefined;
+  rows=c.composerSeatModelRows();
+  assert.deepEqual(Array.from(rows,r=>r.label),['Loaded on the server']); assert.ok(rows[0].disabled);
+  let said=null; c.toast=(t,s)=>{said=s;}; c.restartStopsTurn=()=>{throw new Error('a refused pick must not reach the switch');};
+  c.composerPickSeatModel(rows[0]);
+  assert.match(said,/Change the model on the server/);
+});
+test('LM Studio, Ollama and the built-in local model keep their model lists (ATO-1563)',()=>{
+  const {context:c,rm}=fixture();
+  c.LIVE_CONFIG={llm:{providers:[{id:'local-llama',kind:'llama-server'},{id:'lmstudio',kind:'openai-compatible',baseUrl:'http://localhost:1234/v1'}]}};
+  assert.equal(c.composerSeatModelRows().filter(r=>r.type==='seatModel')[0].id,'local-model');
+  rm.workerProviderId='lmstudio';
+  const rows=c.composerSeatModelRows();
+  assert.equal(rows[0].id,'remote-model'); assert.equal(rows[0].disabled,undefined);
+});
