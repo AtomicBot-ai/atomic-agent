@@ -34,3 +34,41 @@ export type {
   SaveFactCandidatesResult,
   UndoImportedFactsResult,
 } from "./save-fact-candidates.js";
+export { ChatExportReadError, readChatExport } from "./read-chat-export.js";
+export {
+  IMPORT_FACTS_PARTITION,
+  ImportFactsModelError,
+  bindImportFactsModel,
+  isLocalProviderEntry,
+} from "./import-facts-model.js";
+export type {
+  BindImportFactsModelInput,
+  BoundImportFactsModel,
+  ImportFactsProviderEntry,
+  ImportFactsProviderLink,
+} from "./import-facts-model.js";
+export { IMPORT_FACTS_JOB_TTL_MS, ImportFactsJobs } from "./import-facts-jobs.js";
+export type { ImportFactsJobState, ImportFactsJobView, StartImportFactsJobInput } from "./import-facts-jobs.js";
+export {
+  IMPORT_RECEIPTS_DIR,
+  deleteImportReceipt,
+  importReceiptsDir,
+  isImportReceiptId,
+  listImportReceipts,
+  readImportReceipt,
+  writeImportReceipt,
+} from "./import-facts-receipts.js";
+export type { StoredImportFactsReceipt } from "./import-facts-receipts.js";
+export {
+  ImportFactsBusyError,
+  ImportFactsJobNotReadyError,
+  ImportReceiptNotFoundError,
+  saveImportFacts,
+  startImportFacts,
+  undoImportFacts,
+} from "./import-facts-service.js";
+export type {
+  ImportFactsServiceDeps,
+  SaveImportFactsResult,
+  StartImportFactsRequest,
+} from "./import-facts-service.js";
