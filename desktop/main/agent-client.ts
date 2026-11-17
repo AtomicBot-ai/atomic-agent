@@ -1288,6 +1288,12 @@ export class AgentClient extends EventEmitter {
   /** `{runs:[{id, attempt, sessionId, startedAt, endedAt, outcome, error, errorCategory}], available}`, newest first. */
   taskRuns = (id: string, limit = 50) =>
     this.request<unknown>("GET", `/api/tasks/${encodeURIComponent(id)}/runs?limit=${encodeURIComponent(String(limit))}`);
+  /* ATO-458 — suggested tasks (ideas-ipc.ts): rebuilt from failed tasks and
+     stopped goals, then accepted (filed as a task) or dismissed for good.
+     404 "no route" on an agent from before them, 404 when tasks are off. */
+  refreshIdeas = () => this.request<unknown>("POST", "/api/ideas/refresh", {});
+  acceptIdea = (id: string) => this.request<unknown>("POST", `/api/ideas/${encodeURIComponent(id)}/accept`, {});
+  dismissIdea = (id: string) => this.request<unknown>("POST", `/api/ideas/${encodeURIComponent(id)}/dismiss`, {});
   health = () => this.json<unknown>("/health");
   /** ATO-134: /health without its llama probe (agent `?llama=0`; an older one ignores it and probes) — for busyTurns before a switch. */
   turnsHealth = () => this.json<unknown>("/health?llama=0");
