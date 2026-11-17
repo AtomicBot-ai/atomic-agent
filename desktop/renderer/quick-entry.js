@@ -12,6 +12,29 @@
     input.value = opened.draft;
     input.setSelectionRange(input.value.length, input.value.length);
   }
+  /* ATO-985: a selection from the app in front: the quoted chip, and the
+     actions that set the line (quick-entry-selection.js). */
+  const selection = opened && typeof opened.selection === 'string' && opened.selection ? opened.selection : null;
+  if (selection && typeof qeSelectionPreview === 'function') {
+    document.body.classList.add('qe--sel');
+    document.getElementById('qe-sel-text').textContent = qeSelectionPreview(selection);
+    const row = document.getElementById('qe-actions');
+    for (const a of QE_SELECTION_ACTIONS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'qe-act';
+      b.textContent = a.label;
+      b.addEventListener('click', () => {
+        input.value = a.prompt + ' ';
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+        if (BR && BR.quickEntryDraft) BR.quickEntryDraft(input.value);
+      });
+      row.appendChild(b);
+    }
+    document.getElementById('qe-sel').hidden = false;
+    input.placeholder = 'Ask about the selected text…';
+  }
   input.focus();
   window.addEventListener('focus', () => input.focus());
   input.addEventListener('input', () => { if (BR && BR.quickEntryDraft) BR.quickEntryDraft(input.value); });
@@ -21,7 +44,8 @@
     const text = input.value.trim();
     if (!text || sending || !BR || !BR.quickEntrySubmit) return;
     sending = true;
-    BR.quickEntrySubmit(text).catch(() => {}).finally(() => { sending = false; });
+    const out = selection && typeof qeComposeWithSelection === 'function' ? qeComposeWithSelection(text, selection) : text;
+    BR.quickEntrySubmit(out).catch(() => {}).finally(() => { sending = false; });
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); if (BR && BR.quickEntryHide) BR.quickEntryHide(); else window.close(); }
