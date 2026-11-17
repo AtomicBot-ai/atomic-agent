@@ -1,0 +1,32 @@
+/* ============================================================
+   Settings › My files (ATO-1626): folders the agent indexes, and its progress.
+   my-files.js draws it; colours come from tokens only, so light and dark
+   follow the theme. The header, list and notices are settings.css's own.
+   ============================================================ */
+
+.mf-pane{display:flex;flex-direction:column;gap:12px}
+.mf-about{max-width:640px}
+.mf-intro{margin:0;font:400 var(--fs-ui)/1.5 var(--font-ui);color:var(--ink)}
+.mf-note{margin:0}
+
+.mf-progress{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:var(--r-card);background:var(--well)}
+.mf-ptext{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-cap);color:var(--ink);font-variant-numeric:tabular-nums}
+.mf-ptext svg{flex:none;width:16px;height:16px;color:var(--success)}
+.mf-cur{flex:0 1 auto;min-width:0;max-width:45%;color:var(--ink-3);font-size:var(--fs-label);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mf-bar{position:relative;height:6px;border-radius:var(--r-pill);background:var(--hover);overflow:hidden}
+.mf-fill{position:absolute;left:0;top:0;bottom:0;border-radius:inherit;background:var(--brand);transition:width var(--t-state) var(--ease)}
+.mf-fill--wait{opacity:.35}
+.mf-lasterr{margin:0;font-size:var(--fs-label);color:var(--ink-2)}
+
+.mf-list{display:flex;flex-direction:column}
+.mf-row{display:flex;align-items:center;gap:10px;min-height:52px;padding:6px 8px;min-width:0}
+.mf-ic{flex:none;display:flex;color:var(--ink-2)}
+.mf-ic svg{width:18px;height:18px}
+.mf-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.mf-name{font-size:var(--fs-ui);font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mf-path{font-size:var(--fs-label);color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+.mf-count{flex:none;font-size:var(--fs-cap);color:var(--ink-2);font-variant-numeric:tabular-nums}
+.mf-confirm{flex:none;display:flex;align-items:center;gap:6px}
+.mf-ask{font-size:var(--fs-cap);color:var(--ink-2)}
+
+@media (prefers-reduced-motion: reduce){.mf-fill{transition:none}}
