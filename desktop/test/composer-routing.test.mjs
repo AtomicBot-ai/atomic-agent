@@ -122,3 +122,18 @@ test('Stop during a cloud model change prevents the local worker from restarting
     assert.equal(f.up, false);
   });
 });
+
+test('a Fusion model pick on a foreign llama.cpp server is refused and never restarts the built-in model (ATO-1563)', { timeout: 5000 }, async () => {
+  const f = fixture({ worker: 'my-llama', pause: 'none' });
+  f.config.llm.providers.push({ id: 'my-llama', kind: 'llama-server', url: 'http://192.168.1.20:8080', model: 'qwen-loaded' });
+  await f.run(async () => {
+    const result = await selectFusionModel('worker', 'new');
+    assert.equal(result.ok, false);
+    assert.match(result.error, /Change the model on the server/);
+    assert.equal(f.calls.includes('models use'), false);
+    assert.equal(f.calls.includes('models start'), false);
+    assert.equal(f.calls.includes('config set'), false);
+    assert.equal(f.config.localModels.managed.modelId, 'old');
+    assert.equal(f.config.llm.runMode.fusion.workerModel, undefined);
+  });
+});
