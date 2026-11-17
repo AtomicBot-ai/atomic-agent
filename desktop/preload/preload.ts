@@ -399,6 +399,12 @@ contextBridge.exposeInMainWorld("atomic", {
   overnightPickFolder: (current?: string, purpose?: "project") => ipcRenderer.invoke("overnight:pickFolder", current, purpose),
   overnightStart: (input: { message: string; folder: string; maxCostUsd: number | null; hours: number; notifyTelegram: boolean }) =>
     ipcRenderer.invoke("overnight:start", input),
+  /** ATO-1624: My files (main/my-files-ipc.ts). Each answers `{ok, ...}` or `{ok:false, reason, error}`. */
+  filesPickFolder: () => ipcRenderer.invoke("files:pickFolder"),
+  filesAddFolder: (path: string) => ipcRenderer.invoke("files:addFolder", path),
+  filesRemoveFolder: (path: string) => ipcRenderer.invoke("files:removeFolder", path),
+  filesListFolders: () => ipcRenderer.invoke("files:listFolders"),
+  filesStatus: () => ipcRenderer.invoke("files:status"),
   /** ATO-1091: `atag models fit-test` from Settings › Models (fit-test-ipc.ts). */
   fitTestSupported: () => ipcRenderer.invoke("fitTest:supported"),
   fitTestJudges: () => ipcRenderer.invoke("fitTest:judges"),

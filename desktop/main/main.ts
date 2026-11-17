@@ -53,6 +53,7 @@ import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
+import { wireMyFilesIpc } from "./my-files-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
@@ -3111,6 +3112,8 @@ function wireIpc(client: AgentClient): void {
   wireChatRewindIpc(client);
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
   wireOvernightIpc({ window: () => win, client });
+  // ATO-1624: Settings › My files (folders the agent indexes, and its progress).
+  wireMyFilesIpc({ window: () => win, client });
   // ATO-1424: a code block's command typed (not run) into a new Terminal window (macOS).
   wireTerminalOpenIpc();
   // ATO-590: the Tasks tab's Pause / Resume and a task's past runs.
