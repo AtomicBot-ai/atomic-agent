@@ -99,7 +99,7 @@ function exaKeyCardHTML(req, st, h) {
       + '</div>';
   }
   return '<div class="tk-card pad exak" data-exa-card="ask" data-exa-reason="' + h.esc(req.reason) + '">'
-    + '<div class="exak-head">' + h.ic('search') + '<b>Web search needs an Exa key</b></div>'
+    + '<div class="exak-head">' + (exaKeyMark(h, 'xs') || h.ic('search')) + '<b>Web search needs an Exa key</b></div>'
     + '<p>' + h.esc(EXA_KEY_REASONS[req.reason] || EXA_KEY_REASONS.missing) + '</p>'
     + (st.has ? '<p class="exak-sub">A key is already saved. A new one replaces it.</p>' : '')
     + exaKeyInputHTML('chat', st, h)
@@ -112,9 +112,14 @@ function exaKeyCardHTML(req, st, h) {
 
 /* Settings › General: the same field. An empty Save keeps the saved key.
    `st`: {has, saving, error, note, restartOwed, busy}. */
+/* ATO-1634: Exa's mark (h.logo, renderer.js logoHTML), '' without the logo dep. */
+function exaKeyMark(h, size) {
+  return typeof h.logo === 'function' ? h.logo('exa', size) || '' : '';
+}
+
 function exaKeySettingsRowHTML(st, h) {
   const status = st.has === true ? 'A key is saved.' : st.has === false ? 'No key saved.' : '';
-  return '<div class="tk-setrow exak-row">'
+  return '<div class="tk-setrow exak-row">' + exaKeyMark(h, 'sm')
     + '<div class="body"><div class="t">Web search key (Exa)</div>'
       + '<div class="d">' + (status ? h.esc(status) + ' ' : '')
         + 'Without a key, web search uses the free Exa searches, which run out quickly. '

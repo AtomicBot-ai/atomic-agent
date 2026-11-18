@@ -211,9 +211,11 @@ function createDiscordSettings(api) {
   };
 }
 
-/* The tab. `owed`: a restart is owed; `stale`: the last message was said to an earlier agent. `h`: {esc, ic}. */
+/* The tab. `owed`: a restart is owed; `stale`: the last message was said to an earlier agent. `h`: {esc, ic, logo?}. */
 function discordPaneHTML(st, view, h) {
   const {esc, ic} = h;
+  // ATO-1634: Discord's own mark (h.logo, renderer.js logoHTML) where the pane had the chat icon.
+  const dcMark = (size, cls) => (typeof h.logo === 'function' && h.logo('discord', size, 'chat')) || '<span class="tk-ico ' + cls + '">' + ic('chat') + '</span>';
   const v = view || {};
   const busy = st.busy;
   const restartBtn = '<button class="btn btn-p sm" data-act="discord:restart"' + (st.restart.phase === 'restarting' ? ' disabled' : '') + '>'
@@ -233,7 +235,7 @@ function discordPaneHTML(st, view, h) {
     body += '<div class="tk-empty"><span class="tk-spin"></span><p>Loading…</p></div>';
   } else if (st.hasToken !== true) {
     body += '<div class="tk-card pad sd-tgcard sd-center" data-dc-connect>'
-      + '<span class="tk-ico tk-ico--lg tk-ico--blue">' + ic('chat') + '</span>'
+      + dcMark('lg', 'tk-ico--lg tk-ico--blue')
       + '<h3 class="sd-title">Connect Discord</h3>'
       + '<p>Create an application in the Discord Developer Portal, add a bot to it, copy the bot token and paste it here. Then invite the bot to your server, or message it directly. The token is stored only on this machine.</p>'
       + '<div class="sd-acts sd-center"><button class="btn btn-s sm" data-act="discord:portal">Open Developer Portal</button>'
@@ -241,7 +243,7 @@ function discordPaneHTML(st, view, h) {
   } else {
     const s = dcStatus(st, v.owed);
     body += '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
-      + '<span class="tk-ico tk-ico--blue">' + ic('chat') + '</span>'
+      + dcMark('', 'tk-ico--blue')
       + '<div class="body"><div class="t">Discord</div><div class="d">' + esc(s.line) + '</div></div>'
       + '<span class="tk-chip tk-chip--sm ' + (s.on ? 'tk-chip--green' : 'tk-chip--amber') + '" data-dc-status="' + (s.on ? 'connected' : 'not-connected') + '">'
         + (s.on ? 'Connected' : 'Not connected') + '</span>'

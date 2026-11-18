@@ -56,7 +56,7 @@ test("Join Discord: one live invite, the palette row, the sidebar button and the
   assert.match(src, /const DISCORD_URL = 'https:\/\/discord\.gg\/DCqtG8WZX8';/);
   assert.equal(src.match(/discord\.gg\//g).length, 1, "the invite is written once, in DISCORD_URL");
   assert.match(src, /data-url="' \+ DISCORD_URL \+ '">Discord<\/a>/, "the Diagnostics caption uses the constant");
-  assert.match(src, /\['discord','Join Discord','','','help\.discord'\]/, "the palette has Join Discord");
+  assert.match(src, /\['logo:discord','Join Discord','','','help\.discord'\]/, "the palette has Join Discord, with Discord's mark (ATO-1634)");
   assert.match(src, /class="iconbtn sb-discord" data-act="help\.discord"/, "the sidebar foot has the Discord button");
   assert.match(src, /if \(a === 'help\.discord'\) \{ close\(\); render\(\); openDiscord\(\); return; \}/);
   assert.match(src, /function openDiscord\(\) \{\n  if \(BR && BR\.openExternal\) BR\.openExternal\(DISCORD_URL\);/);

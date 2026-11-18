@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <!-- Black N on white. A light stroke optically thickens the mark so
+       Google's ~16–32px circular SERP crop still reads as an N instead of
+       a checkerboard (the unstroked wave gap collapses to four blobs). -->
+  <rect width="48" height="48" fill="#ffffff" />
+  <!-- Official artboard centers the main N body; shift so the full glyph
+       (including the short left stem) is centered in the square/circle. -->
+  <g transform="translate(2.237 0)">
+    <path
+      fill="#000000"
+      stroke="#000000"
+      stroke-width="0.85"
+      stroke-linejoin="round"
+      d="M15.6497 35.7635H9.88281V26.4701C11.5301 25.0744 13.4554 23.9223 15.6497 23.3069V35.7635ZM21.5019 12.2344C22.0491 16.1404 24.3803 19.4743 27.645 21.3865V12.2344H33.6426V35.7635H27.4759C26.0826 32.1254 22.0555 25.2065 15.6497 23.3069L15.65 12.2344H21.5019Z"
+    />
+  </g>
+</svg>

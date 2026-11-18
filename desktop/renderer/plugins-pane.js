@@ -257,8 +257,8 @@ const PLG_INTRO = 'Plugins add ready-made abilities to Atomic Agent: skills, too
 const PLG_SOURCES = 'A plugin is a folder. Get one from GitHub or from someone who shared it with you, then install it from that folder. Plugins made for Claude Code, Codex or Cursor work too.';
 
 /* ATO-1633: the marks of the places plugins come from (renderer.js LOGO_FILES keys). A plugin's
-   manifest format says which app it was made for; Cursor has no mark in renderer/logos/. */
-const PLG_FORMAT_LOGOS = {claude: 'claudecode', codex: 'codex'};
+   manifest format says which app it was made for. */
+const PLG_FORMAT_LOGOS = {claude: 'claudecode', codex: 'codex', cursor: 'cursor'};   // ATO-1634: Cursor's mark
 const PLG_FORMAT_WORDS = {claude: 'Claude Code', codex: 'Codex', cursor: 'Cursor'};
 
 /** The mark keys a plugin row wears: the app its manifest is for, then GitHub when it was installed from there. */
@@ -374,7 +374,7 @@ function pluginsTab() {
   const canInstall = !PLG.unsupported;
   // What plugins are first, always; then the list's own row: label and counts left, actions right.
   const about = '<div class="set-plgabout"><p class="set-plgintro">' + esc(PLG_INTRO) + '</p>'
-    + '<p class="set-plgintro set-plgintro--2">' + esc(PLG_SOURCES) + plgMarksHTML(['github', 'claudecode', 'codex']) + '</p></div>';
+    + '<p class="set-plgintro set-plgintro--2">' + esc(PLG_SOURCES) + plgMarksHTML(['github', 'claudecode', 'codex', 'cursor']) + '</p></div>';
   const head = '<div class="set-plghead">'
     + '<h4 class="set-plgtitle">Installed</h4>'
     + (summary ? '<span class="set-counts">' + esc(summary) + '</span>' : '')

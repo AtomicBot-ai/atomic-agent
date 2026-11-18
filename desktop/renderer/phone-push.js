@@ -84,7 +84,8 @@ function phonePushPaneHTML(p, h) {
   } else {
     const ext = (label, url) => '<button class="btn btn-s sm" data-url="' + h.esc(url) + '">' + label + '</button>';
     body = '<div class="tk-card sd-rows" data-push-steps>'
-      + row('1. Install the free ntfy app', 'On your phone, from the App Store or Google Play.',
+      // ATO-1634: ntfy's mark before its name (h.logo, renderer.js logoHTML).
+      + row((typeof h.logo === 'function' && h.logo('ntfy', 'xs') ? '<span class="sd-inlmark">' + h.logo('ntfy', 'xs') + '</span>' : '') + '1. Install the free ntfy app', 'On your phone, from the App Store or Google Play.',
         ext('App Store', PUSH_APP_IOS) + ext('Google Play', PUSH_APP_ANDROID), ' data-push-step="1"')
       /* W2 QA: the full address pasted into ntfy's "Use another server"
          field answers 404. The app wants the topic name only, and the
@@ -111,7 +112,7 @@ function phonePushPaneHTML(p, h) {
 
 /* ---- runtime (needs the bridge and renderer.js globals) ---- */
 
-function pushTab() { return phonePushPaneHTML(PUSH, {esc, ic}); }
+function pushTab() { return phonePushPaneHTML(PUSH, {esc, ic, logo: typeof logoHTML === 'function' ? logoHTML : null}); }
 
 function phonePushTabEntered() { PUSH.msg = null; PUSH.confirmNew = false; phonePushRefresh(); }
 

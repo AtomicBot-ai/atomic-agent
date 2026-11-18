@@ -424,7 +424,15 @@ function mcpCatalogPreview(id, vals) {
   return mcpCatalogFill(id, masked);
 }
 
+/* ATO-1634: the brand mark a catalog card wears (renderer.js LOGO_FILES key). Desktop only and
+   kept out of MCP_CATALOG, so the copy of the agent's data stays identical. An entry with no mark
+   here (the basics, DeepWiki) keeps its first letter. */
+const MCP_CATALOG_LOGOS = {
+  github: 'github', playwright: 'playwright', context7: 'context7', notion: 'notion', exa: 'exa', firecrawl: 'firecrawl',
+  apify: 'apify', brightdata: 'brightdata', tavily: 'tavily', 'brave-search': 'brave', monid: 'monid',
+};
+
 if (typeof module !== 'undefined') {
-  module.exports = {MCP_CATALOG, mcpCatalogList, mcpCatalogEntry, mcpCatalogJson, mcpCatalogPlaceholders, mcpCatalogUnfilled, mcpCatalogHTML,
+  module.exports = {MCP_CATALOG, MCP_CATALOG_LOGOS, mcpCatalogList, mcpCatalogEntry, mcpCatalogJson, mcpCatalogPlaceholders, mcpCatalogUnfilled, mcpCatalogHTML,
     mcpCatalogFilter, mcpCatalogFill, mcpCatalogMissing, mcpCatalogCardsHTML, mcpCatalogFormHTML, mcpCatalogPreview};
 }
