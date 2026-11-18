@@ -242,7 +242,7 @@ describe("repeatedEmptyCompletionError on a cloud link (ATO-1578)", () => {
 });
 
 describe("emptyCompletionRetryDelayMs (ATO-1676)", () => {
-  it("waits 500 ms before the first re-ask, as Gemini CLI and Claude Code do", () => {
+  it("waits 500 ms before the first re-ask", () => {
     expect(emptyCompletionRetryDelayMs(1)).toBe(500);
   });
 

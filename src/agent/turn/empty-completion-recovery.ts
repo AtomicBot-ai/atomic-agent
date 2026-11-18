@@ -24,9 +24,9 @@
  * closed the turn before emitting anything), not a considered decision
  * about the prompt; naming it in the prompt is one lever, and there is
  * no cap to raise the way `truncation-recovery` raises one. The other
- * lever is time: on a cloud link the same silence is often a busy
- * service, so the loop waits {@link emptyCompletionRetryDelayMs} before
- * the re-ask (ATO-1676). If the second attempt is empty too the fault
+ * lever is time: on a cloud link the silence may be the service, not
+ * the model (a hypothesis), so the loop waits
+ * {@link emptyCompletionRetryDelayMs} before the re-ask (ATO-1676). If the second attempt is empty too the fault
  * is in the link, not in the wording, and the turn is owed the failure.
  */
 
@@ -75,18 +75,20 @@ export const EMPTY_COMPLETION_RETRY_MAX_DELAY_MS = 8_000;
  * How long the loop waits before re-asking after the `attempt`-th empty
  * completion in a run (1-based), ATO-1676.
  *
- * Without it the re-ask went out the moment the empty answer landed. A
- * wholly empty answer from a cloud link is mostly the service, not the
- * prompt: an overloaded backend that closes the stream before the first
- * token, or a service that abandons its own generation with
- * `finish_reason: "error"` on the first event (left to end as an empty
- * completion on purpose, `openai-stream-consumer.ts`). A request sent
- * back in the same instant reaches the same busy backend.
+ * Without it the re-ask went out the moment the empty answer landed.
+ * The hypothesis, not yet confirmed by data: some wholly empty answers
+ * from a cloud link come from the service rather than the prompt, for
+ * example a backend that closes the stream before the first token, or a
+ * service that abandons its own generation with `finish_reason: "error"`
+ * on the first event (left to end as an empty completion on purpose,
+ * `openai-stream-consumer.ts`). If so, a request sent back in the same
+ * instant is likely to meet the same condition, and a short wait gives
+ * it a chance to clear.
  *
- * Copied from the two tools that retry this shape: Gemini CLI waits
- * 500 ms before its one retry of an empty or invalid stream, and Claude
- * Code's API retry starts at 500 ms and doubles per attempt. No jitter:
+ * A short exponential backoff, the usual client retry shape. No jitter:
  * one person's session sends one retry, so there is no herd to spread.
+ * Applies to every native-tools link, local ones included, and is not
+ * counted against the task's duration ceiling.
  */
 export function emptyCompletionRetryDelayMs(attempt: number): number {
   const exponent = Math.max(0, Math.floor(attempt) - 1);

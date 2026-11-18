@@ -1248,8 +1248,8 @@ export class AgentLoop {
         }
         if (decision.kind === "retry_same") { i -= 1; continue; }
         if (decision.kind === "retry_next") {
-          // The empty-answer re-ask waits a moment first (ATO-1676): the
-          // same busy backend asked again at once answers empty again.
+          // The empty-answer re-ask waits a moment first (ATO-1676), in
+          // case the empty answer was the service and not the model.
           if (decision.delayMs !== undefined && decision.delayMs > 0) {
             await abortableSleep(decision.delayMs, options.signal);
             if (options.signal.aborted) {

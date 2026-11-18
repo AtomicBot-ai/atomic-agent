@@ -4098,18 +4098,28 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       capabilities: CAPS,
       skillCatalog: SKILLS,
       onEvent: (event) => {
-        // Announced before the wait starts: the stop lands inside it.
-        if (event.type === "empty_completion_recovered") controller.abort();
+        // The stop arrives 100 ms after the re-ask is announced, so it
+        // lands inside the 500 ms wait. Without the wait the loop would
+        // already have sent the second request by then.
+        if (event.type === "empty_completion_recovered") {
+          announcedAt = Date.now();
+          setTimeout(() => controller.abort(), 100);
+        }
       },
     });
+    let announcedAt = 0;
     const session = createEmptySessionState({ id: "s-empty-wait-stop", workingDir });
     const result = await loop.runTurn(session, {
       userMessage: "go",
       maxSteps: 5,
       signal: controller.signal,
     });
+    const elapsedMs = Date.now() - announcedAt;
+    expect(announcedAt).toBeGreaterThan(0);
     expect(result.reason).toBe("cancelled");
     expect(llmCalls).toBe(1);
+    // The stop cut the wait short instead of sitting out the full 500 ms.
+    expect(elapsedMs).toBeLessThan(EMPTY_COMPLETION_RETRY_BASE_DELAY_MS - 50);
   });
 
   it("ends the turn on the second empty native-tools completion, saying so", async () => {
