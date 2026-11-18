@@ -109,8 +109,8 @@ export async function generateNextStepViaEndpoint(
   const exchange = lastExchangeOf(state);
   if (exchange === null) return null;
   const fetchImpl = deps.fetchImpl ?? fetch;
-  try {
-    const response = await fetchImpl(endpoint.url, {
+  const send = (thinkingOff: boolean) =>
+    fetchImpl(endpoint.url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -125,9 +125,19 @@ export async function generateNextStepViaEndpoint(
         max_tokens: NEXT_STEP_MAX_TOKENS,
         temperature: 0.2,
         stream: false,
+        // Same as the chat-model path (`enableThinking: false`): a hybrid
+        // thinking model (Qwen3.5) would otherwise spend the budget on
+        // reasoning and leave `content` empty. llama-server and vLLM read
+        // it; LM Studio and Ollama ignore it.
+        ...(thinkingOff ? { chat_template_kwargs: { enable_thinking: false } } : {}),
       }),
       ...(deps.signal ? { signal: deps.signal } : {}),
     });
+  try {
+    let response = await send(true);
+    // A strict server (OpenAI itself) refuses unknown fields with 400:
+    // ask once more without the thinking switch.
+    if (response.status === 400) response = await send(false);
     if (!response.ok) throw new Error(`next-step endpoint answered HTTP ${response.status}`);
     return sanitizeNextStep(chatCompletionText(await response.json()));
   } catch (err) {

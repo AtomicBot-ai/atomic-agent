@@ -83,6 +83,20 @@ describe("generateNextStepViaEndpoint", () => {
     expect(body.model).toBe("small");
     expect(body.messages[0]?.role).toBe("system");
     expect(body.messages[1]?.content).toContain("write a parser for the csv export");
+    expect((body as unknown as { chat_template_kwargs?: unknown }).chat_template_kwargs).toEqual({ enable_thinking: false });
+  });
+
+  it("retries once without the thinking switch when a strict server answers 400", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      calls.push(body);
+      if ("chat_template_kwargs" in body) return { ok: false, status: 400, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "Add tests" } }] }) };
+    }) as unknown as typeof fetch;
+    expect(await generateNextStepViaEndpoint(answered(), endpoint, { fetchImpl })).toBe("Add tests");
+    expect(calls).toHaveLength(2);
+    expect("chat_template_kwargs" in calls[1]!).toBe(false);
   });
 
   it("returns null on NONE, an HTTP error, a thrown fetch, or no exchange", async () => {
