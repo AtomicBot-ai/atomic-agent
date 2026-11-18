@@ -14,6 +14,7 @@ import {
   resolveImportFormOptions,
 } from "./import-form-options.js";
 import type { ImportFormState } from "./import-panel-state.js";
+import { ImportFactsRunner } from "./import-facts-runner.js";
 
 export interface ImportOrchestratorDeps {
   /** Refresh the Tasks tab after a cron import created scheduled tasks. */
@@ -35,11 +36,16 @@ export interface ImportOrchestratorDeps {
  * `buildImportRunner`'s `close()`.
  */
 export class ImportOrchestrator {
+  /** The facts step of the tab (ATO-1627). */
+  readonly facts: ImportFactsRunner;
+
   constructor(
     private readonly runtime: AgentRuntime,
     private readonly bus: TuiEventBus & { emit(action: unknown): void },
     private readonly deps: ImportOrchestratorDeps = {},
-  ) {}
+  ) {
+    this.facts = new ImportFactsRunner(runtime, (action) => bus.emit(action));
+  }
 
   /** Dry-run preview — never writes. Emits `import_preview_ready`. */
   preview(form: ImportFormState): void {
