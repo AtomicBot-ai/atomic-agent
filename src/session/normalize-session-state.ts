@@ -1,5 +1,6 @@
 import { validRollingSummary, validSessionCompaction } from "./session-compaction.js";
 import type { SessionState } from "./session-state.js";
+import { readPreviousReplies } from "./session-previous-replies.js";
 import { readPlanSnapshot } from "../agent/plan/plan-snapshot.js";
 
 /**
@@ -43,6 +44,13 @@ export function normalizeSessionState(raw: unknown): SessionState {
     const plan = readPlanSnapshot(normalized.plan);
     if (plan === null) delete normalized.plan;
     else normalized.plan = plan;
+  }
+  // Earlier answers kept by Regenerate (ATO-864): a malformed record is
+  // dropped, the chat itself is unaffected.
+  if (normalized.previousReplies !== undefined) {
+    const previous = readPreviousReplies(normalized.previousReplies);
+    if (previous === undefined) delete normalized.previousReplies;
+    else normalized.previousReplies = previous;
   }
   return normalized;
 }
