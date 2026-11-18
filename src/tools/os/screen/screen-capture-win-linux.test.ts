@@ -18,8 +18,13 @@ import {
   windowsCaptureInvocation,
 } from "./screen-capture-win-linux.js";
 import { ScreenGeometryStore } from "./screen-geometry.js";
-import { ensurePrivateDir, type PrivateDirFs } from "./screen-host.js";
-import { macOnlyMessage, type ScreenCommandResult, type ScreenDeps } from "./screen-host.js";
+import {
+  ensurePrivateDir,
+  macOnlyMessage,
+  type PrivateDirFs,
+  type ScreenCommandResult,
+  type ScreenDeps,
+} from "./screen-host.js";
 import { fakeHost, screenCtx } from "./screen-host.fixture.js";
 
 /** A PNG signature plus an IHDR chunk header for `width` x `height`. */
