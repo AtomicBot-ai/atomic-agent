@@ -24,6 +24,17 @@ export interface WalkOptions {
   maxBytes: number;
   maxFiles: number;
   signal?: AbortSignal;
+  /**
+   * Filled in by the walk: folders it could not read (the root included,
+   * for an unmounted drive or a permission hiccup) and whether it stopped
+   * at `maxFiles`. A file the walk did not see is not proof it is gone.
+   */
+  report?: WalkReport;
+}
+
+export interface WalkReport {
+  unreadable: string[];
+  truncated: boolean;
 }
 
 /** Folder names `os.fs.glob` ignores (`**\/<name>/**`). */
@@ -43,7 +54,8 @@ export async function walkFolder(root: string, options: WalkOptions): Promise<Wa
     try {
       entries = await readdir(dir, { withFileTypes: true });
     } catch {
-      // Unreadable (permissions) or gone since: the rest of the walk goes on.
+      // Unreadable (permissions, unmounted) or gone since: the rest of the walk goes on.
+      options.report?.unreadable.push(dir);
       continue;
     }
     entries.sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0));
@@ -64,5 +76,6 @@ export async function walkFolder(root: string, options: WalkOptions): Promise<Wa
       if (found.length >= options.maxFiles) break;
     }
   }
+  if (options.report && found.length >= options.maxFiles) options.report.truncated = true;
   return found;
 }

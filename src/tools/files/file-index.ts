@@ -27,7 +27,8 @@ export const FILES_SEARCH_DEFAULT_TOP_K = 8;
 export const FILES_SEARCH_MAX_TOP_K = 20;
 const DEFAULT_MAX_FILE_BYTES = 50 * 1024 * 1024;
 const DEFAULT_MAX_FILES_PER_FOLDER = 20_000;
-const DEFAULT_SCAN_LIMIT = 20_000;
+/** Closest vector candidates one search keeps; every stored vector is still looked at. */
+const DEFAULT_SCAN_LIMIT = 2_000;
 
 export interface FileIndexOptions {
   /** `<stateDir>/files-index.sqlite`, or `:memory:` in tests. */

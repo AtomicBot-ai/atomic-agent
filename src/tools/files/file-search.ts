@@ -39,7 +39,7 @@ export interface FileSearchDeps {
   fts5Weight: number;
   vectorWeight: number;
   minCosine?: number;
-  /** Most vectors one search scores. */
+  /** Most vector candidates one search keeps (the closest; every stored vector is looked at). */
   scanLimit: number;
 }
 
@@ -126,7 +126,8 @@ async function blendedHits(deps: FileSearchDeps, request: FileSearchRequest): Pr
 /**
  * Vectors to score: the vector index's nearest plus the keyword hits when
  * it answers (whole-index searches only: it cannot filter by folder),
- * else the newest `scanLimit` plus the keyword hits.
+ * else a scan of every stored vector keeping the closest `scanLimit`,
+ * plus the keyword hits.
  */
 function candidates(
   deps: FileSearchDeps,
@@ -140,7 +141,7 @@ function candidates(
     const ids = deps.nearest(model, query, Math.max(request.topK * NEAREST_PER_HIT, NEAREST_MIN));
     if (ids !== null) return vectors.byIds(model, [...ids, ...keywordIds]);
   }
-  return vectors.scan(model, request.under, deps.scanLimit, keywordIds);
+  return vectors.scan(model, request.under, deps.scanLimit, keywordIds, query);
 }
 
 /** Every term first; when that finds nothing, any of them (as session search does). */

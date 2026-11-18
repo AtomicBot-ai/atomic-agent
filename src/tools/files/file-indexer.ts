@@ -1,10 +1,12 @@
+import { sep } from "node:path";
+
 import { EmbeddingUnavailableError, type EmbeddingClient } from "../../memory/embeddings/embedding-client.js";
 import { chunkSegments } from "./file-chunker.js";
 import type { FileIndexStore } from "./file-index-store.js";
 import type { FileIndexStatus } from "./file-index-types.js";
 import type { FileTextResult } from "./file-text.js";
 import type { FileVectorStore } from "./file-vector-store.js";
-import type { WalkedFile, WalkOptions } from "./file-walker.js";
+import type { WalkedFile, WalkOptions, WalkReport } from "./file-walker.js";
 
 /**
  * The background indexer: one serial queue for every folder. A pass
@@ -97,10 +99,12 @@ export class FileIndexer {
     for (const folder of store.folderPaths()) {
       if (this.stopped) return;
       const known = store.filesIn(folder);
+      const report: WalkReport = { unreadable: [], truncated: false };
       const seen = await this.deps.walk(folder, {
         maxBytes: this.deps.maxFileBytes,
         maxFiles: this.deps.maxFilesPerFolder,
         signal: this.controller.signal,
+        report,
       });
       if (this.stopped) return;
       // The folder may have been removed during the walk.
@@ -111,7 +115,19 @@ export class FileIndexer {
         const reason = file.tooLarge ? `larger than ${this.deps.maxFileBytes} bytes` : undefined;
         store.upsertSeen(folder, file.path, file.mtimeMs, file.size, known.get(file.path), reason);
       }
-      store.deleteFiles([...known.values()].filter((row) => !present.has(row.path)).map((row) => row.id));
+      // Only a file missing under a folder the walk did read is gone. An
+      // unreadable root (unmounted drive, network share, permissions) or a
+      // walk cut at maxFiles keeps every known file and its vectors.
+      if (report.unreadable.includes(folder)) {
+        this.lastError = { path: folder, message: "folder is not readable right now; kept its index", at: this.now().toISOString() };
+      } else if (!report.truncated) {
+        const blocked = report.unreadable.map((dir) => dir + sep);
+        store.deleteFiles(
+          [...known.values()]
+            .filter((row) => !present.has(row.path) && !blocked.some((prefix) => row.path.startsWith(prefix)))
+            .map((row) => row.id),
+        );
+      }
       this.touch();
     }
   }

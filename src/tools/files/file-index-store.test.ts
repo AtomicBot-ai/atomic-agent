@@ -136,6 +136,21 @@ describe("FileVectorStore", () => {
     expect([...scanned[0]!.vector]).toEqual([0.5, 0.25]);
     expect(vectors.scan("m", join("/", "elsewhere"), 10)).toEqual([]);
   });
+
+  it("with a query, an old chunk that matches best is still a candidate past the scan limit", () => {
+    store.addFolder(DOCS, AT);
+    store.upsertSeen(DOCS, pdf, 1, 1, undefined);
+    const texts = Array.from({ length: 6 }, (_, i) => ({ ord: i, text: `chunk ${i}` }));
+    const ids = store.saveChunks(store.nextPending()!.id, texts, AT)!;
+    // The oldest chunk (lowest id) points the query's way; the newer ones do not.
+    vectors.put(ids[0]!, "m", new Float32Array([1, 0]));
+    for (const id of ids.slice(1)) vectors.put(id, "m", new Float32Array([0, 1]));
+    const query = new Float32Array([1, 0]);
+    expect(vectors.scan("m", null, 2).map((c) => c.chunkId)).not.toContain(ids[0]);
+    const scored = vectors.scan("m", null, 2, [], query);
+    expect(scored).toHaveLength(2);
+    expect(scored[0]!.chunkId).toBe(ids[0]);
+  });
 });
 
 describe("FileVectorStore for the sqlite-vec path (ATO-1052)", () => {
