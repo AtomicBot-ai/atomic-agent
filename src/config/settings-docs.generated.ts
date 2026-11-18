@@ -134,6 +134,8 @@ export const SETTINGS_DOCS: Readonly<Record<string, SettingDoc>> = {
   "tracing.otel.endpoint": { type: "string | null", description: "OTLP/HTTP base URL (`/v1/traces` is appended) or a full traces URL." },
   "tracing.otel.captureContent": { type: "boolean", description: "Put prompt, reply, tool argument and error text into spans." },
   "network.offline": { type: "boolean", description: "Network kill switch (ATO-1084): `{ offline: false }` by default. Additive and unversioned: a file without the block reads the default." },
+  "network.proxy.url": { type: "string | null", description: "Your own HTTP(S) proxy for the agent's web traffic (ATO-87), `http://host:port` or `https://host:port`, with `user:password@` if needed; `null` is off. `ATOMIC_AGENT_PROXY` sets it for one process." },
+  "network.proxy.noProxy": { type: "string[]", description: "Hosts that bypass `network.proxy.url` (`example.com` also covers its subdomains). This machine always goes direct." },
   "memory.profile.enabled": { type: "boolean", description: "" },
   "memory.profile.maxTokens": { type: "number", description: "Safety-net ceiling for the rendered `### profile` section." },
   "memory.profile.contextualKeywordGate": { type: "boolean", description: "Master switch for the contextual-keyword gate applied by `profile-renderer`. When `true` (default), facts stored with `pinned=false` render into `### profile` only when one of their `keywords` hits the current user message." },

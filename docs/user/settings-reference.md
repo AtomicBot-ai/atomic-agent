@@ -206,6 +206,8 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `network.offline` | `boolean` | `false` | Network kill switch (ATO-1084): `{ offline: false }` by default. Additive and unversioned: a file without the block reads the default. |
+| `network.proxy.url` | `string \| null` | `null` | Your own HTTP(S) proxy for the agent's web traffic (ATO-87), `http://host:port` or `https://host:port`, with `user:password@` if needed; `null` is off. `ATOMIC_AGENT_PROXY` sets it for one process. Env `ATOMIC_AGENT_PROXY` wins when set. |
+| `network.proxy.noProxy` | `string[]` | `[]` | Hosts that bypass `network.proxy.url` (`example.com` also covers its subdomains). This machine always goes direct. |
 
 ## memory
 
@@ -466,6 +468,7 @@ Read from the process environment or from `~/.atomic-agent/.env` (a variable alr
 | `ATOMIC_AGENT_TASKS_KEEP_AWAKE` | unset | env only | Keep the computer awake for tasks and turns: off or while-working. Unset or any other value: off. |
 | `ATOMIC_AGENT_PERSONA` | unset | env only | Persona name to use for this process, above every config.json setting. |
 | `ATOMIC_AGENT_OFFLINE` | unset | env only | Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process. |
+| `ATOMIC_AGENT_PROXY` | unset | `network.proxy.url` | Send the agent's web traffic through this HTTP(S) proxy, as `network.proxy.url` does. Wins over the config value when set. |
 | `ATOMIC_AGENT_ALLOWED_ORIGINS` | unset | env only | Comma-separated web origins that may call a keyless local `serve`, besides loopback ones. |
 | `ATOMIC_AGENT_MODEL_CATALOG_URL` | unset | env only | URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io. |
 | `ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES` | unset | env only | Stream Telegram replies into the owner's DM (private) or not (off). Wins over telegram.streamReplies when set. |

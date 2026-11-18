@@ -27,7 +27,7 @@ import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
 import { emitConfigNoticeOnce } from "./config-primitives.js";
 import { cloneExtraChannelsConfig } from "./extra-channel-config.js";
-import { OFFLINE_ENV } from "./network-config.js";
+import { OFFLINE_ENV, parseProxyUrl, PROXY_ENV } from "./network-config.js";
 import { DEFAULT_MAX_AUDIO_BYTES } from "./tool-config.js";
 import type {
   LocalModelsValueSource,
@@ -39,6 +39,12 @@ import type {
 function readEnv(key: string): string | undefined {
   const value = process.env[key];
   return value && value.length > 0 ? value : undefined;
+}
+
+/** `ATOMIC_AGENT_PROXY`, checked like `network.proxy.url` (ATO-87). */
+function readProxyEnv(): string | undefined {
+  const raw = readEnv(PROXY_ENV);
+  return raw === undefined ? undefined : parseProxyUrl(raw, PROXY_ENV);
 }
 
 /** Env override of `localModels.completionMaxTokens` (wins over the file, ATO-922). */
@@ -629,6 +635,11 @@ export function loadConfig(): AtomicAgentConfig {
     // off: a file that says offline stays offline whatever the shell has.
     network: {
       offline: user.network.offline || readBool(OFFLINE_ENV, false),
+      // ATO-87: `ATOMIC_AGENT_PROXY` wins over the file for this process.
+      proxy: {
+        url: readProxyEnv() ?? user.network.proxy.url,
+        noProxy: [...user.network.proxy.noProxy],
+      },
     },
     memory: {
       profile: {
