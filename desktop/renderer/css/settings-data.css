@@ -41,6 +41,9 @@
 /* ATO-582: a note's text in an edit box (memory-edit.js). */
 .sd-memedit{display:flex;flex-direction:column;gap:8px;margin:8px 0}
 textarea.tk-inp.sd-memedit-box{width:100%;min-height:140px;font-size:var(--fs-ui);line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere;resize:vertical}
+/* ATO-321: Clear old memory, under the Memory toolbar. */
+.sd-memforget{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.sd-memforget input[type="date"].tk-inp{width:auto}
 .sd-memrow .sd-id{flex:none;min-width:44px;font:400 var(--fs-label)/1.3 var(--font-mono);color:var(--ink-2);white-space:nowrap}
 .sd-memrow.on .sd-id{color:var(--blue)}
 .sd-memrow .t{font-size:var(--fs-ui);font-weight:500}
