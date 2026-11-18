@@ -1,4 +1,5 @@
 import { isBrokenPipeError } from "./broken-pipe.js";
+import { isBudgetStopError } from "./budget-stop.js";
 import { scrubError } from "./error-scrubber.js";
 import type { LlmFailureContext } from "./llm-failure-tags.js";
 import type { SentryClient } from "./sentry-client.js";
@@ -51,6 +52,9 @@ export function captureError(
   // plain words to open it (ATO-1278). Matched by name, so this module
   // takes no import from the LLM layer.
   if (isExpectedUserActionFailure(err)) return;
+  // A fusion turn cap reached is the operator's setting at work, and
+  // the person was told which cap it was (ATO-1677).
+  if (isBudgetStopError(err)) return;
   const error =
     err instanceof Error
       ? err
