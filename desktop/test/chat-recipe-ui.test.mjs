@@ -26,6 +26,9 @@ test("placeholders, filling, missing values and parameter names", () => {
   assert.match(C.recipeKeyFrom("a".repeat(60), []), /^[a-z][a-z0-9_]{0,31}$/);
   assert.equal(C.recipeFirstQuestion([{ kind: "assistant", text: "hi" }, { kind: "user", text: "  " }, { kind: "user", text: " First \n" }, { kind: "user", text: "Second" }]), "First");
   assert.equal(C.recipeFirstQuestion(null), "");
+  // Review fix: a message sent with files keeps no local paths in the recipe.
+  assert.equal(C.recipeFirstQuestion([{ kind: "user", text: "Summarise this\n\n[attachments]\n- /Users/a/b.pdf (application/pdf, 2 MB)" }]), "Summarise this");
+  assert.equal(C.recipeFirstQuestion([{ kind: "user", text: "\n\n[attachments]\n- /Users/a/b.pdf (application/pdf, 2 MB)" }, { kind: "user", text: "Next" }]), "Next");
   assert.deepEqual(C.recipeParamsFor("{{a}} {{b}} {{a}}", { a: "x", b: "" }), [{ key: "a", default: "x" }, { key: "b" }]);
 });
 

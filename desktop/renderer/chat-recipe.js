@@ -50,10 +50,16 @@ function recipeKeyFrom(text, taken) {
   return out;
 }
 
-/** The chat's first question, from the stored turns (GET /api/sessions/{id}). */
+/** The chat's first question, from the stored turns (GET /api/sessions/{id}). A message sent
+    with files ends in an `[attachments]` block of local paths (attachments.js): cut, never shared. */
 function recipeFirstQuestion(turns) {
-  const t = (Array.isArray(turns) ? turns : []).find((x) => x && x.kind === 'user' && typeof x.text === 'string' && x.text.trim());
-  return t ? t.text.trim() : '';
+  for (const x of Array.isArray(turns) ? turns : []) {
+    if (!x || x.kind !== 'user' || typeof x.text !== 'string') continue;
+    const at = x.text.indexOf('\n\n[attachments]\n');
+    const text = (at >= 0 ? x.text.slice(0, at) : x.text).trim();
+    if (text) return text;
+  }
+  return '';
 }
 
 /** The parameters the save sends: the text's placeholders, in order, with the defaults typed for them. */
