@@ -309,6 +309,8 @@ async function fitStart() {
   fitPaintAll();
   const res = await br.fitTestStart({models, judge: FIT.judge}).catch((e) => ({ok: false, error: e && e.message ? e.message : String(e)}));
   FIT.phase = 'idle'; FIT.progress = null;
+  // ATO-1545: messages queued while the test held the server go now (renderer drainOwed).
+  if (typeof drainOwed === 'function') drainOwed();
   if (res && res.ok && res.result) FIT.result = res.result;
   else if (res && res.cancelled) FIT.note = 'Test stopped. Your chats use the same model as before.';
   else FIT.error = (res && res.error) || 'The model test did not finish.';
