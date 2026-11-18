@@ -18,6 +18,24 @@ export type {
 } from "./http-server.js";
 
 export { buildRouteTable } from "./route-table.js";
+export {
+  HTTP_ROLES,
+  HTTP_SCOPES,
+  ROLE_SCOPES,
+  ROUTE_SCOPES,
+  isHttpRole,
+  roleHasScope,
+  scopeForRoute,
+} from "./http-scopes.js";
+export type { HttpRole, HttpScope } from "./http-scopes.js";
+export {
+  addHttpToken,
+  createHttpTokenSource,
+  httpTokensPath,
+  readHttpTokens,
+  removeHttpToken,
+} from "./http-token-store.js";
+export type { StoredHttpToken } from "./http-token-store.js";
 export { buildTunnelRouteTable } from "./tunnel-route-table.js";
 export {
   getWebhookTunnelStatus,

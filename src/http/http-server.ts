@@ -13,13 +13,15 @@ import { openaiError } from "./openai-errors.js";
 import { UndeliveredSteerStore } from "./undelivered-steers.js";
 import { AuthThrottle } from "./auth-throttle.js";
 import { enforceLoopbackGuard } from "./loopback-guard.js";
+import { routeKey, scopeForRoute, type HttpScope } from "./http-scopes.js";
+import type { StoredHttpToken } from "./http-token-store.js";
+import { authorizeRequest } from "./scoped-auth.js";
 
 /** ATO-1126: one per process; loopback callers are never counted. */
 const authThrottle = new AuthThrottle();
 import {
   BodyParseError,
   BodyTooLargeError,
-  enforceAuth,
   sendError,
   sendJson,
   type HandlerContext,
@@ -42,6 +44,8 @@ export interface RouteDefinition {
    * `/v1/models` which OpenAI SDKs probe pre-auth.
    */
   requiresAuth?: boolean;
+  /** ATO-583: the scope a named token needs here; defaults to the `ROUTE_SCOPES` entry. */
+  scope?: HttpScope;
 }
 
 export interface HttpServerOptions {
@@ -60,6 +64,8 @@ export interface HttpServerOptions {
    * that listener serves nothing but signed `POST /api/webhooks/{name}`.
    */
   loopbackGuard?: boolean;
+  /** ATO-583: named tokens with roles, read per request (`createHttpTokenSource`). */
+  namedTokens?: () => readonly StoredHttpToken[];
 }
 
 export interface HttpServerHandle {
@@ -83,6 +89,8 @@ interface CompiledRoute {
   paramNames: string[];
   handler: HttpHandler;
   requiresAuth: boolean;
+  key: string;
+  scope: HttpScope;
 }
 
 /**
@@ -108,6 +116,8 @@ function compileRoute(route: RouteDefinition): CompiledRoute {
     paramNames,
     handler: route.handler,
     requiresAuth: route.requiresAuth ?? true,
+    key: routeKey(route.method, route.path),
+    scope: route.scope ?? scopeForRoute(route.method, route.path),
   };
 }
 
@@ -154,7 +164,7 @@ export function createHttpServer(
         approvalBus,
         completionRegistry,
         undeliveredSteers,
-      }, options.loopbackGuard ?? true);
+      }, options.loopbackGuard ?? true, options.namedTokens);
     } catch (err) {
       handleRouteError(res, err);
     }
@@ -208,6 +218,7 @@ async function dispatch(
   routes: CompiledRoute[],
   baseCtx: Omit<HandlerContext, "params">,
   loopbackGuard: boolean,
+  namedTokens?: () => readonly StoredHttpToken[],
 ): Promise<void> {
   const url = parseRequestUrl(req);
   if (!url) {
@@ -229,7 +240,12 @@ async function dispatch(
     );
     return;
   }
-  if (matched.route.requiresAuth && !enforceAuth(req, res, baseCtx.apiKey, authThrottle)) {
+  if (matched.route.requiresAuth && !authorizeRequest(req, res, {
+    apiKey: baseCtx.apiKey,
+    namedTokens: namedTokens?.() ?? [],
+    scope: matched.route.scope,
+    route: matched.route.key,
+  }, authThrottle)) {
     return;
   }
   const ctx: HandlerContext = { ...baseCtx, params: matched.params };
