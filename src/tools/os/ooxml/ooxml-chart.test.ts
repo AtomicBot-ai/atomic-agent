@@ -33,9 +33,9 @@ describe("chartXml", () => {
   it("caches categories and values and points the formulas at the data cells", () => {
     const xml = chartXml(SALES, AT_A1, "rId1");
     expect(xml).toContain('<c:barDir val="col"/>');
-    expect(xml).toContain("<c:f>Sheet1!$B$1</c:f>");
-    expect(xml).toContain("<c:f>Sheet1!$A$2:$A$4</c:f>");
-    expect(xml).toContain("<c:f>Sheet1!$C$2:$C$4</c:f>");
+    expect(xml).toContain("<c:f>&apos;Sheet1&apos;!$B$1</c:f>");
+    expect(xml).toContain("<c:f>&apos;Sheet1&apos;!$A$2:$A$4</c:f>");
+    expect(xml).toContain("<c:f>&apos;Sheet1&apos;!$C$2:$C$4</c:f>");
     expect(xml).toContain('<c:pt idx="1"><c:v>12.5</c:v></c:pt>');
     // A null value is a gap: no point at that index.
     const firstValues = /<c:numCache>.*?<\/c:numCache>/.exec(xml)![0];
@@ -58,7 +58,10 @@ describe("chartXml", () => {
   });
 
   it("quotes a sheet name that needs it and anchors the data where it is", () => {
-    expect(sheetRef("Sheet1")).toBe("Sheet1");
+    expect(sheetRef("Sheet1")).toBe("'Sheet1'");
+    expect(sheetRef("Q1")).toBe("'Q1'");
+    expect(sheetRef("FY2026")).toBe("'FY2026'");
+    expect(sheetRef("TRUE")).toBe("'TRUE'");
     expect(sheetRef("Q3 sales")).toBe("'Q3 sales'");
     expect(sheetRef("Bob's")).toBe("'Bob''s'");
     const xml = chartXml(SALES, { sheet: "Q3 sales", row: 4, col: 2 });

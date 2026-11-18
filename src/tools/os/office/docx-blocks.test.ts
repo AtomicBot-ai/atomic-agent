@@ -93,6 +93,17 @@ describe("createDocx with lists, a table and a picture", () => {
     expect(doc).toContain('<w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr>');
   });
 
+  it("starts a numbered list at the number it was typed with", async () => {
+    const blocks = parseBlocks(["1. Intro", "some text", "2. Method\n3. Results", "4. Alone"]);
+    expect(blocks.filter((b) => b.kind === "numbered").map((b) => b.start)).toEqual([1, 2, 3, 4]);
+    const numbering = await text(await parts(await createDocx(blocks)), "word/numbering.xml");
+    // Two runs (the paragraph splits them; the last block joins the second run).
+    expect(numbering.match(/<w:startOverride w:val="(\d+)"\/>/g)).toEqual([
+      '<w:startOverride w:val="1"/>',
+      '<w:startOverride w:val="2"/>',
+    ]);
+  });
+
   it("writes a bordered table with a repeating bold header row", async () => {
     const zip = await parts(await createDocx(blocks, { images }));
     const doc = await text(zip, "word/document.xml");

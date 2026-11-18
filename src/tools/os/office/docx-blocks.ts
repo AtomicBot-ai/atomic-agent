@@ -98,8 +98,10 @@ interface ListPlan {
 
 /**
  * One `w:num` for all bullets, and one per run of consecutive list
- * items that contains numbered ones, restarting at 1, the way Word
- * starts a new list after a paragraph.
+ * items that contains numbered ones, the way Word starts a new list
+ * after a paragraph. Each run starts at the number its first item was
+ * typed with, so `4. Results` after a paragraph stays 4 (Markdown
+ * renderers do the same).
  */
 function planLists(blocks: readonly DocBlock[], abstractBase: number, numBase: number): ListPlan | null {
   const numIds = new Map<number, number>();
@@ -122,9 +124,10 @@ function planLists(blocks: readonly DocBlock[], abstractBase: number, numBase: n
     }
     if (listNum === undefined) {
       listNum = nextNum++;
+      const start = Math.max(1, block.start ?? 1);
       nums.push(
         `<w:num w:numId="${listNum}"><w:abstractNumId w:val="${orderedAbstract}"/>` +
-          `<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>`,
+          `<w:lvlOverride w:ilvl="${block.level ?? 0}"><w:startOverride w:val="${start}"/></w:lvlOverride></w:num>`,
       );
     }
     numIds.set(index, listNum);

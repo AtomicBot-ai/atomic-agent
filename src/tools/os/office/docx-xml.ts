@@ -30,6 +30,8 @@ export interface DocBlock {
   text: string;
   /** List nesting, 0 = top level (bullet and numbered only). */
   level?: number;
+  /** The number the line was typed with (`4. Results` → 4), numbered only. */
+  start?: number;
   /** A table's cells, header row first, every row the same width. */
   rows?: string[][];
   /** A picture's path as the block wrote it. */
@@ -127,8 +129,8 @@ function parseLine(line: string): DocBlock {
   const item = LIST_LINE.exec(line.replace(/\t/g, "  "));
   if (item !== null) {
     const level = Math.min(Math.floor(item[1]!.length / 2), MAX_LIST_LEVEL);
-    const kind = item[2] === "-" || item[2] === "*" ? "bullet" : "numbered";
-    return { kind, text: item[3]!.trim(), level };
+    if (item[2] === "-" || item[2] === "*") return { kind: "bullet", text: item[3]!.trim(), level };
+    return { kind: "numbered", text: item[3]!.trim(), level, start: Number.parseInt(item[2]!, 10) };
   }
   return { kind: "paragraph", text: line };
 }

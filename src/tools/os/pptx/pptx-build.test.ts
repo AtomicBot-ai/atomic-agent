@@ -184,7 +184,7 @@ describe("buildPptx", () => {
     const chart = await text(zip, "ppt/charts/chart1.xml");
     expect(XMLValidator.validate(chart)).toBe(true);
     expect(chart).toContain('<c:barDir val="col"/>');
-    expect(chart).toContain("<c:f>Sheet1!$C$2:$C$4</c:f>");
+    expect(chart).toContain("<c:f>&apos;Sheet1&apos;!$C$2:$C$4</c:f>");
     expect(chart).toContain("<a:t>Revenue by quarter</a:t>");
     expect(await text(zip, "ppt/charts/_rels/chart1.xml.rels")).toContain(
       'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" Target="../embeddings/Microsoft_Excel_Worksheet1.xlsx"',
