@@ -17,6 +17,8 @@ import {
   type TraceRecorder,
   type TraceSink,
 } from "../../tracing/trace/index.js";
+import type { LlmPromptBudget } from "../../error-reporting/index.js";
+import { promptBudgetOf } from "./prompt-budget.js";
 import {
   createOtlpTraceSink,
   resolveOtlpExportSettings,
@@ -150,6 +152,12 @@ export function createRuntimeTraces(
    * built a prompt of its own.
    */
   const lastTurnContextUsage = new Map<string, ContextUsageState>();
+  /**
+   * The budget parts of each session's last built prompt (ATO-1678), for
+   * an `llm_failure` report on that turn. Counts only. Same lifecycle as
+   * `lastTurnContextUsage`: written on `prompt_built`, cleared with it.
+   */
+  const lastPromptBudget = new Map<string, LlmPromptBudget>();
 
   const ensureRecorder = (
     session: SessionState,
@@ -187,6 +195,7 @@ export function createRuntimeTraces(
     lastTurnContextUsage.get(sessionId);
   const clearContextUsage = (sessionId: string): void => {
     lastTurnContextUsage.delete(sessionId);
+    lastPromptBudget.delete(sessionId);
   };
   const releaseSession = (sessionId: string): void => {
     activeTraceSessions.delete(sessionId);
@@ -243,6 +252,7 @@ export function createRuntimeTraces(
               ctx.sessionId,
               contextUsageFromPrompt(step.prompt),
             );
+            lastPromptBudget.set(ctx.sessionId, promptBudgetOf(step.prompt));
           } else if (step.type === "llm_completed") {
             const counted = step.completion.timing?.promptTokens ?? 0;
             const usage = lastTurnContextUsage.get(ctx.sessionId);
@@ -274,7 +284,15 @@ export function createRuntimeTraces(
           source: "llm_failure",
           category: event.category,
           // Only with reporting on: the engine probe reads state files.
-          ...(reporter ? { llmFailure: describeLlmFailure(event) } : {}),
+          ...(reporter
+            ? {
+                llmFailure: describeLlmFailure(
+                  event,
+                  undefined,
+                  ctx ? lastPromptBudget.get(ctx.sessionId) : undefined,
+                ),
+              }
+            : {}),
         });
       }
       options.handlers?.onAgentEvent?.(event, ctx?.sessionId);

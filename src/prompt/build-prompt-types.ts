@@ -19,7 +19,12 @@ import type { ToolRole } from "../tools/tool-roles.js";
 
 export interface BuildPromptInput {
   workspace?: import("../session/workspace-context.js").SessionWorkspace;
-  /** Estimated cost of the actual native tool schemas, cloud only. */
+  /**
+   * Estimated cost of the request's native `tools` array (JSON schemas),
+   * set on a `native_tools` link in either model mode. The window holds
+   * it beside the prompt text, so the budget subtracts it (ATO-1678;
+   * before, only the cloud budget did). Absent on the grammar transport.
+   */
   toolSchemaTokens?: number;
   /** Stage 1 metadata only: does not change rendering or budgets yet. */
   modelMode?: import("../llm/model-mode.js").ResolvedModelMode;
@@ -269,8 +274,19 @@ export interface BuiltPrompt {
     recalled: number;
     memoryIndex: number;
     taskPolicy: number;
+    /**
+     * The native `tools` array sent beside the text (`toolSchemaTokens`);
+     * included in `total`. Absent when the request carries none.
+     */
+    toolSchema?: number;
     total: number;
   };
+  /**
+   * The reply reserve the local budget held back
+   * (`effectiveReplyReserve`), for diagnostics only: not `n_predict`.
+   * The cloud prompt reports it on `contextBudget` instead.
+   */
+  replyReserve?: number;
   limits: TokenBudgetLimits;
   truncated: boolean;
   truncation: BuiltPromptTruncationFlags;
