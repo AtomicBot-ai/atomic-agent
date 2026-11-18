@@ -326,7 +326,7 @@ describe("screen gate", () => {
     );
     expect(pointOnly.has("os.screen.capture")).toBe(true);
     expect(pointOnly.has("os.screen.point")).toBe(true);
-    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key"]) {
+    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key", "os.screen.elements", "os.screen.press"]) {
       expect(pointOnly.has(name), name).toBe(false);
     }
     const controlOnly = nameSet(

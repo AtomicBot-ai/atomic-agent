@@ -40,6 +40,22 @@ export const SCREEN_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "os.screen.elements",
+    summary:
+      'List the controls of one app window (macOS) as numbered lines `[n] role "name" value? (x,y,w,h) actions`, read through Accessibility: no screenshot or pixel coordinates needed. Then act with os.screen.press { app, element: n }. May ask the user first.',
+    argsSchema:
+      "{ app: string /* app name or bundle id */, window?: string /* part of the window title */, maxElements?: number /* default 60, at most 200 */ }",
+    tier: "rare",
+  },
+  {
+    name: "os.screen.press",
+    summary:
+      "Press element n of the last os.screen.elements list for that app, or set a text field's text with `value`, in the background: the mouse does not move and the app is not brought to the front. Asks the user first. If the element cannot be pressed this way it refuses; it never clicks instead.",
+    argsSchema:
+      "{ app: string, element: number /* n from the [n] lines */, window?: string, value?: string /* set this text instead of pressing; at most 2000 chars */ }",
+    tier: "rare",
+  },
+  {
     name: "os.screen.point",
     summary:
       'Show the user where to click instead of clicking: arrows, boxes or short labels drawn on their screen by the desktop app, optionally numbered steps. x,y are pixels of the last os.screen.capture image (or global screen points with coords "points"). Only draws; never clicks or types. Then tell the user what to do.',

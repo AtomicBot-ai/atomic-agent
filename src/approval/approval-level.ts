@@ -125,7 +125,8 @@ export type ApprovalCategory =
   | "paid_generation"
   /**
    * Driving the operator's real mouse and keyboard (`os.screen.click`,
-   * `os.screen.type`, `os.screen.key`, ATO-525). Level 4 beside `shell`:
+   * `os.screen.type`, `os.screen.key`, ATO-525), or pressing a control
+   * through Accessibility (`os.screen.press`, ATO-530). Level 4 beside `shell`:
    * a click or a keystroke in an arbitrary app can do anything the
    * operator could do there, so it never goes quiet below the rung where
    * a shell command does.

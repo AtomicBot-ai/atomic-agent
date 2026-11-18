@@ -2,7 +2,8 @@ import { chmod, lstat, mkdir, open, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { runCommand } from "../../../sandbox/command-runner.js";
-import { buildScreenInvocation, type ScreenOp } from "./screen-jxa.js";
+import { buildScreenInvocation, type ScreenFrame, type ScreenOp } from "./screen-jxa.js";
+import { parseElement, type ScreenElement } from "./screen-elements.js";
 import type { ScreenWindow } from "./screen-window.js";
 
 /**
@@ -155,6 +156,23 @@ export interface ScreenProbe {
   textTruncated?: boolean;
   /** How `type` delivered the text: `keys`, `paste` or `keys+paste`. */
   via?: string;
+  /** A window's controls (`elements`), in walk order. */
+  elements?: ScreenElement[];
+  elementsTruncated?: boolean;
+  /** Elements the walk looked at (`elements`). */
+  scanned?: number;
+  /** The AX title of the window the walk (`elements`) used. */
+  windowTitle?: string;
+  /** That window's frame (`elements`), stored so a press finds the same one of same-titled windows. */
+  windowFrame?: ScreenFrame;
+  /** `press`: what it did, `press` or `set-value`. */
+  did?: string;
+  /** `press`: the frontmost app right after acting, to show focus stayed put. */
+  frontmostAfter?: ScreenApp | null;
+  /** `press` refused as `element-changed`: what is at the path now. */
+  element?: { role: string; name: string };
+  /** `press` refused as `press-unsupported`: the actions the element does answer. */
+  actions?: string[];
   error?: string;
 }
 
@@ -179,6 +197,15 @@ export async function runScreenOp(
     );
   }
   return parseScreenProbe(result.stdout);
+}
+
+/** A `{x, y, width, height}` of finite numbers, or `null`. */
+export function parseFrame(raw: unknown): ScreenFrame | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const nums = [o.x, o.y, o.width, o.height];
+  if (!nums.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
+  return { x: o.x as number, y: o.y as number, width: o.width as number, height: o.height as number };
 }
 
 export function parseScreenProbe(stdout: string): ScreenProbe {
@@ -208,6 +235,24 @@ export function parseScreenProbe(stdout: string): ScreenProbe {
     ...(typeof obj.text === "string" ? { text: obj.text } : {}),
     ...(typeof obj.textTruncated === "boolean" ? { textTruncated: obj.textTruncated } : {}),
     ...(typeof obj.via === "string" ? { via: obj.via } : {}),
+    ...(Array.isArray(obj.elements) ? { elements: obj.elements.flatMap(parseElement) } : {}),
+    ...(typeof obj.elementsTruncated === "boolean" ? { elementsTruncated: obj.elementsTruncated } : {}),
+    ...(typeof obj.scanned === "number" ? { scanned: obj.scanned } : {}),
+    ...(typeof obj.windowTitle === "string" ? { windowTitle: obj.windowTitle } : {}),
+    ...(parseFrame(obj.windowFrame) ? { windowFrame: parseFrame(obj.windowFrame)! } : {}),
+    ...(typeof obj.did === "string" ? { did: obj.did } : {}),
+    ...("frontmostAfter" in obj ? { frontmostAfter: parseApp(obj.frontmostAfter) } : {}),
+    ...(obj.element && typeof obj.element === "object"
+      ? {
+          element: {
+            role: String((obj.element as Record<string, unknown>).role ?? ""),
+            name: String((obj.element as Record<string, unknown>).name ?? ""),
+          },
+        }
+      : {}),
+    ...(Array.isArray(obj.actions)
+      ? { actions: obj.actions.filter((a): a is string => typeof a === "string") }
+      : {}),
     ...(typeof obj.error === "string" ? { error: obj.error } : {}),
   };
 }

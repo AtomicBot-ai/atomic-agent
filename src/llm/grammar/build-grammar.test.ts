@@ -1043,6 +1043,8 @@ describe("the base grammar's vocabulary", () => {
       "os.screen.click",
       "os.screen.type",
       "os.screen.key",
+      "os.screen.elements",
+      "os.screen.press",
     ]) {
       const call = `[{"tool":"${name}","args":{}}]`;
       expect(gbnfAccepts(grammar, "root", call), name).toBe(true);
