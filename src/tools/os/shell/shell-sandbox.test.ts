@@ -85,6 +85,21 @@ describe.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-e
       expect(result.summary).toContain("end");
     });
 
+    // Review fix: `cwd` is the model's argument; starting the command in
+    // a denied or outside folder must not widen the sandbox to it.
+    it("a cwd in the state dir does not reopen it", async () => {
+      const result = await tool(on).run(
+        { cmd: "cat .env; echo end", cwd: state },
+        ctx(),
+      );
+      expect(result.summary).not.toContain("sandbox-marker-469");
+    });
+
+    it("a cwd outside the working folder does not make it writable", async () => {
+      await tool(on).run({ cmd: "echo x > escaped.txt", cwd: outside }, ctx());
+      expect(existsSync(join(outside, "escaped.txt"))).toBe(false);
+    });
+
     it("runs as before when Safe Mode is off", async () => {
       await mkdir(join(outside, "d"), { recursive: true });
       const target = join(outside, "d", "free.txt");

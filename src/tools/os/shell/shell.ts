@@ -387,8 +387,10 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       const wrapped = wrapWithOsSandbox(
         spawnSpec.command,
         spawnSpec.args,
+        // Roots from the session's working directory only: `cwd` is a
+        // model-supplied argument, so it may start the command anywhere
+        // but never widens what the sandbox allows.
         buildOsSandboxPolicy({
-          cwd,
           workspaceRoots: [ctx.workingDir],
           ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
           network: sandbox.network,
@@ -403,11 +405,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       }
       spawnCommand = wrapped.command;
       spawnArgs = wrapped.args;
-      sandboxNotice = (
-        "Safe Mode sandbox: writes outside the working folder and temp, reads of credential folders" +
-          (sandbox.network ? "" : " and network access") +
-          " are blocked. An `Operation not permitted` error comes from that, not from the command."
-      );
+      sandboxNotice = sandbox.network
+        ? "Safe Mode sandbox: writes outside the working folder, temp and download caches, and reads of credential folders, are blocked. An `Operation not permitted` error comes from that, not from the command."
+        : "Safe Mode sandbox: writes outside the working folder, temp and download caches, reads of credential folders, internet and local-socket connections, DNS and opening URLs are blocked; loopback (127.0.0.1) stays open. An `Operation not permitted` or name-resolution error comes from that, not from the command.";
     }
     // Its own process group, so a stop reaches what the command
     // started too (`sleep 30 &` behind a subshell used to outlive the
