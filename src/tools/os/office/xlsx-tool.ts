@@ -1,10 +1,12 @@
 import { extname } from "node:path";
 
 import { compressToolResult } from "../../../compressor/result-compressor.js";
-import type { ToolDefinition } from "../../tool-registry.js";
+import type { ToolContext, ToolDefinition } from "../../tool-registry.js";
 import { resolveUserPath } from "../expand-home.js";
 import type { FsDangerousToolOptions } from "../fs/fs-require-approval.js";
+import { CHART_TYPES, type ChartType } from "../ooxml/ooxml-chart.js";
 import { OS_FS_XLSX_CONTRACT } from "./office-contracts.js";
+import { addChartToXlsx, chartDataFromSheet, hasCharts, type ChartPlacement } from "./xlsx-chart.js";
 import { commitOfficeFile, given, optionalString, readExisting } from "./office-write.js";
 import {
   openWorkbook,
@@ -21,7 +23,7 @@ const TOOL = OS_FS_XLSX_CONTRACT.name;
 /** One call's worth of cells. */
 export const MAX_XLSX_CELLS = 50_000;
 
-type XlsxOp = "create" | "write" | "read";
+type XlsxOp = "create" | "write" | "read" | "chart";
 
 interface XlsxArgs {
   path: string;
@@ -33,6 +35,9 @@ interface XlsxArgs {
   bold: boolean;
   numFmt?: string;
   overwrite: boolean;
+  /** op chart: what to draw over `range`, placed at `cell` when given. */
+  chart?: { type: ChartType; title?: string };
+  cellGiven: boolean;
 }
 
 function isCellInput(value: unknown): value is CellInput {
@@ -55,8 +60,8 @@ export function parseXlsxArgs(raw: Record<string, unknown>): XlsxArgs {
     throw new Error(`${TOOL}: \`path\` must end in .xlsx (got ${JSON.stringify(path)}); ${hint}`);
   }
   const op = raw.op;
-  if (op !== "create" && op !== "write" && op !== "read") {
-    throw new Error(`${TOOL}: \`op\` must be one of create, write, read`);
+  if (op !== "create" && op !== "write" && op !== "read" && op !== "chart") {
+    throw new Error(`${TOOL}: \`op\` must be one of create, write, read, chart`);
   }
   let rows: CellInput[][] = [];
   if (given(raw.rows)) {
@@ -85,6 +90,21 @@ export function parseXlsxArgs(raw: Record<string, unknown>): XlsxArgs {
   }
   const sheet = optionalString(raw.sheet, "sheet", TOOL);
   const numFmt = optionalString(raw.numFmt, "numFmt", TOOL);
+  let chart: XlsxArgs["chart"];
+  if (op === "chart") {
+    if (range === undefined || !range.includes(":")) {
+      throw new Error(
+        `${TOOL}: chart needs \`range\` like 'A1:C5': a header row with the series names, the categories in its first column`,
+      );
+    }
+    // Flat fields, not a nested object: they stay on the strict native-tools path.
+    const type = typeof raw.chartType === "string" && raw.chartType.length > 0 ? raw.chartType.toLowerCase() : "column";
+    if (!(CHART_TYPES as readonly string[]).includes(type)) {
+      throw new Error(`${TOOL}: chartType must be one of ${CHART_TYPES.join(", ")} (column = vertical bars, bar = horizontal)`);
+    }
+    const title = typeof raw.title === "string" && raw.title.trim().length > 0 ? raw.title.trim() : undefined;
+    chart = { type: type as ChartType, ...(title === undefined ? {} : { title }) };
+  }
   return {
     path,
     op,
@@ -95,8 +115,13 @@ export function parseXlsxArgs(raw: Record<string, unknown>): XlsxArgs {
     bold: raw.bold === true,
     ...(numFmt === undefined ? {} : { numFmt }),
     overwrite: raw.overwrite === true,
+    ...(chart === undefined ? {} : { chart }),
+    cellGiven: given(raw.cell),
   };
 }
+
+const CHARTS_WOULD_BE_LOST =
+  "it has charts, and writing cells here would drop them (the cell writer cannot keep charts). Save a copy first, or write to another workbook";
 
 export function buildOsFsXlsxTool(options: FsDangerousToolOptions): ToolDefinition {
   return {
@@ -127,6 +152,11 @@ export function buildOsFsXlsxTool(options: FsDangerousToolOptions): ToolDefiniti
         );
       }
 
+      if (args.op === "chart") return chartOp(options, ctx, args, absolute, existing);
+
+      if (args.op === "write" && existing !== null && (await hasChartsSafe(existing))) {
+        throw new Error(`${TOOL}: not writing to ${absolute}: ${CHARTS_WOULD_BE_LOST}`);
+      }
       if (args.op === "create" && existing !== null && !args.overwrite) {
         throw new Error(
           `${TOOL}: ${absolute} already exists; use op write to change it, or overwrite: true to replace it`,
@@ -141,6 +171,9 @@ export function buildOsFsXlsxTool(options: FsDangerousToolOptions): ToolDefiniti
       const build = async (current: Buffer | null): Promise<XlsxEdit> => {
         if (args.op === "write" && current === null) {
           throw new Error(`${TOOL}: ${absolute} does not exist; use op create to make it`);
+        }
+        if (args.op === "write" && current !== null && (await hasChartsSafe(current))) {
+          throw new Error(`${TOOL}: ${CHARTS_WOULD_BE_LOST}`);
         }
         const workbook = await wrapXlsxError(
           () => openWorkbook(args.op === "write" && current !== null ? current : undefined),
@@ -202,6 +235,79 @@ export function buildOsFsXlsxTool(options: FsDangerousToolOptions): ToolDefiniti
       });
     },
   };
+}
+
+async function hasChartsSafe(data: Buffer): Promise<boolean> {
+  try {
+    return await hasCharts(data);
+  } catch {
+    // Not a zip: exceljs reports that more usefully.
+    return false;
+  }
+}
+
+/** op chart: a native chart over a data block, the workbook otherwise untouched. */
+async function chartOp(
+  options: FsDangerousToolOptions,
+  ctx: ToolContext,
+  args: XlsxArgs,
+  absolute: string,
+  existing: Buffer | null,
+) {
+  if (existing === null) throw new Error(`${TOOL}: ${absolute} does not exist; create it and write the data first`);
+  const chart = args.chart ?? { type: "column" as const };
+  const range = args.range ?? "";
+  const build = async (current: Buffer | null): Promise<{ data: Buffer; placement: ChartPlacement }> => {
+    if (current === null) throw new Error(`${absolute} was removed`);
+    const workbook = await wrapXlsxError(() => openWorkbook(current), absolute);
+    const { sheet } = pickSheet(workbook, args.sheet, false);
+    const spec = chartDataFromSheet(sheet, { ...chart, range });
+    return addChartToXlsx(current, spec, {
+      ...chart,
+      range,
+      sheet: sheet.name,
+      ...(args.cellGiven ? { anchor: args.cell } : {}),
+    });
+  };
+  let built: { data: Buffer; placement: ChartPlacement };
+  try {
+    built = await build(existing);
+  } catch (err) {
+    const message = (err as Error).message;
+    throw new Error(message.startsWith(`${TOOL}:`) ? message : `${TOOL}: ${message}`);
+  }
+  const result = await commitOfficeFile(options, ctx, {
+    tool: TOOL,
+    absolute,
+    display: args.path,
+    data: built.data,
+    baseline: existing,
+    rebuild: async (fresh) => {
+      built = await build(fresh);
+      return built.data;
+    },
+    reason: `add a ${chart.type} chart of ${built.placement.sheetName}!${built.placement.range} to ${absolute}`,
+    preview: `${chart.type} chart${chart.title === undefined ? "" : ` "${chart.title}"`}: ${built.placement.series} series × ${built.placement.points} categories, at ${built.placement.anchor}`,
+    replacesWhole: false,
+  });
+  const { placement } = built;
+  const done = `added a ${chart.type} chart of ${placement.sheetName}!${placement.range} to ${absolute} at ${placement.anchor} (${placement.series} series, ${placement.points} categories); it follows the cells when they change`;
+  return compressToolResult({
+    tool: TOOL,
+    status: "ok",
+    output: result.restoreNote === null ? done : `${done}; ${result.restoreNote}`,
+    details: {
+      path: absolute,
+      op: "chart",
+      sheet: placement.sheetName,
+      range: placement.range,
+      anchor: placement.anchor,
+      chartType: chart.type,
+      chartPart: placement.chartPart,
+      bytes: result.data.byteLength,
+      ...(result.rebuilt ? { rebuiltAfterApproval: true } : {}),
+    },
+  });
 }
 
 interface XlsxEdit {

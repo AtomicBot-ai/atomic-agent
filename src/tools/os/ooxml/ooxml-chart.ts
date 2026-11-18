@@ -61,9 +61,12 @@ export function columnName(col: number): string {
   return out;
 }
 
-/** `Sheet1` stays bare; `Q3 sales` becomes `'Q3 sales'`, an apostrophe doubled. */
+/** A sheet name for a formula: `Q1` becomes `'Q1'`, `Bob's` becomes `'Bob''s'`. */
 export function sheetRef(sheet: string): string {
-  return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(sheet) ? sheet : `'${sheet.replace(/'/g, "''")}'`;
+  // Always quoted, apostrophes doubled: names like Q1, FY2026 or TRUE
+  // read as cell references or values when bare, and Excel itself
+  // writes chart formulas quoted.
+  return `'${sheet.replace(/'/g, "''")}'`;
 }
 
 function cell(layout: ChartDataLayout, rowOffset: number, colOffset: number): string {
