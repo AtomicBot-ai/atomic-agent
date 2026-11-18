@@ -14,12 +14,24 @@
  */
 
 import { isSea } from "node:sea";
-import { Writable } from "node:stream";
+import { type Readable, Writable } from "node:stream";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { getAppVersion } from "../version.js";
 import { JsonRpcConnection } from "./acp-jsonrpc.js";
-import { AcpServer } from "./acp-server.js";
+import { AcpServer, type AcpServerOptions } from "./acp-server.js";
+
+/**
+ * Seams for tests. Production passes nothing: the real stdio and the
+ * full agent runtime.
+ */
+export interface AcpCommandDeps {
+  stdin?: Readable;
+  stdout?: Writable;
+  stderr?: Writable;
+  /** Builds the agent runtime for a folder; `log` goes to stderr. */
+  createRuntime?: (log: (message: string) => void) => AcpServerOptions["createRuntime"];
+}
 
 export const ACP_HELP =
   [
@@ -42,9 +54,12 @@ export const ACP_HELP =
     '  "agent_servers": { "Atomic Agent": { "type": "custom", "command": "atag", "args": ["acp"] } }',
   ].join("\n") + "\n";
 
-export async function acpCommand(args: string[]): Promise<number> {
+export async function acpCommand(args: string[], deps: AcpCommandDeps = {}): Promise<number> {
+  const stdin = deps.stdin ?? process.stdin;
+  const stdout = deps.stdout ?? process.stdout;
+  const stderr = deps.stderr ?? process.stderr;
   if (args.includes("-h") || args.includes("--help")) {
-    process.stdout.write(ACP_HELP);
+    stdout.write(ACP_HELP);
     return 0;
   }
   if (args.includes("--setup")) {
@@ -53,36 +68,24 @@ export async function acpCommand(args: string[]): Promise<number> {
   }
   const unknown = args.find((a) => a !== "--setup");
   if (unknown !== undefined) {
-    process.stderr.write(`unknown option: ${unknown}\n${ACP_HELP}`);
+    stderr.write(`unknown option: ${unknown}\n${ACP_HELP}`);
     return 2;
   }
 
   const log = (message: string): void => {
-    process.stderr.write(`atomic-agent acp: ${message}\n`);
+    stderr.write(`atomic-agent acp: ${message}\n`);
   };
-  const protocolOut = claimStdout();
-  const config = getConfig();
+  // Before anything that could print: the runtime factory, config
+  // loading and every dependency they pull in.
+  const protocolOut = claimStdout(stdout, stderr);
   const server = new AcpServer({
     version: getAppVersion(),
     setupCommand: setupCommand(),
     log,
-    createRuntime: (workingDir, handlers) =>
-      createAgentRuntime({
-        workingDir,
-        approvalLevel: config.agent.approvalLevel,
-        traceDefault: false,
-        handlers: {
-          onApprovalRequest: (request) => handlers.onApprovalRequest(request),
-          logSinks: [
-            (record) => {
-              if (record.level === "warn" || record.level === "error") log(`${record.level}: ${record.message}`);
-            },
-          ],
-        },
-      }),
+    createRuntime: (deps.createRuntime ?? agentRuntimeFactory)(log),
   });
   const connection = new JsonRpcConnection({
-    input: process.stdin,
+    input: stdin,
     output: protocolOut,
     onRequest: (method, params) => server.handleRequest(method, params),
     onNotification: (method, params) => server.handleNotification(method, params),
@@ -91,12 +94,36 @@ export async function acpCommand(args: string[]): Promise<number> {
   server.attach(connection);
   log(`ready (version ${getAppVersion()})`);
 
-  const stop = (): void => process.stdin.destroy();
+  const stop = (): void => stdin.destroy();
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
-  await connection.closed;
-  await server.shutdown();
+  try {
+    await connection.closed;
+    await server.shutdown();
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+  }
   return 0;
+}
+
+/** The real runtime: one `createAgentRuntime` per working folder. */
+function agentRuntimeFactory(log: (message: string) => void): AcpServerOptions["createRuntime"] {
+  const config = getConfig();
+  return (workingDir, handlers) =>
+    createAgentRuntime({
+      workingDir,
+      approvalLevel: config.agent.approvalLevel,
+      traceDefault: false,
+      handlers: {
+        onApprovalRequest: (request) => handlers.onApprovalRequest(request),
+        logSinks: [
+          (record) => {
+            if (record.level === "warn" || record.level === "error") log(`${record.level}: ${record.message}`);
+          },
+        ],
+      },
+    });
 }
 
 /**
@@ -111,12 +138,15 @@ function setupCommand(): { command: string; args: string[] } {
 }
 
 /**
- * Keep the real stdout for protocol frames and point
- * `process.stdout.write` at stderr, so nothing else can corrupt the
- * stream the editor parses.
+ * Keep the real stdout for protocol frames and point `stdout.write` at
+ * stderr, so nothing else (a dependency's `console.log`, a stray
+ * `process.stdout.write`) can corrupt the stream the editor parses.
+ * Exported for tests.
  */
-function claimStdout(): Writable {
-  const stdout = process.stdout;
+export function claimStdout(
+  stdout: Writable = process.stdout,
+  stderr: Writable = process.stderr,
+): Writable {
   const writeStdout = stdout.write.bind(stdout) as (
     chunk: string | Uint8Array,
     callback?: (err?: Error | null) => void,
@@ -128,8 +158,8 @@ function claimStdout(): Writable {
   });
   stdout.on("error", (err) => protocolOut.destroy(err));
   stdout.on("close", () => protocolOut.destroy());
-  const toStderr = process.stderr.write.bind(process.stderr);
+  const toStderr = stderr.write.bind(stderr) as (...args: unknown[]) => boolean;
   stdout.write = ((chunk: string | Uint8Array, ...rest: unknown[]) =>
-    toStderr(chunk as string, ...(rest as []))) as typeof stdout.write;
+    toStderr(chunk, ...rest)) as Writable["write"];
   return protocolOut;
 }
