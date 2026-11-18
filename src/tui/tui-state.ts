@@ -5,6 +5,7 @@ import {
   type ApprovalLevel,
 } from "../approval/approval-level.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
+import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";
@@ -934,6 +935,12 @@ export interface TuiState {
    */
   codingModeMenu: { readonly cursor: number } | null;
   /**
+   * `/think` (ATO-490): the reasoning level the next turns ask for.
+   * Session state like `codingMode`, never persisted; `auto` sends
+   * nothing. Optional so states built by tests need not carry it.
+   */
+  reasoningLevel?: ReasoningLevel;
+  /**
    * `/rewind` (ATO-1057): the chat's earlier questions, newest first,
    * or `null`/absent when the picker is closed. Enter takes the chat
    * back to just before the highlighted one.
@@ -1139,6 +1146,7 @@ export function createInitialTuiState(
     abortArmed: false,
     codingMode: "default",
     codingModeMenu: null,
+    reasoningLevel: "auto",
     rewindPicker: null,
     planHandoff: false,
     // `session` is optional in practice: several reducer tests build a

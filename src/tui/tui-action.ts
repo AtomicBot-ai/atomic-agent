@@ -2,6 +2,7 @@ import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
 import type { AppendLocalPrompt } from "./append-local-question/append-local-question-state.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
+import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 import type { MetricSample } from "../tracing/metrics-collector.js";
@@ -173,6 +174,8 @@ export type TuiAction =
   /** Open the mode menu, seeded on the mode currently in force. */
   /** Put the drafted plan away without running it or leaving plan mode. */
   | { type: "plan_handoff_dismissed" }
+  /** `/think` (ATO-490): the reasoning level the next turns ask for. */
+  | { type: "reasoning_level_set"; level: ReasoningLevel }
   /** `/rewind` (ATO-1057): show the chat's earlier questions, newest first. */
   | { type: "rewind_picker_opened"; points: readonly RewindPoint[] }
   | { type: "rewind_picker_closed" }

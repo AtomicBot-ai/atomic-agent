@@ -582,6 +582,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           runtime.setApprovalLevel(resolved.approvalLevel);
           runtime.setPlanMode(resolved.planMode);
         },
+        // ATO-490: `/think`, for this window's next turns; never written to config.json.
+        onReasoningLevelChanged: (level) => orchestrator.setReasoningLevel(level),
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onRewindPickerRequested: () => orchestrator.openRewindPicker(),
         onRewindRequested: (turnIndex, expectText) =>

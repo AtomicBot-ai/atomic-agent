@@ -550,6 +550,16 @@ export const MENU: readonly MenuNode[] = [
     },
   },
   {
+    kind: "action", id: "model.think", label: "Reasoning depth…", group: "model",
+    slash: {
+      name: "think",
+      description:
+        "how hard the model thinks on the next turns: `/think` shows the level · `/think auto|low|medium|high` sets it for this window",
+      // ATO-490: right after /model.
+      rank: 27.5,
+    },
+  },
+  {
     kind: "submenu",
     id: "run.type",
     label: "Where it runs…",
