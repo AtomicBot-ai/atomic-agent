@@ -230,7 +230,7 @@ function fpPaintHead() {
   const d = FP.data && FP.data.ok ? FP.data : null;
   const name = d ? d.name : String(FP.path).split(/[\\/]/).pop();
   const togglable = d && (d.kind === 'markdown' || d.kind === 'html' || d.kind === 'csv' || d.kind === 'tsv');
-  const meta = d ? [d.kind === 'other' ? (d.ext || 'file').replace(/^\./, '').toUpperCase() : d.kind.toUpperCase(), fpFormatSize(d.size)].filter(Boolean).join(' · ') : '';
+  const meta = d ? [d.kind === 'other' || d.kind === 'office' ? (d.ext || 'file').replace(/^\./, '').toUpperCase() : d.kind.toUpperCase(), fpFormatSize(d.size)].filter(Boolean).join(' · ') : '';
   el.querySelector('.fp-head').innerHTML = '<span class="fp-ic">' + fpIcon('doc') + '</span>'
     + '<span class="fp-title"><span class="fp-name" title="' + fpEsc(d ? d.path : FP.path) + '">' + fpEsc(name) + '</span>'
     + (meta ? '<span class="fp-meta">' + fpEsc(meta) + '</span>' : '') + '</span>'
@@ -337,6 +337,7 @@ function fpBodyHtml(res) {
   const text = typeof d.text === 'string' ? d.text : '';
   if (d.kind === 'image') return '<div class="fp-img"><img alt="' + fpEsc(d.name) + '" src="' + fpEsc(d.dataUrl || '') + '"></div>';
   if (d.kind === 'pdf') return '<iframe class="fp-frame fp-pdf" data-fp-pdf="1" title="' + fpEsc(d.name) + '"></iframe>';
+  if (d.kind === 'office' && typeof fpOfficeHtml === 'function') return fpOfficeHtml(d);   // ATO-981: office-preview.js
   if (d.kind === 'other') return fpOtherHtml(d, d.note === 'too-large' ? 'too large to preview' : d.note === 'binary' ? 'no preview for this kind of file' : '');
   if (!text) return fpTruncNote(d) + '<div class="fp-msg">The file is empty.</div>';
   const source = FP.view === 'source';
