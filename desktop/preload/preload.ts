@@ -118,6 +118,10 @@ contextBridge.exposeInMainWorld("atomic", {
   exportSession: (id: string) => ipcRenderer.invoke("agent:exportSession", id),
   // ATO-581: Share chat… — a redacted file, then (asked twice) a secret gist
   shareSession: (id: string) => ipcRenderer.invoke("agent:shareSession", id),
+  // ATO-576: a project's next new chat in a git worktree of its own, and the agent's worktrees of that project
+  worktreeNewChat: (projectId: string) => ipcRenderer.invoke("worktree:newChat", projectId),
+  worktreeList: (projectId: string) => ipcRenderer.invoke("worktree:list", projectId),
+  worktreeRemove: (projectId: string, path: string) => ipcRenderer.invoke("worktree:remove", projectId, path),
   codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */

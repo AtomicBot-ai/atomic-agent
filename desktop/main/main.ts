@@ -23,6 +23,7 @@ import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpd
 import { folderForTurn, readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { assignChat, deleteProject, readProjects, saveProject, turnProject, updateProjects } from "./projects-store.js";
 import { newChatSessionId } from "./chat-session.js";
+import { ChatWorktrees, gitExecWith, registerChatWorktreeIpc } from "./chat-worktree-ipc.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { busyPorts, modelPortsOf, onSmokeStopSignal, portsHeldByRun, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
@@ -1711,6 +1712,13 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
+  // ATO-576: a project's "New chat in its own branch" and its worktree list (chat-worktree-ipc.ts).
+  const chatWorktrees = new ChatWorktrees({
+    stateDir: DESKTOP_STATE_DIR, git: gitExecWith(agentEnv), isRemote: () => client.isRemote, newChatId: newChatSessionId,
+    projectFolder: (id) => readProjects(DESKTOP_STATE_DIR).projects.find((p) => p.id === id)?.folder || null,
+    repoint: (id, dir) => client.setSessionWorkingDir(id, dir),
+  });
+  registerChatWorktreeIpc(ipcMain, chatWorktrees);
   ipcMain.handle("agent:chat", async (_event, payload: unknown) => {
     const { messages, sessionId, projectId, reasoning: reasoningRaw, turnModel: askedModel } = payload as {
       messages?: Array<{ role: string; content: string }>;
@@ -1789,10 +1797,11 @@ function wireIpc(client: AgentClient): void {
     const proj = turnProject(readProjects(DESKTOP_STATE_DIR), {
       sessionId: known, projectId, windowDir: client.status.workingDir, remote: client.isRemote,
     });
+    const inWorktree = !known && proj.project ? chatWorktrees.take(proj.project.id) : null;   // ATO-576
     let chatId = known ?? undefined;
     if (!known && proj.project) {
       // A new chat started in a project: its id is fixed here so it is in the project from its first turn.
-      chatId = newChatSessionId();
+      chatId = inWorktree?.chatId ?? newChatSessionId();
       const pid = proj.project.id;
       updateProjects(DESKTOP_STATE_DIR, (d) => assignChat(d, chatId, pid), () => send("projects:changed"));
     }
@@ -1801,7 +1810,7 @@ function wireIpc(client: AgentClient): void {
        takes that one's instructions. */
     const filed = folderForTurn(readChatFolders(DESKTOP_STATE_DIR), known, projectId);
     const instructions = filed ? (filed.instructions ? { name: filed.name, text: filed.instructions } : null) : proj.instructions;
-    void client.chat(turnId, sent, chatId, proj.workingDir, instructions, reasoning, turnModel ?? undefined);
+    void client.chat(turnId, sent, chatId, inWorktree?.dir ?? proj.workingDir, instructions, reasoning, turnModel ?? undefined);
     return { ok: true, turnId };
   }
 

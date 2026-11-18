@@ -310,6 +310,7 @@ function projectEditOpen(id) {
   PROJECTS.edit = {id, name: p.name, instructions, shownName: p.name, shownInstructions: instructions, error: null, saving: false};
   S.overlay = 'pedit';
   render();
+  if (p.folder && typeof worktreeLoad === 'function') worktreeLoad(id);   // ATO-576: its worktrees (chat-worktree.js)
   const f = typeof document !== 'undefined' && document.getElementById('pedit-name');
   if (f) f.focus();
 }
@@ -361,6 +362,7 @@ function projectEditHTML() {
   const body = '<label class="sd-cap" for="pedit-name">Name</label>'
     + '<input id="pedit-name" class="tk-inp" maxlength="' + PROJECT_NAME_MAX + '" value="' + esc(e.shownName) + '"' + (e.saving ? ' disabled' : '') + '>'
     + (p && p.folder ? '<p class="sd-cap mono" title="' + esc(p.folder) + '">' + esc(p.folder) + '</p>' : '')
+    + (p && p.folder && typeof worktreeListHTML === 'function' ? worktreeListHTML(e.id) : '')   // ATO-576
     + '<label class="sd-cap" for="pedit-instr">Instructions for every chat in this project</label>'
     + '<textarea id="pedit-instr" class="tk-inp sd-json" rows="8" maxlength="' + PROJECT_INSTRUCTIONS_MAX + '"'
       + ' placeholder="For example: answer in English, run the tests before you say it works."' + (e.saving ? ' disabled' : '') + '>' + esc(e.shownInstructions) + '</textarea>'
@@ -437,6 +439,7 @@ function projectsSidebarHTML(groups, folders) {
           + '<span class="sb-fic">' + (folder && typeof folderGlyphHTML === 'function' ? folderGlyphHTML(g.item, g.rows) : ic('folder')) + '</span>'
           + '<span class="sb-fname">' + esc(g.name) + '</span>'
           + (g.rows.length ? '<span class="ct tnum">' + g.rows.length + '</span>' : '')
+          + (folder || !g.item.folder || typeof worktreeHeadButton !== 'function' ? '' : worktreeHeadButton(g.id))   // ATO-576 (chat-worktree.js)
           + '<span class="sesmore iconbtn" data-act="pedit:' + esc(g.id) + '" title="Edit project" aria-label="Edit project" role="button">' + ic('edit') + '</span>'
           + '<span class="sesmore iconbtn" data-act="pdelask:' + esc(g.id) + '" title="Remove project" aria-label="Remove project" role="button">' + ic('x') + '</span>'
         + '</button>'
