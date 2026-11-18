@@ -1232,6 +1232,7 @@ const SETTINGS_SECTIONS = [
   ['models','Models','cpu',['llm']],
   ['connections','Connections','plug',['mcp','telegram','discord','push','composio','monid']],   // ATO-516: discord-settings.js; ATO-1630: monid.js
   ['memory','Memory','memory',['memory']],
+  ['myfiles','My files','folder',['myfiles']],   // ATO-1626: renderer/my-files.js
   // ATO-445: the agent's webhook routes sit beside Tasks, since each event becomes one (renderer/webhooks.js).
   ['tasks','Cron jobs','tasks',['tasks','webhooks']],   // W2: visible name only, the id stays
   ['skills','Skills','skills',['skills']],
@@ -1244,6 +1245,7 @@ const SETTINGS_SECTIONS = [
 /* Every pane, in nav order: [pane id, the name it goes by]. */
 const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['discord','Discord'],['push','Phone push'],['composio','Composio'],['monid','Monid'],['memory','Memory'],
                        ['tasks','Cron jobs'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
+SETTINGS_TABS.splice(SETTINGS_TABS.findIndex((t) => t[0] === 'memory') + 1, 0, ['myfiles','My files']);   // ATO-1626
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -6668,6 +6670,7 @@ function settingsPaneEntered(opened) {
   else if (pane === 'memory') memoryTabEntered();
   else if (pane === 'mcp') mcpTabEntered();
   else if (pane === 'plugins') pluginsTabEntered();
+  else if (pane === 'myfiles') myFilesTabEntered();   // ATO-1626 (my-files.js)
   // Item 7 part C: the LLM / Telegram / Import tabs' first load on entry.
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
@@ -6695,6 +6698,7 @@ function settingsPane() {
   if (p === 'mcp') return mcpTab();
   // ATO-954: Settings › Plugins (renderer/plugins-pane.js).
   if (p === 'plugins') return pluginsTab();
+  if (p === 'myfiles') return myFilesTab();   // ATO-1626 (my-files.js)
   // Item 7 part C: the LLM, Telegram and Import tabs.
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
@@ -7776,6 +7780,7 @@ function act(a) {
   if (k === 'mcp') { close(); mcpAct(a.slice(4)); return; }
   // ATO-954: Settings › Plugins' verbs (renderer/plugins-pane.js).
   if (k === 'plugins') { close(); pluginsAct(a.slice(8)); return; }
+  if (k === 'myfiles') { close(); myFilesAct(a.slice(8)); return; }   // ATO-1626
   // Item 7 part C: the LLM / Telegram / Import tabs' verbs.
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
