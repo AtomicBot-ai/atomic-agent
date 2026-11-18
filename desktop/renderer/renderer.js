@@ -1964,6 +1964,8 @@ const SLASH = [
   // ATO-259: POST /api/sessions/{id}/compact, as the TUI's `/compact`.
   ['compact','summarize older messages to free up context'],
   ['abort','abort the running turn'],
+  // ATO-586: the TUI's `/incognito` (incognito-chat.js).
+  ['incognito','start a new incognito chat: not saved to your chats or memory'],
   // ATO-965: the terminal's and Telegram's /status (status-snapshot.js).
   ['status','what the running turn is doing: now, last result, waiting on you, time'],
   ['quit','exit Atomic Agent'],
@@ -2056,6 +2058,7 @@ const PAL = [
   ]],
   ['Chat', [
     ['plus','New chat','','⌘ N','session:new'],
+    ['eyeOff','New incognito chat','','/incognito','session:incognito'],   // ATO-586 (incognito-chat.js)
     // Calm (S5): the verbs the Settings window's Commands list used to carry.
     ['chat','Switch chat…','','⌘ O','session:switch'],
     ['import','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156
@@ -4368,7 +4371,8 @@ function composer() {
   // ATO-486: the agent's live plan, above the queue (plan-bar.js).
   // ATO-1040: the chat's goal and the goal form, under the plan (goal-card.js).
   const goalBits = typeof goalCardHTML === 'function' ? goalCardHTML(S.sessionId, {esc, ic, busy: !!(S.busy || S.pending)}) + goalFormHTML({esc, ic}) : '';
-  return '<div class="composerwrap">' + status + fzLiveHTML() + planBarHTML(S.sessionId, {esc, ic}) + goalBits + q
+  return '<div class="composerwrap">' + status + fzLiveHTML() + incognitoBarHTML({sessionId: S.agentSession, empty: !S.log.length}, {esc, ic})   // ATO-586
+    + planBarHTML(S.sessionId, {esc, ic}) + goalBits + q
     // Item 2 (voice input): the strip is ALWAYS emitted, hidden and empty
     // when there is nothing to say, so refreshVoice() can repaint it by
     // outerHTML without a render() that would move the caret.
@@ -7485,7 +7489,8 @@ function act(a) {
     close(); S.settings = null; S.room = 'chat'; S.draft = '/' + name + ' '; S.slash = false;
     FOCUS.entry = true; render(); return;
   }
-  if (a === 'session:new') { close();
+  if (a === 'session:incognito') { act('session:new'); incognitoArm(BR).then(render); return; }   // ATO-586
+  if (a === 'session:new') { close(); incognitoLeave(BR);   // ATO-586: leaving an incognito chat deletes it
                              stashQueue();   // Backlog 26: what was queued in the chat being left waits for it, read before the view goes
                              liveLeave();    // Item 38: and a turn running there keeps its view for when it is opened again
                              S.log = []; S.history = []; S.agentSession = null; S.busy = false;
@@ -8365,6 +8370,7 @@ function runSlash(parts) {
   if (name === 'analytics') { analyticsSlash(rest); return; }
   if (name === 'feedback') { interviewSlash(rest); return; }   // ATO-1467
   if (name === 'telegram' && rest[0] === 'pair') { act('settings:telegram'); telegramAct('pair'); return; } // ATO-426
+  if (name === 'incognito') { act('session:incognito'); return; }   // ATO-586
   if (name === 'compact') {
     if (rest.length) { S.log.push({id:nid(), k:'system', text:'usage: /compact'}); render(); return; }
     compactNow(); return;
@@ -10270,12 +10276,12 @@ function startLiveTurn(text) {
   const live = {text, asked, item:streaming, log:S.log, startedAt:S.turnStartedAt, planMode:PLAN.startedMode, prior:livePriorAsks(asked)};
   // Item 27: with no session yet, this message opens a new chat, and the
   // chat's row goes on the list when the stream names its session.
-  const opensChat = !S.agentSession;
+  const opensChat = !S.agentSession && !incognitoArmed();   // ATO-586: an incognito chat never gets a row
   // The agent holds the session, so a turn sends the new message and the
   // session id — not a replay of everything said so far.
   // Backlog 25: read once. The person can open another chat before the
   // agent answers, and the turn still runs in the session it was sent with.
-  const session = S.agentSession || undefined;
+  const session = S.agentSession || incognitoSessionForNewChat() || undefined;
   // ATO-1146: a new chat New project opened says its project, so main files it there before the turn.
   // ATO-490: the chat's reasoning level rides along (absent for Auto); ATO-1148: so does its project's cloud model.
   const forProject = session ? undefined : projectForNewTurn();
@@ -21701,6 +21707,7 @@ let OPEN_SEQ = 0;
 let OPEN_CLEARED = 0;
 async function openSession(id) {
   if (!BR || !id) return;
+  incognitoLeave(BR, id);   // ATO-586: opening another chat deletes the incognito one
   // item 6: is a turn of this session streaming into this window right now?
   const live = [...RUNNING.values()].includes(id);
   // The TUI's switchSession is a no-op ("already on session <id>") for the

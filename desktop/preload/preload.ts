@@ -294,6 +294,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1067: model servers on the local network, and a check of one address (main/lan-discovery-ipc.ts). View-only. */
   lanFind: () => ipcRenderer.invoke("lan:find"),
   lanCheck: (url: string) => ipcRenderer.invoke("lan:check", url),
+  /** ATO-586: a new incognito chat's id, and closing one (deleted on the agent); main/incognito-chats-ipc.ts. */
+  incognitoOpen: () => ipcRenderer.invoke("incognito:open"),
+  incognitoClose: (id: string) => ipcRenderer.invoke("incognito:close", { id }),
   /** ATO-1040: the chat's goal, and set / pause / resume / clear (main/session-goal-ipc.ts). */
   goalGet: (sessionId: string) => ipcRenderer.invoke("goal:get", { sessionId }),
   goalAction: (sessionId: string, body: { action: string; criteria?: string[]; maxRounds?: number }) =>
