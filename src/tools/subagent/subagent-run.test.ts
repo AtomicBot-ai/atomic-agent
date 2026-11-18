@@ -31,6 +31,7 @@ import {
 } from "./index.js";
 import {
   SUBAGENT_CEILING_INSTRUCTION,
+  SUBAGENT_CEILING_REACHED_LINE,
   SUBAGENT_UNPRICED_NOTE,
   SUBAGENT_APPROVAL_REFUSED,
   SUBAGENT_OPERATOR_ONLY_REFUSED,
@@ -753,7 +754,11 @@ describe("subagent.run under the turn's spend ceiling (ATO-1670)", () => {
 
   it("notes on each row of an unpriced cloud leg that the ceiling was not applied to it", async () => {
     const calls: string[] = [];
-    const { deps } = harness({ runTurn: billingRunTurn(calls), resolveWorkerPricing: () => undefined });
+    const { deps } = harness({
+      runTurn: billingRunTurn(calls),
+      resolveWorkerPricing: () => undefined,
+      isCloudProvider: () => true,
+    });
     const ledger = spend(1);
     const result = await buildSubagentRunTool(deps).run(threeTasks, ctx({ turnSpend: ledger.seam }));
     expect(calls).toHaveLength(3);
@@ -763,8 +768,56 @@ describe("subagent.run under the turn's spend ceiling (ATO-1670)", () => {
     }
   });
 
+  it("adds no unpriced note for a local provider without slot affinity", async () => {
+    // Slot affinity is not what makes a leg local (an LM Studio or vLLM
+    // server may have none): the provider check says it is not cloud.
+    const calls: string[] = [];
+    const { deps } = harness({
+      runTurn: billingRunTurn(calls),
+      resolveWorkerPricing: () => undefined,
+      workerSupportsSlotAffinity: () => false,
+      isCloudProvider: () => false,
+    });
+    const result = await buildSubagentRunTool(deps).run(threeTasks, ctx({ turnSpend: spend(1).seam }));
+    expect(calls).toHaveLength(3);
+    for (const row of rowsOf(result.details)) {
+      expect(row.notes ?? []).not.toContain(SUBAGENT_UNPRICED_NOTE);
+    }
+  });
+
+  it("does not say work was stopped when the last completion of a finished run crossed the ceiling", async () => {
+    // The only subagent bills $1 against a $0.50 ceiling and still
+    // finishes ok: nothing was cut or held back.
+    const calls: string[] = [];
+    const finishesAnyway: SubagentRunDeps["runTurn"] = async (session, _message, options) => {
+      calls.push(session.id);
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      options.eventHook?.({
+        type: "llm_event",
+        event: { type: "llm_completed", completion: { usage: USAGE_1_USD } },
+      } as unknown as AgentLoopEvent);
+      options.eventHook?.({ type: "llm_event", event: { type: "assistant_reply", text: "done" } });
+      return {
+        session: createEmptySessionState({ id: "s-x", workingDir: "/repo" }),
+        reason: "reply",
+        stepCount: 1,
+      };
+    };
+    const { deps } = harness({ runTurn: finishesAnyway, resolveWorkerPricing: () => PRICE });
+    const result = await buildSubagentRunTool(deps).run(ONE_TASK, ctx({ turnSpend: spend(0.5).seam }));
+    expect(calls).toHaveLength(1);
+    const [row] = rowsOf(result.details);
+    expect(row!.status).toBe("ok");
+    expect((row!.notes ?? []).some((n) => n.startsWith("stopped by the turn's cap"))).toBe(false);
+    expect(result.summary).not.toContain("Stopped:");
+    expect(result.summary).not.toContain(SUBAGENT_CEILING_INSTRUCTION);
+    expect(result.summary).toContain(SUBAGENT_CEILING_REACHED_LINE);
+    expect(result.details).not.toHaveProperty("stoppedBy");
+    expect(result.details).toMatchObject({ ceilingReached: true });
+  });
+
   it("adds no unpriced note without a ceiling", async () => {
-    const { deps } = harness({ resolveWorkerPricing: () => undefined });
+    const { deps } = harness({ resolveWorkerPricing: () => undefined, isCloudProvider: () => true });
     const result = await buildSubagentRunTool(deps).run(threeTasks, ctx());
     for (const row of rowsOf(result.details)) {
       expect(row.notes ?? []).not.toContain(SUBAGENT_UNPRICED_NOTE);

@@ -1087,6 +1087,16 @@ export function registerRuntimeFusionAndReadScope(input: {
       // same resolver fusion.delegate's workers are priced with.
       resolveWorkerPricing: (providerId, modelId) =>
         resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId)?.pricing,
+      // "Local" as the session readout above decides it: a llama-server
+      // entry or one on a local server URL. Anything else configured is cloud.
+      isCloudProvider: (providerId) => {
+        const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+        return (
+          entry !== undefined &&
+          entry.kind !== "llama-server" &&
+          !isLocalServerUrl(entry.baseUrl ?? entry.url)
+        );
+      },
       // The same profile loader fusion.delegate is given.
       resolveAgentProfiles: (dir) =>
         loadAgentProfiles({

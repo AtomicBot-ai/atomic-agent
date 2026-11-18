@@ -93,6 +93,10 @@ export function subagentCeilingMessage(spentUsd: number, ceilingUsd: number): st
   return `the spend budget for this task is reached: ${formatUsd(spentUsd)} spent of the ${formatUsd(ceilingUsd)} allowed`;
 }
 
+/** The closing line when the ceiling was reached but nothing was cut. */
+export const SUBAGENT_CEILING_REACHED_LINE =
+  "Spend budget for this turn is now reached.";
+
 /** The row note for a cloud subagent with no price under a ceiling. */
 export const SUBAGENT_UNPRICED_NOTE =
   "not priced, spend ceiling not applied to this subagent";
@@ -138,6 +142,14 @@ export interface SubagentRunDeps extends WorkerRunnerCoreDeps {
    * turn's spend; no price (a local leg) counts as $0, as in Fusion.
    */
   resolveWorkerPricing?: (providerId: string, modelId: string) => WorkerPricing | undefined;
+  /**
+   * Whether a provider is a cloud one: configured, not `llama-server`
+   * and not on a local server URL (`isLocalServerUrl`), the rule the
+   * session readout and the inference seam use for "local". Under a
+   * ceiling, only a cloud leg with no price gets `SUBAGENT_UNPRICED_NOTE`.
+   * Absent: no leg is flagged.
+   */
+  isCloudProvider?: (providerId: string) => boolean;
   /** A slot-affine (local) leg runs one subagent at a time. */
   workerSupportsSlotAffinity: (providerId: string) => boolean;
   /**
@@ -433,7 +445,7 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       const ceilingOptionsFor = (leg: TaskLeg) => {
         if (ceiling === undefined) return {};
         const pricing = deps.resolveWorkerPricing?.(leg.providerId, leg.model);
-        if (pricing === undefined && !deps.workerSupportsSlotAffinity(leg.providerId)) {
+        if (pricing === undefined && deps.isCloudProvider?.(leg.providerId) === true) {
           unpricedLegs.add(`${leg.providerId}\u0000${leg.model}`);
         }
         return {
@@ -543,17 +555,20 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       // Every row the stop cut, whether the runner reports it cancelled,
       // failed or timed out; one that finished first, or finished ok, was
       // not cut.
-      const ceilingStopped = stoppedBy as string | undefined;
-      if (ceilingStopped !== undefined && !ctx.signal.aborted) {
+      const ceilingReachedAt = stoppedBy as string | undefined;
+      // Whether the ceiling cut or held back any subagent. The spend can
+      // cross it with the last completion of a run that finished: then
+      // nothing was stopped, and the model is not told otherwise.
+      let ceilingCut = false;
+      if (ceilingReachedAt !== undefined && !ctx.signal.aborted) {
         for (const [i, r] of results.entries()) {
-          if (
-            r.status !== "ok" &&
-            !r.error?.startsWith("not started:") &&
-            !finishedBeforeStop.has(r.id)
-          ) {
+          if (r.error?.startsWith("not started:")) {
+            ceilingCut = true;
+          } else if (r.status !== "ok" && !finishedBeforeStop.has(r.id)) {
+            ceilingCut = true;
             results[i] = {
               ...r,
-              notes: [...(r.notes ?? []), `stopped by the turn's cap: ${ceilingStopped}`],
+              notes: [...(r.notes ?? []), `stopped by the turn's cap: ${ceilingReachedAt}`],
             };
           }
         }
@@ -572,10 +587,13 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
           }
         }
       }
+      const ceilingStopped = ceilingCut ? ceilingReachedAt : undefined;
       const ceilingNote =
-        ceilingStopped === undefined
-          ? ""
-          : `\n\nStopped: ${ceilingStopped}. ${SUBAGENT_CEILING_INSTRUCTION}`;
+        ceilingStopped !== undefined
+          ? `\n\nStopped: ${ceilingStopped}. ${SUBAGENT_CEILING_INSTRUCTION}`
+          : ceilingReachedAt !== undefined && !ctx.signal.aborted
+            ? `\n\n${SUBAGENT_CEILING_REACHED_LINE}`
+            : "";
       const outcome = delegateOutcome(results);
       return compressToolResult(
         {
@@ -589,7 +607,9 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
             origin: "subagent",
             ...(profileReports.length === 0 ? {} : { profiles: profileReports }),
             ...(ceilingStopped === undefined
-              ? {}
+              ? ceilingReachedAt === undefined
+                ? {}
+                : { ceilingReached: true }
               : { stoppedBy: "cost-ceiling", stopReason: ceilingStopped }),
           },
         },
