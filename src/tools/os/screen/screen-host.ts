@@ -1,5 +1,6 @@
-import { mkdir, open, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
+import { dirname } from "node:path";
 import { runCommand } from "../../../sandbox/command-runner.js";
 import { buildScreenInvocation, type ScreenOp } from "./screen-jxa.js";
 import type { ScreenWindow } from "./screen-window.js";
@@ -70,7 +71,7 @@ export function resolveScreenDeps(overrides: Partial<ScreenDeps> = {}): ScreenDe
     ensureDir:
       overrides.ensureDir ??
       (async (path) => {
-        await mkdir(path, { recursive: true });
+        await ensurePrivateDir(path);
       }),
     writeText:
       overrides.writeText ??
@@ -80,6 +81,54 @@ export function resolveScreenDeps(overrides: Partial<ScreenDeps> = {}): ScreenDe
     now: overrides.now ?? (() => new Date()),
     tmpDir: overrides.tmpDir ?? tmpdir(),
   };
+}
+
+/** The file-system calls `ensurePrivateDir` makes; injectable for tests. */
+export interface PrivateDirFs {
+  mkdir: (path: string, options: { recursive: true; mode: number }) => Promise<unknown>;
+  lstat: (path: string) => Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean; uid: number }>;
+  chmod: (path: string, mode: number) => Promise<void>;
+  /** `process.getuid()`; `null` where there is none (Windows). */
+  uid: () => number | null;
+}
+
+const NODE_PRIVATE_DIR_FS: PrivateDirFs = {
+  mkdir: (path, options) => mkdir(path, options),
+  lstat: (path) => lstat(path),
+  chmod: (path, mode) => chmod(path, mode),
+  uid: () => (typeof process.getuid === "function" ? process.getuid() : null),
+};
+
+/**
+ * Make the screenshot folder and its parent private to this user.
+ *
+ * The folder lives under `os.tmpdir()`. On macOS that is a per-user 0700
+ * folder, but on Linux it is the shared `/tmp`, where another local user
+ * could read a full-screen capture, or pre-create the predictable
+ * `atomic-agent-screens` parent (or a symlink) and own what lands inside.
+ * So both levels are created 0700, must be real directories (not
+ * symlinks) owned by this user, and are set back to 0700 if they were
+ * looser. Anything else refuses the capture. Windows has no uid and a
+ * per-user temp folder; only the symlink check applies there.
+ */
+export async function ensurePrivateDir(
+  path: string,
+  fs: PrivateDirFs = NODE_PRIVATE_DIR_FS,
+): Promise<void> {
+  await fs.mkdir(path, { recursive: true, mode: 0o700 });
+  const uid = fs.uid();
+  for (const dir of [dirname(path), path]) {
+    const info = await fs.lstat(dir);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`screenshot folder ${dir} is not a plain folder; refusing to save a capture there`);
+    }
+    if (uid !== null && info.uid !== uid) {
+      throw new Error(
+        `screenshot folder ${dir} belongs to another user; remove it and try again`,
+      );
+    }
+    if (uid !== null) await fs.chmod(dir, 0o700);
+  }
 }
 
 export interface ScreenApp {

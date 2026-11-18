@@ -18,6 +18,7 @@ import {
   windowsCaptureInvocation,
 } from "./screen-capture-win-linux.js";
 import { ScreenGeometryStore } from "./screen-geometry.js";
+import { ensurePrivateDir, type PrivateDirFs } from "./screen-host.js";
 import { macOnlyMessage, type ScreenCommandResult, type ScreenDeps } from "./screen-host.js";
 import { fakeHost, screenCtx } from "./screen-host.fixture.js";
 
@@ -356,5 +357,58 @@ describe("off-mac message for the control tools", () => {
       expect(message).toContain("ATO-527");
     }
     expect(macOnlyMessage("os.screen.click", "freebsd")).toContain("macOS only");
+  });
+});
+
+describe("ensurePrivateDir (shared /tmp on Linux)", () => {
+  function fakeFs(entries: Record<string, { dir?: boolean; link?: boolean; uid?: number }>, uid: number | null = 1000) {
+    const chmods: Array<[string, number]> = [];
+    const mkdirs: Array<[string, number]> = [];
+    const fs: PrivateDirFs = {
+      mkdir: async (path, options) => {
+        mkdirs.push([path, options.mode]);
+      },
+      lstat: async (path) => {
+        const e = entries[path] ?? { dir: true, uid: 1000 };
+        return {
+          isDirectory: () => e.dir ?? true,
+          isSymbolicLink: () => e.link ?? false,
+          uid: e.uid ?? 1000,
+        };
+      },
+      chmod: async (path, mode) => {
+        chmods.push([path, mode]);
+      },
+      uid: () => uid,
+    };
+    return { fs, chmods, mkdirs };
+  }
+
+  const dir = "/tmp/atomic-agent-screens/s1";
+
+  it("creates 0700 and tightens both levels", async () => {
+    const { fs, chmods, mkdirs } = fakeFs({});
+    await ensurePrivateDir(dir, fs);
+    expect(mkdirs).toEqual([[dir, 0o700]]);
+    expect(chmods).toEqual([
+      ["/tmp/atomic-agent-screens", 0o700],
+      [dir, 0o700],
+    ]);
+  });
+
+  it("refuses a parent another user created", async () => {
+    const { fs } = fakeFs({ "/tmp/atomic-agent-screens": { uid: 1001 } });
+    await expect(ensurePrivateDir(dir, fs)).rejects.toThrow(/another user/);
+  });
+
+  it("refuses a symlink in place of the folder", async () => {
+    const { fs } = fakeFs({ [dir]: { link: true } });
+    await expect(ensurePrivateDir(dir, fs)).rejects.toThrow(/not a plain folder/);
+  });
+
+  it("only checks for symlinks where there is no uid (Windows)", async () => {
+    const { fs, chmods } = fakeFs({ "/tmp/atomic-agent-screens": { uid: 5 } }, null);
+    await ensurePrivateDir(dir, fs);
+    expect(chmods).toEqual([]);
   });
 });
