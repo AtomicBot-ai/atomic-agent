@@ -332,7 +332,8 @@ async function loadSitemap(
     try {
       // As bytes: `.xml.gz` and gzip-typed sitemaps are unzipped here (ATO-970).
       res = await input.fetchPage(sitemapUrl.toString(), { binary: true });
-    } catch {
+    } catch (err) {
+      notes.push(`Sitemap ${sitemapUrl.toString()} could not be fetched: ${err instanceof Error ? err.message : String(err)}.`);
       continue;
     }
     if (res.status < 200 || res.status >= 300) continue;

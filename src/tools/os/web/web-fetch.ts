@@ -42,6 +42,8 @@ import {
 } from "./web-fetch-ladder.js";
 
 const MAX_RESPONSE_BYTES = 2_000_000;
+/** How much a `binaryBody` request may write to disk before curl stops. */
+const MAX_BINARY_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const DEFAULT_MAX_CHARS = 50_000;
 const MAX_CHARS_CAP = 50_000;
@@ -665,9 +667,9 @@ async function curlOnce(
 /**
  * `curlOnce` for a `binaryBody` request: the body goes to a file in a fresh
  * private temp dir (`-o`), stdout carries only the `-w` meta line, and the
- * file is read back as bytes and removed. `--max-filesize` stops curl past
- * the usual 2 MB; a body without a Content-Length that runs past it is cut
- * when read and marked truncated.
+ * file is read back as bytes and removed. Only the first 2 MB are read
+ * back (the rest is marked truncated); `--max-filesize` is a 50 MB disk
+ * guard on top.
  */
 async function curlOnceBinary(
   url: URL,
@@ -763,8 +765,12 @@ function buildCurlArgs(
       : [
           "-H",
           "Accept-Encoding: gzip",
+          // A disk guard, not the cap: the read below keeps the first
+          // MAX_RESPONSE_BYTES and marks the rest truncated, so a big
+          // uncompressed sitemap still yields its first entries. 50 MB is
+          // the sitemap protocol's own size limit.
           "--max-filesize",
-          String(MAX_RESPONSE_BYTES),
+          String(MAX_BINARY_DOWNLOAD_BYTES),
           "-o",
           binaryBodyPath,
         ]),

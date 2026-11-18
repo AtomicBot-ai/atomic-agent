@@ -321,7 +321,10 @@ describe("os.web.crawl", () => {
       // curl must not unpack it: the size cap is ours.
       expect(sitemapReq!.args).not.toContain("--compressed");
       expect(sitemapReq!.args).toContain("Accept-Encoding: gzip");
-      expect(sitemapReq!.args).toContain("--max-filesize");
+      // A 50 MB disk guard, not the 2 MB read cap: a big plain sitemap
+      // still yields its first entries instead of failing whole.
+      const guard = sitemapReq!.args[sitemapReq!.args.indexOf("--max-filesize") + 1];
+      expect(guard).toBe(String(50 * 1024 * 1024));
       // Pages are still fetched as text.
       expect(site.binaryRequests.map((r) => r.url)).toEqual([`${O}/sitemap.xml.gz`]);
     });
