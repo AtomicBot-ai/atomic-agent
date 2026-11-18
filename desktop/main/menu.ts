@@ -72,6 +72,8 @@ export function menuTemplate(
       label: "File",
       submenu: [
         item("New Session", "session:new", "CommandOrControl+N"),
+        // ATO-1609: the hotkey's small chat window, from the menu too (main.ts "mini:open"); its chord is the user's own hotkey.
+        item("New Mini Chat", "mini:open"),
         sep,
         // ATO-532: the composer's window picker (renderer/window-snapshot.js); no chord.
         item("Attach App Window…", "attach:window"),

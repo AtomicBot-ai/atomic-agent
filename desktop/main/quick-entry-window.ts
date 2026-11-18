@@ -14,6 +14,7 @@ import {
   writeQuickEntryPref,
   type QuickEntryPref,
 } from "./quick-entry.js";
+import { MINI_CHAT_SIZE, miniChatPagePath } from "./mini-chat.js";
 
 /**
  * The Electron half of ATO-523 (quick-entry.ts holds the rest).
@@ -26,7 +27,15 @@ import {
  *
  * The box has no connection of its own: Enter hands the text to the main
  * window, which starts a new chat and sends it the way a message typed in
- * its composer goes. The text waits here until the page takes it
+ * its composer goes.
+ *
+ * ATO-1609: the window now loads the mini chat page (ATO-1063,
+ * renderer/mini-chat.html) instead of the one-line box, the way ChatGPT's
+ * companion window and Claude's quick entry work: the hotkey opens a small
+ * chat that stays in front, the reply streams there, and "Open in big window"
+ * moves it to the main window. The page keeps the unsent draft through
+ * app:quickEntryOpened / app:quickEntryDraft as the box did. The same window
+ * also opens from the menu (File › New Mini Chat) and the tray (`show`). The text waits here until the page takes it
  * (`app:quickEntryTake`): `app:quickEntry` only says there is one, and a
  * page that was still loading asks once it is up, so nothing is lost to a
  * window opened again from closed and nothing is sent twice.
@@ -50,7 +59,7 @@ export function isQuickEntryWindow(win: BrowserWindow): boolean {
   return quickWindows.has(win);
 }
 
-export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void } {
+export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show: () => void } {
   let box: BrowserWindow | null = null;
   let draft = "";
   let pending: string | null = null;
@@ -69,7 +78,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void } {
       return;
     }
     const cursor = screen.getCursorScreenPoint();
-    const bounds = quickEntryBounds(cursor, screen.getAllDisplays().map((d) => ({ bounds: d.bounds, workArea: d.workArea })));
+    const bounds = quickEntryBounds(cursor, screen.getAllDisplays().map((d) => ({ bounds: d.bounds, workArea: d.workArea })), MINI_CHAT_SIZE);
     const win = new BrowserWindow({
       ...bounds,
       show: false,
@@ -108,7 +117,16 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void } {
       win.show();
       win.focus();
     });
-    void win.loadFile(join(__dirname, "..", "renderer", "quick-entry.html")).catch(() => {});
+    void win.loadFile(miniChatPagePath(__dirname)).catch(() => {});
+  };
+  // The menu and tray item: brings the window up, never toggles it away.
+  const show = () => {
+    if (box && !box.isDestroyed()) {
+      box.show();
+      box.focus();
+      return;
+    }
+    open();
   };
 
   const shortcut = new QuickEntryShortcut(
@@ -179,5 +197,6 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void } {
       shortcut.dispose();
       hide();
     },
+    show,
   };
 }
