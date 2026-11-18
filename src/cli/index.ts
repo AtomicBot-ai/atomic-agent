@@ -233,12 +233,12 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "login",
-    summary: "Experimental: sign in with a ChatGPT plan without the Codex CLI (login chatgpt [--device] | status)",
+    summary: "Experimental: sign in with a ChatGPT or GitHub Copilot plan (login chatgpt [--device] | login copilot | status)",
     run: loginCommand,
   },
   {
     name: "logout",
-    summary: "Experimental: delete the stored ChatGPT sign-in (logout chatgpt)",
+    summary: "Experimental: delete the stored ChatGPT or Copilot sign-in (logout chatgpt | logout copilot)",
     run: logoutCommand,
   },
   {

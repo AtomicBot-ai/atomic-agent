@@ -28,6 +28,7 @@ import {
   type OAuthTokens,
 } from "../llm/provider/subscription-oauth/index.js";
 import { openUrlInBrowser } from "../tui/open-url.js";
+import { copilotLoginStatus, loginCopilot, logoutCopilot, type CopilotLoginDeps } from "./login-copilot.js";
 
 /**
  * ATO-1454 — `atag login chatgpt` / `atag logout chatgpt` /
@@ -51,7 +52,8 @@ import { openUrlInBrowser } from "../tui/open-url.js";
 
 const LOGIN_HELP = [
   "Usage: atomic-agent login chatgpt [--device] [--no-browser]",
-  "       atomic-agent login status [--json]",
+  "       atomic-agent login copilot",
+  "       atomic-agent login status [copilot] [--json]",
   "",
   "EXPERIMENTAL: sign in with your ChatGPT plan without the Codex CLI.",
   "The Codex CLI provider stays the recommended way; this one may stop",
@@ -60,12 +62,16 @@ const LOGIN_HELP = [
   "  --device       Sign in on another device with a link and a code (for SSH)",
   "  --no-browser   Print the sign-in link instead of opening the browser",
   "  --json         (status) Print the sign-in state as JSON",
+  "",
+  "EXPERIMENTAL: `login copilot` signs in with your GitHub Copilot plan",
+  "(a link and a code on github.com). It may stop working if GitHub changes",
+  "how Copilot signs in other apps.",
 ].join("\n");
 
 const LOGOUT_HELP = [
-  "Usage: atomic-agent logout chatgpt",
+  "Usage: atomic-agent logout chatgpt|copilot",
   "",
-  "Deletes the stored ChatGPT sign-in (experimental). The provider entry stays",
+  "Deletes the stored ChatGPT or GitHub Copilot sign-in (experimental). The provider entry stays",
   "in config.json and asks you to sign in again when it is used.",
 ].join("\n");
 
@@ -92,6 +98,8 @@ export interface LoginCommandDeps {
   /** A y/n question in the terminal; absent when there is no terminal. */
   ask?: ((question: string) => Promise<string>) | null;
   now?: () => number;
+  /** GitHub Copilot sign-in seams (ATO-462). */
+  copilot?: CopilotLoginDeps;
 }
 
 export type Activation = "already-active" | "only-provider" | "has-others";
@@ -101,7 +109,11 @@ const jsonFetch: JsonFetchLike = (url, init) =>
 
 function defaultEnsureProviderEntry(model: string): { id: string; added: boolean } {
   const providers = getConfig().llm?.providers ?? [];
-  const existing = providers.find((p) => p.kind === SUBSCRIPTION_OAUTH_KIND);
+  // An entry with no service is a ChatGPT one (the service was optional
+  // before Copilot); a Copilot entry is not reused for ChatGPT (ATO-462).
+  const existing = providers.find(
+    (p) => p.kind === SUBSCRIPTION_OAUTH_KIND && (p.subscriptionOauth?.service ?? "chatgpt") === "chatgpt",
+  );
   if (existing) {
     // A model the person picked stays; an entry with none gets Codex's default.
     if (!existing.defaultChatModel) setProviderDefaultChatModelInConfig(existing.id, model);
@@ -185,9 +197,13 @@ export async function loginCommand(args: string[], deps: LoginCommandDeps = {}):
     write(`${LOGIN_HELP}\n`);
     return target ? 0 : 2;
   }
-  if (target === "status") return loginStatus(rest, deps, write);
+  if (target === "status") {
+    if (rest[0] === "copilot") return copilotLoginStatus(rest.slice(1), deps, write, LOGIN_HELP);
+    return loginStatus(rest, deps, write);
+  }
+  if (target === "copilot") return loginCopilot(rest, deps, write, LOGIN_HELP);
   if (target !== "chatgpt") {
-    write(`unknown sign-in "${target}" (only chatgpt is supported)\n\n${LOGIN_HELP}\n`);
+    write(`unknown sign-in "${target}" (chatgpt or copilot)\n\n${LOGIN_HELP}\n`);
     return 2;
   }
   let device = false;
@@ -259,7 +275,12 @@ export async function loginCommand(args: string[], deps: LoginCommandDeps = {}):
   }
 }
 
-async function offerActivation(id: string, deps: LoginCommandDeps, write: (t: string) => void): Promise<void> {
+export async function offerActivation(
+  id: string,
+  deps: LoginCommandDeps,
+  write: (t: string) => void,
+  serviceName = "ChatGPT",
+): Promise<void> {
   const state = (deps.activation ?? defaultActivation)(id);
   if (state === "already-active") return;
   const setActive = deps.setActive ?? setActiveTextProviderInConfig;
@@ -280,7 +301,7 @@ async function offerActivation(id: string, deps: LoginCommandDeps, write: (t: st
     write(`To use it, pick "${id}" in the Providers panel.\n`);
     return;
   }
-  const answer = await ask("Use ChatGPT now? [y/N] ");
+  const answer = await ask(`Use ${serviceName} now? [y/N] `);
   if (/^y(es)?$/i.test(answer.trim())) {
     activate();
   } else {
@@ -333,6 +354,7 @@ export async function logoutCommand(args: string[], deps: LoginCommandDeps = {})
     write(`${LOGOUT_HELP}\n`);
     return target ? 0 : 2;
   }
+  if (target === "copilot" && rest.length === 0) return logoutCopilot(deps, write);
   if (target !== "chatgpt" || rest.length > 0) {
     write(`${LOGOUT_HELP}\n`);
     return 2;

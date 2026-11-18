@@ -97,3 +97,21 @@ describe("a sign-in service from a newer build (ATO-1448)", () => {
     ).toBeNull();
   });
 });
+
+describe("subscription-oauth service copilot (experimental GitHub Copilot sign-in, ATO-462)", () => {
+  it("parses and is not set aside", () => {
+    const entry = parseLlmProviderEntry(
+      { id: "copilot-sub", kind: SUBSCRIPTION_OAUTH_KIND, subscriptionOauth: { service: "copilot" } },
+      "p",
+    );
+    expect(entry.subscriptionOauth).toEqual({ service: "copilot" });
+    expect(entry.apiKey).toBeUndefined();
+    expect(
+      unknownProviderReason(
+        { id: "copilot-sub", kind: SUBSCRIPTION_OAUTH_KIND, subscriptionOauth: { service: "copilot" } },
+        new Set([SUBSCRIPTION_OAUTH_KIND]),
+        [],
+      ),
+    ).toBeNull();
+  });
+});
