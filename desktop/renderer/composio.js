@@ -165,10 +165,11 @@ function composioPaneHTML(st, h) {
         + '<p>The new key is checked with Composio before it replaces the saved one.</p>'
         + composioKeyFieldHTML(st, h, 'replace') + '</div>';
     }
-    if (st.hasKey !== false) body += composioRowsHTML(st, h);
-    // ATO-1494: the account switcher (composio-accounts.js), once a key is saved and Composio is on.
-    if (st.hasKey === true && st.enabled !== false && st.accounts && typeof composioAccountsHTML === 'function') body += composioAccountsHTML(st.accounts, h);
-    else body += '<div class="tk-card pad sd-tgcard sd-cmpcard sd-inlinecard"><p>No key is saved. Paste a new one to connect again.</p>' + composioKeyFieldHTML(st, h, 'setup') + '</div>';
+    if (st.hasKey !== false) {
+      body += composioRowsHTML(st, h);
+      // ATO-1494: the account switcher (composio-accounts.js), once a key is saved and Composio is on.
+      if (st.hasKey === true && st.enabled !== false && st.accounts && typeof composioAccountsHTML === 'function') body += composioAccountsHTML(st.accounts, h);
+    } else body += '<div class="tk-card pad sd-tgcard sd-cmpcard sd-inlinecard"><p>No key is saved. Paste a new one to connect again.</p>' + composioKeyFieldHTML(st, h, 'setup') + '</div>';
   }
   return '<div class="sd-pane sd-cmp">' + body + composioNoticesHTML(st, h) + '</div>';
 }
