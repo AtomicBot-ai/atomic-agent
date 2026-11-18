@@ -464,10 +464,17 @@ describe("agentProfiles (ATO-1667)", () => {
     );
   });
 
-  it("leaves the key out when absent or null, and reports a bad entry at its path", () => {
+  it("leaves the key out when absent or null, and skips a bad entry without failing the block", () => {
     expect(parseLlmRunModeConfig({ agentProfiles: null }, providers, "llm.runMode")).toEqual({});
+    expect(
+      parseLlmRunModeConfig(
+        { mode: "fusion", agentProfiles: { "bad name": { prompt: "x" }, good: { prompt: "y" } } },
+        providers,
+        "llm.runMode",
+      ),
+    ).toEqual({ mode: "fusion", agentProfiles: { good: { prompt: "y" } } });
     expect(() =>
-      parseLlmRunModeConfig({ agentProfiles: { "bad name": { prompt: "x" } } }, providers, "llm.runMode"),
-    ).toThrow("llm.runMode.agentProfiles.bad name");
+      parseLlmRunModeConfig({ agentProfiles: ["good"] }, providers, "llm.runMode"),
+    ).toThrow("llm.runMode.agentProfiles");
   });
 });

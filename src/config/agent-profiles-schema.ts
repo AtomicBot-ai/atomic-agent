@@ -11,7 +11,8 @@
  * rule and the limits are the file's own (`agent-profile.ts`), so a
  * profile can move between a file and the settings unchanged. Unknown
  * fields are ignored, as in `custom-models-schema.ts` and in a profile
- * file's frontmatter.
+ * file's frontmatter. A broken entry is skipped with a config notice,
+ * as a broken profile file is only a diagnostic; the other entries load.
  */
 
 import {
@@ -20,6 +21,7 @@ import {
   MAX_PROFILE_TOOLS,
   normaliseProfileName,
 } from "../agent-profiles/agent-profile.js";
+import { emitConfigNoticeOnce } from "./config-primitives.js";
 import { ConfigValidationError } from "./config-validation-error.js";
 
 /** One profile in the settings: the fields of an `agents/*.md` file. */
@@ -30,7 +32,11 @@ export type UserAgentProfileConfig = {
   prompt: string;
   /** A fusion role (`plan`, `build`, `review`, `explore`, `utility`), a model name or provider id, or `inherit`. */
   model?: string;
-  /** Tool allowlist (our names, `prefix.*` or Claude Code names). Absent or empty: the worker keeps its usual tools. */
+  /**
+   * Tool allowlist (our names, `prefix.*` or Claude Code names), a list or
+   * one comma-separated string as in a profile file; read as a list.
+   * Absent or empty: the worker keeps its usual tools.
+   */
   tools?: string[];
 };
 
@@ -76,10 +82,17 @@ function parseAgentProfileEntry(raw: unknown, field: string): UserAgentProfileCo
   }
 
   if (entry.tools !== undefined && entry.tools !== null) {
-    if (!Array.isArray(entry.tools) || entry.tools.some((t) => typeof t !== "string")) {
-      throw new ConfigValidationError(`${field}.tools`, "expected a list of tool names");
+    // Split and trimmed exactly as `parseAgentProfileFile` reads frontmatter.
+    const list = typeof entry.tools === "string"
+      ? entry.tools.split(",")
+      : Array.isArray(entry.tools) ? entry.tools : null;
+    if (list === null || list.some((t) => typeof t !== "string")) {
+      throw new ConfigValidationError(
+        `${field}.tools`,
+        "expected a list of tool names or one comma-separated string",
+      );
     }
-    const cleaned = [...new Set((entry.tools as string[]).map((t) => t.trim()).filter(Boolean))];
+    const cleaned = [...new Set((list as string[]).map((t) => t.trim()).filter(Boolean))];
     if (cleaned.length > MAX_PROFILE_TOOLS) {
       throw new ConfigValidationError(`${field}.tools`, `more than ${MAX_PROFILE_TOOLS} entries`);
     }
@@ -90,10 +103,18 @@ function parseAgentProfileEntry(raw: unknown, field: string): UserAgentProfileCo
   return out;
 }
 
+/** One notice per broken entry and process; the entry is left out. */
+function skipEntry(field: string, reason: string): void {
+  emitConfigNoticeOnce(`[atomic-agent] ${field}: ${reason}; this profile is skipped`);
+}
+
 /**
  * Parse the `agentProfiles` map. Absent or `null` is no profiles
  * (`undefined`); an empty object stays empty. Names are lower-cased as
- * a file name is, and two keys that become the same name are an error.
+ * a file name is. An entry with a bad name, a name another key already
+ * took after lower-casing, or an invalid field is skipped with a notice
+ * naming its path. A node that is not an object stays a validation
+ * error, as for `webhooks` and `fileTriggers`.
  */
 export function parseAgentProfilesConfig(
   raw: unknown,
@@ -107,15 +128,22 @@ export function parseAgentProfilesConfig(
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     const name = normaliseProfileName(key);
     if (name === null) {
-      throw new ConfigValidationError(
+      skipEntry(
         `${field}.${key}`,
         `profile name must be 1-64 letters, digits, "-" or "_", starting with a letter or digit (got ${JSON.stringify(key)})`,
       );
+      continue;
     }
     if (Object.hasOwn(out, name)) {
-      throw new ConfigValidationError(`${field}.${key}`, `duplicate profile name: ${name}`);
+      skipEntry(`${field}.${key}`, `duplicate profile name: ${name}`);
+      continue;
     }
-    out[name] = parseAgentProfileEntry(value, `${field}.${key}`);
+    try {
+      out[name] = parseAgentProfileEntry(value, `${field}.${key}`);
+    } catch (err) {
+      if (!(err instanceof ConfigValidationError)) throw err;
+      skipEntry(err.field, err.reason);
+    }
   }
   return out;
 }
