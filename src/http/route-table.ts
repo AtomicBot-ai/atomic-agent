@@ -38,6 +38,10 @@ import {
   createProjectTrustStatusHandler,
 } from "./route-project-trust.js";
 import {
+  createFallbackLocalQuestionAnswerHandler,
+  createFallbackLocalQuestionStatusHandler,
+} from "./route-fallback-local-question.js";
+import {
   createAckUndeliveredSteersHandler,
   createDeleteSessionHandler,
   createGetSessionHandler,
@@ -222,6 +226,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     },
     { method: "GET", path: "/api/project-trust", handler: createProjectTrustStatusHandler() },
     { method: "POST", path: "/api/project-trust", handler: createProjectTrustAnswerHandler() },
+    // ATO-1461: the one-time "Keep the local model as the last-resort fallback?" question.
+    { method: "GET", path: "/api/fallback/local-question", handler: createFallbackLocalQuestionStatusHandler() },
+    { method: "POST", path: "/api/fallback/local-question", handler: createFallbackLocalQuestionAnswerHandler() },
     {
       method: "POST",
       path: "/api/mcp/servers/{name}/restart",
