@@ -747,7 +747,7 @@ export interface UserConfigFile {
   // index signature here would make every property name valid on the type
   // the whole tree writes back — `{ ...file, viison: … }` would compile.
   localModels: UserLocalModelsConfig;
-  log: { level: LogLevel };
+  log: { /** Lowest severity the runtime's structured log writes: `debug`, `info` (default), `warn` or `error`. */ level: LogLevel };
   agent: UserAgentConfig;
   http: UserHttpConfig;
   web: {

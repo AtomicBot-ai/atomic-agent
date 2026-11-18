@@ -28,7 +28,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `localModels.url` | `string` | `"http://127.0.0.1:9931"` |  |
+| `localModels.url` | `string` | `"http://127.0.0.1:9931"` | Base URL of the External llama-server the agent talks to when `mode` is `external`; `managed` mode uses `managed.port` instead. Default `http://127.0.0.1:9931`. |
 | `localModels.mode` | `'external' \| 'managed'` | `"external"` | `external` uses `url`; `managed` overrides runtime `url` to localhost + `managed.port`. |
 | `localModels.completionMaxTokens` | `number` | `16384` | Upper bound on `n_predict` for grammar-constrained tool-call completions. Range [64, 131072]. The env var, when set, still wins over this file value (operator override). Env `ATOMIC_AGENT_LLAMA_MAX_TOKENS` wins when set. |
 | `localModels.requestTimeoutMs` | `number` | `300000` | Budget of one request to the local model: the whole request for a unary completion, the idle gap between bytes for a stream (see `RuntimeLocalModelsConfig.requestTimeoutMs`). Default 300 000 ms. `ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS`, when set, still wins over this file value (ATO-922). Env `ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS` wins when set. |
@@ -38,9 +38,9 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `localModels.drySampler` | `boolean` | `false` | Turn on llama.cpp's DRY ("don't repeat yourself") sampler for every `/completion` request to a llama.cpp-family engine (Atomic Core, the managed llama-server, an External llama-server). It penalises a token that would extend a sequence already in the last 256 tokens of prompt plus reply, which targets the verbatim prose loops small models fall into. |
 | `localModels.strictToolArgs` | `boolean` | `false` | Hold a local model's tool ARGUMENTS to each tool's JSON Schema on the grammar path, not only its tool names (ATO-633): a key the schema does not know, a missing required key or a value outside an `enum` cannot be sampled. |
 | `localModels.managed.engine` | `'llama-server' \| 'atomic-core'` | `"atomic-core"` | Managed process owner. Default `"atomic-core"`; files before v77 migrate to it (llama.cpp stays selectable). |
-| `localModels.managed.modelId` | `string \| null` | `null` |  |
-| `localModels.managed.port` | `number` | `19091` |  |
-| `localModels.managed.dataDirOverride` | `string \| null` | `null` |  |
+| `localModels.managed.modelId` | `string \| null` | `null` | Id of the local model the managed chat daemon loads, from the catalog or `customModels`. `null` (default) means none has been chosen yet. |
+| `localModels.managed.port` | `number` | `19091` | Loopback port the managed chat daemon listens on; in `managed` mode the agent talks to `http://127.0.0.1:<port>`. Default `19091`. |
+| `localModels.managed.dataDirOverride` | `string \| null` | `null` | Folder for the managed backends, downloaded models and their state files. `null` (default) uses `<stateDir>/models`, for example `~/.atomic-agent/models`. |
 | `localModels.managed.autoUpdate` | `boolean` | `true` | When true, managed-mode start (TUI auto-start / `s`, CLI `models start`) checks GitHub Releases and replaces the llama.cpp zip if a newer tag (or a stale Windows variant) is available. Default `true` since config v41. Older files stored an unused `false` default — those migrate to `true`. Set `false` to pin the installed backend. |
 | `localModels.managed.stopOnExit` | `boolean` | `true` | Stop the managed chat daemon when the last CLI session exits. `true` (default) — closing the terminal frees the RAM/VRAM the model was holding; a second live session keeps the daemon up (see `session-registry.ts`). `false` — keep the model warm between sessions; the operator stops it via `atomic-agent models stop`. |
 | `localModels.managed.autoRestart` | `boolean` | `true` | Bring the managed chat daemon back by itself when it dies (or, from the wedge watchdog, stops answering) while this TUI owns it. `true` (default): a crashed or killed llama-server is restarted within a few seconds and a parked turn resumes on it; three deaths within a minute of their start stop the retries and name the fault. |
@@ -52,11 +52,11 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `localModels.managed.tensorSplit` | `number[]` | `[]` | Multi-GPU tensor split for the managed chat daemon. Empty (the default) keeps the single-device behavior: `device` auto-picks the best GPU and pins offload there. Two or more non-negative ratios (at least one positive, e.g. |
 | `localModels.managed.parallel` | `number \| 'auto'` | `"auto"` | llama-server request slots (`--parallel`) for the managed chat daemon: `"auto"` (the default since config v63) or a pinned 1..8. |
 | `localModels.managed.swaFull` | `'auto' \| 'on' \| 'off'` | `"auto"` | `--swa-full` for a sliding-window model (Gemma 4 and kin): keep the whole context in the sliding layers so a partially matching prompt reuses its matching prefix instead of re-reading everything — at a several-fold KV cost for those layers. - `"auto"` (default) — on when the full-SWA KV estimate fits the launch's memory budget (see `swa-full.ts`), else off. |
-| `localModels.embeddings.enabled` | `boolean` | `false` |  |
+| `localModels.embeddings.enabled` | `boolean` | `false` | Master switch for the managed embeddings daemon. Hybrid recall also needs `memory.embeddings.enabled` and a chosen `modelId`; when off, recall is keyword-only. Default `false`. |
 | `localModels.embeddings.modelId` | `string \| null` | `null` | `EmbeddingModelId` from the catalog, or `null` when not chosen. |
-| `localModels.embeddings.port` | `number` | `19092` |  |
+| `localModels.embeddings.port` | `number` | `19092` | Loopback port the managed embeddings daemon listens on. Default `19092`. |
 | `localModels.embeddings.url` | `string` | `"http://127.0.0.1:19092"` | Base URL of the embedding-only llama-server. |
-| `localModels.download.connections` | `number` | `16` |  |
+| `localModels.download.connections` | `number` | `16` | Parallel HTTP range requests one model or backend file is split across, 1 to 64. Default `16`; `1` downloads in a single stream. `ATOMIC_AGENT_DOWNLOAD_CONNECTIONS` wins when set. |
 | `localModels.download.hfEndpoint` | `string` | `"https://huggingface.co"` | Origin that serves Hugging Face for this install, e.g. a regional mirror. Catalogue and custom-model URLs stay canonical `https://huggingface.co/...`; the endpoint is applied at request time, so switching it never invalidates a partial download. The `HF_ENDPOINT` env var (what `huggingface_hub` honours) wins over this value when set. |
 | `localModels.customModels` | `LocalModelDef[]` | `[]` | GGUF models the operator added from an arbitrary Hugging Face repo. Each entry is a whole `LocalModelDef` with a `custom-` prefixed id; `loadConfig()` publishes them to the catalog registry so curated and added models resolve through one lookup. Older files inherit `[]`. |
 
@@ -64,7 +64,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `log.level` | `'debug' \| 'info' \| 'warn' \| 'error'` | `"info"` |  |
+| `log.level` | `'debug' \| 'info' \| 'warn' \| 'error'` | `"info"` | Lowest severity the runtime's structured log writes: `debug`, `info` (default), `warn` or `error`. |
 
 ## agent
 
@@ -82,20 +82,20 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `agent.task.maxCostUsd` | `number` | `0` | Spend ceiling for one task, in USD, estimated from each completion's usage and the model's prices (prompt-cache aware). Reached, the task ends the same graceful way as the time ceiling. `0` means no cap. Unpriced models (a local model) count as $0, so this never stops local work. Default `0`. |
 | `agent.task.replanEveryNSteps` | `number` | `0` | Ask the model to review and resend its live plan (`plan.update`) every this many steps of a long task (ATO-609). The request joins the next step's notice, so it costs no extra model call. `0` (the default) is off. Additive and unversioned: an older file has no field and never re-plans. |
 | `agent.goal.maxTokens` | `number` | `0` | Token budget a new goal starts with: prompt plus completion tokens of all its rounds, as the provider reports them. `0` means no cap (rounds, time and money still bound a goal). `/goal tokens` changes it for one goal. Default `0`. |
-| `agent.toolTimeoutMs` | `number` | `60000` |  |
+| `agent.toolTimeoutMs` | `number` | `60000` | Parsed as a positive number of milliseconds (default `60000`), but no tool reads it today, so it has no effect. The shell's wait is `tools.shell.defaultTimeoutMs`. |
 | `agent.readScope` | `'working-dir' \| 'unrestricted'` | `"working-dir"` | Where a session's reads may go. `working-dir` (the default) confines filesystem reads and shell path arguments to the working directory and the paths the user named in the conversation; `unrestricted` is the pre-v67 behaviour. |
 | `agent.approvalLevel` | `1 \| 2 \| 3 \| 4 \| 5` | `1` | Five-step approval ladder. Replaces the binary `approvalRequired`; the legacy key is still read once for migration (see `resolveApprovalLevel`) and never written back. |
-| `agent.compaction.auto` | `boolean` | `true` |  |
-| `agent.compaction.mode` | `'auto' \| 'model' \| 'extractive'` | `"auto"` |  |
-| `agent.compaction.triggerRatio` | `number` | `0.9` |  |
-| `agent.compaction.targetRatio` | `number` | `0.65` |  |
-| `agent.compaction.summaryMaxTokens` | `number` | `2048` |  |
+| `agent.compaction.auto` | `boolean` | `true` | Compact the conversation automatically once its history reaches `triggerRatio` of the history allowance. `false` leaves only manual and overflow compaction. Default `true`. |
+| `agent.compaction.mode` | `'auto' \| 'model' \| 'extractive'` | `"auto"` | How a checkpoint summary is made: `model` asks the active model, `extractive` builds it from the records without a model call, `auto` (default) chooses per attempt. |
+| `agent.compaction.triggerRatio` | `number` | `0.9` | Share of the history allowance the conversation may fill before automatic compaction runs. Default `0.9`; must be below 1 and above `targetRatio`. |
+| `agent.compaction.targetRatio` | `number` | `0.65` | Share of the history allowance a compaction cuts the conversation down to. Default `0.65`; must be below `triggerRatio`. |
+| `agent.compaction.summaryMaxTokens` | `number` | `2048` | Largest checkpoint summary a compaction asks for, in tokens. Default `2048`; a small history allowance gets a smaller summary. |
 | `agent.compaction.reasoningReserveTokens` | `number` | `4096` | Output tokens a summary call may spend on reasoning on top of `summaryMaxTokens`. A thinking model writes its reasoning out of the same reply allowance; without room for it the summary is cut off. The summary itself is still held to `summaryMaxTokens`. Small windows get less (see `compactionReplyBudget`); `0` sends no reserve. |
 | `agent.compaction.timeoutMs` | `number` | `600000` | Timeout of one summary call; the total budget scales with chunk count. |
-| `agent.compaction.maxTotalTimeoutMs` | `number` | `600000` |  |
+| `agent.compaction.maxTotalTimeoutMs` | `number` | `600000` | Total time budget for one compaction's summary calls, in milliseconds, however many chunks it takes. Default `600000`. |
 | `agent.compaction.background` | `boolean` | `true` | Under `auto`, extend a rolling summary between turns so compaction can swap it in without a model call. Optional: absent means on. It still runs only where it is safe and worthwhile (see the runtime's background scheduler); `false` turns it off everywhere. |
 | `agent.compaction.memoryFlush` | `boolean` | `false` | ATO-676. Before a compaction, ask the model for short dated observations ("YYYY-MM-DD: ...") about the records being compacted and store them as one memory note tagged `observations`. A private side call: the visible chat is unchanged, and a failed flush never stops the compaction. Optional: absent means off (the default). |
-| `agent.conversationMaxTokens` | `number` | `0` |  |
+| `agent.conversationMaxTokens` | `number` | `0` | Ceiling on the conversation section of the prompt, in tokens. `0` (default) is auto: the transcript takes what the model's window leaves, or 64k when the window is unknown. |
 | `agent.conversationMaxPairs` | `number` | `200` | How many macro-turns of history the prompt carries — one "pair" being a task you sent plus everything the agent did answering it. |
 | `agent.nameSessions` | `boolean` | `true` | Ask the model to name each session. |
 | `agent.conversationLowWater` | `number` | `0.65` | Share of a limit the transcript keeps after a cut, `(0, 1]`. History is dropped in chunks — down to this share of the token budget or of `conversationMaxPairs`, whichever overflowed — and the cut then holds until the next overflow, so the prompt is append-only in between and a local model reuses its KV cache. |
@@ -111,29 +111,29 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `http.enabled` | `boolean` | `true` |  |
-| `http.approvalMode` | `'never' \| 'writes' \| 'always'` | `"writes"` |  |
-| `http.hostAllowlist` | `string[] \| null` | `null` |  |
-| `http.maxResponseBytes` | `number` | `1048576` |  |
-| `http.defaultTimeoutMs` | `number` | `30000` |  |
+| `http.enabled` | `boolean` | `true` | Turns the `os.http.request` tool on. With `false` every call fails as disabled by config. Default `true`. |
+| `http.approvalMode` | `'never' \| 'writes' \| 'always'` | `"writes"` | When `os.http.request` asks for approval: `writes` (default) gates a request that sends data but not a GET, `always` gates every call, `never` gates none. |
+| `http.hostAllowlist` | `string[] \| null` | `null` | Hosts `os.http.request` may call. `null` (default) allows any host; a list refuses every other host, and `*.example.com` covers `example.com` and its subdomains. |
+| `http.maxResponseBytes` | `number` | `1048576` | Cap on the response body `os.http.request` returns, in bytes. Default `1048576` (1 MiB). |
+| `http.defaultTimeoutMs` | `number` | `30000` | Timeout of an `os.http.request` call that sets no `timeoutMs` of its own, in milliseconds. Default `30000`. |
 | `http.urlDataGuard` | `'off' \| 'data' \| 'strict'` | `"data"` | Ask before `os.web.fetch`, a GET `os.http.request` or the browser opens an address that carries data out (ATO-1377). `"data"` (default) asks only when the address carries a lot of data (a long value after `?`, an encoded blob, text with line breaks); `"strict"` also asks once per site per chat; `"off"` never asks. |
 
 ## web
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `web.search.enabled` | `boolean` | `true` |  |
+| `web.search.enabled` | `boolean` | `true` | Turns the `os.web.search` tool on. With `false` the tool is left out of the catalog and a call fails as disabled. Default `true`. |
 | `web.search.provider` | `'duckduckgo' \| 'searxng' \| 'exa' \| 'brave'` | `"exa"` | Primary provider. The default `exa` uses its API endpoint when its `apiKeyEnv` resolves to a key, and its free keyless tier otherwise, with `duckduckgo` appended to the chain when it lacks it. The free tier runs out fast; a 429 parks it and the search result asks for a key (ATO-327). Existing configs need no rewrite for that. |
-| `web.search.maxResults` | `number` | `8` |  |
-| `web.search.timeoutMs` | `number` | `15000` |  |
+| `web.search.maxResults` | `number` | `8` | Results a search returns when the call does not ask for a number, 1 to 20. Default `8`. |
+| `web.search.timeoutMs` | `number` | `15000` | Timeout of one search provider request, in milliseconds. Default `15000`. |
 | `web.search.cacheTtlMinutes` | `number` | `60` | Per-runtime result cache TTL in minutes. `0` disables caching. The cache is the primary defence against provider rate-limiting on repeated queries. |
 | `web.search.persistCache` | `boolean` | `true` | Persist the result cache and the provider cooldown under `stateDir` (v46, #256), so a campaign that runs one process per task inherits both instead of starting cold and re-spending quota on queries the last process already answered. Key/TTL/eviction semantics are unchanged — only the storage moves. |
 | `web.search.fallback` | `WebSearchProviderName[]` | `["duckduckgo"]` | Ordered fallback providers tried (after the primary) when a search is blocked / empty / throws. Default `["duckduckgo"]` — DuckDuckGo's keyless HTML endpoint, which also takes over from a keyless Exa primary that hit its free limit. |
-| `web.search.searxng.instanceUrl` | `string \| null` | `null` |  |
-| `web.search.exa.endpoint` | `string` | `"https://mcp.exa.ai/mcp"` |  |
-| `web.search.exa.apiEndpoint` | `string` | `"https://api.exa.ai/search"` |  |
-| `web.search.exa.apiKeyEnv` | `string` | `"EXA_API_KEY"` |  |
-| `web.search.brave.apiKeyEnv` | `string` | `"BRAVE_SEARCH_API_KEY"` |  |
+| `web.search.searxng.instanceUrl` | `string \| null` | `null` | Base URL of the SearXNG instance the `searxng` provider queries. `null` (default) leaves SearXNG unconfigured, so the search chain skips it. |
+| `web.search.exa.endpoint` | `string` | `"https://mcp.exa.ai/mcp"` | Exa's keyless MCP endpoint, used when `apiKeyEnv` holds no key. Default `https://mcp.exa.ai/mcp`. |
+| `web.search.exa.apiEndpoint` | `string` | `"https://api.exa.ai/search"` | Exa's search API URL, used when `apiKeyEnv` holds a key. Default `https://api.exa.ai/search`. |
+| `web.search.exa.apiKeyEnv` | `string` | `"EXA_API_KEY"` | Name of the environment variable that holds the Exa API key. Default `EXA_API_KEY`; without a key Exa uses its rate-limited free tier. |
+| `web.search.brave.apiKeyEnv` | `string` | `"BRAVE_SEARCH_API_KEY"` | Name of the environment variable that holds the Brave Search API key. Default `BRAVE_SEARCH_API_KEY`; without a key the `brave` provider is skipped. |
 | `web.fetch.timeoutMs` | `number` | `30000` | Overall per-attempt budget in milliseconds, passed to curl `--max-time`. Kept at the historical 30_000 so unconfigured installs behave exactly as before. A per-call `timeoutMs` tool argument overrides it. |
 | `web.fetch.connectTimeoutMs` | `number` | `10000` | TCP/TLS connect budget in milliseconds, passed to curl `--connect-timeout`. Much smaller than `timeoutMs` because a host that has not completed a handshake in 10s is almost never merely slow — it is firewalled, dead, or blackholing packets, and waiting the full overall budget for it is pure loss. |
 | `web.fetch.maxRetries` | `number` | `2` | Extra attempts after the first for retryable failures (429/502/503/504 and curl exit 28 "operation timed out"). `0` disables retrying. Deliberately small: `os.web.fetch` is GET-only, so retries are always safe, but each one spends task budget. |
@@ -177,7 +177,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `browser.allowedDomains` | `string[]` | `[]` | `UserConfigFile.browser.allowedDomains`: non-empty ⇒ others ask. |
 | `browser.connect` | `'agent' \| 'user-chrome'` | `"agent"` | `UserConfigFile.browser.connect`: own profile or the user's Chrome. |
 | `browser.cdpUrl` | `string \| null` | `null` | Attach to this DevTools endpoint instead of launching. Env `ATOMIC_AGENT_BROWSER_CDP_URL`, else `UserConfigFile.browser.cdpUrl` (loopback only). Env `ATOMIC_AGENT_BROWSER_CDP_URL` wins when set. |
-| `browser.userDataDir` | `string \| null` | `null` |  |
+| `browser.userDataDir` | `string \| null` | `null` | The user's own Chrome data folder, used with `connect: user-chrome` to find the running browser when it keeps its data outside the standard places. `null` (default) tries the standard places. |
 | `browser.headless` | `boolean \| 'auto'` | `"auto"` | The browser runs without a window for every turn (an explicit `true`). |
 | `browser.profile` | `'agent' \| 'temp'` | `"agent"` | `UserConfigFile.browser.profile`: the agent's profile or a throwaway one per chat. Absent: `"agent"`. |
 | `browser.maxTabs` | `number` | `8` | `UserConfigFile.browser.maxTabs`. Absent: 8. |
@@ -219,41 +219,41 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `memory.profile.enabled` | `boolean` | `true` |  |
+| `memory.profile.enabled` | `boolean` | `true` | Keep a durable profile of facts about the user, rendered into the prompt as `### profile`. With `false` the profile section, its tools and end-of-turn reflection are off. Default `true`. |
 | `memory.profile.maxTokens` | `number` | `512` | Safety-net ceiling for the rendered `### profile` section. |
 | `memory.profile.contextualKeywordGate` | `boolean` | `true` | Master switch for the contextual-keyword gate applied by `profile-renderer`. When `true` (default), facts stored with `pinned=false` render into `### profile` only when one of their `keywords` hits the current user message. |
 | `memory.profile.maxEntries` | `number` | `500` | Cap on active unpinned facts. See the runtime type above. |
-| `memory.reflection.enabled` | `boolean` | `true` |  |
+| `memory.reflection.enabled` | `boolean` | `true` | After each turn, run a background model call that pulls durable facts and notes out of the exchange and stores them. Needs `memory.profile.enabled`. Default `true`. |
 | `memory.reflection.timeoutMs` | `number` | `60000` | Hard timeout per reflection call (ms). |
 | `memory.reflection.maxFactsPerCall` | `number` | `3` | Upper bound on profile facts written per reflection. |
 | `memory.reflection.autoStoreNotes` | `boolean` | `true` | Master switch for the NOTE extraction channel. When `false`, the reflection runner still honours SET facts but drops every NOTE line even if `memoryStore` is wired — useful for rolling out the new behaviour gradually or disabling it if MemoryStore growth becomes a concern. |
 | `memory.reflection.maxNotesPerCall` | `number` | `2` | Upper bound on freeform notes written per reflection call. Mirrors `maxFactsPerCall` for the MemoryStore channel. `0` disables note extraction even when `autoStoreNotes` is true. |
 | `memory.reflection.typedNotes.enabled` | `boolean` | `false` | v2.5. Typed-NOTE extraction: when `enabled`, the reflection prompt forces every NOTE to carry a `[type=event\|behavior\|knowledge\|skill]` marker that the parser projects into a synthetic `type:X` tag on the stored memory. Default `false` — legacy untyped NOTEs are byte-stable. |
 | `memory.reflection.anySpeaker` | `boolean` | `false` | Multi-party / "any-speaker" reflection mode. When `true`, the reflection prompt switches to `REFLECTION_STABLE_PREFIX_ANY_SPEAKER` so the extractor treats every named speaker in the USER channel — including third parties — as a valid source for SET / NOTE extraction. |
-| `memory.reflection.segmentation.enabled` | `boolean` | `false` |  |
+| `memory.reflection.segmentation.enabled` | `boolean` | `false` | Run reflection once every `triggerEveryTurns` turns over the last `windowTurns` exchanges instead of after every turn; the session's final turn always reflects. Default `false`. |
 | `memory.reflection.segmentation.triggerEveryTurns` | `number` | `3` | Trigger reflection every N turns. Must be a positive integer; `1` is functionally equivalent to disabled mode (reflection fires every turn). |
 | `memory.reflection.segmentation.windowTurns` | `number` | `5` | Number of trailing user/assistant pairs to feed into the reflection prompt. Bounded by `triggerEveryTurns` from below — the runtime clamps the slice to whatever is available so an early-session turn never blows past the existing transcript. |
-| `memory.notes.enabled` | `boolean` | `true` |  |
+| `memory.notes.enabled` | `boolean` | `true` | Keep the freeform notes store: the notes tools, recall of notes into the prompt and the memory index. With `false` all of them are off. Default `true`. |
 | `memory.notes.maxEntries` | `number` | `1000` | Hard cap on stored memory rows. Oldest rows are evicted on overflow. |
 | `memory.notes.maxContentChars` | `number` | `4000` | Per-call input ceiling for `memory.notes.store.content`. |
 | `memory.notes.recallDefaultK` | `number` | `5` | Default `k` when `memory.notes.recall` omits it. |
 | `memory.notes.reconcile` | `boolean` | `false` | ATO-672. After reflection writes a note, one extra background model call compares it with similar older notes and marks the ones it replaces (or the new note, when it only repeats one) with the `superseded` tag, which keeps them out of the prompt. Default off. |
-| `memory.recallInjection.enabled` | `boolean` | `true` |  |
+| `memory.recallInjection.enabled` | `boolean` | `true` | Before each turn, recall the notes most relevant to the user message and render them as `### recalled` in the prompt tail. Needs `memory.notes.enabled`. Default `true`. |
 | `memory.recallInjection.k` | `number` | `3` | Top-K notes to include. Applied after BM25 ranking. |
 | `memory.recallInjection.previewChars` | `number` | `160` | Per-line preview clip length (chars) in the `### recalled` block. |
 | `memory.recallInjection.maxTokens` | `number` | `400` | Safety-net ceiling for the rendered `### recalled` section. |
-| `memory.index.enabled` | `boolean` | `true` |  |
+| `memory.index.enabled` | `boolean` | `true` | Render the `### memory-index` section: short pointers to the most recent notes, so the agent knows what exists without loading the bodies. Needs `memory.notes.enabled`. Default `true`. |
 | `memory.index.limit` | `number` | `20` | How many most-recent note pointers to advertise. |
 | `memory.index.previewChars` | `number` | `60` | Per-line preview clip length (chars). |
 | `memory.index.maxTokens` | `number` | `300` | Safety-net ceiling for the rendered `### memory-index` section. |
-| `memory.dedup.enabled` | `boolean` | `true` |  |
-| `memory.dedup.fts5Threshold` | `number` | `0.85` |  |
-| `memory.eviction.utilityWeighted` | `boolean` | `true` |  |
-| `memory.eviction.maxAgeMs` | `number` | `2592000000` |  |
-| `memory.embeddings.enabled` | `boolean` | `false` |  |
-| `memory.embeddings.fts5Weight` | `number` | `0.5` |  |
-| `memory.embeddings.vectorWeight` | `number` | `0.5` |  |
-| `memory.embeddings.bruteForceCeiling` | `number` | `2000` |  |
+| `memory.dedup.enabled` | `boolean` | `true` | Before storing a note, look for a near-identical existing one and merge into it instead of adding a duplicate. Default `true`. |
+| `memory.dedup.fts5Threshold` | `number` | `0.85` | Token-overlap similarity, 0 to 1, at which a new note is merged into an existing one; higher is stricter. Default `0.85`. |
+| `memory.eviction.utilityWeighted` | `boolean` | `true` | When the notes store is full, evict the least recalled notes first instead of the oldest by update time. Default `true`. |
+| `memory.eviction.maxAgeMs` | `number` | `2592000000` | Age limit in milliseconds, default `2592000000` (30 days). Passed to the notes store but not used for eviction today. |
+| `memory.embeddings.enabled` | `boolean` | `false` | Hybrid recall: blend keyword search with embedding similarity. Also needs `localModels.embeddings.enabled` and an embedding model; otherwise recall stays keyword-only. Default `false`. |
+| `memory.embeddings.fts5Weight` | `number` | `0.5` | Weight of the keyword (BM25) score in hybrid recall, 0 to 1. Default `0.5`. |
+| `memory.embeddings.vectorWeight` | `number` | `0.5` | Weight of the embedding similarity score in hybrid recall, 0 to 1. Default `0.5`. |
+| `memory.embeddings.bruteForceCeiling` | `number` | `2000` | Most stored vectors one hybrid recall scans; above it, the newest this many plus the keyword hits are scored. Default `2000`. |
 | `memory.embeddings.backfill` | `boolean` | `true` | Embed, in the background, the notes that have no vector for the active embedding model (after a model switch, or when embeddings are turned on over an existing corpus). Default `true`. |
 | `memory.links.enabled` | `boolean` | `true` | Master switch (covers both recall expansion and link generation). |
 | `memory.links.autoGenerate` | `boolean` | `true` | Fire the `link-generator` sub-call after main reflection. Set to `false` to keep the schema + expansion machinery but never grow the graph automatically (manual `LinkStore.add` still works). |
@@ -277,25 +277,25 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `memory.procedures.indexLimit` | `number` | `20` | Row cap on `ProcedureStore.listIndex`. Default `20`. |
 | `memory.procedures.maxEntries` | `number` | `500` | Hard cap on active procedures. Default `500`. Overflow triggers FIFO eviction in the consolidator (scenario 7b.F.2). |
 | `memory.procedures.deprecationAgeMs` | `number` | `2592000000` | Procedures with `success_count == 0` AND `use_count == 0` older than this are deprecated. Default `2_592_000_000` (30 days). |
-| `memory.consolidation.enabled` | `boolean` | `true` |  |
-| `memory.consolidation.intervalMs` | `number` | `21600000` |  |
-| `memory.consolidation.cooldownMs` | `number` | `86400000` |  |
-| `memory.consolidation.minClusterSize` | `number` | `3` |  |
-| `memory.consolidation.maxClustersPerTick` | `number` | `5` |  |
-| `memory.consolidation.requireSharedTag` | `boolean` | `true` |  |
-| `memory.consolidation.distillTimeoutMs` | `number` | `45000` |  |
+| `memory.consolidation.enabled` | `boolean` | `true` | Run the background consolidator, which periodically distills clusters of related memories into lessons. Needs `memory.lessons.enabled`. Default `true`. |
+| `memory.consolidation.intervalMs` | `number` | `21600000` | Time between consolidator runs, in milliseconds. Default `21600000` (6 hours). |
+| `memory.consolidation.cooldownMs` | `number` | `86400000` | How old a memory must be before the consolidator may distill it, in milliseconds. Default `86400000` (24 hours). |
+| `memory.consolidation.minClusterSize` | `number` | `3` | Fewest related memories a cluster needs before it is distilled. Default `3`. |
+| `memory.consolidation.maxClustersPerTick` | `number` | `5` | Most clusters one consolidator run distills. Default `5`. |
+| `memory.consolidation.requireSharedTag` | `boolean` | `true` | Only cluster memories that each share at least one tag with every other member. Default `true`. |
+| `memory.consolidation.distillTimeoutMs` | `number` | `45000` | Timeout of the model call that distills one cluster, in milliseconds. Default `45000`. |
 | `memory.voting.enabled` | `boolean` | `true` | Master switch. When `false` the vote sub-call is skipped, decay does not run, and the lesson recall reranker treats every row as if `vote_score = 0`. Default `true`. |
 | `memory.voting.maxVotePerItem` | `number` | `50` | Clamp on `\|vote_score\|`. Each UPVOTE/DOWNVOTE is `+1`/`-1` and the row is pinned in `[-maxVotePerItem, +maxVotePerItem]`. Must be > 0; bootstrap rejects 0. Default `50`. |
 | `memory.voting.signalDecay` | `number` | `0.95` | Per-tick scaling factor applied to every `vote_score` value on the consolidator tick. Range `(0, 1]`; `1.0` disables decay, `0.95` matches the spec default. Bootstrap rejects `<= 0` and `> 1`. Default `0.95`. |
 | `memory.voting.scoreBlend` | `number` | `0.6` | Weight of `vote_score` in `combinedScore = scoreBlend * vote_score + (1 - scoreBlend) * (success_count - failure_count)`. Range `[0, 1]`. Default `0.6`. |
 | `memory.voting.eventLogMaxRows` | `number` | `50000` | FIFO cap on the `vote_events` audit log. Default `50_000`; `0` disables eviction (the row count is then bounded only by disk space). |
 | `memory.voting.profileFilterThreshold` | `number` | `3` | Minimum `\|vote_score\|` at which a `profile_facts` row is hidden from `### profile`. Negative votes ≤ `-profileFilterThreshold` mute the fact; positive scores never hide a fact. Default `3`. |
-| `memory.retrieve.rewriter.enabled` | `boolean` | `true` |  |
-| `memory.retrieve.rewriter.timeoutMs` | `number` | `10000` |  |
-| `memory.retrieve.rewriter.historyTurns` | `number` | `3` |  |
-| `memory.retrieve.rewriter.gateMode` | `'always' \| 'heuristic' \| 'embedding'` | `"heuristic"` |  |
-| `memory.retrieve.rewriter.embeddingGate.threshold` | `number` | `0.65` |  |
-| `memory.retrieve.rewriter.embeddingGate.exemplars` | `string[] \| null` | `null` |  |
+| `memory.retrieve.rewriter.enabled` | `boolean` | `true` | Before recall, rewrite a referential follow-up (short, with pronouns) into a self-contained query with one side model call. Default `true`. |
+| `memory.retrieve.rewriter.timeoutMs` | `number` | `10000` | Timeout of one rewrite call, in milliseconds; the call holds up the turn. Default `10000`. |
+| `memory.retrieve.rewriter.historyTurns` | `number` | `3` | Trailing user and assistant pairs fed into the rewrite prompt. Default `3`. |
+| `memory.retrieve.rewriter.gateMode` | `'always' \| 'heuristic' \| 'embedding'` | `"heuristic"` | Which messages get rewritten: `heuristic` (default) checks for short, referential wording, `embedding` compares the message with referential exemplars, `always` rewrites every one. |
+| `memory.retrieve.rewriter.embeddingGate.threshold` | `number` | `0.65` | Cosine similarity to the closest exemplar at or above which the `embedding` gate rewrites a message. Default `0.65`. |
+| `memory.retrieve.rewriter.embeddingGate.exemplars` | `string[] \| null` | `null` | Referential phrases the `embedding` gate compares messages with. `null` (default) uses the built-in English set. |
 
 ## vision
 
@@ -313,20 +313,20 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | --- | --- | --- | --- |
 | `skills.catalogTokenBudget` | `number` | `512` | Soft budget for the `### skills` catalog in the stable prefix, in tokens. `buildSkillCatalog` converts it to a char cap at `SKILL_CATALOG_CHARS_PER_TOKEN` (8) chars/token and drops catalog entries past the cap so the prompt stays bounded. Env `ATOMIC_AGENT_SKILLS_CATALOG_BUDGET` wins when set. |
 | `skills.disabled` | `string[]` | `[]` | Names of installed skills that should be hidden from the registry. A disabled name is filtered out of `SkillRegistry.list()` entirely — the catalog row in `### skills` disappears and `skill.view` returns `SkillNotFoundError`. Mirrors `UserConfigFile.skills.disabled`. Editing the list invalidates KV-cache once because the stable prefix changes. |
-| `skills.cloudWorkspaces` | `CloudWorkspaceSkillsPolicy[]` | `[]` |  |
+| `skills.cloudWorkspaces` | `CloudWorkspaceSkillsPolicy[]` | `[]` | Per-folder skill policies keyed by canonical `workingDir`: `projectSkillsEnabled` turns that folder's project skills off, `disabled` lists skill names hidden only there. Written when a skill is toggled for a workspace; default empty. |
 | `skills.projectTrust` | `ProjectTrustRecord[]` | `[]` | Per-folder trust answers for project skills and instruction files. Mirrors `UserConfigFile.skills.projectTrust`. |
 | `skills.taps` | `string[]` | `["anthropics/skills","openai/skills","vercel-labs/agent-skills"]` | GitHub `owner/repo` repositories the skill hub browses for installable SKILL.md skills. Mirrors `UserConfigFile.skills.taps`. |
-| `skills.clawhub.enabled` | `boolean` | `true` |  |
-| `skills.clawhub.apiBase` | `string` | `"https://clawhub.ai"` |  |
-| `skills.clawhub.browseLimit` | `number` | `100` |  |
-| `skills.clawhub.nonSuspiciousOnly` | `boolean` | `true` |  |
+| `skills.clawhub.enabled` | `boolean` | `true` | Include the ClawHub registry when browsing or searching the skill hub. With `false` no ClawHub request is made. Default `true`. |
+| `skills.clawhub.apiBase` | `string` | `"https://clawhub.ai"` | Base URL of the ClawHub registry API. Default `https://clawhub.ai`. |
+| `skills.clawhub.browseLimit` | `number` | `100` | Most ClawHub skills one browse or search returns. Default `100`. |
+| `skills.clawhub.nonSuspiciousOnly` | `boolean` | `true` | Ask ClawHub to leave out skills it flags as suspicious when browsing or searching. Default `true`. |
 
 ## tui
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `tui.theme` | `string` | `"auto"` |  |
-| `tui.whileBusySubmit` | `'steer' \| 'queue'` | `"steer"` |  |
+| `tui.theme` | `string` | `"auto"` | TUI color theme: `auto` (default) detects the terminal background and picks the matching classic theme, or a registered theme name such as `khorne-red`. Set by the `/theme` picker. |
+| `tui.whileBusySubmit` | `'steer' \| 'queue'` | `"steer"` | What Enter does while a turn is running: `steer` (default) folds the message into the running turn at the next step, `queue` runs it as its own turn once the current one ends. |
 | `tui.mouse` | `boolean` | `true` | Turns terminal mouse reporting on: clicking panels, list rows, the nav bar and the prompt, plus wheel scrolling. Turning it off restores the terminal's own drag-to-select, which mouse reporting takes over — see `/mouse` and `--no-mouse`. Older files are upgraded with `mouse: true`. On the classic Windows console (not Windows Terminal) reporting starts off whatever this says, since that console does not deliver the reports; `--mouse` or `/mouse on` turns it on. |
 | `tui.showSteps` | `boolean` | `false` | Always show steps (ATO-963): keep every finished turn's tool cards and reasoning open in the chat, as before. Off by default: a finished turn folds into one "Used 6 tools · 40s" line. Additive and unversioned, a file without it reads `false`. A display preference only; the agent never reads it. |
 | `tui.nextStepSuggestions` | `boolean` | `false` | Next-step suggestions (ATO-1096, epic ATO-995): after a turn, one short model call proposes what to ask next, shown as grey text in the empty composer that Tab accepts. Off by default: the call costs a model request after every turn, so it is opt-in. Additive and unversioned, a file without it reads `false`. |
@@ -334,14 +334,14 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `tui.language` | `'auto' \| 'en' \| 'ru'` | `"auto"` | Interface language of the terminal UI (ATO-571): `auto`, `en` or `ru`. `auto` (default) uses `ATOMIC_AGENT_LANG`, then the system locale (`LC_ALL`, `LC_MESSAGES`, `LANG`), then English. Additive and unversioned, a file without it reads `auto`. Only the onboarding screens are translated so far; the agent never reads it. |
 | `tui.notify.enabled` | `boolean` | `true` | Off means the terminal is never written to out of band. |
 | `tui.notify.minDurationMs` | `number` | `30000` | How long a turn must have run before its *successful* ending is worth a ping. A failure always pings regardless: it is the ending that needs a person, and it can happen in two seconds. |
-| `tui.sessionRail.order` | `string[]` | `[]` |  |
+| `tui.sessionRail.order` | `string[]` | `[]` | Session ids in the order the operator arranged the rail's Sessions list. Empty (default) sorts by recency; sessions not in the list go on top and unknown ids are ignored. |
 | `tui.sessionRail.pinned` | `string[]` | `[]` | Session ids pinned to the top of the rail. Pinned rows form a block above everything else; inside the block they follow `order` like any other row. A pinned id that no longer exists is ignored on read and dropped on the next write. |
-| `tui.onboarding.completedAt` | `string \| null` | `null` |  |
-| `tui.onboarding.importOfferedAt` | `string \| null` | `null` |  |
-| `tui.onboarding.introSeenAt` | `string \| null` | `null` |  |
-| `tui.onboarding.localSetupSeenAt` | `string \| null` | `null` |  |
-| `tui.onboarding.proposedSecondBackendAt` | `string \| null` | `null` |  |
-| `tui.onboarding.skippedAt` | `string \| null` | `null` |  |
+| `tui.onboarding.completedAt` | `string \| null` | `null` | When the first-run flow configured a backend and handed over to the agent, as an ISO timestamp. `null` (default) means not yet. |
+| `tui.onboarding.importOfferedAt` | `string \| null` | `null` | When the first run offered to bring data over from another agent, as an ISO timestamp; a declined offer does not come back. `null` (default) means not offered. |
+| `tui.onboarding.introSeenAt` | `string \| null` | `null` | When the first-run splash was dismissed, as an ISO timestamp. `null` (default) means never. |
+| `tui.onboarding.localSetupSeenAt` | `string \| null` | `null` | When the first run reached the local model list, whether or not a model was chosen, as an ISO timestamp. `null` (default) means never. |
+| `tui.onboarding.proposedSecondBackendAt` | `string \| null` | `null` | When the first run offered to set up the other backend too, as an ISO timestamp, so the offer is never made twice. `null` (default) means not offered. |
+| `tui.onboarding.skippedAt` | `string \| null` | `null` | When the operator escaped out of the first-run flow, as an ISO timestamp; the flow does not reopen by itself afterwards. `null` (default) means never. |
 
 ## analytics
 

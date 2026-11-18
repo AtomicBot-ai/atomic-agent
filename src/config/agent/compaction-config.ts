@@ -10,10 +10,33 @@ export type CompactionMode = "auto" | "model" | "extractive";
 export const COMPACTION_MODES: readonly CompactionMode[] = ["auto", "model", "extractive"];
 
 export interface CompactionConfig {
+  /**
+   * Compact the conversation automatically once its history reaches
+   * `triggerRatio` of the history allowance. `false` leaves only manual
+   * and overflow compaction. Default `true`.
+   */
   auto: boolean;
+  /**
+   * How a checkpoint summary is made: `model` asks the active model,
+   * `extractive` builds it from the records without a model call, `auto`
+   * (default) chooses per attempt.
+   */
   mode: CompactionMode;
+  /**
+   * Share of the history allowance the conversation may fill before
+   * automatic compaction runs. Default `0.9`; must be below 1 and above
+   * `targetRatio`.
+   */
   triggerRatio: number;
+  /**
+   * Share of the history allowance a compaction cuts the conversation
+   * down to. Default `0.65`; must be below `triggerRatio`.
+   */
   targetRatio: number;
+  /**
+   * Largest checkpoint summary a compaction asks for, in tokens. Default
+   * `2048`; a small history allowance gets a smaller summary.
+   */
   summaryMaxTokens: number;
   /**
    * Output tokens a summary call may spend on reasoning on top of
@@ -25,6 +48,10 @@ export interface CompactionConfig {
   reasoningReserveTokens: number;
   /** Timeout of one summary call; the total budget scales with chunk count. */
   timeoutMs: number;
+  /**
+   * Total time budget for one compaction's summary calls, in
+   * milliseconds, however many chunks it takes. Default `600000`.
+   */
   maxTotalTimeoutMs: number;
   /**
    * Under `auto`, extend a rolling summary between turns so compaction can
