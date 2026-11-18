@@ -83,3 +83,15 @@ Tool names on the wire use `_` for `.` because several clients accept only `[A-Z
 
 
 `handoff --to claude|codex [--out <file>] [--session latest|<id>] [--cwd <dir>]` goes the other way (ATO-1158): it reads one Atomic Agent chat (`latest` = the newest chat in the folder, else the newest anywhere) and writes a Markdown handoff for the other agent ([handoff export](../import/handoff/handoff-export.ts)): the task and the latest request, the agent's last answers as decisions, open items (a turn that did not finish or was stopped), and the files changed by successful `os.fs.write|edit|move` calls and applied `os.fs.patch` calls (shell changes are not tracked). It goes to `--out` (relative to where the command ran) or to stdout. Nothing is written into `~/.claude`, `~/.codex` or the session store: their session formats are undocumented, so the person hands the file over themselves. Serving Atomic Agent to those tools over MCP/ACP is ATO-990, not this command.
+
+## ACP server
+
+`acp [--setup]` (ATO-543) serves the agent to Agent Client Protocol clients (Zed `agent_servers`, JetBrains `~/.jetbrains/acp.json`, Neovim plugins) over stdio: newline-delimited JSON-RPC 2.0, one runtime per working folder (`session/new`'s `cwd`), built by `createAgentRuntime` as for the sidecar. [acp-jsonrpc.ts](acp-jsonrpc.ts) is the framing, [acp-translator.ts](acp-translator.ts) the pure mapping, [acp-server.ts](acp-server.ts) the protocol state, [acp-command.ts](acp-command.ts) the entry.
+
+- `initialize` answers protocol version 1, `embeddedContext` prompts, no `loadSession`, and one auth method of type `terminal` (`args: ["--setup"]`, plus the older `_meta["terminal-auth"]` form): the ACP registry's CI requires an `agent` or `terminal` method. `acp --setup` opens the TUI's first-run setup (`--onboarding`). `authenticate` with that id is a no-op.
+- `session/prompt` runs one `runTurn` (origin `sidecar`, interactive) and streams `session/update`: reply text and deltas as `agent_message_chunk`, reasoning as `agent_thought_chunk`, each tool call as `tool_call` then `tool_call_update` (`reply`, `finish`, `plan.update`, `ask_user` are not shown as calls), the plan as `plan`. Stop reasons: `end_turn`, `max_turn_requests` (step ceiling), `cancelled`.
+- Approvals become `session/request_permission` with the TUI's choices: allow once, for this chat (category grant, when grantable), always (saved rule, when one can be built), deny. An `ask_user` question shows its options as the buttons. A cancelled or unknown answer is an automatic denial. A worker session's approval goes to the one running chat in that folder, else it is denied.
+- `session/cancel` aborts the turn and denies its pending approvals.
+- stdout carries frames only: `process.stdout.write` is pointed at stderr for the life of the command, and runtime warnings and errors are logged to stderr.
+- Not yet: `session/load`, modes, the client's `mcpServers` (logged and ignored), the client's file system and terminals.
+

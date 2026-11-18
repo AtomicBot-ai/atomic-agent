@@ -4,7 +4,7 @@ Zed and JetBrains list agents from the [ACP registry](https://github.com/agentcl
 
 ## Before it can be submitted
 
-The registry's CI launches the agent with the entry's command (`<archive>/atomic-agent acp`) and sends ACP `initialize`. The answer must list `authMethods` with at least one method of type `agent` or `terminal`. atomic-agent has no ACP server yet (ATO-543), so an entry submitted today would fail that check. Submit only after a release that ships `atomic-agent acp`.
+The registry's CI launches the agent with the entry's command (`<archive>/atomic-agent acp`) and sends ACP `initialize`. The answer must list `authMethods` with at least one method of type `agent` or `terminal`. `atomic-agent acp` (ATO-543, [`src/cli/acp-server.ts`](../../src/cli/acp-server.ts)) answers with one `terminal` method, `atomic-agent-setup`, whose `args: ["--setup"]` open first-time setup in a terminal. Submit only an entry whose release ships `atomic-agent acp`; older releases do not have the command and would fail the check.
 
 ## Generate and check the entry
 
