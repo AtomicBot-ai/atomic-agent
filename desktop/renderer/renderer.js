@@ -3362,8 +3362,9 @@ function msgActs(m) {
         : '';
     // ATO-1186: the reply's speed, under the last reply only, when the agent measured it.
     const tps = last && m.speed && typeof replySpeedHTML === 'function' ? replySpeedHTML(m.speed) : '';
+    const kvc = last && m.kvCache && typeof cacheShareHTML === 'function' ? cacheShareHTML(m.kvCache) : '';   // ATO-631 (kv-cache-share.js)
     // ATO-1046: Read aloud after copy, under a finished reply (tts.js).
-    return '<div class="' + cls + '">' + tps + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '')
+    return '<div class="' + cls + '">' + tps + kvc + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '')
       + (typeof rewindActsHTML === 'function' ? rewindActsHTML(m) : '') + '</div>';   // ATO-1058: Fork (chat-rewind.js)
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
@@ -11804,6 +11805,12 @@ function onChatEvent(ev) {
     const sid = RUNNING.get(ev.turnId) || S.agentSession;
     if (sid && BR && BR.ackSteers) BR.ackSteers(sid, seq, 0);
     render();
+    return;
+  }
+  // ATO-631: each step's KV-cache share; the last step's is shown beside tok/s (kv-cache-share.js).
+  if (ev.kind === 'step_speed') {
+    const kv = typeof stepCacheOf === 'function' ? stepCacheOf(ev.payload) : null;
+    if (item && kv) item.kvCache = kv;
     return;
   }
   // ATO-1186: the turn's timed generation (agent with ATO-1186; none from an older one, and no speed is shown).
