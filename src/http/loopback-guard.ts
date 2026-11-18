@@ -6,8 +6,8 @@ import { openaiError } from "./openai-errors.js";
 import { getHeader, sendError } from "./request-context.js";
 
 /**
- * ATO-1495: `serve` without an API key listens on loopback at a fixed
- * port, and loopback alone does not keep a web page out. Any site open
+ * ATO-1495: a server without an API key on loopback at a fixed port is
+ * not kept safe by loopback alone: a web page can reach it. Any site open
  * in the user's browser can send blind cross-site requests to
  * `http://127.0.0.1:8787` (a form or `fetch(..., { mode: "no-cors" })`
  * with a text/plain body needs no preflight), or point its own domain
@@ -23,7 +23,9 @@ import { getHeader, sendError } from "./request-context.js";
  *   and the preflight gets no permissive CORS headers back).
  *
  * With a key the bearer check already stops all of that, and the guard
- * is off: the desktop always starts `serve` with a per-launch key.
+ * is off. `serve` always has a key now (its own, generated on the first
+ * run, or the desktop's per-launch one), so the guard only covers a
+ * server built with `unauthenticated: true`: tests and embedders.
  */
 
 export const ALLOWED_ORIGINS_ENV = "ATOMIC_AGENT_ALLOWED_ORIGINS";

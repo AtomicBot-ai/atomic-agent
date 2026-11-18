@@ -6,7 +6,8 @@ import { createStderrSink } from "../tracing/structured-logger.js";
 import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
-import { HELP, lanUrls, parseArgs, serveAuthWarning } from "./serve-args.js";
+import { HELP, lanUrls, parseArgs } from "./serve-args.js";
+import { resolveServeApiKey, serveApiKeyNotice } from "./serve-api-key.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
 import {
   startWebhookTunnel,
@@ -52,6 +53,18 @@ export async function serveCommand(args: string[]): Promise<number> {
   const stateDir = getConfig().paths.stateDir;
   if (parsed.reapOnly) {
     process.stdout.write(formatReapOutcomes(await reapOrphanedServes({ stateDir })));
+    return 0;
+  }
+
+  // Always a key, on loopback too: the operator's, else the persisted one
+  // made on the first run. No key, no server.
+  const apiKey = resolveServeApiKey(parsed.apiKey, stateDir);
+  if ("error" in apiKey) {
+    process.stderr.write(`serve: ${apiKey.error}\n`);
+    return 1;
+  }
+  if (parsed.printApiKey) {
+    process.stdout.write(`${apiKey.key}\n`);
     return 0;
   }
 
@@ -134,7 +147,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       runtime,
       host: parsed.host,
       port: parsed.port,
-      apiKey: parsed.apiKey,
+      apiKey: apiKey.key,
       routes: buildRouteTable({
         metricsRegistry,
         // ATO-693: off unless --a2a; parseArgs already refused it without a key.
@@ -146,23 +159,19 @@ export async function serveCommand(args: string[]): Promise<number> {
       // ATO-583: `atag http tokens add` names tokens with a role; the key stays admin.
       namedTokens,
     });
+    const baseUrl = `http://${handle.host}:${handle.port}`;
+    // ATO-583 named tokens beside the always-on key (serve always has a key now).
     const named = namedTokens().length;
-    const authNote = parsed.apiKey ? `auth=bearer${named > 0 ? `+${named} named` : ""}` : "auth=none";
-    if (!parsed.apiKey && named > 0) {
-      process.stderr.write(
-        `[atomic-agent] serve: ${named} named HTTP token(s) are not used: serve has no API key, so it only listens on this machine and asks for none\n`,
-      );
-    }
+    const authNote = `auth=bearer${named > 0 ? `+${named} named` : ""}`;
     process.stderr.write(
-      `[atomic-agent] serve listening on http://${handle.host}:${handle.port} (${authNote}, cwd=${parsed.workingDir})\n`,
+      `[atomic-agent] serve listening on ${baseUrl} (${authNote}, cwd=${parsed.workingDir})\n`,
     );
     if (parsed.a2a) {
       process.stderr.write(
         "[atomic-agent] a2a: agent card at /.well-known/agent-card.json, tasks on POST /api/a2a (bearer auth)\n",
       );
     }
-    const authWarning = serveAuthWarning(parsed);
-    if (authWarning) process.stderr.write(authWarning);
+    process.stderr.write(serveApiKeyNotice(apiKey, baseUrl, process.stderr.isTTY === true));
     // ATO-1126: on every interface, say where another device reaches it (the desktop's remote agent, a phone).
     for (const url of lanUrls(parsed.host, handle.port)) {
       process.stderr.write(`[atomic-agent] serve reachable at ${url}\n`);
@@ -172,6 +181,7 @@ export async function serveCommand(args: string[]): Promise<number> {
         runtime,
         request: parsed.tunnel,
         preflight: tunnelCheck,
+        apiKey: apiKey.key,
         approvalBus,
         completionRegistry,
         write: (line) => process.stderr.write(line),

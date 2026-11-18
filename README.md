@@ -545,15 +545,21 @@ Run `atomic-agent` as a local HTTP service:
 atomic-agent serve \
   --host 127.0.0.1 \
   --port 8787 \
-  --cwd /path/to/work \
-  --api-key "$ATOMIC_AGENT_API_KEY"
+  --cwd /path/to/work
 ```
 
-Without a key, anyone who reaches the port can run the agent and its tools, so `serve` refuses to start on a host other than loopback (`0.0.0.0`, a LAN address) unless `--api-key` or `ATOMIC_AGENT_API_KEY` is set. On loopback it still starts without one and prints a one-line warning. Without a key it answers only requests that name a loopback host (`localhost`, `127.0.0.1`, `[::1]`, `*.localhost`, this machine's name) and come from no web page or a page on one of those hosts, and it wants request bodies as `application/json`, so a website open in your browser cannot drive it (ATO-1495). To let a specific web origin in, list it in `ATOMIC_AGENT_ALLOWED_ORIGINS` (comma-separated, a trailing `*` matches a prefix, for example `chrome-extension://*`).
+`serve` always requires an API key, on loopback too: any program on the machine can reach a loopback port, and whoever holds the key can run the agent and its tools. Pass your own with `--api-key` or `ATOMIC_AGENT_API_KEY`. Without one, `serve` generates a key on the first run, keeps it in `<state dir>/serve-api.key` (owner-only, `~/.atomic-agent/serve-api.key` by default), reuses it after, and says where it is when it starts; in a terminal it also prints the phone panel address with the key in it (`http://127.0.0.1:8787/panel#key=…`). Every authenticated route wants it as `Authorization: Bearer <key>` (or `x-api-key`):
+
+```bash
+curl -H "Authorization: Bearer $(atomic-agent serve --print-api-key)" \
+  http://127.0.0.1:8787/api/sessions
+```
+
+`--print-api-key` prints the key `serve` runs with and exits; delete the file to get a new one on the next start. On a host other than loopback (`0.0.0.0`, a LAN address) `serve` wants a key you chose yourself, at least 16 characters, and refuses to start with only the generated one. `/health`, `/v1/models` and the `/panel` page answer without a key.
 
 To give another person or device less than the full key, make a named token with a role: `atag http tokens add phone --role member` prints a token once (`admin` can do everything, `member` can chat and read, `viewer` can only read); `atag http tokens list` and `atag http tokens remove phone` manage them. The serve key stays the admin key, and named tokens only apply while serve has one. A token used on a route its role does not cover gets `403`. A `member` token can also answer the agent's approval prompts, so it can run anything the agent's tools can do once it approves them: shell commands, file reads and writes, config edits. That is the same as running commands on the host, so give `member` tokens only to people you would trust with the machine. `viewer` is the read-only role.
 
-`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. `POST /v1/messages` (Anthropic Messages, for Claude Code: `ANTHROPIC_BASE_URL=http://127.0.0.1:8787`) and `POST /v1/responses` (OpenAI Responses, for Codex and the Agents SDK) run the same turn and answer in their own format; the agent uses its own tools, not the client's ([details](src/http/README.md)). Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
+`POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. `POST /v1/messages` (Anthropic Messages, for Claude Code: `ANTHROPIC_BASE_URL=http://127.0.0.1:8787` with `ANTHROPIC_API_KEY` set to the serve key) and `POST /v1/responses` (OpenAI Responses, for Codex and the Agents SDK) run the same turn and answer in their own format; the agent uses its own tools, not the client's ([details](src/http/README.md)). Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
 `serve` boots the same runtime the TUI does, so enabled Telegram and Discord bots, and every enabled Swarm bot that has a token, come up in this process too. That makes `serve` the way to keep the bots answering with no TUI open; it stays in the foreground until you stop it and does not restart itself. Each bot runs in one process at a time; see Channels below.
 

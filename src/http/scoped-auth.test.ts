@@ -42,6 +42,8 @@ async function start(apiKey: string | null, named: StoredHttpToken[]): Promise<s
     host: "127.0.0.1",
     port: 0,
     apiKey,
+    // Keyless only through the explicit test seam (serve always has a key).
+    unauthenticated: apiKey === null,
     routes: ROUTES,
     namedTokens: () => named,
   });

@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   isLoopbackListenHost,
   lanUrls,
+  HELP,
   parseArgs,
-  serveAuthWarning,
   type ServeArgs,
 } from "./serve-args.js";
 
@@ -70,7 +70,9 @@ describe("serve refuses a network host without an API key (ATO-760)", () => {
   });
 });
 
-describe("loopback without a key still starts, with a warning", () => {
+describe("loopback without a given key parses, for serve's own generated key", () => {
+  // `apiKey: null` means "none given": serveCommand then runs with the
+  // key in <stateDir>/serve-api.key (serve-api-key.test.ts), never keyless.
   it.each(["127.0.0.1", "127.0.0.2", "localhost", "LOCALHOST", "::1", "[::1]"])(
     "--host %s without a key parses",
     (host) => {
@@ -84,17 +86,26 @@ describe("loopback without a key still starts, with a warning", () => {
     expect(parsed.apiKey).toBeNull();
   });
 
-  it("warns in one line when there is no key, and not when there is one", () => {
-    const warning = serveAuthWarning({ apiKey: null });
-    expect(warning).not.toBeNull();
-    expect(warning!.trimEnd()).not.toContain("\n");
-    expect(warning).toContain("ATOMIC_AGENT_API_KEY");
-    expect(serveAuthWarning({ apiKey: "s3cret" })).toBeNull();
+  it("the help says a key is always required and where serve keeps its own", () => {
+    expect(HELP).toContain("serve-api.key");
+    expect(HELP).toContain("always required");
+    expect(HELP).toContain("--print-api-key");
+    expect(HELP).not.toContain("ATOMIC_AGENT_ALLOWED_ORIGINS");
+  });
+});
+
+describe("--print-api-key", () => {
+  it("is off unless asked for", () => {
+    expect(parsedOk([]).printApiKey).toBe(false);
+  });
+  it("parses, and on a network host does not ask for a key it only prints", () => {
+    expect(parsedOk(["--print-api-key"]).printApiKey).toBe(true);
+    expect(parsedOk(["--host", "0.0.0.0", "--print-api-key"]).printApiKey).toBe(true);
   });
 });
 
 describe("the desktop app's launch line", () => {
-  it("parses unchanged: loopback host, a per-launch key, no warning", () => {
+  it("parses unchanged: loopback host, a per-launch key", () => {
     // desktop/main/agent-client.ts spawns exactly this shape.
     const parsed = parsedOk([
       "--host", "127.0.0.1", "--port", "51234", "--api-key", "a".repeat(48),
@@ -102,7 +113,6 @@ describe("the desktop app's launch line", () => {
     expect(parsed.host).toBe("127.0.0.1");
     expect(parsed.port).toBe(51234);
     expect(parsed.apiKey).toBe("a".repeat(48));
-    expect(serveAuthWarning(parsed)).toBeNull();
   });
 });
 
