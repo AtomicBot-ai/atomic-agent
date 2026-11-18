@@ -98,10 +98,11 @@ function deeplinkRecipeHTML(req) {
   h += deeplinkNotices(req.warnings, 'tk-notice--amber');
   h += '<p class="sd-cap">The task text, in full:</p>'
     + '<div class="sd-mono dlink-recipe-text" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:40vh;overflow:auto">' + esc(req.prompt) + '</div>';
+  // A stable id per field: renderOverlays keeps focus and caret only for an input with an id.
   for (const p of req.params || []) {
     const val = DLINK.values[p.key] == null ? '' : DLINK.values[p.key];
     h += '<label class="sd-cap" style="display:block;margin-top:8px">' + esc(p.label) + ' <span class="sd-mono">{{' + esc(p.key) + '}}</span>'
-      + '<input class="tk-inp" type="text" data-dlink-param="' + esc(p.key) + '" value="' + esc(val) + '" spellcheck="false" style="display:block;width:100%"></label>';
+      + '<input class="tk-inp" type="text" id="dlink-p-' + esc(p.key) + '" data-dlink-param="' + esc(p.key) + '" value="' + esc(val) + '" spellcheck="false" style="display:block;width:100%"></label>';
   }
   return h;
 }

@@ -567,8 +567,16 @@ export const RECIPE_PARAM_DEFAULT_MAX = 500;
 export const RECIPE_PARAM_KEY_RE = /^[a-z][a-z0-9_]{0,31}$/;
 /** `{{ key }}`: the placeholder shape Goose recipes use. */
 export const RECIPE_PLACEHOLDER_RE = /\{\{\s*([^{}\s]*)\s*\}\}/g;
-/* Text that reads differently than it runs: direction overrides and invisible characters. */
-const RECIPE_HIDDEN_RE = /[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/;
+/*
+ * Text that reads differently than it runs: anything the card would draw as nothing or
+ * that changes direction. An allow-list by Unicode category, not a list of known ranges:
+ * format characters (Cf: zero-width, bidi marks and overrides, U+061C, U+00AD, U+180E,
+ * the tag block E0001-E007F), private use (Co), unassigned (Cn, which also covers U+E0000),
+ * C1 controls, variation selectors, the combining grapheme joiner and Hangul/Khmer/Mongolian
+ * fillers. C0 controls are refused earlier by parseDeeplink (tab and newline aside, prompt only).
+ */
+export const RECIPE_HIDDEN_RE =
+  /[\p{Cf}\p{Co}\p{Cn}\u0080-\u009f\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\uffa0\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/u;
 const RECIPE_REFUSED_KEYS = ["model", "provider", "tools", "tool", "mcp", "server", "skill", "skills", "permission", "permissions", "approval", "approve", "autosend", "send", "run"];
 
 export interface RecipeParam {

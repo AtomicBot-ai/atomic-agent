@@ -670,6 +670,23 @@ test("recipe: required fields, sizes and hidden characters are refused", () => {
   assert.match(err(recipe(`title=a&prompt=${enc("{{x}}")}&param=${enc("x=\u2066y")}`)), /invisible/);
 });
 
+test("recipe: every invisible or direction-changing character is refused, not only a known few (review fix)", () => {
+  const hidden = [
+    "\u{E0041}", "\u{E0001}", "\u{E007F}", // tag block: an instruction spelled in characters that draw as nothing
+    "\u061C", "\u00AD", "\u034F", "\u115F", "\u1160", "\u17B4", "\u17B5", "\u180B", "\u180E",
+    "\u3164", "\uFFA0", "\uFE00", "\uFE0F", "\u{E0100}", "\u0085", "\u{F0000}", "\uE000",
+  ];
+  for (const ch of hidden) {
+    const code = ch.codePointAt(0).toString(16);
+    assert.match(err(recipe(`title=a&prompt=${enc("ok" + ch + "ok")}`)), /invisible/, `prompt U+${code}`);
+    assert.match(err(recipe(`title=${enc("a" + ch)}&prompt=x`)), /invisible/, `title U+${code}`);
+    assert.match(err(recipe(`title=a&description=${enc("d" + ch)}&prompt=x`)), /invisible/, `description U+${code}`);
+    assert.match(err(recipe(`title=a&prompt=${enc("{{x}}")}&param=${enc("x=y" + ch)}`)), /invisible/, `default U+${code}`);
+  }
+  // Ordinary text in any script still passes.
+  assert.equal(recipe(`title=${enc("Отчёт 東京 مرحبا")}&prompt=${enc("Résumé, naïve, 👋\ttab\nline")}`).ok, true);
+});
+
 test("recipe: line breaks stay refused in every other link's values", () => {
   assert.equal(mcp(`name=a${enc("\n")}b&command=npx&arg=pkg@1`).ok, false);
 });
@@ -715,6 +732,9 @@ test("recipe card: full text, a field per param, Open in new chat puts the fille
   assert.match(p.ctx.html, /Summarise \{\{folder\}\} &lt;b&gt;now&lt;\/b&gt;\nfor \{\{who\}\}/, "the text in full, escaped");
   assert.match(p.ctx.html, /data-dlink-param="folder" value="~\/Notes"/);
   assert.match(p.ctx.html, /data-dlink-param="who" value=""/);
+  // renderOverlays keeps focus and caret only for an input with an id (review fix).
+  assert.match(p.ctx.html, /id="dlink-p-folder" data-dlink-param="folder"/);
+  assert.match(p.ctx.html, /id="dlink-p-who" data-dlink-param="who"/);
   assert.match(p.ctx.html, /Open in new chat/);
   p.ctx.DL.armAt = 0; p.ctx.render();
   assert.match(p.ctx.html, /data-act="dlink:install" disabled/, "who is still empty");
