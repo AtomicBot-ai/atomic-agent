@@ -25,6 +25,7 @@ import {
   buildRouteTable,
   CompletionRegistry,
   createHttpServer,
+  createHttpTokenSource,
 } from "../http/index.js";
 import type { HttpServerHandle } from "../http/index.js";
 
@@ -128,6 +129,7 @@ export async function serveCommand(args: string[]): Promise<number> {
         onMcpElicitation: elicitations,
       },
     });
+    const namedTokens = createHttpTokenSource(stateDir);
     handle = await createHttpServer({
       runtime,
       host: parsed.host,
@@ -141,8 +143,16 @@ export async function serveCommand(args: string[]): Promise<number> {
       approvalBus,
       completionRegistry,
       elicitations,
+      // ATO-583: `atag http tokens add` names tokens with a role; the key stays admin.
+      namedTokens,
     });
-    const authNote = parsed.apiKey ? "auth=bearer" : "auth=none";
+    const named = namedTokens().length;
+    const authNote = parsed.apiKey ? `auth=bearer${named > 0 ? `+${named} named` : ""}` : "auth=none";
+    if (!parsed.apiKey && named > 0) {
+      process.stderr.write(
+        `[atomic-agent] serve: ${named} named HTTP token(s) are not used: serve has no API key, so it only listens on this machine and asks for none\n`,
+      );
+    }
     process.stderr.write(
       `[atomic-agent] serve listening on http://${handle.host}:${handle.port} (${authNote}, cwd=${parsed.workingDir})\n`,
     );

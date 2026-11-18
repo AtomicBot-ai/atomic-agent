@@ -13,6 +13,7 @@ import { skillCommand } from "./skill.js";
 import { pluginCommand } from "./plugin-command.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
+import { httpCommand } from "./http-command.js";
 import { mcpServerCommand } from "./mcp-server-command.js";
 import { acpCommand } from "./acp-command.js";
 import { traceCommand } from "./trace-command.js";
@@ -115,6 +116,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "serve",
     summary: "Serve the HTTP API and run the enabled Telegram/Discord channels",
     run: serveCommand,
+  },
+  {
+    name: "http",
+    summary: "Named API tokens for serve, each with a role: admin, member, viewer (tokens list|add|remove)",
+    run: httpCommand,
   },
   {
     name: "mcp-server",
