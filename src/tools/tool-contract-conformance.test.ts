@@ -433,7 +433,8 @@ describe("whole built-in tool catalog conformance", () => {
     registerAudioListenTools(disabled, { enabled: false, provider: () => undefined, maxAudioBytes: 1024 });
     registerAudioListenTools(disabled, { enabled: true, provider: undefined, maxAudioBytes: 1024 });
     registerOsScreenTools(disabled, { ...dangerous, enabled: false, platform: "darwin" });
-    registerOsScreenTools(disabled, { ...dangerous, enabled: true, platform: "linux" });
+    registerOsScreenTools(disabled, { ...dangerous, enabled: true, platform: "freebsd" });
+    registerOsScreenTools(disabled, { ...dangerous, enabled: false, point: true, platform: "linux" });
     expect(disabled.registrations).toEqual([]);
     const families = [
       { group: GATED_TOOL_NAMES.browser, next: { ...gates, browser: { enabled: false } } },

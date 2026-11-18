@@ -3,15 +3,16 @@ import type { ToolDescriptor } from "./stable-prefix.js";
 /**
  * `os.screen.*` (ATO-525; `point` ATO-1018), spread into `DEFAULT_TOOL_DESCRIPTORS_B` after
  * the other desktop tools. Rare tier: they leave the prompt entirely
- * unless `tools.screen.enabled` is on and the host is macOS
- * (`GATED_TOOLS.screen`), and when they are on, one line each plus
+ * unless `tools.screen.enabled` is on and the host is macOS (capture
+ * alone on Windows and Linux, ATO-527; `GATED_TOOLS.screen`), and when
+ * they are on, one line each plus
  * `tool.view` is enough — capture says how its numbers feed a click.
  */
 export const SCREEN_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   {
     name: "os.screen.capture",
     summary:
-      "Screenshot of the primary display or of one app window (macOS); saves a JPEG in the temp folder and returns its path and the pixel-to-point scale. Look at it with vision.describe or show it with reply.attachments, then click with os.screen.click using that image's pixel x,y. May ask the user first.",
+      "Screenshot of the primary display or of one app window (macOS); saves a JPEG in the temp folder and returns its path and the pixel-to-point scale. Look at it with vision.describe or show it with reply.attachments, then click with os.screen.click using that image's pixel x,y. On Windows and Linux: whole screen only, as a PNG, no clicking yet. May ask the user first.",
     argsSchema:
       "{ x?: number, y?: number, width?: number, height?: number /* a region in screen points, all four or none; omit for the whole primary display */, app?: string /* app name or bundle id: snapshot of its front window; a miss lists the windows on screen */, window?: string /* part of the window title */, text?: boolean /* with app/window: also save the window's text */ }",
     tier: "rare",

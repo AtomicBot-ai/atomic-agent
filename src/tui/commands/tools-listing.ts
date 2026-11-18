@@ -135,8 +135,11 @@ export function effectiveToolDescriptors(
     image: { available: openRouterImageKey(config, env) !== undefined },
     video: { available: openRouterImageKey(config, env) !== undefined },
     screen: {
-      enabled: config.tools?.screen?.enabled === true && platform === "darwin",
+      enabled:
+        config.tools?.screen?.enabled === true &&
+        (platform === "darwin" || platform === "win32" || platform === "linux"),
       point: config.tools?.screen?.point === true && platform === "darwin",
+      control: platform === "darwin",
     },
   });
 }

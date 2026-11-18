@@ -92,8 +92,8 @@ describe("os.screen.capture", () => {
     expect(result.summary).toContain("does not fit");
   });
 
-  it("answers macOS-only elsewhere without running anything", async () => {
-    const { fake, tool } = capture({ platform: "win32" });
+  it("answers macOS-only on an unsupported OS without running anything", async () => {
+    const { fake, tool } = capture({ platform: "freebsd" });
     const result = await tool.run({}, screenCtx());
     expect(result.status).toBe("error");
     expect(result.summary).toContain("macOS only");

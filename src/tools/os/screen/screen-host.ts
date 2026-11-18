@@ -1,5 +1,6 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
+import { dirname } from "node:path";
 import { runCommand } from "../../../sandbox/command-runner.js";
 import { buildScreenInvocation, type ScreenOp } from "./screen-jxa.js";
 import type { ScreenWindow } from "./screen-window.js";
@@ -31,6 +32,8 @@ export interface ScreenDeps {
   /** The agent's environment: names the host app in permission messages. */
   env: NodeJS.ProcessEnv;
   fileSize: (path: string) => Promise<number>;
+  /** The first `bytes` of a file (a PNG header on Windows/Linux captures). */
+  readHead: (path: string, bytes: number) => Promise<Uint8Array>;
   ensureDir: (path: string) => Promise<void>;
   /** Saves a window's text next to its snapshot. */
   writeText: (path: string, text: string) => Promise<void>;
@@ -53,10 +56,22 @@ export function resolveScreenDeps(overrides: Partial<ScreenDeps> = {}): ScreenDe
     platform: overrides.platform ?? platform(),
     env: overrides.env ?? process.env,
     fileSize: overrides.fileSize ?? (async (path) => (await stat(path)).size),
+    readHead:
+      overrides.readHead ??
+      (async (path, bytes) => {
+        const file = await open(path, "r");
+        try {
+          const buffer = Buffer.alloc(bytes);
+          const { bytesRead } = await file.read(buffer, 0, bytes, 0);
+          return buffer.subarray(0, bytesRead);
+        } finally {
+          await file.close();
+        }
+      }),
     ensureDir:
       overrides.ensureDir ??
       (async (path) => {
-        await mkdir(path, { recursive: true });
+        await ensurePrivateDir(path);
       }),
     writeText:
       overrides.writeText ??
@@ -66,6 +81,54 @@ export function resolveScreenDeps(overrides: Partial<ScreenDeps> = {}): ScreenDe
     now: overrides.now ?? (() => new Date()),
     tmpDir: overrides.tmpDir ?? tmpdir(),
   };
+}
+
+/** The file-system calls `ensurePrivateDir` makes; injectable for tests. */
+export interface PrivateDirFs {
+  mkdir: (path: string, options: { recursive: true; mode: number }) => Promise<unknown>;
+  lstat: (path: string) => Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean; uid: number }>;
+  chmod: (path: string, mode: number) => Promise<void>;
+  /** `process.getuid()`; `null` where there is none (Windows). */
+  uid: () => number | null;
+}
+
+const NODE_PRIVATE_DIR_FS: PrivateDirFs = {
+  mkdir: (path, options) => mkdir(path, options),
+  lstat: (path) => lstat(path),
+  chmod: (path, mode) => chmod(path, mode),
+  uid: () => (typeof process.getuid === "function" ? process.getuid() : null),
+};
+
+/**
+ * Make the screenshot folder and its parent private to this user.
+ *
+ * The folder lives under `os.tmpdir()`. On macOS that is a per-user 0700
+ * folder, but on Linux it is the shared `/tmp`, where another local user
+ * could read a full-screen capture, or pre-create the predictable
+ * `atomic-agent-screens` parent (or a symlink) and own what lands inside.
+ * So both levels are created 0700, must be real directories (not
+ * symlinks) owned by this user, and are set back to 0700 if they were
+ * looser. Anything else refuses the capture. Windows has no uid and a
+ * per-user temp folder; only the symlink check applies there.
+ */
+export async function ensurePrivateDir(
+  path: string,
+  fs: PrivateDirFs = NODE_PRIVATE_DIR_FS,
+): Promise<void> {
+  await fs.mkdir(path, { recursive: true, mode: 0o700 });
+  const uid = fs.uid();
+  for (const dir of [dirname(path), path]) {
+    const info = await fs.lstat(dir);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`screenshot folder ${dir} is not a plain folder; refusing to save a capture there`);
+    }
+    if (uid !== null && info.uid !== uid) {
+      throw new Error(
+        `screenshot folder ${dir} belongs to another user; remove it and try again`,
+      );
+    }
+    if (uid !== null) await fs.chmod(dir, 0o700);
+  }
 }
 
 export interface ScreenApp {
@@ -221,6 +284,26 @@ export function screenRecordingMessage(env: NodeJS.ProcessEnv): string {
   );
 }
 
+/**
+ * Hosts where `os.screen.capture` works (ATO-527 first slice: Windows
+ * and Linux take whole-screen pictures). Everything else in `os.screen.*`
+ * needs `screenControlSupported`.
+ */
+export function screenCaptureSupported(os: NodeJS.Platform): boolean {
+  return os === "darwin" || os === "win32" || os === "linux";
+}
+
+/** Hosts where clicking, typing, keys, window snapshots and pointing work: macOS only for now. */
+export function screenControlSupported(os: NodeJS.Platform): boolean {
+  return os === "darwin";
+}
+
 export function macOnlyMessage(tool: string, os: NodeJS.Platform): string {
+  if (screenCaptureSupported(os) && os !== "darwin") {
+    return (
+      `${tool} works on macOS only for now (this is ${os}). os.screen.capture works here and takes a picture of the whole screen, ` +
+      "but clicking, typing, keys and pointing are macOS-only until the next part of ATO-527. Tell the user what to click or type instead."
+    );
+  }
   return `${tool} works on macOS only (this is ${os}); Windows and Linux support is tracked in ATO-527.`;
 }

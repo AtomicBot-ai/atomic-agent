@@ -338,6 +338,26 @@ describe("screen gate", () => {
     expect(controlOnly.has("os.screen.click")).toBe(true);
     expect(controlOnly.has("os.screen.point")).toBe(false);
   });
+
+  it("keeps only capture on a host without screen control (Windows, Linux: ATO-527)", () => {
+    const captureOnly = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        screen: { enabled: true, point: true, control: false },
+      }),
+    );
+    expect(captureOnly.has("os.screen.capture")).toBe(true);
+    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key", "os.screen.point"]) {
+      expect(captureOnly.has(name), name).toBe(false);
+    }
+    const pointOnly = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        screen: { enabled: false, point: true, control: false },
+      }),
+    );
+    for (const name of GATED_TOOL_NAMES.screen) expect(pointOnly.has(name), name).toBe(false);
+  });
 });
 
 describe("e-mail gate", () => {
