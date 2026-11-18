@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   COMPOSIO_GUIDANCE,
+  buildComposioAccountsGuidance,
   COMPOSIO_SEARCH_TOOL,
   isComposioActive,
 } from "./composio-guidance.js";
@@ -93,5 +94,48 @@ describe("the ### integrations prefix section", () => {
 
   it("stays short enough to live in every turn's prefix", () => {
     expect(COMPOSIO_GUIDANCE.length).toBeLessThan(1200);
+  });
+});
+
+describe("named accounts line (ATO-1494)", () => {
+  const ACCOUNTS = [
+    { toolkit: "gmail", alias: "work", isDefault: true },
+    { toolkit: "gmail", alias: "home", isDefault: false },
+    { toolkit: "slack", alias: "team", isDefault: false },
+  ];
+
+  it("says which account each app acts through and what else is saved", () => {
+    const line = buildComposioAccountsGuidance(ACCOUNTS);
+    expect(line).toContain("gmail acts through `work`, also saved: `home`");
+    expect(line).toContain("slack has no default");
+    expect(line).not.toContain("ca_");
+  });
+
+  it("is null with no named accounts", () => {
+    expect(buildComposioAccountsGuidance([])).toBeNull();
+    expect(buildComposioAccountsGuidance(undefined)).toBeNull();
+  });
+
+  it("does not depend on the order of the list", () => {
+    expect(buildComposioAccountsGuidance([...ACCOUNTS].reverse())).toBe(
+      buildComposioAccountsGuidance(ACCOUNTS),
+    );
+  });
+
+  it("renders under the Composio guidance only while Composio is mounted", () => {
+    const base = { capabilities: CAPS, skillCatalog: [], composioAccounts: ACCOUNTS };
+    const mounted = buildStablePrefix({ ...base, toolDescriptors: [descriptor(COMPOSIO_SEARCH_TOOL)] });
+    expect(mounted.indexOf("Named Composio accounts")).toBeGreaterThan(
+      mounted.indexOf(COMPOSIO_GUIDANCE),
+    );
+    const unmounted = buildStablePrefix({ ...base, toolDescriptors: [descriptor("os.fs.read")] });
+    expect(unmounted).not.toContain("Named Composio accounts");
+  });
+
+  it("leaves the prefix byte-identical when no account is named", () => {
+    const tools = [descriptor(COMPOSIO_SEARCH_TOOL)];
+    expect(buildStablePrefix({ toolDescriptors: tools, capabilities: CAPS, skillCatalog: [], composioAccounts: [] })).toBe(
+      prefixWith(tools),
+    );
   });
 });
