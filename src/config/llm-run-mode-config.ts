@@ -1,3 +1,4 @@
+import { parseAgentProfilesConfig, type UserAgentProfilesConfig } from "./agent-profiles-schema.js";
 import { emitConfigNoticeOnce, isSetAsideString } from "./config-primitives.js";
 import { ConfigValidationError } from "./config-validation-error.js";
 
@@ -267,6 +268,21 @@ export const FUSION_JUDGE_MODES: readonly NonNullable<UserLlmFusionConfig["judge
 export type UserLlmRunModeConfig = {
   mode?: RunModeName;
   fusion?: UserLlmFusionConfig;
+  /**
+   * Subagent profiles written in the settings (ATO-1667), keyed by name:
+   * the same roles as `agents/*.md` files, with `description`, `prompt`
+   * (the file's body), `model` and `tools`. A name follows the file rule
+   * (letters, digits, `-`, `_`; lower-cased). Not read yet: the profile
+   * loader picks them up in ATO-1668.
+   *
+   * A sibling of `fusion`, not inside it: a profile is a role a task is
+   * handed to, wider than the Fusion legs, and a map keyed by name like
+   * Codex `[agents.<name>]` and OpenCode `agent`. It stays under
+   * `llm.runMode` rather than at the top level so the change keeps to
+   * the run-mode owner and the `llm` key lists. See
+   * `agent-profiles-schema.ts`.
+   */
+  agentProfiles?: UserAgentProfilesConfig;
 };
 
 export const RUN_MODE_NAMES: readonly RunModeName[] = [
@@ -725,6 +741,8 @@ export function parseLlmRunModeConfig(
   if (obj.fusion !== undefined) {
     out.fusion = parseFusion(obj.fusion, providers, `${field}.fusion`);
   }
+  const agentProfiles = parseAgentProfilesConfig(obj.agentProfiles, `${field}.agentProfiles`);
+  if (agentProfiles !== undefined) out.agentProfiles = agentProfiles;
   return out;
 }
 
