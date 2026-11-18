@@ -24,6 +24,12 @@ describe("GET /panel (ATO-1128)", () => {
     expect(await js.text()).toContain("/api/sessions");
   });
 
+  it("takes the key from the #key= fragment serve prints, and drops it from the address", async () => {
+    const js = await (await fetch(`${harness.baseUrl}/panel/app.js`)).text();
+    expect(js).toContain("location.hash");
+    expect(js).toContain("history.replaceState");
+  });
+
   it("the data behind it still needs the key", async () => {
     expect((await fetch(`${harness.baseUrl}/api/sessions`)).status).toBe(401);
   });

@@ -48,18 +48,25 @@ export interface HttpServerOptions {
   runtime: AgentRuntime;
   host: string;
   port: number;
+  /**
+   * The bearer key every authenticated route requires. `atomic-agent
+   * serve` always passes one (its own, generated on the first run, when
+   * the operator gives none). `null` turns the check off and is accepted
+   * only together with `unauthenticated: true`.
+   */
   apiKey: string | null;
+  /**
+   * The explicit opt-out for a server with no key: test harnesses and an
+   * embedder that guards the port some other way. Without it a `null`
+   * key is refused at construction, so no caller ends up keyless by
+   * forgetting to pass one. A keyless server still runs the loopback
+   * guard (ATO-1495).
+   */
+  unauthenticated?: boolean;
   routes: RouteDefinition[];
   approvalBus?: ApprovalBus;
   completionRegistry?: CompletionRegistry;
   undeliveredSteers?: UndeliveredSteerStore;
-  /**
-   * The keyless loopback guard (ATO-1495). On by default. Only the
-   * webhook tunnel gateway (ATO-625) turns it off: cloudflared sends the
-   * public tunnel host, and webhook senders choose their own body type;
-   * that listener serves nothing but signed `POST /api/webhooks/{name}`.
-   */
-  loopbackGuard?: boolean;
 }
 
 export interface HttpServerHandle {
@@ -139,6 +146,14 @@ function matchRoute(
 export function createHttpServer(
   options: HttpServerOptions,
 ): Promise<HttpServerHandle> {
+  if (options.apiKey === null && options.unauthenticated !== true) {
+    return Promise.reject(
+      new Error("createHttpServer: an API key is required (pass unauthenticated: true only in tests)"),
+    );
+  }
+  if (options.apiKey !== null && options.apiKey.trim().length === 0) {
+    return Promise.reject(new Error("createHttpServer: the API key is empty"));
+  }
   const approvalBus = options.approvalBus ?? new ApprovalBus();
   const completionRegistry =
     options.completionRegistry ?? new CompletionRegistry();
@@ -154,7 +169,7 @@ export function createHttpServer(
         approvalBus,
         completionRegistry,
         undeliveredSteers,
-      }, options.loopbackGuard ?? true);
+      });
     } catch (err) {
       handleRouteError(res, err);
     }
@@ -207,15 +222,14 @@ async function dispatch(
   res: ServerResponse,
   routes: CompiledRoute[],
   baseCtx: Omit<HandlerContext, "params">,
-  loopbackGuard: boolean,
 ): Promise<void> {
   const url = parseRequestUrl(req);
   if (!url) {
     sendError(res, 400, openaiError("Malformed request URL"));
     return;
   }
-  // ATO-1495: without a key, refuse foreign Host/Origin and non-JSON bodies before routing (preflights too).
-  if (loopbackGuard && !enforceLoopbackGuard(req, res, baseCtx.apiKey)) return;
+  // ATO-1495: a keyless (test-only) server refuses foreign Host/Origin and non-JSON bodies before routing.
+  if (!enforceLoopbackGuard(req, res, baseCtx.apiKey)) return;
   const method = (req.method ?? "GET").toUpperCase();
   const matched = matchRoute(routes, method, url.pathname);
   if (!matched) {

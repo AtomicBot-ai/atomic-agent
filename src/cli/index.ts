@@ -241,6 +241,7 @@ function printHelp(): void {
     "  ATOMIC_AGENT_LLAMA_API_KEY     Bearer token for a llama-server you run yourself (external mode) or the legacy managed llama-server engine (unset = a generated key in <models dir>/llama-server.key).",
     "                                 Not needed with Atomic Core: Core issues and rotates its own key.",
     "  ATOMIC_AGENT_SERVE_NO_PARENT_EXIT  1 to keep `serve` running after its parent exits (same as --no-parent-exit)",
+    "  ATOMIC_AGENT_API_KEY           Bearer key `serve` requires (same as --api-key; unset = a generated key in <stateDir>/serve-api.key)",
     `  ATOMIC_AGENT_LLAMA_MAX_TOKENS  Max new tokens per completion (n_predict / max_tokens), default ${USER_CONFIG_DEFAULTS.localModels.completionMaxTokens}, clamped 64..131072`,
     "  ATOMIC_AGENT_BROWSER_CHANNEL           Preferred browser family: chrome | msedge | chromium (default chrome)",
     "  ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH   Explicit path to a Chromium-family binary (overrides auto-detect)",

@@ -8,7 +8,10 @@ import type { HttpHandler } from "./request-context.js";
  * for the API key and every call it makes carries it (the routes it uses
  * are the authenticated ones: /api/sessions, /v1/chat/completions,
  * /api/events, /api/approval/resolve). Reach it from a phone with
- * `atag serve --host 0.0.0.0` and a key (ATO-1126).
+ * `atag serve --host 0.0.0.0` and a key (ATO-1126). On this machine,
+ * serve prints `/panel#key=…` when it runs in a terminal; the page takes
+ * the key from the fragment (never sent to the server) and drops it from
+ * the address bar.
  */
 const HEADERS = {
   "cache-control": "no-store",
