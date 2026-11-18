@@ -8,6 +8,7 @@ import type { ToolContext } from "../../tool-registry.js";
 import {
   explainCurlStderr,
   NO_REVOKE_FLAG,
+  pinThroughProxy,
   resetCurlRevocationFlagForTests,
   REVOKE_BEST_EFFORT_FLAG,
   runCurl,
@@ -193,6 +194,39 @@ describe("runCurl with the user's proxy (ATO-87)", () => {
     expect(env.https_proxy).toBe(PROXY);
     expect(env.http_proxy).toBe(PROXY);
     expect(env.no_proxy).toBe("localhost,127.0.0.1,::1,intra.lan");
+  });
+
+  it("turns the DNS pin into --connect-to, so the proxy goes where the guard looked", async () => {
+    setAgentProxy(agentProxyFrom({ url: PROXY, noProxy: [] }));
+    const run = fakeCurl([]);
+    const pinned = ["-sS", "--resolve", "example.com:443:93.184.215.14,[2606:2800::1]", "--", "https://example.com/"];
+    await runCurl(run as unknown as typeof RunCommandType, pinned, OPTIONS, {
+      platform: "linux",
+      baseEnv: () => ({}),
+    });
+    const [, argv] = run.mock.calls[0]!;
+    expect(argv).toEqual([
+      "-sS",
+      "--connect-to",
+      "example.com:443:93.184.215.14:443",
+      "--",
+      "https://example.com/",
+    ]);
+    expect(argv).not.toContain("--resolve");
+  });
+
+  it("keeps --resolve without a proxy", async () => {
+    const run = fakeCurl([]);
+    const pinned = ["--resolve", "example.com:443:93.184.215.14", "https://example.com/"];
+    await runCurl(run as unknown as typeof RunCommandType, pinned, OPTIONS, { platform: "linux" });
+    expect(run).toHaveBeenCalledWith("curl", pinned, OPTIONS);
+  });
+
+  it("pins an IPv6 address through the proxy", () => {
+    expect(pinThroughProxy(["--resolve", "[::2]:8443:[2001:db8::5]"])).toEqual([
+      "--connect-to",
+      "[::2]:8443:[2001:db8::5]:8443",
+    ]);
   });
 
   it("keeps a caller env that already names a proxy (the verify sandbox)", async () => {

@@ -52,6 +52,46 @@ export interface RunCurlSeams {
 }
 
 /**
+ * Keep the DNS pin when the request goes through the user's proxy.
+ *
+ * The web tools check a host's addresses first (`assertHostAllowed`) and
+ * pin them with `--resolve host:port:addr,...`, so a rebinding DNS answer
+ * cannot send curl somewhere private after the check. Through an HTTP
+ * proxy `--resolve` binds nothing: curl sends `CONNECT host:port` and the
+ * proxy resolves the name itself, maybe to its own loopback or LAN.
+ * `--connect-to host:port:addr:port` makes curl name the checked address
+ * in the CONNECT instead (TLS name and `Host` stay the real host), so the
+ * proxy goes where the guard looked. One address only: `--connect-to`
+ * takes no list, so the multi-address fallback of `--resolve` is lost
+ * while a proxy is on.
+ */
+export function pinThroughProxy(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    const entry = arg === "--resolve" ? args[i + 1] : undefined;
+    const parsed = entry === undefined ? null : parseResolveEntry(entry);
+    if (parsed === null) {
+      out.push(arg);
+      continue;
+    }
+    out.push("--connect-to", `${parsed.host}:${parsed.port}:${parsed.address}:${parsed.port}`);
+    i++;
+  }
+  return out;
+}
+
+function parseResolveEntry(
+  entry: string,
+): { host: string; port: string; address: string } | null {
+  const match = /^(\[[^\]]+\]|[^:\[\]]+):(\d+):(.+)$/.exec(entry);
+  if (!match) return null;
+  const address = match[3]!.split(",")[0]!.trim();
+  if (address.length === 0) return null;
+  return { host: match[1]!, port: match[2]!, address };
+}
+
+/**
  * The user's proxy (ATO-87) for this curl, as curl's own variables: the
  * password stays out of argv (and `ps`). A caller env that already names
  * a proxy keeps it.
@@ -77,7 +117,11 @@ export async function runCurl(
     const refused = offlineRefusal(arg, "curl");
     if (refused) throw refused;
   }
-  options = withAgentProxy(options, seams);
+  const proxied = withAgentProxy(options, seams);
+  if (proxied !== options) {
+    options = proxied;
+    args = pinThroughProxy(args);
+  }
   const platform = seams.platform ?? process.platform;
   if (platform !== "win32") return runCommand("curl", args, options);
 
