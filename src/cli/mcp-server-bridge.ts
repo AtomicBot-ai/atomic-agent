@@ -13,6 +13,9 @@ import {
   type CallToolResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import { runWithApprovalWorkdir } from "../approval/approval-workdir.js";
+import { activePolicy } from "../policy/policy-active.js";
+import { policyCallRefusal } from "../policy/policy-enforce.js";
+import type { EffectivePolicy } from "../policy/policy-evaluator.js";
 import type { McpServeToolSet } from "./mcp-server-tools.js";
 
 /** Session id every call runs under; the gate's refuse policy is keyed on it. */
@@ -31,11 +34,14 @@ export interface McpServeBridgeOptions {
   workingDir: string;
   version: string;
   sessionId?: string;
+  /** The admin policy (ATO-587); the installed one by default. */
+  orgPolicy?: () => EffectivePolicy;
 }
 
 export function createMcpServeServer(options: McpServeBridgeOptions): McpServer {
   const { toolSet, workingDir } = options;
   const sessionId = options.sessionId ?? MCP_SERVE_SESSION_ID;
+  const orgPolicy = options.orgPolicy ?? activePolicy;
   const server = new McpServer(
     { name: "atomic-agent", version: options.version },
     { capabilities: { tools: {} } },
@@ -61,6 +67,11 @@ export function createMcpServeServer(options: McpServeBridgeOptions): McpServer 
         return errorResult(`unknown tool: ${request.params.name}`);
       }
       const args = request.params.arguments ?? {};
+      // The dispatcher's org policy check (`refuseByOrgPolicy`): calls
+      // here skip `executeBatch`, so a denied call is refused here, also
+      // for tools that never ask the gate.
+      const refusal = policyCallRefusal(orgPolicy(), name, args);
+      if (refusal !== null) return errorResult(refusal);
       try {
         const result = await runWithApprovalWorkdir(workingDir, () =>
           toolSet.registry.invoke(name, args, {
