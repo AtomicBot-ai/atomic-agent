@@ -96,6 +96,8 @@ describe("describeToolCall (ATO-962)", () => {
     expect(line("audio.listen", {}, true)).toBe("Listened to a recording");
     expect(line("fusion.delegate", { tasks: [{}, {}, {}] })).toBe("Delegating 3 tasks");
     expect(line("fusion_worker", {}, true)).toBe("Ran a worker");
+    expect(line("subagent.run", { tasks: [{}, {}] }, true)).toBe("Ran 2 subagents");
+    expect(line("subagent.run", { tasks: [{}] })).toBe("Running 1 subagent");
   });
 
   it("humanizes an unknown tool instead of showing its raw name", () => {
