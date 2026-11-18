@@ -841,6 +841,19 @@ describe("Enter in the rewind picker (ATO-1057)", () => {
   });
 });
 
+describe("/export (ATO-1054)", () => {
+  it("hands the format and path to the host", () => {
+    const onChatExportRequested = vi.fn();
+    handleEditorSubmit(
+      "/export pdf out/chat.pdf",
+      createInitialTuiState(fakeSession()),
+      () => undefined,
+      stubCallbacks({ onChatExportRequested }),
+    );
+    expect(onChatExportRequested).toHaveBeenCalledWith({ format: "pdf", path: "out/chat.pdf" });
+  });
+});
+
 describe("bare /enhance", () => {
   it("enhances the composer draft when run from the menu, keeping the buffer", () => {
     // The menu runs `/enhance` with the draft still in the composer.

@@ -17,6 +17,7 @@ import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
 import { compactionInstructionsError, normalizeCompactionInstructions } from "../../runtime/compaction-instructions.js";
 import { parsePersonaCommand, type PersonaCommand } from "./persona-command.js";
+import { parseExportCommand, type ChatExportRequest } from "./export-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -76,6 +77,8 @@ export interface SlashDispatchResult {
   readonly triggerSessionPicker: boolean;
   /** `/rewind` (ATO-1057): ask the orchestrator to open the rewind picker. */
   readonly triggerRewindPicker?: boolean;
+  /** `/export [format] [path]` (ATO-1054): the orchestrator writes the open chat. */
+  readonly chatExport?: ChatExportRequest;
   /** When true the caller should ask the orchestrator to start a fresh session. */
   readonly triggerSessionNew: boolean;
   /** With `triggerSessionNew`: start the session in its own git worktree (`/new worktree`). */
@@ -521,6 +524,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return pureActions([], { triggerSessionNew: true });
     case "rewind":
       return pureActions([], { triggerRewindPicker: true });
+    case "export":
+      return pureActions([], { chatExport: parseExportCommand(parsed.args) });
     case "incognito":
       return pureActions([], { triggerIncognitoSession: true });
     case "window":

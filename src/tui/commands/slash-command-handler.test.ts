@@ -187,6 +187,18 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toBeUndefined();
   });
 
+  it("asks to export the open chat for /export, with the format and path (ATO-1054)", () => {
+    expect(dispatchSlashCommand("/export").chatExport).toEqual({ format: "markdown", path: null });
+    expect(dispatchSlashCommand("/export pdf ~/Documents/trip notes.pdf").chatExport).toEqual({
+      format: "pdf",
+      path: "~/Documents/trip notes.pdf",
+    });
+    const result = dispatchSlashCommand("/export docx");
+    expect(result.chatExport).toEqual({ format: "docx", path: null });
+    expect(result.clearBuffer).toBe(true);
+    expect(result.systemMessage).toBeUndefined();
+  });
+
   it("signals triggerSessionNew for /new", () => {
     const result = dispatchSlashCommand("/new");
     expect(result.triggerSessionNew).toBe(true);
