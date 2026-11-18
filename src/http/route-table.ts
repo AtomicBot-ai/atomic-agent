@@ -107,7 +107,13 @@ import {
 } from "./route-mcp.js";
 import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 import { createSetActiveLlmHandler } from "./route-llm-active.js";
-import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.js";
+import {
+  createPanelIconPngHandler,
+  createPanelIconSvgHandler,
+  createPanelManifestHandler,
+  createPanelPageHandler,
+  createPanelScriptHandler,
+} from "./route-panel.js";
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createRestoreFileHandler } from "./route-fs-restore.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
@@ -172,6 +178,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // ATO-1128: the phone panel's page; it holds no data and asks for the key (route-panel.ts).
     { method: "GET", path: "/panel", handler: createPanelPageHandler(), requiresAuth: false },
     { method: "GET", path: "/panel/app.js", handler: createPanelScriptHandler(), requiresAuth: false },
+    { method: "GET", path: "/panel/manifest.webmanifest", handler: createPanelManifestHandler(), requiresAuth: false },
+    { method: "GET", path: "/panel/icon.svg", handler: createPanelIconSvgHandler(), requiresAuth: false },
+    { method: "GET", path: "/panel/icon-180.png", handler: createPanelIconPngHandler(), requiresAuth: false },
     // ATO-646: Prometheus scrape target. Authenticated like every /api route.
     { method: "GET", path: "/metrics", handler: createMetricsHandler(options.metricsRegistry) },
     {
