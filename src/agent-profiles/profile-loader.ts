@@ -52,8 +52,9 @@ export interface AgentProfileLoadOptions {
   /** Trust answers at startup, used when the config cannot be reread. */
   startupTrust: readonly ProjectTrustRecord[] | undefined;
   /**
-   * `llm.runMode.agentProfiles` from the live config, read on every load
-   * so an edit applies on the next fan-out (ATO-1668).
+   * `llm.runMode.agentProfiles`, called on every load (ATO-1668). The
+   * runtime passes `readSettingsAgentProfiles`, which rereads
+   * `config.json`, so an edit applies on the next fan-out.
    */
   settingsProfiles?: () => Readonly<Record<string, SettingsAgentProfileEntry>> | undefined;
   /** Enabled plugins' profiles, already parsed (`listPluginSubagents`). */

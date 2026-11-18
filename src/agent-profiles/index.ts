@@ -21,5 +21,6 @@ export {
   loadAgentProfiles,
 } from "./profile-loader.js";
 export type { AgentProfileLoadOptions, AgentProfileSet } from "./profile-loader.js";
+export { readSettingsAgentProfiles } from "./settings-profiles.js";
 export { PROFILE_ALWAYS_ALLOWED, compileToolAllowlist } from "./profile-tools.js";
 export type { CompiledToolAllowlist } from "./profile-tools.js";

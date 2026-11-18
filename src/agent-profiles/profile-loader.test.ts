@@ -173,6 +173,8 @@ describe("loadAgentProfiles (ATO-566)", () => {
     });
 
     it("the settings beat a plugin profile of the same name", () => {
+      // Pins pass order only: real plugin profiles are named `plugin:agent`
+      // and a settings name cannot hold ":", so the two never collide.
       const set = load({
         settingsProfiles: () => ({ deploy: { prompt: "SETTINGS" } }),
         pluginProfiles: () => [{ name: "deploy", description: "", prompt: "PLUGIN", source: "plugin" }],
@@ -193,7 +195,7 @@ describe("loadAgentProfiles (ATO-566)", () => {
       expect(text).toContain("llm.runMode.agentProfiles.bad name!");
     });
 
-    it("rereads the settings on every load and survives a reader that throws", () => {
+    it("calls the settings reader on every load and survives one that throws", () => {
       let prompt = "FIRST";
       const options = { settingsProfiles: () => ({ writer: { prompt } }) };
       expect(load(options).get("writer")?.prompt).toBe("FIRST");
