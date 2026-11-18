@@ -46,6 +46,7 @@ import { AgentClient, APPROVAL_DECISIONS, commandOf, probeRemoteAgent, type Proj
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
+import { wireSkillDraftsIpc } from "./skill-drafts-ipc.js";
 import { pushTurnNote, wirePushIpc } from "./push-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireFileMentionsIpc } from "./file-mentions-ipc.js";
@@ -3286,6 +3287,8 @@ function wireIpc(client: AgentClient): void {
   wirePluginsIpc();
   // ATO-1102: "Test skill" on a skill card, through `atag skill eval` (skill-eval-ipc.ts).
   wireSkillEvalIpc({ cwd: () => client.status.workingDir });
+  // ATO-67: Settings › Skills › Pending review, through `atag skill learned` (skill-drafts-ipc.ts).
+  wireSkillDraftsIpc({ cwd: () => client.status.workingDir, isRemote: () => client.isRemote });
   // ATO-1129: Settings › Connections › Phone push, through `atag push` (push-ipc.ts).
   wirePushIpc();
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
@@ -3409,7 +3412,9 @@ function wireIpc(client: AgentClient): void {
           requiresBins?: string[]; installHints?: Record<string, string> }>;
       };
       if (!data.workingDir) return skillList(client.status.workingDir);
-      const rows = data.skills.map(row => ({ ...row, version: row.version || "—", enabled: !row.disabled }));
+      // ATO-67: a learned draft pending review is not an installed skill (the Pending review group shows it).
+      const rows = data.skills.filter(row => (row as { status?: string }).status !== "pending")
+        .map(row => ({ ...row, version: row.version || "—", enabled: !row.disabled }));
       return { ok: true, workingDir: data.workingDir, projectSkillsEnabled: data.projectSkillsEnabled,
         errors: data.errors, rows: client.isRemote ? rows : skillRowsWithBins(rows) };
     } catch (err) { return { ok: false, error: err instanceof Error ? err.message : String(err) }; }

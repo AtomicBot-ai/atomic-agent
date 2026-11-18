@@ -511,6 +511,11 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:skillSetDisabled", { name, disabled, scope, sessionId }),
   skillProjectEnabled: (enabled: boolean, sessionId?: string | null) =>
     ipcRenderer.invoke("cli:skillProjectEnabled", { enabled, sessionId }),
+  /** ATO-67: learned skills waiting for review (main/skill-drafts-ipc.ts). */
+  skillDrafts: () => ipcRenderer.invoke("cli:skillDrafts"),
+  skillDraftShow: (id: string) => ipcRenderer.invoke("cli:skillDraftShow", id),
+  skillDraftApprove: (id: string) => ipcRenderer.invoke("cli:skillDraftApprove", id),
+  skillDraftDiscard: (id: string) => ipcRenderer.invoke("cli:skillDraftDiscard", id),
   /** ATO-954: Settings › Plugins (main/plugins-ipc.ts). */
   pluginList: () => ipcRenderer.invoke("cli:pluginList"),
   /** ATO-1129: Settings › Connections › Phone push (main/push-ipc.ts). */

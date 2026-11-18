@@ -170,6 +170,12 @@ button.set-search:hover{border-color:var(--bd)}
 .set-skeval{padding:10px 12px;border-radius:8px;margin:10px 0}
 .set-skeval .acts{align-items:center;gap:8px;margin:0}
 .set-skeval p{margin:6px 0 0}
+/* ATO-67: Pending review, learned skills waiting above the skill rows */
+.set-skdrafts{margin-bottom:14px}
+.set-skdraft{display:block;padding:10px 12px}
+.set-skdraft .d{margin:4px 0 0;white-space:normal}
+.set-skdraft .acts{align-items:center;gap:8px;margin:8px 0 0}
+.set-skdsrc{margin:4px 0 10px;padding-left:18px}
 
 /* Empty and loading states */
 .set-empty{padding:40px 20px 28px}

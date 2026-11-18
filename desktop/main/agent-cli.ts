@@ -3124,6 +3124,8 @@ export async function skillList(cwd?: string): Promise<{ ok: boolean; rows?: Ski
       }
       return { ok: false, error: `could not parse skill list line: ${line.slice(0, 120)}` };
     }
+    // ATO-67: a learned draft pending review is not a disabled skill; Pending review lists it (skill-drafts-ipc.ts).
+    if (cells[3] === "pending") continue;
     rows.push({
       name: cells[0]!,
       version: (cells[1] ?? "").replace(/^v/, ""),
