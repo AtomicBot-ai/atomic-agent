@@ -98,6 +98,7 @@ import type { LastTurnRollbackOutcome, TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
 import { isInterruptedGoal, readGoalState, type GoalState } from "../agent/goal/index.js";
 import type { GoalCommand } from "./commands/goal-command.js";
+import { writeChatExport, type ChatExportRequest } from "./commands/export-command.js";
 import { activeGoalSpec, createGoalProgressReporter, runGoalCommand } from "./goal/goal-commands.js";
 import {
   ChatPullMirror,
@@ -1731,6 +1732,16 @@ export class ChatOrchestrator {
       return;
     }
     this.bus.emit({ type: "rewind_picker_opened", points });
+  }
+
+  /**
+   * `/export` (ATO-1054): write the open chat, as held now, to a file
+   * and say where in the chat. A running turn is exported up to where
+   * it is.
+   */
+  async exportOpenChat(request: ChatExportRequest): Promise<void> {
+    const text = await writeChatExport(this.session, request);
+    this.bus.emit({ type: "system_message", text });
   }
 
   /**

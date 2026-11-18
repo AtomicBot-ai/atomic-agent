@@ -321,6 +321,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are",
   },
+  // ATO-1054.
+  {
+    name: "export",
+    description:
+      "save this chat as a file: `/export` writes Markdown to the current folder · `/export md|docx|pdf|html [path]`",
+  },
   // Added with the plugin loader (ATO-954).
   {
     name: "plugins",

@@ -12,21 +12,24 @@ import { describeToolCall } from "../tools/describe-tool-call.js";
 
 const HELP =
   [
-    "atomic-agent export — save one chat as Markdown, HTML or Word (ATO-1054)",
+    "atomic-agent export — save one chat as Markdown, HTML, Word or PDF (ATO-1054)",
     "",
     "Usage:",
-    "  atomic-agent export <sessionId> [--format md|html|docx] [--out <file>] [--no-tools]",
-    "  atomic-agent export --last      [--format md|html|docx] [--out <file>] [--no-tools]",
+    "  atomic-agent export <sessionId> [--format md|html|docx|pdf] [--out <file>] [--no-tools]",
+    "  atomic-agent export --last      [--format md|html|docx|pdf] [--out <file>] [--no-tools]",
     "",
-    "Markdown and HTML go to stdout unless --out is given. Word (docx) is",
-    "written to --out, or to a file named after the chat in the current",
-    "folder. --last exports the most recent chat. --no-tools leaves out the",
-    "one line per tool step. For a PDF, open the HTML in a browser and print",
-    "it, or use Export in the desktop app. Session ids: `/session` in the TUI.",
+    "Markdown and HTML go to stdout unless --out is given. Word (docx) and",
+    "PDF are written to --out, or to a file named after the chat in the",
+    "current folder. --last exports the most recent chat. --no-tools leaves",
+    "out the one line per tool step. The PDF uses the standard PDF fonts:",
+    "text outside Western European scripts is transliterated or shown as ?,",
+    "and the file says so; Markdown and Word keep every character. In the",
+    "TUI, `/export` saves the open chat. Session ids: `/session` in the TUI.",
     "",
     "Examples:",
     "  atomic-agent export --last > chat.md",
     "  atomic-agent export s-1234 --format docx --out ~/Documents/chat.docx",
+    "  atomic-agent export --last --format pdf",
   ].join("\n") + "\n";
 
 /** Exit codes follow the dispatcher's split: 0 ok, 1 failed, 2 usage. */
@@ -101,7 +104,7 @@ export function parseExportArgs(args: readonly string[]): ParsedExportArgs | str
   if (!last && !sessionId) return "give a session id or --last";
   if (last && sessionId) return "give a session id or --last, not both";
   const format = parseChatExportFormat(formatRaw);
-  if (!format) return `unknown format: ${formatRaw} (md, html or docx)`;
+  if (!format) return `unknown format: ${formatRaw} (md, html, docx or pdf)`;
   return { sessionId, last, format, out, tools };
 }
 

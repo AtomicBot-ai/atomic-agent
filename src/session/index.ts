@@ -210,7 +210,7 @@ export type {
   DatasetRedactionCounts,
   ExportDatasetResult,
 } from "./dataset-export/index.js";
-// ATO-1054: one chat as Markdown / HTML / DOCX.
+// ATO-1054: one chat as Markdown / HTML / DOCX / PDF.
 export {
   CHAT_EXPORT_MIME,
   chatExportFilename,
@@ -225,6 +225,7 @@ export type {
   DescribeExportedToolCall,
 } from "./chat-export.js";
 export { markdownToDocumentXml, renderMarkdownDocx } from "./chat-export-docx.js";
+export { encodeWinAnsi, renderMarkdownPdf } from "./chat-export-pdf.js";
 export { exportChat } from "./chat-export-render.js";
 export type { ChatExportFile } from "./chat-export-render.js";
 export {
