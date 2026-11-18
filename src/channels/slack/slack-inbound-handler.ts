@@ -205,10 +205,8 @@ export async function dispatchToRuntime(text: string, ref: SlackRef, ctx: SlackI
   };
   try {
     await ctx.runtime.runTurn(session, text, {
+      // `answerChannelForOrigin("slack")` gives the Slack style (ATO-1508).
       origin: "slack",
-      // No Slack entry in `AnswerChannel` yet (shared type, follow-up):
-      // shaped for a chat surface without tables or headings, ~3500 cap.
-      answerChannel: "telegram",
       signal: controller.signal,
       eventHook,
     });
