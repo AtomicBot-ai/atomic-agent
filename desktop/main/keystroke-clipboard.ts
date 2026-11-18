@@ -40,6 +40,10 @@ function isWayland(env: Record<string, string | undefined>): boolean {
 export const WINDOWS_CONSOLE_PROCESSES: readonly string[] = [
   "cmd", "powershell", "pwsh", "powershell_ise", "conhost", "openconsole",
   "windowsterminal", "wt", "mintty", "bash", "wsl", "alacritty", "wezterm", "wezterm-gui",
+  // Terminal apps that are only a terminal (ATO-985 review): ConEmu (and Cmder,
+  // which runs it), Hyper, Tabby, Warp. Editors with a built-in terminal
+  // (VS Code, Cursor, JetBrains) are not listed: there Ctrl+C is the editor's copy.
+  "conemu", "conemu64", "hyper", "tabby", "warp",
 ];
 
 /** True when the process in front is a console or terminal (see WINDOWS_CONSOLE_PROCESSES). */
