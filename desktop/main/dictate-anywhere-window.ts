@@ -22,7 +22,10 @@ import {
   holdWatchFailed,
   holdWatchLine,
   type HoldAction,
+  type HoldKeyLine,
+  type HoldWatchState,
 } from "./dictate-hold.js";
+import { UiohookHoldWatcher } from "./hold-key-uiohook.js";
 import { HoldKeyWatcher } from "./hold-key-watcher.js";
 import { keystrokesAllowed, pasteIntoFrontApp } from "./keystroke-clipboard-host.js";
 import {
@@ -46,9 +49,9 @@ import { VoiceSession } from "./speech.js";
  * the main window. It never takes the keyboard (not focusable, shown
  * inactive), so the app in front stays in front and gets the paste.
  *
- * Two ways in: the hold key (dictate-hold.ts: a watcher process, its
- * down/up through HoldMachine) or the toggle combo (globalShortcut). In the
- * hold mode the combo stands in while the watcher cannot run (no
+ * Two ways in: the hold key (dictate-hold.ts: the Mac helper process or,
+ * on Windows, uiohook-napi in process; its down/up through HoldMachine) or
+ * the toggle combo (globalShortcut). In the hold mode the combo stands in while the watcher cannot run (no
  * Accessibility yet, a build without the helper), so the switch never
  * turns on to nothing.
  */
@@ -231,21 +234,21 @@ export function wireDictateAnywhere(w: DictateWiring): { dispose: () => void } {
   };
   const hold = new HoldMachine({ set: (ms, fn) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as NodeJS.Timeout) }, onHold);
   const nativeDir = app.isPackaged ? join(process.resourcesPath, "native") : join(__dirname, "..", "native");
-  const watcher = new HoldKeyWatcher(
-    () => holdKeyCommand(w.platform, nativeDir, process.env),
-    (line) => {
-      if (line.type === "down") hold.down();
-      else if (line.type === "up") hold.up();
-      else if (line.type === "esc") hold.esc();
-      else if (line.type === "other") hold.other();
-    },
-    (st) => {
-      if (st !== "ready") hold.reset();
-      if (st === "untrusted" || st === "missing" || st === "failed") w.log(`[desktop] dictate anywhere: hold key watcher ${st}`);
-      applyCombo();
-    },
-    w.log,
-  );
+  const onKey = (line: HoldKeyLine) => {
+    if (line.type === "down") hold.down();
+    else if (line.type === "up") hold.up();
+    else if (line.type === "esc") hold.esc();
+    else if (line.type === "other") hold.other();
+  };
+  const onWatchState = (st: HoldWatchState) => {
+    if (st !== "ready") hold.reset();
+    if (st === "untrusted" || st === "missing" || st === "failed") w.log(`[desktop] dictate anywhere: hold key watcher ${st}`);
+    applyCombo();
+  };
+  /* Windows: uiohook-napi inside the app (loaded on the first start); the Mac: the Fn helper process. */
+  const watcher = w.platform === "win32"
+    ? new UiohookHoldWatcher(onKey, onWatchState, w.log)
+    : new HoldKeyWatcher(() => holdKeyCommand(w.platform, nativeDir), onKey, onWatchState, w.log);
 
   const skip = quickEntrySkipReason({ smoke: w.smoke, probe: w.probe, modelsTest: w.modelsTest, envOff: process.env.ATOMIC_AGENT_NO_GLOBAL_SHORTCUT === "1" });
   const shortcut = new QuickEntryShortcut(

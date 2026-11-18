@@ -4,15 +4,18 @@ import { join } from "node:path";
  * ATO-1064: hold to talk, the way Wispr Flow does it. Hold Fn on a Mac, or
  * Ctrl+Win on Windows: while the keys are down the take records, letting go
  * types the words into the app in front. Electron's globalShortcut sees
- * neither Fn nor a key going up, so a small watcher process reports the
- * keys: native/atomic-fn-key.swift on a Mac, a PowerShell low-level
- * keyboard hook on Windows. It swallows nothing and says nothing about any
- * other key except while the hold keys are down (then only `esc` or
- * `other`). Linux has no agreed hold key and keeps the toggle combo.
+ * neither Fn nor a key going up, so a watcher reports the keys: on a Mac
+ * the small helper process native/atomic-fn-key.swift, on Windows the
+ * in-process native module uiohook-napi (hold-key-uiohook.ts), loaded only
+ * there and only while the hold mode is on. Neither swallows a key, and
+ * neither says anything about any other key except while the hold keys are
+ * down (then only `esc` or `other`). Linux has no agreed hold key and keeps
+ * the toggle combo.
  *
  * Pure (no Electron import) so the node tests load it as is:
  * the hold state machine, the watcher's line protocol, the command that
- * starts the watcher, and the line Settings shows when it cannot run.
+ * starts the Mac helper, the Windows key events turned into the same lines,
+ * and the line Settings shows when it cannot run.
  */
 
 /* ---------------- which key ---------------- */
@@ -130,7 +133,7 @@ export type HoldKeyLine =
   | { type: "untrusted" }
   | { type: "error"; message: string };
 
-/** One stdout line of the watcher, or null for anything else (PowerShell noise, blank lines). */
+/** One stdout line of the watcher, or null for anything else (noise, blank lines). */
 export function parseHoldKeyLine(raw: string): HoldKeyLine | null {
   const line = raw.replace(/^﻿/, "").trim();
   if (line === "ready" || line === "down" || line === "up" || line === "esc" || line === "other" || line === "untrusted") {
@@ -163,112 +166,73 @@ export interface WatcherCommand {
 }
 
 /**
- * The Windows watcher: a WH_KEYBOARD_LL hook compiled by Add-Type, with its
- * own message loop. It prints `down` when Ctrl and Win are both held and
- * `up` when either comes up; `esc` / `other` for a key pressed meanwhile.
- * Every event goes on to CallNextHookEx, so nothing is swallowed. When the
- * chord starts it sends one press of an unassigned key (0xE8, AutoHotkey's
- * "menu mask" trick), so letting go of Win does not open the Start menu; the
- * hook skips that key. It exits when its stdin closes (the app quit or died).
+ * How the watcher process is started here, or null where there is none.
+ * Only the Mac has one: `nativeDir` is where its helper lives
+ * (Resources/native when packaged, out/native in a dev run). Windows starts
+ * no process at all; its watcher runs inside the app (WinHoldChord below).
  */
-export const WINDOWS_HOLD_KEY_SCRIPT = String.raw`$ErrorActionPreference = 'Stop'
-$src = @'
-using System;
-using System.Runtime.InteropServices;
-using System.Threading;
-
-public static class AtomicHoldKey {
-  private delegate IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam);
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct KBDLLHOOKSTRUCT { public uint vkCode; public uint scanCode; public uint flags; public uint time; public IntPtr extra; }
-
-  [StructLayout(LayoutKind.Sequential)]
-  private struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public int x; public int y; }
-
-  [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetWindowsHookEx(int idHook, HookProc fn, IntPtr hMod, uint threadId);
-  [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-  [DllImport("user32.dll")] private static extern int GetMessage(out MSG msg, IntPtr hWnd, uint min, uint max);
-  [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int vk);
-  [DllImport("user32.dll")] private static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
-  [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandle(string name);
-
-  private const uint MASK_KEY = 0xE8;
-  private static readonly HookProc Proc = OnKey;   // held, so the GC never collects the hook
-  private static IntPtr hook = IntPtr.Zero;
-  private static bool lctrl, rctrl, lwin, rwin, active;
-
-  private static void Say(string s) { Console.Out.WriteLine(s); Console.Out.Flush(); }
-  private static bool Down(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
-
-  private static IntPtr OnKey(int nCode, IntPtr wParam, IntPtr lParam) {
-    if (nCode >= 0) {
-      KBDLLHOOKSTRUCT k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
-      int msg = wParam.ToInt32();
-      bool down = msg == 0x100 || msg == 0x104;
-      bool up = msg == 0x101 || msg == 0x105;
-      if (k.vkCode != MASK_KEY && (down || up)) {
-        switch (k.vkCode) {
-          case 0xA2: lctrl = down; break;
-          case 0xA3: rctrl = down; break;
-          case 0x5B: lwin = down; break;
-          case 0x5C: rwin = down; break;
-          case 0x11: break;
-          default:
-            // A missed key-up (the secure desktop, a UAC prompt) is put right from the real state.
-            lctrl = Down(0xA2); rctrl = Down(0xA3); lwin = Down(0x5B); rwin = Down(0x5C);
-            if (active && down) Say(k.vkCode == 0x1B ? "esc" : "other");
-            break;
-        }
-        bool both = (lctrl || rctrl) && (lwin || rwin);
-        if (both && !active) {
-          active = true;
-          Say("down");
-          keybd_event((byte)MASK_KEY, 0, 0, UIntPtr.Zero);
-          keybd_event((byte)MASK_KEY, 0, 2, UIntPtr.Zero);
-        } else if (!both && active) {
-          active = false;
-          Say("up");
-        }
-      }
-    }
-    return CallNextHookEx(hook, nCode, wParam, lParam);
-  }
-
-  public static void Run() {
-    Thread watch = new Thread(() => { while (Console.In.ReadLine() != null) { } Environment.Exit(0); });
-    watch.IsBackground = true;
-    watch.Start();
-    hook = SetWindowsHookEx(13, Proc, GetModuleHandle(null), 0);
-    if (hook == IntPtr.Zero) { Say("error SetWindowsHookEx failed (" + Marshal.GetLastWin32Error() + ")"); Environment.Exit(4); }
-    Say("ready");
-    MSG m;
-    while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { }
-  }
+export function holdKeyCommand(platform: NodeJS.Platform | string, nativeDir: string): WatcherCommand | null {
+  if (platform === "darwin") return { file: join(nativeDir, "atomic-fn-key"), args: [] };
+  return null;
 }
-'@
-try { Add-Type -TypeDefinition $src -Language CSharp } catch { [Console]::Out.WriteLine('error ' + ($_.Exception.Message -split "\r?\n")[0]); exit 4 }
-[AtomicHoldKey]::Run()
-`;
+
+/* ---------------- the Windows keys ---------------- */
 
 /**
- * How the watcher is started here, or null where there is none. `nativeDir`
- * is where the Mac helper lives (Resources/native when packaged,
- * out/native in a dev run).
+ * uiohook-napi's key codes (its UiohookKey, the libuiohook VC_ values) for
+ * the keys the Windows hold watches. Kept here so the mapping is tested
+ * without the native module.
  */
-export function holdKeyCommand(
-  platform: NodeJS.Platform | string,
-  nativeDir: string,
-  env: Record<string, string | undefined>,
-): WatcherCommand | null {
-  if (platform === "darwin") return { file: join(nativeDir, "atomic-fn-key"), args: [] };
-  if (platform === "win32") {
-    const root = env.SystemRoot || env.SYSTEMROOT || env.windir;
-    const file = root ? `${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe` : "powershell.exe";
-    const encoded = Buffer.from(WINDOWS_HOLD_KEY_SCRIPT, "utf16le").toString("base64");
-    return { file, args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-EncodedCommand", encoded] };
+export const UIOHOOK_KEYS = {
+  escape: 1,
+  ctrl: 29,
+  ctrlRight: 3613,
+  meta: 3675,
+  metaRight: 3676,
+} as const;
+
+/**
+ * Ctrl+Win from uiohook-napi's keydown/keyup events, as the same lines the
+ * Mac helper prints: `down` when a Ctrl and a Win key are both held, `up`
+ * when either comes up, `esc` or `other` for a key pressed meanwhile. Key
+ * repeat is harmless (a held key going down again changes nothing). The
+ * events are only read: uiohook-napi passes every key on, so nothing is
+ * swallowed.
+ *
+ * Letting go of Win after Ctrl+Win may open the Start menu: the old
+ * PowerShell watcher sent one press of an unassigned key (0xE8) to stop
+ * that, and uiohook-napi can only press keys it has a code for, none of them
+ * unassigned, so that is left out rather than pressing a real key into the
+ * app in front.
+ */
+export class WinHoldChord {
+  private lctrl = false;
+  private rctrl = false;
+  private lwin = false;
+  private rwin = false;
+  private active = false;
+
+  /** One key event; the line it makes, or null. */
+  key(kind: "down" | "up", keycode: number): HoldKeyLine | null {
+    const down = kind === "down";
+    switch (keycode) {
+      case UIOHOOK_KEYS.ctrl: this.lctrl = down; break;
+      case UIOHOOK_KEYS.ctrlRight: this.rctrl = down; break;
+      case UIOHOOK_KEYS.meta: this.lwin = down; break;
+      case UIOHOOK_KEYS.metaRight: this.rwin = down; break;
+      default:
+        return this.active && down ? { type: keycode === UIOHOOK_KEYS.escape ? "esc" : "other" } : null;
+    }
+    const both = (this.lctrl || this.rctrl) && (this.lwin || this.rwin);
+    if (both && !this.active) { this.active = true; return { type: "down" }; }
+    if (!both && this.active) { this.active = false; return { type: "up" }; }
+    return null;
   }
-  return null;
+
+  /** Forget the keys (the watcher stopped). */
+  clear(): void {
+    this.lctrl = this.rctrl = this.lwin = this.rwin = this.active = false;
+  }
 }
 
 /* ---------------- what Settings says ---------------- */

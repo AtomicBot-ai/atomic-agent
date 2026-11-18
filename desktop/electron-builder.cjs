@@ -77,7 +77,18 @@ const config = {
     "out/**",
     "!out/native/**",
     "package.json",
-    "LICENSE"
+    "LICENSE",
+    /* ATO-1064: uiohook-napi (the Windows hold key watcher, loaded only on
+       Windows) ships its prebuilt .node files and nothing to build them:
+       not the C sources, not the macOS and Linux prebuilds. */
+    "!node_modules/uiohook-napi/{libuiohook,src}/**",
+    "!node_modules/uiohook-napi/binding.gyp",
+    "!node_modules/uiohook-napi/prebuilds/{darwin,linux}-*/**"
+  ],
+  /* A .node file cannot be loaded from inside the asar archive: the
+     Windows ones go to app.asar.unpacked, where Electron finds them. */
+  "asarUnpack": [
+    "**/node_modules/uiohook-napi/prebuilds/**"
   ],
   "extraResources": [
     {
@@ -98,7 +109,13 @@ const config = {
     "output": "release",
     "buildResources": "build"
   },
-  "npmRebuild": true,
+  /* ATO-1064: off. The one native dependency, uiohook-napi, is N-API with
+     prebuilds (win32-x64, win32-arm64), which Electron loads as they are.
+     @electron/rebuild does not recognise its prebuild file names
+     (uiohook-napi.node, not node.napi.node) and would compile it from
+     source on every build machine, which needs the X11 headers on Linux.
+     Every other dependency is plain JavaScript, so nothing else is lost. */
+  "npmRebuild": false,
   "mac": {
     "category": "public.app-category.productivity",
     "icon": "build/icon.icns",

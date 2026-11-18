@@ -1638,6 +1638,20 @@ app the first time the renderer opens the microphone. The .app is ad-hoc
 signed, so its signature changes on every rebuild and macOS re-asks for
 microphone access after each new build — expected, not a bug.
 
+On Windows, holding Ctrl+Win to dictate into any app (ATO-1064) needs no
+helper process: `main/hold-key-uiohook.ts` loads the native module
+`uiohook-napi` (pinned to 1.5.5, N-API prebuilds for win32-x64 and
+win32-arm64, so no rebuild for Electron) inside the app, only on Windows
+and only while the hold mode is on, and turns its key events into the same
+down/up lines the Mac helper prints. It reads keys and swallows none. If it
+cannot load or start, Settings says the watcher stopped and the toggle
+combo takes over. `electron-builder.cjs` keeps only its Windows prebuilds,
+unpacks them out of the asar (`asarUnpack`), and has `npmRebuild` off: the
+module is N-API, and `@electron/rebuild` does not recognise its prebuild
+file names, so it would try to compile it from source. Letting go of Win
+after Ctrl+Win may open the Start menu; the module cannot press the
+unassigned key that would stop it, and no real key is pressed instead.
+
 The app does **not** bundle the agent. It looks for `ATOMIC_AGENT_BIN` first,
 then `~/atag-agent/bin/atag`, then `atag` (or `atomic-agent`) in
 `~/.local/bin`, `/usr/local/bin` and `/opt/homebrew/bin`. Without one the
@@ -1987,6 +2001,7 @@ desktop/
   electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)
   native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout (live, and --file for an audio file)
   native/atomic-fn-key.swift  hold Fn to dictate into any app: a listen-only event tap, down/up lines on stdout
+  main/hold-key-uiohook.ts  hold Ctrl+Win to dictate into any app on Windows (uiohook-napi, in process)
   preload/preload.ts     the window.atomic bridge
   renderer/              index.html · styles.css · renderer.js · voice-worklet.js
   scripts/copy-renderer.mjs

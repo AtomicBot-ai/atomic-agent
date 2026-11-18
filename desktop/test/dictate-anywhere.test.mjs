@@ -135,23 +135,117 @@ test("the watcher's lines", () => {
   assert.deepEqual(b.push('p\n'), ['up']);
 });
 
-test('the watcher command: the Mac helper, a hidden PowerShell hook on Windows, none on Linux', () => {
-  assert.deepEqual(H.holdKeyCommand('darwin', '/App/Contents/Resources/native', {}), {file: '/App/Contents/Resources/native/atomic-fn-key', args: []});
-  assert.equal(H.holdKeyCommand('linux', '/x', {}), null);
-  const win = H.holdKeyCommand('win32', 'C:\\x', {SystemRoot: 'C:\\Windows'});
-  assert.equal(win.file, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
-  assert.ok(win.args.includes('-NoProfile') && win.args.includes('-NonInteractive'));
-  const enc = win.args[win.args.indexOf('-EncodedCommand') + 1];
-  assert.equal(Buffer.from(enc, 'base64').toString('utf16le'), H.WINDOWS_HOLD_KEY_SCRIPT);
-  assert.ok(win.args.join(' ').length < 30000, 'fits a Windows command line');
-  assert.equal(H.holdKeyCommand('win32', 'C:\\x', {}).file, 'powershell.exe');
-  const ps = H.WINDOWS_HOLD_KEY_SCRIPT;
-  assert.match(ps, /SetWindowsHookEx\(13,/, 'WH_KEYBOARD_LL');
-  assert.match(ps, /return CallNextHookEx\(/, 'every event goes on: nothing swallowed');
-  assert.doesNotMatch(ps, /return \(IntPtr\)1/, 'never swallows a key');
-  assert.match(ps, /Console\.In\.ReadLine\(\) != null/, 'exits when the app goes');
-  assert.match(ps, /^\$src = @'$/m);
-  assert.match(ps, /^'@$/m, 'the here-string closes at the start of a line');
+test('the watcher command: the Mac helper; no process at all on Windows or Linux', () => {
+  assert.deepEqual(H.holdKeyCommand('darwin', '/App/Contents/Resources/native'), {file: '/App/Contents/Resources/native/atomic-fn-key', args: []});
+  assert.equal(H.holdKeyCommand('linux', '/x'), null);
+  assert.equal(H.holdKeyCommand('win32', 'C:\\x'), null, 'Windows starts no PowerShell (ATO-1064 review)');
+  assert.equal(H.WINDOWS_HOLD_KEY_SCRIPT, undefined, 'the PowerShell hook is gone');
+  for (const f of ['main/dictate-hold.ts', 'main/hold-key-uiohook.ts', 'main/dictate-anywhere-window.ts']) {
+    const src = readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+    assert.doesNotMatch(src, /powershell\.exe|-EncodedCommand|ExecutionPolicy/i, f + ': no PowerShell');
+  }
+  const wiring = readFileSync(new URL('../main/dictate-anywhere-window.ts', import.meta.url), 'utf8');
+  assert.match(wiring, /w\.platform === "win32"\s*\?\s*new UiohookHoldWatcher\(/, 'Windows uses the in-process watcher');
+});
+
+/** A fake uIOhook: `emit` plays a key, `fail` makes start() throw. */
+function fakeHook({fail = false} = {}) {
+  const fns = {keydown: [], keyup: []};
+  const hook = {
+    started: 0, stopped: 0,
+    on: (ev, fn) => { fns[ev].push(fn); },
+    removeListener: (ev, fn) => { fns[ev] = fns[ev].filter((f) => f !== fn); },
+    start: () => { if (fail) throw new Error('hook failed'); hook.started++; },
+    stop: () => { hook.stopped++; },
+    emit: (ev, keycode) => { for (const f of fns[ev]) f({keycode}); },
+    listeners: () => fns.keydown.length + fns.keyup.length,
+  };
+  return hook;
+}
+
+test('Windows: uiohook key events turn into the same down/up/esc/other lines', () => {
+  const K = H.UIOHOOK_KEYS;
+  assert.deepEqual({...K}, {escape: 1, ctrl: 29, ctrlRight: 3613, meta: 3675, metaRight: 3676}, "uiohook-napi's UiohookKey codes");
+  const c = new H.WinHoldChord();
+  const t = (kind, code) => { const l = c.key(kind, code); return l ? l.type : null; };
+  assert.equal(t('down', K.ctrl), null, 'Ctrl alone is nothing');
+  assert.equal(t('down', 30), null, 'a key with only Ctrl held is not reported');
+  assert.equal(t('up', 30), null);
+  assert.equal(t('down', K.meta), 'down', 'Ctrl+Win');
+  assert.equal(t('down', K.meta), null, 'key repeat');
+  assert.equal(t('down', K.ctrl), null, 'key repeat');
+  assert.equal(t('down', K.escape), 'esc');
+  assert.equal(t('down', 32), 'other', 'Ctrl+Win+D is a chord');
+  assert.equal(t('up', 32), null, 'a key going up says nothing');
+  assert.equal(t('up', K.meta), 'up');
+  assert.equal(t('up', K.ctrl), null);
+  assert.equal(t('down', K.metaRight), null, 'Win alone is nothing');
+  assert.equal(t('down', K.ctrlRight), 'down', 'right-hand keys, either order');
+  assert.equal(t('up', K.ctrlRight), 'up');
+  c.clear();
+  assert.equal(t('down', K.ctrl), null, 'cleared: the held Win is forgotten');
+});
+
+test('Windows: the in-process watcher feeds the hold machine; it starts nothing until asked', () => {
+  const U = require('../out/main/hold-key-uiohook.js');
+  const clockNow = clock();
+  const acts = [];
+  const m = new H.HoldMachine(clockNow.timers, (a) => acts.push(a));
+  const states = [];
+  const hook = fakeHook();
+  let loads = 0;
+  const w = new U.UiohookHoldWatcher((line) => {
+    if (line.type === 'down') m.down(); else if (line.type === 'up') m.up(); else if (line.type === 'esc') m.esc(); else if (line.type === 'other') m.other();
+  }, (st) => states.push(st), () => {}, () => { loads++; return hook; });
+  assert.equal(loads, 0, 'the module is not loaded before the hold mode starts the watcher');
+  assert.equal(w.state, 'off');
+  w.start();
+  assert.equal(loads, 1);
+  assert.equal(hook.started, 1);
+  assert.equal(w.state, 'ready');
+  assert.deepEqual(states, ['starting', 'ready']);
+  w.start();
+  assert.equal(hook.started, 1, 'a second start is nothing');
+
+  const K = H.UIOHOOK_KEYS;
+  hook.emit('keydown', K.ctrl); hook.emit('keydown', K.meta); clockNow.advance(300);
+  hook.emit('keyup', K.meta);
+  assert.deepEqual(acts, ['start', 'finish'], 'hold Ctrl+Win past the delay, let go: a take');
+  hook.emit('keyup', K.ctrl);
+  hook.emit('keydown', K.ctrl); hook.emit('keydown', K.meta); clockNow.advance(50); hook.emit('keyup', K.meta);
+  assert.deepEqual(acts, ['start', 'finish'], 'a tap: nothing');
+  hook.emit('keyup', K.ctrl);
+  hook.emit('keydown', K.ctrl); hook.emit('keydown', K.meta); clockNow.advance(300); hook.emit('keydown', K.escape);
+  assert.deepEqual(acts, ['start', 'finish', 'start', 'cancel'], 'Esc throws the take away');
+  hook.emit('keyup', K.meta); hook.emit('keyup', K.ctrl);
+
+  w.stop();
+  assert.equal(hook.stopped, 1);
+  assert.equal(hook.listeners(), 0, 'its listeners are removed');
+  assert.equal(w.state, 'off');
+  hook.emit('keydown', K.ctrl); hook.emit('keydown', K.meta); clockNow.advance(300);
+  assert.deepEqual(acts, ['start', 'finish', 'start', 'cancel'], 'stopped: keys do nothing');
+});
+
+test('Windows: a module that cannot load or start leaves the toggle combo in charge', () => {
+  const U = require('../out/main/hold-key-uiohook.js');
+  const logs = [];
+  const w = new U.UiohookHoldWatcher(() => assert.fail('no key'), () => {}, (l) => logs.push(l), () => { throw new Error("Cannot find module 'uiohook-napi'"); });
+  w.start();
+  assert.equal(w.state, 'failed');
+  assert.equal(H.holdWatchFailed(w.state), true, 'the combo stands in');
+  assert.equal(w.detail, 'could not load the key watcher');
+  assert.match(logs.join('\n'), /Cannot find module/);
+  assert.match(H.holdWatchLine(w.state, 'win32', 'Ctrl+Alt+D', w.detail), /Ctrl\+Win key watcher stopped \(could not load the key watcher\)\. Until then Ctrl\+Alt\+D starts and ends a take/);
+
+  const bad = fakeHook({fail: true});
+  const w2 = new U.UiohookHoldWatcher(() => {}, () => {}, () => {}, () => bad);
+  w2.start();
+  assert.equal(w2.state, 'failed');
+  assert.equal(w2.detail, 'could not start the key watcher');
+  assert.equal(bad.listeners(), 0, 'no listener left behind');
+  w2.stop();
+  assert.equal(w2.state, 'off');
 });
 
 test('when the hold key cannot be watched, Settings says why and what works meanwhile', () => {

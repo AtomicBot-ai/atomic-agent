@@ -324,8 +324,9 @@ jobs:
 
       # afterPack copies ../bundle/<slug> into resources/agent and runs it
       # once; the job fails here if the bundle is missing or cannot open its
-      # database. npmRebuild rebuilds any native desktop dependency for this
-      # runner's platform (there are none today).
+      # database. npmRebuild is off (ATO-1064): the one native desktop
+      # dependency, uiohook-napi, ships N-API prebuilds that are packed as they
+      # are (only the Windows ones; see electron-builder.cjs).
       # On Windows electron-builder hands the app exe, the installer and the
       # uninstaller to desktop/scripts/win-sign.cjs, which signs with the same
       # KeyLocker certificate. The secrets are only passed to the Windows job;
