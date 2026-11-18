@@ -84,7 +84,12 @@ describe("/api/approval-rules (ATO-1141)", () => {
     }
 
     it("saves a hand-made command rule in the global file", async () => {
-      const response = await post({ decision: "allow", commandPrefix: ["git", "status"], note: "mine" });
+      const response = await post({
+        decision: "allow",
+        commandPrefix: ["git", "status"],
+        project: harness.workingDir,
+        note: "mine",
+      });
       expect(response.status).toBe(201);
       const body = (await response.json()) as { rule: ApprovalRule; created: boolean };
       expect(body.created).toBe(true);
@@ -93,13 +98,18 @@ describe("/api/approval-rules (ATO-1141)", () => {
         tool: "os.shell.run",
         category: "shell",
         commandPrefix: ["git", "status"],
+        project: harness.workingDir,
         source: "user",
         note: "mine",
       });
       expect(body.rule.id).toMatch(/^r_/);
       const store = harness.runtime.approvals.getRules()!;
       expect(store.list()).toEqual([body.rule]);
-      const again = await post({ decision: "allow", commandPrefix: ["git", "status"] });
+      const again = await post({
+        decision: "allow",
+        commandPrefix: ["git", "status"],
+        project: harness.workingDir,
+      });
       expect(again.status).toBe(200);
       expect(await again.json()).toEqual({ rule: body.rule, created: false });
     });
@@ -144,6 +154,28 @@ describe("/api/approval-rules (ATO-1141)", () => {
       expect(await refusal({ decision: "allow", commandPrefix: ["sudo"] })).toMatch(/runs other commands/);
       expect(await refusal({ decision: "allow", commandPrefix: ["bash"] })).toMatch(/runs other commands/);
       expect(harness.runtime.approvals.getRules()!.list()).toEqual([]);
+    });
+
+    // Review fix: an allow with no project would match in every folder,
+    // which "Allow always" never saves.
+    it("refuses an allow without a project, and it never applies elsewhere", async () => {
+      expect(await refusal({ decision: "allow", commandPrefix: ["git", "status"] })).toMatch(/needs a project/);
+      expect(
+        await refusal({ decision: "allow", category: "fs_write_workspace", tool: "os.fs.write" }),
+      ).toMatch(/needs a project/);
+      expect(harness.runtime.approvals.getRules()!.list()).toEqual([]);
+      const saved = await post({ decision: "allow", commandPrefix: ["git", "status"], project: harness.workingDir });
+      expect(saved.status).toBe(201);
+      expect(
+        harness.runtime.approvals.ruleDecisionFor({
+          sessionId: "s",
+          tool: "os.shell.run",
+          category: "shell",
+          commandArgv: ["git", "status"],
+          commandSegments: [["git", "status"]],
+          workdir: "/some/other/project",
+        }),
+      ).toBeNull();
     });
 
     it("the gate applies the new rule from the next request", async () => {

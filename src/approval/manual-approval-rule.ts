@@ -21,8 +21,9 @@ import { isSiteScopedCategory } from "./site-grants.js";
  * path rule. It lands in the global rules file, so it may allow, ask or
  * deny. An allow may never cover more than "Allow always" would save
  * from a prompt: the same categories are refused (`canGrantAlways`),
- * and the fields a prompt always fills in (the command, the folder, the
- * site) are required here too.
+ * and the fields a prompt always fills in (the project, the command, the
+ * folder, the site) are required here too. Ask and deny rules may be
+ * global: they only narrow what runs.
  */
 
 /** Fields a request body may carry; anything else is a typo and refused. */
@@ -74,8 +75,23 @@ export function parseManualApprovalRule(body: unknown): NewApprovalRule | string
   return toNewRule(parsed);
 }
 
-/** Why an allow rule cannot be saved, or null when it can. */
+/**
+ * Why an allow rule cannot be saved, or null when it can. "Allow always"
+ * always keys a rule on the project it was asked in (`buildAlwaysRule`
+ * returns nothing without one), so a hand-made allow needs `project`
+ * too: without it the rule would match in every folder on the machine.
+ * Checked last, so a rule refused for its category says that first.
+ */
 function refuseAllow(rule: ApprovalRule): string | null {
+  const refused = refuseAllowShape(rule);
+  if (refused !== null) return refused;
+  if (rule.project === undefined) {
+    return "an allow rule needs a project: the folder it applies in, the way \"Allow always\" saves it";
+  }
+  return null;
+}
+
+function refuseAllowShape(rule: ApprovalRule): string | null {
   const category = rule.category;
   if (category === undefined) {
     return "an allow rule must name a category, so it cannot reach prompts that are never allowed for good";
