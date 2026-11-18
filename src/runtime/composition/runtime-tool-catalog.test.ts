@@ -119,7 +119,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       expect(registry.has("tool.view")).toBe(false);
       // Computer use is opt-in (`tools.screen.enabled`, default off): no input tool registered.
       expect(config.tools.screen.enabled).toBe(false);
-      for (const name of ["os.screen.click", "os.screen.type", "os.screen.key"]) expect(registry.has(name), name).toBe(false);
+      for (const name of ["os.screen.click", "os.screen.type", "os.screen.key", "os.screen.elements", "os.screen.press"]) expect(registry.has(name), name).toBe(false);
       // Pointing is on by default (ATO-1018), macOS only: the marks and the screenshot they read.
       expect(config.tools.screen.point).toBe(true);
       for (const name of ["os.screen.point", "os.screen.capture"]) expect(registry.has(name), name).toBe(process.platform === "darwin");

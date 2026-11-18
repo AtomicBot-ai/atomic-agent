@@ -184,15 +184,23 @@ const GATED_TOOLS = {
     "os.screen.click",
     "os.screen.type",
     "os.screen.key",
+    "os.screen.elements",
+    "os.screen.press",
     "os.screen.point",
   ],
 } as const;
 
-/** `os.screen.*` that drive the mouse and keyboard: `screen.enabled` only. */
+/**
+ * `os.screen.*` that drive the mouse and keyboard, or press controls
+ * through Accessibility (the element list only serves the press):
+ * `screen.enabled` only.
+ */
 const SCREEN_CONTROL_TOOLS: ReadonlySet<string> = new Set([
   "os.screen.click",
   "os.screen.type",
   "os.screen.key",
+  "os.screen.elements",
+  "os.screen.press",
 ]);
 
 /**

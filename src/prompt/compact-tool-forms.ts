@@ -176,6 +176,8 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.screen.click": { summary: "Click at x,y of the last capture (asks first).", tier: RARE },
   "os.screen.type": { summary: "Type text into the frontmost app (asks first).", tier: RARE },
   "os.screen.key": { summary: "Press a key or shortcut (asks first).", tier: RARE },
+  "os.screen.elements": { summary: "Numbered list of a window's buttons and fields.", tier: RARE },
+  "os.screen.press": { summary: "Press element n of that list in the background (asks first).", tier: RARE },
   "os.screen.point": {
     summary: "Draw arrows, boxes or labels on the user's screen to show where to click; never clicks.",
     tier: RARE,

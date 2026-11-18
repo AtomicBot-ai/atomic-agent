@@ -15,6 +15,10 @@
  *  - a click hit-tests the topmost on-screen window under the point and
  *    refuses unless it belongs to the approved app;
  *  - nothing is posted into a protected app (`screen-protected.ts`).
+ * `press` (ATO-530) is the exception to "brought back to the front": it
+ * acts through Accessibility on one element of the approved app's
+ * window, in the background, and checks the pid's bundle id instead.
+ * It never posts a mouse event, so it has nothing to fall back to.
  * The TypeScript side checks the same things from the probe before it
  * asks; these are the re-checks at the moment of acting.
  */
@@ -41,6 +45,35 @@ export type ScreenOp =
       maxElements: number;
       maxChars: number;
     }
+  | {
+      op: "elements";
+      pid: number;
+      /** The window's title; the first window of the process when empty or not found. */
+      title: string;
+      /** Apps whose elements are never listed (`WINDOW_CAPTURE_REFUSED_BUNDLE_IDS`), re-checked by pid. */
+      refusedIds: readonly string[];
+      maxDepth: number;
+      /** Elements looked at in all; the walk stops there. */
+      maxScan: number;
+      /** Elements kept in the list. */
+      maxElements: number;
+    }
+  | ({
+      /**
+       * ATO-530: `AXPress` (or, with `value`, set `AXValue`) on one element
+       * found again by its child-index path, without moving the mouse and
+       * without bringing the app to the front.
+       */
+      op: "press";
+      pid: number;
+      /** The AX title of the window the list was read from; must still exist (no fallback). */
+      title: string;
+      path: readonly number[];
+      /** What the list saw at `path`; anything else there is refused as changed. */
+      role: string;
+      name: string;
+      value?: string;
+    } & Pinned)
   | ({ op: "click"; x: number; y: number; button: "left" | "right"; double: boolean } & Pinned)
   | ({ op: "type"; text: string; typeVia: "keys" | "paste" } & Pinned)
   | ({ op: "key"; keyCode: number; flags: number } & Pinned);
@@ -109,6 +142,90 @@ function windowText(p) {
   var text = parts.join("\n");
   if (text.length > p.maxChars) { text = text.slice(0, p.maxChars); cut = true; }
   return { text: text, truncated: cut };
+}
+// Roles a user acts on; containers and plain text are walked through, not listed.
+var ACTIONABLE = { AXButton: 1, AXCheckBox: 1, AXRadioButton: 1, AXTextField: 1, AXTextArea: 1, AXSecureTextField: 1,
+  AXSearchField: 1, AXComboBox: 1, AXPopUpButton: 1, AXMenuButton: 1, AXMenuItem: 1, AXMenuBarItem: 1, AXLink: 1,
+  AXRow: 1, AXCell: 1, AXTab: 1, AXSlider: 1, AXIncrementor: 1, AXDisclosureTriangle: 1, AXColorWell: 1, AXDateField: 1 };
+// Listed only when they answer AXPress (a clickable icon or label).
+var PRESSABLE_IF = { AXImage: 1, AXStaticText: 1, AXGroup: 1 };
+function elLabel(el) {
+  var s = safe(function () { return el.name(); }, null) || safe(function () { return el.title(); }, null) ||
+    safe(function () { return el.description(); }, null) || "";
+  s = String(s).replace(/\s+/g, " ").trim();
+  return s.length > 120 ? s.slice(0, 120) : s;
+}
+function elActions(el) {
+  return safe(function () { return el.actions().map(function (a) { return String(a.name()); }); }, []);
+}
+function findWindow(pid, title, strict) {
+  var procs = Application("System Events").processes.whose({ unixId: pid })();
+  if (!procs.length) return { error: "no-process" };
+  var wins = safe(function () { return procs[0].windows(); }, []);
+  for (var i = 0; i < wins.length; i++) if (title && safe(function () { return wins[i].name(); }, "") === title) return { win: wins[i], title: title };
+  if (strict && title) return { error: "no-window" };
+  if (!wins[0]) return { error: "no-window" };
+  return { win: wins[0], title: safe(function () { return wins[0].name(); }, "") || "" };
+}
+function listElements(p) {
+  var owner = safe(function () { return appInfo($.NSRunningApplication.runningApplicationWithProcessIdentifier(p.pid)); }, null);
+  if (owner && owner.bundleId && isProtected({ protectedIds: p.refusedIds || [] }, owner.bundleId)) return { error: "protected" };
+  var found = findWindow(p.pid, p.title, false);
+  if (found.error) return found;
+  var items = [], scanned = 0, cut = false;
+  function walk(el, depth, path) {
+    if (items.length >= p.maxElements || scanned >= p.maxScan) { cut = true; return; }
+    if (depth > p.maxDepth) { cut = true; return; }
+    scanned++;
+    var role = depth === 0 ? "AXWindow" : (safe(function () { return el.role(); }, "") || "");
+    var acts = null;
+    var keep = !!ACTIONABLE[role];
+    if (!keep && PRESSABLE_IF[role]) { acts = elActions(el); keep = acts.indexOf("AXPress") >= 0; }
+    if (keep) {
+      var pos = safe(function () { return el.position(); }, null), size = safe(function () { return el.size(); }, null);
+      // Zero-sized elements are hidden (a collapsed panel, an offscreen tab); nobody could see what they do.
+      if (pos && size && size[0] > 0 && size[1] > 0) {
+        var item = { path: path.slice(), role: role, name: elLabel(el), x: pos[0], y: pos[1], width: size[0], height: size[1],
+          actions: acts || elActions(el), enabled: safe(function () { return el.enabled(); }, true) !== false };
+        // A password field is listed so it can be filled, but its value is never read.
+        if (role !== "AXSecureTextField") {
+          var v = safe(function () { return el.value(); }, null);
+          if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") item.value = String(v).slice(0, 80);
+        }
+        items.push(item);
+      }
+      // Text inside a field or a secure field is not a control of its own.
+      if (role === "AXTextField" || role === "AXTextArea" || role === "AXSecureTextField" || role === "AXSearchField") return;
+    }
+    var kids = safe(function () { return el.uiElements(); }, []);
+    for (var k = 0; k < kids.length; k++) { path.push(k); walk(kids[k], depth + 1, path); path.pop(); }
+  }
+  walk(found.win, 0, []);
+  return { elements: items, truncated: cut, scanned: scanned, windowTitle: found.title };
+}
+function pressElement(p) {
+  var owner = safe(function () { return appInfo($.NSRunningApplication.runningApplicationWithProcessIdentifier(p.pid)); }, null);
+  if (!owner || !owner.bundleId || isProtected(p, owner.bundleId)) return { error: "protected" };
+  if (owner.bundleId !== p.expectBundleId) return { error: "owner-mismatch" };
+  var found = findWindow(p.pid, p.title, true);
+  if (found.error) return found;
+  var el = found.win;
+  for (var i = 0; i < p.path.length; i++) {
+    var kids = safe(function () { return el.uiElements(); }, []);
+    if (!(p.path[i] < kids.length)) return { error: "element-changed" };
+    el = kids[p.path[i]];
+  }
+  var role = safe(function () { return el.role(); }, "") || "";
+  var name = elLabel(el);
+  if (role !== p.role || name !== p.name) return { error: "element-changed", element: { role: role, name: name } };
+  if (typeof p.value === "string") {
+    var set = safe(function () { el.value = p.value; return true; }, false);
+    return set ? { did: "set-value" } : { error: "value-unsupported" };
+  }
+  var acts = elActions(el);
+  if (acts.indexOf("AXPress") < 0) return { error: "press-unsupported", actions: acts };
+  var pressed = safe(function () { el.actions.byName("AXPress").perform(); return true; }, false);
+  return pressed ? { did: "press" } : { error: "press-failed", actions: acts };
 }
 function isProtected(p, id) {
   if (!id) return true;
@@ -229,8 +346,31 @@ function run() {
     out.done = true;
     return JSON.stringify(out);
   }
+  if (p.op === "elements") {
+    // Listing posts nothing, like windowText.
+    if (out.accessibility !== true) { out.error = "accessibility"; return JSON.stringify(out); }
+    var listed = safe(function () { return listElements(p); }, { error: "elements-failed" });
+    if (listed.error) { out.error = listed.error; return JSON.stringify(out); }
+    out.elements = listed.elements;
+    out.elementsTruncated = listed.truncated;
+    out.scanned = listed.scanned;
+    out.windowTitle = listed.windowTitle;
+    out.done = true;
+    return JSON.stringify(out);
+  }
   if (out.accessibility !== true) { out.error = "accessibility"; return JSON.stringify(out); }
   if (!p.expectBundleId || isProtected(p, p.expectBundleId)) { out.error = "protected"; return JSON.stringify(out); }
+  if (p.op === "press") {
+    // Background delivery (ATO-530): no bringToFront, no mouse event, no fallback to one.
+    var r = safe(function () { return pressElement(p); }, { error: "press-failed" });
+    out.frontmostAfter = safe(frontmost, null);
+    if (r.element) out.element = r.element;
+    if (r.actions) out.actions = r.actions;
+    if (r.error) { out.error = r.error; return JSON.stringify(out); }
+    out.did = r.did;
+    out.done = true;
+    return JSON.stringify(out);
+  }
   if (!bringToFront(p.expectBundleId)) { out.frontmost = safe(frontmost, null); out.error = "not-frontmost"; return JSON.stringify(out); }
   out.frontmost = safe(frontmost, null);
   if (!out.frontmost || isProtected(p, out.frontmost.bundleId)) { out.error = "protected"; return JSON.stringify(out); }

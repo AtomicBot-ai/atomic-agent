@@ -7,6 +7,8 @@ import {
   buildOsScreenTypeTool,
 } from "./screen-input.js";
 import { ScreenGeometryStore } from "./screen-geometry.js";
+import { buildOsScreenElementsTool, buildOsScreenPressTool } from "./screen-element-tools.js";
+import { ScreenElementStore } from "./screen-elements.js";
 import { buildOsScreenPointTool } from "./screen-point.js";
 import { screenOverlayAvailable } from "./screen-overlay-hosts.js";
 import { resolveScreenDeps, type ScreenDeps } from "./screen-host.js";
@@ -39,6 +41,23 @@ export {
   toScreenPoint,
 } from "./screen-geometry.js";
 export type { CaptureGeometry } from "./screen-geometry.js";
+export {
+  buildOsScreenElementsTool,
+  buildOsScreenPressTool,
+  elementsRefusal,
+  OS_SCREEN_ELEMENTS_TOOL,
+  OS_SCREEN_PRESS_TOOL,
+  parseMaxElements,
+} from "./screen-element-tools.js";
+export type { OsScreenElementOptions } from "./screen-element-tools.js";
+export {
+  formatElement,
+  formatElements,
+  parseElement,
+  SCREEN_ELEMENT_LIMITS,
+  ScreenElementStore,
+} from "./screen-elements.js";
+export type { ElementListing, ScreenElement } from "./screen-elements.js";
 export { parseKeyChord } from "./screen-keys.js";
 export type { KeyChord } from "./screen-keys.js";
 export {
@@ -93,12 +112,14 @@ export {
 export type { OsScreenPointOptions, ScreenMark, ScreenMarkKind, ScreenMarksPayload } from "./screen-point.js";
 export { claimScreenOverlay, screenOverlayAvailable } from "./screen-overlay-hosts.js";
 
-/** The five names, in catalog order — mirrored by `GATED_TOOLS.screen`. */
+/** The seven names, in catalog order — mirrored by `GATED_TOOLS.screen`. */
 export const OS_SCREEN_TOOL_NAMES = [
   "os.screen.capture",
   "os.screen.click",
   "os.screen.type",
   "os.screen.key",
+  "os.screen.elements",
+  "os.screen.press",
   "os.screen.point",
 ] as const;
 
@@ -120,12 +141,13 @@ export interface RegisterOsScreenToolsOptions extends DangerousToolOptions {
 }
 
 /**
- * Register `os.screen.{capture,click,type,key}` when the operator turned
- * them on and the host is macOS, and `os.screen.{capture,point}` when
+ * Register `os.screen.{capture,click,type,key,elements,press}` when the
+ * operator turned them on and the host is macOS, and `os.screen.{capture,point}` when
  * pointing is on; otherwise register nothing (the descriptor gate drops
  * them from the prompt the same way). They share one geometry store, so
  * a click or a mark maps the pixels of the capture the same session
- * took last.
+ * took last; `elements` and `press` share one element store the same way
+ * (ATO-998, ATO-530).
  */
 export function registerOsScreenTools(
   registry: ToolRegistry,
@@ -154,6 +176,9 @@ export function registerOsScreenTools(
     registry.register(buildOsScreenClickTool(input));
     registry.register(buildOsScreenTypeTool(input));
     registry.register(buildOsScreenKeyTool(input));
+    const elements = { approvals: options.approvals, approvalRequired: options.approvalRequired, deps, elements: new ScreenElementStore() };
+    registry.register(buildOsScreenElementsTool(elements));
+    registry.register(buildOsScreenPressTool(elements));
   }
   if (point) registry.register(buildOsScreenPointTool({ geometry, platform: deps.platform, overlayAvailable }));
 }

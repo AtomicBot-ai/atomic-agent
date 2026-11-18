@@ -2,6 +2,7 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { runCommand } from "../../../sandbox/command-runner.js";
 import { buildScreenInvocation, type ScreenOp } from "./screen-jxa.js";
+import { parseElement, type ScreenElement } from "./screen-elements.js";
 import type { ScreenWindow } from "./screen-window.js";
 
 /**
@@ -92,6 +93,21 @@ export interface ScreenProbe {
   textTruncated?: boolean;
   /** How `type` delivered the text: `keys`, `paste` or `keys+paste`. */
   via?: string;
+  /** A window's controls (`elements`), in walk order. */
+  elements?: ScreenElement[];
+  elementsTruncated?: boolean;
+  /** Elements the walk looked at (`elements`). */
+  scanned?: number;
+  /** The AX title of the window the walk (`elements`) used. */
+  windowTitle?: string;
+  /** `press`: what it did, `press` or `set-value`. */
+  did?: string;
+  /** `press`: the frontmost app right after acting, to show focus stayed put. */
+  frontmostAfter?: ScreenApp | null;
+  /** `press` refused as `element-changed`: what is at the path now. */
+  element?: { role: string; name: string };
+  /** `press` refused as `press-unsupported`: the actions the element does answer. */
+  actions?: string[];
   error?: string;
 }
 
@@ -145,6 +161,23 @@ export function parseScreenProbe(stdout: string): ScreenProbe {
     ...(typeof obj.text === "string" ? { text: obj.text } : {}),
     ...(typeof obj.textTruncated === "boolean" ? { textTruncated: obj.textTruncated } : {}),
     ...(typeof obj.via === "string" ? { via: obj.via } : {}),
+    ...(Array.isArray(obj.elements) ? { elements: obj.elements.flatMap(parseElement) } : {}),
+    ...(typeof obj.elementsTruncated === "boolean" ? { elementsTruncated: obj.elementsTruncated } : {}),
+    ...(typeof obj.scanned === "number" ? { scanned: obj.scanned } : {}),
+    ...(typeof obj.windowTitle === "string" ? { windowTitle: obj.windowTitle } : {}),
+    ...(typeof obj.did === "string" ? { did: obj.did } : {}),
+    ...("frontmostAfter" in obj ? { frontmostAfter: parseApp(obj.frontmostAfter) } : {}),
+    ...(obj.element && typeof obj.element === "object"
+      ? {
+          element: {
+            role: String((obj.element as Record<string, unknown>).role ?? ""),
+            name: String((obj.element as Record<string, unknown>).name ?? ""),
+          },
+        }
+      : {}),
+    ...(Array.isArray(obj.actions)
+      ? { actions: obj.actions.filter((a): a is string => typeof a === "string") }
+      : {}),
     ...(typeof obj.error === "string" ? { error: obj.error } : {}),
   };
 }
