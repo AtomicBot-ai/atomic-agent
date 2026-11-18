@@ -9,6 +9,7 @@ import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import type { FileCheckpointStore } from "../../tools/os/fs/fs-checkpoint-store.js";
 import type { createRuntimeTraces } from "./runtime-traces.js";
 import { sweepOrphanIncognitoSessions } from "../incognito-sessions.js";
+import { forgetPrivacyVault, linkPrivacyVault } from "../../privacy/index.js";
 
 export function prepareRuntimeSessionStore(
   config: AtomicAgentConfig,
@@ -131,6 +132,8 @@ export function installRuntimeSessionDelete(
         .catch(() => undefined);
     }
     deleteSession(id);
+    // Its Privacy Shield placeholders (ATO-1083), memory only.
+    forgetPrivacyVault(id);
   };
 }
 
@@ -173,10 +176,13 @@ export function createRuntimeSessionFactories(
     meta: FusionWorkerMeta,
     dir?: string,
     inheritWorkspace: boolean = dir !== undefined,
-  ): SessionState => ({
-    ...createFusionWorkerSession({ workingDir: dir ?? workingDir, meta }),
-    ...(inheritWorkspace ? { inheritedWorkspace: true } : {}),
-  });
+  ): SessionState => {
+    const state = createFusionWorkerSession({ workingDir: dir ?? workingDir, meta });
+    // ATO-1083: a cloud worker masks with its chat's Privacy Shield
+    // vault, so the planner and its workers share placeholders.
+    linkPrivacyVault(state.id, meta.parentSessionId);
+    return { ...state, ...(inheritWorkspace ? { inheritedWorkspace: true } : {}) };
+  };
 
   return { createSession, createEphemeralSession };
 }
