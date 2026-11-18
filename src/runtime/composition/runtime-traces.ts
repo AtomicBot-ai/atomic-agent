@@ -28,6 +28,7 @@ import { isExpectedProviderLimit } from "../../llm/index.js";
 import { describeLlmFailure } from "./llm-failure-context.js";
 import { runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 import { isUnreportedLocalServerFailure } from "../../llm/reliability/local-server-error.js";
+import { isUnregisteredToolStreak } from "../../llm/reliability/unregistered-tool-failure.js";
 
 export function createRuntimeTraces(
   config: AtomicAgentConfig,
@@ -258,10 +259,15 @@ export function createRuntimeTraces(
       // the user in chat and is not a defect to report (ATO-1283).
       // Atomic Chat's key protection (ATO-1274) is the person's to fix
       // and already told in plain words: not a defect, so not a report.
+      // A model that kept calling near misses of real tools, after every
+      // call was answered with the closest real names, made a mistake
+      // the agent handled (ATO-1674): not a report either. Other
+      // unknown-tool streaks still report.
       if (
         event.type === "loop_failed" &&
         !isExpectedProviderLimit(event.error) &&
-        !isUnreportedLocalServerFailure(event.error)
+        !isUnreportedLocalServerFailure(event.error) &&
+        !isUnregisteredToolStreak(event.error)
       ) {
         const reporter = getErrorReporter();
         captureError(reporter, event.error, {
