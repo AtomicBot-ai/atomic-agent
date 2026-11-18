@@ -162,6 +162,10 @@ contextBridge.exposeInMainWorld("atomic", {
   miniChatSession: (sessionId: string, title: string) => ipcRenderer.send("mini:session", { sessionId, title }),
   miniChatSessions: () => ipcRenderer.invoke("mini:sessions"),
   onMiniChatSession: (cb: (payload: unknown) => void) => on("mini:sessionKnown", cb),
+  /* ATO-561: a chat from the sidebar in a window of its own (main/chat-popout-ipc.ts), which loads
+     the mini chat page. The main window opens it; that page asks which chat it was opened for. */
+  chatPopoutOpen: (sessionId: string) => ipcRenderer.invoke("chatPopout:open", sessionId),
+  chatPopoutMine: () => ipcRenderer.invoke("chatPopout:mine"),
 
   /** Setup wizard: real config writes and the real model catalogue. */
   configGet: () => ipcRenderer.invoke("cli:configGet"),
