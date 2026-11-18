@@ -32,6 +32,14 @@ const TOOL_NAME = "os.web.fetch";
 const DEFAULT_TIMEOUT_MS = 30_000;
 import { describeChallenge, detectChallenge } from "./web-fetch-challenge.js";
 import {
+  checkUrlSend,
+  DEFAULT_URL_DATA_GUARD,
+  noteUrlSendAllowed,
+  urlSendReason,
+  type UrlSendSites,
+} from "./url-data-guard.js";
+import { maskUrlSecrets } from "./http-request-preview.js";
+import {
   describeReadVia,
   readPastWall,
   type PageRenderer,
@@ -89,7 +97,7 @@ export interface OsWebFetchOptions {
    * working — when absent `DEFAULT_FETCH_CONFIG` applies, which reproduces the
    * pre-v38 30s budget.
    */
-  config?: Pick<AtomicAgentConfig, "web">;
+  config?: Pick<AtomicAgentConfig, "web"> & Partial<Pick<AtomicAgentConfig, "http">>;
   /** Injectable sleep so retry-backoff tests do not wait in real time. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /**
@@ -98,6 +106,8 @@ export interface OsWebFetchOptions {
    * (`ApprovalGate.holdsForOutsideContent`, ATO-618). Absent: never asks.
    */
   dangerous?: DangerousToolOptions;
+  /** Sites a chat already used under `http.urlDataGuard: "strict"` (ATO-1377). Defaults to the shared store. */
+  urlSendSites?: UrlSendSites;
   /** Injectable Defuddle runner so extractor tests need no real package. */
   runDefuddle?: DefuddleRunner;
   /**
@@ -179,19 +189,36 @@ export function buildOsWebFetchTool(
       // After outside content a GET's URL alone can carry data out
       // (`https://x/?d=<secret>`), so a held session asks first (ATO-618).
       const gate = options.dangerous;
-      if (gate?.approvals.holdsForOutsideContent(ctx.sessionId, "http") === true) {
+      // ATO-1377: an address that carries a lot of data (or, under
+      // `"strict"`, the chat's first request to a site) asks like a POST
+      // on every session, held or not.
+      const urlCheck =
+        gate === undefined
+          ? null
+          : checkUrlSend(
+              options.config?.http?.urlDataGuard ?? DEFAULT_URL_DATA_GUARD,
+              args.url,
+              ctx.sessionId,
+              options.urlSendSites,
+            );
+      if (
+        gate !== undefined &&
+        (urlCheck !== null || gate.approvals.holdsForOutsideContent(ctx.sessionId, "http"))
+      ) {
+        const shownUrl = maskUrlSecrets(args.url);
         await requireApproval(
           gate,
           {
             sessionId: ctx.sessionId,
             tool: TOOL_NAME,
-            category: "http",
-            reason: `GET ${args.url}`,
-            affectedResources: [args.url],
+            category: urlCheck !== null ? "http_write" : "http",
+            reason: urlCheck !== null ? urlSendReason(shownUrl, urlCheck) : `GET ${args.url}`,
+            affectedResources: [urlCheck !== null ? shownUrl : args.url],
             grantKey: urlOrigin(args.url),
           },
           ctx.signal,
         );
+        if (urlCheck !== null) noteUrlSendAllowed(urlCheck, ctx.sessionId, options.urlSendSites);
       }
       let outcome: FetchOutcome;
       try {

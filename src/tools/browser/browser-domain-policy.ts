@@ -6,6 +6,7 @@
  * itself and every subdomain, case-insensitively.
  */
 import type { UserSiteApprovals } from "./user-profile-sites.js";
+import type { UrlDataGuardMode, UrlSendSites } from "../os/web/url-data-guard.js";
 
 export interface BrowserDomainPolicy {
   readonly blockedDomains: readonly string[];
@@ -24,6 +25,14 @@ export interface BrowserDomainPolicy {
    * in `allowedDomains` excepted. Absent ⇒ every site asks.
    */
   readonly userSites?: UserSiteApprovals;
+  /**
+   * `http.urlDataGuard` (ATO-1377): ask before opening an address that
+   * carries a lot of data, and under `"strict"` before the chat's first
+   * visit to a site. Absent ⇒ `"data"`.
+   */
+  readonly urlDataGuard?: UrlDataGuardMode;
+  /** Sites a chat already used under `"strict"`. Absent ⇒ the shared store. */
+  readonly urlSendSites?: UrlSendSites;
 }
 
 export const EMPTY_DOMAIN_POLICY: BrowserDomainPolicy = {
