@@ -178,6 +178,12 @@ const V0_2_2_SLASH_COMMANDS = [
       "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
     aliases: ["models", "local"],
   },
+  // Added with the reasoning level (ATO-490).
+  {
+    name: "think",
+    description:
+      "how hard the model thinks on the next turns: `/think` shows the level · `/think auto|low|medium|high` sets it for this window",
+  },
   {
     name: "tasks",
     description: "jump to the Tasks tab (Option 4 cron + ingress UI)",

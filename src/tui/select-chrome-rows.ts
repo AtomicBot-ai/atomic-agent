@@ -20,6 +20,7 @@ import { codingModeChipLabel } from "./coding-mode/coding-mode-chip.js";
 import { contextChipLabel } from "./context/context-chip.js";
 import { usageReadoutLabel } from "./context/usage-readout.js";
 import { stepSpeedReadoutLabel } from "./context/step-speed-readout.js";
+import { thinkReadoutLabel } from "./commands/think-command.js";
 import { layoutChipRows } from "./components/hotkey-chip-rows.js";
 import { resolveChips } from "./components/hotkey-chips.js";
 import {
@@ -132,6 +133,7 @@ export function selectMetaBarFit(
     contextWidth:
       (usage ? contextChipLabel(usage).length : 0) +
       (stepSpeedReadoutLabel(state.metrics.stepSpeedLast)?.length ?? 0) +
+      (thinkReadoutLabel(state.reasoningLevel)?.length ?? 0) +
       (usageReadoutLabel(state.sessionUsage, Date.now())?.length ?? 0),
     // Always drawn, including in `default` — see `promptModeSlot`.
     modeWidth: codingModeChipLabel(state.codingMode).length,
