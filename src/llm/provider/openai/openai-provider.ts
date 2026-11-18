@@ -65,6 +65,14 @@ import { describeAudioViaOpenAi } from "./openai-describe-audio.js";
 import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
 import { isLocalServerUrl } from "./local-server-url.js";
 import {
+  createChunkUnmasker,
+  maskOpenAiBody,
+  shieldVaultFor,
+  unmaskCompletion,
+  type ChunkUnmasker,
+} from "./openai-privacy-shield.js";
+import type { PrivacyVault } from "../../../privacy/index.js";
+import {
   adaptQwenCompletionResult,
   adaptQwenTaggedToolResponse,
   type TaggedToolAdaptOptions,
@@ -233,6 +241,11 @@ export class OpenAiProvider implements LlmProvider {
   private readonly reasoningFormat: ReasoningFormat;
   private readonly messageShape: "native" | "flat";
   /**
+   * Whether the base URL is this machine or the local network. Privacy
+   * Shield (ATO-1081) never masks for such a server: it is not a cloud.
+   */
+  private readonly localServer: boolean;
+  /**
    * Sessions whose requests go out flat after the service rejected the
    * native layout (`"*"` for requests without a session id). Per
    * session rather than per provider so one shim-backed session cannot
@@ -300,6 +313,7 @@ export class OpenAiProvider implements LlmProvider {
     this.jsonSchemaToolFallback = options.jsonSchemaToolFallback ?? false;
     this.providerPreferences = options.providerPreferences;
     this.messageShape = options.messageShape ?? "native";
+    this.localServer = isLocalServerUrl(options.baseUrl);
     this.bodyOptions = {
       nameEscape: (name) => this.toolCallAdapter.nameEscape(name),
       ...(options.providerKind ? { providerKind: options.providerKind } : {}),
@@ -421,6 +435,8 @@ export class OpenAiProvider implements LlmProvider {
     }
     // The body the response actually came from; see `OnOpenAiRequestBody`.
     let sentBody: Record<string, unknown> | undefined;
+    // Privacy Shield (ATO-1081): one vault for the body and the reply.
+    const vault = shieldVaultFor(request.sessionId, this.localServer);
     const post = (body: Record<string, unknown>) =>
       openAiPostJson(
         this.http,
@@ -441,10 +457,10 @@ export class OpenAiProvider implements LlmProvider {
               logger: this.http.logger,
             },
             request,
-            (req) => this.buildBody(req, false, shape),
+            (req) => this.buildBody(req, false, shape, vault),
             post,
           )
-        : post(this.buildBody(request, false, shape));
+        : post(this.buildBody(request, false, shape, vault));
     // One resend per completion when the service names the only
     // temperature it takes, or refuses the field altogether
     // (`allowed-temperature.ts`); the rebuilt body carries the lesson.
@@ -476,12 +492,13 @@ export class OpenAiProvider implements LlmProvider {
       request,
       this.taggedToolOptions(),
     );
+    const normalised = normaliseOpenAiChatResponse(
+      adapted,
+      model,
+      this.reasoningFormat,
+    );
     return this.withRateLimits(withSentMaxTokens(
-      normaliseOpenAiChatResponse(
-        adapted,
-        model,
-        this.reasoningFormat,
-      ),
+      vault ? unmaskCompletion(normalised, vault) : normalised,
       sentBody,
     ));
   }
@@ -500,6 +517,7 @@ export class OpenAiProvider implements LlmProvider {
     request: CompletionRequest,
     stream: boolean,
     shape: "native" | "flat",
+    vault: PrivacyVault | null = null,
   ): Record<string, unknown> {
     const body = buildOpenAiChatBody(
       request,
@@ -527,6 +545,8 @@ export class OpenAiProvider implements LlmProvider {
     ) {
       body.response_format = toGeminiResponseFormat(body.response_format);
     }
+    // Privacy Shield (ATO-1081): last, on the body exactly as it goes out.
+    if (vault) maskOpenAiBody(body, vault);
     return body;
   }
 
@@ -824,7 +844,10 @@ export class OpenAiProvider implements LlmProvider {
     // a schema error names one more to leave out (`withoutRejectedTool`).
     const known = this.withoutRememberedTools(request);
     let activeRequest = known.request;
-    let body = this.buildBody(activeRequest, true, shape);
+    // Privacy Shield (ATO-1081): one vault for every attempt of this
+    // completion, so a reopen masks the same way and the reply unmasks.
+    const vault = shieldVaultFor(request.sessionId, this.localServer);
+    let body = this.buildBody(activeRequest, true, shape, vault);
     const path = `${this.chatPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";
@@ -897,6 +920,9 @@ export class OpenAiProvider implements LlmProvider {
         accumulatedReasoning = "";
         streamFinal = undefined;
         const stream = this.streamConsumer.consume(res.body, request.signal);
+        // Placeholders back in the text as it streams; a fresh hold-back
+        // per attempt, like the transcript above.
+        const unmasker: ChunkUnmasker | null = vault ? createChunkUnmasker(vault) : null;
         // Whether this pump reached the consumer's own `done`. A pump that
         // did not has abandoned a live stream; see the release below.
         let drained = false;
@@ -907,9 +933,21 @@ export class OpenAiProvider implements LlmProvider {
               streamFinal = next.value;
               streamEnded = true;
               drained = true;
+              // A placeholder the stream ended on was held back: it goes
+              // out now, under the same rules as any other chunk.
+              const tail = unmasker?.flush() ?? null;
+              if (tail) {
+                accumulated += tail.delta;
+                accumulatedReasoning += tail.reasoningDelta;
+                const shown = holdContent ? { ...tail, delta: "" } : tail;
+                if (shown.delta.length > 0 || shown.reasoningDelta.length > 0) {
+                  committed = true;
+                  yield shown;
+                }
+              }
               break attempts;
             }
-            const received = next.value;
+            const received = unmasker ? unmasker.push(next.value) : next.value;
             if (received.delta) accumulated += received.delta;
             if (received.reasoningDelta)
               accumulatedReasoning += received.reasoningDelta;
@@ -997,7 +1035,7 @@ export class OpenAiProvider implements LlmProvider {
             toolDropped = reduced.dropped;
             schemaError = err;
             activeRequest = reduced.request;
-            body = this.buildBody(activeRequest, true, shape);
+            body = this.buildBody(activeRequest, true, shape, vault);
             continue;
           }
         }
@@ -1011,7 +1049,7 @@ export class OpenAiProvider implements LlmProvider {
           this.learnTemperature(request, err, body)
         ) {
           temperatureRetried = true;
-          body = this.buildBody(activeRequest, true, shape);
+          body = this.buildBody(activeRequest, true, shape, vault);
           continue;
         }
         // The service refused the message layout, before any byte of
@@ -1022,7 +1060,7 @@ export class OpenAiProvider implements LlmProvider {
         if (!committed && this.shouldFallBackToFlat(request, shape, err)) {
           this.markFlat(request, err);
           shape = "flat";
-          body = this.buildBody(activeRequest, true, shape);
+          body = this.buildBody(activeRequest, true, shape, vault);
           continue;
         }
         // An error event inside the stream (OpenRouter's `504 Upstream
@@ -1070,12 +1108,15 @@ export class OpenAiProvider implements LlmProvider {
         "openai stream retry loop ended without a completion — canReopenStream and OPENAI_MAX_ATTEMPTS disagree",
       );
     }
-    const final = completionFromStreamFinal(
+    const built = completionFromStreamFinal(
       streamFinal,
       model,
       accumulated,
       accumulatedReasoning,
     );
+    // The consumer's own transcript and tool calls still carry the
+    // placeholders; `accumulated` was unmasked chunk by chunk.
+    const final = vault ? { ...unmaskCompletion(built, vault) } : built;
     if (accumulated.length > 0 && final.content.length === 0) {
       final.content = accumulated;
     }
