@@ -35,6 +35,14 @@ const PICK_EXPLAINER: readonly string[] = [
 
 const SKIP_DETAIL = "Go straight to your agent — /import works any time later.";
 
+/**
+ * ATO-1062: ChatGPT and Claude keep nothing on this machine to detect;
+ * their data export is a zip the person downloads. So the pick screen
+ * names the one place that reads it (the Import tab's facts step, ATO-1627).
+ */
+export const CHAT_EXPORT_HINT =
+  "From ChatGPT or Claude? Download your data export, then /import › Facts about you.";
+
 const CHECKBOX_ON = "[x] ";
 const CHECKBOX_OFF = "[ ] ";
 
@@ -146,6 +154,7 @@ export function measureOnboardingImportPickStep(
     `${ROW_INDENT}${IMPORT_SKIP_LABEL}`,
     `${ROW_INDENT}${SKIP_DETAIL}`,
     `${ROW_INDENT}${importActionLabel(agents.length)}`,
+    CHAT_EXPORT_HINT,
   ]);
 }
 
@@ -192,6 +201,9 @@ export function OnboardingImportPickStep(props: {
           />
         ),
       )}
+      <Box marginTop={1}>
+        <Text color={theme.colors.muted}>{CHAT_EXPORT_HINT}</Text>
+      </Box>
       {props.busy ? <Text color={theme.colors.muted}>importing…</Text> : null}
       {props.error !== null ? (
         <Text color={theme.colors.error}>{props.error}</Text>
