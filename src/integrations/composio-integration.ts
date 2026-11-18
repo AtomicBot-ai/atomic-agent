@@ -52,6 +52,41 @@ export const composioIntegration: IntegrationDescriptor = {
         return undefined;
       },
     },
+    // ATO-1494: several accounts for one app. Acted on when saved
+    // (tui/integrations/integrations-orchestrator-composio.ts), never
+    // stored as typed: the list lands in `composio.accounts`.
+    {
+      key: "addAccount",
+      label: "Add account",
+      store: "transient",
+      secret: false,
+      required: false,
+      help: "<app> <name> <account-id> [--default], e.g. gmail work ca_abc123. Press a to see the ids.",
+    },
+    {
+      key: "defaultAccount",
+      label: "Default account",
+      store: "transient",
+      secret: false,
+      required: false,
+      help: "<app> <name>: every call for that app goes through it. <app> none: Composio picks the latest.",
+    },
+    {
+      key: "removeAccount",
+      label: "Remove account",
+      store: "transient",
+      secret: false,
+      required: false,
+      help: "<app> <name>. Forgets the name; the account stays signed in on Composio.",
+    },
+  ],
+  actions: [
+    {
+      key: "a",
+      id: "accounts",
+      label: "accounts",
+      available: (ctx) => ctx.presentFields.has(COMPOSIO_KEY_FIELD),
+    },
   ],
   status(ctx: IntegrationStatusContext): IntegrationStatus {
     const configured = isConfigured(composioIntegration, ctx.presentFields);
@@ -63,7 +98,8 @@ export const composioIntegration: IntegrationDescriptor = {
     }
     const state = ctx.mcpServerStates?.get(COMPOSIO_SERVER_NAME);
     if (state === "up") {
-      return { level: "connected", detail: "connected" };
+      const via = defaultsLine(ctx.config);
+      return { level: "connected", detail: via ? `connected · ${via}` : "connected" };
     }
     if (state === "down") {
       return {
@@ -76,3 +112,15 @@ export const composioIntegration: IntegrationDescriptor = {
     return { level: "configured", detail: "key saved" };
   },
 };
+
+/* `gmail via work, slack via team` from `composio.accounts`, or null. */
+function defaultsLine(config: Readonly<Record<string, unknown>> | undefined): string | null {
+  const composio = config?.composio as { accounts?: unknown } | undefined;
+  const accounts = Array.isArray(composio?.accounts) ? composio.accounts : [];
+  const via = accounts
+    .filter((a): a is { toolkit: string; alias: string; isDefault: true } =>
+      typeof a === "object" && a !== null && (a as { isDefault?: unknown }).isDefault === true)
+    .map((a) => `${a.toolkit} via ${a.alias}`)
+    .sort();
+  return via.length > 0 ? via.join(", ") : null;
+}

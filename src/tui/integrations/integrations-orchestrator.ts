@@ -19,6 +19,11 @@ import {
   runAtomicMailAction,
 } from "./integrations-orchestrator-atomic-mail.js";
 import {
+  applyComposioAccountField,
+  composioAccountsSummary,
+  isComposioAccountField,
+} from "./integrations-orchestrator-composio.js";
+import {
   EXA_INTEGRATION_ID,
   GITHUB_INTEGRATION_ID,
   GITHUB_TOKEN_FIELD,
@@ -269,6 +274,9 @@ export class IntegrationsOrchestrator {
       await channel.start();
       return "Discord channel restarted";
     }
+    if (integrationId === "composio" && actionId === "accounts") {
+      return composioAccountsSummary({ composio: getConfig().composio });
+    }
     if (integrationId === GITHUB_INTEGRATION_ID) {
       if (actionId === "verify") return this.verifyGithub();
       if (actionId === "import") return this.importGithubTokenFromGh();
@@ -377,6 +385,21 @@ export class IntegrationsOrchestrator {
         throw new IntegrationSecretError(`unknown field ${fieldKey}`);
       }
       const cfg = getConfig();
+      if (integrationId === "composio" && isComposioAccountField(field)) {
+        // ATO-1494: an account edit, not a key change. The cached session
+        // stays: its pin stamp no longer matches a changed default, so
+        // the remount creates a pinned session only when one is needed.
+        const message = applyComposioAccountField(
+          field,
+          value,
+          cfg.composio.accounts,
+          cfg.paths.userConfigFile,
+        );
+        if (value !== null) await this.applyComposio(true, false);
+        this.bus.emit({ type: "integrations_action_settled", message });
+        this.refresh();
+        return;
+      }
       if (integrationId === "atomic-mail") {
         // Acts *before* the write: the owner address must not land in
         // config unless the code mail went out — the service writes
@@ -480,12 +503,13 @@ export class IntegrationsOrchestrator {
    *
    * The cached tool-router session is dropped on every key change: a
    * session belongs to the key that created it, so reusing it across a
-   * key swap would silently keep talking to the old account.
+   * key swap would silently keep talking to the old account. An account
+   * edit keeps it (`clearSession: false`): `sessionPins` decides.
    */
-  private async applyComposio(configured: boolean): Promise<void> {
+  private async applyComposio(configured: boolean, clearSession = true): Promise<void> {
     const config = getConfig();
     await this.runtime.mcpManager.removeServerLive(COMPOSIO_SERVER_NAME);
-    clearComposioSession(config.paths.userConfigFile);
+    if (clearSession) clearComposioSession(config.paths.userConfigFile);
     if (configured) {
       const server = await resolveComposioServerConfig({
         composio: getConfig().composio,
