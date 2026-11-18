@@ -151,6 +151,29 @@ function acceptCard(match: string): boolean {
   return luhnValid(digits);
 }
 
+/**
+ * Card candidates. The CARD pattern is greedy, so a number pasted with its
+ * expiry or CVV right after it (`4242 4242 4242 4242 12/25`, `…4242 123`)
+ * matches as one longer run that fails Luhn. When the whole run fails, try
+ * the shorter prefixes that end at a group boundary (a space or dash), longest
+ * first, and keep the first one that is a valid card. The scan then resumes
+ * right after what was kept.
+ */
+function collectCards(text: string, out: PrivateSpan[]): void {
+  CARD.lastIndex = 0;
+  for (let m = CARD.exec(text); m !== null; m = CARD.exec(text)) {
+    const match = m[0];
+    const ends = [match.length];
+    for (let i = match.length - 1; i > 0; i--) {
+      if ((match[i] === " " || match[i] === "-") && /\d/.test(match[i - 1] ?? "")) ends.push(i);
+    }
+    const end = ends.find((e) => acceptCard(match.slice(0, e)));
+    if (end === undefined) continue;
+    out.push({ start: m.index, end: m.index + end, kind: "CARD", value: match.slice(0, end) });
+    CARD.lastIndex = m.index + end;
+  }
+}
+
 function acceptPhone(match: string): boolean {
   const n = digitCount(match);
   if (n < 8 || n > 15) return false;
@@ -169,7 +192,7 @@ export function findPrivateSpans(text: string, known: readonly KnownSecret[] = [
   if (hasDigit && /[A-Z]{2}\d{2}/.test(text)) {
     collect(text, IBAN, "IBAN", (m) => ibanValid(m.replace(/ /g, "")), candidates);
   }
-  if (hasDigit) collect(text, CARD, "CARD", acceptCard, candidates);
+  if (hasDigit) collectCards(text, candidates);
   if (text.includes("@")) collect(text, EMAIL, "EMAIL", () => true, candidates);
   if (hasDigit && text.includes("+")) collect(text, PHONE_INTERNATIONAL, "PHONE", acceptPhone, candidates);
   if (hasDigit && text.includes("(")) collect(text, PHONE_BRACKETED, "PHONE", acceptPhone, candidates);

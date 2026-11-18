@@ -17,6 +17,16 @@ describe("findPrivateSpans (ATO-599)", () => {
     expect(kinds("amex 378282246310005")).toEqual([["CARD", "378282246310005"]]);
   });
 
+  it("finds a card number with its expiry or CVV right after it", () => {
+    expect(kinds("card 4242 4242 4242 4242 12/25")).toEqual([["CARD", "4242 4242 4242 4242"]]);
+    expect(kinds("4242424242424242 123")).toEqual([["CARD", "4242424242424242"]]);
+    expect(kinds("4111-1111-1111-1111 737")).toEqual([["CARD", "4111-1111-1111-1111"]]);
+    expect(kinds("5555 5555 5555 4444 123 and 4111 1111 1111 1111")).toEqual([
+      ["CARD", "5555 5555 5555 4444"],
+      ["CARD", "4111 1111 1111 1111"],
+    ]);
+  });
+
   it("leaves digit runs that are not cards alone", () => {
     // Fails Luhn.
     expect(kinds("order 4111 1111 1111 1112")).toEqual([]);
