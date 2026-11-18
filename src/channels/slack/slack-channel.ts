@@ -13,7 +13,7 @@ import type { ChannelStatus } from "../../runtime/channel-status.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { Channel } from "../channel.js";
-import { ChatSessionMap } from "../chat-session-map.js";
+import { ChatSessionMap, type ChatSessionPrunePolicy } from "../chat-session-map.js";
 import type { WebSocketLike } from "../discord/discord-gateway-transport.js";
 import { SlackApi, SlackApiError } from "./slack-api.js";
 import { SlackApprovalBridge } from "./slack-approval-bridge.js";
@@ -32,6 +32,20 @@ import {
   type SlackMessageEvent,
   type SlackTarget,
 } from "./slack-types.js";
+
+/**
+ * Every Slack thread is its own session key (`<channel>:<thread ts>`),
+ * so `slack-session.json` would grow by one entry per thread forever
+ * (ATO-1509). Threads untouched for 30 days go, and past 500 entries the
+ * oldest go first; DMs (`dm:<id>`) and whole-channel keys (no thread)
+ * are kept. Same defaults as OpenClaw's session store maintenance
+ * (`pruneAfter: 30d`, `maxEntries: 500`).
+ */
+export const SLACK_SESSION_PRUNE: ChatSessionPrunePolicy = {
+  maxAgeMs: 30 * 24 * 60 * 60 * 1000,
+  maxEntries: 500,
+  keep: (chatKey) => chatKey.startsWith("dm:") || !chatKey.includes(":"),
+};
 
 export interface SlackChannelDeps {
   runtime: AgentRuntime;
@@ -69,7 +83,7 @@ export class SlackChannel implements Channel {
 
   constructor(private readonly deps: SlackChannelDeps) {
     this.ownerIds = [...deps.ownerIds];
-    this.sessions = new ChatSessionMap(deps.sessionMapPath);
+    this.sessions = new ChatSessionMap(deps.sessionMapPath, { prune: SLACK_SESSION_PRUNE });
   }
 
   state(): ChannelStatus["state"] {
