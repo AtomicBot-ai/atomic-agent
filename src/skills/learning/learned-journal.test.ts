@@ -129,6 +129,77 @@ describe("learned journal and undo", () => {
     expect((await runLearnCommand({ kind: "discard", id: drop.id }, { stateDir: root, skillsDir })).ok).toBe(false);
     expect((await runLearnCommand({ kind: "approve", id: drop.id }, { stateDir: root, skillsDir, takenNames: async () => new Set() })).ok).toBe(false);
   });
+
+  it("/learn lists each draft with its path and strips control characters (ATO-67 review2)", async () => {
+    const content = "---\nname: tidy-notes\ndescription: Tidy the notes folder.\nversion: 1.0.0\n---\n\n1. Sort.\n";
+    const d = await savePendingDraft(root, {
+      kind: "create", name: "tidy-notes", reason: "looks \u001b[2Kfine\u0007", content,
+      sources: ["os.web.fetch\u001b]0;pwned\u0007"], origin: "tele\rgram", now: () => Date.UTC(2026, 10, 18, 9, 0),
+    });
+    const listed = await runLearnCommand({ kind: "list" }, { stateDir: root, skillsDir });
+    expect(listed.text).toContain(`draft: ${join(root, "skills-pending", d.id, "SKILL.md")}`);
+    expect(listed.text).toContain("/learn show <id>");
+    // eslint-disable-next-line no-control-regex
+    expect(listed.text).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f]/);
+    expect(listed.text).toContain("looks [2Kfine");
+  });
+
+  it("/learn show prints a new skill draft in full and --json keeps the desktop contract", async () => {
+    const content = "---\nname: tidy-notes\ndescription: Tidy the notes folder.\nversion: 1.0.0\n---\n\n1. Sort.\n\t2. Indented \u001b[31mred\u001b[0m.\n";
+    const d = await savePendingDraft(root, {
+      kind: "create", name: "tidy-notes", reason: "tidy \u001b[31msteps", content, sources: ["os.web.fetch"], origin: "telegram",
+      now: () => Date.UTC(2026, 10, 18, 9, 0),
+    });
+    const shown = await runLearnCommand({ kind: "show", id: d.id, json: false }, { stateDir: root, skillsDir });
+    expect(shown.ok).toBe(true);
+    expect(shown.text).toContain(`path:    ${join(root, "skills-pending", d.id, "SKILL.md")}`);
+    expect(shown.text).toContain("kind:    new skill");
+    expect(shown.text).toContain("origin:  telegram");
+    expect(shown.text).toContain("sources: os.web.fetch");
+    expect(shown.text).toContain("1. Sort.\n\t2. Indented [31mred[0m.");
+    expect(shown.text).not.toContain("\u001b");
+    expect(shown.text).toContain(`/learn approve ${d.id}`);
+
+    const json = await runLearnCommand({ kind: "show", id: d.id, json: true }, { stateDir: root, skillsDir });
+    const view = JSON.parse(json.text) as Record<string, unknown>;
+    expect(Object.keys(view).sort()).toEqual(
+      ["id", "kind", "skill", "path", "origin", "sources", "reason", "createdAt", "skillMd", "currentSkillMd", "diff"].sort(),
+    );
+    expect(view).toMatchObject({
+      id: d.id, kind: "create", skill: "tidy-notes", path: join(root, "skills-pending", d.id, "SKILL.md"), origin: "telegram",
+      sources: ["os.web.fetch"], reason: "tidy [31msteps", createdAt: Date.UTC(2026, 10, 18, 9, 0), currentSkillMd: null, diff: null,
+    });
+    expect(view.skillMd).toBe(content.replaceAll("\u001b", ""));
+
+    expect((await runLearnCommand({ kind: "show", id: "abcdef", json: false }, { stateDir: root, skillsDir })).ok).toBe(false);
+  });
+
+  it("/learn show gives a patch draft as a unified diff against the live SKILL.md", async () => {
+    const live = "---\nname: deploy-staging\ndescription: Deploy to staging.\nversion: 1.0.0\n---\n\n1. Build.\n2. Push.\n";
+    const patched = live.replace("2. Push.\n", "2. Push.\n3. Check the health page.\n");
+    write("deploy-staging", live);
+    const d = await savePendingDraft(root, {
+      kind: "patch", name: "deploy-staging", reason: "health check", content: patched, sources: [], targetHash: "x",
+    });
+    const view = JSON.parse((await runLearnCommand({ kind: "show", id: d.id, json: true }, { stateDir: root, skillsDir })).text) as {
+      currentSkillMd: string | null; diff: string | null; origin: string | null; kind: string;
+    };
+    expect(view.kind).toBe("patch");
+    expect(view.origin).toBeNull();
+    expect(view.currentSkillMd).toBe(live);
+    expect(view.diff).toContain("--- a/deploy-staging/SKILL.md");
+    expect(view.diff).toContain("+++ b/deploy-staging/SKILL.md");
+    expect(view.diff).toContain("+3. Check the health page.");
+    expect(view.diff).not.toContain("=====");
+
+    const text = (await runLearnCommand({ kind: "show", id: d.id, json: false }, { stateDir: root, skillsDir })).text;
+    expect(text).toContain("Changes to the live deploy-staging/SKILL.md:");
+    expect(text).toContain("+3. Check the health page.");
+
+    rmSync(join(skillsDir, "deploy-staging"), { recursive: true, force: true });
+    const gone = JSON.parse((await runLearnCommand({ kind: "show", id: d.id, json: true }, { stateDir: root, skillsDir })).text) as { diff: unknown; currentSkillMd: unknown };
+    expect(gone).toMatchObject({ diff: null, currentSkillMd: null });
+  });
 });
 
 describe("parseLearnCommand", () => {
@@ -143,5 +214,10 @@ describe("parseLearnCommand", () => {
     expect(parseLearnCommand("discard a1b2c3")).toEqual({ kind: "discard", id: "a1b2c3" });
     expect(parseLearnCommand("approve ../x").kind).toBe("error");
     expect(parseLearnCommand("discard").kind).toBe("error");
+    expect(parseLearnCommand("show A1B2C3")).toEqual({ kind: "show", id: "a1b2c3", json: false });
+    expect(parseLearnCommand("show a1b2c3 --json")).toEqual({ kind: "show", id: "a1b2c3", json: true });
+    expect(parseLearnCommand("show").kind).toBe("error");
+    expect(parseLearnCommand("show ../x").kind).toBe("error");
+    expect(parseLearnCommand("show a1b2c3 --yaml").kind).toBe("error");
   });
 });

@@ -876,7 +876,7 @@ export const MENU: readonly MenuNode[] = [
     slash: {
       name: "learn",
       description:
-        "skills the agent learned by itself after long tasks: `/learn` lists them · `/learn undo <id>` takes one back · `/learn approve|discard <id>` for one pending review",
+        "skills the agent learned by itself after long tasks: `/learn` lists them · `/learn undo <id>` takes one back · `/learn show <id>` reads a draft pending review · `/learn approve|discard <id>` for it",
       // ATO-67: right after /skill.
       rank: 22.5,
     },

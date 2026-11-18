@@ -30,16 +30,18 @@ export const SKILL_HISTORY_HELP_LINES = [
   "  curate [--dry-run]         Archive agent-learned skills unused for 30 days now (never starter, hub or your own)",
   "  learned [undo <id>]        List skills the agent learned by itself after long tasks; undo one (a new skill is",
   "                             archived, a patched one goes back to the version saved before the patch)",
+  "  learned show <id> [--json] Print a draft pending review in full: path, where it came from, its SKILL.md,",
+  "                             and for a patch a diff against the live skill",
   "  learned approve|discard <id>",
   "                             Drafts learned in a task that read outside content (or came from a chat or API",
   "                             caller) wait as \"Pending review\" until you approve or discard them",
 ];
 
-/** `skill learned [undo|approve|discard <id>]` (ATO-67): the TUI's `/learn`. */
+/** `skill learned [show|undo|approve|discard <id>]` (ATO-67): the TUI's `/learn`. */
 export async function handleSkillLearned(args: string[]): Promise<number> {
   const command = parseLearnCommand(args.join(" "));
   if (command.kind === "error") {
-    process.stderr.write("usage: atomic-agent skill learned [undo <id> | approve <id> | discard <id>]\n");
+    process.stderr.write("usage: atomic-agent skill learned [show <id> [--json] | undo <id> | approve <id> | discard <id>]\n");
     return 2;
   }
   const config = getConfig();

@@ -47,6 +47,11 @@ export function pendingDraftsDir(stateDir: string): string {
   return join(stateDir, "skills-pending");
 }
 
+/** The draft's SKILL.md, the file `show` points the person at. */
+export function pendingDraftSkillFile(stateDir: string, id: string): string {
+  return join(pendingDraftsDir(stateDir), id, "SKILL.md");
+}
+
 export function hashSkillText(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }

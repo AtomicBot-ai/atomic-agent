@@ -45,14 +45,24 @@ export type {
 export { isPatchableSkill, patchableSkillNames, takenSkillNames } from "./learn-targets.js";
 export type { LearnTargetInput } from "./learn-targets.js";
 
-export { formatLearnedList, LEARN_USAGE, parseLearnCommand, runLearnCommand } from "./learn-command.js";
-export type { LearnCommand, LearnCommandDirs, LearnCommandResult } from "./learn-command.js";
+export {
+  formatLearnedList,
+  LEARN_USAGE,
+  multiLine,
+  oneLine,
+  parseLearnCommand,
+  runLearnCommand,
+  showPendingDraft,
+  skillMdDiff,
+} from "./learn-command.js";
+export type { LearnCommand, LearnCommandDirs, LearnCommandResult, PendingDraftView } from "./learn-command.js";
 
 export {
   hashSkillText,
   listPendingDrafts,
   PENDING_DRAFT_LIMIT,
   pendingDraftsDir,
+  pendingDraftSkillFile,
   readPendingDraft,
   removePendingDraft,
   savePendingDraft,
