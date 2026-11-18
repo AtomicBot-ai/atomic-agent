@@ -19,5 +19,10 @@
 	     is denied without this, whatever the user answers in the prompt. -->
 	<key>com.apple.security.device.audio-input</key>
 	<true/>
+	<!-- Selected text and dictation in any app (ATO-985, ATO-1064): osascript
+	     asks System Events to press Copy or Paste. Under the hardened
+	     runtime Apple Events from this app are refused without this. -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
 </dict>
 </plist>
