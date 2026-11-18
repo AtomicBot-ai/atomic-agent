@@ -80,6 +80,8 @@ export class SkillRegistry {
     private readonly options: LoadSkillsOptions,
     disabledNames: Iterable<string> = [],
     private readonly projectTrustGate?: ProjectSkillTrustGate,
+    /** Admin policy (ATO-587): a blocked skill is never loaded, like a disabled one. */
+    private readonly isBlocked?: (name: string) => boolean,
   ) {
     this.disabledNames = new Set(disabledNames);
   }
@@ -118,11 +120,12 @@ export class SkillRegistry {
    * Unfiltered list — every successfully-parsed skill on disk including
    * those flagged `disabled`. Consumed by CLI / TUI rendering only.
    */
-  listAll(): Array<{ record: SkillRecord; disabled: boolean; trust?: ProjectItemTrust }> {
+  listAll(): Array<{ record: SkillRecord; disabled: boolean; trust?: ProjectItemTrust; blocked?: true }> {
     return Array.from(this.allRecords.values())
       .map((record) => ({
         record,
         disabled: this.disabledNames.has(record.manifest.name),
+        ...(this.isBlocked?.(record.manifest.name) === true ? { blocked: true as const } : {}),
         ...(record.source === "project" && this.projectTrust ? { trust: this.projectTrust(record.manifest.name) } : {}),
       }))
       .sort((a, b) =>
@@ -177,6 +180,7 @@ export class SkillRegistry {
     this.records = new Map();
     for (const [name, record] of this.allRecords) {
       if (this.disabledNames.has(name)) continue;
+      if (this.isBlocked?.(name) === true) continue;
       if (record.source === "project" && this.projectTrust && this.projectTrust(name) !== "trusted") continue;
       this.records.set(name, record);
     }
