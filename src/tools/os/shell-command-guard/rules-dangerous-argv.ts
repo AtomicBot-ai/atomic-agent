@@ -68,7 +68,8 @@ export function matchDangerousArgv(
     matchRm(segments) ??
     matchNestedShell(segments) ??
     matchPluginConsent(segments) ??
-    matchSecretsAccess(segments);
+    matchSecretsAccess(segments) ??
+    matchSkillDraftConsent(segments);
   if (hit === null) return null;
   return { action: "approval_required", rule: hit.id, reason: hit.reason };
 }
@@ -776,6 +777,32 @@ function matchSecretsAccess(
         return {
           id: "dangerous.secrets_value_access",
           reason: `read or change a saved API key (config secrets ${verb})`,
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The agent approving its own learned skill draft (ATO-67): `atomic-agent
+ * skill learned approve <id>`. A draft is held because the turn that made
+ * it read outside content, and only a person may let it become a live
+ * skill, so this asks every time like `plugin allow-code`. Matched on the
+ * words, not the binary name (`atag`, `node dist/cli/index.js`); the
+ * verb is compared case-insensitively because the command parser is.
+ * `undo`, `discard` and the listing stay on the ordinary path.
+ */
+function matchSkillDraftConsent(
+  segments: readonly (readonly string[])[],
+): ArgvCheck | null {
+  for (const words of segments) {
+    for (let i = 0; i < words.length - 2; i += 1) {
+      if (words[i] !== "skill" || words[i + 1] !== "learned") continue;
+      if (words[i + 2]?.toLowerCase() === "approve") {
+        return {
+          id: "dangerous.skill_draft_consent",
+          reason: "approve a learned skill draft",
         };
       }
     }

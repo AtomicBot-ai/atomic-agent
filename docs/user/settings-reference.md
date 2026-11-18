@@ -320,6 +320,8 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `skills.clawhub.apiBase` | `string` | `"https://clawhub.ai"` | Base URL of the ClawHub registry API. Default `https://clawhub.ai`. |
 | `skills.clawhub.browseLimit` | `number` | `100` | Most ClawHub skills one browse or search returns. Default `100`. |
 | `skills.clawhub.nonSuspiciousOnly` | `boolean` | `true` | Ask ClawHub to leave out skills it flags as suspicious when browsing or searching. Default `true`. |
+| `skills.selfLearning.enabled` | `boolean` | `true` | After a long turn, review it in the background and save what was learned as a skill (a new SKILL.md, or a fix to a skill it used). Every change is listed by `/learn` and undone with `/learn undo <id>`. |
+| `skills.selfLearning.minSteps` | `number` | `10` | Model steps a turn needs before it is reviewed for something to learn. |
 
 ## tui
 

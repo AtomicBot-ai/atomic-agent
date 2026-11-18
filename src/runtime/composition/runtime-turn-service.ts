@@ -37,6 +37,7 @@ import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "
 import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
 import { createRuntimeGoalRunner } from "./runtime-goal.js";
 import { createNextStepSuggester } from "./runtime-next-step.js";
+import type { createExperienceReviewer } from "./runtime-experience-review.js";
 import { routeTurnProvider } from "./runtime-turn-router.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 import { surfaceShowsQuestions, withAskUserVisibility } from "../../tools/conversation/ask-user-surface.js";
@@ -122,6 +123,11 @@ export interface RuntimeTurnDependencies {
    * (ATO-1093). Omitted (tests, embedders): the suggestion is only stored.
    */
   emitEvent?: (sessionId: string, event: AgentLoopEvent) => void;
+  /**
+   * Self-learning after a long turn (ATO-67,
+   * `runtime-experience-review.ts`). Omitted (tests, embedders): no review.
+   */
+  experienceReview?: Pick<ReturnType<typeof createExperienceReviewer>, "maybeReview">;
   lifecycle: { isShutdown(): boolean };
   logger: StructuredLogger;
 }
@@ -695,6 +701,14 @@ export function createRuntimeTurnService(
         if (!stoppedForMoney(result.stopCause)) {
           nextStep.maybeSuggest(finished, runOptions.origin);
         }
+        // Self-learning (ATO-67): same contract, gated on the turn's
+        // length, origin and ending inside the reviewer.
+        deps.experienceReview?.maybeReview(finished, {
+          result,
+          origin: runOptions.origin,
+          ...(runOptions.answerChannel !== undefined ? { answerChannel: runOptions.answerChannel } : {}),
+          ...(runOptions.memoryReadOnly === true ? { memoryReadOnly: true } : {}),
+        });
         // `finish` ended the whole session: its kept jobs go with it.
         if (finished.status === "completed") shellJobs.endSession(session.id);
         return { ...result, session: finished };

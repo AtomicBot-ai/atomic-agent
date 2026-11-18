@@ -38,6 +38,19 @@ export interface SkillsEvalConfig {
   judgeProvider?: string;
 }
 
+/**
+ * Self-learning (`skills.selfLearning`, ATO-67): after a long turn the
+ * agent reviews it in the background and may write a new skill or patch a
+ * learned one. Unversioned, additive: a file without the block reads the
+ * defaults below.
+ */
+export interface SkillsSelfLearningConfig {
+  /** After a long turn, review it in the background and save what was learned as a skill (a new SKILL.md, or a fix to a skill it used). Every change is listed by `/learn` and undone with `/learn undo <id>`. */
+  enabled: boolean;
+  /** Model steps a turn needs before it is reviewed for something to learn. */
+  minSteps: number;
+}
+
 export interface RuntimeSkillsConfig {
   cloudWorkspaces: CloudWorkspaceSkillsPolicy[];
   /** Per-folder trust answers for project skills and instruction files. Mirrors `UserConfigFile.skills.projectTrust`. */
@@ -80,6 +93,8 @@ export interface RuntimeSkillsConfig {
   };
   /** Skill Lab settings; absent when config.json has no `skills.eval`. */
   eval?: SkillsEvalConfig;
+  /** Self-learning (ATO-67); absent in narrow fixtures, which read the defaults. */
+  selfLearning?: SkillsSelfLearningConfig;
 }
 
 export interface UserSkillsConfig {
@@ -101,7 +116,16 @@ export interface UserSkillsConfig {
   };
   /** Skill Lab settings; absent when config.json has no `skills.eval`. */
   eval?: SkillsEvalConfig;
+  /** Self-learning (ATO-67). Optional so older literals still type-check; defaults and parsing always set it. */
+  selfLearning?: SkillsSelfLearningConfig;
 }
+
+/**
+ * Self-learning defaults (ATO-67): on, like OpenClaw's skill workshop
+ * (`autonomous.mode: "auto"`), after a turn of at least 10 model steps,
+ * the iteration count OpenClaw and Hermes review at.
+ */
+export const DEFAULT_SKILLS_SELF_LEARNING: SkillsSelfLearningConfig = { enabled: true, minSteps: 10 };
 
 /**
  * Default `skills.catalogTokenBudget`, shared by the file defaults and
@@ -241,6 +265,7 @@ export function createSkillsDefaults(): UserSkillsConfig {
       browseLimit: 100,
       nonSuspiciousOnly: true,
     },
+    selfLearning: { ...DEFAULT_SKILLS_SELF_LEARNING },
   };
 }
 
@@ -268,6 +293,23 @@ export function parseSkillsConfig(
     ),
     clawhub: parseClawHubConfigWithDefaults(skills.clawhub, () => readDefaults().clawhub),
     ...parseSkillsEvalConfig(skills.eval),
+    selfLearning: parseSelfLearningConfig(skills.selfLearning, readDefaults().selfLearning ?? DEFAULT_SKILLS_SELF_LEARNING),
+  };
+}
+
+/** `skills.selfLearning` (unversioned, additive): missing fields take the defaults. */
+export function parseSelfLearningConfig(
+  raw: unknown,
+  defaults: SkillsSelfLearningConfig = DEFAULT_SKILLS_SELF_LEARNING,
+): SkillsSelfLearningConfig {
+  if (raw === undefined || raw === null) return { ...defaults };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError("skills.selfLearning", `expected object, got ${JSON.stringify(raw)}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    enabled: parseBool(obj.enabled ?? defaults.enabled, "skills.selfLearning.enabled"),
+    minSteps: parseBoundedPositiveInt(obj.minSteps ?? defaults.minSteps, "skills.selfLearning.minSteps", 1, 1000),
   };
 }
 

@@ -496,6 +496,15 @@ export class ApprovalGate {
     return this.taint.sources(sessionId).length > 0;
   }
 
+  /**
+   * The outside sources `sessionId` read in its running (or just ended)
+   * turn, whatever `agent.taintReview` says; empty when it read none.
+   * Self-learning skips a turn with any (ATO-67).
+   */
+  outsideContentSources(sessionId: string): readonly string[] {
+    return this.taint.sources(sessionId);
+  }
+
   /** Forget the outside content of `sessionId`'s last turn; called when a turn starts. */
   clearUntrustedContent(sessionId: string): void {
     this.taint.clear(sessionId);

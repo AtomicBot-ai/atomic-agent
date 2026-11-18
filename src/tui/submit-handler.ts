@@ -427,6 +427,10 @@ export function runSlashCommand(
   if (result.thinkShow) {
     dispatch({ type: "system_message", text: describeThinkLevel(state.reasoningLevel ?? "auto") });
   }
+  if (result.learnCommand) {
+    if (callbacks.onLearnCommand) callbacks.onLearnCommand(result.learnCommand);
+    else dispatch({ type: "system_message", text: "learned skills are not available here" });
+  }
   if (result.fusionWorkerAction !== undefined) {
     const worker = result.fusionWorkerAction;
     if (state.session.sessionId === null || callbacks.onFusionWorkerAction === undefined) {

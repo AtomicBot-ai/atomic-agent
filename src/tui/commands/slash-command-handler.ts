@@ -19,6 +19,7 @@ import { compactionInstructionsError, normalizeCompactionInstructions } from "..
 import { parsePersonaCommand, type PersonaCommand } from "./persona-command.js";
 import { describeThinkLevel, parseThinkCommand } from "./think-command.js";
 import type { ReasoningLevel } from "../../llm/reasoning-levels.js";
+import { parseLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -46,6 +47,8 @@ export interface SlashDispatchResult {
   readonly goalCommand?: GoalCommand;
   /** `/persona …` (ATO-54): the submit path writes the config and reports. */
   readonly personaCommand?: PersonaCommand;
+  /** `/learn …` (ATO-67): the skills orchestrator lists or undoes learned skills. */
+  readonly learnCommand?: LearnCommand;
   /**
    * `/think <level>` (ATO-490): the caller hands the level to the
    * orchestrator, which sends it on the next turns; the action in
@@ -460,6 +463,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         systemMessage: describeThinkLevel(think.level, think.fromOff === true),
       });
     }
+    case "learn":
+      return pureActions([], { learnCommand: parseLearnCommand(parsed.args) });
     case "enhance":
       // Opt-in and never sends: the draft goes back into the composer
       // right away, and the rewrite replaces it there for review.

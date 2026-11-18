@@ -177,6 +177,7 @@ import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
 import type { SkillSourceKind } from "../skills/index.js";
 import type { HubSkillRow } from "./skills/skills-panel-state.js";
+import type { LearnCommand } from "../skills/learning/learn-command.js";
 import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
 import type {
   MemoryChannel,
@@ -586,6 +587,8 @@ export interface TuiAppCallbacks {
   preparePluginCommand?(name: string, args: string): string;
   /** Refresh the skills panel, count and slash catalog for the selected workspace. */
   onSkillsRefreshRequested?(): void;
+  /** `/learn` (ATO-67): list the skills the agent learned, or undo one. */
+  onLearnCommand?(command: LearnCommand): void;
   /** Skills tab: load the SKILL.md body and open the detail view. */
   onSkillDetailRequested?(name: string): void;
   /** Skills tab: flip the disabled bit and persist to `config.json`. */
