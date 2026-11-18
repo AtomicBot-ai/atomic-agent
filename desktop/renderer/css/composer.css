@@ -368,9 +368,17 @@
    "Working in" line and cut it in half. While the list is open the empty
    state steps aside (it keeps its space, so nothing jumps when it closes). */
 .scroller:has(~ .composerwrap > .slash) .emptychat{visibility:hidden}
+/* ATO-1596: the @ file list (file-mentions.js) sits where the slash list does,
+   in its rows; a path gets the whole row instead of the command column. */
+.composerwrap > .fmmenu{position:absolute;left:28px;right:28px;bottom:calc(100% - 4px);z-index:40;
+  max-width:560px;display:flex;flex-direction:column;padding:6px;border-radius:var(--r-pop);
+  background:var(--lift);box-shadow:var(--sh-pop)}
+.slashrow.fmrow{display:flex}
+.slashrow.fmrow .cmd{flex:1;min-width:0}
+.scroller:has(~ .composerwrap > .fmmenu) .emptychat{visibility:hidden}
 
 /* ---- Narrow windows ------------------------------------------------------ */
-@media (max-width:820px){.composerwrap{padding:0 16px 12px}.composerwrap > .slash{left:16px;right:16px}}
+@media (max-width:820px){.composerwrap{padding:0 16px 12px}.composerwrap > .slash,.composerwrap > .fmmenu{left:16px;right:16px}}
 
 /* Each Fusion role keeps its engine and model together when the row wraps.
    ATO-734: a seat is as wide as its names, so a seat that does not fit moves
