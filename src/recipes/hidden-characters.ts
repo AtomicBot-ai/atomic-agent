@@ -12,7 +12,7 @@
  * (U+FE00-FE0F) are left alone: they are in everyday text.
  */
 const HIDDEN_RE =
-  /[­؜᠎​-‏ -‮⁠-⁤⁦-⁩﻿\u{e0000}-\u{e007f}\u{e0100}-\u{e01ef}]/gu;
+  /[\u{ad}\u{61c}\u{180e}\u{200b}-\u{200f}\u{2028}-\u{202e}\u{2060}-\u{2064}\u{2066}-\u{2069}\u{feff}\u{e0000}-\u{e007f}\u{e0100}-\u{e01ef}]/gu;
 
 export interface HiddenCharacter {
   /** 1-based line within the text. */
