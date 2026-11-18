@@ -152,11 +152,14 @@ export type { RouteLeg, SessionRoute } from "./session-route.js";
 export {
   FUSION_WORKER_METADATA_KEY,
   FUSION_WORKER_ID_PREFIX,
+  FUSION_WORKER_DEFAULT_DEPTH,
+  childFusionWorkerDepth,
   createFusionWorkerSession,
   readFusionWorkerMeta,
+  readSessionDepth,
   isFusionWorkerSessionId,
 } from "./fusion-worker-session.js";
-export type { FusionWorkerMeta } from "./fusion-worker-session.js";
+export type { FusionWorkerMeta, StampedFusionWorkerMeta } from "./fusion-worker-session.js";
 export {
   SESSION_TITLE_MAX_CHARS,
   SESSION_TITLE_METADATA_KEY,
