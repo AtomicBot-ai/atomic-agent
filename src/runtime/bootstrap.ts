@@ -18,6 +18,7 @@ import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunne
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
 import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
+import { createPrivacyShieldControl } from "./composition/runtime-privacy-shield.js";
 import { holdWhileRunning } from "../scheduler/index.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
 export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
@@ -1035,6 +1036,8 @@ export async function createAgentRuntime(
           error: err instanceof Error ? err.message : String(err),
         }),
     }),
+    // ATO-1082: Privacy Shield's live switch and "masked N" counter.
+    privacyShield: createPrivacyShieldControl(),
     mcpManager,
     providerRegistry,
     capabilities,

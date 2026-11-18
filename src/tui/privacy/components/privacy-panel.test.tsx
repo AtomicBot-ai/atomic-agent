@@ -14,6 +14,7 @@ function panelState(
     lastError: null,
     sessionGrants: { categories: [], shapes: [] },
     offline: { supported: false, enabled: false, egress: null },
+    shield: { supported: false, enabled: false, masked: null, sessionMasked: null },
     ...overrides,
   };
 }
@@ -103,5 +104,28 @@ describe("PrivacyPanel", () => {
     });
     expect(frame).toContain("could not read the outbound counter");
     expect(frame).not.toContain("sent out since");
+  });
+
+  it("shows Privacy Shield on/off with the agent's masked counter (ATO-1082)", () => {
+    const off = renderFlat({
+      shield: { supported: true, enabled: false, masked: 0, sessionMasked: null },
+    });
+    expect(off).toContain("Privacy Shield");
+    expect(off).toContain("privacy shield off");
+    expect(off).toContain("masked 0 values since the agent started");
+    expect(off).toContain("m: shield on");
+
+    const on = renderFlat({
+      shield: { supported: true, enabled: true, masked: 5, sessionMasked: null },
+    });
+    expect(on).toContain("privacy shield on");
+    expect(on).toContain("masked 5 values since the agent started");
+    expect(on).toContain("m: shield off");
+  });
+
+  it("says Privacy Shield is not available without the agent's control", () => {
+    const frame = renderFlat();
+    expect(frame).toContain("Privacy Shield");
+    expect(frame).not.toContain("m: shield");
   });
 });

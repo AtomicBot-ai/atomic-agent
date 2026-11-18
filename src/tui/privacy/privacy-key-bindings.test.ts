@@ -119,4 +119,24 @@ describe("handlePrivacyTabKey", () => {
     expect(handlePrivacyTabKey("o", emptyKey(), withSwitch)).toBe(true);
     expect(onOfflineToggleRequested).toHaveBeenCalledTimes(1);
   });
+
+  it("m toggles Privacy Shield only when the agent has it (ATO-1082)", () => {
+    const onPrivacyShieldToggleRequested = vi.fn();
+    const base = privacyState();
+    const without = ctx(base, { onPrivacyShieldToggleRequested });
+    expect(handlePrivacyTabKey("m", emptyKey(), without)).toBe(true);
+    expect(onPrivacyShieldToggleRequested).not.toHaveBeenCalled();
+
+    const supported: TuiState = {
+      ...base,
+      privacyPanel: {
+        ...base.privacyPanel,
+        shield: { supported: true, enabled: false, masked: 0, sessionMasked: null },
+      },
+    };
+    const withShield = ctx(supported, { onPrivacyShieldToggleRequested });
+    expect(handlePrivacyTabKey("m", emptyKey(), withShield)).toBe(true);
+    expect(onPrivacyShieldToggleRequested).toHaveBeenCalledTimes(1);
+  });
 });
+

@@ -31,6 +31,7 @@ function reducePanel(
         analyticsEnabled: action.analyticsEnabled,
         sessionGrants: action.sessionGrants,
         offline: action.offline ?? panel.offline,
+        shield: action.shield ?? panel.shield,
       };
     case "privacy_action_started":
       return { ...panel, busy: true };
