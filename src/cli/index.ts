@@ -29,6 +29,7 @@ import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
 import { dataCommand } from "./data-command.js";
 import { idCommand } from "./id-command.js";
+import { policyCommand } from "./policy-command.js";
 import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
 import { whisperCommand } from "./whisper-command.js";
@@ -184,6 +185,11 @@ const COMMANDS: CommandDescriptor[] = [
     run: idCommand,
   },
   {
+    name: "policy",
+    summary: "Show the organization policy in force and where it came from (show [--json])",
+    run: policyCommand,
+  },
+  {
     name: "data",
     summary: "Back up, restore, move or reset the data folder (shared with the desktop app); export chats as a dataset",
     run: dataCommand,
@@ -238,6 +244,7 @@ function printHelp(): void {
     "",
     "Bootstrap env:",
     "  ATOMIC_AGENT_STATE_DIR         Directory for persistent state + config.json (default ~/.atomic-agent)",
+    "  ATOMIC_POLICY_URL              Organization policy to fetch at start (cached for offline use; see `atag policy show`)",
     "  ATOMIC_AGENT_LLAMA_API_KEY     Bearer token for a llama-server you run yourself (external mode) or the legacy managed llama-server engine (unset = a generated key in <models dir>/llama-server.key).",
     "                                 Not needed with Atomic Core: Core issues and rotates its own key.",
     "  ATOMIC_AGENT_SERVE_NO_PARENT_EXIT  1 to keep `serve` running after its parent exits (same as --no-parent-exit)",

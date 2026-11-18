@@ -2,6 +2,9 @@ import { cp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseSkillFile } from "./skill-manifest.js";
 import type { SkillManifest } from "./skill-manifest.js";
+import { activePolicy } from "../policy/policy-active.js";
+import { skillPolicyRefusal } from "../policy/policy-enforce.js";
+import type { EffectivePolicy } from "../policy/policy-evaluator.js";
 
 export interface InstallSkillOptions {
   sourceDir: string;
@@ -13,6 +16,8 @@ export interface InstallSkillOptions {
    * temporary staging copy that is deleted after the install.
    */
   verbatimSymlinks?: boolean;
+  /** Admin policy to check the skill name against; defaults to `activePolicy()` (ATO-587). */
+  policy?: EffectivePolicy;
 }
 
 export interface InstallSkillResult {
@@ -27,7 +32,8 @@ export class SkillInstallError extends Error {
       | "source_missing"
       | "manifest_missing"
       | "already_installed"
-      | "invalid_manifest",
+      | "invalid_manifest"
+      | "policy_denied",
   ) {
     super(message);
     this.name = "SkillInstallError";
@@ -79,6 +85,9 @@ export async function prepareSkillInstall(
       "invalid_manifest",
     );
   }
+
+  const refusal = skillPolicyRefusal(options.policy ?? activePolicy(), manifest.name);
+  if (refusal !== null) throw new SkillInstallError(refusal, "policy_denied");
 
   const targetRoot = resolve(options.targetRoot);
   await mkdir(targetRoot, { recursive: true });
