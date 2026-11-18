@@ -13,6 +13,8 @@ import { classifyTestCommand } from "../progress/test-command-key.js";
 import { classifyReadResult } from "../progress/read-coverage.js";
 import { fingerprintWorkspace } from "../progress/workspace-fingerprint.js";
 import type { BatchCallInput, BatchExecutionContext, BatchLoopSignal } from "./batch-contract.js";
+import { policyCallRefusal } from "../../policy/policy-enforce.js";
+import type { EffectivePolicy } from "../../policy/policy-evaluator.js";
 /**
  * The error result a call gets instead of running when its arguments
  * are not what the model meant, or `null` when the call is clean.
@@ -58,6 +60,26 @@ export function refuseBeforeDispatch(
     });
   }
   return null;
+}
+
+/**
+ * The error result for a call the admin policy denies (ATO-587), or
+ * `null`. Checked at dispatch so a tool that never asks the approval gate
+ * (`os.web.search`, a read-only MCP tool, `skill.view`) is still covered;
+ * a policy `ask` is the gate's job (`ApprovalGate.setOrgPolicy`).
+ */
+export function refuseByOrgPolicy(
+  call: ToolCallPayload,
+  policy: EffectivePolicy,
+): CompressedToolResult | null {
+  const reason = policyCallRefusal(policy, call.tool, call.args);
+  if (reason === null) return null;
+  return compressToolResult({
+    tool: call.tool,
+    status: "error",
+    output: reason,
+    details: { policyDenied: true },
+  });
 }
 
 /**

@@ -48,6 +48,7 @@ Other area entry points (use their underlying domain instructions for shared con
 - [import](src/import/README.md).
 - [plugins](src/plugins/README.md).
 - [recipes](src/recipes/README.md).
+- [policy](src/policy/README.md).
 - [hooks](src/hooks/README.md).
 - [integrations](src/integrations/README.md).
 - [native](src/native/README.md).

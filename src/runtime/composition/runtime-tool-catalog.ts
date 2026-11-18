@@ -63,6 +63,7 @@ import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
 import { resolveComposioServerConfig } from "../../composio/index.js";
+import { activePolicy, mcpServerPolicy } from "../../policy/index.js";
 
 /** Header names whose value is a credential (`Authorization`, `X-Api-Key`, `Cookie`, ...). */
 const SECRET_HEADER = /authorization|api[-_]?key|token|secret|password|cookie|auth/i;
@@ -594,6 +595,8 @@ export async function connectRuntimeMcpCatalog(input: {
     // with ATOMIC_AGENT_MCP_APPS_UI; only then do clients advertise the
     // extension and read a tool's `ui://` page after a call.
     ...(mcpAppsUiFromEnv() ? { appsUi: true } : {}),
+    // Admin MCP allowlist (ATO-587), read live so a refreshed policy applies on restart.
+    serverPolicy: (server) => mcpServerPolicy(activePolicy(), server),
     ...(options.handlers?.onChannelStatus
       ? {
           onStatus: (status) =>

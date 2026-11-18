@@ -110,6 +110,7 @@ import { TurnUsageMeter } from "../analytics/index.js";
 
 import { installGlobalErrorHandlers } from "../error-reporting/index.js";
 import { ToolHookEngine, installToolHooks } from "../hooks/index.js";
+import { activePolicy, installPolicy, loadPolicy, policyRuleMatch } from "../policy/index.js";
 
 /**
  * One-stop factory that wires the whole agent runtime. Both the CLI
@@ -233,6 +234,18 @@ export async function createAgentRuntime(
     stateDir: config.paths.stateDir,
     warn: (message, fields) => logger.warn(message, fields),
   }));
+  // Admin policy (ATO-587): `<stateDir>/policy.json`, the machine-wide
+  // file and `ATOMIC_POLICY_URL` (short timeout, last good copy when
+  // offline; never blocks the start). Its deny / ask reach the gate as
+  // rules; the dispatcher, the MCP manager and the skill registry read it too.
+  const orgPolicy = await loadPolicy({ stateDir: config.paths.stateDir });
+  installPolicy(orgPolicy);
+  for (const source of orgPolicy.sources) {
+    if (source.state === "invalid" || source.state === "unreachable" || source.state === "cached") {
+      logger.warn("policy: source not loaded fresh", { ...source });
+    }
+  }
+  approvals.setOrgPolicy((request) => policyRuleMatch(activePolicy(), request));
   // Tools are registered with `approvalRequired: true` unconditionally;
   // the gate's approval level carries the boot-time value instead. Every
   // request reaches the gate with its category and the gate decides
