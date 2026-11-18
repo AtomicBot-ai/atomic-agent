@@ -276,6 +276,13 @@ const PRESETS = [
   {id:'mistral', label:'Mistral', kind:'openai-compatible', baseUrl:'https://api.mistral.ai', env:'MISTRAL_API_KEY'},
   {id:'cerebras', label:'Cerebras', kind:'openai-compatible', baseUrl:'https://api.cerebras.ai', env:'CEREBRAS_API_KEY'},
   {id:'together', label:'Together AI', kind:'openai-compatible', baseUrl:'https://api.together.xyz', env:'TOGETHER_API_KEY'},
+  /* ATO-1607: provider-presets.ts azure-openai and bedrock (ATO-468). The endpoint is per account (an Azure
+     resource, an AWS Region), so `perAccount` asks for it, prefilled with the preset's template; `placeholder`
+     is the part that must be replaced. Google Vertex waits for the agent's token command (#1534). */
+  {id:'azure-openai', label:'Azure OpenAI', kind:'openai-compatible', baseUrl:'https://your-resource.openai.azure.com/openai', env:'AZURE_OPENAI_API_KEY',
+   perAccount:{hint:'Replace your-resource with your Azure OpenAI resource name. The model is your deployment name.', placeholder:'your-resource'}},
+  {id:'bedrock', label:'Amazon Bedrock', kind:'openai-compatible', baseUrl:'https://bedrock-mantle.us-east-1.api.aws', env:'AWS_BEARER_TOKEN_BEDROCK',
+   perAccount:{hint:'Change us-east-1 to the AWS Region your Bedrock models are in. The key is a Bedrock API key.'}},
   // provider-presets.ts wandb (ATO-931): CoreWeave Serverless Inference on the W&B hostname, Bearer key.
   {id:'wandb', label:'W&B Inference (CoreWeave)', kind:'openai-compatible', baseUrl:'https://api.inference.wandb.ai', env:'WANDB_API_KEY'},
   {id:'fireworks', label:'Fireworks AI', kind:'openai-compatible', baseUrl:'https://api.fireworks.ai/inference', env:'FIREWORKS_API_KEY'},
@@ -294,7 +301,18 @@ const PRESETS = [
   {id:'lemonade', label:'Lemonade (local)', kind:'openai-compatible', baseUrl:'http://localhost:13305', env:'LEMONADE_API_KEY', local:true},
 ];
 PRESETS.filter((p) => !['openrouter','aimlapi'].includes(p.id)).forEach((p) =>
-  KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers, local:p.local}));
+  KIND_ROWS.splice(KIND_ROWS.length - 1, 0, {id:p.id, kind:'openai-compatible', label:p.label, env:p.env, baseUrl:p.baseUrl, apiKeyHeader:p.apiKeyHeader, headers:p.headers, local:p.local, perAccount:p.perAccount}));
+/** ATO-1607: the configure step has an address field: a custom endpoint, or a preset whose endpoint is per account. */
+function wizAsksUrl(k) { return !!(k && (k.custom || k.perAccount)); }
+/** ATO-1607: the address field's value: what was typed, else a per-account preset's template to edit. */
+function wizUrlValue(k) { return WIZ.baseUrl || (k && k.perAccount ? k.baseUrl : ''); }
+/** ATO-1607: why a per-account preset's address cannot be saved yet, or ''. */
+function wizPerAccountUrlError(k, url) {
+  if (!k || !k.perAccount) return '';
+  if (!/^https?:\/\/\S+$/.test(url)) return 'That does not look like a URL. ' + k.perAccount.hint;
+  if (k.perAccount.placeholder && url.includes(k.perAccount.placeholder)) return k.perAccount.hint;
+  return '';
+}
 /* ATO-1066: a model on another computer on this network (lan-provider.js). Last, so every other row keeps its place. */
 KIND_ROWS.push(lanProviderRow());
 /* Backlog 32 — a key is plain ASCII, and the key fields keep it that way
@@ -2348,7 +2366,7 @@ const shortModel = (id) => id.replace(/-instruct$/, '');
 const BACKEND_WORDS = {cloud:'Cloud', local:'Local models', custom:'Custom server', fusion:'Fusion'};
 function backendWord(b) { return BACKEND_WORDS[b] || String(b || ''); }
 /* Presets the TUI offers and this window's wizard does not (provider-presets.ts): a provider added there keeps a name here. */
-const TUI_ONLY_PRESET_WORDS = {'azure-openai': 'Azure OpenAI', bedrock: 'Amazon Bedrock', 'foundry-local': 'Foundry Local'};
+const TUI_ONLY_PRESET_WORDS = {'foundry-local': 'Foundry Local'};
 /** A provider id → its preset's name ("OpenRouter", "Atomic Chat"), qualifier dropped. */
 function providerWord(id) {
   const s = String(id || '');
@@ -16155,8 +16173,9 @@ function obWizardHTML() {
   return '<div class="ob-wiz">'
     + '<div class="ob-kicker">API key</div>'
     + '<div class="ob-h">' + providerMark(k.custom ? '' : k.id) + esc(service) + '</div>'
-    + (k.custom ? '<label class="ob-flabel" for="wiz-url">' + (k.lan ? 'Address of the other computer' : 'API base URL') + '</label>'
-        + '<input class="ob-inp" id="wiz-url" placeholder="' + (k.lan ? '192.168.1.20:8080' : 'https://host/v1') + '" value="' + esc(WIZ.baseUrl) + '">' : '')
+    + (wizAsksUrl(k) ? '<label class="ob-flabel" for="wiz-url">' + (k.lan ? 'Address of the other computer' : k.perAccount ? 'Your endpoint URL' : 'API base URL') + '</label>'
+        + '<input class="ob-inp" id="wiz-url" placeholder="' + esc(k.lan ? '192.168.1.20:8080' : k.perAccount ? k.baseUrl : 'https://host/v1') + '" value="' + esc(wizUrlValue(k)) + '">'
+        + (k.perAccount ? '<div class="ob-help">' + esc(k.perAccount.hint) + '</div>' : '') : '')
     + '<div class="ob-field' + tone + '">' + ic('key')
       + '<input class="ob-inp" id="wiz-key" type="password" autocomplete="off" spellcheck="false"'
       + ' aria-label="API key for ' + esc(service) + '"'
@@ -22349,7 +22368,7 @@ function wizardHTML() {
   const unchecked = WIZ.uncheckedFor;
   /* Soft Tactile (MP-06…09): the field takes the tone of the line under it —
      red for an error, amber for a key that could not be checked. */
-  const urlBad = !!(k.custom && WIZ.error && !/^https?:\/\/\S+$/.test(WIZ.baseUrl));
+  const urlBad = !!(WIZ.error && ((k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) || wizPerAccountUrlError(k, wizUrlValue(k))));
   /* ATO-161: a request for a key leaves the field unlit \u2014 only a failure lights it. */
   const soft = wizErrSoft();
   const tone = WIZ.error && !soft && !wizErrUnreachable() ? (unchecked ? ' is-warn' : ' is-error') : '';
@@ -22358,11 +22377,12 @@ function wizardHTML() {
      gives way to whatever the step has to say. */
   const envNote = k.env && !k.local && !WIZ.error && !verifying
     ? '<p class="ob-help wiz-envnote">Leave it empty to use ' + esc(k.env) + ' from this computer\u2019s environment.</p>' : '';
-  const fields = (k.custom
-      ? '<label class="tk-lbl" for="wiz-url">' + (k.lan ? 'Address of the other computer' : 'Base URL') + '</label>'
+  const fields = (wizAsksUrl(k)
+      ? '<label class="tk-lbl" for="wiz-url">' + (k.lan ? 'Address of the other computer' : k.perAccount ? 'Your endpoint URL' : 'Base URL') + '</label>'
         + '<span class="tk-inpwrap' + (urlBad ? ' is-error' : '') + '">' + ic('globe')
-        + '<input id="wiz-url" placeholder="' + (k.lan ? '192.168.1.20:8080' : 'https://host/v1') + '" value="' + esc(WIZ.baseUrl) + '" spellcheck="false"></span>'
-        + (typeof lanfHTML === 'function' ? lanfHTML('wiz-url') : '')   // ATO-1067: find it on the network, check it
+        + '<input id="wiz-url" placeholder="' + esc(k.lan ? '192.168.1.20:8080' : k.perAccount ? k.baseUrl : 'https://host/v1') + '" value="' + esc(wizUrlValue(k)) + '" spellcheck="false"></span>'
+        + (k.perAccount ? '<p class="ob-help">' + esc(k.perAccount.hint) + '</p>'
+          : typeof lanfHTML === 'function' ? lanfHTML('wiz-url') : '')   // ATO-1067: find it on the network, check it
       : '')
     + '<label class="tk-lbl" for="wiz-key">API key' + (k.local || k.lan ? ' (optional)' : '') + '</label>'
     + '<span class="tk-inpwrap' + (urlBad ? '' : tone) + '">' + ic('key')
@@ -22741,6 +22761,12 @@ async function wizNextStep() {
   /* ATO-1066: another computer's address as typed (192.168.1.20:8080) becomes its base URL here. */
   if (k.lan) { const lan = lanAddressToBaseUrl(WIZ.baseUrl); if (!lan.ok) { ANX.providerFailed('bad_url', OB.open); WIZ.error = lan.reason; render(); return; } WIZ.baseUrl = lan.baseUrl; }
   if (k.custom && !/^https?:\/\/\S+$/.test(WIZ.baseUrl)) { ANX.providerFailed('bad_url', OB.open); WIZ.error = 'That does not look like a URL.'; render(); return; }
+  /* ATO-1607: an Azure resource or a Bedrock Region is the person's own: the template is refused until it is filled in. */
+  if (k.perAccount) {
+    WIZ.baseUrl = wizUrlValue(k).replace(/\/+$/, '');
+    const bad = wizPerAccountUrlError(k, WIZ.baseUrl);
+    if (bad) { ANX.providerFailed('bad_url', OB.open); WIZ.error = bad; render(); return; }
+  }
   /* Backlog 32 — a key with a character keys don't have stops here, on its
      own screen, before anything is saved or asked. It used to be saved, then
      sent to the check, whose fetch refused the header — which read as "Could
@@ -22776,6 +22802,7 @@ async function wizNextStep() {
      preset's URL wins when it has one (that is what picking that row means),
      then what the user typed, then whatever the entry already had. */
   if (k.custom) entry.baseUrl = WIZ.baseUrl;
+  else if (k.perAccount) entry.baseUrl = WIZ.baseUrl;   // ATO-1607: the endpoint typed for this account, not the template
   else if (k.baseUrl) entry.baseUrl = k.baseUrl;
   else if (existing && existing.baseUrl) entry.baseUrl = existing.baseUrl;
   if (k.env) entry.apiKeyEnvVar = k.env;
