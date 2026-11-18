@@ -1022,6 +1022,7 @@ export function registerRuntimeFusionAndReadScope(input: {
           stateDir: config.paths.stateDir,
           configFile: config.paths.userConfigFile,
           startupTrust: config.skills.projectTrust,
+          settingsProfiles: () => getConfig().llm?.runMode?.agentProfiles,
           pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
         }),
       outputCharCap: config.agent.batchToolResultCharCap,

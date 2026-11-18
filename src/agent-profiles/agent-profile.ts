@@ -16,7 +16,7 @@ import { parse as parseYaml } from "yaml";
  * Unknown frontmatter keys (`color`, ...) are ignored so files written for
  * other agents load unchanged.
  */
-export type AgentProfileSource = "builtin" | "user" | "project" | "plugin";
+export type AgentProfileSource = "builtin" | "user" | "project" | "settings" | "plugin";
 
 export interface AgentProfile {
   /** Lower-cased; `plugin:agent` for a plugin's profile. */
@@ -32,7 +32,7 @@ export interface AgentProfile {
    */
   tools?: string[];
   source: AgentProfileSource;
-  /** The file it came from; absent for a built-in. */
+  /** The file it came from; absent for a built-in or a settings entry. */
   file?: string;
 }
 
@@ -94,6 +94,41 @@ export function parseAgentProfileFile(
       meta = parsed as Record<string, unknown>;
     }
   }
+  return validateProfileFields(meta, split.body, fallbackName);
+}
+
+/**
+ * One entry of `llm.runMode.agentProfiles` (ATO-1667), as the config
+ * parse leaves it: the key is the name, `prompt` is a file's body.
+ * Structural, so this module does not depend on the config.
+ */
+export interface SettingsAgentProfileEntry {
+  description?: string;
+  prompt: string;
+  model?: string;
+  tools?: readonly string[];
+}
+
+/**
+ * A settings entry checked by the same rules as a profile file
+ * (ATO-1668), so a profile reads the same from either place. Never
+ * throws; the config parse has already refused a bad entry, this only
+ * guards a value that did not come through it.
+ */
+export function parseSettingsAgentProfile(name: string, entry: unknown): ParsedProfileFile {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+    return { ok: false, error: "expected an object" };
+  }
+  const { prompt, ...meta } = entry as Record<string, unknown>;
+  if (typeof prompt !== "string") return { ok: false, error: "prompt must be text" };
+  return validateProfileFields({ ...meta, name }, prompt, name);
+}
+
+function validateProfileFields(
+  meta: Record<string, unknown>,
+  body: string,
+  fallbackName: string,
+): ParsedProfileFile {
   const problems: string[] = [];
 
   const rawName = meta.name === undefined || meta.name === null ? fallbackName : meta.name;
@@ -133,7 +168,7 @@ export function parseAgentProfileFile(
     }
   }
 
-  const prompt = split.body.trim();
+  const prompt = body.trim();
   if (prompt.length === 0) problems.push("the body (the profile's instructions) is empty");
   else if (prompt.length > MAX_PROFILE_PROMPT_CHARS) {
     problems.push(`the body is ${prompt.length} chars; at most ${MAX_PROFILE_PROMPT_CHARS}`);

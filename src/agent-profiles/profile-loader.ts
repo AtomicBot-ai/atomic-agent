@@ -6,15 +6,18 @@ import { isWithinWorkspace, readWorkspaceFile } from "../skills/workspace-files.
 import {
   MAX_PROFILE_FILE_BYTES,
   parseAgentProfileFile,
+  parseSettingsAgentProfile,
   type AgentProfile,
   type AgentProfileSource,
+  type SettingsAgentProfileEntry,
 } from "./agent-profile.js";
 import { BUILTIN_AGENT_PROFILES } from "./builtin-profiles.js";
 
 /**
  * Where profiles come from, and which one wins a name (ATO-566):
  *
- *   trusted project > user (`<stateDir>/agents/*.md`) > plugin > built-in
+ *   trusted project > user (`<stateDir>/agents/*.md`) > settings
+ *   (`llm.runMode.agentProfiles`) > plugin > built-in
  *
  * A trusted project's copy wins, as in Claude Code: the repository knows
  * what its `review` should check. That needs the operator's yes for that
@@ -27,6 +30,9 @@ import { BUILTIN_AGENT_PROFILES } from "./builtin-profiles.js";
  * an instruction file (`src/skills/docs/project-trust.md`). A pending or
  * declined file is not read past discovery.
  *
+ * A settings entry (ATO-1668) is the user's too, so it sits right below
+ * the user's files and is checked by the file rules.
+ *
  * Plugin profiles are named `plugin:agent`, so they never collide with
  * the other sources. Discovery problems are diagnostics, never errors.
  */
@@ -34,6 +40,8 @@ export const USER_AGENT_DIR_NAME = "agents";
 export const PROJECT_AGENT_DIRS: readonly string[] = [".atomic-agent/agents", ".claude/agents"];
 /** Files read per folder; a folder with more is cut there with a diagnostic. */
 export const MAX_PROFILES_PER_DIR = 128;
+/** Where a settings profile lives, for diagnostics: it has no file. */
+export const SETTINGS_AGENT_PROFILES_KEY = "llm.runMode.agentProfiles";
 
 export interface AgentProfileLoadOptions {
   workingDir: string;
@@ -43,6 +51,11 @@ export interface AgentProfileLoadOptions {
   configFile: string;
   /** Trust answers at startup, used when the config cannot be reread. */
   startupTrust: readonly ProjectTrustRecord[] | undefined;
+  /**
+   * `llm.runMode.agentProfiles` from the live config, read on every load
+   * so an edit applies on the next fan-out (ATO-1668).
+   */
+  settingsProfiles?: () => Readonly<Record<string, SettingsAgentProfileEntry>> | undefined;
   /** Enabled plugins' profiles, already parsed (`listPluginSubagents`). */
   pluginProfiles?: () => readonly AgentProfile[];
 }
@@ -158,6 +171,9 @@ export function loadAgentProfiles(options: AgentProfileLoadOptions): AgentProfil
   const diagnostics: string[] = [];
   const withheld: string[] = [];
   const byName = new Map<string, AgentProfile>();
+  /** A file path, a settings key, or the source alone. */
+  const origin = (p: AgentProfile): string =>
+    p.file ?? (p.source === "settings" ? `${SETTINGS_AGENT_PROFILES_KEY}.${p.name}` : p.source);
   /** First one in wins; a later copy of the name is reported as shadowed. */
   const offer = (profile: AgentProfile): void => {
     const existing = byName.get(profile.name);
@@ -166,7 +182,7 @@ export function loadAgentProfiles(options: AgentProfileLoadOptions): AgentProfil
       return;
     }
     if (profile.source !== "builtin") {
-      diagnostics.push(`agent profile ${profile.name}: ${profile.file ?? profile.source} is shadowed by ${existing.file ?? existing.source}`);
+      diagnostics.push(`agent profile ${profile.name}: ${origin(profile)} is shadowed by ${origin(existing)}`);
     }
   };
 
@@ -202,6 +218,21 @@ export function loadAgentProfiles(options: AgentProfileLoadOptions): AgentProfil
     for (const file of markdownFiles(userRoot, diagnostics)) {
       const profile = readProfile(userRoot, join(userRoot, file), "user", file, diagnostics);
       if (profile !== null) offer(profile);
+    }
+  }
+
+  if (options.settingsProfiles !== undefined) {
+    try {
+      for (const [key, entry] of Object.entries(options.settingsProfiles() ?? {})) {
+        const parsed = parseSettingsAgentProfile(key, entry);
+        if (!parsed.ok) {
+          diagnostics.push(`agent profile ${SETTINGS_AGENT_PROFILES_KEY}.${key}: ${parsed.error}`);
+          continue;
+        }
+        offer({ ...parsed.profile, source: "settings" });
+      }
+    } catch (err) {
+      diagnostics.push(`settings agent profiles unavailable: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
