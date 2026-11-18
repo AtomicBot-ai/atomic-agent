@@ -65,6 +65,26 @@ describe("findUrlData", () => {
     expect(findUrlData("https://ec2-12-34-56-78.compute-1.amazonaws.com/")).toBeNull();
   });
 
+  it("counts the subdomain labels, even plain-letter ones (review, round 2)", () => {
+    const label = "abcdefghij".repeat(4); // 40 letters, no digit
+    const url = "https://" + Array.from({ length: 6 }, () => label).join(".") + ".evil.example/";
+    expect(findUrlData(url)?.reason).toMatch(/site name carries 240 characters/);
+    // Subdomain data adds up with the path toward the total cap.
+    // 4 x 125 = 500 path chars (under the cap alone) + 120 host chars.
+    const path = Array.from({ length: 4 }, () => "word%20".repeat(25)).join("/");
+    const mixed = "https://" + Array.from({ length: 3 }, () => label).join(".") + ".evil.example/" + path;
+    expect(findUrlData(mixed)?.reason).toMatch(/characters of data/);
+    // Ordinary hosts stay quiet.
+    expect(findUrlData("https://a.b.cloudfront.net/x.js")).toBeNull();
+    expect(findUrlData("https://my-bucket-name.s3.us-west-2.amazonaws.com/file.txt")).toBeNull();
+    expect(
+      findUrlData("https://internal-my-loadbalancer-1234567890.us-east-2.elb.amazonaws.com/health"),
+    ).toBeNull();
+    expect(findUrlData("https://atomic-agent-git-feature-branch-name-atomicbot.vercel.app/")).toBeNull();
+    expect(findUrlData("https://news.bbc.co.uk/sport")).toBeNull();
+    expect(findUrlData("http://192.168.1.10:8080/status")).toBeNull();
+  });
+
   it("flags data in the user-info part of the address (review)", () => {
     const url = "https://" + "secret".repeat(12) + ":x@evil.example/";
     expect(findUrlData(url)?.reason).toMatch(/before "@"/);

@@ -54,7 +54,7 @@ export const MAX_URL_SEGMENT_CHARS = 200;
 /** A base64 / hex looking run with no spaces. */
 export const MIN_URL_BLOB_CHARS = 100;
 /**
- * Path, query, fragment and user-info together. Without it, data split
+ * Path, query, fragment, user-info and subdomain labels together. Without it, data split
  * over many path segments, each under `MAX_URL_SEGMENT_CHARS`, went out
  * unasked (ATO-1377 review).
  */
@@ -65,6 +65,15 @@ export const MAX_URL_TOTAL_CHARS = 600;
  * DNS label is at most 63 characters, so the blob run check never fires there.
  */
 export const MIN_HOST_LABEL_BLOB_CHARS = 48;
+/**
+ * The subdomain part of the site name (every label left of the site's
+ * own domain, `registrableDomainLabels`), letters only or not. Ordinary
+ * hosts stay far below this (`a.b.cloudfront.net`, a load balancer or a
+ * preview-deploy name is under 100); a site name is at most 253, so
+ * many short or plain-letter labels can no longer carry data unasked
+ * (ATO-1377 review, round 2). Counted in `MAX_URL_TOTAL_CHARS` too.
+ */
+export const MAX_URL_SUBDOMAIN_CHARS = 160;
 /** User name plus password in the address (`https://<data>@host/`). */
 export const MAX_URL_USERINFO_CHARS = 64;
 
@@ -94,7 +103,7 @@ const BLOB_RE = /[A-Za-z0-9+/_-]{100,}={0,2}/;
 export interface UrlDataFinding {
   /** Plain words for the approval prompt. */
   reason: string;
-  /** Decoded characters the address carries in its query, fragment, path and user-info. */
+  /** Decoded characters the address carries in its query, fragment, path, user-info and subdomain. */
   chars: number;
 }
 
@@ -112,6 +121,31 @@ function looksLikeBlob(value: string): boolean {
   // Pure letters (a long word, a slug with no separators) is not an
   // encoding; base64 and hex mix digits in.
   return /\d/.test(match[0]) && /[A-Za-z]/.test(match[0]);
+}
+
+/**
+ * Second-level labels under a two-letter country code that act as a
+ * public suffix (`example.co.uk`, `example.com.au`). A heuristic, not the
+ * public-suffix list: the worst case is a few characters counted on the
+ * wrong side.
+ */
+const COUNTRY_SECOND_LEVEL: ReadonlySet<string> = new Set([
+  "ac", "co", "com", "edu", "gov", "ltd", "me", "net", "or", "org", "plc",
+]);
+
+/** How many labels at the end of `labels` name the site itself. */
+function registrableDomainLabels(labels: readonly string[]): number {
+  if (labels.length < 3) return labels.length;
+  const tld = labels[labels.length - 1] ?? "";
+  const second = labels[labels.length - 2] ?? "";
+  return tld.length === 2 && COUNTRY_SECOND_LEVEL.has(second) ? 3 : 2;
+}
+
+/** The labels left of the site's own domain; none for an IP address. */
+function subdomainLabels(hostname: string): string[] {
+  if (hostname.startsWith("[") || /^[\d.]+$/.test(hostname)) return [];
+  const labels = hostname.split(".").filter((l) => l !== "");
+  return labels.slice(0, labels.length - registrableDomainLabels(labels));
 }
 
 function splitParams(text: string): Array<{ name: string; value: string }> {
@@ -142,7 +176,10 @@ export function findUrlData(url: string): UrlDataFinding | null {
   const segments = parsed.pathname.split("/").filter((s) => s !== "").map(decode);
   const tailChars = decode(query).length + decode(fragment).length;
   const userinfo = decode(parsed.username) + (parsed.password ? `:${decode(parsed.password)}` : "");
-  const chars = tailChars + userinfo.length + segments.reduce((sum, s) => sum + s.length, 0);
+  const subdomain = subdomainLabels(parsed.hostname);
+  const hostChars = subdomain.reduce((sum, l) => sum + l.length, 0);
+  const chars =
+    tailChars + userinfo.length + hostChars + segments.reduce((sum, s) => sum + s.length, 0);
 
   if (userinfo.length > MAX_URL_USERINFO_CHARS) {
     return { reason: `the address carries ${userinfo.length} characters before "@"`, chars };
@@ -154,6 +191,9 @@ export function findUrlData(url: string): UrlDataFinding | null {
     if (label.length >= MIN_HOST_LABEL_BLOB_CHARS && /\d/.test(label) && /[a-z]/i.test(label)) {
       return { reason: "the site name carries a long encoded part", chars };
     }
+  }
+  if (hostChars > MAX_URL_SUBDOMAIN_CHARS) {
+    return { reason: `the site name carries ${hostChars} characters before the site's own domain`, chars };
   }
 
   for (const { name, value } of params) {
