@@ -124,22 +124,39 @@ describe("fusion.delegate", () => {
     expect(create.mock.calls[0]?.[2]).toBe(true);
   });
 
-  it("runs a local worker in the parent's folder without inheriting a workspace (issue #1121)", async () => {
+  it("runs a local worker in the parent's folder, with that folder's workspace once the folder changed (issue #1121, ATO-1601)", async () => {
     // The real factory: bootstrap folder /boot, parent switched live to /selected.
     const factories = createRuntimeSessionFactories("/boot", { save: () => {} }, () => null);
     const create = vi.fn(factories.createEphemeralSession);
     const runTurn = vi.fn(async (session: SessionState) => {
       expect(session.workingDir).toBe("/selected");
-      expect(session.inheritedWorkspace).toBeUndefined();
+      // The startup folder's skill registry is the wrong one here; the
+      // worker builds its own view of /selected (skills only on a local leg).
+      expect(session.inheritedWorkspace).toBe(true);
       return turnResult({ session });
     });
     const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
       { tasks: [TASKS[0]!] }, ctx({ workingDir: "/selected", modelMode: "local" }));
     expect(result.status).toBe("ok");
     expect(create.mock.calls[0]?.[1]).toBe("/selected");
-    expect(create.mock.calls[0]?.[2]).toBe(false);
+    expect(create.mock.calls[0]?.[2]).toBe(true);
     expect(runTurn).toHaveBeenCalledOnce();
   });
+
+  it("runs a local worker in the startup folder without inheriting a workspace (issue #1121)", async () => {
+    const factories = createRuntimeSessionFactories("/boot", { save: () => {} }, () => null);
+    const create = vi.fn(factories.createEphemeralSession);
+    const runTurn = vi.fn(async (session: SessionState) => {
+      expect(session.workingDir).toBe("/boot");
+      expect(session.inheritedWorkspace).toBeUndefined();
+      return turnResult({ session });
+    });
+    const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
+      { tasks: [TASKS[0]!] }, ctx({ workingDir: "/boot", modelMode: "local" }));
+    expect(result.status).toBe("ok");
+    expect(create.mock.calls[0]?.[2]).toBe(false);
+  });
+
   it("is not readonly and carries its own name", () => {
     const tool = buildFusionDelegateTool(deps());
     expect(tool.name).toBe("fusion.delegate");
