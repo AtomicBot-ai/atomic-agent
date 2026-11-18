@@ -17,7 +17,7 @@ import { getConfig } from "../../config/index.js";
 import { workerReplyAllowance } from "../../local-llm/server/worker-slots.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { parseDelegateArgs } from "./delegate-args.js";
-import { FusionBudgetStopError } from "./turn-budget-stop-error.js";
+import { FusionBudgetStopError } from "./fusion-stop-errors.js";
 import {
   applyCheckOutcomes,
   applyContractFindings,

@@ -11,7 +11,7 @@ import {
   type FusionDelegateDeps,
 } from "./fusion-delegate.js";
 import { FusionTurnBudget } from "./turn-budget.js";
-import { FusionBudgetStopError } from "./turn-budget-stop-error.js";
+import { FusionBudgetStopError } from "./fusion-stop-errors.js";
 import { fanoutSpend, WorkerRunCollector } from "./worker-result.js";
 
 const logger = new StructuredLogger({ level: "error", sinks: [] });
