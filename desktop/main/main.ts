@@ -63,6 +63,7 @@ import { wireTraceTreeIpc } from "./trace-tree-ipc.js";
 import { wireProjectWorkersIpc } from "./project-workers-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireMyFilesIpc } from "./my-files-ipc.js";
+import { wireImportFactsIpc } from "./import-facts-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
@@ -3313,6 +3314,8 @@ function wireIpc(client: AgentClient): void {
   wireOvernightIpc({ window: () => win, client });
   // ATO-1624: Settings › My files (folders the agent indexes, and its progress).
   wireMyFilesIpc({ window: () => win, client });
+  // ATO-1629 / ATO-1061: "Here is what I learned about you" after a Claude import, and Move from ChatGPT.
+  wireImportFactsIpc({ window: () => win, client });
   // ATO-1424: a code block's command typed (not run) into a new Terminal window (macOS).
   wireTerminalOpenIpc();
   // ATO-1157: the Agents sheet, Claude Code and Codex sessions waiting for the person (agent-hub-scan.ts).

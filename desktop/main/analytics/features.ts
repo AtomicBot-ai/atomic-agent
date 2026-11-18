@@ -77,6 +77,21 @@ export function overnightStarted(r: { maxCostUsd: number | null; hours: number; 
   });
 }
 
+/** ATO-1629: "Here is what I learned about you". Counts and which kind of model read, never a fact, a quote or a path. */
+export function importFactsStep(r: {
+  step: "found" | "saved"; source: "claude" | "chatgpt"; local: boolean; state: string; found: number; saved: number; skipped: number;
+}): void {
+  track("import_facts", {
+    step: r.step,
+    source: r.source,
+    engine: r.local ? "local" : "cloud",
+    state: r.state,
+    found: r.found,
+    saved: r.saved,
+    skipped: r.skipped,
+  });
+}
+
 export function skillInstalled(res: unknown, riskAcknowledged: boolean): void {
   const r = (res ?? {}) as { ok?: boolean; blocked?: boolean };
   track("skill_installed", { result: r.ok ? "ok" : r.blocked === true ? "blocked" : "error", risk_acknowledged: riskAcknowledged });

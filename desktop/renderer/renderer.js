@@ -16427,6 +16427,7 @@ function obHTML() {
       + (OB.settleSlow ? '<div class="ob-explain ob-help">This is taking longer than usual. You can open the app now and finish setup later.</div>' : '');
   }
   else body = '<div class="ob-explain">' + esc(OB_SUBTITLES[OB.step] || '') + '</div>';
+  if (OB.step === 'import_pick' && typeof ifactEntryHTML === 'function') body += ifactEntryHTML(LIVE_CAPS, 'ob');   // ATO-1061: Move from ChatGPT (import-facts.js)
   /* r6 UX: an error belongs beside the control that produced it. The two
      URL steps and the Hugging Face reference draw their own, directly
      under the field that was rejected; for every other step the surface
@@ -31353,6 +31354,7 @@ function importTab() {
       + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Preview import</button>' : '')
     + '</div>';
   if (IMP.notice) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(IMP.notice) + '</span></div>';
+  if (IMP.mode === 'configure' && typeof ifactEntryHTML === 'function') body += ifactEntryHTML(LIVE_CAPS, 'settings');   // ATO-1061: Move from ChatGPT (import-facts.js)
   if (IMP.mode === 'configure') body += impFormHTML(f);
   // Д53: a preview is a check — nothing is imported until Apply.
   else if (IMP.mode === 'running') body += '<div class="tk-empty"><span class="tk-spin"></span><p>' + (IMP.applying ? 'Importing…' : 'Checking…') + '</p></div>';
@@ -31541,6 +31543,7 @@ async function impRun(execute) {
     IMP.mode = 'done'; IMP.reportExecuted = true;
     if (res.state === 'applied') {
       toast('Import finished', impGroupSentence(res.report, true) || impSummaryText(res.report.summary, true));
+      if (f.source === 'claude-app' && typeof ifactAfterImport === 'function') ifactAfterImport(dir, LIVE_CAPS);   // ATO-1629: "Here is what I learned about you"
       if (toggles.includes('cron') && f.cron) tasksRefresh();
       if (f.sessions) {
         /* W2: the import wrote projects.json / chat-folders.json. Read the folders
