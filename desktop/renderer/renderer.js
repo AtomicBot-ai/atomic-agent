@@ -2027,6 +2027,8 @@ const SLASH = [
   ['abort','abort the running turn'],
   // ATO-965: the terminal's and Telegram's /status (status-snapshot.js).
   ['status','what the running turn is doing: now, last result, waiting on you, time'],
+  // ATO-1152: POST /api/btw, as the TUI's `/btw` (side-question.js).
+  ['btw','ask a quick side question; the answer is not saved to the chat','<question>'],
   ['quit','exit Atomic Agent'],
   ['debug','show or hide the console'],
   ['chat','back to the chat'],
@@ -4449,7 +4451,8 @@ function composer() {
   // ATO-486: the agent's live plan, above the queue (plan-bar.js).
   // ATO-1040: the chat's goal and the goal form, under the plan (goal-card.js).
   const goalBits = typeof goalCardHTML === 'function' ? goalCardHTML(S.sessionId, {esc, ic, busy: !!(S.busy || S.pending)}) + goalFormHTML({esc, ic}) : '';
-  return '<div class="composerwrap">' + status + fzLiveHTML() + planBarHTML(S.sessionId, {esc, ic}) + goalBits + q
+  return '<div class="composerwrap">' + status + fzLiveHTML() + planBarHTML(S.sessionId, {esc, ic}) + goalBits
+    + (typeof btwCardHTML === 'function' ? btwCardHTML({esc, ic, md: renderMarkdown}) : '') + q   // ATO-1152: /btw (side-question.js)
     // Item 2 (voice input): the strip is ALWAYS emitted, hidden and empty
     // when there is nothing to say, so refreshVoice() can repaint it by
     // outerHTML without a render() that would move the caret.
@@ -8512,6 +8515,7 @@ function runSlash(parts) {
   if (name === 'analytics') { analyticsSlash(rest); return; }
   if (name === 'feedback') { interviewSlash(rest); return; }   // ATO-1467
   if (name === 'telegram' && rest[0] === 'pair') { act('settings:telegram'); telegramAct('pair'); return; } // ATO-426
+  if (name === 'btw') { const said = btwAsk(rest, {bridge: BR, sessionId: S.agentSession, paint: render}); if (said) { S.log.push({id:nid(), k:'system', text: esc(said)}); render(); } return; }   // ATO-1152
   if (name === 'compact') {
     const keep = compactInstructionsFrom(rest);   // ATO-661: `/compact <what to keep>`
     if (!keep.ok) { S.log.push({id:nid(), k:'system', text: esc(keep.error)}); render(); return; }

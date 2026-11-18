@@ -1796,6 +1796,43 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1152: `POST /api/btw` — a side question beside the chat (`/btw`),
+   * answered with the chat as read-only context, no tools, nothing saved.
+   * The agent's own deadline is 90 s; ten more cover the queue. `supported:
+   * false` on an agent from before the route (404 "No route for", or 501).
+   * Never throws.
+   */
+  async askSideQuestion(
+    question: string,
+    sessionId?: string,
+    timeoutMs = 100_000,
+  ): Promise<{ ok: true; supported: true; text: string } | { ok: false; supported: boolean; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/btw`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ question, ...(sessionId ? { session_id: sessionId } : {}) }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await res.text();
+      if ((res.status === 404 && /No route for/.test(text)) || res.status === 501) {
+        return { ok: false, supported: false, error: "This agent cannot answer side questions" };
+      }
+      type BtwReply = { text?: unknown; error?: { message?: unknown } };
+      let parsed: BtwReply | null = null;
+      try { parsed = JSON.parse(text) as BtwReply; } catch { /* not JSON */ }
+      if (res.ok && typeof parsed?.text === "string") return { ok: true, supported: true, text: parsed.text };
+      const message = typeof parsed?.error?.message === "string" ? parsed.error.message : `HTTP ${res.status}`;
+      return { ok: false, supported: true, error: message };
+    } catch (err) {
+      if (err && typeof err === "object" && (err as { name?: unknown }).name === "TimeoutError") {
+        return { ok: false, supported: true, error: "timed out" };
+      }
+      return { ok: false, supported: true, error: requestErrorText(err) };
+    }
+  }
+
+  /**
    * ATO-1250: `GET /api/project-trust` — the agent's one-time question about
    * a folder's own skills and instruction files (ATO-298). An agent from
    * before the route answers "No route for", reported as unsupported so the

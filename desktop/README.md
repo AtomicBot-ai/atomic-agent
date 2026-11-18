@@ -60,6 +60,7 @@ window shows "Not while a turn is running".
 | Steering the turn already running | `POST /api/sessions/{id}/steer` |
 | What a turn accepted but never read | `GET` / `DELETE /api/sessions/{id}/steer` |
 | Compacting a chat's context now | `POST /api/sessions/{id}/compact` |
+| `/btw`, a side question answered in a card and never saved to the chat (ATO-1152; an agent without the route says to update) | `POST /api/btw` |
 | "Trust this folder?" and Settings › Skills' folder-trust switch (ATO-1250) | `GET` / `POST /api/project-trust` |
 | "Local model is set as your last-resort fallback. Keep it?", asked once (ATO-1461; hidden on an agent without the route) | `GET` / `POST /api/fallback/local-question` |
 | The grey next-step suggestion in the empty composer, Tab takes it (ATO-1094; only while Settings › General › Suggest a next step, `tui.nextStepSuggestions`, is on; hidden on an agent without the route) | `GET /api/sessions/{id}/next-step` |
