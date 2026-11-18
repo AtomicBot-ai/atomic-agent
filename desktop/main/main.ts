@@ -148,7 +148,8 @@ import {
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
 import { quantMachine, rateRepoChoices } from "./quant-fit.js";   // ATO-450: a badge, a speed estimate and the pick per quant
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
-import { LOCAL_MODEL_SHARED_NOTE, readProjectModels, turnModelFor, writeProjectModel, type ProjectModelPick } from "./project-model.js";
+import { LOCAL_MODEL_SHARED_NOTE, moveProjectModel, readProjectModels, turnModelFor, writeProjectModel, type ProjectModelPick } from "./project-model.js";
+import { instructionsFileFor } from "./project-instructions-file.js";
 import { probeLinuxSandbox, sandboxVerdict } from "./linux-sandbox.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
 import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
@@ -2676,7 +2677,11 @@ function wireIpc(client: AgentClient): void {
   const projectsChanged = () => send("projects:changed");
   ipcMain.handle("projects:list", () => ({ ok: true, data: readProjects(DESKTOP_STATE_DIR) }));
   ipcMain.handle("projects:save", (_event, input: unknown) => {
+    // ATO-1012: a project given another folder takes its own model along (project-models.json is keyed by folder).
+    const id = (input as { id?: unknown } | null)?.id;
+    const was = typeof id === "string" ? readProjects(DESKTOP_STATE_DIR).projects.find((p) => p.id === id)?.folder : undefined;
     const res = updateProjects(DESKTOP_STATE_DIR, (d) => saveProject(d, input), projectsChanged);
+    if (res.ok && was && was !== res.project.folder) moveProjectModel(app.getPath("userData"), was, res.project.folder);
     return res.ok ? { ok: true, data: res.project } : res;
   });
   ipcMain.handle("projects:delete", (_event, id: unknown) => {
@@ -2687,6 +2692,14 @@ function wireIpc(client: AgentClient): void {
     const { sessionId, projectId } = (payload ?? {}) as { sessionId?: unknown; projectId?: unknown };
     const res = updateProjects(DESKTOP_STATE_DIR, (d) => assignChat(d, sessionId, projectId), projectsChanged);
     return res.ok ? { ok: true } : res;
+  });
+  // ATO-1012: the instruction file in a project's folder (AGENTS.md, …), by the project's id: only a stored project's folder is read.
+  ipcMain.handle("projects:instructionsFile", (_event, id: unknown) => {
+    const p = typeof id === "string" ? readProjects(DESKTOP_STATE_DIR).projects.find((x) => x.id === id) : undefined;
+    if (!p) return { ok: false, error: "no such project" };
+    if (client.isRemote) return { ok: false, remote: true, error: "a remote agent reads its own folder" };
+    const file = instructionsFileFor(p.folder);
+    return file ? { ok: true, file } : { ok: false, error: "the project's folder is not on this computer" };
   });
 
   // --- Lane B — backend switch ---
