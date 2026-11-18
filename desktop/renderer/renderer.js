@@ -7538,6 +7538,8 @@ function act(a) {
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
   // ATO-568: one Fusion worker's Stop / Steer (fusion-panel.js).
   if (k === 'fzp') { fzpAct(v); return; }
+  // ATO-594: a page's Publish… and its confirm (publish-site.js).
+  if (k === 'pubsite' || k === 'pubsitego') { publishSiteAct(k, v); return; }
   // ATO-229: the update toast and Settings › General's update rows (app-update.js).
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).

@@ -653,6 +653,7 @@
 .chat-art-bar svg{flex:none}
 .chat-art-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-art-file{flex:none}
+.chat-art-pub{flex:none}
 .chat-art-box{line-height:0;min-height:80px;background:var(--paper)}
 .chat-art-frame{display:block;width:100%;border:0;background:transparent}
 @media (prefers-reduced-motion:no-preference){
