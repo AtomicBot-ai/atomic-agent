@@ -12,6 +12,7 @@ import { sanitizeLlmFailureTags, type LlmFailureContext } from "./llm-failure-ta
 import { maskSecrets } from "./secret-detector.js";
 import { extractAnswerFailureTags } from "./answer-failure-tag.js";
 import { extractSubscriptionCliFailureTags } from "./subscription-cli-failure-tag.js";
+import { extractUpstreamErrorDetail } from "./upstream-error-detail.js";
 
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
@@ -116,6 +117,20 @@ export interface ScrubbedErrorEvent {
    * of the user's own prompt in that field, and none of that may travel.
    */
   upstreamErrorType?: string;
+  /**
+   * What the provider said was wrong, as one fixed word
+   * (`upstream-error-detail.ts`, ATO-1673): `missing_thought_signature`,
+   * `tool_result_missing`, `empty_content`, … or `other`. Matched on
+   * this machine; the provider's sentence itself never travels.
+   */
+  upstreamReason?: string;
+  /**
+   * The request field the provider blamed (`messages[].content`), only
+   * when it starts at a known request field, indices reduced to `[]`.
+   */
+  upstreamErrorParam?: string;
+  /** `error.code` of the provider body, bounded enum shape. */
+  upstreamErrorCode?: string;
   /**
    * `llm_failure` turn context as ready-made tags (`provider_id`,
    * `local_engine`, `outage_waited_ms`, `outage_attempts`,
@@ -525,6 +540,16 @@ export function scrubError(
   if (transportHost !== undefined) event.transportHost = transportHost;
   if (upstreamErrorType !== undefined) {
     event.upstreamErrorType = upstreamErrorType;
+  }
+  const detail = extractUpstreamErrorDetail(err);
+  if (detail.upstreamReason !== undefined) {
+    event.upstreamReason = detail.upstreamReason;
+  }
+  if (detail.upstreamErrorParam !== undefined) {
+    event.upstreamErrorParam = detail.upstreamErrorParam;
+  }
+  if (detail.upstreamErrorCode !== undefined) {
+    event.upstreamErrorCode = detail.upstreamErrorCode;
   }
   const llmFailureTags = sanitizeLlmFailureTags(opts.llmFailure);
   if (llmFailureTags !== undefined) event.llmFailureTags = llmFailureTags;
