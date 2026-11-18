@@ -82,6 +82,7 @@ import type {
   SiteToolsListing,
   TabInfo,
   TabsInput,
+  TakeOverTarget,
   TypeInput,
 } from "./browser-backend.js";
 
@@ -181,6 +182,8 @@ export class PlaywrightBackend implements BrowserBackend {
   private lostConnection = false;
   /** Whether the Chrome the agent started is headless; `null` when it started none. */
   private launchedHeadless: boolean | null = null;
+  /** The next launch gets a window whatever the turn (a take over, ATO-508). */
+  private nextLaunchWindowed = false;
   private relaunching: Promise<void> | null = null;
   /** Per-session throwaway profiles (`browser.profile: "temp"`). */
   private readonly tempProfiles = new TempProfiles();
@@ -458,6 +461,28 @@ export class PlaywrightBackend implements BrowserBackend {
     return stopAnnotateOnPage(await this.requireActivePage());
   }
 
+  /**
+   * A take over needs a window even in a turn nobody watches (the person
+   * answers from Telegram, then walks to the machine): a headless Chrome
+   * the agent started is restarted with one, unless `browser.headless`
+   * is `true`. A Chrome the agent did not start (`cdpUrl`, the user's
+   * own) is used as it is; the user's own already has their windows.
+   */
+  async prepareTakeOver(): Promise<TakeOverTarget> {
+    await this.requireContext();
+    if (this.launchedHeadless === true) {
+      if (this.options.headless === true) {
+        const page = await this.requireActivePage();
+        return { url: page.url(), title: await page.title().catch(() => ""), window: false };
+      }
+      this.nextLaunchWindowed = true;
+      await this.relaunchWithWindow();
+    }
+    const page = await this.requireActivePage();
+    await page.bringToFront().catch(() => undefined);
+    return { url: page.url(), title: await page.title().catch(() => ""), window: true };
+  }
+
   async act(input: PageActionInput): Promise<PageActionResult> {
     return runPageAction(await this.requireActivePage(), input);
   }
@@ -724,7 +749,10 @@ export class PlaywrightBackend implements BrowserBackend {
    * "spawn + attach" and "attach to user's browser" modes.
    */
   private async launchOwnChrome(): Promise<string> {
-    const headless = resolveLaunchHeadless(this.options.headless, currentBrowserScope());
+    const headless = this.nextLaunchWindowed
+      ? false
+      : resolveLaunchHeadless(this.options.headless, currentBrowserScope());
+    this.nextLaunchWindowed = false;
     if (this.options.launchChrome) {
       const cdpUrl = await this.options.launchChrome({ headless });
       this.launchedHeadless = headless;

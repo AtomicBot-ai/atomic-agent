@@ -132,8 +132,9 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       {
         action: {
           type: "string",
-          enum: ["select", "upload", "back", "forward", "key", "hover", "dialog", "wait"],
+          enum: ["select", "upload", "back", "forward", "key", "hover", "dialog", "wait", "take_over"],
         },
+        reason: stringSchema,
         ref: stringSchema,
         values: { type: "array", items: stringSchema },
         paths: { type: "array", items: stringSchema },
