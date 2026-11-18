@@ -152,7 +152,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "learn",
     description:
-      "skills the agent learned by itself after long tasks: `/learn` lists them · `/learn undo <id>` takes one back",
+      "skills the agent learned by itself after long tasks: `/learn` lists them · `/learn undo <id>` takes one back · `/learn approve|discard <id>` for one pending review",
   },
   {
     name: "memory",

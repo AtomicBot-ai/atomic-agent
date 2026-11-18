@@ -30,6 +30,8 @@ export interface LearnedChange {
   reason: string;
   /** Session whose turn was reviewed. */
   sessionId?: string;
+  /** Set when the change was a pending draft the owner approved (`/learn approve <id>`). */
+  approvedDraft?: string;
 }
 
 export interface LearnedEntry extends LearnedChange {
@@ -82,6 +84,7 @@ function parseLine(raw: string): JournalLine | null {
     reason: typeof obj.reason === "string" ? obj.reason : "",
     ...(typeof obj.snapshot === "string" ? { snapshot: obj.snapshot } : {}),
     ...(typeof obj.sessionId === "string" ? { sessionId: obj.sessionId } : {}),
+    ...(typeof obj.approvedDraft === "string" ? { approvedDraft: obj.approvedDraft } : {}),
   };
 }
 
@@ -103,6 +106,7 @@ export async function readLearnedChanges(file: string): Promise<LearnedEntry[]> 
         id: parsed.id, at: parsed.at, name: parsed.name, action: parsed.action, reason: parsed.reason,
         ...(parsed.snapshot !== undefined ? { snapshot: parsed.snapshot } : {}),
         ...(parsed.sessionId !== undefined ? { sessionId: parsed.sessionId } : {}),
+        ...(parsed.approvedDraft !== undefined ? { approvedDraft: parsed.approvedDraft } : {}),
       };
       byId.set(change.id, change);
     } else {

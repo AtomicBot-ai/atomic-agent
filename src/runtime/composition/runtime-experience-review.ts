@@ -50,7 +50,8 @@ export interface ExperienceReviewerDeps {
   /**
    * The outside sources the session read in the turn that just ended
    * (`ApprovalGate.outsideContentSources`, the ATO-618 taint, recorded
-   * whatever `agent.taintReview` says). Non-empty: no review.
+   * whatever `agent.taintReview` says). Non-empty: the review runs, but a
+   * skill it learned waits as a pending draft for the owner's approval.
    */
   outsideContentSources: (sessionId: string) => readonly string[];
   /** Test seam; the release list by default. */
@@ -58,22 +59,28 @@ export interface ExperienceReviewerDeps {
 }
 
 /**
- * Origins whose turns are reviewed: the owner at the terminal, the
- * desktop sidecar and editors over ACP. An allowlist, so a new origin is
- * not reviewed until someone decides it should be. Not reviewed: a
- * scheduled task, a fusion worker (OpenClaw skips cron, subagent and hook
- * runs), every chat channel (a group or a forwarded message carries other
- * people's words) and plain HTTP callers (any program holding the API
- * key). An HTTP turn from the desktop app (`answerChannel: "desktop"`)
- * is the owner's chat and is reviewed.
+ * How a turn from each origin is reviewed. `auto`: what it learned is
+ * saved live (the owner at the terminal, the desktop sidecar, editors over
+ * ACP, and an HTTP turn from the desktop app, `answerChannel: "desktop"`).
+ * `skip`: never reviewed (a scheduled task, a fusion worker: OpenClaw
+ * skips cron, subagent and hook runs). Every other origin, chat channels
+ * (a group or a forwarded message carries other people's words), plain
+ * HTTP callers (any program holding the API key) and any origin added
+ * later, is reviewed but only into a pending draft the owner approves
+ * (decided 18.11).
  */
-const REVIEWED_ORIGINS: ReadonlySet<TurnOrigin> = new Set(["cli", "tui", "sidecar"]);
+export type ReviewMode = "auto" | "draft" | "skip";
 
-/** Whether a turn from `origin` may teach a skill; `undefined` is an in-process caller. */
-export function isReviewedOrigin(origin: TurnOrigin | undefined, answerChannel?: AnswerChannel): boolean {
-  if (origin === undefined) return true;
-  if (origin === "http") return answerChannel === "desktop";
-  return REVIEWED_ORIGINS.has(origin);
+const AUTO_ORIGINS: ReadonlySet<TurnOrigin> = new Set(["cli", "tui", "sidecar"]);
+const SKIPPED_ORIGINS: ReadonlySet<TurnOrigin> = new Set(["scheduler", "fusion"]);
+
+/** The review mode for a turn from `origin`; `undefined` is an in-process caller. */
+export function reviewModeForOrigin(origin: TurnOrigin | undefined, answerChannel?: AnswerChannel): ReviewMode {
+  if (origin === undefined) return "auto";
+  if (SKIPPED_ORIGINS.has(origin)) return "skip";
+  if (AUTO_ORIGINS.has(origin)) return "auto";
+  if (origin === "http" && answerChannel === "desktop") return "auto";
+  return "draft";
 }
 
 /** Fallback-chain partition for the call, like `title:` and `next-step:`. */
@@ -107,7 +114,11 @@ function answerText(result: Pick<CompletionResult, "content" | "toolCalls">): st
 export function createExperienceReviewer(deps: ExperienceReviewerDeps) {
   let running: Promise<void> | null = null;
 
-  const review = async (state: SessionState, experience: TurnExperience): Promise<void> => {
+  const review = async (
+    state: SessionState,
+    experience: TurnExperience,
+    hold: { sources: readonly string[]; origin?: string } | null,
+  ): Promise<void> => {
     if (deps.isShutdown()) return;
     const config = deps.getConfig();
     const skillsDir = config.paths.globalSkillsDir;
@@ -172,6 +183,15 @@ export function createExperienceReviewer(deps: ExperienceReviewerDeps) {
           recorder: new SkillChangeRecorder(skillsDir, paths),
           sessionId: state.id,
         },
+        ...(hold !== null
+          ? {
+              draft: {
+                stateDir: config.paths.stateDir,
+                sources: hold.sources,
+                ...(hold.origin !== undefined ? { origin: hold.origin } : {}),
+              },
+            }
+          : {}),
       });
       if (deps.isShutdown()) return;
       if (result.applied) {
@@ -183,6 +203,16 @@ export function createExperienceReviewer(deps: ExperienceReviewerDeps) {
           reason: result.change.reason,
         });
         await deps.refreshSkills();
+      } else if ("draft" in result) {
+        // Not live, so no refresh: the draft folder is outside the skills tree.
+        deps.logger.info("self-learning: held a skill for review", {
+          sessionId: state.id,
+          id: result.draft.id,
+          skill: result.draft.name,
+          action: result.draft.kind,
+          reason: result.draft.reason,
+          sources: result.draft.sources,
+        });
       } else {
         deps.logger.debug("self-learning: nothing saved", {
           sessionId: state.id,
@@ -209,7 +239,8 @@ export function createExperienceReviewer(deps: ExperienceReviewerDeps) {
   const maybeReview = (state: SessionState, info: ReviewTurnInfo): boolean => {
     try {
       if (running || deps.isShutdown()) return false;
-      if (!isReviewedOrigin(info.origin, info.answerChannel)) return false;
+      const originMode = reviewModeForOrigin(info.origin, info.answerChannel);
+      if (originMode === "skip") return false;
       if (info.memoryReadOnly === true || isIncognitoSession(state)) return false;
       if (info.result.reason !== "reply" && info.result.reason !== "finish") return false;
       // A ceiling ended the turn: its reply is a summary of unfinished work,
@@ -218,22 +249,22 @@ export function createExperienceReviewer(deps: ExperienceReviewerDeps) {
       const config = deps.getConfig();
       const { enabled, minSteps } = selfLearning(config);
       const experience = enabled && info.result.stepCount >= minSteps ? collectTurnExperience(state.turns) : null;
+      // Read now: the taint is cleared when the session's next turn starts.
+      const outsideSources = [...deps.outsideContentSources(state.id)];
       const verdict = shouldReviewTurn({
         enabled,
         stepCount: info.result.stepCount,
         minSteps,
         experience,
-        // Read now: the taint is cleared when the session's next turn starts.
-        outsideSources: deps.outsideContentSources(state.id),
+        outsideSources,
+        draftOnly: originMode === "draft",
         turnEditedSkills: experience !== null && editedSkills(experience, state.workingDir, config.paths.globalSkillsDir),
       });
-      if (!verdict.review) {
-        if (verdict.reason === "outside-content") {
-          deps.logger.debug("self-learning: skipped, the turn read outside content", { sessionId: state.id });
-        }
-        return false;
-      }
-      running = review(state, verdict.experience)
+      if (!verdict.review) return false;
+      const hold = verdict.mode === "draft"
+        ? { sources: outsideSources, ...(info.origin !== undefined ? { origin: info.origin } : {}) }
+        : null;
+      running = review(state, verdict.experience, hold)
         .catch((err: unknown) => {
           deps.logger.warn("self-learning review failed", { sessionId: state.id, error: err instanceof Error ? err.message : String(err) });
         })

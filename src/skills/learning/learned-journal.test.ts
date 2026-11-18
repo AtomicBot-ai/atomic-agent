@@ -13,6 +13,7 @@ import {
   undoLearnedChange,
 } from "./learned-journal.js";
 import { formatLearnedList, parseLearnCommand, runLearnCommand } from "./learn-command.js";
+import { listPendingDrafts, savePendingDraft } from "./pending-drafts.js";
 
 describe("learned journal and undo", () => {
   let root: string;
@@ -106,6 +107,28 @@ describe("learned journal and undo", () => {
     expect(again).toMatchObject({ ok: false, skillsChanged: false });
     expect((await runLearnCommand({ kind: "list" }, { stateDir: root, skillsDir })).text).toContain("(undone)");
   });
+
+  it("/learn lists drafts as Pending review, approves one and discards another", async () => {
+    const content = "---\nname: fetch-release-notes\ndescription: Collect release notes from the changelog.\nversion: 1.0.0\n---\n\n1. Open CHANGELOG.md.\n2. Copy the newest section.\n";
+    const keep = await savePendingDraft(root, { kind: "create", name: "fetch-release-notes", reason: "changelog steps", content, sources: ["os.web.fetch"], origin: "telegram", now: () => Date.UTC(2026, 10, 18, 9, 0) });
+    const drop = await savePendingDraft(root, { kind: "create", name: "other-steps", reason: "other", content: content.replaceAll("fetch-release-notes", "other-steps"), sources: [], now: () => Date.UTC(2026, 10, 18, 9, 5) });
+    const listed = await runLearnCommand({ kind: "list" }, { stateDir: root, skillsDir });
+    expect(listed.text).toContain("Pending review");
+    expect(listed.text).toContain(`${keep.id}  2026-11-18 09:00  new skill fetch-release-notes (Pending review): changelog steps [read: telegram, os.web.fetch]`);
+    expect(listed.text).toContain("/learn approve <id>");
+
+    const approved = await runLearnCommand({ kind: "approve", id: keep.id }, { stateDir: root, skillsDir, takenNames: async () => new Set() });
+    expect(approved).toMatchObject({ ok: true, skillsChanged: true });
+    expect(read("fetch-release-notes")).toBe(content);
+    expect((await readLearnedChanges(journal)).map((e) => e.id)).toEqual([keep.id]);
+
+    const discarded = await runLearnCommand({ kind: "discard", id: drop.id }, { stateDir: root, skillsDir });
+    expect(discarded).toMatchObject({ ok: true, skillsChanged: false });
+    expect(existsSync(join(skillsDir, "other-steps"))).toBe(false);
+    expect(await listPendingDrafts(root)).toEqual([]);
+    expect((await runLearnCommand({ kind: "discard", id: drop.id }, { stateDir: root, skillsDir })).ok).toBe(false);
+    expect((await runLearnCommand({ kind: "approve", id: drop.id }, { stateDir: root, skillsDir, takenNames: async () => new Set() })).ok).toBe(false);
+  });
 });
 
 describe("parseLearnCommand", () => {
@@ -116,5 +139,9 @@ describe("parseLearnCommand", () => {
     expect(parseLearnCommand("undo").kind).toBe("error");
     expect(parseLearnCommand("undo ../x").kind).toBe("error");
     expect(parseLearnCommand("forget everything").kind).toBe("error");
+    expect(parseLearnCommand("approve A1B2C3")).toEqual({ kind: "approve", id: "a1b2c3" });
+    expect(parseLearnCommand("discard a1b2c3")).toEqual({ kind: "discard", id: "a1b2c3" });
+    expect(parseLearnCommand("approve ../x").kind).toBe("error");
+    expect(parseLearnCommand("discard").kind).toBe("error");
   });
 });

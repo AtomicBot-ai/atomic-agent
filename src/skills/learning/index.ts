@@ -17,18 +17,23 @@ export type { LearnedAction, LearnedChange, LearnedEntry, UndoLearnedResult } fr
 
 export {
   applyReviewDecision,
+  approvePendingDraft,
   buildExperienceReviewPrompt,
+  checkReviewDecision,
   collectTurnExperience,
   EXPERIENCE_REVIEW_LIMITS,
   EXPERIENCE_REVIEW_SCHEMA,
   EXPERIENCE_REVIEW_SYSTEM,
   parseReviewDecision,
+  PendingDraftError,
   readPatchCandidates,
   runExperienceReview,
   shouldReviewTurn,
 } from "./experience-review.js";
 export type {
   ApplyReviewResult,
+  ApprovePendingDraftContext,
+  DraftReviewContext,
   PatchCandidate,
   ReviewDecision,
   ReviewGateVerdict,
@@ -41,4 +46,15 @@ export { isPatchableSkill, patchableSkillNames, takenSkillNames } from "./learn-
 export type { LearnTargetInput } from "./learn-targets.js";
 
 export { formatLearnedList, LEARN_USAGE, parseLearnCommand, runLearnCommand } from "./learn-command.js";
-export type { LearnCommand, LearnCommandResult } from "./learn-command.js";
+export type { LearnCommand, LearnCommandDirs, LearnCommandResult } from "./learn-command.js";
+
+export {
+  hashSkillText,
+  listPendingDrafts,
+  PENDING_DRAFT_LIMIT,
+  pendingDraftsDir,
+  readPendingDraft,
+  removePendingDraft,
+  savePendingDraft,
+} from "./pending-drafts.js";
+export type { PendingDraft, SavePendingDraftInput } from "./pending-drafts.js";
