@@ -2121,6 +2121,7 @@ const PAL = [
     // Calm (S5): the verbs the Settings window's Commands list used to carry.
     ['chat','Switch chat…','','⌘ O','session:switch'],
     ['logo:claudecode','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156; ATO-1633: wears the Claude Code mark
+    ['arrowR','Hand off to Claude Code / Codex…','','','houtopen'],   // ATO-1014 (handoff-out.js)
     ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
@@ -5571,6 +5572,7 @@ function overlaysHTML() {
   if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
   if (S.overlay === 'handoff') html += handoffSheetHTML();   // ATO-1156 (handoff.js)
+  if (S.overlay === 'hout') html += handoffOutSheetHTML();   // ATO-1014 (handoff-out.js)
   if (S.overlay === 'rewind') html += rewindSheetHTML();   // ATO-1056/1058 (chat-rewind.js)
   if (S.overlay === 'bugrep') html += bugRepHTML();   // ATO-1466 (bug-report.js)
   if (S.overlay === 'pedit') html += projectEditHTML();   // ATO-1146 (chat-projects.js)
@@ -7539,6 +7541,7 @@ function act(a) {
   // ATO-1156: Continue from Claude Code / Codex (handoff.js). Opening it takes every other overlay
   // and the settings window down first, so Escape and the scrim close the sheet itself.
   if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
+  if (k === 'houtopen' || k === 'hout') { if (k === 'houtopen') { close(); S.settings = null; } handoffOutAct(k, v || ''); render(); return; }   // ATO-1014 (handoff-out.js)
   // ATO-556: the atomicagent:// link card's Install (deeplink.js); Cancel is `close`.
   if (k === 'dlink') { deeplinkAct(v || ''); return; }
   // ATO-1492: an MCP server's question (mcp-elicitation.js); closing the sheet is `close`.
