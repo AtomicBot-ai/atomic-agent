@@ -22,7 +22,11 @@ import {
   OPENROUTER_APP_REFERER,
   OPENROUTER_APP_TITLE,
 } from "../openrouter/openrouter-provider.js";
-import { SUBSCRIPTION_CLI_KIND } from "../../../config/provider-auth-mode.js";
+import {
+  SUBSCRIPTION_CLI_KIND,
+  SUBSCRIPTION_OAUTH_KIND,
+} from "../../../config/provider-auth-mode.js";
+import { createSubscriptionOAuthProvider } from "../subscription-oauth/create-subscription-oauth-provider.js";
 import {
   registerBuiltInCliAdapters,
   resolveCliAdapter,
@@ -356,4 +360,16 @@ export function registerBuiltInProviderKinds(): void {
         ctx.logger.warn("llm.subscription_cli", { message }),
     });
   });
+
+  // EXPERIMENTAL (ATO-1448): a ChatGPT plan signed in by `atag login
+  // chatgpt`, without the Codex CLI. Only used by an entry that names
+  // this kind; nothing defaults to it.
+  registerProviderKind(SUBSCRIPTION_OAUTH_KIND, (ctx) =>
+    createSubscriptionOAuthProvider({
+      entry: ctx.entry,
+      stateDir: ctx.config.paths.stateDir,
+      onWarning: (message) =>
+        ctx.logger.warn("llm.subscription_oauth", { message }),
+    }),
+  );
 }

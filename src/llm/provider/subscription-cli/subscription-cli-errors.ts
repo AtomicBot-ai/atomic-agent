@@ -4,6 +4,8 @@
  * missing, the CLI is signed out, or the invocation itself failed.
  */
 
+import { ChatgptSignInRequiredError } from "../subscription-oauth/oauth-errors.js";
+
 export class SubscriptionCliNotInstalledError extends Error {
   /**
    * `productName` words it for someone who picked a subscription in a
@@ -165,13 +167,17 @@ export function looksLikeAuthFailure(text: string): boolean {
  *
  * Walks `cause`: the step executor hands the agent loop a
  * `TransportError` wrapping the original.
+ *
+ * The experimental ChatGPT sign-in (ATO-1453) counts too: an expired or
+ * missing sign-in is the same "sign in again" as a signed-out CLI.
  */
 export function isSubscriptionCliSetupError(err: unknown): boolean {
   let current: unknown = err;
   for (let depth = 0; depth < 5; depth += 1) {
     if (
       current instanceof SubscriptionCliNotInstalledError ||
-      current instanceof SubscriptionCliAuthError
+      current instanceof SubscriptionCliAuthError ||
+      current instanceof ChatgptSignInRequiredError
     ) {
       return true;
     }

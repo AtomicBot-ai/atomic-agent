@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
 import { shouldAdvance } from "./should-advance.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { LlamaServerError } from "../llama-server-client.js";
@@ -256,6 +257,13 @@ describe("shouldAdvance", () => {
     expect(
       shouldAdvance(new SubscriptionCliAuthError("codex", "Run /login.")),
     ).toEqual({ advance: true, immediate: false });
+  });
+
+  it("advances when the experimental ChatGPT sign-in is missing or expired (ATO-1453)", () => {
+    expect(shouldAdvance(new ChatgptSignInRequiredError("refresh_refused"))).toEqual({
+      advance: true,
+      immediate: false,
+    });
   });
 
   it("advances via threshold on a TransportError carrying null status", () => {

@@ -373,7 +373,7 @@ export function connectRuntimeFallback(
     return {
       local:
         entry === undefined || entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url),
-      plan: entry?.kind === "subscription-cli",
+      plan: entry?.kind === "subscription-cli" || entry?.kind === "subscription-oauth",
     };
   };
   // ATO-649: fold a metered completion into today's total. Before the

@@ -1,6 +1,6 @@
 import { OAuthFlowError, SignInRequiredError } from "./oauth-errors.js";
 import type { Clock, FetchLike, OAuthTokens, TokenStore } from "./oauth-types.js";
-import { requestToken } from "./token-request.js";
+import { requestToken, type TokenEncoding } from "./token-request.js";
 
 export interface TokenRefresherOptions {
   store: TokenStore;
@@ -10,8 +10,20 @@ export interface TokenRefresherOptions {
   /** Refresh this long before `expiresAt` (default 60 s). */
   skewMs?: number;
   extraParams?: Record<string, string>;
+  /** Body encoding of the refresh request (default `form`). */
+  encoding?: TokenEncoding;
+  /** Extra headers on the refresh request. */
+  headers?: Record<string, string>;
+  /**
+   * Send why the refresh happens as `refresh_reason`, the way Codex does
+   * (`proactive_expiry` before expiry, `unauthorized_recovery` after a
+   * 401; codex-rs/login/src/oauth/client.rs `RefreshReason`).
+   */
+  sendRefreshReason?: boolean;
   now?: Clock;
 }
+
+export type RefreshReason = "proactive_expiry" | "unauthorized_recovery";
 
 export interface TokenRefresher {
   /** Stored tokens, refreshed first when they are expired or about to be. */
@@ -31,7 +43,7 @@ export function createTokenRefresher(options: TokenRefresherOptions): TokenRefre
 
   // The shared request never takes a caller's signal: one caller giving up
   // must not cancel the refresh that other callers joined.
-  async function runRefresh(): Promise<OAuthTokens> {
+  async function runRefresh(reason: RefreshReason): Promise<OAuthTokens> {
     const current = await options.store.load();
     if (!current) throw new SignInRequiredError("no_tokens");
     if (!current.refreshToken) throw new SignInRequiredError("no_refresh_token");
@@ -44,7 +56,10 @@ export function createTokenRefresher(options: TokenRefresherOptions): TokenRefre
         grant_type: "refresh_token",
         refresh_token: current.refreshToken,
         client_id: options.clientId,
+        ...(options.sendRefreshReason ? { refresh_reason: reason } : {}),
       },
+      ...(options.encoding ? { encoding: options.encoding } : {}),
+      ...(options.headers ? { headers: options.headers } : {}),
     });
     if (result.kind === "error") {
       if (REFUSED.has(result.oauthError)) throw new SignInRequiredError("refresh_refused");
@@ -65,13 +80,17 @@ export function createTokenRefresher(options: TokenRefresherOptions): TokenRefre
     return next;
   }
 
-  function refresh(signal?: AbortSignal): Promise<OAuthTokens> {
+  function startRefresh(reason: RefreshReason, signal?: AbortSignal): Promise<OAuthTokens> {
     if (!inflight) {
-      inflight = runRefresh().finally(() => {
+      inflight = runRefresh(reason).finally(() => {
         inflight = null;
       });
     }
     return withCallerSignal(inflight, signal);
+  }
+
+  function refresh(signal?: AbortSignal): Promise<OAuthTokens> {
+    return startRefresh("unauthorized_recovery", signal);
   }
 
   async function getValidTokens(signal?: AbortSignal): Promise<OAuthTokens> {
@@ -81,7 +100,7 @@ export function createTokenRefresher(options: TokenRefresherOptions): TokenRefre
     if (tokens.expiresAt === undefined || now() + skewMs < tokens.expiresAt) {
       return tokens;
     }
-    return refresh(signal);
+    return startRefresh("proactive_expiry", signal);
   }
 
   return { getValidTokens, refresh };
