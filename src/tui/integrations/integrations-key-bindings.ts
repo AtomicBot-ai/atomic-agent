@@ -86,6 +86,16 @@ export function handleIntegrationsTabKey(
       return true;
     }
     const field = selectedField(panel);
+    // ATO-1630: a row with no fields (Monid signs in through the browser)
+    // has nothing to edit. Enter runs its first verb; e opens nothing.
+    if (!field && (key.return || input === "e")) {
+      const row = selectedRow(panel);
+      const first = (row?.actions ?? [])[0];
+      if (row && first && key.return) {
+        void callbacks.onIntegrationActionRequested?.(row.id, first.id);
+      }
+      return true;
+    }
     // Enter on a toggle flips it; on a text field it opens the editor,
     // so the obvious key does the obvious thing for both kinds.
     if (key.return || (input === "e" && field?.kind === "boolean")) {

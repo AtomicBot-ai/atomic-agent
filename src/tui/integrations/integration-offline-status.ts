@@ -25,6 +25,7 @@ export const OFFLINE_PAUSED_INTEGRATIONS: ReadonlySet<string> = new Set([
   "github",
   "exa",
   "composio",
+  "monid",
 ]);
 
 /**

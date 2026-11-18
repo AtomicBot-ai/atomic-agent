@@ -99,6 +99,14 @@ export interface IntegrationStatusContext {
    */
   mcpServerStates?: ReadonlyMap<string, string>;
   /**
+   * MCP server names whose browser sign-in (OAuth) has a saved token in
+   * `<stateDir>/mcp-oauth/` (`src/mcp/mcp-oauth-store.ts`). Tells
+   * "signed in" from "never signed in" for an integration whose only
+   * credential is that sign-in (Monid). Absent in tests that do not
+   * need it.
+   */
+  mcpSignedIn?: ReadonlySet<string>;
+  /**
    * Live channel states by channel name (`ChannelState` values), for
    * integrations that run one — Telegram today. Absent when the
    * runtime is not available (e.g. in tests).
