@@ -59,7 +59,7 @@ import { mcpAppsUiFromEnv } from "../../mcp/mcp-apps.js";
 import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
 import { createPluginMcpLiveStop } from "../../plugins/plugin-mcp-live.js";
 import { listPluginSubagents } from "../../plugins/plugin-subagents.js";
-import { loadAgentProfiles, normaliseProfileName, type AgentProfile } from "../../agent-profiles/index.js";
+import { loadAgentProfiles, normaliseProfileName, readSettingsAgentProfiles, type AgentProfile } from "../../agent-profiles/index.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
@@ -1070,6 +1070,8 @@ export function registerRuntimeFusionAndReadScope(input: {
           stateDir: config.paths.stateDir,
           configFile: config.paths.userConfigFile,
           startupTrust: config.skills.projectTrust,
+          settingsProfiles: () =>
+            readSettingsAgentProfiles(config.paths.userConfigFile, () => getConfig().llm?.runMode?.agentProfiles),
           pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
         }),
       outputCharCap: config.agent.batchToolResultCharCap,

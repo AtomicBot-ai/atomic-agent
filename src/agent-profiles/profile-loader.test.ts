@@ -128,4 +128,83 @@ describe("loadAgentProfiles (ATO-566)", () => {
     expect(failing.get("explore")).toBeDefined();
     expect(failing.diagnostics.join("\n")).toContain("boom");
   });
+
+  describe("settings profiles (ATO-1668)", () => {
+    it("loads an entry as a profile with the settings source and no file", () => {
+      const set = load({
+        settingsProfiles: () => ({ writer: { description: "writes", prompt: "  WRITE  ", model: "build", tools: ["Read"] } }),
+      });
+      expect(set.get("writer")).toEqual({
+        name: "writer",
+        description: "writes",
+        prompt: "WRITE",
+        model: "build",
+        tools: ["Read"],
+        source: "settings",
+      });
+    });
+
+    it("a settings profile replaces a built-in of the same name", () => {
+      const set = load({ settingsProfiles: () => ({ review: { prompt: "SETTINGS REVIEW" } }) });
+      expect(set.get("review")).toMatchObject({ source: "settings", prompt: "SETTINGS REVIEW" });
+    });
+
+    it("a trusted project file of the same name beats the settings", () => {
+      put(join(repo, ".claude/agents"), "review.md", "PROJECT");
+      const set = load({
+        startupTrust: trust([".claude/agents/review.md"]),
+        settingsProfiles: () => ({ review: { prompt: "SETTINGS" } }),
+      });
+      expect(set.get("review")).toMatchObject({ source: "project", prompt: "PROJECT" });
+      expect(set.diagnostics.join("\n")).toContain("llm.runMode.agentProfiles.review is shadowed by");
+    });
+
+    it("an untrusted project file leaves the settings profile in place", () => {
+      put(join(repo, ".claude/agents"), "review.md", "PROJECT");
+      const set = load({ settingsProfiles: () => ({ review: { prompt: "SETTINGS" } }) });
+      expect(set.get("review")).toMatchObject({ source: "settings", prompt: "SETTINGS" });
+      expect(set.withheld).toEqual([".claude/agents/review.md"]);
+    });
+
+    it("a user file of the same name beats the settings", () => {
+      put(join(state, "agents"), "deploy.md", "USER");
+      const set = load({ settingsProfiles: () => ({ deploy: { prompt: "SETTINGS" } }) });
+      expect(set.get("deploy")).toMatchObject({ source: "user", prompt: "USER" });
+    });
+
+    it("the settings beat a plugin profile of the same name", () => {
+      // Pins pass order only: real plugin profiles are named `plugin:agent`
+      // and a settings name cannot hold ":", so the two never collide.
+      const set = load({
+        settingsProfiles: () => ({ deploy: { prompt: "SETTINGS" } }),
+        pluginProfiles: () => [{ name: "deploy", description: "", prompt: "PLUGIN", source: "plugin" }],
+      });
+      expect(set.get("deploy")).toMatchObject({ source: "settings", prompt: "SETTINGS" });
+      expect(set.diagnostics.join("\n")).toContain("shadowed by llm.runMode.agentProfiles.deploy");
+    });
+
+    it("reports a bad entry as a diagnostic and keeps the others", () => {
+      const set = load({
+        settingsProfiles: () =>
+          ({ broken: { prompt: "   " }, "bad name!": { prompt: "X" }, fine: { prompt: "FINE" } }),
+      });
+      expect(set.get("fine")?.prompt).toBe("FINE");
+      expect(set.get("broken")).toBeUndefined();
+      const text = set.diagnostics.join("\n");
+      expect(text).toContain("llm.runMode.agentProfiles.broken");
+      expect(text).toContain("llm.runMode.agentProfiles.bad name!");
+    });
+
+    it("calls the settings reader on every load and survives one that throws", () => {
+      let prompt = "FIRST";
+      const options = { settingsProfiles: () => ({ writer: { prompt } }) };
+      expect(load(options).get("writer")?.prompt).toBe("FIRST");
+      prompt = "SECOND";
+      expect(load(options).get("writer")?.prompt).toBe("SECOND");
+      const failing = load({ settingsProfiles: () => { throw new Error("config gone"); } });
+      expect(failing.get("explore")).toBeDefined();
+      expect(failing.diagnostics.join("\n")).toContain("config gone");
+      expect(load({ settingsProfiles: () => undefined }).profiles.map((p) => p.name)).toEqual(["explore", "research", "review"]);
+    });
+  });
 });
