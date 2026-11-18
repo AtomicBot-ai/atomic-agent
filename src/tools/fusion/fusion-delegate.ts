@@ -17,6 +17,7 @@ import { getConfig } from "../../config/index.js";
 import { workerReplyAllowance } from "../../local-llm/server/worker-slots.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import { parseDelegateArgs } from "./delegate-args.js";
+import { FusionBudgetStopError } from "./fusion-stop-errors.js";
 import {
   applyCheckOutcomes,
   applyContractFindings,
@@ -745,7 +746,7 @@ export function buildFusionDelegateTool(
       const stopForBudget = (stop: TurnBudgetStop): void => {
         if (stoppedBy !== undefined) return;
         stoppedBy = stop;
-        budgetAbort.abort(new Error(stop.message));
+        budgetAbort.abort(new FusionBudgetStopError(stop));
       };
       const timeLeft = capped
         ? turnBudget.timeLeftMs(ctx.sessionId, limits)
