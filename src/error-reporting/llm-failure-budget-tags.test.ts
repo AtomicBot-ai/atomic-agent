@@ -40,6 +40,15 @@ describe("sanitizeLlmFailureTags: prompt budget and cut counts (ATO-1678)", () =
     expect(tags?.cut_reply_cap).toBe("none");
   });
 
+  it("reads a zero cut count as not reported, not as zero tokens", () => {
+    const tags = sanitizeLlmFailureTags({
+      truncationCounts: { promptTokens: 0, completionTokens: 0, requestedMaxTokens: 4096 },
+    });
+    expect(tags?.cut_prompt_tokens).toBe("unknown");
+    expect(tags?.cut_reply_tokens).toBe("unknown");
+    expect(tags?.cut_reply_cap).toBe("4096");
+  });
+
   it("never lets a non-count through", () => {
     const tags = sanitizeLlmFailureTags({
       truncationCounts: { promptTokens: Number.NaN, completionTokens: -3 },

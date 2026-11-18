@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { ModelError } from "../../llm/index.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt-types.js";
-import { describeLlmFailure, promptBudgetOf } from "./llm-failure-context.js";
+import { describeLlmFailure } from "./llm-failure-context.js";
+import { promptBudgetOf } from "./prompt-budget.js";
 
 /**
  * ATO-1678: a context-full report says which part filled the window

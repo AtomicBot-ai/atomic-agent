@@ -276,6 +276,11 @@ function safeCount(value: number): string {
   return Number.isFinite(value) && value >= 0 ? String(Math.round(value)) : UNKNOWN;
 }
 
+/** A count where `0` means the provider did not report one. */
+function reportedCount(value: number): string {
+  return Number.isFinite(value) && value > 0 ? String(Math.round(value)) : UNKNOWN;
+}
+
 /**
  * Sentry tags for an {@link LlmFailureContext}. Only fixed words and
  * non-negative integers come out: a value outside its vocabulary becomes
@@ -374,8 +379,9 @@ export function sanitizeLlmFailureTags(
   }
   const cut = context.truncationCounts;
   if (cut !== undefined) {
-    tags.cut_prompt_tokens = safeCount(cut.promptTokens);
-    tags.cut_reply_tokens = safeCount(cut.completionTokens);
+    // `0` is "not reported" in `TruncationDetail`, not a count.
+    tags.cut_prompt_tokens = reportedCount(cut.promptTokens);
+    tags.cut_reply_tokens = reportedCount(cut.completionTokens);
     tags.cut_reply_cap = cut.requestedMaxTokens === undefined ? "none" : safeCount(cut.requestedMaxTokens);
   }
   return Object.keys(tags).length > 0 ? tags : undefined;

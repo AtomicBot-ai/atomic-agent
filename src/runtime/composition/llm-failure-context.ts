@@ -1,7 +1,6 @@
 import { getConfig, type AtomicAgentConfig } from "../../config/index.js";
 import type { EngineWaitVerdicts } from "../../agent/agent-contract.js";
 import type { LlmFailureContext, LlmPromptBudget, LlmTruncationCounts } from "../../error-reporting/index.js";
-import type { BuiltPrompt } from "../../prompt/build-prompt-types.js";
 import { managedPortsOf } from "../../llm/describe-llama-health-failure.js";
 import { readErrnoCode } from "../../llm/errno-code.js";
 import { readFailingLink } from "../../llm/fallback/index.js";
@@ -190,22 +189,6 @@ function readRequestUrl(error: unknown): string | undefined {
     current = (current as { cause?: unknown }).cause;
   }
   return undefined;
-}
-
-/**
- * The budget parts of a built prompt (ATO-1678): the numbers that say
- * whether a full window was the history, the prefix, the native tool
- * schemas or the reply reserve. Counts only; no text is read.
- */
-export function promptBudgetOf(prompt: BuiltPrompt): LlmPromptBudget {
-  return {
-    totalTokens: prompt.tokens.total,
-    stablePrefixTokens: prompt.tokens.stablePrefix,
-    toolSchemaTokens: prompt.tokens.toolSchema ?? 0,
-    conversationTokens: prompt.tokens.conversation,
-    contextWindow: prompt.contextWindow,
-    replyReserve: prompt.contextBudget?.replyReserve ?? prompt.replyReserve ?? null,
-  };
 }
 
 /**

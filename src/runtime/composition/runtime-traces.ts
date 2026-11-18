@@ -17,6 +17,8 @@ import {
   type TraceRecorder,
   type TraceSink,
 } from "../../tracing/trace/index.js";
+import type { LlmPromptBudget } from "../../error-reporting/index.js";
+import { promptBudgetOf } from "./prompt-budget.js";
 import {
   createOtlpTraceSink,
   resolveOtlpExportSettings,
@@ -25,8 +27,7 @@ import {
 import { getAppVersion } from "../../version.js";
 import { captureError, type SentryClient } from "../../error-reporting/index.js";
 import { isExpectedProviderLimit } from "../../llm/index.js";
-import { describeLlmFailure, promptBudgetOf } from "./llm-failure-context.js";
-import type { LlmPromptBudget } from "../../error-reporting/index.js";
+import { describeLlmFailure } from "./llm-failure-context.js";
 import { runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 import { isUnreportedLocalServerFailure } from "../../llm/reliability/local-server-error.js";
 

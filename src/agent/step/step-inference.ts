@@ -114,6 +114,13 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     ...(deps.toolTransport === "native_tools" ? {
       toolSchemaTokens: nativeToolSchemaTokens(stepDescriptors, deps),
     } : {}),
+    // A chat's reasoning level bounds the grammar's think block with its
+    // own budget (`resolveStepGrammar`, ATO-490); the reply reserve must
+    // plan for that bound, not `localModels.reasoningBudgetTokens`
+    // (ATO-1678). `high` is `0`, unbounded, as the grammar sends it.
+    ...(ctx.reasoningOverride !== undefined && deps.toolTransport !== "native_tools"
+      ? { reasoningBudgetTokens: LOCAL_REASONING_BUDGET_TOKENS[ctx.reasoningOverride] }
+      : {}),
     ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
     fusionTokensPerSecond: deps.fusionTokensPerSecond?.() ?? null,
     ...(deps.fusionPastRuns !== undefined
@@ -190,6 +197,22 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
 }
 
 /**
+ * The prompt input for a grammar fallback link behind a native-tools
+ * primary. The grammar link's template/GBNF prelude also expects the
+ * legacy text-JSON emission mandate, not the native function-calling
+ * guidance the primary prompt carries (issue #285), and it sends no
+ * `tools` array, so none is budgeted (ATO-1678). Exported for the tests.
+ */
+export function grammarFallbackPromptInput(promptInput: BuildPromptInput): BuildPromptInput {
+  return {
+    ...promptInput,
+    toolTransport: "grammar",
+    toolSchemaTokens: 0,
+    suppressReasoningPrefill: false,
+  };
+}
+
+/**
  * Estimated tokens of the native `tools` array this step sends: the
  * same adapter and strictness the request is built with. Exported for
  * the budget tests.
@@ -223,17 +246,7 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
     deps.profile.requiresPromptThinkPrefix
       ? memoizeText(
           () =>
-            buildPrompt({
-              ...promptInput,
-              // The grammar link's template/GBNF prelude also expects the
-              // legacy text-JSON emission mandate, not the native
-              // function-calling guidance the primary prompt carries
-              // (issue #285) — rebuild for the grammar transport.
-              toolTransport: "grammar",
-              // A grammar link sends no `tools` array.
-              toolSchemaTokens: 0,
-              suppressReasoningPrefill: false,
-            }).text,
+            buildPrompt(grammarFallbackPromptInput(promptInput)).text,
         )
       : undefined;
   const slot = deps.supportsSlotAffinity
