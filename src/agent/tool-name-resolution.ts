@@ -16,13 +16,13 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
  * a 30-minute turn ended with `reason=failed` over a separator.
  *
  * The candidates are deliberately narrow — separator confusion, case,
- * wrapping the model or its chat template added, and the `mcp.<server>.`
- * namespace written short. This is not fuzzy matching: `os.fs.write`
- * must never resolve to `os.fs.trash` because the two are close. Every
- * character of the tool's own name must be there; only separators,
- * case and a namespace prefix may differ, and the form must point at
- * exactly one registered tool. Anything else is still unknown and gets
- * the error result naming the closest tools (`policies/unknown-tool.ts`).
+ * and wrapping the model or its chat template added. This is not fuzzy
+ * matching: `os.fs.write` must never resolve to `os.fs.trash` because
+ * the two are close. Every character of the tool's own name must be
+ * there, in order; only separators, case and wrapping may differ, and
+ * the form must point at exactly one registered tool. Anything else is
+ * still unknown and gets the error result naming the closest tools
+ * (`policies/unknown-tool.ts`).
  */
 export function resolveToolName(
   name: string,
@@ -51,7 +51,6 @@ export function resolveToolName(
   return resolveByShape(name, registry.list().map((definition) => definition.name));
 }
 
-const MCP_PREFIX = "mcp.";
 const FUNCTIONS_PREFIX = "functions.";
 
 /**
@@ -100,61 +99,25 @@ function emittedKeys(name: string): string[] {
 }
 
 /**
- * Separator, case, wrapping and namespace forms that point at exactly
- * one registered tool. Two tiers, each of which must be unambiguous
- * (the second over both of its short forms together):
+ * The whole name in another spelling of exactly one registered tool:
+ * separators and case over names with underscores or hyphens of their
+ * own (`mcp_github_create_issue`, `mcp.brave_search.brave_web_search`
+ * for `mcp.brave-search.brave_web_search`), wrapping (`"os.fs.read"`,
+ * `os.fs.read()`) and the `functions.` namespace. Two tools that share
+ * a spelling (`mcp.a.b_c` and `mcp.a_b.c`) resolve to neither.
  *
- *  1. The whole name in another spelling (`mcp_github_create_issue`,
- *     `mcp.brave_search.web_search` for `mcp.brave-search.web_search`,
- *     `"os.fs.read"`, `functions.os.fs.read`).
- *  2. An MCP tool written without its `mcp.` namespace
- *     (`github.create_issue`) or by the server's own name for it alone
- *     (`create_issue`, `mcp.create_issue`, Composio's
- *     `GITHUB_CREATE_ISSUE`). The bare form needs two words or more.
- *     Either short form resolves only when no built-in tool ends in the
- *     same words, so `web_search` never picks an MCP `web_search` over
- *     `os.web.search`, nor `fs.write` an MCP `fs.write` over `os.fs.write`.
+ * A name with part of the real one missing is not resolved, however
+ * likely the match: `write_file` may be meant for `os.fs.write` or an
+ * MCP filesystem server's `write_file`, `github.create_issue` for the
+ * built-in GitHub tool or an MCP server's. Those get the error result
+ * naming the candidates, and the model picks (ATO-1674).
  */
 function resolveByShape(name: string, registered: readonly string[]): string | null {
   const keys = emittedKeys(name);
   if (keys.length === 0) return null;
-
-  const whole = new Set<string>();
+  const matches = new Set<string>();
   for (const candidate of registered) {
-    if (keys.includes(shapeKey(candidate))) whole.add(candidate);
+    if (keys.includes(shapeKey(candidate))) matches.add(candidate);
   }
-  if (whole.size > 0) return only(whole);
-
-  // `mcp.create_issue`: the namespace kept, the server dropped. A bare
-  // name of one word (`search`, `get`) is too common to stand for one
-  // server's tool and is left to the error result.
-  const bareKeys = keys
-    .flatMap((key) =>
-      key.startsWith(MCP_PREFIX) ? [key, key.slice(MCP_PREFIX.length)] : [key],
-    )
-    .filter((key) => key.includes("."));
-  const qualified = new Set<string>();
-  const bare = new Set<string>();
-  // A built-in tool ending in the same words (`os.fs.write` for
-  // `fs.write`) makes the short form ambiguous: refuse rather than pick.
-  let builtInEndsLikeQualified = false;
-  let builtInEndsLikeBare = false;
-  const endsLike = (key: string, forms: readonly string[]) =>
-    forms.some((form) => key.endsWith(`.${form}`));
-  for (const candidate of registered) {
-    const key = shapeKey(candidate);
-    if (!key.startsWith(MCP_PREFIX)) {
-      if (endsLike(key, keys)) builtInEndsLikeQualified = true;
-      if (endsLike(key, bareKeys)) builtInEndsLikeBare = true;
-      continue;
-    }
-    const rest = candidate.slice(MCP_PREFIX.length);
-    const dot = rest.indexOf(".");
-    if (dot <= 0 || dot >= rest.length - 1) continue;
-    if (keys.includes(shapeKey(rest))) qualified.add(candidate);
-    if (bareKeys.includes(shapeKey(rest.slice(dot + 1)))) bare.add(candidate);
-  }
-  if (qualified.size > 0 && builtInEndsLikeQualified) return null;
-  if (bare.size > 0 && builtInEndsLikeBare) return null;
-  return only(new Set([...qualified, ...bare]));
+  return only(matches);
 }

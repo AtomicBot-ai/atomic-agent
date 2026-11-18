@@ -178,7 +178,7 @@ describe("runtime trace ownership and deferred event routing", () => {
     expect(capture).toHaveBeenCalledTimes(1);
   });
 
-  it("does not report the unknown-tool streak, and still reports other tool failures (ATO-1674)", () => {
+  it("does not report a near-miss unknown-tool streak, and still reports other tool failures (ATO-1674)", () => {
     const { traces } = fixture();
     const capture = vi.fn();
     const reporter = { capture } as unknown as SentryClient;
@@ -195,5 +195,15 @@ describe("runtime trace ownership and deferred event routing", () => {
       category: "tool",
     });
     expect(capture).toHaveBeenCalledTimes(1);
+    // A streak on a name close to no tool still reports, with its class.
+    routing.emitAgentLoopEventFor(undefined, {
+      type: "loop_failed",
+      error: new ToolExecutionError("function_name", "tool not registered in this agent: function_name", {
+        kind: "unregistered",
+        nameClass: "other",
+      }),
+      category: "tool",
+    });
+    expect(capture).toHaveBeenCalledTimes(2);
   });
 });

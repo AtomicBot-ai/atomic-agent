@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ToolRegistry } from "../tools/tool-registry.js";
 import { resolveToolName } from "./tool-name-resolution.js";
+import { closestToolNames, unknownToolResult } from "./policies/unknown-tool.js";
 
 function registry(...names: string[]): ToolRegistry {
   const reg = new ToolRegistry();
@@ -78,7 +79,6 @@ const MCP_REG = registry(
   "mcp.github.list_issues",
   "mcp.brave-search.brave_web_search",
   "mcp.search.web_search",
-  "mcp.files.fs.write",
 );
 
 describe("resolveToolName on separator and wrapping forms", () => {
@@ -110,41 +110,49 @@ describe("resolveToolName on separator and wrapping forms", () => {
   });
 });
 
-describe("resolveToolName on an MCP tool written short", () => {
-  it("resolves the server and tool without the `mcp.` namespace", () => {
-    expect(resolveToolName("github.create_issue", MCP_REG)).toBe("mcp.github.create_issue");
-    expect(resolveToolName("github__list_issues", MCP_REG)).toBe("mcp.github.list_issues");
+describe("resolveToolName with part of the real name missing", () => {
+  // Never resolved, however likely the match: the short form can be
+  // meant for a different tool, and a different tool can act outside
+  // the read roots or without approval. The error result names the
+  // candidates and the model picks (ATO-1674).
+  const SHORT_REG = registry(
+    "os.fs.read",
+    "os.fs.write",
+    "github.issue.create",
+    "mcp.github.create_issue",
+    "mcp.filesystem.write_file",
+    "mcp.filesystem.delete_file",
+    "mcp.composio.GITHUB_CREATE_ISSUE",
+  );
+  const names = SHORT_REG.list().map((definition) => definition.name);
+
+  it.each([
+    ["write_file", ["mcp.filesystem.write_file", "os.fs.write"]],
+    ["delete_file", ["mcp.filesystem.delete_file"]],
+    ["github.create_issue", ["mcp.github.create_issue", "github.issue.create"]],
+    ["create_issue", ["mcp.github.create_issue"]],
+    ["mcp.create_issue", ["mcp.github.create_issue"]],
+  ] as const)("%s is not resolved and the error result names the candidates", (emitted, named) => {
+    expect(resolveToolName(emitted, SHORT_REG)).toBeNull();
+    const suggestions = closestToolNames(emitted, names);
+    for (const candidate of named) expect(suggestions).toContain(candidate);
+    const refused = unknownToolResult(emitted, names);
+    expect(refused).toMatchObject({ tool: emitted, status: "error" });
+    expect(refused.details).toMatchObject({ unregisteredTool: true });
+    for (const candidate of named) expect(refused.details?.suggestions).toContain(candidate);
   });
 
-  it("resolves the server's own name for the tool when one server has it", () => {
-    expect(resolveToolName("brave_web_search", MCP_REG)).toBe("mcp.brave-search.brave_web_search");
-    expect(resolveToolName("mcp.list_issues", MCP_REG)).toBe("mcp.github.list_issues");
-    // Composio names its tools in capitals with the app in front.
-    const composio = registry("os.fs.read", "mcp.composio.GITHUB_CREATE_ISSUE");
-    expect(resolveToolName("GITHUB_CREATE_ISSUE", composio)).toBe("mcp.composio.GITHUB_CREATE_ISSUE");
-    expect(resolveToolName("github_create_issue", composio)).toBe("mcp.composio.GITHUB_CREATE_ISSUE");
+  it("does not resolve a namespace-less Composio name either", () => {
+    expect(resolveToolName("GITHUB_CREATE_ISSUE", SHORT_REG)).toBeNull();
   });
 
-  it("refuses when two tools answer to the same short form", () => {
-    const twoServers = registry("mcp.github.create_issue", "mcp.gitlab.create_issue");
-    expect(resolveToolName("create_issue", twoServers)).toBeNull();
-    // `github_create_issue` is the GitHub server's `create_issue` and
-    // Composio's `GITHUB_CREATE_ISSUE` alike once case and separators go.
-    const githubTwice = registry("mcp.github.create_issue", "mcp.composio.GITHUB_CREATE_ISSUE");
-    expect(resolveToolName("github_create_issue", githubTwice)).toBeNull();
-    expect(resolveToolName("GITHUB_CREATE_ISSUE", githubTwice)).toBeNull();
-  });
-
-  it("never picks an MCP tool over a built-in that ends in the same words", () => {
-    // `web_search` could be `os.web.search` as much as the MCP tool.
-    expect(resolveToolName("web_search", MCP_REG)).toBeNull();
-    // `fs.write` could be `os.fs.write` as much as `mcp.files.fs.write`.
-    expect(resolveToolName("fs.write", MCP_REG)).toBeNull();
-  });
-
-  it("leaves a one-word name to the error result", () => {
-    // `list` is `mcp.resource.list` by its last word, and nothing more.
-    expect(resolveToolName("list", MCP_REG)).toBeNull();
+  it("refuses two tools that share one spelling", () => {
+    const collide = registry("mcp.a.b_c", "mcp.a_b.c");
+    expect(resolveToolName("mcp_a_b_c", collide)).toBeNull();
+    expect(resolveToolName("mcp-a-b-c", collide)).toBeNull();
+    // Each exact name still resolves to itself.
+    expect(resolveToolName("mcp.a.b_c", collide)).toBe("mcp.a.b_c");
+    expect(resolveToolName("mcp.a_b.c", collide)).toBe("mcp.a_b.c");
   });
 
   it("still refuses a name that is a different tool, not a different spelling", () => {

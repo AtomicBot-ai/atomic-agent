@@ -12,6 +12,10 @@ import { createEmptySessionState } from "../session/session-state.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
 import type { CapabilitiesSummary, ToolDescriptor } from "../prompt/stable-prefix.js";
 import type { ConversationTurn } from "../session/conversation-turn.js";
+import type { ToolDefinition } from "../tools/tool-registry.js";
+import { ApprovalGate } from "../approval/approval-gate.js";
+import { createMcpToolDefinition } from "../mcp/mcp-tool-adapter.js";
+import type { McpClient } from "../mcp/mcp-client.js";
 
 type ToolResultTurn = Extract<ConversationTurn, { kind: "tool_result" }>;
 const isToolResult = (turn: ConversationTurn): turn is ToolResultTurn =>
@@ -64,13 +68,14 @@ describe("AgentLoop with an unregistered tool name", () => {
     rmSync(workingDir, { recursive: true, force: true });
   });
 
-  function loop(script: (call: number) => unknown[], extraTools: readonly string[] = []) {
+  function loop(script: (call: number) => unknown[], extraTools: readonly ToolDefinition[] = []) {
     const prompts: string[] = [];
     const ran: string[] = [];
     const events: AgentLoopEvent[] = [];
     let call = 0;
     const registry = buildDefaultToolRegistry();
-    for (const name of ["os.fs.read", "os.fs.grep", ...extraTools]) {
+    for (const definition of extraTools) registry.register(definition);
+    for (const name of ["os.fs.read", "os.fs.grep"]) {
       registry.register({
         name,
         description: name,
@@ -159,21 +164,44 @@ describe("AgentLoop with an unregistered tool name", () => {
     expect(stepErrors[0]!.error).toMatchObject({ kind: "unregistered", nameClass: "other" });
   });
 
-  it("runs an MCP tool the model wrote with the wrong separators (ATO-1674)", async () => {
+  it("runs an MCP tool the model wrote with the wrong separators, asking approval under its real name (ATO-1674)", async () => {
     // The server is `brave-search`; the wire escape is `__` and models
     // write the hyphen as an underscore. Every letter is right, so the
-    // call runs instead of costing the turn a step.
+    // call runs instead of costing the turn a step, and it is the real
+    // tool that runs: its approval prompt names the registered tool.
     const mcpTool = "mcp.brave-search.brave_web_search";
-    const { agent, ran } = loop(
+    const asked: string[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      emit: (req) => {
+        asked.push(req.tool);
+        setImmediate(() => gate.resolve({ approvalId: req.approvalId, approved: true }));
+      },
+    });
+    const client = {
+      callTool: async () => ({ content: [{ type: "text", text: "3 results" }] }),
+    } as unknown as McpClient;
+    const definition = createMcpToolDefinition(
+      {
+        server: "brave-search",
+        rawName: "brave_web_search",
+        qualifiedName: mcpTool,
+        description: "",
+        inputSchema: { type: "object" },
+        resourceClass: "approval_gated",
+      },
+      client,
+      { trust: "approval_gated", dangerous: { approvals: gate, approvalRequired: true } },
+    );
+    const { agent } = loop(
       (call) =>
         call === 1
           ? [{ tool: "mcp__brave_search__brave_web_search", args: { query: "todo" } }]
           : [{ tool: "reply", args: { text: "found it" } }],
-      [mcpTool],
+      [definition],
     );
     const result = await run(agent, "s-mcp-separators");
     expect(result.reason).toBe("reply");
-    expect(ran).toEqual([mcpTool]);
+    expect(asked).toEqual([mcpTool]);
     const results = result.session.turns.filter(isToolResult);
     expect(results.map((turn) => [turn.tool, turn.status])).toEqual([[mcpTool, "ok"]]);
   });
