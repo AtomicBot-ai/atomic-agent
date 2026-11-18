@@ -827,6 +827,33 @@ describe("humanizeOpenAiHttpError", () => {
     });
   });
 
+  it("names the provider and the refused sampling setting on a cloud 400 (ATO-1218)", () => {
+    const err = new OpenAiHttpError(
+      'openai provider 400: {"error":{"message":"invalid temperature: only 1 is allowed for this model"}}',
+      400,
+      "https://api.moonshot.ai/v1/chat/completions",
+      false,
+      null,
+      "kimi",
+    );
+    const said = humanizeOpenAiHttpError(err);
+    expect(said).toContain('"kimi" did not accept the "temperature" setting for this model (400).');
+    expect(said).toContain("only 1 is allowed");
+    expect(said).toContain("pick another model");
+  });
+
+  it("keeps the generic wording for a cloud 400 about something else (ATO-1218)", () => {
+    const err = new OpenAiHttpError(
+      "openai provider 400: unsupported parameter: tools",
+      400,
+      "https://openrouter.ai/api/v1/chat/completions",
+      false,
+      null,
+      "openrouter",
+    );
+    expect(humanizeOpenAiHttpError(err)).toContain('"openrouter" rejected the request (400).');
+  });
+
   it("claims a retry count only for classes the client retries", () => {
     expect(humanizeOpenAiHttpError(mk(401))).not.toContain("Tried");
     expect(humanizeOpenAiHttpError(mk(404))).not.toContain("Tried");
