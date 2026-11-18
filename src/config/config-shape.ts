@@ -114,6 +114,8 @@ export const DICTIONARY_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "fileTriggers",
   "mcp.servers",
   "llm.providers",
+  // Keyed by profile name (ATO-1667); a removed profile stays removed.
+  "llm.runMode.agentProfiles",
   // Header names are the operator's (`Authorization`, `x-api-key`, …).
   "tracing.otel.headers",
 ]);
@@ -146,6 +148,7 @@ const LLM_FALLBACK_KEYS: Record<keyof UserLlmFallbackConfig, true> = {
 const LLM_RUN_MODE_KEYS: Record<keyof UserLlmRunModeConfig, true> = {
   mode: true,
   fusion: true,
+  agentProfiles: true,
 };
 const LLM_FUSION_KEYS: Record<keyof UserLlmFusionConfig, true> = {
   orchestratorProvider: true,

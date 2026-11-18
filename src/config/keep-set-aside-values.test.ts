@@ -359,3 +359,44 @@ describe("model modes a newer build added (ATO-1241)", () => {
       .toThrow(/provider\.modelMode/);
   });
 });
+
+describe("subagent profiles this build skips (ATO-1667)", () => {
+  const good = { prompt: "Find bugs." };
+  function profilesTree(profiles: Tree): Tree {
+    const tree = baseTree();
+    tree.llm.runMode.agentProfiles = profiles;
+    return tree;
+  }
+
+  it("a whole-file write keeps a skipped entry as written", () => {
+    const typo = { prompt: "Reads the diff.", model: "review" };
+    const tooLong = { prompt: "p".repeat(16_001) };
+    writeTree(profilesTree({ good, "typo name": typo, "long-1667": tooLong }));
+    const parsed = readUserConfigFileSync(path)!;
+    expect(parsed.llm?.runMode?.agentProfiles).toEqual({ good });
+    writeUnrelated(parsed);
+    expect(disk().llm.runMode.agentProfiles).toEqual({ good, "typo name": typo, "long-1667": tooLong });
+    expect(disk().log.level).toBe("debug");
+  });
+
+  it("a valid entry the data no longer has stays removed", () => {
+    writeTree(profilesTree({ good, other: { prompt: "Other." }, "bad one": { prompt: "x" } }));
+    const parsed = readUserConfigFileSync(path)!;
+    const rest = Object.fromEntries(
+      Object.entries(parsed.llm!.runMode!.agentProfiles!).filter(([name]) => name !== "other"),
+    );
+    writeUnrelated({ ...parsed, llm: { ...parsed.llm!, runMode: { ...parsed.llm!.runMode, agentProfiles: rest } } });
+    expect(disk().llm.runMode.agentProfiles).toEqual({ good, "bad one": { prompt: "x" } });
+  });
+
+  it("a fixed version of a broken entry in the data wins", () => {
+    writeTree(profilesTree({ good, Fixme: { prompt: "   " } }));
+    const parsed = readUserConfigFileSync(path)!;
+    const fixed = { prompt: "Fixed now." };
+    writeUnrelated({
+      ...parsed,
+      llm: { ...parsed.llm!, runMode: { ...parsed.llm!.runMode, agentProfiles: { good, fixme: fixed } } },
+    });
+    expect(disk().llm.runMode.agentProfiles).toEqual({ good, fixme: fixed });
+  });
+});

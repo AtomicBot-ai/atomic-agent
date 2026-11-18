@@ -1281,6 +1281,8 @@ export interface UserConfigFile {
 // Unversioned, additive: `llm.runMode.fusion.taskTree` (`enabled` default
 // false, `maxDepth` 1..3 default 2, `maxNodes` 1..64 default 24),
 // ATO-940. An older file has no field and keeps the flat fan-out.
+// Unversioned, additive: `llm.runMode.agentProfiles` (subagent profiles
+// keyed by name, ATO-1667). Missing reads as none.
 // Unversioned, additive: `localModels.requestTimeoutMs` (default
 // 300 000 ms, ATO-922). It used to be env-only
 // (`ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS`, which still wins over the
