@@ -2059,6 +2059,7 @@ const PAL = [
     // Calm (S5): the verbs the Settings window's Commands list used to carry.
     ['chat','Switch chat…','','⌘ O','session:switch'],
     ['import','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156
+    ['star','Recipes…','','','recipe:gallery'],   // ATO-1072 (chat-recipe.js)
     ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
@@ -5490,6 +5491,7 @@ function overlaysHTML() {
   if (S.overlay === 'bugrep') html += bugRepHTML();   // ATO-1466 (bug-report.js)
   if (S.overlay === 'pedit') html += projectEditHTML();   // ATO-1146 (chat-projects.js)
   if (S.overlay === 'pnew') html += projectCreateHTML();   // W2 QA (chat-projects.js)
+  if (S.overlay === 'recipes' || S.overlay === 'recipe-edit') html += recipeSheetHTML();   // ATO-1072 (chat-recipe.js)
   if (S.overlay === 'deeplink') html += deeplinkSheetHTML(); else deeplinkWhenClosed();   // ATO-556 (deeplink.js): a waiting link opens once the card is closed
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
@@ -7745,6 +7747,7 @@ function act(a) {
   // ATO-455: the row menu's Rename opens the inline box over the row's name (chat-rename.js).
   if (k === 'rename')    { close(); renameStart(v, 'row'); return; }
   if (k === 'export')    { close(); render(); chatExport(v); return; }   // ATO-1054 (chat-export.js)
+  if (k === 'recipe')    { recipeAct(v || '', close); return; }   // ATO-1072: Save as recipe and the Recipes gallery (chat-recipe.js)
   /* ATO-1034: folders (chat-folders.js). Folder ids never hold a colon, so
      `fput:<folder>:<chat>` splits at its first one; an empty folder is "no folder". */
   if (k === 'ftoggle')   { const f = folderById(FOLDERS.state, v); if (!f) return;
