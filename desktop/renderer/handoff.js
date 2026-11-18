@@ -97,6 +97,8 @@ function handoffSheetHTML() {
   return sheet('Continue from ' + label,
     body,
     '<button class="btn btn-g sm" data-act="handoff:refresh"' + (HANDOFF.loading ? ' disabled' : '') + '>' + ic('refresh') + 'Refresh</button>'
+    // ATO-1157: every session of both agents, by who is waiting (agent-hub.js).
+    + '<button class="btn btn-g sm" data-act="hub:open">Agents…</button>'
     + '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Close</button>',
     'sheet-handoff');
 }

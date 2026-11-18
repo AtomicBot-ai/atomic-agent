@@ -524,6 +524,8 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1014: the way back, a Markdown brief of a chat for Claude Code / Codex.
   handoffTo: (to: string, sessionId: string) => ipcRenderer.invoke("cli:handoffTo", to, sessionId),
   handoffReveal: (path: string) => ipcRenderer.invoke("cli:handoffReveal", path),
+  // ATO-1157: the Agents sheet's list of Claude Code / Codex sessions (main/agent-hub-ipc.ts).
+  hubScan: () => ipcRenderer.invoke("hub:scan"),
   // ATO-556: atomicagent:// links — main keeps what came in until the window takes it; `deeplink:new` says there is more.
   deeplinkTake: () => ipcRenderer.invoke("app:deeplinkTake"),
   onDeeplink: (cb: () => void) => on("deeplink:new", () => cb()),
