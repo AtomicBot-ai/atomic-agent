@@ -31,7 +31,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "browser.type",
-    summary: "Type into a snapshot element; optional Enter.",
+    summary: "Type into a snapshot element; optional Enter. Passwords, codes, captchas: browser.act take_over.",
     argsSchema: "{ ref: string, text: string, pressEnter?: boolean }",
   },
   {
@@ -66,8 +66,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.act",
     summary:
-      "More page actions by `action`: select (choose `values` in a <select> ref), upload (local `paths` into a file input ref; always asks), back, forward, key (press `key`, e.g. Enter, Escape, Tab, ArrowDown, optionally on a ref), hover (ref), dialog (answer the NEXT alert/confirm/prompt: `accept`, optional `text`; call it before the click that opens it), wait (`text` to appear, or with state \"hidden\" to go; a `ref`; or `ms`, at most 10000).",
-    argsSchema: `{ action: "select" | "upload" | "back" | "forward" | "key" | "hover" | "dialog" | "wait", ref?: string, values?: string[], paths?: string[], key?: string, accept?: boolean, text?: string, state?: "visible" | "hidden", ms?: number, timeoutMs?: number }`,
+      "More page actions by `action`: select (choose `values` in a <select> ref), upload (local `paths` into a file input ref; always asks), back, forward, key (press `key`, e.g. Enter, Escape, Tab, ArrowDown, optionally on a ref), hover (ref), dialog (answer the NEXT alert/confirm/prompt: `accept`, optional `text`; call it before the click that opens it), wait (`text` to appear, or with state \"hidden\" to go; a `ref`; or `ms`, at most 10000), take_over (hand the browser to the user for a login, password, one-time code or captcha: `reason` says what to do; waits for them, then re-reads the page).",
+    argsSchema: `{ action: "select" | "upload" | "back" | "forward" | "key" | "hover" | "dialog" | "wait" | "take_over", reason?: string, ref?: string, values?: string[], paths?: string[], key?: string, accept?: boolean, text?: string, state?: "visible" | "hidden", ms?: number, timeoutMs?: number }`,
   },
   {
     name: "browser.extract",

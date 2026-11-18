@@ -24,7 +24,7 @@ export function buildBrowserTypeTool(
   return {
     name: "browser.type",
     description:
-      "Type text into a textbox/searchbox addressed by `ref`. Optionally presses Enter.",
+      "Type text into a textbox/searchbox addressed by `ref`. Optionally presses Enter. For a password, a one-time code or a captcha use browser.act take_over: the user types it.",
     readonly: false,
     async run(rawArgs, ctx) {
       const ref = rawArgs.ref;

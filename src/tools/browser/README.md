@@ -53,6 +53,19 @@ A page on a blocked host is never captured. A capture is discarded, never saved,
 - Gates, before the backend acts: any action on a blocked host is refused. `upload` asks as `browser_secret` every time, with each file's name, size and full path in the preview; its paths are also checked like reads (`../read-scope/read-scope-targets.ts`), so the agent's own secret files and files outside the read scope ask first. `key` Enter / Space on a `ref` goes through the click / type gate above (Enter like `type` with Enter, Space like a click); without a `ref` the focused element cannot be read, so Enter / Space ask as `browser_commit`. Accepting a dialog asks as `browser_commit` (it may confirm a delete or a payment); dismissing does not. In the user's own Chrome these `browser_commit` prompts ask as `browser_secret`. select, hover, back, forward, wait and other keys do not ask.
 - After select, key, back and forward the landed page is re-checked against the block list, like after a click.
 
+## Take over
+
+`browser.act { action: "take_over", reason }` (`take-over.ts`, ATO-508): the agent hands the browser to the user for one step it should not do itself (log in, a password, a one-time code, a captcha), waits, and reads the page again when they hand it back. Same idea as OpenWork's browser task (Take over, then Resume) and the "take control" of Claude's and ChatGPT's agent modes.
+
+- The tab is made visible first (`BrowserBackend.prepareTakeOver`): the agent's own Chrome running without a window (`browser.headless: "auto"`, a background turn started it) is restarted with one and its pages reopened, even in a turn nobody watches; then the tab is brought to the front. In the user's own Chrome, or a `cdpUrl` Chrome, the tab is just brought to the front.
+- Then the turn waits on an approval of category `browser_take_over`, so every surface that shows approvals (the TUI, the desktop app, Telegram) shows it: "Take over: <reason>. Do it in the browser window, then answer Continue." Allow is Continue, Deny is Stop.
+- Only a person answers it: no approval level (bypass mode included), session grant, saved rule or risk reviewer does (`approval-level.ts`, like `user_question`).
+- Continue: the page is read again in the `interactive` view, into `### world`, through the same page-read check as `read_aria` (a blocked page is not read; in your own Chrome a new site asks first). Refs from before may be gone.
+- Stop: the model is told the user stopped, and not to retry or do the step itself. Like a denied approval, it stops the browser calls queued after it in the same batch.
+- Nobody to hand to returns at once and says so, never that the step was done: a fusion worker (it also never restarts the shared Chrome), a session whose prompts are refused, a prompt that timed out, `browser.headless: true` (no window to show).
+- `browser.type`'s description points the model here for passwords, codes and captchas; typing into such a field still asks as `browser_secret`.
+- Not yet: the browser panel inside the desktop window (`WebContentsView` over CDP), an agent cursor, and a dedicated Take over / Resume button in the desktop app.
+
 
 ## Extracting data
 
@@ -120,7 +133,7 @@ One honest, fixed identity for the browser the agent launches and for the curl t
 - One Chrome serves the whole process. A watched turn that finds the agent's Chrome running headless restarts it with a window and reopens its pages; a background turn that finds a window open uses it. A Chrome the agent did not start (`cdpUrl`, your own Chrome) is never restarted.
 - `true` / `false` (or env `ATOMIC_AGENT_BROWSER_HEADLESS`, which wins when set) always / never run headless.
 
-`browser.profile` (default `"agent"`, `temp-profiles.ts`): `"temp"` makes each chat browse in its own throwaway, logged-out profile: a separate browser context in the same Chrome, like an incognito window, with no cookies, storage or logins from the agent's profile and nothing written to disk. Per call, `browser.tabs { action: "new", profile: "temp" }` switches the chat to its throwaway profile and `profile: "agent"` back. A throwaway profile closes with its last tab, when more than four are open (oldest first), or with the browser. Not available in your own Chrome.
+`browser.profile` (default `"agent"`, `temp-profiles.ts`): `"temp"` makes each chat browse in its own throwaway, logged-out profile: a separate browser context in the same Chrome, like an incognito window, with no cookies, storage or logins from the agent's profile and nothing written to disk. Per call, `browser.tabs { action: "new", profile: "temp" }` switches the chat to its throwaway profile and `profile: "agent"` back. A throwaway profile closes with its last tab, when more than four are open (oldest first), or with the browser. When the agent's Chrome restarts to show a window (a background chat asks for one, or `take_over`), each throwaway profile comes back with its cookies, local storage and web tabs, held in memory only. Not available in your own Chrome.
 
 ## Fusion workers: parallel tabs
 

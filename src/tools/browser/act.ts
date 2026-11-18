@@ -21,6 +21,8 @@ import {
 import { gateBrowserAction } from "./gate-browser-action.js";
 import { recheckLandedPage } from "./gate-browser-url.js";
 import { keyCommits, parsePageAction } from "./page-action-args.js";
+import { AriaSnapshotStore } from "./aria-view.js";
+import { runTakeOver, TAKE_OVER_ACTION } from "./take-over.js";
 
 const TOOL = "browser.act";
 type Ctx = Pick<ToolContext, "sessionId" | "signal" | "workingDir">;
@@ -41,18 +43,23 @@ type Ctx = Pick<ToolContext, "sessionId" | "signal" | "workingDir">;
  *  - in the user's own Chrome every `browser_commit` asks as `browser_secret`.
  * select, hover, back, forward and wait do not ask. After select, key,
  * back and forward the landed page is re-checked against the block list.
+ *
+ * `take_over` (ATO-508, `take-over.ts`) is not a page action: it hands the
+ * tab to the person and waits for them to hand it back.
  */
 export function buildBrowserActTool(
   backend: BrowserBackend,
   dangerous: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  store: AriaSnapshotStore = new AriaSnapshotStore(),
 ): ToolDefinition {
   return {
     name: TOOL,
     description:
-      "More page actions: select (option values or labels in a <select>), upload (local files into a file input), back, forward, key (press a key, e.g. Enter, Escape, Tab, ArrowDown), hover, dialog (answer the next alert / confirm / prompt: call it BEFORE the click that opens one), wait (for text to appear or go, for a ref, or a pause in ms).",
+      "More page actions: select (option values or labels in a <select>), upload (local files into a file input), back, forward, key (press a key, e.g. Enter, Escape, Tab, ArrowDown), hover, dialog (answer the next alert / confirm / prompt: call it BEFORE the click that opens one), wait (for text to appear or go, for a ref, or a pause in ms), take_over (hand the browser to the user for a login, a password, a one-time code or a captcha, with `reason`; waits until they hand it back, then re-reads the page).",
     readonly: false,
     async run(rawArgs, ctx) {
+      if (rawArgs.action === TAKE_OVER_ACTION) return runTakeOver(backend, dangerous, policy, store, rawArgs, ctx);
       const input = parsePageAction(rawArgs);
       const files = input.action === "upload" ? resolveUploadFiles(input.paths, ctx.workingDir) : [];
       await backend.ensureReady();
