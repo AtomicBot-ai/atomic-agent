@@ -82,6 +82,7 @@ import type {
   SiteToolsListing,
   TabInfo,
   TabsInput,
+  TakeOverTarget,
   TypeInput,
 } from "./browser-backend.js";
 
@@ -181,6 +182,8 @@ export class PlaywrightBackend implements BrowserBackend {
   private lostConnection = false;
   /** Whether the Chrome the agent started is headless; `null` when it started none. */
   private launchedHeadless: boolean | null = null;
+  /** The next launch gets a window whatever the turn (a take over, ATO-508). */
+  private nextLaunchWindowed = false;
   private relaunching: Promise<void> | null = null;
   /** Per-session throwaway profiles (`browser.profile: "temp"`). */
   private readonly tempProfiles = new TempProfiles();
@@ -458,6 +461,28 @@ export class PlaywrightBackend implements BrowserBackend {
     return stopAnnotateOnPage(await this.requireActivePage());
   }
 
+  /**
+   * A take over needs a window even in a turn nobody watches (the person
+   * answers from Telegram, then walks to the machine): a headless Chrome
+   * the agent started is restarted with one, unless `browser.headless`
+   * is `true`. A Chrome the agent did not start (`cdpUrl`, the user's
+   * own) is used as it is; the user's own already has their windows.
+   */
+  async prepareTakeOver(): Promise<TakeOverTarget> {
+    await this.requireContext();
+    if (this.launchedHeadless === true) {
+      if (this.options.headless === true) {
+        const page = await this.requireActivePage();
+        return { url: page.url(), title: await page.title().catch(() => ""), window: false };
+      }
+      this.nextLaunchWindowed = true;
+      await this.relaunchWithWindow();
+    }
+    const page = await this.requireActivePage();
+    await page.bringToFront().catch(() => undefined);
+    return { url: page.url(), title: await page.title().catch(() => ""), window: true };
+  }
+
   async act(input: PageActionInput): Promise<PageActionResult> {
     return runPageAction(await this.requireActivePage(), input);
   }
@@ -724,7 +749,10 @@ export class PlaywrightBackend implements BrowserBackend {
    * "spawn + attach" and "attach to user's browser" modes.
    */
   private async launchOwnChrome(): Promise<string> {
-    const headless = resolveLaunchHeadless(this.options.headless, currentBrowserScope());
+    const headless = this.nextLaunchWindowed
+      ? false
+      : resolveLaunchHeadless(this.options.headless, currentBrowserScope());
+    this.nextLaunchWindowed = false;
     if (this.options.launchChrome) {
       const cdpUrl = await this.options.launchChrome({ headless });
       this.launchedHeadless = headless;
@@ -823,7 +851,8 @@ export class PlaywrightBackend implements BrowserBackend {
 
   /**
    * Restart the agent's own Chrome with a window, reopening the pages it
-   * had (throwaway profiles are not carried over). A background turn
+   * had. Throwaway profiles are carried over too: their cookies and local
+   * storage (in memory, as before) and their web tabs (ATO-508). A background turn
    * still using the old pages sees them gone and reads the page again.
    * A fusion worker's tab comes back as that worker's, so the chat does
    * not see it and the worker's end still closes it (ATO-961).
@@ -834,6 +863,10 @@ export class PlaywrightBackend implements BrowserBackend {
         const reopen = (this.context?.pages() ?? [])
           .filter((page) => /^https?:/i.test(page.url()))
           .map((page) => ({ url: page.url(), owner: this.pageOwners.get(page) }));
+        // Throwaway profiles live only in this Chrome: carry their cookies,
+        // storage and tabs over, or a chat browsing logged-out would come
+        // back to a blank window (ATO-508, a take over in such a chat).
+        const temp = await this.tempProfiles.snapshot();
         await this.shutdown();
         await this.ensureReady();
         const context = this.context as PwBrowserContext | null;
@@ -843,6 +876,8 @@ export class PlaywrightBackend implements BrowserBackend {
           if (owner !== undefined) this.claim(page, owner);
           await page.goto(url).catch(() => undefined);
         }
+        const browser = context.browser();
+        if (browser) await this.tempProfiles.restore(browser, temp);
       })().finally(() => {
         this.relaunching = null;
       });

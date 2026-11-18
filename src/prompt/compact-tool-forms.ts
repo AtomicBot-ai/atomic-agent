@@ -43,7 +43,7 @@ const FORMS: Record<string, CompactToolForm> = {
   "browser.scroll": { summary: "Scroll the page; read_aria after if needed.", tier: RARE },
   "browser.act": {
     summary:
-      "select, upload, back, forward, key, hover, dialog (before the click that opens it) or wait, by `action`.",
+      "select, upload, back, forward, key, hover, dialog (before the click that opens it), wait, or take_over (user logs in / solves a captcha), by `action`.",
     tier: RARE,
   },
   "browser.screenshot": {

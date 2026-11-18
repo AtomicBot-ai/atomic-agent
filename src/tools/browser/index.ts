@@ -191,7 +191,7 @@ export function buildBrowserTools(
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
     buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
-    buildBrowserActTool(backend, dangerous, policy),
+    buildBrowserActTool(backend, dangerous, policy, store),
     buildBrowserExtractTool(backend, policy, extractModel, dangerous),
     buildBrowserSiteToolsTool(backend, dangerous, policy),
     buildBrowserDebugTool(backend, policy),
