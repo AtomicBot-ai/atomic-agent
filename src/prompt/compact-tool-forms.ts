@@ -63,7 +63,7 @@ const FORMS: Record<string, CompactToolForm> = {
     tier: RARE,
   },
   "browser.annotate": {
-    summary: "The user pins comments on page elements: start, then read (selectors, styles, boxes), stop.",
+    summary: "The user pins page elements (says in chat what to change): start, then read (selectors, styles, boxes), stop.",
     tier: RARE,
   },
   "os.shell.run": {

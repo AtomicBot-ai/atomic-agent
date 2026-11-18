@@ -22,7 +22,7 @@ export const BROWSER_ANNOTATE_TOOL = "browser.annotate";
 
 /** Source named on the framing of the pins: element details come from the page. */
 export const ANNOTATE_SOURCE =
-  "pins the user put on a web page in the browser (the comments are the user's; element text, selectors and styles come from the page)";
+  "pins the user put on a web page in the browser (element text, selectors and styles come from the page; what to change is in the user's chat messages)";
 
 /** Element crops taken in one read. */
 export const MAX_ANNOTATE_CROPS = 12;
@@ -74,12 +74,14 @@ function refusal(verdict: PageReadVerdict, url: string, after: boolean): Compres
  * (ATO-518): the user marks up the page in the agent's browser window.
  *
  * - `start` puts an overlay on the active page (`annotate-in-page.ts`):
- *   the user clicks an element, types what should change, and a numbered
- *   pin stays on it. A floating "Annotate" toggle on the page (badge: the
- *   pin count) turns picking off and on again. While picking, clicks on the
+ *   the user clicks an element and a numbered pin stays on it. What should
+ *   change about each pin is said in the agent's chat, not on the page
+ *   (ATO-1543: anything typed into the page can be read by the page's own
+ *   scripts, isolated world or not). A floating "Annotate" toggle on the
+ *   page (badge: the pin count) turns picking off and on again. While picking, clicks on the
  *   page are swallowed (a pin never presses a button), so browser.click
  *   should wait until `read` or `stop`.
- * - `read` returns every pin: the comment, a CSS selector, the box, key
+ * - `read` returns every pin: its number, a CSS selector, the box, key
  *   computed styles and, with `crops`, a JPEG of the element saved under
  *   the temp folder (like `browser.screenshot`; secret fields boxed
  *   over). Pins are grouped by the DOM subtree they share
@@ -87,9 +89,9 @@ function refusal(verdict: PageReadVerdict, url: string, after: boolean): Compres
  * - `stop` removes the overlay and forgets the pins.
  *
  * The overlay runs in an isolated world, so the page cannot read the
- * saved pins or forge them; a navigation or reload drops them. The page
- * can see the keys while a comment is typed (see `annotate-in-page.ts`). Reading is a page read
- * (`gate-page-read.ts`): a blocked page is refused, and in the user's own
+ * saved pins or forge them; a navigation or reload drops them. Nothing is
+ * typed on the page, so there is nothing for it to overhear. Reading is a
+ * page read (`gate-page-read.ts`): a blocked page is refused, and in the user's own
  * Chrome a site not opened this session asks first. Nothing is clicked
  * or typed on the site, so there is no other prompt.
  */
@@ -102,7 +104,7 @@ export function buildBrowserAnnotateTool(
   return {
     name: BROWSER_ANNOTATE_TOOL,
     description:
-      "Let the user mark up the open page: `start` shows an overlay where they click elements and type what to change; `read` returns each pin's comment, CSS selector, box and styles (`crops: true` adds element pictures), grouped by page area; `stop` removes it.",
+      "Let the user mark up the open page: `start` shows an overlay where they click elements to drop numbered pins (they say in chat what to change for each number); `read` returns each pin's CSS selector, box and styles (`crops: true` adds element pictures), grouped by page area; `stop` removes it.",
     readonly: false,
     untrustedOutput: ANNOTATE_SOURCE,
     async run(rawArgs, ctx) {
@@ -145,8 +147,8 @@ export function buildBrowserAnnotateTool(
           started.started
             ? `annotate overlay is on ${started.url}.`
             : `annotate overlay was already on ${started.url}; picking resumed (${started.pins} pin(s) so far).`,
-          "In the browser window the user clicks an element, types what should change and saves; each pin gets a number. The Annotate button on the page (it shows the pin count) turns picking off and on.",
-          "Tell the user that, then wait for them; when they say they are done, call browser.annotate { \"action\": \"read\" } (add \"crops\": true for pictures of the elements).",
+          "In the browser window the user clicks elements; each gets a numbered pin (click a pin to remove it). The Annotate button on the page (it shows the pin count) turns picking off and on.",
+          "Tell the user that, and to write what should change for each pin number here in the chat, not on the page (the site could read text typed there). Then wait; when they are done, call browser.annotate { \"action\": \"read\" } (add \"crops\": true for pictures of the elements).",
           "Until then do not click or type on this page: the overlay catches clicks. Navigating away drops the pins.",
         ];
         return compressToolResult(
@@ -203,7 +205,7 @@ export function buildBrowserAnnotateTool(
       const byId = new Map(pins.map((pin) => [pin.id, pin] as const));
       const lines = [
         `${pins.length} pin(s) on ${read.url}${read.picking ? " (the user may still add more)" : ""}, in ${groups.length} area(s) of the page.`,
-        "Each comment is the user's request for that element. Pins in one area share a DOM subtree; different areas can be edited separately.",
+        "The pins carry no text: what to change for each pin number is in the user's chat messages. If they have not said it for a pin, ask them in chat; do not guess. Pins in one area share a DOM subtree; different areas can be edited separately.",
       ];
       groups.forEach((group, index) => {
         lines.push(`Area ${index + 1}: ${group.region} (pins ${group.pinIds.join(", ")})`);
