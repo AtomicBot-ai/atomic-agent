@@ -30,7 +30,11 @@ export interface ScenarioTarget {
 }
 
 interface StepBase {
-  /** Page the step ran on when it was recorded (informational). */
+  /**
+   * Page the step ran on when it was recorded. On replay a step that acts
+   * on a page stops (`origin_changed`) unless the browser is on this URL's
+   * origin (scheme, host, port); the path may differ.
+   */
   url?: string;
   /** Digest of that page's snapshot when it was recorded (informational, never checked). */
   pageDigest?: string;

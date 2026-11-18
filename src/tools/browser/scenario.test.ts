@@ -251,6 +251,39 @@ describe("browser.scenario: replay", () => {
     expect(backend.navigations).toHaveLength(0);
   });
 
+  it("stops before typing when a redirect put the replay on another site", async () => {
+    writeScenario("sign-in", [
+      { kind: "navigate", url: "https://bank.example/login" },
+      { kind: "type", url: "https://bank.example/login", target: { role: "textbox", name: "Email" }, text: "me@x.com" },
+    ]);
+    const backend = new PageBackend();
+    backend.redirects.set("https://bank.example/login", "https://evil.example/login");
+    backend.page = '- textbox "Email" [ref=e1]';
+    backend.elements.set("e1", EMAIL);
+    const ran = await toolsByName(backend, recordingGate(true).options).scenario({ action: "run", name: "sign-in", timeoutMs: 0 });
+    expect(ran.status).toBe("error");
+    expect(ran.details).toMatchObject({
+      reason: "origin_changed",
+      failedStep: 2,
+      recordedOrigin: "https://bank.example",
+      origin: "https://evil.example",
+    });
+    expect(backend.types).toHaveLength(0);
+  });
+
+  it("allows another path on the recorded site", async () => {
+    writeScenario("sign-in", [
+      { kind: "type", url: "https://bank.example/login", target: { role: "textbox", name: "Email" }, text: "me@x.com" },
+    ]);
+    const backend = new PageBackend();
+    backend.url = "https://bank.example/login?next=/home";
+    backend.page = '- textbox "Email" [ref=e1]';
+    backend.elements.set("e1", EMAIL);
+    const ran = await toolsByName(backend, recordingGate(true).options).scenario({ action: "run", name: "sign-in", timeoutMs: 0 });
+    expect(ran.status).toBe("ok");
+    expect(backend.types).toHaveLength(1);
+  });
+
   it("stops at a step whose element is missing, naming the step", async () => {
     writeScenario("checkout", [
       { kind: "navigate", url: "https://shop.example/cart" },

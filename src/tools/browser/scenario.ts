@@ -302,6 +302,16 @@ function callFor(
   }
 }
 
+/** `scheme://host:port` of a web URL, or `null` for anything else (`about:blank`, junk). */
+export function originOf(url: string): string | null {
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.origin : null;
+  } catch {
+    return null;
+  }
+}
+
 async function replay(
   deps: BrowserScenarioDeps,
   args: Record<string, unknown>,
@@ -341,6 +351,27 @@ async function replay(
         reason,
         ...extra,
       });
+    // Without a model watching, nothing else notices that a redirect or a
+    // changed site put the replay on another site: a plain text step would
+    // type the recorded text (an email, an address) into that site's page.
+    // So a step that acts on a page must be on the site it was recorded on.
+    if (step.kind !== "navigate" && step.kind !== "search" && step.url !== undefined) {
+      const recorded = originOf(step.url);
+      if (recorded !== null) {
+        let here: string | null = null;
+        try {
+          here = originOf(await deps.backend.currentUrl());
+        } catch {
+          here = null;
+        }
+        if (here !== recorded) {
+          return stopped(`the page is on ${here ?? "an unknown page"}, the step was recorded on ${recorded}`, "origin_changed", {
+            recordedOrigin: recorded,
+            ...(here !== null ? { origin: here } : {}),
+          });
+        }
+      }
+    }
     let ref: string | undefined;
     const target = "target" in step ? step.target : undefined;
     if (target !== undefined) {
