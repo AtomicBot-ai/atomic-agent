@@ -13,7 +13,8 @@
   "files": [
     "dist/**",
     "grammars/**",
-    "assets/ai-models/**"
+    "assets/ai-models/**",
+    "assets/hermes-plugin-bridge/**"
   ],
   "engines": {
     "node": ">=25.7.0"
