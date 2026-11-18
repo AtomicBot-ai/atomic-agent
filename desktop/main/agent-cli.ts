@@ -13,7 +13,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, unlinkSync, wr
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 
-import { commandOf, resolveBinary } from "./agent-client.js";
+import { commandOfAsync, resolveBinary } from "./agent-client.js";
 // r5 item 9 — every `atag` subprocess runs on the DESKTOP's state directory.
 import { AGENT_HOME_DIRNAME, agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor, managedDataDir } from "./local-llama-key.js";
@@ -2650,7 +2650,7 @@ export function daemonPidsIn(dataDir: string, includeCore = false): number[] {
  * still a llama-server (a pid reused by anything else is never touched).
  * Answers the pids it killed.
  */
-export function killDaemonLeftovers(pids: number[]): number[] {
+export async function killDaemonLeftovers(pids: number[]): Promise<number[]> {
   const killed: number[] = [];
   for (const pid of new Set(pids)) {
     try {
@@ -2658,7 +2658,8 @@ export function killDaemonLeftovers(pids: number[]): number[] {
     } catch {
       continue;   // gone already
     }
-    const command = commandOf(pid);
+    // ATO-921: one PowerShell per pid on Windows; never on the main thread.
+    const command = await commandOfAsync(pid);
     if (!command || !/llama-server/i.test(command)) continue;
     try {
       process.kill(pid, "SIGKILL");
@@ -3696,7 +3697,7 @@ export async function stopEmbeddingServer(): Promise<{ ok: boolean; error?: stri
   }
   const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
   if (Number.isInteger(pid) && pid > 1 && alive()) {
-    const command = commandOf(pid);
+    const command = await commandOfAsync(pid);
     if (command && /llama-server/i.test(command)) {
       try { process.kill(pid, "SIGTERM"); } catch { /* gone in between */ }
       for (let i = 0; i < 15 && alive(); i++) await new Promise((r) => setTimeout(r, 200));
