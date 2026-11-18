@@ -84,7 +84,12 @@ describe("buildPptx", () => {
     const image: PptxImageInput = { data: PNG_1X1, info: sniffImage(PNG_1X1)!, name: "chart.png" };
     const spec = deck({
       ...SAMPLE,
-      slides: [...SAMPLE.slides, { title: "Chart", bullets: ["See right"], image: "chart.png", notes: "n" }],
+      slides: [
+        ...SAMPLE.slides,
+        { title: "Chart", bullets: ["See right"], image: "chart.png", notes: "n" },
+        { title: "Numbers", table: [["Region", "Q3"], ["EU", 12]] },
+        { title: "Trend", bullets: ["Up"], chart: { type: "line", categories: ["Q1", "Q2"], series: [{ name: "EU", values: [1, 2] }] } },
+      ],
     });
     const zip = await open((await buildPptx({ spec, images: new Map([[3, image]]), now: NOW })).data);
     const names = Object.keys(zip.files).filter((name) => !zip.files[name]!.dir);
@@ -112,6 +117,85 @@ describe("buildPptx", () => {
     const slide = await text(zip, "ppt/slides/slide4.xml");
     expect(slide).toContain('r:embed="rId3"');
     expect(slide).toContain('descr="chart.png"');
+    expect(zip.file("ppt/charts/chart1.xml")).not.toBeNull();
+    expect(zip.file("ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx")).not.toBeNull();
+    expect(contentTypes).toContain('<Default Extension="xlsx"');
+  });
+
+  it("writes a table as a native a:tbl with the header row first", async () => {
+    const spec = deck({
+      slides: [
+        {
+          title: "Pricing",
+          bullets: ["Two tiers"],
+          table: [["Plan", "Price", "Seats"], ["Free", 0], ["Pro & Team", 20, "<10"]],
+        },
+      ],
+    });
+    const built = await buildPptx({ spec, now: NOW });
+    expect(built.tableCount).toBe(1);
+    const zip = await open(built.data);
+    const slide = await text(zip, "ppt/slides/slide1.xml");
+    expect(XMLValidator.validate(slide)).toBe(true);
+    expect(slide).toContain('<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">');
+    expect(slide).toContain('<a:tblPr firstRow="1" bandRow="1"><a:tableStyleId>{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}</a:tableStyleId>');
+    expect(slide.match(/<a:gridCol /g)).toHaveLength(3);
+    expect(slide.match(/<a:tr /g)).toHaveLength(3);
+    // The short row is padded, so every row has three cells.
+    expect(slide.match(/<a:tc>/g)).toHaveLength(9);
+    expect(slide).toContain("<a:t>Pro &amp; Team</a:t>");
+    expect(slide).toContain("<a:t>&lt;10</a:t>");
+    // Bullets keep the left half; the table takes the right one.
+    expect(slide).toContain('<p:ph type="body" idx="1"/>');
+    const result = await pptxExtractor({ data: built.data, sourcePath: "deck.pptx" });
+    expect(result.text).toContain("Plan");
+    expect(result.text).toContain("Pro & Team");
+  });
+
+  it("writes a chart part with its data cached and an embedded workbook for Edit Data", async () => {
+    const spec = deck({
+      slides: [
+        { title: "Intro" },
+        {
+          title: "Revenue",
+          chart: {
+            type: "column",
+            title: "Revenue by quarter",
+            categories: ["Q1", "Q2", "Q3"],
+            series: [
+              { name: "EU", values: [10, 12, 15] },
+              { name: "US", values: [8, 9, 11] },
+            ],
+          },
+          notes: "Point at Q3.",
+        },
+      ],
+    });
+    const built = await buildPptx({ spec, now: NOW });
+    expect(built.chartCount).toBe(1);
+    const zip = await open(built.data);
+    const slide = await text(zip, "ppt/slides/slide2.xml");
+    expect(slide).toContain('<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">');
+    expect(slide).toMatch(/<c:chart xmlns:c="[^"]+" r:id="rId4"\/>/);
+    const slideRels = await text(zip, "ppt/slides/_rels/slide2.xml.rels");
+    expect(slideRels).toContain(
+      'Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"',
+    );
+    const chart = await text(zip, "ppt/charts/chart1.xml");
+    expect(XMLValidator.validate(chart)).toBe(true);
+    expect(chart).toContain('<c:barDir val="col"/>');
+    expect(chart).toContain("<c:f>Sheet1!$C$2:$C$4</c:f>");
+    expect(chart).toContain("<a:t>Revenue by quarter</a:t>");
+    expect(await text(zip, "ppt/charts/_rels/chart1.xml.rels")).toContain(
+      'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/package" Target="../embeddings/Microsoft_Excel_Worksheet1.xlsx"',
+    );
+    expect(await text(zip, "[Content_Types].xml")).toContain(
+      '<Override PartName="/ppt/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>',
+    );
+    const workbook = await JSZip.loadAsync(await zip.file("ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx")!.async("nodebuffer"));
+    expect(await workbook.file("xl/worksheets/sheet1.xml")!.async("text")).toContain('<c r="C4"><v>11</v></c>');
+    // A chart-only slide is not a title slide: the title keeps its place at the top.
+    expect(slide).toContain('name="Accent 3"');
   });
 
   it("applies the theme and an accent override to the master and theme parts", async () => {
