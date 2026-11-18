@@ -518,3 +518,39 @@ describe("parseToolCalls", () => {
     expect(out.calls).toHaveLength(1);
   });
 });
+
+describe("parseToolCalls on call shapes written without our grammar (ATO-1675)", () => {
+  it("reads llama.cpp's generic {tool_calls: [...]} envelope as a batch", () => {
+    const out = parseToolCalls(
+      '{"tool_calls":[{"name":"fs.read","arguments":{"path":"a.txt"}},{"name":"fs.read","arguments":{"path":"b.txt"}}]}',
+    );
+    expect(out.kind).toBe("batch");
+    expect(out.calls).toEqual([
+      { tool: "fs.read", args: { path: "a.txt" } },
+      { tool: "fs.read", args: { path: "b.txt" } },
+    ]);
+  });
+
+  it("reads OpenAI {type, function: {name, arguments}} entries, arguments as a JSON string", () => {
+    const out = parseToolCalls(
+      '[{"id":"call_1","type":"function","function":{"name":"fs.read","arguments":"{\\"path\\":\\"a.txt\\"}"}}]',
+    );
+    expect(out.calls).toEqual([{ tool: "fs.read", args: { path: "a.txt" } }]);
+  });
+
+  it("finds an OpenAI-shaped call after prose and inside a code fence", () => {
+    const out = parseToolCalls(
+      'Sure, reading it now.\n```json\n{"tool_calls":[{"type":"function","function":{"name":"fs.read","arguments":"{}"}}]}\n```',
+    );
+    expect(out.calls).toEqual([{ tool: "fs.read", args: {} }]);
+  });
+
+  it("leaves our own shape untouched, even with a tool_calls or function argument", () => {
+    const out = parseToolCalls(
+      '[{"tool":"notes.save","args":{"tool_calls":[1],"function":{"name":"x"}}}]',
+    );
+    expect(out.calls).toEqual([
+      { tool: "notes.save", args: { tool_calls: [1], function: { name: "x" } } },
+    ]);
+  });
+});

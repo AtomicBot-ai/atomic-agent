@@ -39,6 +39,7 @@ export function parseStepBatch(args: StepBatchParsingArgs): ToolCallBatchParseRe
     thinkingOff,
   );
   parsed = admitRepairedJson(args, completion, parsed);
+  parsed = admitProseWithoutGrammar(args, completion, parsed);
   if (parsed.ok && args.rewrite !== undefined) {
     const rewritten = args.rewrite(parsed.batch);
     parsed =
@@ -154,6 +155,34 @@ export function finishStepBatchRepair(
     parsed = { ok: true, batch: fallback };
   }
   return parsed;
+}
+
+/**
+ * A completion the server produced WITHOUT the grammar (ATO-1675: it
+ * refused ours, so the client stopped sending it) is free text, and
+ * prose there is the model's answer, not a botched call: read it as a
+ * `reply` at once, the way the native-tools path reads content that
+ * carries no tool call, instead of spending a repair round-trip that,
+ * with no grammar either, ends in the same prose. A body that opens a
+ * JSON value still goes to repair (`replyFallbackBatch` returns null).
+ */
+function admitProseWithoutGrammar(
+  args: Pick<StepBatchParsingArgs, "ctx" | "deps" | "assumesOpenReasoning">,
+  completion: CompletionResult,
+  parsed: ToolCallBatchParseResult,
+): ToolCallBatchParseResult {
+  if (parsed.ok || completion.grammarSkipped !== true) return parsed;
+  const fallback = replyFallbackBatch(
+    completion,
+    args.deps.profile,
+    args.assumesOpenReasoning(completion),
+  );
+  if (fallback === null) return parsed;
+  args.deps.logger?.info("reading a reply served without the grammar", {
+    sessionId: args.ctx.session.id,
+    stepIndex: args.ctx.stepIndex,
+  });
+  return { ok: true, batch: fallback };
 }
 
 /**

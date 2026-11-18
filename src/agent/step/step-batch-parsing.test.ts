@@ -1,0 +1,81 @@
+import { describe, expect, it } from "vitest";
+import { compressToolResult } from "../../compressor/result-compressor.js";
+import type { ToolCallBatch } from "../../llm/grammar/tool-call-grammar.js";
+import type { CompletionResult } from "../../llm/llama-server-client.js";
+import { PLAIN_INSTRUCT_PROFILE } from "../../llm/model-profile.js";
+import { ToolRegistry } from "../../tools/tool-registry.js";
+import type { StepBatchPolicy } from "./step-batch-policy.js";
+import { parseStepBatch } from "./step-batch-parsing.js";
+import type { StepContext, StepDependencies } from "./step-contract.js";
+import type { PreparedStepInference } from "./step-inference.js";
+
+function registryWith(...names: string[]): ToolRegistry {
+  const registry = new ToolRegistry();
+  for (const name of names) {
+    registry.register({
+      name,
+      description: name,
+      readonly: true,
+      run: async () => compressToolResult({ tool: name, status: "ok", output: "" }),
+    });
+  }
+  return registry;
+}
+
+function run(content: string, extra: Partial<CompletionResult> = {}) {
+  const messages: string[] = [];
+  const log = (message: string) => {
+    messages.push(message);
+  };
+  const ctx = { session: { id: "s-1" }, stepIndex: 1, toolDescriptors: [] } as unknown as StepContext;
+  const deps = {
+    profile: PLAIN_INSTRUCT_PROFILE,
+    toolTransport: "grammar",
+    toolCallAdapter: null,
+    registry: registryWith("os.fs.read", "reply"),
+    logger: { info: log, warn: log, error: log, debug: log },
+  } as unknown as StepDependencies;
+  const prepared = { stepDescriptors: [], stepToolDescriptors: [], thinkingOff: false } as unknown as PreparedStepInference;
+  const policy = {
+    takeProgressNote: (batch: ToolCallBatch) => ({ batch, note: undefined }),
+    setProgressNote: () => {},
+    trySplitPureReadWaves: () => null,
+    tryTrimApprovalGated: () => null,
+  } as unknown as StepBatchPolicy;
+  const completion = {
+    content,
+    reasoningContent: "",
+    stop: true,
+    truncated: false,
+    ...extra,
+  } as unknown as CompletionResult;
+  const parsed = parseStepBatch({ ctx, deps, prepared, completion, policy, assumesOpenReasoning: () => false });
+  return { parsed, messages };
+}
+
+describe("parseStepBatch on a completion served without the grammar (ATO-1675)", () => {
+  it("reads prose as the model's reply at once", () => {
+    const { parsed, messages } = run("The file has three lines.", { grammarSkipped: true });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) {
+      expect(parsed.batch.calls).toEqual([{ tool: "reply", args: { text: "The file has three lines." } }]);
+    }
+    expect(messages).toContain("reading a reply served without the grammar");
+  });
+
+  it("still parses a call the model wrote", () => {
+    const { parsed } = run('Reading it.\n[{"tool":"os.fs.read","args":{"path":"a.ts"}}]', { grammarSkipped: true });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.batch.calls).toEqual([{ tool: "os.fs.read", args: { path: "a.ts" } }]);
+  });
+
+  it("sends a botched JSON body to repair, never echoing it as a reply", () => {
+    const { parsed } = run('[{"tool": "os.fs.read", "args": ', { grammarSkipped: true, truncated: true });
+    expect(parsed.ok).toBe(false);
+  });
+
+  it("keeps the grammar path as it was: prose under a grammar is a parse failure for repair", () => {
+    const { parsed } = run("The file has three lines.");
+    expect(parsed.ok).toBe(false);
+  });
+});

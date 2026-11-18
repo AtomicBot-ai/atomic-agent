@@ -215,7 +215,9 @@ export function parseToolCalls(
 ): ToolCallBatch {
   const extracted = extractReasoning(raw, options);
   const repair: RepairState = { enabled: parseOptions.repairJson === true };
-  const { parsed, kind } = parseRoot(extracted.body, repair);
+  const { parsed, kind } = unwrapToolCallsEnvelope(
+    parseRoot(extracted.body, repair),
+  );
 
   const reasoning = extracted.reasoning;
   const repaired = (): Pick<ToolCallBatch, "jsonRepair"> =>
@@ -308,10 +310,59 @@ function parseRoot(
   }
 }
 
+/**
+ * Two call shapes a model writes when nothing holds it to ours (a
+ * server that refused the grammar, ATO-1675, or one that ignores it),
+ * read as the calls they name:
+ *
+ *  - llama.cpp's own generic tool-call format, the root
+ *    `{"tool_calls": [{"name": ..., "arguments": ...}]}` (common/chat.cpp,
+ *    `COMMON_CHAT_FORMAT_GENERIC`);
+ *  - the OpenAI entry `{"type": "function", "function": {"name": ...,
+ *    "arguments": "<json>"}}` (`OpenAiToolCall`, the shape our native
+ *    transport reads), alone or in either array.
+ *
+ * Only where the object names no call itself: our grammar always writes
+ * `tool` at the top, so a grammar-held reply never reaches either branch.
+ */
+function unwrapToolCallsEnvelope(root: {
+  parsed: unknown;
+  kind: "object" | "array";
+}): { parsed: unknown; kind: "object" | "array" } {
+  if (root.kind !== "object") return root;
+  const record = asRecord(root.parsed);
+  if (record === null || hasOwnCallName(record)) return root;
+  const calls = record.tool_calls;
+  return Array.isArray(calls) && calls.length > 0
+    ? { parsed: calls, kind: "array" }
+    : root;
+}
+
+/** The `function` object of an OpenAI tool-call entry, else the entry itself. */
+function unwrapFunctionEntry(payload: Record<string, unknown>): Record<string, unknown> {
+  if (hasOwnCallName(payload)) return payload;
+  const inner = asRecord(payload.function);
+  return inner !== null && hasOwnCallName(inner) ? inner : payload;
+}
+
+function hasOwnCallName(record: Record<string, unknown>): boolean {
+  return ["tool", "name", "action"].some((key) => {
+    const name = record[key];
+    return typeof name === "string" && name.trim().length > 0;
+  });
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 function normalizeToolCall(
-  payload: Record<string, unknown>,
+  entry: Record<string, unknown>,
   repair: RepairState = { enabled: false },
 ): ToolCallPayload {
+  const payload = unwrapFunctionEntry(entry);
   const tool = readToolName(payload);
   if (tool.length === 0) {
     throw new ToolCallParseError(
@@ -545,21 +596,23 @@ function collectRootSpans(input: string): {
   return { spans, sawOpen };
 }
 
-/** Shape gate: a call object, or a non-empty array of call objects. */
+/**
+ * Shape gate: a call object, a non-empty array of call objects, or
+ * llama.cpp's `{"tool_calls": [...]}` envelope of them
+ * (`unwrapToolCallsEnvelope`).
+ */
 function looksLikeToolCallRoot(value: unknown): boolean {
   if (Array.isArray(value)) {
     return value.length > 0 && value.every(isToolCallObject);
   }
-  return isToolCallObject(value);
+  if (isToolCallObject(value)) return true;
+  const calls = asRecord(value)?.tool_calls;
+  return Array.isArray(calls) && calls.length > 0 && calls.every(isToolCallObject);
 }
 
 function isToolCallObject(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return ["tool", "name", "action"].some((key) => {
-    const name = record[key];
-    return typeof name === "string" && name.trim().length > 0;
-  });
+  const record = asRecord(value);
+  return record !== null && hasOwnCallName(unwrapFunctionEntry(record));
 }
 
 function escapeRegex(text: string): string {
