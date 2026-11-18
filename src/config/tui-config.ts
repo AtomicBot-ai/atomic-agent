@@ -98,6 +98,14 @@ export interface TuiConfig {
    * display/input preference only; the agent never reads it.
    */
   vimMode: boolean;
+  /**
+   * Verbose steps (ATO-34): one plain line under every finished tool card
+   * in the terminal chat, with the step number, the call and what came
+   * back. Off by default; `/verbose` flips it. Additive and unversioned, a
+   * file without it reads `false`. A display preference only; the agent
+   * never reads it.
+   */
+  verboseSteps: boolean;
   onboarding: OnboardingState;
   sessionRail: SessionRailConfig;
   notify: TuiNotifyConfig;
@@ -111,6 +119,7 @@ export function createTuiDefaults(): TuiConfig {
     showSteps: false,
     nextStepSuggestions: false,
     vimMode: false,
+    verboseSteps: false,
     notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
@@ -282,6 +291,10 @@ export function parseTuiConfig(
     vimMode: parseBool(
       tui.vimMode ?? readDefaults().vimMode,
       "tui.vimMode",
+    ),
+    verboseSteps: parseBool(
+      tui.verboseSteps ?? readDefaults().verboseSteps,
+      "tui.verboseSteps",
     ),
     onboarding: parseOnboardingStateWithDefaults(
       tui.onboarding,

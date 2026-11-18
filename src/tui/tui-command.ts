@@ -41,6 +41,7 @@ import {
   persistUserTuiMouse,
   persistUserTuiShowSteps,
   persistUserTuiVimMode,
+  persistUserTuiVerboseSteps,
   persistUserTuiTheme,
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
@@ -209,6 +210,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
     showSteps: config.tui.showSteps,
     // Vim keys in the composer, off unless `/vim` turned them on (ATO-662).
     vimMode: config.tui.vimMode,
+    // Step notes under tool cards, off unless `/verbose` turned them on (ATO-34).
+    verboseSteps: config.tui.verboseSteps,
     // The composer's route controls read these on the home screen, and
     // the local-models slice only refreshes while the Models tab is
     // open — unseeded, a managed install mislabels itself `custom`
@@ -617,6 +620,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           persistThemeChoice(themeName, bus),
         onShowStepsPersistRequested: (on) => persistShowSteps(on, bus),
         onVimModePersistRequested: (on) => persistVimMode(on, bus),
+        onVerboseStepsPersistRequested: (on) => persistVerboseSteps(on, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) =>
@@ -1331,6 +1335,22 @@ function persistVimMode(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     bus.emit({ type: "runtime_info", line: `vim setting not saved: ${msg}` });
+  }
+}
+
+/**
+ * `/verbose` already said in the chat what changed, so only a failed
+ * write is reported: the choice then lasts for this run only.
+ */
+function persistVerboseSteps(
+  on: boolean,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserTuiVerboseSteps(on);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `verbose setting not saved: ${msg}` });
   }
 }
 

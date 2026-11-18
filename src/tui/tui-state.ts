@@ -9,6 +9,7 @@ import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 import type { SessionUsageState } from "../session/usage-meter.js";
+import type { StepSpendByStep } from "./step-spend.js";
 import type { StepSpeed } from "../llm/step-speed.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
@@ -234,6 +235,13 @@ export interface ToolCardEntry {
   details?: Record<string, unknown>;
   startedAt: number;
   finishedAt: number | null;
+  /**
+   * What this card's step cost in dollars (ATO-34, `/why`), stamped when
+   * the card finishes and only when every model call of the step was
+   * priced. Absent for a local or plan-billed step, an unpriced model, or
+   * a card rebuilt from a saved session.
+   */
+  stepCostUsd?: number;
 }
 
 /**
@@ -672,9 +680,17 @@ export interface TuiState {
   /**
    * Verbose steps (ATO-34): every finished tool card carries one plain
    * line under its header: step number, the call with its args, and what
-   * came back. Flipped with `/verbose`; lives for this TUI run only.
+   * came back. Seeded from `tui.verboseSteps` and flipped with
+   * `/verbose` (persisted).
    */
   verboseSteps: boolean;
+  /**
+   * Spend of each step of the running turn (ATO-34, `/why`), keyed by
+   * step index, from the `usage_updated` readings that arrive while it
+   * runs. Reset when a turn starts and when the session on screen
+   * changes. See `step-spend.ts`.
+   */
+  stepSpend: StepSpendByStep;
   /**
    * Vim keys in the composer (ATO-662). Seeded from `tui.vimMode` and
    * flipped with `/vim on|off` (persisted). The NORMAL / INSERT mode
@@ -974,6 +990,8 @@ export interface InitialTuiLayoutOptions {
   showSteps?: boolean;
   /** Seeds {@link TuiState.vimMode} from `tui.vimMode`. */
   vimMode?: boolean;
+  /** Seeds {@link TuiState.verboseSteps} from `tui.verboseSteps`. */
+  verboseSteps?: boolean;
   /**
    * Seeds the local-models slice's config-derived facts (mode + chosen
    * model), so the composer's route controls are right on the home
@@ -1066,7 +1084,8 @@ export function createInitialTuiState(
     toolsExpandedById: {},
     turnsExpandedById: {},
     showSteps: layout?.showSteps ?? false,
-    verboseSteps: false,
+    verboseSteps: layout?.verboseSteps ?? false,
+    stepSpend: {},
     vimMode: layout?.vimMode ?? false,
     sessionPickerOpen: false,
     sessionPickerList: [],

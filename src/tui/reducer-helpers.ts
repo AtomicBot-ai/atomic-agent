@@ -12,6 +12,7 @@ import type {
   TuiState,
 } from "./tui-state.js";
 import { collapseFusionLiveWorkers } from "./fusion-worker-summary.js";
+import { knownStepCostUsd } from "./step-spend.js";
 
 /** Push `next` onto `list`, dropping the oldest entry if the ring is full. */
 export function pushRing<T>(list: readonly T[], next: T, cap: number): T[] {
@@ -438,6 +439,10 @@ export function finalizeStreamingToolCall(
     startedAt: call.startedAt,
     finishedAt,
   };
+  // ATO-34: the step's model call has been counted by now (it precedes
+  // the tool), so a known cost rides on the card into the finished turn.
+  const stepCost = knownStepCostUsd(state.stepSpend[call.stepIndex]);
+  if (stepCost !== null) card.stepCostUsd = stepCost;
   const remaining = [
     ...state.streamingToolCalls.slice(0, idx),
     ...state.streamingToolCalls.slice(idx + 1),

@@ -27,6 +27,7 @@ import {
   formatLocalServerErrorForChat,
 } from "./chat/format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
+import { addStepSpend } from "./step-spend.js";
 import {
   formatProviderGaveUpLine,
   formatProviderResumedNotice,
@@ -201,6 +202,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         plan: null,
         // Same for spend: a fresh thread has spent nothing.
         sessionUsage: null,
+        stepSpend: {},
         // The last turn's worker rows belong to the thread just left.
         fusionLiveWorkers: [],
       };
@@ -605,6 +607,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         status: "running",
         currentTurnToolSteps: 0,
         runStartedAt: Date.now(),
+        // `/why` step cost (ATO-34): a new turn starts its own count.
+        stepSpend: {},
       };
     case "turn_finished": {
       // `waiting` and `retrying` are claims about a turn that is still
@@ -1176,9 +1180,18 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // ATO-569: spend and limits for the composer readout. Session
       // scoped: a background thread's spend must not land on the chat on
       // screen.
-      return event.sessionId === state.session.sessionId
-        ? { ...state, sessionUsage: event.usage }
-        : state;
+      // ATO-34: the difference from the previous reading is the call
+      // that just finished, kept on the running step for `/why`. Outside
+      // a turn (the next-step suggestion call) nothing is attributed.
+      if (event.sessionId !== state.session.sessionId) return state;
+      return {
+        ...state,
+        sessionUsage: event.usage,
+        stepSpend:
+          state.status === "running" || state.status === "awaiting_approval"
+            ? addStepSpend(state.stepSpend, state.sessionUsage, event.usage, state.currentStep)
+            : state.stepSpend,
+      };
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
       // changes what the model does, and the operator sees the effect

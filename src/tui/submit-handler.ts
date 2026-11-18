@@ -535,13 +535,14 @@ export function runSlashCommand(
     dispatch({ type: "show_steps_set", on });
     callbacks.onShowStepsPersistRequested?.(on);
   }
-  // `/verbose`: session-only, so nothing is written to the config.
+  // `/verbose`: same shape as `/steps`, written to `tui.verboseSteps`.
   if (result.verboseStepsVerb) {
     const on =
       result.verboseStepsVerb === "toggle"
         ? !state.verboseSteps
         : result.verboseStepsVerb === "on";
     dispatch({ type: "verbose_steps_set", on });
+    callbacks.onVerboseStepsPersistRequested?.(on);
     dispatch({
       type: "system_message",
       text: on
