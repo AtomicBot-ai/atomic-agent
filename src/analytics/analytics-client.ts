@@ -11,6 +11,7 @@ import { isCiEnvironment } from "./read-ci-environment.js";
 import { isTeamRun } from "./read-team-run-marker.js";
 import { isAnalyticsKilledByEnv } from "./read-analytics-kill-switch.js";
 import type { AnalyticsDimensions } from "./resolve-analytics-dimensions.js";
+import { resolveSurface } from "./resolve-surface.js";
 
 /**
  * Sentinel IP sent as the `$ip` event property. Overriding with a truthy
@@ -73,9 +74,10 @@ export interface AnalyticsClientOptions {
  *     request IP is captured instead, so the override must be a real string;
  *   - stamped with the `platform` OS tag (`darwin` / `linux` / `win32`);
  *   - stamped with the `app_version` tag (the running app version);
- *   - stamped with `arch`, and — when dimensions are given — `surface`,
- *     `install_channel`, `install_source` and `desktop_version` (desktop
- *     only).
+ *   - stamped with `arch` and `surface` (always; without dimensions the
+ *     surface comes from `ATOMIC_AGENT_SURFACE`, else `cli`), and — when
+ *     dimensions are given — `install_channel`, `install_source` and
+ *     `desktop_version` (desktop only).
  *
  * The client is fire-safe: capture failures are swallowed so an
  * analytics outage never disturbs the agent runtime.
@@ -268,11 +270,14 @@ function personTags(
 function globalProperties(
   dimensions: AnalyticsDimensions | undefined,
 ): Record<string, string> {
+  // ATO-1603: `surface` is on every event, with or without dimensions,
+  // so a dashboard split by surface never sees a null. Without dimensions
+  // it is read the same way the resolver reads it (env, else `cli`).
   const props: Record<string, string> = {
     arch: dimensions?.arch ?? process.arch,
+    surface: dimensions?.surface ?? resolveSurface(),
   };
   if (!dimensions) return props;
-  props.surface = dimensions.surface;
   props.install_channel = dimensions.installChannel;
   if (dimensions.installSource !== undefined) {
     props.install_source = dimensions.installSource;

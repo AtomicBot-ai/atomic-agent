@@ -15,6 +15,8 @@ Offline mode (`network.offline` or `ATOMIC_AGENT_OFFLINE=1`, ATO-1084) counts as
 
 ## Install events and the shared state folder
 
+Every event carries `surface` (`desktop` / `tui` / `cli`), stamped by the client after the caller's properties so no event can drop or change it (ATO-1603). A client built without dimensions still stamps it, from `ATOMIC_AGENT_SURFACE`, else `cli`. The desktop app stamps the same property name on its own events. That is the one surface property: there is no `$app_surface`. Events with no surface at all come from builds older than 0.6.7.
+
 Desktop (0.0.3 and later) and the terminal share one state folder, `~/.atomic-agent`, so they share `analytics.json` and one install id. `app_installed` is still counted per surface: the file keeps one "sent" flag for the terminal (`appInstalledSent`, used by `tui` and `cli`) and one for the desktop (`appInstalledSentDesktop`), picked by the `surface` passed to `captureAppInstalled` (ATO-1227). Each surface therefore reports `app_installed` once. `other_surface_installed` on that event is `true` when the other surface's flag is already set, or when a legacy separate state dir (`~/.atomic-agent-desktop`) holds an `analytics.json`.
 
 A file written before the desktop flag existed has only `appInstalledSent`; it reads as "terminal reported, desktop not". On a machine where the desktop ran first on an older build, the desktop therefore sends `app_installed` one more time after the upgrade.
