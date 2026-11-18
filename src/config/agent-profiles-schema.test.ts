@@ -29,7 +29,7 @@ function expectSkipped(key: string, entry: unknown, reason: string): void {
   expect(notices).toHaveLength(1);
   expect(notices[0]).toContain(`${FIELD}.${key}`);
   expect(notices[0]).toContain(reason);
-  expect(notices[0]).toContain("this profile is skipped");
+  expect(notices[0]).toContain("this profile is skipped and kept in the file as written");
 }
 
 describe("parseAgentProfilesConfig (ATO-1667)", () => {
@@ -93,7 +93,7 @@ describe("parseAgentProfilesConfig (ATO-1667)", () => {
       parseAgentProfilesConfig({ dup: { prompt: "first" }, DUP: { prompt: "second" } }, FIELD),
     ).toEqual({ dup: { prompt: "first" } });
     expect(notices).toEqual([
-      `[atomic-agent] ${FIELD}.DUP: duplicate profile name: dup; this profile is skipped`,
+      `[atomic-agent] ${FIELD}.DUP: duplicate profile name: dup; this profile is skipped and kept in the file as written`,
     ]);
   });
 

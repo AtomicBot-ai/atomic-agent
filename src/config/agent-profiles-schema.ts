@@ -12,7 +12,8 @@
  * profile can move between a file and the settings unchanged. Unknown
  * fields are ignored, as in `custom-models-schema.ts` and in a profile
  * file's frontmatter. A broken entry is skipped with a config notice,
- * as a broken profile file is only a diagnostic; the other entries load.
+ * as a broken profile file is only a diagnostic; the other entries load,
+ * and a whole-file write keeps the broken one in the file as written.
  */
 
 import {
@@ -103,18 +104,51 @@ function parseAgentProfileEntry(raw: unknown, field: string): UserAgentProfileCo
   return out;
 }
 
-/** One notice per broken entry and process; the entry is left out. */
-function skipEntry(field: string, reason: string): void {
-  emitConfigNoticeOnce(`[atomic-agent] ${field}: ${reason}; this profile is skipped`);
+/** An entry the parse leaves out: its key, the field path and why. */
+type SkippedAgentProfile = { key: string; field: string; reason: string };
+
+/**
+ * The one walk both the parse and the write side use: the entries that
+ * load, and the ones that are left out with the reason.
+ */
+function readAgentProfiles(
+  raw: Record<string, unknown>,
+  field: string,
+): { profiles: UserAgentProfilesConfig; skipped: SkippedAgentProfile[] } {
+  const profiles: UserAgentProfilesConfig = {};
+  const skipped: SkippedAgentProfile[] = [];
+  for (const [key, value] of Object.entries(raw)) {
+    const name = normaliseProfileName(key);
+    if (name === null) {
+      skipped.push({
+        key,
+        field: `${field}.${key}`,
+        reason: `profile name must be 1-64 letters, digits, "-" or "_", starting with a letter or digit (got ${JSON.stringify(key)})`,
+      });
+      continue;
+    }
+    if (Object.hasOwn(profiles, name)) {
+      skipped.push({ key, field: `${field}.${key}`, reason: `duplicate profile name: ${name}` });
+      continue;
+    }
+    try {
+      profiles[name] = parseAgentProfileEntry(value, `${field}.${key}`);
+    } catch (err) {
+      if (!(err instanceof ConfigValidationError)) throw err;
+      skipped.push({ key, field: err.field, reason: err.reason });
+    }
+  }
+  return { profiles, skipped };
 }
 
 /**
  * Parse the `agentProfiles` map. Absent or `null` is no profiles
  * (`undefined`); an empty object stays empty. Names are lower-cased as
  * a file name is. An entry with a bad name, a name another key already
- * took after lower-casing, or an invalid field is skipped with a notice
- * naming its path. A node that is not an object stays a validation
- * error, as for `webhooks` and `fileTriggers`.
+ * took after lower-casing, or an invalid field is skipped with one
+ * notice per process naming its path; `keepSetAsideConfigValues` keeps
+ * it in the file on a whole-file write. A node that is not an object
+ * stays a validation error, as for `webhooks` and `fileTriggers`.
  */
 export function parseAgentProfilesConfig(
   raw: unknown,
@@ -124,26 +158,21 @@ export function parseAgentProfilesConfig(
   if (typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError(field, "expected an object keyed by profile name");
   }
-  const out: UserAgentProfilesConfig = {};
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    const name = normaliseProfileName(key);
-    if (name === null) {
-      skipEntry(
-        `${field}.${key}`,
-        `profile name must be 1-64 letters, digits, "-" or "_", starting with a letter or digit (got ${JSON.stringify(key)})`,
-      );
-      continue;
-    }
-    if (Object.hasOwn(out, name)) {
-      skipEntry(`${field}.${key}`, `duplicate profile name: ${name}`);
-      continue;
-    }
-    try {
-      out[name] = parseAgentProfileEntry(value, `${field}.${key}`);
-    } catch (err) {
-      if (!(err instanceof ConfigValidationError)) throw err;
-      skipEntry(err.field, err.reason);
-    }
+  const { profiles, skipped } = readAgentProfiles(raw as Record<string, unknown>, field);
+  for (const entry of skipped) {
+    emitConfigNoticeOnce(
+      `[atomic-agent] ${entry.field}: ${entry.reason}; this profile is skipped and kept in the file as written`,
+    );
   }
-  return out;
+  return profiles;
+}
+
+/**
+ * Keys of a raw `agentProfiles` map that the parse leaves out, in file
+ * order, with no notice. Empty for anything that is not an object (that
+ * node fails validation instead). For the write side.
+ */
+export function skippedAgentProfileKeys(raw: unknown): string[] {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return [];
+  return readAgentProfiles(raw as Record<string, unknown>, "").skipped.map((entry) => entry.key);
 }

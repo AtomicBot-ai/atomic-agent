@@ -1,7 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 
+import { normaliseProfileName } from "../agent-profiles/agent-profile.js";
 import { BACKEND_VARIANT_PREFERENCES } from "../local-llm/backend/windows-backend-variant.js";
 import { TOOL_SEARCH_MODES } from "./agent/agent-parser.js";
+import { skippedAgentProfileKeys } from "./agent-profiles-schema.js";
 import { COMPACTION_MODES } from "./agent/compaction-config.js";
 import { COMPACT_PROMPT_MODES } from "./agent/prompt-config.js";
 import { parseUserConfigFile, type UserConfigFile } from "./config-schema.js";
@@ -117,6 +119,7 @@ function keepSetAsideValues(data: UserConfigFile, disk: Tree): UserConfigFile {
   }
   out = keepSetAsideProviders(out, disk, read);
   out = keepUnknownRolePins(out, disk, read);
+  out = keepSkippedAgentProfiles(out, disk);
   return out === (withLocalModels as unknown) ? withLocalModels : (out as unknown as UserConfigFile);
 }
 
@@ -169,6 +172,34 @@ function keepUnknownRolePins(out: Tree, disk: Tree, read: UserConfigFile): Tree 
     next = keepAt(next, disk, read, `${FUSION_ROLES_KEY}.${role}`);
   }
   return next;
+}
+
+const AGENT_PROFILES_KEY = "llm.runMode.agentProfiles";
+
+/**
+ * Entries of `llm.runMode.agentProfiles` the parse skipped (a name this
+ * build refuses, a case-collision, a field over this build's limit or of
+ * the wrong type), put back as written so an unrelated save does not
+ * erase them (ATO-1667). Which entries are skipped comes from the parse's
+ * own walk. Data wins where it holds the same key or the same normalised
+ * name (a fixed version). A disk entry that parses is never put back: it
+ * is missing from `data` because a caller removed it.
+ */
+function keepSkippedAgentProfiles(out: Tree, disk: Tree): Tree {
+  const diskProfiles = getPath(disk, AGENT_PROFILES_KEY);
+  if (!isPlain(diskProfiles) || !isPlain(out.llm)) return out;
+  const skipped = skippedAgentProfileKeys(diskProfiles);
+  if (skipped.length === 0) return out;
+  const current = getPath(out, AGENT_PROFILES_KEY);
+  const profiles: Tree = isPlain(current) ? { ...current } : {};
+  let changed = false;
+  for (const key of skipped) {
+    const name = normaliseProfileName(key);
+    if (Object.hasOwn(profiles, key) || (name !== null && Object.hasOwn(profiles, name))) continue;
+    profiles[key] = diskProfiles[key];
+    changed = true;
+  }
+  return changed ? setPath(out, AGENT_PROFILES_KEY, profiles) : out;
 }
 
 /** A per-provider `modelMode` / `modelModes` value a newer build added (read as unset here). */
