@@ -11021,14 +11021,15 @@ A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
 wireProcessErrorReporting();
 
-/* ATO-1229: an AppImage on a Linux that blocks unprivileged user namespaces
-   (Ubuntu 24.04's AppArmor restriction) and has no setuid chrome-sandbox runs
+/* ATO-1229 / ATO-1193: an AppImage (or a .deb with no AppArmor profile
+   attached) on a Linux that blocks unprivileged user namespaces (Ubuntu
+   24.04's AppArmor restriction) and has no setuid chrome-sandbox runs
    without Chromium's sandbox, as electron-builder's AppRun already decides
    before it starts the app (linux-sandbox.ts). Only before the app is ready. */
 const LINUX_SANDBOX = sandboxVerdict(probeLinuxSandbox());
 if (LINUX_SANDBOX.noSandbox) {
   app.commandLine.appendSwitch("no-sandbox");
-  console.error(`[desktop] running without the Chromium sandbox: ${LINUX_SANDBOX.reason} (AppImage)`);
+  console.error(`[desktop] running without the Chromium sandbox: ${LINUX_SANDBOX.reason}`);
 }
 
 /* ATO-1030: a GPU process that crashed twice in a short while turned hardware
