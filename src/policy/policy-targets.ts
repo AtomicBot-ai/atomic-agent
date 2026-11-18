@@ -66,7 +66,7 @@ export function gateRequestTarget(request: PolicyGateRequest): PolicyTarget | nu
     return { action: "edit", resources: nonEmpty([...(request.targetPaths ?? []), ...(request.affectedResources ?? [])]) };
   }
   if (FETCH_CATEGORIES.has(request.category)) {
-    return { action: "webfetch", resources: nonEmpty([...(request.affectedResources ?? []), request.grantKey]) };
+    return { action: "webfetch", resources: nonEmpty(urlResources([...(request.affectedResources ?? []), request.grantKey])) };
   }
   return null;
 }
@@ -106,6 +106,34 @@ export function shellResources(cmd: string, args: readonly string[] = []): strin
   return nonEmpty([line, ...segments.flatMap(argvResources)]);
 }
 
+/**
+ * URLs as webfetch globs see them: as given, then the way a fetch reads
+ * them (`new URL`: scheme and host lowercased, no user info, no default
+ * port, a `/` path at least), then the origin and the host on their own,
+ * so a host-only rule (`https://evil.com`, `evil.com`, `*.evil.com`)
+ * covers every URL on it. `HTTPS://Evil.com:443` and
+ * `https://user@evil.com` read as `https://evil.com/`.
+ */
+export function urlResources(values: ReadonlyArray<string | undefined>): Array<string | undefined> {
+  const out: Array<string | undefined> = [];
+  for (const value of values) {
+    out.push(value);
+    if (value === undefined) continue;
+    let u: URL;
+    try {
+      u = new URL(value.trim());
+    } catch {
+      continue;
+    }
+    if (u.protocol !== "http:" && u.protocol !== "https:") continue;
+    u.username = "";
+    u.password = "";
+    if (u.hostname.endsWith(".")) u.hostname = u.hostname.slice(0, -1);
+    out.push(u.href, u.origin, u.host, u.hostname);
+  }
+  return out;
+}
+
 /** The target of a tool call by its arguments, or null when no policy action covers it. */
 export function toolCallTarget(tool: string, args: unknown): PolicyTarget | null {
   const a = record(args);
@@ -122,7 +150,7 @@ export function toolCallTarget(tool: string, args: unknown): PolicyTarget | null
     const paths = Array.isArray(a.paths) ? a.paths.map(str) : [];
     return { action: "edit", resources: nonEmpty([str(a.path), str(a.from), str(a.to), str(a.destination), ...paths]) };
   }
-  if (FETCH_TOOLS.has(tool)) return { action: "webfetch", resources: nonEmpty([str(a.url)]) };
+  if (FETCH_TOOLS.has(tool)) return { action: "webfetch", resources: nonEmpty(urlResources([str(a.url)])) };
   if (tool === "os.web.search") return { action: "websearch", resources: nonEmpty([str(a.query)]) };
   if (tool === "skill.view") return { action: "skill", resources: nonEmpty([str(a.name)]) };
   if (tool === "skill.run_script") return { action: "skill", resources: nonEmpty([str(a.skill)]) };

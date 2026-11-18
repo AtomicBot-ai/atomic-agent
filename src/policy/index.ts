@@ -35,7 +35,7 @@ export {
 } from "./policy-loader.js";
 export type { LoadedPolicySource, PolicyLoaderDeps } from "./policy-loader.js";
 export { activePolicy, installPolicy } from "./policy-active.js";
-export { gateRequestTarget, mcpResource, shellResources, toolCallTarget } from "./policy-targets.js";
+export { gateRequestTarget, mcpResource, shellResources, toolCallTarget, urlResources } from "./policy-targets.js";
 export type { PolicyGateRequest, PolicyTarget } from "./policy-targets.js";
 export { mcpServerPolicy, policyCallRefusal, policyRuleMatch, skillPolicyRefusal } from "./policy-enforce.js";
 export type { PolicyMcpServerConfig } from "./policy-enforce.js";

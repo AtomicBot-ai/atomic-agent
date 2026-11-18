@@ -26,7 +26,8 @@ describe("policy targets", () => {
     expect(toolCallTarget("os.shell.run", { cmd: "git", args: ["push", "-f"] })).toEqual({ action: "shell", resources: ["git push -f"] });
     expect(toolCallTarget("os.shell.run", { wait: 3 })).toBeNull();
     expect(toolCallTarget("os.fs.move", { from: "/a", to: "/b" })).toEqual({ action: "edit", resources: ["/a", "/b"] });
-    expect(toolCallTarget("os.web.fetch", { url: "https://x.test/" })).toEqual({ action: "webfetch", resources: ["https://x.test/"] });
+    expect(toolCallTarget("os.web.fetch", { url: "https://x.test/" }))
+      .toEqual({ action: "webfetch", resources: ["https://x.test/", "https://x.test", "x.test"] });
     expect(toolCallTarget("os.web.search", { query: "q" })).toEqual({ action: "websearch", resources: ["q"] });
     expect(toolCallTarget("skill.view", { name: "notes" })).toEqual({ action: "skill", resources: ["notes"] });
     expect(toolCallTarget("skill.run_script", { skill: "notes", script: "a" })).toEqual({ action: "skill", resources: ["notes"] });
@@ -39,7 +40,7 @@ describe("policy targets", () => {
     expect(gateRequestTarget({ tool: "os.fs.write", category: "fs_write_home", targetPaths: ["/h/a"], affectedResources: ["/h/a"] }))
       .toEqual({ action: "edit", resources: ["/h/a"] });
     expect(gateRequestTarget({ tool: "os.http.request", category: "http_write", affectedResources: ["https://x.test/a"], grantKey: "https://x.test" }))
-      .toEqual({ action: "webfetch", resources: ["https://x.test/a", "https://x.test"] });
+      .toEqual({ action: "webfetch", resources: ["https://x.test/a", "https://x.test", "x.test", "https://x.test/"] });
     expect(gateRequestTarget({ tool: "mcp.gh.delete_repo", category: "other" })).toEqual({ action: "mcp", resources: ["gh/delete_repo"] });
     expect(gateRequestTarget({ tool: "os.proc.kill", category: "proc_kill" })).toBeNull();
   });
@@ -125,6 +126,44 @@ describe("shell rules see each command the way saved rules do", () => {
     expect(refused("ls", ["-la"])).toBeNull();
     expect(refused("echo rm")).toBeNull();
     expect(refused("printf 'hi' | cat")).toBeNull();
+  });
+});
+
+// ATO-587 review: webfetch globs were case-sensitive matches on the raw
+// url argument, so forms a fetch accepts walked past the rule.
+describe("webfetch rules see the URL the fetch will use", () => {
+  const deniedBy = (resource: string) => policyOf({ rules: [{ action: "webfetch", resource, effect: "deny" }] });
+  const refused = (resource: string, url: string) => policyCallRefusal(deniedBy(resource), "os.web.fetch", { url });
+
+  it.each([
+    "HTTPS://EVIL.COM/x",
+    "https://Evil.com/x",
+    "https://evil.com",
+    "https://evil.com:443/x",
+    "https://user@evil.com/x",
+    "https://user:pw@evil.com/x",
+    "https://evil.com./x",
+  ])("deny https://evil.com/* covers %s", (url) => {
+    expect(refused("https://evil.com/*", url)).not.toBeNull();
+  });
+
+  it("a host-only rule covers the whole origin", () => {
+    expect(refused("https://evil.com", "https://evil.com/deep/path?q=1")).not.toBeNull();
+    expect(refused("evil.com", "http://EVIL.com:8080/x")).not.toBeNull();
+    expect(refused("*.evil.com", "https://api.evil.com/x")).not.toBeNull();
+  });
+
+  it("the gate side normalises affected resources and the grant key too", () => {
+    const match = policyRuleMatch(deniedBy("https://evil.com/*"), {
+      tool: "os.http.request", category: "http", affectedResources: ["HTTPS://Evil.COM:443/a"], grantKey: "https://evil.com",
+    });
+    expect(match?.decision).toBe("deny");
+  });
+
+  it("leaves other hosts alone", () => {
+    expect(refused("https://evil.com/*", "https://evil.com.good.test/x")).toBeNull();
+    expect(refused("evil.com", "https://notevil.com/")).toBeNull();
+    expect(refused("https://evil.com/*", "https://good.test/?u=https://evil.com/")).toBeNull();
   });
 });
 
