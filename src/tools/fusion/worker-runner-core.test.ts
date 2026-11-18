@@ -8,6 +8,8 @@ import {
   type FusionWorkerMeta,
 } from "../../session/fusion-worker-session.js";
 import type { DelegateTask } from "./delegate-args.js";
+import type { SessionApprovalPolicy } from "../../approval/approval-gate.js";
+import { FUSION_WORKER_APPROVAL_REFUSED, workerRefusalFor } from "./worker-tool-policy.js";
 import {
   DEFAULT_WORKER_TURN_ORIGIN,
   runWorkerTasksCore,
@@ -135,5 +137,43 @@ describe("runWorkerTasksCore (ATO-1669)", () => {
     );
     expect(calls[0]!.options.origin).toBe("subagent");
     expect(results[0]!.status).toBe("ok");
+  });
+
+  it("stamps the worker session with the default depth 1 when no depth is given", async () => {
+    const { deps, calls } = coreHarness("done");
+    await runWorkerTasksCore(deps, coreOptions());
+    expect(calls[0]!.session.metadata?.fusionWorker).toMatchObject({ depth: 1 });
+  });
+
+  it("stamps the worker session with the depth the options name (ATO-1670)", async () => {
+    const { deps, calls } = coreHarness("done");
+    await runWorkerTasksCore(deps, coreOptions({ depth: 2 }));
+    expect(calls[0]!.session.metadata?.fusionWorker).toMatchObject({
+      parentSessionId: "s-parent",
+      taskId: "t0",
+      depth: 2,
+    });
+  });
+
+  it("refuses a worker's approval prompt with Fusion's texts when no refusal is given", async () => {
+    const { deps } = coreHarness("done");
+    const set: SessionApprovalPolicy[] = [];
+    deps.approvals.setSessionPolicy = (_id, policy) => set.push(policy);
+    await runWorkerTasksCore(deps, coreOptions());
+    expect(set[0]!.reason).toBe(FUSION_WORKER_APPROVAL_REFUSED);
+    expect(set[0]!.reasonFor).toBe(workerRefusalFor);
+  });
+
+  it("refuses a worker's approval prompt with the caller's own texts when it names them (ATO-1670)", async () => {
+    const { deps } = coreHarness("done");
+    const set: SessionApprovalPolicy[] = [];
+    deps.approvals.setSessionPolicy = (_id, policy) => set.push(policy);
+    const reasonFor = () => "operator only";
+    await runWorkerTasksCore(
+      deps,
+      coreOptions({ approvalRefusal: { general: "ask the caller", reasonFor } }),
+    );
+    expect(set[0]!.reason).toBe("ask the caller");
+    expect(set[0]!.reasonFor).toBe(reasonFor);
   });
 });

@@ -255,6 +255,27 @@ describe("filterToolDescriptorsByConfig", () => {
     expect(filtered.length).toBeGreaterThan(0);
   });
 
+  it("drops subagent.run only when its gate is off, and keeps it when the gate is absent (ATO-1670)", () => {
+    expect(nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN)).has("subagent.run")).toBe(true);
+    const off = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        subagent: { enabled: false },
+      }),
+    );
+    expect(off.has("subagent.run")).toBe(false);
+    expect(off.has("fusion.delegate")).toBe(true);
+    expect(
+      nameSet(
+        filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+          ...ALL_OPEN,
+          subagent: { enabled: true },
+        }),
+      ).has("subagent.run"),
+    ).toBe(true);
+    expect(GATED_TOOL_NAMES.subagent).toEqual(["subagent.run"]);
+  });
+
   it("every gated tool name exists in DEFAULT_TOOL_DESCRIPTORS", () => {
     const known = new Set(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
     const allGated = [
@@ -269,6 +290,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.sessions,
       ...GATED_TOOL_NAMES.mcp,
       ...GATED_TOOL_NAMES.fusion,
+      ...GATED_TOOL_NAMES.subagent,
       ...GATED_TOOL_NAMES.image,
       ...GATED_TOOL_NAMES.video,
       ...GATED_TOOL_NAMES.screen,

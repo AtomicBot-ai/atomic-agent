@@ -270,6 +270,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Hand independent parts of the work to local workers; call it alone.",
     tier: RARE,
   },
+  "subagent.run": {
+    summary: "Hand a self-contained part of the work to a subagent on your model; call it alone.",
+    tier: RARE,
+  },
   reply: {
     summary:
       "Final answer to the user; ends the turn. If an exact answer format is required, `text` is only that. `attachments`: file paths to send.",

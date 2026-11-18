@@ -419,6 +419,20 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // ATO-1670. Rare tier: one line in the catalog, the full args through
+    // tool.view. Hidden while Fusion is the run mode, where
+    // fusion.delegate is the way to hand work out (filter-disabled-tools).
+    name: "subagent.run",
+    summary:
+      "Hand a self-contained part of the work to a subagent: a fresh worker turn on your current model that sees the user's request and your `instructions`, nothing else of this chat, and reports back. Optional `profile` (built-in: explore, review, research, all read-only; or one the user defined) gives it that profile's instructions and tool list. Several tasks in one call run side by side, at most 4 per call. Listing `files` on a task asks the user once for the call, and a yes lets the subagents write anywhere in the directories of those files and in the working directory, not only in the listed files; with no `files` a subagent cannot write, so make the edit yourself or list the files. A subagent cannot start subagents of its own. Call it on its own, never alongside other tool calls.",
+    argsSchema:
+      '{ tasks: [{ id: string, instructions: string, title?: string, profile?: string /* "explore" | "review" | "research" or a user profile */, deliverable?: string, files?: string[] /* paths it may write; asks the user once */ }] /* 1..4 */ }',
+    examples: [
+      '{"tasks":[{"id":"find-auth","profile":"explore","instructions":"Find where session tokens are checked under src/http/ and list each file and function."}]}',
+    ],
+    tier: "rare",
+  },
+  {
     // Frequent tier: a checklist only helps when the model keeps it from
     // the first step, and a model that must `tool.view` first never
     // starts one (ATO-486). Placed after the git duplicates so their

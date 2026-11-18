@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, resolve, sep } from "node:path";
+import { dirname, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 
 import { isInside } from "../../approval/fanout-scope.js";
@@ -65,7 +65,10 @@ function collectFromText(text: string, workingDir: string): string[] {
  * anything too broad to authorise.
  */
 export function collapseScope(dirs: readonly string[]): string[] {
-  const unique = [...new Set(dirs)].filter((dir) => !isTooBroad(dir));
+  // Normalised first: `/a/..` is `/`, and must be judged and granted as `/`.
+  const unique = [...new Set(dirs.map((dir) => resolve(dir)))].filter(
+    (dir) => !isTooBroad(dir),
+  );
   const roots: string[] = [];
   for (const dir of unique.sort((a, b) => a.length - b.length)) {
     if (!roots.some((root) => isInside(root, dir))) roots.push(dir);
@@ -97,7 +100,9 @@ export function resolveFanoutScope(
       paths.push(...collectFromText(task.deliverable, workingDir));
     }
   }
-  const dirs = paths.map((path) => (isAbsolute(path) ? dirname(path) : path));
-  dirs.push(workingDir);
+  // `resolveUserPath` leaves an absolute path as written, `..` and all:
+  // normalise before taking the directory, so `/a/../b` reads as `/b`.
+  const dirs = paths.map((path) => dirname(resolve(path)));
+  dirs.push(resolve(workingDir));
   return collapseScope(dirs);
 }

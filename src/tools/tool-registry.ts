@@ -69,6 +69,20 @@ export interface ToolContext {
    */
   providerId?: string;
   /**
+   * With `providerId`: the chat model this turn asks that link for
+   * (`StepDependencies.model`, e.g. the desktop's per-project model,
+   * ATO-1148). Absent => the link's default model. `subagent.run` runs
+   * its children on it (ATO-1670).
+   */
+  model?: string;
+  /**
+   * Identity of the agent turn this call belongs to
+   * (`StepDependencies.turnId`). Tools that keep a per-turn tally key it
+   * on this instead of guessing turn edges from `stepIndex` (ATO-1670).
+   * Absent => the caller did not run inside an agent turn.
+   */
+  turnId?: string;
+  /**
    * What `os.fs.read` last saw of each file this turn, so `os.fs.write`,
    * `os.fs.edit` and `os.fs.patch` can say when their target changed
    * since (`fs-read-freshness.ts`, ATO-659). Absent ⇒ no notice.

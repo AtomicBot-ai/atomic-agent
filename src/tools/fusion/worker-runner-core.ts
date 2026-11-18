@@ -21,7 +21,7 @@ import type {
   CompletionUsage,
   ReasoningEffort,
 } from "../../llm/provider/completion-types.js";
-import type { ApprovalGate } from "../../approval/approval-gate.js";
+import type { ApprovalGate, ApprovalRequest } from "../../approval/approval-gate.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
@@ -199,6 +199,23 @@ export interface WorkerRunnerCoreOptions {
    * `"subagent"`, which the runtime treats like `"fusion"`.
    */
   origin?: TurnOrigin;
+  /**
+   * The depth stamped on every worker session (ATO-1670): the caller's
+   * `childFusionWorkerDepth`. Absent: `FUSION_WORKER_DEFAULT_DEPTH` (1),
+   * as Fusion always stamps, since it fans out only from the operator.
+   */
+  depth?: number;
+  /**
+   * What a worker's approval prompt is refused with, for a caller whose
+   * workers do not answer to a Fusion orchestrator (ATO-1670).
+   * `general` must keep `FUSION_WORKER_APPROVAL_MARKER` so the row still
+   * comes back `needs_orchestrator`; `reasonFor` picks a refusal per
+   * request, like `workerRefusalFor`. Absent: Fusion's own texts.
+   */
+  approvalRefusal?: {
+    general: string;
+    reasonFor?: (request: ApprovalRequest) => string | undefined;
+  };
 }
 
 /** Fusion's options on top of the core. Each one absent does nothing. */

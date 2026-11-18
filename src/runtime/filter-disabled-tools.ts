@@ -85,6 +85,12 @@ export interface ToolGateConfig {
    */
   fusion: { enabled: boolean };
   /**
+   * Subagent gate (ATO-1670). `enabled=false` drops `subagent.run`: the
+   * runtime passes it while Fusion is the effective mode, where
+   * `fusion.delegate` is the one way to hand work out. Absent: kept.
+   */
+  subagent?: { enabled: boolean };
+  /**
    * Image generation gate. `available=false` (no OpenRouter key) drops
    * `image.generate`: until local image models can be installed
    * (ATO-411) a call without a key could only answer "add a key". Read
@@ -165,6 +171,7 @@ const GATED_TOOLS = {
     "sessions.check",
   ],
   fusion: ["fusion.delegate"],
+  subagent: ["subagent.run"],
   mcp: [
     "mcp.resource.list",
     "mcp.resource.read",
@@ -257,6 +264,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.fusion.enabled) {
     for (const name of GATED_TOOLS.fusion) disabled.add(name);
+  }
+  if (gates.subagent?.enabled === false) {
+    for (const name of GATED_TOOLS.subagent) disabled.add(name);
   }
   if (!gates.image.available) {
     for (const name of GATED_TOOLS.image) disabled.add(name);

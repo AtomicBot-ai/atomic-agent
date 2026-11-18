@@ -644,6 +644,7 @@ export class AgentLoop {
             ...(options.providerId !== undefined && options.model !== undefined
               ? { model: options.model }
               : {}),
+            turnId: `${state.id}#${turnIndex}@${turnStartedAt}`,
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }

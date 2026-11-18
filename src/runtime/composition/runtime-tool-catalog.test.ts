@@ -223,6 +223,9 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(initial.some(tool => tool.name === "fusion.delegate" || tool.name === "vision.describe")).toBe(false);
     setFusion(true); const fusion = owner.effectiveToolDescriptors(); expect(fusion).not.toBe(initial);
     expect(fusion.some(tool => tool.name === "fusion.delegate")).toBe(true); expect(owner.effectiveToolDescriptors()).toBe(fusion);
+    // The other side of the fusion gate (ATO-1670): subagent.run is offered only outside Fusion.
+    expect(initial.some(tool => tool.name === "subagent.run")).toBe(true);
+    expect(fusion.some(tool => tool.name === "subagent.run")).toBe(false);
     setVision(true); const vision = owner.effectiveToolDescriptors(); expect(vision).not.toBe(fusion);
     expect(vision.some(tool => tool.name === "vision.describe")).toBe(true); expect(owner.effectiveToolDescriptors()).toBe(vision);
     setFusion(false); setVision(false);
@@ -309,7 +312,8 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(protectedReads.stateSecrets).toEqual({ stateDir: config.paths.stateDir, files: getStateSecretPaths(config.paths) });
     config.agent.readScope = "unrestricted"; expect(protectedReads.readScope?.()).toBe("unrestricted");
     config.agent.readScope = "working-dir"; expect(protectedReads.readScope?.()).toBe("working-dir");
-    expect(toolRegistry.list().map(tool => tool.name)).toEqual(["os.fs.read", "fusion.delegate"]);
+    // subagent.run registers right after fusion.delegate (ATO-1670).
+    expect(toolRegistry.list().map(tool => tool.name)).toEqual(["os.fs.read", "fusion.delegate", "subagent.run"]);
     expect(builder.mock.invocationCallOrder[0]).toBeLessThan(confinement.mock.invocationCallOrder[0] ?? 0);
   });
 });

@@ -107,6 +107,10 @@ export interface BatchExecutionContext {
   incognito?: boolean;
   /** The step's provider pin, handed to every call (`ToolContext.providerId`). */
   providerId?: string;
+  /** The turn's model on the pinned link (`ToolContext.model`). */
+  model?: string;
+  /** The agent turn this batch runs in (`ToolContext.turnId`). */
+  turnId?: string;
   /**
    * Fired immediately before the registry is invoked for each call.
    * Order: matches the order the executor reaches each call (within a
