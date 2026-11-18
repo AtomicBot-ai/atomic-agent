@@ -30991,11 +30991,12 @@ const DC = createDiscordSettings({
   restart: async () => { const st = await BR.restart(); try { applyStatus(st); } catch (e) { /* the status still says how it went */ } return st; },
   restartBlocked: () => restartStopsTurn(),
   agentGen: () => AGENT_GEN,
+  channel: () => BR && BR.discordChannel ? BR.discordChannel() : null,   // ATO-516: the bot's live state
 });
 function discordVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'discord'; }
 function discordTab() { return discordPaneHTML(DC.state, {owed:DC.restartOwed(), stale:DC.state.msgGen !== AGENT_GEN}, {esc, ic}); }
 function dcRepaint() { if (discordVisible()) paneRepaintKeepFocus(discordTab()); }
-function discordTabEntered() { DC.entered().then(dcRepaint); dcRepaint(); }
+function discordTabEntered() { DC.entered().then(() => { dcRepaint(); dcLiveLoop(DC, discordVisible, dcRepaint); }); dcRepaint(); }
 async function discordAct(what) {
   const [verb] = what.split(':');
   const arg = what.slice(verb.length + 1);
