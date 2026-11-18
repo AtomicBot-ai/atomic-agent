@@ -61,6 +61,7 @@ function chatMenuItems(opts) {
     ...(o.archivable === true ? [o.archived ? {verb: 'unarchive', label: 'Unarchive', icon: 'archive'} : {verb: 'archive', label: 'Archive', icon: 'archive'}] : []),
     // ATO-1054: "Export…" saves the chat as Markdown / PDF / Word (chat-export.js), for a stored chat.
     ...(o.exportable === true ? [{verb: 'export', label: 'Export…', icon: 'download'}] : []),
+    ...(o.exportable === true ? [{verb: 'recipe:save', label: 'Save as recipe…', icon: 'star'}] : []),   // ATO-1072 (chat-recipe.js)
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }

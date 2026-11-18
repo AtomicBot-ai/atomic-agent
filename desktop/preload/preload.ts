@@ -336,6 +336,11 @@ contextBridge.exposeInMainWorld("atomic", {
   projectsAssign: (payload: { sessionId: string; projectId: string | null }) =>
     ipcRenderer.invoke("projects:assign", payload),
   onProjectsChanged: (cb: () => void) => on("projects:changed", () => cb()),
+  // ATO-1072: saved recipes (userData/recipes.json, main/recipes-store.ts).
+  recipesList: () => ipcRenderer.invoke("recipes:list"),
+  recipesSave: (recipe: { id?: string; title: string; description?: string; prompt: string; params: Array<{ key: string; default?: string }> }) =>
+    ipcRenderer.invoke("recipes:save", recipe),
+  recipesDelete: (id: string) => ipcRenderer.invoke("recipes:delete", id),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
   /* ATO-523: the global hotkey's one-line box (main/quick-entry-window.ts).
      The box's page: what it opened with, the draft kept while it is away,
