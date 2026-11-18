@@ -49,6 +49,7 @@ import { SwarmRegistry } from "../channels/swarm/index.js";
 import type { ChannelRegistry } from "../channels/channel-registry.js";
 
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
+import { setPrivacyShieldEnabled } from "../privacy/index.js";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
 import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
@@ -126,6 +127,8 @@ export async function createAgentRuntime(
   // unreachable, and turned a wedged llama-server into a bare
   // `fetch failed` at 306 s. See `installTransportDeadlines`.
   installTransportDeadlines(config);
+  // ATO-1081: Privacy Shield, read per cloud request by the providers.
+  setPrivacyShieldEnabled(config.privacy?.shield.enabled === true);
   const workingDir = resolve(options.workingDir);
 
   const observability = createRuntimeObservability(config, options);

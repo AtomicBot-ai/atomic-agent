@@ -23,6 +23,7 @@ export { DEFAULT_SKILLS_CATALOG_BUDGET, parseSkillNameArray, parseSkillTapArray 
 import { createSessionDefaults, parseSessionConfig, type RuntimeSessionsConfig, type UserSessionsConfig } from "./session-retention-config.js";
 import { createTracingDefaults, parseTracingConfig, type RuntimeTracingConfig, type UserTracingConfig } from "./tracing-config.js";
 import { createNetworkDefaults, parseNetworkConfig, type NetworkConfig } from "./network-config.js";
+import { createPrivacyDefaults, parsePrivacyConfig, type PrivacyConfig } from "./privacy-config.js";
 
 import {
   createTuiDefaults, parseTuiConfig,
@@ -327,6 +328,12 @@ export interface AtomicAgentConfig {
    * as `{ offline: false }`. See `src/llm/offline-network.ts`.
    */
   network?: NetworkConfig;
+  /**
+   * Privacy Shield (ATO-599). Mirrors `UserConfigFile.privacy`. Optional
+   * so hand-built configs (tests, embedders) keep compiling; absent reads
+   * as off. See `src/privacy/README.md`.
+   */
+  privacy?: PrivacyConfig;
   /**
    * Durable task queue. All values are env-only operational tuning —
    * not part of the user config file because the queue is an
@@ -777,6 +784,11 @@ export interface UserConfigFile {
    * Additive and unversioned: a file without the block reads the default.
    */
   network: NetworkConfig;
+  /**
+   * Privacy Shield (ATO-599): `{ shield: { enabled: false } }` by default.
+   * Additive and unversioned: a file without the block reads the default.
+   */
+  privacy: PrivacyConfig;
   memory: UserMemoryConfig;
   /**
    * Keyed map of webhook ingress bindings. Each entry is mounted at
@@ -1462,6 +1474,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   sessions: createSessionDefaults(),
   tracing: createTracingDefaults(),
   network: createNetworkDefaults(),
+  privacy: createPrivacyDefaults(),
   memory: createMemoryDefaults(),
   webhooks: {},
   fileTriggers: {},
@@ -1728,6 +1741,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
   const network = (obj.network as Record<string, unknown> | undefined) ?? {};
+  const privacy = (obj.privacy as Record<string, unknown> | undefined) ?? {};
   const traceFromLegacy =
     (legacyTelemetry.trace as Record<string, unknown> | undefined) ?? {};
   const traceFromTracing =
@@ -1843,6 +1857,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       (tracing.otel as Record<string, unknown> | undefined) ?? {},
     ),
     network: parseNetworkConfig(network, () => USER_CONFIG_DEFAULTS.network),
+    privacy: parsePrivacyConfig(privacy, () => USER_CONFIG_DEFAULTS.privacy),
     memory: parseMemoryConfig(
       preparedMemory,
       version,

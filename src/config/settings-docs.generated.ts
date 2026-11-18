@@ -133,6 +133,7 @@ export const SETTINGS_DOCS: Readonly<Record<string, SettingDoc>> = {
   "tracing.otel.endpoint": { type: "string | null", description: "OTLP/HTTP base URL (`/v1/traces` is appended) or a full traces URL." },
   "tracing.otel.captureContent": { type: "boolean", description: "Put prompt, reply, tool argument and error text into spans." },
   "network.offline": { type: "boolean", description: "Network kill switch (ATO-1084): `{ offline: false }` by default. Additive and unversioned: a file without the block reads the default." },
+  "privacy.shield.enabled": { type: "boolean", description: "Privacy Shield (ATO-599): when `true`, emails, phone numbers, card numbers, IBANs and keys in a request to a cloud model are replaced with placeholders such as `[EMAIL_1]` and put back in the reply on this machine. Off by default. Local models always get the real text." },
   "memory.profile.enabled": { type: "boolean", description: "" },
   "memory.profile.maxTokens": { type: "number", description: "Safety-net ceiling for the rendered `### profile` section." },
   "memory.profile.contextualKeywordGate": { type: "boolean", description: "Master switch for the contextual-keyword gate applied by `profile-renderer`. When `true` (default), facts stored with `pinned=false` render into `### profile` only when one of their `keywords` hits the current user message." },
