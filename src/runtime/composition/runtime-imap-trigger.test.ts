@@ -69,5 +69,7 @@ describe("createRuntimeImapTrigger (ATO-601)", () => {
     await sidecar!.tick(Date.now() + 61_000, signal);
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]![0]).toMatchObject({ origin: "scheduler", triggerSource: "webhook", maxAttempts: 3, maxSteps: null });
+    // boss@example.com is allowed but is not the mailbox's own address: the task waits.
+    expect(create.mock.calls[0]![0]).toMatchObject({ startPaused: true });
   });
 });

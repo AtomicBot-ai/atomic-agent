@@ -35,6 +35,11 @@ import {
  *    topmost `Authentication-Results` must also carry that id), creates
  *    nothing, is logged, and the mail is left as it was (still unread,
  *    never downloaded past its header);
+ *  - only mail from an auto-start sender (`email.autoStartSenders`, by
+ *    default the mailbox's own address, `imap.user` when it is one)
+ *    starts its task right away; any other allowed sender's task is
+ *    created paused and waits for the person to start it, as for Atomic
+ *    Mail (decided 18.11.2026);
  *  - at most {@link MAX_TASKS_PER_POLL} tasks per pass;
  *  - the subject and body reach the task fenced as untrusted data, the
  *    saved attachments as a list of paths below it.
@@ -71,7 +76,13 @@ export interface ImapMailTriggerOptions {
   stateDir: string;
   /** The live `webhooks` block; read on every tick so edits apply without a restart. */
   bindings: () => Record<string, WebhookConfig>;
-  createTask: (input: { binding: string; userMessage: string; sessionId: string | null }) => { id: string };
+  createTask: (input: {
+    binding: string;
+    userMessage: string;
+    sessionId: string | null;
+    /** Not from an auto-start sender: the task waits for the person to start it. */
+    startPaused: boolean;
+  }) => { id: string };
   resolveSessionId: (binding: string, cfg: WebhookConfig) => string | null;
   logger?: Pick<StructuredLogger, "info" | "warn" | "debug">;
   /** Test seams. */
@@ -81,7 +92,7 @@ export interface ImapMailTriggerOptions {
   idleCycleMs?: number;
 }
 
-type ImapBinding = WebhookConfig & {
+export type ImapBinding = WebhookConfig & {
   email: NonNullable<WebhookConfig["email"]>;
   imap: ImapTriggerConfig;
 };
@@ -95,6 +106,18 @@ export function activeImapBindings(bindings: Record<string, WebhookConfig>): Arr
       entry[1].email !== undefined &&
       entry[1].email.allowedSenders.length > 0,
   );
+}
+
+/**
+ * Senders whose mail task starts at once: the binding's
+ * `autoStartSenders`, or by default the mailbox's own address (the login
+ * name, when it is an address). A login that is not an address gives
+ * none, so every task then waits.
+ */
+export function imapAutoStartSenders(cfg: ImapBinding): string[] {
+  if (cfg.email.autoStartSenders) return cfg.email.autoStartSenders;
+  const user = cfg.imap.user.trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user) ? [user] : [];
 }
 
 function accountKey(imap: ImapTriggerConfig): string {
@@ -338,7 +361,8 @@ export class ImapMailTrigger {
       if (!head?.body) continue; // gone (moved or expunged) since the search
       const id = `${box.uidValidity}:${uid}`;
       const headerMail = parseImapMessage(head.body, id).mail;
-      const why = this.refusal(headerMail, cfg);
+      const autoStart = imapAutoStartSenders(cfg);
+      const why = this.refusal(headerMail, cfg, autoStart);
       if (why) {
         this.options.logger?.info("mail trigger: message ignored", { binding: name, source: "imap", reason: why });
         continue;
@@ -359,13 +383,15 @@ export class ImapMailTrigger {
         note = await saveMailAttachments(parsed.attachments, cfg.imap.attachments, inbox);
       }
       const message = buildMailTaskMessage(cfg.userMessageTemplate, parsed.mail);
+      const startPaused = !isAllowedSender(headerMail.fromEmail, autoStart);
       const task = this.options.createTask({
         binding: name,
         userMessage: note.length > 0 ? buildAttachmentUserMessage(message, note) : message,
         sessionId: this.options.resolveSessionId(name, cfg),
+        startPaused,
       });
       created += 1;
-      this.options.logger?.info("mail trigger: task created", {
+      this.options.logger?.info(startPaused ? "mail trigger: task created, waiting to be started" : "mail trigger: task created", {
         binding: name,
         source: "imap",
         taskId: task.id,
@@ -382,8 +408,14 @@ export class ImapMailTrigger {
     return { backlog: handled < uids.length };
   }
 
-  private refusal(mail: { fromEmail: string; authResults: string | null }, cfg: ImapBinding): string | null {
-    if (!isAllowedSender(mail.fromEmail, cfg.email.allowedSenders)) return "sender not in allowedSenders";
+  private refusal(
+    mail: { fromEmail: string; authResults: string | null },
+    cfg: ImapBinding,
+    autoStart: readonly string[],
+  ): string | null {
+    if (!isAllowedSender(mail.fromEmail, cfg.email.allowedSenders) && !isAllowedSender(mail.fromEmail, autoStart)) {
+      return "sender not in allowedSenders";
+    }
     if (cfg.email.trustFromHeader) return null;
     if (cfg.imap.authservId && authservIdOf(mail.authResults) !== cfg.imap.authservId) {
       return `topmost Authentication-Results is not from ${cfg.imap.authservId}`;

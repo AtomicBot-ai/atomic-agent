@@ -12,6 +12,7 @@ export {
 export {
   ImapMailTrigger,
   activeImapBindings,
+  imapAutoStartSenders,
   type ImapConnect,
   type ImapMailTriggerOptions,
 } from "./imap-mail-trigger.js";

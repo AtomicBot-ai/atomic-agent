@@ -28,10 +28,11 @@ export function createRuntimeImapTrigger(args: {
   const trigger = new ImapMailTrigger({
     stateDir: config.paths.stateDir,
     bindings: () => config.webhooks,
-    createTask: ({ userMessage, sessionId }) =>
+    createTask: ({ userMessage, sessionId, startPaused }) =>
       taskRunner.create({
         ...(sessionId ? { sessionId } : {}),
         userMessage,
+        ...(startPaused ? { startPaused: true } : {}),
         origin: "scheduler",
         triggerSource: "webhook",
         maxAttempts: config.tasks.maxAttempts,

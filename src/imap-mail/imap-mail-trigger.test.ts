@@ -9,7 +9,7 @@ import { MAX_TASKS_PER_POLL } from "../atomic-mail/atomic-mail-trigger.js";
 import type { WebhookConfig } from "../config/index.js";
 import { IMAP_ATTACHMENT_DEFAULTS, type ImapTriggerConfig } from "../config/imap-trigger-config.js";
 import { FakeImapServer } from "./fake-imap-server-test-helpers.js";
-import { ImapMailTrigger, activeImapBindings } from "./imap-mail-trigger.js";
+import { ImapMailTrigger, activeImapBindings, imapAutoStartSenders } from "./imap-mail-trigger.js";
 import { IMAP_TRIGGER_STATE_FILENAME } from "./imap-trigger-state.js";
 
 const PASS =
@@ -97,7 +97,7 @@ describe("ImapMailTrigger (ATO-601)", () => {
   let stateDir: string;
   let server: FakeImapServer;
   let bindings: Record<string, WebhookConfig>;
-  let created: Array<{ binding: string; userMessage: string; sessionId: string | null }>;
+  let created: Array<{ binding: string; userMessage: string; sessionId: string | null; startPaused: boolean }>;
   let logger: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn> };
   let trigger: ImapMailTrigger;
   let t: number;
@@ -161,6 +161,33 @@ describe("ImapMailTrigger (ATO-601)", () => {
 
     await tick();
     expect(created).toHaveLength(1);
+  });
+
+  it("starts only the mailbox owner's own mail at once; other allowed senders wait paused", async () => {
+    await tick();
+    server.deliver(rawMail({ subject: "from boss" }));
+    // The mailbox's own address is allowed even when it is not listed.
+    server.deliver(rawMail({ from: "me@example.com", subject: "from me" }));
+    await tick();
+    expect(created.map((c) => [/Subject: (.*)/.exec(c.userMessage)?.[1], c.startPaused])).toEqual([
+      ["from boss", true],
+      ["from me", false],
+    ]);
+    expect(logger.info).toHaveBeenCalledWith("mail trigger: task created, waiting to be started", expect.anything());
+
+    bindings = {
+      gmail: binding({ email: { allowedSenders: ["boss@example.com", "me@example.com"], autoStartSenders: ["boss@example.com"] } }),
+    };
+    server.deliver(rawMail({ subject: "boss again" }));
+    server.deliver(rawMail({ from: "me@example.com", subject: "me again" }));
+    await tick();
+    expect(created.slice(2).map((c) => c.startPaused)).toEqual([false, true]);
+  });
+
+  it("picks the auto-start default from the login name", () => {
+    expect(imapAutoStartSenders(binding() as never)).toEqual(["me@example.com"]);
+    expect(imapAutoStartSenders(binding({ imap: { user: "me" } }) as never)).toEqual([]);
+    expect(imapAutoStartSenders(binding({ email: { autoStartSenders: [] } }) as never)).toEqual([]);
   });
 
   it("never downloads, marks or acts on mail from a sender off the list", async () => {
