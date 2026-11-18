@@ -57,14 +57,14 @@ test("parse: anything off-shape is refused", () => {
 /* ---------------- router ---------------- */
 
 test("router: an unknown host is an error; a new route adds itself with one line", () => {
-  const before = M.routeDeeplink("atomicagent://recipe?x=1");
+  const before = M.routeDeeplink("atomicagent://later?x=1");
   assert.equal(before.ok, false);
-  assert.match(before.error, /does not know the "recipe" link/);
-  M.registerDeeplinkRoute("recipe", (link) => ({ ok: true, request: { route: "recipe", link: link.raw, x: link.params.get("x") } }));
-  const after = M.routeDeeplink("atomicagent://recipe?x=1");
+  assert.match(before.error, /does not know the "later" link/);
+  M.registerDeeplinkRoute("later", (link) => ({ ok: true, request: { route: "later", link: link.raw, x: link.params.get("x") } }));
+  const after = M.routeDeeplink("atomicagent://later?x=1");
   assert.equal(after.ok, true);
   assert.deepEqual(after.request.x, ["1"]);
-  assert.deepEqual(M.deeplinkHosts().includes("mcp") && M.deeplinkHosts().includes("skill"), true);
+  assert.deepEqual(["mcp", "skill", "recipe"].every((h) => M.deeplinkHosts().includes(h)), true);
   assert.throws(() => M.registerDeeplinkRoute("Bad Host", () => ({ ok: false, error: "" })));
 });
 
@@ -610,4 +610,168 @@ test("card: Install is off for a moment after the card's content changes", async
 
 test("renderer.js: the overlay hook opens a waiting link once the card is closed", () => {
   assert.match(RENDERER_SRC, /if \(S\.overlay === 'deeplink'\) html \+= deeplinkSheetHTML\(\); else deeplinkWhenClosed\(\);/);
+});
+
+/* ---------------- recipe/open (ATO-1615) ---------------- */
+
+const recipe = (q) => M.routeDeeplink(`atomicagent://recipe/open?${q}`);
+const enc = encodeURIComponent;
+
+test("recipe: title, multi-line text with {{placeholders}}, params with defaults", () => {
+  const r = recipe(`title=${enc("Weekly report")}&description=${enc("For Mondays")}&prompt=${enc("Summarise {{folder}}\r\nfor {{ who }}.")}&param=${enc("folder=~/Notes")}&param=who`);
+  assert.equal(r.ok, true, err(r));
+  assert.equal(r.request.route, "recipe-open");
+  assert.equal(r.request.title, "Weekly report");
+  assert.equal(r.request.description, "For Mondays");
+  assert.equal(r.request.prompt, "Summarise {{folder}}\nfor {{ who }}.");
+  assert.deepEqual(r.request.params, [{ key: "folder", label: "folder", default: "~/Notes" }, { key: "who", label: "who", default: "" }]);
+  assert.match(r.request.warnings[0], /Read all of it/);
+});
+
+test("recipe: name stands for title; the bare atomicagent://recipe path works too", () => {
+  const r = M.routeDeeplink(`atomicagent://recipe?name=${enc("Daily plan")}&prompt=${enc("Plan my day")}`);
+  assert.equal(r.ok, true, err(r));
+  assert.equal(r.request.title, "Daily plan");
+  assert.deepEqual(r.request.params, []);
+  assert.equal(recipe(`title=a&name=b&prompt=x`).ok, false);
+  assert.equal(M.routeDeeplink("atomicagent://recipe/run?title=a&prompt=x").ok, false);
+});
+
+test("recipe: a link never chooses the model, tools, servers, skills or permissions", () => {
+  for (const key of ["model", "provider", "tools", "mcp", "skill", "permissions", "approval", "autosend", "send", "run"]) {
+    const r = recipe(`title=a&prompt=x&${key}=anything`);
+    assert.equal(r.ok, false, key);
+    assert.match(r.error, /cannot choose the model/, key);
+  }
+  assert.match(err(recipe("title=a&prompt=x&temperature=2")), /does not take here/);
+});
+
+test("recipe: placeholders and params must match each other", () => {
+  assert.match(err(recipe(`title=a&prompt=${enc("Hi {{name}}")}`)), /does not declare it/);
+  assert.match(err(recipe(`title=a&prompt=hi&param=name`)), /not used in the recipe text/);
+  assert.match(err(recipe(`title=a&prompt=${enc("{{x}}")}&param=x&param=x`)), /given twice/);
+  assert.match(err(recipe(`title=a&prompt=${enc("{{Bad}}")}&param=Bad`)), /lowercase/);
+  assert.match(err(recipe(`title=a&prompt=${enc("{{}}")}`)), /does not declare/);
+  const many = Array.from({ length: M.RECIPE_MAX_PARAMS + 1 }, (_, i) => `p${i}`);
+  assert.equal(recipe(`title=a&prompt=${enc(many.map((k) => `{{${k}}}`).join(" "))}&${many.map((k) => `param=${k}`).join("&")}`).ok, false);
+});
+
+test("recipe: required fields, sizes and hidden characters are refused", () => {
+  assert.match(err(recipe("prompt=x")), /no "title"/);
+  assert.match(err(recipe("title=a")), /no "prompt"/);
+  assert.match(err(recipe(`title=a&prompt=${enc("   ")}`)), /no "prompt"/);
+  assert.equal(recipe(`title=${"t".repeat(M.RECIPE_TITLE_MAX + 1)}&prompt=x`).ok, false);
+  assert.equal(recipe(`title=a&prompt=${"x".repeat(M.DEEPLINK_MAX_TEXT + 1)}`).ok, false);
+  assert.equal(recipe(`title=a&prompt=${"x".repeat(M.DEEPLINK_MAX_VALUE + 100)}`).ok, true, "a recipe text may be longer than other values");
+  assert.equal(recipe(`title=a&prompt=${enc("rm\u0000")}`).ok, false, "NUL in the text");
+  assert.equal(recipe(`title=${enc("a\nb")}&prompt=x`).ok, false, "line breaks only in the text");
+  assert.match(err(recipe(`title=a&prompt=${enc("delete \u202Eelif")}`)), /invisible or direction-changing/);
+  assert.match(err(recipe(`title=a&prompt=${enc("ok\u200Bok")}`)), /invisible/);
+  assert.match(err(recipe(`title=a&prompt=${enc("{{x}}")}&param=${enc("x=\u2066y")}`)), /invisible/);
+});
+
+test("recipe: every invisible or direction-changing character is refused, not only a known few (review fix)", () => {
+  const hidden = [
+    "\u{E0041}", "\u{E0001}", "\u{E007F}", // tag block: an instruction spelled in characters that draw as nothing
+    "\u061C", "\u00AD", "\u034F", "\u115F", "\u1160", "\u17B4", "\u17B5", "\u180B", "\u180E",
+    "\u3164", "\uFFA0", "\uFE00", "\uFE0F", "\u{E0100}", "\u0085", "\u{F0000}", "\uE000",
+  ];
+  for (const ch of hidden) {
+    const code = ch.codePointAt(0).toString(16);
+    assert.match(err(recipe(`title=a&prompt=${enc("ok" + ch + "ok")}`)), /invisible/, `prompt U+${code}`);
+    assert.match(err(recipe(`title=${enc("a" + ch)}&prompt=x`)), /invisible/, `title U+${code}`);
+    assert.match(err(recipe(`title=a&description=${enc("d" + ch)}&prompt=x`)), /invisible/, `description U+${code}`);
+    assert.match(err(recipe(`title=a&prompt=${enc("{{x}}")}&param=${enc("x=y" + ch)}`)), /invisible/, `default U+${code}`);
+  }
+  // One U+FE0F right after an emoji only picks the emoji look: allowed (Nadya, 18.11).
+  for (const ok of ["\u2764\uFE0F", "Plan \u2600\uFE0F trip", "\u2764\uFE0F\u2B50\uFE0F"]) {
+    assert.equal(recipe(`title=${enc(ok)}&prompt=${enc(ok)}`).ok, true, `allowed: ${ok}`);
+    assert.equal(recipe(`title=a&prompt=${enc("{{x}}")}&param=${enc("x=" + ok)}`).ok, true, `allowed default: ${ok}`);
+  }
+  // Everything else stays refused: two in a row, after a letter or a digit, alone, and U+FE0E.
+  for (const bad of ["\u2764\uFE0F\uFE0F", "a\uFE0F", "1\uFE0F", "\uFE0F", "\u2764\uFE0E", "\u2764\uFE0F\u{E0041}"]) {
+    assert.match(err(recipe(`title=a&prompt=${enc("ok" + bad)}`)), /invisible/, `refused: ${JSON.stringify(bad)}`);
+  }
+  // Ordinary text in any script still passes.
+  assert.equal(recipe(`title=${enc("Отчёт 東京 مرحبا")}&prompt=${enc("Résumé, naïve, 👋\ttab\nline")}`).ok, true);
+});
+
+test("recipe: line breaks stay refused in every other link's values", () => {
+  assert.equal(mcp(`name=a${enc("\n")}b&command=npx&arg=pkg@1`).ok, false);
+});
+
+test("recipe: fillRecipe and the card's fill agree; a value is text, not another placeholder", () => {
+  const text = "Read {{folder}} then {{ folder }} and {{who}}; keep {{other}}";
+  const values = { folder: "~/A", who: "{{folder}}" };
+  const want = "Read ~/A then ~/A and {{folder}}; keep {{other}}";
+  assert.equal(M.fillRecipe(text, values), want);
+  assert.equal(R.deeplinkRecipeFill(text, values), want);
+  assert.deepEqual(M.recipePlaceholders(text), ["folder", "who", "other"]);
+  assert.deepEqual(R.deeplinkRecipeMissing({ params: [{ key: "a" }, { key: "b" }] }, { a: "x", b: "  " }), ["b"]);
+  assert.equal(R.deeplinkTitle({ route: "recipe-open" }), "Use this recipe?");
+});
+
+/** The recipe card in the vm, with the new-chat path stubbed as renderer.js runs it. */
+function recipePage() {
+  const page = { acts: [], toasts: [], entry: { value: "", focused: false } };
+  const ctx = vm.createContext({
+    setTimeout: (f, ms) => { const t = setTimeout(f, ms); t.unref?.(); return t; }, clearTimeout,
+    S: { overlay: null, settings: null, draft: "" }, MCP: {},
+    BR: { deeplinkTake: async () => [], onDeeplink() {} },
+    toast: (title) => page.toasts.push(title),
+    act: (a) => { page.acts.push(a); ctx.S.overlay = null; ctx.render(); },
+    $: (sel) => (sel === "#entry" ? { set value(v) { page.entry.value = v; }, focus() { page.entry.focused = true; } } : null),
+    autosize: () => {},
+    sheet: (title, body, foot) => title + body + foot, ic: () => "", esc: (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])),
+  });
+  vm.runInContext(DLINK_SRC + `
+    function render() { globalThis.html = S.overlay === 'deeplink' ? deeplinkSheetHTML() : (deeplinkWhenClosed(), ''); }
+    globalThis.DL = DLINK;`, ctx);
+  page.ctx = ctx;
+  return page;
+}
+
+test("recipe card: full text, a field per param, Open in new chat puts the filled text in the box and sends nothing", async () => {
+  const r = recipe(`title=Report&prompt=${enc("Summarise {{folder}} <b>now</b>\nfor {{who}}")}&param=${enc("folder=~/Notes")}&param=who`);
+  assert.equal(r.ok, true, err(r));
+  const p = recipePage();
+  p.ctx.deeplinkShow(r.request);
+  assert.equal(p.ctx.S.overlay, "deeplink");
+  assert.match(p.ctx.html, /Use this recipe\?/);
+  assert.match(p.ctx.html, /Summarise \{\{folder\}\} &lt;b&gt;now&lt;\/b&gt;\nfor \{\{who\}\}/, "the text in full, escaped");
+  assert.match(p.ctx.html, /data-dlink-param="folder" value="~\/Notes"/);
+  assert.match(p.ctx.html, /data-dlink-param="who" value=""/);
+  // renderOverlays keeps focus and caret only for an input with an id (review fix).
+  assert.match(p.ctx.html, /id="dlink-p-folder" data-dlink-param="folder"/);
+  assert.match(p.ctx.html, /id="dlink-p-who" data-dlink-param="who"/);
+  assert.match(p.ctx.html, /Open in new chat/);
+  p.ctx.DL.armAt = 0; p.ctx.render();
+  assert.match(p.ctx.html, /data-act="dlink:install" disabled/, "who is still empty");
+  p.ctx.deeplinkAct("install");
+  await tick();
+  assert.deepEqual(p.acts, []);
+  assert.match(p.ctx.html, /Fill in who first/);
+  p.ctx.DL.armAt = 0;                      // the error re-armed the button; the person reads it, then types
+  assert.equal(p.ctx.deeplinkRecipeInput({ target: { dataset: { dlinkParam: "who" }, value: "Nadya" } }), true);
+  p.ctx.render();
+  assert.doesNotMatch(p.ctx.html, /data-act="dlink:install" disabled/);
+  assert.match(p.ctx.html, /data-dlink-param="who" value="Nadya"/, "a repaint keeps the typed value");
+  p.ctx.deeplinkAct("install");
+  await tick();
+  assert.deepEqual(p.acts, ["session:new"], "a new chat, and no send");
+  assert.equal(p.ctx.S.draft, "Summarise ~/Notes <b>now</b>\nfor Nadya");
+  assert.equal(p.entry.value, "Summarise ~/Notes <b>now</b>\nfor Nadya");
+  assert.equal(p.entry.focused, true);
+  assert.equal(p.ctx.DL.req, null);
+  assert.ok(p.toasts.includes("Recipe ready"));
+});
+
+test("recipe card: the input hook ignores fields that are not a recipe's", () => {
+  const p = recipePage();
+  assert.equal(p.ctx.deeplinkRecipeInput({ target: { dataset: {}, value: "x" } }), false);
+  assert.equal(p.ctx.deeplinkRecipeInput({ target: { dataset: { dlinkParam: "who" }, value: "x" } }), false, "no recipe card open");
+});
+
+test("renderer.js: the input listener hands recipe fields to deeplink.js", () => {
+  assert.match(RENDERER_SRC, /if \(typeof deeplinkRecipeInput === 'function' && deeplinkRecipeInput\(e\)\) return;/);
 });

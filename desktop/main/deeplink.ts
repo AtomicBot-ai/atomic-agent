@@ -6,12 +6,12 @@
  *   atomicagent://mcp/install?name=files&command=npx&arg=-y&arg=@scope/server-files@1.2.0&env=ROOT=/tmp
  *   atomicagent://mcp/install?name=docs&url=https://example.com/mcp
  *   atomicagent://skill/install?slug=@owner/skill-name
+ *   atomicagent://recipe/open?title=Weekly%20report&prompt=Summarise%20{{folder}}&param=folder=~/Notes
  *
  * This file is pure (no electron import, so the Node checks load it):
  *
  *   parseDeeplink           strict scheme / host / path / params, size limits
- *   registerDeeplinkRoute   one route per host ("mcp", "skill", and "recipe"
- *                           from ATO-1071 adds itself with one line)
+ *   registerDeeplinkRoute   one route per host ("mcp", "skill", "recipe")
  *   routeDeeplink           a raw link to the request the window draws, or an error
  *   checkMcpCommand         the stdio command allowlist and its argument rules
  *   shouldRegisterProtocol  never in a test, smoke, dev or unpackaged run, and
@@ -38,6 +38,11 @@ const SEGMENT_RE = /^[a-z][a-z0-9-]{0,31}$/;
 const KEY_RE = /^[a-z][a-zA-Z0-9_]{0,31}$/;
 // eslint-disable-next-line no-control-regex
 const CONTROL_RE = /[\u0000-\u001f\u007f]/;
+/* ATO-1615: a recipe's text may span lines (tab, line feed, carriage return), and may be longer than other values. */
+// eslint-disable-next-line no-control-regex
+const TEXT_CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+export const DEEPLINK_TEXT_KEYS: ReadonlySet<string> = new Set(["prompt"]);
+export const DEEPLINK_MAX_TEXT = 6000;
 
 export interface ParsedDeeplink {
   /** `mcp` in atomicagent://mcp/install. */
@@ -89,8 +94,9 @@ export function parseDeeplink(raw: unknown): ParseResult {
     count += 1;
     if (count > DEEPLINK_MAX_PARAMS) return { ok: false, error: `The link has more than ${DEEPLINK_MAX_PARAMS} parameters.` };
     if (!KEY_RE.test(key)) return { ok: false, error: `The link has a parameter with an odd name (${JSON.stringify(key.slice(0, 40))}).` };
-    if (value.length > DEEPLINK_MAX_VALUE) return { ok: false, error: `The parameter "${key}" is too long.` };
-    if (CONTROL_RE.test(value)) return { ok: false, error: `The parameter "${key}" holds control characters.` };
+    const text = DEEPLINK_TEXT_KEYS.has(key);
+    if (value.length > (text ? DEEPLINK_MAX_TEXT : DEEPLINK_MAX_VALUE)) return { ok: false, error: `The parameter "${key}" is too long.` };
+    if ((text ? TEXT_CONTROL_RE : CONTROL_RE).test(value)) return { ok: false, error: `The parameter "${key}" holds control characters.` };
     const list = params.get(key);
     if (list) list.push(value);
     else params.set(key, [value]);
@@ -543,8 +549,121 @@ export const skillInstallRoute: DeeplinkRoute = (link) => {
   };
 };
 
+/* ---------------- recipe/open (ATO-1615) ---------------- */
+
+/**
+ * Recipe v1 (Nadya's decision, 17.11): the whole recipe is in the link, a
+ * title (or name), the task text with {{placeholders}}, and the placeholders as
+ * `param=key` or `param=key=default`. The card shows the text in full and a
+ * field per parameter; its button opens a new chat with the filled text in
+ * the box and sends nothing. A link never picks the model, tools, MCP
+ * servers, skills or permissions: those keys are refused by name.
+ * Placeholders are written `{{key}}` (spaces inside allowed), as Goose recipes write them.
+ */
+export const RECIPE_MAX_PARAMS = 16;
+export const RECIPE_TITLE_MAX = 120;
+export const RECIPE_DESCRIPTION_MAX = 300;
+export const RECIPE_PARAM_DEFAULT_MAX = 500;
+export const RECIPE_PARAM_KEY_RE = /^[a-z][a-z0-9_]{0,31}$/;
+/** `{{ key }}`: the placeholder shape Goose recipes use. */
+export const RECIPE_PLACEHOLDER_RE = /\{\{\s*([^{}\s]*)\s*\}\}/g;
+/*
+ * Text that reads differently than it runs: anything the card would draw as nothing or
+ * that changes direction. An allow-list by Unicode category, not a list of known ranges:
+ * format characters (Cf: zero-width, bidi marks and overrides, U+061C, U+00AD, U+180E,
+ * the tag block E0001-E007F), private use (Co), unassigned (Cn, which also covers U+E0000),
+ * C1 controls, variation selectors, the combining grapheme joiner and Hangul/Khmer/Mongolian
+ * fillers. C0 controls are refused earlier by parseDeeplink (tab and newline aside, prompt only).
+ */
+export const RECIPE_HIDDEN_RE =
+  /[\p{Cf}\p{Co}\p{Cn}\u0080-\u009f\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\uffa0\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/u;
+/* One U+FE0F right after an emoji only asks for the emoji look (a red heart): allowed. A second one, or one anywhere else, is not. */
+const RECIPE_EMOJI_VS16_RE = /(\p{Extended_Pictographic})\ufe0f/gu;
+/** Whether `text` holds a character the card would not show; see RECIPE_HIDDEN_RE. */
+export function recipeHasHidden(text: string): boolean {
+  return RECIPE_HIDDEN_RE.test(text.replace(RECIPE_EMOJI_VS16_RE, "$1"));
+}
+const RECIPE_REFUSED_KEYS = ["model", "provider", "tools", "tool", "mcp", "server", "skill", "skills", "permission", "permissions", "approval", "approve", "autosend", "send", "run"];
+
+export interface RecipeParam {
+  key: string;
+  /** The field's label: the key with `_` as spaces. */
+  label: string;
+  default: string;
+}
+
+/** The placeholders a recipe's text uses, each once, in order. */
+export function recipePlaceholders(prompt: string): string[] {
+  const out: string[] = [];
+  for (const m of prompt.matchAll(RECIPE_PLACEHOLDER_RE)) {
+    const key = m[1] ?? "";
+    if (!out.includes(key)) out.push(key);
+  }
+  return out;
+}
+
+/** The text with each `{{key}}` replaced by its value. Values are text only: a `{{x}}` inside a value stays as typed. */
+export function fillRecipe(prompt: string, values: Readonly<Record<string, string>>): string {
+  return prompt.replace(RECIPE_PLACEHOLDER_RE, (whole, key: string) => (Object.prototype.hasOwnProperty.call(values, key) ? values[key]! : whole));
+}
+
+export const recipeOpenRoute: DeeplinkRoute = (link) => {
+  const path = link.path.join("/");
+  if (path !== "open" && path !== "") return { ok: false, error: "The recipe link can only open a recipe (atomicagent://recipe/open)." };
+  const refused = [...link.params.keys()].find((k) => RECIPE_REFUSED_KEYS.includes(k.toLowerCase()));
+  if (refused) return { ok: false, error: `A recipe link cannot choose the model, tools, servers, skills or permissions ("${refused}"). Only its text and parameters are used.` };
+  const p = takeParams(link, {
+    title: { max: 1 },
+    name: { max: 1 },   // the same as title, for links that say name
+    description: { max: 1 },
+    prompt: { max: 1, required: true },
+    param: { max: RECIPE_MAX_PARAMS },
+  });
+  if (!p.ok) return p;
+  const v = p.values;
+  if (v.title!.length && v.name!.length) return { ok: false, error: "The link gives both a title and a name; give one." };
+  const title = (v.title![0] ?? v.name![0] ?? "").trim();
+  if (!title) return { ok: false, error: "The link has no \"title\"." };
+  if (title.length > RECIPE_TITLE_MAX) return { ok: false, error: "The recipe title is too long." };
+  const description = (v.description![0] ?? "").trim();
+  if (description.length > RECIPE_DESCRIPTION_MAX) return { ok: false, error: "The recipe description is too long." };
+  const prompt = v.prompt![0]!.replace(/\r\n?/g, "\n").trim();
+  for (const [what, text] of [["title", title], ["description", description], ["text", prompt]] as const) {
+    if (recipeHasHidden(text)) return { ok: false, error: `The recipe ${what} holds invisible or direction-changing characters.` };
+  }
+  const params: RecipeParam[] = [];
+  for (const raw of v.param!) {
+    const eq = raw.indexOf("=");
+    const key = (eq >= 0 ? raw.slice(0, eq) : raw).trim();
+    const def = eq >= 0 ? raw.slice(eq + 1) : "";
+    if (!RECIPE_PARAM_KEY_RE.test(key)) return { ok: false, error: `The parameter name ${JSON.stringify(key.slice(0, 40))} can use lowercase letters, digits and _ (up to 32).` };
+    if (params.some((x) => x.key === key)) return { ok: false, error: `The parameter ${key} is given twice.` };
+    if (def.length > RECIPE_PARAM_DEFAULT_MAX) return { ok: false, error: `The default for ${key} is too long.` };
+    if (recipeHasHidden(def)) return { ok: false, error: `The default for ${key} holds invisible or direction-changing characters.` };
+    params.push({ key, label: key.replace(/_/g, " "), default: def });
+  }
+  const used = recipePlaceholders(prompt);
+  const undeclared = used.find((k) => !params.some((x) => x.key === k));
+  if (undeclared !== undefined) return { ok: false, error: `The recipe text uses {{${undeclared.slice(0, 40)}}}, but the link does not declare it as a param.` };
+  const unused = params.find((x) => !used.includes(x.key));
+  if (unused) return { ok: false, error: `The parameter ${unused.key} is not used in the recipe text.` };
+  return {
+    ok: true,
+    request: {
+      route: "recipe-open",
+      link: displayLink(link.raw),
+      title,
+      ...(description ? { description } : {}),
+      prompt,
+      params,
+      warnings: ["This task text comes from a website or another app. Read all of it before you use it: the agent will do what it says once you send it."],
+    },
+  };
+};
+
 registerDeeplinkRoute("mcp", mcpInstallRoute);
 registerDeeplinkRoute("skill", skillInstallRoute);
+registerDeeplinkRoute("recipe", recipeOpenRoute);
 
 /* ---------------- the OS side ---------------- */
 
