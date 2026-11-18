@@ -1776,6 +1776,24 @@ function wireIpc(client: AgentClient): void {
     return client.cancel(turnId);
   });
 
+  /* ATO-1492: the person's answer to an MCP server's question. Its own
+     route, never agent:approve: approvals can be answered by the ladder,
+     these only by a person. */
+  ipcMain.handle("agent:mcpElicitationAnswer", async (_event, payload: unknown) => {
+    const { id, action, content } = (payload ?? {}) as { id?: unknown; action?: unknown; content?: unknown };
+    if (typeof id !== "string" || !id) return { ok: false, error: "id required" };
+    if (action !== "accept" && action !== "decline" && action !== "cancel") {
+      return { ok: false, error: "action must be accept, decline or cancel" };
+    }
+    const fields = content && typeof content === "object" && !Array.isArray(content)
+      ? (content as Record<string, unknown>) : undefined;
+    try {
+      return await client.answerMcpElicitation(id, action, action === "accept" ? fields : undefined);
+    } catch (err) {
+      return { ok: false, status: 0, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle("agent:approve", async (_event, payload: unknown) => {
     const { approvalId, decision, reason } = payload as {
       approvalId?: string;
@@ -3867,6 +3885,9 @@ function wireIpc(client: AgentClient): void {
   });
   ipcMain.handle("app:daemonWatch", () => daemonWatchState());
   client.on("approval", (event) => send("agent:approval", event));
+  // ATO-1492: an MCP server's question to the person, drawn by renderer/mcp-elicitation.js.
+  client.on("mcpElicitation", (event) => send("agent:mcpElicitation", event));
+  client.on("mcpElicitationClosed", (event) => send("agent:mcpElicitationClosed", event));
   // Analytics and error reporting: counts, enums and exit codes only.
   client.on("chat", (event) => chatTurns.observe(event));
   client.on("approval", (event) => chatTurns.approval(event));

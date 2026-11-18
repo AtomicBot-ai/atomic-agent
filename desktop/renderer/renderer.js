@@ -5517,6 +5517,7 @@ function overlaysHTML() {
   if (S.overlay === 'pedit') html += projectEditHTML();   // ATO-1146 (chat-projects.js)
   if (S.overlay === 'pnew') html += projectCreateHTML();   // W2 QA (chat-projects.js)
   if (S.overlay === 'deeplink') html += deeplinkSheetHTML(); else deeplinkWhenClosed();   // ATO-556 (deeplink.js): a waiting link opens once the card is closed
+  if (S.overlay === 'mcpelicit') html += mcpElicitSheetHTML(); else mcpElicitWhenClosed();   // ATO-1492 (mcp-elicitation.js): closing it unanswered is a cancel
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -7434,6 +7435,8 @@ function act(a) {
   if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
   // ATO-556: the atomicagent:// link card's Install (deeplink.js); Cancel is `close`.
   if (k === 'dlink') { deeplinkAct(v || ''); return; }
+  // ATO-1492: an MCP server's question (mcp-elicitation.js); closing the sheet is `close`.
+  if (k === 'mcpelicit') { mcpElicitAct(v || ''); return; }
   // ATO-1056/1058: Roll back here, Edit, Fork from here (chat-rewind.js).
   if (k === 'rewind') { rewindAct(v || ''); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
@@ -8729,6 +8732,7 @@ document.addEventListener('input', (e) => {
   // ATO-568: a worker's Steer field keeps its text across repaints.
   if (typeof fzpInput === 'function' && fzpInput(e)) return;
   if (typeof deeplinkRecipeInput === 'function' && deeplinkRecipeInput(e)) return;   // ATO-1615: a recipe card's fields (deeplink.js)
+  if (typeof mcpElicitInput === 'function' && mcpElicitInput(e)) return;   // ATO-1492
   if (typeof allSettingsInput === 'function' && allSettingsInput(e, esc)) return;   // ATO-41
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);
@@ -12605,6 +12609,7 @@ if (BR) {
   BR.onChat(onChatEvent);
   BR.onApproval(onApprovalEvent);
   deeplinkWire();   // ATO-556: a link that came in before this page loaded, and every later one (deeplink.js)
+  mcpElicitWire();   // ATO-1492: MCP servers' questions; the approval replay below reopens the stream, which replays them too
   /* B01 QA, ATO-198: the turns main is streaming are this page's from here
      (adoptLiveTurns), and only then does the agent replay the approvals still
      pending: a request then finds its chat, and is kept for it instead of

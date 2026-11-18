@@ -1124,7 +1124,10 @@ export class AgentClient extends EventEmitter {
     void (async () => {
       while (!controller.signal.aborted && alive()) {
         try {
-          const res = await fetch(`${this.base()}/api/events`, {
+          // ATO-1492: `?elicitation=1` says this window draws MCP servers'
+          // questions; an agent from before it ignores the parameter and
+          // never sends those frames.
+          const res = await fetch(`${this.base()}/api/events?elicitation=1`, {
             headers: { authorization: `Bearer ${this.authToken()}` },
             signal: controller.signal,
           });
@@ -1132,7 +1135,7 @@ export class AgentClient extends EventEmitter {
           for await (const frame of sseFrames(res.body, controller.signal)) {
             if (frame.data === "[DONE]") continue;
             try {
-              this.emit("approval", JSON.parse(frame.data));
+              this.emit(eventsFrameChannel(frame.event), JSON.parse(frame.data));
             } catch {
               /* ignore malformed frame */
             }
@@ -2401,6 +2404,35 @@ export class AgentClient extends EventEmitter {
     return res.json();
   }
 
+  /**
+   * ATO-1492: the person's answer to an MCP server's question
+   * (`POST /api/mcp/elicitation/answer`). Never the approval route: the
+   * approval ladder can answer approvals by itself, these only a person.
+   * Resolves `{ok:false, status, error}` on a refusal: 400 keeps the
+   * question open (an answer that does not fit), 404 means it is gone.
+   */
+  async answerMcpElicitation(
+    id: string,
+    action: "accept" | "decline" | "cancel",
+    content?: Record<string, unknown>,
+  ): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const res = await fetch(`${this.base()}/api/mcp/elicitation/answer`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ id, action, ...(content ? { content } : {}) }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (res.ok) return { ok: true };
+    let error = `HTTP ${res.status}`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body.error?.message) error = body.error.message;
+    } catch {
+      /* not JSON */
+    }
+    return { ok: false, status: res.status, error };
+  }
+
   async resolveApproval(
     approvalId: string,
     decision: ApprovalDecision,
@@ -2548,6 +2580,17 @@ export class AgentClient extends EventEmitter {
     }
     return false;
   }
+}
+
+/**
+ * Which client event a `GET /api/events` frame becomes. Approval frames
+ * keep the old unnamed / `approval_request` behaviour; an MCP server's
+ * question (ATO-1492) never reaches the approval path.
+ */
+export function eventsFrameChannel(event: string): "approval" | "mcpElicitation" | "mcpElicitationClosed" {
+  if (event === "mcp_elicitation") return "mcpElicitation";
+  if (event === "mcp_elicitation_closed") return "mcpElicitationClosed";
+  return "approval";
 }
 
 /** Minimal SSE frame reader: yields `{event, data}` per blank-line-delimited block. */

@@ -138,6 +138,11 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1502: answer an ask_user question (POST /api/question/answer). */
   answerQuestion: (req: { approvalId: string; selected?: string[]; other?: string; skip?: boolean }) =>
     ipcRenderer.invoke("agent:answerQuestion", req),
+  /** ATO-1492: an MCP server's question to the person, and its answer (never through approve). */
+  onMcpElicitation: (cb: (payload: unknown) => void) => on("agent:mcpElicitation", cb),
+  onMcpElicitationClosed: (cb: (payload: unknown) => void) => on("agent:mcpElicitationClosed", cb),
+  mcpElicitationAnswer: (id: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>) =>
+    ipcRenderer.invoke("agent:mcpElicitationAnswer", { id, action, ...(content ? { content } : {}) }),
   /** B01 QA, ATO-198: the turns main streams, for a page that loads while they run. */
   liveTurns: () => ipcRenderer.invoke("agent:liveTurns"),
   /** B01 review: the agent replays the approvals still pending (asked once the page has taken the turns over). */
