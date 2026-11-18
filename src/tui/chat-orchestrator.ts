@@ -663,6 +663,13 @@ export class ChatOrchestrator {
       const rm = this.runMode.current();
       if (rm.effective !== "fusion") return;
       const id = leg === "worker" ? rm.workerProviderId : rm.orchestratorProviderId;
+      // ATO-1563: a foreign llama.cpp server serves what it loaded; a pick
+      // there would only be a label, so none is written.
+      const kind = resolveLlmConfig(getConfig()).providers.find((p) => p.id === id)?.kind;
+      if (id !== "local-llama" && kind === "llama-server") {
+        this.bus.emit({ type: "composer_notice", text: "This server runs the model it has loaded. Change the model on the server itself." });
+        return;
+      }
       if (id === "local-llama") {
         if (getConfig().localModels.managed.modelId === modelId) {
           if (!await this.localModels.startDaemon()) return;

@@ -42,6 +42,20 @@ export function fusionModelRows(state: TuiState, leg: "orchestrator" | "worker")
     })),
     {id: "model:download", label: "Download more models…", detail: "opens the local models pane", active: false, intent: {kind: "localModelsPanel"}},
   ];
+  // ATO-1563: a llama.cpp server that is not ours serves the model it
+  // loaded and ignores the one a request names, so it offers one row that
+  // says what is loaded and cannot be picked. LM Studio, Ollama and the
+  // cloud list their models below; a pick there is what the leg runs
+  // (ATO-1560).
+  const entry = state.providersPanel.rows.find(p => p.id === id);
+  if (entry?.kind === "llama-server") return [{
+    id: `model:${leg}:server`,
+    label: entry.chatModel ? `Loaded on the server: ${entry.chatModel}` : "Loaded on the server",
+    detail: "Change the model on the server",
+    active: true,
+    intent: {kind: "fusionModel", leg, modelId: entry.chatModel ?? ""},
+    disabled: "This server runs the model it has loaded. Change the model on the server itself.",
+  }];
   // Reuse the provider catalog selector, with this role as the read-only focus.
   const focused = {...state, providersPanel: {...state.providersPanel, rows: state.providersPanel.rows.map(p => ({...p, isActiveText: p.id === id}))}};
   const section = selectCloudModelSection(focused);
