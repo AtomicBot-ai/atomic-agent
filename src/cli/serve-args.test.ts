@@ -178,3 +178,26 @@ describe("serve --tunnel flags (ATO-625)", () => {
     expect(parseError(["--tunnel-name", "--tunnel"])).toContain("requires a value");
   });
 });
+
+describe("serve --a2a (ATO-693)", () => {
+  it("is off unless asked for", () => {
+    vi.stubEnv("ATOMIC_AGENT_SERVE_A2A", "");
+    expect(parsedOk([]).a2a).toBe(false);
+  });
+
+  it("--a2a with an API key turns it on", () => {
+    expect(parsedOk(["--a2a", "--api-key", "a2a-key-0123456789"]).a2a).toBe(true);
+  });
+
+  it("ATOMIC_AGENT_SERVE_A2A=1 turns it on too", () => {
+    vi.stubEnv("ATOMIC_AGENT_SERVE_A2A", "1");
+    vi.stubEnv("ATOMIC_AGENT_API_KEY", "a2a-key-0123456789");
+    expect(parsedOk([]).a2a).toBe(true);
+  });
+
+  it("is refused without an API key, even on loopback", () => {
+    const error = parseError(["--a2a"]);
+    expect(error).toContain("--a2a");
+    expect(error).toContain("ATOMIC_AGENT_API_KEY");
+  });
+});
