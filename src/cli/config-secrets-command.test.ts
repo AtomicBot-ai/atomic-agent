@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 
 import { handleSecrets } from "./config-secrets-command.js";
 
@@ -47,6 +48,53 @@ describe("config secrets", () => {
     expect(out.join("")).toBe(
       "Secrets store: OS keychain\nKeys in the OS keychain: OPENAI_API_KEY\n",
     );
+  });
+
+  it("status --json carries the store and the names only", () => {
+    writeFileSync(
+      join(stateDir, "secrets-store.json"),
+      JSON.stringify({ store: "keychain", keychainKeys: ["OPENAI_API_KEY"] }),
+    );
+    expect(handleSecrets(["status", "--json"], stateDir)).toBe(0);
+    expect(JSON.parse(out.join(""))).toEqual({
+      store: "keychain",
+      keychainKeys: ["OPENAI_API_KEY"],
+    });
+  });
+
+  // ATO-1639: one key at a time, for the desktop app. Default (.env) mode
+  // only here; the keychain branch is src/config/secret-access.test.ts.
+  it("set reads the value from stdin and says where it went", async () => {
+    const code = await handleSecrets(
+      ["set", "OPENROUTER_API_KEY", "--json"],
+      stateDir,
+      Readable.from(["sk-or-1\n"]),
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(out.join(""))).toEqual({ name: "OPENROUTER_API_KEY", store: "env" });
+    expect(readFileSync(join(stateDir, ".env"), "utf8")).toBe("OPENROUTER_API_KEY=sk-or-1\n");
+    expect(out.join("")).not.toContain("sk-or-1");
+  });
+
+  it("set refuses a name that is not a key, and an empty value", async () => {
+    expect(await handleSecrets(["set", "NODE_OPTIONS"], stateDir, Readable.from(["x"]))).toBe(1);
+    expect(await handleSecrets(["set", "OPENAI_API_KEY"], stateDir, Readable.from([""]))).toBe(1);
+    expect(await handleSecrets(["set"], stateDir, Readable.from(["x"]))).toBe(1);
+    expect(err.join("")).toContain("usage: atomic-agent config secrets set <NAME>");
+  });
+
+  it("get prints a saved value; exit 1 when nothing is saved", async () => {
+    expect(handleSecrets(["get", "GEMINI_API_KEY"], stateDir)).toBe(1);
+    expect(err.join("")).toContain("GEMINI_API_KEY is not saved");
+    writeFileSync(join(stateDir, ".env"), "GEMINI_API_KEY=g-1\n");
+    expect(handleSecrets(["get", "GEMINI_API_KEY"], stateDir)).toBe(0);
+    expect(out.join("")).toBe("g-1\n");
+  });
+
+  it("unset removes the key", () => {
+    writeFileSync(join(stateDir, ".env"), "GEMINI_API_KEY=g-1\nATOMIC_PORT=1\n");
+    expect(handleSecrets(["unset", "GEMINI_API_KEY"], stateDir)).toBe(0);
+    expect(readFileSync(join(stateDir, ".env"), "utf8")).toBe("ATOMIC_PORT=1\n");
   });
 
   it("rejects an unknown subcommand", () => {

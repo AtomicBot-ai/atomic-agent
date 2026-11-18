@@ -27,6 +27,7 @@ import {
   createPatchConfigHandler,
   createPutConfigHandler,
 } from "./route-config.js";
+import { createGetSecretsHandler, createPutSecretHandler } from "./route-secrets.js";
 import {
   createGetSkillHandler,
   createInstallSkillHandler,
@@ -227,6 +228,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     },
     // ATO-1022: the desktop's whole-file write, without an `atag config set` process.
     { method: "PUT", path: "/api/config", handler: createPutConfigHandler() },
+    // ATO-1639: the desktop saves keys wherever the agent keeps them (.env or the OS keychain).
+    { method: "GET", path: "/api/secrets", handler: createGetSecretsHandler() },
+    { method: "PUT", path: "/api/secrets/{name}", handler: createPutSecretHandler() },
     { method: "GET", path: "/api/skills", handler: createListSkillsHandler() },
     {
       method: "GET",

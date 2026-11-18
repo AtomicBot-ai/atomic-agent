@@ -109,6 +109,15 @@ export {
   type SecretsStoreState,
 } from "./secret-store.js";
 export {
+  SecretAccessError,
+  readSavedSecret,
+  saveSecret,
+  secretNameError,
+  secretValueError,
+  type SavedSecret,
+  type SavedSecretRead,
+} from "./secret-access.js";
+export {
   moveSecretsToEnv,
   moveSecretsToKeychain,
   type SecretsMigrationResult,

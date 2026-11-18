@@ -79,6 +79,7 @@ export const HELP =
     "  GET  /health                             Liveness + llama-server reachability (public)",
     "  GET  /api/capabilities                   Runtime wiring summary",
     "  GET|PATCH /api/config                    Read or merge-write the user config file",
+    "  GET  /api/secrets, PUT /api/secrets/{name} Where keys are saved; save one key (this computer only)",
     "  GET  /api/skills, GET /api/skills/{name} List or inspect installed skills",
     "  POST /api/skills/install, /uninstall     Manage installed skills",
     "  GET  /api/sessions, GET /api/sessions/{id}, DELETE /api/sessions/{id}",
