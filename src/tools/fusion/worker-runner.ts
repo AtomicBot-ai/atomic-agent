@@ -1,17 +1,9 @@
-import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-contract.js";
-import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
-import type { ApprovalGate } from "../../approval/approval-gate.js";
-import type { SessionState } from "../../session/session-state.js";
-import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
-import type { TurnOrigin } from "../../runtime/turn-controller.js";
+import type { AgentLoopEvent } from "../../agent/agent-contract.js";
 import type { DelegateTask } from "./delegate-args.js";
-import type { DelegateContract } from "./contract.js";
 import {
   readWorkerQuestion,
   WORKER_NEEDS_INPUT_NOTE,
 } from "./worker-question.js";
-import type { CompletionUsage } from "../../llm/provider/completion-types.js";
-import type { FusionEscalationTarget } from "../../llm/run-mode/index.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
   describeTrigger,
@@ -20,18 +12,14 @@ import {
   formatPersonSteer,
   renderAdvisorPrompt,
   requestAdvice,
-  type EscalationComplete,
   type EscalationTrigger,
-  type FusionLiveWorkers,
 } from "./escalation.js";
-import type { WorkerPricing } from "./worker-result.js";
 import { resolveContractInputs } from "./contract-inputs.js";
 import {
   applyDeclaredFileReport,
   applyNoChangesRule,
   inspectDeclaredFiles,
 } from "./declared-files.js";
-import type { DeclaredInputsRegistry } from "../os/fs/fs-declared-inputs.js";
 import {
   renderWorkerBrief,
   WORKER_REPLY_CHAR_BUDGET,
@@ -45,7 +33,6 @@ import {
   type SlotOccupancy,
   type WorkerTaskResult,
 } from "./worker-result.js";
-import type { StructuredLogger } from "../../tracing/index.js";
 import { getConfig } from "../../config/index.js";
 import {
   FUSION_WORKER_APPROVAL_REFUSED,
@@ -53,17 +40,29 @@ import {
   workerToolFilterFor,
   workerRefusalFor,
 } from "./worker-tool-policy.js";
-import type { ToolRole } from "../tool-roles.js";
 import { fingerprintToolOutcome } from "../../agent/progress/loop-fingerprints.js";
 import {
   LOCAL_LEG_UNRESPONSIVE_ERROR,
   LOCAL_LEG_UNRESPONSIVE_HINT,
-  type LocalHealthAnswer,
-  type LocalLegHealth,
 } from "./local-leg-health.js";
 import { hasSplitProposal, splitSteer } from "./task-tree.js";
 import { WrittenFilesTracker } from "./worker-files-written.js";
 import { estimatedOutputTokens } from "./worker-fit.js";
+import {
+  DEFAULT_WORKER_TURN_ORIGIN,
+  type FusionWorkerRunnerDepsExtras,
+  type FusionWorkerRunnerOptionsExtras,
+  type WorkerRunnerCoreDeps,
+  type WorkerRunnerCoreOptions,
+} from "./worker-runner-core.js";
+
+export {
+  DEFAULT_WORKER_TURN_ORIGIN,
+  type FusionWorkerRunnerDepsExtras,
+  type FusionWorkerRunnerOptionsExtras,
+  type WorkerRunnerCoreDeps,
+  type WorkerRunnerCoreOptions,
+} from "./worker-runner-core.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -440,223 +439,31 @@ export function formatEarlyHandBack(input: {
   );
 }
 
-export interface WorkerRunnerDeps {
-  /** `runtime.runTurn`, unchanged. */
-  runTurn: (
-    session: SessionState,
-    userMessage: string,
-    options: {
-      origin?: TurnOrigin;
-      providerId?: string;
-      /** The worker leg's model for this turn (`RunWorkerTasksOptions.turnModel`). */
-      model?: string;
-      maxSteps?: number;
-      taskMaxDurationMs?: number;
-      toolFilter?: (name: string) => boolean;
-      toolRole?: ToolRole;
-      reasoningEffort?: ReasoningEffort;
-      maxOutputTokens?: number;
-      signal?: AbortSignal;
-      eventHook?: (event: AgentLoopEvent) => void;
-    },
-  ) => Promise<RunTurnResult>;
-  /** `runtime.createEphemeralSession` — in-memory, never persisted. */
-  createEphemeralSession: (meta: FusionWorkerMeta, workingDir?: string, inheritWorkspace?: boolean) => SessionState;
-  inheritWorkspace?: boolean;
-  approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy"> &
-    Partial<
-      Pick<
-        ApprovalGate,
-        | "fanoutScopes"
-        | "followDeclined"
-        | "clearSessionGrants"
-        | "hasDeclinedUnder"
-        | "forgetDeclinedUnder"
-        | "wouldPrompt"
-      >
-    >;
-  /**
-   * Where a worker's declared inputs (the contract's `inputs`, F51) are
-   * registered for its session so `os.fs.write` refuses to replace
-   * them. Absent (tests, embedders) declares nothing.
-   */
-  declaredInputs?: Pick<DeclaredInputsRegistry, "declare" | "clear">;
-  /** Progress into the PARENT session's frame. */
-  emitEvent: (sessionId: string, event: AgentLoopEvent) => void;
-  workingDir: string;
-  /**
-   * The local server's slot table at this moment (`GET /slots`, read by
-   * `readSlotOccupancy`), `null` when it gave no readable answer. Asked
-   * once, by a local worker's queue watchdog just before it ends the
-   * worker, so the hint on the row says what the server was doing rather
-   * than guessing from the worker count. Absent (tests, embedders, a
-   * cloud leg) nothing is probed and the hint says only what is known.
-   */
-  probeSlotOccupancy?: () => Promise<SlotOccupancy | null>;
-  /** Where a raised task budget is logged. Absent, it is only noted on the row. */
-  logger?: Pick<StructuredLogger, "info">;
-  /**
-   * The local leg's dispatch health across fan-outs (ATO-917): marked
-   * when a local worker is cut off, checked before the next local worker
-   * is sent. Absent (tests, embedders, a cloud leg) nothing is checked.
-   */
-  localLegHealth?: LocalLegHealth;
-  /** `LlamaServerClient.probeHealth`, the question the check above asks. */
-  probeLocalHealth?: () => Promise<LocalHealthAnswer>;
-  /**
-   * The probe for one local leg's own server (ATO-1318), or `undefined`
-   * when nothing can ask that server; then the check is skipped for it.
-   * When set it replaces `probeLocalHealth`, which only ever asks the
-   * main local server.
-   */
-  probeLocalHealthFor?: (
-    providerId: string,
-  ) => (() => Promise<LocalHealthAnswer>) | undefined;
-  /**
-   * One completion on the escalation provider (ATO-942). Absent, nothing
-   * is ever escalated, manual or automatic.
-   */
-  escalationComplete?: EscalationComplete;
-  /** `runtime.steer`: how an advisor's hint reaches a running worker. */
-  steerWorker?: (sessionId: string, text: string) => boolean;
-  /** Where running workers are registered for the person's stop / escalate. */
-  liveWorkers?: FusionLiveWorkers;
-  /**
-   * Replace the process's HTTP connection pool before a local worker is
-   * sent after one was cut off and the server still answered
-   * (`renewTransportPool`, ATO-1357). Returns whether it did. Absent
-   * (tests, embedders), nothing is renewed.
-   */
-  renewLocalTransport?: () => boolean;
-}
+/**
+ * The Fusion runner's dependencies: the shared core plus Fusion's
+ * add-ons, every one of which is optional (ATO-1669,
+ * `worker-runner-core.ts`).
+ */
+export interface WorkerRunnerDeps
+  extends WorkerRunnerCoreDeps,
+    FusionWorkerRunnerDepsExtras {}
+
+/** The same type under the core/add-on naming. */
+export type FusionWorkerRunnerDeps = WorkerRunnerDeps;
 
 /** Escalations one worker may get, automatic and manual together. */
 export const MAX_ESCALATIONS_PER_WORKER = 2;
 
-export interface RunWorkerTasksOptions {
-  parentSessionId: string;
-  tasks: readonly DelegateTask[];
-  /** Concurrency ceiling, already reconciled against the slot pool. */
-  maxWorkers: number;
-  /** The local leg every worker turn is pinned to. */
-  providerId: string;
-  /**
-   * Display label for the model the workers run on, already resolved by
-   * the caller (`runMode.workerModel ?? providerId`). Resolved there
-   * rather than here because the runner has no config access and must
-   * never invent a name it cannot stand behind.
-   */
-  workerModel: string;
-  /**
-   * The model every worker turn asks `providerId` for (ATO-1560), when it
-   * is not the entry's own chat model: `ResolvedRunMode.workerTurnModel`,
-   * or a role's `turnModel`. Absent, the provider's configured model
-   * answers, as before. Never set for a `llama-server` leg.
-   */
-  turnModel?: string;
-  workerMaxSteps: number;
-  /**
-   * Wall-clock ceiling per worker turn. With `localTokensPerSecond` it
-   * is the ceiling of a per-task estimate (`estimateWorkerTimeoutMs`);
-   * without, it is the limit itself.
-   */
-  workerTimeoutMs: number;
-  /**
-   * The local leg's measured generation speed
-   * (`LlamaServerClient.measuredTokensPerSecond`), `null` when nothing
-   * has completed yet. Absent for a cloud leg, which keeps the ceiling.
-   */
-  localTokensPerSecond?: number | null;
-  /**
-   * The workers run on a local (slot-affine) leg. Turns on the local
-   * floors (`LOCAL_WORKER_TASK_BUDGET_FLOOR_MS`,
-   * `LOCAL_WORKER_FIRST_TOKEN_FLOOR_MS`) and the slot probe. Explicit
-   * because `localTokensPerSecond` is `null` both on a cloud leg and on
-   * a local one nothing has been measured on yet.
-   */
-  localLeg?: boolean;
-  /** `runMode.fusion.workerReasoning`, sent with every worker completion. */
-  workerReasoning?: ReasoningEffort;
-  /**
-   * `runMode.fusion.workerMaxOutputTokens`, the per-step output cap. A
-   * measured local leg may send less: what fits the worker's time
-   * (`fitReplyCapToTime`).
-   */
-  workerMaxOutputTokens?: number;
-  /**
-   * Directories these workers may write in without asking, as approved
-   * by the operator on this fan-out's own prompt. Empty means nothing
-   * was authorised — the workers then hit the refuse policy on every
-   * write, exactly as they did before the fan-out prompt existed, and
-   * the operator sees it as every task returning `needs_orchestrator`.
-   */
-  writeScope?: readonly string[];
-  /**
-   * The operator's request behind the orchestrator's turn, quoted into
-   * every worker's brief as context (`renderWorkerBrief`). Absent when
-   * the parent turn has none to give.
-   */
-  originalRequest?: string;
-  /**
-   * The fan-out's contract, rendered into every brief above the task
-   * (`renderWorkerBrief`). Checked after the fan-out by the caller.
-   */
-  contract?: DelegateContract;
-  signal: AbortSignal;
-  /**
-   * Asked before each task starts: a reason means the task is not
-   * started and comes back `cancelled` with that reason (the turn's cap,
-   * ATO-947). Absent, every task starts as before.
-   */
-  shouldStart?: () => string | undefined;
-  /**
-   * Asked only before a task starts, after `shouldStart`: the failure
-   * breaker (ATO-1406). Unlike `shouldStart` it never refuses an
-   * escalation or cuts a run already going, so running workers finish.
-   */
-  shouldStartTask?: () => string | undefined;
-  /** Every worker completion's usage, as it lands (live spend, ATO-947). */
-  onWorkerUsage?: (taskId: string, usage: CompletionUsage) => void;
-  /**
-   * Where a stuck worker may be escalated, and that model's price when
-   * known (ATO-942). Absent: no escalation of any kind.
-   */
-  escalation?: { target: FusionEscalationTarget; pricing?: WorkerPricing };
-  /** What an escalation cost, as it lands, for the turn's cap. */
-  onEscalationSpend?: (taskId: string, usd: number) => void;
-  /** The worker model's price, for the live $ on its row. Absent: tokens only. */
-  workerPricing?: WorkerPricing;
-  /**
-   * Text appended to a task's brief: its acceptance checklist and, on a
-   * judge's retry, what was found not met (ATO-944). Absent: the brief
-   * is exactly as before.
-   */
-  briefSuffix?: (taskId: string) => string | undefined;
-  /**
-   * The workspace a task runs in instead of the working directory, and
-   * the write scope rebased onto it (branch isolation, ATO-946). Absent,
-   * or `undefined` for a task: the working directory, as before.
-   */
-  taskWorkspace?: (
-    taskId: string,
-  ) => { workingDir: string; writeScope: readonly string[] } | undefined;
-  /**
-   * The task tree (ATO-940): whether this task may still propose a
-   * split. True, the half-budget hand-back and a cut first answer first
-   * steer the worker toward a `split_proposal` (once, with
-   * `SPLIT_GRACE_STEPS` more steps), and a reply that carries one skips
-   * the declared-file check: the files are its children's to write.
-   * Absent: exactly as before.
-   */
-  canProposeSplit?: (taskId: string) => boolean;
-  /**
-   * Every tool a worker starts, unthrottled (the feed's lines are capped
-   * per task). The run checkpoint (ATO-617) records side effects from it.
-   */
-  onWorkerTool?: (taskId: string, tool: string) => void;
-  /** Each task's row as soon as it is final, before the fan-out returns (ATO-617). */
-  onTaskFinished?: (result: WorkerTaskResult) => void;
-}
+/**
+ * The Fusion runner's options: the shared core plus Fusion's add-ons,
+ * every one of which is optional (ATO-1669, `worker-runner-core.ts`).
+ */
+export interface RunWorkerTasksOptions
+  extends WorkerRunnerCoreOptions,
+    FusionWorkerRunnerOptionsExtras {}
+
+/** The same type under the core/add-on naming. */
+export type FusionWorkerRunnerOptions = RunWorkerTasksOptions;
 
 /**
  * Steps a worker steered toward a split proposal gets to write one
@@ -732,6 +539,18 @@ export async function runWorkerTasks(
   });
   await Promise.all(runners);
   return results;
+}
+
+/**
+ * The shared runner with only the core fields (ATO-1669): the same
+ * `runWorkerTasks`, with every Fusion add-on absent. Kept as its own
+ * entry so a non-Fusion caller cannot reach for an add-on by accident.
+ */
+export function runWorkerTasksCore(
+  deps: WorkerRunnerCoreDeps,
+  options: WorkerRunnerCoreOptions,
+): Promise<WorkerTaskResult[]> {
+  return runWorkerTasks(deps, options);
 }
 
 async function runOneTask(
@@ -1403,7 +1222,7 @@ async function runOneTask(
   let result: WorkerTaskResult;
   try {
     const turn = await deps.runTurn(session, brief, {
-      origin: "fusion",
+      origin: options.origin ?? DEFAULT_WORKER_TURN_ORIGIN,
       providerId: options.providerId,
       ...(options.turnModel === undefined ? {} : { model: options.turnModel }),
       maxSteps: stepBudget.value,
@@ -1659,7 +1478,7 @@ async function runOneTask(
         replaceSession,
         `${brief}\n\n## Already tried\nA local worker worked on this task first and stayed stuck after advice. What it found: ${localFindings}`,
         {
-          origin: "fusion",
+          origin: options.origin ?? DEFAULT_WORKER_TURN_ORIGIN,
           providerId: target.providerId,
           ...(target.turnModel === undefined ? {} : { model: target.turnModel }),
           maxSteps: stepBudget.value,

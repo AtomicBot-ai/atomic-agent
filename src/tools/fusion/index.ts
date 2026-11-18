@@ -121,11 +121,18 @@ export {
   WORKER_READ_REFUSAL_REASON,
   WORKER_READ_TOOL_TARGETS,
 } from "../read-scope/index.js";
-export { runWorkerTasks } from "./worker-runner.js";
+export { runWorkerTasks, runWorkerTasksCore } from "./worker-runner.js";
 export type {
   WorkerRunnerDeps,
   RunWorkerTasksOptions,
 } from "./worker-runner.js";
+export {
+  DEFAULT_WORKER_TURN_ORIGIN,
+  type FusionWorkerRunnerDepsExtras,
+  type FusionWorkerRunnerOptionsExtras,
+  type WorkerRunnerCoreDeps,
+  type WorkerRunnerCoreOptions,
+} from "./worker-runner-core.js";
 export {
   buildFusionDelegateTool,
   FUSION_DELEGATE_TOOL,
