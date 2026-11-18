@@ -54,12 +54,12 @@ test("the catalog gives its speech models with the recommended quant; music, oth
   assert.equal(M.speechModelId(ms[0]), "qwen3-tts-1.7b-customvoice:q8_0");
   assert.equal(M.speechModelUrl(ms[0]),
     "https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/874fcb41ececda20bcbc0782d6b4ea7f7d069ea8/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf");
-  assert.deepEqual(M.loadRequest(ms[0]), {
+  assert.deepEqual(M.loadRequest(ms[0], "/managed/audio/models/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf"), {
     modelId: "qwen3-tts-1.7b-customvoice:q8_0", displayName: "Qwen3-TTS 1.7B", mode: "speech",
-    file: "Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf",
+    file: "/managed/audio/models/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF/qwen3-tts-12hz-1.7b-customvoice-q8_0.gguf",
     family: "qwen3_tts", task: "tts", defaultRequestOptions: { seed: 42 }, defaultVoice: "vivian",
   });
-  assert.equal("defaultVoice" in M.loadRequest(ms[1]), false);
+  assert.equal("defaultVoice" in M.loadRequest(ms[1], "/x.gguf"), false);
   assert.deepEqual(M.parseSpeechCatalog(null), []);
   assert.deepEqual(M.parseSpeechCatalog({ models: "x" }), []);
 });
@@ -113,11 +113,11 @@ function speech(over = {}) {
   const s = new M.CoreSpeech({
     coreVersion: over.coreVersion ?? "0.24.1",
     client: async () => core.client,
-    modelsRoot: () => "/data/audio/models",
+    modelsRoot: () => over.modelsRoot ?? "/data/audio/models",
     catalog: over.catalog ?? (async () => CATALOG),
     download: over.download ?? (async (target, opts) => { downloads.push({ target, root: opts.root }); opts.onBytes(target.bytes); opts.onVerifying(); sizes[target.savePath.split("/").pop()] = target.bytes; }),
     chosen: () => over.chosen ?? "",
-    fileSize: async (p) => { const n = sizes[p.split(/[\\/]/).pop()]; if (n === undefined) throw new Error("ENOENT"); return n; },
+    fileSize: over.fileSize ?? (async (p) => { const n = sizes[p.split(/[\\/]/).pop()]; if (n === undefined) throw new Error("ENOENT"); return n; }),
     readFile: async () => Buffer.from("RIFFwav"),
     pollMs: 1,
     jobTimeoutMs: over.jobTimeoutMs ?? 5000,
@@ -140,7 +140,7 @@ test("status: too old a Core, no catalog, not downloaded, no engine, ready", asy
   assert.equal((await speech({ chosen: "moss-tts-nano-100m", sizes: { "a-q8_0.gguf": 193 } }).s.status()).model.id, "moss-tts-nano-100m");
 });
 
-test("prepare installs the engine, then downloads the model into Core's models folder", async () => {
+test("prepare installs the engine, then downloads the model into the voices folder", async () => {
   const core = fakeCore({ active: null });
   const { s, downloads } = speech({ core, sizes: {} });
   const events = [];
@@ -178,6 +178,31 @@ test("speak loads the model once, polls the job, returns the WAV and clears Core
   core.state.polls = 0;
   assert.equal((await s.speak("Again.")).ok, true);
   assert.equal(core.calls.filter((c) => c.path === "/audio/model/load").length, 1, "loaded once per Core");
+});
+
+test("speak loads the model by its absolute path, outside Core's own folder", async () => {
+  const { s, core } = speech();
+  assert.equal((await s.speak("Hi.")).ok, true);
+  const load = core.calls.find((c) => c.path === "/audio/model/load");
+  assert.match(load.body.file, /^[\/]data[\/]audio[\/]models[\/]Qwen3-TTS-12Hz-1\.7B-CustomVoice-GGUF[\/]qwen3-tts-12hz-1\.7b-customvoice-q8_0\.gguf$/);
+});
+
+test("a Core version bump keeps the downloaded voice", async () => {
+  const root = M.speechModelsDir("/managed");
+  assert.doesNotMatch(root, /versions/);
+  // One disk, keyed by full path, so a file under another folder is not found.
+  const disk = new Map();
+  const fileSize = async (p) => { if (!disk.has(p)) throw new Error("ENOENT"); return disk.get(p); };
+  const download = async (target, opts) => { opts.onBytes(target.bytes); disk.set(target.savePath, target.bytes); };
+  const first = speech({ coreVersion: "0.20.6", modelsRoot: root, fileSize, download });
+  assert.deepEqual(await first.s.prepare(undefined, () => {}), { ok: true });
+  assert.equal(disk.size, 1);
+  assert.ok([...disk.keys()][0].startsWith(root));
+  let downloadedAgain = false;
+  const next = speech({ coreVersion: "0.20.7", modelsRoot: root, fileSize, download: async () => { downloadedAgain = true; } });
+  assert.equal((await next.s.status()).ok, true);
+  assert.deepEqual(await next.s.prepare(undefined, () => {}), { ok: true });
+  assert.equal(downloadedAgain, false, "no second download after the bump");
 });
 
 test("speak: a model Core already has loaded is not loaded again", async () => {

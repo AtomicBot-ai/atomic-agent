@@ -15,9 +15,15 @@
  *      {task_id}` puts it in place (Core downloads it);
  *   2. the model file: Core never downloads a model (its ADR
  *      2026-10-15), so the desktop fetches the catalog's GGUF from Hugging
- *      Face into `<core data>/audio/models/<path>` with the Studio's
- *      resumable, hash-checked download (studio-download.ts);
- *   3. `POST /audio/model/load` once, then per piece of text
+ *      Face into `<managed data dir>/audio/models/<path>` with the Studio's
+ *      resumable, hash-checked download (studio-download.ts). Not Core's
+ *      own `<core data>/audio/models`: Core's data folder is per Core
+ *      version (`core/versions/<v>/data`), and a pin bump must not orphan
+ *      a GB-class voice (the same reason studio-local.ts keeps diffusion
+ *      models out of it);
+ *   3. `POST /audio/model/load` once, with the file's absolute path (Core's
+ *      src/audio/config.ts resolveModelPath takes an absolute path as is,
+ *      v0.20.6 through main), then per piece of text
  *      `POST /audio/jobs {mode: "speech", request: {text}}`, polled on
  *      `GET /audio/jobs/:id` until it is `completed`, its WAV read and the
  *      clip removed from Core's gallery again (`DELETE /audio/gallery/:id`):
@@ -126,13 +132,22 @@ export function speechModelId(m: SpeechModel): string {
   return `${m.id}:${m.file.quant}`;
 }
 
-/** `POST /audio/model/load`'s body (LoadAudioModelRequest). The file is relative to `<data>/audio/models`. */
-export function loadRequest(m: SpeechModel): Record<string, unknown> {
+/** Our voices folder under the managed data dir, shared by every Core version. */
+export function speechModelsDir(dataDir: string): string {
+  return join(dataDir, "audio", "models");
+}
+
+/**
+ * `POST /audio/model/load`'s body (LoadAudioModelRequest). `file` is the
+ * model's absolute path: Core takes an absolute path as is and a relative
+ * one under its own per-version `<data>/audio/models`, where ours are not.
+ */
+export function loadRequest(m: SpeechModel, file: string): Record<string, unknown> {
   return {
     modelId: speechModelId(m),
     displayName: m.name,
     mode: "speech",
-    file: m.file.path,
+    file,
     family: m.family,
     task: "tts",
     ...(Object.keys(m.defaults).length ? { defaultRequestOptions: m.defaults } : {}),
@@ -209,7 +224,7 @@ export interface CoreSpeechDeps {
   coreVersion: string;
   /** A Core that answers (studio-core-start.ts ensureStudioCore). */
   client: () => Promise<StudioCoreClient>;
-  /** `<core data folder>/audio/models`. */
+  /** speechModelsDir(<managed data dir>): outside Core's per-version folder. */
   modelsRoot: () => string;
   /** conf's audio catalog, parsed JSON. */
   catalog: () => Promise<unknown>;
@@ -347,7 +362,7 @@ export class CoreSpeech {
       if (this.loadedFor !== loadKey) {
         const st = await client.call<{ model?: { loaded?: { modelId?: string } | null } }>("/audio/status");
         if (st.model?.loaded?.modelId !== want) {
-          await client.call("/audio/model/load", loadRequest(m), { signal: abort.signal, timeoutMs: 10 * 60_000 });
+          await client.call("/audio/model/load", loadRequest(m, this.filePath(m)), { signal: abort.signal, timeoutMs: 10 * 60_000 });
         }
         this.loadedFor = loadKey;
       }

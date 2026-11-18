@@ -63,8 +63,8 @@ import { pickOpenRouterKey } from "./studio-key.js";
 import { removeProviderForgettingMedia } from "./studio-forget-key.js";
 import { isStudioCoreInstalled } from "./studio-core-install.js";
 // ATO-1167: a neural voice on this computer, through Atomic Core's audio module.
-import { AUDIO_CATALOG_URL, CoreSpeech } from "./core-speech.js";
-import { ensureStudioCore, studioCorePaths } from "./studio-core-start.js";
+import { AUDIO_CATALOG_URL, CoreSpeech, speechModelsDir } from "./core-speech.js";
+import { ensureStudioCore } from "./studio-core-start.js";
 import { downloadModelFile } from "./studio-download.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
@@ -460,7 +460,8 @@ const coreSpeech = new CoreSpeech({
   coreVersion: BUNDLED_CORE_VERSION,
   client: () => ensureStudioCore(managedDataDirNow(), BUNDLED_CORE_VERSION,
     app.isPackaged && !SMOKE ? { seed: (dir: string) => seedBundledCore(dir) } : {}),
-  modelsRoot: () => join(studioCorePaths(managedDataDirNow(), BUNDLED_CORE_VERSION).dataFolder, "audio", "models"),
+  /* Not Core's per-version data folder: a pin bump would orphan the voice. */
+  modelsRoot: () => speechModelsDir(managedDataDirNow()),
   catalog: async () => {
     const res = await fetch(AUDIO_CATALOG_URL, { signal: AbortSignal.timeout(15_000), redirect: "follow" });
     if (!res.ok) throw new Error(`the voice catalog answered ${res.status}`);
