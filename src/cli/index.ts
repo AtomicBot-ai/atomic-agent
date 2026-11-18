@@ -26,6 +26,7 @@ import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
 import { handoffCommand } from "./handoff-command.js";
 import { shareCommand } from "./share-command.js";
+import { recipeCommand } from "./recipe-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
@@ -185,6 +186,12 @@ const COMMANDS: CommandDescriptor[] = [
     summary:
       "Save a chat as one redacted HTML/Markdown file for a colleague (--gist asks, then uploads a secret gist)",
     run: (args) => shareCommand(args),
+  },
+  {
+    name: "recipe",
+    summary:
+      "Check a shared recipe before you use it, or turn a recipe file into its link (check|link)",
+    run: (args) => recipeCommand(args),
   },
   {
     name: "doctor",
