@@ -6,7 +6,7 @@ import {
   type TuiSessionInfo,
   type TuiState,
 } from "../tui-state.js";
-import { ThinkingIndicator } from "./thinking-indicator.js";
+import { promptPercent, ThinkingIndicator } from "./thinking-indicator.js";
 
 const BASE_SESSION: TuiSessionInfo = fakeSession({
   sessionId: "abc",
@@ -207,5 +207,39 @@ describe("ThinkingIndicator fusion worker rows", () => {
     expect(without).not.toContain("ctx");
     // Same row count: the count rides the existing line.
     expect(withCount.split("\n")).toHaveLength(without.split("\n").length);
+  });
+
+  it("says how far a local model has read the prompt (ATO-1001)", () => {
+    const state = makeState({ promptProgress: { processed: 4_920, total: 12_300 } });
+    const text = strip(render(<ThinkingIndicator state={state} />).lastFrame() ?? "");
+    expect(text).toMatch(/reading prompt · 40% of 12\.3k tokens · \d+s/);
+    expect(text).not.toContain("thinking");
+  });
+
+  it("goes back to 'thinking' without progress, and a streaming reply wins over it", () => {
+    const idle = strip(render(<ThinkingIndicator state={makeState({ promptProgress: null })} />).lastFrame() ?? "");
+    expect(idle).toMatch(/thinking · \d+s/);
+    const replying = strip(
+      render(
+        <ThinkingIndicator
+          state={makeState({
+            promptProgress: { processed: 10, total: 100 },
+            streamingAssistantText: "Hello",
+          })}
+        />,
+      ).lastFrame() ?? "",
+    );
+    expect(replying).toMatch(/writing reply/);
+    expect(replying).not.toContain("reading prompt");
+  });
+});
+
+describe("promptPercent", () => {
+  it("floors, clamps to 0..100 and survives an empty total", () => {
+    expect(promptPercent({ processed: 999, total: 1000 })).toBe(99);
+    expect(promptPercent({ processed: 1000, total: 1000 })).toBe(100);
+    expect(promptPercent({ processed: 1200, total: 1000 })).toBe(100);
+    expect(promptPercent({ processed: -5, total: 1000 })).toBe(0);
+    expect(promptPercent({ processed: 5, total: 0 })).toBe(0);
   });
 });
