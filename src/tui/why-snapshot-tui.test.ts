@@ -39,6 +39,7 @@ function base(extra: Partial<WhyState> = {}): WhyState {
     streamingToolCards: initial.streamingToolCards,
     reasoning: initial.reasoning,
     metrics: initial.metrics,
+    stepSpend: initial.stepSpend,
     ...extra,
   };
 }
@@ -107,5 +108,32 @@ describe("/why", () => {
     const text = formatWhy(base({ streamingToolCards: [card()] }));
     expect(text).toContain("Why: the model gave no reasoning for this step");
     expect(text).toContain("Tokens: not reported for this turn");
+  });
+
+  it("shows the running step's cost when every call of it was priced", () => {
+    const priced = { usd: 0.0042, pricedCalls: 1, unpricedCalls: 0, localCalls: 0, planCalls: 0 };
+    const text = formatWhy(base({ streamingToolCards: [card()], stepSpend: { 3: priced } }));
+    expect(text).toContain("Cost (this step): $0.0042");
+    // Another step's spend is not this step's.
+    expect(formatWhy(base({ streamingToolCards: [card()], stepSpend: { 2: priced } }))).not.toContain("Cost");
+  });
+
+  it("shows no cost for a local or unpriced step rather than $0 or a guess", () => {
+    const local = { usd: 0, pricedCalls: 0, unpricedCalls: 0, localCalls: 1, planCalls: 0 };
+    const unpriced = { usd: 0.01, pricedCalls: 1, unpricedCalls: 1, localCalls: 0, planCalls: 0 };
+    expect(formatWhy(base({ streamingToolCards: [card()], stepSpend: { 3: local } }))).not.toContain("Cost");
+    expect(formatWhy(base({ streamingToolCards: [card()], stepSpend: { 3: unpriced } }))).not.toContain("Cost");
+  });
+
+  it("reads a finished turn's step cost from its card", () => {
+    const message = (extra: Partial<ToolCardEntry>) => ({
+      id: "m1",
+      role: "assistant" as const,
+      text: "ok",
+      timestamp: 0,
+      toolCards: [card(extra)],
+    });
+    expect(formatWhy(base({ messages: [message({ stepCostUsd: 0.25 })] }))).toContain("Cost (this step): $0.25");
+    expect(formatWhy(base({ messages: [message({})] }))).not.toContain("Cost");
   });
 });

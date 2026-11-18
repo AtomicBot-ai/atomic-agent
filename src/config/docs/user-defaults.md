@@ -270,6 +270,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `tui.nextStepSuggestions` (default `false`).
 - `tui.vimMode` (default `false`).
 - `tui.language` (default `"auto"`).
+- `tui.verboseSteps` (default `false`).
 - `tui.notify.enabled` (default `true`).
 - `tui.notify.minDurationMs` (default `30000`).
 - `tui.onboarding.completedAt` (default `null`).

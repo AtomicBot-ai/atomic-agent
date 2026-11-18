@@ -119,6 +119,14 @@ export interface TuiConfig {
    * Interface language of the terminal UI (ATO-571): `auto`, `en` or `ru`. `auto` (default) uses `ATOMIC_AGENT_LANG`, then the system locale (`LC_ALL`, `LC_MESSAGES`, `LANG`), then English. Additive and unversioned, a file without it reads `auto`. Only the onboarding screens are translated so far; the agent never reads it.
    */
   language: UiLanguageSetting;
+  /**
+   * Verbose steps (ATO-34): one plain line under every finished tool card
+   * in the terminal chat, with the step number, the call and what came
+   * back. Off by default; `/verbose` flips it. Additive and unversioned, a
+   * file without it reads `false`. A display preference only; the agent
+   * never reads it.
+   */
+  verboseSteps: boolean;
   onboarding: OnboardingState;
   sessionRail: SessionRailConfig;
   notify: TuiNotifyConfig;
@@ -133,6 +141,7 @@ export function createTuiDefaults(): TuiConfig {
     nextStepSuggestions: false,
     vimMode: false,
     language: "auto",
+    verboseSteps: false,
     notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
@@ -321,6 +330,10 @@ export function parseTuiConfig(
       "tui.vimMode",
     ),
     language: readUiLanguage(tui.language, readDefaults),
+    verboseSteps: parseBool(
+      tui.verboseSteps ?? readDefaults().verboseSteps,
+      "tui.verboseSteps",
+    ),
     onboarding: parseOnboardingStateWithDefaults(
       tui.onboarding,
       () => readDefaults().onboarding,

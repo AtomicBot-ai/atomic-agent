@@ -40,6 +40,10 @@ The desktop app and the terminal share one state dir and one `config.json`, and 
 
 `tui.vimMode` (boolean) is additive and unversioned: a file without it reads `false`, so the terminal composer types as before; `true` turns on vim keys there (NORMAL / INSERT). `/vim on|off` writes it. A non-boolean is a validation error. [TUI config tests](../tui-config.test.ts) cover it.
 
+## Terminal chat verbose steps
+
+`tui.verboseSteps` (boolean, ATO-34) is additive and unversioned: a file without it reads `false`, so finished tool cards show no step note, as before; `true` adds one plain line under each. `/verbose on|off` writes it. A non-boolean is a validation error. [TUI config tests](../tui-config.test.ts) cover it.
+
 ## Offline mode
 
 `network.offline` (boolean, ATO-1084) is additive and unversioned: a file without the `network` block reads `false`, which changes nothing. `ATOMIC_AGENT_OFFLINE=1` can only turn it on; `loadConfig` folds it into `config.network.offline`. A non-boolean is a validation error. [Network config tests](../network-config.test.ts) cover it.

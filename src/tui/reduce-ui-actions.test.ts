@@ -483,6 +483,10 @@ describe("reduceUiAction finished-turn folds (ATO-963)", () => {
   it("sets verbose steps, off by default (ATO-34)", () => {
     const state = createInitialTuiState(SESSION);
     expect(state.verboseSteps).toBe(false);
+    // Seeded from `tui.verboseSteps` on start.
+    expect(
+      createInitialTuiState(SESSION, undefined, { verboseSteps: true }).verboseSteps,
+    ).toBe(true);
     const on = reduceUiAction(state, { type: "verbose_steps_set", on: true });
     expect(on?.verboseSteps).toBe(true);
     expect(
