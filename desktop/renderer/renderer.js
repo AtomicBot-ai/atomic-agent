@@ -7901,6 +7901,7 @@ function act(a) {
   if (k === 'rename')    { close(); renameStart(v, 'row'); return; }
   if (k === 'export')    { close(); render(); chatExport(v); return; }   // ATO-1054 (chat-export.js)
   if (k === 'popout')    { close(); render(); chatPopoutOpen(v); return; }   // ATO-561 (chat-popout.js)
+  if (k === 'share')     { close(); render(); chatShare(v); return; }    // ATO-581 (chat-share.js)
   /* ATO-1034: folders (chat-folders.js). Folder ids never hold a colon, so
      `fput:<folder>:<chat>` splits at its first one; an empty folder is "no folder". */
   if (k === 'ftoggle')   { const f = folderById(FOLDERS.state, v); if (!f) return;

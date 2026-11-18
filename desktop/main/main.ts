@@ -10,6 +10,7 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKT
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
 import { printHtmlToPdf, registerChatExportIpc } from "./chat-export.js";
+import { ghRunner, registerChatShareIpc } from "./chat-share.js";
 import { cleanWebhookCreate, webhookNameOk } from "./webhooks-ipc.js";
 import { registerSettingsReferenceIpc } from "./settings-reference.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
@@ -1618,6 +1619,10 @@ function wireIpc(client: AgentClient): void {
   );
   // ATO-1054: the chat row's Export… (chat-export.ts): Markdown, PDF, Word or HTML.
   registerChatExportIpc({ ipcMain, dialog, window: () => win, fetchExport: (id, format) => client.exportSession(id, format), printPdf: printHtmlToPdf });
+  // ATO-581: the chat row's Share chat… (chat-share.ts): a redacted file, a secret gist only after two yeses.
+  registerChatShareIpc({ ipcMain, dialog, window: () => win, runAgent: (args) => atagRun(args, 60_000), runGh: ghRunner(agentEnv),
+    isRemote: () => client.isRemote, showInFolder: (p) => shell.showItemInFolder(p),
+    copyText: (t) => (require("electron") as typeof import("electron")).clipboard.writeText(t), openUrl: (u) => { if (/^https:\/\//.test(u)) void shell.openExternal(u); } });
   /* Backlog 18 (its second review): the last coding mode the window set. A
      switch's restart puts it back on the new agent before the turns waiting
      for that restart go (restartsAgent below). */

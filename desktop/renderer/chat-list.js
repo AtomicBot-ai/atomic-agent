@@ -65,6 +65,8 @@ function chatMenuItems(opts) {
     ...(o.windowable === true ? [{verb: 'popout', label: 'Open in new window', icon: 'open'}] : []),
     // ATO-1014: the same stored chat, written up as a brief for Claude Code / Codex (handoff-out.js).
     ...(o.exportable === true ? [{verb: 'houtopen', label: 'Hand off to Claude / Codex…', icon: 'arrowR'}] : []),
+    // ATO-581: "Share chat…" saves a redacted copy and offers a secret gist (chat-share.js), for a stored chat.
+    ...(o.exportable === true ? [{verb: 'share', label: 'Share chat…', icon: 'upload'}] : []),
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }

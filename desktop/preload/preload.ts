@@ -116,6 +116,8 @@ contextBridge.exposeInMainWorld("atomic", {
   setSessionArchived: (id: string, archived: boolean) => ipcRenderer.invoke("agent:setSessionArchived", id, archived),
   // ATO-1054: save one chat as Markdown / PDF / Word / HTML (asks where in a save dialog)
   exportSession: (id: string) => ipcRenderer.invoke("agent:exportSession", id),
+  // ATO-581: Share chat… — a redacted file, then (asked twice) a secret gist
+  shareSession: (id: string) => ipcRenderer.invoke("agent:shareSession", id),
   codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */
