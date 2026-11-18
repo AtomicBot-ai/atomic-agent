@@ -475,6 +475,14 @@ export class PlaywrightBackend implements BrowserBackend {
         const page = await this.requireActivePage();
         return { url: page.url(), title: await page.title().catch(() => ""), window: false };
       }
+      // A restart reopens only the agent profile's tabs: a session browsing
+      // in a throwaway profile would hand the person a blank window, with
+      // the page they were asked to finish gone. Refuse instead.
+      const scope = currentBrowserScope();
+      if (scope && this.tempProfiles.choiceFor(scope.sessionId, this.options.profile ?? "agent") === "temp") {
+        const page = await this.requireActivePage();
+        return { url: page.url(), title: await page.title().catch(() => ""), window: false, why: "temp_profile" };
+      }
       this.nextLaunchWindowed = true;
       await this.relaunchWithWindow();
     }

@@ -165,6 +165,14 @@ describe("take over (ATO-508)", () => {
     expect(launches).toEqual([true, false]);
   });
 
+  it("a headless chat in a throwaway profile is not restarted: the page would be lost", async () => {
+    const { backend, launches } = backendWith();
+    await inTurn(CRON, () => backend.tabs({ action: "new", url: "https://shop.example/login", profile: "temp" }));
+    const target = await inTurn(CRON, () => backend.prepareTakeOver());
+    expect(target).toMatchObject({ url: "https://shop.example/login", window: false, why: "temp_profile" });
+    expect(launches).toEqual([true]);
+  });
+
   it("a Chrome that already has a window is only brought to the front", async () => {
     const { backend, launches } = backendWith();
     await inTurn(CHAT, () => backend.navigate({ url: "https://shop.example/login" }));
