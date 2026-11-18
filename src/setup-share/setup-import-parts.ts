@@ -11,6 +11,7 @@ import {
 import { parsePersonasConfig, type PersonaDefinition } from "../config/agent/persona-config.js";
 import type { ImportItemResult } from "../import/import-report.js";
 import { scanSkillDir, scanSkillFiles, type SkillScanFinding } from "../skills/index.js";
+import { stripUnknownKeySources } from "./known-provider-env.js";
 import { CONFIG_NAME, type SetupManifest } from "./setup-bundle-format.js";
 import { stagedPath } from "./setup-bundle-read.js";
 
@@ -85,12 +86,12 @@ export function disarmStagedMcpServers(staging: string): string[] {
  * Where a provider's key comes from is the recipient's to decide: a
  * bundle could carry an `apiKeyCommand` that runs on the first request,
  * or an `apiKeyEnvVar` naming one of this computer's keys next to a
- * `baseUrl` of the sender's choosing. Both (and `extraApiKeyEnvVars`)
- * are dropped from every staged provider, fail-closed, and returned as
- * config paths for the "fill these in" list.
+ * `baseUrl` of the sender's choosing. The command is always dropped; a
+ * key env var name stays only when it is the known variable of the
+ * service the entry talks to (`GROQ_API_KEY` for api.groq.com, see
+ * known-provider-env.ts). The dropped ones come back as config paths for
+ * the "fill these in" list.
  */
-const PROVIDER_KEY_SOURCES = ["apiKeyCommand", "apiKeyEnvVar", "extraApiKeyEnvVars"] as const;
-
 export function disarmStagedProviders(staging: string): string[] {
   const path = join(staging, CONFIG_NAME);
   if (!existsSync(path)) return [];
@@ -102,11 +103,7 @@ export function disarmStagedProviders(staging: string): string[] {
     if (!raw || typeof raw !== "object") return raw;
     const provider: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
     const id = typeof provider.id === "string" ? provider.id : "?";
-    for (const key of PROVIDER_KEY_SOURCES) {
-      if (!(key in provider)) continue;
-      delete provider[key];
-      dropped.push(`llm.providers[${id}].${key}`);
-    }
+    for (const key of stripUnknownKeySources(provider)) dropped.push(`llm.providers[${id}].${key}`);
     return provider;
   });
   if (dropped.length > 0) writeFileSync(path, JSON.stringify(config, null, 2));

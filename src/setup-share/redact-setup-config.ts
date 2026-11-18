@@ -1,4 +1,5 @@
 import { isSecretConfigKey } from "../config/config-paths.js";
+import { stripUnknownKeySources } from "./known-provider-env.js";
 
 /**
  * ATO-1073: the part of `config.json` that goes into a shared setup, with
@@ -19,8 +20,9 @@ import { isSecretConfigKey } from "../config/config-paths.js";
  *  - it looks like a known key format anywhere (`sk-…`, `ghp_…`, `xoxb-…`).
  * A URL keeps its address but loses `user:pass@` and secret-named query
  * parameters. A provider's `apiKeyCommand` is dropped whole (it is a
- * program to run, not a value to blank). Every blanked spot is listed, so
- * the recipient knows what to fill in.
+ * program to run, not a value to blank), and so is a key env var name
+ * that is not the known one for the provider's address. Every blanked
+ * spot is listed, so the recipient knows what to fill in.
  */
 export interface ShareableConfig {
   config: Record<string, unknown>;
@@ -158,11 +160,11 @@ export function buildShareableConfig(raw: Record<string, unknown>): ShareableCon
       providers: providers.map(({ id, entry }) => {
         // A key command runs on the recipient's computer, and blanking its
         // argv items leaves a list the config parser rejects: it is left
-        // out whole and listed, so the recipient sets their own.
-        if (!("apiKeyCommand" in entry)) return r.value(entry, `llm.providers[${id}]`, "", false);
+        // out whole and listed, so the recipient sets their own. A key env
+        // var name stays only for a known service at its own address
+        // (known-provider-env.ts); import applies the same rule.
         const rest = { ...entry };
-        delete rest.apiKeyCommand;
-        r.redacted.push(`llm.providers[${id}].apiKeyCommand`);
+        for (const key of stripUnknownKeySources(rest)) r.redacted.push(`llm.providers[${id}].${key}`);
         return r.value(rest, `llm.providers[${id}]`, "", false);
       }),
     };

@@ -23,7 +23,7 @@ describe("buildShareableConfig", () => {
 
   it("blanks provider keys and secret headers but keeps the name of the env var", () => {
     const r = buildShareableConfig({
-      llm: { providers: [{ id: "groq", apiKey: KEY, apiKeyEnvVar: "GROQ_API_KEY", apiKeyHeader: "x-api-key", headers: { Authorization: `Bearer ${KEY}` } }] },
+      llm: { providers: [{ id: "groq", kind: "openai-compatible", baseUrl: "https://api.groq.com/openai", apiKey: KEY, apiKeyEnvVar: "GROQ_API_KEY", apiKeyHeader: "x-api-key", headers: { Authorization: `Bearer ${KEY}` } }] },
     });
     const p = (r.config.llm as { providers: Array<Record<string, unknown>> }).providers[0]!;
     expect(p.apiKey).toBe("");
@@ -41,6 +41,36 @@ describe("buildShareableConfig", () => {
     expect("apiKeyCommand" in p).toBe(false);
     expect(p).toEqual({ id: "vertex", kind: "openai-compatible", baseUrl: "https://x.test/v1" });
     expect(r.redacted).toEqual(["llm.providers[vertex].apiKeyCommand"]);
+  });
+
+  it("keeps key env var names only for a known service at its own address", () => {
+    const r = buildShareableConfig({
+      llm: {
+        providers: [
+          { id: "openai", kind: "openai-compatible", baseUrl: "https://api.openai.com/v1", apiKeyEnvVar: "OPENAI_API_KEY" },
+          { id: "or", kind: "openrouter", apiKeyEnvVar: "OPENROUTER_API_KEY" },
+          { id: "groq", kind: "openai-compatible", baseUrl: "https://api.groq.com/openai", apiKeyEnvVar: "GROQ_API_KEY", extraApiKeyEnvVars: ["GROQ_API_KEY_2", "MY_OTHER_KEY"] },
+          { id: "proxy", kind: "openai-compatible", baseUrl: "https://proxy.example/v1", apiKeyEnvVar: "OPENAI_API_KEY" },
+          { id: "mixed", kind: "openai-compatible", baseUrl: "https://api.groq.com/openai", apiKeyEnvVar: "OPENAI_API_KEY" },
+          { id: "home", kind: "openai-compatible", baseUrl: "https://llm.example", apiKeyEnvVar: "MY_LLM_KEY" },
+        ],
+      },
+    });
+    const byId = Object.fromEntries((r.config.llm as { providers: Array<Record<string, unknown>> }).providers.map((p) => [p.id, p]));
+    expect(byId.openai!.apiKeyEnvVar).toBe("OPENAI_API_KEY");
+    expect(byId.or!.apiKeyEnvVar).toBe("OPENROUTER_API_KEY");
+    expect(byId.groq!.apiKeyEnvVar).toBe("GROQ_API_KEY");
+    expect(byId.groq!.extraApiKeyEnvVars).toEqual(["GROQ_API_KEY_2"]);
+    expect("apiKeyEnvVar" in byId.proxy!).toBe(false);
+    expect("apiKeyEnvVar" in byId.mixed!).toBe(false);
+    expect("apiKeyEnvVar" in byId.home!).toBe(false);
+    expect(r.redacted).toEqual(expect.arrayContaining([
+      "llm.providers[groq].extraApiKeyEnvVars",
+      "llm.providers[proxy].apiKeyEnvVar",
+      "llm.providers[mixed].apiKeyEnvVar",
+      "llm.providers[home].apiKeyEnvVar",
+    ]));
+    expect(r.redacted).not.toContain("llm.providers[openai].apiKeyEnvVar");
   });
 
   it("blanks every MCP env value, header, secret flag argument and URL credential", () => {
