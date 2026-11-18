@@ -577,6 +577,12 @@ export const RECIPE_PLACEHOLDER_RE = /\{\{\s*([^{}\s]*)\s*\}\}/g;
  */
 export const RECIPE_HIDDEN_RE =
   /[\p{Cf}\p{Co}\p{Cn}\u0080-\u009f\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u3164\uffa0\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/u;
+/* One U+FE0F right after an emoji only asks for the emoji look (a red heart): allowed. A second one, or one anywhere else, is not. */
+const RECIPE_EMOJI_VS16_RE = /(\p{Extended_Pictographic})\ufe0f/gu;
+/** Whether `text` holds a character the card would not show; see RECIPE_HIDDEN_RE. */
+export function recipeHasHidden(text: string): boolean {
+  return RECIPE_HIDDEN_RE.test(text.replace(RECIPE_EMOJI_VS16_RE, "$1"));
+}
 const RECIPE_REFUSED_KEYS = ["model", "provider", "tools", "tool", "mcp", "server", "skill", "skills", "permission", "permissions", "approval", "approve", "autosend", "send", "run"];
 
 export interface RecipeParam {
@@ -623,7 +629,7 @@ export const recipeOpenRoute: DeeplinkRoute = (link) => {
   if (description.length > RECIPE_DESCRIPTION_MAX) return { ok: false, error: "The recipe description is too long." };
   const prompt = v.prompt![0]!.replace(/\r\n?/g, "\n").trim();
   for (const [what, text] of [["title", title], ["description", description], ["text", prompt]] as const) {
-    if (RECIPE_HIDDEN_RE.test(text)) return { ok: false, error: `The recipe ${what} holds invisible or direction-changing characters.` };
+    if (recipeHasHidden(text)) return { ok: false, error: `The recipe ${what} holds invisible or direction-changing characters.` };
   }
   const params: RecipeParam[] = [];
   for (const raw of v.param!) {
@@ -633,7 +639,7 @@ export const recipeOpenRoute: DeeplinkRoute = (link) => {
     if (!RECIPE_PARAM_KEY_RE.test(key)) return { ok: false, error: `The parameter name ${JSON.stringify(key.slice(0, 40))} can use lowercase letters, digits and _ (up to 32).` };
     if (params.some((x) => x.key === key)) return { ok: false, error: `The parameter ${key} is given twice.` };
     if (def.length > RECIPE_PARAM_DEFAULT_MAX) return { ok: false, error: `The default for ${key} is too long.` };
-    if (RECIPE_HIDDEN_RE.test(def)) return { ok: false, error: `The default for ${key} holds invisible or direction-changing characters.` };
+    if (recipeHasHidden(def)) return { ok: false, error: `The default for ${key} holds invisible or direction-changing characters.` };
     params.push({ key, label: key.replace(/_/g, " "), default: def });
   }
   const used = recipePlaceholders(prompt);

@@ -683,6 +683,15 @@ test("recipe: every invisible or direction-changing character is refused, not on
     assert.match(err(recipe(`title=a&description=${enc("d" + ch)}&prompt=x`)), /invisible/, `description U+${code}`);
     assert.match(err(recipe(`title=a&prompt=${enc("{{x}}")}&param=${enc("x=y" + ch)}`)), /invisible/, `default U+${code}`);
   }
+  // One U+FE0F right after an emoji only picks the emoji look: allowed (Nadya, 18.11).
+  for (const ok of ["\u2764\uFE0F", "Plan \u2600\uFE0F trip", "\u2764\uFE0F\u2B50\uFE0F"]) {
+    assert.equal(recipe(`title=${enc(ok)}&prompt=${enc(ok)}`).ok, true, `allowed: ${ok}`);
+    assert.equal(recipe(`title=a&prompt=${enc("{{x}}")}&param=${enc("x=" + ok)}`).ok, true, `allowed default: ${ok}`);
+  }
+  // Everything else stays refused: two in a row, after a letter or a digit, alone, and U+FE0E.
+  for (const bad of ["\u2764\uFE0F\uFE0F", "a\uFE0F", "1\uFE0F", "\uFE0F", "\u2764\uFE0E", "\u2764\uFE0F\u{E0041}"]) {
+    assert.match(err(recipe(`title=a&prompt=${enc("ok" + bad)}`)), /invisible/, `refused: ${JSON.stringify(bad)}`);
+  }
   // Ordinary text in any script still passes.
   assert.equal(recipe(`title=${enc("Отчёт 東京 مرحبا")}&prompt=${enc("Résumé, naïve, 👋\ttab\nline")}`).ok, true);
 });
