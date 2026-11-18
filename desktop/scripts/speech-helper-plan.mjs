@@ -33,3 +33,12 @@ export function compileFailureMessage(err) {
     "On a Mac without the macOS 26 SDK, build with ATOMIC_SKIP_SPEECH_HELPER=1 to leave it out on purpose.",
   ].join("\n");
 }
+
+/**
+ * ATO-1506: the swiftc target for the Mac this build runs on. Each mac job
+ * builds on its own arch (macos-15 arm64, macos-15-intel x64), so the
+ * helper is compiled for that arch; macOS 26 is the SpeechAnalyzer floor.
+ */
+export function speechHelperTarget(arch = process.arch) {
+  return `${arch === "x64" ? "x86_64" : "arm64"}-apple-macos26.0`;
+}

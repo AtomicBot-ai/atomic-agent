@@ -3,7 +3,7 @@
 // merged file must list both and keep the legacy path on x64.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mergeUpdateInfo, mergeUpdateYml } from "../scripts/merge-update-yml.mjs";
+import { MAC_ARCHES, mergeUpdateInfo, mergeUpdateYml } from "../scripts/merge-update-yml.mjs";
 
 const X64 = `version: 0.6.10
 files:
@@ -60,4 +60,57 @@ test("refuses two different versions, swapped arguments and a clashing hash", ()
   const clash = ARM64.replace("files:\n", "files:\n  - url: Atomic-Agent-Setup-0.6.10-x64.exe\n    sha512: ZZZ\n");
   assert.throws(() => mergeUpdateYml(X64, clash), /different sha512/);
   assert.throws(() => mergeUpdateInfo({ version: "1" }, { version: "1" }), /no files/);
+});
+
+// ATO-1506: the two Mac builds share one stable-mac.yml.
+const MAC_ARM64 = `version: 0.0.10
+files:
+  - url: Atomic-Agent-0.0.10-arm64-mac.zip
+    sha512: MACarm
+    size: 200
+  - url: Atomic-Agent-0.0.10-arm64.dmg
+    sha512: DMGarm
+    size: 210
+path: Atomic-Agent-0.0.10-arm64-mac.zip
+sha512: MACarm
+releaseDate: '2026-11-18T10:00:00.000Z'
+`;
+
+const MAC_X64 = `version: 0.0.10
+files:
+  - url: Atomic-Agent-0.0.10-x64-mac.zip
+    sha512: MACx64
+    size: 220
+  - url: Atomic-Agent-0.0.10-x64.dmg
+    sha512: DMGx64
+    size: 230
+path: Atomic-Agent-0.0.10-x64-mac.zip
+sha512: MACx64
+releaseDate: '2026-11-18T10:20:00.000Z'
+`;
+
+test("Mac: both zips are listed and the legacy path stays on arm64", () => {
+  const out = mergeUpdateYml(MAC_ARM64, MAC_X64, MAC_ARCHES);
+  assert.match(out, /url: Atomic-Agent-0\.0\.10-arm64-mac\.zip/);
+  assert.match(out, /url: Atomic-Agent-0\.0\.10-x64-mac\.zip/);
+  assert.match(out, /^path: Atomic-Agent-0\.0\.10-arm64-mac\.zip$/m);
+  assert.match(out, /^sha512: MACarm$/m);
+  assert.match(out, /releaseDate: '2026-11-18T10:20:00\.000Z'/);
+});
+
+test("Mac: what the Mac updater picks, an arm64 zip on Apple silicon and the other on Intel", () => {
+  const merged = mergeUpdateInfo(
+    { version: "0.0.10", path: "a", sha512: "x", files: [{ url: "Atomic-Agent-0.0.10-arm64-mac.zip", sha512: "1" }] },
+    { version: "0.0.10", path: "b", sha512: "y", files: [{ url: "Atomic-Agent-0.0.10-x64-mac.zip", sha512: "2" }] },
+    MAC_ARCHES,
+  );
+  const zips = merged.files.filter((f) => f.url.endsWith(".zip"));
+  const appleSilicon = zips.filter((f) => f.url.includes("arm64"));
+  const intel = zips.filter((f) => !f.url.includes("arm64"));
+  assert.deepEqual(appleSilicon.map((f) => f.url), ["Atomic-Agent-0.0.10-arm64-mac.zip"]);
+  assert.deepEqual(intel.map((f) => f.url), ["Atomic-Agent-0.0.10-x64-mac.zip"]);
+});
+
+test("Mac: swapped arguments are refused", () => {
+  assert.throws(() => mergeUpdateYml(MAC_X64, MAC_ARM64, MAC_ARCHES), /first file lists no arm64 installer/);
 });

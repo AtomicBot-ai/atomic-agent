@@ -102,18 +102,18 @@ const config = {
   "mac": {
     "category": "public.app-category.productivity",
     "icon": "build/icon.icns",
+    /* ATO-1506: no `arch` here, as under "win": the CLI flag decides
+       (`--mac --arm64` or `--mac --x64`), one arch per job, never universal.
+       afterPack has only the job's own agent bundle to copy. The arch in the
+       file names keeps the two builds apart, and the zip's is what the Mac
+       updater matches on (an Apple silicon Mac takes the "arm64" zip, an
+       Intel Mac the other). */
     "target": [
       {
-        "target": "dmg",
-        "arch": [
-          "arm64"
-        ]
+        "target": "dmg"
       },
       {
-        "target": "zip",
-        "arch": [
-          "arm64"
-        ]
+        "target": "zip"
       }
     ],
     /* ATO-255: no space in the file name. Without this electron-builder
@@ -144,8 +144,8 @@ const config = {
         "to": "native/atomic-speech"
       },
       /* Atomic Chat Core, fetched and checked against the release's
-         SHA256SUMS by scripts/fetch-core.mjs. Per arch, like the app: the
-         mac build is arm64 only, never universal. Under Resources, so the
+         SHA256SUMS by scripts/fetch-core.mjs. Per arch, like the app: one
+         build per arch (arm64, x64), never universal. Under Resources, so the
          Developer ID pass signs it with the hardened runtime and
          entitlementsInherit like the agent, and notarization covers it. */
       {

@@ -5,7 +5,7 @@
  * The desktop workflow writes one update file per platform and uploads it
  * with the installers as a workflow artifact:
  *
- *   <channel>-mac.yml            macOS (installs the -mac.zip)
+ *   <channel>-mac.yml            macOS, arm64 + x64 MERGED (merge-update-yml.mjs --mac)
  *   <channel>.yml                Windows, x64 + arm64 MERGED (merge-update-yml.mjs)
  *   <channel>-linux.yml          Linux x64 AppImage
  *   <channel>-linux-arm64.yml    Linux arm64 AppImage
@@ -95,6 +95,12 @@ export function checkFeed(files, read, channel = "stable") {
     }
     if (platform === "windows" && !(named.some((n) => /-x64\.exe$/.test(n)) && named.some((n) => /-arm64\.exe$/.test(n)))) {
       problems.push(`${yml}: does not list both the x64 and the arm64 installer (merge the two jobs' files with merge-update-yml.mjs)`);
+    }
+    // ATO-1506: an Apple silicon Mac takes the zip with "arm64" in its name,
+    // an Intel Mac one without; a single job's file would leave one of them
+    // with nothing to install.
+    if (platform === "mac" && !(named.some((n) => /-arm64-mac\.zip$/.test(n)) && named.some((n) => /-x64-mac\.zip$/.test(n)))) {
+      problems.push(`${yml}: does not list both the arm64 and the x64 zip (merge the two jobs' files with merge-update-yml.mjs --mac)`);
     }
     if (platform.startsWith("linux") && !named.some((n) => n.endsWith(".AppImage"))) {
       problems.push(`${yml}: names no .AppImage`);

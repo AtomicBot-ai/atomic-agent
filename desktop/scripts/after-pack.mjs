@@ -11,7 +11,7 @@
  * The agent comes from `../bundle/<slug>` at the repo root, where the
  * release pipeline stages it (`npm run bundle:package <slug>`). The slugs are
  * the release matrix ones from .github/workflows/release.yml and
- * scripts/bundle-targets.ts: darwin-arm64, win32-x64, win32-arm64, linux-x64,
+ * scripts/bundle-targets.ts: darwin-arm64, darwin-x64 (ATO-1506), win32-x64, win32-arm64, linux-x64,
  * linux-arm64. win32-arm64 is built by the desktop workflow only
  * (.github/workflows/desktop.yml); the terminal CLI release does not ship it.
  *
@@ -51,6 +51,7 @@ const ARCH_NAMES = { 0: "ia32", 1: "x64", 2: "armv7l", 3: "arm64", 4: "universal
 /** The agent release targets the desktop app can ship with. */
 const SUPPORTED = new Set([
   "darwin-arm64",
+  "darwin-x64",
   "win32-x64",
   "win32-arm64",
   "linux-x64",
