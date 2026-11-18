@@ -118,6 +118,7 @@ import {
 } from "./route-memory-history.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 import { createMetricsHandler } from "./route-metrics.js";
+import { a2aRoutes, type A2aOptions } from "./route-a2a.js";
 import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 
 export interface RouteTableOptions {
@@ -127,6 +128,12 @@ export interface RouteTableOptions {
    * time (turns running, tasks per status).
    */
   metricsRegistry?: PrometheusRegistry;
+  /**
+   * ATO-693: the A2A agent card and JSON-RPC endpoint (route-a2a.ts).
+   * Off unless serve was started with `--a2a`; `null`/omitted leaves both
+   * routes out of the table, so they answer 404.
+   */
+  a2a?: A2aOptions | null;
 }
 
 /**
@@ -394,5 +401,6 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // ATO-445: the desktop's Webhooks screen adds and removes routes.
     { method: "POST", path: "/api/webhooks", handler: createCreateWebhookHandler() },
     { method: "DELETE", path: "/api/webhooks/{name}", handler: createDeleteWebhookHandler() },
+    ...(options.a2a ? a2aRoutes(options.a2a) : []),
   ];
 }
