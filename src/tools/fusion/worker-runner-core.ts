@@ -81,7 +81,11 @@ export interface WorkerRunnerCoreDeps {
   /** Progress into the PARENT session's frame. */
   emitEvent: (sessionId: string, event: AgentLoopEvent) => void;
   workingDir: string;
-  /** Where a raised task budget is logged. Absent, it is only noted on the row. */
+  /**
+   * A generic log sink. Only Fusion's local-leg paths write to it today (a
+   * raised task budget, a local dispatch, fresh connections); absent, a
+   * raised budget is only noted on the row.
+   */
   logger?: Pick<StructuredLogger, "info">;
 }
 

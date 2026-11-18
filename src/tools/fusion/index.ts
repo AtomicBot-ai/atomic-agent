@@ -125,6 +125,8 @@ export { runWorkerTasks, runWorkerTasksCore } from "./worker-runner.js";
 export type {
   WorkerRunnerDeps,
   RunWorkerTasksOptions,
+  FusionWorkerRunnerDeps,
+  FusionWorkerRunnerOptions,
 } from "./worker-runner.js";
 export {
   DEFAULT_WORKER_TURN_ORIGIN,

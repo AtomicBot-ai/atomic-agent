@@ -543,8 +543,8 @@ export async function runWorkerTasks(
 
 /**
  * The shared runner with only the core fields (ATO-1669): the same
- * `runWorkerTasks`, with every Fusion add-on absent. Kept as its own
- * entry so a non-Fusion caller cannot reach for an add-on by accident.
+ * `runWorkerTasks`, typed to the core fields only; add-ons are still
+ * read if present.
  */
 export function runWorkerTasksCore(
   deps: WorkerRunnerCoreDeps,
