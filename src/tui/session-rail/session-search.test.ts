@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { reduceTuiState } from "../agent-event-reducer.js";
 import { createInitialTuiState, type SessionPickerEntry } from "../tui-state.js";
 import {
+  createIndexedSessionPickerSearch,
   createSessionPickerSearch,
   normaliseQuery,
   pickerQuery,
   SEARCH_TEXT_MAX_CHARS,
   snippetAround,
+  snippetFromHit,
   visiblePickerSessions,
 } from "./session-search.js";
 
@@ -161,5 +163,39 @@ describe("pickerQuery and the draft the picker opened over", () => {
     expect(closed.sessionPickerOpen).toBe(false);
     expect(closed.inputValue).toBe("draft ");
     expect(visiblePickerSessions(closed, undefined)).toBe(closed.sessionPickerList);
+  });
+});
+
+/** ATO-1510: the picker also finds sessions past the loaded pages, through the FTS5 index. */
+describe("createIndexedSessionPickerSearch", () => {
+  const loaded = [entry("s-1", "plan the trip"), entry("s-2", "fix the login bug")];
+  const hit = (sessionId: string, snippet: string) => ({ sessionId, workingDir: "/tmp/old", updatedAt: 5, snippet });
+
+  it("keeps the loaded-list matches first and adds index hits not on the list", () => {
+    const index = vi.fn(() => [hit("s-1", "Book the «train»"), hit("s-9", "an old «train» ticket"), hit("s-9", "again «train»")]);
+    const search = createIndexedSessionPickerSearch(index, (id) => lines[id] ?? []);
+    const rows = search(loaded, "train");
+    expect(ids(rows)).toEqual(["s-1", "s-9"]);
+    expect(rows[1]).toMatchObject({ workingDir: "/tmp/old", updatedAt: 5, preview: "an old train ticket", pinned: false });
+    expect(index).toHaveBeenCalledWith("train");
+  });
+
+  it("falls back to the loaded list when the index cannot answer", () => {
+    const search = createIndexedSessionPickerSearch(() => { throw new Error("no fts5"); }, (id) => lines[id] ?? []);
+    expect(ids(search(loaded, "lisbon"))).toEqual(["s-1"]);
+  });
+
+  it("asks nothing for an empty query and once per query and list", () => {
+    const index = vi.fn(() => []);
+    const search = createIndexedSessionPickerSearch(index);
+    expect(search(loaded, "  ")).toBe(loaded);
+    search(loaded, "bug");
+    search(loaded, "bug");
+    expect(index).toHaveBeenCalledTimes(1);
+  });
+
+  it("turns the index snippet into one plain line that fits the picker", () => {
+    expect(snippetFromHit("the «train»\nto «Lisbon»", 46)).toBe("the train to Lisbon");
+    expect(snippetFromHit("x".repeat(60), 10)).toBe(`${"x".repeat(9)}…`);
   });
 });

@@ -8,10 +8,11 @@ import type { SessionPickerEntry } from "../tui-state.js";
  * holds it (case-insensitive substring), and a session found by its text
  * shows the matched words in place of its title.
  *
- * The search goes through one function, {@link SessionPickerSearch}, so
- * the matcher here can later be swapped for the store's FTS5 index
- * (`SessionStore.searchTranscripts`, ATO-1149/1151, PR #1297) without
- * touching the picker, the keys or the submit path.
+ * The search goes through one function, {@link SessionPickerSearch}.
+ * {@link createIndexedSessionPickerSearch} adds the store's FTS5 index
+ * (`SessionStore.searchTranscripts`, ATO-1149/1151, ATO-1510) so sessions
+ * past the loaded pages are found too, without touching the picker, the
+ * keys or the submit path.
  */
 export type SessionPickerSearch = (
   entries: readonly SessionPickerEntry[],
@@ -95,6 +96,86 @@ export function createSessionPickerSearch(
     last = { entries, query: needle, result };
     return result;
   };
+}
+
+/**
+ * One hit of the store's full-text index (`SessionStore.searchTranscripts`,
+ * ATO-1149): the fields the picker needs to show a session that is not on
+ * the loaded pages of the list.
+ */
+export interface IndexedSessionHit {
+  sessionId: string;
+  workingDir: string;
+  updatedAt: number;
+  /** The matching part of a line, terms wrapped in `«` and `»`. */
+  snippet: string;
+}
+
+/** Ask the index; throws when the index cannot be created. */
+export type IndexedSessionSource = (query: string) => readonly IndexedSessionHit[];
+
+/** Hits asked of the index per query: the route's own maximum. */
+export const INDEXED_SEARCH_LIMIT = 25;
+
+/**
+ * The picker's search over the whole history (ATO-1510): the matcher
+ * above over the loaded list first, exactly as before, then the sessions
+ * the FTS5 index finds that are not on the loaded pages, newest hit
+ * first, each with its matched words as the preview. An index that
+ * cannot answer (no FTS5, a read-only file) leaves the loaded-list
+ * matcher alone, so the search never gets worse than it was.
+ */
+export function createIndexedSessionPickerSearch(
+  index: IndexedSessionSource,
+  source?: SessionTextSource,
+): SessionPickerSearch {
+  const local = createSessionPickerSearch(source);
+  let last: {
+    entries: readonly SessionPickerEntry[];
+    query: string;
+    result: readonly SessionPickerEntry[];
+  } | null = null;
+
+  return (entries, query) => {
+    const needle = normaliseQuery(query);
+    if (needle.length === 0) return entries;
+    if (last && last.entries === entries && last.query === needle) {
+      return last.result;
+    }
+    const matched = local(entries, query);
+    let hits: readonly IndexedSessionHit[] = [];
+    try {
+      hits = index(needle);
+    } catch {
+      // The loaded-list answer stands.
+    }
+    const seen = new Set(entries.map((e) => e.sessionId));
+    const extra: SessionPickerEntry[] = [];
+    for (const hit of hits) {
+      if (seen.has(hit.sessionId)) continue;
+      seen.add(hit.sessionId);
+      extra.push({
+        sessionId: hit.sessionId,
+        workingDir: hit.workingDir,
+        // Not known from a hit; the picker reloads the session on switch.
+        turnCount: 0,
+        stepCount: 0,
+        updatedAt: hit.updatedAt,
+        preview: snippetFromHit(hit.snippet, SEARCH_SNIPPET_CHARS),
+        pinned: false,
+      });
+    }
+    const result = extra.length > 0 ? [...matched, ...extra] : matched;
+    last = { entries, query: needle, result };
+    return result;
+  };
+}
+
+/** The index's snippet as one plain line for the picker, at most `width` characters. */
+export function snippetFromHit(snippet: string, width: number): string {
+  const plain = snippet.replace(/[«»]/g, "").replace(/\s+/g, " ").trim();
+  if (plain.length <= width) return plain;
+  return `${plain.slice(0, Math.max(1, width - 1))}…`;
 }
 
 /** One line, trimmed, lowercased: what the matcher compares. */
