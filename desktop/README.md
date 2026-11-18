@@ -910,6 +910,24 @@ Honestly degraded, and labelled as such in the UI:
   frame's `envVar`) is not supported from the card or Settings, and such an
   agent keeps asking until that variable is set by hand. `app:dotenvSet`
   refuses a line break or NUL in any value.
+- **Keys in the OS keychain** (ATO-1639). When the agent keeps saved keys in
+  the OS keychain (`atag config secrets keychain`, opt-in since ATO-474;
+  `.env` stays the default), the app goes through the agent for every key
+  and never opens the keychain itself ([keychain-keys.ts](main/keychain-keys.ts)).
+  Which store is on, and the NAMES the keychain holds, come from the agent's
+  `<stateDir>/secrets-store.json`, so Settings counts those keys as saved. A
+  provider key typed in the window is saved under
+  `ATOMIC_AGENT_PROVIDER_<ID>_API_KEY` and the entry names that variable
+  instead of holding the key; bot tokens, the Exa key and the Composio key
+  (`app:dotenvSet`, `composio:*`) are saved and removed the same way. The
+  save is `PUT /api/secrets/{name}` while `atag serve` runs on this computer
+  (the running agent uses the key at once), else `atag config secrets set
+  <NAME>` with the value on stdin. A value the app needs (the key check, the
+  OpenRouter catalog, Studio's prompt help, Composio's Check) is read with
+  `atag config secrets get <NAME>` and kept for a minute. If the keychain
+  refuses a provider key, or the agent is older than these commands, the
+  key stays in config.json as before. With the default `.env` store none of
+  this runs.
 - **Import** is the TUI's Hermes/OpenClaw form over `atag import <source>
   … --dry-run` (preview) and `… --yes` (apply) — always exactly one of the
   two, never a bare run (which exits 0 on a non-TTY having written nothing).

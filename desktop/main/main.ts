@@ -114,6 +114,10 @@ import {
   managedDataDir,
   readWholeConfig,
   resolveKeyValue,
+  warmKeychainValues,
+  desktopSecretSet,
+  readSavedKeychainKey,
+  useSecretsRoute,
   rewriteWholeConfig,
   withConfigLock,
   localDaemonRunning,
@@ -2550,6 +2554,7 @@ function wireIpc(client: AgentClient): void {
         const read = await readWholeConfig();
         // A config that could not be read is not "no key": Core keeps it (logged, never shown).
         if (!read.ok) throw new Error(read.error ?? "could not read the config");
+        await warmKeychainValues((read.config?.llm?.providers ?? []) as ProviderEntry[]); // ATO-1639
         return pickOpenRouterKey(read.config?.llm?.providers ?? [], (entry) => resolveKeyValue(entry as ProviderEntry));
       },
       forget: () => studio.forgetOpenRouterKey(),
@@ -3332,6 +3337,7 @@ function wireIpc(client: AgentClient): void {
     beforeDownload: () => { syncHfEndpoint(hfMirrorSources()); },
     openRouterKey: async () => {
       const read = await readWholeConfig();
+      if (read.ok) await warmKeychainValues((read.config?.llm?.providers ?? []) as ProviderEntry[]); // ATO-1639
       return pickOpenRouterKey(read.ok ? read.config?.llm?.providers ?? [] : [], (entry) => resolveKeyValue(entry as ProviderEntry));
     },
   });
@@ -3890,7 +3896,8 @@ function wireIpc(client: AgentClient): void {
     if (!ownDir(stateDir)) return { ok: false, error: "state dir required" };
     const refused = desktopDotenvError(key, value);
     if (refused) return { ok: false, error: refused };
-    const res = await dotenvSet(stateDir, key as string, value as string | null);
+    // ATO-1639: through the agent when it keeps keys in the OS keychain, else the .env write as before.
+    const res = await desktopSecretSet(stateDir, key as string, value as string | null);
     if (key === "TELEGRAM_BOT_TOKEN") A.telegramStep(value === null ? "token_cleared" : "token_saved", res);   // never the token
     return res;
   });
@@ -3904,7 +3911,9 @@ function wireIpc(client: AgentClient): void {
   const composioDeps = (stateDir: string): ComposioDeps => ({
     stateDir,
     env: process.env,
-    dotenvSet,
+    // ATO-1639: through the agent when it keeps keys in the OS keychain.
+    dotenvSet: desktopSecretSet,
+    readSaved: (key) => readSavedKeychainKey(key),
     readComposio: () => configGetKey("composio"),
     writeComposio: (patch) => configSetPaths(Object.entries(patch).map(([leaf, v]) => [`composio.${leaf}`, v] as const)),
   });
@@ -4107,8 +4116,11 @@ function wireIpc(client: AgentClient): void {
        go through it instead of an `atag config` process each; down, the CLI. */
     if (status.state === "connected") {
       useConfigRoute({ read: () => client.configWithSha(), write: (json, expect) => client.putConfig(json, expect) });
+      // ATO-1639: keys belong to this computer, never to an agent on another one.
+      useSecretsRoute(client.isRemote ? null : (name, value) => client.putSecret(name, value));
     } else {
       useConfigRoute(null);
+      useSecretsRoute(null);
     }
     // ATO-1127: on another computer's agent, Settings › Models reads that computer's models,
     // also while it is not answering (then it says so) — never this computer's models instead.

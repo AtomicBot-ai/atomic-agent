@@ -25,6 +25,18 @@ export { managedDataDir } from "./local-llama-key.js";
 import { curatedMeta } from "./model-catalog.js";
 import { projectorOnDisk } from "./pull-projector.js";
 import { pruneIncompleteProviders } from "./provider-hygiene.js";
+// ATO-1639: keys in the OS keychain, saved and read through the agent.
+import {
+  cachedKeychainValue,
+  isKeychainSecretName,
+  keychainHeldNames,
+  keychainProviderEnvVar,
+  keychainStoreOn,
+  readKeychainValue,
+  saveSecretThroughAgent,
+  type KeychainDeps,
+  type SecretsRoute,
+} from "./keychain-keys.js";
 import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
 import { SUBSCRIPTION_CLI_KIND, subscriptionCliModels } from "./subscription-cli-models.js";
 
@@ -981,6 +993,22 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
     if (!apiKeyCharsOk(key)) return { ok: false, stdout: "", stderr: "", error: API_KEY_CHAR_ERROR };
     entry = { ...entry, apiKey: key };
   }
+  /* ATO-1639: with the agent's keys in the OS keychain (`atag config secrets
+     keychain`), a key typed here goes there too, under a variable of this
+     provider's own, and the entry names the variable instead of holding the
+     key. Saved before the read below, so the read's hash still guards the
+     write. If the keychain did not take it (the agent fell back to .env) or
+     the agent is older than these commands, the key stays in the entry as
+     before. Never for an agent on another computer: its config is not here. */
+  let keychainName: string | null = null;
+  if (typeof entry.apiKey === "string" && entry.apiKey.length > 0 && !remoteModelsActive() && keychainStoreOn(stateDirPath())) {
+    const hinted = (configFileHint()?.llm?.providers ?? []).find((p) => p?.id === entry.id) as ProviderEntry | undefined;
+    const name = keychainProviderEnvVar({ id: entry.id, apiKeyEnvVar: hinted?.apiKeyEnvVar ?? entry.apiKeyEnvVar });
+    const saved = await saveSecretThroughAgent(keychainDeps(), name, entry.apiKey);
+    if (saved.ok && saved.store === "keychain") keychainName = name;
+    else if (saved.ok) await saveSecretThroughAgent(keychainDeps(), name, null); // landed in .env: take it back out
+    else if (!saved.unsupported) console.error(`[desktop] the agent could not save the key in the OS keychain (${saved.error}); it stays in config.json`);
+  }
   const current = await configGet();
   if (!current.ok || !current.config) {
     return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
@@ -998,7 +1026,14 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
      the entry reads. The window sends its row's variable, which an entry set
      up elsewhere (the terminal, a hand edit) may not be reading. */
   if (!clean.apiKey && at >= 0 && providers[at]!.apiKeyEnvVar) delete clean.apiKeyEnvVar;
-  if (at >= 0) providers[at] = { ...providers[at], ...clean };
+  if (keychainName) {
+    delete clean.apiKey;
+    clean.apiKeyEnvVar = keychainName;
+  }
+  if (at >= 0) {
+    providers[at] = { ...providers[at], ...clean };
+    if (keychainName) delete providers[at]!.apiKey; // the key now lives in the keychain only
+  }
   else {
     clean.modelMode ??= defaultProviderModelMode(clean);
     providers.push(clean);
@@ -1597,8 +1632,8 @@ export function readsSharedCompatKey(entry: ProviderEntry): boolean {
   return !isOtherComputerOnNetworkUrl(entry.baseUrl ?? "");
 }
 
-export function resolveKeyValue(entry: ProviderEntry): string | null {
-  if (entry.apiKey && entry.apiKey.length > 0) return entry.apiKey;
+/** The variables the agent reads this entry's key from, in its order (resolve-llm-api-key.ts). */
+function keyVarNames(entry: ProviderEntry): string[] {
   const names: string[] = [];
   if (entry.apiKeyEnvVar) names.push(entry.apiKeyEnvVar);
   if (entry.kind === "openrouter") names.push("OPENROUTER_API_KEY");
@@ -1607,21 +1642,57 @@ export function resolveKeyValue(entry: ProviderEntry): string | null {
   if (readsSharedCompatKey(entry)) {
     names.push("OPENAI_COMPAT_API_KEY", "OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY");
   }
+  return names;
+}
+
+/**
+ * ATO-1639: resolveKeyValue, plus a key the agent keeps in the OS keychain
+ * (read through `atag config secrets get`, after the environment and
+ * `.env`, as the agent's loader applies them). For the async paths: the key
+ * check, the add-provider step, Studio's prompt help.
+ */
+export async function resolveKeyValueAsync(entry: ProviderEntry): Promise<string | null> {
+  const known = resolveKeyValue(entry);
+  if (known !== null || (entry.apiKey && entry.apiKey.length > 0)) return known;
+  const dir = stateDirPath();
+  const held = keychainHeldNames(dir);
+  for (const name of keyVarNames(entry)) {
+    if (process.env[name] !== undefined) return null; // set-but-empty wins, as for the agent
+    if (!held.includes(name)) continue;
+    return readKeychainValue(keychainDeps(), dir, name);
+  }
+  return null;
+}
+
+/** ATO-1639: read the keychain-held keys of `entries` now, so the sync resolveKeyValue finds them for the next minute. */
+export async function warmKeychainValues(entries: readonly ProviderEntry[]): Promise<void> {
+  for (const entry of entries) await resolveKeyValueAsync(entry);
+}
+
+export function resolveKeyValue(entry: ProviderEntry): string | null {
+  if (entry.apiKey && entry.apiKey.length > 0) return entry.apiKey;
+  const names = keyVarNames(entry);
   for (const name of names) {
     const v = process.env[name];
     if (v !== undefined) return v.length > 0 ? v : null; // set-but-empty wins, as for the agent
   }
-  let text: string;
+  let text = "";
   try {
     text = readFileSync(join(stateDirPath(), ".env"), "utf8");
   } catch {
-    return null;
+    // no .env: the keychain below may still hold it
   }
   for (const line of text.split(/\r?\n/)) {
     const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(line);
     if (!m || !names.includes(m[1]!)) continue;
     const v = m[2]!.trim().replace(/^["']|["']$/g, "");
     return v.length > 0 ? v : null;
+  }
+  /* ATO-1639: a key the agent keeps in the OS keychain, when the app read or
+     saved it within the last minute (resolveKeyValueAsync, warmKeychainValues). */
+  const held = keychainHeldNames(stateDirPath());
+  for (const name of names) {
+    if (held.includes(name)) return cachedKeychainValue(name) ?? null;
   }
   return null;
 }
@@ -1727,7 +1798,7 @@ export async function verifyProviderKey(
   const url = chatCompletionsUrl(entry.kind, entry.baseUrl);
   if (!url) return { ok: false, checked: false, error: `this build cannot check a ${entry.kind || "provider"} key` };
   if (!model) return { ok: false, checked: false, error: "no model to check the key against" };
-  const key = resolveKeyValue(entry);
+  const key = await resolveKeyValueAsync(entry);
   /* Backlog 32: such a key cannot go into the header. fetch refuses it before
      it opens a connection (a TypeError for a character above U+00FF), and the
      catch below used to read that as an unreachable host — "the key was not
@@ -1867,13 +1938,13 @@ export async function providerKeyPresent(
   } as ProviderEntry;
   // A server on this machine needs no key (a custom URL on localhost included): nothing to ask for.
   if (isKeylessLocalProviderEntry(probe)) return { ok: true, present: true };
-  if (resolveKeyValue(probe) !== null) return { ok: true, present: true };
+  if (resolveKeyValue(probe) !== null || keyHeldInKeychain(probe)) return { ok: true, present: true };
   if (!entry.id) return { ok: true, present: false };
   const read = await readWholeConfig();
   // A config that could not be read is not "no key": the window goes on and the key check answers, as before.
   if (!read.ok || !read.config) return { ok: false, error: read.error ?? "could not read the config" };
   const saved = (read.config.llm?.providers ?? []).find((p) => p.id === entry.id);
-  return { ok: true, present: !!saved && resolveKeyValue(saved) !== null };
+  return { ok: true, present: !!saved && (resolveKeyValue(saved) !== null || keyHeldInKeychain(saved)) };
 }
 
 /**
@@ -2730,6 +2801,14 @@ export function keyNamesAvailable(): KeyEnvNames {
     }
   } catch {
     // no .env — the environment alone decides
+  }
+  /* ATO-1639: names the agent loads from the OS keychain after .env (load-dotenv.ts). The
+     value is not read here (that is a keychain prompt); the agent saved it from a field
+     that refuses a non-ASCII key, so it counts as a usable key. */
+  for (const name of keychainHeldNames(stateDirPath())) {
+    if (present.has(name)) continue;
+    present.add(name);
+    nonEmpty.add(name);
   }
   return { present, nonEmpty, badChars };
 }
@@ -4159,7 +4238,7 @@ export function dotenvKeys(stateDir: string): { ok: boolean; keys: string[]; exi
   try {
     raw = readFileSync(path, "utf8");
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true, keys: [], exists: false };
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ok: true, keys: withKeychainNames(stateDir, []), exists: false };
     return { ok: false, keys: [], exists: true, error: err instanceof Error ? err.message : String(err) };
   }
   const keys: string[] = [];
@@ -4171,7 +4250,13 @@ export function dotenvKeys(stateDir: string): { ok: boolean; keys: string[]; exi
     const key = trimmed.slice(0, eq).trim();
     if (DOTENV_KEY_PATTERN.test(key) && !keys.includes(key)) keys.push(key);
   }
-  return { ok: true, keys, exists: true };
+  return { ok: true, keys: withKeychainNames(stateDir, keys), exists: true };
+}
+
+/** ATO-1639: the names the agent keeps in the OS keychain count as saved keys too (names only). */
+function withKeychainNames(stateDir: string, keys: string[]): string[] {
+  const held = keychainHeldNames(stateDir).filter((k) => !keys.includes(k));
+  return held.length > 0 ? [...keys, ...held] : keys;
 }
 
 /** Which of `names` are set (non-empty) in this process's environment — the other half of the TUI's `process.env` view. Names only. */
@@ -4213,6 +4298,61 @@ export function dotenvSet(stateDir: string, key: string, value: string | null): 
   } catch (err) {
     return { ok: false, path, preexisting: false, changed: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/* ---------------------------------------------------------------
+   ATO-1639 — keys in the OS keychain go through the agent
+   (keychain-keys.ts). While `atag serve` runs on this computer, main hands
+   in its `PUT /api/secrets/{name}` route (the running agent then uses the
+   key at once); otherwise, and for an older agent, `atag config secrets`.
+   --------------------------------------------------------------- */
+let secretsRoute: SecretsRoute | null = null;
+let secretsRouteBin: string | undefined;
+/** main.ts: the running agent's secrets route, or null while there is none (or it runs on another computer). */
+export function useSecretsRoute(route: SecretsRoute | null): void {
+  secretsRoute = route;
+  secretsRouteBin = process.env.ATOMIC_AGENT_BIN;
+}
+
+function keychainDeps(): KeychainDeps {
+  // A check that points the CLI at a stand-in or another binary means its calls to go there (liveConfigRoute).
+  const route = !inCliStandIn() && secretsRoute && process.env.ATOMIC_AGENT_BIN === secretsRouteBin ? secretsRoute : null;
+  return { cli: (args, input, timeoutMs) => cli(args, timeoutMs ?? 30_000, undefined, undefined, input), route };
+}
+
+/** ATO-1639: one of the variables this entry reads is a key the agent keeps in the OS keychain. Names only. */
+export function keyHeldInKeychain(entry: ProviderEntry): boolean {
+  const held = keychainHeldNames(stateDirPath());
+  return held.length > 0 && keyVarNames(entry).some((n) => held.includes(n));
+}
+
+/** ATO-1639: the value the agent keeps in the OS keychain for `name` (Composio's saved-key check), or null. */
+export function readSavedKeychainKey(name: string): Promise<string | null> {
+  if (remoteModelsActive()) return Promise.resolve(null);
+  return readKeychainValue(keychainDeps(), stateDirPath(), name);
+}
+
+/**
+ * `app:dotenvSet` (bot tokens, the Exa key): dotenvSet, unless the agent
+ * keeps keys in the OS keychain (ATO-1639). Then the agent saves or removes
+ * it, so the token lands in the keychain and a removed one is gone from
+ * there too (a `.env` edit alone would leave the keychain copy loading).
+ * An agent older than `config secrets set` gets the old write.
+ */
+export async function desktopSecretSet(
+  stateDir: string,
+  key: string,
+  value: string | null,
+): Promise<{ ok: boolean; path: string; preexisting: boolean; changed: boolean; error?: string }> {
+  const path = join(stateDir, ".env");
+  const viaAgent = stateDir === stateDirPath() && !remoteModelsActive() && isKeychainSecretName(key)
+    && (keychainStoreOn(stateDir) || keychainHeldNames(stateDir).includes(key));
+  if (viaAgent) {
+    const saved = await saveSecretThroughAgent(keychainDeps(), key, value);
+    if (saved.ok) return { ok: true, path, preexisting: existsSync(path), changed: true };
+    if (!saved.unsupported) return { ok: false, path, preexisting: false, changed: false, error: saved.error };
+  }
+  return dotenvSet(stateDir, key, value);
 }
 
 /* The .env keys the window may write through `app:dotenvSet`, and nothing
