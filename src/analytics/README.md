@@ -40,6 +40,16 @@ Every built-in slash command the TUI runs sends one `ui_action` (ATO-1465), the 
 Only names from the built-in registry are sent. Skills, plugin commands, unknown input and plain messages send nothing. The event goes through the normal client, so it is dropped while analytics is off, under `ATOMIC_AGENT_ANALYTICS=off` and under `DO_NOT_TRACK`. Wiring: `reportBuiltInSlashCommand` in `src/tui/submit-handler.ts` → `TuiAppCallbacks.onUiAction` → `runtime.reportUiAction` → `captureUiAction`.
 
 
+## `update_checked` from the terminal
+
+Each successful startup update check in the TUI sends one `update_checked` (ATO-1007), the "share of installs on the current version" metric. `app_version` is already on every event; this event adds what the running version cannot know by itself:
+
+- `latest_version`: the latest release at that moment, without the `v`.
+- `on_latest`: `true` when no newer release exists.
+- `update_required`: `true` when the release policy (`src/update/update-policy.ts`, ATO-1125) lists the running version as broken or below its minimum; `required_reason` is then `broken` or `below-minimum`.
+
+A failed check (offline, rate limit) sends nothing. The check, and so the event, only runs where the startup check runs: `update.checkOnStartup` on, a binary that can update itself, and not a deb, rpm or AUR install. Wiring: `ChatOrchestrator.checkForUpdate` → `runtime.reportUpdateChecked` → `captureUpdateChecked`.
+
 ## Local turn speed on `message_sent`
 
 A turn served by a local llama-server also carries `prefill_ms` (time spent reading the prompt), `gen_ms` (time spent generating) and `gen_tokens_per_s`, summed over the turn's completions from llama.cpp's own `timings` (ATO-1026, [turn-usage-meter.ts](turn-usage-meter.ts) `recordTiming`). Completions with a `usage` block (cloud providers, subscription CLIs) and OpenAI-compatible servers that report zero times add nothing, so cloud turns carry none of the three. Model loading time is not in these figures: llama-server does not report it per completion.

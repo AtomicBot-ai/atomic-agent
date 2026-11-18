@@ -13,6 +13,7 @@ import {
   captureModelConfigured,
   captureOnboardingStep,
   captureUiAction,
+  captureUpdateChecked,
   createTelemetryToggle,
   INTERVIEW_INVITE_EVENTS,
   detectOtherSurfaceInstalled,
@@ -20,6 +21,7 @@ import {
   type AnalyticsDisabledVia,
   type LocalEngineFailedContext,
   type UiActionVia,
+  type UpdateCheckedContext,
 } from "../../analytics/index.js";
 import { getAppVersion } from "../../version.js";
 import { SENTRY_RATE_LIMIT_FILE } from "../../error-reporting/index.js";
@@ -159,6 +161,9 @@ export function createRuntimeObservability(
     const reportUiAction = (action: string, via: UiActionVia): void => {
       captureUiAction(analytics, action, via);
     };
+    const reportUpdateChecked = (context: UpdateCheckedContext): void => {
+      captureUpdateChecked(analytics, context);
+    };
     // ATO-1467: the interview invite reads the id and the install age
     // only while analytics is on; its events carry fixed words only.
     const interviewInviteIdentity = () => {
@@ -180,6 +185,7 @@ export function createRuntimeObservability(
       reportModelConfigured,
       reportLocalEngineFailed,
       reportUiAction,
+      reportUpdateChecked,
       interviewInviteIdentity,
       reportInterviewInvite,
     };

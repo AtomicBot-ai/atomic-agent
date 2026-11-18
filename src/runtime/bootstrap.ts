@@ -149,6 +149,7 @@ export async function createAgentRuntime(
     reportModelConfigured,
     reportLocalEngineFailed,
     reportUiAction,
+    reportUpdateChecked,
     interviewInviteIdentity,
     reportInterviewInvite,
   } = observability.createControls();
@@ -1134,6 +1135,7 @@ export async function createAgentRuntime(
     reportModelConfigured,
     reportLocalEngineFailed,
     reportUiAction,
+    reportUpdateChecked,
     interviewInviteIdentity,
     reportInterviewInvite,
     setLocalModelRestarter: (restarter: LocalModelRestarter | null) => {

@@ -49,7 +49,7 @@ import type { MetricSink } from "../tracing/metrics-collector.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { TraceSink } from "../tracing/trace/index.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
-import type { AnalyticsDisabledVia, AnalyticsSurface, UiActionVia } from "../analytics/index.js";
+import type { AnalyticsDisabledVia, AnalyticsSurface, UiActionVia, UpdateCheckedContext } from "../analytics/index.js";
 import type { BrokenPipePolicy } from "../error-reporting/index.js";
 
 
@@ -803,6 +803,13 @@ export interface AgentRuntime {
    * implement it.
    */
   reportUiAction?(action: string, via: UiActionVia): void;
+  /**
+   * Count one successful startup update check (`update_checked`,
+   * ATO-1007): the latest release and whether this install is on it or
+   * must leave its version. A no-op while analytics is off. Optional so
+   * test doubles and older hosts need not implement it.
+   */
+  reportUpdateChecked?(context: UpdateCheckedContext): void;
   /**
    * The interview invite's view of analytics (ATO-1467): the anonymous
    * shared install id and the whole days since install, or `null` while
