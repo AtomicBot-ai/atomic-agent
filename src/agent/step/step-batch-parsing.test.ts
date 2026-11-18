@@ -103,4 +103,35 @@ describe("parseStepBatch on a completion served without the grammar (ATO-1675)",
     }
     expect(run(body).parsed.ok).toBe(false);
   });
+
+  it("admits a fenced code answer that is not a call as a reply", () => {
+    const answer = "Use this:\n```python\nitems = {\"a\": 1}\nprint(items[\"a\"])\n```";
+    const { parsed } = run(answer, { grammarSkipped: true });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.batch.calls).toEqual([{ tool: "reply", args: { text: answer } }]);
+  });
+
+  it("admits citations and braces in prose, even at the start of the answer", () => {
+    for (const answer of ["The limit is 4096 tokens [1].", "[1] The docs say {x} is a set."]) {
+      const { parsed } = run(answer, { grammarSkipped: true });
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) expect(parsed.batch.calls).toEqual([{ tool: "reply", args: { text: answer } }]);
+    }
+  });
+
+  it("sends prose followed by a broken {\"tool\": ...} call to repair", () => {
+    const { parsed } = run('Done reading.\n{"tool": "os.fs.read", "args": {"path": "a.ts"', {
+      grammarSkipped: true,
+      truncated: true,
+    });
+    expect(parsed.ok).toBe(false);
+  });
+
+  it("sends prose with a fenced {name, arguments} call that did not validate to repair", () => {
+    const { parsed } = run(
+      'Reading.\n```json\n{"name":"os.fs.reed","arguments":{"path":"a.ts"}}\n```',
+      { grammarSkipped: true },
+    );
+    expect(parsed.ok).toBe(false);
+  });
 });

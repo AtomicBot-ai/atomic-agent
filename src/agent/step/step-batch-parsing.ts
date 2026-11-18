@@ -7,8 +7,8 @@ import type { ParseDeps, ToolCallBatchParseResult } from "./step-parsing.js";
 import { tryParseToolCalls, parseDepsFor, rawPreview, logTextPreview, replyFallbackBatch } from "./step-parsing.js";
 import { validateBatch } from "./step-batch-policy.js";
 import { GrammarError } from "../../llm/index.js";
-import { parseToolCalls } from "../../llm/grammar/tool-call-grammar.js";
-import { completionAssumesOpenReasoning, getReasoningTagOptions, normalizeContent } from "./step-reasoning.js";
+import { extractReasoning, parseToolCalls } from "../../llm/grammar/tool-call-grammar.js";
+import { completionAssumesOpenReasoning, getReasoningTagOptions, normalizeContent, resolveReasoning } from "./step-reasoning.js";
 import { judgeRepairedBatch, repairRefusedError } from "./step-json-repair.js";
 
 export interface StepBatchParsingArgs {
@@ -193,24 +193,39 @@ function readForeignShapes(
 }
 
 /**
- * Anything in a reply body that could be a call: a JSON opener, or a
- * code fence (which may hold one). Prose with either is not admitted
- * as a reply by `admitProseWithoutGrammar`.
+ * A call-looking JSON value somewhere in a reply body: an object opener
+ * followed, anywhere later, by a key only a call is named with (`tool`,
+ * `action`, `function`, `tool_calls`), or by `name` with an argument key
+ * (`arguments`, `args`, `parameters`) after it, quoted with either quote.
+ * It finds a whole call, a call inside a ```json fence, an OpenAI or
+ * llama.cpp-shaped one, and a call cut off after its first key (a
+ * `name` object that never closes).
+ * Ordinary prose does not match: a fenced code answer, a `[1]` citation,
+ * `{braces}` in a sentence, a JSON example with a bare `name` (a
+ * package.json).
  */
-const CALL_LIKE = /[{[]|```/;
+const CALL_KEY = /\{[\s\S]*?["'](?:tool|action|function|tool_calls)["']\s*:/;
+const NAMED_CALL = /\{[\s\S]*?["']name["']\s*:[\s\S]*?["'](?:arguments|args|parameters)["']\s*:/;
+/** A `{"name": ...` object the completion was cut inside: it never closes. */
+const NAMED_CUT = /\{\s*["']name["']\s*:[^}]*$/;
+
+function callLike(text: string): boolean {
+  return CALL_KEY.test(text) || NAMED_CALL.test(text) || NAMED_CUT.test(text);
+}
 
 /**
  * A completion the server produced WITHOUT the grammar (ATO-1675: it
  * refused ours, so the client stopped sending it) is free text, and
- * plain prose there is the model's answer, not a botched call: read it
- * as a `reply` at once, the way the native-tools path reads content
- * that carries no tool call, instead of spending a repair round-trip
- * that, with no grammar either, ends in the same prose.
+ * prose there is the model's answer, not a botched call: read it as a
+ * `reply` at once, the way the native-tools path reads content that
+ * carries no tool call, instead of spending a repair round-trip that,
+ * with no grammar either, rewrites or loses the answer.
  *
- * Only prose with nothing call-like anywhere in it (`CALL_LIKE`): a body
- * that holds a JSON value or a fence after its prose may be a call that
- * did not parse, or one `admitRepairedJson` refused, and goes to repair
- * as before instead of showing raw JSON to the user.
+ * Not `replyFallbackBatch`: that refuses any body that opens with `{`
+ * or `[`, which here is an ordinary answer. The only body refused is
+ * one that holds a call-looking value (`callLike`): it may be a call
+ * that did not parse, or one `admitRepairedJson` refused, and goes to
+ * repair as before instead of showing raw JSON to the user.
  */
 function admitProseWithoutGrammar(
   args: Pick<StepBatchParsingArgs, "ctx" | "deps" | "assumesOpenReasoning">,
@@ -218,13 +233,19 @@ function admitProseWithoutGrammar(
   parsed: ToolCallBatchParseResult,
 ): ToolCallBatchParseResult {
   if (parsed.ok || completion.grammarSkipped !== true) return parsed;
-  const fallback = replyFallbackBatch(
-    completion,
-    args.deps.profile,
-    args.assumesOpenReasoning(completion),
-  );
-  const text = fallback?.calls[0]?.args.text;
-  if (fallback === null || typeof text !== "string" || CALL_LIKE.test(text)) return parsed;
+  const { profile } = args.deps;
+  const assumeOpen = args.assumesOpenReasoning(completion);
+  const text = extractReasoning(
+    normalizeContent(completion, profile, assumeOpen),
+    getReasoningTagOptions(profile),
+  ).body.trim();
+  if (text.length === 0 || callLike(text)) return parsed;
+  const reasoning = resolveReasoning(completion, profile, assumeOpen);
+  const fallback: ToolCallBatch = {
+    kind: "batch",
+    calls: [{ tool: "reply", args: { text }, ...(reasoning.length > 0 ? { reasoning } : {}) }],
+    ...(reasoning.length > 0 ? { reasoning } : {}),
+  };
   args.deps.logger?.info("reading a reply served without the grammar", {
     sessionId: args.ctx.session.id,
     stepIndex: args.ctx.stepIndex,
