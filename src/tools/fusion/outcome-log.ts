@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 
 import type { DelegateTask } from "./delegate-args.js";
+import { sampleTokensPerSecond, workerSpeedSample } from "./leg-speed.js";
 import { summarizeOutcomes } from "./outcome-summary.js";
 import type { WorkerTaskResult, WorkerTaskStatus } from "./worker-result.js";
 
@@ -63,6 +64,8 @@ export interface FusionOutcomeRow {
   writes: number;
   /** Generated tokens, when the provider reported usage. */
   outputTokens?: number;
+  /** Measured output speed, queue wait excluded (ATO-1583), when measurable. */
+  tokensPerSecond?: number;
   /** Priced spend, `null` when no price is known (a local leg). */
   costUsd: number | null;
 }
@@ -99,6 +102,7 @@ export function outcomeRowFor(input: {
     (task?.instructions.length ?? 0) + (task?.deliverable?.length ?? 0);
   const files = task?.files?.length ?? 0;
   const outputTokens = result.usage?.completionTokens;
+  const speed = workerSpeedSample(result);
   return {
     v: OUTCOME_ROW_VERSION,
     at: input.at,
@@ -115,6 +119,7 @@ export function outcomeRowFor(input: {
     ...(typeof outputTokens === "number" && Number.isFinite(outputTokens)
       ? { outputTokens }
       : {}),
+    ...(speed === null ? {} : { tokensPerSecond: sampleTokensPerSecond(speed) }),
     costUsd:
       input.costUsd !== null && Number.isFinite(input.costUsd)
         ? input.costUsd
