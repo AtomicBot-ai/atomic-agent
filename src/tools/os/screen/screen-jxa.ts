@@ -32,6 +32,14 @@ interface Pinned {
   protectedIds: readonly string[];
 }
 
+/** Global screen points, top-left origin. */
+export interface ScreenFrame {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export type ScreenOp =
   | { op: "probe"; point?: { x: number; y: number }; windows?: boolean }
   | {
@@ -50,6 +58,8 @@ export type ScreenOp =
       pid: number;
       /** The window's title; the first window of the process when empty or not found. */
       title: string;
+      /** The picked window's frame, so the walk takes that one of several same-titled windows. */
+      frame?: ScreenFrame;
       /** Apps whose elements are never listed (`WINDOW_CAPTURE_REFUSED_BUNDLE_IDS`), re-checked by pid. */
       refusedIds: readonly string[];
       maxDepth: number;
@@ -68,6 +78,10 @@ export type ScreenOp =
       pid: number;
       /** The AX title of the window the list was read from; must still exist (no fallback). */
       title: string;
+      /** That window's frame when listed: picks it among same-titled windows, refuses if none is there. */
+      windowFrame?: ScreenFrame;
+      /** The element's frame when listed: it must sit at the same place in its window. */
+      frame?: ScreenFrame;
       path: readonly number[];
       /** What the list saw at `path`; anything else there is refused as changed. */
       role: string;
@@ -158,19 +172,37 @@ function elLabel(el) {
 function elActions(el) {
   return safe(function () { return el.actions().map(function (a) { return String(a.name()); }); }, []);
 }
-function findWindow(pid, title, strict) {
+function winFrame(w) {
+  var pos = safe(function () { return w.position(); }, null), size = safe(function () { return w.size(); }, null);
+  return pos && size ? { x: pos[0], y: pos[1], width: size[0], height: size[1] } : null;
+}
+function sameFrame(a, b, tol) {
+  return !!a && !!b && Math.abs(a.x - b.x) <= tol && Math.abs(a.y - b.y) <= tol &&
+    Math.abs(a.width - b.width) <= tol && Math.abs(a.height - b.height) <= tol;
+}
+// A title alone does not name a window: two "New Message" windows share one.
+// With a frame, the window at that frame wins; strict (a press) refuses when
+// no titled window sits there, or when several share the title and none does.
+function findWindow(pid, title, strict, frame) {
   var procs = Application("System Events").processes.whose({ unixId: pid })();
   if (!procs.length) return { error: "no-process" };
   var wins = safe(function () { return procs[0].windows(); }, []);
-  for (var i = 0; i < wins.length; i++) if (title && safe(function () { return wins[i].name(); }, "") === title) return { win: wins[i], title: title };
+  var titled = [];
+  for (var i = 0; i < wins.length; i++) if (title && safe(function () { return wins[i].name(); }, "") === title) titled.push(wins[i]);
+  if (frame) {
+    for (var j = 0; j < titled.length; j++) if (sameFrame(winFrame(titled[j]), frame, 2)) return { win: titled[j], title: title, frame: winFrame(titled[j]) };
+    if (strict && titled.length) return { error: "window-changed" };
+  }
+  if (strict && titled.length > 1) return { error: "window-ambiguous" };
+  if (titled.length) return { win: titled[0], title: title, frame: winFrame(titled[0]) };
   if (strict && title) return { error: "no-window" };
   if (!wins[0]) return { error: "no-window" };
-  return { win: wins[0], title: safe(function () { return wins[0].name(); }, "") || "" };
+  return { win: wins[0], title: safe(function () { return wins[0].name(); }, "") || "", frame: winFrame(wins[0]) };
 }
 function listElements(p) {
   var owner = safe(function () { return appInfo($.NSRunningApplication.runningApplicationWithProcessIdentifier(p.pid)); }, null);
   if (owner && owner.bundleId && isProtected({ protectedIds: p.refusedIds || [] }, owner.bundleId)) return { error: "protected" };
-  var found = findWindow(p.pid, p.title, false);
+  var found = findWindow(p.pid, p.title, false, p.frame || null);
   if (found.error) return found;
   var items = [], scanned = 0, cut = false;
   function walk(el, depth, path) {
@@ -201,13 +233,13 @@ function listElements(p) {
     for (var k = 0; k < kids.length; k++) { path.push(k); walk(kids[k], depth + 1, path); path.pop(); }
   }
   walk(found.win, 0, []);
-  return { elements: items, truncated: cut, scanned: scanned, windowTitle: found.title };
+  return { elements: items, truncated: cut, scanned: scanned, windowTitle: found.title, windowFrame: found.frame };
 }
 function pressElement(p) {
   var owner = safe(function () { return appInfo($.NSRunningApplication.runningApplicationWithProcessIdentifier(p.pid)); }, null);
   if (!owner || !owner.bundleId || isProtected(p, owner.bundleId)) return { error: "protected" };
   if (owner.bundleId !== p.expectBundleId) return { error: "owner-mismatch" };
-  var found = findWindow(p.pid, p.title, true);
+  var found = findWindow(p.pid, p.title, true, p.windowFrame || null);
   if (found.error) return found;
   var el = found.win;
   for (var i = 0; i < p.path.length; i++) {
@@ -218,6 +250,17 @@ function pressElement(p) {
   var role = safe(function () { return el.role(); }, "") || "";
   var name = elLabel(el);
   if (role !== p.role || name !== p.name) return { error: "element-changed", element: { role: role, name: name } };
+  // Same role and name is not enough: a re-sorted list puts the next row's
+  // "Delete" (or an unnamed icon button) at the stored path. The element must
+  // also sit where it was, relative to its window (the window may move).
+  if (p.frame) {
+    var pos = safe(function () { return el.position(); }, null), size = safe(function () { return el.size(); }, null);
+    var wf = found.frame || p.windowFrame || { x: 0, y: 0 };
+    var listedWf = p.windowFrame || wf;
+    var now = pos && size ? { x: pos[0] - wf.x, y: pos[1] - wf.y, width: size[0], height: size[1] } : null;
+    var then = { x: p.frame.x - listedWf.x, y: p.frame.y - listedWf.y, width: p.frame.width, height: p.frame.height };
+    if (!sameFrame(now, then, 4)) return { error: "element-changed", element: { role: role, name: name } };
+  }
   if (typeof p.value === "string") {
     var set = safe(function () { el.value = p.value; return true; }, false);
     return set ? { did: "set-value" } : { error: "value-unsupported" };

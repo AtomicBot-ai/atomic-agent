@@ -121,6 +121,7 @@ export function buildOsScreenElementsTool(options: OsScreenElementOptions): Tool
             op: "elements",
             pid: target.pid,
             title: target.title,
+            frame: { x: target.x, y: target.y, width: target.width, height: target.height },
             refusedIds: WINDOW_CAPTURE_REFUSED_BUNDLE_IDS,
             maxDepth: SCREEN_ELEMENT_LIMITS.maxDepth,
             maxScan: SCREEN_ELEMENT_LIMITS.maxScan,
@@ -143,6 +144,7 @@ export function buildOsScreenElementsTool(options: OsScreenElementOptions): Tool
         bundleId,
         pid: target.pid,
         windowTitle: report.windowTitle ?? target.title,
+        ...(report.windowFrame ? { windowFrame: report.windowFrame } : {}),
         elements,
       });
       return listingResult(name, label, target, bundleId, elements, report, deps.env);
@@ -294,6 +296,8 @@ export function buildOsScreenPressTool(options: OsScreenElementOptions): ToolDef
             op: "press",
             pid: listing.pid,
             title: listing.windowTitle,
+            ...(listing.windowFrame ? { windowFrame: listing.windowFrame } : {}),
+            frame: { x: el.x, y: el.y, width: el.width, height: el.height },
             path: el.path,
             role: el.role,
             name: el.name,
@@ -348,6 +352,9 @@ function pressResult(
     case "no-window":
     case "no-process":
       return result(name, "error", `${name} did nothing: the window the list was read from is gone. ${relist}`, { ...details, reason: "no-window" });
+    case "window-changed":
+    case "window-ambiguous":
+      return result(name, "error", `${name} did nothing: the window the list was read from moved, or another window with the same title is in the way, so it is not clear which one is meant. ${relist}`, { ...details, reason: after.error });
     case "element-changed": {
       const now = after.element ? ` (now: ${after.element.role || "nothing"} ${JSON.stringify(after.element.name)})` : "";
       return result(name, "error", `${name} did nothing: element ${n} is no longer ${shortName(el)}${now}; the window changed. ${relist}`, { ...details, reason: "element-changed" });

@@ -252,6 +252,40 @@ describe("os.screen.press", () => {
     expect(result.summary).toContain("os.screen.type");
   });
 
+  it("sends the listed window and element frames, so a shifted row or a same-titled window is refused", async () => {
+    const { fake, store, options } = setup({ frontmost: TEXTEDIT, actionReport: { done: true, did: "press", frontmostAfter: TEXTEDIT } });
+    store.set("s1", { bundleId: "com.apple.mail", pid: 501, windowTitle: "New Message", windowFrame: { x: 100, y: 80, width: 800, height: 600 }, elements: [SEND, TO] });
+    await buildOsScreenPressTool(options).run({ app: "Mail", element: 1 }, screenCtx());
+    expect(fake.ops()[1]).toMatchObject({
+      op: "press",
+      windowFrame: { x: 100, y: 80, width: 800, height: 600 },
+      frame: { x: 120, y: 90, width: 60, height: 24 },
+    });
+    for (const error of ["window-changed", "window-ambiguous"]) {
+      const other = setup({ actionReport: { error } });
+      seed(other.store);
+      const r = await buildOsScreenPressTool(other.options).run({ app: "Mail", element: 1 }, screenCtx());
+      expect(r.status).toBe("error");
+      expect(r.details.reason).toBe(error);
+    }
+  });
+
+  it("lists the picked window by its frame and remembers the frame the script reports", async () => {
+    const { fake, store, options } = setup({ actionReport: { ...LIST_REPORT, windowFrame: { x: 100, y: 80, width: 800, height: 600 } } });
+    await buildOsScreenElementsTool(options).run({ app: "Mail" }, screenCtx());
+    const listOp = fake.ops().find((o) => o.op === "elements");
+    expect(listOp).toMatchObject({ frame: { x: 100, y: 80, width: 800, height: 600 } });
+    expect(store.get("s1", "com.apple.mail")?.windowFrame).toEqual({ x: 100, y: 80, width: 800, height: 600 });
+  });
+
+  it("checks the element's place in its window at press time, not only role and name", () => {
+    const pressFn = /function pressElement\(p\) \{[\s\S]*?\n\}/.exec(SCREEN_JXA_SOURCE)?.[0] ?? "";
+    expect(pressFn).toContain("sameFrame(now, then, 4)");
+    const findFn = /function findWindow\([\s\S]*?\n\}/.exec(SCREEN_JXA_SOURCE)?.[0] ?? "";
+    expect(findFn).toContain('"window-ambiguous"');
+    expect(findFn).toContain('"window-changed"');
+  });
+
   it("refuses when the element at the stored path changed, and when the app was restarted", async () => {
     const changed = setup({ actionReport: { error: "element-changed", element: { role: "AXButton", name: "Discard" } } });
     seed(changed.store);

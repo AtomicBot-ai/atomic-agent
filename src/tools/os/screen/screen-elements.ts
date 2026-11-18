@@ -104,6 +104,8 @@ export interface ElementListing {
   pid: number;
   /** The AX title of the window that was walked: the press looks for exactly this window. */
   windowTitle: string;
+  /** That window's frame when listed; the press refuses when no same-titled window is there. */
+  windowFrame?: { x: number; y: number; width: number; height: number };
   /** `elements[n - 1]` is element n. */
   elements: ScreenElement[];
 }
