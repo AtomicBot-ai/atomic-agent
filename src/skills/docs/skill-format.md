@@ -87,6 +87,7 @@ atomic-agent skill tap list|add <owner/repo>|remove <owner/repo>   # manage hub 
 atomic-agent skill history [name]       # change log, saved versions, use count
 atomic-agent skill restore <name> [--version <id>|archive]   # undo: put back an archived copy or a saved version
 atomic-agent skill curate [--dry-run]   # archive unused agent-learned skills now
+atomic-agent skill learned [undo <id>]  # skills the agent learned by itself; undo one
 ```
 
 Local installation is a security scan, `SKILL.md` validation and `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`). Search also asks [skills.sh](https://skills.sh) and shows its install counts; a skills.sh row (`skills.sh/owner/repo/skill`) is looked up in its GitHub repository and then installed like a tap skill, with the same download limits, scan and gate. skills.sh's search API is undocumented: any network or response-shape problem is a warning and the other sources still answer.
@@ -123,6 +124,12 @@ Global skills (`<stateDir>/skills/`) keep a history (ATO-580, [curator](../curat
 - `skill.view` and `skill.run_script` count a use in `<stateDir>/skills-usage.json` (use count, last use).
 - Before the agent changes a skill folder with `os.fs.write`, `edit`, `patch`, `move`, `trash` or `restore`, the folder is copied to `<stateDir>/skills-history/<name>/<version>/` (10 versions kept per skill) and the change is appended to `<stateDir>/skills-history/changes.jsonl` (who, what, when). A folder the agent created is recorded as agent-learned. `skill uninstall` is saved the same way. Shell commands are not tracked.
 - The curator only considers agent-learned skills: never starters, hub, plugin or hand-written ones, and never one a recurring task names. Unused for 14 days it is marked stale; for 30 days it is moved to `<stateDir>/skills-archive/` (never deleted). The automatic pass is off by default (`ATOMIC_AGENT_SKILL_CURATOR=1` turns it on at boot, at most once a week); `skill curate` runs it by hand and `skill restore` undoes it.
+
+## Self-learning
+
+After a turn of at least `skills.selfLearning.minSteps` model steps (default 10) that ended on a reply, one background model call reviews it (ATO-67, [learning](../learning/index.ts), wired in [runtime-experience-review.ts](../../runtime/composition/runtime-experience-review.ts)). It answers with one JSON decision: `none` (the usual answer), `create` a new focused skill, or `patch` a skill the turn loaded or ran whose steps proved wrong or missing. Only skills in the global folder that are not starters, hub installs, plugin, shared or project skills can be patched; a new skill must take a name no skill (or archived skill) uses. Scheduler, fusion-worker, incognito, `skill eval`, budget-stopped and stopped turns are not reviewed, nor a turn that edited a skill itself; one review runs at a time.
+
+Every write passes the linter ([skill-lint.ts](../learning/skill-lint.ts)): valid frontmatter whose `name` equals the folder, a one-line description of at most 300 characters, a body that says something, at most 16 KiB and 500 body lines, no `requires_scripts`, `env_keys` or `dangerous`, and nothing that looks like a key or token. The previous version is saved in the history first (the same snapshot as above) and the change is appended to `<stateDir>/skills-history/learned.jsonl` with a short id. `/learn` in the TUI and `skill learned` list them; `/learn undo <id>` (`skill learned undo <id>`) archives a created skill or restores the version saved before a patch, and only the newest live change of a skill can be undone. `skills.selfLearning.enabled: false` turns it off. A desktop "Learned" panel with an Undo button is not built yet.
 
 ## Prompt and KV-cache
 

@@ -14,6 +14,7 @@ import {
   type SkillChangeEntry,
 } from "../skills/curator/index.js";
 import { listStarterSkillNames } from "../skills/seed-starter-skills.js";
+import { parseLearnCommand, runLearnCommand } from "../skills/learning/index.js";
 import { TaskStore } from "../tasks/task-store.js";
 
 /**
@@ -27,7 +28,26 @@ export const SKILL_HISTORY_HELP_LINES = [
   "  restore <name> [--version <id>|archive]",
   "                             Put a skill back from the archive or a saved version (the current copy is saved first)",
   "  curate [--dry-run]         Archive agent-learned skills unused for 30 days now (never starter, hub or your own)",
+  "  learned [undo <id>]        List skills the agent learned by itself after long tasks; undo one (a new skill is",
+  "                             archived, a patched one goes back to the version saved before the patch)",
 ];
+
+/** `skill learned` / `skill learned undo <id>` (ATO-67): the TUI's `/learn`. */
+export async function handleSkillLearned(args: string[]): Promise<number> {
+  const command = parseLearnCommand(args.join(" "));
+  if (command.kind === "error") {
+    process.stderr.write("usage: atomic-agent skill learned [undo <id>]\n");
+    return 2;
+  }
+  const config = getConfig();
+  const result = await runLearnCommand(
+    command,
+    { stateDir: config.paths.stateDir, skillsDir: config.paths.globalSkillsDir },
+    "atomic-agent skill learned undo <id>",
+  );
+  (result.ok ? process.stdout : process.stderr).write(`${result.text}\n`);
+  return result.ok ? 0 : 1;
+}
 
 function dirsFor(stateDir: string, skillsDir: string) {
   const paths = skillCuratorPaths(stateDir);

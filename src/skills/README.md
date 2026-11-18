@@ -17,6 +17,7 @@ This area owns skill installation and discovery. Read [AGENTS.md](AGENTS.md) bef
 - Plugin skills: installed plugins ([../plugins/README.md](../plugins/README.md)) contribute skill folders through the `pluginSkills` option; they load as user-installed skills named `plugin:skill`.
 - [eval/](eval/README.md): Skill Lab, `skill eval` runs tasks with and without a skill and saves the comparison under `<stateDir>/skill-evals/`.
 - [curator/](curator/index.ts): skill usage ledger, version snapshots and change log, and the curator that archives unused agent-learned skills (ATO-580); [history and curator](docs/skill-format.md#history-usage-and-the-curator).
+- [learning/](learning/index.ts): self-learning (ATO-67), the background experience review after a long turn, the learned-skill linter, the "Learned" journal and `/learn undo`; [self-learning](docs/skill-format.md#self-learning).
 - [skill-script-runner.ts](skill-script-runner.ts): runs a declared script with the same filtered environment as a shell command (`buildCommandEnv` plus `tools.shell.envPassthrough`), so provider keys loaded from `.env` do not reach it.
 
 ## Ownership and dependencies

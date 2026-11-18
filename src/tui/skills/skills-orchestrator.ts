@@ -32,6 +32,7 @@ import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import type { HubSkillRow } from "./skills-panel-state.js";
 import { toSkillSummaryRows } from "./skills-summary.js";
+import { runLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
 import { createEmptySessionState, type SessionState } from "../../session/session-state.js";
 import { setSkillDisabled as setWorkspaceSkillDisabled, setProjectSkillsEnabled } from "../../config/skill-policy-commands.js";
 import { readUserConfigFileSync } from "../../config/config-file.js";
@@ -356,6 +357,24 @@ export class SkillsOrchestrator {
         error: null,
       },
     });
+  }
+
+  /**
+   * `/learn` (ATO-67): list what the experience review saved, or undo one
+   * change. An undo moves or restores a skill folder, so the registry and
+   * the stable prefix are rebuilt after it like after an uninstall.
+   */
+  async runLearnCommand(command: LearnCommand): Promise<void> {
+    const paths = this.runtime.config.paths;
+    const result = await runLearnCommand(command, { stateDir: paths.stateDir, skillsDir: paths.globalSkillsDir });
+    this.bus.emit({ type: "system_message", text: result.text });
+    if (!result.skillsChanged) return;
+    try {
+      await this.runtime.refreshSkills();
+      this.refresh();
+    } catch (err) {
+      this.bus.emit({ type: "runtime_info", line: `skills refresh failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
   }
 
   /**

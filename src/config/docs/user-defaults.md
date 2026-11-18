@@ -251,6 +251,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `skills.clawhub.apiBase` (default `"https://clawhub.ai"`).
 - `skills.clawhub.browseLimit` (default `100`).
 - `skills.clawhub.nonSuspiciousOnly` (default `true`).
+- `skills.selfLearning.enabled` (default `true`, ATO-67): after a turn of at least `skills.selfLearning.minSteps` model steps, one background model call reviews it and may write a new user skill or patch a learned one it used. The previous version is saved first; `/learn` (TUI) and `atomic-agent skill learned` list the changes, `/learn undo <id>` and `atomic-agent skill learned undo <id>` take one back. Never touches starter, hub, plugin, shared or project skills. Set `false` to turn it off.
+- `skills.selfLearning.minSteps` (default `10`): model steps a turn needs before it is reviewed, 1 to 1000.
 - `skills.eval.judgeProvider`: unset. A provider id from `llm.providers` that grades `judge` checks in `atomic-agent skill eval` (ATO-1101). Unset, the active text provider grades them when it is a cloud provider; with a local model active, `skill eval` stops with exit 2 until this is set or `ATOMIC_AGENT_JUDGE_URL` is.
 
 ## tui

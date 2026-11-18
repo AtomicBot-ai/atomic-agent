@@ -48,6 +48,7 @@ import { handleUpdate } from "./skill-update.js";
 import {
   handleSkillCurate,
   handleSkillHistory,
+  handleSkillLearned,
   handleSkillRestore,
   recordUserSkillRemoval,
   SKILL_HISTORY_HELP_LINES,
@@ -134,6 +135,8 @@ export async function skillCommand(args: string[]): Promise<number> {
         return await handleSkillRestore(args.slice(1));
       case "curate":
         return await handleSkillCurate(args.slice(1));
+      case "learned":
+        return await handleSkillLearned(args.slice(1));
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);

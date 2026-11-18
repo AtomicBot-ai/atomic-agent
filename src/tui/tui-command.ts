@@ -651,6 +651,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         prepareSkillInvocation: (name, input) => orchestrator.skills.prepareInvocation(name, input),
         preparePluginCommand: (name, args) => orchestrator.skills.preparePluginCommand(name, args),
         onSkillsRefreshRequested: () => orchestrator.skills.refresh(),
+        onLearnCommand: (command) => void orchestrator.skills.runLearnCommand(command),
         onSkillDetailRequested: (name) =>
           void orchestrator.skills.openDetail(name),
         onSkillToggleRequested: (name) =>

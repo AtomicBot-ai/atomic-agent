@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { skillCommand } from "./skill.js";
 import { resetConfigCache } from "../config/index.js";
 import { DAY_MS, readSkillChanges, SkillUsageLedger, skillCuratorPaths } from "../skills/curator/index.js";
+import { appendLearnedChange, learnedJournalFile } from "../skills/learning/index.js";
 
 function writeSkill(globalDir: string, name: string, body = `Body of ${name}.`): void {
   const dir = join(globalDir, name);
@@ -100,5 +101,25 @@ describe("skill history / restore / curate", () => {
     expect(await skillCommand(["restore", "learned-old"])).toBe(0);
     expect(stdout).toContain("restored learned-old from archive");
     expect(existsSync(join(globalSkillsDir, "learned-old", "SKILL.md"))).toBe(true);
+  });
+  it("skill learned lists what self-learning saved and undo takes it back (ATO-67)", async () => {
+    stdout = "";
+    expect(await skillCommand(["learned"])).toBe(0);
+    expect(stdout).toMatch(/Nothing learned yet/);
+
+    writeSkill(globalSkillsDir, "sync-with-delete");
+    await appendLearnedChange(learnedJournalFile(skillCuratorPaths(stateDir)), {
+      id: "c0ffee", at: Date.now(), name: "sync-with-delete", action: "create", reason: "stale files stayed",
+    });
+    stdout = "";
+    expect(await skillCommand(["learned"])).toBe(0);
+    expect(stdout).toMatch(/c0ffee .* new skill sync-with-delete: stale files stayed/);
+    expect(stdout).toContain("atomic-agent skill learned undo <id>");
+
+    expect(await skillCommand(["learned", "undo", "c0ffee"])).toBe(0);
+    expect(existsSync(join(globalSkillsDir, "sync-with-delete"))).toBe(false);
+    expect(await skillCommand(["learned", "undo", "c0ffee"])).toBe(1);
+    expect(stderr).toMatch(/already undone/);
+    expect(await skillCommand(["learned", "forget"])).toBe(2);
   });
 });

@@ -870,6 +870,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "setup.learn",
+    label: "Learned skills…",
+    group: "setup",
+    slash: {
+      name: "learn",
+      description:
+        "skills the agent learned by itself after long tasks: `/learn` lists them · `/learn undo <id>` takes one back",
+      // ATO-67: right after /skill.
+      rank: 22.5,
+    },
+  },
+  {
+    kind: "action",
     id: "setup.task",
     label: "Create, cancel or run a task…",
     group: "setup",

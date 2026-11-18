@@ -493,6 +493,7 @@ export function loadConfig(): AtomicAgentConfig {
       taps: user.skills.taps,
       clawhub: user.skills.clawhub,
       ...(user.skills.eval ? { eval: user.skills.eval } : {}),
+      ...(user.skills.selfLearning ? { selfLearning: user.skills.selfLearning } : {}),
     },
     http: {
       enabled: user.http.enabled,

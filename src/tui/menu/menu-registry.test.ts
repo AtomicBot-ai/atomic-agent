@@ -148,6 +148,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "skill subcommand: `/skill enable <name>` | `/skill disable <name>`",
   },
+  // Added with self-learning (ATO-67).
+  {
+    name: "learn",
+    description:
+      "skills the agent learned by itself after long tasks: `/learn` lists them · `/learn undo <id>` takes one back",
+  },
   {
     name: "memory",
     description:
