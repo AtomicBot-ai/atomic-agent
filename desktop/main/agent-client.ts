@@ -212,6 +212,14 @@ export function requestErrorText(err: unknown): string {
   return detail && !err.message.includes(detail) ? `${err.message} (${detail})` : err.message;
 }
 
+/** ATO-1461: the agent's `GET /api/fallback/local-question` answer (src/runtime/append-local-question.ts). */
+export interface AppendLocalQuestionStatus {
+  question: string | null;
+  detail: string | null;
+  appendLocal: boolean;
+  answer: "keep" | "off" | null;
+}
+
 /** ATO-1250: the agent's `GET /api/project-trust` answer (src/runtime/project-trust.ts). */
 export interface ProjectTrustStatus {
   workingDir: string;
@@ -1713,6 +1721,45 @@ export class AgentClient extends EventEmitter {
       return { supported: true, ok: true, status: JSON.parse(text) as ProjectTrustStatus };
     } catch (err) {
       return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1461: `GET /api/fallback/local-question` — the agent's one-time
+   * "Local model is set as your last-resort fallback. Keep it?" question.
+   * An agent from before the route is reported as unsupported, so the
+   * window shows nothing. Never throws.
+   */
+  async appendLocalQuestion(): Promise<{ supported: false } | { supported: true; ok: true; status: AppendLocalQuestionStatus } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/fallback/local-question`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, status: JSON.parse(text) as AppendLocalQuestionStatus };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /** ATO-1461: `POST /api/fallback/local-question` — Keep or Turn off, remembered by the agent. */
+  async answerAppendLocalQuestion(answer: "keep" | "off"): Promise<{ supported: false } | { ok: true; status: AppendLocalQuestionStatus } | { ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/fallback/local-question`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ answer }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) return { ok: true, status: JSON.parse(text) as AppendLocalQuestionStatus };
+      return { ok: false, error: errorMessage(text, res.status) };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
     }
   }
 
