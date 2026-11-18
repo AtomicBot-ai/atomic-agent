@@ -1,17 +1,22 @@
 /* ---------------- ATO-1010: MCP Apps in the chat, sandboxed ----------------
    An MCP server can ship a small UI for one of its tools (the MCP Apps
    extension, SEP-1865: the tool names a `ui://` page, the host shows it next
-   to the result). The agent reads that page from the server after an ok call
-   and the call's `tool_result` frame carries it as
-   `mcp_app: {server, uri, title, html, bytes}`.
+   to the result). The agent core (ATO-1135, src/mcp/mcp-apps.ts) reads that
+   page from the server after an ok call and the call's `tool_result` frame
+   carries it as `mcp_app: {resourceUri, mimeType, html, csp?, permissions?,
+   domain?, prefersBorder?, toolInput?, toolResult?}`. The frame's `tool`
+   (`mcp.<server>.<tool>`) names the server. The core sends it only when the
+   host turned MCP Apps on (`McpClientDeps.appsUi`).
 
    The page is someone else's code, so it goes through the SAME frame as the
    agent's own canvases (chat-artifact.js): main keeps the text and serves it
    from `atomic-art://<token>/` under the strict CSP (inline script and style,
    `connect-src 'none'`, no frames, no forms), in an <iframe sandbox=
    "allow-scripts"> with an opaque origin. Nothing here makes a frame, sets
-   `srcdoc` or opens a URL of the server's. An app that needs live calls back
-   to its server (the spec's postMessage bridge) draws but cannot fetch yet.
+   `srcdoc` or opens a URL of the server's. The server's `csp`, `permissions`
+   and `domain` are requests; this frame grants none of them. `toolInput` and
+   `toolResult` are for the spec's postMessage bridge, which this frame does
+   not have yet: an app draws but gets no call data and cannot call back.
 
    One frame per app page per chat: a second call of the same tool loads the
    page in the frame already on screen, where it is, as a canvas of the same
@@ -20,20 +25,28 @@
    Loaded after chat-artifact.js and before renderer.js; only declares. The
    pure part is exported for test/mcp-app.test.mjs. */
 
-/** Largest page drawn (UTF-8 bytes); the agent caps it the same. */
-const MCP_APP_MAX_BYTES = 1024 * 1024;
+/** Largest page drawn (UTF-8 bytes); the core and the artifact frame cap it the same (4 MB). */
+const MCP_APP_MAX_BYTES = 4 * 1024 * 1024;
 
 function mcpAppBytes(s) {
   if (typeof TextEncoder === 'function') return new TextEncoder().encode(s).length;
   return s.length * 3;   // worst case, without an encoder
 }
 
-/** The `mcp_app` a tool_result frame carries, checked: {server, uri, title, html} or null. */
+/** The server of an MCP tool name `mcp.<server>.<tool>`, or ''. */
+function mcpAppServer(tool) {
+  const m = typeof tool === 'string' ? /^mcp\.([a-z0-9][a-z0-9-]{0,62})\.\S+$/.exec(tool) : null;
+  return m ? m[1] : '';
+}
+
+/** The `mcp_app` an ok tool_result frame carries, checked: {server, uri, title, html} or null. */
 function mcpAppFromToolResult(p) {
-  const a = p && typeof p === 'object' ? (p.mcp_app || p.mcpApp) : null;
-  if (!a || typeof a !== 'object') return null;
-  const server = typeof a.server === 'string' ? a.server.trim().slice(0, 64) : '';
-  const uri = typeof a.uri === 'string' && a.uri.length <= 2048 && /^ui:\/\/\S+$/i.test(a.uri) ? a.uri : '';
+  if (!p || typeof p !== 'object' || (p.status != null && p.status !== 'ok')) return null;
+  const a = p.mcp_app;
+  if (!a || typeof a !== 'object' || Array.isArray(a)) return null;
+  const server = mcpAppServer(p.tool);
+  const ru = a.resourceUri;
+  const uri = typeof ru === 'string' && ru.length <= 2048 && /^ui:\/\/\S+$/i.test(ru) ? ru : '';
   if (!server || !uri) return null;
   if (typeof a.html !== 'string' || !a.html.trim()) return null;
   if (a.html.length > MCP_APP_MAX_BYTES || mcpAppBytes(a.html) > MCP_APP_MAX_BYTES) return null;
@@ -66,5 +79,5 @@ function chatMcpApp(item, payload, scope, log) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {MCP_APP_MAX_BYTES, mcpAppFromToolResult, mcpAppKey, chatMcpApp};
+  module.exports = {MCP_APP_MAX_BYTES, mcpAppServer, mcpAppFromToolResult, mcpAppKey, chatMcpApp};
 }
