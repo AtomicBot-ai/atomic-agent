@@ -346,6 +346,7 @@ export class TaskRunner {
     const shouldEagerDrain =
       this.options.enabled &&
       this.options.runOnCreate &&
+      record.status === "pending" &&
       (record.scheduledFor === null || record.scheduledFor <= now) &&
       record.sessionId !== null;
     if (shouldEagerDrain) {

@@ -51,6 +51,26 @@ describe("TaskStore pause, resume and run history", () => {
     });
   }
 
+  describe("startPaused (ATO-601)", () => {
+    it("creates the row paused, out of the due and pending queries, and resume starts it", () => {
+      const task = store.create({
+        sessionId: "s-1",
+        userMessage: "from a mail",
+        origin: "scheduler",
+        maxAttempts: 3,
+        startPaused: true,
+      });
+      expect(task.status).toBe("paused");
+      expect(store.listDue(Date.now()).map((t) => t.id)).not.toContain(task.id);
+      expect(store.resume(task.id)?.status).toBe("pending");
+      expect(store.listDue(Date.now()).map((t) => t.id)).toContain(task.id);
+    });
+
+    it("is pending as before when left out", () => {
+      expect(oneShot().status).toBe("pending");
+    });
+  });
+
   describe("pause", () => {
     it("takes a pending task out of the due and pending queries", () => {
       const task = oneShot();
