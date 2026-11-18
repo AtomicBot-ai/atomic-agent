@@ -18,8 +18,8 @@ import { decodeBytes } from "./text-decode.js";
  * - attached messages (`message/rfc822`, i.e. forwards) are rendered
  *   recursively.
  *
- * Outlook `.msg` is a different, binary (OLE2) container and is not
- * handled here.
+ * Outlook `.msg` is a different, binary (OLE2) container: see
+ * `msg-extractor.ts`, which renders it in the same shape.
  */
 const SHOWN_HEADERS = ["from", "to", "cc", "date", "subject"] as const;
 const MAX_DEPTH = 8;
@@ -330,7 +330,7 @@ function capitalise(name: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-function formatSize(bytes: number): string {
+export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
