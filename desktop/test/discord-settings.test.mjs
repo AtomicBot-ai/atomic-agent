@@ -224,3 +224,80 @@ test('renderer wiring: the helper loads before renderer.js; the pane, verbs, key
   assert.ok(source.includes("BR.configGetKey('discord')"));
   assert.equal(D.DISCORD_TOKEN_ENV, 'DISCORD_BOT_TOKEN');
 });
+
+// ATO-516: the bot's live state, from the agent's GET /api/discord/channel.
+test('live status: connected as the bot, connecting, a failure in words, another agent holding the bot', async () => {
+  const f = fakeApi({cfg:{enabled:true, ownerUserIds:[ID]}, token:TOKEN});
+  let live = {available:true, state:'up', lastError:null, hasToken:true, bot:{id:'1', username:'atomic_bot'}, otherPoller:null};
+  f.api.channel = async () => live;
+  const dc = D.createDiscordSettings(f.api);
+  await dc.entered();
+  let s = D.dcStatus(dc.state, false);
+  assert.equal(s.chip, 'connected');
+  assert.match(s.line, /^Connected as @atomic_bot\. /);
+  live = Object.assign({}, live, {state:'starting'});
+  assert.equal(await dc.pollChannel(), true, 'a change asks for a repaint');
+  assert.equal(await dc.pollChannel(), false, 'the same answer does not');
+  assert.equal(D.dcStatus(dc.state, false).chip, 'connecting');
+  assert.ok(D.discordPaneHTML(dc.state, {}, h).includes('data-dc-status="connecting"'));
+  live = Object.assign({}, live, {state:'down', lastError:'Discord gateway closed (4004: Authentication failed).'});
+  await dc.pollChannel();
+  s = D.dcStatus(dc.state, false);
+  assert.equal(s.chip, 'not-connected');
+  assert.match(s.line, /could not connect: Discord gateway closed \(4004: Authentication failed\)\. Check the token/);
+  live = Object.assign({}, live, {otherPoller:{where:'this_computer', pid:4242}});
+  await dc.pollChannel();
+  assert.match(D.dcStatus(dc.state, false).line, /Another Atomic Agent on this computer \(process 4242\)/);
+  live = Object.assign({}, live, {state:'disabled', otherPoller:null, lastError:null});
+  await dc.pollChannel();
+  assert.match(D.dcStatus(dc.state, false).line, /has not started the bot/);
+  // A restart owed still says so first, whatever the agent reports.
+  assert.match(D.dcStatus(dc.state, true).line, /Waiting for a restart/);
+  for (const line of [s.line, D.dcStatus(dc.state, false).line]) assert.ok(!line.includes('—'));
+});
+
+test('live status: an agent without the route keeps the saved-settings wording', async () => {
+  const f = fakeApi({cfg:{enabled:true, ownerUserIds:[ID]}, token:TOKEN});
+  f.api.channel = async () => null;
+  const dc = D.createDiscordSettings(f.api);
+  await dc.entered();
+  const s = D.dcStatus(dc.state, false);
+  assert.equal(s.chip, 'connected');
+  assert.match(s.line, /^Send your bot a direct message/);
+  f.api.channel = async () => { throw new Error('ipc gone'); };
+  await dc.pollChannel();
+  assert.equal(dc.state.channel, null);
+});
+
+test('live loop: polls while the tab is visible, repaints on change, one loop at a time', async () => {
+  const f = fakeApi({cfg:{enabled:true, ownerUserIds:[ID]}, token:TOKEN});
+  let n = 0;
+  f.api.channel = async () => ({available:true, state:n++ % 2 ? 'up' : 'starting', lastError:null, bot:null, otherPoller:null});
+  const dc = D.createDiscordSettings(f.api);
+  const queued = [];
+  const timers = {setTimeout: (fn, ms) => { assert.equal(ms, D.DC_LIVE_POLL_MS); queued.push(fn); }};
+  let visible = true, paints = 0;
+  D.dcLiveLoop(dc, () => visible, () => { paints++; }, timers);
+  D.dcLiveLoop(dc, () => visible, () => { paints++; }, timers);
+  // Each poll is two awaits deep; let the microtasks run.
+  const settle = async () => { for (let i = 0; i < 25; i++) await Promise.resolve(); };
+  await settle();
+  assert.equal(queued.length, 1, 'the second call did not start a second loop');
+  queued.shift()(); await settle();
+  assert.equal(paints, 2);
+  visible = false;
+  queued.shift()(); await settle();
+  assert.equal(queued.length, 0, 'a hidden tab stops the loop');
+  assert.equal(dc.state.liveLoop, false);
+});
+
+test('renderer wiring (ATO-516): the live call reaches the agent and the tab starts the loop', () => {
+  assert.ok(source.includes("channel: () => BR && BR.discordChannel ? BR.discordChannel() : null"));
+  assert.ok(source.includes('dcLiveLoop(DC, discordVisible, dcRepaint)'));
+  const preload = readFileSync(new URL('../preload/preload.ts', import.meta.url), 'utf8');
+  assert.ok(preload.includes('discordChannel: () => ipcRenderer.invoke("agent:discordChannel")'));
+  const live = readFileSync(new URL('../main/agent-live.ts', import.meta.url), 'utf8');
+  assert.ok(live.includes('ipcMain.handle("agent:discordChannel", () => client.discordChannel())'));
+  const client = readFileSync(new URL('../main/agent-client.ts', import.meta.url), 'utf8');
+  assert.ok(client.includes('/api/discord/channel'));
+});

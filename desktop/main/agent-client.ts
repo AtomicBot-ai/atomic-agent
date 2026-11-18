@@ -1675,6 +1675,29 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-516: `/api/discord/channel` — the Discord bot's live state (up, down,
+   * starting...), the bot's name once Discord said it, and another
+   * atomic-agent on this computer holding the bot. Null on an agent without
+   * the route, or one that is not up; never throws. Never carries the token.
+   */
+  async discordChannel(): Promise<{
+    available: boolean; state: string | null; lastError: string | null; hasToken: boolean;
+    bot: { id: string; username: string | null } | null;
+    otherPoller: { where: "this_computer"; pid: number | null } | null;
+  } | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/discord/channel`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as NonNullable<Awaited<ReturnType<AgentClient["discordChannel"]>>>;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * ATO-1094: the next-step suggestion the agent stored after this chat's last
    * turn (ATO-1093), `GET /api/sessions/{id}/next-step` answering
    * `{ sessionId, suggestion: string | null }`. `supported: false` on an agent

@@ -202,3 +202,16 @@ test('renderer wiring (ATO-516): Copy link and Open in Telegram use the link in 
   assert.match(source, /if \(tgPairPolling\(TG\.pair\) && telegramVisible\(\)\) TG\.pairTick = setInterval\(/);
   assert.ok(!/console\.(log|info|warn|error)\([^)]*pair\.link/.test(source));
 });
+
+test('the waiting card shows the link as a QR code for a phone (ATO-516), and none without a link', () => {
+  const Q = require('../renderer/qr-code.js');
+  const waiting = P.tgPairApply(P.tgPairInitial(), 'start', opened, NOW);
+  const html = P.tgPairCardHTML(waiting, ctx, Object.assign({}, h, {qr:Q.qrSvg}));
+  assert.ok(html.includes('data-tg-qr') && html.includes('<svg class="qr-svg"'));
+  assert.match(html, /aria-label="QR code: open the bot in Telegram"/);
+  assert.ok(html.indexOf('data-tg-qr') > html.indexOf('data-tg-link'), 'under the link');
+  const noBot = P.tgPairApply(P.tgPairInitial(), 'start', {ok:true, data:Object.assign({}, opened.data, {botUsername:null})}, NOW);
+  assert.ok(!P.tgPairCardHTML(noBot, ctx, Object.assign({}, h, {qr:Q.qrSvg})).includes('data-tg-qr'));
+  // Without an encoder (a Node check, an older page) the card is as before.
+  assert.ok(!P.tgPairCardHTML(waiting, ctx, h).includes('data-tg-qr'));
+});
