@@ -19,16 +19,19 @@ import {
  * Memory history and undo (ATO-1059), next to the edit routes of
  * route-memory.ts:
  *
- *   GET  /api/memory/changes?limit=1..200&kind=note|profile
+ *   GET  /api/memory/changes?limit=1..200&kind=note|profile|lesson|procedure
  *        → { changes: MemoryChange[] }, newest first
  *   POST /api/memory/changes/{id}/restore
  *        → { restored: true, change, note? , fact? }
- *        404 change_not_found; 409 already_restored | note_gone
+ *        404 change_not_found;
+ *        409 already_restored | note_gone | already_current | store_unavailable
  *   POST /api/memory/profile/{key}/restore { versionId }
  *        → { fact }   (a version id from GET .../history; 404 version_not_found)
  *
  * The journal holds note edits, note deletions and profile deletions,
- * by the person or the agent, for 90 days. Profile edits are versions
+ * by the person or the agent, and the store's own housekeeping (notes
+ * and facts evicted over the cap, dedup merges, notes archived into a
+ * lesson, lessons and procedures created or retired), for 90 days. Profile edits are versions
  * already (`GET /api/memory/profile/{key}/history`).
  */
 
@@ -49,8 +52,14 @@ export function createListMemoryChangesHandler(): HttpHandler {
       return;
     }
     const kind = params.get("kind");
-    if (kind !== null && kind !== "note" && kind !== "profile") {
-      sendError(res, 400, openaiError("kind must be note or profile"));
+    if (
+      kind !== null &&
+      kind !== "note" &&
+      kind !== "profile" &&
+      kind !== "lesson" &&
+      kind !== "procedure"
+    ) {
+      sendError(res, 400, openaiError("kind must be note, profile, lesson or procedure"));
       return;
     }
     const changes = ctx.runtime.notesStore
@@ -72,6 +81,8 @@ export function createRestoreMemoryChangeHandler(): HttpHandler {
       outcome = restoreMemoryChange(Number(raw), {
         notes: ctx.runtime.notesStore,
         profile: ctx.runtime.profileStore,
+        lessons: ctx.runtime.lessonStore,
+        procedures: ctx.runtime.procedureStore,
       });
     } catch (err) {
       const message = badRequest(err);

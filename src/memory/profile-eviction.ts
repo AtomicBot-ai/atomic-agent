@@ -5,6 +5,13 @@ export interface EvictedProfileFact {
   key: string;
 }
 
+/** A fact as eviction reads it, before the delete (ATO-1059). */
+export interface EvictedProfileRow extends EvictedProfileFact {
+  value: string;
+  /** Raw column: a JSON array, or `null`. */
+  keywords: string | null;
+}
+
 /** One overflow sweep that removed at least one fact. */
 export interface ProfileEviction {
   /** In eviction order (lowest utility first). */
@@ -58,6 +65,11 @@ export class ProfileEvictor {
   constructor(
     db: Database.Database,
     private readonly maxEntries: number,
+    /**
+     * ATO-1059. Called with each fact just before it is deleted, inside
+     * the same transaction, so the store can journal it for an undo.
+     */
+    private readonly beforeDelete?: (fact: EvictedProfileRow) => void,
   ) {
     assertProfileMaxEntries(maxEntries);
     this.countStmt = db.prepare(
@@ -65,7 +77,7 @@ export class ProfileEvictor {
         WHERE superseded_by IS NULL AND pinned = 0`,
     );
     this.pickStmt = db.prepare(
-      `SELECT id, key FROM profile_facts
+      `SELECT id, key, value, keywords FROM profile_facts
         WHERE superseded_by IS NULL AND pinned = 0 AND id != @keep_id
         ORDER BY vote_score ASC, updated_at ASC, id ASC
         LIMIT @limit`,
@@ -88,9 +100,10 @@ export class ProfileEvictor {
     const picked = this.pickStmt.all({
       keep_id: keepId,
       limit: count - this.maxEntries,
-    }) as EvictedProfileFact[];
+    }) as EvictedProfileRow[];
     const evicted: EvictedProfileFact[] = [];
     for (const row of picked) {
+      this.beforeDelete?.(row);
       const result = this.deleteStmt.run(row.id) as { changes: number };
       if (result.changes > 0) evicted.push({ id: row.id, key: row.key });
     }
