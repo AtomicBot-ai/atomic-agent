@@ -8,15 +8,27 @@ export interface ChunkVector {
   vector: Float32Array;
 }
 
+/** Gets a copy of every vector written ([sqlite-vec mirror](file-vec-index.ts)). */
+export interface VectorMirror {
+  put(chunkId: number, model: string, vector: Float32Array): void;
+}
+
 /**
  * Chunk embeddings (`chunk_vectors`), per embedding model, so a model
  * switch keeps the old rows until the new model has covered the chunks.
  * Read back whole for a brute-force cosine scan, the same trade-off
- * memory recall makes (`memory/embeddings/hybrid-recall.ts`): no
- * native vector extension to load, and `scanLimit` bounds the cost.
+ * memory recall makes (`memory/embeddings/hybrid-recall.ts`), and
+ * `scanLimit` bounds the cost. When `sqlite-vec` is installed a mirror
+ * picks the candidates instead and {@link byIds} reads them back.
  */
 export class FileVectorStore {
+  private mirror: VectorMirror | null = null;
+
   constructor(private readonly db: Database.Database) {}
+
+  setMirror(mirror: VectorMirror | null): void {
+    this.mirror = mirror;
+  }
 
   put(chunkId: number, model: string, vector: Float32Array): void {
     this.db
@@ -25,10 +37,15 @@ export class FileVectorStore {
          ON CONFLICT(chunk_id, model) DO UPDATE SET dim = excluded.dim, vector = excluded.vector`,
       )
       .run(chunkId, model, vector.length, float32ToBuffer(vector));
+    this.mirror?.put(chunkId, model, vector);
   }
 
-  countFor(model: string): number {
-    return (this.db.prepare(`SELECT COUNT(*) AS n FROM chunk_vectors WHERE model = ?`).get(model) as { n: number }).n;
+  /** Vectors of `model`, of one dimension when `dim` is given. */
+  countFor(model: string, dim?: number): number {
+    if (dim === undefined) {
+      return (this.db.prepare(`SELECT COUNT(*) AS n FROM chunk_vectors WHERE model = ?`).get(model) as { n: number }).n;
+    }
+    return (this.db.prepare(`SELECT COUNT(*) AS n FROM chunk_vectors WHERE model = ? AND dim = ?`).get(model, dim) as { n: number }).n;
   }
 
   /** Chunks this model has no vector for, oldest first, with their text. */
@@ -58,26 +75,40 @@ export class FileVectorStore {
           WHERE v.model = @model ${filter}
           ORDER BY v.chunk_id DESC LIMIT @limit`,
       )
-      .all({ model, limit: scanLimit, ...(under === null ? {} : { under: likePrefix(under) }) }) as {
-      chunkId: number;
-      dim: number;
-      vector: Buffer;
-    }[];
+      .all({ model, limit: scanLimit, ...(under === null ? {} : { under: likePrefix(under) }) }) as VectorRow[];
     const seen = new Set(rows.map((row) => row.chunkId));
-    const extra = alsoIds.filter((id) => !seen.has(id));
-    if (extra.length > 0) {
-      const marks = extra.map(() => "?").join(",");
-      rows.push(
-        ...(this.db
-          .prepare(`SELECT chunk_id AS chunkId, dim, vector FROM chunk_vectors WHERE model = ? AND chunk_id IN (${marks})`)
-          .all(model, ...extra) as { chunkId: number; dim: number; vector: Buffer }[]),
-      );
-    }
+    return [...decode(rows), ...this.byIds(model, alsoIds.filter((id) => !seen.has(id)))];
+  }
+
+  /** The model's vectors of these chunks (those it has). */
+  byIds(model: string, ids: readonly number[]): ChunkVector[] {
+    const unique = [...new Set(ids)];
+    if (unique.length === 0) return [];
     const out: ChunkVector[] = [];
-    for (const row of rows) {
-      const vector = bufferToFloat32(row.vector, row.dim);
-      if (vector !== null) out.push({ chunkId: row.chunkId, vector });
+    // Stay well under SQLite's bound-parameter limit.
+    for (let i = 0; i < unique.length; i += 500) {
+      const part = unique.slice(i, i + 500);
+      const marks = part.map(() => "?").join(",");
+      const rows = this.db
+        .prepare(`SELECT chunk_id AS chunkId, dim, vector FROM chunk_vectors WHERE model = ? AND chunk_id IN (${marks})`)
+        .all(model, ...part) as VectorRow[];
+      out.push(...decode(rows));
     }
     return out;
   }
+}
+
+interface VectorRow {
+  chunkId: number;
+  dim: number;
+  vector: Buffer;
+}
+
+function decode(rows: readonly VectorRow[]): ChunkVector[] {
+  const out: ChunkVector[] = [];
+  for (const row of rows) {
+    const vector = bufferToFloat32(row.vector, row.dim);
+    if (vector !== null) out.push({ chunkId: row.chunkId, vector });
+  }
+  return out;
 }

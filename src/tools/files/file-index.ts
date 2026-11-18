@@ -14,8 +14,11 @@ import {
   type IndexedFolder,
 } from "./file-index-types.js";
 import { FileIndexer } from "./file-indexer.js";
+import type { Reranker } from "./file-rerank.js";
 import { searchFileIndex } from "./file-search.js";
 import { extractFileText, type FileTextOptions, type FileTextResult } from "./file-text.js";
+import { loadSqliteVec, type VecExtensionLoader } from "./file-vec-extension.js";
+import { FileVecIndex } from "./file-vec-index.js";
 import { FileVectorStore } from "./file-vector-store.js";
 import { walkFolder, type WalkedFile, type WalkOptions } from "./file-walker.js";
 import { isInside, validateFolder, type FolderValidationOptions } from "./folder-validation.js";
@@ -43,6 +46,13 @@ export interface FileIndexOptions {
   media?: MediaTextOptions;
   maxFileBytes?: number;
   maxFilesPerFolder?: number;
+  /**
+   * Loads `sqlite-vec` when it is installed (the default); `false` never
+   * tries. Without it vectors are scanned (ATO-1052).
+   */
+  vectorExtension?: VecExtensionLoader | false;
+  /** Re-orders the best hits; `null` or unset: off (ATO-1052). */
+  reranker?: Reranker | null;
   /** Test seams. */
   extract?: (path: string, signal: AbortSignal) => Promise<FileTextResult>;
   walk?: (root: string, options: WalkOptions) => Promise<WalkedFile[]>;
@@ -61,6 +71,7 @@ export class FileIndex implements FileIndexApi {
   private readonly store: FileIndexStore;
   private readonly vectors: FileVectorStore;
   private readonly indexer: FileIndexer;
+  private readonly vecIndex: Promise<FileVecIndex | null>;
   private closed = false;
   private startTimer: NodeJS.Timeout | null = null;
 
@@ -68,6 +79,7 @@ export class FileIndex implements FileIndexApi {
     this.db = openFileIndexDb(options.dbFile);
     this.store = new FileIndexStore(this.db);
     this.vectors = new FileVectorStore(this.db);
+    this.vecIndex = this.attachVecIndex(options.vectorExtension ?? loadSqliteVec);
     const extract =
       options.extract ??
       ((path: string, signal: AbortSignal) =>
@@ -144,10 +156,13 @@ export class FileIndex implements FileIndexApi {
   async search(options: FileSearchOptions): Promise<FileSearchHit[]> {
     const topK = Math.min(Math.max(1, Math.trunc(options.topK ?? FILES_SEARCH_DEFAULT_TOP_K)), FILES_SEARCH_MAX_TOP_K);
     const under = options.folder === undefined ? null : this.folderScope(options.folder);
+    const vec = await this.vecIndex;
     return searchFileIndex(
       {
         store: this.store,
         vectors: this.vectors,
+        ...(vec !== null ? { nearest: (model: string, query: Float32Array, k: number) => (vec.active ? vec.nearest(model, query, k) : null) } : {}),
+        reranker: this.options.reranker ?? null,
         embedding: this.options.embedding ?? (() => null),
         fts5Weight: this.options.fts5Weight ?? 0.5,
         vectorWeight: this.options.vectorWeight ?? 0.5,
@@ -156,6 +171,12 @@ export class FileIndex implements FileIndexApi {
       },
       { query: options.query, under, topK, ...(options.signal ? { signal: options.signal } : {}) },
     );
+  }
+
+  /** Whether vector candidates come from `sqlite-vec` (true) or a scan. */
+  async usesSqliteVec(): Promise<boolean> {
+    const vec = await this.vecIndex;
+    return vec !== null && vec.active;
   }
 
   /** Settles when the background queue is empty. */
@@ -169,7 +190,22 @@ export class FileIndex implements FileIndexApi {
     if (this.startTimer !== null) clearTimeout(this.startTimer);
     this.startTimer = null;
     await this.indexer.stop();
+    await this.vecIndex;
     this.db.close();
+  }
+
+  private async attachVecIndex(loader: VecExtensionLoader | false): Promise<FileVecIndex | null> {
+    if (loader === false) return null;
+    let loaded = false;
+    try {
+      loaded = await loader(this.db);
+    } catch {
+      loaded = false;
+    }
+    if (!loaded || this.closed) return null;
+    const vec = new FileVecIndex(this.db, this.vectors);
+    this.vectors.setMirror(vec);
+    return vec;
   }
 
   /** `folder` must be an added folder or inside one. */

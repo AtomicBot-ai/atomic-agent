@@ -138,6 +138,23 @@ describe("FileVectorStore", () => {
   });
 });
 
+describe("FileVectorStore for the sqlite-vec path (ATO-1052)", () => {
+  it("reads vectors back by chunk id, counts per dimension and copies writes to a mirror", () => {
+    store.addFolder(DOCS, AT);
+    store.upsertSeen(DOCS, pdf, 1, 1, undefined);
+    const ids = store.saveChunks(store.nextPending()!.id, [{ ord: 0, text: "one" }, { ord: 1, text: "two" }], AT)!;
+    const mirrored: number[] = [];
+    vectors.setMirror({ put: (chunkId) => mirrored.push(chunkId) });
+    vectors.put(ids[0]!, "m", new Float32Array([1, 0]));
+    vectors.put(ids[1]!, "m", new Float32Array([1, 0, 0]));
+    expect(mirrored).toEqual(ids);
+    expect(vectors.countFor("m")).toBe(2);
+    expect(vectors.countFor("m", 2)).toBe(1);
+    expect(vectors.byIds("m", [ids[1]!, ids[1]!, 9999]).map((v) => v.chunkId)).toEqual([ids[1]]);
+    expect(vectors.byIds("m", [])).toEqual([]);
+  });
+});
+
 describe("likePrefix", () => {
   it("escapes LIKE wildcards in the folder path", () => {
     expect(likePrefix("/a_b%c")).toBe("/a\\_b\\%c/%");

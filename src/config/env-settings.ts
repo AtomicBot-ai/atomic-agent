@@ -108,6 +108,7 @@ export const ENV_SETTINGS: readonly EnvSetting[] = [
   env("ATOMIC_AGENT_OFFLINE", null, "Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process."),
   env("ATOMIC_AGENT_ALLOWED_ORIGINS", null, "Comma-separated web origins that may call a keyless local `serve`, besides loopback ones."),
   env("ATOMIC_AGENT_MODEL_CATALOG_URL", null, "URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io."),
+  env("ATOMIC_AGENT_RERANK_URL", null, "Local reranker (llama-server /v1/rerank style) that re-orders My files search hits. Unset: off. Only a server on this machine or the local network is used."),
 
   // Channels and media.
   env("ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES", null, "Stream Telegram replies into the owner's DM (private) or not (off). Wins over telegram.streamReplies when set."),
