@@ -1247,7 +1247,20 @@ export class AgentLoop {
           }, this.deps, (sessionId) => this.flushSteering(sessionId));
         }
         if (decision.kind === "retry_same") { i -= 1; continue; }
-        if (decision.kind === "retry_next") continue;
+        if (decision.kind === "retry_next") {
+          // The empty-answer re-ask waits a moment first (ATO-1676), in
+          // case the empty answer was the service and not the model.
+          if (decision.delayMs !== undefined && decision.delayMs > 0) {
+            await abortableSleep(decision.delayMs, options.signal);
+            if (options.signal.aborted) {
+              // Stopped during the wait: closed once below the loop, as
+              // the outage park does.
+              turn.reason = "cancelled";
+              break;
+            }
+          }
+          continue;
+        }
         if (decision.kind === "stop") break;
         if (contextExhausted !== undefined && decision.runError === contextExhausted) {
           this.deps.logger?.warn("conversation does not fit the model's context window after overflow compaction; ending the turn", {
