@@ -26,6 +26,24 @@ export interface FusionWorkerMeta {
   parentSessionId: string;
   /** The orchestrator's task id for this subtask (its own bookkeeping). */
   taskId: string;
+  /**
+   * How deep this worker sits under the operator session: the operator
+   * session is 0, a worker it spawns is 1, a worker spawned by a worker
+   * is its parent's depth + 1 (`childFusionWorkerDepth`). Optional on
+   * input, where it defaults to 1; always present on a stamped record and
+   * on what `readFusionWorkerMeta` returns (ATO-1666).
+   */
+  depth?: number;
+}
+
+/** A worker stamp as read back: the depth is always resolved. */
+export type StampedFusionWorkerMeta = Required<FusionWorkerMeta>;
+
+/** Depth of a worker spawned straight from a real (operator) session. */
+export const FUSION_WORKER_DEFAULT_DEPTH = 1;
+
+function isValidDepth(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1;
 }
 
 /**
@@ -37,10 +55,16 @@ export function createFusionWorkerSession(input: {
   workingDir: string;
   meta: FusionWorkerMeta;
 }): SessionState {
+  const { parentSessionId, taskId, depth } = input.meta;
+  const stamp: StampedFusionWorkerMeta = {
+    parentSessionId,
+    taskId,
+    depth: isValidDepth(depth) ? depth : FUSION_WORKER_DEFAULT_DEPTH,
+  };
   return createEmptySessionState({
     id: `${FUSION_WORKER_ID_PREFIX}${randomUUID()}`,
     workingDir: input.workingDir,
-    metadata: { [FUSION_WORKER_METADATA_KEY]: { ...input.meta } },
+    metadata: { [FUSION_WORKER_METADATA_KEY]: stamp },
   });
 }
 
@@ -49,23 +73,51 @@ export function createFusionWorkerSession(input: {
  * purpose, like `readSessionLlmStamp`: metadata is a free-form JSON bag,
  * so a malformed value degrades to "not a worker" — the safe direction,
  * since treating a real session as a worker would drop its save.
+ * The depth is the one exception: records written before ATO-1666 have
+ * none, so a missing or malformed depth reads as 1 and the record stays
+ * a valid worker stamp.
  */
 export function readFusionWorkerMeta(
   metadata: Record<string, unknown> | undefined,
-): FusionWorkerMeta | null {
+): StampedFusionWorkerMeta | null {
   const raw = metadata?.[FUSION_WORKER_METADATA_KEY];
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
   }
-  const { parentSessionId, taskId } = raw as {
+  const { parentSessionId, taskId, depth } = raw as {
     parentSessionId?: unknown;
     taskId?: unknown;
+    depth?: unknown;
   };
   if (typeof parentSessionId !== "string" || parentSessionId.length === 0) {
     return null;
   }
   if (typeof taskId !== "string" || taskId.length === 0) return null;
-  return { parentSessionId, taskId };
+  return {
+    parentSessionId,
+    taskId,
+    depth: isValidDepth(depth) ? depth : FUSION_WORKER_DEFAULT_DEPTH,
+  };
+}
+
+/**
+ * The depth of the session carrying `metadata`: 0 for a real session
+ * (no valid worker stamp), the stamped depth for a worker.
+ */
+export function readSessionDepth(
+  metadata: Record<string, unknown> | undefined,
+): number {
+  return readFusionWorkerMeta(metadata)?.depth ?? 0;
+}
+
+/**
+ * The depth a worker spawned from the session carrying `parentMetadata`
+ * gets: the parent's depth + 1, so 1 under a real session.
+ */
+export function childFusionWorkerDepth(
+  parentMetadata: Record<string, unknown> | undefined,
+): number {
+  return readSessionDepth(parentMetadata) + 1;
 }
 
 /** Whether `id` was minted by `createFusionWorkerSession`. */
