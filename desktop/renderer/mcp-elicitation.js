@@ -149,8 +149,10 @@ function mcpElicitWhenClosed() {
   }, 0);
 }
 
-function mcpElicitFieldHTML(f, values) {
-  const id = 'mcpel-' + f.name;
+function mcpElicitFieldHTML(f, values, index) {
+  // From the field's position, never its name: the name is the MCP server's text and an
+  // id built from it could close the attribute and add others (review fix).
+  const id = 'mcpel-' + (Number.isInteger(index) && index >= 0 ? index : 0);
   const label = esc(f.title || f.name) + (f.required ? ' <span class="sd-cap">(required)</span>' : '');
   const hint = f.description ? '<span class="sd-cap">' + esc(f.description) + '</span>' : '';
   const v = values[f.name];
@@ -181,7 +183,7 @@ function mcpElicitSheetHTML() {
   const confirm = mcpElicitIsConfirm(q);
   let body = '<p class="sd-cap">An MCP server you added is asking you this in the middle of a task. The task waits for your answer.</p>'
     + '<p>' + esc(q.message || '') + '</p>';
-  if (!confirm) body += '<div class="sd-form">' + q.fields.map((f) => mcpElicitFieldHTML(f, MCPEL.values)).join('') + '</div>';
+  if (!confirm) body += '<div class="sd-form">' + q.fields.map((f, i) => mcpElicitFieldHTML(f, MCPEL.values, i)).join('') + '</div>';
   if (MCPEL.error) body += '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MCPEL.error) + '</span></div>';
   const armed = Date.now() >= MCPEL.armAt && !MCPEL.busy;
   const foot = '<span class="grow"></span>'
@@ -249,4 +251,4 @@ function mcpElicitAct(v) {
   if (v === 'accept' || v === 'decline') mcpElicitAnswer(v);
 }
 
-if (typeof module !== 'undefined') module.exports = {mcpElicitTitle, mcpElicitIsConfirm, mcpElicitDefaults, mcpElicitContent};
+if (typeof module !== 'undefined') module.exports = {mcpElicitTitle, mcpElicitIsConfirm, mcpElicitDefaults, mcpElicitContent, mcpElicitFieldHTML};

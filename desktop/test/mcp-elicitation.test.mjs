@@ -46,6 +46,19 @@ test('a sensitive field is drawn as a password box', () => {
   assert.match(src, /f\.sensitive \? 'password'/);
 });
 
+test('a field name from the server never lands in an attribute raw (review fix)', () => {
+  // renderer.js defines esc(); the same function, for the module run alone.
+  globalThis.esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+  const evil = 'a" data-act="session:new" style="position:fixed;inset:0;opacity:0';
+  for (const kind of ['string', 'boolean', 'enum', 'number']) {
+    const f = {name: evil, kind, required: false, sensitive: false, options: [{value: 'x', label: 'X'}]};
+    const html = R.mcpElicitFieldHTML(f, {}, 2);
+    assert.doesNotMatch(html, /data-act=/, kind);
+    assert.doesNotMatch(html, /style="position/, kind);
+    assert.match(html, /id="mcpel-2"/, kind);
+  }
+});
+
 test('events frames: elicitation frames never reach the approval path', () => {
   assert.equal(eventsFrameChannel('mcp_elicitation'), 'mcpElicitation');
   assert.equal(eventsFrameChannel('mcp_elicitation_closed'), 'mcpElicitationClosed');
