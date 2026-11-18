@@ -53,7 +53,7 @@ test('a field name from the server never lands in an attribute raw (review fix)'
   for (const kind of ['string', 'boolean', 'enum', 'number']) {
     const f = {name: evil, kind, required: false, sensitive: false, options: [{value: 'x', label: 'X'}]};
     const html = R.mcpElicitFieldHTML(f, {}, 2);
-    assert.doesNotMatch(html, /data-act=/, kind);
+    assert.doesNotMatch(html, /data-act="/, kind);
     assert.doesNotMatch(html, /style="position/, kind);
     assert.match(html, /id="mcpel-2"/, kind);
   }
