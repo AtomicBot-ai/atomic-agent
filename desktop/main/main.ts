@@ -67,6 +67,7 @@ import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
 import { wireInterviewInviteIpc } from "./interview-invite-ipc.js";
+import { wireRecipesIpc } from "./recipes-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
 import { machineProfile } from "./studio-local.js";
@@ -3332,6 +3333,7 @@ function wireIpc(client: AgentClient): void {
     },
   });
   wireInterviewInviteIpc({ stateDir: TUI_STATE_DIR });   // ATO-1467
+  wireRecipesIpc({ dir: () => app.getPath("userData") });   // ATO-1072: saved recipes (recipes-ipc.ts)
   /* Studio (Images + Video): Core's media API for the Studio pages
      (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
      OpenRouter key goes to Core over loopback only, never to the window. */
@@ -4159,8 +4161,9 @@ function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tas
   return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Projects", "Chats", ...(sb.tasks.length > 0 ? ["Cron jobs"] : [])]);
 }
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js, studio/shell.js).
-    W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header. */
-const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Skills", "Plugins"]);
+    W2: Studio's one row, then Cron jobs (the Tasks tab), Skills and Plugins; New project is on the Projects header.
+    ATO-1072: Recipes last (the saved recipes sheet). */
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Studio", "Cron jobs", "Skills", "Plugins", "Recipes"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;

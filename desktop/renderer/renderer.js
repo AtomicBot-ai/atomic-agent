@@ -2132,6 +2132,7 @@ const PAL = [
     ['logo:claudecode','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156; ATO-1633: wears the Claude Code mark
     ['arrowR','Hand off to Claude Code / Codex…','','','houtopen'],   // ATO-1014 (handoff-out.js)
     ['chat','Agents: who is waiting for you','','','hub:open'],   // ATO-1157 (agent-hub.js)
+    ['star','Recipes…','','','recipe:gallery'],   // ATO-1072 (chat-recipe.js)
     ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
@@ -5594,6 +5595,7 @@ function overlaysHTML() {
   if (S.overlay === 'pedit') html += projectEditHTML();   // ATO-1146 (chat-projects.js)
   if (S.overlay === 'pnew') html += projectCreateHTML();   // W2 QA (chat-projects.js)
   if (S.overlay === 'pworkers') html += pworkersSheetHTML();   // ATO-1173 (project-workers.js)
+  if (S.overlay === 'recipes' || S.overlay === 'recipe-edit') html += recipeSheetHTML();   // ATO-1072 (chat-recipe.js)
   if (S.overlay === 'deeplink') html += deeplinkSheetHTML(); else deeplinkWhenClosed();   // ATO-556 (deeplink.js): a waiting link opens once the card is closed
   if (S.overlay === 'mcpelicit') html += mcpElicitSheetHTML(); else mcpElicitWhenClosed();   // ATO-1492 (mcp-elicitation.js): closing it unanswered is a cancel
   if (SEL.open) html += selectorHTML();
@@ -7917,6 +7919,7 @@ function act(a) {
   if (k === 'export')    { close(); render(); chatExport(v); return; }   // ATO-1054 (chat-export.js)
   if (k === 'popout')    { close(); render(); chatPopoutOpen(v); return; }   // ATO-561 (chat-popout.js)
   if (k === 'share')     { close(); render(); chatShare(v); return; }    // ATO-581 (chat-share.js)
+  if (k === 'recipe')    { recipeAct(v || '', close); return; }   // ATO-1072: Save as recipe and the Recipes gallery (chat-recipe.js)
   /* ATO-1034: folders (chat-folders.js). Folder ids never hold a colon, so
      `fput:<folder>:<chat>` splits at its first one; an empty folder is "no folder". */
   if (k === 'ftoggle')   { const f = folderById(FOLDERS.state, v); if (!f) return;

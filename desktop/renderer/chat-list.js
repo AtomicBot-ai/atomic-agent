@@ -69,6 +69,7 @@ function chatMenuItems(opts) {
     ...(o.exportable === true ? [{verb: 'houtopen', label: 'Hand off to Claude / Codex…', icon: 'arrowR'}] : []),
     // ATO-581: "Share chat…" saves a redacted copy and offers a secret gist (chat-share.js), for a stored chat.
     ...(o.exportable === true ? [{verb: 'share', label: 'Share chat…', icon: 'upload'}] : []),
+    ...(o.exportable === true ? [{verb: 'recipe:save', label: 'Save as recipe…', icon: 'star'}] : []),   // ATO-1072 (chat-recipe.js)
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }
