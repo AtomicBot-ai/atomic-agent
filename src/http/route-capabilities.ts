@@ -154,6 +154,9 @@ export function createCapabilitiesHandler(): HttpHandler {
       // ATO-490: the composer's reasoning switch for the active route.
       // An agent from before it has no field, and the client draws none.
       reasoning: activeReasoningControl(runtime),
+      // ATO-1621: the `/api/files/*` routes have an index behind them; the
+      // desktop shows its My files screen only when this is true.
+      fileIndex: runtime.fileIndex !== undefined,
     });
   };
 }

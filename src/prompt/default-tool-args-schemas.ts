@@ -678,6 +678,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       radius: numberSchema,
     }),
   ],
+  [
+    "files.search",
+    obj({ query: stringSchema, folder: stringSchema, topK: numberSchema }, ["query"]),
+  ],
 
   // ── tasks ────────────────────────────────────────────────────────────────
   [

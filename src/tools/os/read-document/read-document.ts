@@ -277,8 +277,10 @@ const SOURCE_LIKE_EXTENSIONS: ReadonlySet<string> = new Set([
  * extractor (rendered as markdown; pass `format: "plain"` for raw markup).
  * `.xml/.json/.csv/.tsv` still fall through to `plain` — it's the safest
  * default until we need format-specific pretty-printing for them.
+ * Exported for the file index (`tools/files`); it throws for an
+ * extension no extractor reads.
  */
-function detectFormat(absolute: string, override: unknown): DocumentFormat {
+export function detectFormat(absolute: string, override: unknown): DocumentFormat {
   if (typeof override === "string" && override.length > 0) {
     const norm = override.toLowerCase();
     if (isKnownFormat(norm)) return norm;
@@ -359,9 +361,10 @@ function isKnownFormat(value: string): value is DocumentFormat {
 /**
  * Lazy-load the concrete extractor implementation so the dispatcher (and
  * its tests) do not pull in 3 MB of PDF/XLSX runtime until a real document
- * request arrives.
+ * request arrives. Exported for the file index (`tools/files`), which
+ * reads the same formats the same way.
  */
-async function resolveExtractor(
+export async function resolveExtractor(
   format: DocumentFormat,
   options: ReadDocumentOptions,
 ): Promise<Extractor> {

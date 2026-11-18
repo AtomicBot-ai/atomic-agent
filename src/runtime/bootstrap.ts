@@ -30,6 +30,7 @@ import { prepareRuntimeLocalProfile, connectRuntimeLocalProfile } from "./compos
 import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallback, createRuntimeProviderReloads, catalogWindowOf } from "./composition/runtime-inference.js";
 import { modelWantsStrictTools } from "../llm/provider/model-strict-tools.js";
 import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
+import { createRuntimeFileIndex } from "./composition/runtime-file-index.js";
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
 import { sessionGroundingSource } from "../memory/name-grounding.js";
@@ -365,6 +366,9 @@ export async function createAgentRuntime(
     },
   });
 
+  // ATO-1621: "My files", its own SQLite file; embeds with memory's model.
+  const fileIndex = createRuntimeFileIndex({ config, notesStore, logger });
+
   const sessionStore = prepareRuntimeSessionStore(config, logger);
   // The commands `os.shell.run` detached at the default timeout (F47).
   // One registry for the runtime, so the turn-end (`executeTurn`),
@@ -417,6 +421,7 @@ export async function createAgentRuntime(
     resolvePreviousReply: (id) => turnPreviousReplies.get(id),
     canAskUser: (id) => !turnsWithoutQuestions.has(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, browserBackend,
+    ...(fileIndex ? { fileIndex } : {}),
     // Only the terminal UI has an `/integrations` screen that saves an Exa
     // key into this process; every other entry point keeps the desktop /
     // `.env` advice (ATO-345).
@@ -1161,6 +1166,7 @@ export async function createAgentRuntime(
       await profileManager?.refresh();
     },
     reconnectMemoryEmbeddings: () => memoryEmbeddings.reconnect(),
+    ...(fileIndex ? { fileIndex } : {}),
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
@@ -1180,7 +1186,11 @@ export async function createAgentRuntime(
     setPlanMode: (on: boolean) => {
       planMode = on;
     },
-    shutdown,
+    // The file index stops after the rest; it holds no session state.
+    shutdown: async () => {
+      await shutdown();
+      await fileIndex?.close();
+    },
   } as AgentRuntime & {
     telegramChannel: TelegramChannel | null;
     discordChannel: DiscordChannel | null;

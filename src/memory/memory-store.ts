@@ -1220,6 +1220,15 @@ export class MemoryStore {
   }
 
   /**
+   * The embedding model attached now, or `null` when recall is
+   * keyword-only. The file index (ATO-1621) embeds its chunks with the
+   * same local model, and follows a reattach through this.
+   */
+  currentEmbeddingClient(): EmbeddingWriter["client"] | null {
+    return this.embeddingWriter?.client ?? null;
+  }
+
+  /**
    * Memory-v2 phase 1B. Fire-and-forget embedding write. Idempotent:
    * the underlying `UPSERT` handles re-embeds when the model is
    * upgraded. Always non-throwing — see `EmbeddingWriter` doc.
