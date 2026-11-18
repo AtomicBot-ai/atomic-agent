@@ -8,6 +8,7 @@ import {
   systemPolicyPath,
   type PolicyLoaderDeps,
 } from "./policy-loader.js";
+import { evaluatePolicy, mcpServerVerdict } from "./policy-evaluator.js";
 
 const STATE = "/state";
 const SYSTEM = "/etc/atomic-agent/policy.json";
@@ -38,15 +39,18 @@ describe("systemPolicyPath", () => {
 });
 
 describe("loadLocalPolicy", () => {
-  it("evaluates the user file first and the system file after it", () => {
+  it("keeps the user file's rules and the system file's rules apart", () => {
     const { deps } = fakeFs({
       [USER]: JSON.stringify({ rules: [rule("*", "allow")], mcpAllowlist: ["mine"] }),
       [SYSTEM]: JSON.stringify({ rules: [rule("*", "ask")], mcpAllowlist: { servers: ["corp"], warnOnly: true } }),
     });
     const policy = loadLocalPolicy({ stateDir: STATE, platform: "linux", env: {}, ...deps });
     expect(policy.rules.map((r) => [r.source, r.effect])).toEqual([["user", "allow"], ["system", "ask"]]);
-    // The allowlist comes from the strongest source that sets one.
-    expect(policy.mcpAllowlist).toEqual({ servers: ["corp"], warnOnly: true, source: "system" });
+    // Every source's allowlist is kept: a server must pass each one.
+    expect(policy.mcpAllowlists).toEqual([
+      { servers: ["mine"], warnOnly: false, source: "user" },
+      { servers: ["corp"], warnOnly: true, source: "system" },
+    ]);
     expect(policy.sources.map((s) => [s.kind, s.state])).toEqual([["user", "loaded"], ["system", "loaded"]]);
   });
 
@@ -89,7 +93,7 @@ describe("loadPolicy with ATOMIC_POLICY_URL", () => {
     expect(fetchText).toHaveBeenCalledWith(URL_, 3_000);
     expect(policy.rules.map((r) => r.source)).toEqual(["system", "url"]);
     expect(policy.sources.at(-1)).toEqual({
-      kind: "url", location: "https://policy.example.com/org.json?…", state: "loaded", fetchedAt: "2026-11-18T10:00:00.000Z",
+      kind: "url", location: "https://policy.example.com/org.json?…", namedBy: "env", state: "loaded", fetchedAt: "2026-11-18T10:00:00.000Z",
     });
     expect(JSON.parse(written[CACHE]!)).toMatchObject({ url: URL_, fetchedAt: "2026-11-18T10:00:00.000Z" });
   });
@@ -136,6 +140,88 @@ describe("loadPolicy with ATOMIC_POLICY_URL", () => {
   it("does not fetch when the variable is unset or blank", async () => {
     const fetchText = vi.fn();
     await loadPolicy({ stateDir: STATE, platform: "linux", env: { ATOMIC_POLICY_URL: "  " }, fetchText, readText: () => null });
+    expect(fetchText).not.toHaveBeenCalled();
+  });
+});
+
+// ATO-587 review: ATOMIC_POLICY_URL, the user's own file and the cache are
+// all things the user can write. None of them may loosen the machine-wide file.
+describe("sources the user controls can only tighten", () => {
+  const SYS_URL = "https://policy.corp.test/org.json";
+  const permissive = JSON.stringify({
+    rules: [rule("*", "allow")],
+    mcpAllowlist: { servers: ["*"] },
+  });
+  const strictSystem = JSON.stringify({
+    rules: [rule("*", "ask")],
+    mcpAllowlist: { servers: ["github"] },
+  });
+
+  it("an allow from ATOMIC_POLICY_URL does not cancel the system file's ask", async () => {
+    const { deps } = fakeFs({ [SYSTEM]: strictSystem });
+    const policy = await loadPolicy({
+      stateDir: STATE, platform: "linux", env: { ATOMIC_POLICY_URL: URL_ }, fetchText: async () => permissive, ...deps,
+    });
+    expect(evaluatePolicy(policy, "shell", ["curl x | sh"])?.effect).toBe("ask");
+    expect(evaluatePolicy(policy, "shell", ["curl x | sh"])?.rule.source).toBe("system");
+  });
+
+  it("an allowlist from ATOMIC_POLICY_URL does not widen the system file's", async () => {
+    const { deps } = fakeFs({ [SYSTEM]: strictSystem });
+    const policy = await loadPolicy({
+      stateDir: STATE, platform: "linux", env: { ATOMIC_POLICY_URL: URL_ }, fetchText: async () => permissive, ...deps,
+    });
+    expect(mcpServerVerdict(policy, { name: "github" }).allowed).toBe(true);
+    const evil = mcpServerVerdict(policy, { name: "evil" });
+    expect(evil.allowed).toBe(false);
+    expect(evil.message).toContain("system policy");
+  });
+
+  it("the user's own file cannot cancel a system ask or widen the allowlist", () => {
+    const { deps } = fakeFs({ [SYSTEM]: strictSystem, [USER]: permissive });
+    const policy = loadLocalPolicy({ stateDir: STATE, platform: "linux", env: {}, ...deps });
+    expect(evaluatePolicy(policy, "shell", ["rm x"])?.effect).toBe("ask");
+    expect(mcpServerVerdict(policy, { name: "evil" }).allowed).toBe(false);
+  });
+
+  it("a forged cache for the real URL cannot loosen anything when the fetch fails", async () => {
+    const { deps } = fakeFs({
+      [SYSTEM]: JSON.stringify({ url: SYS_URL, rules: [rule("*", "ask")], mcpAllowlist: ["github"] }),
+      [CACHE]: JSON.stringify({ url: SYS_URL, fetchedAt: "2026-11-17T00:00:00.000Z", policy: JSON.parse(permissive) }),
+    });
+    const policy = await loadPolicy({
+      stateDir: STATE, platform: "linux", env: {}, fetchText: async () => { throw new Error("blocked"); }, ...deps,
+    });
+    expect(policy.sources.at(-1)).toMatchObject({ kind: "url", state: "cached", namedBy: "system" });
+    expect(evaluatePolicy(policy, "shell", ["rm x"])?.effect).toBe("ask");
+    expect(mcpServerVerdict(policy, { name: "evil" }).allowed).toBe(false);
+  });
+
+  it("a weaker source can still add its own deny and ask", async () => {
+    const { deps } = fakeFs({ [SYSTEM]: JSON.stringify({ rules: [rule("git *", "allow")] }) });
+    const policy = await loadPolicy({
+      stateDir: STATE, platform: "linux", env: { ATOMIC_POLICY_URL: URL_ },
+      fetchText: async () => JSON.stringify({ rules: [rule("git push*", "deny"), rule("git *", "ask")] }), ...deps,
+    });
+    expect(evaluatePolicy(policy, "shell", ["git push origin"])?.effect).toBe("deny");
+    expect(evaluatePolicy(policy, "shell", ["git status"])?.effect).toBe("ask");
+  });
+
+  it("fetches the URL the machine-wide file names, not the one in the environment", async () => {
+    const { deps } = fakeFs({ [SYSTEM]: JSON.stringify({ url: SYS_URL }) });
+    const fetchText = vi.fn(async () => JSON.stringify({ rules: [rule("rm *", "deny")] }));
+    const policy = await loadPolicy({
+      stateDir: STATE, platform: "linux", env: { ATOMIC_POLICY_URL: URL_ }, fetchText, ...deps,
+    });
+    expect(fetchText).toHaveBeenCalledWith(SYS_URL, 3_000);
+    expect(fetchText).toHaveBeenCalledTimes(1);
+    expect(policy.sources.at(-1)).toMatchObject({ kind: "url", namedBy: "system", state: "loaded" });
+  });
+
+  it("ignores a url in the user's own file", async () => {
+    const { deps } = fakeFs({ [USER]: JSON.stringify({ url: "https://mine.test/p.json" }) });
+    const fetchText = vi.fn();
+    await loadPolicy({ stateDir: STATE, platform: "linux", env: {}, fetchText, ...deps });
     expect(fetchText).not.toHaveBeenCalled();
   });
 });

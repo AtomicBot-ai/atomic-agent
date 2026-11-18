@@ -1,7 +1,7 @@
 import { globMatches } from "./policy-glob.js";
 import type { McpAllowlist, PolicyAction, PolicyEffect, PolicyRule } from "./policy-schema.js";
 
-/** Where a piece of the effective policy came from, weakest first. */
+/** Where a piece of the effective policy came from. No source can loosen another. */
 export type PolicySourceKind = "user" | "system" | "url";
 
 export interface PolicySourceStatus {
@@ -18,6 +18,8 @@ export interface PolicySourceStatus {
   error?: string;
   /** For `url`: when the copy in use was fetched. */
   fetchedAt?: string;
+  /** For `url`: whether the machine-wide file or `ATOMIC_POLICY_URL` named it. */
+  namedBy?: "system" | "env";
 }
 
 export interface SourcedPolicyRule extends PolicyRule {
@@ -27,14 +29,14 @@ export interface SourcedPolicyRule extends PolicyRule {
 }
 
 export interface EffectivePolicy {
-  /** All rules in evaluation order: user file, then system file, then URL. */
+  /** All rules, grouped by source: user file, then system file, then URL. */
   rules: SourcedPolicyRule[];
-  /** From the strongest source that sets one; absent means every server is allowed. */
-  mcpAllowlist?: McpAllowlist & { source: PolicySourceKind };
+  /** Every source's allowlist; a server must pass each one. Empty means every server is allowed. */
+  mcpAllowlists: Array<McpAllowlist & { source: PolicySourceKind }>;
   sources: PolicySourceStatus[];
 }
 
-export const EMPTY_POLICY: EffectivePolicy = { rules: [], sources: [] };
+export const EMPTY_POLICY: EffectivePolicy = { rules: [], mcpAllowlists: [], sources: [] };
 
 export interface PolicyVerdict {
   effect: PolicyEffect;
@@ -46,24 +48,40 @@ export interface PolicyVerdict {
 const STRICTNESS: Record<PolicyEffect, number> = { allow: 0, ask: 1, deny: 2 };
 
 /**
- * What the policy says about `action` on `resources`. For one resource
+ * What the policy says about `action` on `resources`. Inside one source
  * the last matching rule wins, except that any matching `deny` wins
- * outright. Over several resources (a compound shell line, a move with
- * two paths) the strictest answer wins. Null when no rule matches.
+ * outright. Across sources, and over several resources (a compound shell
+ * line, a move with two paths), the strictest answer wins: an `allow` in
+ * one source never cancels another source's `ask`, so a source the user
+ * can write (their own file, `ATOMIC_POLICY_URL`, the cache) can only
+ * tighten. Null when no rule matches.
  */
 export function evaluatePolicy(
   policy: EffectivePolicy,
   action: PolicyAction,
   resources: readonly string[],
 ): PolicyVerdict | null {
+  const groups = rulesBySource(policy.rules);
   let best: PolicyVerdict | null = null;
   for (const resource of resources) {
-    const verdict = evaluateOne(policy.rules, action, resource);
-    if (verdict === null) continue;
-    if (verdict.effect === "deny") return verdict;
-    if (best === null || STRICTNESS[verdict.effect] > STRICTNESS[best.effect]) best = verdict;
+    for (const rules of groups) {
+      const verdict = evaluateOne(rules, action, resource);
+      if (verdict === null) continue;
+      if (verdict.effect === "deny") return verdict;
+      if (best === null || STRICTNESS[verdict.effect] > STRICTNESS[best.effect]) best = verdict;
+    }
   }
   return best;
+}
+
+function rulesBySource(rules: readonly SourcedPolicyRule[]): SourcedPolicyRule[][] {
+  const groups = new Map<PolicySourceKind, SourcedPolicyRule[]>();
+  for (const rule of rules) {
+    const group = groups.get(rule.source);
+    if (group === undefined) groups.set(rule.source, [rule]);
+    else group.push(rule);
+  }
+  return [...groups.values()];
 }
 
 function evaluateOne(
@@ -98,12 +116,21 @@ export interface McpServerVerdict {
   message?: string;
 }
 
-/** Whether the MCP allowlist lets `server` start. No allowlist allows everything. */
+/**
+ * Whether the MCP allowlists let `server` start: it must be on every
+ * source's list (so no source can widen another's). A list in `warnOnly`
+ * mode only warns. No allowlist allows everything.
+ */
 export function mcpServerVerdict(policy: EffectivePolicy, server: McpServerIdentity): McpServerVerdict {
-  const list = policy.mcpAllowlist;
-  if (list === undefined) return { allowed: true };
   const keys = [server.name, server.url, server.command].filter((k): k is string => typeof k === "string" && k.length > 0);
-  if (list.servers.some((pattern) => keys.some((key) => globMatches(pattern, key)))) return { allowed: true };
+  const missing = policy.mcpAllowlists.filter(
+    (list) => !list.servers.some((pattern) => keys.some((key) => globMatches(pattern, key))),
+  );
+  if (missing.length === 0) return { allowed: true };
+  const enforced = missing.find((list) => !list.warnOnly);
+  const list = enforced ?? missing[0]!;
   const message = `MCP server "${server.name}" is not on your organization's allowlist (${list.source} policy)`;
-  return list.warnOnly ? { allowed: true, message: `${message}; allowed because the allowlist is in warn-only mode` } : { allowed: false, message };
+  return enforced === undefined
+    ? { allowed: true, message: `${message}; allowed because the allowlist is in warn-only mode` }
+    : { allowed: false, message };
 }

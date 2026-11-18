@@ -107,32 +107,38 @@ function readCache(deps: Required<Pick<PolicyLoaderDeps, "readText">> & PolicyLo
   }
 }
 
-function fromCache(deps: Required<Pick<PolicyLoaderDeps, "readText">> & PolicyLoaderDeps, url: string, error?: string): LoadedPolicySource {
-  const location = redactPolicyUrl(url);
-  const cached = readCache(deps, url);
+interface PolicyUrl {
+  url: string;
+  namedBy: "system" | "env";
+}
+
+// The cache is a file the user can write, which is fine: like every
+// source it can only add asks, denies and allowlist limits.
+function fromCache(deps: Required<Pick<PolicyLoaderDeps, "readText">> & PolicyLoaderDeps, target: PolicyUrl, error?: string): LoadedPolicySource {
+  const base = { kind: "url" as const, location: redactPolicyUrl(target.url), namedBy: target.namedBy };
+  const cached = readCache(deps, target.url);
   if (cached === null) {
-    return { status: { kind: "url", location, state: "unreachable", ...(error ? { error } : {}) } };
+    return { status: { ...base, state: "unreachable", ...(error ? { error } : {}) } };
   }
   return {
-    status: { kind: "url", location, state: "cached", fetchedAt: cached.fetchedAt, ...(error ? { error } : {}) },
+    status: { ...base, state: "cached", fetchedAt: cached.fetchedAt, ...(error ? { error } : {}) },
     file: cached.file,
   };
 }
 
-/** Combine sources, weakest first: later rules come later in evaluation order. */
+/**
+ * Combine sources. Each keeps its own rules and allowlist; the evaluator
+ * takes the strictest answer across them, so no source loosens another.
+ */
 export function mergePolicySources(loaded: readonly LoadedPolicySource[]): EffectivePolicy {
   const rules: SourcedPolicyRule[] = [];
-  let mcpAllowlist: EffectivePolicy["mcpAllowlist"];
+  const mcpAllowlists: EffectivePolicy["mcpAllowlists"] = [];
   for (const { status, file } of loaded) {
     if (file === undefined) continue;
     file.rules.forEach((rule, index) => rules.push({ ...rule, source: status.kind, index }));
-    if (file.mcpAllowlist !== undefined) mcpAllowlist = { ...file.mcpAllowlist, source: status.kind };
+    if (file.mcpAllowlist !== undefined) mcpAllowlists.push({ ...file.mcpAllowlist, source: status.kind });
   }
-  return {
-    rules,
-    ...(mcpAllowlist !== undefined ? { mcpAllowlist } : {}),
-    sources: loaded.map((l) => l.status),
-  };
+  return { rules, mcpAllowlists, sources: loaded.map((l) => l.status) };
 }
 
 function withDefaults(deps: PolicyLoaderDeps) {
@@ -151,46 +157,53 @@ function localSources(d: ReturnType<typeof withDefaults>): LoadedPolicySource[] 
   ];
 }
 
-function policyUrl(env: NodeJS.ProcessEnv): string | undefined {
-  const url = env[POLICY_URL_ENV]?.trim();
-  return url ? url : undefined;
+/**
+ * The URL to fetch: the one the machine-wide file names, else
+ * `ATOMIC_POLICY_URL`. A `url` in the user's own file is ignored.
+ */
+function policyUrl(env: NodeJS.ProcessEnv, local: readonly LoadedPolicySource[]): PolicyUrl | undefined {
+  const fromSystem = local.find((l) => l.status.kind === "system")?.file?.url;
+  if (fromSystem) return { url: fromSystem, namedBy: "system" };
+  const fromEnv = env[POLICY_URL_ENV]?.trim();
+  return fromEnv ? { url: fromEnv, namedBy: "env" } : undefined;
 }
 
 /**
  * The policy without network: both files plus the last fetched copy of
- * `ATOMIC_POLICY_URL`. For short-lived commands (`skill install`, `policy
+ * the policy URL. For short-lived commands (`skill install`, `policy
  * show`) and as the fallback before the runtime has fetched.
  */
 export function loadLocalPolicy(deps: PolicyLoaderDeps): EffectivePolicy {
   const d = withDefaults(deps);
-  const url = policyUrl(d.env);
   const loaded = localSources(d);
+  const url = policyUrl(d.env, loaded);
   if (url !== undefined) loaded.push(fromCache(d, url));
   return mergePolicySources(loaded);
 }
 
 /**
- * The policy at start: both files, then `ATOMIC_POLICY_URL` fetched with a
- * short timeout. A good copy is cached; when the fetch fails (offline, a
+ * The policy at start: both files, then the policy URL (the machine-wide
+ * file's `url`, else `ATOMIC_POLICY_URL`) fetched with a short timeout. A good copy is cached; when the fetch fails (offline, a
  * 500, bad JSON) the cached copy is used. Never throws, never waits longer
  * than the timeout: a policy server that is down must not stop the agent.
  */
 export async function loadPolicy(deps: PolicyLoaderDeps): Promise<EffectivePolicy> {
   const d = withDefaults(deps);
-  const url = policyUrl(d.env);
   const loaded = localSources(d);
+  const url = policyUrl(d.env, loaded);
   if (url !== undefined) loaded.push(await fetchSource(d, url));
   return mergePolicySources(loaded);
 }
 
-async function fetchSource(d: ReturnType<typeof withDefaults>, url: string): Promise<LoadedPolicySource> {
+async function fetchSource(d: ReturnType<typeof withDefaults>, target: PolicyUrl): Promise<LoadedPolicySource> {
+  const { url } = target;
   const fetchText = d.fetchText ?? defaultFetchText;
   let fetched: { raw: unknown; file: PolicyFile };
   try {
     const raw: unknown = JSON.parse(await fetchText(url, d.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS));
     fetched = { raw, file: parsePolicyFile(raw) };
   } catch (err) {
-    return fromCache(d, url, errorText(err));
+    return fromCache(d, target, errorText(err));
   }
   const { raw, file } = fetched;
   const fetchedAt = (d.now?.() ?? new Date()).toISOString();
@@ -200,5 +213,8 @@ async function fetchSource(d: ReturnType<typeof withDefaults>, url: string): Pro
   } catch {
     // An unwritable cache only costs the offline fallback next time.
   }
-  return { status: { kind: "url", location: redactPolicyUrl(url), state: "loaded", fetchedAt }, file };
+  return {
+    status: { kind: "url", location: redactPolicyUrl(url), namedBy: target.namedBy, state: "loaded", fetchedAt },
+    file,
+  };
 }

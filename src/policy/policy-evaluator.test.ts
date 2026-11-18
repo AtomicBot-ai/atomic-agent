@@ -81,6 +81,14 @@ describe("evaluatePolicy", () => {
     ]);
     expect(evaluatePolicy(policy, "websearch", ["the secret plan"])?.rule.source).toBe("user");
   });
+
+  it("an allow in one source never cancels another source's ask", () => {
+    const policy = mergePolicySources([
+      { status: { kind: "system", location: "s", state: "loaded" }, file: parsePolicyFile({ rules: [{ action: "shell", resource: "*", effect: "ask" }] }) },
+      { status: { kind: "url", location: "x", state: "loaded" }, file: parsePolicyFile({ rules: [{ action: "shell", resource: "*", effect: "allow" }] }) },
+    ]);
+    expect(evaluatePolicy(policy, "shell", ["ls"])?.effect).toBe("ask");
+  });
 });
 
 describe("parsePolicyFile", () => {
@@ -111,6 +119,20 @@ describe("mcpServerVerdict", () => {
     const refused = mcpServerVerdict(policy, { name: "evil", url: "https://evil.test/mcp" });
     expect(refused.allowed).toBe(false);
     expect(refused.message).toContain('"evil" is not on your organization\'s allowlist');
+  });
+
+  it("a server must be on every source's allowlist", () => {
+    const policy = mergePolicySources([
+      { status: { kind: "system", location: "s", state: "loaded" }, file: parsePolicyFile({ mcpAllowlist: ["github", "linear"] }) },
+      { status: { kind: "url", location: "x", state: "loaded" }, file: parsePolicyFile({ mcpAllowlist: ["*"] }) },
+      { status: { kind: "user", location: "u", state: "loaded" }, file: parsePolicyFile({ mcpAllowlist: { servers: ["github"], warnOnly: true } }) },
+    ]);
+    expect(mcpServerVerdict(policy, { name: "github" })).toEqual({ allowed: true });
+    // Only the warn-only list misses linear: it connects, with a warning.
+    expect(mcpServerVerdict(policy, { name: "linear" }).allowed).toBe(true);
+    expect(mcpServerVerdict(policy, { name: "linear" }).message).toContain("warn-only");
+    // The system list misses evil: refused, whatever the other lists say.
+    expect(mcpServerVerdict(policy, { name: "evil" })).toMatchObject({ allowed: false });
   });
 
   it("warn-only mode lets an unlisted server through with a message", () => {

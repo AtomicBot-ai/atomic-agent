@@ -36,6 +36,12 @@ export interface PolicyFile {
   version: 1;
   rules: PolicyRule[];
   mcpAllowlist?: McpAllowlist;
+  /**
+   * A policy URL to fetch at start. Read only from the machine-wide file:
+   * there it pins the organisation's URL, which the user cannot unset the
+   * way they can unset `ATOMIC_POLICY_URL`.
+   */
+  url?: string;
 }
 
 export class PolicyFormatError extends Error {
@@ -93,6 +99,12 @@ export function parsePolicyFile(value: unknown): PolicyFile {
   if (!Array.isArray(rules)) throw new PolicyFormatError("rules must be an array");
   const file: PolicyFile = { version: 1, rules: rules.map(parseRule) };
   if (value.mcpAllowlist !== undefined) file.mcpAllowlist = parseAllowlist(value.mcpAllowlist);
+  if (value.url !== undefined) {
+    if (typeof value.url !== "string" || !/^https?:\/\/\S+$/i.test(value.url.trim())) {
+      throw new PolicyFormatError("url must be an http(s) URL");
+    }
+    file.url = value.url.trim();
+  }
   return file;
 }
 
