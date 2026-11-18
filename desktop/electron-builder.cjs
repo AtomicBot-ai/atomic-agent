@@ -131,6 +131,9 @@ const config = {
       "LSMinimumSystemVersion": "14.0",
       "NSMicrophoneUsageDescription": "Atomic Agent records your voice only while you hold the microphone button in the composer, and transcribes it on this Mac.",
       "NSSpeechRecognitionUsageDescription": "Atomic Agent transcribes what you dictate using the on-device speech model. Nothing is sent to Apple.",
+      /* ATO-985 / ATO-1064: selected text and dictation in any app press
+         ⌘C / ⌘V through System Events (main/keystroke-clipboard.ts). */
+      "NSAppleEventsUsageDescription": "Atomic Agent presses Copy or Paste in the app in front, only when you use selected text or dictation in any app.",
       /* ATO-1067: "Find on my network" sends an mDNS query and probes the
          home subnet, which raises macOS's Local Network prompt. These give
          the prompt our words and declare the service types we browse

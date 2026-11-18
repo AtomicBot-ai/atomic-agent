@@ -70,12 +70,27 @@ function quickEntryRowHTML(st, h) {
         + (label ? h.esc(label) + ' · Change…' : 'Change…') + '</button>')
     + h.setSwitchHTML({on, busy: st.busy, disabled: !info || st.busy || st.recording, act: 'quickentry:toggle',
       label: 'Quick entry shortcut', title: 'Turn the quick entry shortcut ' + (on ? 'off' : 'on')})
+  + '</div>'
+  + ('sel' in st ? qeSelectionRowHTML(st.sel, st.selBusy, h) : '');
+}
+
+/** ATO-985: the "Use selected text" row under it. `sel` is main's answer (app:selectedTextGet). */
+function qeSelectionRowHTML(sel, busy, h) {
+  const on = !!(sel && sel.on);
+  const warn = (sel && (sel.error || sel.hint)) || '';
+  return '<div class="tk-setrow">'
+    + '<div class="body"><div class="t">Use selected text</div>'
+      + '<div class="d">When the shortcut opens the mini chat, the text selected in the app in front comes with it, with Rewrite, Translate, Explain and Summarize. Atomic Agent copies it and puts your clipboard back.</div>'
+      + (warn ? '<div class="tk-help tk-help--warn" role="status">' + h.esc(warn) + '</div>' : '')
+    + '</div>'
+    + h.setSwitchHTML({on, busy, disabled: !sel || busy, act: 'quickentry:selection',
+      label: 'Use selected text', title: 'Turn selected text ' + (on ? 'off' : 'on')})
   + '</div>';
 }
 
 /* ---- renderer side (globals from renderer.js, read at call time) ---- */
 
-const QE = {info: null, busy: false, recording: false, error: null, asked: false};
+const QE = {info: null, busy: false, recording: false, error: null, asked: false, sel: null, selBusy: false};
 
 function qeApply(r) {
   if (r && typeof r === 'object' && 'enabled' in r) QE.info = r;
@@ -86,6 +101,7 @@ function qeApply(r) {
 function quickEntryRefresh() {
   if (typeof BR === 'undefined' || !BR || !BR.quickEntryGet) return;
   BR.quickEntryGet().then((r) => { qeApply(r); render(); }).catch(() => {});
+  if (BR.selectedTextGet) BR.selectedTextGet().then((r) => { QE.sel = r; render(); }).catch(() => {});
 }
 
 function qeStopRecording() {
@@ -121,6 +137,14 @@ function qeOnKey(e) {
 function quickEntryAct(v) {
   if (!BR || !BR.quickEntrySet) return;
   if (v === 'cancel') { qeCancel(); return; }
+  if (v === 'selection') {
+    if (!QE.sel || QE.selBusy || !BR.selectedTextSet) return;
+    QE.selBusy = true; render();
+    BR.selectedTextSet({use: !QE.sel.on})
+      .then((r) => { QE.selBusy = false; QE.sel = r; render(); })
+      .catch(() => { QE.selBusy = false; QE.sel = Object.assign({}, QE.sel, {error: 'The setting could not be saved.'}); render(); });
+    return;
+  }
   if (v === 'toggle') {
     if (!QE.info || QE.busy) return;
     QE.busy = true; render();
@@ -162,4 +186,4 @@ function quickEntryBoot() {
   void quickEntryDeliver();
 }
 
-if (typeof module !== 'undefined') module.exports = {QE_CODE_KEYS, qeAcceleratorFromKey, quickEntryRowHTML};
+if (typeof module !== 'undefined') module.exports = {QE_CODE_KEYS, qeAcceleratorFromKey, quickEntryRowHTML, qeSelectionRowHTML};

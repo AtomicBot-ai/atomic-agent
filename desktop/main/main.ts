@@ -311,6 +311,7 @@ import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverla
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import { appWindows, createScreenMarksOverlay } from "./screen-overlay-window.js";
 import { isQuickEntryWindow, wireQuickEntry } from "./quick-entry-window.js";
+import { wireSelectedText } from "./selected-text-ipc.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
@@ -11337,6 +11338,8 @@ void app.whenReady().then(async () => {
       return win;
     },
     log: (line) => console.error(line),
+    // ATO-985: the text selected in the app in front, when Settings allows it.
+    grabSelection: wireSelectedText({ userData: app.getPath("userData"), platform: process.platform }).grabSelection,
   });
   showMiniChat = quickEntry.show;
   app.once("will-quit", () => { showMiniChat = null; quickEntry.dispose(); });
