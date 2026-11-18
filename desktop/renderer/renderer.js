@@ -26462,7 +26462,8 @@ function memoryTab() {
     + '<div class="tk-bar"><div class="tk-seg" role="group" aria-label="Memory channel">' + seg + '</div>' + filter + memGraphToggleHTML() /* ATO-584 */ + '<span class="grow"></span>'
     // Calm (S5): Refresh is a button (the `r` key). The auto-refresh status is the window's, beside Done (Д26); `a` still pauses it.
     + '<span class="set-counts">' + memVisibleRows().length + ' shown</span>'
-    + '<button class="iconbtn sm" data-act="memory:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
+    + memForgetButtonHTML({ic}) /* ATO-321 (memory-forget.js) */ + '<button class="iconbtn sm" data-act="memory:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
+    + memForgetHTML(MEMF, {esc, ic})
     + (MEM.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(MEM.lastError) + '</span></div>' : '')
     + (MEM.mode === 'list' ? (memGraphOn() ? memGraphHTML() : memListHTML()) : memDetailHTML()) + '</div>';
 }
@@ -26779,6 +26780,7 @@ function memoryAct(what) {
   const [verb, ...rest] = what.split(':');
   const arg = rest.join(':');
   if (memEditAct(verb, arg)) return; // ATO-582: edit / delete (memory-edit.js)
+  if (memForgetAct(verb)) return; // ATO-321: clear old memory (memory-forget.js)
   if (verb === 'ch') { memSetChannel(arg); return; }
   if (verb === 'cycle') {
     const order = MEM.available.length ? MEM.available : MEM_CHANNEL_ORDER;

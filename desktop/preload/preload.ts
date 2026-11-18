@@ -445,6 +445,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("app:memoryQuery", { stateDir, name, params: params ?? [] }),
   /** ATO-582: `{op:'note.edit', id, text}` / `{op:'note.delete', id}` / `{op:'profile.delete', key}`, through the agent. */
   memoryWrite: (op: unknown) => ipcRenderer.invoke("app:memoryWrite", op),
+  /** ATO-321: count (apply false) or clear (apply true) notes and lessons created before `before` (YYYY-MM-DD). */
+  memoryForget: (before: string, apply: boolean) => ipcRenderer.invoke("cli:memoryForget", { before, apply: apply === true }),
 
   /** Item 7 part C: the LLM, Telegram and Import tabs. */
   modelsEngine: (action: string) => ipcRenderer.invoke("cli:modelsEngine", action),
