@@ -2130,6 +2130,27 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1629: one of the agent's `/api/import/facts/*` routes (import-facts.ts),
+   * answered as the status and the parsed JSON body; a request that never got one throws.
+   */
+  async importFactsRoute(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${this.base()}/api/import/facts/${path}`, {
+      method,
+      headers: this.headers(),
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    let parsed: unknown = null;
+    try {
+      const raw = await res.text();
+      parsed = raw ? JSON.parse(raw) : null;
+    } catch {
+      /* not JSON */
+    }
+    return { status: res.status, body: parsed };
+  }
+
+  /**
    * ATO-448: continue a chat whose last turn a restart cut off, through the
    * agent's `POST /api/sessions/{id}/resume`. On success the agent hands back
    * the continuing message (a note to check before repeating side effects,
