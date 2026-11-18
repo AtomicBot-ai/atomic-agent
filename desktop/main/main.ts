@@ -59,6 +59,7 @@ import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { chatPopoutTurnRefused, isChatPopout, wireChatPopoutIpc } from "./chat-popout-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
 import { wireTraceTreeIpc } from "./trace-tree-ipc.js";
+import { wireProjectWorkersIpc } from "./project-workers-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { wireMyFilesIpc } from "./my-files-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
@@ -1767,6 +1768,8 @@ function wireIpc(client: AgentClient): void {
     projectId?: unknown,
     reasoning?: ReasoningLevel,
     turnModel: ProjectModelPick | null = null,
+    /** ATO-1173: a worker chat works in its own copy of the project folder (project-workers-ipc.ts). */
+    workDir?: string,
   ): Promise<{ ok: true; turnId: string } | { ok: false; error: string }> {
     /* Backlog 18 (its second review): a restart a switch held back for the
        turns runs as the last one ends (backend-switch restartAfterSwitch), and
@@ -1815,7 +1818,7 @@ function wireIpc(client: AgentClient): void {
        takes that one's instructions. */
     const filed = folderForTurn(readChatFolders(DESKTOP_STATE_DIR), known, projectId);
     const instructions = filed ? (filed.instructions ? { name: filed.name, text: filed.instructions } : null) : proj.instructions;
-    void client.chat(turnId, sent, chatId, inWorktree?.dir ?? proj.workingDir, instructions, reasoning, turnModel ?? undefined);
+    void client.chat(turnId, sent, chatId, workDir ?? inWorktree?.dir ?? proj.workingDir, instructions, reasoning, turnModel ?? undefined);
     return { ok: true, turnId };
   }
 
@@ -2705,6 +2708,12 @@ function wireIpc(client: AgentClient): void {
     if (client.isRemote) return { ok: false, remote: true, error: "a remote agent reads its own folder" };
     const file = instructionsFileFor(p.folder);
     return file ? { ok: true, file } : { ok: false, error: "the project's folder is not on this computer" };
+  });
+  // ATO-1173: a project chat split into worker chats, each in its own copy of the folder (project-workers-ipc.ts).
+  wireProjectWorkersIpc({
+    stateDir: DESKTOP_STATE_DIR, userData: app.getPath("userData"), startTurn, isRemote: () => client.isRemote,
+    providers: async () => (await readWholeConfig().catch(() => null))?.config?.llm?.providers,
+    onChat: (cb) => client.on("chat", cb), emitChat: (ev) => client.emit("chat", ev), send,
   });
 
   // --- Lane B — backend switch ---
