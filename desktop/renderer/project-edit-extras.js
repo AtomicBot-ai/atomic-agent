@@ -76,14 +76,19 @@ function pexInstructionsLine(file, opts) {
 
 /* The chats a project holds only because they ran in its folder: moving
    the project to another folder would drop them from it in the sidebar, so
-   they are filed in it by id first. A chat filed elsewhere is left alone. */
-function pexChatsToKeep(project, rows, storeChats, folderChats, home) {
+   they are filed in it by id first. A chat filed elsewhere is left alone,
+   and so is one a project nested inside this folder holds (the deepest
+   folder wins, as in the sidebar): the check runs over every project,
+   with this one still at its old folder. */
+function pexChatsToKeep(project, rows, storeChats, folderChats, home, projects) {
   if (!project || typeof projectOf !== 'function') return [];
-  const only = {projects: [project], chats: {}};
+  const list = (Array.isArray(projects) && projects.length ? projects : [project]).filter((q) => q && q.id !== project.id);
+  const all = {projects: [project, ...list], chats: {}};
   const out = [];
   for (const r of rows || []) {
     if (!r || !r.id || (storeChats && storeChats[r.id]) || (folderChats && folderChats[r.id])) continue;
-    if (projectOf(only, r, home) === project) out.push(r.id);
+    const owner = projectOf(all, r, home);
+    if (owner && owner.id === project.id) out.push(r.id);
   }
   return out;
 }
@@ -241,7 +246,7 @@ function projectEditExtrasSaved(e, p) {
     const rows = typeof SESSIONS !== 'undefined' ? SESSIONS : [];
     const home = typeof homeDir === 'function' ? homeDir() : '';
     const folderChats = typeof FOLDERS !== 'undefined' ? FOLDERS.state.chats : {};
-    for (const sid of pexChatsToKeep(x.old, rows, PROJECTS.state.chats, folderChats, home)) {
+    for (const sid of pexChatsToKeep(x.old, rows, PROJECTS.state.chats, folderChats, home, PROJECTS.state.projects)) {
       PROJECTS.state.chats[sid] = p.id;
       BR.projectsAssign({sessionId: sid, projectId: p.id}).then(() => {}, () => {});
     }

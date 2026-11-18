@@ -129,12 +129,16 @@ test("no answer for a folder that is not one on this computer", () => {
 
 /* ---- main: the model follows the folder ---- */
 
-test("a project moved to another folder takes its model along", () => {
+test("a project moved to another folder takes its model along, and its old chats keep it", () => {
   const u = scratch();
   M.writeProjectModel(u, "/src/app", { providerId: "openrouter", model: "openai/gpt-5" });
   M.writeProjectModel(u, "/src/new", { providerId: "anthropic", model: "claude-sonnet-5" });
   const moved = M.moveProjectModel(u, "/src/app/", "/src/new");
-  assert.deepEqual(moved, { "/src/new": { providerId: "openrouter", model: "openai/gpt-5" } });
+  // Review fix: the old folder's pick stays, since chats already in the project still run there.
+  assert.deepEqual(moved, {
+    "/src/app": { providerId: "openrouter", model: "openai/gpt-5" },
+    "/src/new": { providerId: "openrouter", model: "openai/gpt-5" },
+  });
   assert.deepEqual(M.readProjectModels(u), moved);
 });
 
@@ -314,6 +318,15 @@ test("chats held only by their folder are the ones kept; filed ones are left alo
   const c = load();
   const ids = vm.runInContext(`pexChatsToKeep(PROJECTS.state.projects[0], SESSIONS, {'s-put': 'pbbbbbb'}, {'s-sub': 'f1'}, '/Users/me')`, c);
   assert.deepEqual([...ids], ["s-old"]);
+});
+
+test("a chat a nested project holds is not pulled into the moved project", () => {
+  const c = load();
+  // Review fix: project A on /work, project B on /work/app; a chat in /work/app/src belongs to B.
+  const ids = vm.runInContext(`pexChatsToKeep({id:'pA', name:'A', folder:'/work'},
+    [{id:'c1', workingDir:'/work/app/src'}, {id:'c2', workingDir:'/work/docs'}], {}, {}, '/Users/me',
+    [{id:'pA', name:'A', folder:'/elsewhere'}, {id:'pB', name:'B', folder:'/work/app'}])`, c);
+  assert.deepEqual([...ids], ["c2"]);
 });
 
 test("chat-projects.js keeps only small hooks into the extras", () => {

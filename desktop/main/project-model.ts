@@ -107,7 +107,9 @@ export function writeProjectModel(userData: string, dir: string, pick: ProjectMo
 /**
  * ATO-1012: a project moved to another folder (Edit project › Change
  * folder…) takes its model along: the old folder's pick is stored under the
- * new folder, replacing whatever that folder had, and the old key goes.
+ * new folder too, replacing whatever that folder had. The old key stays:
+ * a turn's model is looked up by the chat's own folder, and the chats the
+ * project already has keep running in the old one.
  * Null when the old folder had no pick (nothing is written) or the write
  * failed; else the whole map as written.
  */
@@ -117,7 +119,6 @@ export function moveProjectModel(userData: string, fromDir: string, toDir: strin
   const from = folderKey(fromDir), to = folderKey(toDir);
   const pick = all[from];
   if (!pick || from === to) return null;
-  delete all[from];
   delete all[to];
   all[to] = pick;
   return writeAll(userData, all);
