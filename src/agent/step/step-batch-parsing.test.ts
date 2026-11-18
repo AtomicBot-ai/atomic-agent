@@ -5,7 +5,7 @@ import type { CompletionResult } from "../../llm/llama-server-client.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../../llm/model-profile.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
 import type { StepBatchPolicy } from "./step-batch-policy.js";
-import { parseStepBatch } from "./step-batch-parsing.js";
+import { callLike, parseStepBatch } from "./step-batch-parsing.js";
 import type { StepContext, StepDependencies } from "./step-contract.js";
 import type { PreparedStepInference } from "./step-inference.js";
 
@@ -133,5 +133,22 @@ describe("parseStepBatch on a completion served without the grammar (ATO-1675)",
       { grammarSkipped: true },
     );
     expect(parsed.ok).toBe(false);
+  });
+});
+
+describe("callLike stays linear on hostile text (ATO-1675)", () => {
+  it("answers quickly on repeated name objects and on a wall of openers", () => {
+    const started = Date.now();
+    expect(callLike('{"name": 1} '.repeat(20_000))).toBe(false);
+    expect(callLike("{".repeat(100_000))).toBe(false);
+    expect(callLike('{"name": 1, "args" '.repeat(20_000))).toBe(true);
+    expect(Date.now() - started).toBeLessThan(200);
+  });
+
+  it("keeps finding a call and ignoring a package.json example", () => {
+    expect(callLike('Reading.\n```json\n{"name":"x","arguments":{"path":"a.ts"}}\n```')).toBe(true);
+    expect(callLike('{"name": "x", "argu')).toBe(true);
+    expect(callLike('Done.\n{"tool": "os.fs.read", "args": {')).toBe(true);
+    expect(callLike('{"name":"pkg","version":"1.0.0"}')).toBe(false);
   });
 });

@@ -193,24 +193,47 @@ function readForeignShapes(
 }
 
 /**
- * A call-looking JSON value somewhere in a reply body: an object opener
- * followed, anywhere later, by a key only a call is named with (`tool`,
- * `action`, `function`, `tool_calls`), or by `name` with an argument key
- * (`arguments`, `args`, `parameters`) after it, quoted with either quote.
- * It finds a whole call, a call inside a ```json fence, an OpenAI or
- * llama.cpp-shaped one, and a call cut off after its first key (a
- * `name` object that never closes).
- * Ordinary prose does not match: a fenced code answer, a `[1]` citation,
- * `{braces}` in a sentence, a JSON example with a bare `name` (a
- * package.json).
+ * A call-looking JSON value somewhere in a reply body: an object whose
+ * opening keys (no nested object before it, at most `KEY_GAP` chars in)
+ * include a key only a call is named with (`tool`, `action`, `function`,
+ * `tool_calls`), or `name` with an argument key (`arguments`, `args`,
+ * `parameters`) within `ARGS_GAP` chars after it, quoted with either
+ * quote. It finds a whole call, a call inside a ```json fence, an OpenAI
+ * or llama.cpp-shaped one, and a call cut off after its first key (a
+ * `name` object that never closes). Ordinary prose does not match: a
+ * fenced code answer, a `[1]` citation, `{braces}` in a sentence, a JSON
+ * example with a bare `name` (a package.json).
+ *
+ * Every gap is bounded and only the first and last `SCAN_CHARS` of the
+ * text are read, so the cost is linear in the text: it runs on the
+ * step's thread, on whatever a model wrote.
  */
-const CALL_KEY = /\{[\s\S]*?["'](?:tool|action|function|tool_calls)["']\s*:/;
-const NAMED_CALL = /\{[\s\S]*?["']name["']\s*:[\s\S]*?["'](?:arguments|args|parameters)["']\s*:/;
-/** A `{"name": ...` object the completion was cut inside: it never closes. */
-const NAMED_CUT = /\{\s*["']name["']\s*:[^}]*$/;
+const CALL_KEY = /\{[^{}]{0,200}?["'](?:tool|action|function|tool_calls)["']\s*:/;
+const NAMED_CALL =
+  /\{[^{}]{0,200}?["']name["']\s*:[\s\S]{0,2000}?["'](?:arguments|args|parameters)["']\s*:/;
+/** A `{"name":` object opening; `callLike` reads it only after the last `}`. */
+const NAMED_OPEN = /\{\s*["']name["']\s*:/;
+const SCAN_CHARS = 16_000;
 
-function callLike(text: string): boolean {
-  return CALL_KEY.test(text) || NAMED_CALL.test(text) || NAMED_CUT.test(text);
+/** The parts of `text` worth scanning: all of it when short, else its head and tail. */
+function scanWindows(text: string): string[] {
+  return text.length <= SCAN_CHARS * 2
+    ? [text]
+    : [text.slice(0, SCAN_CHARS), text.slice(-SCAN_CHARS)];
+}
+
+export function callLike(text: string): boolean {
+  if (!text.includes("{")) return false;
+  const windows = scanWindows(text);
+  const hasCallKey = /tool|action|function/.test(text);
+  if (hasCallKey && windows.some((part) => CALL_KEY.test(part))) return true;
+  if (!text.includes("name")) return false;
+  if (/argument|args|parameters/.test(text) && windows.some((part) => NAMED_CALL.test(part))) {
+    return true;
+  }
+  // Cut off inside a `{"name": ...` object: it opens after the last `}`.
+  const afterLastClose = text.slice(text.lastIndexOf("}") + 1).slice(-SCAN_CHARS);
+  return NAMED_OPEN.test(afterLastClose);
 }
 
 /**
