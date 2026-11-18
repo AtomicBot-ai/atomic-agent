@@ -9,6 +9,7 @@ import { FileIndex, type FileIndexOptions } from "./file-index.js";
 import { FolderRejectedError } from "./file-index-types.js";
 import { isIndexDone, statusFrom } from "./file-indexer.js";
 import { extractFileText } from "./file-text.js";
+import { walkFolder } from "./file-walker.js";
 
 let root: string;
 let docs: string;
@@ -102,6 +103,39 @@ describe("FileIndex: add a folder, index it, search it", () => {
     expect(fileIndex.status()).toMatchObject({ found: 2, indexed: 1, skipped: 1 });
     expect(await fileIndex.search({ query: "termination" })).toEqual([]);
     expect(await fileIndex.search({ query: "renewal" })).toHaveLength(1);
+  });
+
+  it("keeps the index when the folder cannot be read (unmounted drive), and when the walk is cut short", async () => {
+    let mode: "real" | "unreadable" | "truncated" = "real";
+    const fileIndex = open({
+      walk: async (folderRoot, options) => {
+        if (mode === "unreadable") {
+          options.report?.unreadable.push(folderRoot);
+          return [];
+        }
+        const files = await walkFolder(folderRoot, options);
+        if (mode === "truncated" && options.report) {
+          options.report.truncated = true;
+          return files.slice(0, 1);
+        }
+        return files;
+      },
+    });
+    await fileIndex.addFolder(docs);
+    await fileIndex.idle();
+    expect(fileIndex.status()).toMatchObject({ found: 3, indexed: 2 });
+
+    mode = "unreadable";
+    fileIndex.start();
+    await fileIndex.idle();
+    expect(fileIndex.status()).toMatchObject({ found: 3, indexed: 2 });
+    expect(fileIndex.status().lastError).toMatchObject({ path: docs });
+    expect(await fileIndex.search({ query: "termination" })).not.toEqual([]);
+
+    mode = "truncated";
+    fileIndex.start();
+    await fileIndex.idle();
+    expect(fileIndex.status()).toMatchObject({ found: 3, indexed: 2 });
   });
 
   it("counts a file over the size cap as skipped and a reader error as failed", async () => {
