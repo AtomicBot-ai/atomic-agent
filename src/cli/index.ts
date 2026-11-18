@@ -28,6 +28,7 @@ import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
 import { dataCommand } from "./data-command.js";
+import { setupCommand } from "./setup-command.js";
 import { idCommand } from "./id-command.js";
 import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
@@ -187,6 +188,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "data",
     summary: "Back up, restore, move or reset the data folder (shared with the desktop app); export chats as a dataset",
     run: dataCommand,
+  },
+  {
+    name: "setup",
+    summary: "Share your agent setup (skills, subagents, MCP servers, personas) with the keys taken out (export|import)",
+    run: (args) => setupCommand(args),
   },
   {
     name: "push",
