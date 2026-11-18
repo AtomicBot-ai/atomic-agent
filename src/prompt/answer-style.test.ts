@@ -134,7 +134,11 @@ describe("### answer-style in the stable prefix (ATO-966)", () => {
       }
       const full = buildAnswerStyleGuidance({ channel, compact: false });
       expect(full).toContain("no headings");
-      expect(full).toContain("`attachments`");
+    }
+    expect(buildAnswerStyleGuidance({ channel: "slack", compact: false })).toContain("`attachments`");
+    // iMessage, Signal and Matrix do not deliver reply files: never point the model there.
+    for (const compact of [false, true]) {
+      expect(buildAnswerStyleGuidance({ channel: "messenger", compact })).not.toContain("attachments");
     }
     // iMessage and Signal split at 2000: one reply stays one bubble.
     expect(MESSENGER_REPLY_MAX_CHARS).toBeLessThan(2000);

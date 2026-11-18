@@ -110,8 +110,10 @@ const FULL_CHANNEL: Record<AnswerChannel, string> = {
     `Shown in Slack: no tables and no headings (they do not render); use short lists. ` +
     `Keep the reply under ${SLACK_REPLY_MAX_CHARS} characters; put anything longer in a file and send it in \`attachments\`.`,
   messenger:
+    // No `attachments` hint: the iMessage, Signal and Matrix adapters do
+    // not deliver reply files yet, so a body moved into a file would be lost.
     `Shown in a phone chat app (iMessage, Signal or Matrix): no tables and no headings; short paragraphs or a short list. ` +
-    `Keep the reply under ${MESSENGER_REPLY_MAX_CHARS} characters; put anything longer in a file and send it in \`attachments\`.`,
+    `Keep the reply under ${MESSENGER_REPLY_MAX_CHARS} characters where you can; files cannot be sent here, so keep everything in the text.`,
 };
 
 const COMPACT_CHANNEL: Record<AnswerChannel, string> = {
