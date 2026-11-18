@@ -15,7 +15,9 @@
 #   is ad-hoc signed by afterPack, same as a local `npm run dist`.
 # - Windows, with the DigiCert KeyLocker secrets: the agent binaries are
 #   signed before they are bundled and electron-builder signs the app exe, the
-#   installer and the uninstaller through desktop/scripts/win-sign.cjs.
+#   installer and the uninstaller through desktop/scripts/win-sign.cjs. The
+#   two keyboard modules of uiohook-napi (win32-x64 and win32-arm64 .node,
+#   ATO-1064) are signed after `npm ci` in desktop/; no other .node is touched.
 #
 # Atomic Chat Core ships inside every app (resources/core). "Fetch Atomic Chat
 # Core" downloads the release asset for the job's slug into
@@ -316,6 +318,37 @@ jobs:
         working-directory: desktop
         run: npm run build
 
+      # ATO-1064: the two keyboard modules uiohook-napi ships for Windows
+      # (prebuilds/win32-x64 and win32-arm64, both packed into every Windows
+      # app, see electron-builder.cjs) are signed here, where npm ci put them;
+      # electron-builder then copies them into app.asar.unpacked with the
+      # signature inside. Only these two files: no other desktop .node file is
+      # signed or changed (npmRebuild is off). A missing one fails the job.
+      - name: Sign the keyboard modules (Windows)
+        if: startsWith(matrix.slug, 'win32-') && env.HAS_WIN_SIGNING == 'true'
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targets = @(
+            "desktop\node_modules\uiohook-napi\prebuilds\win32-x64\uiohook-napi.node",
+            "desktop\node_modules\uiohook-napi\prebuilds\win32-arm64\uiohook-napi.node"
+          )
+          foreach ($t in $targets) {
+            if (-not (Test-Path $t)) { Write-Error "keyboard module missing: $t"; exit 1 }
+            $full = (Get-Item $t).FullName
+            Write-Host "Signing: $full"
+            signtool sign /sha1 $env:SM_CODE_SIGNING_CERT_SHA1_HASH /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 "$full"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool sign failed for $full"; exit 1 }
+            signtool verify /pa "$full"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool verify failed for $full"; exit 1 }
+          }
+
       # build-speech-helper.mjs fails the build when swiftc is there but the
       # compile fails; it still skips quietly with no swiftc at all or with
       # ATOMIC_SKIP_SPEECH_HELPER=1. CI must not ship a Mac DMG without it.
@@ -487,6 +520,10 @@ jobs:
             @(Get-Item "desktop\release\win-unpacked\Atomic Agent.exe") +
             @(Get-Item "desktop\release\win-unpacked\resources\agent\atomic-agent.exe") +
             @(Get-Item "desktop\release\win-unpacked\resources\core\atomic-chat-core.exe")
+          # ATO-1064: exactly the two keyboard modules, signed in "Sign the keyboard modules".
+          $keys = @(Get-ChildItem "desktop\release\win-unpacked\resources\app.asar.unpacked\node_modules\uiohook-napi\prebuilds\win32-*\uiohook-napi.node")
+          if ($keys.Count -ne 2) { Write-Error "expected 2 keyboard modules in app.asar.unpacked, found $($keys.Count)"; exit 1 }
+          $files += $keys
           foreach ($f in $files) {
             Write-Host "Verifying: $($f.FullName)"
             signtool verify /pa "$($f.FullName)"
@@ -861,6 +898,37 @@ jobs:
         working-directory: desktop
         run: npm run build
 
+      # ATO-1064: the two keyboard modules uiohook-napi ships for Windows
+      # (prebuilds/win32-x64 and win32-arm64, both packed into every Windows
+      # app, see electron-builder.cjs) are signed here, where npm ci put them;
+      # electron-builder then copies them into app.asar.unpacked with the
+      # signature inside. Only these two files: no other desktop .node file is
+      # signed or changed (npmRebuild is off). A missing one fails the job.
+      - name: Sign the keyboard modules (Windows)
+        if: env.HAS_WIN_SIGNING == 'true'
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          SM_API_KEY: ${{ secrets.SM_API_KEY }}
+          SM_CLIENT_CERT_PASSWORD: ${{ secrets.SM_CLIENT_CERT_PASSWORD }}
+          SM_CODE_SIGNING_CERT_SHA1_HASH: ${{ secrets.SM_CODE_SIGNING_CERT_SHA1_HASH }}
+          SM_HOST: https://clientauth.one.digicert.com
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targets = @(
+            "desktop\node_modules\uiohook-napi\prebuilds\win32-x64\uiohook-napi.node",
+            "desktop\node_modules\uiohook-napi\prebuilds\win32-arm64\uiohook-napi.node"
+          )
+          foreach ($t in $targets) {
+            if (-not (Test-Path $t)) { Write-Error "keyboard module missing: $t"; exit 1 }
+            $full = (Get-Item $t).FullName
+            Write-Host "Signing: $full"
+            signtool sign /sha1 $env:SM_CODE_SIGNING_CERT_SHA1_HASH /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 "$full"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool sign failed for $full"; exit 1 }
+            signtool verify /pa "$full"
+            if ($LASTEXITCODE -ne 0) { Write-Error "signtool verify failed for $full"; exit 1 }
+          }
+
       - name: Set the app version for this build (version_override)
         if: inputs.version_override != ''
         working-directory: desktop
@@ -901,6 +969,10 @@ jobs:
             @(Get-Item "desktop\release\win-arm64-unpacked\Atomic Agent.exe") +
             @(Get-Item "desktop\release\win-arm64-unpacked\resources\agent\atomic-agent.exe") +
             @(Get-Item "desktop\release\win-arm64-unpacked\resources\core\atomic-chat-core.exe")
+          # ATO-1064: exactly the two keyboard modules, signed in "Sign the keyboard modules".
+          $keys = @(Get-ChildItem "desktop\release\win-arm64-unpacked\resources\app.asar.unpacked\node_modules\uiohook-napi\prebuilds\win32-*\uiohook-napi.node")
+          if ($keys.Count -ne 2) { Write-Error "expected 2 keyboard modules in app.asar.unpacked, found $($keys.Count)"; exit 1 }
+          $files += $keys
           foreach ($f in $files) {
             Write-Host "Verifying: $($f.FullName)"
             signtool verify /pa "$($f.FullName)"
