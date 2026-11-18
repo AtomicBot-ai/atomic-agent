@@ -24,7 +24,7 @@ import type { TurnLoopState } from "./turn-state.js";
 export type TurnRecoveryDependencies = Pick<
   AgentLoopDependencies,
   "contextWindow" | "onContextWindowObserved" | "onEvent" | "logger" | "metrics" | "localEngineState"
-  | "explainLocalEngineState" | "localOutOfMemory"
+  | "explainLocalEngineState" | "localOutOfMemory" | "isCloudLink"
 >;
 
 export interface TurnRecoveryContext {
@@ -403,7 +403,9 @@ export function recoverTurnStep(
   // to `model`, so reclassifying could only ever return what it
   // already holds.
   if (repeatedEmptyAfterAnnouncedRetry) {
-    runError = repeatedEmptyCompletionError(err);
+    runError = repeatedEmptyCompletionError(err, {
+      cloud: deps.isCloudLink?.(readFailingLink(err)) === true,
+    });
   }
   // The provider refused the request for its size. The window it
   // named (or, failing that, most of the prompt just estimated)

@@ -244,6 +244,15 @@ export interface AgentLoopDependencies {
    */
   localEngineState?: (providerId: string | undefined) => LocalEngineState;
   /**
+   * Whether the link a turn failed on is a cloud provider (ATO-1578):
+   * not a `llama-server` entry and not a server on this machine (LM
+   * Studio, Ollama). `undefined` means the active text provider. Read
+   * when the model answered empty twice in a row: on the cloud the
+   * failure then offers another model instead of "Retry". Absent
+   * (embedders, tests): every link reads as not cloud, so "Retry" stays.
+   */
+  isCloudLink?: (providerId: string | undefined) => boolean;
+  /**
    * `localEngineState` with the reason as a fixed word (ATO-1432). Asked
    * in its place by the outage wait when given, so the turn can report
    * what it decided on. Absent: the plain state, with no reason.

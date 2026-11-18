@@ -169,7 +169,9 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
 }
 
 function modelCause(err: ModelError): FailureCauseId {
-  if (err.reason === "empty") return "empty_response";
+  if (err.reason === "empty") {
+    return err.repeatedOnCloud === true ? "empty_response_repeated" : "empty_response";
+  }
   if (err.reason === "no_stop") return "unfinished_reply";
   if (err.truncation?.repetitive === true) return "repeating_output";
   if (err.truncation?.cause === "context_window") return "context_too_long";
