@@ -78,4 +78,29 @@ describe("parseStepBatch on a completion served without the grammar (ATO-1675)",
     const { parsed } = run("The file has three lines.");
     expect(parsed.ok).toBe(false);
   });
+
+  it("sends prose followed by a botched call to repair, never delivering it as a reply", () => {
+    const { parsed } = run('Let me read it.\n[{"tool": "os.fs.read", "args": {"path": ', {
+      grammarSkipped: true,
+      truncated: true,
+    });
+    expect(parsed.ok).toBe(false);
+  });
+
+  it("sends prose with a fenced call the step refused to repair, not to the user", () => {
+    const { parsed } = run('Reading.\n```json\n[{"tool":"os.fs.reed","args":{"path":"a.ts",}}]\n```', {
+      grammarSkipped: true,
+    });
+    expect(parsed.ok).toBe(false);
+  });
+
+  it("reads llama.cpp's generic tool_calls envelope only on a completion served without the grammar", () => {
+    const body = '{"tool_calls":[{"name":"os.fs.read","arguments":{"path":"a.ts"}}]}';
+    const skipped = run(body, { grammarSkipped: true });
+    expect(skipped.parsed.ok).toBe(true);
+    if (skipped.parsed.ok) {
+      expect(skipped.parsed.batch.calls).toEqual([{ tool: "os.fs.read", args: { path: "a.ts" } }]);
+    }
+    expect(run(body).parsed.ok).toBe(false);
+  });
 });

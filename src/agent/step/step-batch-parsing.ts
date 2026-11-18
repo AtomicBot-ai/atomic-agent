@@ -7,6 +7,8 @@ import type { ParseDeps, ToolCallBatchParseResult } from "./step-parsing.js";
 import { tryParseToolCalls, parseDepsFor, rawPreview, logTextPreview, replyFallbackBatch } from "./step-parsing.js";
 import { validateBatch } from "./step-batch-policy.js";
 import { GrammarError } from "../../llm/index.js";
+import { parseToolCalls } from "../../llm/grammar/tool-call-grammar.js";
+import { completionAssumesOpenReasoning, getReasoningTagOptions, normalizeContent } from "./step-reasoning.js";
 import { judgeRepairedBatch, repairRefusedError } from "./step-json-repair.js";
 
 export interface StepBatchParsingArgs {
@@ -38,6 +40,7 @@ export function parseStepBatch(args: StepBatchParsingArgs): ToolCallBatchParseRe
     stepDescriptors,
     thinkingOff,
   );
+  parsed = readForeignShapes(args, completion, parsed);
   parsed = admitRepairedJson(args, completion, parsed);
   parsed = admitProseWithoutGrammar(args, completion, parsed);
   if (parsed.ok && args.rewrite !== undefined) {
@@ -96,6 +99,7 @@ export function finishStepBatchRepair(
     stepDescriptors,
     thinkingOff,
   );
+  parsed = readForeignShapes(args, completion, parsed);
   parsed = admitRepairedJson(args, completion, parsed);
   if (parsed.ok) {
     const taken = policy.takeProgressNote(parsed.batch, completion);
@@ -158,13 +162,55 @@ export function finishStepBatchRepair(
 }
 
 /**
+ * A completion the server produced WITHOUT the grammar (ATO-1675) may
+ * carry a call in a shape our grammar never writes: llama.cpp's generic
+ * `{"tool_calls": [...]}` envelope or OpenAI `function` entries. Read
+ * those on such a completion only, after our own shape failed, so the
+ * grammar path and the native-tools salvage keep reading what they did.
+ * A batch this finds still passes `admitRepairedJson` like any other.
+ */
+function readForeignShapes(
+  args: Pick<StepBatchParsingArgs, "deps" | "prepared">,
+  completion: CompletionResult,
+  parsed: ToolCallBatchParseResult,
+): ToolCallBatchParseResult {
+  if (parsed.ok || completion.grammarSkipped !== true) return parsed;
+  const { profile } = args.deps;
+  try {
+    const batch = parseToolCalls(
+      normalizeContent(
+        completion,
+        profile,
+        completionAssumesOpenReasoning(profile, "grammar", args.prepared.thinkingOff),
+      ),
+      getReasoningTagOptions(profile),
+      { repairJson: true, foreignShapes: true },
+    );
+    return { ok: true, batch };
+  } catch {
+    return parsed;
+  }
+}
+
+/**
+ * Anything in a reply body that could be a call: a JSON opener, or a
+ * code fence (which may hold one). Prose with either is not admitted
+ * as a reply by `admitProseWithoutGrammar`.
+ */
+const CALL_LIKE = /[{[]|```/;
+
+/**
  * A completion the server produced WITHOUT the grammar (ATO-1675: it
  * refused ours, so the client stopped sending it) is free text, and
- * prose there is the model's answer, not a botched call: read it as a
- * `reply` at once, the way the native-tools path reads content that
- * carries no tool call, instead of spending a repair round-trip that,
- * with no grammar either, ends in the same prose. A body that opens a
- * JSON value still goes to repair (`replyFallbackBatch` returns null).
+ * plain prose there is the model's answer, not a botched call: read it
+ * as a `reply` at once, the way the native-tools path reads content
+ * that carries no tool call, instead of spending a repair round-trip
+ * that, with no grammar either, ends in the same prose.
+ *
+ * Only prose with nothing call-like anywhere in it (`CALL_LIKE`): a body
+ * that holds a JSON value or a fence after its prose may be a call that
+ * did not parse, or one `admitRepairedJson` refused, and goes to repair
+ * as before instead of showing raw JSON to the user.
  */
 function admitProseWithoutGrammar(
   args: Pick<StepBatchParsingArgs, "ctx" | "deps" | "assumesOpenReasoning">,
@@ -177,7 +223,8 @@ function admitProseWithoutGrammar(
     args.deps.profile,
     args.assumesOpenReasoning(completion),
   );
-  if (fallback === null) return parsed;
+  const text = fallback?.calls[0]?.args.text;
+  if (fallback === null || typeof text !== "string" || CALL_LIKE.test(text)) return parsed;
   args.deps.logger?.info("reading a reply served without the grammar", {
     sessionId: args.ctx.session.id,
     stepIndex: args.ctx.stepIndex,

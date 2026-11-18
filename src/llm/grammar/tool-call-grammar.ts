@@ -99,6 +99,14 @@ export interface ToolCallParseOptions {
    * the step, which can check the result against the registry, asks.
    */
   repairJson?: boolean;
+  /**
+   * Also read the call shapes a model writes when no grammar held it
+   * (`unwrapToolCallsEnvelope`, ATO-1675). Off by default: only the step
+   * asks, and only for a completion the server produced without our
+   * grammar (`CompletionResult.grammarSkipped`), so the grammar path and
+   * the native-tools content salvage read exactly what they read before.
+   */
+  foreignShapes?: boolean;
 }
 
 export class ToolCallParseError extends Error {
@@ -214,10 +222,12 @@ export function parseToolCalls(
   parseOptions: ToolCallParseOptions = {},
 ): ToolCallBatch {
   const extracted = extractReasoning(raw, options);
-  const repair: RepairState = { enabled: parseOptions.repairJson === true };
-  const { parsed, kind } = unwrapToolCallsEnvelope(
-    parseRoot(extracted.body, repair),
-  );
+  const repair: RepairState = {
+    enabled: parseOptions.repairJson === true,
+    foreignShapes: parseOptions.foreignShapes === true,
+  };
+  const root = parseRoot(extracted.body, repair);
+  const { parsed, kind } = repair.foreignShapes ? unwrapToolCallsEnvelope(root) : root;
 
   const reasoning = extracted.reasoning;
   const repaired = (): Pick<ToolCallBatch, "jsonRepair"> =>
@@ -267,6 +277,8 @@ export function parseToolCalls(
 interface RepairState {
   enabled: boolean;
   report?: JsonRepairReport;
+  /** `ToolCallParseOptions.foreignShapes`. */
+  foreignShapes?: boolean;
 }
 
 /**
@@ -280,7 +292,7 @@ function parseRoot(
 ): { parsed: unknown; kind: "object" | "array" } {
   let root: ExtractedRoot;
   try {
-    root = extractJsonRoot(body);
+    root = extractJsonRoot(body, repair.foreignShapes === true);
   } catch (error) {
     // No complete root at all (a truncated call): repair from the first
     // opener, if allowed and if that yields an object or an array.
@@ -362,7 +374,7 @@ function normalizeToolCall(
   entry: Record<string, unknown>,
   repair: RepairState = { enabled: false },
 ): ToolCallPayload {
-  const payload = unwrapFunctionEntry(entry);
+  const payload = repair.foreignShapes === true ? unwrapFunctionEntry(entry) : entry;
   const tool = readToolName(payload);
   if (tool.length === 0) {
     throw new ToolCallParseError(
@@ -506,7 +518,7 @@ function spanValue(span: RootSpan): { ok: boolean; value: unknown } {
  * Spans close in inner-to-outer order, so an enclosing array always
  * lands after its own entries and rule 1 keeps the whole batch.
  */
-function extractJsonRoot(raw: string): ExtractedRoot {
+function extractJsonRoot(raw: string, foreignShapes = false): ExtractedRoot {
   const input = raw.trim();
   if (input.length === 0) {
     throw new ToolCallParseError("tool-call body is empty");
@@ -522,7 +534,7 @@ function extractJsonRoot(raw: string): ExtractedRoot {
   for (let idx = eligible.length - 1; idx >= 0; idx -= 1) {
     const span = eligible[idx]!;
     const { ok, value } = spanValue(span);
-    if (ok && looksLikeToolCallRoot(value)) {
+    if (ok && looksLikeToolCallRoot(value, foreignShapes)) {
       return { jsonText: span.jsonText, kind: span.kind };
     }
   }
@@ -597,22 +609,25 @@ function collectRootSpans(input: string): {
 }
 
 /**
- * Shape gate: a call object, a non-empty array of call objects, or
- * llama.cpp's `{"tool_calls": [...]}` envelope of them
- * (`unwrapToolCallsEnvelope`).
+ * Shape gate: a call object or a non-empty array of call objects. With
+ * `foreignShapes`, also llama.cpp's `{"tool_calls": [...]}` envelope and
+ * OpenAI `function` entries (`unwrapToolCallsEnvelope`).
  */
-function looksLikeToolCallRoot(value: unknown): boolean {
+function looksLikeToolCallRoot(value: unknown, foreignShapes = false): boolean {
+  const isCall = (entry: unknown): boolean => isToolCallObject(entry, foreignShapes);
   if (Array.isArray(value)) {
-    return value.length > 0 && value.every(isToolCallObject);
+    return value.length > 0 && value.every(isCall);
   }
-  if (isToolCallObject(value)) return true;
+  if (isCall(value)) return true;
+  if (!foreignShapes) return false;
   const calls = asRecord(value)?.tool_calls;
-  return Array.isArray(calls) && calls.length > 0 && calls.every(isToolCallObject);
+  return Array.isArray(calls) && calls.length > 0 && calls.every(isCall);
 }
 
-function isToolCallObject(value: unknown): boolean {
+function isToolCallObject(value: unknown, foreignShapes = false): boolean {
   const record = asRecord(value);
-  return record !== null && hasOwnCallName(unwrapFunctionEntry(record));
+  if (record === null) return false;
+  return hasOwnCallName(foreignShapes ? unwrapFunctionEntry(record) : record);
 }
 
 function escapeRegex(text: string): string {

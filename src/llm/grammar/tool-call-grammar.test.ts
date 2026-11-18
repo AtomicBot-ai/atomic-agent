@@ -520,9 +520,13 @@ describe("parseToolCalls", () => {
 });
 
 describe("parseToolCalls on call shapes written without our grammar (ATO-1675)", () => {
+  const FOREIGN = { foreignShapes: true } as const;
+
   it("reads llama.cpp's generic {tool_calls: [...]} envelope as a batch", () => {
     const out = parseToolCalls(
       '{"tool_calls":[{"name":"fs.read","arguments":{"path":"a.txt"}},{"name":"fs.read","arguments":{"path":"b.txt"}}]}',
+      {},
+      FOREIGN,
     );
     expect(out.kind).toBe("batch");
     expect(out.calls).toEqual([
@@ -534,6 +538,8 @@ describe("parseToolCalls on call shapes written without our grammar (ATO-1675)",
   it("reads OpenAI {type, function: {name, arguments}} entries, arguments as a JSON string", () => {
     const out = parseToolCalls(
       '[{"id":"call_1","type":"function","function":{"name":"fs.read","arguments":"{\\"path\\":\\"a.txt\\"}"}}]',
+      {},
+      FOREIGN,
     );
     expect(out.calls).toEqual([{ tool: "fs.read", args: { path: "a.txt" } }]);
   });
@@ -541,6 +547,8 @@ describe("parseToolCalls on call shapes written without our grammar (ATO-1675)",
   it("finds an OpenAI-shaped call after prose and inside a code fence", () => {
     const out = parseToolCalls(
       'Sure, reading it now.\n```json\n{"tool_calls":[{"type":"function","function":{"name":"fs.read","arguments":"{}"}}]}\n```',
+      {},
+      FOREIGN,
     );
     expect(out.calls).toEqual([{ tool: "fs.read", args: {} }]);
   });
@@ -548,9 +556,20 @@ describe("parseToolCalls on call shapes written without our grammar (ATO-1675)",
   it("leaves our own shape untouched, even with a tool_calls or function argument", () => {
     const out = parseToolCalls(
       '[{"tool":"notes.save","args":{"tool_calls":[1],"function":{"name":"x"}}}]',
+      {},
+      FOREIGN,
     );
     expect(out.calls).toEqual([
       { tool: "notes.save", args: { tool_calls: [1], function: { name: "x" } } },
     ]);
+  });
+
+  it("reads neither shape unless asked: the grammar and native salvage paths are unchanged", () => {
+    expect(() =>
+      parseToolCalls('{"tool_calls":[{"name":"fs.read","arguments":{"path":"a.txt"}}]}'),
+    ).toThrow(ToolCallParseError);
+    expect(() =>
+      parseToolCalls('[{"type":"function","function":{"name":"fs.read","arguments":"{}"}}]'),
+    ).toThrow(ToolCallParseError);
   });
 });

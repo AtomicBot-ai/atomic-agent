@@ -1,6 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { LlamaServerClient, LlamaServerError } from "./llama-server-client.js";
 import { getConfig } from "../config/index.js";
+
+/** A Core session owns port 7777 here: the Core-key branch of `isManagedEngine`. */
+const CORE_PORT = "7777";
+vi.mock("../local-llm/core/core-state.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../local-llm/core/core-state.js")>()),
+  coreKeyForUrl: (_dataDir: string, url: string) =>
+    new URL(url).port === CORE_PORT ? "core-session-key" : null,
+}));
 
 /**
  * ATO-1675: an external llama server that refuses our GBNF grammar with a
@@ -42,11 +50,13 @@ function refusingServer(
   baseUrl: string,
   sent: Sent[],
   answer: () => Response = () => json({ content: "hello", stop: true }),
+  extra: ConstructorParameters<typeof LlamaServerClient>[0] = {},
 ): LlamaServerClient {
   return new LlamaServerClient({
     baseUrl,
     completionRetries: 1,
     progressWatch: false,
+    ...extra,
     fetchImpl: (async (_input: unknown, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as Sent;
       sent.push(body);
@@ -223,5 +233,69 @@ describe("LlamaServerClient on a grammar refusal (ATO-1675)", () => {
       drain(client.completeStream({ prompt: "p", grammar: "root ::= x" })),
     ).rejects.toBeInstanceOf(LlamaServerError);
     expect(sent).toHaveLength(1);
+  });
+
+  it("keeps the refusal of a server with a Core session key, on any port", async () => {
+    const sent: Sent[] = [];
+    const client = refusingServer(`http://127.0.0.1:${CORE_PORT}`, sent);
+    await expect(client.complete({ prompt: "p", grammar: "root ::= x" })).rejects.toMatchObject({
+      status: 400,
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("does not resend, nor remember, a refusal of a request the caller aborted", async () => {
+    const sent: Sent[] = [];
+    const controller = new AbortController();
+    const client = new LlamaServerClient({
+      baseUrl: EXTERNAL,
+      completionRetries: 1,
+      fetchImpl: (async (_input: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as Sent;
+        sent.push(body);
+        if ("grammar" in body) {
+          controller.abort();
+          return new Response(GRAMMAR_REFUSAL, { status: 400 });
+        }
+        return json({ content: "ok", stop: true });
+      }) as typeof fetch,
+    });
+    await expect(
+      client.complete({ prompt: "p", grammar: "root ::= x", signal: controller.signal }),
+    ).rejects.toBeInstanceOf(LlamaServerError);
+    expect(sent).toHaveLength(1);
+    sent.length = 0;
+    await client.complete({ prompt: "p", grammar: "root ::= x" }).catch(() => undefined);
+    expect(sent[0]).toHaveProperty("grammar");
+  });
+
+  it("streams: a resend that fails before any text gives back the grammar refusal", async () => {
+    const sent: Sent[] = [];
+    const client = refusingServer(EXTERNAL, sent, () => json({ error: "not found" }, 404));
+    await expect(
+      drain(client.completeStream({ prompt: "p", grammar: "root ::= x" })),
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("Failed to parse grammar"),
+    });
+    expect(sent).toHaveLength(2);
+  });
+
+  it("warns once with the port, never the server's words", async () => {
+    const warnings: Array<{ message: string; context?: Record<string, unknown> }> = [];
+    const sent: Sent[] = [];
+    const client = refusingServer(EXTERNAL, sent, undefined, {
+      logger: {
+        debug: () => {},
+        warn: (message: string, context?: Record<string, unknown>) => {
+          warnings.push({ message, ...(context ? { context } : {}) });
+        },
+      },
+    });
+    await client.complete({ prompt: "p", grammar: "root ::= x" });
+    await client.complete({ prompt: "p", grammar: "root ::= x" });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.context).toMatchObject({ status: 400, port: "8080", loopback: true });
+    expect(JSON.stringify(warnings)).not.toContain("Failed to parse");
   });
 });
