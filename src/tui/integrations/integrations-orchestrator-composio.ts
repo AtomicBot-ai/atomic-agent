@@ -90,6 +90,63 @@ export function applyComposioAccountField(
   }
 }
 
+/**
+ * Before an add is written: the typed `ca_…` id is looked up among the
+ * accounts Composio has signed in for this user. A pinned id Composio
+ * does not have makes the session create fail, and with it every
+ * Composio tool, so a miss is refused with a message and nothing is
+ * written. When Composio cannot be asked (no key, no user yet, offline)
+ * the add still goes through and the returned note says it was not
+ * checked. Returns null when the id was found, or when the input is not
+ * a well-formed add (`applyComposioAccountField` reports that).
+ */
+export async function checkComposioAccountToAdd(
+  value: string,
+  deps: ComposioAccountsListDeps,
+): Promise<string | null> {
+  const args = value.trim().split(/\s+/).filter((w) => w.length > 0 && !w.startsWith("--"));
+  if (args.length !== 3) return null;
+  const toolkit = args[0]!.toLowerCase();
+  const id = args[2]!;
+  const apiKey = resolveComposioApiKey({
+    apiKeyEnv: deps.composio.apiKeyEnv,
+    ...(deps.env === undefined ? {} : { env: deps.env }),
+  });
+  if (apiKey === undefined) return "no API key";
+  if (!deps.composio.userId) return "no app connected yet";
+  let connected: ComposioConnectedAccount[];
+  try {
+    connected = await (deps.listConnected ?? listComposioConnectedAccounts)({ apiKey, userId: deps.composio.userId });
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+  const found = connected.find((c) => c.id === id);
+  if (!found) {
+    throw new IntegrationSecretError(`Composio has no signed-in account ${id}. Press a to see the ids it has`);
+  }
+  if (found.toolkit !== toolkit) {
+    throw new IntegrationSecretError(`${id} is a ${found.toolkit} account on Composio, not ${toolkit}`);
+  }
+  return null;
+}
+
+/** An add that went through without the Composio check. */
+export function uncheckedAccountMessage(message: string, why: string): string {
+  return `${message} (not checked with Composio: ${why})`;
+}
+
+/**
+ * The pane's error when Composio did not come back after an account
+ * edit: its tools are off now, and the line says how to get them back.
+ */
+export function composioRemountFailedMessage(message: string, value: string): string {
+  const words = value.trim().split(/\s+/).filter((w) => w.length > 0 && !w.startsWith("--"));
+  const toolkit = (words[0] ?? "<app>").toLowerCase();
+  const alias = words[1] ?? "<name>";
+  return `${message}, but Composio did not start with it, so its tools are off. ` +
+    `Type "${toolkit} none" in Default account or "${toolkit} ${alias}" in Remove account to get them back`;
+}
+
 export interface ComposioAccountsListDeps {
   composio: Pick<ComposioConfig, "accounts" | "apiKeyEnv" | "userId">;
   env?: NodeJS.ProcessEnv;
