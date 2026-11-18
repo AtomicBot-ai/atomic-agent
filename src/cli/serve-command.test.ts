@@ -92,6 +92,17 @@ describe("what serve hands the runtime", () => {
     }
   });
 
+  // ATO-1492: a server's question to the person has its own port, so
+  // the approval ladder can never answer it. With no window showing it,
+  // nobody is there and the question is declined at once.
+  it("an MCP elicitation port that says nobody is there until a window attaches", async () => {
+    const { handlers } = await serveBootOptions();
+    const port = handlers?.onMcpElicitation;
+    expect(port).toBeDefined();
+    const surface = typeof port!.surface === "function" ? port!.surface() : port!.surface;
+    expect(surface).toBe("none");
+  });
+
   // Under the desktop, a host that died leaves stderr a dead pipe, and
   // the next log line exited the process before its teardown ran (the
   // port, the session store's turn ends, the serve record). Muted, the

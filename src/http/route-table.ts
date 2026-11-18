@@ -18,6 +18,10 @@ import { createModelTiersHandler } from "./route-model-tiers.js";
 import { createModelsHandler } from "./route-models.js";
 import { createCapabilitiesHandler } from "./route-capabilities.js";
 import {
+  createAnswerMcpElicitationHandler,
+  createListMcpElicitationsHandler,
+} from "./route-mcp-elicitation.js";
+import {
   createGetConfigHandler,
   createPatchConfigHandler,
   createPutConfigHandler,
@@ -314,6 +318,10 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     },
     // ATO-489: the answer to an `ask_user` question shown from /api/events.
     { method: "POST", path: "/api/question/answer", handler: createAnswerQuestionHandler() },
+    // ATO-1492: an MCP server's question to the person, shown from
+    // /api/events?elicitation=1. Never through the approval routes.
+    { method: "GET", path: "/api/mcp/elicitation", handler: createListMcpElicitationsHandler() },
+    { method: "POST", path: "/api/mcp/elicitation/answer", handler: createAnswerMcpElicitationHandler() },
     // ATO-1141: saved "always allow" / ask / deny rules.
     { method: "GET", path: "/api/approval-rules", handler: createListApprovalRulesHandler() },
     { method: "DELETE", path: "/api/approval-rules/{id}", handler: createDeleteApprovalRuleHandler() },

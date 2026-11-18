@@ -7,6 +7,7 @@ import {
 import type { Socket } from "node:net";
 
 import type { AgentRuntime } from "../runtime/bootstrap.js";
+import type { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
 import { openaiError } from "./openai-errors.js";
@@ -53,6 +54,8 @@ export interface HttpServerOptions {
   approvalBus?: ApprovalBus;
   completionRegistry?: CompletionRegistry;
   undeliveredSteers?: UndeliveredSteerStore;
+  /** ATO-1492: the broker the runtime got as `onMcpElicitation`, if any. */
+  elicitations?: McpElicitationBroker;
   /**
    * The keyless loopback guard (ATO-1495). On by default. Only the
    * webhook tunnel gateway (ATO-625) turns it off: cloudflared sends the
@@ -154,6 +157,7 @@ export function createHttpServer(
         approvalBus,
         completionRegistry,
         undeliveredSteers,
+        ...(options.elicitations ? { elicitations: options.elicitations } : {}),
       }, options.loopbackGuard ?? true);
     } catch (err) {
       handleRouteError(res, err);

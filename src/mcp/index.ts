@@ -49,6 +49,17 @@ export type {
   McpElicitationResult,
   McpElicitationSurface,
 } from "./mcp-elicitation-handler.js";
+export {
+  McpElicitationBroker,
+  DEFAULT_ELICITATION_DETACH_GRACE_MS,
+} from "./mcp-elicitation-broker.js";
+export type {
+  McpElicitationAnswerResult,
+  McpElicitationBrokerEvent,
+  McpElicitationCloseReason,
+  McpElicitationPresenter,
+  PendingMcpElicitation,
+} from "./mcp-elicitation-broker.js";
 export type {
   McpElicitationField,
   McpElicitationOption,
