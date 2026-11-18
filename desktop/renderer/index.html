@@ -31,6 +31,7 @@
 <link rel="stylesheet" href="css/onboarding.css">
 <link rel="stylesheet" href="css/settings.css">
 <link rel="stylesheet" href="css/my-files.css">
+<link rel="stylesheet" href="css/citation-chip.css">
 <link rel="stylesheet" href="css/settings-data.css">
 <link rel="stylesheet" href="css/trace-view.css">
 <link rel="stylesheet" href="css/memory-graph.css">
@@ -204,6 +205,8 @@
 <script src="vendor/marked.js"></script>
 <script src="vendor/purify.js"></script>
 <!-- ATO-1251: the reply's markdown blocks (renderMarkdown hands its text here). -->
+<!-- ATO-1628: citation chips (`file://…#page=N`) in a reply; md-render.js asks it for one. -->
+<script src="citation-chip.js"></script>
 <script src="md-render.js"></script>
 <!-- ATO-1140: formulas and Mermaid diagrams; KaTeX and Mermaid themselves load on first use. -->
 <script src="rich-blocks.js"></script>
