@@ -549,3 +549,132 @@ describe("subagent.run writes (ATO-1670)", () => {
     expect(SUBAGENT_OPERATOR_ONLY_REFUSED).not.toContain("orchestrator");
   });
 });
+
+describe("subagent.run under the turn's spend ceiling (ATO-1670)", () => {
+  /** A turn's spend seam: a ceiling and a running total tools add to. */
+  function spend(ceilingUsd: number, startUsd = 0) {
+    let spent = startUsd;
+    return {
+      seam: {
+        ceilingUsd,
+        spentUsd: () => spent,
+        add: (usd: number) => {
+          if (Number.isFinite(usd) && usd > 0) spent += usd;
+        },
+      },
+      spent: () => spent,
+    };
+  }
+
+  /** $1 per million tokens either way: a completion of 1M prompt tokens costs $1. */
+  const PRICE = { input: 1, output: 1 };
+  const USAGE_1_USD = { promptTokens: 1_000_000, completionTokens: 0, totalTokens: 1_000_000 };
+
+  /** A child turn that bills $1, then ends cancelled if its signal was stopped. */
+  const billingRunTurn =
+    (calls: string[]): SubagentRunDeps["runTurn"] =>
+    async (session, _message, options) => {
+      calls.push(session.id);
+      options.eventHook?.({ type: "turn_started", turnIndex: 0 });
+      options.eventHook?.({
+        type: "llm_event",
+        event: { type: "llm_completed", completion: { usage: USAGE_1_USD } },
+      } as unknown as AgentLoopEvent);
+      const stopped = options.signal?.aborted === true;
+      if (!stopped) {
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "done" },
+        });
+      }
+      return {
+        session: createEmptySessionState({ id: "s-x", workingDir: "/repo" }),
+        reason: stopped ? "cancelled" : "reply",
+        stepCount: 1,
+      };
+    };
+
+  const threeTasks = {
+    tasks: [
+      { id: "a", instructions: "Do a." },
+      { id: "b", instructions: "Do b." },
+      { id: "c", instructions: "Do c." },
+    ],
+  };
+
+  type Row = { id: string; status: string; error?: string; notes?: string[] };
+  const rowsOf = (details: unknown): Row[] => (details as { tasks: Row[] }).tasks;
+
+  it("starts no subagent once the ceiling is reached, and the rows say the budget stopped them", async () => {
+    const calls: string[] = [];
+    const { deps } = harness({ runTurn: billingRunTurn(calls), resolveWorkerPricing: () => PRICE });
+    const ledger = spend(1, 1);
+    const result = await buildSubagentRunTool(deps).run(threeTasks, ctx({ turnSpend: ledger.seam }));
+    expect(calls).toHaveLength(0);
+    const rows = rowsOf(result.details);
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      expect(row.status).toBe("cancelled");
+      expect(row.error).toBe(
+        "not started: the spend budget for this task is reached: $1.00 spent of the $1.00 allowed",
+      );
+    }
+    expect(result.details).toMatchObject({ stoppedBy: "cost-ceiling" });
+  });
+
+  it("stops the running subagent and starts no more when the ceiling is reached mid-run", async () => {
+    const calls: string[] = [];
+    const { deps } = harness({
+      runTurn: billingRunTurn(calls),
+      resolveWorkerPricing: () => PRICE,
+      // A local leg runs one at a time, so the order is fixed.
+      workerSupportsSlotAffinity: () => true,
+    });
+    const ledger = spend(1.5);
+    const result = await buildSubagentRunTool(deps).run(threeTasks, ctx({ turnSpend: ledger.seam }));
+    // a bills $1 (under), b bills $1 (over: stopped), c never starts.
+    expect(calls).toHaveLength(2);
+    const [a, b, c] = rowsOf(result.details);
+    expect(a!.status).toBe("ok");
+    expect(b!.status).toBe("cancelled");
+    expect(b!.notes?.some((n) => n.startsWith("stopped by the turn's cap: the spend budget for this task is reached"))).toBe(true);
+    expect(c!.status).toBe("cancelled");
+    expect(c!.error).toBe(
+      "not started: the spend budget for this task is reached: $2.00 spent of the $1.50 allowed",
+    );
+  });
+
+  it("adds each subagent's priced spend to the turn's spend", async () => {
+    const calls: string[] = [];
+    const { deps } = harness({ runTurn: billingRunTurn(calls), resolveWorkerPricing: () => PRICE });
+    const ledger = spend(100, 0.5);
+    const result = await buildSubagentRunTool(deps).run(
+      { tasks: [{ id: "a", instructions: "Do a." }, { id: "b", instructions: "Do b." }] },
+      ctx({ turnSpend: ledger.seam }),
+    );
+    expect(result.status).toBe("ok");
+    expect(ledger.spent()).toBeCloseTo(2.5);
+  });
+
+  it("counts an unpriced leg (a local model) as $0, as Fusion does", async () => {
+    const calls: string[] = [];
+    const { deps } = harness({ runTurn: billingRunTurn(calls), resolveWorkerPricing: () => undefined });
+    const ledger = spend(1);
+    await buildSubagentRunTool(deps).run(threeTasks, ctx({ turnSpend: ledger.seam }));
+    expect(calls).toHaveLength(3);
+    expect(ledger.spent()).toBe(0);
+  });
+
+  it("changes nothing without a ceiling: every subagent runs and no row says it was stopped", async () => {
+    const calls: string[] = [];
+    const { deps } = harness({ runTurn: billingRunTurn(calls), resolveWorkerPricing: () => PRICE });
+    const result = await buildSubagentRunTool(deps).run(threeTasks, ctx());
+    expect(calls).toHaveLength(3);
+    for (const row of rowsOf(result.details)) {
+      expect(row.status).toBe("ok");
+      expect(row.error).toBeUndefined();
+      expect((row.notes ?? []).some((n) => n.includes("stopped by the turn's cap"))).toBe(false);
+    }
+    expect(result.details).not.toHaveProperty("stoppedBy");
+  });
+});

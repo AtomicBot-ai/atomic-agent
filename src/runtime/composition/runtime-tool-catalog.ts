@@ -1083,6 +1083,10 @@ export function registerRuntimeFusionAndReadScope(input: {
       // Declared `files` are asked about once per call, as a fan-out is.
       approvalRequired: dangerous.approvalRequired,
       agentStateDir: config.paths.stateDir,
+      // Prices subagent completions under the turn's spend ceiling, the
+      // same resolver fusion.delegate's workers are priced with.
+      resolveWorkerPricing: (providerId, modelId) =>
+        resolveModelPricingFor(resolveLlmConfig(getConfig()), modelId, providerId)?.pricing,
       // The same profile loader fusion.delegate is given.
       resolveAgentProfiles: (dir) =>
         loadAgentProfiles({
