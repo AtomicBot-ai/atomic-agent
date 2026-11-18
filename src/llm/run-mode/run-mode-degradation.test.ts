@@ -42,4 +42,13 @@ describe("describeRunModeDegradation", () => {
       expect(line).toContain("answers come from the local model");
     }
   });
+
+  it("names the missing second provider without an em dash (ATO-1515)", () => {
+    const line = describeRunModeDegradation({
+      reason: "no-second-provider",
+      requested: "fusion",
+    });
+    expect(line).not.toContain("\u2014");
+    expect(line).toContain("two providers: one to orchestrate");
+  });
 });
