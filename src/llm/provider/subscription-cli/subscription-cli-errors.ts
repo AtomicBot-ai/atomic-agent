@@ -276,10 +276,60 @@ export function mapCliFailure(input: CliFailureInput): Error {
   return new SubscriptionCliInvocationError(
     `"${input.binary}" exited with code ${input.exitCode ?? "null"}: ${
       detail || "no output"
-    }`,
+    }${exitHint(input.binary, combined)}`,
     input.exitCode,
     "exited",
   );
+}
+
+/**
+ * The CLI refused one of our flags: an older Claude Code or Codex that
+ * predates `--tools ""`, `--strict-mcp-config`, `--json-schema` and the
+ * like. Commander says "unknown option '--x'", clap says "unexpected
+ * argument '--x' found" or "error: unrecognized ...". Mirrored as the
+ * `unknown_option` reason in `src/error-reporting/subscription-cli-failure-tag.ts`.
+ */
+const UNKNOWN_OPTION_PATTERNS = [
+  /\bunknown option\b/i,
+  /\bunexpected argument\b/i,
+  /\berror: unrecognized\b/i,
+];
+
+/**
+ * Older Claude Code on Windows exits 1 without Git for Windows: "Claude
+ * Code on Windows requires git-bash ... CLAUDE_CODE_GIT_BASH_PATH".
+ * Mirrored as the `git_bash_missing` reason in
+ * `src/error-reporting/subscription-cli-failure-tag.ts`.
+ */
+const GIT_BASH_PATTERNS = [/\brequires git-bash\b/i, /\bCLAUDE_CODE_GIT_BASH_PATH\b/];
+
+/** `claude` or `codex` from a path such as `C:\...\npm\claude.cmd`, else `null`. */
+function knownCli(binary: string): "claude" | "codex" | null {
+  const base = binary.split(/[\\/]/).pop() ?? binary;
+  const name = base.replace(/\.(?:cmd|bat|exe|ps1|js|mjs)$/i, "").toLowerCase();
+  return name === "claude" || name === "codex" ? name : null;
+}
+
+/**
+ * A plain-words next step appended to an `exited` message for the two
+ * failures the person can fix on their own. Empty for anything else, so
+ * the CLI's own text stays the whole explanation.
+ */
+function exitHint(binary: string, text: string): string {
+  if (GIT_BASH_PATTERNS.some((re) => re.test(text))) {
+    return " Claude Code on Windows needs Git for Windows (git-bash). Install it from https://git-scm.com/downloads/win or set CLAUDE_CODE_GIT_BASH_PATH to your bash.exe, then restart Atomic Agent.";
+  }
+  if (UNKNOWN_OPTION_PATTERNS.some((re) => re.test(text))) {
+    const cli = knownCli(binary);
+    if (cli === "claude") {
+      return " Your Claude Code may be older than this version of Atomic Agent needs; update it with `claude update` and retry.";
+    }
+    if (cli === "codex") {
+      return " Your Codex may be older than this version of Atomic Agent needs; update it with `npm install -g @openai/codex@latest` and retry.";
+    }
+    return ` Your "${binary}" may be older than this version of Atomic Agent needs; update it (for Claude Code: \`claude update\`; for Codex: \`npm install -g @openai/codex@latest\`) and retry.`;
+  }
+  return "";
 }
 
 /**
