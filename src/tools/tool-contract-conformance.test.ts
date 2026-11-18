@@ -318,7 +318,7 @@ beforeAll(() => {
   registerAudioTools(registry, { ...dangerous, dataDir: () => directory });
   registry.register(buildFusionDelegateTool({ ...dangerous, slotManager: { poolSize: () => 1 }, resolveRunMode: unexpected, workerSupportsSlotAffinity: () => false, warmWorkerBackend: async () => unexpected(), outputCharCap: 1000, logger: new StructuredLogger({ level: "error", sinks: [] }), runTurn: async () => unexpected(), createEphemeralSession: unexpected, emitEvent: unexpected, workingDir: directory }));
   // Runtime registers it beside fusion.delegate (runtime-tool-catalog, ATO-1670).
-  registry.register(buildSubagentRunTool({ approvals: dangerous.approvals, resolveRunMode: unexpected, resolveSessionLeg: unexpected, workerSupportsSlotAffinity: () => false, outputCharCap: 1000, runTurn: async () => unexpected(), createEphemeralSession: unexpected, emitEvent: unexpected, workingDir: directory }));
+  registry.register(buildSubagentRunTool({ approvals: dangerous.approvals, approvalRequired: true, resolveRunMode: unexpected, resolveSessionLeg: unexpected, workerSupportsSlotAffinity: () => false, outputCharCap: 1000, runTurn: async () => unexpected(), createEphemeralSession: unexpected, emitEvent: unexpected, workingDir: directory }));
   manager = new McpManager([], { toolRegistry: registry });
   for (const definition of [buildMcpResourceListTool(manager), buildMcpResourceReadTool(manager), buildMcpPromptListTool(manager), buildMcpPromptGetTool(manager)]) registry.register(definition);
 });

@@ -971,6 +971,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
               instructions: stringSchema,
               profile: stringSchema,
               deliverable: stringSchema,
+              files: stringArraySchema,
             },
             ["id", "instructions"],
           ),

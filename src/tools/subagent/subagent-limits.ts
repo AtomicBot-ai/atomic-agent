@@ -54,26 +54,60 @@ export function callerDepth(
     : stamped;
 }
 
+/** Where a call sits: its turn (when the loop names it) and its step. */
+export interface SubagentTurnPosition {
+  /** `ToolContext.turnId`: one value per agent turn. */
+  turnId?: string;
+  /** `ToolContext.stepIndex`. */
+  stepIndex: number;
+}
+
 /**
- * Subagents started per turn, per session. A tool sees no turn boundary,
- * only the step index, which restarts at 0 each turn; the tool runs solo,
- * so within one turn every call has a higher step index than the last.
- * A step index at or below the last one seen therefore starts a new turn.
+ * Subagents started per turn, per session. Keyed on the turn id the agent
+ * loop hands every call (`ToolContext.turnId`): a call in another turn
+ * starts from 0. Only a call without a turn id (outside the agent loop)
+ * falls back to step edges: the step index restarts at 0 each turn and
+ * the tool runs solo, so a step at or below the last one seen is a new
+ * turn. Bounded: one entry per session (a new turn replaces the old
+ * one), and past `maxSessions` sessions the oldest is forgotten.
  */
 export class SubagentTurnLedger {
-  private readonly bySession = new Map<string, { step: number; children: number }>();
+  private readonly bySession = new Map<
+    string,
+    { turnId: string | undefined; step: number; children: number }
+  >();
+
+  constructor(private readonly maxSessions = 256) {}
 
   /** Children already started this turn on `sessionId`. */
-  childrenThisTurn(sessionId: string, stepIndex: number): number {
+  childrenThisTurn(sessionId: string, at: SubagentTurnPosition): number {
     const seen = this.bySession.get(sessionId);
-    if (seen === undefined || stepIndex <= seen.step) return 0;
-    return seen.children;
+    if (seen === undefined) return 0;
+    if (at.turnId !== undefined || seen.turnId !== undefined) {
+      return at.turnId === seen.turnId ? seen.children : 0;
+    }
+    return at.stepIndex <= seen.step ? 0 : seen.children;
   }
 
   /** Count `count` children starting now. */
-  record(sessionId: string, stepIndex: number, count: number): void {
-    const before = this.childrenThisTurn(sessionId, stepIndex);
-    this.bySession.set(sessionId, { step: stepIndex, children: before + count });
+  record(sessionId: string, at: SubagentTurnPosition, count: number): void {
+    const before = this.childrenThisTurn(sessionId, at);
+    this.bySession.delete(sessionId);
+    this.bySession.set(sessionId, {
+      turnId: at.turnId,
+      step: at.stepIndex,
+      children: before + count,
+    });
+    while (this.bySession.size > this.maxSessions) {
+      const oldest = this.bySession.keys().next().value;
+      if (oldest === undefined) break;
+      this.bySession.delete(oldest);
+    }
+  }
+
+  /** Sessions tracked now (for tests of the bound). */
+  get size(): number {
+    return this.bySession.size;
   }
 }
 
@@ -83,6 +117,11 @@ export class SubagentTurnLedger {
  * stored, so nothing else can answer for them. Bounded: past `max`
  * entries the oldest is forgotten, which only falls back to the id
  * prefix check in `callerDepth`, never to depth 0 for a worker.
+ *
+ * With `SUBAGENT_MAX_DEPTH` at 1 this changes no outcome yet: every
+ * minted worker id carries the `s-w-` prefix, so the prefix check alone
+ * already refuses it. The stamp only decides once the maximum depth is
+ * above 1, where a depth-1 child may call and a depth-2 one may not.
  */
 export class MintedSessionMetadata {
   private readonly byId = new Map<string, Record<string, unknown>>();

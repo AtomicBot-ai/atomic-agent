@@ -1,4 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  ApprovalGate,
+  type ApprovalRequest,
+} from "../../approval/approval-gate.js";
+import { ApprovalDeniedError } from "../../approval/dangerous-tool.js";
+import { requireFsApproval } from "../os/fs/fs-require-approval.js";
 
 import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-loop.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
@@ -19,6 +29,11 @@ import {
   buildSubagentRunTool,
   type SubagentRunDeps,
 } from "./index.js";
+import {
+  SUBAGENT_APPROVAL_REFUSED,
+  SUBAGENT_OPERATOR_ONLY_REFUSED,
+  subagentRefusalFor,
+} from "./subagent-run.js";
 
 type RunTurnCall = {
   session: SessionState;
@@ -72,6 +87,7 @@ function harness(over: Partial<SubagentRunDeps> = {}): {
       model: "session-model",
     }),
     workerSupportsSlotAffinity: () => false,
+    approvalRequired: false,
     outputCharCap: 8_000,
     ...over,
   };
@@ -187,6 +203,26 @@ describe("subagent.run from a real session (ATO-1670)", () => {
     expect(calls[0]!.options.providerId).toBe("pinned-provider");
   });
 
+  it("runs on the turn's own model when the turn asked its link for one, and the row names it", async () => {
+    // The desktop's per-project model reaches the turn as
+    // runTurn({ providerId, model }); the link's default is another.
+    const { deps, calls } = harness({
+      resolveSessionLeg: (pinned) => ({
+        providerId: pinned ?? "session-provider",
+        model: "default-model",
+      }),
+    });
+    const result = await buildSubagentRunTool(deps).run(
+      ONE_TASK,
+      ctx({ providerId: "cloud-x", model: "project-model" }),
+    );
+    expect(result.status).toBe("ok");
+    expect(calls[0]!.options.providerId).toBe("cloud-x");
+    expect(calls[0]!.options.model).toBe("project-model");
+    const rows = (result.details as { tasks: Array<{ model?: string }> }).tasks;
+    expect(rows[0]!.model).toBe("project-model");
+  });
+
   it("refuses in Fusion mode and points at fusion.delegate", async () => {
     const { deps, calls } = harness({
       resolveRunMode: () => mode({ effective: "fusion" }),
@@ -236,11 +272,15 @@ describe("subagent.run child limits (ATO-1670)", () => {
 
   it("refuses a call that would take the turn over the per-turn cap, and counts afresh next turn", async () => {
     const turnLedger = new SubagentTurnLedger();
-    turnLedger.record("s-operator", 1, SUBAGENT_MAX_CHILDREN_PER_TURN - 2);
+    turnLedger.record(
+      "s-operator",
+      { turnId: "turn-1", stepIndex: 1 },
+      SUBAGENT_MAX_CHILDREN_PER_TURN - 2,
+    );
     const { deps, calls } = harness({ turnLedger });
     const tool = buildSubagentRunTool(deps);
 
-    const over = await tool.run({ tasks: tasks(3) }, ctx({ stepIndex: 2 }));
+    const over = await tool.run({ tasks: tasks(3) }, ctx({ turnId: "turn-1", stepIndex: 2 }));
     expect(over.status).toBe("error");
     expect(over.details).toMatchObject({
       reason: "children-per-turn",
@@ -250,17 +290,35 @@ describe("subagent.run child limits (ATO-1670)", () => {
     expect(calls).toHaveLength(0);
 
     // Two still fit this turn.
-    const fits = await tool.run({ tasks: tasks(2) }, ctx({ stepIndex: 3 }));
+    const fits = await tool.run({ tasks: tasks(2) }, ctx({ turnId: "turn-1", stepIndex: 3 }));
     expect(fits.status).toBe("ok");
     expect(calls).toHaveLength(2);
-    expect(turnLedger.childrenThisTurn("s-operator", 4)).toBe(
-      SUBAGENT_MAX_CHILDREN_PER_TURN,
-    );
+    expect(
+      turnLedger.childrenThisTurn("s-operator", { turnId: "turn-1", stepIndex: 4 }),
+    ).toBe(SUBAGENT_MAX_CHILDREN_PER_TURN);
 
-    // A step index back at the start is the next turn: the count restarts.
-    const nextTurn = await tool.run({ tasks: tasks(3, "n") }, ctx({ stepIndex: 0 }));
+    // The next turn counts afresh, even though its first call lands at
+    // a higher step than the last call of the turn before.
+    const nextTurn = await tool.run(
+      { tasks: tasks(3, "n") },
+      ctx({ turnId: "turn-2", stepIndex: 5 }),
+    );
     expect(nextTurn.status).toBe("ok");
     expect(calls).toHaveLength(5);
+  });
+
+  it("does not carry a turn's count into the next turn whose first call is at a higher step", async () => {
+    // Turn 1 called at step 0; turn 2's first call is at step 1. Read
+    // from step edges alone that is one turn, and the call is refused.
+    const turnLedger = new SubagentTurnLedger();
+    turnLedger.record("s-operator", { turnId: "turn-1", stepIndex: 0 }, SUBAGENT_MAX_CHILDREN_PER_TURN);
+    const { deps, calls } = harness({ turnLedger });
+    const result = await buildSubagentRunTool(deps).run(
+      ONE_TASK,
+      ctx({ turnId: "turn-2", stepIndex: 1 }),
+    );
+    expect(result.status).toBe("ok");
+    expect(calls).toHaveLength(1);
   });
 });
 
@@ -325,5 +383,145 @@ describe("subagent.run profiles (ATO-1670)", () => {
     expect(result.summary).toContain('profile "nope"');
     expect(result.summary).toContain("`explore`");
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("subagent.run writes (ATO-1670)", () => {
+  function gateApproving(): { gate: ApprovalGate; prompts: ApprovalRequest[] } {
+    const prompts: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      level: 1,
+      emit: (req) => {
+        prompts.push(req);
+        queueMicrotask(() => gate.resolve({ approvalId: req.approvalId, approved: true }));
+      },
+    });
+    return { gate, prompts };
+  }
+
+  /** What a subagent's write of `path` gets from the gate, as `os.fs.write` asks. */
+  const writeAs = async (
+    gate: ApprovalGate,
+    sessionId: string,
+    workingDir: string,
+    path: string,
+  ): Promise<string> => {
+    try {
+      await requireFsApproval(
+        { approvals: gate, approvalRequired: true },
+        { kind: "write", paths: [path], sessionId, tool: "os.fs.write", reason: `write ${path}`, workingDir },
+        new AbortController().signal,
+      );
+      return "written";
+    } catch (err) {
+      return err instanceof ApprovalDeniedError ? (err.reason ?? err.message) : String(err);
+    }
+  };
+
+  it("asks the person once for declared files at level 1, then lets the subagents write there", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "subagent-writes-"));
+    const elsewhere = mkdtempSync(join(tmpdir(), "subagent-elsewhere-"));
+    try {
+      mkdirSync(join(repo, "src"));
+      const { gate, prompts } = gateApproving();
+      const writes: string[] = [];
+      const { deps } = harness({
+        approvals: gate,
+        approvalRequired: true,
+        workingDir: repo,
+        runTurn: async (session) => {
+          writes.push(await writeAs(gate, session.id, repo, join(repo, "src", "a.ts")));
+          writes.push(await writeAs(gate, session.id, repo, join(elsewhere, "b.ts")));
+          return {
+            session: createEmptySessionState({ id: "s-x", workingDir: repo }),
+            reason: "reply",
+            stepCount: 1,
+          };
+        },
+      });
+      const result = await buildSubagentRunTool(deps).run(
+        {
+          tasks: [
+            { id: "fix_a", instructions: "Fix the bug in src/a.ts.", files: ["src/a.ts"] },
+            { id: "fix_c", instructions: "Fix the bug in src/c.ts.", files: ["src/c.ts"] },
+          ],
+        },
+        ctx({ workingDir: repo }),
+      );
+      expect(result.status).not.toBe("error");
+      // One question for the whole call, under the fan-out category.
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toMatchObject({ tool: "subagent.run", category: "fusion_fanout" });
+      // Inside the declared directory: written unasked. Outside: refused
+      // with the subagent's own text, which names no orchestrator.
+      expect(writes.filter((w) => w === "written")).toHaveLength(2);
+      const refused = writes.filter((w) => w !== "written");
+      expect(refused).toHaveLength(2);
+      for (const text of refused) {
+        expect(text).toBe(SUBAGENT_APPROVAL_REFUSED);
+        expect(text).not.toContain("orchestrator");
+        expect(text).toContain("`files`");
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  it("asks nothing without declared files, and a subagent's write is refused with its own text", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "subagent-nofiles-"));
+    try {
+      const { gate, prompts } = gateApproving();
+      const writes: string[] = [];
+      const { deps } = harness({
+        approvals: gate,
+        approvalRequired: true,
+        workingDir: repo,
+        runTurn: async (session) => {
+          writes.push(await writeAs(gate, session.id, repo, join(repo, "a.ts")));
+          return {
+            session: createEmptySessionState({ id: "s-x", workingDir: repo }),
+            reason: "reply",
+            stepCount: 1,
+          };
+        },
+      });
+      await buildSubagentRunTool(deps).run(ONE_TASK, ctx({ workingDir: repo }));
+      expect(prompts).toHaveLength(0);
+      expect(writes).toEqual([SUBAGENT_APPROVAL_REFUSED]);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("does not start a subagent when the person declines the declared files", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "subagent-declined-"));
+    try {
+      const prompts: ApprovalRequest[] = [];
+      const gate: ApprovalGate = new ApprovalGate({
+        level: 1,
+        emit: (req) => {
+          prompts.push(req);
+          queueMicrotask(() => gate.resolve({ approvalId: req.approvalId, approved: false }));
+        },
+      });
+      const { deps, calls } = harness({ approvals: gate, approvalRequired: true, workingDir: repo });
+      const result = await buildSubagentRunTool(deps).run(
+        { tasks: [{ id: "fix", instructions: "Fix a.ts.", files: ["a.ts"] }] },
+        ctx({ workingDir: repo }),
+      );
+      expect(prompts).toHaveLength(1);
+      expect(result.status).toBe("error");
+      expect(result.details).toMatchObject({ reason: "writes-denied", deniedByUser: true });
+      expect(calls).toHaveLength(0);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the operator-only refusal for steps no declared file can authorise", () => {
+    expect(subagentRefusalFor({ category: "shell_dangerous" })).toBe(SUBAGENT_OPERATOR_ONLY_REFUSED);
+    expect(subagentRefusalFor({ category: "fs_write_workspace" })).toBeUndefined();
+    expect(SUBAGENT_OPERATOR_ONLY_REFUSED).not.toContain("orchestrator");
   });
 });

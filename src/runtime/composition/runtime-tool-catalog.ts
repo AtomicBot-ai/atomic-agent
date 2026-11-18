@@ -1080,6 +1080,9 @@ export function registerRuntimeFusionAndReadScope(input: {
       workerSupportsSlotAffinity: (providerId) =>
         providerRegistry.getProvider(providerId)?.capabilities
           .supportsSlotAffinity ?? false,
+      // Declared `files` are asked about once per call, as a fan-out is.
+      approvalRequired: dangerous.approvalRequired,
+      agentStateDir: config.paths.stateDir,
       // The same profile loader fusion.delegate is given.
       resolveAgentProfiles: (dir) =>
         loadAgentProfiles({

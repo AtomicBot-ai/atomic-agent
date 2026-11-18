@@ -3,7 +3,7 @@ import { SUBAGENT_MAX_CHILDREN_PER_CALL } from "./subagent-limits.js";
 
 /**
  * `subagent.run` args (ATO-1670): `{ tasks: [{ id, instructions, title?,
- * profile?, deliverable? }] }`. The tasks go through `parseDelegateArgs`,
+ * profile?, deliverable?, files? }] }`. The tasks go through `parseDelegateArgs`,
  * the parser `fusion.delegate` uses, so a task is held to the same
  * checks (unique ids, brief length); on top of that only the keys this
  * tool teaches are accepted, and at most
@@ -16,7 +16,22 @@ const TASK_KEYS: ReadonlySet<string> = new Set([
   "instructions",
   "profile",
   "deliverable",
+  "files",
 ]);
+
+/**
+ * `tasks` as the parser will read it: a JSON string becomes what it
+ * parses to, exactly as `parseDelegateArgs` reads one, so the key check
+ * below sees the same array the parser does.
+ */
+function readTasks(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
 
 export type ParsedSubagentArgs =
   | { ok: true; tasks: DelegateTask[] }
@@ -32,21 +47,22 @@ export function parseSubagentArgs(
       `unknown argument${extraTop.length === 1 ? "" : "s"} ${extraTop.join(", ")}; the only argument is tasks`,
     );
   }
-  if (Array.isArray(raw.tasks)) {
-    if (raw.tasks.length > SUBAGENT_MAX_CHILDREN_PER_CALL) {
-      return overCallCap(raw.tasks.length);
+  const tasks = readTasks(raw.tasks);
+  if (Array.isArray(tasks)) {
+    if (tasks.length > SUBAGENT_MAX_CHILDREN_PER_CALL) {
+      return overCallCap(tasks.length);
     }
-    raw.tasks.forEach((entry, i) => {
+    tasks.forEach((entry: unknown, i) => {
       if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return;
-      const extra = Object.keys(entry).filter((k) => !TASK_KEYS.has(k));
+      const extra = Object.keys(entry as Record<string, unknown>).filter((k) => !TASK_KEYS.has(k));
       if (extra.length > 0) {
         problems.push(
-          `tasks[${i}] has unknown key${extra.length === 1 ? "" : "s"} ${extra.join(", ")}; a task takes id, instructions, title, profile, deliverable`,
+          `tasks[${i}] has unknown key${extra.length === 1 ? "" : "s"} ${extra.join(", ")}; a task takes id, instructions, title, profile, deliverable, files`,
         );
       }
     });
   }
-  const parsed = parseDelegateArgs({ tasks: raw.tasks });
+  const parsed = parseDelegateArgs({ tasks });
   if (!parsed.ok) {
     return {
       ok: false,
@@ -58,10 +74,6 @@ export function parseSubagentArgs(
   }
   if (problems.length > 0) {
     return { ok: false, error: `validation: ${problems.join("; ")}` };
-  }
-  // `tasks` may arrive as a JSON string, which only the parser reads.
-  if (parsed.tasks.length > SUBAGENT_MAX_CHILDREN_PER_CALL) {
-    return overCallCap(parsed.tasks.length);
   }
   return { ok: true, tasks: parsed.tasks };
 }

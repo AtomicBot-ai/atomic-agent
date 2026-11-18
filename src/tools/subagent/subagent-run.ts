@@ -9,6 +9,11 @@ import {
   builtinAgentProfileSet,
   type AgentProfileSet,
 } from "../../agent-profiles/index.js";
+import type { ApprovalGate } from "../../approval/approval-gate.js";
+import {
+  ApprovalDeniedError,
+  requireApproval,
+} from "../../approval/dangerous-tool.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { DelegateTask } from "../fusion/delegate-args.js";
 import {
@@ -22,6 +27,16 @@ import {
   type AppliedProfileReport,
 } from "../fusion/task-profiles.js";
 import { treeLimitBreach } from "../fusion/task-tree.js";
+import { resolveFanoutScope } from "../fusion/fanout-paths.js";
+import {
+  describeFanoutPreview,
+  scopeInsideStateDir,
+} from "../fusion/fusion-delegate.js";
+import {
+  FUSION_WORKER_APPROVAL_MARKER,
+  FUSION_WORKER_OPERATOR_ONLY_MARKER,
+  workerRefusalFor,
+} from "../fusion/worker-tool-policy.js";
 import { runWorkerTasksCore } from "../fusion/worker-runner.js";
 import type { WorkerRunnerCoreDeps } from "../fusion/worker-runner-core.js";
 import {
@@ -39,6 +54,40 @@ import {
 
 export const SUBAGENT_RUN_TOOL = "subagent.run";
 
+/**
+ * What a subagent's approval prompt is refused with: a subagent has no
+ * one to ask, and its caller is the session that called the tool, not a
+ * Fusion orchestrator. Keeps `FUSION_WORKER_APPROVAL_MARKER`, so the row
+ * still comes back `needs_orchestrator` and the brief's wording holds.
+ */
+export const SUBAGENT_APPROVAL_REFUSED =
+  `this step ${FUSION_WORKER_APPROVAL_MARKER}. ` +
+  `It is outside the files this ${SUBAGENT_RUN_TOOL} call was approved for. Stop and, in your reply, ` +
+  `name the exact path, so the caller can call ${SUBAGENT_RUN_TOOL} again with that path in the task's \`files\` ` +
+  "or make the change itself. " +
+  "A browser step that submits, publishes, deletes, pays or enters a password needs the user: " +
+  "report that step and do not retry it another way.";
+
+/**
+ * The refusal for a step no declared file can authorise (the same
+ * categories as `workerRefusalFor`): naming the path would only loop.
+ */
+export const SUBAGENT_OPERATOR_ONLY_REFUSED =
+  `this step ${FUSION_WORKER_APPROVAL_MARKER}, and ${FUSION_WORKER_OPERATOR_ONLY_MARKER}: ` +
+  "a dangerous command (rm -rf, git reset --hard, a force push, sudo), a read or change of " +
+  "the agent's own config or secret files, a mail, a password or a payment. " +
+  "Do not retry it or try another way to do the same thing. In your reply, name the exact " +
+  "command or file: running the task again will not help, only the user can run or approve it.";
+
+/** `SessionApprovalPolicy.reasonFor` for a subagent. */
+export function subagentRefusalFor(request: {
+  category: Parameters<typeof workerRefusalFor>[0]["category"];
+}): string | undefined {
+  return workerRefusalFor(request) === undefined
+    ? undefined
+    : SUBAGENT_OPERATOR_ONLY_REFUSED;
+}
+
 export interface SubagentRunDeps extends WorkerRunnerCoreDeps {
   /** Live read: in Fusion the tool refuses and points at `fusion.delegate`. */
   resolveRunMode: () => ResolvedRunMode;
@@ -49,6 +98,15 @@ export interface SubagentRunDeps extends WorkerRunnerCoreDeps {
    * its profile's model resolves to a configured role.
    */
   resolveSessionLeg: (pinnedProviderId: string | undefined) => WorkerLegRef;
+  /**
+   * Whether approvals are asked at all (`dangerous.approvalRequired`).
+   * When a task declares `files`, the person is asked once per call,
+   * under the same `fusion_fanout` category `fusion.delegate` uses, and
+   * a yes lets the subagents write inside those directories.
+   */
+  approvalRequired: boolean;
+  /** The agent's own state directory: a declared file may not be in it. */
+  agentStateDir?: string;
   /** A slot-affine (local) leg runs one subagent at a time. */
   workerSupportsSlotAffinity: (providerId: string) => boolean;
   /**
@@ -102,14 +160,20 @@ function error(
  * Each subagent's session is stamped one level below its caller, its
  * turn runs under the `subagent` origin with the worker tool policy and
  * the profile's allowlist on top, and an approval-gated step is refused
- * by the worker session policy, as for every worker.
+ * by the worker session policy, as for every worker, with a refusal
+ * that tells the subagent to name the path for its caller.
+ *
+ * A subagent may write only where a task declared `files`: the person
+ * is asked once for the call, as for a Fusion fan-out
+ * (`resolveFanoutScope`, `describeFanoutPreview`, category
+ * `fusion_fanout`), and a yes is granted to every subagent of the call.
  */
 export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
   const ledger = deps.turnLedger ?? new SubagentTurnLedger();
   return {
     name: SUBAGENT_RUN_TOOL,
     description:
-      "Hand self-contained parts of the work to subagents: each task becomes a fresh worker turn on the current model that sees the user's request and its own instructions, and reports back. A task may name a `profile` (built-in: explore, review, research, all read-only; or one the user defined) for that profile's instructions and tool list. A subagent cannot start subagents. Args: { tasks: [{ id, instructions, title?, profile?, deliverable? }] }.",
+      "Hand self-contained parts of the work to subagents: each task becomes a fresh worker turn on the current model that sees the user's request and its own instructions, and reports back. A task may name a `profile` (built-in: explore, review, research, all read-only; or one the user defined) for that profile's instructions and tool list. A subagent writes only the paths a task lists in `files`, which asks the user once for the call; without them, make the edit yourself. A subagent cannot start subagents. Args: { tasks: [{ id, instructions, title?, profile?, deliverable?, files? }] }.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       const depth = callerDepth(
@@ -140,7 +204,11 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       if (!parsed.ok) {
         return error(`${SUBAGENT_RUN_TOOL}: ${parsed.error}`, { field: "tasks" });
       }
-      const already = ledger.childrenThisTurn(ctx.sessionId, ctx.stepIndex);
+      const turnAt = {
+        stepIndex: ctx.stepIndex,
+        ...(ctx.turnId === undefined ? {} : { turnId: ctx.turnId }),
+      };
+      const already = ledger.childrenThisTurn(ctx.sessionId, turnAt);
       const overTurn = treeLimitBreach({
         depth,
         maxDepth: SUBAGENT_MAX_DEPTH,
@@ -159,7 +227,14 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
         );
       }
 
-      const sessionLeg = deps.resolveSessionLeg(ctx.providerId);
+      // The turn's own model when it asked its link for one (the
+      // desktop's per-project model, ATO-1148): the subagents ask for it
+      // too, and their rows name it.
+      const baseLeg = deps.resolveSessionLeg(ctx.providerId);
+      const sessionLeg: WorkerLegRef =
+        ctx.providerId !== undefined && ctx.model !== undefined
+          ? { providerId: baseLeg.providerId, model: ctx.model, turnModel: ctx.model }
+          : baseLeg;
       let tasks: DelegateTask[] = parsed.tasks;
       let profileReports: AppliedProfileReport[] = [];
       if (tasks.some((t) => t.profile !== undefined)) {
@@ -207,7 +282,57 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
         else group.tasks.push(task);
       }
 
-      ledger.record(ctx.sessionId, ctx.stepIndex, tasks.length);
+      // Writes: only where a task declared `files`, asked once for the
+      // whole call before a subagent starts.
+      let writeScope: string[] = [];
+      if (tasks.some((t) => (t.files?.length ?? 0) > 0)) {
+        writeScope = resolveFanoutScope(tasks, ctx.workingDir);
+        const intoState = scopeInsideStateDir(writeScope, deps.agentStateDir);
+        if (intoState.length > 0) {
+          return error(
+            `${SUBAGENT_RUN_TOOL} did not run: the tasks would write in the agent's own state directory (${intoState.join(", ")}). ` +
+              "Subagents cannot write there. Name a project directory instead; if the user really wants a change to the agent's own files, tell them.",
+            { reason: "agent-state-dir", scope: intoState },
+          );
+        }
+        const declinedInScope =
+          deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
+        const alreadyApproved =
+          !declinedInScope &&
+          (deps.approvals.fanoutScopes?.turnGrantCovers(ctx.sessionId, writeScope) ??
+            false);
+        try {
+          if (!alreadyApproved) {
+            const models = [...new Set([...legs.values()].map((l) => l.model))];
+            await requireApproval(
+              {
+                approvals: deps.approvals as ApprovalGate,
+                approvalRequired: deps.approvalRequired,
+              },
+              {
+                sessionId: ctx.sessionId,
+                tool: SUBAGENT_RUN_TOOL,
+                category: "fusion_fanout",
+                reason: `${tasks.length} subagent${tasks.length === 1 ? "" : "s"} on ${models.join(", ")} may write in ${writeScope.join(", ")}`,
+                preview: describeFanoutPreview(tasks, writeScope),
+                affectedResources: [...writeScope],
+              },
+              ctx.signal,
+            );
+          }
+          deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
+        } catch (err) {
+          if (err instanceof ApprovalDeniedError && (err.byUser || err.declinedEarlier)) {
+            return error(err.message, { reason: "writes-denied", deniedByUser: true });
+          }
+          return error(
+            `${SUBAGENT_RUN_TOOL} did not run: the writes were not approved: ${err instanceof Error ? err.message : String(err)}`,
+            { reason: "writes-denied" },
+          );
+        }
+      }
+
+      ledger.record(ctx.sessionId, turnAt, tasks.length);
       const childDepth = depth + 1;
       const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
       const runnerDeps: WorkerRunnerCoreDeps = {
@@ -252,6 +377,11 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
           signal: ctx.signal,
           origin: "subagent",
           depth: childDepth,
+          ...(writeScope.length === 0 ? {} : { writeScope }),
+          approvalRefusal: {
+            general: SUBAGENT_APPROVAL_REFUSED,
+            reasonFor: subagentRefusalFor,
+          },
         });
       };
 
