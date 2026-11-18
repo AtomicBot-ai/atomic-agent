@@ -169,6 +169,13 @@ export function buildNativeMessages(
       case "assistant_reply":
         answerPending();
         flushOrphans();
+        // ATO-1575: a reply with no text (a reasoning-only reply, as an
+        // imported Claude Code session records held thinking) would go out
+        // as an assistant message with empty content and no tool calls.
+        // Anthropic refuses that, and through OpenRouter it can come back
+        // as an empty completion instead of an error. Nothing was said, so
+        // nothing is sent.
+        if (turn.text.trim().length === 0) break;
         out.push({ role: "assistant", content: turn.text });
         break;
       case "assistant_tool_call": {
