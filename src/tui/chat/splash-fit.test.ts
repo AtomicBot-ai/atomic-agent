@@ -196,6 +196,7 @@ describe("computeSplashFit", () => {
     }
     expect(perLockup.get("full:below")).toBe(SPLASH_TIPS.length);
   });
+});
 
 describe("start-page tips", () => {
   it("offer the run-mode switch right after the model pick (ATO-1640)", () => {
