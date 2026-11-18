@@ -9,6 +9,7 @@ import { LlamaServerError } from "../llama-server-client.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
 import { SubscriptionCliNotInstalledError } from "../provider/subscription-cli/subscription-cli-errors.js";
+import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
 import { classifyFailureCause } from "./classify-failure-cause.js";
 import type { FailureAction, FailureCauseId } from "./failure-catalog.js";
 import {
@@ -196,6 +197,12 @@ const SAMPLES: ReadonlyArray<
     ),
     "provider_error_mid_reply",
     "retry",
+  ],
+  [
+    "a missing or expired ChatGPT sign-in (ATO-1453)",
+    new ChatgptSignInRequiredError("no_tokens"),
+    "provider_setup",
+    "none",
   ],
   [
     "a subscription CLI that is not installed",

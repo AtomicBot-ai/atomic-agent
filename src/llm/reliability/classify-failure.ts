@@ -4,6 +4,7 @@ import {
   SubscriptionCliAuthError,
   SubscriptionCliNotInstalledError,
 } from "../provider/subscription-cli/subscription-cli-errors.js";
+import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
 import { ToolCallParseError } from "../grammar/tool-call-grammar.js";
 import type { LlmFailureCategory } from "./failure-category.js";
 import { LlmFailure } from "./llm-failures.js";
@@ -71,9 +72,13 @@ export function classifyFailure(err: unknown): LlmFailureCategory {
   // cannot serve the turn, and no other link is implicated. The default
   // `tool` arm below would both mislabel it ("Turn failed [tool]" for a
   // binary the user never installed) and stop the chain dead.
+  // The experimental ChatGPT sign-in (ATO-1453) missing or expired is the
+  // same "sign in again" as a signed-out CLI: the chain falls over to the
+  // next link.
   if (
     err instanceof SubscriptionCliNotInstalledError ||
-    err instanceof SubscriptionCliAuthError
+    err instanceof SubscriptionCliAuthError ||
+    err instanceof ChatgptSignInRequiredError
   ) {
     return "transport";
   }
