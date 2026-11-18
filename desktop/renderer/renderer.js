@@ -1212,7 +1212,7 @@ const MENU_ACTS = {
 const SETTINGS_SECTIONS = [
   ['general','General','sliders',['general']],
   ['models','Models','cpu',['llm']],
-  ['connections','Connections','plug',['mcp','telegram','discord','push','composio']],   // ATO-516: discord-settings.js
+  ['connections','Connections','plug',['mcp','telegram','discord','push','composio','monid']],   // ATO-516: discord-settings.js; ATO-1630: monid.js
   ['memory','Memory','memory',['memory']],
   // ATO-445: the agent's webhook routes sit beside Tasks, since each event becomes one (renderer/webhooks.js).
   ['tasks','Cron jobs','tasks',['tasks','webhooks']],   // W2: visible name only, the id stays
@@ -1224,7 +1224,7 @@ const SETTINGS_SECTIONS = [
   ['diagnostics','Diagnostics','gauge',['diagnostics']],
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
-const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['discord','Discord'],['push','Phone push'],['composio','Composio'],['memory','Memory'],
+const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['discord','Discord'],['push','Phone push'],['composio','Composio'],['monid','Monid'],['memory','Memory'],
                        ['tasks','Cron jobs'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
@@ -2052,6 +2052,7 @@ const PAL = [
     ['chat','Discord','Settings · Connections','','settings:discord'],
     ['bell','Phone push','Settings · Connections','','settings:push'],
     ['link','Composio','Settings · Connections','','settings:composio'],
+    ['link','Monid','Settings · Connections','','settings:monid'],
     ['memory','Memory','Settings','⌘ 4','settings:memory'],
     ['tasks','Cron jobs','Settings','','settings:tasks'],
     ['skills','Skills','Settings','','settings:skills'],
@@ -6564,6 +6565,7 @@ function settingsPaneEntered(opened) {
   else if (pane === 'discord') discordTabEntered();
   else if (pane === 'push') phonePushTabEntered();   // ATO-1129 (phone-push.js)
   else if (pane === 'composio') composioTabEntered();
+  else if (pane === 'monid') monidTabEntered();   // ATO-1630 (monid.js)
   else if (pane === 'import') importTabEntered();
   // ATO-720: the Model row reads `models status`; ask once on entry when the route uses a local model server.
   else if (pane === 'diagnostics' && BR && (engfRouteLocal() || selBackend() === 'custom')) llmRefreshStatus(true).then(diagRepaint);
@@ -6590,6 +6592,7 @@ function settingsPane() {
   if (p === 'discord') return discordTab();
   if (p === 'push') return pushTab();
   if (p === 'composio') return composioTab();
+  if (p === 'monid') return monidTab();
   if (p === 'import') return importTab();
   return comingNote(SETTINGS_TABS.find((t) => t[0] === p)[1]);
 }
@@ -7664,6 +7667,7 @@ function act(a) {
   if (k === 'discord') { close(); discordAct(a.slice(8)); return; }
   if (k === 'push') { close(); phonePushAct(a.slice(5)); return; }
   if (k === 'composio') { close(); composioAct(a.slice(9)); return; }
+  if (k === 'monid') { close(); monidAct(a.slice(6)); return; }
   // ATO-328: Save on the Exa key card or its Settings row. No close(): the card is in the chat, the row in Settings.
   if (k === 'exakey') { exaKeyAct(v); return; }
   // ATO-577 / ATO-579: Diagnostics' Doctor and Data buttons (doctor-data.js).
