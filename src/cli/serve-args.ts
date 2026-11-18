@@ -93,6 +93,7 @@ export const HELP =
     "  GET  /api/events                         SSE stream of pending approval requests",
     "  GET  /api/webhooks                       Webhook bindings, and their public addresses with --tunnel",
     "  POST /api/webhooks/{name}                Deliver a webhook (x-webhook-secret, or a signature per the binding's verify)",
+    "  POST|GET|DELETE /mcp                     MCP Streamable HTTP: read-only memory and skills for MCP clients",
   ].join("\n") + "\n";
 
 export function parseArgs(
