@@ -8,7 +8,8 @@ import {
 } from "./leg-speed.js";
 import { outcomeRowFor } from "./outcome-log.js";
 import { FusionTurnBudget } from "./turn-budget.js";
-import type { WorkerTaskResult } from "./worker-result.js";
+import type { AgentLoopEvent } from "../../agent/agent-contract.js";
+import { WorkerRunCollector, type WorkerTaskResult } from "./worker-result.js";
 
 function result(over: Partial<WorkerTaskResult> = {}): WorkerTaskResult {
   return {
@@ -25,24 +26,105 @@ function result(over: Partial<WorkerTaskResult> = {}): WorkerTaskResult {
 }
 
 describe("workerSpeedSample", () => {
-  it("divides output tokens by the time spent generating, queue wait excluded", () => {
+  it("divides output tokens by the time the model spent producing them", () => {
+    // A 60 s task that spent 50 s in tool runs: 60 tokens in 10 s of
+    // generation is 6 tok/s, not the 1 tok/s the task clock would say.
     const sample = workerSpeedSample(
-      result({ durationMs: 12_000, queueWaitMs: 2_000 }),
+      result({ durationMs: 60_000, generation: { tokens: 60, ms: 10_000 } }),
     );
     expect(sample).toEqual({ tokens: 60, ms: 10_000, tasks: 1 });
     expect(sampleTokensPerSecond(sample!)).toBe(6);
   });
 
-  it("measures nothing without usage, without tokens, or on a too-short run", () => {
-    expect(workerSpeedSample(result({ usage: undefined }))).toBeNull();
+  it("measures nothing without generation, without tokens, on too little of it, or on a task that did not end ok", () => {
+    expect(workerSpeedSample(result())).toBeNull();
     expect(
-      workerSpeedSample(
-        result({ usage: { promptTokens: 10, completionTokens: 0, totalTokens: 10 } }),
-      ),
+      workerSpeedSample(result({ generation: { tokens: 0, ms: 5_000 } })),
     ).toBeNull();
     expect(
-      workerSpeedSample(result({ durationMs: 1_500, queueWaitMs: 1_000 })),
+      workerSpeedSample(result({ generation: { tokens: 60, ms: 500 } })),
     ).toBeNull();
+    for (const status of ["timeout", "failed", "cancelled", "max_steps"] as const) {
+      expect(
+        workerSpeedSample(
+          result({ status, generation: { tokens: 60, ms: 10_000 } }),
+        ),
+      ).toBeNull();
+    }
+  });
+});
+
+describe("WorkerRunCollector generation time", () => {
+  function completion(over: {
+    completionTokens?: number;
+    predictedMs?: number;
+    predictedTokens?: number;
+  }) {
+    return {
+      type: "llm_event",
+      event: {
+        type: "llm_completed",
+        completion: {
+          content: "",
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: null,
+          timing: {
+            promptMs: 0,
+            predictedMs: over.predictedMs ?? 0,
+            promptTokens: 0,
+            predictedTokens: over.predictedTokens ?? 0,
+          },
+          ...(over.completionTokens === undefined
+            ? {}
+            : {
+                usage: {
+                  promptTokens: 100,
+                  completionTokens: over.completionTokens,
+                  totalTokens: 100 + over.completionTokens,
+                },
+              }),
+        },
+      },
+    } as unknown as AgentLoopEvent;
+  }
+  const promptBuilt = {
+    type: "llm_event",
+    event: { type: "prompt_built", prompt: {}, slotId: 0 },
+  } as unknown as AgentLoopEvent;
+  const finish = (c: WorkerRunCollector) =>
+    c.finish({
+      id: "t",
+      title: "t",
+      reason: null,
+      stepCount: 2,
+      durationMs: 60_000,
+    });
+
+  it("sums the server's decode time per completion, leaving tool time out", () => {
+    let clock = 0;
+    const c = new WorkerRunCollector(() => clock);
+    c.observe(promptBuilt);
+    clock += 30_000; // prefill + decode wall time, decode stated below
+    c.observe(completion({ predictedTokens: 40, predictedMs: 8_000 }));
+    clock += 20_000; // a tool run: not generation
+    c.observe(promptBuilt);
+    clock += 5_000;
+    c.observe(completion({ predictedTokens: 20, predictedMs: 2_000 }));
+    expect(finish(c).generation).toEqual({ tokens: 60, ms: 10_000 });
+  });
+
+  it("falls back to the request's wall time when the provider states no decode time", () => {
+    let clock = 0;
+    const c = new WorkerRunCollector(() => clock);
+    c.observe(promptBuilt);
+    clock += 2_000;
+    c.observe(completion({ completionTokens: 96 }));
+    clock += 40_000; // tools
+    expect(finish(c).generation).toEqual({ tokens: 96, ms: 2_000 });
   });
 });
 
@@ -86,7 +168,7 @@ describe("leg averages", () => {
 describe("outcome log row", () => {
   it("carries the measured speed when there is one, and leaves it out otherwise", () => {
     const measured = outcomeRowFor({
-      result: result({ durationMs: 12_000, queueWaitMs: 2_000 }),
+      result: result({ generation: { tokens: 60, ms: 10_000 } }),
       task: undefined,
       leg: "local",
       model: "qwen",
@@ -95,7 +177,7 @@ describe("outcome log row", () => {
     });
     expect(measured.tokensPerSecond).toBe(6);
     const unmeasured = outcomeRowFor({
-      result: result({ usage: undefined }),
+      result: result(),
       task: undefined,
       leg: "local",
       model: "qwen",

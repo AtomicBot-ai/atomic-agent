@@ -4,9 +4,10 @@
  * The planner already sees the local daemon's probe speed in the
  * `### fusion` block, measured once at daemon start, and nothing at all
  * for a cloud leg. What it plans the next fan-out from is better served
- * by what the workers really did: tokens written over the time they
- * were generating (the queue wait taken out), averaged per leg and model
- * over the turn.
+ * by what the workers really did: tokens written over the time the
+ * model spent producing them (summed per completion, so tool runs and
+ * checks between completions do not count), averaged per leg and model
+ * over the turn, from tasks that ended `ok`.
  *
  * The figure rides the `fusion.delegate` result, not the prompt prefix:
  * it moves after every task, and the `### fusion` block sits in the
@@ -24,7 +25,7 @@ export const MIN_SPEED_SAMPLE_MS = 1000;
 export interface LegSpeedSample {
   /** Output tokens written. */
   tokens: number;
-  /** Milliseconds spent generating them (queue wait excluded). */
+  /** Milliseconds the model spent producing them (per completion). */
   ms: number;
   /** Tasks that contributed. */
   tasks: number;
@@ -39,19 +40,25 @@ export interface LegSpeed {
 }
 
 /**
- * A finished task's output and the time it spent generating it, or
- * `null` when there is nothing to measure: no usage reported, no tokens
- * written, or too short a run to mean anything.
+ * A finished task's output and the time the model spent producing it
+ * (`WorkerTaskResult.generation`: per completion, the server's decode
+ * time or the request's wall time, never the tool runs between them),
+ * or `null` when there is nothing fair to measure: a task that did not
+ * end `ok` (a timeout or a failure says nothing about decode speed and
+ * would drag the leg down), no generation recorded, or too little of it.
  */
 export function workerSpeedSample(
-  result: Pick<WorkerTaskResult, "usage" | "durationMs" | "queueWaitMs">,
+  result: Pick<WorkerTaskResult, "status" | "generation">,
 ): LegSpeedSample | null {
-  const tokens = result.usage?.completionTokens;
+  if (result.status !== "ok") return null;
+  const tokens = result.generation?.tokens;
+  const ms = result.generation?.ms;
   if (typeof tokens !== "number" || !Number.isFinite(tokens) || tokens <= 0) {
     return null;
   }
-  const ms = result.durationMs - (result.queueWaitMs ?? 0);
-  if (!Number.isFinite(ms) || ms < MIN_SPEED_SAMPLE_MS) return null;
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < MIN_SPEED_SAMPLE_MS) {
+    return null;
+  }
   return { tokens, ms, tasks: 1 };
 }
 
