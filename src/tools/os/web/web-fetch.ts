@@ -1,3 +1,6 @@
+import { mkdtemp, open, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import {
   runCommand as defaultRunCommand,
@@ -124,6 +127,8 @@ interface CurlResponse {
   truncated: boolean;
   /** Seconds parsed from a `Retry-After` response header, when present. */
   retryAfterMs: number | null;
+  /** The raw bytes, set only for a `binaryBody` request (`body` is then empty). */
+  bodyBytes?: Buffer;
 }
 
 export interface FetchOutcome {
@@ -138,6 +143,11 @@ export interface FetchOutcome {
    * that was not requested. `finalUrl`/`status` are then the redirecting page.
    */
   refusedRedirect?: string;
+  /**
+   * The body exactly as sent, for a `binaryBody` request (gzipped sitemaps,
+   * ATO-970). `body` is empty then: the bytes are not text yet.
+   */
+  bodyBytes?: Buffer;
 }
 
 export function buildOsWebFetchTool(
@@ -412,6 +422,8 @@ interface FetchWithGuardOptions {
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Pacing hooks for callers that limit their own traffic (`os.web.crawl`). */
   hooks?: FetchRequestHooks;
+  /** Keep the body as bytes (see `FetchRawPageOptions.binaryBody`). */
+  binaryBody?: boolean;
 }
 
 /**
@@ -435,6 +447,14 @@ export interface FetchRawPageOptions {
   timeoutMs?: number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   hooks?: FetchRequestHooks;
+  /**
+   * Return the body as raw bytes in `bodyBytes` instead of text (ATO-970,
+   * `.xml.gz` sitemaps). curl writes it to a private temp file and does not
+   * decode `Content-Encoding` itself (it only asks for gzip), so the caller
+   * unpacks it with its own size cap and a gzip bomb never reaches the disk
+   * at full size. The download is capped at the same 2 MB as text.
+   */
+  binaryBody?: boolean;
 }
 
 /**
@@ -455,6 +475,7 @@ export function fetchRawPage(
     timeoutMs: options.timeoutMs ?? fetchCfg.timeoutMs,
     sleep: options.sleep ?? defaultSleep,
     hooks: options.hooks,
+    binaryBody: options.binaryBody,
   });
 }
 
@@ -504,6 +525,7 @@ async function fetchWithGuard(
           truncated: res.truncated,
           redirectChain: chain,
           refusedRedirect: nextUrl.toString(),
+          ...(res.bodyBytes ? { bodyBytes: res.bodyBytes } : {}),
         };
       }
       currentUrl = nextUrl;
@@ -516,6 +538,7 @@ async function fetchWithGuard(
       body: res.body,
       truncated: res.truncated,
       redirectChain: chain,
+      ...(res.bodyBytes ? { bodyBytes: res.bodyBytes } : {}),
     };
   }
 }
@@ -614,6 +637,7 @@ async function curlOnce(
   pinnedIps: readonly string[],
   opts: FetchWithGuardOptions,
 ): Promise<CurlResponse> {
+  if (opts.binaryBody === true) return curlOnceBinary(url, pinnedIps, opts);
   const curlArgs = buildCurlArgs(url, pinnedIps, opts);
   let result: CommandResult;
   try {
@@ -638,10 +662,70 @@ async function curlOnce(
   return { ...parseCurlMeta(result.stdout), truncated: result.truncated };
 }
 
+/**
+ * `curlOnce` for a `binaryBody` request: the body goes to a file in a fresh
+ * private temp dir (`-o`), stdout carries only the `-w` meta line, and the
+ * file is read back as bytes and removed. `--max-filesize` stops curl past
+ * the usual 2 MB; a body without a Content-Length that runs past it is cut
+ * when read and marked truncated.
+ */
+async function curlOnceBinary(
+  url: URL,
+  pinnedIps: readonly string[],
+  opts: FetchWithGuardOptions,
+): Promise<CurlResponse> {
+  const dir = await mkdtemp(join(tmpdir(), "atomic-web-"));
+  const bodyPath = join(dir, "body");
+  try {
+    const curlArgs = buildCurlArgs(url, pinnedIps, opts, bodyPath);
+    let result: CommandResult;
+    try {
+      result = await runCurl(opts.runCommand, curlArgs, {
+        cwd: opts.cwd,
+        timeoutMs: opts.timeoutMs + 2_000,
+        signal: opts.signal,
+        maxOutputBytes: 64 * 1024,
+      });
+    } catch (err) {
+      if (isCurlMissingError(err)) throw new CurlUnavailableError();
+      throw err;
+    }
+    if (result.exitCode !== 0) {
+      throw new CurlFailedError(
+        `${TOOL_NAME}: ${formatCurlError(result)}`,
+        result.exitCode ?? -1,
+      );
+    }
+    let bytes: Buffer = Buffer.alloc(0);
+    let truncated = false;
+    try {
+      // Read at most the cap: an older curl without a Content-Length to
+      // check may have written past `--max-filesize`.
+      const file = await open(bodyPath, "r");
+      try {
+        const size = (await file.stat()).size;
+        const want = Math.min(size, MAX_RESPONSE_BYTES);
+        bytes = Buffer.alloc(want);
+        const { bytesRead } = await file.read(bytes, 0, want, 0);
+        bytes = bytes.subarray(0, bytesRead);
+        truncated = size > MAX_RESPONSE_BYTES;
+      } finally {
+        await file.close();
+      }
+    } catch {
+      // No file: an empty body (a 204, or a redirect without one).
+    }
+    return { ...parseCurlMeta(result.stdout), body: "", bodyBytes: bytes, truncated };
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 function buildCurlArgs(
   url: URL,
   pinnedIps: readonly string[],
   opts: Pick<FetchWithGuardOptions, "fetchCfg" | "timeoutMs">,
+  binaryBodyPath?: string,
 ): string[] {
   const host = url.hostname.replace(/^\[|\]$/g, "");
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
@@ -672,7 +756,18 @@ function buildCurlArgs(
     // hands back bytes the extractor reads as binary noise — and some
     // hosts behave differently for a client that claims no encoding
     // support at all, since no browser has looked like that in years.
-    "--compressed",
+    // A binary body (ATO-970) is kept as sent: only gzip is offered, curl
+    // does not unpack it, and the caller unzips it under its own cap.
+    ...(binaryBodyPath === undefined
+      ? ["--compressed"]
+      : [
+          "-H",
+          "Accept-Encoding: gzip",
+          "--max-filesize",
+          String(MAX_RESPONSE_BYTES),
+          "-o",
+          binaryBodyPath,
+        ]),
     "-H",
     "Accept: text/markdown, text/html;q=0.9, */*;q=0.1",
     "-H",

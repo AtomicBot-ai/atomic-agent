@@ -5,6 +5,12 @@
  * per host per `web.crawl.minDelayMs`, backoff on 429/503 and
  * `Retry-After`, robots.txt, a short cache. Pages come from the start page's
  * same-origin links (breadth first, up to `maxDepth`) and the sitemap.
+ *
+ * ATO-970 follow-ups: gzipped sitemaps are unzipped with a size cap; a start
+ * page that redirects within the same site (`example.com` ->
+ * `www.example.com`) moves the crawl there; pages built by JavaScript are
+ * rendered in the agent's own browser (the `os.web.fetch` renderer, a few
+ * per crawl) or listed as needing it.
  */
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { offlineRefusal } from "../../../llm/offline-network.js";
@@ -26,7 +32,8 @@ import {
   type CrawlArgs,
   type CrawlReport,
 } from "./web-crawl-args.js";
-import { runCrawl } from "./web-crawl-run.js";
+import type { PageRenderer } from "./web-fetch-ladder.js";
+import { runCrawl, type CrawlScope, type RenderedCrawlPage } from "./web-crawl-run.js";
 
 export interface OsWebCrawlOptions {
   runCommand?: typeof defaultRunCommand;
@@ -34,6 +41,11 @@ export interface OsWebCrawlOptions {
   config?: Pick<AtomicAgentConfig, "web">;
   sleep?: Sleep;
   now?: () => number;
+  /**
+   * The agent's own browser, as wired into `os.web.fetch` (ATO-968). Used for
+   * pages built by JavaScript when `web.fetch.renderWithBrowser` is on.
+   */
+  renderPage?: PageRenderer;
 }
 
 function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
@@ -66,7 +78,10 @@ export function buildOsWebCrawlTool(options: OsWebCrawlOptions = {}): ToolDefini
       "page as markdown/text. Polite by design: at most one request per second per " +
       "site (longer if robots.txt asks), backs off on 429/503 and Retry-After, obeys " +
       "robots.txt (the user can exempt their own sites in config), caches pages for " +
-      "a few minutes. Same SSRF guard and no-JavaScript fetch as os.web.fetch. " +
+      "a few minutes. Same SSRF guard as os.web.fetch. Unzips .xml.gz sitemaps; " +
+      "follows a start page that redirects within the same site (e.g. to www.); " +
+      "pages built by JavaScript are rendered in the agent's browser when it is " +
+      "available, else listed as needing browser.navigate. " +
       "`pathPrefix` keeps it under one section (e.g. \"/docs/\"). For a single page " +
       "use os.web.fetch.",
     readonly: true,
@@ -92,7 +107,11 @@ export function buildOsWebCrawlTool(options: OsWebCrawlOptions = {}): ToolDefini
       // earlier crawl must not stop this one before its first request.
       politeness.pacer.resetStrikes(start.host);
 
-      const fetchPage = (url: string, allowRedirect?: (u: URL) => boolean): Promise<FetchOutcome> =>
+      const fetchPage = (
+        url: string,
+        allowRedirect?: (u: URL) => boolean,
+        binaryBody = false,
+      ): Promise<FetchOutcome> =>
         fetchRawPage(url, {
           cwd: ctx.workingDir,
           signal: ctx.signal,
@@ -106,19 +125,22 @@ export function buildOsWebCrawlTool(options: OsWebCrawlOptions = {}): ToolDefini
               politeness.pacer.noteResponse(u.host, status, retryAfterMs),
             allowRedirect,
           },
+          ...(binaryBody ? { binaryBody: true } : {}),
         });
 
       // A missing curl or a cancelled task is not "robots.txt unreachable".
       let fatal = null as Error | null;
-      const robots = await politeness.robotsFor(start, async (robotsUrl) => {
-        try {
-          const res = await fetchPage(robotsUrl);
-          return { status: res.status, body: res.body };
-        } catch (err) {
-          if (err instanceof CurlUnavailableError || ctx.signal.aborted) fatal = err as Error;
-          throw err;
-        }
-      });
+      const loadRobots = (url: URL) =>
+        politeness.robotsFor(url, async (robotsUrl) => {
+          try {
+            const res = await fetchPage(robotsUrl);
+            return { status: res.status, body: res.body };
+          } catch (err) {
+            if (err instanceof CurlUnavailableError || ctx.signal.aborted) fatal = err as Error;
+            throw err;
+          }
+        });
+      const robots = await loadRobots(start);
       if (fatal !== null) return errorResult(args, (fatal as Error).message, false);
       if (!politeness.allows(robots, start)) {
         const why =
@@ -133,26 +155,54 @@ export function buildOsWebCrawlTool(options: OsWebCrawlOptions = {}): ToolDefini
         );
       }
 
+      // Mutable: a start page that redirects within the site moves it.
+      const scope: CrawlScope = { start, robots };
+      const fetchCfg = options.config?.web.fetch;
+      const renderer =
+        options.renderPage !== undefined && (fetchCfg?.renderWithBrowser ?? true) ? options.renderPage : undefined;
       const report = await runCrawl({
         args,
-        start,
-        robots,
+        scope,
         politeness,
         signal: ctx.signal,
         now,
         deadline: now() + CRAWL_TIME_BUDGET_MS,
-        fetchPage: async (url) => {
-          const cached = pageCache.get(url);
+        fetchPage: async (url, opts) => {
+          const binary = opts?.binary === true;
+          const cacheKey = binary ? `bytes:${url}` : url;
+          const cached = pageCache.get(cacheKey);
           if (cached !== undefined) return cached;
           // A same-site redirect hop is checked against robots.txt before it
-          // is requested; off-site hops are left to runCrawl's origin check.
+          // is requested. An off-site hop is not requested at all: runCrawl
+          // decides whether the crawl moves there (start page only) after
+          // reading that site's robots.txt.
           const res = await fetchPage(
             url,
-            (u) => u.origin !== start.origin || politeness.allows(robots, u),
+            (u) => u.origin === scope.start.origin && politeness.allows(scope.robots, u),
+            binary,
           );
-          if (res.status >= 200 && res.status < 400) pageCache.set(url, res);
+          if (res.status >= 200 && res.status < 400) pageCache.set(cacheKey, res);
           return res;
         },
+        robotsFor: async (url) => {
+          const decision = await loadRobots(url);
+          if (fatal !== null) throw fatal;
+          return decision;
+        },
+        ...(renderer === undefined
+          ? {}
+          : {
+              renderPage: async (url): Promise<RenderedCrawlPage | null> => {
+                // One more request to the site: it waits its turn like curl.
+                await politeness.pacer.acquire(new URL(url).host, ctx.signal);
+                const page = await renderer({ url, timeoutMs: fetchCfg?.timeoutMs ?? 30_000 });
+                if (page === null) return null;
+                // The browser follows redirects itself; where it landed must
+                // pass the private-address check like every curl hop.
+                await assertHostAllowed(parseHttpUrl(page.finalUrl), { lookup: options.lookup });
+                return page;
+              },
+            }),
       });
       return resultFor(args, report, ctx.modelMode);
     },
@@ -199,6 +249,7 @@ function resultFor(
           status: p.status,
           chars: p.text.length,
           truncated: p.truncated,
+          ...(p.via ? { via: p.via } : {}),
         })),
         robots: report.robotsSource,
         blockedByRobots: report.blockedByRobots.slice(0, 20),
@@ -207,6 +258,10 @@ function resultFor(
         errors: report.errors.slice(0, 10),
         stoppedBecause: report.stoppedBecause,
         delayMs: report.delayMs,
+        ...(report.notes.length > 0 ? { notes: report.notes } : {}),
+        ...(report.jsPages.length > 0
+          ? { needsBrowser: report.jsPages.slice(0, 20), retryWith: "browser.navigate" }
+          : {}),
         truncated: capped,
       },
     },
