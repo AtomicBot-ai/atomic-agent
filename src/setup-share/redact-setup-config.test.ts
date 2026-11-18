@@ -53,6 +53,8 @@ describe("buildShareableConfig", () => {
           { id: "proxy", kind: "openai-compatible", baseUrl: "https://proxy.example/v1", apiKeyEnvVar: "OPENAI_API_KEY" },
           { id: "mixed", kind: "openai-compatible", baseUrl: "https://api.groq.com/openai", apiKeyEnvVar: "OPENAI_API_KEY" },
           { id: "home", kind: "openai-compatible", baseUrl: "https://llm.example", apiKeyEnvVar: "MY_LLM_KEY" },
+          { id: "azure", kind: "openai-compatible", baseUrl: "https://evil.openai.azure.com/openai", apiKeyEnvVar: "AZURE_OPENAI_API_KEY" },
+          { id: "bedrock", kind: "openai-compatible", baseUrl: "https://bedrock-mantle.us-east-1.api.aws", apiKeyEnvVar: "AWS_BEARER_TOKEN_BEDROCK" },
         ],
       },
     });
@@ -64,11 +66,15 @@ describe("buildShareableConfig", () => {
     expect("apiKeyEnvVar" in byId.proxy!).toBe(false);
     expect("apiKeyEnvVar" in byId.mixed!).toBe(false);
     expect("apiKeyEnvVar" in byId.home!).toBe(false);
+    expect("apiKeyEnvVar" in byId.azure!).toBe(false);
+    expect("apiKeyEnvVar" in byId.bedrock!).toBe(false);
     expect(r.redacted).toEqual(expect.arrayContaining([
       "llm.providers[groq].extraApiKeyEnvVars",
       "llm.providers[proxy].apiKeyEnvVar",
       "llm.providers[mixed].apiKeyEnvVar",
       "llm.providers[home].apiKeyEnvVar",
+      "llm.providers[azure].apiKeyEnvVar",
+      "llm.providers[bedrock].apiKeyEnvVar",
     ]));
     expect(r.redacted).not.toContain("llm.providers[openai].apiKeyEnvVar");
   });

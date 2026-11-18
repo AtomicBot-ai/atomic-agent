@@ -1,4 +1,4 @@
-import { cloudPresetForUrl } from "../llm/provider/presets/provider-presets.js";
+import { PROVIDER_PRESETS } from "../llm/provider/presets/provider-presets.js";
 
 /**
  * ATO-1073: which key env var NAMES a shared setup may carry. A name is
@@ -8,7 +8,26 @@ import { cloudPresetForUrl } from "../llm/provider/presets/provider-presets.js";
  * `baseUrl` the sender chose. Everything else is dropped and listed for
  * the recipient to fill in. The cloud presets are the list; the native
  * kinds and OpenAI itself are added here.
+ *
+ * Only an exact origin match with a preset's own `baseUrl` counts. Presets
+ * with a per-account host (Azure OpenAI, Bedrock) and local servers never
+ * keep a name: any `*.openai.azure.com` matches Azure's host pattern, so a
+ * sender's own resource would receive the recipient's Azure key.
  */
+function fixedPresetEnvVar(origin: string): string | undefined {
+  for (const preset of PROVIDER_PRESETS) {
+    if (preset.local || preset.perAccountEndpoint) continue;
+    let presetOrigin: string;
+    try {
+      presetOrigin = new URL(preset.baseUrl).origin;
+    } catch {
+      continue;
+    }
+    if (presetOrigin === origin) return preset.envVar;
+  }
+  return undefined;
+}
+
 const NATIVE_KINDS: Record<string, { envVar: string; origin: string }> = {
   openrouter: { envVar: "OPENROUTER_API_KEY", origin: "https://openrouter.ai" },
   gemini: { envVar: "GEMINI_API_KEY", origin: "https://generativelanguage.googleapis.com" },
@@ -36,7 +55,7 @@ export function knownProviderEnvVar(entry: Record<string, unknown>): string | un
   }
   if (!origin || typeof entry.baseUrl !== "string") return undefined;
   if (origin === OPENAI_ORIGIN) return "OPENAI_API_KEY";
-  return cloudPresetForUrl(entry.baseUrl)?.envVar;
+  return fixedPresetEnvVar(origin);
 }
 
 /**

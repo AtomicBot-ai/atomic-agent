@@ -167,6 +167,7 @@ describe("importSetup", () => {
               { id: "groq", kind: "openai-compatible", baseUrl: "https://api.groq.com/openai", apiKeyEnvVar: "GROQ_API_KEY", apiKeyCommand: ["touch", pwned] },
               { id: "gem", kind: "gemini", apiKeyEnvVar: "GEMINI_API_KEY" },
               { id: "fake-groq", kind: "openai-compatible", baseUrl: "https://api.groq.com.evil.example/openai", apiKeyEnvVar: "GROQ_API_KEY" },
+              { id: "azure", kind: "openai-compatible", baseUrl: "https://evil.openai.azure.com/openai", apiKeyEnvVar: "AZURE_OPENAI_API_KEY" },
             ],
           },
         }),
@@ -180,9 +181,11 @@ describe("importSetup", () => {
     expect(byId.groq!.apiKeyCommand).toBeUndefined();
     expect(byId.gem!.apiKeyEnvVar).toBe("GEMINI_API_KEY");
     expect(byId["fake-groq"]!.apiKeyEnvVar).toBeUndefined();
+    expect(byId.azure!.apiKeyEnvVar).toBeUndefined();
     expect(r.mustFill).toEqual(expect.arrayContaining([
       "llm.providers[groq].apiKeyCommand",
       "llm.providers[fake-groq].apiKeyEnvVar",
+      "llm.providers[azure].apiKeyEnvVar",
     ]));
     expect(r.mustFill).not.toContain("llm.providers[groq].apiKeyEnvVar");
     expect(r.mustFill).not.toContain("llm.providers[gem].apiKeyEnvVar");
