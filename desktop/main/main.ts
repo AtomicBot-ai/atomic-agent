@@ -11,6 +11,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, p
 import { registerDoctorDataIpc } from "./doctor-data.js";
 import { printHtmlToPdf, registerChatExportIpc } from "./chat-export.js";
 import { ghRunner, registerChatShareIpc } from "./chat-share.js";
+import { registerMemoryForgetIpc } from "./memory-forget.js";
 import { cleanWebhookCreate, webhookNameOk } from "./webhooks-ipc.js";
 import { registerSettingsReferenceIpc } from "./settings-reference.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
@@ -2683,6 +2684,8 @@ function wireIpc(client: AgentClient): void {
   });
   // ATO-41: Settings › Diagnostics' All settings list (main/settings-reference.ts).
   registerSettingsReferenceIpc({ ipcMain, run: (args, timeoutMs) => atagRun(args, timeoutMs), isRemote: () => client.isRemote });
+  // ATO-321: Settings › Memory › Clear old memory (`atag memory forget --before`).
+  registerMemoryForgetIpc({ ipcMain, run: (args, timeoutMs) => atagRun(args, timeoutMs), remote: () => client.isRemote });
   // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
   ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));
   ipcMain.handle("app:gpuSet", (_event, on: unknown) => {
