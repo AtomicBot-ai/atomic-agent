@@ -26,7 +26,7 @@ import {
   hermesPluginsDir,
   hermesShimInstallPath,
   installHermesShim,
-  isTrustedPlugin,
+  resolveTrustedPlugins,
 } from "./hermes-plugins.js";
 import type { HermesSource } from "./hermes-source.js";
 import type { ImportOptionId } from "./import-options.js";
@@ -300,15 +300,22 @@ export class HermesImporter {
       return;
     }
     const plugins = discoverHermesPlugins(sourceDir);
-    for (const name of trusted) {
-      if (!plugins.some((p) => isTrustedPlugin(p, [name]))) {
-        items.push({
-          kind: "plugins",
-          source: name,
-          status: "skipped",
-          reason: `no Python plugin named ${JSON.stringify(name)} in ${hermesPluginsDir(sourceDir)}`,
-        });
-      }
+    const resolution = resolveTrustedPlugins(plugins, trusted);
+    for (const name of resolution.unmatched) {
+      items.push({
+        kind: "plugins",
+        source: name,
+        status: "skipped",
+        reason: `no Python plugin named ${JSON.stringify(name)} in ${hermesPluginsDir(sourceDir)}`,
+      });
+    }
+    for (const { name, keys } of resolution.ambiguous) {
+      items.push({
+        kind: "plugins",
+        source: name,
+        status: "skipped",
+        reason: `ambiguous: ${keys.length} plugins declare name ${JSON.stringify(name)} (${keys.join(", ")}); trust one by folder, e.g. --trust-plugin ${keys[0]}`,
+      });
     }
     if (plugins.length === 0) {
       items.push({
@@ -329,7 +336,7 @@ export class HermesImporter {
         source: plugin.key,
         status: "migrated",
       };
-      if (!isTrustedPlugin(plugin, trusted)) {
+      if (!resolution.trustedKeys.has(plugin.key)) {
         items.push({
           ...base,
           status: "skipped",
@@ -362,7 +369,12 @@ export class HermesImporter {
         continue;
       }
       toAppend.push(built.server);
-      items.push({ ...base, destination });
+      const envNote = this.requiredEnvNote(plugin.requiredEnv, sourceDir);
+      items.push({
+        ...base,
+        destination,
+        ...(envNote ? { reason: envNote } : {}),
+      });
     }
     if (!options.execute || toAppend.length === 0) return;
     try {
@@ -388,6 +400,30 @@ export class HermesImporter {
         }
       }
     }
+  }
+
+  /**
+   * Tell the user which keys a bridged plugin needs. The shim exports these
+   * names (and only these) from `<HERMES_HOME>/.env` when they are not set,
+   * like Hermes does; tools whose keys are missing stay hidden.
+   */
+  private requiredEnvNote(
+    required: readonly string[],
+    sourceDir: string,
+  ): string | null {
+    if (required.length === 0) return null;
+    let found: Map<string, string>;
+    try {
+      found = this.deps.source.readEnvKeys(required);
+    } catch {
+      found = new Map();
+    }
+    const missing = required.filter((name) => !found.get(name));
+    const envFile = join(sourceDir, ".env");
+    const base = `needs env ${required.join(", ")} (read from ${envFile})`;
+    return missing.length === 0
+      ? base
+      : `${base}; not set there: ${missing.join(", ")}, tools that need them stay hidden until added`;
   }
 }
 

@@ -11,9 +11,16 @@ that only records `ctx.register_tool(...)` and `ctx.register_command(...)`.
 Hooks, platforms, providers and the other registrars are accepted and ignored
 (logged to stderr), so a plugin that also registers those still loads.
 
+Tools with `requires_env` get those names (only those) from
+`<HERMES_HOME>/.env` when the process does not already have them, the way
+Hermes makes plugin keys available. Other keys in that file are never read
+into the environment.
+
 The MCP side is hand-written JSON-RPC 2.0 over newline-delimited stdio
 (protocol 2025-06-18): initialize, notifications/initialized, ping,
 tools/list, tools/call. Standard library only, no pip dependencies.
+The protocol is UTF-8 on a private dup of fd 1; fd 1 itself is pointed at
+stderr so plugin and child-process output cannot reach the stream.
 
 Signatures mirror Hermes' `hermes_cli/plugins_context.py`:
   register_tool(name, toolset, schema, handler, check_fn=None,
@@ -40,13 +47,23 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 PROTOCOL_VERSION = "2025-06-18"
-SHIM_VERSION = "0.1.0"
+SHIM_VERSION = "0.1.1"
 COMMAND_PREFIX = "command_"
 _NS_PARENT = "hermes_plugins"
 
-# The protocol owns the real stdout. Anything a plugin prints goes to stderr,
-# otherwise one stray print() would corrupt the JSON-RPC stream.
-_PROTOCOL_OUT = sys.stdout
+# The protocol owns the real stdout, at the file-descriptor level: keep a
+# private dup of fd 1 for JSON-RPC, then point fd 1 at stderr. Python print(),
+# child processes that inherit stdio (subprocess, os.system) and C extensions
+# all write to fd 1, so all of them land on stderr instead of corrupting the
+# stream. The protocol is always UTF-8, whatever the locale (Windows pipes
+# default to the ANSI code page).
+sys.stdout.flush()
+_PROTOCOL_OUT = os.fdopen(os.dup(1), "w", encoding="utf-8", newline="\n")
+os.dup2(2, 1)
+try:
+    sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")  # type: ignore[attr-defined]
+except (AttributeError, ValueError):
+    pass
 sys.stdout = sys.stderr
 
 logging.basicConfig(
@@ -85,6 +102,86 @@ def _install_registry_stub() -> None:
     tools_pkg.registry = registry  # type: ignore[attr-defined]
     sys.modules["tools"] = tools_pkg
     sys.modules["tools.registry"] = registry
+
+
+_DOTENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DOTENV_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", '"': '"', "\\": "\\"}
+
+
+def parse_dotenv(text: str) -> dict[str, str]:
+    """Small dotenv reader: KEY=VALUE, optional `export `, single or double
+    quotes (double quotes honour \\n \\t \\" \\\\), `#` comments on their own
+    line or after an unquoted value. Malformed lines are skipped."""
+    out: dict[str, str] = {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if not sep or not _DOTENV_KEY.match(key):
+            continue
+        value = value.strip()
+        if value[:1] in ("'", '"'):
+            quote = value[0]
+            end = 1
+            buf = []
+            while end < len(value) and value[end] != quote:
+                ch = value[end]
+                if quote == '"' and ch == "\\" and end + 1 < len(value):
+                    nxt = value[end + 1]
+                    buf.append(_DOTENV_ESCAPES.get(nxt, "\\" + nxt))
+                    end += 2
+                    continue
+                buf.append(ch)
+                end += 1
+            value = "".join(buf)
+        else:
+            hash_at = value.find(" #")
+            if hash_at >= 0:
+                value = value[:hash_at]
+            value = value.strip()
+        out[key] = value
+    return out
+
+
+def _hermes_home() -> Path:
+    home = os.environ.get("HERMES_HOME", "").strip()
+    return Path(home).expanduser() if home else Path.home() / ".hermes"
+
+
+_HERMES_DOTENV: Optional[dict[str, str]] = None
+
+
+def _hermes_dotenv() -> dict[str, str]:
+    global _HERMES_DOTENV
+    if _HERMES_DOTENV is None:
+        path = _hermes_home() / ".env"
+        try:
+            _HERMES_DOTENV = parse_dotenv(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            _HERMES_DOTENV = {}
+    return _HERMES_DOTENV
+
+
+def _export_required_env(names: list[str]) -> None:
+    """Hermes loads <HERMES_HOME>/.env, which is where plugin keys live.
+    Export only the names a registered tool asks for in requires_env and
+    that are not already set; every other key in that file stays out of
+    this process (and out of anything the plugin spawns)."""
+    wanted = [n for n in names if n and not os.environ.get(n)]
+    if not wanted:
+        return
+    dotenv = _hermes_dotenv()
+    for name in wanted:
+        value = dotenv.get(name)
+        if value:
+            os.environ[name] = value
+            log.info("env %s loaded from %s/.env", name, _hermes_home())
 
 
 class _Tool:
@@ -136,10 +233,9 @@ class ShimContext:
         if params is not None and not isinstance(params, dict):
             log.warning("tool %r: schema['parameters'] must be a dict, skipped", name)
             return
-        missing = [
-            env for env in (requires_env or [])
-            if isinstance(env, str) and not os.environ.get(env)
-        ]
+        names = [env for env in (requires_env or []) if isinstance(env, str)]
+        _export_required_env(names)
+        missing = [env for env in names if not os.environ.get(env)]
         if missing:
             log.warning("tool %r hidden: missing env %s", name, ", ".join(missing))
             return
@@ -316,7 +412,13 @@ def _call_result(tool: _Tool, args: dict) -> dict:
 
 
 def _send(message: dict) -> None:
-    _PROTOCOL_OUT.write(json.dumps(message, ensure_ascii=False) + "\n")
+    text = json.dumps(message, ensure_ascii=False)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        # Lone surrogates from plugin output: fall back to \\u escapes.
+        text = json.dumps(message, ensure_ascii=True)
+    _PROTOCOL_OUT.write(text + "\n")
     _PROTOCOL_OUT.flush()
 
 
@@ -379,8 +481,16 @@ def main(argv: list[str]) -> int:
         log.exception("failed to load plugin at %s: %s", plugin_dir, exc)
         return 1
     log.info("loaded %s: %d tool(s)", ctx.plugin_id, len(ctx.tools))
-    for line in sys.stdin:
-        line = line.strip()
+    # Read raw bytes and decode as UTF-8 ourselves, so the locale (cp1252 on
+    # Windows pipes) never matters and one undecodable line is a parse error,
+    # not a crash.
+    for raw in sys.stdin.buffer:
+        try:
+            line = raw.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            log.warning("dropped a request that is not valid UTF-8")
+            _reply_error(None, -32700, "parse error: request is not valid UTF-8")
+            continue
         if not line:
             continue
         try:
@@ -393,7 +503,10 @@ def main(argv: list[str]) -> int:
         except Exception as exc:  # noqa: BLE001 - never die on one bad request
             log.exception("request failed")
             if isinstance(message, dict) and "id" in message:
-                _reply_error(message.get("id"), -32603, f"internal error: {exc}")
+                try:
+                    _reply_error(message.get("id"), -32603, f"internal error: {exc}")
+                except Exception:  # noqa: BLE001 - protocol pipe trouble
+                    log.exception("could not report the failure")
     return 0
 
 

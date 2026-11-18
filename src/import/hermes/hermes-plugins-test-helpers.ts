@@ -35,3 +35,17 @@ export function writeFakeHermesPlugin(
   writeFileSync(join(dir, "helpers.py"), "def add(a, b):\n    return a + b\n");
   return dir;
 }
+
+/** Write a plugin whose `__init__.py` is exactly `initPy` (tests only). */
+export function writeHermesPluginSource(
+  pluginsRoot: string,
+  relDir: string,
+  initPy: string,
+  manifest = `name: ${relDir.split("/").pop()}\nversion: 1.0.0\n`,
+): string {
+  const dir = join(pluginsRoot, relDir);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "plugin.yaml"), manifest);
+  writeFileSync(join(dir, "__init__.py"), initPy);
+  return dir;
+}

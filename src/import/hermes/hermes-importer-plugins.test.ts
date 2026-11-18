@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,7 +14,10 @@ import { SessionStore } from "../../session/index.js";
 import { TaskStore } from "../../tasks/index.js";
 import { HermesImporter } from "./hermes-importer.js";
 import { hermesShimInstallPath } from "./hermes-plugins.js";
-import { writeFakeHermesPlugin } from "./hermes-plugins-test-helpers.js";
+import {
+  writeFakeHermesPlugin,
+  writeHermesPluginSource,
+} from "./hermes-plugins-test-helpers.js";
 import { HermesSource } from "./hermes-source.js";
 
 /** ATO-953: trusted Hermes Python plugins -> config.mcp.servers. */
@@ -146,6 +155,74 @@ describe("HermesImporter plugins option", () => {
       reason: expect.stringContaining("no Python plugin named"),
     });
     expect(existsSync(configFile) ? servers() : []).toEqual([]);
+  });
+
+  it("does not bridge a plugin that only borrows a trusted name", () => {
+    // plugins/weather declares `name: calculator` in its manifest.
+    writeFakeHermesPlugin(
+      join(sourceDir, "plugins"),
+      "weather",
+      "name: calculator\n",
+    );
+    const report = buildImporter(["calculator"]).run({
+      options: ["plugins"],
+      execute: true,
+      overwrite: false,
+    });
+    expect(report.items.find((i) => i.source === "weather")).toMatchObject({
+      status: "skipped",
+      reason: expect.stringContaining("not trusted"),
+    });
+    expect(servers().map((s) => s.name)).toEqual(["hermes-calculator"]);
+  });
+
+  it("refuses an ambiguous manifest name and says which folders match", () => {
+    rmSync(join(sourceDir, "plugins"), { recursive: true, force: true });
+    writeFakeHermesPlugin(join(sourceDir, "plugins"), "a/calculator");
+    writeFakeHermesPlugin(join(sourceDir, "plugins"), "b/calculator");
+    const report = buildImporter(["calculator"]).run({
+      options: ["plugins"],
+      execute: true,
+      overwrite: false,
+    });
+    const items = report.items.filter((i) => i.kind === "plugins");
+    expect(items.find((i) => i.source === "calculator")).toMatchObject({
+      status: "skipped",
+      reason: expect.stringMatching(/ambiguous.*a\/calculator, b\/calculator/),
+    });
+    expect(items.filter((i) => i.status === "migrated")).toEqual([]);
+    expect(existsSync(configFile) ? servers() : []).toEqual([]);
+    expect(shimInstalls).toBe(0);
+  });
+
+  it("lists the env names a trusted plugin needs in the preview", () => {
+    writeHermesPluginSource(
+      join(sourceDir, "plugins"),
+      "weather",
+      [
+        "def register(ctx):",
+        "    ctx.register_tool(name='w', toolset='t', schema={}, handler=None,",
+        "        requires_env=['WEATHER_API_KEY', 'WEATHER_REGION'])",
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(sourceDir, ".env"), "WEATHER_API_KEY=abc\n");
+    const report = buildImporter(["weather"]).run({
+      options: ["plugins"],
+      execute: false,
+      overwrite: false,
+    });
+    const item = report.items.find((i) => i.source === "weather");
+    expect(item?.status).toBe("migrated");
+    expect(item?.reason).toContain("needs env WEATHER_API_KEY, WEATHER_REGION");
+    expect(item?.reason).toContain("not set there: WEATHER_REGION");
+    // Names only: the preview never prints a key's value.
+    expect(item?.reason).not.toContain("abc");
+    // A plugin with no requires_env gets no note.
+    const calc = buildImporter(["calculator"])
+      .run({ options: ["plugins"], execute: false, overwrite: false })
+      .items.find((i) => i.source === "calculator");
+    expect(calc?.reason).toBeUndefined();
   });
 
   it("downgrades items to errors when the shim cannot be installed", () => {

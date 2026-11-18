@@ -1,5 +1,6 @@
 import {
   copyFileSync,
+  type Dirent,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -43,6 +44,12 @@ export interface HermesPlugin {
   description: string | null;
   /** Absolute plugin directory (holds plugin.yaml + __init__.py). */
   dir: string;
+  /**
+   * Env names the plugin's tools list in `requires_env=[...]`, read from its
+   * Python sources (best effort, no code runs). The shim exports exactly
+   * these from `<HERMES_HOME>/.env` when they are not already set.
+   */
+  requiredEnv: string[];
 }
 
 export function hermesPluginsDir(sourceDir: string): string {
@@ -77,6 +84,50 @@ function listDirs(path: string): string[] {
   }
 }
 
+const REQUIRES_ENV_RE = /requires_env\s*=\s*[[(]([^\])]*)[\])]/g;
+const QUOTED_NAME_RE = /["']([A-Za-z_][A-Za-z0-9_]*)["']/g;
+const MAX_SCANNED_PY_FILES = 50;
+
+/**
+ * Collect `requires_env=[...]` names from a plugin's `.py` files (the plugin
+ * dir and one level of subpackages). Static text scan, so a list built at
+ * runtime is missed; the shim still hides such tools and says why on stderr.
+ */
+export function scanRequiredEnv(dir: string): string[] {
+  const files: string[] = [];
+  const collect = (base: string, depth: number) => {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(base, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (files.length >= MAX_SCANNED_PY_FILES) return;
+      if (entry.name.startsWith(".") || entry.name === "__pycache__") continue;
+      const path = join(base, entry.name);
+      if (entry.isFile() && entry.name.endsWith(".py")) files.push(path);
+      else if (entry.isDirectory() && depth > 0) collect(path, depth - 1);
+    }
+  };
+  collect(dir, 1);
+  const names = new Set<string>();
+  for (const file of files.sort()) {
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const list of text.matchAll(REQUIRES_ENV_RE)) {
+      for (const name of (list[1] ?? "").matchAll(QUOTED_NAME_RE)) {
+        if (name[1]) names.add(name[1]);
+      }
+    }
+  }
+  return [...names].sort();
+}
+
 function readPlugin(dir: string, key: string): HermesPlugin | null {
   const manifest = manifestFile(dir);
   if (!manifest || !existsSync(join(dir, "__init__.py"))) return null;
@@ -86,6 +137,7 @@ function readPlugin(dir: string, key: string): HermesPlugin | null {
     manifestName: readScalar(text, "name") ?? key.split("/").pop() ?? key,
     description: readScalar(text, "description"),
     dir,
+    requiredEnv: scanRequiredEnv(dir),
   };
 }
 
@@ -113,14 +165,45 @@ export function discoverHermesPlugins(sourceDir: string): HermesPlugin[] {
   return out;
 }
 
-/** True when `trusted` names this plugin by key or manifest name. */
-export function isTrustedPlugin(
-  plugin: HermesPlugin,
+export interface TrustResolution {
+  /** Keys of the plugins the user trusted (unambiguously). */
+  trustedKeys: Set<string>;
+  /** Trusted names that match two or more plugins by manifest name. */
+  ambiguous: { name: string; keys: string[] }[];
+  /** Trusted names that match no plugin at all. */
+  unmatched: string[];
+}
+
+/**
+ * Resolve `--trust-plugin` names to plugins. The plugin key (its folder
+ * path under plugins/) is authoritative. The manifest `name:` is chosen by
+ * the plugin author, so it is only a fallback: used when no key equals the
+ * name and exactly one plugin declares it. Otherwise the name is reported
+ * as ambiguous and nothing is trusted for it.
+ */
+export function resolveTrustedPlugins(
+  plugins: readonly HermesPlugin[],
   trusted: readonly string[],
-): boolean {
-  return trusted.some(
-    (t) => t === plugin.key || t === plugin.manifestName,
-  );
+): TrustResolution {
+  const trustedKeys = new Set<string>();
+  const ambiguous: { name: string; keys: string[] }[] = [];
+  const unmatched: string[] = [];
+  for (const name of new Set(trusted)) {
+    const byKey = plugins.find((p) => p.key === name);
+    if (byKey) {
+      trustedKeys.add(byKey.key);
+      continue;
+    }
+    const byName = plugins.filter((p) => p.manifestName === name);
+    if (byName.length === 1 && byName[0]) {
+      trustedKeys.add(byName[0].key);
+    } else if (byName.length > 1) {
+      ambiguous.push({ name, keys: byName.map((p) => p.key) });
+    } else {
+      unmatched.push(name);
+    }
+  }
+  return { trustedKeys, ambiguous, unmatched };
 }
 
 /**
@@ -174,7 +257,14 @@ export function buildHermesPluginMcpServer(
       args: [options.shimPath, plugin.dir],
       cwd: plugin.dir,
     },
-    env: { HERMES_HOME: options.hermesHome, PYTHONUNBUFFERED: "1" },
+    env: {
+      HERMES_HOME: options.hermesHome,
+      PYTHONUNBUFFERED: "1",
+      // UTF-8 stdio whatever the locale (Windows pipes default to cp125x).
+      // The shim also forces UTF-8 itself, so older entries keep working.
+      PYTHONUTF8: "1",
+      PYTHONIOENCODING: "utf-8",
+    },
   };
   try {
     const first = parseMcpServers([candidate], "mcp.servers")[0];
