@@ -166,6 +166,7 @@ describe("default tool argsJsonSchema map", () => {
         "html",
         "eml",
         "mbox",
+        "msg",
         "plain",
       ],
     });
@@ -182,7 +183,7 @@ describe("default tool argsJsonSchema map", () => {
     );
     expect(descriptor).toBeDefined();
     expect(descriptor!.argsSchema).toContain(
-      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'ods' | 'odp' | 'epub' | 'html' | 'eml' | 'mbox' | 'plain'",
+      "format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'ods' | 'odp' | 'epub' | 'html' | 'eml' | 'mbox' | 'msg' | 'plain'",
     );
     expect(descriptor!.argsSchema).not.toContain("format?: string");
   });
