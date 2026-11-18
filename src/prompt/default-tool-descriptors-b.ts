@@ -172,6 +172,17 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "files.search",
+    summary:
+      "Search the folders the person added in My files (PDF, Word, slides, sheets, text). Each hit has the file, PDF page, a snippet and a `cite` link: paste `cite` exactly as given after what you took from it.",
+    argsSchema: "{ query: string, folder?: string /* an added folder */, topK?: number /* 1..20 */ }",
+    examples: [
+      '{"query":"notice period termination"}',
+      '{"query":"Q3 revenue","folder":"/Users/me/Reports","topK":5}',
+    ],
+    tier: "rare",
+  },
+  {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",
     argsSchema:
@@ -402,10 +413,24 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary:
       "Delegate independent parts of the work to local worker agents that run concurrently and report back. Each task becomes one throwaway worker turn that sees the operator's original request and your `instructions`, but nothing else from this conversation, so `instructions` must carry what the request does not (exact paths, the contract between parts, acceptance criteria, the answer format you want). Returns every worker's reply plus a per-task status. You choose `maxWorkers`; it is bounded only by the task count and the machine. Call it on its own, never alongside other tool calls.",
     argsSchema:
-      '{ tasks: [{ id: string, instructions: string, title?: string /* defaults to the id */, deliverable?: string, files?: string[], etaSeconds?: number /* your estimate of how long this part takes; shown to the operator beside the running clock so they can tell thinking from stuck */, outputTokens?: number, outputLines?: number /* what the worker will write; checked against its time limit on a local leg */, profile?: string /* a subagent profile: "explore" (find code), "review" (find bugs), "research" (web + files), all read-only, or a profile the user defined */ }] /* 1..8 */, maxWorkers?: number /* how many run at once; you decide */, contract?: { inputs?: string[] /* the files the request provides: workers edit them in place, never replace */, owners?: { [path]: taskId }, provides?: [{ task, kind: "symbol"|"file"|"id"|"endpoint"|"env"|"flag"|"other", name, in?: path, shape?: string /* one line: signature or return shape; give it for anything another task uses */, example?: { call, expect, page? } /* for a function another task calls: one small call and a JS condition over its result r, run after the fan-out; page = the HTML file that loads browser code */ }], requires?: [{ task, name /* a provides name */ }], checks?: [{ task?, ...verify.run args }] } /* the interface between the parts: shown to every worker, checked after the fan-out */, resume?: string /* ONLY to continue a run cut off by a restart: the run id, sent alone */, confirm?: string[] /* with resume: task ids the person agreed to run again */ }',
+      '{ tasks: [{ id: string, instructions: string, title?: string /* defaults to the id */, deliverable?: string, files?: string[], etaSeconds?: number /* your estimate of how long this part takes; shown to the operator beside the running clock so they can tell thinking from stuck */, outputTokens?: number, outputLines?: number /* what the worker will write; checked against its time limit on a local leg */, profile?: string /* a subagent profile: "explore" (find code), "review" (find bugs), "research" (web + files), all read-only, or a profile the user defined */ }] /* 1..16 */, maxWorkers?: number /* how many run at once; you decide */, contract?: { inputs?: string[] /* the files the request provides: workers edit them in place, never replace */, owners?: { [path]: taskId }, provides?: [{ task, kind: "symbol"|"file"|"id"|"endpoint"|"env"|"flag"|"other", name, in?: path, shape?: string /* one line: signature or return shape; give it for anything another task uses */, example?: { call, expect, page? } /* for a function another task calls: one small call and a JS condition over its result r, run after the fan-out; page = the HTML file that loads browser code */ }], requires?: [{ task, name /* a provides name */ }], checks?: [{ task?, ...verify.run args }] } /* the interface between the parts: shown to every worker, checked after the fan-out */, resume?: string /* ONLY to continue a run cut off by a restart: the run id, sent alone */, confirm?: string[] /* with resume: task ids the person agreed to run again */ }',
     examples: [
       '{"tasks":[{"id":"t1","title":"Map the auth routes","instructions":"List every route under src/http/ that touches auth. For each: path, method, and the middleware it runs.","deliverable":"one bullet per route","etaSeconds":120},{"id":"t2","title":"Summarise the session store","instructions":"Read src/session/session-store.ts and describe its public API and persistence model.","files":["src/session/session-store.ts"]}]}',
     ],
+  },
+  {
+    // ATO-1670. Rare tier: one line in the catalog, the full args through
+    // tool.view. Hidden while Fusion is the run mode, where
+    // fusion.delegate is the way to hand work out (filter-disabled-tools).
+    name: "subagent.run",
+    summary:
+      "Hand a self-contained part of the work to a subagent: a fresh worker turn on your current model that sees the user's request and your `instructions`, nothing else of this chat, and reports back. Optional `profile` (built-in: explore, review, research, all read-only; or one the user defined) gives it that profile's instructions and tool list. Several tasks in one call run side by side, at most 4 per call. Listing `files` on a task asks the user once for the call, and a yes lets the subagents write anywhere in the directories of those files and in the working directory, not only in the listed files; with no `files` a subagent cannot write, so make the edit yourself or list the files. A subagent cannot start subagents of its own. Call it on its own, never alongside other tool calls.",
+    argsSchema:
+      '{ tasks: [{ id: string, instructions: string, title?: string, profile?: string /* "explore" | "review" | "research" or a user profile */, deliverable?: string, files?: string[] /* paths it may write; asks the user once */ }] /* 1..4 */ }',
+    examples: [
+      '{"tasks":[{"id":"find-auth","profile":"explore","instructions":"Find where session tokens are checked under src/http/ and list each file and function."}]}',
+    ],
+    tier: "rare",
   },
   {
     // Frequent tier: a checklist only helps when the model keeps it from

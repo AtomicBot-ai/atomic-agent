@@ -1,6 +1,7 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { formatTokens } from "./components/format-tokens.js";
 import type { FeedEntry } from "./tui-state.js";
+import { modelBrand, providerBrand, type Brand } from "./brand/brand-badges.js";
 
 type FusionWorkerEvent = Extract<AgentLoopEvent, { type: "fusion_worker" }>;
 
@@ -73,6 +74,17 @@ export function formatFusionWorkerLine(event: FusionWorkerEvent): string {
       return `» ${who}`;
     }
   }
+}
+
+/**
+ * The brand a fusion leg's line wears (ATO-1635), from the same `model`
+ * the line names. The runtime falls back to a provider id when it has no
+ * model label, so a provider brand is the second answer; `null` when
+ * neither is known, and the line then carries no badge at all.
+ */
+export function fusionWorkerBrand(model: string | undefined): Brand | null {
+  if (!model) return null;
+  return modelBrand(model) ?? providerBrand(model);
 }
 
 /** Colour semantics, unchanged from the event's first shape. */

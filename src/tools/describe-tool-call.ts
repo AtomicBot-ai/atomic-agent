@@ -362,6 +362,10 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
       const n = Array.isArray(a.tasks) ? a.tasks.length : 0;
       return P(V.delegated, n > 0 ? plural(n, "task") : "tasks");
     }
+    case "subagent.run": {
+      const n = Array.isArray(a.tasks) ? a.tasks.length : 0;
+      return P(V.ran, n > 0 ? plural(n, "subagent") : "subagents");
+    }
     case "tasks.schedule":
     case "tasks.cron": {
       const title = str(a.title) ?? str(a.name);

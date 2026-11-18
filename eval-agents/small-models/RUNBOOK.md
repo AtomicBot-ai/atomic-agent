@@ -49,7 +49,10 @@ Checker fix vs the old private stand: t5 used `grep -rl` and on GNU grep it coun
 ```bash
 node eval-agents/small-models/run.mjs --dry-run --profile release --agent .
 node eval-agents/small-models/run.mjs --dry-run --profile quick --agent .
+node eval-agents/small-models/run.mjs --dry-run --profile small-window --agent .
 ```
+
+Run `small-window` (4B at 16K and 32K, thinking off and on) after any change to the answer reserve, compaction or the prompt budget: 16K is where compaction used to break (ATO-257).
 
 Prints every cell, the exact llama-server command per cell, the seeded agent config,
 the number of runs and a time estimate.

@@ -27,7 +27,8 @@ import { scrubSlackError, type SlackMessageEvent, type SlackTarget } from "./sla
 export interface SlackInboundContext {
   runtime: AgentRuntime;
   api: Pick<SlackApi, "postText">;
-  sessions: Pick<ChatSessionMap, "get" | "setCurrent" | "rotate">;
+  sessions: Pick<ChatSessionMap, "get" | "setCurrent" | "rotate"> &
+    Partial<Pick<ChatSessionMap, "touch">>;
   logger: StructuredLogger;
   /** Slack member ids allowed to drive the agent. Empty refuses everyone. */
   ownerIds: readonly string[];
@@ -205,10 +206,8 @@ export async function dispatchToRuntime(text: string, ref: SlackRef, ctx: SlackI
   };
   try {
     await ctx.runtime.runTurn(session, text, {
+      // `answerChannelForOrigin("slack")` gives the Slack style (ATO-1508).
       origin: "slack",
-      // No Slack entry in `AnswerChannel` yet (shared type, follow-up):
-      // shaped for a chat surface without tables or headings, ~3500 cap.
-      answerChannel: "telegram",
       signal: controller.signal,
       eventHook,
     });
@@ -238,7 +237,11 @@ function acquireOrCreateSession(ref: SlackRef, ctx: SlackInboundContext): Sessio
   const current = ctx.sessions.get(ref.key).current;
   if (current) {
     const existing = ctx.runtime.sessionStore.load(current);
-    if (existing) return existing;
+    if (existing) {
+      // Keeps an active thread clear of the 30-day prune (ATO-1509).
+      ctx.sessions.touch?.(ref.key);
+      return existing;
+    }
     ctx.logger.warn("slack: pointer references missing session, recreating", { sessionId: current });
     ctx.releaseApprovalSession?.(current);
   }

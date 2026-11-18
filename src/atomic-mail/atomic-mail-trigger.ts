@@ -39,6 +39,10 @@ import {
  *    SPF/DKIM pass in the topmost `Authentication-Results`, see
  *    `checkSenderAuth`) create nothing and are logged, unless the
  *    binding sets `email.trustFromHeader`;
+ *  - only mail from an auto-start sender (`email.autoStartSenders`, by
+ *    default the owner's verified address) starts its task right away;
+ *    any other allowed sender's task is created paused and waits for
+ *    the person to start it (decided 18.11.2026);
  *  - at most {@link MAX_TASKS_PER_POLL} tasks per poll — the rest wait;
  *  - the subject and body reach the task fenced as untrusted data.
  *
@@ -69,6 +73,8 @@ export interface AtomicMailTriggerOptions {
     binding: string;
     userMessage: string;
     sessionId: string | null;
+    /** Not from an auto-start sender: the task waits for the person to start it. */
+    startPaused: boolean;
   }) => { id: string };
   resolveSessionId: (binding: string, cfg: WebhookConfig) => string | null;
   getTask: (id: string) => MailTriggerTask | null;
@@ -89,6 +95,16 @@ export function activeMailBindings(
       entry[1].email !== undefined &&
       entry[1].email.allowedSenders.length > 0,
   );
+}
+
+/**
+ * Senders whose mail task starts at once: the binding's
+ * `autoStartSenders`, or by default the owner's verified address alone
+ * (none while the owner is unverified, so every task then waits).
+ */
+export function autoStartSendersFor(cfg: MailBinding, ownerEmail: string | null): string[] {
+  if (cfg.email.autoStartSenders) return cfg.email.autoStartSenders;
+  return ownerEmail ? [ownerEmail] : [];
 }
 
 export class AtomicMailTrigger {
@@ -141,8 +157,10 @@ export class AtomicMailTrigger {
     });
     if (signal?.aborted) return;
     const state = readMailTriggerState(this.statePath);
+    // Only a verified owner counts as "the user's own address".
+    const ownerEmail = ready.level === "ready" ? ready.ownerEmail.trim().toLowerCase() : null;
     for (const [name, cfg] of due) {
-      this.pollBinding(name, cfg, mails, ready.address.toLowerCase(), state, now);
+      this.pollBinding(name, cfg, mails, ready.address.toLowerCase(), ownerEmail, state, now);
     }
   }
 
@@ -151,9 +169,11 @@ export class AtomicMailTrigger {
     cfg: MailBinding,
     mails: readonly TriggerMail[],
     ownAddress: string,
+    ownerEmail: string | null,
     state: MailTriggerState,
     now: number,
   ): void {
+    const autoStart = autoStartSendersFor(cfg, ownerEmail);
     const entry = state.bindings[name];
     if (!entry) {
       state.bindings[name] = { seen: mails.map((m) => m.id).slice(0, SEEN_IDS_CAP) };
@@ -171,7 +191,7 @@ export class AtomicMailTrigger {
       if (created >= MAX_TASKS_PER_POLL) break;
       entry.seen = [...entry.seen, mail.id].slice(-SEEN_IDS_CAP);
       writeMailTriggerState(this.statePath, state);
-      const why = this.refusal(mail, cfg, ownAddress);
+      const why = this.refusal(mail, cfg, ownAddress, autoStart);
       if (why) {
         this.options.logger?.info("mail trigger: message ignored", {
           binding: name,
@@ -179,16 +199,18 @@ export class AtomicMailTrigger {
         });
         continue;
       }
+      const startPaused = !isAllowedSender(mail.fromEmail, autoStart);
       const task = this.options.createTask({
         binding: name,
         userMessage: buildMailTaskMessage(cfg.userMessageTemplate, mail),
         sessionId: this.options.resolveSessionId(name, cfg),
+        startPaused,
       });
       created += 1;
-      this.options.logger?.info("mail trigger: task created", {
-        binding: name,
-        taskId: task.id,
-      });
+      this.options.logger?.info(
+        startPaused ? "mail trigger: task created, waiting to be started" : "mail trigger: task created",
+        { binding: name, taskId: task.id },
+      );
       if (cfg.email.replyByEmail) {
         state.pendingReplies.push({
           taskId: task.id,
@@ -202,9 +224,17 @@ export class AtomicMailTrigger {
     }
   }
 
-  private refusal(mail: TriggerMail, cfg: MailBinding, ownAddress: string): string | null {
+  private refusal(
+    mail: TriggerMail,
+    cfg: MailBinding,
+    ownAddress: string,
+    autoStart: readonly string[],
+  ): string | null {
     if (mail.fromEmail === ownAddress) return "sent by the agent's own address";
-    if (!isAllowedSender(mail.fromEmail, cfg.email.allowedSenders)) {
+    if (
+      !isAllowedSender(mail.fromEmail, cfg.email.allowedSenders) &&
+      !isAllowedSender(mail.fromEmail, autoStart)
+    ) {
       return "sender not in allowedSenders";
     }
     if (!cfg.email.trustFromHeader) {

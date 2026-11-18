@@ -5,7 +5,7 @@ export type { ReadScope } from "./agent/agent-types.js";
 export { READ_SCOPES, parseReadScope, parseApprovalLevel, CONVERSATION_MAX_PAIRS_MIN, CONVERSATION_MAX_PAIRS_MAX } from "./agent/agent-parser.js";
 
 import { createHttpDefaults, parseHttpConfig, type RuntimeHttpConfig, type UserHttpConfig } from "./http-config.js";
-export { parseHttpApprovalMode, type HttpApprovalMode } from "./http-config.js";
+export { parseHttpApprovalMode, type HttpApprovalMode, type UrlDataGuardMode } from "./http-config.js";
 
 import {
   createProjectsDefaults, createToolsDefaults, createVisionDefaults,
@@ -23,6 +23,7 @@ export { DEFAULT_SKILLS_CATALOG_BUDGET, parseSkillNameArray, parseSkillTapArray 
 import { createSessionDefaults, parseSessionConfig, type RuntimeSessionsConfig, type UserSessionsConfig } from "./session-retention-config.js";
 import { createTracingDefaults, parseTracingConfig, type RuntimeTracingConfig, type UserTracingConfig } from "./tracing-config.js";
 import { createNetworkDefaults, parseNetworkConfig, type NetworkConfig } from "./network-config.js";
+import { createPrivacyDefaults, parsePrivacyConfig, type PrivacyConfig } from "./privacy-config.js";
 
 import {
   createTuiDefaults, parseTuiConfig,
@@ -328,6 +329,12 @@ export interface AtomicAgentConfig {
    */
   network?: NetworkConfig;
   /**
+   * Privacy Shield (ATO-599). Mirrors `UserConfigFile.privacy`. Optional
+   * so hand-built configs (tests, embedders) keep compiling; absent reads
+   * as off. See `src/privacy/README.md`.
+   */
+  privacy?: PrivacyConfig;
+  /**
    * Durable task queue. All values are env-only operational tuning —
    * not part of the user config file because the queue is an
    * infrastructure detail, not a user-facing knob. When `enabled` is
@@ -616,6 +623,12 @@ export interface AtomicAgentConfig {
         streaming?: boolean;
         maxBudgetUsd?: number;
       };
+      /**
+       * EXPERIMENTAL (ATO-1448): a `subscription-oauth` entry's service.
+       * The sign-in tokens are kept in `<stateDir>/auth/<service>.json`
+       * (owner-only), never in this file.
+       */
+      subscriptionOauth?: { service: "chatgpt" | "copilot" };
       userModels?: ReadonlyArray<{
         id: string;
         kind: "chat" | "embedding";
@@ -734,7 +747,7 @@ export interface UserConfigFile {
   // index signature here would make every property name valid on the type
   // the whole tree writes back — `{ ...file, viison: … }` would compile.
   localModels: UserLocalModelsConfig;
-  log: { level: LogLevel };
+  log: { /** Lowest severity the runtime's structured log writes: `debug`, `info` (default), `warn` or `error`. */ level: LogLevel };
   agent: UserAgentConfig;
   http: UserHttpConfig;
   web: {
@@ -777,6 +790,11 @@ export interface UserConfigFile {
    * Additive and unversioned: a file without the block reads the default.
    */
   network: NetworkConfig;
+  /**
+   * Privacy Shield (ATO-599): `{ shield: { enabled: false } }` by default.
+   * Additive and unversioned: a file without the block reads the default.
+   */
+  privacy: PrivacyConfig;
   memory: UserMemoryConfig;
   /**
    * Keyed map of webhook ingress bindings. Each entry is mounted at
@@ -1230,6 +1248,9 @@ export interface UserConfigFile {
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
 // every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp
 // engines receive them. An older file has no field and reads as off.
+// Unversioned, additive: `skills.selfLearning` (`enabled` true,
+// `minSteps` 10, ATO-67). An older file has no block and reads the
+// defaults, so self-learning is on after an upgrade, as in OpenClaw.
 // Unversioned, additive: `skills.eval.judgeProvider` (ATO-1101), the
 // provider id that grades `judge` checks in `skill eval`. An older file
 // has no field; the key stays out of the file until it is set.
@@ -1281,6 +1302,8 @@ export interface UserConfigFile {
 // Unversioned, additive: `llm.runMode.fusion.taskTree` (`enabled` default
 // false, `maxDepth` 1..3 default 2, `maxNodes` 1..64 default 24),
 // ATO-940. An older file has no field and keeps the flat fan-out.
+// Unversioned, additive: `llm.runMode.agentProfiles` (subagent profiles
+// keyed by name, ATO-1667). Missing reads as none.
 // Unversioned, additive: `localModels.requestTimeoutMs` (default
 // 300 000 ms, ATO-922). It used to be env-only
 // (`ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS`, which still wins over the
@@ -1462,6 +1485,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   sessions: createSessionDefaults(),
   tracing: createTracingDefaults(),
   network: createNetworkDefaults(),
+  privacy: createPrivacyDefaults(),
   memory: createMemoryDefaults(),
   webhooks: {},
   fileTriggers: {},
@@ -1728,6 +1752,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     (obj.telemetry as Record<string, unknown> | undefined) ?? {};
   const tracing = (obj.tracing as Record<string, unknown> | undefined) ?? {};
   const network = (obj.network as Record<string, unknown> | undefined) ?? {};
+  const privacy = (obj.privacy as Record<string, unknown> | undefined) ?? {};
   const traceFromLegacy =
     (legacyTelemetry.trace as Record<string, unknown> | undefined) ?? {};
   const traceFromTracing =
@@ -1843,6 +1868,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       (tracing.otel as Record<string, unknown> | undefined) ?? {},
     ),
     network: parseNetworkConfig(network, () => USER_CONFIG_DEFAULTS.network),
+    privacy: parsePrivacyConfig(privacy, () => USER_CONFIG_DEFAULTS.privacy),
     memory: parseMemoryConfig(
       preparedMemory,
       version,

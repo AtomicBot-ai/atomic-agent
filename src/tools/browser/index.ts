@@ -20,6 +20,9 @@ import {
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
 import { AriaSnapshotStore } from "./aria-view.js";
+import { ScenarioRecorder } from "./scenario-recorder.js";
+import { ScenarioStore } from "./scenario-store.js";
+import { buildBrowserScenarioTool } from "./scenario.js";
 
 export type {
   AnnotateReadInput,
@@ -165,6 +168,12 @@ export { PageDebugLog, redactDebugUrl } from "./page-debug-log.js";
 export type { ConsoleEntry, DebugLogKind, NetworkEntry } from "./page-debug-log.js";
 export { BROWSER_ANNOTATE_TOOL, buildBrowserAnnotateTool } from "./annotate.js";
 export type { BrowserAnnotateDeps } from "./annotate.js";
+export { BROWSER_SCENARIO_TOOL, buildBrowserScenarioTool } from "./scenario.js";
+export type { BrowserScenarioDeps, ScenarioReplayTools } from "./scenario.js";
+export { RECORDED_BROWSER_TOOLS, ScenarioRecorder } from "./scenario-recorder.js";
+export { BROWSER_SCENARIO_DIR, browserScenarioDir, ScenarioStore } from "./scenario-store.js";
+export { findTarget, parseScenario, SCENARIO_VERSION } from "./scenario-format.js";
+export type { Scenario, ScenarioStep, ScenarioTarget } from "./scenario-format.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
@@ -173,28 +182,49 @@ export type { BrowserAnnotateDeps } from "./annotate.js";
  * and payment input, and hosts outside the allow-list; `policy` carries
  * `browser.blockedDomains` / `browser.allowedDomains`. `extractModel` is
  * the model `browser.extract` calls, bound by the runtime once it exists.
+ * `scenarioDir` is where `browser.scenario` keeps its files
+ * (`browserScenarioDir(stateDir)`); without it scenarios live in memory.
  */
 export function buildBrowserTools(
   backend: BrowserBackend,
   dangerous: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
   extractModel: BrowserExtractModelRef = {},
+  scenarioDir?: string,
 ): ToolDefinition[] {
   // One per tool set: the last snapshot of each tab, for read_aria's diff view.
   const store = new AriaSnapshotStore();
+  // The tools a scenario replays. The model gets them wrapped by the
+  // recorder; a replay calls them directly, gates and all (ATO-960).
+  const replay = {
+    navigate: buildBrowserNavigateTool(backend, dangerous, policy, store),
+    search: buildBrowserSearchTool(backend, dangerous, policy, store),
+    click: buildBrowserClickTool(backend, dangerous, policy),
+    type: buildBrowserTypeTool(backend, dangerous, policy),
+    act: buildBrowserActTool(backend, dangerous, policy, store),
+  };
+  const recorder = new ScenarioRecorder(backend);
   return [
-    buildBrowserNavigateTool(backend, dangerous, policy, store),
-    buildBrowserClickTool(backend, dangerous, policy),
-    buildBrowserTypeTool(backend, dangerous, policy),
+    recorder.wrap(replay.navigate),
+    recorder.wrap(replay.click),
+    recorder.wrap(replay.type),
     buildBrowserReadAriaTool(backend, policy, store, dangerous),
-    buildBrowserSearchTool(backend, dangerous, policy, store),
+    recorder.wrap(replay.search),
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
     buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
-    buildBrowserActTool(backend, dangerous, policy),
+    recorder.wrap(replay.act),
     buildBrowserExtractTool(backend, policy, extractModel, dangerous),
     buildBrowserSiteToolsTool(backend, dangerous, policy),
     buildBrowserDebugTool(backend, policy),
     buildBrowserAnnotateTool(backend, policy, dangerous),
+    buildBrowserScenarioTool({
+      backend,
+      recorder,
+      store: new ScenarioStore(scenarioDir),
+      tools: replay,
+      policy,
+      ariaStore: store,
+    }),
   ];
 }

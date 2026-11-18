@@ -41,6 +41,8 @@ const TAINT_SENSITIVE: Record<ApprovalCategory, boolean> = {
   browser_offsite: true,
   // The site's own code runs and may send, buy or delete (ATO-521).
   browser_site_tool: true,
+  // Never auto-approved, like `user_question`: nothing to hold.
+  browser_take_over: false,
   trust_config: true,
   publish: true,
   email: true,

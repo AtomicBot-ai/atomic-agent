@@ -342,6 +342,74 @@ describe("isLoopbackHost", () => {
   });
 });
 
+describe("defaultBrowserLauncher — launch order", () => {
+  type LaunchOpts = { executablePath?: string; headless?: boolean; args?: string[] };
+  const fakeBrowser = {} as Browser;
+  const recorder = (fail: (opts: LaunchOpts) => boolean = () => false) => {
+    const calls: LaunchOpts[] = [];
+    const loadPlaywright = async () =>
+      ({
+        chromium: {
+          launch: async (opts: LaunchOpts) => {
+            calls.push(opts);
+            if (fail(opts)) throw new Error(opts.executablePath === undefined ? "Executable doesn't exist\nmore" : "spawn failed");
+            return fakeBrowser;
+          },
+        },
+      }) as never;
+    return { calls, loadPlaywright };
+  };
+  const findExecutable = () => ({ kind: "chrome" as const, path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
+
+  it("macOS with no explicit browser tries the Playwright Chromium first", async () => {
+    const { calls, loadPlaywright } = recorder();
+    const browser = await defaultBrowserLauncher(CONFIG, { platform: "darwin", loadPlaywright, findExecutable })();
+    expect(browser).toBe(fakeBrowser);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.executablePath).toBeUndefined();
+  });
+
+  it("macOS falls back to the system Chrome when the Playwright Chromium is missing", async () => {
+    const { calls, loadPlaywright } = recorder((o) => o.executablePath === undefined);
+    await defaultBrowserLauncher(CONFIG, { platform: "darwin", loadPlaywright, findExecutable })();
+    expect(calls.map((c) => c.executablePath)).toEqual([undefined, findExecutable().path]);
+  });
+
+  it("macOS with an explicit executablePath keeps the host browser first", async () => {
+    const { calls, loadPlaywright } = recorder();
+    const config = { browser: { ...CONFIG.browser, executablePath: "/opt/chrome" } };
+    await defaultBrowserLauncher(config, { platform: "darwin", loadPlaywright, findExecutable: () => ({ kind: "custom", path: "/opt/chrome" }) })();
+    expect(calls.map((c) => c.executablePath)).toEqual(["/opt/chrome"]);
+  });
+
+  it("macOS with a non-default channel keeps the host browser first", async () => {
+    const { calls, loadPlaywright } = recorder();
+    const config = { browser: { ...CONFIG.browser, channel: "msedge" as const } };
+    await defaultBrowserLauncher(config, { platform: "darwin", loadPlaywright, findExecutable })();
+    expect(calls[0]?.executablePath).toBe(findExecutable().path);
+  });
+
+  it("Linux keeps the host browser first", async () => {
+    const { calls, loadPlaywright } = recorder();
+    await defaultBrowserLauncher(CONFIG, { platform: "linux", loadPlaywright, findExecutable })();
+    expect(calls.map((c) => c.executablePath)).toEqual([findExecutable().path]);
+  });
+
+  it("names both attempts when neither launches", async () => {
+    const { loadPlaywright } = recorder(() => true);
+    await expect(defaultBrowserLauncher(CONFIG, { platform: "darwin", loadPlaywright, findExecutable })()).rejects.toThrow(
+      /^no browser available: playwright chromium: Executable doesn't exist; \/Applications\/Google Chrome\.app\/Contents\/MacOS\/Google Chrome: spawn failed$/,
+    );
+  });
+
+  it("says no browser was found when the host has none and Playwright fails", async () => {
+    const { loadPlaywright } = recorder(() => true);
+    await expect(defaultBrowserLauncher(CONFIG, { platform: "darwin", loadPlaywright, findExecutable: () => null })()).rejects.toThrow(
+      "no Chromium-family browser found",
+    );
+  });
+});
+
 describe("runVerify — page, real browser", () => {
   let launchable = false;
   beforeAll(async () => {

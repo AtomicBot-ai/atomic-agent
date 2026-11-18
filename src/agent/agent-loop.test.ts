@@ -17,7 +17,7 @@ import {
 } from "../llm/provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { PARSE_RECOVERY_BUDGET } from "./parse-failure-recovery.js";
-import { EMPTY_COMPLETION_RECOVERY_BUDGET } from "./empty-completion-recovery.js";
+import { EMPTY_COMPLETION_RECOVERY_BUDGET, EMPTY_COMPLETION_RETRY_BASE_DELAY_MS } from "./empty-completion-recovery.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
 import type {
@@ -4041,6 +4041,85 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     );
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({ text: "done" });
+  });
+
+  it("waits before re-asking after a wholly empty native-tools completion (ATO-1676)", async () => {
+    // Sent back in the same instant, the re-ask reached the same busy
+    // backend that had just answered empty.
+    const registry = buildDefaultToolRegistry();
+    const calledAt: number[] = [];
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        calledAt.push(Date.now());
+        return calledAt.length === 1
+          ? makeNativeCompletion()
+          : makeNativeCompletion([
+              { name: "reply", arguments: JSON.stringify({ text: "done" }) },
+            ]);
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const session = createEmptySessionState({ id: "s-empty-wait", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 5,
+      signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(calledAt).toHaveLength(2);
+    // Timer slack: setTimeout may fire a few ms early on some hosts.
+    expect(calledAt[1]! - calledAt[0]!).toBeGreaterThanOrEqual(
+      EMPTY_COMPLETION_RETRY_BASE_DELAY_MS - 50,
+    );
+  });
+
+  it("a stop during the empty-answer wait cancels the turn without a second request (ATO-1676)", async () => {
+    const registry = buildDefaultToolRegistry();
+    const controller = new AbortController();
+    let llmCalls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      toolTransport: "native_tools",
+      toolCallAdapter: null,
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeNativeCompletion();
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+      onEvent: (event) => {
+        // The stop arrives 100 ms after the re-ask is announced, so it
+        // lands inside the 500 ms wait. Without the wait the loop would
+        // already have sent the second request by then.
+        if (event.type === "empty_completion_recovered") {
+          announcedAt = Date.now();
+          setTimeout(() => controller.abort(), 100);
+        }
+      },
+    });
+    let announcedAt = 0;
+    const session = createEmptySessionState({ id: "s-empty-wait-stop", workingDir });
+    const result = await loop.runTurn(session, {
+      userMessage: "go",
+      maxSteps: 5,
+      signal: controller.signal,
+    });
+    const elapsedMs = Date.now() - announcedAt;
+    expect(announcedAt).toBeGreaterThan(0);
+    expect(result.reason).toBe("cancelled");
+    expect(llmCalls).toBe(1);
+    // The stop cut the wait short instead of sitting out the full 500 ms.
+    expect(elapsedMs).toBeLessThan(EMPTY_COMPLETION_RETRY_BASE_DELAY_MS - 50);
   });
 
   it("ends the turn on the second empty native-tools completion, saying so", async () => {

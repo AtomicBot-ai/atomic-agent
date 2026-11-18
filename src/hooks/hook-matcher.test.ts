@@ -21,6 +21,12 @@ describe("hook matcher", () => {
     expect(matcherMatches("mcp__github__.*", "mcp.slack.post")).toBe(false);
   });
 
+  it("matches Claude's Task matcher against both ways of handing work out (ATO-1670)", () => {
+    expect(claudeToolName("subagent.run")).toBe("Task");
+    expect(matcherMatches("Task", "subagent.run")).toBe(true);
+    expect(matcherMatches("Task", "fusion.delegate")).toBe(true);
+  });
+
   it("matches our own names and anchors the pattern", () => {
     expect(matcherMatches("os\\.fs\\..*", "os.fs.write")).toBe(true);
     expect(matcherMatches("os.shell.run", "os.shell.run")).toBe(true);

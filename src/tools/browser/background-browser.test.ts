@@ -40,7 +40,14 @@ class FakePage {
 class FakeContext {
   closed = false;
   readonly all: FakePage[] = [];
-  constructor(private readonly owner: FakeBrowser) {}
+  constructor(
+    private readonly owner: FakeBrowser,
+    readonly options?: { storageState?: unknown },
+  ) {}
+  /** Stands for the cookies a logged-out chat gathered (a login started). */
+  async storageState() {
+    return { cookies: [{ name: "sid", value: "s1", domain: "shop.example" }], origins: [] };
+  }
   pages() {
     return this.all.filter((page) => !page.closed);
   }
@@ -65,8 +72,8 @@ class FakeBrowser {
   contexts() {
     return [this.main];
   }
-  async newContext() {
-    const context = new FakeContext(this);
+  async newContext(options?: { storageState?: unknown }) {
+    const context = new FakeContext(this, options);
     this.extra.push(context);
     return context;
   }
@@ -148,6 +155,54 @@ describe("headless: auto", () => {
     const { backend, launches, browsers } = backendWith({ cdpUrl: "http://127.0.0.1:9222" });
     await inTurn(CRON, () => backend.currentUrl());
     await inTurn(CHAT, () => backend.currentUrl());
+    expect(launches).toEqual([]);
+    expect(browsers).toHaveLength(1);
+  });
+});
+
+describe("take over (ATO-508)", () => {
+  it("a background turn's headless Chrome is restarted with a window, its page reopened", async () => {
+    const { backend, launches } = backendWith();
+    await inTurn(CRON, () => backend.navigate({ url: "https://shop.example/login" }));
+    const target = await inTurn(CRON, () => backend.prepareTakeOver());
+    expect(launches).toEqual([true, false]);
+    expect(target).toMatchObject({ url: "https://shop.example/login", window: true });
+    // The window stays for the next background call; nothing restarts again.
+    await inTurn(CRON, () => backend.currentUrl());
+    expect(launches).toEqual([true, false]);
+  });
+
+  it("a headless chat in a throwaway profile keeps its page and cookies across the restart", async () => {
+    const { backend, launches, browsers } = backendWith();
+    await inTurn(CRON, () => backend.tabs({ action: "new", url: "https://shop.example/login", profile: "temp" }));
+    const target = await inTurn(CRON, () => backend.prepareTakeOver());
+    expect(launches).toEqual([true, false]);
+    expect(target).toMatchObject({ url: "https://shop.example/login", window: true });
+    // The throwaway profile came back in the new Chrome, cookies included,
+    // and is still apart from the agent's own profile.
+    const restarted = browsers[1]!;
+    expect(restarted.extra).toHaveLength(1);
+    expect(restarted.extra[0]!.options?.storageState).toMatchObject({ cookies: [{ name: "sid" }] });
+    expect(restarted.extra[0]!.pages().map((page) => page.url())).toEqual(["https://shop.example/login"]);
+    expect(restarted.main.pages().map((page) => page.url())).not.toContain("https://shop.example/login");
+  });
+
+  it("a Chrome that already has a window is only brought to the front", async () => {
+    const { backend, launches } = backendWith();
+    await inTurn(CHAT, () => backend.navigate({ url: "https://shop.example/login" }));
+    expect(await inTurn(CHAT, () => backend.prepareTakeOver())).toMatchObject({ window: true });
+    expect(launches).toEqual([false]);
+  });
+
+  it("browser.headless true keeps it headless and says there is no window", async () => {
+    const { backend, launches } = backendWith({ headless: true });
+    expect(await inTurn(CHAT, () => backend.prepareTakeOver())).toMatchObject({ window: false });
+    expect(launches).toEqual([true]);
+  });
+
+  it("a Chrome the agent did not start is used as it is", async () => {
+    const { backend, launches, browsers } = backendWith({ cdpUrl: "http://127.0.0.1:9222" });
+    expect(await inTurn(CRON, () => backend.prepareTakeOver())).toMatchObject({ window: true });
     expect(launches).toEqual([]);
     expect(browsers).toHaveLength(1);
   });

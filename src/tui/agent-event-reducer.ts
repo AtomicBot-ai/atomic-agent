@@ -27,6 +27,7 @@ import {
   formatLocalServerErrorForChat,
 } from "./chat/format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
+import { addStepSpend } from "./step-spend.js";
 import {
   formatProviderGaveUpLine,
   formatProviderResumedNotice,
@@ -89,6 +90,7 @@ import {
 import { stepSpeedFromCompletion } from "../llm/step-speed.js";
 import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import { rejectedKeyProviderId } from "./chat/rejected-key-provider.js";
+import { withoutMcpAppPage } from "../mcp/mcp-apps.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -201,6 +203,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         plan: null,
         // Same for spend: a fresh thread has spent nothing.
         sessionUsage: null,
+        stepSpend: {},
         // The last turn's worker rows belong to the thread just left.
         fusionLiveWorkers: [],
       };
@@ -531,6 +534,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, projectTrustPrompt: action.prompt };
     case "project_trust_closed":
       return { ...state, projectTrustPrompt: null };
+    case "append_local_asked":
+      return { ...state, appendLocalPrompt: action.prompt };
+    case "append_local_closed":
+      return { ...state, appendLocalPrompt: null };
     case "update_started":
       return appendFeed(
         { ...state, updatePrompt: null, updateStatus: "running" },
@@ -605,6 +612,9 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         status: "running",
         currentTurnToolSteps: 0,
         runStartedAt: Date.now(),
+        promptProgress: null,
+        // `/why` step cost (ATO-34): a new turn starts its own count.
+        stepSpend: {},
       };
     case "turn_finished": {
       // `waiting` and `retrying` are claims about a turn that is still
@@ -653,6 +663,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           status: "running",
           currentStep: event.stepIndex,
           stepStartedAt: Date.now(),
+          promptProgress: null,
         },
         event.stepIndex,
       );
@@ -1081,6 +1092,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
           stepIndex: null,
           line: formatFusionWorkerLine(event),
           color: fusionWorkerLineColor(event),
+          ...(event.model ? { brandModel: event.model } : {}),
         },
       );
     }
@@ -1176,9 +1188,18 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // ATO-569: spend and limits for the composer readout. Session
       // scoped: a background thread's spend must not land on the chat on
       // screen.
-      return event.sessionId === state.session.sessionId
-        ? { ...state, sessionUsage: event.usage }
-        : state;
+      // ATO-34: the difference from the previous reading is the call
+      // that just finished, kept on the running step for `/why`. Outside
+      // a turn (the next-step suggestion call) nothing is attributed.
+      if (event.sessionId !== state.session.sessionId) return state;
+      return {
+        ...state,
+        sessionUsage: event.usage,
+        stepSpend:
+          state.status === "running" || state.status === "awaiting_approval"
+            ? addStepSpend(state.stepSpend, state.sessionUsage, event.usage, state.currentStep)
+            : state.stepSpend,
+      };
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
       // changes what the model does, and the operator sees the effect
@@ -1314,8 +1335,11 @@ function reduceStepEvent(
         status: event.result.status,
         summary: event.result.summary,
         truncated: event.result.truncated ?? false,
+        // An MCP App's page (`details.mcpApp`, ATO-1135, up to 4 MB) is
+        // not drawn in the terminal; the card and `latestResult` keep
+        // everything else.
         ...(event.result.details !== undefined
-          ? { details: event.result.details }
+          ? { details: withoutMcpAppPage(event.result.details) }
           : {}),
       });
       return {
@@ -1325,7 +1349,7 @@ function reduceStepEvent(
           status: event.result.status,
           summary: event.result.summary,
           ...(event.result.details !== undefined
-            ? { details: event.result.details }
+            ? { details: withoutMcpAppPage(event.result.details) }
             : {}),
         },
         metrics: { ...withCard.metrics, toolsOk, toolsError },
@@ -1482,12 +1506,18 @@ function reduceStepEvent(
       // The trace recorder wants them; the chat feed would drown in
       // them. Listed so the exhaustiveness check holds.
       return state;
-    case "first_token":
     case "prompt_progress":
-      // ATO-1027: the wait before the first token, for an HTTP host's
-      // status line. The TUI's own streaming tail already shows output
-      // the moment it starts. Listed so the exhaustiveness check holds.
-      return state;
+      // ATO-1001: how far a local model has read the prompt, for the
+      // thinking indicator ("reading prompt · 40%"). A long prefill used
+      // to show only "thinking" for a minute, and people cancelled.
+      if (event.total <= 0) return state;
+      return {
+        ...state,
+        promptProgress: { processed: Math.max(0, event.processed), total: event.total },
+      };
+    case "first_token":
+      // Output has started: the streaming tail takes over from here.
+      return state.promptProgress == null ? state : { ...state, promptProgress: null };
     default: {
       const unhandled: never = event;
       void unhandled;

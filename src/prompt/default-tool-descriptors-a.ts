@@ -31,7 +31,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "browser.type",
-    summary: "Type into a snapshot element; optional Enter.",
+    summary: "Type into a snapshot element; optional Enter. Passwords, codes, captchas: browser.act take_over.",
     argsSchema: "{ ref: string, text: string, pressEnter?: boolean }",
   },
   {
@@ -66,8 +66,8 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.act",
     summary:
-      "More page actions by `action`: select (choose `values` in a <select> ref), upload (local `paths` into a file input ref; always asks), back, forward, key (press `key`, e.g. Enter, Escape, Tab, ArrowDown, optionally on a ref), hover (ref), dialog (answer the NEXT alert/confirm/prompt: `accept`, optional `text`; call it before the click that opens it), wait (`text` to appear, or with state \"hidden\" to go; a `ref`; or `ms`, at most 10000).",
-    argsSchema: `{ action: "select" | "upload" | "back" | "forward" | "key" | "hover" | "dialog" | "wait", ref?: string, values?: string[], paths?: string[], key?: string, accept?: boolean, text?: string, state?: "visible" | "hidden", ms?: number, timeoutMs?: number }`,
+      "More page actions by `action`: select (choose `values` in a <select> ref), upload (local `paths` into a file input ref; always asks), back, forward, key (press `key`, e.g. Enter, Escape, Tab, ArrowDown, optionally on a ref), hover (ref), dialog (answer the NEXT alert/confirm/prompt: `accept`, optional `text`; call it before the click that opens it), wait (`text` to appear, or with state \"hidden\" to go; a `ref`; or `ms`, at most 10000), take_over (hand the browser to the user for a login, password, one-time code or captcha: `reason` says what to do; waits for them, then re-reads the page).",
+    argsSchema: `{ action: "select" | "upload" | "back" | "forward" | "key" | "hover" | "dialog" | "wait" | "take_over", reason?: string, ref?: string, values?: string[], paths?: string[], key?: string, accept?: boolean, text?: string, state?: "visible" | "hidden", ms?: number, timeoutMs?: number }`,
   },
   {
     name: "browser.extract",
@@ -90,8 +90,14 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   {
     name: "browser.annotate",
     summary:
-      "Let the user mark up the open page: start shows an overlay where they click elements and type what to change; read returns each pin's comment, selector, box and styles (crops adds element pictures), grouped by page area; stop removes it.",
+      "Let the user mark up the open page: start shows an overlay where they click elements to drop numbered pins (they say in chat what to change for each); read returns each pin's selector, box and styles (crops adds element pictures), grouped by page area; stop removes it.",
     argsSchema: `{ action: "start" | "read" | "stop", crops?: boolean }`,
+  },
+  {
+    name: "browser.scenario",
+    summary:
+      "Record a browser task once and replay it without the model: start records this chat's navigate/search/click/type/act steps; stop saves them under `name` (`params` turns typed text into {{placeholders}}, e.g. { query: \"running shoes\" }); run replays a saved scenario, finding each element by role and name, with `params` filling the placeholders, and stops at the first step it cannot do; cancel, list, delete. Every replayed step asks for approval like the same call by you.",
+    argsSchema: `{ action: "start" | "stop" | "cancel" | "run" | "list" | "delete", name?: string, params?: object, timeoutMs?: number }`,
   },
   {
     name: "os.shell.run",
@@ -125,7 +131,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     summary:
       "Extract plain text from documents — PDF, Office, ODF, RTF, EPUB, HTML, email (markers in output). NOT for source code: use os.fs.read. Read-only.",
     argsSchema:
-      "{ path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'ods' | 'odp' | 'epub' | 'html' | 'eml' | 'mbox' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
+      "{ path: string, format?: 'pdf' | 'docx' | 'doc' | 'xlsx' | 'rtf' | 'odt' | 'pptx' | 'ods' | 'odp' | 'epub' | 'html' | 'eml' | 'mbox' | 'msg' | 'plain', maxBytes?: number, maxPages?: number, pagesFrom?: number, pagesTo?: number, sheets?: (string | number)[], pageSeparators?: boolean, includeTables?: boolean }",
   },
   OS_FS_DOCX_CONTRACT.descriptor,
   OS_FS_XLSX_CONTRACT.descriptor,

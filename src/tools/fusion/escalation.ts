@@ -37,6 +37,12 @@ export function describeTrigger(trigger: EscalationTrigger): string {
 /** One escalation completion, on a pinned provider, no fallback. */
 export type EscalationComplete = (input: {
   providerId: string;
+  /**
+   * The model to ask that provider for, when it is not the entry's own
+   * chat model (`turnModel` of the target, ATO-1560). Absent, the
+   * provider's configured model answers, as before.
+   */
+  model?: string;
   prompt: string;
   maxOutputTokens: number;
   signal: AbortSignal;
@@ -131,6 +137,7 @@ export async function requestAdvice(input: {
   try {
     const answer = await input.complete({
       providerId: target.providerId,
+      ...(target.turnModel === undefined ? {} : { model: target.turnModel }),
       prompt: input.prompt,
       maxOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
       signal: input.signal,

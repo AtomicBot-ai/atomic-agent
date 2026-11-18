@@ -2,6 +2,7 @@ import type { TuiState } from "../tui-state.js";
 import { isImportAction, type ImportAction } from "./import-actions.js";
 import type { ImportPanelState } from "./import-panel-state.js";
 import { defaultSourceDir, importSourceSupports } from "./import-sources.js";
+import { isImportFactsAction, reduceImportFacts } from "./import-facts-reducer.js";
 
 /**
  * Reducer slice for `state.importPanel`. Returns an updated `TuiState`
@@ -27,6 +28,12 @@ function reducePanel(
   panel: ImportPanelState,
   action: ImportAction,
 ): ImportPanelState {
+  if (isImportFactsAction(action)) {
+    const facts = reduceImportFacts(panel.facts, action);
+    const mode =
+      action.type === "import_facts_opened" ? "facts" : action.type === "import_facts_closed" ? "configure" : panel.mode;
+    return facts === panel.facts && mode === panel.mode ? panel : { ...panel, mode, facts };
+  }
   switch (action.type) {
     case "import_form_field_changed":
       return { ...panel, form: { ...panel.form, ...action.patch } };

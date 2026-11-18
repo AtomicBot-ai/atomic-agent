@@ -366,6 +366,14 @@ export interface CompletionResult {
    * when every tool the caller sent went out.
    */
   droppedTools?: readonly DroppedTool[];
+  /**
+   * The request carried a GBNF grammar and the server got it without
+   * one: this server refused our grammar with a 400 earlier, so the
+   * llama-server client stopped sending it there (ATO-1675). Nothing held
+   * the reply to the call shape, so the step reads plain prose as a
+   * reply, as on native tools. Absent when the grammar went out.
+   */
+  grammarSkipped?: true;
 }
 
 /** One tool a provider left out of a request (`CompletionResult.droppedTools`). */

@@ -8,6 +8,7 @@ import { createEmptySessionState, recordTurn } from "../session/session-state.js
 import { userTurn } from "../session/conversation-turn.js";
 import type { TurnOwnerProbe } from "../session/turn-owner.js";
 import { StructuredLogger, type LogRecord } from "../tracing/structured-logger.js";
+import { TaskStore } from "../tasks/task-store.js";
 import {
   createIncognitoSessions,
   removeIncognitoTrace,
@@ -109,6 +110,70 @@ describe("incognito sessions in the runtime", () => {
     expect(existsSync(trace("s-dead"))).toBe(false);
     expect(existsSync(trace("s-live"))).toBe(true);
     expect(records.filter((r) => r.message === "deleted incognito chats left by a stopped agent")).toHaveLength(1);
+  });
+
+  it("the boot sweep drops the tasks a dead process's incognito chat left (ATO-1547)", () => {
+    alive.add(10).add(20);
+    save(open(10), "s-dead", true);
+    save(open(20), "s-live", true);
+    const tasksDbFile = join(dir, "tasks.sqlite");
+    const tasks = new TaskStore({ dbFile: tasksDbFile });
+    const task = (sessionId: string): string =>
+      tasks.create({ sessionId, userMessage: `secret for ${sessionId}`, origin: "cli", maxAttempts: 1 }).id;
+    const dead = task("s-dead");
+    const live = task("s-live");
+    alive.delete(10);
+
+    expect(sweepOrphanIncognitoSessions(open(30), tracesDir, logger, tasksDbFile)).toEqual(["s-dead"]);
+    expect(tasks.get(dead)).toBeNull();
+    expect(tasks.get(live)).not.toBeNull();
+    tasks.close();
+  });
+
+  it("deletes a task the dead process was running, prompt and all; one a live process runs is only cancelled", () => {
+    alive.add(10).add(20);
+    save(open(10), "s-dead", true);
+    const tasksDbFile = join(dir, "tasks.sqlite");
+    const deadRunner = new TaskStore({ dbFile: tasksDbFile, ownerProbe: probe(10, alive) });
+    const liveRunner = new TaskStore({ dbFile: tasksDbFile, ownerProbe: probe(20, alive) });
+    const create = (store: TaskStore, text: string): string =>
+      store.create({ sessionId: "s-dead", userMessage: text, origin: "cli", maxAttempts: 1 }).id;
+    const killed = create(deadRunner, "secret for s-dead");
+    expect(deadRunner.markRunning(killed)?.status).toBe("running");
+    const held = create(liveRunner, "held by a live runner");
+    expect(liveRunner.markRunning(held)?.status).toBe("running");
+    deadRunner.close();
+    alive.delete(10);
+
+    expect(
+      sweepOrphanIncognitoSessions(open(30), tracesDir, logger, tasksDbFile, { ownerProbe: probe(30, alive) }),
+    ).toEqual(["s-dead"]);
+    expect(liveRunner.get(killed)).toBeNull();
+    expect(liveRunner.get(held)?.status).toBe("cancelled");
+    liveRunner.close();
+  });
+
+  it("keeps a chat whose tasks could not be dropped, for the next start", () => {
+    alive.add(10);
+    save(open(10), "s-dead", true);
+    alive.delete(10);
+    // A directory where the tasks file should be: it cannot be opened.
+    const tasksDbFile = join(dir, "tasks-dir");
+    mkdirSync(tasksDbFile);
+    const boot = open(30);
+
+    expect(sweepOrphanIncognitoSessions(boot, tracesDir, logger, tasksDbFile)).toEqual([]);
+    expect(boot.isIncognito("s-dead")).toBe(true);
+    expect(existsSync(trace("s-dead"))).toBe(true);
+    expect(records.some((r) => r.level === "warn" && r.message.includes("tasks of an incognito chat"))).toBe(true);
+  });
+
+  it("a sweep with no tasks file still deletes the chat", () => {
+    alive.add(10);
+    save(open(10), "s-dead", true);
+    alive.delete(10);
+    expect(sweepOrphanIncognitoSessions(open(30), tracesDir, logger, join(dir, "missing.sqlite"))).toEqual(["s-dead"]);
+    expect(existsSync(join(dir, "missing.sqlite"))).toBe(false);
   });
 
   it("a failing sweep is logged and never throws", () => {

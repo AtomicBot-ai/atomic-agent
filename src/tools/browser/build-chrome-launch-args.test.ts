@@ -121,3 +121,21 @@ describe("buildChromeLaunchArgs offline (ATO-1084)", () => {
     expect(buildChromeLaunchArgs(base).some((a) => a.startsWith("--proxy-server"))).toBe(false);
   });
 });
+
+describe("buildChromeLaunchArgs with the user's proxy (ATO-87)", () => {
+  const base = { cdpPort: 9222, userDataDir: "/tmp/p", headless: false, platform: "darwin" as const };
+  const proxyArgs = ["--proxy-server=http://10.0.0.2:3128", "--proxy-bypass-list=a.com;*.a.com"];
+
+  it("passes the proxy flags", () => {
+    const args = buildChromeLaunchArgs({ ...base, proxyArgs });
+    expect(args).toEqual(expect.arrayContaining(proxyArgs));
+  });
+
+  it("lets offline mode win over the proxy", () => {
+    const args = buildChromeLaunchArgs({ ...base, offline: true, proxyArgs });
+    expect(args.filter((a) => a.startsWith("--proxy-server"))).toEqual([
+      "--proxy-server=http://127.0.0.1:9",
+    ]);
+    expect(args.some((a) => a.startsWith("--proxy-bypass-list"))).toBe(false);
+  });
+});

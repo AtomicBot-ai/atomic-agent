@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoreControlClient } from "./core-client.js";
-import { coreAssetName, coreChecksum, checkCoreUpdate } from "./core-install.js";
+import { coreAssetName, coreChecksum, checkCoreUpdate, CORE_RELEASE_CHECK_RETRY_MS } from "./core-install.js";
 import { CORE_VERSION, coreDataDir, coreKeyForUrl, coreSessionPath, orphanedCoreSession, readCoreSession, writeCoreJson } from "./core-state.js";
 import { coreLoadOverrides, stopCoreSession } from "./core-sessions.js";
 import { withCoreOperation } from "./core-operation.js";
@@ -34,6 +34,33 @@ describe("Core host contract", () => {
     expect(await checkCoreUpdate(dir, request)).toMatchObject({ currentVersion: null, compatibleVersion: CORE_VERSION, latestVersion: "999.0.0", requiresAgentUpdate: true, updateAvailable: true });
     await checkCoreUpdate(dir, request);
     expect(request).toHaveBeenCalledTimes(1);
+  });
+  it("remembers a failed release check instead of asking GitHub on every refresh (ATO-339)", async () => {
+    const dir = fixture();
+    const offline = vi.fn<typeof fetch>(async () => { throw new TypeError("fetch failed"); });
+    // No cache and no network: the shipped version answers, nothing throws.
+    expect(await checkCoreUpdate(dir, offline)).toMatchObject({ latestVersion: CORE_VERSION, requiresAgentUpdate: false, updateAvailable: true });
+    await checkCoreUpdate(dir, offline);
+    expect(offline).toHaveBeenCalledTimes(1);
+    // A forced check (`models engine check`) still asks and still reports the failure.
+    await expect(checkCoreUpdate(dir, offline, true)).rejects.toThrow("fetch failed");
+    expect(offline).toHaveBeenCalledTimes(2);
+    // After the retry window the next refresh asks again.
+    const later = Date.now() + CORE_RELEASE_CHECK_RETRY_MS + 1;
+    vi.spyOn(Date, "now").mockReturnValue(later);
+    const online = vi.fn(async () => Response.json({ tag_name: "v999.0.0" }));
+    expect(await checkCoreUpdate(dir, online)).toMatchObject({ latestVersion: "999.0.0", requiresAgentUpdate: true });
+    expect(online).toHaveBeenCalledTimes(1);
+  });
+  it("keeps the last known release when a later check fails (ATO-339)", async () => {
+    const dir = fixture();
+    await checkCoreUpdate(dir, vi.fn(async () => Response.json({ tag_name: "v999.0.0" })));
+    // The cached answer has gone stale and GitHub now refuses.
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 7 * 60 * 60_000);
+    const limited = vi.fn(async () => new Response("", { status: 403 }));
+    expect(await checkCoreUpdate(dir, limited)).toMatchObject({ latestVersion: "999.0.0", requiresAgentUpdate: true });
+    await checkCoreUpdate(dir, limited);
+    expect(limited).toHaveBeenCalledTimes(1);
   });
   it("requires one exact checksum entry and supports all shipped CPU targets", () => {
     const hash = "a".repeat(64), asset = coreAssetName(CORE_VERSION, "darwin", "arm64");

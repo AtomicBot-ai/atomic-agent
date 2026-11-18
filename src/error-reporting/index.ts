@@ -23,7 +23,7 @@ export {
   MIN_KNOWN_SECRET_LENGTH,
 } from "./secret-detector.js";
 export type { KnownSecret } from "./secret-detector.js";
-export type { LlmFailureContext } from "./llm-failure-tags.js";
+export type { LlmFailureContext, LlmPromptBudget, LlmTruncationCounts } from "./llm-failure-tags.js";
 export {
   buildEnvelope,
   buildFingerprint,

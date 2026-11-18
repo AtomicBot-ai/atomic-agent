@@ -4,6 +4,8 @@
  * the narrower fusion-worker one (`read-scope.ts`).
  */
 
+import { imagePathsOf } from "../os/office/docx-xml.js";
+
 export type ReadTargetsOf = (args: Record<string, unknown>) => string[];
 
 function nonEmpty(value: unknown): string | undefined {
@@ -31,7 +33,20 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
   ["os.fs.read_document", pathArg],
   // The office tools read the file they edit or show; `create` makes a
   // new one, which the approval ladder classifies as a write.
-  ["os.fs.docx", (args) => (args.op === "create" ? [] : pathArg(args))],
+  [
+    // The document itself (not for create), and every picture its
+    // `![alt](path)` blocks embed: a file from outside the scope put in a
+    // document inside it could otherwise be read without asking.
+    "os.fs.docx",
+    (args) => [
+      ...(args.op === "create" ? [] : pathArg(args)),
+      ...imagePathsOf(
+        (Array.isArray(args.blocks) ? args.blocks : []).filter(
+          (block: unknown): block is string => typeof block === "string",
+        ),
+      ),
+    ],
+  ],
   ["os.fs.xlsx", (args) => (args.op === "create" ? [] : pathArg(args))],
   ["os.fs.archive.list", pathArg],
   ["os.fs.archive.read_entry", pathArg],
@@ -77,6 +92,15 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
         nonEmpty(args.path),
         ...(Array.isArray(args.paths) ? args.paths.map(nonEmpty) : []),
       ].filter((path): path is string => path !== undefined),
+  ],
+  // A `folder` names where to search; without it the search covers only
+  // the folders the person added in My files themselves (ATO-1621).
+  [
+    "files.search",
+    (args) => {
+      const folder = nonEmpty(args.folder);
+      return folder === undefined ? [] : [folder];
+    },
   ],
   // The clip is read from disk and sent to the model (ATO-497).
   ["audio.listen", pathArg],

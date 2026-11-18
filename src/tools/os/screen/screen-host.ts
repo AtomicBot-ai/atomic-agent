@@ -1,7 +1,9 @@
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
+import { dirname } from "node:path";
 import { runCommand } from "../../../sandbox/command-runner.js";
-import { buildScreenInvocation, type ScreenOp } from "./screen-jxa.js";
+import { buildScreenInvocation, type ScreenFrame, type ScreenOp } from "./screen-jxa.js";
+import { parseElement, type ScreenElement } from "./screen-elements.js";
 import type { ScreenWindow } from "./screen-window.js";
 
 /**
@@ -31,6 +33,8 @@ export interface ScreenDeps {
   /** The agent's environment: names the host app in permission messages. */
   env: NodeJS.ProcessEnv;
   fileSize: (path: string) => Promise<number>;
+  /** The first `bytes` of a file (a PNG header on Windows/Linux captures). */
+  readHead: (path: string, bytes: number) => Promise<Uint8Array>;
   ensureDir: (path: string) => Promise<void>;
   /** Saves a window's text next to its snapshot. */
   writeText: (path: string, text: string) => Promise<void>;
@@ -53,10 +57,22 @@ export function resolveScreenDeps(overrides: Partial<ScreenDeps> = {}): ScreenDe
     platform: overrides.platform ?? platform(),
     env: overrides.env ?? process.env,
     fileSize: overrides.fileSize ?? (async (path) => (await stat(path)).size),
+    readHead:
+      overrides.readHead ??
+      (async (path, bytes) => {
+        const file = await open(path, "r");
+        try {
+          const buffer = Buffer.alloc(bytes);
+          const { bytesRead } = await file.read(buffer, 0, bytes, 0);
+          return buffer.subarray(0, bytesRead);
+        } finally {
+          await file.close();
+        }
+      }),
     ensureDir:
       overrides.ensureDir ??
       (async (path) => {
-        await mkdir(path, { recursive: true });
+        await ensurePrivateDir(path);
       }),
     writeText:
       overrides.writeText ??
@@ -66,6 +82,54 @@ export function resolveScreenDeps(overrides: Partial<ScreenDeps> = {}): ScreenDe
     now: overrides.now ?? (() => new Date()),
     tmpDir: overrides.tmpDir ?? tmpdir(),
   };
+}
+
+/** The file-system calls `ensurePrivateDir` makes; injectable for tests. */
+export interface PrivateDirFs {
+  mkdir: (path: string, options: { recursive: true; mode: number }) => Promise<unknown>;
+  lstat: (path: string) => Promise<{ isDirectory(): boolean; isSymbolicLink(): boolean; uid: number }>;
+  chmod: (path: string, mode: number) => Promise<void>;
+  /** `process.getuid()`; `null` where there is none (Windows). */
+  uid: () => number | null;
+}
+
+const NODE_PRIVATE_DIR_FS: PrivateDirFs = {
+  mkdir: (path, options) => mkdir(path, options),
+  lstat: (path) => lstat(path),
+  chmod: (path, mode) => chmod(path, mode),
+  uid: () => (typeof process.getuid === "function" ? process.getuid() : null),
+};
+
+/**
+ * Make the screenshot folder and its parent private to this user.
+ *
+ * The folder lives under `os.tmpdir()`. On macOS that is a per-user 0700
+ * folder, but on Linux it is the shared `/tmp`, where another local user
+ * could read a full-screen capture, or pre-create the predictable
+ * `atomic-agent-screens` parent (or a symlink) and own what lands inside.
+ * So both levels are created 0700, must be real directories (not
+ * symlinks) owned by this user, and are set back to 0700 if they were
+ * looser. Anything else refuses the capture. Windows has no uid and a
+ * per-user temp folder; only the symlink check applies there.
+ */
+export async function ensurePrivateDir(
+  path: string,
+  fs: PrivateDirFs = NODE_PRIVATE_DIR_FS,
+): Promise<void> {
+  await fs.mkdir(path, { recursive: true, mode: 0o700 });
+  const uid = fs.uid();
+  for (const dir of [dirname(path), path]) {
+    const info = await fs.lstat(dir);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error(`screenshot folder ${dir} is not a plain folder; refusing to save a capture there`);
+    }
+    if (uid !== null && info.uid !== uid) {
+      throw new Error(
+        `screenshot folder ${dir} belongs to another user; remove it and try again`,
+      );
+    }
+    if (uid !== null) await fs.chmod(dir, 0o700);
+  }
 }
 
 export interface ScreenApp {
@@ -92,6 +156,23 @@ export interface ScreenProbe {
   textTruncated?: boolean;
   /** How `type` delivered the text: `keys`, `paste` or `keys+paste`. */
   via?: string;
+  /** A window's controls (`elements`), in walk order. */
+  elements?: ScreenElement[];
+  elementsTruncated?: boolean;
+  /** Elements the walk looked at (`elements`). */
+  scanned?: number;
+  /** The AX title of the window the walk (`elements`) used. */
+  windowTitle?: string;
+  /** That window's frame (`elements`), stored so a press finds the same one of same-titled windows. */
+  windowFrame?: ScreenFrame;
+  /** `press`: what it did, `press` or `set-value`. */
+  did?: string;
+  /** `press`: the frontmost app right after acting, to show focus stayed put. */
+  frontmostAfter?: ScreenApp | null;
+  /** `press` refused as `element-changed`: what is at the path now. */
+  element?: { role: string; name: string };
+  /** `press` refused as `press-unsupported`: the actions the element does answer. */
+  actions?: string[];
   error?: string;
 }
 
@@ -116,6 +197,15 @@ export async function runScreenOp(
     );
   }
   return parseScreenProbe(result.stdout);
+}
+
+/** A `{x, y, width, height}` of finite numbers, or `null`. */
+export function parseFrame(raw: unknown): ScreenFrame | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const nums = [o.x, o.y, o.width, o.height];
+  if (!nums.every((n) => typeof n === "number" && Number.isFinite(n))) return null;
+  return { x: o.x as number, y: o.y as number, width: o.width as number, height: o.height as number };
 }
 
 export function parseScreenProbe(stdout: string): ScreenProbe {
@@ -145,6 +235,24 @@ export function parseScreenProbe(stdout: string): ScreenProbe {
     ...(typeof obj.text === "string" ? { text: obj.text } : {}),
     ...(typeof obj.textTruncated === "boolean" ? { textTruncated: obj.textTruncated } : {}),
     ...(typeof obj.via === "string" ? { via: obj.via } : {}),
+    ...(Array.isArray(obj.elements) ? { elements: obj.elements.flatMap(parseElement) } : {}),
+    ...(typeof obj.elementsTruncated === "boolean" ? { elementsTruncated: obj.elementsTruncated } : {}),
+    ...(typeof obj.scanned === "number" ? { scanned: obj.scanned } : {}),
+    ...(typeof obj.windowTitle === "string" ? { windowTitle: obj.windowTitle } : {}),
+    ...(parseFrame(obj.windowFrame) ? { windowFrame: parseFrame(obj.windowFrame)! } : {}),
+    ...(typeof obj.did === "string" ? { did: obj.did } : {}),
+    ...("frontmostAfter" in obj ? { frontmostAfter: parseApp(obj.frontmostAfter) } : {}),
+    ...(obj.element && typeof obj.element === "object"
+      ? {
+          element: {
+            role: String((obj.element as Record<string, unknown>).role ?? ""),
+            name: String((obj.element as Record<string, unknown>).name ?? ""),
+          },
+        }
+      : {}),
+    ...(Array.isArray(obj.actions)
+      ? { actions: obj.actions.filter((a): a is string => typeof a === "string") }
+      : {}),
     ...(typeof obj.error === "string" ? { error: obj.error } : {}),
   };
 }
@@ -221,6 +329,26 @@ export function screenRecordingMessage(env: NodeJS.ProcessEnv): string {
   );
 }
 
+/**
+ * Hosts where `os.screen.capture` works (ATO-527 first slice: Windows
+ * and Linux take whole-screen pictures). Everything else in `os.screen.*`
+ * needs `screenControlSupported`.
+ */
+export function screenCaptureSupported(os: NodeJS.Platform): boolean {
+  return os === "darwin" || os === "win32" || os === "linux";
+}
+
+/** Hosts where clicking, typing, keys, window snapshots and pointing work: macOS only for now. */
+export function screenControlSupported(os: NodeJS.Platform): boolean {
+  return os === "darwin";
+}
+
 export function macOnlyMessage(tool: string, os: NodeJS.Platform): string {
+  if (screenCaptureSupported(os) && os !== "darwin") {
+    return (
+      `${tool} works on macOS only for now (this is ${os}). os.screen.capture works here and takes a picture of the whole screen, ` +
+      "but clicking, typing, keys and pointing are macOS-only until the next part of ATO-527. Tell the user what to click or type instead."
+    );
+  }
   return `${tool} works on macOS only (this is ${os}); Windows and Linux support is tracked in ATO-527.`;
 }

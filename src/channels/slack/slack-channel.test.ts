@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import type { WebSocketLike } from "../discord/discord-gateway-transport.js";
 import { readThreadReplies, slackChannelDefinition } from "./index.js";
-import { SlackChannel } from "./slack-channel.js";
+import { SLACK_SESSION_PRUNE, SlackChannel } from "./slack-channel.js";
 
 class FakeSocket {
   sent: string[] = [];
@@ -184,5 +184,19 @@ describe("readThreadReplies", () => {
     expect(readThreadReplies({ threadReplies: true })).toBe(true);
     expect(readThreadReplies({ threadReplies: false })).toBe(false);
     expect(readThreadReplies({ threadReplies: "false" })).toBe(false);
+  });
+});
+
+describe("SLACK_SESSION_PRUNE (ATO-1509)", () => {
+  it("keeps DMs and whole-channel keys, lets thread keys go", () => {
+    const keep = SLACK_SESSION_PRUNE.keep!;
+    expect(keep("dm:D123")).toBe(true);
+    expect(keep("C123")).toBe(true);
+    expect(keep("C123:1712345678.000100")).toBe(false);
+  });
+
+  it("prunes threads after 30 days and caps the file at 500 entries", () => {
+    expect(SLACK_SESSION_PRUNE.maxAgeMs).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(SLACK_SESSION_PRUNE.maxEntries).toBe(500);
   });
 });

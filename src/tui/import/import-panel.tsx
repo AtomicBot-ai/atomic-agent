@@ -11,6 +11,7 @@ import type {
   ImportPanelState,
 } from "./import-panel-state.js";
 import { ImportClick, importRowClick } from "./import-mouse.js";
+import { ImportFactsView } from "./import-facts-view.js";
 import {
   IMPORT_SOURCE_IDS,
   importSourceLabel,
@@ -44,6 +45,7 @@ export function ImportPanel(props: ImportPanelProps): ReactElement {
         </Box>
       ) : null}
       {panel.mode === "configure" ? <ConfigureForm form={panel.form} /> : null}
+      {panel.mode === "facts" ? <ImportFactsView facts={panel.facts} maxRows={maxRows} /> : null}
       {panel.mode === "running" ? (
         <Box marginTop={1}>
           <Text color={theme.colors.muted}>importing… please wait</Text>
@@ -134,6 +136,11 @@ function ConfigureForm({ form }: { form: ImportFormState }): ReactElement {
         )}
       >
         <RunRow focused={form.focus === "run"} />
+      </ImportClick>
+      <ImportClick onClick={importRowClick("facts", (ctx) => ctx.callbacks.onImportFacts?.({ kind: "open" }))}>
+        <Text color={form.focus === "facts" ? theme.colors.accent : theme.colors.muted}>
+          {form.focus === "facts" ? theme.glyphs.chevronRight : " "} Facts about you from a ChatGPT or Claude export…
+        </Text>
       </ImportClick>
       <Box marginTop={1}>
         <Text color={theme.colors.muted}>

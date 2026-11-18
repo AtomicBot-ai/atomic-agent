@@ -5,6 +5,7 @@ import { buildIntroArt } from "./intro-art.js";
 import type { OnboardingFit } from "./onboarding-fit.js";
 import { starTierOfGlyph, type StarTier } from "./star-tiers.js";
 import { theme } from "../theme/theme.js";
+import { t } from "../../i18n/index.js";
 import { CROSS_MARKS, FACE_GLYPHS } from "../components/logo-art.js";
 import { WORDMARK_ROWS, TAGLINE } from "../components/logo.js";
 
@@ -50,7 +51,6 @@ const SKY_BY_TIER: Readonly<Record<OnboardingFit["tier"], SkyTier>> = {
   minimal: { density: 0.5, halo: 0 },
 };
 
-const PRESS_ANY_KEY = "[ press any key to continue ]";
 /**
  * The no-mark fallback must be this one shared instance: `markRows` sits
  * in the sky's `useMemo` dependency list, and a fresh `[]` per render
@@ -157,7 +157,7 @@ export function OnboardingIntroStep(props: {
       */}
       <Box marginTop={1}>
         <Text color={theme.colors.accent} wrap="truncate">
-          {pad(PRESS_ANY_KEY)}
+          {pad(t("onboarding.intro.pressAnyKey"))}
         </Text>
       </Box>
     </Box>

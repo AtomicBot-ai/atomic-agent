@@ -1,6 +1,9 @@
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import type { ModelMode } from "../../../config/model-mode.js";
-import type { UserSubscriptionCliOptions } from "../../../config/llm-config.js";
+import type {
+  UserSubscriptionCliOptions,
+  UserSubscriptionOAuthOptions,
+} from "../../../config/llm-config.js";
 import type { UserLlmRunModeConfig } from "../../../config/llm-run-mode-config.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import type { ModelProfile } from "../../model-profile.js";
@@ -95,6 +98,8 @@ export type LlmProviderConfigEntry = {
    * drive and how to invoke it. Absent on every other kind.
    */
   subscriptionCli?: UserSubscriptionCliOptions;
+  /** EXPERIMENTAL `subscription-oauth` settings (ATO-1448); no tokens here. */
+  subscriptionOauth?: UserSubscriptionOAuthOptions;
   userModels?: ReadonlyArray<UserModelConfigEntry>;
 };
 

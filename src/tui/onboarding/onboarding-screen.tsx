@@ -14,7 +14,7 @@ import {
   orderLocalModelPicks,
 } from "./local-model-picks.js";
 import {
-  ONBOARDING_SUBTITLES,
+  onboardingSubtitleFor,
   onboardingFooterFor,
 } from "./onboarding-chrome.js";
 import {
@@ -180,7 +180,7 @@ export function OnboardingScreen(props: {
     rows: size.rows,
     step: onboarding.step,
     fit,
-    subtitle: ONBOARDING_SUBTITLES[onboarding.step],
+    subtitle: onboardingSubtitleFor(onboarding.step),
     picks,
     cursor: blockCursor,
     ramGb,
@@ -235,7 +235,7 @@ export function OnboardingScreen(props: {
             fit={fit}
             columns={size.columns}
             viewportRows={placement.rows}
-            subtitle={ONBOARDING_SUBTITLES[onboarding.step]}
+            subtitle={onboardingSubtitleFor(onboarding.step)}
             picks={picks}
             pickCursor={pickCursor}
             ramGb={ramGb}

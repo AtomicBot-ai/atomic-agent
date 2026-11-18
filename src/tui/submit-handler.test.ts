@@ -841,6 +841,19 @@ describe("Enter in the rewind picker (ATO-1057)", () => {
   });
 });
 
+describe("/export (ATO-1054)", () => {
+  it("hands the format and path to the host", () => {
+    const onChatExportRequested = vi.fn();
+    handleEditorSubmit(
+      "/export pdf out/chat.pdf",
+      createInitialTuiState(fakeSession()),
+      () => undefined,
+      stubCallbacks({ onChatExportRequested }),
+    );
+    expect(onChatExportRequested).toHaveBeenCalledWith({ format: "pdf", path: "out/chat.pdf" });
+  });
+});
+
 describe("bare /enhance", () => {
   it("enhances the composer draft when run from the menu, keeping the buffer", () => {
     // The menu runs `/enhance` with the draft still in the composer.
@@ -1042,6 +1055,19 @@ describe("/why and /verbose (ATO-34)", () => {
     const second = run("/verbose", { ...off, verboseSteps: true });
     expect(second.find((a) => a.type === "verbose_steps_set")?.on).toBe(false);
     expect(run("/verbose off", off).find((a) => a.type === "verbose_steps_set")?.on).toBe(false);
+  });
+
+  it("/verbose asks to persist the choice in tui.verboseSteps", () => {
+    const onVerboseStepsPersistRequested = vi.fn();
+    const push = () => {};
+    const off = createInitialTuiState(fakeSession());
+    runSlashCommand("/verbose", off, push, stubCallbacks({ onVerboseStepsPersistRequested }));
+    expect(onVerboseStepsPersistRequested).toHaveBeenLastCalledWith(true);
+    const on = { ...off, verboseSteps: true };
+    runSlashCommand("/verbose", on, push, stubCallbacks({ onVerboseStepsPersistRequested }));
+    expect(onVerboseStepsPersistRequested).toHaveBeenLastCalledWith(false);
+    runSlashCommand("/verbose on", on, push, stubCallbacks({ onVerboseStepsPersistRequested }));
+    expect(onVerboseStepsPersistRequested).toHaveBeenLastCalledWith(true);
   });
 });
 

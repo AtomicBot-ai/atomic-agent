@@ -255,6 +255,27 @@ describe("filterToolDescriptorsByConfig", () => {
     expect(filtered.length).toBeGreaterThan(0);
   });
 
+  it("drops subagent.run only when its gate is off, and keeps it when the gate is absent (ATO-1670)", () => {
+    expect(nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN)).has("subagent.run")).toBe(true);
+    const off = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        subagent: { enabled: false },
+      }),
+    );
+    expect(off.has("subagent.run")).toBe(false);
+    expect(off.has("fusion.delegate")).toBe(true);
+    expect(
+      nameSet(
+        filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+          ...ALL_OPEN,
+          subagent: { enabled: true },
+        }),
+      ).has("subagent.run"),
+    ).toBe(true);
+    expect(GATED_TOOL_NAMES.subagent).toEqual(["subagent.run"]);
+  });
+
   it("every gated tool name exists in DEFAULT_TOOL_DESCRIPTORS", () => {
     const known = new Set(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
     const allGated = [
@@ -269,6 +290,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.sessions,
       ...GATED_TOOL_NAMES.mcp,
       ...GATED_TOOL_NAMES.fusion,
+      ...GATED_TOOL_NAMES.subagent,
       ...GATED_TOOL_NAMES.image,
       ...GATED_TOOL_NAMES.video,
       ...GATED_TOOL_NAMES.screen,
@@ -326,7 +348,7 @@ describe("screen gate", () => {
     );
     expect(pointOnly.has("os.screen.capture")).toBe(true);
     expect(pointOnly.has("os.screen.point")).toBe(true);
-    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key"]) {
+    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key", "os.screen.elements", "os.screen.press"]) {
       expect(pointOnly.has(name), name).toBe(false);
     }
     const controlOnly = nameSet(
@@ -337,6 +359,26 @@ describe("screen gate", () => {
     );
     expect(controlOnly.has("os.screen.click")).toBe(true);
     expect(controlOnly.has("os.screen.point")).toBe(false);
+  });
+
+  it("keeps only capture on a host without screen control (Windows, Linux: ATO-527)", () => {
+    const captureOnly = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        screen: { enabled: true, point: true, control: false },
+      }),
+    );
+    expect(captureOnly.has("os.screen.capture")).toBe(true);
+    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key", "os.screen.point"]) {
+      expect(captureOnly.has(name), name).toBe(false);
+    }
+    const pointOnly = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        screen: { enabled: false, point: true, control: false },
+      }),
+    );
+    for (const name of GATED_TOOL_NAMES.screen) expect(pointOnly.has(name), name).toBe(false);
   });
 });
 

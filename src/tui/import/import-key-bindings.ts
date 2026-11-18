@@ -10,6 +10,7 @@ import {
   type ImportToggleField,
 } from "./import-panel-state.js";
 import { nextImportSource } from "./import-sources.js";
+import { handleImportFactsKey } from "./import-facts-keys.js";
 
 export interface ImportTabKeyContext {
   state: TuiState;
@@ -40,6 +41,9 @@ export function handleImportTabKey(
   if (panel.mode === "running") return true; // busy — swallow every key
   if (panel.mode === "preview") return handlePreviewKey(input, key, ctx);
   if (panel.mode === "done") return handleDoneKey(input, key, ctx);
+  if (panel.mode === "facts") {
+    return handleImportFactsKey(input, key, panel.facts, ctx.dispatch, (cmd) => ctx.callbacks.onImportFacts?.(cmd));
+  }
   return handleConfigureKey(input, key, ctx, panel.form);
 }
 
@@ -71,6 +75,10 @@ function handleConfigureKey(
   if (key.return) {
     if (form.focus === "run") {
       callbacks.onImportPreview?.(form);
+      return true;
+    }
+    if (form.focus === "facts") {
+      callbacks.onImportFacts?.({ kind: "open" });
       return true;
     }
     if (form.focus === "sourceType") {

@@ -17,6 +17,7 @@ describe("importFocusOrder", () => {
       "overwrite",
       "limit",
       "run",
+      "facts",
     ]);
     expect(importFocusOrder("openclaw")).toEqual([
       "sourceType",
@@ -26,6 +27,7 @@ describe("importFocusOrder", () => {
       "overwrite",
       "limit",
       "run",
+      "facts",
     ]);
     expect(importFocusOrder("claude-code")).toEqual([
       "sourceType",
@@ -38,6 +40,7 @@ describe("importFocusOrder", () => {
       "overwrite",
       "limit",
       "run",
+      "facts",
     ]);
     expect(importFocusOrder("codex")).toEqual([
       "sourceType",
@@ -49,6 +52,7 @@ describe("importFocusOrder", () => {
       "overwrite",
       "limit",
       "run",
+      "facts",
     ]);
   });
 });

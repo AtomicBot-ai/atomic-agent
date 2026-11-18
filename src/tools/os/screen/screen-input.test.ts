@@ -340,7 +340,8 @@ describe("platform and registration", () => {
     expect(off.list()).toEqual([]);
     const linux = new ToolRegistry();
     registerOsScreenTools(linux, { approvals, approvalRequired: true, enabled: true, platform: "linux" });
-    expect(linux.list()).toEqual([]);
+    // ATO-527: Windows and Linux get the screenshot alone; input stays macOS-only.
+    expect(linux.list().map((tool) => tool.name)).toEqual(["os.screen.capture"]);
     const mac = new ToolRegistry();
     registerOsScreenTools(mac, { approvals, approvalRequired: true, enabled: true, point: true, platform: "darwin" });
     expect(mac.list().map((tool) => tool.name)).toEqual([...OS_SCREEN_TOOL_NAMES]);

@@ -552,7 +552,15 @@ jobs:
             fi
             echo "Draft $TAG exists; replacing its assets"
           else
-            gh release create "$TAG" --draft --title "$TAG" --generate-notes
+            # The required-update policy (src/update/update-policy.ts) rides in the body of the
+            # latest release as one HTML comment, so every new release carries it from
+            # packaging/update-policy.json; gh puts these notes above the generated ones (ATO-1007).
+            jq -e '(.minimum == null or (.minimum | type == "string")) and (.broken | type == "array")' \
+              packaging/update-policy.json >/dev/null
+            printf '<!-- atomic-agent-update-policy: %s -->\n' "$(jq -c . packaging/update-policy.json)" \
+              > "$RUNNER_TEMP/update-policy-notes.md"
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes \
+              --notes-file "$RUNNER_TEMP/update-policy-notes.md"
           fi
           cd release-assets
           ls -la

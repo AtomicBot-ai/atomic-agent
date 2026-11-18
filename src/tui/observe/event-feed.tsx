@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import type { FeedEntry, TuiState } from "../tui-state.js";
+import { BrandBadge } from "../brand/brand-badge.js";
+import { fusionWorkerBrand } from "../format-fusion-worker-line.js";
 
 interface EventFeedProps {
   state: TuiState;
@@ -38,9 +40,21 @@ function FeedRow({ entry }: FeedRowProps): ReactElement {
     <Text>
       <Text color={entry.color}>{glyph(entry)}</Text>
       <Text> </Text>
+      <FeedBrand entry={entry} />
       <Text>{entry.line}</Text>
     </Text>
   );
+}
+
+/**
+ * A fusion leg's model badge (ATO-1635). Only a brand we know is drawn:
+ * the feed is not a column, and a blank in front of one line in twenty
+ * would read as a stray indent.
+ */
+function FeedBrand({ entry }: FeedRowProps): ReactElement | null {
+  if (entry.brandModel === undefined) return null;
+  const brand = fusionWorkerBrand(entry.brandModel);
+  return brand ? <BrandBadge brand={brand} /> : null;
 }
 
 function glyph(entry: FeedEntry): string {

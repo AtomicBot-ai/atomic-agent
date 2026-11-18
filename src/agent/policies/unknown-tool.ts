@@ -13,7 +13,8 @@
  *
  * Suggestions are a hint in the result text only; a near miss is never
  * resolved to a real tool here (`tool-name-resolution.ts` owns the
- * separator / case forms that are safe to resolve silently).
+ * separator, case, wrapping and namespace forms that are safe to
+ * resolve silently).
  */
 import { compressToolResult, type CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { ToolRegistry } from "../../tools/tool-registry.js";

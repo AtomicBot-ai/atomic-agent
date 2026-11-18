@@ -20,6 +20,7 @@
  */
 
 import { widestLine } from "../onboarding/centre-onboarding-block.js";
+import { BRAND_SLOT_WIDTH } from "../brand/brand-badges.js";
 import { findProviderPreset } from "./provider-presets.js";
 import {
   listAimlapiEmbeddingModels,
@@ -66,8 +67,12 @@ export const CHECKING_KEY_HINT =
 
 /** Two border cells plus one cell of padding either side of the box. */
 const WIZARD_CHROME_COLUMNS = 4;
-/** The cursor mark and its trailing gap before every pick-list row. */
-const OPTION_MARK_COLUMNS = 2;
+/**
+ * The cursor mark and its trailing gap before every pick-list row, then
+ * the brand badge slot every provider and embedding row carries
+ * (ATO-1635).
+ */
+const OPTION_MARK_COLUMNS = 2 + BRAND_SLOT_WIDTH;
 
 /** A pick list's hint line at the widest its counter can reach. */
 function hintLine(

@@ -102,9 +102,9 @@ describe("computeSplashFit", () => {
       wordmarkPlacement: "none",
       wordmark: false,
       tagline: false,
-      // 12 rows − 5 for the mark − 1 margin − 1 slack leaves five of the
-      // six tips.
-      tipCount: 6,
+      // 12 rows − 3 for the mark − 1 margin − 1 slack leaves seven rows:
+      // every tip, `/theme` included.
+      tipCount: SPLASH_TIPS.length,
       labelWidth: 10,
       descriptions: "short",
     });
@@ -195,5 +195,16 @@ describe("computeSplashFit", () => {
       perLockup.set(key, tipCount);
     }
     expect(perLockup.get("full:below")).toBe(SPLASH_TIPS.length);
+  });
+});
+
+describe("start-page tips", () => {
+  it("offer the run-mode switch right after the model pick (ATO-1640)", () => {
+    const labels = SPLASH_TIPS.map((tip) => tip.label);
+    expect(labels.indexOf("/runmode")).toBe(labels.indexOf("/model") + 1);
+    const tip = SPLASH_TIPS.find((t) => t.label === "/runmode");
+    // `/runmode` with no argument opens the composer's backend switch.
+    expect(tip?.command).toBe("/runmode");
+    expect(tip?.description).toMatch(/Local, Cloud or Fusion/);
   });
 });

@@ -58,6 +58,7 @@ describe("checkpointTargets (ATO-1056)", () => {
     expect(checkpointTargets("os.fs.xlsx", { path: "b.xlsx", op: "create", rows: [[1]] }, WD, noDirs)).toEqual([join(WD, "b.xlsx")]);
     expect(checkpointTargets("os.fs.xlsx", { path: "b.xlsx", op: "write", cell: "A1", rows: [[1]] }, WD, noDirs)).toEqual([join(WD, "b.xlsx")]);
     expect(checkpointTargets("os.fs.xlsx", { path: "b.xlsx", op: "read", range: "A1:B2" }, WD, noDirs)).toEqual([]);
+    expect(checkpointTargets("os.fs.xlsx", { path: "b.xlsx", op: "chart", range: "A1:B3" }, WD, noDirs)).toEqual([join(WD, "b.xlsx")]);
     expect(checkpointTargets("os.fs.write_pptx", { path: "c.pptx", slides: [{ title: "T" }] }, WD, noDirs)).toEqual([join(WD, "c.pptx")]);
     // An op the tool refuses writes nothing.
     expect(checkpointTargets("os.fs.docx", { path: "a.docx" }, WD, noDirs)).toEqual([]);

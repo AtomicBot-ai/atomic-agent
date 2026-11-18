@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CHECKPOINT_MAX_ENTRIES,
   CHECKPOINT_MAX_FILE_BYTES,
+  CHECKPOINT_MAX_OFFICE_FILE_BYTES,
   FileCheckpointStore,
   looksBinary,
 } from "./fs-checkpoint-store.js";
@@ -83,6 +84,22 @@ describe("FileCheckpointStore (ATO-1056)", () => {
     const { entries } = await store.since("s-1", 0);
     expect(entries[0]?.skipped).toBeUndefined();
     expect(await store.readCopy("s-1", entries[0]!)).toEqual(zip);
+  });
+
+  it("copies a replaced deck past the text-file cap, so a rollback can bring it back (ATO-537)", async () => {
+    const deck = join(work, "big.pptx");
+    const bytes = Buffer.alloc(CHECKPOINT_MAX_FILE_BYTES + 1024, 7);
+    writeFileSync(deck, bytes);
+    await store.capture("s-1", deck, "os.fs.write_pptx");
+    const log = join(work, "big.log");
+    writeFileSync(log, Buffer.alloc(CHECKPOINT_MAX_FILE_BYTES + 1024, 65));
+    await store.capture("s-1", log, "os.fs.write");
+    const huge = join(work, "huge.pptx");
+    writeFileSync(huge, Buffer.alloc(CHECKPOINT_MAX_OFFICE_FILE_BYTES + 1, 7));
+    await store.capture("s-1", huge, "os.fs.write_pptx");
+    const { entries } = await store.since("s-1", 0);
+    expect(entries.map((e) => e.skipped)).toEqual([undefined, "too_large", "too_large"]);
+    expect((await store.readCopy("s-1", entries[0]!)).equals(bytes)).toBe(true);
   });
 
   it("drops the oldest past the entry cap and says a point before that is incomplete", async () => {

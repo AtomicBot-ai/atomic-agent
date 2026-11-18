@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it, vi } from "vitest";
 
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import type { CreateAgentRuntimeOptions } from "../runtime/bootstrap.js";
 import { StructuredLogger } from "../tracing/structured-logger.js";
 
+import { getConfig } from "../config/index.js";
+import { serveApiKeyPath } from "./serve-api-key.js";
 import { serveCommand } from "./serve-command.js";
 
 /** What `serveCommand` handed `createAgentRuntime`, the last time it ran. */
@@ -92,6 +96,17 @@ describe("what serve hands the runtime", () => {
     }
   });
 
+  // ATO-1492: a server's question to the person has its own port, so
+  // the approval ladder can never answer it. With no window showing it,
+  // nobody is there and the question is declined at once.
+  it("an MCP elicitation port that says nobody is there until a window attaches", async () => {
+    const { handlers } = await serveBootOptions();
+    const port = handlers?.onMcpElicitation;
+    expect(port).toBeDefined();
+    const surface = typeof port!.surface === "function" ? port!.surface() : port!.surface;
+    expect(surface).toBe("none");
+  });
+
   // Under the desktop, a host that died leaves stderr a dead pipe, and
   // the next log line exited the process before its teardown ran (the
   // port, the session store's turn ends, the serve record). Muted, the
@@ -145,5 +160,50 @@ describe("serve --tunnel without cloudflared", () => {
       vi.unstubAllEnvs();
     }
     expect(boot.options).toBeNull();
+  });
+});
+
+// A key always, on loopback too: with none given, serve uses the one in
+// the state dir, generated on the first run.
+describe("serve's own API key", () => {
+  it("--print-api-key prints the persisted key, the same on every run, and boots nothing", async () => {
+    vi.stubEnv("ATOMIC_AGENT_API_KEY", "");
+    boot.options = null;
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    try {
+      expect(await serveCommand(["--print-api-key"])).toBe(0);
+      expect(await serveCommand(["--print-api-key"])).toBe(0);
+      const printed = stdout.mock.calls.map((c) => String(c[0]));
+      expect(printed).toHaveLength(2);
+      expect(printed[0]).toMatch(/^[0-9a-f]{64}\n$/);
+      expect(printed[1]).toBe(printed[0]);
+      const onDisk = readFileSync(
+        serveApiKeyPath(getConfig().paths.stateDir),
+        "utf-8",
+      );
+      expect(`${onDisk.trim()}\n`).toBe(printed[0]);
+    } finally {
+      stdout.mockRestore();
+      vi.unstubAllEnvs();
+    }
+    expect(boot.options).toBeNull();
+  });
+
+  it("--print-api-key prints a given key instead", async () => {
+    vi.stubEnv("ATOMIC_AGENT_API_KEY", "given-key-0123456789");
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    try {
+      expect(await serveCommand(["--print-api-key"])).toBe(0);
+      expect(stdout.mock.calls.map((c) => String(c[0])).join("")).toBe(
+        "given-key-0123456789\n",
+      );
+    } finally {
+      stdout.mockRestore();
+      vi.unstubAllEnvs();
+    }
   });
 });

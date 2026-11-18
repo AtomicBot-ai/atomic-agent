@@ -16,6 +16,7 @@ import { toLlmFailure } from "./step/step-errors.js";
 export { BatchValidationError } from "./step/step-errors.js";
 import { completionAssumesOpenReasoning, resolveReasoning } from "./step/step-reasoning.js";
 import { runInitialCompletion } from "./step/step-inference.js";
+import { completionDefectLogFields } from "./step/completion-defect-log.js";
 import { continueCutAnswer, type ContinuedAnswer } from "./step/step-answer-continuation.js";
 import type { ToolCallBatchParseResult } from "./step/step-parsing.js";
 import { isNativeToolsEmptyCompletionHandledByParser, isGrammarEmptyCompletionWorthRepairing, parseDepsFor, replyCapSent, prepareStepRepair, finishStepRepair } from "./step/step-parsing.js";
@@ -180,6 +181,7 @@ async function executeStepInner(
         sessionId: ctx.session.id,
         stepIndex: ctx.stepIndex,
         reason: initialModelFailure.reason,
+        ...completionDefectLogFields(completion, prompt),
       });
       throw new ModelError(
         initialModelFailure.reason,
@@ -208,6 +210,7 @@ async function executeStepInner(
       deps.logger?.warn("empty completion, repairing once", {
         sessionId: ctx.session.id,
         stepIndex: ctx.stepIndex,
+        ...completionDefectLogFields(completion, prompt),
       });
     }
   }
@@ -280,6 +283,8 @@ async function executeStepInner(
     // A pinned step (fusion worker) runs its model-calling tools on the
     // same provider as its completions — `vision.describe` reads this.
     ...(deps.providerId !== undefined ? { providerId: deps.providerId } : {}),
+    ...(deps.providerId !== undefined && deps.model !== undefined ? { model: deps.model } : {}),
+    ...(deps.turnId !== undefined ? { turnId: deps.turnId } : {}),
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
     ...(ctx.terminalOnly ? { terminalOnly: true } : {}),
     ...(ctx.toolSet !== undefined ? { toolSet: ctx.toolSet } : {}),

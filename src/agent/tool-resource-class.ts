@@ -91,6 +91,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "browser.site_tools": "browser",
   "browser.debug": "browser",
   "browser.annotate": "browser",
+  "browser.scenario": "browser",
 
   // os.shell.* — always approval-gated when approvals are on
   "os.shell.run": "approval_gated",
@@ -188,6 +189,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.screen.click": "approval_gated",
   "os.screen.type": "approval_gated",
   "os.screen.key": "approval_gated",
+  // ATO-998 / ATO-530: the element list and the background press, same class.
+  "os.screen.elements": "approval_gated",
+  "os.screen.press": "approval_gated",
   // Draws marks through the desktop overlay and asks nothing; serialised
   // like `os.notify`, a small side effect on a shared OS resource.
   "os.screen.point": "memory_write",
@@ -213,6 +217,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "memory.procedures.recall": "pure_read",
   "memory.notes.recall": "pure_read",
   "memory.sessions.search": "pure_read",
+  // ATO-1621: reads the My files index (its own SQLite file), nothing else.
+  "files.search": "pure_read",
   "memory.profile.set": "memory_write",
   "memory.profile.remove": "memory_write",
   "memory.notes.store": "memory_write",
@@ -256,6 +262,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // inside itself, for minutes. Batching it beside other tools would
   // stack the orchestrator's own fan-out on top of the fan-out.
   "fusion.delegate": "approval_gated",
+  // Same for subagent.run (ATO-1670): several subagent turns in one call.
+  "subagent.run": "approval_gated",
 
   // verify.* — read-only checks. `verify.syntax` spawns nothing that
   // writes (node --check, tsc --noEmit, python compile(), bash -n), so
@@ -453,6 +461,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.screen.click": ["screen_control"],
     "os.screen.type": ["screen_control"],
     "os.screen.key": ["screen_control"],
+    // Reading a window's controls asks like a window snapshot; pressing one like a click.
+    "os.screen.elements": ["screen_capture"],
+    "os.screen.press": ["screen_control"],
     "skill.run_script": ["script"],
     // A local generation asks nothing; the cloud one is `paid_generation`.
     "image.generate": ["paid_generation"],
@@ -477,6 +488,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
  */
 const SOLO_REGARDLESS_OF_APPROVAL: ReadonlySet<string> = new Set([
   "fusion.delegate",
+  // Its turns run inside the call, like a fan-out (ATO-1670); the
+  // per-turn child count also relies on one call per step.
+  "subagent.run",
   "ask_user",
 ]);
 

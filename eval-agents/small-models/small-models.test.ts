@@ -237,6 +237,17 @@ describe("plan", () => {
     expect(plan.cells[0]?.server.args).toContain("32768");
   });
 
+  it("small-window profile = 4B at 16K and 32K, thinking off and on", () => {
+    const plan = buildPlan({ profile: "small-window" }, matrix);
+    expect(plan.cells.map((c: { window: number }) => c.window)).toEqual([16384, 32768]);
+    for (const c of plan.cells) {
+      expect(c.model.id).toBe("qwen3.5-4b");
+      expect(c.thinking).toEqual(["off", "on"]);
+      expect(c.server.args).toContain(String(c.window));
+    }
+    expect(plan.runs).toBe(2 * 2 * TASKS.length * 3);
+  });
+
   it("--server-url needs exactly one model and one window", () => {
     expect(() => buildPlan({ "server-url": "http://x", profile: "release" }, matrix)).toThrow(/one model at one window/);
     expect(buildPlan({ "server-url": "http://x", models: "qwen3.5-4b", windows: "32768", tasks: "core" }, matrix).cells).toHaveLength(1);

@@ -55,6 +55,7 @@ export interface UserBrowserConfig {
   allowedDomains: string[];
   connect: BrowserConnectMode;
   cdpUrl: string | null;
+  /** The user's own Chrome data folder, used with `connect: user-chrome` to find the running browser when it keeps its data outside the standard places. `null` (default) tries the standard places. */
   userDataDir: string | null;
   headless: boolean | "auto";
   profile: "agent" | "temp";

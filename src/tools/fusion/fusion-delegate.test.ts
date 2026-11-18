@@ -124,22 +124,39 @@ describe("fusion.delegate", () => {
     expect(create.mock.calls[0]?.[2]).toBe(true);
   });
 
-  it("runs a local worker in the parent's folder without inheriting a workspace (issue #1121)", async () => {
+  it("runs a local worker in the parent's folder, with that folder's workspace once the folder changed (issue #1121, ATO-1601)", async () => {
     // The real factory: bootstrap folder /boot, parent switched live to /selected.
     const factories = createRuntimeSessionFactories("/boot", { save: () => {} }, () => null);
     const create = vi.fn(factories.createEphemeralSession);
     const runTurn = vi.fn(async (session: SessionState) => {
       expect(session.workingDir).toBe("/selected");
-      expect(session.inheritedWorkspace).toBeUndefined();
+      // The startup folder's skill registry is the wrong one here; the
+      // worker builds its own view of /selected (skills only on a local leg).
+      expect(session.inheritedWorkspace).toBe(true);
       return turnResult({ session });
     });
     const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
       { tasks: [TASKS[0]!] }, ctx({ workingDir: "/selected", modelMode: "local" }));
     expect(result.status).toBe("ok");
     expect(create.mock.calls[0]?.[1]).toBe("/selected");
-    expect(create.mock.calls[0]?.[2]).toBe(false);
+    expect(create.mock.calls[0]?.[2]).toBe(true);
     expect(runTurn).toHaveBeenCalledOnce();
   });
+
+  it("runs a local worker in the startup folder without inheriting a workspace (issue #1121)", async () => {
+    const factories = createRuntimeSessionFactories("/boot", { save: () => {} }, () => null);
+    const create = vi.fn(factories.createEphemeralSession);
+    const runTurn = vi.fn(async (session: SessionState) => {
+      expect(session.workingDir).toBe("/boot");
+      expect(session.inheritedWorkspace).toBeUndefined();
+      return turnResult({ session });
+    });
+    const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
+      { tasks: [TASKS[0]!] }, ctx({ workingDir: "/boot", modelMode: "local" }));
+    expect(result.status).toBe("ok");
+    expect(create.mock.calls[0]?.[2]).toBe(false);
+  });
+
   it("is not readonly and carries its own name", () => {
     const tool = buildFusionDelegateTool(deps());
     expect(tool.name).toBe("fusion.delegate");
@@ -1846,6 +1863,43 @@ describe("fusion.delegate models by role (ATO-943)", () => {
     expect(rows[3]).toMatchObject({ model: "sonnet" });
   });
 
+  it("asks each leg's provider for its turn model on the wire (ATO-1560)", async () => {
+    const asked = new Map<string, string | undefined>();
+    const withTurns: NonNullable<ResolvedRunMode["roles"]> = {
+      ...roles,
+      byRole: {
+        ...roles.byRole,
+        build: { providerId: "or-coder", model: "qwen-coder", turnModel: "qwen/qwen3-coder", local: false },
+      },
+    };
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => fusionMode({ roles: withTurns, workerTurnModel: "qwen3.8-27b" }),
+        workerSupportsSlotAffinity: affine,
+        runTurn: async (session, _msg, options) => {
+          const meta = session.metadata?.fusionWorker as { taskId: string };
+          asked.set(meta.taskId, options.model);
+          return turnResult();
+        },
+      }),
+    ).run(
+      {
+        tasks: [
+          { id: "b", instructions: "build it", role: "build" },
+          { id: "d", instructions: "plain" },
+          { id: "r", instructions: "check", role: "review" },
+        ],
+      },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(Object.fromEntries(asked)).toEqual({
+      b: "qwen/qwen3-coder",
+      d: "qwen3.8-27b",
+      r: undefined,
+    });
+  });
+
   it("refuses a model that is not on the allowed list before any worker starts", async () => {
     const runTurn = vi.fn(async () => turnResult());
     const result = await buildFusionDelegateTool(
@@ -2221,5 +2275,55 @@ describe("fusion.delegate subagent profiles (ATO-566)", () => {
     expect(resolveAgentProfiles).not.toHaveBeenCalled();
     expect(filter?.("os.fs.write")).toBe(true);
     expect(result.details).not.toHaveProperty("profiles");
+  });
+});
+
+describe("fusion.delegate on a llama.cpp server that is not ours (ATO-1562)", () => {
+  it("labels the workers with the model the server serves and says once that it differs from the pick", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+        resolveRunMode: () => fusionMode({ workerModel: "picked-model", workerModelPinned: true }),
+        servedModelOf: async () => "served-model",
+      }),
+    );
+    const first = await tool.run({ tasks: TASKS }, ctx());
+    const workerEvents = events.filter((e) => e.role === "worker");
+    expect(workerEvents.length).toBeGreaterThan(0);
+    expect(workerEvents.every((e) => e.model === "served-model")).toBe(true);
+    expect(first.summary).toContain(
+      "Selected picked-model, but the server serves served-model. The model is changed on the server side.",
+    );
+    const second = await tool.run({ tasks: TASKS }, ctx());
+    expect(second.summary).not.toContain("Selected picked-model");
+  });
+
+  it("says nothing when nothing was picked, and keeps the pick when the server does not say", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const quiet = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+        resolveRunMode: () => fusionMode({ workerModel: "managed-default" }),
+        servedModelOf: async () => "served-model",
+      }),
+    );
+    const unpinned = await quiet.run({ tasks: TASKS }, ctx());
+    expect(events.filter((e) => e.role === "worker").every((e) => e.model === "served-model")).toBe(true);
+    expect(unpinned.summary).not.toContain("but the server serves");
+
+    const kept: Array<Record<string, unknown>> = [];
+    const silent = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => kept.push({ sessionId, ...event }),
+        resolveRunMode: () => fusionMode({ workerModel: "picked-model", workerModelPinned: true }),
+        servedModelOf: async () => {
+          throw new Error("unreachable");
+        },
+      }),
+    );
+    const result = await silent.run({ tasks: TASKS }, ctx());
+    expect(kept.filter((e) => e.role === "worker").every((e) => e.model === "picked-model")).toBe(true);
+    expect(result.summary).not.toContain("but the server serves");
   });
 });

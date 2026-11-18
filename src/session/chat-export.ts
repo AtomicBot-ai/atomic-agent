@@ -6,7 +6,7 @@ import { readSessionTitle } from "./session-title.js";
 
 /**
  * Export one chat as a document (ATO-1054): Markdown first, and HTML /
- * DOCX built from that Markdown so every format says the same thing.
+ * DOCX / PDF built from that Markdown so every format says the same thing.
  *
  * What goes in is what the person saw: their messages, the agent's
  * replies (progress notes included), one line per tool step, and the
@@ -16,7 +16,7 @@ import { readSessionTitle } from "./session-title.js";
  * can be megabytes of file content the person never read.
  */
 
-export type ChatExportFormat = "markdown" | "html" | "docx";
+export type ChatExportFormat = "markdown" | "html" | "docx" | "pdf";
 
 /** The formats a caller may name, with the short spellings people type. */
 export function parseChatExportFormat(raw: string | null | undefined): ChatExportFormat | null {
@@ -24,6 +24,7 @@ export function parseChatExportFormat(raw: string | null | undefined): ChatExpor
   if (v === "" || v === "md" || v === "markdown") return "markdown";
   if (v === "html" || v === "htm") return "html";
   if (v === "docx" || v === "word") return "docx";
+  if (v === "pdf") return "pdf";
   return null;
 }
 
@@ -31,9 +32,10 @@ export const CHAT_EXPORT_MIME: Record<ChatExportFormat, string> = {
   markdown: "text/markdown; charset=utf-8",
   html: "text/html; charset=utf-8",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pdf: "application/pdf",
 };
 
-const EXTENSION: Record<ChatExportFormat, string> = { markdown: "md", html: "html", docx: "docx" };
+const EXTENSION: Record<ChatExportFormat, string> = { markdown: "md", html: "html", docx: "docx", pdf: "pdf" };
 
 /** A tool step in words, as the live stream labels it once done. */
 export type DescribeExportedToolCall = (call: {

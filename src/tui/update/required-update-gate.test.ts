@@ -24,6 +24,7 @@ type Gate = {
 
 function fixture(opts: { required: "broken" | "below-minimum" | null; turns?: number }) {
   const emit = vi.fn();
+  const reportUpdateChecked = vi.fn();
   const app = Object.assign(Object.create(ChatOrchestrator.prototype), {
     currentController: null,
     detachedTurns: { size: 0 },
@@ -35,6 +36,7 @@ function fixture(opts: { required: "broken" | "below-minimum" | null; turns?: nu
     runtime: {
       config: { update: { checkOnStartup: true, repo: "o/r" } },
       turnController: { busySessionIds: () => [] },
+      reportUpdateChecked,
     },
     bus: { emit },
     cancelPromptEnhance: () => {},
@@ -43,7 +45,7 @@ function fixture(opts: { required: "broken" | "below-minimum" | null; turns?: nu
     // The first step after the gate: reaching it means the turn starts.
     announceHeapPressure: () => { throw new Error(PAST_GATE); },
   }) as unknown as Gate & Pick<ChatOrchestrator, "sendMessage">;
-  return { app, emit };
+  return { app, emit, reportUpdateChecked };
 }
 
 describe("required-update gate in the orchestrator (ATO-1125)", () => {
@@ -102,5 +104,37 @@ describe("required-update gate in the orchestrator (ATO-1125)", () => {
     expect(f.emit).not.toHaveBeenCalled();
     expect(f.app.requiredUpdate).toBeNull();
     await expect(f.app.runOneTurn("hello")).rejects.toThrow(PAST_GATE);
+  });
+
+  it("reports each successful check for the on-latest metric (ATO-1007)", async () => {
+    check.impl.mockResolvedValue({
+      updateAvailable: false, currentVersion: "0.8.0", latestTag: "v0.8.0", latestVersion: "0.8.0",
+      updateRequired: false, requiredReason: null,
+    });
+    const f = fixture({ required: null });
+    await f.app.checkForUpdate();
+    expect(f.reportUpdateChecked).toHaveBeenCalledWith({
+      latestVersion: "0.8.0", updateAvailable: false, requiredReason: null,
+    });
+    expect(f.emit).not.toHaveBeenCalled();
+  });
+
+  it("reports a required update along with the offer (ATO-1007)", async () => {
+    check.impl.mockResolvedValue({
+      updateAvailable: true, currentVersion: "0.6.10", latestTag: "v0.8.0", latestVersion: "0.8.0",
+      updateRequired: true, requiredReason: "broken",
+    });
+    const f = fixture({ required: null });
+    await f.app.checkForUpdate();
+    expect(f.reportUpdateChecked).toHaveBeenCalledWith({
+      latestVersion: "0.8.0", updateAvailable: true, requiredReason: "broken",
+    });
+  });
+
+  it("a failed check reports nothing (ATO-1007)", async () => {
+    check.impl.mockRejectedValue(new Error("offline"));
+    const f = fixture({ required: null });
+    await f.app.checkForUpdate();
+    expect(f.reportUpdateChecked).not.toHaveBeenCalled();
   });
 });

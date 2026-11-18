@@ -12,15 +12,15 @@ const NAME = "os.fs.write_pptx";
 export const OS_FS_WRITE_PPTX_CONTRACT = {
   name: NAME,
   description:
-    "Create an editable PowerPoint (.pptx) deck from a list of slides: a title, bullet points, an optional picture from disk and speaker notes per slide, with a simple colour theme. An existing file is replaced only with overwrite: true, never a deck the request hands in as an input. Dangerous — always requires approval.",
+    "Create an editable PowerPoint (.pptx) deck from a list of slides: a title, bullet points, an optional picture from disk, table or chart (column, bar, line, pie) and speaker notes per slide, with a simple colour theme. An existing file is replaced only with overwrite: true, never a deck the request hands in as an input. Dangerous — always requires approval.",
   readonly: false,
   resourceClass: "approval_gated",
   descriptor: {
     name: NAME,
     summary:
-      "Create an editable PowerPoint .pptx deck (may require approval): per slide a title, bullets, an optional png/jpg/gif image path and speaker notes. A slide with only title + subtitle is a title slide. Use it instead of scripts or pandoc for presentations.",
+      "Create an editable PowerPoint .pptx deck (may require approval): per slide a title, bullets, at most one of a png/jpg/gif image path, a table (rows, first row = header) or a chart (column, bar, line, pie), and speaker notes. A slide with only title + subtitle is a title slide. Use it instead of scripts or pandoc for presentations.",
     argsSchema:
-      '{ path: string /* ends in .pptx */, slides: { title: string, subtitle?: string, bullets?: string[] /* indent with two spaces per level */, image?: string, notes?: string }[], title?: string, author?: string, theme?: "light" | "dark" | "blue" | "warm", accentColor?: string /* hex like 2F6FEB */, font?: string, overwrite?: boolean }',
+      '{ path: string /* ends in .pptx */, slides: { title: string, subtitle?: string, bullets?: string[] /* indent with two spaces per level */, image?: string, table?: (string | number)[][] /* first row is the header */, chart?: { type: "column" | "bar" | "line" | "pie", title?: string, categories: string[], series: { name: string, values: number[] }[] }, notes?: string }[], title?: string, author?: string, theme?: "light" | "dark" | "blue" | "warm", accentColor?: string /* hex like 2F6FEB */, font?: string, overwrite?: boolean }',
     tier: "rare",
   },
   argsJsonSchema: {
@@ -38,6 +38,33 @@ export const OS_FS_WRITE_PPTX_CONTRACT = {
             subtitle: { type: "string" },
             bullets: { type: "array", items: { type: "string" } },
             image: { type: "string" },
+            table: {
+              type: "array",
+              maxItems: 30,
+              items: { type: "array", items: { anyOf: [{ type: "string" }, { type: "number" }, { type: "null" }] } },
+            },
+            chart: {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["column", "bar", "line", "pie"] },
+                title: { type: "string" },
+                categories: { type: "array", items: { type: "string" } },
+                series: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: { type: "string" },
+                      values: { type: "array", items: { anyOf: [{ type: "number" }, { type: "null" }] } },
+                    },
+                    required: ["name", "values"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["type", "categories", "series"],
+              additionalProperties: false,
+            },
             notes: { type: "string" },
           },
           required: ["title"],

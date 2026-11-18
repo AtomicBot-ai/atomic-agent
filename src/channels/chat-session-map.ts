@@ -52,12 +52,40 @@ export interface ChatSessionMapData {
   legacy?: ChatSessionEntry;
 }
 
+/**
+ * Optional clean-up for maps whose keys keep coming (ATO-1509): Slack
+ * gives every thread its own key, so without this the file grows by one
+ * entry per thread forever. Applied on every write, so the file shrinks
+ * the next time any chat changes. Dropping an entry only forgets the
+ * pointer: the session itself stays on disk and in `/sessions`, and a
+ * new message in that thread starts a fresh session.
+ */
+export interface ChatSessionPrunePolicy {
+  /** Drop entries whose `updatedAt` is older than this. */
+  maxAgeMs?: number;
+  /** Past this many entries, drop the oldest first. */
+  maxEntries?: number;
+  /** Keys that are never dropped (a DM, a whole channel). */
+  keep?: (chatKey: string) => boolean;
+}
+
+export interface ChatSessionMapOptions {
+  prune?: ChatSessionPrunePolicy;
+  /** Clock for tests. */
+  now?: () => number;
+}
+
 const FILE_VERSION = 2;
+/** `touch` rewrites a chat's `updatedAt` at most this often. */
+const TOUCH_MIN_INTERVAL_MS = 60 * 60 * 1000;
 const HISTORY_LIMIT = 16;
 const EMPTY_ENTRY: ChatSessionEntry = { current: null };
 
 export class ChatSessionMap {
-  constructor(private readonly path: string) {}
+  constructor(
+    private readonly path: string,
+    private readonly options: ChatSessionMapOptions = {},
+  ) {}
 
   read(): ChatSessionMapData {
     if (!existsSync(this.path)) return { chats: {} };
@@ -168,6 +196,21 @@ export class ChatSessionMap {
     return legacy.current;
   }
 
+  /**
+   * Mark `chatKey` as still in use, so a prune policy measures age from
+   * the last message, not from when the session was first set. Writes
+   * at most once per `minIntervalMs` per chat to keep disk churn low.
+   */
+  touch(chatKey: string, minIntervalMs = TOUCH_MIN_INTERVAL_MS): void {
+    const data = this.read();
+    const entry = data.chats[chatKey];
+    if (!entry?.current) return;
+    const now = (this.options.now ?? Date.now)();
+    if (entry.updatedAt !== undefined && now - entry.updatedAt < minIntervalMs) return;
+    data.chats[chatKey] = { ...entry, updatedAt: now };
+    this.write(data);
+  }
+
   /** Forget a chat entirely (no history kept). */
   remove(chatKey: string): void {
     const data = this.read();
@@ -185,7 +228,10 @@ export class ChatSessionMap {
   private write(data: ChatSessionMapData): void {
     mkdirSync(dirname(this.path), { recursive: true });
     const chats: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(data.chats)) {
+    const kept = this.options.prune
+      ? pruneChats(data.chats, this.options.prune, (this.options.now ?? Date.now)())
+      : data.chats;
+    for (const [key, entry] of Object.entries(kept)) {
       chats[key] = serializeEntry(entry);
     }
     const payload: Record<string, unknown> = { version: FILE_VERSION, chats };
@@ -194,6 +240,39 @@ export class ChatSessionMap {
     writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     renameSync(tmp, this.path);
   }
+}
+
+/**
+ * The chats a prune policy keeps, insertion order preserved. An entry
+ * with no `updatedAt` (hand-edited, or written before the field) is
+ * never dropped for age, but counts as the oldest for `maxEntries`.
+ */
+export function pruneChats(
+  chats: Record<string, ChatSessionEntry>,
+  policy: ChatSessionPrunePolicy,
+  now: number,
+): Record<string, ChatSessionEntry> {
+  const keep = policy.keep ?? (() => false);
+  const out: Record<string, ChatSessionEntry> = {};
+  for (const [key, entry] of Object.entries(chats)) {
+    const tooOld =
+      policy.maxAgeMs !== undefined &&
+      entry.updatedAt !== undefined &&
+      now - entry.updatedAt > policy.maxAgeMs;
+    if (tooOld && !keep(key)) continue;
+    out[key] = entry;
+  }
+  const max = policy.maxEntries;
+  if (max === undefined) return out;
+  const excess = Object.keys(out).length - max;
+  if (excess <= 0) return out;
+  // Kept keys never go, so the file may stay above `max` if they alone exceed it.
+  Object.keys(out)
+    .filter((key) => !keep(key))
+    .sort((a, b) => (out[a]?.updatedAt ?? 0) - (out[b]?.updatedAt ?? 0))
+    .slice(0, excess)
+    .forEach((key) => delete out[key]);
+  return out;
 }
 
 function parseEntry(obj: Record<string, unknown>): ChatSessionEntry {

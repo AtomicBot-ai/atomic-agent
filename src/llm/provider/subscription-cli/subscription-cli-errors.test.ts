@@ -215,7 +215,8 @@ describe("mapCliFailure", () => {
       ].join("\n"),
     });
     expect(err.message).toBe(
-      "\"claude\" exited with code 1: Error: unknown option '--bogus'",
+      "\"claude\" exited with code 1: Error: unknown option '--bogus'" +
+        " Your Claude Code may be older than this version of Atomic Agent needs; update it with `claude update` and retry.",
     );
   });
 
@@ -333,5 +334,99 @@ describe("SubscriptionCliInvocationError.failureKind (ATO-1446)", () => {
     expect(
       new SubscriptionCliInvocationError('"claude" produced more than 1024 bytes (rate limit)', 0, "output_too_large").failureKind,
     ).toBe("output_too_large");
+  });
+});
+
+describe("mapCliFailure next step for an exit the person can fix (ATO-1679)", () => {
+  const CLAUDE_HINT = "update it with `claude update` and retry.";
+  const CODEX_HINT =
+    "update it the way you installed it (for example `npm install -g @openai/codex@latest` or `brew upgrade codex`) and retry.";
+  const GIT_BASH_HINT =
+    "Claude Code on Windows needs Git for Windows (git-bash). Install it from https://git-scm.com/downloads/win or set CLAUDE_CODE_GIT_BASH_PATH to your bash.exe, then restart Atomic Agent.";
+
+  it("tells an old Claude Code on Windows to update when it refuses our flags", () => {
+    const err = mapCliFailure({
+      ...base,
+      binary: "C:\\Users\\a\\AppData\\Roaming\\npm\\claude.cmd",
+      stderr: "error: unknown option '--strict-mcp-config'",
+    });
+    expect(err).toBeInstanceOf(SubscriptionCliInvocationError);
+    expect((err as SubscriptionCliInvocationError).failureKind).toBe("exited");
+    expect((err as SubscriptionCliInvocationError).exitCode).toBe(1);
+    expect(err.message).toContain("exited with code 1: error: unknown option '--strict-mcp-config'");
+    expect(err.message).toContain("Your Claude Code may be older than this version of Atomic Agent needs");
+    expect(err.message.endsWith(CLAUDE_HINT)).toBe(true);
+    expect(err.message).not.toContain("@openai/codex");
+  });
+
+  it("tells an old Codex to update with npm", () => {
+    const err = mapCliFailure({
+      ...base,
+      binary: "/usr/local/bin/codex",
+      stderr: "error: unexpected argument '--output-schema' found",
+    });
+    expect((err as SubscriptionCliInvocationError).failureKind).toBe("exited");
+    expect(err.message).toContain("Your Codex may be older");
+    expect(err.message.endsWith(CODEX_HINT)).toBe(true);
+    expect(err.message).not.toContain("claude update");
+  });
+
+  it("names both update commands for a CLI it does not know", () => {
+    const err = mapCliFailure({
+      ...base,
+      binary: "/opt/my-wrapper",
+      stderr: "error: unknown option '--tools'",
+    });
+    expect(err.message).toContain('Your "/opt/my-wrapper" may be older');
+    expect(err.message).toContain("`claude update`");
+    expect(err.message).toContain("`npm install -g @openai/codex@latest`");
+    expect(err.message).toContain("`brew upgrade codex`");
+    expect(err.message).toContain("update it the way you installed it");
+  });
+
+  it("gives the same next step when the CLI quit before reading a long prompt", () => {
+    const flag = mapCliFailure({
+      ...base,
+      binary: "C:\\Users\\a\\AppData\\Roaming\\npm\\claude.cmd",
+      stderr: "error: unknown option '--json-schema'",
+      inputTruncated: true,
+    });
+    expect((flag as SubscriptionCliInvocationError).failureKind).toBe("input_truncated");
+    expect(flag.message).toContain("stopped reading the prompt");
+    expect(flag.message.endsWith(CLAUDE_HINT)).toBe(true);
+    const bash = mapCliFailure({
+      ...base,
+      binary: "claude.cmd",
+      stderr: "Claude Code on Windows requires git-bash. Set CLAUDE_CODE_GIT_BASH_PATH.",
+      inputTruncated: true,
+    });
+    expect((bash as SubscriptionCliInvocationError).failureKind).toBe("input_truncated");
+    expect(bash.message.endsWith(` ${GIT_BASH_HINT}`)).toBe(true);
+  });
+
+  it("tells a Windows user without git-bash what to install", () => {
+    const stderr =
+      "Claude Code on Windows requires git-bash (https://git-scm.com/downloads/win). If installed but not in PATH, set environment variable pointing to your bash.exe, similar to: CLAUDE_CODE_GIT_BASH_PATH=C:\\Program Files\\Git\\bin\\bash.exe";
+    const err = mapCliFailure({ ...base, binary: "claude.cmd", stderr });
+    expect((err as SubscriptionCliInvocationError).failureKind).toBe("exited");
+    expect((err as SubscriptionCliInvocationError).exitCode).toBe(1);
+    expect(err.message).toContain(`exited with code 1: ${stderr}`);
+    expect(err.message.endsWith(` ${GIT_BASH_HINT}`)).toBe(true);
+  });
+
+  it("adds nothing to an ordinary exit", () => {
+    const err = mapCliFailure({ ...base, stderr: "Segmentation fault" });
+    expect(err.message).toBe('"claude" exited with code 1: Segmentation fault');
+    expect(mapCliFailure({ ...base }).message).toBe('"claude" exited with code 1: no output');
+  });
+
+  it("still reads a signed-out CLI as an auth error", () => {
+    const err = mapCliFailure({
+      ...base,
+      binary: "C:\\Users\\a\\AppData\\Roaming\\npm\\claude.cmd",
+      stderr: "Invalid API key · Please run /login",
+    });
+    expect(err).toBeInstanceOf(SubscriptionCliAuthError);
+    expect(err.message).not.toContain("may be older");
   });
 });

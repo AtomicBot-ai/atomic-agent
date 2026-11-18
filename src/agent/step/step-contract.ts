@@ -303,6 +303,12 @@ export interface StepDependencies {
   /** The pinned link's model for this turn; `LlmStreamParams.model`. */
   model?: string;
   /**
+   * Identity of the agent turn this step belongs to, the same for every
+   * step of one turn and different across turns. Handed to every tool
+   * call as `ToolContext.turnId` (ATO-1670).
+   */
+  turnId?: string;
+  /**
    * Invoked after every LLM completion (initial call and one-shot parse
    * retry alike). Used by the agent loop to feed the served `modelId`
    * into the profile manager so mid-turn model swaps can be detected.

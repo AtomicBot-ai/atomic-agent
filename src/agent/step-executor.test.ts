@@ -3998,6 +3998,76 @@ describe("executeStep empty-completion repair", () => {
   });
 });
 
+describe("executeStep empty-completion log fields (ATO-1572)", () => {
+  const grammarsDir = join(process.cwd(), "grammars");
+  const SECRET = "ato-1572-unique-history-text";
+
+  async function runEmptyTwice() {
+    const records: LogRecord[] = [];
+    const logger = new StructuredLogger({ level: "debug", sinks: [(record) => records.push(record)] });
+    const registry = new ToolRegistry();
+    registry.register(replyTool);
+    const grammar = await buildGrammar(PLAIN_INSTRUCT_PROFILE, grammarsDir);
+    const run = executeStep(
+      {
+        session: createEmptySessionState({ id: "s-empty-log", workingDir: "/w" }),
+        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        capabilities: CAPS,
+        skillCatalog: SKILLS,
+        stepIndex: 0,
+        signal: new AbortController().signal,
+        userMessage: SECRET,
+      },
+      {
+        registry,
+        slotManager: new SlotManager(2),
+        llmComplete: async () => ({
+          content: "",
+          reasoningContent: "",
+          stop: true,
+          truncated: false,
+          finishReason: "stop",
+          usage: { promptTokens: 1234, completionTokens: 0, totalTokens: 1234 },
+          servedModelMode: { mode: "cloud", source: "provider", providerId: "openrouter", modelId: "anthropic/claude-opus-5" },
+          timing: { promptMs: 1, predictedMs: 1, promptTokens: 1234, predictedTokens: 0 },
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "anthropic/claude-opus-5",
+        }),
+        grammar,
+        profile: PLAIN_INSTRUCT_PROFILE,
+        logger,
+      },
+    );
+    await expect(run).rejects.toMatchObject({ name: "ModelError", reason: "empty" });
+    return records;
+  }
+
+  it("says why the reply was empty: finish reason, tokens, provider, model and request size", async () => {
+    const records = await runEmptyTwice();
+    for (const message of ["empty completion, repairing once", "model-side completion defect on parse retry"]) {
+      const rec = records.find((r) => r.message === message);
+      expect(rec, message).toBeDefined();
+      expect(rec!.context).toMatchObject({
+        finishReason: "stop",
+        promptTokens: 1234,
+        completionTokens: 0,
+        providerId: "openrouter",
+        model: "anthropic/claude-opus-5",
+      });
+      expect(rec!.context?.["requestMessages"]).toBeGreaterThanOrEqual(2);
+      expect(rec!.context?.["requestTokens"]).toBeGreaterThan(0);
+    }
+  });
+
+  it("never logs the conversation's text", async () => {
+    const records = await runEmptyTwice();
+    const warned = records.filter((r) => /completion/.test(r.message));
+    expect(warned.length).toBeGreaterThanOrEqual(2);
+    expect(JSON.stringify(warned)).not.toContain(SECRET);
+  });
+});
+
 describe("executeStep ModelError transport tag", () => {
   const grammarsDir = join(process.cwd(), "grammars");
 

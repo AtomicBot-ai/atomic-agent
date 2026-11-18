@@ -4,15 +4,16 @@ import { openaiError } from "./openai-errors.js";
 import { sendError, sendJson, type HttpHandler } from "./request-context.js";
 
 /**
- * `GET /api/sessions/{id}/export?format=markdown|html|docx[&tools=0]` —
+ * `GET /api/sessions/{id}/export?format=markdown|html|docx|pdf[&tools=0]` —
  * one chat as a document (ATO-1054).
  *
  * The answer is JSON, not the raw file, so a client that already speaks
  * JSON to this server needs nothing new to read it:
  * `{ id, format, filename, mimeType, encoding, content }`, where
- * `encoding` is `utf8` for Markdown and HTML and `base64` for DOCX. The
- * client writes `content` to wherever the person chose. PDF is the
- * client's job: it prints the `html` format (Electron `printToPDF`).
+ * `encoding` is `utf8` for Markdown and HTML and `base64` for DOCX and
+ * PDF. The client writes `content` to wherever the person chose. The
+ * desktop prints the `html` format itself (Electron `printToPDF`), which
+ * keeps every script; `pdf` is the browserless writer the terminal uses.
  *
  * `format` defaults to Markdown and also takes `md` / `word`; anything
  * else is `400`. `tools=0` leaves out the one-line-per-tool-step list.
@@ -28,7 +29,7 @@ export function createExportSessionHandler(): HttpHandler {
     const url = new URL(req.url ?? "/", "http://localhost");
     const format = parseChatExportFormat(url.searchParams.get("format"));
     if (!format) {
-      sendError(res, 400, openaiError("format must be markdown, html or docx", "invalid_request_error", "format"));
+      sendError(res, 400, openaiError("format must be markdown, html, docx or pdf", "invalid_request_error", "format"));
       return;
     }
     const state = ctx.runtime.sessionStore.load(id);

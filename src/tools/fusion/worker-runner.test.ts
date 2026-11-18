@@ -25,6 +25,8 @@ import {
   WORKER_TOOL_LINES_PER_TASK,
   type WorkerRunnerDeps,
 } from "./worker-runner.js";
+import { FusionLiveWorkers } from "./escalation.js";
+import { FusionWorkerStopError } from "./fusion-stop-errors.js";
 
 type RunTurnCall = {
   session: SessionState;
@@ -202,6 +204,27 @@ describe("runWorkerTasks", () => {
     });
     expect(plain.calls[0]!.options).not.toHaveProperty("reasoningEffort");
     expect(plain.calls[0]!.options).not.toHaveProperty("maxOutputTokens");
+  });
+
+  it("asks the worker leg for its own model, only when one is set (ATO-1560)", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      workerModel: "model-b",
+      turnModel: "model-b",
+      signal: new AbortController().signal,
+    });
+    expect(calls[0]!.options).toMatchObject({ providerId: BASE.providerId, model: "model-b" });
+    const plain = harness(async () => turnResult());
+    await runWorkerTasks(plain.deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(plain.calls[0]!.options).not.toHaveProperty("model");
   });
 
   it("runs on a fresh session id, never the parent's — that would deadlock", async () => {
@@ -1885,5 +1908,101 @@ describe("runWorkerTasks — shouldStartTask (ATO-1406)", () => {
       shouldStartTask: () => "the breaker",
     });
     expect(results[0]!.error).toBe("not started: the spend cap");
+  });
+});
+
+/**
+ * A worker stopped on purpose aborts with a named reason (ATO-1677): the
+ * provider rethrows `signal.reason` as is, and a plain `Error` there was
+ * reported to Sentry as a crash (`Object.stop`). The fake turns below
+ * read `signal.reason` on abort, the value a cloud request rejects with.
+ */
+describe("a stopped worker's abort reason (ATO-1677)", () => {
+  type TurnOptions = Parameters<WorkerRunnerDeps["runTurn"]>[2];
+
+  it("the person's stop aborts with a FusionWorkerStopError", async () => {
+    const live = new FusionLiveWorkers();
+    let started!: () => void;
+    const running = new Promise<void>((r) => {
+      started = r;
+    });
+    const reasons: unknown[] = [];
+    const { deps } = harness(
+      ({ options }: { options: TurnOptions }) =>
+        new Promise<RunTurnResult>((resolve) => {
+          // The request rejects with `signal.reason`; the loop catches it
+          // and ends the turn, which is what the runner sees.
+          options.signal?.addEventListener(
+            "abort",
+            () => {
+              reasons.push(options.signal!.reason);
+              resolve(turnResult({ reason: "cancelled", stepCount: 0 }));
+            },
+            { once: true },
+          );
+          started();
+        }),
+    );
+    deps.liveWorkers = live;
+    const run = runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    await running;
+    expect(live.stop("s-parent", "t0")).toBe(true);
+    const [row] = await run;
+    expect(row!.status).toBe("cancelled");
+    expect(reasons).toHaveLength(1);
+    const reason = reasons[0];
+    expect(reason).toBeInstanceOf(FusionWorkerStopError);
+    expect((reason as FusionWorkerStopError).name).toBe("FusionWorkerStopError");
+    expect((reason as FusionWorkerStopError).reason).toBe("person");
+    expect((reason as Error).message).toBe("stopped by the person");
+  });
+
+  it("an early hand-back aborts with a FusionWorkerStopError", async () => {
+    const reasons: unknown[] = [];
+    const { deps } = harness(async ({ options }: { options: TurnOptions }) => {
+      for (let step = 1; step <= 8; step += 1) {
+        if (options.signal?.aborted) {
+          reasons.push(options.signal.reason);
+          return turnResult({ reason: "cancelled", stepCount: step - 1 });
+        }
+        options.eventHook?.({ type: "step_started", stepIndex: step - 1 });
+        options.eventHook?.({
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: { tool: "os.fs.read", status: "ok", summary: "read main.js", details: {}, truncated: false },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        });
+        options.eventHook?.({
+          type: "step_finished",
+          stepIndex: step - 1,
+          summary: "step done",
+          durationMs: 1,
+        });
+      }
+      return turnResult({ stepCount: 8 });
+    });
+    const [row] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(row!.status).toBe("needs_orchestrator");
+    expect(reasons).toHaveLength(1);
+    const reason = reasons[0];
+    expect(reason).toBeInstanceOf(FusionWorkerStopError);
+    expect((reason as FusionWorkerStopError).reason).toBe("hand-back");
+    expect((reason as Error).message).toBe(
+      "handed back early: no file written by half the budget",
+    );
   });
 });

@@ -4,9 +4,10 @@
  * (`../import-report.ts`) only aggregates the results.
  *
  * `secrets` is gated behind the explicit `--migrate-secrets` flag and
- * never enters a preset (see `resolveSelectedOptions`).
+ * `plugins` behind at least one explicit `--trust-plugin <name>`; neither
+ * ever enters a preset (see `resolveSelectedOptions`).
  */
-export type ImportOptionId = "sessions" | "cron" | "secrets";
+export type ImportOptionId = "sessions" | "cron" | "secrets" | "plugins";
 
 /** Preset names exposed via `--preset`. */
 export type ImportPresetId = "default" | "full";
@@ -36,6 +37,9 @@ export const IMPORT_OPTIONS: readonly ImportOptionMeta[] = [
       "OPENROUTER_API_KEY / AIMLAPI_API_KEY (.env) -> <stateDir>/.env",
   },
 ];
+// `plugins` is deliberately absent from the registry: the onboarding and
+// TUI import screens render one toggle per registry row, and plugins run
+// local Python, so the only way in is the CLI's per-plugin trust list.
 
 /**
  * Presets only ever contain non-secret options. `secrets` is opt-in via
@@ -65,6 +69,11 @@ export interface ResolveOptionsInput {
   exclude?: readonly string[];
   /** When true, `secrets` is added to the resolved set. */
   migrateSecrets?: boolean;
+  /**
+   * Plugins the user explicitly trusted (`--trust-plugin`). Non-empty adds
+   * `plugins`; plugins run local code, so there is no other way in.
+   */
+  trustedPlugins?: readonly string[];
 }
 
 /**
@@ -113,5 +122,9 @@ export function resolveSelectedOptions(
   }
 
   // Preserve registry order for deterministic output.
-  return IMPORT_OPTIONS.map((o) => o.id).filter((id) => selected.has(id));
+  const out = IMPORT_OPTIONS.map((o) => o.id).filter((id) => selected.has(id));
+  if ((input.trustedPlugins ?? []).some((t) => t.trim().length > 0)) {
+    out.push("plugins");
+  }
+  return out;
 }

@@ -4,6 +4,7 @@ import {
   POSTHOG_PROJECT_KEY,
 } from "./posthog-config.js";
 import { parseFeatureFlagReply } from "./interview-invite.js";
+import { isOfflineNetwork } from "../llm/offline-network.js";
 
 /** How long a flag check may take before it reads as "off". */
 export const FEATURE_FLAG_TIMEOUT_MS = 3_000;
@@ -30,6 +31,8 @@ export interface FetchFeatureFlagOptions {
 export async function fetchFeatureFlag(options: FetchFeatureFlagOptions): Promise<boolean> {
   const env = options.env ?? process.env;
   if ((POSTHOG_PROJECT_KEY as string) === POSTHOG_PLACEHOLDER_KEY) return false;
+  // ATO-1085: offline mode reads as "flag off" without asking PostHog.
+  if (isOfflineNetwork(env)) return false;
   if (!options.fetchImpl && (env.VITEST !== undefined || env.NODE_ENV === "test")) {
     return false;
   }

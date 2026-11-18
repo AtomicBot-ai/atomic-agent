@@ -26,8 +26,12 @@ const REFUSAL_MESSAGES: Record<string, string> = {
  * stored last question differs in any, `409 turn_mismatch` and nothing
  * is removed.
  *
- * Only removes. The answer is `200 { id, text }` with the question's
- * text; the client sends it again through `/v1/chat/completions` like
+ * Only removes from the transcript. The answer is
+ * `200 { id, text, previousReplies }` with the question's text and how
+ * many earlier answers it now has: a real answer taken back is kept
+ * beside the transcript (ATO-864, `GET .../previous-replies`,
+ * `POST .../restore-previous-reply`), never sent to the model. The
+ * client sends the question through `/v1/chat/completions` like
  * any message, so a retry runs exactly the path a first try does.
  *
  * `404 session_not_found` for an unknown chat (an agent without this
@@ -88,6 +92,8 @@ export function createRollbackLastTurnHandler(): HttpHandler {
     ctx.runtime.sessionStore.save(plan.state);
     // A stopped turn keeps its resume marker; the turn it points at is gone.
     ctx.runtime.sessionStore.clearTurnProgress(id);
-    sendJson(res, 200, { id, text: plan.text });
+    // ATO-864: how many earlier answers the question now has (the one just
+    // taken back among them, when it was a real answer), for "< 1/2 >".
+    sendJson(res, 200, { id, text: plan.text, previousReplies: plan.previousReplies });
   };
 }

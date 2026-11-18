@@ -17,6 +17,8 @@ import {
   type TraceRecorder,
   type TraceSink,
 } from "../../tracing/trace/index.js";
+import type { LlmPromptBudget } from "../../error-reporting/index.js";
+import { promptBudgetOf } from "./prompt-budget.js";
 import {
   createOtlpTraceSink,
   resolveOtlpExportSettings,
@@ -28,6 +30,7 @@ import { isExpectedProviderLimit } from "../../llm/index.js";
 import { describeLlmFailure } from "./llm-failure-context.js";
 import { runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 import { isUnreportedLocalServerFailure } from "../../llm/reliability/local-server-error.js";
+import { isUnregisteredToolStreak } from "../../llm/reliability/unregistered-tool-failure.js";
 
 export function createRuntimeTraces(
   config: AtomicAgentConfig,
@@ -149,6 +152,12 @@ export function createRuntimeTraces(
    * built a prompt of its own.
    */
   const lastTurnContextUsage = new Map<string, ContextUsageState>();
+  /**
+   * The budget parts of each session's last built prompt (ATO-1678), for
+   * an `llm_failure` report on that turn. Counts only. Same lifecycle as
+   * `lastTurnContextUsage`: written on `prompt_built`, cleared with it.
+   */
+  const lastPromptBudget = new Map<string, LlmPromptBudget>();
 
   const ensureRecorder = (
     session: SessionState,
@@ -186,6 +195,7 @@ export function createRuntimeTraces(
     lastTurnContextUsage.get(sessionId);
   const clearContextUsage = (sessionId: string): void => {
     lastTurnContextUsage.delete(sessionId);
+    lastPromptBudget.delete(sessionId);
   };
   const releaseSession = (sessionId: string): void => {
     activeTraceSessions.delete(sessionId);
@@ -242,6 +252,7 @@ export function createRuntimeTraces(
               ctx.sessionId,
               contextUsageFromPrompt(step.prompt),
             );
+            lastPromptBudget.set(ctx.sessionId, promptBudgetOf(step.prompt));
           } else if (step.type === "llm_completed") {
             const counted = step.completion.timing?.promptTokens ?? 0;
             const usage = lastTurnContextUsage.get(ctx.sessionId);
@@ -258,17 +269,30 @@ export function createRuntimeTraces(
       // the user in chat and is not a defect to report (ATO-1283).
       // Atomic Chat's key protection (ATO-1274) is the person's to fix
       // and already told in plain words: not a defect, so not a report.
+      // A model that kept calling near misses of real tools, after every
+      // call was answered with the closest real names, made a mistake
+      // the agent handled (ATO-1674): not a report either. Other
+      // unknown-tool streaks still report.
       if (
         event.type === "loop_failed" &&
         !isExpectedProviderLimit(event.error) &&
-        !isUnreportedLocalServerFailure(event.error)
+        !isUnreportedLocalServerFailure(event.error) &&
+        !isUnregisteredToolStreak(event.error)
       ) {
         const reporter = getErrorReporter();
         captureError(reporter, event.error, {
           source: "llm_failure",
           category: event.category,
           // Only with reporting on: the engine probe reads state files.
-          ...(reporter ? { llmFailure: describeLlmFailure(event) } : {}),
+          ...(reporter
+            ? {
+                llmFailure: describeLlmFailure(
+                  event,
+                  undefined,
+                  ctx ? lastPromptBudget.get(ctx.sessionId) : undefined,
+                ),
+              }
+            : {}),
         });
       }
       options.handlers?.onAgentEvent?.(event, ctx?.sessionId);

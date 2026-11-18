@@ -32,6 +32,7 @@ import {
   localBadRequestKind,
 } from "./local-bad-request.js";
 import { isToolSchemaErrorText } from "./tool-schema-rejection.js";
+import { invalidSamplingParameter } from "./invalid-parameter.js";
 import {
   ATOMIC_CHAT_KEY_ADVICE,
   atomicChatKeyMessage,
@@ -336,6 +337,20 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if (err.status === 400 && isLocalProviderUrl(err.url)) {
     const sentence = localBadRequestSentence(err);
     if (sentence !== null) return sentence;
+  }
+  if ((err.status === 400 || err.status === 422) && !isLocalProviderUrl(err.url)) {
+    // ATO-1218: the model refused one of the sampling settings we sent.
+    // The turn stops here (`shouldAdvance`), so name the provider and the
+    // setting, keep the provider's own words, and say what to change.
+    const param = invalidSamplingParameter(`${err.message}\n${err.body?.text ?? ""}`);
+    if (param !== null) {
+      const own = providerReason(err);
+      return (
+        `${who} did not accept the "${param}" setting for this model (${err.status}).` +
+        (own ? ` ${own}` : "") +
+        ` Change or remove it in the model's settings, or pick another model.`
+      );
+    }
   }
   // Everything else — 400 bad request, 413, 422 — has no wording of its own
   // here, and a bare "rejected the request (400)" throws away the only

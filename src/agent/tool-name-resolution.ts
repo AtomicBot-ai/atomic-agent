@@ -15,11 +15,14 @@ import type { ToolRegistry } from "../tools/tool-registry.js";
  * membership check in the step executor throws for the whole batch, so
  * a 30-minute turn ended with `reason=failed` over a separator.
  *
- * The candidates are deliberately narrow — separator confusion and
- * case, nothing else. This is not fuzzy matching: `os.fs.write` must
- * never resolve to `os.fs.trash` because the two are close. A name that
- * does not resolve exactly, or by fixing the separator it was clearly
- * trying to use, is still unknown and still fails.
+ * The candidates are deliberately narrow — separator confusion, case,
+ * and wrapping the model or its chat template added. This is not fuzzy
+ * matching: `os.fs.write` must never resolve to `os.fs.trash` because
+ * the two are close. Every character of the tool's own name must be
+ * there, in order; only separators, case and wrapping may differ, and
+ * the form must point at exactly one registered tool. Anything else is
+ * still unknown and gets the error result naming the closest tools
+ * (`policies/unknown-tool.ts`).
  */
 export function resolveToolName(
   name: string,
@@ -45,5 +48,76 @@ export function resolveToolName(
     if (candidate.toLowerCase() === lower) return candidate;
     if (candidate.toLowerCase() === singleToDot.toLowerCase()) return candidate;
   }
-  return null;
+  return resolveByShape(name, registry.list().map((definition) => definition.name));
+}
+
+const FUNCTIONS_PREFIX = "functions.";
+
+/**
+ * The name with what is not part of it taken off: a chat-template tail
+ * (`os.fs.read<|channel|>commentary`, gpt-oss), surrounding quotes or
+ * backticks, an empty call `()` and trailing punctuation.
+ */
+function stripWrapping(name: string): string {
+  return name
+    .replace(/<\|[\s\S]*$/, "")
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .replace(/\(\s*\)$/, "")
+    .replace(/[:;,.!?]+$/, "");
+}
+
+/**
+ * One spelling for every separator and case form of a name:
+ * `mcp__brave_search__web_search`, `mcp.brave-search.web_search` and
+ * `MCP.Brave-Search.Web-Search` all read `mcp.brave.search.web.search`.
+ * Letters and digits are kept as they are, in order.
+ */
+function shapeKey(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[._-]+/g, ".")
+    .replace(/^\.+|\.+$/g, "");
+}
+
+/** The one element of `matches`, or `null` when there are none or several. */
+function only(matches: ReadonlySet<string>): string | null {
+  return matches.size === 1 ? [...matches][0]! : null;
+}
+
+/**
+ * The forms an emitted name is compared under: as written, and without
+ * the `functions.` namespace OpenAI-style templates put in front of
+ * every function (`functions.os.fs.read`, `functions__os__fs__read`).
+ */
+function emittedKeys(name: string): string[] {
+  const key = shapeKey(stripWrapping(name));
+  if (key.length === 0) return [];
+  return key.startsWith(FUNCTIONS_PREFIX) && key.length > FUNCTIONS_PREFIX.length
+    ? [key, key.slice(FUNCTIONS_PREFIX.length)]
+    : [key];
+}
+
+/**
+ * The whole name in another spelling of exactly one registered tool:
+ * separators and case over names with underscores or hyphens of their
+ * own (`mcp_github_create_issue`, `mcp.brave_search.brave_web_search`
+ * for `mcp.brave-search.brave_web_search`), wrapping (`"os.fs.read"`,
+ * `os.fs.read()`) and the `functions.` namespace. Two tools that share
+ * a spelling (`mcp.a.b_c` and `mcp.a_b.c`) resolve to neither.
+ *
+ * A name with part of the real one missing is not resolved, however
+ * likely the match: `write_file` may be meant for `os.fs.write` or an
+ * MCP filesystem server's `write_file`, `github.create_issue` for the
+ * built-in GitHub tool or an MCP server's. Those get the error result
+ * naming the candidates, and the model picks (ATO-1674).
+ */
+function resolveByShape(name: string, registered: readonly string[]): string | null {
+  const keys = emittedKeys(name);
+  if (keys.length === 0) return null;
+  const matches = new Set<string>();
+  for (const candidate of registered) {
+    if (keys.includes(shapeKey(candidate))) matches.add(candidate);
+  }
+  return only(matches);
 }

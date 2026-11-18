@@ -239,6 +239,7 @@ export interface UserAgentConfig {
   task: AgentTaskConfig;
   /** Goal mode defaults (`agent.goal`, ATO-1036). */
   goal?: AgentGoalConfig;
+  /** Parsed as a positive number of milliseconds (default `60000`), but no tool reads it today, so it has no effect. The shell's wait is `tools.shell.defaultTimeoutMs`. */
   toolTimeoutMs: number;
   /**
    * Where a session's reads may go (config v67). `working-dir` (the
@@ -254,6 +255,7 @@ export interface UserAgentConfig {
    */
   approvalLevel: ApprovalLevel;
   compaction: CompactionConfig;
+  /** Ceiling on the conversation section of the prompt, in tokens. `0` (default) is auto: the transcript takes what the model's window leaves, or 64k when the window is unknown. */
   conversationMaxTokens: number;
   /**
    * How many macro-turns of history the prompt carries — one "pair"

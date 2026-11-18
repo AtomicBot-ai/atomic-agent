@@ -43,7 +43,7 @@ const FORMS: Record<string, CompactToolForm> = {
   "browser.scroll": { summary: "Scroll the page; read_aria after if needed.", tier: RARE },
   "browser.act": {
     summary:
-      "select, upload, back, forward, key, hover, dialog (before the click that opens it) or wait, by `action`.",
+      "select, upload, back, forward, key, hover, dialog (before the click that opens it), wait, or take_over (user logs in / solves a captcha), by `action`.",
     tier: RARE,
   },
   "browser.screenshot": {
@@ -63,7 +63,11 @@ const FORMS: Record<string, CompactToolForm> = {
     tier: RARE,
   },
   "browser.annotate": {
-    summary: "The user pins comments on page elements: start, then read (selectors, styles, boxes), stop.",
+    summary: "The user pins page elements (says in chat what to change): start, then read (selectors, styles, boxes), stop.",
+    tier: RARE,
+  },
+  "browser.scenario": {
+    summary: "Record browser steps (start, stop with a name), then run them again without the model; list, delete.",
     tier: RARE,
   },
   "os.shell.run": {
@@ -116,8 +120,8 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.fs.read_document": {
     summary: "Text from PDF, Office, ODF, RTF, EPUB, HTML or email files. Not for source code: use os.fs.read.",
   },
-  "os.fs.docx": { summary: "Create, append to or find-and-replace in a Word .docx (may require approval).", tier: RARE },
-  "os.fs.xlsx": { summary: "Create, write cells and formulas in, or read an Excel .xlsx (writes may require approval).", tier: RARE },
+  "os.fs.docx": { summary: "Create, append to (lists, tables, pictures) or find-and-replace in a Word .docx, optionally as tracked changes (may require approval).", tier: RARE },
+  "os.fs.xlsx": { summary: "Create, write cells and formulas in, chart, or read an Excel .xlsx (writes may require approval).", tier: RARE },
   "os.fs.archive.list": { summary: "List archive entries.", tier: RARE },
   "os.fs.archive.read_entry": { summary: "Read one archive entry.", tier: RARE },
   "os.fs.archive.extract": { summary: "Extract an archive (may require approval).", tier: RARE },
@@ -130,7 +134,7 @@ const FORMS: Record<string, CompactToolForm> = {
     tier: RARE,
   },
   "os.fs.write_pptx": {
-    summary: "Create an editable .pptx deck: per slide title, bullets, image path, notes (may require approval).",
+    summary: "Create an editable .pptx deck: per slide title, bullets, an image, table or chart, notes (may require approval).",
     tier: RARE,
   },
   "os.git.status": { summary: "Git status and current branch." },
@@ -176,6 +180,8 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.screen.click": { summary: "Click at x,y of the last capture (asks first).", tier: RARE },
   "os.screen.type": { summary: "Type text into the frontmost app (asks first).", tier: RARE },
   "os.screen.key": { summary: "Press a key or shortcut (asks first).", tier: RARE },
+  "os.screen.elements": { summary: "Numbered list of a window's buttons and fields.", tier: RARE },
+  "os.screen.press": { summary: "Press element n of that list in the background (asks first).", tier: RARE },
   "os.screen.point": {
     summary: "Draw arrows, boxes or labels on the user's screen to show where to click; never clicks.",
     tier: RARE,
@@ -213,6 +219,10 @@ const FORMS: Record<string, CompactToolForm> = {
   },
   "memory.sessions.search": {
     summary: "Search past chats by their words, then read around a hit.",
+    tier: RARE,
+  },
+  "files.search": {
+    summary: "Search My files folders; paste each hit's `cite` as is.",
     tier: RARE,
   },
   "tasks.schedule": { summary: "Schedule a one-shot task.", tier: RARE },
@@ -258,6 +268,10 @@ const FORMS: Record<string, CompactToolForm> = {
   },
   "fusion.delegate": {
     summary: "Hand independent parts of the work to local workers; call it alone.",
+    tier: RARE,
+  },
+  "subagent.run": {
+    summary: "Hand a self-contained part of the work to a subagent on your model; call it alone.",
     tier: RARE,
   },
   reply: {

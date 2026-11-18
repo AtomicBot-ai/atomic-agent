@@ -11,6 +11,7 @@ This area owns durable cross-session memory. Read [AGENTS.md](AGENTS.md) before 
 - [profile-store.ts](profile-store.ts)
 - [memory-context-provider.ts](memory-context-provider.ts)
 - [reflection-runner.ts](reflection/reflection-runner.ts)
+- [extract-fact-candidates.ts](import-facts/extract-fact-candidates.ts): facts from an old chat export, for the person to approve (ATO-1060)
 
 ## Ownership and dependencies
 

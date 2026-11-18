@@ -4,6 +4,9 @@ import {
   StepSpeedReadout,
   stepSpeedReadoutLabel,
 } from "./context/step-speed-readout.js";
+import { ThinkReadout } from "./context/think-readout.js";
+import { thinkReadoutLabel } from "./commands/think-command.js";
+import type { ReasoningLevel } from "../llm/reasoning-levels.js";
 import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import type {
@@ -131,6 +134,7 @@ import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./tasks/tasks-cancel-modal.js";
 import { UpdateModal } from "./update/update-modal.js";
 import { ProjectTrustModal } from "./project-trust/project-trust-modal.js";
+import { AppendLocalQuestionModal } from "./append-local-question/append-local-question-modal.js";
 import { UpdateIndicator } from "./update/update-indicator.js";
 import { UpdateRestartPrompt } from "./update/update-restart-prompt.js";
 import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
@@ -173,6 +177,7 @@ import { handleTasksTabKey } from "./tasks/tasks-key-bindings.js";
 import { handleSkillsTabKey } from "./skills/skills-key-bindings.js";
 import type { SkillSourceKind } from "../skills/index.js";
 import type { HubSkillRow } from "./skills/skills-panel-state.js";
+import type { LearnCommand } from "../skills/learning/learn-command.js";
 import { handleMemoryTabKey } from "./memory/memory-key-bindings.js";
 import type {
   MemoryChannel,
@@ -321,6 +326,11 @@ export interface TuiAppCallbacks {
     mode: CodingMode,
     resolved: { approvalLevel: ApprovalLevel; planMode: boolean },
   ): void;
+  /**
+   * `/think <level>` (ATO-490): the reasoning level the next turns of
+   * this window ask for (`auto` sends none).
+   */
+  onReasoningLevelChanged?(level: ReasoningLevel): void;
   /** Ask the orchestrator to emit the recent-sessions list to the bus. */
   onSessionPickerRequested?(): void;
   /**
@@ -329,6 +339,8 @@ export interface TuiAppCallbacks {
    * nothing to go back to).
    */
   onRewindPickerRequested?(): void;
+  /** `/export [format] [path]` (ATO-1054): write the open chat to a file and say where. */
+  onChatExportRequested?(request: import("./commands/export-command.js").ChatExportRequest): void;
   /**
    * Take the chat back to just before the question at `turnIndex` of
    * the session's turns: the session (held and saved) keeps only what
@@ -394,6 +406,8 @@ export interface TuiAppCallbacks {
   onShowStepsPersistRequested?(on: boolean): void;
   /** Persist the composer's vim keys into `tui.vimMode` (`/vim`). */
   onVimModePersistRequested?(on: boolean): void;
+  /** Persist verbose step notes into `tui.verboseSteps` (`/verbose`). */
+  onVerboseStepsPersistRequested?(on: boolean): void;
   /**
    * `/mouse on|off` — flip terminal mouse reporting live. `null` asks
    * for the current state to be reported without changing it. The
@@ -577,6 +591,8 @@ export interface TuiAppCallbacks {
   preparePluginCommand?(name: string, args: string): string;
   /** Refresh the skills panel, count and slash catalog for the selected workspace. */
   onSkillsRefreshRequested?(): void;
+  /** `/learn` (ATO-67): list the skills the agent learned, or undo one. */
+  onLearnCommand?(command: LearnCommand): void;
   /** Skills tab: load the SKILL.md body and open the detail view. */
   onSkillDetailRequested?(name: string): void;
   /** Skills tab: flip the disabled bit and persist to `config.json`. */
@@ -846,6 +862,8 @@ export interface TuiAppCallbacks {
   onAnalyticsSetEnabledRequested?(enabled: boolean): void | Promise<void>;
   /** Privacy tab: toggle offline mode through the agent's kill switch. */
   onOfflineToggleRequested?(): void | Promise<void>;
+  /** Privacy tab: toggle Privacy Shield (masking before cloud models). */
+  onPrivacyShieldToggleRequested?(): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Integrations tab: re-read credential presence + live server state. */
@@ -909,10 +927,14 @@ export interface TuiAppCallbacks {
   onImportPreview?(form: ImportFormState): void;
   /** Import tab: execute the import (write sessions / tasks / secrets). */
   onImportExecute?(form: ImportFormState): void;
+  /** Import tab: the "what I learned about you" step (ATO-1627). */
+  onImportFacts?(cmd: import("./import/import-facts-runner.js").ImportFactsCommand): void;
   /** Startup self-update: user accepted the offer — run `install.sh`. */
   onUpdateConfirmed?(): void;
   /** Startup folder trust question answered (ATO-298). */
   onProjectTrustAnswered?(answer: "trust" | "decline"): void;
+  /** Startup last-resort fallback question answered (ATO-1461). */
+  onAppendLocalAnswered?(answer: "keep" | "off"): void;
   /** Self-update settled: user pressed a key to re-exec the new binary. */
   onUpdateRestart?(): void;
   /**
@@ -1471,6 +1493,8 @@ export function TuiApp({
     state.updateStatus !== "done" &&
     // The folder trust question claims y / n / Esc the same way (ATO-1481).
     state.projectTrustPrompt === null &&
+    // So does the last-resort fallback question (ATO-1461).
+    state.appendLocalPrompt === null &&
     // When the slash-command palette is open the editor must hold focus
     // regardless of the active debug tab so the operator can type the
     // command and drive ↑↓ / tab / enter selection. Panels that open the
@@ -2432,8 +2456,16 @@ export function TuiApp({
         fusion={promptBackend.kind === "fusion"}
       />
     ) : null;
+  // ATO-490: the `/think` level, when one is picked.
+  const thinkReadout =
+    thinkReadoutLabel(state.reasoningLevel) !== null ? (
+      <ThinkReadout
+        level={state.reasoningLevel}
+        fusion={promptBackend.kind === "fusion"}
+      />
+    ) : null;
   const promptContextSlot =
-    composerContextUsage || usageReadout || stepSpeedReadout ? (
+    composerContextUsage || usageReadout || stepSpeedReadout || thinkReadout ? (
       <Box flexDirection="row" flexShrink={0}>
         {composerContextUsage ? (
           <ContextChip
@@ -2443,6 +2475,7 @@ export function TuiApp({
           />
         ) : null}
         {stepSpeedReadout}
+        {thinkReadout}
         {usageReadout}
       </Box>
     ) : null;
@@ -2826,6 +2859,11 @@ export function TuiApp({
                 {state.projectTrustPrompt ? (
                   <Box flexShrink={0}>
                     <ProjectTrustModal prompt={state.projectTrustPrompt} />
+                  </Box>
+                ) : null}
+                {!state.projectTrustPrompt && state.appendLocalPrompt ? (
+                  <Box flexShrink={0}>
+                    <AppendLocalQuestionModal prompt={state.appendLocalPrompt} />
                   </Box>
                 ) : null}
                 {state.updatePrompt ? (

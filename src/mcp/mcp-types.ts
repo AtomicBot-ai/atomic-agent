@@ -24,6 +24,12 @@ import type { ResourceClass } from "../agent/tool-resource-class.js";
  * `name` is validated against `MCP_SERVER_NAME_RE` so it lands
  * cleanly inside JSON keys, tool names, and GBNF string literals.
  */
+/** Per-server sandbox settings (`mcp.servers[].sandbox` object form). */
+export interface McpServerSandboxConfig {
+  /** Let the server reach the Docker daemon socket. Default false. */
+  allowDocker?: boolean;
+}
+
 export interface McpServerConfig {
   /** Unique operator-chosen namespace (kebab-case, max 32 chars). */
   name: string;
@@ -69,6 +75,21 @@ export interface McpServerConfig {
    * Ignored for HTTP / SSE transports.
    */
   env?: Record<string, string>;
+  /**
+   * Safe Mode's OS sandbox for a `stdio` server (ATO-620). When Safe
+   * Mode is on (`ATOMIC_AGENT_SANDBOX=workspace`) every stdio server runs
+   * inside it: writes only in its `cwd`, temp and tool caches, no reads
+   * of credential folders or the agent's state; network stays on, since
+   * most servers call an API. `false` opts this one server out (a
+   * filesystem server that must write across the disk). Ignored for
+   * HTTP / SSE transports and while Safe Mode is off.
+   *
+   * The object form keeps the sandbox and loosens one thing:
+   * `{ allowDocker: true }` lets this server reach the Docker daemon
+   * socket, hidden from every sandboxed server by default (a Docker
+   * client can start a container that mounts the whole disk).
+   */
+  sandbox?: boolean | McpServerSandboxConfig;
   /**
    * Raw tool names to offer from this server. Absent: every tool the
    * server lists. Present (even empty): only these. See
@@ -200,8 +221,23 @@ export interface McpToolMeta {
    * without re-fetching.
    */
   annotations?: Record<string, unknown>;
+  /**
+   * MCP Apps (ATO-1135): the tool's `_meta.ui` from discovery, parsed by
+   * `parseToolUiMeta` (mcp-apps.ts). `resourceUri` names the `ui://`
+   * page the host fetches after a call; `visibility` says who may call
+   * the tool. Absent for a tool without UI.
+   */
+  ui?: McpToolUiMeta;
   /** Computed resource class — drives batching / approval behaviour. */
   resourceClass: ResourceClass;
+}
+
+/** A tool's MCP Apps metadata (`_meta.ui`), see `McpToolMeta.ui`. */
+export interface McpToolUiMeta {
+  /** The `ui://` resource holding the tool's page. */
+  resourceUri?: string;
+  /** Who may call the tool; absent means `["model", "app"]`. */
+  visibility?: Array<"model" | "app">;
 }
 
 /** Neutral descriptor of a resource exposed by an MCP server. */

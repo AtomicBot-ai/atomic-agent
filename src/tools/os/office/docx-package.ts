@@ -1,11 +1,13 @@
 import JSZip from "jszip";
 
+import { addOverride, addRelationship, packZip } from "../ooxml/ooxml-package.js";
+import { maxAttr, renderBlocks, type RenderOptions } from "./docx-blocks.js";
+
 import {
   HEADING_STYLES,
   R_NS,
   STYLES_XML,
   W_NS,
-  paragraphXml,
   type DocBlock,
 } from "./docx-xml.js";
 
@@ -44,19 +46,22 @@ const SECTION =
   `<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>` +
   `<w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="709" w:footer="709" w:gutter="0"/></w:sectPr>`;
 
-export async function createDocx(blocks: readonly DocBlock[]): Promise<Buffer> {
+export async function createDocx(
+  blocks: readonly DocBlock[],
+  options: Omit<RenderOptions, "revision"> = {},
+): Promise<Buffer> {
   const zip = new JSZip();
-  const body = blocks.map(paragraphXml).join("");
   zip.file("[Content_Types].xml", CONTENT_TYPES);
   zip.file("_rels/.rels", PACKAGE_RELS);
   zip.file("word/_rels/document.xml.rels", DOCUMENT_RELS);
   zip.file("word/styles.xml", STYLES_XML);
+  const body = await renderBlocks(zip, "word/document.xml", "", blocks, options);
   zip.file(
     "word/document.xml",
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}"><w:body>${body}${SECTION}</w:body></w:document>`,
   );
-  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  return packZip(zip);
 }
 
 /** `word/document.xml` unless the package's root relationship names another part. */
@@ -86,18 +91,28 @@ export function insertAtBodyEnd(documentXml: string, xml: string): string {
   return documentXml.slice(0, at) + xml + documentXml.slice(at);
 }
 
+/**
+ * Add `blocks` at the end of the body. With `options.revision` the
+ * addition is a tracked insertion by that author (Word's Track Changes).
+ */
 export async function appendToDocx(
   data: Buffer,
   blocks: readonly DocBlock[],
+  options: RenderOptions = {},
 ): Promise<Buffer> {
   const zip = await JSZip.loadAsync(data);
   const main = await mainDocumentPath(zip);
   const documentXml = await zip.file(main)!.async("text");
-  zip.file(main, insertAtBodyEnd(documentXml, blocks.map(paragraphXml).join("")));
+  if (options.revision !== undefined) {
+    // Revision ids share one space with comments and bookmarks: start past them.
+    options.revision.nextId = Math.max(options.revision.nextId, maxAttr(documentXml, /\bw:id="(\d+)"/g) + 1);
+  }
+  const body = await renderBlocks(zip, main, documentXml, blocks, options);
+  zip.file(main, insertAtBodyEnd(documentXml, body));
   if (blocks.some((block) => block.kind.startsWith("heading"))) {
     await ensureHeadingStyles(zip, main);
   }
-  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  return packZip(zip);
 }
 
 /**
@@ -128,23 +143,8 @@ async function ensureHeadingStyles(zip: JSZip, main: string): Promise<void> {
   const stylesPath = `${dir}styles.xml`;
   if (zip.file(stylesPath) !== null) return;
   zip.file(stylesPath, STYLES_XML);
-  const relationship = `<Relationship Id="rIdAtomicStyles" Type="${STYLES_REL_TYPE}" Target="styles.xml"/>`;
-  zip.file(
-    relsPath,
-    rels === undefined
-      ? DOCUMENT_RELS
-      : rels.replace("</Relationships>", `${relationship}</Relationships>`),
-  );
-  const types = await zip.file("[Content_Types].xml")?.async("text");
-  if (types !== undefined && !types.includes(`PartName="/${stylesPath}"`)) {
-    zip.file(
-      "[Content_Types].xml",
-      types.replace(
-        "</Types>",
-        `<Override PartName="/${stylesPath}" ContentType="${STYLES_CONTENT_TYPE}"/></Types>`,
-      ),
-    );
-  }
+  await addRelationship(zip, main, STYLES_REL_TYPE, "styles.xml");
+  await addOverride(zip, stylesPath, STYLES_CONTENT_TYPE);
 }
 
 function escapeRegex(text: string): string {

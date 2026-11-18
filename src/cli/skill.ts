@@ -45,9 +45,12 @@ import {
   formatScanFindings,
 } from "./skill-install-confirm.js";
 import { handleUpdate } from "./skill-update.js";
+import { listPendingDrafts, type PendingDraft } from "../skills/learning/pending-drafts.js";
+import { oneLine } from "../skills/learning/learn-command.js";
 import {
   handleSkillCurate,
   handleSkillHistory,
+  handleSkillLearned,
   handleSkillRestore,
   recordUserSkillRemoval,
   SKILL_HISTORY_HELP_LINES,
@@ -69,7 +72,8 @@ const HELP =
     "                             Skills changed locally are reported, never overwritten.",
     "                             --check only lists what is outdated; --rollback <name> restores the previous copy",
     "  uninstall <name>           Remove an installed global skill",
-    "  list                       List installed skills (project + global) with enabled/disabled state",
+    "  list [--json]              List installed skills (project + global) with enabled/disabled state, then",
+    "                             learned drafts pending review; --json lists those as status \"pending\" rows",
     "  show <name>                Print SKILL.md for an installed skill",
     "  enable <name>              Re-enable a previously disabled skill (mutates config.json)",
     "  disable <name>             Hide a skill from the registry without removing files (mutates config.json)",
@@ -110,7 +114,7 @@ export async function skillCommand(args: string[]): Promise<number> {
       case "uninstall":
         return await handleUninstall(args.slice(1));
       case "list":
-        return await handleList();
+        return await handleList(args.slice(1));
       case "show":
         return await handleShow(args.slice(1));
       case "enable":
@@ -134,6 +138,8 @@ export async function skillCommand(args: string[]): Promise<number> {
         return await handleSkillRestore(args.slice(1));
       case "curate":
         return await handleSkillCurate(args.slice(1));
+      case "learned":
+        return await handleSkillLearned(args.slice(1));
       default:
         process.stderr.write(`unknown subcommand: ${sub}\n`);
         process.stderr.write(HELP);
@@ -379,7 +385,20 @@ async function handleUninstall(args: string[]): Promise<number> {
   return 0;
 }
 
-async function handleList(): Promise<number> {
+/** One row of `skill list --json`; `status: "pending"` is a learned draft waiting for approval (ATO-67). */
+interface SkillListJsonRow {
+  name: string;
+  version: string;
+  source: string;
+  status: "enabled" | "disabled" | "untrusted" | "declined" | "pending";
+  description: string;
+  /** Pending rows: the id `skill learned approve|discard <id>` takes, and whether it is a new skill or a patch. */
+  draftId?: string;
+  draftKind?: "create" | "patch";
+}
+
+async function handleList(args: string[] = []): Promise<number> {
+  const json = args.includes("--json");
   const config = getConfig();
   const projectDir = resolve(process.cwd(), config.paths.projectSkillsDirName);
   const { skills, errors } = await loadSkills({
@@ -390,16 +409,33 @@ async function handleList(): Promise<number> {
   // Project skills load only once this folder is trusted (ATO-298); show why one is off.
   const trust = readProjectTrust(config.paths.userConfigFile, config.skills.projectTrust, process.cwd());
   let untrusted = 0;
+  const rows: SkillListJsonRow[] = [];
+  for (const s of skills) {
+    const projectTrust = s.source === "project" ? skillTrust(trust, s.manifest.name) : "trusted";
+    if (projectTrust === "pending") untrusted++;
+    const state = disabled.has(s.manifest.name) ? "disabled" : projectTrust === "pending" ? "untrusted" : projectTrust === "declined" ? "declined" : "enabled";
+    rows.push({ name: s.manifest.name, version: s.manifest.version, source: s.source, status: state, description: s.manifest.description });
+  }
+  if (json) {
+    // `--json` also carries the self-learning drafts pending review, so a
+    // UI can show them as "Pending review"; the tab-separated listing the
+    // desktop parses today stays installed skills only.
+    const installedNames = new Set(skills.map((s) => s.manifest.name));
+    for (const name of disabled) {
+      if (!installedNames.has(name)) rows.push({ name, version: "-", source: "missing", status: "disabled", description: "(not installed)" });
+    }
+    for (const d of await listPendingDrafts(config.paths.stateDir)) {
+      rows.push({ name: d.name, version: "-", source: "learned", status: "pending", description: oneLine(d.reason), draftId: d.id, draftKind: d.kind });
+    }
+    process.stdout.write(`${JSON.stringify(rows, null, 2)}\n`);
+    for (const e of errors) process.stderr.write(`WARN: ${e.path}: ${e.error}\n`);
+    return 0;
+  }
   if (skills.length === 0) {
     process.stdout.write("(no skills installed)\n");
   } else {
-    for (const s of skills) {
-      const projectTrust = s.source === "project" ? skillTrust(trust, s.manifest.name) : "trusted";
-      if (projectTrust === "pending") untrusted++;
-      const state = disabled.has(s.manifest.name) ? "disabled" : projectTrust === "pending" ? "untrusted" : projectTrust === "declined" ? "declined" : "enabled";
-      process.stdout.write(
-        `${s.manifest.name}\tv${s.manifest.version}\t[${s.source}]\t${state}\t${s.manifest.description}\n`,
-      );
+    for (const r of rows) {
+      process.stdout.write(`${r.name}\tv${r.version}\t[${r.source}]\t${r.status}\t${r.description}\n`);
     }
   }
   // Surface entries that are in the disable list but no longer installed —
@@ -416,7 +452,37 @@ async function handleList(): Promise<number> {
   for (const e of errors) {
     process.stderr.write(`WARN: ${e.path}: ${e.error}\n`);
   }
+  const pending = await listPendingDrafts(config.paths.stateDir);
+  if (pending.length > 0) process.stderr.write(formatPendingSection(pending));
   return 0;
+}
+
+/**
+ * The plain listing's "Pending review" section (ATO-67). It goes to
+ * stderr: the desktop on rel/xp-build parses stdout line by line
+ * (desktop/main/agent-cli.ts skillList), folds any line with fewer than
+ * four tab cells into the previous row's description, fails on such a
+ * line when no row came before, and shows every 4+ cell row whose status
+ * is not "enabled" as a disabled installed skill. No stdout line could
+ * carry a draft without one of those misreadings, while stderr is only
+ * read when the command fails. A person at a terminal sees both streams,
+ * the way `WARN:` lines already reach them. No tabs, so even `2>&1`
+ * never forms a fake row.
+ */
+export function formatPendingSection(pending: readonly PendingDraft[]): string {
+  const lines = [
+    "",
+    `Pending review (${pending.length} learned skill draft${pending.length === 1 ? "" : "s"}, not used until you approve ${pending.length === 1 ? "it" : "them"}):`,
+  ];
+  for (const d of [...pending].reverse()) {
+    const reason = oneLine(d.reason);
+    lines.push(
+      `  ${d.id}  ${d.kind === "create" ? "new skill" : "patch"} ${oneLine(d.name)}${reason ? `: ${reason}` : ""}`,
+      `          review: atomic-agent skill learned show ${d.id}`,
+    );
+  }
+  lines.push("Then: atomic-agent skill learned approve <id> | atomic-agent skill learned discard <id>");
+  return `${lines.join("\n")}\n`;
 }
 
 async function handleShow(args: string[]): Promise<number> {

@@ -306,6 +306,8 @@ export function parseJudgeAnswer(
 export interface JudgeTarget {
   providerId: string;
   model: string | null;
+  /** The model asked for on the wire, when not the entry's own (ATO-1560). */
+  turnModel?: string;
 }
 
 /**
@@ -362,6 +364,7 @@ export async function judgeTask(input: {
   try {
     const answer = await input.complete({
       providerId: input.target.providerId,
+      ...(input.target.turnModel === undefined ? {} : { model: input.target.turnModel }),
       prompt: renderJudgePrompt({
         task: input.task,
         items: input.items,

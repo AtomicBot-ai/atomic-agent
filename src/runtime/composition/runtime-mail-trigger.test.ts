@@ -84,5 +84,7 @@ describe("createRuntimeMailTrigger (ATO-601)", () => {
       maxSteps: null,
     });
     expect(create.mock.calls[0]![0]).not.toHaveProperty("sessionId");
+    // Not the owner's address (o@x.io): the task waits to be started (ATO-601, 18.11).
+    expect(create.mock.calls[0]![0]).toMatchObject({ startPaused: true });
   });
 });

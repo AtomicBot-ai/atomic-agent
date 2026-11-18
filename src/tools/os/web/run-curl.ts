@@ -1,9 +1,11 @@
+import { buildCommandEnv } from "../../../sandbox/command-env.js";
 import type {
   CommandOptions,
   CommandResult,
   runCommand as RunCommand,
 } from "../../../sandbox/command-runner.js";
 import { offlineRefusal } from "../../../llm/offline-network.js";
+import { curlProxyEnv, currentAgentProxy } from "../../../llm/agent-proxy.js";
 
 /**
  * Spawn the system `curl` for the HTTP/web tools, with the one Windows
@@ -45,6 +47,60 @@ let revocationFlag: RevocationFlag = REVOKE_BEST_EFFORT_FLAG;
 export interface RunCurlSeams {
   /** Platform override for deterministic tests. Defaults to process.platform. */
   platform?: NodeJS.Platform;
+  /** Base env when the caller passes none (tests). Defaults to the command runner's. */
+  baseEnv?: () => NodeJS.ProcessEnv;
+}
+
+/**
+ * Keep the DNS pin when the request goes through the user's proxy.
+ *
+ * The web tools check a host's addresses first (`assertHostAllowed`) and
+ * pin them with `--resolve host:port:addr,...`, so a rebinding DNS answer
+ * cannot send curl somewhere private after the check. Through an HTTP
+ * proxy `--resolve` binds nothing: curl sends `CONNECT host:port` and the
+ * proxy resolves the name itself, maybe to its own loopback or LAN.
+ * `--connect-to host:port:addr:port` makes curl name the checked address
+ * in the CONNECT instead (TLS name and `Host` stay the real host), so the
+ * proxy goes where the guard looked. One address only: `--connect-to`
+ * takes no list, so the multi-address fallback of `--resolve` is lost
+ * while a proxy is on.
+ */
+export function pinThroughProxy(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    const entry = arg === "--resolve" ? args[i + 1] : undefined;
+    const parsed = entry === undefined ? null : parseResolveEntry(entry);
+    if (parsed === null) {
+      out.push(arg);
+      continue;
+    }
+    out.push("--connect-to", `${parsed.host}:${parsed.port}:${parsed.address}:${parsed.port}`);
+    i++;
+  }
+  return out;
+}
+
+function parseResolveEntry(
+  entry: string,
+): { host: string; port: string; address: string } | null {
+  const match = /^(\[[^\]]+\]|[^:\[\]]+):(\d+):(.+)$/.exec(entry);
+  if (!match) return null;
+  const address = match[3]!.split(",")[0]!.trim();
+  if (address.length === 0) return null;
+  return { host: match[1]!, port: match[2]!, address };
+}
+
+/**
+ * The user's proxy (ATO-87) for this curl, as curl's own variables: the
+ * password stays out of argv (and `ps`). A caller env that already names
+ * a proxy keeps it.
+ */
+function withAgentProxy(options: CommandOptions, seams: RunCurlSeams): CommandOptions {
+  const extra = curlProxyEnv(currentAgentProxy(), options.env);
+  if (Object.keys(extra).length === 0) return options;
+  const base = options.env ?? (seams.baseEnv ?? (() => buildCommandEnv(process.env)))();
+  return { ...options, env: { ...base, ...extra } };
 }
 
 export async function runCurl(
@@ -60,6 +116,11 @@ export async function runCurl(
     if (!/^(?:https?|wss?|ftp):\/\//i.test(arg)) continue;
     const refused = offlineRefusal(arg, "curl");
     if (refused) throw refused;
+  }
+  const proxied = withAgentProxy(options, seams);
+  if (proxied !== options) {
+    options = proxied;
+    args = pinThroughProxy(args);
   }
   const platform = seams.platform ?? process.platform;
   if (platform !== "win32") return runCommand("curl", args, options);

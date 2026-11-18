@@ -68,8 +68,17 @@ describe("resource configuration ownership", () => {
       disabled: ["one", "two"],
       taps: ["Owner/repo", "owner/repo"],
       clawhub: { enabled: false, apiBase: "ftp://source.local/path", browseLimit: 100, nonSuspiciousOnly: true },
+      selfLearning: { enabled: true, minSteps: 10 },
     });
     expect(parseSkillsConfig({ disabled: ["x"] }, createSkillsDefaults).disabled).toEqual(["x"]);
+  });
+
+  it("reads skills.selfLearning, on by default after 10 steps (ATO-67)", () => {
+    expect(parseSkillsConfig({}, createSkillsDefaults).selfLearning).toEqual({ enabled: true, minSteps: 10 });
+    expect(parseSkillsConfig({ selfLearning: { enabled: "false" } }, createSkillsDefaults).selfLearning).toEqual({ enabled: false, minSteps: 10 });
+    expect(parseSkillsConfig({ selfLearning: { minSteps: "25" } }, createSkillsDefaults).selfLearning).toEqual({ enabled: true, minSteps: 25 });
+    expect(validation(() => parseSkillsConfig({ selfLearning: { minSteps: 0 } }, createSkillsDefaults)).field).toBe("skills.selfLearning.minSteps");
+    expect(validation(() => parseSkillsConfig({ selfLearning: true }, createSkillsDefaults)).field).toBe("skills.selfLearning");
   });
 
   it("reads skills.eval.judgeProvider and leaves the key out when unset (ATO-1101)", () => {

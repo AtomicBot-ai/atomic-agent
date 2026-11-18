@@ -162,6 +162,15 @@ export interface PickListProps {
    * keypress that did nothing — the whole of report #3.
    */
   error?: string | null;
+  /**
+   * Drawn between the cursor mark and an option's label, for the rows on
+   * screen only (the catalogs run past 300 rows, and their labels are
+   * built lazily). Must render a fixed width for every index so labels
+   * stay in one column; the providers wizard puts brand badges here
+   * (ATO-1635). Kept as a render prop so this shared list knows nothing
+   * about brands.
+   */
+  leading?: (index: number) => ReactNode;
 }
 
 export function renderPickList(props: PickListProps): ReactElement {
@@ -237,7 +246,8 @@ export function renderPickList(props: PickListProps): ReactElement {
               color={index === clamped ? theme.colors.accent : undefined}
               wrap="truncate-end"
             >
-              {mark} {opt.label}
+              {mark} {props.leading ? props.leading(index) : null}
+              {opt.label}
             </Text>
           </MouseListRow>
         );

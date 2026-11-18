@@ -8,6 +8,9 @@ import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { fusionChipColors } from "../theme/fusion-tint.js";
 import { chromeTheme } from "../theme/theme.js";
 import type { ComposerSwitchRow } from "./composer-switch-rows.js";
+import { BrandBadge } from "../brand/brand-badge.js";
+import { BRAND_SLOT_WIDTH } from "../brand/brand-badges.js";
+import { switchRowBrand } from "./composer-switch-row-brand.js";
 
 /** Column reserved for the entry label when a detail column follows it. */
 export const LABEL_WIDTH = 24;
@@ -18,12 +21,19 @@ export function SwitchRow({
   selected,
   rowIndex,
   onActivate,
+  brandSlot = false,
 }: {
   row: ComposerSwitchRow;
   inner: number;
   selected: boolean;
   rowIndex: number;
   onActivate: (row: ComposerSwitchRow) => void;
+  /**
+   * Reserve the brand badge column (ATO-1635). Set by the popup for the
+   * whole list when any row in it names a provider or a model, so every
+   * label starts in the same column; a row with no brand gets a blank.
+   */
+  brandSlot?: boolean;
 }): ReactElement {
   const mouse = useMouseCommands();
   const marker = selected ? chromeTheme.glyphs.menuCursor : " ";
@@ -31,14 +41,27 @@ export function SwitchRow({
   // The label column is reserved only when there is a detail column to
   // align: catalog ids differ past column 24, and truncating them
   // against an empty right half made neighbouring rows read identical.
-  const labelBudget =
-    row.detail.length > 0 ? Math.min(LABEL_WIDTH, inner) : inner;
   const prefix = ` ${marker} ${check}`;
-  const label = fitToWidth(`${prefix}${row.label}`, labelBudget);
+  // The badge column comes out of the detail column, not the label's:
+  // ids are what the operator reads to choose, the detail only explains.
+  // On a popup too narrow for a badge and a readable label it is left out.
+  const badge =
+    brandSlot &&
+    row.emphasis !== "fusion" &&
+    inner >= prefix.length + BRAND_SLOT_WIDTH + 8;
+  const slot = badge ? BRAND_SLOT_WIDTH : 0;
+  const labelBudget =
+    row.detail.length > 0 ? Math.min(LABEL_WIDTH + slot, inner) : inner;
+  const label = badge
+    ? `${prefix}${fitToWidth(row.label, Math.max(0, labelBudget - prefix.length - slot))}`
+    : fitToWidth(`${prefix}${row.label}`, labelBudget);
   const detail = fitToWidth(
     ` ${row.detail}`,
-    Math.max(0, inner - label.length),
+    Math.max(0, inner - label.length - slot),
   );
+  const labelColor = row.disabled
+    ? chromeTheme.colors.railMuted
+    : chromeTheme.colors.railForeground;
   const body = (
     <>
       {/*
@@ -53,15 +76,14 @@ export function SwitchRow({
           width={label.length}
           selected={selected}
         />
+      ) : badge ? (
+        <Text color={labelColor} bold={selected}>
+          {prefix}
+          <BrandBadge brand={switchRowBrand(row) ?? null} />
+          {label.slice(prefix.length)}
+        </Text>
       ) : (
-        <Text
-          color={
-            row.disabled
-              ? chromeTheme.colors.railMuted
-              : chromeTheme.colors.railForeground
-          }
-          bold={selected}
-        >
+        <Text color={labelColor} bold={selected}>
           {label}
         </Text>
       )}

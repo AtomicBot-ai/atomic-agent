@@ -38,6 +38,15 @@ export type WhileBusySubmitMode = "steer" | "queue";
 export const WHILE_BUSY_SUBMIT_MODES: readonly WhileBusySubmitMode[] = ["steer", "queue"];
 
 /**
+ * Interface language of the terminal UI (ATO-571). `auto` follows
+ * `ATOMIC_AGENT_LANG`, then the system locale; the catalogs live in
+ * `src/i18n/`. Kept as its own literal list so the config layer does not
+ * import the TUI side.
+ */
+export type UiLanguageSetting = "auto" | "en" | "ru";
+export const UI_LANGUAGE_SETTINGS: readonly UiLanguageSetting[] = ["auto", "en", "ru"];
+
+/**
  * First-run flow state (config v43, extended in v44). Five nullable
  * ISO-8601 timestamps, not booleans: knowing *when* a run was completed
  * or skipped is what lets a later release decide whether an install
@@ -62,16 +71,24 @@ export const WHILE_BUSY_SUBMIT_MODES: readonly WhileBusySubmitMode[] = ["steer",
 
 
 export interface OnboardingState {
+  /** When the first-run flow configured a backend and handed over to the agent, as an ISO timestamp. `null` (default) means not yet. */
   completedAt: string | null;
+  /** When the first-run splash was dismissed, as an ISO timestamp. `null` (default) means never. */
   introSeenAt: string | null;
+  /** When the operator escaped out of the first-run flow, as an ISO timestamp; the flow does not reopen by itself afterwards. `null` (default) means never. */
   skippedAt: string | null;
+  /** When the first run offered to set up the other backend too, as an ISO timestamp, so the offer is never made twice. `null` (default) means not offered. */
   proposedSecondBackendAt: string | null;
+  /** When the first run reached the local model list, whether or not a model was chosen, as an ISO timestamp. `null` (default) means never. */
   localSetupSeenAt: string | null;
+  /** When the first run offered to bring data over from another agent, as an ISO timestamp; a declined offer does not come back. `null` (default) means not offered. */
   importOfferedAt: string | null;
 }
 
 export interface TuiConfig {
+  /** TUI color theme: `auto` (default) detects the terminal background and picks the matching classic theme, or a registered theme name such as `khorne-red`. Set by the `/theme` picker. */
   theme: string;
+  /** What Enter does while a turn is running: `steer` (default) folds the message into the running turn at the next step, `queue` runs it as its own turn once the current one ends. */
   whileBusySubmit: WhileBusySubmitMode;
   mouse: boolean;
   /**
@@ -98,6 +115,18 @@ export interface TuiConfig {
    * display/input preference only; the agent never reads it.
    */
   vimMode: boolean;
+  /**
+   * Interface language of the terminal UI (ATO-571): `auto`, `en` or `ru`. `auto` (default) uses `ATOMIC_AGENT_LANG`, then the system locale (`LC_ALL`, `LC_MESSAGES`, `LANG`), then English. Additive and unversioned, a file without it reads `auto`. Only the onboarding screens are translated so far; the agent never reads it.
+   */
+  language: UiLanguageSetting;
+  /**
+   * Verbose steps (ATO-34): one plain line under every finished tool card
+   * in the terminal chat, with the step number, the call and what came
+   * back. Off by default; `/verbose` flips it. Additive and unversioned, a
+   * file without it reads `false`. A display preference only; the agent
+   * never reads it.
+   */
+  verboseSteps: boolean;
   onboarding: OnboardingState;
   sessionRail: SessionRailConfig;
   notify: TuiNotifyConfig;
@@ -111,6 +140,8 @@ export function createTuiDefaults(): TuiConfig {
     showSteps: false,
     nextStepSuggestions: false,
     vimMode: false,
+    language: "auto",
+    verboseSteps: false,
     notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
@@ -257,6 +288,21 @@ function readWhileBusySubmit(raw: unknown, readDefaults: () => TuiConfig): While
   return parseWhileBusySubmit(raw ?? fallback, "tui.whileBusySubmit");
 }
 
+/**
+ * `tui.language` (ATO-571). A language a newer build added reads as the
+ * default here, like `tui.whileBusySubmit`; a non-string is an error.
+ */
+function readUiLanguage(raw: unknown, readDefaults: () => TuiConfig): UiLanguageSetting {
+  const fallback = readDefaults().language;
+  if (isSetAsideString(raw, UI_LANGUAGE_SETTINGS, "tui.language", fallback)) return fallback;
+  const value = raw === undefined || raw === null || raw === "" ? fallback : raw;
+  if (value === "auto" || value === "en" || value === "ru") return value;
+  throw new ConfigValidationError(
+    "tui.language",
+    `expected "auto", "en" or "ru", got ${JSON.stringify(value)}`,
+  );
+}
+
 export function parseTuiConfig(
   tui: Record<string, unknown>,
   readDefaults: () => TuiConfig,
@@ -282,6 +328,11 @@ export function parseTuiConfig(
     vimMode: parseBool(
       tui.vimMode ?? readDefaults().vimMode,
       "tui.vimMode",
+    ),
+    language: readUiLanguage(tui.language, readDefaults),
+    verboseSteps: parseBool(
+      tui.verboseSteps ?? readDefaults().verboseSteps,
+      "tui.verboseSteps",
     ),
     onboarding: parseOnboardingStateWithDefaults(
       tui.onboarding,

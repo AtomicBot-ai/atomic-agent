@@ -51,3 +51,48 @@ export const COMPOSIO_GUIDANCE = [
   "Then run what it found via `mcp.composio.COMPOSIO_MULTI_EXECUTE_TOOL` (use `mcp.composio.COMPOSIO_GET_TOOL_SCHEMAS` first if you need the exact arguments).",
   "If the account is not connected yet, `mcp.composio.COMPOSIO_MANAGE_CONNECTIONS` returns a sign-in link: put that URL in a `reply` so the user can click it, wait for them to confirm, then retry. Connections persist, so this happens once per app.",
 ].join("\n");
+
+/** The slice of a `composio.accounts` entry the prompt needs. */
+export interface ComposioAccountHint {
+  toolkit: string;
+  alias: string;
+  isDefault: boolean;
+}
+
+/**
+ * ATO-1494: one line saying which named account each app acts through,
+ * so "send it from my work Gmail" is answered honestly instead of
+ * silently going out through whichever account is pinned. `null` with
+ * no named accounts, so an install that never named one keeps its
+ * prefix byte-identical. The list is config, written only by the
+ * operator (CLI, Integrations tab, desktop) and followed by a remount,
+ * so it is as stable as the descriptor gate above it. Connected account
+ * ids are left out: the model has no use for them.
+ */
+export function buildComposioAccountsGuidance(
+  accounts: readonly ComposioAccountHint[] | undefined,
+): string | null {
+  if (accounts === undefined || accounts.length === 0) return null;
+  const byToolkit = new Map<string, ComposioAccountHint[]>();
+  for (const a of accounts) {
+    const list = byToolkit.get(a.toolkit) ?? [];
+    list.push(a);
+    byToolkit.set(a.toolkit, list);
+  }
+  const parts = [...byToolkit.keys()].sort().map((toolkit) => {
+    const list = byToolkit.get(toolkit)!;
+    const def = list.find((a) => a.isDefault);
+    const others = list
+      .filter((a) => a !== def)
+      .map((a) => `\`${a.alias}\``)
+      .sort();
+    const head = def
+      ? `${toolkit} acts through \`${def.alias}\``
+      : `${toolkit} has no default (Composio uses the account connected last)`;
+    return others.length > 0 ? `${head}, also saved: ${others.join(", ")}` : head;
+  });
+  return [
+    `Named Composio accounts: ${parts.join("; ")}.`,
+    "Say which account you acted through when it matters. If the user wants a different saved account, ask them to make it the default in Integrations (or `atomic-agent composio accounts default <app> <name>`); you cannot switch it yourself.",
+  ].join("\n");
+}

@@ -234,4 +234,30 @@ describe("handleIntegrationsTabKey", () => {
     handleIntegrationsTabKey("", emptyKey({ escape: true }), detail);
     expect(d2).toHaveBeenCalledWith({ type: "integrations_closed" });
   });
+  it("never opens the editor on a row with no fields; Enter runs its first verb (ATO-1630)", () => {
+    const monid: IntegrationRow = {
+      id: "monid",
+      label: "Monid",
+      summary: "",
+      level: "not_configured",
+      appliesLive: true,
+      actions: [{ key: "s", id: "signin", label: "sign in with Monid" }],
+      fields: [],
+    };
+    const onIntegrationActionRequested = vi.fn();
+    const { ctx: c, dispatch } = ctx(
+      stateWith({ rows: [monid], mode: "detail", selectedField: 0 }),
+      { onIntegrationActionRequested },
+    );
+    expect(handleIntegrationsTabKey("e", emptyKey(), c)).toBe(true);
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "integrations_edit_started" });
+    expect(onIntegrationActionRequested).not.toHaveBeenCalled();
+
+    handleIntegrationsTabKey("\r", emptyKey({ return: true }), c);
+    expect(dispatch).not.toHaveBeenCalledWith({ type: "integrations_edit_started" });
+    expect(onIntegrationActionRequested).toHaveBeenCalledWith("monid", "signin");
+
+    handleIntegrationsTabKey("s", emptyKey(), c);
+    expect(onIntegrationActionRequested).toHaveBeenCalledTimes(2);
+  });
 });

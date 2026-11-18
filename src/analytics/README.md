@@ -11,9 +11,11 @@ Checks: `npx vitest run src/analytics` when tests are present; `npm run lint`; `
 
 ## Offline mode
 
-Offline mode (`network.offline` or `ATOMIC_AGENT_OFFLINE=1`, ATO-1084) counts as a kill switch in `isAnalyticsKilledByEnv`: no PostHog or Sentry client is built while it is on. See [offline mode](../llm/docs/offline-network.md).
+Offline mode (`network.offline` or `ATOMIC_AGENT_OFFLINE=1`, ATO-1084) counts as a kill switch in `isAnalyticsKilledByEnv`: no PostHog or Sentry client is built while it is on, and a client built before it was switched on at run time drops every event while it is on (ATO-1085). See [offline mode](../llm/docs/offline-network.md).
 
 ## Install events and the shared state folder
+
+Every event carries `surface` (`desktop` / `tui` / `cli`), stamped by the client after the caller's properties so no event can drop or change it (ATO-1603). A client built without dimensions still stamps it, from `ATOMIC_AGENT_SURFACE`, else `cli`. The desktop app stamps the same property name on its own events. That is the one surface property: there is no `$app_surface`. Events with no surface at all come from builds older than 0.6.7.
 
 Desktop (0.0.3 and later) and the terminal share one state folder, `~/.atomic-agent`, so they share `analytics.json` and one install id. `app_installed` is still counted per surface: the file keeps one "sent" flag for the terminal (`appInstalledSent`, used by `tui` and `cli`) and one for the desktop (`appInstalledSentDesktop`), picked by the `surface` passed to `captureAppInstalled` (ATO-1227). Each surface therefore reports `app_installed` once. `other_surface_installed` on that event is `true` when the other surface's flag is already set, or when a legacy separate state dir (`~/.atomic-agent-desktop`) holds an `analytics.json`.
 
@@ -39,6 +41,16 @@ Every built-in slash command the TUI runs sends one `ui_action` (ATO-1465), the 
 
 Only names from the built-in registry are sent. Skills, plugin commands, unknown input and plain messages send nothing. The event goes through the normal client, so it is dropped while analytics is off, under `ATOMIC_AGENT_ANALYTICS=off` and under `DO_NOT_TRACK`. Wiring: `reportBuiltInSlashCommand` in `src/tui/submit-handler.ts` → `TuiAppCallbacks.onUiAction` → `runtime.reportUiAction` → `captureUiAction`.
 
+
+## `update_checked` from the terminal
+
+Each successful startup update check in the TUI sends one `update_checked` (ATO-1007), the "share of installs on the current version" metric. `app_version` is already on every event; this event adds what the running version cannot know by itself:
+
+- `latest_version`: the latest release at that moment, without the `v`.
+- `on_latest`: `true` when no newer release exists.
+- `update_required`: `true` when the release policy (`src/update/update-policy.ts`, ATO-1125) lists the running version as broken or below its minimum; `required_reason` is then `broken` or `below-minimum`.
+
+A failed check (offline, rate limit) sends nothing. The check, and so the event, only runs where the startup check runs: `update.checkOnStartup` on, a binary that can update itself, and not a deb, rpm or AUR install. Wiring: `ChatOrchestrator.checkForUpdate` → `runtime.reportUpdateChecked` → `captureUpdateChecked`.
 
 ## Local turn speed on `message_sent`
 

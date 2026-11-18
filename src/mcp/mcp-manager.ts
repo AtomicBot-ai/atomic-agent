@@ -81,6 +81,13 @@ export interface McpManagerDeps extends McpClientDeps {
    * advertises `elicitation`; when absent, no client does.
    */
   elicitationPort?: McpElicitationPort;
+  /**
+   * The admin MCP allowlist (`src/policy/`, ATO-587), asked before every
+   * connect. `allowed: false` keeps the server down with `message` as its
+   * error; an allowed server with a `message` (warn-only mode) connects
+   * and logs it. Absent means every server may connect.
+   */
+  serverPolicy?: (config: McpServerConfig) => { allowed: boolean; message?: string };
 }
 
 /**
@@ -331,6 +338,18 @@ export class McpManager {
   private async startOne(s: ManagedServer): Promise<void> {
     if (!s.config.enabled) {
       this.transition(s, "disabled");
+      return;
+    }
+    const policy = this.deps.serverPolicy?.(s.config);
+    if (policy?.message !== undefined) {
+      this.deps.logger?.warn("mcp.server_not_on_allowlist", {
+        server: s.config.name,
+        blocked: !policy.allowed,
+      });
+    }
+    if (policy?.allowed === false) {
+      s.lastError = policy.message ?? "blocked by your organization's policy";
+      this.transition(s, "down");
       return;
     }
     this.transition(s, "starting");

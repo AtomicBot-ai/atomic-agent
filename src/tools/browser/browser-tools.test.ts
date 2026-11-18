@@ -449,6 +449,7 @@ describe("browser tools on a fake backend", () => {
       "browser.extract",
       "browser.navigate",
       "browser.read_aria",
+      "browser.scenario",
       "browser.screenshot",
       "browser.scroll",
       "browser.search",

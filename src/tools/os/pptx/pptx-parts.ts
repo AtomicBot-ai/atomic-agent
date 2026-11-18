@@ -1,3 +1,4 @@
+import { CT as OOXML_CT } from "../ooxml/ooxml-package.js";
 import type { PptxPalette } from "./pptx-theme.js";
 import {
   NOTES_HEIGHT,
@@ -25,7 +26,11 @@ export const BODY_BOX: Box = { x: MARGIN_X, y: 1_600_200, cx: SLIDE_WIDTH - 2 * 
 const CT = "application/vnd.openxmlformats-officedocument";
 const PML_CT = `${CT}.presentationml`;
 
-export function contentTypesXml(slideCount: number, notesSlides: readonly number[]): string {
+export function contentTypesXml(
+  slideCount: number,
+  notesSlides: readonly number[],
+  chartCount = 0,
+): string {
   const override = (part: string, type: string) => `<Override PartName="${part}" ContentType="${type}"/>`;
   const slides = Array.from({ length: slideCount }, (_, i) =>
     override(`/ppt/slides/slide${i + 1}.xml`, `${PML_CT}.slide+xml`),
@@ -33,6 +38,9 @@ export function contentTypesXml(slideCount: number, notesSlides: readonly number
   const notes = notesSlides
     .map((n) => override(`/ppt/notesSlides/notesSlide${n}.xml`, `${PML_CT}.notesSlide+xml`))
     .join("");
+  const charts = Array.from({ length: chartCount }, (_, i) =>
+    override(`/ppt/charts/chart${i + 1}.xml`, OOXML_CT.chart),
+  ).join("");
   return (
     XML_HEAD +
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
@@ -41,6 +49,8 @@ export function contentTypesXml(slideCount: number, notesSlides: readonly number
     '<Default Extension="png" ContentType="image/png"/>' +
     '<Default Extension="jpeg" ContentType="image/jpeg"/>' +
     '<Default Extension="gif" ContentType="image/gif"/>' +
+    // A chart's data travels as an embedded workbook (what "Edit Data" opens).
+    (chartCount > 0 ? `<Default Extension="xlsx" ContentType="${OOXML_CT.xlsxPackage}"/>` : "") +
     override("/ppt/presentation.xml", `${PML_CT}.presentation.main+xml`) +
     override("/ppt/slideMasters/slideMaster1.xml", `${PML_CT}.slideMaster+xml`) +
     override("/ppt/slideLayouts/slideLayout1.xml", `${PML_CT}.slideLayout+xml`) +
@@ -52,6 +62,7 @@ export function contentTypesXml(slideCount: number, notesSlides: readonly number
     override("/ppt/tableStyles.xml", `${PML_CT}.tableStyles+xml`) +
     slides +
     notes +
+    charts +
     override("/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml") +
     override("/docProps/app.xml", `${CT}.extended-properties+xml`) +
     "</Types>"

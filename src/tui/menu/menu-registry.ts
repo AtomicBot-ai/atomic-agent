@@ -466,6 +466,15 @@ export const MENU: readonly MenuNode[] = [
     slash: { name: "rewind", description: "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are", rank: 45.5 },
   },
   {
+    // ATO-1054: like Claude Code's `/export <file>`; after /rewind, before /plugins.
+    kind: "action", id: "session.export", label: "Export chat", group: "session",
+    slash: {
+      name: "export",
+      description: "save this chat as a file: `/export` writes Markdown to the current folder · `/export md|docx|pdf|html [path]`",
+      rank: 45.75,
+    },
+  },
+  {
     kind: "action", id: "session.enhance", label: "Enhance prompt", group: "session",
     slash: { name: "enhance", description: "rewrite a prompt into a clearer one in the composer; nothing is sent", rank: 45 },
   },
@@ -547,6 +556,16 @@ export const MENU: readonly MenuNode[] = [
         "open chat model picker · subcommands: pull <id> | use <id> | status | <base-url>",
       aliases: ["models", "local"],
       rank: 27,
+    },
+  },
+  {
+    kind: "action", id: "model.think", label: "Reasoning depth…", group: "model",
+    slash: {
+      name: "think",
+      description:
+        "how hard the model thinks on the next turns: `/think` shows the level · `/think auto|low|medium|high` sets it for this window",
+      // ATO-490: right after /model.
+      rank: 27.5,
     },
   },
   {
@@ -866,6 +885,19 @@ export const MENU: readonly MenuNode[] = [
       description:
         "skill subcommand: `/skill enable <name>` | `/skill disable <name>`",
       rank: 22,
+    },
+  },
+  {
+    kind: "action",
+    id: "setup.learn",
+    label: "Learned skills…",
+    group: "setup",
+    slash: {
+      name: "learn",
+      description:
+        "skills the agent learned by itself after long tasks: `/learn` lists them · `/learn undo <id>` takes one back · `/learn show <id>` reads a draft pending review · `/learn approve|discard <id>` for it",
+      // ATO-67: right after /skill.
+      rank: 22.5,
     },
   },
   {

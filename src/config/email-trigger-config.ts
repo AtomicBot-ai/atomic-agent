@@ -15,6 +15,12 @@ import { ConfigValidationError } from "./config-validation-error.js";
  *  - `replyByEmail` — when `true`, the agent's final answer is mailed
  *    back to the sender once the task ends, with no prompt per reply:
  *    turning it on is the operator's consent. Off when left out.
+ *  - `autoStartSenders` — whose mail starts its task right away
+ *    (ATO-601, decided 18.11.2026). Same forms as `allowedSenders`, and
+ *    a sender here is allowed even when not listed there. Left out:
+ *    only the owner's verified Atomic Mail address. Every other
+ *    allowed sender's task is created paused and waits for the person
+ *    to start it. `[]` makes every mail task wait.
  *  - `trustFromHeader` — when `true`, mail is accepted on the From line
  *    alone. Off when left out: a message needs `dmarc=pass`, or an
  *    SPF/DKIM pass aligned with the From domain, in the receiving
@@ -23,6 +29,8 @@ import { ConfigValidationError } from "./config-validation-error.js";
  */
 export interface EmailTriggerConfig {
   allowedSenders: string[];
+  /** Left out: the owner's verified address only. */
+  autoStartSenders?: string[];
   pollIntervalMs: number;
   replyByEmail: boolean;
   trustFromHeader: boolean;
@@ -51,17 +59,17 @@ export function parseEmailTriggerConfig(
       "expected an array of addresses (empty = trigger off)",
     );
   }
-  const allowedSenders: string[] = [];
-  obj.allowedSenders.forEach((entry, i) => {
-    const value = typeof entry === "string" ? entry.trim().toLowerCase() : "";
-    if (!SENDER_PATTERN.test(value)) {
+  const allowedSenders = parseSenderList(obj.allowedSenders, `${field}.allowedSenders`);
+  let autoStartSenders: string[] | undefined;
+  if (obj.autoStartSenders !== undefined && obj.autoStartSenders !== null) {
+    if (!Array.isArray(obj.autoStartSenders)) {
       throw new ConfigValidationError(
-        `${field}.allowedSenders[${i}]`,
-        `expected "name@host" or "@host", got ${JSON.stringify(entry)}`,
+        `${field}.autoStartSenders`,
+        "expected an array of addresses (left out = the owner's verified address)",
       );
     }
-    if (!allowedSenders.includes(value)) allowedSenders.push(value);
-  });
+    autoStartSenders = parseSenderList(obj.autoStartSenders, `${field}.autoStartSenders`);
+  }
   const rawPoll = obj.pollIntervalMs ?? EMAIL_TRIGGER_DEFAULT_POLL_MS;
   if (
     typeof rawPoll !== "number" ||
@@ -89,8 +97,24 @@ export function parseEmailTriggerConfig(
   }
   return {
     allowedSenders,
+    ...(autoStartSenders ? { autoStartSenders } : {}),
     pollIntervalMs: rawPoll,
     replyByEmail: rawReply,
     trustFromHeader: rawTrust,
   };
+}
+
+function parseSenderList(raw: readonly unknown[], field: string): string[] {
+  const out: string[] = [];
+  raw.forEach((entry, i) => {
+    const value = typeof entry === "string" ? entry.trim().toLowerCase() : "";
+    if (!SENDER_PATTERN.test(value)) {
+      throw new ConfigValidationError(
+        `${field}[${i}]`,
+        `expected "name@host" or "@host", got ${JSON.stringify(entry)}`,
+      );
+    }
+    if (!out.includes(value)) out.push(value);
+  });
+  return out;
 }
