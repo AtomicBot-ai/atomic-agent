@@ -11,6 +11,7 @@ This area owns http and openai-compatible ingress. Read [AGENTS.md](AGENTS.md) b
 - [route-sessions.ts](route-sessions.ts)
 - [route-mcp.ts](route-mcp.ts)
 - [route-offline-mode.ts](route-offline-mode.ts): `GET`/`POST /api/offline-mode`, the network kill switch and its egress counter ([offline mode](../llm/docs/offline-network.md))
+- [route-privacy-shield.ts](route-privacy-shield.ts): `GET`/`POST /api/privacy-shield`, the Privacy Shield switch and its "masked N" counter, `?sessionId=` for one chat ([privacy shield](../privacy/README.md))
 - [request-context.ts](request-context.ts)
 - [openai-completions-cancel.ts](openai-completions-cancel.ts)
 

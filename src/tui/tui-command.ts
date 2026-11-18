@@ -944,6 +944,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onAnalyticsSetEnabledRequested: (enabled) =>
           orchestrator.privacy.setAnalyticsEnabled(enabled, "slash"),
         onOfflineToggleRequested: () => orchestrator.privacy.toggleOffline(),
+        onPrivacyShieldToggleRequested: () => orchestrator.privacy.toggleShield(),
         onPrivacyRefreshRequested: () => orchestrator.privacy.refresh(),
         onIntegrationsRefreshRequested: () =>
           orchestrator.integrations.refresh(),
