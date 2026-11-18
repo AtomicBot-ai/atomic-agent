@@ -58,6 +58,7 @@ import { chatPopoutTurnRefused, isChatPopout, wireChatPopoutIpc } from "./chat-p
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
 import { wireTraceTreeIpc } from "./trace-tree-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
+import { wireMyFilesIpc } from "./my-files-ipc.js";
 import { wireTerminalOpenIpc } from "./terminal-open-ipc.js";
 import { wireAgentHubIpc } from "./agent-hub-ipc.js";
 import { wireFitTestIpc } from "./fit-test-ipc.js";
@@ -3223,6 +3224,8 @@ function wireIpc(client: AgentClient): void {
   wireTraceTreeIpc({ ipcMain });
   // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
   wireOvernightIpc({ window: () => win, client });
+  // ATO-1624: Settings › My files (folders the agent indexes, and its progress).
+  wireMyFilesIpc({ window: () => win, client });
   // ATO-1424: a code block's command typed (not run) into a new Terminal window (macOS).
   wireTerminalOpenIpc();
   // ATO-1157: the Agents sheet, Claude Code and Codex sessions waiting for the person (agent-hub-scan.ts).

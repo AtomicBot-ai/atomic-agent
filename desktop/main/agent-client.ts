@@ -1555,6 +1555,11 @@ export class AgentClient extends EventEmitter {
     return runMemoryWrite(op, () => ({ base: this.base(), headers: this.headers() }));
   }
 
+  /** ATO-1624: where the "My files" routes go (main/my-files.ts calls them). Throws when no agent is running. */
+  filesTarget(): { base: string; headers: Record<string, string> } {
+    return { base: this.base(), headers: this.headers() };
+  }
+
   /**
    * The composer's coding mode, applied live on the runtime by
    * /api/coding-mode exactly as the TUI does — no config write, no
