@@ -475,14 +475,6 @@ export class PlaywrightBackend implements BrowserBackend {
         const page = await this.requireActivePage();
         return { url: page.url(), title: await page.title().catch(() => ""), window: false };
       }
-      // A restart reopens only the agent profile's tabs: a session browsing
-      // in a throwaway profile would hand the person a blank window, with
-      // the page they were asked to finish gone. Refuse instead.
-      const scope = currentBrowserScope();
-      if (scope && this.tempProfiles.choiceFor(scope.sessionId, this.options.profile ?? "agent") === "temp") {
-        const page = await this.requireActivePage();
-        return { url: page.url(), title: await page.title().catch(() => ""), window: false, why: "temp_profile" };
-      }
       this.nextLaunchWindowed = true;
       await this.relaunchWithWindow();
     }
@@ -859,7 +851,8 @@ export class PlaywrightBackend implements BrowserBackend {
 
   /**
    * Restart the agent's own Chrome with a window, reopening the pages it
-   * had (throwaway profiles are not carried over). A background turn
+   * had. Throwaway profiles are carried over too: their cookies and local
+   * storage (in memory, as before) and their web tabs (ATO-508). A background turn
    * still using the old pages sees them gone and reads the page again.
    * A fusion worker's tab comes back as that worker's, so the chat does
    * not see it and the worker's end still closes it (ATO-961).
@@ -870,6 +863,10 @@ export class PlaywrightBackend implements BrowserBackend {
         const reopen = (this.context?.pages() ?? [])
           .filter((page) => /^https?:/i.test(page.url()))
           .map((page) => ({ url: page.url(), owner: this.pageOwners.get(page) }));
+        // Throwaway profiles live only in this Chrome: carry their cookies,
+        // storage and tabs over, or a chat browsing logged-out would come
+        // back to a blank window (ATO-508, a take over in such a chat).
+        const temp = await this.tempProfiles.snapshot();
         await this.shutdown();
         await this.ensureReady();
         const context = this.context as PwBrowserContext | null;
@@ -879,6 +876,8 @@ export class PlaywrightBackend implements BrowserBackend {
           if (owner !== undefined) this.claim(page, owner);
           await page.goto(url).catch(() => undefined);
         }
+        const browser = context.browser();
+        if (browser) await this.tempProfiles.restore(browser, temp);
       })().finally(() => {
         this.relaunching = null;
       });

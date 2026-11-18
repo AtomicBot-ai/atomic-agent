@@ -112,12 +112,6 @@ export async function runTakeOver(
   }
   const target = await backend.prepareTakeOver();
   if (!target.window) {
-    if (target.why === "temp_profile") {
-      return nobody(
-        "this chat browses in a throwaway profile in a browser without a window; opening a window restarts the browser and would lose this page. Switch to the agent profile (browser.tabs new with profile agent) and open the page again, or ask the user to do the step in their own browser",
-        "temp_profile",
-      );
-    }
     return nobody("the browser runs without a window (browser.headless is true)", "no_window");
   }
   const host = webHostOf(target.url);

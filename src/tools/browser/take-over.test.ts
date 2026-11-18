@@ -18,10 +18,9 @@ import { parseTakeOverReason, TAKE_OVER_REASON_MAX } from "./take-over.js";
 class TakeOverBackend extends GateBackend {
   public prepared = 0;
   public window = true;
-  public why: TakeOverTarget["why"];
   async prepareTakeOver(): Promise<TakeOverTarget> {
     this.prepared += 1;
-    return { url: this.url, title: "Sign in", window: this.window, ...(this.why ? { why: this.why } : {}) };
+    return { url: this.url, title: "Sign in", window: this.window };
   }
 }
 
@@ -111,17 +110,6 @@ describe("browser.act take_over: the hand-over", () => {
     const { prompts, options } = answeringGate({ approved: true });
     const result = await buildBrowserActTool(backend, options).run(LOGIN, GATE_CTX);
     expect(result.details).toMatchObject({ reason: "no_window" });
-    expect(prompts).toHaveLength(0);
-  });
-
-  it("a throwaway profile without a window says so instead of handing over a blank window", async () => {
-    const backend = new TakeOverBackend();
-    backend.window = false;
-    backend.why = "temp_profile";
-    const { prompts, options } = answeringGate({ approved: true });
-    const result = await buildBrowserActTool(backend, options).run(LOGIN, GATE_CTX);
-    expect(result.details).toMatchObject({ reason: "temp_profile" });
-    expect(result.summary).toContain("throwaway profile");
     expect(prompts).toHaveLength(0);
   });
 

@@ -388,10 +388,4 @@ export interface TakeOverTarget {
    * and `browser.headless` is `true`, so it is never given a window.
    */
   window: boolean;
-  /**
-   * Why there is no window when it is not just `browser.headless: true`:
-   * `temp_profile` is a headless Chrome whose caller browses in a throwaway
-   * profile, which a restart with a window would lose.
-   */
-  why?: "temp_profile";
 }
