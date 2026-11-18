@@ -1365,6 +1365,8 @@ const SKP = {
 };
 /* ATO-1102: "Test skill" on the skill card: the open card's probe, the one run in flight, the last answer per skill. */
 const SKE = {probeName:null, probe:null, seq:0, runningName:null, cancelling:false, outcomes:{}};
+/* ATO-67: learned skills waiting for review, the "Pending review" group (workspace-skills.js, main/skill-drafts-ipc.ts). */
+const SKD = createSkillDraftsController({api: () => BR, paint: () => { if (skillsVisible() && !skpTyping()) render(); }, changed: () => skpReloadRows()});
 const SKP_FILTERS = ['all','enabled','disabled']; // skills-filter.ts FILTER_ORDER
 const SKP_FILTER_LABELS = {all:'All', enabled:'Enabled', disabled:'Disabled'}; // Д43: the tabs, each with its count
 const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx
@@ -6472,6 +6474,7 @@ async function webhooksAct(v) {
 async function refreshSkillList() {
   if (!BR || !BR.skillList) return;
   projectTrustCheck();
+  SKD.refresh(SKP.listRefreshing); // ATO-67: at most every 15 s, at once on Refresh
   const key = skillContextKey();
   if (SK.for !== key) {
     SK.for = key; SK.rows = null; SK.err = null; SK.workingDir = null; SK.errors = []; SKILLS.length = 0;
@@ -6485,7 +6488,7 @@ async function refreshSkillList() {
   const res = answer.result, before = JSON.stringify([SK.rows, SK.err, SK.projectSkillsEnabled]);
   const oldDetail = SK.rows && SK.rows.find(row => row.name === SKP.detailName);
   if (res && res.ok && Array.isArray(res.rows)) {
-    SK.rows = res.rows; SK.err = null; SK.at = Date.now();
+    SK.rows = skillRowsWithoutDrafts(res.rows); SK.err = null; SK.at = Date.now();
     SK.workingDir = res.workingDir || null; SK.projectSkillsEnabled = res.projectSkillsEnabled !== false;
     SK.errors = res.errors || [];
     SKILLS.length = 0;
@@ -25492,6 +25495,7 @@ function skillsTabEntered() {
   // Item 09: the section opens on its skills; Built-in tools is picked (its segment, `/tools`, which enters through here first).
   if (SKP.view !== 'skills') { SKP.view = 'skills'; skpListTop(); render(); }
   ensureSkillsPoll();
+  SKD.refresh(true);
   if (SK.workingDir) refreshSkillList();
   tpSkillsOmittedRefresh();
   projectTrustCheck(true);   // ATO-1250: the folder-trust row reads the agent's current answer
@@ -25509,7 +25513,7 @@ function skillsTab() {
   ensureSkillsPoll();
   // Soft Tactile (ST-08, ST-11): a confirm is a modal over the view it was
   // raised from instead of replacing it; the same two states win as before.
-  const overlay = SKP.installConfirm ? skpInstallConfirmHTML() : SKP.removeConfirm ? skpRemoveConfirmHTML() : '';
+  const overlay = SKP.installConfirm ? skpInstallConfirmHTML() : SKP.removeConfirm ? skpRemoveConfirmHTML() : SKD.confirmHTML(esc);
   let view;
   // Д45: a card is drawn from its hub row at once (only its source waits for the detail read), so no view-wide loader here.
   if (SKP.hubCard) view = skpHubCardHTML();
@@ -25551,7 +25555,7 @@ function skillsTab() {
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
       + (SK.err && !tools ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
       + skpMessages()
-      + (tools ? skpToolsHTML(groups) : SKP.mode === 'detail' ? skpDetailHTML() : tpSkillsOmittedHTML() + skpListHTML(visible));
+      + (tools ? skpToolsHTML(groups) : SKP.mode === 'detail' ? skpDetailHTML() : SKD.state.open ? SKD.detailHTML(esc) : tpSkillsOmittedHTML() + SKD.listHTML(esc) + skpListHTML(visible));
   }
   return '<div class="set-pane set-skills">' + view + overlay + '</div>';
 }
@@ -26143,6 +26147,7 @@ function skillsAct(what) {
   if (verb === 'removeCancel') { SKP.removeConfirm = null; render(); return; }
   if (verb === 'test') { const name = sel(); if (name) skeRun(name); return; } // ATO-1102
   if (verb === 'testCancel') { skeCancel(); return; }
+  if (verb === 'draft') { SKD.act(arg); return; } // ATO-67: Pending review
   if (verb === 'refresh') {
     if (SKP.mode === 'list' && SKP.view === 'tools') { skpToolsRefresh(); render(); return; } // Item 09: the list on screen is the agent's tools
     if (SKP.mode === 'detail' && SKP.detailName) { refreshSkillList(); skpOpenDetail(SKP.detailName); return; }
@@ -26196,6 +26201,7 @@ function skillsKey(e, k, inText) {
     if (k === 'n' || k === 'Escape') { e.preventDefault(); SKP.removeConfirm = null; render(); return true; }
     return true;
   }
+  if (SKP.mode === 'list' && SKP.view === 'skills' && SKD.key(e, k)) return true; // ATO-67: the Discard confirm, a draft's preview
   if (SKP.hubCard) {
     if (k === 'i' || k === 'y' || k === 'Enter') { e.preventDefault(); if (SKP.hubCard.installId) skpInstall(false); return true; } // handleHubCardKey: i / y / Enter
     if (k === 'n' || k === 'Escape') { e.preventDefault(); skillsAct('back'); return true; }
