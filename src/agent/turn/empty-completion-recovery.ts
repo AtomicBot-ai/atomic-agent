@@ -26,7 +26,8 @@
  * no cap to raise the way `truncation-recovery` raises one. The other
  * lever is time: on a cloud link the silence may be the service, not
  * the model (a hypothesis), so the loop waits
- * {@link emptyCompletionRetryDelayMs} before the re-ask (ATO-1676). If the second attempt is empty too the fault
+ * {@link emptyCompletionRetryDelayMs} before the re-ask (ATO-1676). If
+ * the second attempt is empty too the fault
  * is in the link, not in the wording, and the turn is owed the failure.
  */
 
@@ -87,8 +88,9 @@ export const EMPTY_COMPLETION_RETRY_MAX_DELAY_MS = 8_000;
  *
  * A short exponential backoff, the usual client retry shape. No jitter:
  * one person's session sends one retry, so there is no herd to spread.
- * Applies to every native-tools link, local ones included, and is not
- * counted against the task's duration ceiling.
+ * Applies to every native-tools link, local ones included. The wait is
+ * wall time, so it counts toward the task's duration ceiling
+ * (`durationCeilingMs` is read off the clock), adding at most 500 ms.
  */
 export function emptyCompletionRetryDelayMs(attempt: number): number {
   const exponent = Math.max(0, Math.floor(attempt) - 1);
