@@ -197,3 +197,14 @@ describe("computeSplashFit", () => {
     expect(perLockup.get("full:below")).toBe(SPLASH_TIPS.length);
   });
 });
+
+describe("start-page tips", () => {
+  it("offer the run-mode switch right after the model pick (ATO-1640)", () => {
+    const labels = SPLASH_TIPS.map((tip) => tip.label);
+    expect(labels.indexOf("/runmode")).toBe(labels.indexOf("/model") + 1);
+    const tip = SPLASH_TIPS.find((t) => t.label === "/runmode");
+    // `/runmode` with no argument opens the composer's backend switch.
+    expect(tip?.command).toBe("/runmode");
+    expect(tip?.description).toMatch(/Local, Cloud or Fusion/);
+  });
+});
