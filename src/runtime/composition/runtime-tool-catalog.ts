@@ -846,7 +846,7 @@ export function registerRuntimeFusionAndReadScope(input: {
   prepareLocalLink: FusionDelegateDeps["warmWorkerBackend"];
   emitAgentLoopEventFor: FusionDelegateDeps["emitEvent"];
   resolveCurrentRunMode: FusionDelegateDeps["resolveRunMode"];
-  providerRegistry: Pick<ProviderRegistry, "getProvider">;
+  providerRegistry: Pick<ProviderRegistry, "getProvider" | "modelVariant">;
   llama: Pick<
     LlamaServerClient,
     "measuredTokensPerSecond" | "fetchSlots" | "probeHealth"
@@ -938,10 +938,19 @@ export function registerRuntimeFusionAndReadScope(input: {
       // Escalation (ATO-942): one completion pinned to the configured
       // escalation provider — never the fallback chain, so it cannot
       // land on a model the operator did not pick for it.
-      escalationComplete: async ({ providerId, prompt, maxOutputTokens, signal, sessionId }) => {
-        const provider = providerRegistry.getProvider(providerId);
+      escalationComplete: async ({ providerId, model, prompt, maxOutputTokens, signal, sessionId }) => {
+        // ATO-1560: the escalation's / judge's own model on that provider
+        // runs on the provider's copy built for it, like a per-turn model.
+        const provider =
+          model === undefined
+            ? providerRegistry.getProvider(providerId)
+            : await providerRegistry.modelVariant(providerId, model);
         if (provider === undefined) {
-          throw new Error(`escalation provider ${providerId} is not configured`);
+          throw new Error(
+            model === undefined
+              ? `escalation provider ${providerId} is not configured`
+              : `escalation provider ${providerId} cannot run model ${model}`,
+          );
         }
         const result = await provider.complete({
           prompt,

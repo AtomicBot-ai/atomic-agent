@@ -103,6 +103,30 @@ describe("the judge cannot pass what the facts fail", () => {
     expect(verdict.items.find((v) => v.id === "a3")?.why).toBe("the judge gave no verdict");
   });
 
+  it("asks the judge's provider for the judge role's model, and for none without one (ATO-1560)", async () => {
+    writeFileSync(join(dir, "a.txt"), "hello");
+    const asked: Array<string | undefined> = [];
+    const complete: EscalationComplete = async (input) => {
+      asked.push(input.model);
+      return { content: '{"items":[{"id":"a2","pass":true}]}' };
+    };
+    for (const target of [{ ...TARGET, turnModel: "qwen3.8-27b" }, TARGET]) {
+      await judgeTask({
+        task,
+        items,
+        facts: { checkOutcomes: [], findings: [] },
+        reply: "",
+        contract: undefined,
+        workingDir: dir,
+        target,
+        pricing: undefined,
+        complete,
+        signal: new AbortController().signal,
+      });
+    }
+    expect(asked).toEqual(["qwen3.8-27b", undefined]);
+  });
+
   it("leaves a task unverified, never green, when the answer cannot be read", async () => {
     const verdict = await judgeTask({
       task,

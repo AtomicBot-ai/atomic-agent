@@ -29,6 +29,12 @@ export interface TaskLeg {
   providerId: string;
   /** Display and pricing label. */
   model: string;
+  /**
+   * The model the task's turns ask its provider for, when that is not
+   * the entry's own chat model (ATO-1560). Absent, the provider's
+   * configured model answers.
+   */
+  turnModel?: string;
   /** Whether it is the session's worker leg (the old, only, path). */
   isWorkerLeg: boolean;
   /** The role whose model this is, when a role picked it. */
@@ -40,6 +46,8 @@ export interface TaskLeg {
 export interface WorkerLegRef {
   providerId: string;
   model: string;
+  /** `ResolvedRunMode.workerTurnModel` (ATO-1560). */
+  turnModel?: string;
 }
 
 /** Every model a task may name, worker leg first, each once. */
@@ -91,6 +99,7 @@ export function resolveTaskLegs(
   const workerDefault = (note?: string): TaskLeg => ({
     providerId: workerLeg.providerId,
     model: workerLeg.model,
+    ...(workerLeg.turnModel === undefined ? {} : { turnModel: workerLeg.turnModel }),
     isWorkerLeg: true,
     ...(note === undefined ? {} : { note }),
   });
@@ -100,7 +109,7 @@ export function resolveTaskLegs(
   for (const task of tasks) {
     const byRole = roles?.byRole ?? {};
     let picked:
-      | { providerId: string; model: string; local: boolean; role?: FusionRole }
+      | { providerId: string; model: string; turnModel?: string; local: boolean; role?: FusionRole }
       | undefined;
     if (task.model !== undefined) {
       if (
@@ -121,6 +130,7 @@ export function resolveTaskLegs(
           picked = {
             providerId: entry.providerId,
             model: entry.model ?? entry.providerId,
+            ...(entry.turnModel === undefined ? {} : { turnModel: entry.turnModel }),
             local: entry.local,
             ...(task.role === role ? { role: role as FusionRole } : {}),
           };
@@ -145,6 +155,7 @@ export function resolveTaskLegs(
       picked = {
         providerId: entry.providerId,
         model: entry.model ?? entry.providerId,
+        ...(entry.turnModel === undefined ? {} : { turnModel: entry.turnModel }),
         local: entry.local,
         role: task.role,
       };
@@ -178,6 +189,7 @@ export function resolveTaskLegs(
     legs.set(task.id, {
       providerId: picked.providerId,
       model: picked.model,
+      ...(picked.turnModel === undefined ? {} : { turnModel: picked.turnModel }),
       isWorkerLeg: false,
       ...(picked.role === undefined ? {} : { role: picked.role }),
     });

@@ -1,4 +1,5 @@
 export { resolveRunMode } from "./resolve-run-mode.js";
+export { fusionLinkModel } from "./fusion-link-model.js";
 export type {
   ResolvedRunMode,
   FusionEscalationTarget,

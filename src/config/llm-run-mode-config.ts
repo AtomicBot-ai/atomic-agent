@@ -33,10 +33,11 @@ export type UserLlmFusionConfig = {
    */
   orchestratorProvider?: string;
   /**
-   * Informational pin for the orchestrator model. The wire request
-   * carries no model field — the provider entry's `defaultChatModel` is
-   * what actually serves — so this only overrides what is *displayed*
-   * and priced. Left unset by the TUI.
+   * The orchestrator model. On a provider that serves several models (a
+   * cloud API, LM Studio, Ollama) the orchestrator's requests ask for it
+   * instead of the entry's `defaultChatModel` (ATO-1560); it is also
+   * what is displayed and priced. A `llama-server` entry serves the
+   * model it loaded, so there it is only the label.
    */
   orchestratorModel?: string;
   /**
@@ -45,9 +46,11 @@ export type UserLlmFusionConfig = {
    */
   workerProvider?: string;
   /**
-   * Informational pin for the worker model. The managed daemon serves
-   * whatever `localModels.managed.modelId` names; this only overrides
-   * the label. Left unset by the TUI.
+   * The worker model. On a provider that serves several models (a cloud
+   * API, LM Studio, Ollama) every worker turn asks for it instead of the
+   * entry's `defaultChatModel` (ATO-1560). On a `llama-server` leg the
+   * server serves whatever it loaded (the managed daemon:
+   * `localModels.managed.modelId`), so there it only overrides the label.
    */
   workerModel?: string;
   /**
