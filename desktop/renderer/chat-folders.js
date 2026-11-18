@@ -84,6 +84,39 @@ function folderImportSource(sessionId) {
   return m && FOLDER_SOURCES[m[1]] ? m[1] : null;
 }
 
+/* ATO-1633: an imported app's folder wears that app's mark (renderer/logos/)
+   instead of the folder glyph. Keys of renderer.js LOGO_FILES. */
+const FOLDER_SOURCE_LOGOS = {
+  'claude-code': 'claudecode', codex: 'codex', hermes: 'hermes', openclaw: 'openclaw', pi: 'pi', 'oh-my-pi': 'ohmypi', 'claude-app': 'claude',
+};
+
+/**
+ * The app a folder holds chats from, or null: the one app every chat in it
+ * came from (the app's own folder, a Claude Code project folder). Judged by
+ * the chats, not the name, so a folder the person called "Codex" is not
+ * branded. A folder of the person's own chats, an empty one or a mix is null.
+ */
+function folderSourceOf(folder, rows) {
+  if (!folder) return null;
+  const ids = (Array.isArray(rows) ? rows : []).map((r) => r && r.id).filter(Boolean);
+  if (!ids.length) return null;
+  const first = folderImportSource(ids[0]);
+  return first && ids.every((id) => folderImportSource(id) === first) ? first : null;
+}
+
+/** The mark key (renderer.js LOGO_FILES) a folder wears, or ''. */
+function folderLogoKey(folder, rows) {
+  const src = folderSourceOf(folder, rows);
+  return (src && FOLDER_SOURCE_LOGOS[src]) || '';
+}
+
+/** A folder head's glyph: the app's mark when it holds one app's chats, else the folder icon. */
+function folderGlyphHTML(folder, rows) {
+  const key = folderLogoKey(folder, rows);
+  const logo = key && typeof logoHTML === 'function' ? logoHTML(key, 'xs', 'folder') : '';
+  return logo || ic('folder');
+}
+
 /** A folder name as typed: {ok, name} or {ok:false, error}. */
 function folderNameCheck(raw) {
   const name = String(raw == null ? '' : raw).replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ').trim();
@@ -400,7 +433,7 @@ function foldersSidebarHTML(groups) {
         + '<button class="sb-fhead" data-ftoggle="' + esc(f.id) + '" data-fdrop="' + esc(f.id) + '" aria-expanded="' + !f.collapsed + '"'
           + ' title="' + esc(f.name + ' · ' + g.rows.length + (g.rows.length === 1 ? ' chat' : ' chats')) + '">'
           + '<span class="sb-fchev">' + ic(f.collapsed ? 'chevR' : 'chevD') + '</span>'
-          + '<span class="sb-fic">' + ic('folder') + '</span>'
+          + '<span class="sb-fic">' + folderGlyphHTML(f, g.rows) + '</span>'
           + '<span class="sb-fname">' + esc(f.name) + '</span>'
           + (g.rows.length ? '<span class="ct tnum">' + g.rows.length + '</span>' : '')
           + '<span class="sesmore iconbtn" data-fmenu="' + esc(f.id) + '" title="Folder actions" aria-label="Folder actions"'
@@ -460,6 +493,6 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {FOLDER_SOURCES, foldersEmpty, foldersCoerce, folderImportSource, folderNameCheck, folderAdd, folderById,
+  module.exports = {FOLDER_SOURCES, FOLDER_SOURCE_LOGOS, folderSourceOf, folderLogoKey, foldersEmpty, foldersCoerce, folderImportSource, folderNameCheck, folderAdd, folderById,
     folderRename, folderRemove, folderPut, folderOf, folderForget, folderGroups, folderAutoSort, folderFreeName, folderForProject, folderNotAProject, folderProjectDir, folderListCut, FOLDERS_SHOWN};
 }

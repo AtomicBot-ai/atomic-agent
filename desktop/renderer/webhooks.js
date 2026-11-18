@@ -206,12 +206,16 @@ function createWebhooks(api) {
   };
 }
 
-/** The pane. deps: {esc, ic?}. Inputs carry ids so a repaint keeps focus and caret.
+/* ATO-1633: the brand mark a preset wears (renderer.js LOGO_FILES key), '' for none. */
+const WHK_PRESET_LOGOS = {github: 'github'};
+
+/** The pane. deps: {esc, ic?, logo?(key, size)}. Inputs carry ids so a repaint keeps focus and caret.
     The header is the shared section header (css/settings.css .set-sechead): the
     label at the pane's left edge, New webhook at its right edge, one line. */
 function webhooksHTML(st, deps) {
   const {esc} = deps;
   const ic = typeof deps.ic === 'function' ? deps.ic : () => '';
+  const mark = (id, size) => (WHK_PRESET_LOGOS[id] && typeof deps.logo === 'function' ? deps.logo(WHK_PRESET_LOGOS[id], size) || '' : '');
   const head = (btn) => '<div class="set-sechead set-whk-sh"><h4 class="set-sechead-t">Webhooks</h4><span class="grow"></span>' + (btn || '') + '</div>';
   const note = (text, cls) => '<p class="set-cap set-privnote' + (cls ? ' ' + cls : '') + '">' + text + '</p>';
   if (st.supported === false) return '<div class="set-pane set-whk">' + head() + note(esc(WHK_OLD_AGENT), 'set-whk-old') + '</div>';
@@ -249,7 +253,7 @@ function webhooksHTML(st, deps) {
     const f = st.form;
     const p = whkPreset(f.verify);
     const seg = '<div class="tk-seg set-seg" role="radiogroup" aria-label="Sender">'
-      + whkPresetsFor(st.data).map((x) => '<button class="' + (x[0] === f.verify ? 'on' : '') + '" role="radio" aria-checked="' + (x[0] === f.verify) + '" data-act="whk:preset:' + x[0] + '">' + esc(x[1]) + '</button>').join('')
+      + whkPresetsFor(st.data).map((x) => '<button class="' + (x[0] === f.verify ? 'on' : '') + '" role="radio" aria-checked="' + (x[0] === f.verify) + '" data-act="whk:preset:' + x[0] + '">' + mark(x[0], 'xs') + esc(x[1]) + '</button>').join('')
       + '</div>';
     const secret = p[4] === 'none' ? ''
       : '<label class="set-whk-field"><span>Signing secret' + (p[4] === 'optional' ? ' (optional)' : '') + '</span>'
@@ -280,7 +284,7 @@ function webhooksHTML(st, deps) {
     const bits = [esc(whkPresetLabel(w.verify))];
     if (w.hasSecret === false) bits.push('no secret, so the tunnel turns it away');
     if (w.live === false) bits.push('starts after the agent restarts');
-    return '<div class="tk-setrow set-whk-row" data-whk="' + esc(w.name) + '">'
+    return '<div class="tk-setrow set-whk-row" data-whk="' + esc(w.name) + '">' + mark(w.verify, 'sm')
       + '<div class="body"><div class="t">' + esc(w.name) + ' <span class="d">' + bits.join(' · ') + '</span></div>'
         + '<div class="d"><code>' + esc(url || w.path) + '</code></div></div>'
       + acts + '</div>';
@@ -291,4 +295,4 @@ function webhooksHTML(st, deps) {
   return '<div class="set-pane set-whk">' + parts.join('') + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {WHK_OLD_AGENT, WHK_INTRO, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_TUNNEL_UP, WHK_PRESETS, whkPreset, whkPresetLabel, whkPresetsFor, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError, createWebhooks, webhooksHTML};
+if (typeof module !== 'undefined') module.exports = {WHK_OLD_AGENT, WHK_INTRO, WHK_EMPTY, WHK_TUNNEL_HOWTO, WHK_TUNNEL_UP, WHK_PRESETS, WHK_PRESET_LOGOS, whkPreset, whkPresetLabel, whkPresetsFor, whkNameOk, whkSuggestName, whkUrl, whkTunnel, whkPublicUrl, whkFormError, createWebhooks, webhooksHTML};

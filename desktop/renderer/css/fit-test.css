@@ -23,6 +23,8 @@
 .fit-table tbody th{font-weight:600}
 .fit-table tr.is-best{background:var(--brand-wash)}
 .fit-name{margin-right:8px}
+/* ATO-1633: a brand's mark inline in a line or before a model's name. */
+.fit-mark{display:inline-block;vertical-align:middle;line-height:0;margin:-3px 5px 0 1px}
 .fit-dnf{color:var(--ink-2)}
 .fit-act{text-align:right;white-space:nowrap}
 .fit-chip{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-pill);

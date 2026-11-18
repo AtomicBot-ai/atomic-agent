@@ -2064,7 +2064,7 @@ const PAL = [
     ['plus','New chat','','⌘ N','session:new'],
     // Calm (S5): the verbs the Settings window's Commands list used to carry.
     ['chat','Switch chat…','','⌘ O','session:switch'],
-    ['import','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156
+    ['logo:claudecode','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156; ATO-1633: wears the Claude Code mark
     ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
@@ -3860,6 +3860,19 @@ function toolErrLine(m) {
   const said = lines.find((l) => !/^(\$ |exit:|path:|total:|cwd:)/.test(l)) || lines[0] || 'it did not finish';
   return clipWords(said, 200);
 }
+/** ATO-1633: the brand a tool belongs to (LOGO_FILES key): GitHub for github.* and an MCP
+    server named after it, a known provider for an MCP server of that name; '' otherwise. */
+function toolLogoKey(name) {
+  const n = String(name || '').toLowerCase();
+  if (/^github\./.test(n)) return 'github';
+  const m = /^mcp\.([^.]+)\./.exec(n);
+  if (!m || m[1] === 'resource' || m[1] === 'prompt') return '';
+  return /github/.test(m[1]) ? 'github' : providerLogoKey(m[1]);
+}
+/** A tool's glyph: its brand's mark where it has one, else toolIcon's icon. */
+function toolGlyphHTML(name) {
+  return logoHTML(toolLogoKey(name), 'xs', toolIcon(name)) || ic(toolIcon(name));
+}
 function toolIcon(name) {
   const n = String(name || '');
   if (n === 'os.shell.run' || /^os\.(proc|git)\./.test(n) || /^verify\./.test(n) || n === 'skill.run_script') return 'term';
@@ -4003,7 +4016,7 @@ function toolCard(m) {
      the same id is printed, visibly, inside the expanded part. */
   return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (soft ? ' soft' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '" title="' + esc(m.name) + '">'
-      + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
+      + '<span class="tl-ic">' + toolGlyphHTML(m.name) + '</span>'
       + '<span class="nm">' + (st === 'held' ? toolHeldLine(m) : toolTense(toolLine(m), running && toolAwaitsApproval(m) ? 'wait' : st)) + '</span>'
       // item 4: the number is the agent's own (trace) once the turn is stored; while it runs, or
       // until the store lands, the wall time this window observed. The TUI prints a fabricated
@@ -5379,6 +5392,11 @@ function bold(t, q) {
   return esc(t.slice(0, i)) + '<b>' + esc(t.slice(i, i + q.length)) + '</b>' + esc(t.slice(i + q.length));
 }
 
+/** A palette row's glyph: `logo:<key>` is a brand mark (LOGO_FILES), anything else an icon name. */
+function palIconHTML(name) {
+  const n = String(name || '');
+  return (n.startsWith('logo:') && logoHTML(n.slice(5), 'xs', 'import')) || ic(n.startsWith('logo:') ? 'import' : n);
+}
 /* Soft Tactile: the right slot carries, in order, the current theme's check (Theme
    scope only), a mono slash alias, the status dot of a matching chat or task (only
    when it needs you or is running — a read chat carries none), or keycaps. Chats,
@@ -5393,7 +5411,7 @@ function palRowHTML(r, i, q) {
     : keycaps(r.sc);
   const two = !!(r.badge || S.scope);
   return '<button class="palrow' + (two ? ' two' : '') + (i === S.cur ? ' on' : '') + '" data-palrow="' + i + '">'
-    + '<span class="ic">' + ic(r.ic) + '</span>'
+    + '<span class="ic">' + palIconHTML(r.ic) + '</span>'
     + '<span class="ti">' + bold(r.t, q) + '</span>'
     + '<span class="cx">' + esc(r.cx || '') + '</span>'
     + '<span class="sc">' + shortcut + '</span></button>';
@@ -6444,7 +6462,7 @@ async function webhooksLoad() {
   await pending;
   if (webhooksShown()) render();
 }
-function webhooksSection() { return webhooksHTML(WHK.state, {esc, ic}); }
+function webhooksSection() { return webhooksHTML(WHK.state, {esc, ic, logo: logoHTML}); }
 async function webhooksAct(v) {
   const st = WHK.state;
   const arg = (p) => v.slice(p.length);
@@ -11453,7 +11471,7 @@ function onChatEvent(ev) {
     // `usage` (agent with the worker token counts) only moves the live row's
     // context size: one transcript line per completion per worker would bury
     // the lines that say what happened, as the TUI's reducer keeps it off its feed.
-    if (item && e.phase !== 'usage') S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, text: esc(fzWorkerLine(e))});
+    if (item && e.phase !== 'usage') S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, fusion:true, fzModel: e.model || null, text: esc(fzWorkerLine(e))});
     render();
     return;
   }
@@ -14584,7 +14602,8 @@ function modelSpotlightCardHTML(m) {
   // Back after an interruption the weights are here: the full size is not what the button costs.
   const line = m.downloaded ? modelBlurb(m) : modelBlurb(m) + ' · ' + modelSizeWord(m);
   return '<section class="dlc" role="region" aria-label="New model">'
-    + '<div class="dlc-head"><span class="dlc-ttl">' + ic('download')
+    // ATO-1633: the model's family mark where it has one, else the download icon.
+    + '<div class="dlc-head"><span class="dlc-ttl">' + (logoHTML(modelLogoKey(m.id), 'xs', 'download') || ic('download'))
       + '<span title="' + esc(m.id) + '">' + esc('New: ' + llmModelName(m)) + '</span></span>'
     + '<button class="iconbtn sm dlc-x" data-act="dlc:spotlightNo" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>'
     + '<ul class="dlc-list"><li class="dlc-row"><p class="dlc-line" title="' + esc(line) + '">' + esc(line) + '</p>'
@@ -21530,7 +21549,7 @@ function fzLiveHTML() {
   const now = Date.now();
   return '<div class="fzlive" role="group" aria-label="Fusion workers">' + FZ.live.map((w) =>
     '<div class="fzw' + (w.done ? ' done' : '') + (w.phase === 'failed' ? ' failed' : w.phase === 'cancelled' ? ' cancelled' : '') + '">'
-    + '<span class="fzdot"></span><span class="fzt">' + esc(fzLiveLine(w)) + '</span>'
+    + '<span class="fzdot"></span>' + logoHTML(modelLogoKey(w.model), 'xs', 'cpu') + '<span class="fzt">' + esc(fzLiveLine(w)) + '</span>'
     + (panel ? fzpRowExtrasHTML(w, FZ.live, FZP, now) : '') + '</div>'
     + (panel ? fzpSteerFieldHTML(w, FZP) + fzpNoteHTML(w, FZP, now) : '')).join('') + '</div>';
 }
@@ -23219,6 +23238,9 @@ function sysGlyph(m) {
   if (m.spin || m.text === 'loading session\u2026') return '<span class="sys-ic"><span class="tk-spin"></span></span>';
   const sev = m.sev || (m.act === 'switch-provider' ? 'err' : '');
   const name = sev === 'err' || sev === 'warn' ? 'alert' : sev === 'pause' ? 'pause' : sev === 'stop' ? 'stop' : m.fusion ? 'fusion' : 'info';
+  // ATO-1633: a Fusion worker's line wears its model's mark; an error or warning keeps its glyph.
+  const mark = name === 'fusion' && m.fzModel ? logoHTML(modelLogoKey(m.fzModel), 'xs', 'fusion') : '';
+  if (mark) return '<span class="sys-ic">' + mark + '</span>';
   return '<span class="sys-ic' + (sev ? ' ' + sev : '') + '">' + ic(name) + '</span>';
 }
 /** ATO-381: "Try again" on a failed turn's row sends the person's message
@@ -23286,7 +23308,7 @@ function groupCard(run) {
      members' own lines are one click away (the run unfolds in place). */
   return '<div class="turn tk-step" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : softBad ? ' soft' : '') + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-group="' + m.id + '" title="' + esc(m.name) + '">'
-    + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
+    + '<span class="tl-ic">' + toolGlyphHTML(m.name) + '</span>'
     /* Calm (S7): the head takes the run's tense like a single call does —
        "Couldn't list files · 3 times" when every member failed (and then no
        separate "3 failed"), "Listing files" while one still runs. */
@@ -25676,7 +25698,7 @@ function skpToolsHTML(groups) {
     + groups.map((g) => (g.family ? '<div class="set-tlfam" data-tool-group="' + esc(g.groupId) + '"><span class="set-tlgn">' + esc(g.family) + '</span>'
         + (g.what ? '<span class="set-tlwhat">' + esc(g.what) + '</span>' : '') + '</div>' : '')
       + g.tools.map((t) => '<div class="tk-li set-tlrow" data-tool-row="' + esc(t.name) + '">'
-        + '<span class="set-tlic">' + ic(toolIcon(t.name)) + '</span>'
+        + '<span class="set-tlic">' + toolGlyphHTML(t.name) + '</span>'
         + '<span class="t mono" title="' + esc(t.name) + '">' + esc(t.name) + '</span>'
         + '<span class="d" title="' + esc(t.description) + '">' + esc(t.description) + '</span></div>').join('')).join('')
     + '</div>';
@@ -30824,7 +30846,7 @@ function composioState() {
     lastError: CMP.lastError, shadowed: CMP.envHas, running: cmpRunning(),
   };
 }
-function composioTab() { return composioPaneHTML(composioState(), {esc, ic}); }
+function composioTab() { return composioPaneHTML(composioState(), {esc, ic, logo: logoHTML}); }
 /* A half-typed key is not kept across visits: it lives in memory only while the pane is in use. */
 function composioTabEntered() { CMP.draft = ''; CMP.keyError = null; composioRefresh(); }
 /* The state dir main's key writes are checked against: the running agent's, else the one the first-run read. */
