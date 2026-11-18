@@ -2,6 +2,7 @@ import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { XMLValidator } from "fast-xml-parser";
 import JSZip from "jszip";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -182,5 +183,91 @@ describe("xlsx helpers", () => {
       cell: "A1",
       rows: [],
     });
+  });
+});
+
+describe("os.fs.xlsx op chart (ATO-541)", () => {
+  async function workbookWithData(): Promise<string> {
+    await tool().run(
+      {
+        path: "sales.xlsx",
+        op: "create",
+        sheet: "Q3 sales",
+        rows: [
+          ["Region", "July", "August"],
+          ["EU", 10, 12],
+          ["US", 8, "=B3+1"],
+        ],
+      },
+      ctx(),
+    );
+    return join(dir, "sales.xlsx");
+  }
+
+  it("adds a native chart over a range, wiring sheet, drawing and chart parts", async () => {
+    const path = await workbookWithData();
+    const before = await JSZip.loadAsync(await readFile(path));
+    const sheetBefore = await before.file("xl/worksheets/sheet1.xml")!.async("text");
+    const result = await tool().run(
+      { path: "sales.xlsx", op: "chart", range: "A1:C3", chartType: "column", title: "Sales by month" },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.details).toMatchObject({ op: "chart", sheet: "Q3 sales", range: "A1:C3", anchor: "E1", chartType: "column" });
+    expect(prompts).toHaveLength(2);
+
+    const zip = await JSZip.loadAsync(await readFile(path));
+    const chart = await zip.file("xl/charts/chart1.xml")!.async("text");
+    expect(XMLValidator.validate(chart)).toBe(true);
+    expect(chart).toContain("<c:f>&apos;Q3 sales&apos;!$B$2:$B$3</c:f>");
+    expect(chart).toContain("<c:v>July</c:v>");
+    expect(chart).toContain("<a:t>Sales by month</a:t>");
+    expect(chart).not.toContain("externalData");
+
+    const sheet = await zip.file("xl/worksheets/sheet1.xml")!.async("text");
+    expect(XMLValidator.validate(sheet)).toBe(true);
+    expect(sheet).toMatch(/<drawing r:id="rId\d+"\/>/);
+    // The cells are as they were: only the drawing reference is new.
+    expect(sheet.replace(/<drawing r:id="rId\d+"\/>/, "").replace(/ xmlns:r="[^"]+"/, "")).toBe(
+      sheetBefore.replace(/ xmlns:r="[^"]+"/, ""),
+    );
+    const sheetRels = await zip.file("xl/worksheets/_rels/sheet1.xml.rels")!.async("text");
+    expect(sheetRels).toContain('Target="../drawings/drawing1.xml"');
+    const drawing = await zip.file("xl/drawings/drawing1.xml")!.async("text");
+    expect(XMLValidator.validate(drawing)).toBe(true);
+    expect(drawing).toContain("<xdr:from><xdr:col>4</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>0</xdr:row>");
+    expect(await zip.file("xl/drawings/_rels/drawing1.xml.rels")!.async("text")).toContain('Target="../charts/chart1.xml"');
+    const types = await zip.file("[Content_Types].xml")!.async("text");
+    expect(types).toContain('PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"');
+    expect(types).toContain('PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"');
+
+    // A second chart joins the same drawing.
+    await tool().run({ path: "sales.xlsx", op: "chart", range: "A1:B3", chartType: "pie", cell: "E20" }, ctx());
+    const again = await JSZip.loadAsync(await readFile(path));
+    const drawing2 = await again.file("xl/drawings/drawing1.xml")!.async("text");
+    expect(drawing2.match(/<xdr:twoCellAnchor/g)).toHaveLength(2);
+    expect(again.file("xl/charts/chart2.xml")).not.toBeNull();
+    expect(again.file("xl/drawings/drawing2.xml")).toBeNull();
+    // The workbook still reads.
+    expect(await textOf(path)).toContain("Region | July | August");
+  });
+
+  it("refuses a cell write that would drop the charts, before asking", async () => {
+    await workbookWithData();
+    await tool().run({ path: "sales.xlsx", op: "chart", range: "A1:C3" }, ctx());
+    const asked = prompts.length;
+    await expect(
+      tool().run({ path: "sales.xlsx", op: "write", cell: "A5", rows: [["x"]] }, ctx()),
+    ).rejects.toThrow(/has charts, and writing cells here would drop them/);
+    expect(prompts).toHaveLength(asked);
+  });
+
+  it("validates a chart request", async () => {
+    expect(() => parseXlsxArgs({ path: "a.xlsx", op: "chart" })).toThrow(/chart needs `range`/);
+    expect(() => parseXlsxArgs({ path: "a.xlsx", op: "chart", range: "A1:B3", chartType: "radar" })).toThrow(/chartType must be one of/);
+    expect(parseXlsxArgs({ path: "a.xlsx", op: "chart", range: "A1:B3", chartType: null, title: "" }).chart).toEqual({ type: "column" });
+    await workbookWithData();
+    await expect(tool().run({ path: "sales.xlsx", op: "chart", range: "A1:A3" }, ctx())).rejects.toThrow(/category column plus at least one series/);
+    await expect(tool().run({ path: "nope.xlsx", op: "chart", range: "A1:B2" }, ctx())).rejects.toThrow(/does not exist/);
   });
 });
