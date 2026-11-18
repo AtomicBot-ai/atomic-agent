@@ -17,8 +17,13 @@
  * encryption, a bad offset, a missing part) gives null, never a throw, and
  * the panel falls back to name, size, Open and Reveal.
  *
- * XML is scanned with regular expressions: the parts are machine-written and
- * the caps bound the work. Pure: no Electron import (tested from `out/main`).
+ * The byte caps bound memory, not time. This runs synchronously in main, so
+ * the XML is walked by `scan` below with indexOf, in one pass over each part:
+ * no regular expression that searches for a closing tag, which on a part with
+ * many openings and no closing (a few KB compressed) would rescan to the end
+ * from every opening and freeze the app. The few regexes left run on one tag's
+ * attributes or one element's text and cannot backtrack across it. Pure: no
+ * Electron import (tested from `out/main`).
  */
 
 import { inflateRawSync } from "node:zlib";
@@ -136,16 +141,98 @@ function budget(limit: number) {
   };
 }
 
+/** An element (its text runs to its closing tag) or a lone tag (only its attributes are read). */
+type Kind = "el" | "tag";
+
+/** Whether the character at `j` ends a tag name: XML whitespace, '>' or '/'. */
+function endsName(xml: string, j: number): boolean {
+  const c = xml.charCodeAt(j);
+  return c === 62 || c === 47 || c === 32 || c === 9 || c === 10 || c === 13;
+}
+
+/**
+ * Calls `each` for every tag in `xml` named in `names`, in document order, in
+ * one linear pass. `attrs` is what follows the name up to the tag's first '>'
+ * (a trailing '/' left out); `closed` says it was `<name .../>`. For an "el"
+ * name that is not self-closing, `inner` is the text up to the first
+ * `</name>` after it, and the walk goes on after that closing tag (what the
+ * lazy regexes this replaces took). A tag with no '>' or an element with no
+ * closing tag ends the whole walk: nothing after it can close, and trying the
+ * next opening again is what was quadratic. `each` returns false to stop.
+ */
+function scan(
+  xml: string,
+  names: Record<string, Kind>,
+  each: (name: string, attrs: string, inner: string | null, closed: boolean) => boolean | void,
+): void {
+  const list = Object.entries(names);
+  let pos = 0;
+  for (;;) {
+    const i = xml.indexOf("<", pos);
+    if (i < 0) return;
+    pos = i + 1;
+    const hit = list.find(([n]) => xml.startsWith(n, i + 1) && endsName(xml, i + 1 + n.length));
+    if (!hit) continue;
+    const [name, kind] = hit;
+    const from = i + 1 + name.length;
+    const gt = xml.indexOf(">", from);
+    if (gt < 0) return;
+    const closed = gt > from && xml.charCodeAt(gt - 1) === 47;
+    const attrs = xml.slice(from, closed ? gt - 1 : gt);
+    let inner: string | null = null;
+    pos = gt + 1;
+    if (kind === "el" && !closed) {
+      const close = "</" + name + ">";
+      const end = xml.indexOf(close, pos);
+      if (end < 0) return;
+      inner = xml.slice(pos, end);
+      pos = end + close.length;
+    }
+    if (each(name, attrs, inner, closed) === false) return;
+  }
+}
+
+/** The attributes of the first `name` tag that `ok` accepts, or null. */
+function findTag(xml: string, name: string, ok: (attrs: string) => boolean): string | null {
+  let found: string | null = null;
+  scan(xml, { [name]: "tag" }, (_n, attrs) => {
+    if (!ok(attrs)) return;
+    found = attrs;
+    return false;
+  });
+  return found;
+}
+
+/** The inner XML of the first `name` element (not self-closing) that `ok` accepts, or null. */
+function firstInner(xml: string, name: string, ok: (inner: string) => boolean): string | null {
+  let found: string | null = null;
+  scan(xml, { [name]: "el" }, (_n, _a, inner) => {
+    if (inner === null || !ok(inner)) return;
+    found = inner;
+    return false;
+  });
+  return found;
+}
+
 /** The paragraphs of DrawingML text (<a:p> joining its <a:t> runs), blank ones dropped. */
 function drawingParas(xml: string): string[] {
   const out: string[] = [];
-  for (const m of xml.matchAll(/<a:p(?=[\s>])[\s\S]*?<\/a:p>/g)) {
+  scan(xml, { "a:p": "el" }, (_p, _a, para) => {
+    if (para === null) return;
     let t = "";
-    for (const r of m[0].matchAll(/<a:t(?:\s[^>]*)?>([\s\S]*?)<\/a:t>|<a:br\b[^>]*\/>/g)) t += r[1] === undefined ? "\n" : decodeXml(r[1]);
+    scan(para, { "a:t": "el", "a:br": "tag" }, (name, _attrs, text, closed) => {
+      if (name === "a:t") { if (text !== null) t += decodeXml(text); }
+      else if (closed) t += "\n";
+    });
     t = t.trim();
     if (t) out.push(t);
-  }
+  });
   return out;
+}
+
+/** Whether a <p:sp> shape's inner XML holds the slide's title placeholder. */
+function isTitleShape(inner: string): boolean {
+  return findTag(inner, "p:ph", (a) => /type="(?:title|ctrTitle)"/.test(a)) !== null;
 }
 
 function pptx(zip: Zip, L: typeof OFFICE_LIMITS): OfficePreview | null {
@@ -161,11 +248,20 @@ function pptx(zip: Zip, L: typeof OFFICE_LIMITS): OfficePreview | null {
     const xml = zip.read(s.name);
     if (xml === null) break;   // over the byte caps: the slides so far are shown
     // The title is the text of the shape that is the slide's title placeholder, else its first paragraph.
-    const titleShape = [...xml.matchAll(/<p:sp(?=[\s>])[\s\S]*?<\/p:sp>/g)].find((m) => /<p:ph\b[^>]*type="(?:title|ctrTitle)"/.test(m[0]));
+    const titleShape = firstInner(xml, "p:sp", isTitleShape);
     let paras = drawingParas(xml);
-    const own = titleShape ? drawingParas(titleShape[0]) : paras.slice(0, 1);
-    // The title's paragraphs are not repeated under it.
-    for (const o of own) { const k = paras.indexOf(o); if (k >= 0) paras = [...paras.slice(0, k), ...paras.slice(k + 1)]; }
+    const own: string[] = titleShape !== null ? drawingParas(titleShape) : paras.slice(0, 1);
+    // The title's paragraphs are not repeated under it: the first occurrence
+    // of each is dropped, in one pass (one indexOf + copy per title paragraph
+    // was quadratic on a title shape with many paragraphs).
+    const drop = new Map<string, number>();
+    for (const o of own) drop.set(o, (drop.get(o) ?? 0) + 1);
+    paras = paras.filter((p) => {
+      const k = drop.get(p);
+      if (!k) return true;
+      drop.set(p, k - 1);
+      return false;
+    });
     const title = chars.take(own.join(" ")) ?? "";
     const kept: string[] = [];
     for (const p of paras) {
@@ -188,22 +284,26 @@ function docx(zip: Zip, L: typeof OFFICE_LIMITS): OfficePreview | null {
   const chars = budget(L.chars);
   const paras: { text: string; heading?: number }[] = [];
   let more = false;
-  for (const m of xml.matchAll(/<w:p(?=[\s>])[\s\S]*?<\/w:p>/g)) {
+  scan(xml, { "w:p": "el" }, (_p, _a, para) => {
+    if (para === null) return;   // <w:p/>: empty
     let t = "";
-    for (const r of m[0].matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:(tab|br|cr)\/>/g)) {
-      t += r[1] !== undefined ? decodeXml(r[1]) : r[2] === "tab" ? "\t" : "\n";
-    }
+    // Only the bare <w:tab/>, <w:br/> and <w:cr/> are breaks (a <w:tab w:val=.../> is a tab stop in pPr).
+    scan(para, { "w:t": "el", "w:tab": "tag", "w:br": "tag", "w:cr": "tag" }, (name, attrs, text, closed) => {
+      if (name === "w:t") { if (text !== null) t += decodeXml(text); }
+      else if (closed && attrs === "") t += name === "w:tab" ? "\t" : "\n";
+    });
     t = t.trim();
-    if (!t) continue;
-    if (paras.length >= L.paras) { more = true; break; }
+    if (!t) return;
+    if (paras.length >= L.paras) { more = true; return false; }
     const kept = chars.take(t);
-    if (kept === null) break;
-    const style = /<w:pStyle\s+w:val="([^"]*)"/.exec(m[0]);
+    if (kept === null) return false;
+    // Linear: `[^"]*` stops at the next quote, and every later match attempt starts past one.
+    const style = /<w:pStyle\s+w:val="([^"]*)"/.exec(para);
     const lvl = style ? /^heading\s?([1-6])$/i.exec(style[1]) : null;
     const heading = lvl ? Number(lvl[1]) : style && /^title$/i.test(style[1]) ? 1 : undefined;
     paras.push(heading ? { text: kept, heading } : { text: kept });
-    if (chars.cut) break;
-  }
+    if (chars.cut) return false;
+  });
   return { type: "docx", paras, truncated: more || chars.cut };
 }
 
@@ -218,9 +318,11 @@ function cellRef(r: string): { col: number; row: number } | null {
 /** The joined <t> text of a shared string or an inline string (rich runs included, phonetic hints left out). */
 function runText(xml: string): string {
   let t = "";
-  for (const r of xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, "").matchAll(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g)) t += decodeXml(r[1]);
+  // An <rPh> is walked over whole, so the <t> inside it is not read.
+  scan(xml, { rPh: "el", t: "el" }, (name, _a, text) => { if (name === "t" && text !== null) t += decodeXml(text); });
   return t;
 }
+/** One attribute of a tag's attribute text. Linear: `[^"]*` stops at the next quote. */
 function attr(tag: string, name: string): string | null {
   const m = new RegExp("(?:^|\\s)" + name + "=\"([^\"]*)\"").exec(tag);
   return m ? decodeXml(m[1]) : null;
@@ -229,43 +331,54 @@ function attr(tag: string, name: string): string | null {
 function xlsx(zip: Zip, L: typeof OFFICE_LIMITS): OfficePreview | null {
   const wb = zip.read("xl/workbook.xml");
   if (wb === null) return null;
-  const sheetTags = [...wb.matchAll(/<sheet\s([^>]*?)\/?>/g)].slice(0, L.sheets).map((m) => m[1]);
+  // <sheet followed by whitespace (not <sheets>, <sheetPr>); its attributes.
+  const sheetTags: string[] = [];
+  scan(wb, { sheet: "tag" }, (_n, attrs) => {
+    if (!/^\s/.test(attrs)) return;
+    if (sheetTags.length >= L.sheets) return false;
+    sheetTags.push(attrs);
+  });
   const sheets = sheetTags.map((t) => attr(t, "name") ?? "");
   // The first sheet's part, through the workbook's relationships; sheet1.xml when they say nothing.
   let part = "xl/worksheets/sheet1.xml";
   const rid = sheetTags[0] ? attr(sheetTags[0], "r:id") : null;
   const rels = rid ? zip.read("xl/_rels/workbook.xml.rels") : null;
   if (rels && rid) {
-    const rel = [...rels.matchAll(/<Relationship\s([^>]*?)\/?>/g)].map((m) => m[1]).find((t) => attr(t, "Id") === rid);
+    const rel = findTag(rels, "Relationship", (t) => /^\s/.test(t) && attr(t, "Id") === rid);
     const target = rel ? attr(rel, "Target") : null;
     if (target && !/^[a-z]+:/i.test(target)) part = target.startsWith("/") ? target.slice(1) : "xl/" + target.replace(/^\.\//, "");
   }
   const sheetXml = zip.read(part);
   if (sheetXml === null) return null;
   const sstXml = zip.entries.has("xl/sharedStrings.xml") ? zip.read("xl/sharedStrings.xml") : "";
-  const shared = sstXml ? [...sstXml.matchAll(/<si>([\s\S]*?)<\/si>|<si\/>/g)].map((m) => (m[1] ? runText(m[1]) : "")) : [];
+  // Every bare <si> or <si/>, in order: a cell's t="s" value is an index into them.
+  const shared: string[] = [];
+  if (sstXml) scan(sstXml, { si: "el" }, (_n, attrs, inner) => { if (attrs === "") shared.push(inner ? runText(inner) : ""); });
   const chars = budget(L.chars);
   const grid: string[][] = [];
   let width = 0, cut = false, nextRow = 0;
-  for (const rm of sheetXml.matchAll(/<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/g)) {
-    const rAttr = attr(rm[1], "r");
+  scan(sheetXml, { row: "el" }, (_r, rowAttrs, rowInner) => {
+    const rAttr = attr(rowAttrs, "r");
     const ri = rAttr ? Number(rAttr) - 1 : nextRow;
     nextRow = ri + 1;
-    if (!(ri >= 0) || ri >= L.rows) { cut = true; break; }
+    if (!(ri >= 0) || ri >= L.rows) { cut = true; return false; }
     let nextCol = 0;
-    for (const cm of (rm[2] || "").matchAll(/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
-      const ref = attr(cm[1], "r");
+    scan(rowInner ?? "", { c: "el" }, (_c, cAttrs, cInner) => {
+      const ref = attr(cAttrs, "r");
       const at = ref ? cellRef(ref) : null;
       const ci = at ? at.col : nextCol;
       nextCol = ci + 1;
-      if (ci >= L.cols) { cut = true; continue; }
-      const t = attr(cm[1], "t");
-      const inner = cm[2] || "";
-      const v = /<v>([\s\S]*?)<\/v>/.exec(inner);
+      if (ci >= L.cols) { cut = true; return; }
+      const t = attr(cAttrs, "t");
+      const inner = cInner ?? "";
+      // The first <v>…</v>: when the first <v> has no closing, no later one has.
+      const vs = inner.indexOf("<v>");
+      const ve = vs < 0 ? -1 : inner.indexOf("</v>", vs + 3);
+      const v = ve < 0 ? null : inner.slice(vs + 3, ve);
       let s = "";
       if (t === "inlineStr") s = runText(inner);
-      else if (v) {
-        const raw = decodeXml(v[1]);
+      else if (v !== null) {
+        const raw = decodeXml(v);
         if (t === "s") s = shared[Number(raw)] ?? "";
         else if (t === "b") s = raw === "1" ? "TRUE" : "FALSE";
         else if (t === "str" || t === "e") s = raw;
@@ -275,15 +388,15 @@ function xlsx(zip: Zip, L: typeof OFFICE_LIMITS): OfficePreview | null {
           s = raw !== "" && Number.isFinite(n) ? String(Number(n.toPrecision(15))) : raw;
         }
       }
-      if (!s) continue;
+      if (!s) return;
       const kept = chars.take(s);
-      if (kept === null) { cut = true; break; }
+      if (kept === null) { cut = true; return false; }
       while (grid.length <= ri) grid.push([]);
       grid[ri][ci] = kept;
       width = Math.max(width, ci + 1);
-    }
-    if (chars.cut) { cut = true; break; }
-  }
+    });
+    if (chars.cut) { cut = true; return false; }
+  });
   const rows = grid.map((r) => Array.from({ length: width }, (_, i) => r[i] ?? ""));
   return { type: "xlsx", sheets, sheet: sheets[0] ?? "", rows, truncated: cut };
 }

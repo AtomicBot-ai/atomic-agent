@@ -175,6 +175,60 @@ test("a zip bomb is refused, not inflated", () => {
   assert.equal(d.truncated, true);
 });
 
+// Parts of up to 8 MB inflated with many openings and no closing tag (a few
+// KB compressed, under every byte cap). A scan that retries from each opening
+// is quadratic and froze main; these must come back at once.
+function timed(buf, type) {
+  const t0 = performance.now();
+  const d = officePreview(buf, type);
+  return { d, ms: performance.now() - t0 };
+}
+
+test("a document with a million unclosed <w:p> openings is read in linear time", () => {
+  for (const body of ["<w:p ".repeat(1_400_000), "<w:p>".repeat(1_400_000)]) {
+    const { d, ms } = timed(zip({ "word/document.xml": body }), "docx");
+    assert.ok(ms < 1000, `took ${Math.round(ms)} ms`);
+    assert.equal(d.type, "docx");
+    assert.deepEqual(d.paras, []);
+  }
+});
+
+test("a slide with a million unclosed <a:p> openings is read in linear time", () => {
+  const { d, ms } = timed(zip({ "ppt/slides/slide1.xml": "<a:p ".repeat(1_400_000) }), "pptx");
+  assert.ok(ms < 1000, `took ${Math.round(ms)} ms`);
+  assert.equal(d.type, "pptx");
+  assert.deepEqual(d.slides, [{ n: 1, title: "", paras: [] }]);
+  // A title shape of 300,000 paragraphs: taking them out of the body is one pass, not one copy each.
+  const many = `<p:sld ${A}><p:sp><p:nvSpPr><p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr><p:txBody>`
+    + "<a:p><a:t>a</a:t></a:p>".repeat(300_000) + "</p:txBody></p:sp></p:sld>";
+  const t = timed(zip({ "ppt/slides/slide1.xml": many }), "pptx");
+  assert.ok(t.ms < 1000, `took ${Math.round(t.ms)} ms`);
+  assert.equal(t.d.slides[0].title.length, OFFICE_LIMITS.chars);
+  assert.deepEqual(t.d.slides[0].paras, []);
+  assert.equal(t.d.truncated, true);
+});
+
+test("a sheet with a million unclosed <row>, <c> or <si> openings is read in linear time", () => {
+  const wb = `<workbook><sheets><sheet name="S" sheetId="1"/></sheets></workbook>`;
+  const cases = [
+    { "xl/workbook.xml": wb, "xl/worksheets/sheet1.xml": "<row ".repeat(1_400_000) },
+    { "xl/workbook.xml": wb, "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row r="1">${"<c ".repeat(2_000_000)}</row></sheetData></worksheet>` },
+    {
+      "xl/workbook.xml": wb,
+      "xl/sharedStrings.xml": "<si>".repeat(1_700_000),
+      "xl/worksheets/sheet1.xml": `<worksheet><sheetData><row r="1"><c r="A1"><v>7</v></c></row></sheetData></worksheet>`,
+    },
+  ];
+  const rows = [[], [], [["7"]]];
+  for (const [k, files] of cases.entries()) {
+    const { d, ms } = timed(zip(files), "xlsx");
+    assert.ok(ms < 1000, `case ${k} took ${Math.round(ms)} ms`);
+    assert.equal(d.type, "xlsx");
+    assert.deepEqual(d.sheets, ["S"]);
+    assert.deepEqual(d.rows, rows[k]);
+  }
+});
+
 test("anything that is not a readable Office file gives null, never a throw", () => {
   assert.equal(officePreview(Buffer.from("not a zip at all"), "docx"), null);
   assert.equal(officePreview(Buffer.alloc(0), "pptx"), null);
