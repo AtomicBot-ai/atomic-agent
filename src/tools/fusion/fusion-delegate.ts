@@ -1376,25 +1376,27 @@ export function buildFusionDelegateTool(
       // into the rows BEFORE the head line counts them: a task whose
       // declared check failed is `failed` in the table the orchestrator
       // reads, not `ok` with a footnote.
+      // Keep the worker outcomes separate from acceptance evidence: a
+      // repair can invalidate any task's earlier checks or findings.
+      const workerResults = results;
       let contract: ContractReport | undefined;
       // Check outcomes in `contract.checks` order, for the judge.
       let checkOutcomes: readonly (ContractCheckOutcome | undefined)[] = [];
       // Folds the disk and the check runner into `rows`. Run once after
-      // the waves and, for the tasks a judge sent back, once after their
-      // retry — on the retried rows only, so nothing is applied twice.
+      // the waves and again after a judge's retry, on the whole fan-out
+      // from its worker outcomes so no old evidence is carried forward.
       const evaluateContract = async (
         rows: WorkerTaskResult[],
-        allRows: WorkerTaskResult[],
       ): Promise<WorkerTaskResult[]> => {
         if (parsed.contract === undefined) return rows;
-        // `allRows` goes in so a task that never ran is not accused of
+        // Every row goes in so a task that never ran is not accused of
         // failing to provide: a cancelled fan-out leaves the disk empty
         // for reasons that are not the worker's.
         const provides = await inspectContractProvides(
           parsed.contract,
           parsed.tasks,
           ctx.workingDir,
-          { results: allRows, signal: ctx.signal },
+          { results: rows, signal: ctx.signal },
         );
         let out = applyContractFindings(rows, provides.findings);
         // The declared checks, then one call per provide `example`
@@ -1430,7 +1432,7 @@ export function buildFusionDelegateTool(
         };
         return out;
       };
-      results = await evaluateContract(results, results);
+      results = await evaluateContract(workerResults);
 
       // The judge (ATO-944): a task closes on a green acceptance list, a
       // red list is re-run once with the findings, and a list still red
@@ -1522,17 +1524,14 @@ export function buildFusionDelegateTool(
               true,
             ),
           );
-          const merged = results.map(
+          const merged = workerResults.map(
             (r) => retried.find((x) => x.id === r.id) ?? r,
           );
-          const evaluated = await evaluateContract(
-            merged.filter((r) => retryIds.has(r.id)),
-            merged,
-          );
-          results = merged.map(
-            (r) => evaluated.find((x) => x.id === r.id) ?? r,
-          );
-          second = await judgeRows(results.filter((r) => retryIds.has(r.id)));
+          results = await evaluateContract(merged);
+          // A repair can break a previously green task, including an
+          // item only the judge can assess. Recheck every current list;
+          // this does not grant another worker retry or bypass budgets.
+          second = await judgeRows(results);
         }
         results = results.map((r) => {
           if (retryIds.has(r.id)) {
@@ -1550,7 +1549,7 @@ export function buildFusionDelegateTool(
               ],
             };
           }
-          const verdict = first.get(r.id);
+          const verdict = (retryIds.size > 0 ? second : first).get(r.id);
           return verdict === undefined ? r : applyJudgeVerdict(r, verdict, false);
         });
       }
