@@ -81,7 +81,12 @@ function allowListed(origin: string, env: NodeJS.ProcessEnv): boolean {
   return false;
 }
 
-function originAllowed(origin: string | null, env: NodeJS.ProcessEnv, machineHostname: string): boolean {
+/** No `Origin`, a loopback one, or one in `ATOMIC_AGENT_ALLOWED_ORIGINS`. Also used by `/mcp` (route-mcp-endpoint.ts). */
+export function originAllowed(
+  origin: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+  machineHostname: string = osHostname(),
+): boolean {
   if (origin === null) return true;
   if (allowListed(origin, env)) return true;
   let url: URL;
