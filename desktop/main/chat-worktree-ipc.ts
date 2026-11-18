@@ -39,8 +39,9 @@ export interface ChatWorktreeDeps {
   projectFolder: (projectId: string) => string | null;
   isRemote: () => boolean;
   newChatId: () => string;
-  /** Move a stored chat to another folder; `busy` while it runs a turn. */
-  repoint: (sessionId: string, dir: string) => Promise<{ busy?: boolean; error?: string } | { supported: false }>;
+  /** Move a stored chat to another folder (agent-client setSessionWorkingDir): `busy` while it runs a turn,
+      `error` when the agent refused, `supported: false` when the agent has no such route or cannot be reached. */
+  repoint: (sessionId: string, dir: string) => Promise<{ supported?: true; busy?: boolean; error?: string } | { supported: false }>;
 }
 
 export interface WorktreeRow { path: string; branch: string | null; removable: boolean; reason: string | null; sessionId: string | null }
@@ -114,9 +115,18 @@ export class ChatWorktrees {
     if (who) {
       const moved = await this.deps.repoint(who.sessionId, existsSync(who.originalWorkingDir) ? who.originalWorkingDir : folder);
       if ("busy" in moved && moved.busy) return { ok: false, error: "Its chat is running a turn. Remove it when the turn ends." };
+      /* The chat must leave the folder before it is deleted, or its next turn runs in a missing folder
+         (the same three answers main.ts app:chooseWorkspace handles). Nothing is removed. */
+      if ("error" in moved && moved.error) return { ok: false, error: `Its chat could not be moved back to the project's folder (${moved.error}), so the worktree was kept.` };
+      if (moved.supported === false) return { ok: false, error: "Its chat could not be moved back to the project's folder: the agent is not reachable or is too old for that. The worktree was kept." };
     }
     const removed = await this.deps.git(["worktree", "remove", row.path], folder);
-    if (!removed || removed.code !== 0) return { ok: false, error: `git worktree remove refused: ${(removed?.stderr || "").trim().split("\n").at(-1) || "unknown error"}` };
+    if (!removed || removed.code !== 0) {
+      const why = (removed?.stderr || "").trim().split("\n").at(-1) || "unknown error";
+      return { ok: false, error: who
+        ? `git worktree remove refused: ${why}. Its chat now works in the project's folder; the worktree and its branch are still there.`
+        : `git worktree remove refused: ${why}` };
+    }
     await this.deps.git(["worktree", "prune"], folder);
     const branch = row.branch ? await this.deps.git(["branch", "-d", row.branch], folder) : null;
     await rm(`${row.path}.json`, { force: true }).catch(() => {});

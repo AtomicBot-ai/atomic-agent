@@ -57,14 +57,14 @@ function setup(over = {}) {
     if (args[0] === 'worktree' && args[1] === 'add') { mkdirSync(args[4], { recursive: true }); made.push(args[4]); return { code: 0, stdout: '', stderr: '' }; }
     if (a === 'worktree list --porcelain') return { code: 0, stdout: [`worktree ${repo}\nHEAD c0ffee\nbranch refs/heads/main\n`, ...made.map((p) => `worktree ${p}\nHEAD c0ffee\nbranch refs/heads/atomic/session-${p.split('/').pop()}\n`)].join('\n'), stderr: '' };
     if (args[0] === 'status') return { code: 0, stdout: over.status ?? '', stderr: '' };
-    if (args[0] === 'worktree' && args[1] === 'remove') return { code: 0, stdout: '', stderr: '' };
+    if (args[0] === 'worktree' && args[1] === 'remove') return over.removeFails ? { code: 128, stdout: '', stderr: 'fatal: cannot remove: file in use' } : { code: 0, stdout: '', stderr: '' };
     return { code: 0, stdout: '', stderr: '' };
   };
   const repointed = [];
   const wt = new ChatWorktrees({
     stateDir: state, git, isRemote: () => over.remote === true, newChatId: () => '0f9e8d7c-aaaa-bbbb-cccc-ddddeeeeffff',
     projectFolder: (id) => (id === 'p1' ? repo : null),
-    repoint: async (id, dir) => { repointed.push([id, dir]); return over.busy ? { busy: true } : {}; },
+    repoint: async (id, dir) => { repointed.push([id, dir]); return over.moved ?? (over.busy ? { busy: true } : {}); },
   });
   return { wt, repo, state, calls, repointed };
 }
@@ -116,6 +116,27 @@ test('Remove refuses a dirty worktree, a path that is not the agent\'s, and a ch
   assert.match((await busy.wt.remove('p1', b.path)).error, /running a turn/);
   assert.ok(existsSync(b.path));
   assert.ok(!busy.calls.some(([a]) => a.startsWith('worktree remove')));
+});
+
+test('Remove keeps the worktree when its chat cannot be moved out (agent refused, old or unreachable)', async () => {
+  for (const moved of [{ supported: true, error: 'That folder is not allowed' }, { supported: false }]) {
+    const h = setup({ moved });
+    const made = await h.wt.start('p1');
+    const res = await h.wt.remove('p1', made.path);
+    assert.equal(res.ok, false);
+    assert.match(res.error, /could not be moved back/);
+    assert.ok(!h.calls.some(([a]) => a.startsWith('worktree remove')), 'no git worktree remove while the chat still points there');
+    assert.ok(existsSync(made.path));
+  }
+});
+
+test('a failed git worktree remove after the chat moved says so', async () => {
+  const h = setup({ removeFails: true });
+  const made = await h.wt.start('p1');
+  const res = await h.wt.remove('p1', made.path);
+  assert.equal(res.ok, false);
+  assert.match(res.error, /file in use/);
+  assert.match(res.error, /now works in the project's folder/);
 });
 
 test('the IPC channels', () => {
