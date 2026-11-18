@@ -302,6 +302,25 @@ test("an unchanged model is not written again; Same as the app forgets it", asyn
   assert.deepEqual(JSON.parse(JSON.stringify(clear.models)), [["/src/app", null]]);
 });
 
+test("moved to a folder with its own model, a project with none shows and keeps that model", async () => {
+  // Nadya, 18.11: the new folder's own model stays and the sheet shows it, not "Same as the app".
+  const c = load({ pick: "/src/new" });
+  vm.runInContext("ProjectModels.state.folders = {'/src/new': {providerId: 'openrouter', model: 'x/y'}}; projectAct('pedit', 'paaaaaa')", c);
+  await vm.runInContext("pexPickFolder(PROJECTS.edit)", c);
+  const want = vm.runInContext("pexModelValue({providerId: 'openrouter', model: 'x/y'})", c);
+  assert.equal(vm.runInContext("PROJECTS.edit.x.model", c), want);
+  assert.equal(vm.runInContext("PROJECTS.edit.x.modelWas", c), want);
+  assert.match(vm.runInContext("projectEditHTML()", c), /The new folder already has this model, so the project keeps it\./);
+  await vm.runInContext("projectEditSave()", c);
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(c.models)), [], "nothing is written: the folder already has it");
+  // A project that has its own model still carries it (main copies it on save).
+  const k = load({ pick: "/src/new" });
+  vm.runInContext("ProjectModels.state.folders = {'/src/app': {providerId: 'openrouter', model: 'openai/gpt-5'}, '/src/new': {providerId: 'openrouter', model: 'x/y'}}; projectAct('pedit', 'paaaaaa')", k);
+  await vm.runInContext("pexPickFolder(PROJECTS.edit)", k);
+  assert.equal(vm.runInContext("PROJECTS.edit.x.model", k), vm.runInContext("pexModelValue({providerId: 'openrouter', model: 'openai/gpt-5'})", k));
+});
+
 test("a folder that is already another project is refused; the same folder is no change", async () => {
   const c = load({ pick: "/src/site" });
   vm.runInContext("projectAct('pedit', 'paaaaaa')", c);

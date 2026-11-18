@@ -227,6 +227,7 @@ function projectEditMoreHTML(e, p) {
     const off = typeof liveBackend === 'function' && liveBackend() !== 'cloud' ? ' It applies while the app runs on Cloud.' : '';
     html += '<label class="sd-cap" for="pedit-model">Model for this project</label>'
       + pexModelSelectHTML(groups, x.model, e.saving)
+      + (x.modelFromFolder && x.model === x.modelWas ? '<p class="sd-cap">The new folder already has this model, so the project keeps it.</p>' : '')
       + '<p class="sd-cap">Cloud models only. ' + pexEsc(note) + '.' + pexEsc(off) + '</p>';
   }
   return html;
@@ -269,8 +270,23 @@ async function pexPickFolder(e) {
   const other = typeof projectForFolder === 'function' ? projectForFolder(PROJECTS.state, dir) : null;
   pexRepaint(e, () => {
     if (other && other.id !== e.id) e.x.folderErr = 'That folder is already the project “' + other.name + '”.';
-    else { e.x.folderErr = null; e.x.folder = pexSameFolder(dir, p.folder) ? '' : dir; }
+    else { e.x.folderErr = null; e.x.folder = pexSameFolder(dir, p.folder) ? '' : dir; pexFolderModel(e.x, p); }
   }, true);
+}
+
+/* Nadya, 18.11: a project with no model of its own moved to a folder that
+   already has one (picked earlier in the composer) keeps that folder's
+   model, and the sheet shows it rather than "Same as the app". Nothing is
+   written for it on Save: main copies a pick only from a folder that has one.
+   A choice the person made in the sheet is never overwritten. */
+function pexFolderModel(x, p) {
+  if (!x || !p || typeof ProjectModels === 'undefined') return;
+  if (x.model !== x.modelWas) return;
+  const own = pexModelValue(ProjectModels.pickFor(p.folder));
+  if (own) return;
+  const there = x.folder ? pexModelValue(ProjectModels.pickFor(x.folder)) : '';
+  x.model = x.modelWas = there;
+  x.modelFromFolder = !!there;
 }
 
 function pexOpen(e) {
