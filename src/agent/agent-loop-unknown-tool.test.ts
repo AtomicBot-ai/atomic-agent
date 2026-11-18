@@ -64,13 +64,13 @@ describe("AgentLoop with an unregistered tool name", () => {
     rmSync(workingDir, { recursive: true, force: true });
   });
 
-  function loop(script: (call: number) => unknown[]) {
+  function loop(script: (call: number) => unknown[], extraTools: readonly string[] = []) {
     const prompts: string[] = [];
     const ran: string[] = [];
     const events: AgentLoopEvent[] = [];
     let call = 0;
     const registry = buildDefaultToolRegistry();
-    for (const name of ["os.fs.read", "os.fs.grep"]) {
+    for (const name of ["os.fs.read", "os.fs.grep", ...extraTools]) {
       registry.register({
         name,
         description: name,
@@ -157,5 +157,24 @@ describe("AgentLoop with an unregistered tool name", () => {
     expect(stepErrors).toHaveLength(1);
     expect(stepErrors[0]).toMatchObject({ category: "tool" });
     expect(stepErrors[0]!.error).toMatchObject({ kind: "unregistered", nameClass: "other" });
+  });
+
+  it("runs an MCP tool the model wrote with the wrong separators (ATO-1674)", async () => {
+    // The server is `brave-search`; the wire escape is `__` and models
+    // write the hyphen as an underscore. Every letter is right, so the
+    // call runs instead of costing the turn a step.
+    const mcpTool = "mcp.brave-search.brave_web_search";
+    const { agent, ran } = loop(
+      (call) =>
+        call === 1
+          ? [{ tool: "mcp__brave_search__brave_web_search", args: { query: "todo" } }]
+          : [{ tool: "reply", args: { text: "found it" } }],
+      [mcpTool],
+    );
+    const result = await run(agent, "s-mcp-separators");
+    expect(result.reason).toBe("reply");
+    expect(ran).toEqual([mcpTool]);
+    const results = result.session.turns.filter(isToolResult);
+    expect(results.map((turn) => [turn.tool, turn.status])).toEqual([[mcpTool, "ok"]]);
   });
 });

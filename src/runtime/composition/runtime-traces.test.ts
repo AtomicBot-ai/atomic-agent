@@ -12,7 +12,7 @@ import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import { createRuntimeTraces } from "./runtime-traces.js";
 import type { SentryClient } from "../../error-reporting/index.js";
 import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
-import { TransportError } from "../../llm/reliability/llm-failures.js";
+import { ToolExecutionError, TransportError } from "../../llm/reliability/llm-failures.js";
 
 const logger = new StructuredLogger({ level: "error", sinks: [] });
 
@@ -175,6 +175,25 @@ describe("runtime trace ownership and deferred event routing", () => {
     routing.emitAgentLoopEventFor(undefined, { type: "loop_failed", error: planLimit, category: "transport" });
     expect(capture).not.toHaveBeenCalled();
     routing.emitAgentLoopEventFor(undefined, { type: "loop_failed", error: new Error("synthetic failure"), category: "transport" });
+    expect(capture).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not report the unknown-tool streak, and still reports other tool failures (ATO-1674)", () => {
+    const { traces } = fixture();
+    const capture = vi.fn();
+    const reporter = { capture } as unknown as SentryClient;
+    const routing = traces.createEventRouting({ emit: vi.fn() }, { handlers: {} }, () => reporter);
+    const streak = new ToolExecutionError("os.grep", "tool not registered in this agent: os.grep", {
+      kind: "unregistered",
+      nameClass: "near_miss",
+    });
+    routing.emitAgentLoopEventFor(undefined, { type: "loop_failed", error: streak, category: "tool" });
+    expect(capture).not.toHaveBeenCalled();
+    routing.emitAgentLoopEventFor(undefined, {
+      type: "loop_failed",
+      error: new ToolExecutionError("os.fs.read", "EACCES"),
+      category: "tool",
+    });
     expect(capture).toHaveBeenCalledTimes(1);
   });
 });
