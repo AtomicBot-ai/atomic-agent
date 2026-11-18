@@ -272,8 +272,8 @@ export type UserLlmRunModeConfig = {
    * Subagent profiles written in the settings (ATO-1667), keyed by name:
    * the same roles as `agents/*.md` files, with `description`, `prompt`
    * (the file's body), `model` and `tools`. A name follows the file rule
-   * (letters, digits, `-`, `_`; lower-cased). Not read yet: the profile
-   * loader picks them up in ATO-1668.
+   * (letters, digits, `-`, `_`; lower-cased). The profile loader reads
+   * them after the user's files and before plugins (ATO-1668).
    *
    * A sibling of `fusion`, not inside it: a profile is a role a task is
    * handed to, wider than the Fusion legs, and a map keyed by name like
