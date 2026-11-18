@@ -143,6 +143,10 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `network.proxy.url` (default `null`, off): your own HTTP(S) proxy, or the local HTTP port of a VPN client (v2ray, Clash, sing-box), for the agent's web traffic: model providers, web search, `os.web.*` and `os.http.request`, remote MCP servers and the browser the agent starts. `http://host:port` or `https://host:port`, with `user:password@` if needed. SOCKS is not supported: use the client's HTTP port. `ATOMIC_AGENT_PROXY` sets it for one process. Not covered: shell commands, your own Chrome when the agent attaches to it, the Telegram bot. Offline mode wins over a proxy.
 - `network.proxy.noProxy` (default `[]`): hosts that go direct (`example.com` also covers its subdomains). This machine always goes direct.
 
+## privacy
+
+- `privacy.shield.enabled` (default `false`): Privacy Shield. Emails, phone numbers, card numbers, IBANs and keys in a request to a cloud model are replaced with placeholders such as `[EMAIL_1]` and put back in the reply and in tool calls on this machine. Local models are never masked ([privacy shield](../../privacy/README.md)).
+
 ## sessions
 
 - `sessions.retention.enabled` (default `false`).

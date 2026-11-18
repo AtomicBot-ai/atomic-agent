@@ -209,6 +209,12 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `network.proxy.url` | `string \| null` | `null` | Your own HTTP(S) proxy for the agent's web traffic (ATO-87), `http://host:port` or `https://host:port`, with `user:password@` if needed; `null` is off. `ATOMIC_AGENT_PROXY` sets it for one process. Env `ATOMIC_AGENT_PROXY` wins when set. |
 | `network.proxy.noProxy` | `string[]` | `[]` | Hosts that bypass `network.proxy.url` (`example.com` also covers its subdomains). This machine always goes direct. |
 
+## privacy
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `privacy.shield.enabled` | `boolean` | `false` | Privacy Shield (ATO-599): when `true`, emails, phone numbers, card numbers, IBANs and keys in a request to a cloud model are replaced with placeholders such as `[EMAIL_1]` and put back in the reply on this machine. Off by default. Local models always get the real text. |
+
 ## memory
 
 | Key | Type | Default | Description |

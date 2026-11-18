@@ -641,6 +641,10 @@ export function loadConfig(): AtomicAgentConfig {
         noProxy: [...user.network.proxy.noProxy],
       },
     },
+    // ATO-599: Privacy Shield, read by the cloud provider adapters.
+    privacy: {
+      shield: { enabled: user.privacy.shield.enabled },
+    },
     memory: {
       profile: {
         enabled: user.memory.profile.enabled,
