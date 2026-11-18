@@ -1,6 +1,8 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
 import { theme } from "../../theme/theme.js";
+import { BrandBadge } from "../../brand/brand-badge.js";
+import { integrationBrand } from "../../brand/brand-badges.js";
 import type {
   IntegrationRow,
   IntegrationsPanelState,
@@ -92,6 +94,9 @@ function ListView({
             >
               {i === panel.selected ? "> " : "  "}
             </Text>
+            {/* ATO-1635: blank for an integration with no brand of its
+                own, so every label starts in the same column. */}
+            <BrandBadge brand={integrationBrand(row.id)} />
             <Text bold={i === panel.selected}>{row.label}</Text>
             <Text color={badgeColor(row.level)}>
               {"  "}

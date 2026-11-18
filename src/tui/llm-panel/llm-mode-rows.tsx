@@ -19,6 +19,12 @@ import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
 import { FallbackRows } from "./fallback/llm-fallback-rows.js";
 import { SUBSCRIPTION_CLI_KIND } from "../../config/provider-auth-mode.js";
+import { BrandBadge } from "../brand/brand-badge.js";
+import {
+  modelBrand,
+  providerRowBrand,
+  type Brand,
+} from "../brand/brand-badges.js";
 
 export function LlmModeRows({
   rows,
@@ -407,7 +413,8 @@ function Row({
       onActivate={pressEnter(handleLlmPanelKey)}
     >
       <Text color={baseColor} bold={selected} wrap="truncate-end">
-        {mark} {renderRowText(row, state)}
+        {mark} {rowBrandSlot(row)}
+        {renderRowText(row, state)}
         {insufficient ? (
           <Text color={theme.colors.warn}> Not enough VRAM</Text>
         ) : ramFit === "tight" ? (
@@ -417,6 +424,33 @@ function Row({
       </Text>
     </MouseListRow>
   );
+}
+
+/**
+ * The brand a row wears (ATO-1635): the provider for a provider row, the
+ * model family for a model row. `undefined` for rows that are neither
+ * (the daemon, the engine, an external URL), which take no badge column.
+ * Every row of a provider or model section takes the column, branded or
+ * blank, so its labels stay aligned.
+ */
+function rowBrand(row: LlmPanelRow): Brand | null | undefined {
+  switch (row.kind) {
+    case "cloudProvider":
+      return providerRowBrand(row.provider);
+    case "cloudChatModel":
+    case "cloudEmbeddingModel":
+      return modelBrand(row.modelId);
+    case "localTextModel":
+    case "localEmbeddingModel":
+      return modelBrand(row.model.id);
+    default:
+      return undefined;
+  }
+}
+
+function rowBrandSlot(row: LlmPanelRow): ReactElement | null {
+  const brand = rowBrand(row);
+  return brand === undefined ? null : <BrandBadge brand={brand} />;
 }
 
 function renderRowText(row: LlmPanelRow, state: TuiState): string {

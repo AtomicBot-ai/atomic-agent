@@ -17,6 +17,12 @@ import {
 import { handleOnboardingStepKey } from "./onboarding-step-keys.js";
 import { ROW_INDENT, rowPrefix } from "./onboarding-rows.js";
 import { theme } from "../theme/theme.js";
+import { BrandBadge } from "../brand/brand-badge.js";
+import {
+  BRAND_SLOT_WIDTH,
+  importSourceBrand,
+  type Brand,
+} from "../brand/brand-badges.js";
 
 /**
  * The first-run import screens: tick the agents found on this machine
@@ -37,6 +43,11 @@ const SKIP_DETAIL = "Go straight to your agent — /import works any time later.
 
 const CHECKBOX_ON = "[x] ";
 const CHECKBOX_OFF = "[ ] ";
+/**
+ * The agent's brand badge sits between the checkbox and its name
+ * (ATO-1635); the folder line underneath starts under the name.
+ */
+const BRAND_GAP = " ".repeat(BRAND_SLOT_WIDTH);
 
 /** A toggled list row: checkbox, label, detail; click toggles like space. */
 function ToggleRow(props: {
@@ -45,6 +56,8 @@ function ToggleRow(props: {
   index: number;
   label: string;
   detail: string;
+  /** The agent's badge; `null` draws a blank of the same width. */
+  brand: Brand | null;
   /** The action a click's second press sends (space, via the key table). */
   onToggle: Parameters<typeof MouseListRow>[0]["onActivate"];
 }): ReactElement {
@@ -61,10 +74,12 @@ function ToggleRow(props: {
           color={props.selected ? theme.colors.accent : undefined}
           bold={props.selected}
         >
-          {`${rowPrefix(props.selected)}${props.enabled ? CHECKBOX_ON : CHECKBOX_OFF}${props.label}`}
+          {`${rowPrefix(props.selected)}${props.enabled ? CHECKBOX_ON : CHECKBOX_OFF}`}
+          <BrandBadge brand={props.brand} />
+          {props.label}
         </Text>
         <Text color={theme.colors.muted}>
-          {`${ROW_INDENT}    ${props.detail}`}
+          {`${ROW_INDENT}    ${BRAND_GAP}${props.detail}`}
         </Text>
       </Box>
     </MouseListRow>
@@ -140,8 +155,8 @@ export function measureOnboardingImportPickStep(
   return widestLine([
     ...PICK_EXPLAINER,
     ...agents.flatMap((row) => [
-      `${ROW_INDENT}${CHECKBOX_ON}${row.label}`,
-      `${ROW_INDENT}    ${row.dir}`,
+      `${ROW_INDENT}${CHECKBOX_ON}${BRAND_GAP}${row.label}`,
+      `${ROW_INDENT}    ${BRAND_GAP}${row.dir}`,
     ]),
     `${ROW_INDENT}${IMPORT_SKIP_LABEL}`,
     `${ROW_INDENT}${SKIP_DETAIL}`,
@@ -175,6 +190,7 @@ export function OnboardingImportPickStep(props: {
             index={index}
             label={row.agent.label}
             detail={row.agent.dir}
+            brand={importSourceBrand(row.agent.id)}
             onToggle={pressSpace()}
           />
         ) : (

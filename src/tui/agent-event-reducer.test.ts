@@ -84,6 +84,34 @@ describe("reduceTuiState fusion worker progress", () => {
     ]);
   });
 
+  it("keeps the leg's model on its feed entry for the brand badge (ATO-1635)", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t1",
+          title: "Map the routes",
+          phase: "started",
+          model: "qwen3.6-35b-a3b",
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "fusion_worker",
+          taskId: "t2",
+          title: "No model named",
+          phase: "started",
+        },
+      },
+    ]);
+    expect(state.feed.map((entry) => entry.brandModel)).toEqual([
+      "qwen3.6-35b-a3b",
+      undefined,
+    ]);
+  });
+
   it("renders the failed and cancelled phases distinctly", () => {
     const lines = feedLines([
       {
