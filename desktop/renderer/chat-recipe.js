@@ -50,14 +50,18 @@ function recipeKeyFrom(text, taken) {
   return out;
 }
 
+/** The stand-in caption of a message sent with files and no text (attachments.js ATT_STANDIN). */
+const RECIPE_ATT_STANDIN = /^The user sent (?:a file|\d+ files) without a message\.$/;
+
 /** The chat's first question, from the stored turns (GET /api/sessions/{id}). A message sent
-    with files ends in an `[attachments]` block of local paths (attachments.js): cut, never shared. */
+    with files ends in an `[attachments]` block of local paths (attachments.js): cut, never shared.
+    A file sent with no text carries a stand-in caption, not a question: treated as no text. */
 function recipeFirstQuestion(turns) {
   for (const x of Array.isArray(turns) ? turns : []) {
     if (!x || x.kind !== 'user' || typeof x.text !== 'string') continue;
     const at = x.text.indexOf('\n\n[attachments]\n');
     const text = (at >= 0 ? x.text.slice(0, at) : x.text).trim();
-    if (text) return text;
+    if (text && !(at >= 0 && RECIPE_ATT_STANDIN.test(text))) return text;
   }
   return '';
 }

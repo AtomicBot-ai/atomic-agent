@@ -29,6 +29,13 @@ test("placeholders, filling, missing values and parameter names", () => {
   // Review fix: a message sent with files keeps no local paths in the recipe.
   assert.equal(C.recipeFirstQuestion([{ kind: "user", text: "Summarise this\n\n[attachments]\n- /Users/a/b.pdf (application/pdf, 2 MB)" }]), "Summarise this");
   assert.equal(C.recipeFirstQuestion([{ kind: "user", text: "\n\n[attachments]\n- /Users/a/b.pdf (application/pdf, 2 MB)" }, { kind: "user", text: "Next" }]), "Next");
+  // A file sent with no text: the stand-in caption is not a question, so the box stays empty.
+  const standin = "The user sent a file without a message.\n\n[attachments]\n- /Users/a/b.pdf (application/pdf, 2 MB)";
+  assert.equal(C.recipeFirstQuestion([{ kind: "user", text: standin }]), "");
+  assert.equal(C.recipeFirstQuestion([{ kind: "user", text: standin.replace("a file", "2 files") }]), "");
+  assert.equal(C.recipeFirstQuestion([{ kind: "user", text: standin }, { kind: "user", text: "Next" }]), "Next");
+  // The same words typed by the person, with no files, stay.
+  assert.equal(C.recipeFirstQuestion([{ kind: "user", text: "The user sent a file without a message." }]), "The user sent a file without a message.");
   assert.deepEqual(C.recipeParamsFor("{{a}} {{b}} {{a}}", { a: "x", b: "" }), [{ key: "a", default: "x" }, { key: "b" }]);
 });
 
