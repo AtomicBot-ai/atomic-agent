@@ -1493,6 +1493,14 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:offlineMode", async () => {
     try { return await client.offlineMode(); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
   });
+  // ATO-1082: Settings › Privacy › Privacy Shield (renderer/privacy-shield.js).
+  ipcMain.handle("agent:privacyShield", async () => {
+    try { return await client.privacyShield(); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:privacyShieldSet", async (_event, enabled: unknown) => {
+    if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
+    try { return await client.privacyShield(enabled); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
   ipcMain.handle("agent:offlineModeSet", async (_event, enabled: unknown) => {
     if (typeof enabled !== "boolean") return { supported: true, ok: false, error: "enabled must be true or false" };
     try { return await client.offlineMode(enabled); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
