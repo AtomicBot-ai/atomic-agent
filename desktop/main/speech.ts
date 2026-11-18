@@ -200,6 +200,11 @@ export class VoiceSession {
     }
   }
 
+  /** ATO-1076: the whisper.cpp binary and model the last good probe found, for file transcription. */
+  whisperPaths(): { bin: string; model: string } | null {
+    return this.whisper ? { ...this.whisper } : null;
+  }
+
   /** Windows/Linux: whisper.cpp and a model on disk, or the case that is missing. */
   private probeWhisper(): VoiceProbe {
     const lookup = (this.deps.lookup ?? whisperLookup)();

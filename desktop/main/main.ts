@@ -264,7 +264,7 @@ import { checkSavedComposioKey, removeComposioKey, saveComposioKey, type Composi
 // Item 2 (voice input): the on-device speech helper's supervisor.
 import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 // ATO-1074: an audio file transcribed on this machine, with timestamps.
-import { FileTranscriber, appleSpeechEngine } from "./transcribe-file.js";
+import { FileTranscriber, appleSpeechEngine, findOnPath, whisperFileEngine } from "./transcribe-file.js";
 // Item 7 part B (Skills / Memory / MCP tabs)
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
@@ -441,12 +441,20 @@ let pull: DownloadSlot | null = null;
 const voice = new VoiceSession();
 /* ATO-1074: the same helper in file mode. Its own child, never the voice
    session's: a dictation and a file can run side by side. The engine is the
-   one place that knows it is Apple's (ATO-1076 adds a whisper.cpp one). */
-const fileTranscriber = new FileTranscriber(appleSpeechEngine({
-  command: speechHelperPath,
-  probe: () => voice.probe(),
-  chosen: () => readVoicePrefs().locales,
-}));
+   one place that knows it is Apple's; ATO-1076: on Windows and Linux it is
+   the whisper.cpp binary and model voice input found or downloaded. */
+const fileTranscriber = new FileTranscriber(process.platform === "darwin"
+  ? appleSpeechEngine({
+    command: speechHelperPath,
+    probe: () => voice.probe(),
+    chosen: () => readVoicePrefs().locales,
+  })
+  : whisperFileEngine({
+    probe: () => voice.probe(),
+    paths: () => voice.whisperPaths(),
+    chosen: () => readVoicePrefs().locales,
+    ffmpeg: () => findOnPath("ffmpeg", { env: process.env, platform: process.platform, home: homedir() }),
+  }));
 
 /* Voice input exists only where the speech helper can run (macOS; see
    platform.ts voiceSupported). Answered synchronously so the preload can

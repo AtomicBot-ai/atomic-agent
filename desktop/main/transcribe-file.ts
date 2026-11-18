@@ -24,8 +24,10 @@
  * in this file imports electron, so the unit suite loads it directly.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
-import { basename, extname, isAbsolute } from "node:path";
+import { accessSync, constants, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, extname, isAbsolute, join, posix, win32 } from "node:path";
+import { searchDirs, whisperLanguage, WHISPER_SAMPLE_RATE, type LookupEnv } from "./whisper-dictation.js";
 
 /** One timed piece of the transcript, in seconds from the start of the file. */
 export interface TranscriptSegment {
@@ -40,7 +42,9 @@ export type TranscribeReason =
   | "voice-os-too-old"
   | "voice-helper-missing"
   | "voice-helper-failed"
-  | "voice-model-missing";
+  | "voice-model-missing"
+  | "voice-whisper-missing"
+  | "voice-whisper-model-missing";
 
 export interface TranscribeAvailability {
   ok: boolean;
@@ -79,6 +83,8 @@ export interface TranscribeRun {
 
 export interface TranscribeEngine {
   id: string;
+  /** The extensions this engine takes; TRANSCRIBE_AUDIO_EXTS when absent. */
+  exts?: ReadonlySet<string>;
   available(): Promise<TranscribeAvailability>;
   run(path: string, locale: string, onEvent: (ev: TranscribeEvent) => void): TranscribeRun;
 }
@@ -88,8 +94,8 @@ export interface TranscribeEngine {
 /** What AVAudioFile opens (and what a later whisper engine is expected to take). */
 export const TRANSCRIBE_AUDIO_EXTS = new Set(["mp3", "wav", "m4a", "aac", "aif", "aiff", "caf"]);
 
-export function isTranscribableAudio(path: string): boolean {
-  return TRANSCRIBE_AUDIO_EXTS.has(extname(String(path || "")).slice(1).toLowerCase());
+export function isTranscribableAudio(path: string, exts: ReadonlySet<string> = TRANSCRIBE_AUDIO_EXTS): boolean {
+  return exts.has(extname(String(path || "")).slice(1).toLowerCase());
 }
 
 /** `83.4` → `00:01:23`. Always hours, so a list of lines lines up. */
@@ -295,6 +301,222 @@ export function appleSpeechEngine(deps: AppleEngineDeps): TranscribeEngine {
   };
 }
 
+/* ---------------------------------------- the whisper.cpp engine --- */
+
+/*
+ * ATO-1076: the same file transcription on Windows and Linux, where there is
+ * no Apple speech helper. It runs the whisper.cpp binary and model that voice
+ * input already found or downloaded (speech.ts probeWhisper, ATO-1049), so a
+ * person who pressed the microphone once can also transcribe a recording.
+ *
+ *   ffmpeg -i <file> -vn -ar 16000 -ac 1 -c:a pcm_s16le <tmp>/audio.wav   (when ffmpeg is there)
+ *   whisper-cli -m <model> -f <wav> -l <lang> -pp
+ *
+ * whisper-cli prints each segment on stdout as it is decoded,
+ * `[00:01:23.400 --> 00:01:27.120]  text`, and with `-pp` its progress on
+ * stderr, `whisper_print_progress_callback: progress =  42%`. Both are read
+ * live, so the chip moves while a long meeting is heard.
+ *
+ * ffmpeg comes first, the way the agent's audio.transcribe does it
+ * (src/tools/audio/whisper-args.ts): whisper.cpp reads 16 kHz WAV for sure,
+ * MP3 and FLAC in its own builds, and m4a/ogg/opus not at all. Without
+ * ffmpeg on PATH only those three are tried as they are; the rest end in
+ * `needs-ffmpeg`, which the chip turns into a sentence.
+ */
+
+/** What the whisper route takes: everything ffmpeg turns into WAV that a recorder or a call app saves. */
+export const WHISPER_TRANSCRIBE_EXTS: ReadonlySet<string> = new Set([
+  "wav", "mp3", "flac", "m4a", "aac", "ogg", "oga", "opus", "wma", "aif", "aiff",
+]);
+/** Read by whisper-cli itself, no ffmpeg needed. */
+export const WHISPER_NATIVE_EXTS: ReadonlySet<string> = new Set(["wav", "mp3", "flac"]);
+
+/** `-m <model> -f <wav> -l <lang> -pp`: timed segments on stdout, progress on stderr. */
+export function whisperFileArgs(model: string, wav: string, language: string): string[] {
+  return ["-m", model, "-f", wav, "-l", language, "-pp"];
+}
+
+/** `ffmpeg … -i <input> -vn -ar 16000 -ac 1 -c:a pcm_s16le <output>` (the agent's ffmpegToWavArgs). */
+export function ffmpegWavArgs(input: string, output: string): string[] {
+  return [
+    "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+    "-i", input, "-vn", "-ar", String(WHISPER_SAMPLE_RATE), "-ac", "1", "-c:a", "pcm_s16le", output,
+  ];
+}
+
+const WHISPER_SEGMENT = /^\[(\d+):(\d{2}):(\d{2})[.,](\d{1,3})\s*-->\s*(\d+):(\d{2}):(\d{2})[.,](\d{1,3})\]\s*(.*)$/;
+const NOT_SPEECH = /^[[(](BLANK_AUDIO|MUSIC|NOISE|SILENCE|INAUDIBLE)[\])]$/i;
+
+function hms(h: string, m: string, s: string, ms: string): number {
+  return Number(h) * 3600 + Number(m) * 60 + Number(s) + Number(ms.padEnd(3, "0")) / 1000;
+}
+
+/** One stdout line of whisper-cli → a segment, or null (blank, `[BLANK_AUDIO]`, anything else). */
+export function parseWhisperSegment(line: string): TranscriptSegment | null {
+  const m = WHISPER_SEGMENT.exec(String(line || "").trim());
+  if (!m) return null;
+  const text = (m[9] ?? "").trim();
+  if (!text || NOT_SPEECH.test(text)) return null;
+  const start = hms(m[1]!, m[2]!, m[3]!, m[4]!);
+  const end = hms(m[5]!, m[6]!, m[7]!, m[8]!);
+  return { start, end: Math.max(start, end), text };
+}
+
+/** One stderr line of whisper-cli → a 0..1 fraction, or null. */
+export function parseWhisperProgress(line: string): number | null {
+  const m = /progress\s*=\s*(\d{1,3})\s*%/.exec(String(line || ""));
+  if (!m) return null;
+  return Math.min(1, Math.max(0, Number(m[1]) / 100));
+}
+
+/** Where a program is on PATH (and the installer folders a GUI app misses), or null. */
+export function findOnPath(name: string, o: LookupEnv): string | null {
+  const isExec = o.isExecutable ?? ((p: string) => {
+    try { accessSync(p, o.platform === "win32" ? constants.F_OK : constants.X_OK); return statSync(p).isFile(); } catch { return false; }
+  });
+  const exts = o.platform === "win32" ? [".exe", ""] : [""];
+  const joinFor = o.platform === "win32" ? win32.join : posix.join;
+  for (const dir of searchDirs(o)) {
+    for (const ext of exts) {
+      const candidate = joinFor(dir, name + ext);
+      if (isExec(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+export interface WhisperEngineDeps {
+  /** voice.probe(): on Windows/Linux it is the whisper probe (ATO-1049). */
+  probe: () => Promise<{ ok: boolean; reason?: string }>;
+  /** The binary and model the last good probe found (VoiceSession.whisperPaths). */
+  paths: () => { bin: string; model: string } | null;
+  /** The voice-input languages the person chose (userData/voice.json). */
+  chosen: () => string[];
+  /** ffmpeg on PATH, or null. */
+  ffmpeg: () => string | null;
+  /** Put before the binary's own args (the tests run fakes through node). */
+  prefixArgs?: { whisper?: string[]; ffmpeg?: string[] };
+  /** Where the converted WAV goes; deleted after every run. */
+  tempRoot?: () => string;
+}
+
+export function whisperFileEngine(deps: WhisperEngineDeps): TranscribeEngine {
+  return {
+    id: "whisper",
+    exts: WHISPER_TRANSCRIBE_EXTS,
+    async available() {
+      const p = await deps.probe();
+      if (!p.ok) return { ok: false, reason: p.reason ?? "voice-whisper-missing", engine: "whisper" };
+      if (!deps.paths()) return { ok: false, reason: "voice-whisper-missing", engine: "whisper" };
+      // One multilingual model hears every language; the first chosen one names the file.
+      return { ok: true, locale: deps.chosen()[0] ?? "en-US", engine: "whisper" };
+    },
+    run(path, locale, onEvent) {
+      const segments: TranscriptSegment[] = [];
+      let child: ChildProcess | null = null;
+      let cancelled = false;
+      let work: string | null = null;
+      let settle: (r: TranscribeResult) => void = () => {};
+      const done = new Promise<TranscribeResult>((resolve) => {
+        let settled = false;
+        settle = (r) => {
+          if (settled) return;
+          settled = true;
+          if (work) { try { rmSync(work, { recursive: true, force: true }); } catch { /* temp folder */ } }
+          resolve(r);
+        };
+      });
+      const found = deps.paths();
+      if (!found) {
+        settle({ ok: false, error: "voice-whisper-missing" });
+        return { cancel() {}, done };
+      }
+      const chosen = deps.chosen();
+      const language = whisperLanguage(chosen.length ? chosen : [locale]);
+      const ext = extname(path).slice(1).toLowerCase();
+      const ffmpeg = deps.ffmpeg();
+      if (!ffmpeg && !WHISPER_NATIVE_EXTS.has(ext)) {
+        settle({ ok: false, error: "needs-ffmpeg" });
+        return { cancel() {}, done };
+      }
+
+      const spawnStep = (cmd: string, args: string[]): ChildProcess | null => {
+        try {
+          return spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+        } catch (err) {
+          settle({ ok: false, error: "spawn", message: err instanceof Error ? err.message : String(err) });
+          return null;
+        }
+      };
+
+      const transcribe = (wav: string) => {
+        if (cancelled) { settle({ ok: false, cancelled: true, error: "cancelled" }); return; }
+        child = spawnStep(found.bin, [...(deps.prefixArgs?.whisper ?? []), ...whisperFileArgs(found.model, wav, language)]);
+        if (!child) return;
+        let stderr = "";
+        const out = lineSplitter((line) => {
+          const seg = parseWhisperSegment(line);
+          if (!seg) return;
+          segments.push(seg);
+          onEvent({ type: "segment", segment: seg, segments: segments.length });
+        });
+        const err = lineSplitter((line) => {
+          const f = parseWhisperProgress(line);
+          if (f !== null) onEvent({ type: "progress", fraction: f, segments: segments.length });
+        });
+        child.stdout?.on("data", (b: Buffer) => out.push(b.toString("utf8")));
+        child.stderr?.on("data", (b: Buffer) => { const t = b.toString("utf8"); err.push(t); stderr = (stderr + t).slice(-2000); });
+        child.on("error", (e) => settle({ ok: false, error: "spawn", message: e.message }));
+        child.on("close", (code) => {
+          out.end();
+          err.end();
+          if (cancelled) { settle({ ok: false, cancelled: true, error: "cancelled" }); return; }
+          if (code !== 0) {
+            const tail = stderr.trim().split("\n").filter((l) => !/progress\s*=/.test(l)).slice(-3).join("\n");
+            settle({ ok: false, error: "whisper-failed", message: tail || `whisper exited with ${code}` });
+            return;
+          }
+          const last = segments[segments.length - 1];
+          settle({
+            ok: true, locale, engine: "whisper", duration: last ? last.end : 0,
+            segments, text: formatTranscript(segments),
+          });
+        });
+      };
+
+      if (!ffmpeg) {
+        transcribe(path);
+      } else {
+        try {
+          work = mkdtempSync(join((deps.tempRoot ?? tmpdir)(), "atomic-transcribe-"));
+        } catch (e) {
+          settle({ ok: false, error: "spawn", message: e instanceof Error ? e.message : String(e) });
+          return { cancel() {}, done };
+        }
+        const wav = join(work, "audio.wav");
+        child = spawnStep(ffmpeg, [...(deps.prefixArgs?.ffmpeg ?? []), ...ffmpegWavArgs(path, wav)]);
+        if (child) {
+          let stderr = "";
+          child.stderr?.on("data", (b: Buffer) => { stderr = (stderr + b.toString("utf8")).slice(-1000); });
+          child.on("error", (e) => settle({ ok: false, error: "spawn", message: e.message }));
+          child.on("close", (code) => {
+            if (cancelled) { settle({ ok: false, cancelled: true, error: "cancelled" }); return; }
+            if (code !== 0) { settle({ ok: false, error: "open-file", message: stderr.trim().slice(-400) || undefined }); return; }
+            transcribe(wav);
+          });
+        }
+      }
+      return {
+        cancel() {
+          cancelled = true;
+          try { child?.kill("SIGKILL"); } catch { /* already gone */ }
+        },
+        done,
+      };
+    },
+  };
+}
+
 /* --------------------------------------------------- the supervisor --- */
 
 export interface TranscribeFileRequest {
@@ -321,7 +543,7 @@ export class FileTranscriber {
 
   async transcribe(req: TranscribeFileRequest, emit: (job: string, ev: TranscribeEvent) => void): Promise<TranscribeResult> {
     if (!req || typeof req.job !== "string" || !req.job || typeof req.path !== "string") return { ok: false, error: "bad-request" };
-    if (!isAbsolute(req.path) || !isTranscribableAudio(req.path)) return { ok: false, error: "not-audio" };
+    if (!isAbsolute(req.path) || !isTranscribableAudio(req.path, this.engine.exts)) return { ok: false, error: "not-audio" };
     if (!this.fileOk(req.path)) return { ok: false, error: "missing" };
     if (this.current) return { ok: false, error: "busy" };
     const avail = await this.available();
