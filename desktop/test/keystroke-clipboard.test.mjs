@@ -28,8 +28,9 @@ test("the key press per platform: osascript, SendKeys, xdotool or wtype", () => 
   const mac = K.keystrokeCommands("copy", { platform: "darwin", env: {} });
   assert.equal(mac.length, 1);
   assert.equal(mac[0].file, "/usr/bin/osascript");
-  assert.deepEqual(mac[0].args, ["-e", 'tell application "System Events" to keystroke "c" using command down']);
-  assert.match(K.keystrokeCommands("paste", { platform: "darwin", env: {} })[0].args[1], /keystroke "v" using command down/);
+  assert.deepEqual(mac[0].args.slice(0, 3), ["-l", "JavaScript", "-e"]);
+  assert.match(mac[0].args[3], /keystroke\('c', \{ using: 'command down' \}\)/);
+  assert.deepEqual(K.keystrokeCommands("paste", { platform: "darwin", env: {} })[0].args, ["-e", 'tell application "System Events" to keystroke "v" using command down']);
 
   const win = K.keystrokeCommands("paste", { platform: "win32", env: {} });
   assert.equal(win[0].file, "powershell.exe");
@@ -60,6 +61,60 @@ test("Windows: a copy is never pressed into a console or terminal, a paste still
   for (const n of ["Code", "chrome", "notepad", "WINWORD", "", null, undefined]) {
     assert.equal(K.isWindowsConsoleProcess(n), false, String(n));
   }
+});
+
+test("a copy waits for the hotkey's modifiers to be up, a paste does not (ATO-985 review)", () => {
+  assert.equal(K.MODIFIER_POLL_MS, 30);
+  assert.equal(K.MODIFIER_WAIT_CAP_MS, 600);
+
+  const mac = K.keystrokeCommands("copy", { platform: "darwin", env: {} })[0].args.at(-1);
+  assert.match(mac, /\$\.NSEvent\.modifierFlags/);
+  assert.ok(mac.includes(`& ${K.MAC_MODIFIER_MASK})`), "checks the modifier mask");
+  assert.equal(K.MAC_MODIFIER_MASK, 0x1e0000, "Shift, Control, Option and Command");
+  assert.ok(mac.includes(`waited < ${K.MODIFIER_WAIT_CAP_MS}`), "capped");
+  assert.ok(mac.includes(`delay(${K.MODIFIER_POLL_MS / 1000})`), "polls");
+  assert.ok(mac.includes(`$.exit(${K.MODIFIERS_HELD_EXIT})`), "skips when still held");
+  assert.ok(mac.indexOf("modifierFlags") < mac.indexOf("keystroke("), "the wait runs before the key press");
+  assert.ok(mac.indexOf(`$.exit(${K.MODIFIERS_HELD_EXIT})`) < mac.indexOf("keystroke("), "a skip presses nothing");
+  assert.ok(!mac.includes('"'), "single quotes only");
+
+  const win = K.keystrokeCommands("copy", { platform: "win32", env: {} })[0].args.at(-1);
+  assert.match(win, /GetAsyncKeyState/);
+  assert.deepEqual([...K.WIN_MODIFIER_VKEYS], [0x10, 0x11, 0x12, 0x5b, 0x5c], "Shift, Ctrl, Alt, both Win keys");
+  assert.ok(win.includes(`foreach ($k in ${K.WIN_MODIFIER_VKEYS.join(",")})`));
+  assert.ok(win.includes(`-lt ${K.MODIFIER_WAIT_CAP_MS}`), "capped");
+  assert.ok(win.includes(`Start-Sleep -Milliseconds ${K.MODIFIER_POLL_MS}`), "polls");
+  assert.ok(win.indexOf(`exit ${K.MODIFIERS_HELD_EXIT}`) < win.indexOf("SendWait('^c')"), "a skip presses nothing");
+  assert.ok(win.indexOf(`exit ${K.WIN_CONSOLE_SKIP_EXIT}`) < win.indexOf("GetAsyncKeyState($k)"), "the console check still comes first");
+
+  for (const platform of ["darwin", "win32"]) {
+    const paste = K.keystrokeCommands("paste", { platform, env: {} })[0].args.at(-1);
+    assert.doesNotMatch(paste, /modifierFlags|GetAsyncKeyState/, `${platform}: the paste is unchanged`);
+  }
+});
+
+test("modifiers still held at the cap: no copy is pressed, no selection, the clipboard comes back", async () => {
+  // The fake plays the script: Shift stays down past MODIFIER_WAIT_CAP_MS, so it
+  // exits with MODIFIERS_HELD_EXIT before any key press and the host sees a failed run.
+  const { host, box } = fakeHost("mine");
+  let copied = false;
+  const shiftHeldMs = K.MODIFIER_WAIT_CAP_MS + 200;
+  const press = async (kind) => {
+    assert.equal(kind, "copy");
+    let waited = 0;
+    while (waited < shiftHeldMs && waited < K.MODIFIER_WAIT_CAP_MS) waited += K.MODIFIER_POLL_MS;
+    if (waited < shiftHeldMs) return false;
+    copied = true; box.text = "selected"; return true;
+  };
+  assert.equal(await K.grabSelectionByCopy(host, { press, sleep: noSleep }), null);
+  assert.equal(copied, false, "no wrong chord was sent");
+  assert.equal(box.text, "mine");
+
+  // Released in time: the same fake copies once the key is up.
+  const two = fakeHost("mine");
+  const quick = async () => { two.box.text = "selected"; return true; };
+  assert.equal(await K.grabSelectionByCopy(two.host, { press: quick, sleep: noSleep }), "selected");
+  assert.equal(two.box.text, "mine");
 });
 
 test("a copy the system refused to press (console in front) gives no selection and keeps the clipboard", async () => {

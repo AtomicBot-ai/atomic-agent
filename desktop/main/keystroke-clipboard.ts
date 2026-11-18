@@ -57,15 +57,53 @@ export function isWindowsConsoleProcess(name: unknown): boolean {
 export const WIN_CONSOLE_SKIP_EXIT = 3;
 
 /**
+ * The copy is pressed only once the hotkey's own modifiers are up. The
+ * hotkey is Cmd/Ctrl+Shift+Space, and a person is often still holding Shift
+ * when the copy fires: the app in front would then get Cmd+Shift+C or
+ * Ctrl+Shift+C (the element picker in Chrome and Edge) instead of a copy, and
+ * on Windows a held Win key would turn Ctrl+C into Win+Ctrl+C. So the script
+ * that presses the copy first polls the real key state every
+ * MODIFIER_POLL_MS, for up to MODIFIER_WAIT_CAP_MS. If a modifier is still
+ * down then, it presses nothing and exits with MODIFIERS_HELD_EXIT: the box
+ * gets no selection and the clipboard is put back, never a wrong chord.
+ * A paste is left as it was.
+ */
+export const MODIFIER_POLL_MS = 30;
+export const MODIFIER_WAIT_CAP_MS = 600;
+export const MODIFIERS_HELD_EXIT = 4;
+
+/** NSEvent modifier flags: Shift, Control, Option, Command (Caps Lock and Fn left out). */
+export const MAC_MODIFIER_MASK = 0x20000 | 0x40000 | 0x80000 | 0x100000;
+
+/** Windows virtual keys: Shift, Ctrl, Alt, left Win, right Win. */
+export const WIN_MODIFIER_VKEYS: readonly number[] = [0x10, 0x11, 0x12, 0x5b, 0x5c];
+
+/**
+ * The macOS copy, in JavaScript for Automation so the same osascript can read
+ * the modifier state ($.NSEvent.modifierFlags) before it presses Cmd+C.
+ * Single quotes only.
+ */
+const MAC_COPY_SCRIPT = [
+  "ObjC.import('AppKit'); ObjC.import('stdlib');",
+  `var waited = 0; while (($.NSEvent.modifierFlags & ${MAC_MODIFIER_MASK}) && waited < ${MODIFIER_WAIT_CAP_MS}) { delay(${MODIFIER_POLL_MS / 1000}); waited += ${MODIFIER_POLL_MS}; }`,
+  `if ($.NSEvent.modifierFlags & ${MAC_MODIFIER_MASK}) { $.exit(${MODIFIERS_HELD_EXIT}); }`,
+  "Application('System Events').keystroke('c', { using: 'command down' });",
+].join(" ");
+
+/**
  * The PowerShell that runs before the Windows copy: the process of the
  * window in front, and an exit with WIN_CONSOLE_SKIP_EXIT (no key pressed)
  * when it is a console. Single quotes only, so it survives the command line.
  */
 const WIN_CONSOLE_GUARD = [
-  "Add-Type -Namespace AtomicAgent -Name Fg -MemberDefinition '[DllImport(''user32.dll'')] public static extern System.IntPtr GetForegroundWindow(); [DllImport(''user32.dll'')] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint pid);';",
+  "Add-Type -Namespace AtomicAgent -Name Fg -MemberDefinition '[DllImport(''user32.dll'')] public static extern System.IntPtr GetForegroundWindow(); [DllImport(''user32.dll'')] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint pid); [DllImport(''user32.dll'')] public static extern short GetAsyncKeyState(int vKey);';",
   "$fgPid = [uint32]0; [void][AtomicAgent.Fg]::GetWindowThreadProcessId([AtomicAgent.Fg]::GetForegroundWindow(), [ref]$fgPid);",
   "$fgName = ''; try { $fgName = (Get-Process -Id $fgPid -ErrorAction Stop).ProcessName.ToLower() } catch {}",
   `if (@(${WINDOWS_CONSOLE_PROCESSES.map((n) => `'${n}'`).join(",")}) -contains $fgName) { exit ${WIN_CONSOLE_SKIP_EXIT} };`,
+  // Then wait for the modifiers to be up (see MODIFIER_WAIT_CAP_MS).
+  `$held = { foreach ($k in ${WIN_MODIFIER_VKEYS.join(",")}) { if ([AtomicAgent.Fg]::GetAsyncKeyState($k) -band 0x8000) { return $true } }; return $false };`,
+  `$waited = 0; while ((& $held) -and $waited -lt ${MODIFIER_WAIT_CAP_MS}) { Start-Sleep -Milliseconds ${MODIFIER_POLL_MS}; $waited += ${MODIFIER_POLL_MS} };`,
+  `if (& $held) { exit ${MODIFIERS_HELD_EXIT} };`,
 ].join(" ");
 
 /**
@@ -76,6 +114,7 @@ const WIN_CONSOLE_GUARD = [
 export function keystrokeCommands(kind: KeystrokeKind, o: KeystrokeEnv): KeystrokeCommand[] {
   const letter = kind === "copy" ? "c" : "v";
   if (o.platform === "darwin") {
+    if (kind === "copy") return [{ file: "/usr/bin/osascript", args: ["-l", "JavaScript", "-e", MAC_COPY_SCRIPT] }];
     return [{ file: "/usr/bin/osascript", args: ["-e", `tell application "System Events" to keystroke "${letter}" using command down`] }];
   }
   if (o.platform === "win32") {
@@ -132,7 +171,7 @@ export interface KeystrokeDeps {
 export const SELECTION_MAX_CHARS = 8000;
 
 export interface GrabOptions {
-  /** Wait before the key press: the hotkey's own modifiers are still held. */
+  /** Wait before the key press starts; the press itself then waits for the modifiers to be up. */
   settleMs?: number;
   /** How long the app in front gets to put the copy on the clipboard. */
   timeoutMs?: number;
