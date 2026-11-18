@@ -11123,6 +11123,11 @@ function turnFailureLine(ev) {
      at once, not after a wait, so no "gave up after". */
   const billing = billingFailureLine(ev, id);
   if (billing) return esc(billing);
+  /* ATO-1544: our own daily spend ceiling (ATO-649) refused the cloud call
+     before it was sent. Said at once and in plain words: how much, what the
+     limit is, and where to change it. */
+  const capped = dailyLimitLine(ev);
+  if (capped) return esc(capped);
   /* W2 QA (16.11): offline mode refused the request before it left the Mac.
      The agent says so (offlineTurnSentence, src/llm/offline-network.ts);
      "OpenRouter is not answering" sent the person to their network. */
@@ -11168,6 +11173,22 @@ function offlineTurnLine(ev) {
   }
   return null;
 }
+/** ATO-1544: the turn ended on the daily cloud spending limit
+    (`llm.costTracking.dailyLimitUsd`, ATO-649). The agent marks it with
+    `failure.cause: "daily_limit_reached"` and says 'Daily cloud limit
+    reached: $1.20 of $1.00. Cloud calls are paused until tomorrow. Raise
+    llm.costTracking.dailyLimitUsd …' (spend-limit-error.ts). The window has
+    no field for the limit, so the line names the key in config.json. ''
+    for any other failure. */
+function dailyLimitLine(ev) {
+  const said = String((ev && ev.error) || '');
+  const f = (ev && ev.payload && ev.payload.failure) || {};
+  const m = /Daily cloud limit reached: (\$\d[\d,]*(?:\.\d+)?) of (\$\d[\d,]*(?:\.\d+)?)/.exec(said);
+  if (!m && f.cause !== 'daily_limit_reached') return '';
+  return "Today's cloud spending limit is reached" + (m ? ': ' + m[1] + ' spent of ' + m[2] : '') + '.'
+    + ' Cloud calls are paused until tomorrow.'
+    + ' Pick a local model to keep going, or raise llm.costTracking.dailyLimitUsd in the agent\'s config.json.';
+}
 /** ATO-1458: the turn failed on a key: the agent's verdict (`failure.cause` /
     `failure.action`, ATO-384), a saved key the agent would not send, or, from
     an older agent, its sentence. */
@@ -11189,6 +11210,8 @@ function turnFailureAct(ev) {
   if (turnKeyRejected(ev)) return {act:'fix-key', keyFor: selActiveProviderId() || ''};
   // ATO-1578: a cloud model answered empty twice; another model, in this chat, instead of Try again.
   if (turnEmptyTwice(ev)) return {act:'switch-model', noRetry: true};
+  // ATO-1544: the daily limit is not the provider failing, but another (local) model is the way on.
+  if (dailyLimitLine(ev)) return {act:'switch-provider'};
   return {act: providerFailure(ev) ? 'switch-provider' : null};
 }
 
