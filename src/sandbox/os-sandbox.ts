@@ -7,12 +7,14 @@
  * every right the user has. This wraps the spawn itself, so the kernel
  * enforces the limits whatever the command line says:
  *
- * - writes only under the working directory, the workspace roots, the
- *   temp folders and a short list of tool caches;
- * - no reads of credential folders (`~/.ssh`, `~/.aws`, `~/.gnupg`, ...)
- *   or of the agent's own state directory (its `.env`, config, tokens),
- *   unless the working directory itself is inside it;
- * - with `network: false`, no outbound connection except to loopback.
+ * - writes only under the session's working directory, the temp
+ *   folders and a short list of pure download caches; a model-supplied
+ *   `cwd` never widens this;
+ * - no reads of credential folders and files (`~/.ssh`, `~/.aws`,
+ *   `~/.netrc`, ...) or of the agent's own state directory (its `.env`,
+ *   config, tokens); a working folder inside one is opened by itself;
+ * - with `network: false`, no outbound IP or local-socket connection
+ *   except to loopback IP, no DNS lookups and no URL opening.
  *
  * Same split as Codex (`workspace-write`, network off by default inside
  * it) and Jan (shell always sandboxed, Seatbelt on macOS, bubblewrap on
@@ -23,8 +25,8 @@
  *   name cannot change the policy.
  * - Linux: `bwrap` (bubblewrap) when it is installed: the root is
  *   mounted read-only, writable roots are bound back read-write, secret
- *   folders are covered with an empty tmpfs, `--unshare-net` drops the
- *   network.
+ *   folders are covered with an empty tmpfs (files with `/dev/null`),
+ *   `--unshare-net` drops the network.
  * - Windows, or Linux without `bwrap`: no sandbox is available. The
  *   caller refuses the command (Jan's rule: no sandbox, no shell) and
  *   says how to turn the mode off.
@@ -33,7 +35,7 @@
  * network inside it is off unless `ATOMIC_AGENT_SANDBOX_NETWORK=on`.
  * A config key and a desktop/TUI switch come next (ATO-1078).
  */
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -64,21 +66,45 @@ export function readOsSandboxSettings(
   return { mode, network: net === "on" || net === "1" || net === "true" };
 }
 
+export interface OsSandboxReopen {
+  path: string;
+  /** Writable too (a working folder), or read-only (a server's own code). */
+  write: boolean;
+}
+
 export interface OsSandboxPolicy {
-  /** Folders the command may write under (cwd first). */
+  /** Folders the command may write under (working folders first). */
   writableRoots: readonly string[];
-  /** Folders the command may not read (credential stores, agent state). */
+  /**
+   * Folders and files the command may not read (credential stores,
+   * agent state). Each one is listed both as named and, when it is a
+   * link, as the resolved target: Seatbelt matches resolved paths.
+   */
   denyRead: readonly string[];
+  /**
+   * Folders inside a denied one that are opened again, and only those:
+   * the rest of the denied folder stays hidden. A workspace under the
+   * state directory, or an MCP server's own install folder there.
+   */
+  reopen: readonly OsSandboxReopen[];
   network: boolean;
 }
 
 export interface OsSandboxPolicyInput {
-  cwd: string;
-  /** The session's working directory and any other workspace roots. */
-  workspaceRoots?: readonly string[];
+  /**
+   * The trusted working folders: the session's working directory and
+   * any other workspace roots. Never a model-supplied `cwd`: that
+   * argument is what the sandbox distrusts, so it must not widen it.
+   */
+  workspaceRoots: readonly string[];
   /** The agent's state directory (`config.paths.stateDir`). */
   stateDir?: string;
   network: boolean;
+  /**
+   * Folders that must stay readable though they sit under a denied one
+   * (an MCP server installed under the state directory). Not writable.
+   */
+  keepReadable?: readonly string[];
   home?: string;
   tmp?: string;
 }
@@ -96,30 +122,46 @@ export const SECRET_HOME_PATHS: readonly string[] = [
   ".docker/config.json",
   ".config/gcloud",
   ".config/gh",
+  ".config/hub",
+  ".config/op",
   ".netrc",
   ".git-credentials",
+  ".pypirc",
   ".password-store",
+  ".zsh_history",
+  ".bash_history",
   "Library/Keychains",
 ];
 
 /**
- * Tool caches a build writes to outside the project (npm, pip, cargo,
- * Go, Gradle, Xcode). Without them `npm install` or `cargo build` fails
- * inside the sandbox. Relative to the home folder.
+ * Pure download caches a build writes to outside the project. Without
+ * them `npm install`, `pip install` or `cargo build` fails inside the
+ * sandbox. Only cache folders: never a tool's `bin`, `init.d` or
+ * settings file, because a file planted there would run later outside
+ * the sandbox with every right the user has. Relative to the home folder.
  */
 export const CACHE_HOME_PATHS: readonly string[] = [
-  ".npm",
-  ".cache",
-  ".yarn",
+  ".npm/_cacache",
+  ".npm/_logs",
+  ".npm/_npx",
+  ".cache/pip",
+  ".cache/yarn",
+  ".cache/go-build",
+  ".cache/node-gyp",
+  ".yarn/berry/cache",
   ".pnpm-store",
-  ".bun",
+  ".bun/install/cache",
   ".cargo/registry",
   ".cargo/git",
   ".rustup/tmp",
-  "go/pkg",
-  ".gradle",
-  ".m2",
-  "Library/Caches",
+  "go/pkg/mod",
+  ".gradle/caches",
+  ".m2/repository",
+  "Library/Caches/pip",
+  "Library/Caches/Yarn",
+  "Library/Caches/pnpm",
+  "Library/Caches/go-build",
+  "Library/Caches/node-gyp",
   "Library/Developer/Xcode/DerivedData",
 ];
 
@@ -132,6 +174,12 @@ function real(path: string): string {
   }
 }
 
+/** A path as named and, when it resolves elsewhere, as resolved. */
+function bothSpellings(path: string): string[] {
+  const resolved = real(path);
+  return resolved === path ? [path] : [path, resolved];
+}
+
 function isInside(child: string, parent: string): boolean {
   const rel = relative(parent, child);
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
@@ -141,31 +189,36 @@ function unique(paths: readonly string[]): string[] {
   return [...new Set(paths)];
 }
 
-/** The policy for one command run in `cwd`. */
+/** The policy for one command run from the trusted working folders. */
 export function buildOsSandboxPolicy(
   input: OsSandboxPolicyInput,
 ): OsSandboxPolicy {
   const home = input.home ?? homedir();
   const tmp = input.tmp ?? tmpdir();
-  const work = [input.cwd, ...(input.workspaceRoots ?? [])].map((p) =>
-    real(resolve(p)),
-  );
+  const work = unique(input.workspaceRoots.map((p) => real(resolve(p))));
   const writableRoots = unique([
     ...work,
     real(tmp),
     // `/tmp` is a link to `/private/tmp` on macOS; both spellings.
     ...(process.platform === "win32" ? [] : ["/tmp", real("/tmp")]),
-    ...CACHE_HOME_PATHS.map((p) => join(home, p)),
+    ...CACHE_HOME_PATHS.flatMap((p) => bothSpellings(join(home, p))),
   ]);
-  const secret = SECRET_HOME_PATHS.map((p) => join(home, p));
-  if (input.stateDir !== undefined) secret.push(real(resolve(input.stateDir)));
-  // A working folder inside a denied one (a workspace under the state
-  // directory) stays readable: the deny would break the command's own
-  // work. The rest of that folder stays hidden.
-  const denyRead = unique(
-    secret.filter((dir) => !work.some((w) => isInside(w, dir))),
-  );
-  return { writableRoots, denyRead, network: input.network };
+  const secret = SECRET_HOME_PATHS.flatMap((p) => bothSpellings(join(home, p)));
+  if (input.stateDir !== undefined) {
+    secret.push(...bothSpellings(resolve(input.stateDir)));
+  }
+  const denyRead = unique(secret);
+  // A working folder (or a server's own folder) inside a denied one is
+  // opened again by itself; the denied folder stays denied around it.
+  const keep = unique((input.keepReadable ?? []).map((p) => real(resolve(p))));
+  const insideDenied = (p: string) => denyRead.some((dir) => isInside(p, dir));
+  const reopen: OsSandboxReopen[] = [
+    ...work.filter(insideDenied).map((path) => ({ path, write: true })),
+    ...keep
+      .filter((p) => insideDenied(p) && !work.includes(p))
+      .map((path) => ({ path, write: false })),
+  ];
+  return { writableRoots, denyRead, reopen, network: input.network };
 }
 
 export type OsSandboxWrap =
@@ -176,10 +229,26 @@ export type OsSandboxWrap =
 export const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
 
 /**
+ * Mach services that reach outside the box without an IP socket: DNS
+ * lookups (a name can carry data out) and LaunchServices (`open URL`
+ * hands the URL to a browser that runs unsandboxed). Denied with the
+ * network.
+ */
+const NETWORK_MACH_SERVICES = [
+  "com.apple.mDNSResponder",
+  "com.apple.dnssd.service",
+  "com.apple.coreservices.launchservicesd",
+  "com.apple.lsd.mapdb",
+  "com.apple.lsd.modifydb",
+];
+
+/**
  * The Seatbelt profile. Later rules win, so: allow everything, then
  * deny all writes, re-allow the writable roots, deny the secret reads,
- * and (without network) deny outbound IP traffic except loopback.
- * Paths arrive as `(param "...")` values from `-D`, never as text here.
+ * reopen the folders inside them that must work, and (without network)
+ * deny outbound IP and local-socket traffic, DNS and URL opening, with
+ * loopback IP kept. Paths arrive as `(param "...")` values from `-D`,
+ * never as text here.
  */
 export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
   const lines = ["(version 1)", "(allow default)", "(deny file-write*)"];
@@ -193,9 +262,15 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
     const denied = policy.denyRead.map((_, i) => `(subpath (param "R${i}"))`);
     lines.push(`(deny file-read* file-write* ${denied.join(" ")})`);
   }
+  policy.reopen.forEach((entry, i) => {
+    const ops = entry.write ? "file-read* file-write*" : "file-read*";
+    lines.push(`(allow ${ops} (subpath (param "O${i}")))`);
+  });
   if (!policy.network) {
-    lines.push('(deny network-outbound (remote ip "*:*"))');
+    lines.push('(deny network-outbound (remote ip "*:*") (remote unix-socket))');
     lines.push('(allow network-outbound (remote ip "localhost:*"))');
+    const services = NETWORK_MACH_SERVICES.map((n) => `(global-name "${n}")`);
+    lines.push(`(deny mach-lookup ${services.join(" ")})`);
   }
   return lines.join("\n");
 }
@@ -208,6 +283,7 @@ function seatbeltArgs(
   const params: string[] = [];
   policy.writableRoots.forEach((dir, i) => params.push("-D", `W${i}=${dir}`));
   policy.denyRead.forEach((dir, i) => params.push("-D", `R${i}=${dir}`));
+  policy.reopen.forEach((entry, i) => params.push("-D", `O${i}=${entry.path}`));
   return [...params, "-p", buildSeatbeltProfile(policy), command, ...args];
 }
 
@@ -221,6 +297,20 @@ export function findBwrap(env: NodeJS.ProcessEnv = process.env): string | null {
   return null;
 }
 
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Mount order matters (a later mount covers an earlier one): read-only
+ * root, writable roots, then the denied paths covered (an empty tmpfs
+ * on a folder, `/dev/null` on a file, since bwrap cannot mount a tmpfs
+ * on a file), then the reopened folders bound back on top.
+ */
 function bwrapArgs(
   policy: OsSandboxPolicy,
   command: string,
@@ -231,8 +321,14 @@ function bwrapArgs(
     // A cache folder that does not exist yet cannot be bound; skipped.
     if (existsSync(dir)) out.push("--bind", dir, dir);
   }
-  for (const dir of policy.denyRead) {
-    if (existsSync(dir)) out.push("--tmpfs", dir);
+  for (const path of policy.denyRead) {
+    if (!existsSync(path)) continue;
+    if (isFile(path)) out.push("--ro-bind", "/dev/null", path);
+    else out.push("--tmpfs", path);
+  }
+  for (const entry of policy.reopen) {
+    if (!existsSync(entry.path)) continue;
+    out.push(entry.write ? "--bind" : "--ro-bind", entry.path, entry.path);
   }
   if (!policy.network) out.push("--unshare-net");
   out.push("--die-with-parent", "--new-session", "--", command, ...args);
