@@ -285,6 +285,13 @@ async function main(): Promise<number> {
     join(stageDir, "assets", "ai-models"),
   );
 
+  // Python shim that serves a trusted Hermes plugin as a stdio MCP server
+  // (`import hermes --trust-plugin`); resolved next to the binary.
+  await copyOptional(
+    join(ROOT, "assets", "hermes-plugin-bridge"),
+    join(stageDir, "assets", "hermes-plugin-bridge"),
+  );
+
   // Bundled ripgrep for os.fs.grep. ripgrep-resolver picks it up via
   // `<dirname(process.execPath)>/vendor/rg[.exe]` at runtime. The binary
   // is fetched by `scripts/fetch-assets.ts` into assets/ripgrep/<slug>/.
