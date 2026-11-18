@@ -50,6 +50,7 @@ import { AUDIO_TRANSCRIBE_TOOL, registerAudioListenTools, registerAudioTools } f
 import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
 import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } from "../../tools/fusion/index.js";
+import { MintedSessionMetadata, buildSubagentRunTool } from "../../tools/subagent/index.js";
 import { confineReads } from "../../tools/read-scope/index.js";
 import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpResourceListTool, buildMcpResourceReadTool, buildMcpToolDescriptors, createMcpSamplingHandler, mergeMcpDescriptors, applyMcpToolNameRule, buildMcpToolNameRule } from "../../mcp/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
@@ -698,6 +699,9 @@ export async function connectRuntimeMcpCatalog(input: {
       // keys off it) only exists while the resolver says fusion — an
       // orchestrator that cannot delegate must not be told it can.
       fusion: { enabled: resolveCurrentRunMode().effective === "fusion" },
+      // The other side of the same gate (ATO-1670): subagent.run is
+      // offered outside Fusion, where fusion.delegate is not.
+      subagent: { enabled: resolveCurrentRunMode().effective !== "fusion" },
       image: { available: openRouterImageKey(getConfig()) !== undefined },
       // Same key, same reason: every clip is made on OpenRouter.
       video: { available: openRouterImageKey(getConfig()) !== undefined },
@@ -871,6 +875,11 @@ export function registerRuntimeFusionAndReadScope(input: {
     prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode, providerRegistry,
     llama, approvals, dangerous, slotManager, workingDir, logger, turnBudget,
     orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints, sessionUsage, outcomeLog, costAccumulator } = input;
+  // Every worker session minted here, by id, so subagent.run reads the
+  // caller's own depth stamp (ATO-1670). Worker sessions are never stored.
+  const mintedSessions = new MintedSessionMetadata();
+  const createTrackedEphemeralSession: FusionDelegateDeps["createEphemeralSession"] = (meta, dir, inherit) =>
+    mintedSessions.remember(createEphemeralSession(meta, dir, inherit));
 
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
@@ -887,7 +896,7 @@ export function registerRuntimeFusionAndReadScope(input: {
     buildFusionDelegateTool({
       runTurn: (session, userMessage, turnOptions) =>
         runTurn(session, userMessage, turnOptions),
-      createEphemeralSession,
+      createEphemeralSession: createTrackedEphemeralSession,
       resolveOriginalRequest: resolveOriginalRequest,
       declaredInputs,
       // The worker leg's pricing, when the catalogue or a hand-priced
@@ -1043,6 +1052,44 @@ export function registerRuntimeFusionAndReadScope(input: {
           signal: ctx.signal,
           config,
         }),
+      logger,
+    }),
+  );
+  // Subagents outside Fusion (ATO-1670), on the shared worker runner.
+  // Registered unconditionally like fusion.delegate; the descriptor gate
+  // above hides it in Fusion, and the tool refuses there too.
+  toolRegistry.register(
+    buildSubagentRunTool({
+      runTurn: (session, userMessage, turnOptions) =>
+        runTurn(session, userMessage, turnOptions),
+      createEphemeralSession: createTrackedEphemeralSession,
+      readSessionMetadata: (sessionId) => mintedSessions.read(sessionId),
+      resolveOriginalRequest,
+      approvals,
+      emitEvent: emitAgentLoopEventFor,
+      workingDir,
+      resolveRunMode: resolveCurrentRunMode,
+      // The calling session's model: the step's pinned provider, else the
+      // active one with its configured chat model.
+      resolveSessionLeg: (pinnedProviderId) => {
+        const resolved = resolveLlmConfig(getConfig());
+        const providerId = pinnedProviderId ?? resolved.activeTextProvider;
+        const entry = resolved.providers.find((p) => p.id === providerId);
+        return { providerId, model: entry?.defaultChatModel ?? entry?.model ?? providerId };
+      },
+      workerSupportsSlotAffinity: (providerId) =>
+        providerRegistry.getProvider(providerId)?.capabilities
+          .supportsSlotAffinity ?? false,
+      // The same profile loader fusion.delegate is given.
+      resolveAgentProfiles: (dir) =>
+        loadAgentProfiles({
+          workingDir: dir,
+          stateDir: config.paths.stateDir,
+          configFile: config.paths.userConfigFile,
+          startupTrust: config.skills.projectTrust,
+          pluginProfiles: () => pluginAgentProfiles(config.paths.stateDir),
+        }),
+      outputCharCap: config.agent.batchToolResultCharCap,
       logger,
     }),
   );

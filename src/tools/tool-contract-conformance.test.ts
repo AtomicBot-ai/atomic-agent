@@ -52,6 +52,7 @@ import { registerImageTools } from "./image/index.js";
 import { registerVideoTools } from "./video/index.js";
 import { registerAudioTools } from "./audio/index.js";
 import { buildFusionDelegateTool } from "./fusion/fusion-delegate.js";
+import { buildSubagentRunTool } from "./subagent/index.js";
 import { TOOL_ROLES, descriptorsForRole, partitionByRole, roleAdmits } from "./tool-roles.js";
 import { confineReads } from "./read-scope/confine-reads.js";
 import { READ_TOOL_TARGETS } from "./read-scope/read-scope-targets.js";
@@ -113,7 +114,7 @@ const TERMINALS = {
 };
 const CONDITIONAL = {
   registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, sessions, vision, audio and screen builders follow their enabled gates" },
-  availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub, fusion, image and video definitions stay registered while unavailable descriptors are hidden" },
+  availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub, fusion, subagent, image and video definitions stay registered while unavailable descriptors are hidden" },
   mcp: { owner: "mcp/McpManager + runtime/bootstrap", reason: "Meta tools are registered once; server-qualified tools and external schemas belong to the live catalog" },
   wrapper: { owner: "tools/read-scope/confine-reads", reason: "The protection phase replaces selected definitions without changing their catalog metadata" },
 };
@@ -316,6 +317,8 @@ beforeAll(() => {
   registerVideoTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registerAudioTools(registry, { ...dangerous, dataDir: () => directory });
   registry.register(buildFusionDelegateTool({ ...dangerous, slotManager: { poolSize: () => 1 }, resolveRunMode: unexpected, workerSupportsSlotAffinity: () => false, warmWorkerBackend: async () => unexpected(), outputCharCap: 1000, logger: new StructuredLogger({ level: "error", sinks: [] }), runTurn: async () => unexpected(), createEphemeralSession: unexpected, emitEvent: unexpected, workingDir: directory }));
+  // Runtime registers it beside fusion.delegate (runtime-tool-catalog, ATO-1670).
+  registry.register(buildSubagentRunTool({ approvals: dangerous.approvals, resolveRunMode: unexpected, resolveSessionLeg: unexpected, workerSupportsSlotAffinity: () => false, outputCharCap: 1000, runTurn: async () => unexpected(), createEphemeralSession: unexpected, emitEvent: unexpected, workingDir: directory }));
   manager = new McpManager([], { toolRegistry: registry });
   for (const definition of [buildMcpResourceListTool(manager), buildMcpResourceReadTool(manager), buildMcpPromptListTool(manager), buildMcpPromptGetTool(manager)]) registry.register(definition);
 });
@@ -349,7 +352,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(118);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(119);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {
@@ -447,6 +450,7 @@ describe("whole built-in tool catalog conformance", () => {
       { group: GATED_TOOL_NAMES.mcp, next: { ...gates, mcp: { enabled: false } } },
       { group: GATED_TOOL_NAMES.github, next: { ...gates, github: { connected: false } } },
       { group: GATED_TOOL_NAMES.fusion, next: { ...gates, fusion: { enabled: false } } },
+      { group: GATED_TOOL_NAMES.subagent, next: { ...gates, subagent: { enabled: false } } },
       { group: GATED_TOOL_NAMES.image, next: { ...gates, image: { available: false } } },
       { group: GATED_TOOL_NAMES.video, next: { ...gates, video: { available: false } } },
       { group: GATED_TOOL_NAMES.screen, next: { ...gates, screen: { enabled: false } } },
