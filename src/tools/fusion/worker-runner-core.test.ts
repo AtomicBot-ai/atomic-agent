@@ -8,6 +8,8 @@ import {
   type FusionWorkerMeta,
 } from "../../session/fusion-worker-session.js";
 import type { DelegateTask } from "./delegate-args.js";
+import type { SessionApprovalPolicy } from "../../approval/approval-gate.js";
+import { FUSION_WORKER_APPROVAL_REFUSED, workerRefusalFor } from "./worker-tool-policy.js";
 import {
   DEFAULT_WORKER_TURN_ORIGIN,
   runWorkerTasksCore,
@@ -151,5 +153,27 @@ describe("runWorkerTasksCore (ATO-1669)", () => {
       taskId: "t0",
       depth: 2,
     });
+  });
+
+  it("refuses a worker's approval prompt with Fusion's texts when no refusal is given", async () => {
+    const { deps } = coreHarness("done");
+    const set: SessionApprovalPolicy[] = [];
+    deps.approvals.setSessionPolicy = (_id, policy) => set.push(policy);
+    await runWorkerTasksCore(deps, coreOptions());
+    expect(set[0]!.reason).toBe(FUSION_WORKER_APPROVAL_REFUSED);
+    expect(set[0]!.reasonFor).toBe(workerRefusalFor);
+  });
+
+  it("refuses a worker's approval prompt with the caller's own texts when it names them (ATO-1670)", async () => {
+    const { deps } = coreHarness("done");
+    const set: SessionApprovalPolicy[] = [];
+    deps.approvals.setSessionPolicy = (_id, policy) => set.push(policy);
+    const reasonFor = () => "operator only";
+    await runWorkerTasksCore(
+      deps,
+      coreOptions({ approvalRefusal: { general: "ask the caller", reasonFor } }),
+    );
+    expect(set[0]!.reason).toBe("ask the caller");
+    expect(set[0]!.reasonFor).toBe(reasonFor);
   });
 });

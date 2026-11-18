@@ -783,8 +783,8 @@ async function runOneTask(
     // the orchestrator to re-send it with the path and loop.
     deps.approvals.setSessionPolicy(id, {
       onPrompt: "refuse",
-      reason: FUSION_WORKER_APPROVAL_REFUSED,
-      reasonFor: workerRefusalFor,
+      reason: options.approvalRefusal?.general ?? FUSION_WORKER_APPROVAL_REFUSED,
+      reasonFor: options.approvalRefusal?.reasonFor ?? workerRefusalFor,
       // A throwaway worktree is still the parent's project: its saved
       // rules hold here too.
       ...(isolated !== undefined ? { ruleWorkdir: deps.workingDir } : {}),
