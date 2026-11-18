@@ -1,6 +1,6 @@
 import type { CompletionRequest, CompletionResult } from "../../llm/provider/completion-types.js";
 import { buildCloudSubcallRequest } from "../../llm/provider/cloud-subcall.js";
-import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
+import { hostOfUrl, isLoopbackHost } from "../../llm/offline-network.js";
 import {
   assertImportFactsEngineAllowed,
   type ImportFactsComplete,
@@ -75,8 +75,19 @@ const EMIT_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
 };
 
+/**
+ * "Local" here means this computer only, because the local path runs with
+ * no consent. A llama-server entry with no url is the agent's own managed
+ * server (127.0.0.1). Any other address, a LAN box, a `.local` or
+ * `.internal` host or a public llama.cpp, is treated as cloud and needs the
+ * per-run consent.
+ */
 export function isLocalProviderEntry(entry: ImportFactsProviderEntry): boolean {
-  return entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url);
+  // A llama-server entry's baseUrl is its embeddings daemon; the text model lives at url.
+  const target = entry.kind === "llama-server" ? (entry.url ?? entry.baseUrl) : (entry.baseUrl ?? entry.url);
+  if (!target) return entry.kind === "llama-server";
+  const host = hostOfUrl(target);
+  return host !== null && isLoopbackHost(host);
 }
 
 export function bindImportFactsModel(input: BindImportFactsModelInput): BoundImportFactsModel {
