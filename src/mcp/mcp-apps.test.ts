@@ -1,14 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   extractMcpAppUi,
   fetchMcpAppUi,
   isMcpAppMimeType,
   isModelVisibleTool,
+  MCP_APP_FETCH_TIMEOUT_MS,
   MCP_APP_MIME_TYPE,
   MCP_APPS_EXTENSION_ID,
   mcpAppsClientExtension,
   parseToolUiMeta,
+  withoutMcpAppPage,
 } from "./mcp-apps.js";
 import { clientCapabilities, McpClient } from "./mcp-client.js";
 import { createMcpToolDefinition } from "./mcp-tool-adapter.js";
@@ -145,6 +147,42 @@ describe("fetchMcpAppUi", () => {
     await expect(fetchMcpAppUi(client, "ui://weather/view.html", ac.signal)).resolves.toBeUndefined();
     expect(client.readResource).not.toHaveBeenCalled();
   });
+
+  it("gives up after its own short deadline and aborts the read", async () => {
+    let seen: AbortSignal | undefined;
+    const client = {
+      readResource: vi.fn((_uri: string, signal: AbortSignal) => {
+        seen = signal;
+        return new Promise<Record<string, unknown>>(() => {});
+      }),
+    };
+    const started = Date.now();
+    await expect(
+      fetchMcpAppUi(client, "ui://weather/view.html", new AbortController().signal, undefined, 20),
+    ).resolves.toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(seen?.aborted).toBe(true);
+  });
+
+  it("stops waiting when the turn is aborted mid-read", async () => {
+    const client = { readResource: vi.fn(() => new Promise<Record<string, unknown>>(() => {})) };
+    const ac = new AbortController();
+    const pending = fetchMcpAppUi(client, "ui://weather/view.html", ac.signal);
+    ac.abort();
+    await expect(pending).resolves.toBeUndefined();
+  });
+
+  it("keeps its deadline well under the 60 s request deadline", () => {
+    expect(MCP_APP_FETCH_TIMEOUT_MS).toBeLessThanOrEqual(5_000);
+  });
+});
+
+describe("withoutMcpAppPage", () => {
+  it("drops only the page and leaves the input object alone", () => {
+    const details = { structuredContent: { temp: 21 }, mcpApp: { html: "<p>x</p>" } };
+    expect(withoutMcpAppPage(details)).toEqual({ structuredContent: { temp: 21 } });
+    expect(details.mcpApp.html).toBe("<p>x</p>");
+  });
 });
 
 describe("clientCapabilities and MCP Apps", () => {
@@ -202,13 +240,17 @@ describe("createMcpToolDefinition with an MCP App", () => {
   });
   const callResult = { content: [{ type: "text", text: "Sunny, 21C" }], structuredContent: { temp: 21 } };
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("attaches the page to details, never to the summary the model reads", async () => {
     const readResource = vi.fn(async () => readResult());
-    const client = { callTool: async () => callResult, readResource } as unknown as McpClient;
+    const client = { appsUi: true, callTool: async () => callResult, readResource } as unknown as McpClient;
     const res = await createMcpToolDefinition(meta(), client).run({ city: "Tallinn" }, ctx);
 
     expect(res.status).toBe("ok");
-    expect(readResource).toHaveBeenCalledWith("ui://weather/view.html", ctx.signal);
+    expect(readResource).toHaveBeenCalledWith("ui://weather/view.html", expect.any(AbortSignal));
     expect(res.details.mcpApp).toEqual({
       resourceUri: "ui://weather/view.html",
       mimeType: MCP_APP_MIME_TYPE,
@@ -222,6 +264,7 @@ describe("createMcpToolDefinition with an MCP App", () => {
 
   it("returns the plain result when the page cannot be read", async () => {
     const client = {
+      appsUi: true,
       callTool: async () => callResult,
       readResource: async () => readResult({ mimeType: "text/html" }),
     } as unknown as McpClient;
@@ -232,14 +275,36 @@ describe("createMcpToolDefinition with an MCP App", () => {
 
   it("does not read any resource for a tool without a page, or after a failed call", async () => {
     const readResource = vi.fn(async () => readResult());
-    const ok = { callTool: async () => callResult, readResource } as unknown as McpClient;
+    const ok = { appsUi: true, callTool: async () => callResult, readResource } as unknown as McpClient;
     await createMcpToolDefinition(meta({ ui: undefined }), ok).run({}, ctx);
     const failing = {
+      appsUi: true,
       callTool: async () => { throw new Error("down"); },
       readResource,
     } as unknown as McpClient;
     const res = await createMcpToolDefinition(meta(), failing).run({}, ctx);
     expect(res.status).toBe("error");
     expect(readResource).not.toHaveBeenCalled();
+  });
+
+  it("does not read the page when the host does not render MCP Apps", async () => {
+    const readResource = vi.fn(async () => readResult());
+    const client = { appsUi: false, callTool: async () => callResult, readResource } as unknown as McpClient;
+    const res = await createMcpToolDefinition(meta(), client).run({}, ctx);
+    expect(res.status).toBe("ok");
+    expect(readResource).not.toHaveBeenCalled();
+    expect(res.details).not.toHaveProperty("mcpApp");
+  });
+
+  it("returns the tool result when the page read never answers", async () => {
+    vi.useFakeTimers();
+    const readResource = vi.fn(() => new Promise<Record<string, unknown>>(() => {}));
+    const client = { appsUi: true, callTool: async () => callResult, readResource } as unknown as McpClient;
+    const pending = createMcpToolDefinition(meta(), client).run({}, ctx);
+    await vi.advanceTimersByTimeAsync(MCP_APP_FETCH_TIMEOUT_MS + 1);
+    const res = await pending;
+    expect(readResource).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe("ok");
+    expect(res.details).not.toHaveProperty("mcpApp");
   });
 });

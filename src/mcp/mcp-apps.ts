@@ -208,22 +208,64 @@ export function extractMcpAppUi(
 }
 
 /**
+ * How long the host waits for a tool's page after the call itself has
+ * answered. Well under the 60 s request deadline: the page is extra, and
+ * the tool result must not wait on it.
+ */
+export const MCP_APP_FETCH_TIMEOUT_MS = 5_000;
+
+/**
  * Read a tool's page after its call. Never throws: a failed read, a
- * wrong mimeType, an oversized page or an aborted turn all mean the
- * result goes out without UI, exactly as for a tool that has none.
+ * wrong mimeType, an oversized page, an aborted turn or a read slower
+ * than `timeoutMs` all mean the result goes out without UI, exactly as
+ * for a tool that has none. On timeout the read itself is aborted too.
  */
 export async function fetchMcpAppUi(
   client: { readResource(uri: string, signal: AbortSignal): Promise<Record<string, unknown>> },
   resourceUri: string,
   signal: AbortSignal,
   maxBytes = MCP_APP_MAX_HTML_BYTES,
+  timeoutMs = MCP_APP_FETCH_TIMEOUT_MS,
 ): Promise<McpAppUi | undefined> {
   if (signal.aborted) return undefined;
+  const ac = new AbortController();
+  const onAbort = (): void => ac.abort();
+  signal.addEventListener("abort", onAbort, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // Resolves (never rejects) when the turn aborts or the deadline passes,
+  // so a read that ignores its signal still cannot hold the result.
+  const giveUp = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => {
+      ac.abort();
+      resolve(undefined);
+    }, timeoutMs);
+    ac.signal.addEventListener("abort", () => resolve(undefined), { once: true });
+  });
   try {
-    return extractMcpAppUi(resourceUri, await client.readResource(resourceUri, signal), maxBytes);
+    const read = client
+      .readResource(resourceUri, ac.signal)
+      .then((res) => extractMcpAppUi(resourceUri, res, maxBytes))
+      .catch(() => undefined);
+    return await Promise.race([read, giveUp]);
   } catch {
     return undefined;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
   }
+}
+
+/**
+ * `details` without `mcpApp` (an MCP App's page, up to 4 MB plus the
+ * call's input and result). The page is for the live `tool_result`
+ * frame only: the session file, the trace file, the TUI's tool cards and
+ * the loop detector's hashes all read `details` through this.
+ */
+export function withoutMcpAppPage(details: Record<string, unknown>): Record<string, unknown> {
+  if (!("mcpApp" in details)) return details;
+  const rest = { ...details };
+  delete rest.mcpApp;
+  return rest;
 }
 
 /** `capabilities.extensions` entry a host that renders MCP Apps advertises. */

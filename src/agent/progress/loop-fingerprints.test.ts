@@ -37,4 +37,17 @@ describe("deterministic progress owner compatibility", () => {
     expect(fingerprints.hashToolCall("fixture", { a: 1, b: 2 })).toBe(fingerprints.hashToolCall("fixture", { b: 2, a: 1 }));
     expect(fingerprints.hashBatchCompositeArgs([{ tool: "a", args: {} }, { tool: "b", args: {} }])).not.toBe(fingerprints.hashBatchCompositeArgs([{ tool: "b", args: {} }, { tool: "a", args: {} }]));
   });
+
+  it("hashes an MCP tool's result without its app page (ATO-1135)", () => {
+    const withPage = (html: string) => compressToolResult({
+      tool: "mcp.weather.get_forecast",
+      status: "ok",
+      output: "Sunny, 21C",
+      details: { structuredContent: { temp: 21 }, mcpApp: { resourceUri: "ui://weather/view.html", html } },
+    });
+    const plain = compressToolResult({ tool: "mcp.weather.get_forecast", status: "ok", output: "Sunny, 21C", details: { structuredContent: { temp: 21 } } });
+    const expected = fingerprints.hashToolOutcome("mcp.weather.get_forecast", {}, plain);
+    expect(fingerprints.hashToolOutcome("mcp.weather.get_forecast", {}, withPage("<p>a</p>"))).toBe(expected);
+    expect(fingerprints.hashToolOutcome("mcp.weather.get_forecast", {}, withPage("<p>b</p>"))).toBe(expected);
+  });
 });

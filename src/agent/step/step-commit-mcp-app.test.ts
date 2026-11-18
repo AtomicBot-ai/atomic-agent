@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { withoutMcpAppPage } from "./step-commit.js";
+import { withoutMcpAppPage } from "../../mcp/mcp-apps.js";
 
 describe("session copy of an MCP App result (ATO-1135)", () => {
   it("leaves the page out and keeps every other detail", () => {

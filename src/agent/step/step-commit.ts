@@ -9,6 +9,7 @@ import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import { compressToolResult, fullToolResult } from "../../compressor/result-compressor.js";
 import { knownSecretsFromEnv, maskSecretsDeep } from "../../error-reporting/secret-detector.js";
+import { withoutMcpAppPage } from "../../mcp/mcp-apps.js";
 import { evidenceMarks } from "./step-evidence.js";
 import type { SessionState } from "../../session/session-state.js";
 import { rememberConversationPackStart, recordLoadedTool, recordLatestResult, recordTurn, recordLoadedSkill, recordWorldSnapshot, recordPlan } from "../../session/session-state.js";
@@ -565,12 +566,4 @@ export function applyStateEffects(
     }
   }
   return next;
-}
-
-/** `details` without `mcpApp` (an MCP App's page), for the session file. */
-export function withoutMcpAppPage(details: Record<string, unknown>): Record<string, unknown> {
-  if (!("mcpApp" in details)) return details;
-  const rest = { ...details };
-  delete rest.mcpApp;
-  return rest;
 }

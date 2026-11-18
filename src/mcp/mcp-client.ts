@@ -105,8 +105,9 @@ export interface McpClientDeps {
    * MCP Apps (ATO-1135): set only by a host that renders a server's
    * `ui://` page (`details.mcpApp`). The client then advertises the
    * `io.modelcontextprotocol/ui` extension in `initialize`, which servers
-   * check before offering UI tools. Absent: not advertised; a tool that
-   * names a page anyway still gets it fetched and attached.
+   * check before offering UI tools, and the tool adapter reads a tool's
+   * page after its call. Absent: not advertised and no page is read, so
+   * a host that renders nothing pays no extra `resources/read`.
    */
   appsUi?: boolean;
 }
@@ -178,6 +179,11 @@ export class McpClient {
 
   get isConnected(): boolean {
     return this.client !== null;
+  }
+
+  /** Whether the host renders MCP Apps pages (`McpClientDeps.appsUi`). */
+  get appsUi(): boolean {
+    return this.deps.appsUi === true;
   }
 
   /**

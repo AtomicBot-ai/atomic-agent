@@ -220,9 +220,12 @@ export function createMcpToolDefinition(
         const details = extractStructuredDetails(res);
         // MCP Apps (ATO-1135): the server's page for this call, for a
         // client to render. It goes into `details` only; the model reads
-        // the summary, which `output` alone feeds.
+        // the summary, which `output` alone feeds. Read only when the
+        // host renders pages (`appsUi`), and under its own short deadline
+        // (`MCP_APP_FETCH_TIMEOUT_MS`), so a slow `ui://` read never holds
+        // the tool result back.
         const resourceUri = meta.ui?.resourceUri;
-        if (resourceUri !== undefined) {
+        if (resourceUri !== undefined && client.appsUi === true) {
           const app = await fetchMcpAppUi(client, resourceUri, ctx.signal);
           if (app !== undefined) details.mcpApp = withToolCall(app, args, res);
         }
