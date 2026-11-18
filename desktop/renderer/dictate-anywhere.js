@@ -34,7 +34,7 @@
 
   if (!BR || !BR.dictateOpened) return;
   const opened = await BR.dictateOpened().catch(() => null);
-  if (opened && opened.label) hintEl.textContent = opened.label + ' types it · esc';
+  if (opened && (opened.hint || opened.label)) hintEl.textContent = opened.hint || (opened.label + ' types it · esc');
   if (BR.onDictate) BR.onDictate(show);
   document.getElementById('da-done').addEventListener('click', () => { if (BR.dictateStop) BR.dictateStop(); });
   document.getElementById('da-cancel').addEventListener('click', () => { stopMic(); if (BR.dictateCancel) BR.dictateCancel(); });

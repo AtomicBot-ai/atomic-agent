@@ -1,5 +1,5 @@
-// ATO-1064: dictation into any app. The pure half (main/dictate-anywhere.ts,
-// against the built output) and the Settings row
+// ATO-1064: dictation into any app. The pure half (main/dictate-anywhere.ts
+// and main/dictate-hold.ts, against the built output) and the Settings row
 // (renderer/dictate-anywhere-settings.js).
 // Run: npm run build && npm run test:unit
 import { after, test } from 'node:test';
@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const D = require('../out/main/dictate-anywhere.js');
+const H = require('../out/main/dictate-hold.js');
 const Q = require('../out/main/quick-entry.js');
 const {dictateAnywhereRowHTML} = require('../renderer/dictate-anywhere-settings.js');
 
@@ -19,24 +20,154 @@ after(() => { for (const d of dirs) rmSync(d, {recursive: true, force: true}); }
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), 'da-')); dirs.push(d); return d; };
 const h = {esc: (s) => String(s).replace(/</g, '&lt;'), setSwitchHTML: (o) => '<button data-act="' + o.act + '" data-on="' + !!o.on + '"' + (o.disabled ? ' disabled' : '') + '></button>'};
 
-test('off by default, on a combo of its own that passes the check', () => {
-  assert.deepEqual(D.DICTATE_DEFAULT_PREF, {enabled: false, accelerator: 'Control+Alt+D'});
-  assert.deepEqual(Q.normalizeAccelerator(D.DICTATE_DEFAULT_ACCELERATOR), {ok: true, accelerator: 'Control+Alt+D'});
-  assert.notEqual(D.DICTATE_DEFAULT_ACCELERATOR, Q.QUICK_ENTRY_DEFAULT_ACCELERATOR);
+test('off by default; hold Fn on a Mac, hold Ctrl+Win on Windows, a combo on Linux', () => {
+  assert.deepEqual(D.dictateDefaultPref('darwin'), {enabled: false, mode: 'hold', accelerator: 'Control+Alt+D'});
+  assert.deepEqual(D.dictateDefaultPref('win32'), {enabled: false, mode: 'hold', accelerator: 'Control+Alt+D'});
+  assert.deepEqual(D.dictateDefaultPref('linux'), {enabled: false, mode: 'toggle', accelerator: 'Control+Alt+D'});
+  assert.equal(H.holdKeyFor('darwin'), 'fn');
+  assert.equal(H.holdKeyFor('win32'), 'ctrl+win');
+  assert.equal(H.holdKeyFor('linux'), null);
+  assert.equal(H.holdKeyLabel('darwin'), 'Fn');
+  assert.equal(H.holdKeyLabel('win32'), 'Ctrl+Win');
+  assert.deepEqual(Q.normalizeAccelerator(D.DICTATE_TOGGLE_ACCELERATOR), {ok: true, accelerator: 'Control+Alt+D'});
+  assert.notEqual(D.DICTATE_TOGGLE_ACCELERATOR, Q.QUICK_ENTRY_DEFAULT_ACCELERATOR);
 });
 
-test('the saved pref: missing, broken and good files', () => {
-  assert.deepEqual(D.parseDictatePref(null), D.DICTATE_DEFAULT_PREF);
-  assert.deepEqual(D.parseDictatePref('{'), D.DICTATE_DEFAULT_PREF);
-  assert.deepEqual(D.parseDictatePref('{"enabled":true,"accelerator":"Space"}'), {enabled: true, accelerator: 'Control+Alt+D'});
-  assert.deepEqual(D.parseDictatePref('{"enabled":true,"accelerator":"alt+cmd+j"}'), {enabled: true, accelerator: 'Command+Alt+J'});
+test('the saved pref: missing, broken and good files, the mode per platform', () => {
+  const mac = D.dictateDefaultPref('darwin');
+  assert.deepEqual(D.parseDictatePref(null, 'darwin'), mac);
+  assert.deepEqual(D.parseDictatePref('{', 'darwin'), mac);
+  assert.deepEqual(D.parseDictatePref('{"enabled":true,"accelerator":"Space"}', 'darwin'), {enabled: true, mode: 'hold', accelerator: 'Control+Alt+D'});
+  assert.deepEqual(D.parseDictatePref('{"enabled":true,"mode":"toggle","accelerator":"alt+cmd+j"}', 'darwin'), {enabled: true, mode: 'toggle', accelerator: 'Command+Alt+J'});
+  assert.deepEqual(D.parseDictatePref('{"enabled":true,"mode":"hold"}', 'linux'), {enabled: true, mode: 'toggle', accelerator: 'Control+Alt+D'}, 'no hold key on Linux');
+  assert.equal(D.parseDictatePref('{"mode":"sideways"}', 'win32').mode, 'hold');
   const d = tmp();
-  assert.deepEqual(D.readDictatePref(d), D.DICTATE_DEFAULT_PREF);
-  assert.equal(D.writeDictatePref(d, {enabled: true, accelerator: 'Control+Alt+K'}), true);
-  assert.deepEqual(D.readDictatePref(d), {enabled: true, accelerator: 'Control+Alt+K'});
+  assert.deepEqual(D.readDictatePref(d, 'darwin'), mac);
+  assert.equal(D.writeDictatePref(d, {enabled: true, mode: 'toggle', accelerator: 'Control+Alt+K'}), true);
+  assert.deepEqual(D.readDictatePref(d, 'darwin'), {enabled: true, mode: 'toggle', accelerator: 'Control+Alt+K'});
+  assert.deepEqual(JSON.parse(readFileSync(D.dictatePrefPath(d), 'utf8')), {enabled: true, mode: 'toggle', accelerator: 'Control+Alt+K'});
   writeFileSync(D.dictatePrefPath(d), 'null');
-  assert.deepEqual(D.readDictatePref(d), D.DICTATE_DEFAULT_PREF);
+  assert.deepEqual(D.readDictatePref(d, 'darwin'), mac);
   assert.match(D.dictatePrefPath(d), /dictate-anywhere\.json$/);
+});
+
+test('a Settings write: a recorded combo means toggle, hold comes back, hold is refused on Linux', () => {
+  const mac = D.dictateDefaultPref('darwin');
+  assert.deepEqual(D.mergeDictatePref(mac, {enabled: true}, 'darwin'), {ok: true, pref: {enabled: true, mode: 'hold', accelerator: 'Control+Alt+D'}});
+  const rec = D.mergeDictatePref(mac, {enabled: true, accelerator: 'cmd+alt+j'}, 'darwin');
+  assert.deepEqual(rec, {ok: true, pref: {enabled: true, mode: 'toggle', accelerator: 'Command+Alt+J'}});
+  assert.deepEqual(D.mergeDictatePref(rec.pref, {mode: 'hold'}, 'darwin'), {ok: true, pref: {enabled: true, mode: 'hold', accelerator: 'Command+Alt+J'}}, 'the combo is kept for later');
+  assert.equal(D.mergeDictatePref(mac, {mode: 'hold'}, 'linux').ok, false);
+  assert.equal(D.mergeDictatePref(mac, {mode: 'press'}, 'darwin').ok, false);
+  assert.equal(D.mergeDictatePref(mac, {accelerator: 'Space'}, 'darwin').ok, false);
+  assert.equal(D.mergeDictatePref(mac, {enabled: 'yes'}, 'darwin').ok, false);
+  assert.equal(D.mergeDictatePref(mac, null, 'darwin').ok, false);
+});
+
+/* A fake clock for the hold machine. */
+function clock() {
+  let now = 0;
+  let seq = 0;
+  const due = new Map();
+  return {
+    timers: {
+      set: (ms, fn) => { const id = ++seq; due.set(id, {at: now + ms, fn}); return id; },
+      clear: (id) => { due.delete(id); },
+    },
+    advance(ms) {
+      now += ms;
+      for (const [id, t] of [...due]) if (t.at <= now) { due.delete(id); t.fn(); }
+    },
+    pending: () => due.size,
+  };
+}
+
+test('hold to talk: a tap does nothing, a hold starts, letting go finishes', () => {
+  const c = clock();
+  const acts = [];
+  const m = new H.HoldMachine(c.timers, (a) => acts.push(a));
+  m.down(); c.advance(H.HOLD_START_DELAY_MS - 1); m.up();
+  c.advance(1000);
+  assert.deepEqual(acts, [], 'a tap shorter than the delay never starts a take');
+  assert.equal(c.pending(), 0);
+
+  m.down(); c.advance(H.HOLD_START_DELAY_MS);
+  assert.deepEqual(acts, ['start']);
+  assert.equal(m.state, 'held');
+  m.down();   // key repeat
+  m.up();
+  assert.deepEqual(acts, ['start', 'finish']);
+  assert.equal(m.state, 'idle');
+  m.up();
+  assert.deepEqual(acts, ['start', 'finish'], 'a stray up is nothing');
+});
+
+test('hold to talk: Esc or a chord cancels, and the rest of that hold is ignored', () => {
+  const c = clock();
+  const acts = [];
+  const m = new H.HoldMachine(c.timers, (a) => acts.push(a));
+  m.down(); c.advance(300); m.esc();
+  assert.deepEqual(acts, ['start', 'cancel']);
+  m.down(); c.advance(1000); m.up();
+  assert.deepEqual(acts, ['start', 'cancel'], 'still the same hold: nothing starts, nothing is typed');
+  assert.equal(m.state, 'idle');
+
+  m.down(); c.advance(50); m.other(); c.advance(1000); m.up();
+  assert.deepEqual(acts, ['start', 'cancel'], 'Fn+arrow before the delay: no take at all');
+
+  m.down(); c.advance(300); m.reset();
+  assert.deepEqual(acts, ['start', 'cancel', 'start', 'cancel'], 'the watcher died while held: the take goes');
+  m.down(); m.reset(); c.advance(1000);
+  assert.deepEqual(acts, ['start', 'cancel', 'start', 'cancel'], 'reset before the delay: nothing');
+});
+
+test("the watcher's lines", () => {
+  for (const w of ['ready', 'down', 'up', 'esc', 'other', 'untrusted']) assert.deepEqual(H.parseHoldKeyLine(w + '\r'), {type: w});
+  assert.deepEqual(H.parseHoldKeyLine('\uFEFFready'), {type: 'ready'});
+  assert.deepEqual(H.parseHoldKeyLine('error SetWindowsHookEx failed (5)'), {type: 'error', message: 'SetWindowsHookEx failed (5)'});
+  assert.equal(H.parseHoldKeyLine('error').type, 'error');
+  assert.equal(H.parseHoldKeyLine(''), null);
+  assert.equal(H.parseHoldKeyLine('WARNING: something'), null);
+  assert.equal(H.parseHoldKeyLine('downtown'), null);
+  const b = new H.LineBuffer();
+  assert.deepEqual(b.push('rea'), []);
+  assert.deepEqual(b.push('dy\r\ndown\nu'), ['ready', 'down']);
+  assert.deepEqual(b.push('p\n'), ['up']);
+});
+
+test('the watcher command: the Mac helper, a hidden PowerShell hook on Windows, none on Linux', () => {
+  assert.deepEqual(H.holdKeyCommand('darwin', '/App/Contents/Resources/native', {}), {file: '/App/Contents/Resources/native/atomic-fn-key', args: []});
+  assert.equal(H.holdKeyCommand('linux', '/x', {}), null);
+  const win = H.holdKeyCommand('win32', 'C:\\x', {SystemRoot: 'C:\\Windows'});
+  assert.equal(win.file, 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+  assert.ok(win.args.includes('-NoProfile') && win.args.includes('-NonInteractive'));
+  const enc = win.args[win.args.indexOf('-EncodedCommand') + 1];
+  assert.equal(Buffer.from(enc, 'base64').toString('utf16le'), H.WINDOWS_HOLD_KEY_SCRIPT);
+  assert.ok(win.args.join(' ').length < 30000, 'fits a Windows command line');
+  assert.equal(H.holdKeyCommand('win32', 'C:\\x', {}).file, 'powershell.exe');
+  const ps = H.WINDOWS_HOLD_KEY_SCRIPT;
+  assert.match(ps, /SetWindowsHookEx\(13,/, 'WH_KEYBOARD_LL');
+  assert.match(ps, /return CallNextHookEx\(/, 'every event goes on: nothing swallowed');
+  assert.doesNotMatch(ps, /return \(IntPtr\)1/, 'never swallows a key');
+  assert.match(ps, /Console\.In\.ReadLine\(\) != null/, 'exits when the app goes');
+  assert.match(ps, /^\$src = @'$/m);
+  assert.match(ps, /^'@$/m, 'the here-string closes at the start of a line');
+});
+
+test('when the hold key cannot be watched, Settings says why and what works meanwhile', () => {
+  assert.equal(H.holdWatchFailed('ready'), false);
+  assert.equal(H.holdWatchFailed('starting'), false);
+  assert.equal(H.holdWatchFailed('untrusted'), true);
+  assert.equal(H.holdWatchFailed('missing'), true);
+  assert.equal(H.holdWatchFailed('failed'), true);
+  assert.match(H.holdWatchLine('untrusted', 'darwin', '⌃⌥D'), /Holding Fn needs Accessibility.*Until then ⌃⌥D starts and ends a take/);
+  assert.match(H.holdWatchLine('failed', 'win32', 'Ctrl+Alt+D', 'exit code 4'), /Ctrl\+Win key watcher stopped \(exit code 4\)/);
+  assert.match(H.holdWatchLine('missing', 'darwin', ''), /no Fn key watcher\.$/);
+  assert.equal(H.holdWatchLine('ready', 'darwin', '⌃⌥D'), null);
+  assert.match(H.holdKeyNote('darwin'), /Do Nothing/);
+  assert.equal(H.holdKeyNote('win32'), null);
+  assert.match(H.dictatePrivacyUrl('darwin'), /Privacy_Accessibility/);
+  assert.equal(H.dictatePrivacyUrl('win32'), null);
 });
 
 test("the quick entry box's combo is refused, whatever its spelling", () => {
@@ -124,12 +255,16 @@ test('the pill: centred near the bottom of the display under the cursor', () => 
 });
 
 test('the Settings row: switch, combo, the reason when it cannot run', () => {
-  const info = {ok: true, enabled: true, accelerator: 'Control+Alt+D', label: '⌃⌥D', state: 'registered', error: null, available: true, reason: null, hint: null};
+  const info = {ok: true, enabled: true, mode: 'toggle', accelerator: 'Control+Alt+D', label: '⌃⌥D', holdLabel: 'Fn', holdNote: null, holdState: 'off', holdError: null, canOpenPrivacy: false, state: 'registered', error: null, available: true, reason: null, hint: null};
   const html = dictateAnywhereRowHTML({info, busy: false, recording: false, error: null}, h);
   assert.match(html, /Dictate into any app/);
   assert.match(html, /data-act="dictate:record"[^>]*>⌃⌥D · Change…/);
+  assert.match(html, /data-act="dictate:hold"[^>]*>Hold Fn instead/);
   assert.match(html, /data-act="dictate:toggle" data-on="true"/);
   assert.doesNotMatch(html, /tk-help--warn/);
+
+  const linux = dictateAnywhereRowHTML({info: Object.assign({}, info, {holdLabel: null}), busy: false, recording: false, error: null}, h);
+  assert.doesNotMatch(linux, /dictate:hold/, 'no hold key on Linux');
 
   const none = dictateAnywhereRowHTML({info: Object.assign({}, info, {enabled: false, available: false, reason: 'This build has no speech helper, so dictation cannot run.'}), busy: false, recording: false, error: null}, h);
   assert.match(none, /tk-help--warn[^>]*>This build has no speech helper/);
@@ -143,6 +278,25 @@ test('the Settings row: switch, combo, the reason when it cannot run', () => {
   assert.match(rec, /data-act="dictate:cancel"/);
   assert.match(rec, /Press the new combination now/);
   assert.match(dictateAnywhereRowHTML({info: null, busy: false, recording: false, error: null}, h), /data-act="dictate:toggle"[^>]* disabled/);
+});
+
+test('the Settings row in the hold mode: hold Fn, the emoji note, Open Privacy Settings when untrusted', () => {
+  const info = {ok: true, enabled: true, mode: 'hold', accelerator: 'Control+Alt+D', label: '⌃⌥D', holdLabel: 'Fn', holdNote: 'If Fn opens the emoji picker, set it to Do Nothing.', holdState: 'ready', holdError: null, canOpenPrivacy: false, state: 'off', error: null, available: true, reason: null, hint: null};
+  const html = dictateAnywhereRowHTML({info, busy: false, recording: false, error: null}, h);
+  assert.match(html, /Hold Fn in any app and speak; let go to type/);
+  assert.match(html, /Do Nothing/);
+  assert.match(html, /data-act="dictate:record"[^>]*>Use a key combination…/);
+  assert.doesNotMatch(html, /dictate:hold"/);
+  assert.doesNotMatch(html, /dictate:privacy/);
+  assert.doesNotMatch(html, /tk-help--warn/);
+
+  const untrusted = dictateAnywhereRowHTML({info: Object.assign({}, info, {holdState: 'untrusted', canOpenPrivacy: true,
+    holdError: 'Holding Fn needs Accessibility. Until then ⌃⌥D starts and ends a take.', hint: 'Typing into other apps needs Accessibility'}), busy: false, recording: false, error: null}, h);
+  assert.match(untrusted, /tk-help--warn[^>]*>Holding Fn needs Accessibility/, 'the hold line wins over the paste hint');
+  assert.match(untrusted, /data-act="dictate:privacy"[^>]*>Open Privacy Settings/);
+
+  const win = dictateAnywhereRowHTML({info: Object.assign({}, info, {holdLabel: 'Ctrl+Win', holdNote: null}), busy: false, recording: false, error: null}, h);
+  assert.match(win, /Hold Ctrl\+Win in any app/);
 });
 
 test('the page loads the row after the quick entry recorder and before renderer.js; the hooks are in place', () => {

@@ -1629,7 +1629,10 @@ fails, the build fails with the compiler output; `ATOMIC_SKIP_SPEECH_HELPER=1`
 leaves the helper out on purpose, e.g. with an Xcode older than 26). It ships through `extraResources`, NOT through
 `files` — `asar` is on, and a binary inside an asar archive cannot be
 executed, so `out/native/**` is excluded from the archive and the same file
-is copied to `Contents/Resources/native/atomic-speech`. `mac.extendInfo`
+is copied to `Contents/Resources/native/atomic-speech`. The same step builds
+`out/native/atomic-fn-key` from `native/atomic-fn-key.swift` (ATO-1064: it
+says when Fn is held down and let go, for dictation into any app; target
+macOS 14) and ships it the same way, to `Contents/Resources/native/atomic-fn-key`. `mac.extendInfo`
 carries `NSMicrophoneUsageDescription`; without it TCC kills the packaged
 app the first time the renderer opens the microphone. The .app is ad-hoc
 signed, so its signature changes on every rebuild and macOS re-asks for
@@ -1983,6 +1986,7 @@ desktop/
   main/updater.ts        app updates (electron-updater), only ever on a click
   electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)
   native/atomic-speech.swift  on-device transcription (SpeechAnalyzer), NDJSON on stdout (live, and --file for an audio file)
+  native/atomic-fn-key.swift  hold Fn to dictate into any app: a listen-only event tap, down/up lines on stdout
   preload/preload.ts     the window.atomic bridge
   renderer/              index.html · styles.css · renderer.js · voice-worklet.js
   scripts/copy-renderer.mjs

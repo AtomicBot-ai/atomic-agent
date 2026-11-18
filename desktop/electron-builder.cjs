@@ -146,6 +146,11 @@ const config = {
         "from": "out/native/atomic-speech",
         "to": "native/atomic-speech"
       },
+      /* ATO-1064: says when Fn is held down and let go (dictation into any app). */
+      {
+        "from": "out/native/atomic-fn-key",
+        "to": "native/atomic-fn-key"
+      },
       /* Atomic Chat Core, fetched and checked against the release's
          SHA256SUMS by scripts/fetch-core.mjs. Per arch, like the app: the
          mac build is arm64 only, never universal. Under Resources, so the

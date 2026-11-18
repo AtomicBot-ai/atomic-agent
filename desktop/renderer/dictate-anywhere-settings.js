@@ -3,33 +3,52 @@
    qeAcceleratorFromKey records the combo); declares only. The renderer half
    reads renderer.js globals (BR, render, IS_MAC) at call time.
 
-   The row: a switch (off until turned on), the combo with Change…, and one
-   line when it cannot work here: no dictation backend on this computer
-   (ATO-979, the switch is then disabled with the reason), a combo another
-   app holds, or, on macOS, the Accessibility the paste needs. While Change…
-   records, main lets go of the old combo. */
+   The row: a switch (off until turned on), how a take starts, and one line
+   when it cannot work here. By default the take runs while the hold key is
+   down (Fn on a Mac, Ctrl+Win on Windows; main's holdLabel); "Use a key
+   combination…" records a combo pressed once to start and again to type
+   (the toggle mode, the only one on Linux, where holdLabel is null), and
+   "Hold Fn instead" goes back. The line under it: no dictation backend
+   (ATO-979, the switch is then disabled with the reason), a hold key that
+   cannot be watched yet (with Open Privacy Settings on a Mac), a combo
+   another app holds, or the Accessibility the paste needs. While Change…
+   records, main lets go of the hold key and the combo. */
 
 /** The Settings row. `st.info` is main's answer (app:dictateGet); `h` has esc and setSwitchHTML. */
 function dictateAnywhereRowHTML(st, h) {
   const info = st.info;
   const on = !!(info && info.enabled);
   const label = info && info.label ? info.label : '';
+  const holdLabel = info && info.holdLabel ? info.holdLabel : '';
+  const holding = !!(info && info.mode === 'hold' && holdLabel);
   const unavailable = !!(info && info.available === false);
   const desc = st.recording
     ? 'Press the new combination now. Esc cancels.'
-    : on && label
-      ? 'Press ' + h.esc(label) + ' in any app and speak; press it again to type the words where the cursor is. Esc throws it away. Transcribed on this computer.'
-      : 'A key combination that dictates into any app: speak, press it again, and the words are typed where the cursor is. Transcribed on this computer.';
-  const warn = st.error || (info && (info.error || (unavailable ? info.reason : null) || (on ? info.hint : null))) || '';
+    : holding
+      ? 'Hold ' + h.esc(holdLabel) + ' in any app and speak; let go to type the words where the cursor is. Esc throws it away. Transcribed on this computer.'
+        + (info.holdNote ? ' ' + h.esc(info.holdNote) : '')
+      : on && label
+        ? 'Press ' + h.esc(label) + ' in any app and speak; press it again to type the words where the cursor is. Esc throws it away. Transcribed on this computer.'
+        : 'A key combination that dictates into any app: speak, press it again, and the words are typed where the cursor is. Transcribed on this computer.';
+  const warn = st.error || (info && (info.holdError || info.error || (unavailable ? info.reason : null) || (on ? info.hint : null))) || '';
+  const idle = info && !st.busy && !unavailable;
+  let buttons;
+  if (st.recording) {
+    buttons = '<button class="btn btn-s sm" data-act="dictate:cancel">Cancel</button>';
+  } else if (holding) {
+    buttons = (info.canOpenPrivacy ? '<button class="btn btn-s sm" data-act="dictate:privacy" title="Open System Settings › Privacy & Security › Accessibility">Open Privacy Settings</button>' : '')
+      + '<button class="btn btn-s sm" data-act="dictate:record"' + (idle ? '' : ' disabled') + ' title="Start and end a take with a key combination instead">Use a key combination…</button>';
+  } else {
+    buttons = (holdLabel ? '<button class="btn btn-s sm" data-act="dictate:hold"' + (idle ? '' : ' disabled') + ' title="Record while the key is held down">Hold ' + h.esc(holdLabel) + ' instead</button>' : '')
+      + '<button class="btn btn-s sm" data-act="dictate:record"' + (idle ? '' : ' disabled') + ' title="Choose another key combination">'
+        + (label ? h.esc(label) + ' · Change…' : 'Change…') + '</button>';
+  }
   return '<div class="tk-setrow">'
     + '<div class="body"><div class="t">Dictate into any app</div>'
       + '<div class="d">' + desc + '</div>'
       + (warn ? '<div class="tk-help tk-help--warn" role="status">' + h.esc(warn) + '</div>' : '')
     + '</div>'
-    + (st.recording
-      ? '<button class="btn btn-s sm" data-act="dictate:cancel">Cancel</button>'
-      : '<button class="btn btn-s sm" data-act="dictate:record"' + (info && !st.busy && !unavailable ? '' : ' disabled') + ' title="Choose another key combination">'
-        + (label ? h.esc(label) + ' · Change…' : 'Change…') + '</button>')
+    + buttons
     + h.setSwitchHTML({on, busy: st.busy, disabled: !info || st.busy || st.recording || (unavailable && !on), act: 'dictate:toggle',
       label: 'Dictate into any app', title: 'Turn dictation into any app ' + (on ? 'off' : 'on')})
   + '</div>';
@@ -76,10 +95,22 @@ function daOnKey(e) {
     .catch(() => { DA.busy = false; DA.error = 'The shortcut could not be changed.'; render(); });
 }
 
-/** The row's acts: `toggle`, `record`, `cancel`. */
+/** The row's acts: `toggle`, `record`, `cancel`, `hold`, `privacy`. */
 function dictateAnywhereAct(v) {
   if (typeof BR === 'undefined' || !BR || !BR.dictateSet) return;
   if (v === 'cancel') { daCancel(); return; }
+  if (v === 'privacy') {
+    if (BR.dictateOpenPrivacy) BR.dictateOpenPrivacy().then((r) => { daApply(r); render(); }).catch(() => {});
+    return;
+  }
+  if (v === 'hold') {
+    if (!DA.info || DA.busy) return;
+    DA.busy = true; render();
+    BR.dictateSet({mode: 'hold'})
+      .then((r) => { DA.busy = false; daApply(r); render(); })
+      .catch(() => { DA.busy = false; DA.error = 'The setting could not be saved.'; render(); });
+    return;
+  }
   if (v === 'toggle') {
     if (!DA.info || DA.busy) return;
     DA.busy = true; render();

@@ -1,27 +1,46 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { displayUnderCursor, normalizeAccelerator, type QuickEntryDisplay, type QuickEntryPref, type Rect } from "./quick-entry.js";
+import { holdKeyFor } from "./dictate-hold.js";
+import { displayUnderCursor, normalizeAccelerator, type QuickEntryDisplay, type Rect } from "./quick-entry.js";
 import type { VoiceProbe } from "./speech.js";
 
 /**
- * ATO-1064: dictation into any app. A global hotkey starts the on-device
- * dictation the composer's microphone uses (speech.ts), a small "Listening…"
- * pill shows, and the same hotkey again types the words into the app in
- * front by a paste (keystroke-clipboard.ts). Esc throws the take away.
- * As macOS Dictation, Superwhisper and Wispr Flow do; off until turned on.
+ * ATO-1064: dictation into any app. By default, as Wispr Flow does: hold Fn
+ * (macOS) or Ctrl+Win (Windows) and speak, a small "Listening…" pill shows,
+ * and letting go types the words into the app in front by a paste
+ * (keystroke-clipboard.ts). dictate-hold.ts watches the hold key. Settings
+ * can swap it for a key combination pressed once to start and again to
+ * type (the toggle mode, and the only one on Linux, which has no agreed
+ * hold key). Esc throws the take away. Off until turned on.
  *
  * The pure half (no Electron import, so the node tests load it as is): the
  * saved preference, whether dictation can run here at all, the languages a
  * take uses, how the events of a take add up to its text, and where the
- * pill goes. dictate-anywhere-window.ts is the Electron half. The hotkey
- * itself is quick-entry.ts's QuickEntryShortcut, the same bookkeeping.
+ * pill goes. dictate-anywhere-window.ts is the Electron half. The toggle
+ * combo is quick-entry.ts's QuickEntryShortcut, the same bookkeeping.
  */
 
-/** ⌃⌥D on a Mac, Ctrl+Alt+D elsewhere: clear of the quick-entry box's ⌘⇧Space. */
-export const DICTATE_DEFAULT_ACCELERATOR = "Control+Alt+D";
+export type DictateMode = "hold" | "toggle";
 
-export const DICTATE_DEFAULT_PREF: QuickEntryPref = { enabled: false, accelerator: DICTATE_DEFAULT_ACCELERATOR };
+/** The toggle mode's combo, ⌃⌥D on a Mac, Ctrl+Alt+D elsewhere: clear of the quick-entry box's ⌘⇧Space. */
+export const DICTATE_TOGGLE_ACCELERATOR = "Control+Alt+D";
+
+export interface DictatePref {
+  enabled: boolean;
+  /** hold: the platform's hold key (dictate-hold.ts); toggle: `accelerator` pressed twice. */
+  mode: DictateMode;
+  accelerator: string;
+}
+
+/** Hold where the platform has a hold key, else the combo. */
+export function dictateDefaultMode(platform: NodeJS.Platform | string): DictateMode {
+  return holdKeyFor(platform) ? "hold" : "toggle";
+}
+
+export function dictateDefaultPref(platform: NodeJS.Platform | string): DictatePref {
+  return { enabled: false, mode: dictateDefaultMode(platform), accelerator: DICTATE_TOGGLE_ACCELERATOR };
+}
 
 /** The pill, in DIP. */
 export const DICTATE_PILL_SIZE = { width: 380, height: 44 } as const;
@@ -32,40 +51,80 @@ export function dictatePrefPath(userData: string): string {
   return join(userData, "dictate-anywhere.json");
 }
 
-export function parseDictatePref(text: string | null): QuickEntryPref {
-  if (text === null) return { ...DICTATE_DEFAULT_PREF };
+function modeFor(raw: unknown, platform: NodeJS.Platform | string): DictateMode {
+  if (raw === "toggle") return "toggle";
+  if (raw === "hold" && holdKeyFor(platform)) return "hold";
+  return dictateDefaultMode(platform);
+}
+
+export function parseDictatePref(text: string | null, platform: NodeJS.Platform | string): DictatePref {
+  const fallback = dictateDefaultPref(platform);
+  if (text === null) return fallback;
   try {
-    const raw = JSON.parse(text) as { enabled?: unknown; accelerator?: unknown } | null;
-    if (!raw || typeof raw !== "object") return { ...DICTATE_DEFAULT_PREF };
+    const raw = JSON.parse(text) as { enabled?: unknown; mode?: unknown; accelerator?: unknown } | null;
+    if (!raw || typeof raw !== "object") return fallback;
     const acc = normalizeAccelerator(raw.accelerator);
     return {
-      enabled: typeof raw.enabled === "boolean" ? raw.enabled : DICTATE_DEFAULT_PREF.enabled,
-      accelerator: acc.ok ? acc.accelerator : DICTATE_DEFAULT_ACCELERATOR,
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : fallback.enabled,
+      mode: modeFor(raw.mode, platform),
+      accelerator: acc.ok ? acc.accelerator : DICTATE_TOGGLE_ACCELERATOR,
     };
   } catch {
-    return { ...DICTATE_DEFAULT_PREF };
+    return fallback;
   }
 }
 
-export function readDictatePref(userData: string): QuickEntryPref {
+export function readDictatePref(userData: string, platform: NodeJS.Platform | string): DictatePref {
   try {
-    return parseDictatePref(readFileSync(dictatePrefPath(userData), "utf8"));
+    return parseDictatePref(readFileSync(dictatePrefPath(userData), "utf8"), platform);
   } catch {
-    return parseDictatePref(null);
+    return parseDictatePref(null, platform);
   }
 }
 
 /** Written whole, via a temp file. Best effort, never throws. */
-export function writeDictatePref(userData: string, pref: QuickEntryPref): boolean {
+export function writeDictatePref(userData: string, pref: DictatePref): boolean {
   const path = dictatePrefPath(userData);
   const tmp = `${path}.${process.pid}.tmp`;
   try {
-    writeFileSync(tmp, JSON.stringify({ enabled: pref.enabled, accelerator: pref.accelerator }) + "\n", { mode: 0o600 });
+    writeFileSync(tmp, JSON.stringify({ enabled: pref.enabled, mode: pref.mode, accelerator: pref.accelerator }) + "\n", { mode: 0o600 });
     renameSync(tmp, path);
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * A Settings write ({enabled?, mode?, accelerator?}) on top of the saved
+ * pref, checked. A new combo (Change… recorded one) means the toggle mode,
+ * unless the same write names a mode. Hold is refused where there is no
+ * hold key.
+ */
+export function mergeDictatePref(
+  current: DictatePref,
+  patch: unknown,
+  platform: NodeJS.Platform | string,
+): { ok: true; pref: DictatePref } | { ok: false; error: string } {
+  if (!patch || typeof patch !== "object") return { ok: false, error: "Nothing to change." };
+  const p = patch as { enabled?: unknown; mode?: unknown; accelerator?: unknown };
+  const next: DictatePref = { ...current };
+  if (p.enabled !== undefined) {
+    if (typeof p.enabled !== "boolean") return { ok: false, error: "enabled must be true or false." };
+    next.enabled = p.enabled;
+  }
+  if (p.accelerator !== undefined) {
+    const acc = normalizeAccelerator(p.accelerator);
+    if (!acc.ok) return acc;
+    next.accelerator = acc.accelerator;
+    next.mode = "toggle";
+  }
+  if (p.mode !== undefined) {
+    if (p.mode !== "hold" && p.mode !== "toggle") return { ok: false, error: "mode must be hold or toggle." };
+    if (p.mode === "hold" && !holdKeyFor(platform)) return { ok: false, error: "There is no hold key on this system; use a key combination." };
+    next.mode = p.mode;
+  }
+  return { ok: true, pref: next };
 }
 
 /** A combo the quick-entry box already holds is refused before it is tried. */
@@ -157,7 +216,7 @@ export class DictateTake {
     }
   }
 
-  /** The hotkey was pressed again: from now on the end of the take is expected. */
+  /** The combo was pressed again, or the hold key let go: from now on the end of the take is expected. */
   stop(): void {
     this.stopping = true;
   }

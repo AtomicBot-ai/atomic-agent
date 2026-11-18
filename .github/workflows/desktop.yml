@@ -318,6 +318,9 @@ jobs:
           set -euo pipefail
           test -x desktop/out/native/atomic-speech || { echo "::error::desktop/out/native/atomic-speech was not built — voice input would be missing from the DMG."; exit 1; }
           file desktop/out/native/atomic-speech
+          # ATO-1064: hold Fn to dictate into any app.
+          test -x desktop/out/native/atomic-fn-key || { echo "::error::desktop/out/native/atomic-fn-key was not built; holding Fn to dictate would be missing from the DMG."; exit 1; }
+          file desktop/out/native/atomic-fn-key
 
       # afterPack copies ../bundle/<slug> into resources/agent and runs it
       # once; the job fails here if the bundle is missing or cannot open its
@@ -453,6 +456,10 @@ jobs:
           speech_sig=$(codesign -dvv "$app/Contents/Resources/native/atomic-speech" 2>&1)
           grep -q "^Authority=Developer ID Application" <<<"$speech_sig"
           grep -q "^CodeDirectory .*flags=.*runtime" <<<"$speech_sig"
+          # ATO-1064: the Fn key watcher, signed the same way.
+          fnkey_sig=$(codesign -dvv "$app/Contents/Resources/native/atomic-fn-key" 2>&1)
+          grep -q "^Authority=Developer ID Application" <<<"$fnkey_sig"
+          grep -q "^CodeDirectory .*flags=.*runtime" <<<"$fnkey_sig"
           # Atomic Chat Core: Developer ID, hardened runtime, secure timestamp.
           core_sig=$(codesign -dvv "$app/Contents/Resources/core/atomic-chat-core" 2>&1)
           grep -q "^Authority=Developer ID Application" <<<"$core_sig"
