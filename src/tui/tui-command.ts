@@ -83,6 +83,7 @@ import {
   resolveStartupTheme,
 } from "./theme/detect-terminal-background.js";
 import { resolveThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
+import { resolveUiLanguage, setUiLanguage } from "../i18n/index.js";
 import { formatStartupFusionNotice } from "./fusion-resume-notice.js";
 import {
   formatRestoredWorkingDirNotice,
@@ -141,6 +142,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
     recentDirs: () => readRecentWorkingDirs(getConfig().paths.sessionsDbFile),
   });
   const workingDir = startupDir.workingDir;
+  // Interface language, before the first render for the same reason as the
+  // theme below (ATO-571): `tui.language`, then ATOMIC_AGENT_LANG, then
+  // the system locale, then English.
+  setUiLanguage(resolveUiLanguage({ setting: getConfig().tui.language }));
   // Theme selection BEFORE any Ink render or stdin listener (the first-run
   // flow and the main render). An explicit
   // `tui.theme` (a registered name) wins; otherwise `"auto"` (or an unknown

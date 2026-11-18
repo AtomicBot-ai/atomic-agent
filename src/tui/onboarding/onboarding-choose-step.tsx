@@ -7,6 +7,7 @@ import { handleOnboardingStepKey } from "./onboarding-step-keys.js";
 import { ROW_MARKER, rowPrefix } from "./onboarding-rows.js";
 import { ONBOARDING_CHOICES } from "./onboarding-state.js";
 import { theme } from "../theme/theme.js";
+import { t } from "../../i18n/index.js";
 
 /**
  * The one decision the flow actually needs: where the model runs. The
@@ -27,10 +28,9 @@ const LABEL_COLUMNS = 20;
  * measured width, and a line that rewraps at a width the measure did
  * not predict would move the whole box.
  */
-const EXPLAINER: readonly string[] = [
-  "atomic-agent can drive models three ways. Nothing here is permanent — you",
-  "can add the others at any time from the menu.",
-];
+function explainerLines(): readonly string[] {
+  return [t("onboarding.choose.explainer1"), t("onboarding.choose.explainer2")];
+}
 
 /** Where a choice row's detail column starts. */
 const DETAIL_COLUMN = ROW_MARKER.length + LABEL_COLUMNS;
@@ -53,7 +53,7 @@ function labelCell(
 
 /** Widest line this step draws, for the block that centres it. */
 export function measureOnboardingChooseStep(fit: OnboardingFit): number {
-  const lines: string[] = fit.explainer ? [...EXPLAINER] : [];
+  const lines: string[] = fit.explainer ? [...explainerLines()] : [];
   for (const choice of ONBOARDING_CHOICES) {
     // Measured as selected: the marker and the indent are the same width.
     lines.push(
@@ -73,7 +73,7 @@ export function OnboardingChooseStep(props: {
     <Box flexDirection="column" flexShrink={0}>
       {props.fit.explainer ? (
         <Box flexDirection="column" marginBottom={1}>
-          {EXPLAINER.map((line) => (
+          {explainerLines().map((line) => (
             <Text key={line} color={theme.colors.muted}>
               {line}
             </Text>

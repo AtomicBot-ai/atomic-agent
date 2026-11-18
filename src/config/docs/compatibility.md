@@ -33,6 +33,8 @@ The desktop app and the terminal share one state dir and one `config.json`, and 
 
 `tui.nextStepSuggestions` (boolean, ATO-1096) is additive and unversioned: a file without it reads `false`, so no next-step call runs after a turn and neither composer shows a suggestion. `true` turns the suggestions on. A non-boolean is a validation error. [TUI config tests](../tui-config.test.ts) cover it.
 
+`tui.language` (`auto`, `en` or `ru`, ATO-571) is additive and unversioned: a file without it reads `auto`, so the terminal UI picks its language from `ATOMIC_AGENT_LANG`, then the system locale, then English. A language name this build does not know (written by a newer one) reads as `auto` with a one-time notice; a non-string is a validation error. [TUI config tests](../tui-config.test.ts) cover it.
+
 
 ## Terminal composer vim mode
 

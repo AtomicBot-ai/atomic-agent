@@ -331,6 +331,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `tui.showSteps` | `boolean` | `false` | Always show steps (ATO-963): keep every finished turn's tool cards and reasoning open in the chat, as before. Off by default: a finished turn folds into one "Used 6 tools · 40s" line. Additive and unversioned, a file without it reads `false`. A display preference only; the agent never reads it. |
 | `tui.nextStepSuggestions` | `boolean` | `false` | Next-step suggestions (ATO-1096, epic ATO-995): after a turn, one short model call proposes what to ask next, shown as grey text in the empty composer that Tab accepts. Off by default: the call costs a model request after every turn, so it is opt-in. Additive and unversioned, a file without it reads `false`. |
 | `tui.vimMode` | `boolean` | `false` | Vim keys in the terminal composer (ATO-662): NORMAL / INSERT modes with the core motions and operators. Off by default; `/vim` flips it. Additive and unversioned, a file without it reads `false`. A display/input preference only; the agent never reads it. |
+| `tui.language` | `'auto' \| 'en' \| 'ru'` | `"auto"` | Interface language of the terminal UI (ATO-571): `auto`, `en` or `ru`. `auto` (default) uses `ATOMIC_AGENT_LANG`, then the system locale (`LC_ALL`, `LC_MESSAGES`, `LANG`), then English. Additive and unversioned, a file without it reads `auto`. Only the onboarding screens are translated so far; the agent never reads it. |
 | `tui.notify.enabled` | `boolean` | `true` | Off means the terminal is never written to out of band. |
 | `tui.notify.minDurationMs` | `number` | `30000` | How long a turn must have run before its *successful* ending is worth a ping. A failure always pings regardless: it is the ending that needs a person, and it can happen in two seconds. |
 | `tui.sessionRail.order` | `string[]` | `[]` |  |
@@ -473,6 +474,7 @@ Read from the process environment or from `~/.atomic-agent/.env` (a variable alr
 | `ATOMIC_AGENT_SESSION_TOOLS_ENABLED` | `false` | env only | Let the agent list, read and message its other sessions (the sessions.* tools). |
 | `ATOMIC_AGENT_TASKS_KEEP_AWAKE` | unset | env only | Keep the computer awake for tasks and turns: off or while-working. Unset or any other value: off. |
 | `ATOMIC_AGENT_PERSONA` | unset | env only | Persona name to use for this process, above every config.json setting. |
+| `ATOMIC_AGENT_LANG` | unset | env only | Interface language of the terminal UI when `tui.language` is `auto`: en or ru. Unset: taken from LC_ALL, LC_MESSAGES or LANG, else English. |
 | `ATOMIC_AGENT_OFFLINE` | unset | env only | Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process. |
 | `ATOMIC_AGENT_PROXY` | unset | `network.proxy.url` | Send the agent's web traffic through this HTTP(S) proxy, as `network.proxy.url` does. Wins over the config value when set. |
 | `ATOMIC_AGENT_ALLOWED_ORIGINS` | unset | env only | Comma-separated web origins that may call a keyless local `serve`, besides loopback ones. |
