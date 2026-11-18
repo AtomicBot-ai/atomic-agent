@@ -184,6 +184,48 @@ describe("step batch lifecycle owner seams", () => {
     expect(second.calls[0]).toBe(call);
   });
 
+  // ATO-1674: a name is resolved to its registered form before any check
+  // reads it. `functions.reply` used to reach the claim hold as a tool
+  // that is not `reply`, so an unverified claim went out unheld.
+  it("holds an unverified claim in a reply written as `functions.reply`", () => {
+    const { ctx, deps } = fixture();
+    register(deps, "reply");
+    let noticed = false;
+    deps.claimEvidence = { noticed: () => noticed, markNoticed: () => { noticed = true; } };
+    const prepared = prepareStepInference(ctx, deps);
+    const policy = createStepBatchPolicy(ctx, deps, () => false);
+    const completion = result([{ tool: "functions.reply", args: { text: "Tests pass." } }]);
+    const parsed = parseStepBatch({ ctx, deps, prepared, completion, assumesOpenReasoning: () => false, policy });
+    if (!parsed.ok) throw new Error("fixture must parse");
+    expect(parsed.batch.calls.map((call) => call.tool)).toEqual(["reply"]);
+    const admitted = prepareStepDispatch(ctx, deps, parsed.batch, completion, policy);
+    expect(noticed).toBe(true);
+    expect(admitted.calls).toEqual([]);
+    expect(admitted.suppressed?.call.tool).toBe("reply");
+    expect(admitted.suppressed?.result.details?.notDelivered).toBe(true);
+  });
+
+  it("trims a batch whose approval-gated call is spelled another way, as for its registered name", () => {
+    const { ctx, deps, events } = fixture();
+    register(deps, "os.fs.write");
+    register(deps, "os.fs.read");
+    const prepared = prepareStepInference(ctx, deps);
+    const policy = createStepBatchPolicy(ctx, deps, () => false);
+    const completion = result([
+      { tool: "functions.os.fs.write", args: { path: "a", content: "a" } },
+      { tool: "os.fs.read", args: { path: "b" } },
+    ]);
+    const parsed = parseStepBatch({ ctx, deps, prepared, completion, assumesOpenReasoning: () => false, policy });
+    // Not a parse failure sent to repair: the normal trim to the gated call.
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.batch.calls.map((call) => call.tool)).toEqual(["os.fs.write"]);
+    expect(policy.trimmedBatchNotice).toBeDefined();
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "batch_trimmed", kept: "os.fs.write", reason: "approval-gated-batched",
+    }));
+  });
+
   it("commits results in model order after the second tool finishes first", async () => {
     const { ctx, deps } = fixture();
     let finishFirst = () => {};
