@@ -62,6 +62,7 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import type { BrowserExtractModelRef } from "../tools/browser/extract-request.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
+import { FileCheckpointStore, fileCheckpointsRoot } from "../tools/os/fs/fs-checkpoint-store.js";
 import { ToolOutputSpill } from "../tools/index.js";
 import { registerSessionTools } from "../tools/sessions/index.js";
 import {
@@ -359,7 +360,10 @@ export async function createAgentRuntime(
   // sessions that are gone (fusion workers are never stored) swept here.
   const toolOutputSpill = new ToolOutputSpill();
   toolOutputSpill.sweepStale();
-  installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs, toolOutputSpill);
+  installRuntimeSessionDelete(
+    sessionStore, dropRecorder, shellJobs, toolOutputSpill,
+    new FileCheckpointStore(fileCheckpointsRoot(config.paths.stateDir)),
+  );
 
   // `browser.extract` calls the model (ATO-699); the completer is built
   // further down, so the tool reads it through this ref per call.
