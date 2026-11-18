@@ -184,7 +184,8 @@ const CLASSIFY_COLUMNS = `
  * Fusion worker (`s-w-` id or the `fusionWorker` stamp), or a session
  * stamped `metadata.internal: true` or `metadata.subagent`. Task sessions
  * are the ones the task runner and the scheduler create
- * (`recurringTask`, `ephemeralTask`, `overnight`, `source: "http-task"`).
+ * (`recurringTask`, `ephemeralTask`, `overnight`, `source: "http-task"`),
+ * and the sessions A2A opens for a peer agent (`source: "a2a"`).
  */
 export function classifySessionForSearch(row: ClassifyRow): SessionSearchSource | null {
   if (row.incognitoType === "object") return null;
@@ -212,7 +213,9 @@ export function classifySessionForSearch(row: ClassifyRow): SessionSearchSource 
     set("recurringTask") ||
     set("ephemeralTask") ||
     meta.overnight === true ||
-    meta.source === "http-task"
+    meta.source === "http-task" ||
+    // A2A peers' tasks (ATO-693): another agent's conversation, not one of the person's chats.
+    meta.source === "a2a"
   ) {
     return "task";
   }
