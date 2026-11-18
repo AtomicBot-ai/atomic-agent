@@ -308,6 +308,8 @@ export interface StepDependencies {
    * call as `ToolContext.turnId` (ATO-1670).
    */
   turnId?: string;
+  /** The turn's spend ceiling seam, when a ceiling is set (`ToolContext.turnSpend`). */
+  turnSpend?: import("../../tools/tool-registry.js").TurnSpendSeam;
   /**
    * Invoked after every LLM completion (initial call and one-shot parse
    * retry alike). Used by the agent loop to feed the served `modelId`

@@ -216,6 +216,51 @@ describe("AgentLoop fusion seams", () => {
     expect(pins).toEqual(["local-x", undefined]);
   });
 
+  it("hands tools the turn's spend ceiling only when one is set, and what they add counts in the turn's spend (ATO-1670)", async () => {
+    // `subagent.run` adds its children's spend through this seam, so the
+    // ceiling check before the next step sees it.
+    const seen: Array<{ ceilingUsd: number; before: number; after: number } | undefined> = [];
+    const registry = buildDefaultToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "read",
+      readonly: true,
+      run: async (_args, ctx) => {
+        if (ctx.turnSpend === undefined) {
+          seen.push(undefined);
+        } else {
+          const before = ctx.turnSpend.spentUsd();
+          ctx.turnSpend.add(2);
+          seen.push({ ceilingUsd: ctx.turnSpend.ceilingUsd, before, after: ctx.turnSpend.spentUsd() });
+        }
+        return { tool: "os.fs.read", status: "ok", summary: "ok" };
+      },
+    });
+    let call = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        call += 1;
+        return makeCompletion(
+          call % 2 === 1
+            ? JSON.stringify({ tool: "os.fs.read", args: { path: `a${call}` } })
+            : JSON.stringify({ tool: "reply", args: { text: "done" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    const capped = await loop.runTurn(
+      createEmptySessionState({ id: "s-spend", workingDir }),
+      turnOptions({ maxSteps: 4, taskMaxCostUsd: 1 }),
+    );
+    await loop.runTurn(capped.session, turnOptions({ maxSteps: 4 }));
+    expect(seen).toEqual([{ ceilingUsd: 1, before: 0, after: 2 }, undefined]);
+  });
+
   it("a pinned turn hands its model and one turn id per turn to the tools it calls (ATO-1670)", async () => {
     // `subagent.run` runs children on the turn's model (the desktop's
     // per-project model arrives as runTurn({ providerId, model })) and

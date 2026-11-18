@@ -282,6 +282,7 @@ async function executeStepInner(
     ...(deps.providerId !== undefined ? { providerId: deps.providerId } : {}),
     ...(deps.providerId !== undefined && deps.model !== undefined ? { model: deps.model } : {}),
     ...(deps.turnId !== undefined ? { turnId: deps.turnId } : {}),
+    ...(deps.turnSpend !== undefined ? { turnSpend: deps.turnSpend } : {}),
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
     ...(ctx.terminalOnly ? { terminalOnly: true } : {}),
     ...(ctx.toolSet !== undefined ? { toolSet: ctx.toolSet } : {}),
