@@ -19,6 +19,7 @@ import {
 } from "./environment.js";
 import { writeAnalyticsSwitch } from "./opt-out.js";
 import { PostHogTransport, type QueuedEvent } from "./transport.js";
+import { desktopOffline, onDesktopOfflineChange } from "../offline-state.js";
 
 const UI_ACTION_CAP = 200;
 /** The quit drains at most this many batches (of 100) inside its 2 s. */
@@ -58,7 +59,8 @@ const enabledListeners: Array<(on: boolean) => void> = [];
 
 const TEAM_RUN = teamRunIn();
 const transport = new PostHogTransport({
-  canSend: () => S.enabled && !S.testRun,
+  // ATO-1085: offline mode (offline-state.ts) stops sending like the switch does.
+  canSend: () => S.enabled && !S.testRun && !desktopOffline(),
   distinctId: () => installId(),
   // ATO-1247: read once; a marker file made while the app runs counts from the next launch.
   team: () => TEAM_RUN,
@@ -155,9 +157,15 @@ export function analyticsEnabled(): boolean {
   return S.enabled;
 }
 
+/** Analytics on, not a test run, and not offline (ATO-1085): Sentry and the flag reads follow it too. */
 export function sendingAllowed(): boolean {
-  return S.enabled && !S.testRun;
+  return S.enabled && !S.testRun && !desktopOffline();
 }
+
+// ATO-1085: what was queued before offline mode went on never leaves later.
+onDesktopOfflineChange((on) => {
+  if (on) transport.clear();
+});
 
 export function flagsStore(): DesktopFlagsStore | null {
   return S.flags;

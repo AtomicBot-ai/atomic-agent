@@ -40,6 +40,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { app } from "electron";
 
 import * as A from "./analytics/index.js";
+import { desktopOffline } from "./offline-state.js";
 import { parseUpdatePolicy, requiredUpdate, type RequiredUpdate } from "./update-policy.js";
 
 type UpdaterModule = typeof import("electron-updater");
@@ -264,6 +265,13 @@ export function firstNotesLine(notes: unknown): string | null {
 }
 
 /** A failed check or download, in plain words. */
+/** ATO-1085: Check now while offline mode is on; nothing was asked. */
+export const OFFLINE_CHECK_RESULT: CheckResult = {
+  kind: "error",
+  reason: "offline",
+  message: "Offline mode is on, so updates were not checked. Turn it off in Settings › Privacy to check.",
+};
+
 export function plainUpdateError(err: unknown): { reason: "offline" | "no-feed" | "other"; message: string } {
   const text = err instanceof Error ? `${err.name} ${err.message}` : String(err);
   if (/ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ERR_NETWORK_CHANGED|ERR_CONNECTION|ERR_TIMED_OUT|ERR_PROXY|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENETUNREACH|socket hang up/i.test(text)) {
@@ -621,6 +629,8 @@ export class AppUpdateController {
   /** The timer's check: nothing when the switch is off; quiet on failure. */
   async autoCheck(): Promise<void> {
     if (this.disabled || !this.prefs.autoCheck) return;
+    // ATO-1085: offline mode asks no update server; the next tick looks again.
+    if (desktopOffline()) return;
     await this.ensureEligible();
     if (this.disabled) return;
     await this.check("auto");
@@ -629,6 +639,11 @@ export class AppUpdateController {
   /** Settings' Check now. */
   async checkNow(): Promise<UpdateState> {
     if (this.disabled) return this.state();
+    if (desktopOffline()) {
+      this.manualCheck = { at: Date.now(), result: OFFLINE_CHECK_RESULT };
+      this.emit();
+      return this.state();
+    }
     await this.ensureEligible();
     if (this.disabled) return this.state();
     this.manualChecking = true;
