@@ -195,6 +195,12 @@ export interface WorkerRunnerCoreOptions {
    * `"subagent"`, which the runtime treats like `"fusion"`.
    */
   origin?: TurnOrigin;
+  /**
+   * The depth stamped on every worker session (ATO-1670): the caller's
+   * `childFusionWorkerDepth`. Absent: `FUSION_WORKER_DEFAULT_DEPTH` (1),
+   * as Fusion always stamps, since it fans out only from the operator.
+   */
+  depth?: number;
 }
 
 /** Fusion's options on top of the core. Each one absent does nothing. */

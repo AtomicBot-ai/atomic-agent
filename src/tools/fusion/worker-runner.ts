@@ -569,11 +569,12 @@ async function runOneTask(
   // mode, #1121); only an isolated or cloud worker inherits a workspace.
   const inheritWorkspace = isolated !== undefined || deps.inheritWorkspace === true;
   // Fusion fans out only from the operator session, so every worker it
-  // spawns sits one level down (ATO-1666).
+  // spawns sits one level down (ATO-1666); a subagent run passes the
+  // depth it computed from its caller's session (ATO-1670).
   const session = deps.createEphemeralSession({
     parentSessionId: options.parentSessionId,
     taskId: task.id,
-    depth: FUSION_WORKER_DEFAULT_DEPTH,
+    depth: options.depth ?? FUSION_WORKER_DEFAULT_DEPTH,
   }, workingDir, inheritWorkspace);
   // A worker that queued on the parent id would wait behind the
   // orchestrator's own turn — which is the turn calling this — and the
@@ -1448,7 +1449,7 @@ async function runOneTask(
       {
         parentSessionId: options.parentSessionId,
         taskId: task.id,
-        depth: FUSION_WORKER_DEFAULT_DEPTH,
+        depth: options.depth ?? FUSION_WORKER_DEFAULT_DEPTH,
       },
       workingDir,
       inheritWorkspace,

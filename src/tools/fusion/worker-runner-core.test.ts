@@ -136,4 +136,20 @@ describe("runWorkerTasksCore (ATO-1669)", () => {
     expect(calls[0]!.options.origin).toBe("subagent");
     expect(results[0]!.status).toBe("ok");
   });
+
+  it("stamps the worker session with the default depth 1 when no depth is given", async () => {
+    const { deps, calls } = coreHarness("done");
+    await runWorkerTasksCore(deps, coreOptions());
+    expect(calls[0]!.session.metadata?.fusionWorker).toMatchObject({ depth: 1 });
+  });
+
+  it("stamps the worker session with the depth the options name (ATO-1670)", async () => {
+    const { deps, calls } = coreHarness("done");
+    await runWorkerTasksCore(deps, coreOptions({ depth: 2 }));
+    expect(calls[0]!.session.metadata?.fusionWorker).toMatchObject({
+      parentSessionId: "s-parent",
+      taskId: "t0",
+      depth: 2,
+    });
+  });
 });
