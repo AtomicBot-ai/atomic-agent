@@ -132,7 +132,8 @@ function fetchById(rawId: unknown, store: MemoryStore) {
   }
   try {
     const entry = store.get(rawId);
-    if (entry === null) {
+    // ATO-1124: a note the person turned off reads as absent to the agent.
+    if (entry === null || entry.disabledAt !== undefined) {
       return compressToolResult({
         tool: "memory.notes.recall",
         status: "ok",
