@@ -74,6 +74,41 @@ export interface LlmFailureContext {
    * patterns (ATO-1435, `EngineExitReason`). Sent as `engine_exit_reason`.
    */
   engineExitReason?: string;
+  /**
+   * The failed step's prompt budget, by part, from its last
+   * `prompt_built` (ATO-1678): counts only, in the agent's estimate
+   * units. Sent as `prompt_*` tags.
+   */
+  promptBudget?: LlmPromptBudget;
+  /**
+   * The counts a truncated reply reported (`TruncationDetail`), in the
+   * server's units: what the window really held. Sent as `cut_*` tags.
+   */
+  truncationCounts?: LlmTruncationCounts;
+}
+
+/** {@link LlmFailureContext.promptBudget}. Every field a token count. */
+export interface LlmPromptBudget {
+  /** The whole prompt as estimated (`BuiltPrompt.tokens.total`). */
+  totalTokens: number;
+  /** The stable prefix: system, rules, tool catalog text, skills. */
+  stablePrefixTokens: number;
+  /** The native `tools` array beside the text; `0` on grammar. */
+  toolSchemaTokens: number;
+  /** The packed conversation (history). */
+  conversationTokens: number;
+  /** The window the prompt was packed to; `null` when unknown. */
+  contextWindow: number | null;
+  /** The reply reserve the budget held back; `null` when not reported. */
+  replyReserve: number | null;
+}
+
+/** {@link LlmFailureContext.truncationCounts}. */
+export interface LlmTruncationCounts {
+  promptTokens: number;
+  completionTokens: number;
+  /** The cap the request carried; absent when it carried none. */
+  requestedMaxTokens?: number;
 }
 
 /**
@@ -263,6 +298,11 @@ function safeCount(value: number): string {
  * when it decided (ATO-1432). A refusal with no model process adds
  * `engine_exit_reason`, why it is gone, read from its log (ATO-1435).
  * None of these for an `external` engine.
+ * A failed step's prompt budget adds `prompt_total_tokens`,
+ * `prompt_prefix_tokens`, `prompt_tools_tokens`, `prompt_history_tokens`,
+ * `prompt_window` and `prompt_reply_reserve`; a truncated reply adds
+ * `cut_prompt_tokens`, `cut_reply_tokens` and `cut_reply_cap` (ATO-1678).
+ * Counts only, for every engine: no prompt text is read here.
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -322,6 +362,21 @@ export function sanitizeLlmFailureTags(
         tags.engine_exit_reason = fromVocabulary(context.engineExitReason, ENGINE_EXIT_REASONS);
       }
     }
+  }
+  const budget = context.promptBudget;
+  if (budget !== undefined) {
+    tags.prompt_total_tokens = safeCount(budget.totalTokens);
+    tags.prompt_prefix_tokens = safeCount(budget.stablePrefixTokens);
+    tags.prompt_tools_tokens = safeCount(budget.toolSchemaTokens);
+    tags.prompt_history_tokens = safeCount(budget.conversationTokens);
+    tags.prompt_window = budget.contextWindow === null ? "none" : safeCount(budget.contextWindow);
+    tags.prompt_reply_reserve = budget.replyReserve === null ? UNKNOWN : safeCount(budget.replyReserve);
+  }
+  const cut = context.truncationCounts;
+  if (cut !== undefined) {
+    tags.cut_prompt_tokens = safeCount(cut.promptTokens);
+    tags.cut_reply_tokens = safeCount(cut.completionTokens);
+    tags.cut_reply_cap = cut.requestedMaxTokens === undefined ? "none" : safeCount(cut.requestedMaxTokens);
   }
   return Object.keys(tags).length > 0 ? tags : undefined;
 }

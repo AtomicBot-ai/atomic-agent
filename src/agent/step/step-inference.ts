@@ -107,8 +107,12 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     ...(deps.modelMode ? { modelMode: deps.modelMode } : {}),
     ...(deps.modelMode?.mode === "cloud" ? {
       completionMaxTokens: ctx.maxTokens ?? ctx.maxOutputTokens ?? localModels.completionMaxTokens,
-      toolSchemaTokens: deps.toolTransport === "native_tools"
-        ? estimateTokens(JSON.stringify((deps.toolCallAdapter ?? openAiToolCallAdapter).descriptorsToTools(stepDescriptors, { strict: deps.strictTools === true }))) : 0,
+    } : {}),
+    // The `tools` array a native-tools link sends beside the text takes
+    // window room in every model mode (ATO-1678): a local link (Ollama,
+    // LM Studio, a Fusion worker leg) was budgeted without it.
+    ...(deps.toolTransport === "native_tools" ? {
+      toolSchemaTokens: nativeToolSchemaTokens(stepDescriptors, deps),
     } : {}),
     ...(ctx.toolRole !== undefined ? { toolRole: ctx.toolRole } : {}),
     fusionTokensPerSecond: deps.fusionTokensPerSecond?.() ?? null,
@@ -185,6 +189,23 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
   return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision, personaResolution };
 }
 
+/**
+ * Estimated tokens of the native `tools` array this step sends: the
+ * same adapter and strictness the request is built with. Exported for
+ * the budget tests.
+ */
+export function nativeToolSchemaTokens(
+  descriptors: readonly ToolDescriptor[],
+  deps: Pick<StepDependencies, "toolCallAdapter" | "strictTools">,
+): number {
+  const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
+  return estimateTokens(
+    JSON.stringify(
+      adapter.descriptorsToTools(descriptors, { strict: deps.strictTools === true }),
+    ),
+  );
+}
+
 export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   if (!ctx.workspace) refreshStepWorkspace(ctx, deps);
   const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision, personaResolution } = prepareStepPrompt(ctx, deps);
@@ -209,6 +230,8 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
               // function-calling guidance the primary prompt carries
               // (issue #285) — rebuild for the grammar transport.
               toolTransport: "grammar",
+              // A grammar link sends no `tools` array.
+              toolSchemaTokens: 0,
               suppressReasoningPrefill: false,
             }).text,
         )
@@ -383,6 +406,7 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       delete linkPromptInput.compactPromptWindow;
       const next = buildPrompt({ ...linkPromptInput, session: ctx.session, modelMode: link.modelMode,
         toolTransport: link.transport, contextWindow: link.contextWindow, profileWindowApplies: false,
+        toolSchemaTokens: link.transport === "native_tools" ? nativeToolSchemaTokens(linkDescriptors, linkDeps) : 0,
         suppressReasoningPrefill: link.transport === "native_tools" || template.useServerTemplate,
         completionMaxTokens: link.maxTokens ?? ctx.maxOutputTokens ?? getConfig().localModels.completionMaxTokens,
       });

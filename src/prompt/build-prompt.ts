@@ -49,6 +49,7 @@ import {
   CONVERSATION_CAP_AUTO,
   CONVERSATION_CAP_AUTO_FALLBACK,
   defaultBudget,
+  effectiveReplyReserve,
   estimateTokens,
   SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
@@ -409,6 +410,11 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // `contextWindow` was resolved above, before the stable prefix.
   const sessionTokenEstimate =
     estimateTokens(sessionPartsForBudget) + loadedToolsTokens + projectTokens;
+  // A `native_tools` link sends the tool schemas beside the text; the
+  // window holds them too (ATO-1678). The cloud prompt always counted
+  // them; a local one (Ollama, LM Studio, a Fusion worker leg) did not,
+  // so the transcript was packed into room the schemas already took.
+  const toolSchemaTokens = Math.max(0, input.toolSchemaTokens ?? 0);
   const conversationCapEffective = computeEffectiveConversationCap({
     configuredCap: limits.conversation,
     ...(conversationCapAuto ? { autoFill: true } : {}),
@@ -422,6 +428,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     lessonsTokens,
     proceduresTokens,
     loadedToolsTokens,
+    toolSchemaTokens,
     completionMaxTokens,
     reasoningBudgetTokens,
   });
@@ -645,14 +652,20 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       memoryIndex: memoryIndexTokens,
       taskPolicy: taskPolicyTokens,
       ...(compactionTokens ? { compaction: compactionTokens } : {}),
+      ...(toolSchemaTokens > 0 ? { toolSchema: toolSchemaTokens } : {}),
       total:
         budgetResult.perSection.total +
         loadedToolsTokens +
         profileTokens +
         recalledTokens +
         memoryIndexTokens +
-        taskPolicyTokens + compactionTokens,
+        taskPolicyTokens + compactionTokens + toolSchemaTokens,
     },
+    replyReserve: effectiveReplyReserve(
+      completionMaxTokens,
+      contextWindow,
+      reasoningBudgetTokens,
+    ),
     limits,
     truncated:
       truncation.loadedSkills ||
