@@ -4,6 +4,7 @@ import {
   parseEmailTriggerConfig,
   type EmailTriggerConfig,
 } from "./email-trigger-config.js";
+import { parseImapTriggerConfig, type ImapTriggerConfig } from "./imap-trigger-config.js";
 import type { TaskSchedule } from "../tasks/task-types.js";
 
 /**
@@ -45,7 +46,9 @@ import type { TaskSchedule } from "../tasks/task-types.js";
  * `email.allowedSenders` (see `email-trigger-config.ts`). A mail
  * binding is never reachable over HTTP, and its template only sees
  * `{{body.from}}` and `{{body.receivedAt}}`: the subject and text are
- * appended below it as fenced, untrusted data.
+ * appended below it as fenced, untrusted data. `"imap"` is the same
+ * for the operator's own mailbox reached over IMAP: it takes the same
+ * `email` block plus an `imap` block (see `imap-trigger-config.ts`).
  */
 export type WebhookVerifyScheme = "secret" | "github" | "standard-webhooks" | "stripe";
 
@@ -66,8 +69,9 @@ export function isWebhookVerifyScheme(value: unknown): value is WebhookVerifySch
 
 export interface WebhookConfig {
   userMessageTemplate: string;
-  source?: "http" | "atomic-mail";
+  source?: "http" | "atomic-mail" | "imap";
   email?: EmailTriggerConfig;
+  imap?: ImapTriggerConfig;
   secret?: string;
   verify?: WebhookVerifyScheme;
   events?: string[];
@@ -170,30 +174,48 @@ export function parseWebhookMap(
       );
     }
     const source = cfg.source ?? "http";
-    if (source !== "http" && source !== "atomic-mail") {
+    if (source !== "http" && source !== "atomic-mail" && source !== "imap") {
       throw new ConfigValidationError(
         `${field}.${name}.source`,
-        `expected http|atomic-mail, got ${JSON.stringify(source)}`,
+        `expected http|atomic-mail|imap, got ${JSON.stringify(source)}`,
       );
     }
+    const isMail = source === "atomic-mail" || source === "imap";
     let email: EmailTriggerConfig | undefined;
-    if (source === "atomic-mail") {
+    if (isMail) {
       email = parseEmailTriggerConfig(cfg.email, `${field}.${name}.email`);
     } else if (cfg.email !== undefined && cfg.email !== null) {
       throw new ConfigValidationError(
         `${field}.${name}.email`,
-        'only allowed with source "atomic-mail"',
+        'only allowed with source "atomic-mail" or "imap"',
       );
     }
-    if (source === "atomic-mail" && schedule) {
+    let imap: ImapTriggerConfig | undefined;
+    if (source === "imap") {
+      imap = parseImapTriggerConfig(cfg.imap, `${field}.${name}.imap`);
+      // No SMTP client yet: an IMAP binding cannot mail its answer back.
+      if (email?.replyByEmail) {
+        throw new ConfigValidationError(
+          `${field}.${name}.email.replyByEmail`,
+          'not supported with source "imap" yet',
+        );
+      }
+    } else if (cfg.imap !== undefined && cfg.imap !== null) {
+      throw new ConfigValidationError(
+        `${field}.${name}.imap`,
+        'only allowed with source "imap"',
+      );
+    }
+    if (isMail && schedule) {
       throw new ConfigValidationError(
         `${field}.${name}.schedule`,
-        'not allowed with source "atomic-mail": each mail is one task',
+        `not allowed with source "${source}": each mail is one task`,
       );
     }
     out[name] = {
       userMessageTemplate,
-      ...(source === "atomic-mail" ? { source, email } : {}),
+      ...(isMail ? { source, email } : {}),
+      ...(imap ? { imap } : {}),
       sessionMode,
       ...(sessionId ? { sessionId } : {}),
       ...(secret ? { secret } : {}),

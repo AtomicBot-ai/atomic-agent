@@ -45,6 +45,7 @@ Other area entry points (use their underlying domain instructions for shared con
 - [error-reporting](src/error-reporting/README.md).
 - [fit-test](src/fit-test/README.md).
 - [github](src/github/README.md).
+- [imap-mail](src/imap-mail/README.md).
 - [import](src/import/README.md).
 - [plugins](src/plugins/README.md).
 - [hooks](src/hooks/README.md).
