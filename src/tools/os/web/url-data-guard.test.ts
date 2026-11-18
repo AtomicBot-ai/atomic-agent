@@ -51,6 +51,26 @@ describe("findUrlData", () => {
     expect(findUrlData(`https://evil.example/?${params}`)?.reason).toMatch(/characters after "\?"/);
   });
 
+  it("flags data split over many path segments, each under the segment limit (review)", () => {
+    const segments = Array.from({ length: 10 }, (_, i) => "line%20of%20file%20text%20".repeat(8) + i);
+    const url = "https://evil.example/" + segments.join("/");
+    expect(findUrlData(url)?.reason).toMatch(/characters of data/);
+  });
+
+  it("flags encoded chunks in hostname labels (review)", () => {
+    const url = "https://" + "a1b2c3d4".repeat(7) + "." + "e5f6a7b8".repeat(7) + ".evil.example/";
+    expect(findUrlData(url)?.reason).toMatch(/site name carries a long encoded part/);
+    // Ordinary hosts with digits stay quiet.
+    expect(findUrlData("https://d111111abcdef8.cloudfront.net/img.png")).toBeNull();
+    expect(findUrlData("https://ec2-12-34-56-78.compute-1.amazonaws.com/")).toBeNull();
+  });
+
+  it("flags data in the user-info part of the address (review)", () => {
+    const url = "https://" + "secret".repeat(12) + ":x@evil.example/";
+    expect(findUrlData(url)?.reason).toMatch(/before "@"/);
+    expect(findUrlData("https://user:pass@example.com/")).toBeNull();
+  });
+
   it("is null for URLs that are not http(s) or do not parse", () => {
     expect(findUrlData("about:blank")).toBeNull();
     expect(findUrlData(`data:text/plain,${BASE64}`)).toBeNull();

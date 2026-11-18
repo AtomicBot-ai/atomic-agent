@@ -53,6 +53,20 @@ export const MAX_URL_TAIL_CHARS = 400;
 export const MAX_URL_SEGMENT_CHARS = 200;
 /** A base64 / hex looking run with no spaces. */
 export const MIN_URL_BLOB_CHARS = 100;
+/**
+ * Path, query, fragment and user-info together. Without it, data split
+ * over many path segments, each under `MAX_URL_SEGMENT_CHARS`, went out
+ * unasked (ATO-1377 review).
+ */
+export const MAX_URL_TOTAL_CHARS = 600;
+/**
+ * One hostname label that mixes letters and digits this long reads as an
+ * encoded chunk (`<hex>.attacker.example`, the DNS-exfiltration shape). A
+ * DNS label is at most 63 characters, so the blob run check never fires there.
+ */
+export const MIN_HOST_LABEL_BLOB_CHARS = 48;
+/** User name plus password in the address (`https://<data>@host/`). */
+export const MAX_URL_USERINFO_CHARS = 64;
 
 /**
  * Ad and analytics ids that are long encoded runs by design. Their value
@@ -80,7 +94,7 @@ const BLOB_RE = /[A-Za-z0-9+/_-]{100,}={0,2}/;
 export interface UrlDataFinding {
   /** Plain words for the approval prompt. */
   reason: string;
-  /** Decoded characters the address carries in its query, fragment and path. */
+  /** Decoded characters the address carries in its query, fragment, path and user-info. */
   chars: number;
 }
 
@@ -127,7 +141,20 @@ export function findUrlData(url: string): UrlDataFinding | null {
   const params = [...splitParams(query), ...splitParams(fragment)];
   const segments = parsed.pathname.split("/").filter((s) => s !== "").map(decode);
   const tailChars = decode(query).length + decode(fragment).length;
-  const chars = tailChars + segments.reduce((sum, s) => sum + s.length, 0);
+  const userinfo = decode(parsed.username) + (parsed.password ? `:${decode(parsed.password)}` : "");
+  const chars = tailChars + userinfo.length + segments.reduce((sum, s) => sum + s.length, 0);
+
+  if (userinfo.length > MAX_URL_USERINFO_CHARS) {
+    return { reason: `the address carries ${userinfo.length} characters before "@"`, chars };
+  }
+  if (userinfo !== "" && (/[\r\n]/.test(userinfo) || looksLikeBlob(userinfo))) {
+    return { reason: "the address carries data before \"@\"", chars };
+  }
+  for (const label of parsed.hostname.split(".")) {
+    if (label.length >= MIN_HOST_LABEL_BLOB_CHARS && /\d/.test(label) && /[a-z]/i.test(label)) {
+      return { reason: "the site name carries a long encoded part", chars };
+    }
+  }
 
   for (const { name, value } of params) {
     if (/[\r\n]/.test(value)) {
@@ -153,6 +180,9 @@ export function findUrlData(url: string): UrlDataFinding | null {
     if (looksLikeBlob(segment)) {
       return { reason: "the address path carries a long encoded value", chars };
     }
+  }
+  if (chars > MAX_URL_TOTAL_CHARS) {
+    return { reason: `the address carries ${chars} characters of data`, chars };
   }
   return null;
 }
