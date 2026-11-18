@@ -182,7 +182,7 @@ function sameFrame(a, b, tol) {
 }
 // A title alone does not name a window: two "New Message" windows share one.
 // With a frame, the window at that frame wins; strict (a press) refuses when
-// no titled window sits there, or when several share the title and none does.
+// several share the title and none sits there.
 function findWindow(pid, title, strict, frame) {
   var procs = Application("System Events").processes.whose({ unixId: pid })();
   if (!procs.length) return { error: "no-process" };
@@ -191,7 +191,9 @@ function findWindow(pid, title, strict, frame) {
   for (var i = 0; i < wins.length; i++) if (title && safe(function () { return wins[i].name(); }, "") === title) titled.push(wins[i]);
   if (frame) {
     for (var j = 0; j < titled.length; j++) if (sameFrame(winFrame(titled[j]), frame, 2)) return { win: titled[j], title: title, frame: winFrame(titled[j]) };
-    if (strict && titled.length) return { error: "window-changed" };
+    // One window with that title is still that window, moved or resized;
+    // several, and none at the listed frame, cannot be told apart.
+    if (strict && titled.length > 1) return { error: "window-changed" };
   }
   if (strict && titled.length > 1) return { error: "window-ambiguous" };
   if (titled.length) return { win: titled[0], title: title, frame: winFrame(titled[0]) };
