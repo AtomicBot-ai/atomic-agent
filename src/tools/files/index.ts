@@ -11,3 +11,5 @@ export {
 export { citeFor, fileUrlFor, formatTimestamp } from "./file-cite.js";
 export { buildFilesSearchTool, FILES_SEARCH_TOOL, type FilesSearchToolOptions } from "./files-search-tool.js";
 export { isIndexDone } from "./file-indexer.js";
+export { createHttpReranker, rerankerFromEnv, RERANK_URL_ENV, type Reranker, type RerankScore } from "./file-rerank.js";
+export { loadSqliteVec, type VecExtensionLoader } from "./file-vec-extension.js";

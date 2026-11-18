@@ -481,6 +481,7 @@ Read from the process environment or from `~/.atomic-agent/.env` (a variable alr
 | `ATOMIC_AGENT_PROXY` | unset | `network.proxy.url` | Send the agent's web traffic through this HTTP(S) proxy, as `network.proxy.url` does. Wins over the config value when set. |
 | `ATOMIC_AGENT_ALLOWED_ORIGINS` | unset | env only | Comma-separated web origins that may call a keyless local `serve`, besides loopback ones. |
 | `ATOMIC_AGENT_MODEL_CATALOG_URL` | unset | env only | URL of the extra local-model catalog JSON. Unset: the catalog hosted on atomicagent.io. |
+| `ATOMIC_AGENT_RERANK_URL` | unset | env only | Local reranker (llama-server /v1/rerank style) that re-orders My files search hits. Unset: off. Only a server on this machine or the local network is used. |
 | `ATOMIC_AGENT_TELEGRAM_STREAM_REPLIES` | unset | env only | Stream Telegram replies into the owner's DM (private) or not (off). Wins over telegram.streamReplies when set. |
 | `ATOMIC_AGENT_WHISPER_BIN` | unset | env only | Path of the whisper.cpp CLI for audio transcription. Unset: the downloaded copy, then the PATH. |
 | `ATOMIC_AGENT_WHISPER_MODEL` | unset | env only | Whisper model file or catalog id to transcribe with. Unset: the saved default (base). |
