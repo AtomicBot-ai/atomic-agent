@@ -33,10 +33,11 @@ export function createRuntimeMailTrigger(args: {
     stateDir: config.paths.stateDir,
     mail: args.mail ?? new AtomicMailService(),
     bindings: () => config.webhooks,
-    createTask: ({ userMessage, sessionId }) =>
+    createTask: ({ userMessage, sessionId, startPaused }) =>
       taskRunner.create({
         ...(sessionId ? { sessionId } : {}),
         userMessage,
+        ...(startPaused ? { startPaused: true } : {}),
         origin: "scheduler",
         triggerSource: "webhook",
         maxAttempts: config.tasks.maxAttempts,
