@@ -130,7 +130,7 @@ const FORMS: Record<string, CompactToolForm> = {
     tier: RARE,
   },
   "os.fs.write_pptx": {
-    summary: "Create an editable .pptx deck: per slide title, bullets, image path, notes (may require approval).",
+    summary: "Create an editable .pptx deck: per slide title, bullets, an image, table or chart, notes (may require approval).",
     tier: RARE,
   },
   "os.git.status": { summary: "Git status and current branch." },

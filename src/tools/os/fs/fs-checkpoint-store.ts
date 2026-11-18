@@ -24,7 +24,8 @@ import { safeSegment, writeJsonAtomically } from "./fs-restore-manifest.js";
  * Bounded: a file over {@link CHECKPOINT_MAX_FILE_BYTES} or one that looks
  * binary is recorded as changed but not copied (the rollback says it
  * cannot put it back), except the files of the Office tools
- * ({@link BINARY_COPY_TOOLS}), which are binary by nature; past {@link CHECKPOINT_MAX_ENTRIES} entries or
+ * ({@link BINARY_COPY_TOOLS}), which are binary by nature and are
+ * copied up to {@link CHECKPOINT_MAX_OFFICE_FILE_BYTES}; past {@link CHECKPOINT_MAX_ENTRIES} entries or
  * {@link CHECKPOINT_MAX_SESSION_BYTES} of copies the oldest are dropped,
  * and `droppedThrough` remembers how far, so a rollback to a point
  * older than that says some changes are no longer kept. Session folders
@@ -38,6 +39,13 @@ import { safeSegment, writeJsonAtomically } from "./fs-restore-manifest.js";
  */
 
 export const CHECKPOINT_MAX_FILE_BYTES = 2 * 1024 * 1024;
+/**
+ * The cap for an Office tool's file: a deck with a few photos or a
+ * workbook with a chart is past 2 MB, and replacing one without a copy
+ * would leave "roll back here" unable to bring it back (ATO-537).
+ * Still well under the session budget, which drops the oldest first.
+ */
+export const CHECKPOINT_MAX_OFFICE_FILE_BYTES = 24 * 1024 * 1024;
 export const CHECKPOINT_MAX_SESSION_BYTES = 64 * 1024 * 1024;
 export const CHECKPOINT_MAX_ENTRIES = 400;
 export const CHECKPOINT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -256,6 +264,7 @@ interface Before {
 }
 
 async function readBefore(absolute: string, binaryOk: boolean): Promise<Before> {
+  const maxBytes = binaryOk ? CHECKPOINT_MAX_OFFICE_FILE_BYTES : CHECKPOINT_MAX_FILE_BYTES;
   let info: Stats;
   try {
     info = await stat(absolute);
@@ -265,14 +274,14 @@ async function readBefore(absolute: string, binaryOk: boolean): Promise<Before> 
     return { existed: true, skipped: "unreadable" };
   }
   if (!info.isFile()) return { existed: true, skipped: "not_a_file" };
-  if (info.size > CHECKPOINT_MAX_FILE_BYTES) return { existed: true, skipped: "too_large" };
+  if (info.size > maxBytes) return { existed: true, skipped: "too_large" };
   let content: Buffer;
   try {
     content = await readFile(absolute);
   } catch {
     return { existed: true, skipped: "unreadable" };
   }
-  if (content.byteLength > CHECKPOINT_MAX_FILE_BYTES) return { existed: true, skipped: "too_large" };
+  if (content.byteLength > maxBytes) return { existed: true, skipped: "too_large" };
   if (!binaryOk && looksBinary(content)) return { existed: true, skipped: "binary" };
   return { existed: true, content };
 }

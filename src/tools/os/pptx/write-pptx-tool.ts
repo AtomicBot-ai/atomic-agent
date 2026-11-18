@@ -127,6 +127,8 @@ export function buildOsFsWritePptxTool(options: OsFsWritePptxOptions): ToolDefin
         `${built.slideCount} slide${built.slideCount === 1 ? "" : "s"}`,
         `${built.notesCount} with speaker notes`,
         `${built.imageCount} picture${built.imageCount === 1 ? "" : "s"}`,
+        ...(built.tableCount > 0 ? [`${built.tableCount} table${built.tableCount === 1 ? "" : "s"}`] : []),
+        ...(built.chartCount > 0 ? [`${built.chartCount} chart${built.chartCount === 1 ? "" : "s"}`] : []),
         `theme ${spec.theme}`,
       ];
       return compressToolResult({
@@ -138,6 +140,8 @@ export function buildOsFsWritePptxTool(options: OsFsWritePptxOptions): ToolDefin
           slides: built.slideCount,
           notes: built.notesCount,
           images: built.imageCount,
+          tables: built.tableCount,
+          charts: built.chartCount,
           bytes: built.data.length,
           theme: spec.theme,
           replaced: exists,
@@ -272,6 +276,8 @@ function outline(spec: PptxDeckSpec): string {
     const extras = [
       slide.bullets.length > 0 ? `${slide.bullets.length} bullets` : "",
       slide.image !== undefined ? "picture" : "",
+      slide.table !== undefined ? `table ${slide.table.length}x${slide.table[0]?.length ?? 0}` : "",
+      slide.chart !== undefined ? `${slide.chart.type} chart` : "",
       slide.notes !== undefined ? "notes" : "",
     ].filter((part) => part.length > 0);
     return `${i + 1}. ${slide.title}${extras.length > 0 ? ` (${extras.join(", ")})` : ""}`;

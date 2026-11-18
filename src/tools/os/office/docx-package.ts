@@ -1,5 +1,7 @@
 import JSZip from "jszip";
 
+import { addOverride, addRelationship, packZip } from "../ooxml/ooxml-package.js";
+
 import {
   HEADING_STYLES,
   R_NS,
@@ -56,7 +58,7 @@ export async function createDocx(blocks: readonly DocBlock[]): Promise<Buffer> {
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
       `<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}"><w:body>${body}${SECTION}</w:body></w:document>`,
   );
-  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  return packZip(zip);
 }
 
 /** `word/document.xml` unless the package's root relationship names another part. */
@@ -97,7 +99,7 @@ export async function appendToDocx(
   if (blocks.some((block) => block.kind.startsWith("heading"))) {
     await ensureHeadingStyles(zip, main);
   }
-  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  return packZip(zip);
 }
 
 /**
@@ -128,23 +130,8 @@ async function ensureHeadingStyles(zip: JSZip, main: string): Promise<void> {
   const stylesPath = `${dir}styles.xml`;
   if (zip.file(stylesPath) !== null) return;
   zip.file(stylesPath, STYLES_XML);
-  const relationship = `<Relationship Id="rIdAtomicStyles" Type="${STYLES_REL_TYPE}" Target="styles.xml"/>`;
-  zip.file(
-    relsPath,
-    rels === undefined
-      ? DOCUMENT_RELS
-      : rels.replace("</Relationships>", `${relationship}</Relationships>`),
-  );
-  const types = await zip.file("[Content_Types].xml")?.async("text");
-  if (types !== undefined && !types.includes(`PartName="/${stylesPath}"`)) {
-    zip.file(
-      "[Content_Types].xml",
-      types.replace(
-        "</Types>",
-        `<Override PartName="/${stylesPath}" ContentType="${STYLES_CONTENT_TYPE}"/></Types>`,
-      ),
-    );
-  }
+  await addRelationship(zip, main, STYLES_REL_TYPE, "styles.xml");
+  await addOverride(zip, stylesPath, STYLES_CONTENT_TYPE);
 }
 
 function escapeRegex(text: string): string {
