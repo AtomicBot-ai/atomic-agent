@@ -109,6 +109,8 @@ describe("cli_reason tag (ATO-1679)", () => {
     ],
     ["node_missing", "env: node: No such file or directory"],
     ["node_missing", "'node' is not recognized as an internal or external command,\r\noperable program or batch file."],
+    ["node_missing", "/usr/local/bin/claude: 2: exec: node: not found"],
+    ["node_missing", "zsh: command not found: node"],
     ["command_not_recognized", "'claude' is not recognized as an internal or external command,\r\noperable program or batch file."],
     ["path_not_found", "The system cannot find the path specified."],
     ["path_not_found", "The system cannot find the file specified."],
@@ -152,7 +154,6 @@ describe("cli_reason tag (ATO-1679)", () => {
   it("adds no reason to a failure that carries none of the CLI's words", () => {
     expect(extractSubscriptionCliFailureTags(failure({ timedOut: true, exitCode: null }))).toEqual({ cli_failure: "timeout" });
     expect(extractSubscriptionCliFailureTags(failure({ truncated: true }))?.cli_reason).toBeUndefined();
-    expect(extractSubscriptionCliFailureTags(failure({ inputTruncated: true }))?.cli_reason).toBeUndefined();
     const limit = failure({ stderr: "Claude AI usage limit reached|1762000000" });
     expect(extractSubscriptionCliFailureTags(limit)).toEqual({ cli_failure: "limit_reached", cli_exit_code: "1" });
     expect(extractSubscriptionCliFailureTags(new SubscriptionCliNotInstalledError("claude"))).toEqual({ cli_failure: "not_installed" });
@@ -172,5 +173,42 @@ describe("cli_reason tag (ATO-1679)", () => {
     const other = scrubError(failure({ stderr: "Segmentation fault" }), { source: "llm_failure" });
     expect(other.cliFailureTags?.cli_reason).toBe("other");
     expect(buildFingerprint(other)).toEqual(buildFingerprint(ev));
+  });
+});
+
+describe("cli_reason agrees with the hint in the message (ATO-1679)", () => {
+  const UNKNOWN = "error: unknown option '--strict-mcp-config'";
+  const GIT_BASH =
+    "Claude Code on Windows requires git-bash (https://git-scm.com/downloads/win). If installed but not in PATH, set environment variable pointing to your bash.exe, similar to: CLAUDE_CODE_GIT_BASH_PATH=C:\\Program Files\\Git\\bin\\bash.exe";
+  const CASES: ReadonlyArray<readonly [string, string, string]> = [
+    ["unknown_option", UNKNOWN, "may be older than this version of Atomic Agent needs"],
+    ["git_bash_missing", GIT_BASH, "needs Git for Windows (git-bash)"],
+  ];
+
+  for (const inputTruncated of [false, true]) {
+    const kind = inputTruncated ? "input_truncated" : "exited";
+    it.each(CASES)(`gives %s with the hint for ${kind}`, (reason, stderr, hint) => {
+      const err = failure({ binary: "C:\\Users\\a\\AppData\\Roaming\\npm\\claude.cmd", stderr, inputTruncated });
+      expect(err).toBeInstanceOf(SubscriptionCliInvocationError);
+      expect((err as SubscriptionCliInvocationError).failureKind).toBe(kind);
+      expect(err.message).toContain(hint);
+      expect(classifyCliReason(err.message)).toBe(reason);
+      expect(extractSubscriptionCliFailureTags(err)).toEqual({ cli_failure: kind, cli_exit_code: "1", cli_reason: reason });
+    });
+  }
+
+  it("agrees when the flag error scrolled out of a long stderr: no hint and other", () => {
+    // The message keeps only the last 2048 characters of stderr, and the
+    // hint reads that same text, so neither sees the flag error.
+    const err = failure({ stderr: `${UNKNOWN}\n${"x".repeat(3000)}` });
+    expect(err.message).not.toContain("unknown option");
+    expect(err.message).not.toContain("may be older");
+    expect(classifyCliReason(err.message)).toBe("other");
+  });
+
+  it("agrees when the flag error is at the end of a long stderr: hint and unknown_option", () => {
+    const err = failure({ stderr: `${"x".repeat(3000)}\n${UNKNOWN}` });
+    expect(err.message).toContain("may be older");
+    expect(classifyCliReason(err.message)).toBe("unknown_option");
   });
 });

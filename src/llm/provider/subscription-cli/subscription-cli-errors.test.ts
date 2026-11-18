@@ -339,7 +339,8 @@ describe("SubscriptionCliInvocationError.failureKind (ATO-1446)", () => {
 
 describe("mapCliFailure next step for an exit the person can fix (ATO-1679)", () => {
   const CLAUDE_HINT = "update it with `claude update` and retry.";
-  const CODEX_HINT = "update it with `npm install -g @openai/codex@latest` and retry.";
+  const CODEX_HINT =
+    "update it the way you installed it (for example `npm install -g @openai/codex@latest` or `brew upgrade codex`) and retry.";
   const GIT_BASH_HINT =
     "Claude Code on Windows needs Git for Windows (git-bash). Install it from https://git-scm.com/downloads/win or set CLAUDE_CODE_GIT_BASH_PATH to your bash.exe, then restart Atomic Agent.";
 
@@ -379,6 +380,28 @@ describe("mapCliFailure next step for an exit the person can fix (ATO-1679)", ()
     expect(err.message).toContain('Your "/opt/my-wrapper" may be older');
     expect(err.message).toContain("`claude update`");
     expect(err.message).toContain("`npm install -g @openai/codex@latest`");
+    expect(err.message).toContain("`brew upgrade codex`");
+    expect(err.message).toContain("update it the way you installed it");
+  });
+
+  it("gives the same next step when the CLI quit before reading a long prompt", () => {
+    const flag = mapCliFailure({
+      ...base,
+      binary: "C:\\Users\\a\\AppData\\Roaming\\npm\\claude.cmd",
+      stderr: "error: unknown option '--json-schema'",
+      inputTruncated: true,
+    });
+    expect((flag as SubscriptionCliInvocationError).failureKind).toBe("input_truncated");
+    expect(flag.message).toContain("stopped reading the prompt");
+    expect(flag.message.endsWith(CLAUDE_HINT)).toBe(true);
+    const bash = mapCliFailure({
+      ...base,
+      binary: "claude.cmd",
+      stderr: "Claude Code on Windows requires git-bash. Set CLAUDE_CODE_GIT_BASH_PATH.",
+      inputTruncated: true,
+    });
+    expect((bash as SubscriptionCliInvocationError).failureKind).toBe("input_truncated");
+    expect(bash.message.endsWith(` ${GIT_BASH_HINT}`)).toBe(true);
   });
 
   it("tells a Windows user without git-bash what to install", () => {

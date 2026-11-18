@@ -13,9 +13,9 @@
  *    `command_line_control_character` for the other CLI error classes;
  *  - `cli_exit_code`: the CLI's exit code, a bounded integer;
  *  - `cli_reason`: for a run that failed with the CLI's own words
- *    (`exited`, `reported_error`, `turn_failed`), what those words say,
- *    as one fixed word from `CLI_REASONS`. The message is matched here,
- *    on the machine, and only the word leaves it.
+ *    (`exited`, `input_truncated`, `reported_error`, `turn_failed`),
+ *    what those words say, as one fixed word from `CLI_REASONS`. The
+ *    message is matched here, on the machine, and only the word leaves.
  *
  * Read by class name, so this module takes no import from the LLM
  * layer, and walked through `cause`: the step executor hands the report
@@ -55,6 +55,16 @@ const KINDS_WITH_CLI_TEXT: ReadonlySet<string> = new Set([
   "turn_failed",
 ]);
 
+/**
+ * Kinds that get a `cli_reason`: those above plus `input_truncated`,
+ * whose message also ends with the CLI's own text (an old CLI or a
+ * missing git-bash exits before reading a long prompt).
+ */
+const KINDS_WITH_REASON: ReadonlySet<string> = new Set([
+  ...KINDS_WITH_CLI_TEXT,
+  "input_truncated",
+]);
+
 /** Every value `cli_reason` can take. */
 export const CLI_REASONS = [
   "git_bash_missing",
@@ -72,12 +82,12 @@ export type CliReason = (typeof CLI_REASONS)[number];
  * Checked in order, first match wins. Narrow on purpose: a miss is
  * `other`, which is honest, while a wrong word would send whoever reads
  * the report down the wrong path. `unknown_option` and
- * `git_bash_missing` are mirrored in `mapCliFailure`
- * (`src/llm/provider/subscription-cli/subscription-cli-errors.ts`),
- * which adds a plain-words next step for those two.
+ * `git_bash_missing` are mirrored in
+ * `src/llm/provider/subscription-cli/cli-exit-hint.ts`, which adds a
+ * plain-words next step for those two to the message.
  */
 const REASON_PATTERNS: ReadonlyArray<readonly [CliReason, readonly RegExp[]]> = [
-  // Older Claude Code on Windows without Git for Windows.
+  // Claude Code on Windows without Git for Windows.
   ["git_bash_missing", [/\brequires git-bash\b/i, /\bCLAUDE_CODE_GIT_BASH_PATH\b/]],
   // A `#!/usr/bin/env node` shim or a cmd shim with no Node to run it.
   [
@@ -147,7 +157,7 @@ function tagsOf(e: Record<string, unknown>): SubscriptionCliFailureTags | undefi
     ) {
       tags.cli_exit_code = String(exitCode);
     }
-    if (typeof kind === "string" && KINDS_WITH_CLI_TEXT.has(kind)) {
+    if (typeof kind === "string" && KINDS_WITH_REASON.has(kind)) {
       const message = e.message;
       tags.cli_reason = typeof message === "string" ? classifyCliReason(message) : "other";
     }
