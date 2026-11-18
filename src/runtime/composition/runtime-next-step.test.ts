@@ -98,6 +98,15 @@ describe("createNextStepSuggester", () => {
     expect(on.llmComplete).not.toHaveBeenCalled();
   });
 
+  it("makes no call for a subagent worker turn, like a fusion one (ATO-1669)", async () => {
+    const on = rig();
+    on.suggester.maybeSuggest(answered(), "subagent");
+    await flush();
+    expect(on.deps.pending.size).toBe(0);
+    expect(on.llmComplete).not.toHaveBeenCalled();
+    expect(on.events).toEqual([]);
+  });
+
   it("drops a suggestion a newer turn made stale, and never writes during shutdown", async () => {
     const stale = rig();
     const state = answered();
