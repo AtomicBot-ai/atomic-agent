@@ -329,6 +329,49 @@ describe("reduceTuiState", () => {
     expect(next.metrics.toolsError).toBe(0);
   });
 
+  it("keeps an MCP App's page out of the tool card and latestResult (ATO-1135)", () => {
+    const initial = createInitialTuiState(fakeSession());
+    const next = apply(initial, [
+      { type: "agent_event", event: { type: "step_started", stepIndex: 0 } },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "tool_call_parsed",
+            call: { tool: "mcp.weather.get_forecast", args: { city: "Tallinn" } },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        },
+      },
+      {
+        type: "agent_event",
+        event: {
+          type: "llm_event",
+          event: {
+            type: "tool_call_executed",
+            result: {
+              tool: "mcp.weather.get_forecast",
+              status: "ok",
+              summary: "Sunny, 21C",
+              details: {
+                structuredContent: { temp: 21 },
+                mcpApp: { resourceUri: "ui://weather/view.html", html: "<p>page</p>" },
+              },
+              truncated: false,
+            },
+            batchIndex: 0,
+            batchSize: 1,
+          },
+        },
+      },
+    ]);
+    expect(next.latestResult?.details).toEqual({ structuredContent: { temp: 21 } });
+    const card = next.streamingToolCards.find((c) => c.tool === "mcp.weather.get_forecast");
+    expect(card?.details).toEqual({ structuredContent: { temp: 21 } });
+  });
+
   it("should enter awaiting_approval state on approval request", () => {
     const initial = createInitialTuiState(fakeSession());
     const request = {

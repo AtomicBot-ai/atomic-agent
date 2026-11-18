@@ -714,6 +714,8 @@ export function buildStreamEventHook(
           // ATO-1137: the canvas an ok `canvas.render` wrote, for the chat to show.
           ...canvasFrame(inner.result),
           ...diffstatFrame(inner.result),
+          // ATO-1135: an MCP App's page for this call, for the chat to render.
+          ...mcpAppFrame(inner.result),
           // ATO-1145: the call's approval records, as the transcript keeps
           // them (`tool_result.approvals`), so a live turn summary can list
           // what was auto-approved (`verdict: "auto-approved"`, `via`,
@@ -1194,6 +1196,25 @@ function diffstatFrame(
     typeof n === "number" && Number.isInteger(n) && n >= 0;
   if (!count(added) || !count(removed)) return {};
   return { diffstat: { path, added, removed } };
+}
+
+/**
+ * `mcp_app` on a `tool_result` frame (ATO-1135): the page an ok MCP tool
+ * with `_meta.ui.resourceUri` named, as `details.mcpApp` holds it
+ * (`McpAppUi` plus `toolInput` / `toolResult`, see mcp-apps.ts), so a
+ * host can render it in its sandboxed frame. The frame is the only live
+ * path: the model sees the summary alone, never the page. Left out for
+ * any other call and unless the page is a non-empty string from a
+ * `ui://` URI.
+ */
+function mcpAppFrame(result: CompressedToolResult): { mcp_app?: Record<string, unknown> } {
+  if (!result.tool.startsWith("mcp.") || result.status !== "ok") return {};
+  const raw = (result.details ?? {}).mcpApp;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const app = raw as Record<string, unknown>;
+  if (typeof app.resourceUri !== "string" || !app.resourceUri.toLowerCase().startsWith("ui://")) return {};
+  if (typeof app.html !== "string" || app.html.length === 0) return {};
+  return { mcp_app: app };
 }
 
 /** Longest `summary` a `tool_result` carries; the store keeps the whole one. */

@@ -89,6 +89,7 @@ import {
 import { stepSpeedFromCompletion } from "../llm/step-speed.js";
 import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import { rejectedKeyProviderId } from "./chat/rejected-key-provider.js";
+import { withoutMcpAppPage } from "../mcp/mcp-apps.js";
 import type { TuiAction } from "./tui-action.js";
 import type { RunOutcome, StreamingToolCall, TuiState } from "./tui-state.js";
 
@@ -1319,8 +1320,11 @@ function reduceStepEvent(
         status: event.result.status,
         summary: event.result.summary,
         truncated: event.result.truncated ?? false,
+        // An MCP App's page (`details.mcpApp`, ATO-1135, up to 4 MB) is
+        // not drawn in the terminal; the card and `latestResult` keep
+        // everything else.
         ...(event.result.details !== undefined
-          ? { details: event.result.details }
+          ? { details: withoutMcpAppPage(event.result.details) }
           : {}),
       });
       return {
@@ -1330,7 +1334,7 @@ function reduceStepEvent(
           status: event.result.status,
           summary: event.result.summary,
           ...(event.result.details !== undefined
-            ? { details: event.result.details }
+            ? { details: withoutMcpAppPage(event.result.details) }
             : {}),
         },
         metrics: { ...withCard.metrics, toolsOk, toolsError },
