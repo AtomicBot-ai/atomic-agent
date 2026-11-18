@@ -52,6 +52,7 @@ import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
 import {
   buildOsSandboxPolicy,
   formatSandboxUnavailable,
+  MCP_SECRET_HOME_PATHS,
   readOsSandboxSettings,
   wrapWithOsSandbox,
   type OsSandboxSettings,
@@ -531,11 +532,13 @@ export class McpClient {
     command: string,
     args: string[],
     cwd: string | undefined,
-  ): { command: string; args: string[]; sandboxed: boolean } {
+  ): { command: string; args: string[]; sandboxed: boolean; allowDocker: boolean } {
     const settings = (this.deps.sandbox ?? (() => readOsSandboxSettings()))();
     if (settings.mode === "off" || this.config.sandbox === false) {
-      return { command, args, sandboxed: false };
+      return { command, args, sandboxed: false, allowDocker: true };
     }
+    const allowDocker =
+      typeof this.config.sandbox === "object" && this.config.sandbox.allowDocker === true;
     // The server's own code must stay readable when it is installed under
     // a denied folder (a plugin under `<stateDir>/plugins/installed/`):
     // the command's folder, an absolute file argument by its exact path,
@@ -561,6 +564,15 @@ export class McpClient {
       ...(process.env.SSH_AUTH_SOCK === undefined
         ? {}
         : { sshAuthSock: process.env.SSH_AUTH_SOCK }),
+      // npm's tokens and the shell rc files (where keys get exported) are
+      // hidden from a server too (owner decision 18.11).
+      extraDenyRead: MCP_SECRET_HOME_PATHS,
+      // The Docker daemon socket ends the sandbox (a container can mount
+      // the disk): hidden unless this server says `{ allowDocker: true }`.
+      hideDocker: !allowDocker,
+      ...(process.env.DOCKER_HOST === undefined
+        ? {}
+        : { dockerHost: process.env.DOCKER_HOST }),
     });
     const wrapped = wrapWithOsSandbox(command, args, policy);
     if (!wrapped.ok) {
@@ -572,7 +584,7 @@ export class McpClient {
         ),
       );
     }
-    return { command: wrapped.command, args: wrapped.args, sandboxed: true };
+    return { command: wrapped.command, args: wrapped.args, sandboxed: true, allowDocker };
   }
 
   private buildTransport():
@@ -595,9 +607,13 @@ export class McpClient {
       // A sandboxed server keeps its network, so the ssh-agent socket would
       // let it sign with every loaded key without reading `~/.ssh`. Not
       // forwarded inside the sandbox; a server that needs it opts out.
+      // Without `allowDocker` the Docker variables go too: a `tcp://`
+      // `DOCKER_HOST` would reach the daemon over the open network.
       if (spawn.sandboxed) {
         for (const name of Object.keys(env)) {
-          if (name.toUpperCase() === "SSH_AUTH_SOCK") delete env[name];
+          const upper = name.toUpperCase();
+          if (upper === "SSH_AUTH_SOCK") delete env[name];
+          else if (!spawn.allowDocker && upper.startsWith("DOCKER_")) delete env[name];
         }
       }
       return new StdioClientTransport({

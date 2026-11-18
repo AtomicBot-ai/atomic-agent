@@ -13,7 +13,9 @@ import { join } from "node:path";
 import {
   buildOsSandboxPolicy,
   buildSeatbeltProfile,
+  dockerHostSocket,
   formatSandboxUnavailable,
+  MCP_SECRET_HOME_PATHS,
   readOsSandboxSettings,
   SANDBOX_EXEC,
   wrapWithOsSandbox,
@@ -262,5 +264,69 @@ describe("wrapWithOsSandbox", () => {
     expect(win.ok).toBe(false);
     if (win.ok) return;
     expect(formatSandboxUnavailable(win.reason)).toContain("ATOMIC_AGENT_SANDBOX");
+  });
+});
+
+// Decisions 18.11: sandboxed MCP servers also lose ~/.npmrc, the shell
+// rc and history files and every Docker socket, unless a server opts in.
+describe("MCP extras (ATO-620)", () => {
+  const mcpPolicy = (extra: { hideDocker?: boolean; dockerHost?: string } = {}) =>
+    buildOsSandboxPolicy({
+      workspaceRoots: ["/home/op/project"],
+      network: true,
+      extraDenyRead: MCP_SECRET_HOME_PATHS,
+      ...extra,
+      home: HOME,
+      tmp: TMP,
+    });
+
+  it("hides ~/.npmrc and the shell rc and history files", () => {
+    const p = mcpPolicy();
+    for (const f of [".npmrc", ".zshrc", ".bashrc", ".bash_profile", ".profile", ".zsh_history", ".bash_history"]) {
+      expect(p.denyRead).toContain(`/home/op/${f}`);
+    }
+  });
+
+  it("keeps them for the shell tool, which does not pass extraDenyRead", () => {
+    expect(policy().denyRead).not.toContain("/home/op/.npmrc");
+  });
+
+  it("denies the Docker sockets and a unix DOCKER_HOST, without the ssh rule", () => {
+    const p = mcpPolicy({ hideDocker: true, dockerHost: "unix:///home/op/custom/docker.sock" });
+    expect(p.denySockets).toContain("/var/run/docker.sock");
+    expect(p.denySockets).toContain("/home/op/.docker/run/docker.sock");
+    expect(p.denySockets).toContain("/home/op/custom/docker.sock");
+    const profile = buildSeatbeltProfile(p);
+    expect(profile).toContain('(literal (param "S0"))');
+    expect(profile).toMatch(/^\(deny network-outbound .*S0/m);
+    expect(profile).not.toContain("launchd");
+  });
+
+  it("leaves Docker alone when the server opts in", () => {
+    expect(mcpPolicy().denySockets ?? []).not.toContain("/var/run/docker.sock");
+  });
+
+  it("reads only unix DOCKER_HOST values", () => {
+    expect(dockerHostSocket("unix:///var/run/x.sock")).toBe("/var/run/x.sock");
+    expect(dockerHostSocket("tcp://127.0.0.1:2375")).toBeNull();
+    expect(dockerHostSocket(undefined)).toBeNull();
+  });
+
+  it("covers a Docker socket path with /dev/null on Linux", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-sbx-docker-"));
+    try {
+      const sock = join(dir, "docker.sock");
+      writeFileSync(sock, "");
+      const w = wrapWithOsSandbox("ls", [], mcpPolicy({ hideDocker: true, dockerHost: `unix://${sock}` }), {
+        platform: "linux",
+        bwrap: "/usr/bin/bwrap",
+      });
+      if (!w.ok) throw new Error(w.reason);
+      const at = w.args.lastIndexOf(sock);
+      expect(w.args[at - 1]).toBe("/dev/null");
+      expect(w.args[at - 2]).toBe("--ro-bind");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

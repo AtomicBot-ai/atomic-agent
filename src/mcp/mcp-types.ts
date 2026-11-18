@@ -24,6 +24,12 @@ import type { ResourceClass } from "../agent/tool-resource-class.js";
  * `name` is validated against `MCP_SERVER_NAME_RE` so it lands
  * cleanly inside JSON keys, tool names, and GBNF string literals.
  */
+/** Per-server sandbox settings (`mcp.servers[].sandbox` object form). */
+export interface McpServerSandboxConfig {
+  /** Let the server reach the Docker daemon socket. Default false. */
+  allowDocker?: boolean;
+}
+
 export interface McpServerConfig {
   /** Unique operator-chosen namespace (kebab-case, max 32 chars). */
   name: string;
@@ -77,8 +83,13 @@ export interface McpServerConfig {
    * most servers call an API. `false` opts this one server out (a
    * filesystem server that must write across the disk). Ignored for
    * HTTP / SSE transports and while Safe Mode is off.
+   *
+   * The object form keeps the sandbox and loosens one thing:
+   * `{ allowDocker: true }` lets this server reach the Docker daemon
+   * socket, hidden from every sandboxed server by default (a Docker
+   * client can start a container that mounts the whole disk).
    */
-  sandbox?: boolean;
+  sandbox?: boolean | McpServerSandboxConfig;
   /**
    * Raw tool names to offer from this server. Absent: every tool the
    * server lists. Present (even empty): only these. See

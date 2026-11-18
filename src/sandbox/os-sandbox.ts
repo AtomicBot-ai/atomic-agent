@@ -98,7 +98,10 @@ export interface OsSandboxPolicy {
    * sockets) and the exact `SSH_AUTH_SOCK` path in `denySockets`.
    */
   hideSshAgent?: boolean;
-  /** Socket files that may not be read or connected to. */
+  /**
+   * Socket files that may not be read or connected to: the exact
+   * `SSH_AUTH_SOCK` path, and the Docker sockets when `hideDocker` is on.
+   */
   denySockets?: readonly string[];
 }
 
@@ -124,6 +127,20 @@ export interface OsSandboxPolicyInput {
    */
   hideSshAgent?: boolean;
   sshAuthSock?: string;
+  /**
+   * More home-relative files or folders to hide on top of
+   * `SECRET_HOME_PATHS` (an MCP server also loses `~/.npmrc` and the
+   * shell rc files: `MCP_SECRET_HOME_PATHS`).
+   */
+  extraDenyRead?: readonly string[];
+  /**
+   * Hide the Docker daemon sockets (`DOCKER_SOCKET_PATHS`, plus a unix
+   * `DOCKER_HOST`): whoever can talk to the daemon can start a
+   * container that mounts the whole disk, which ends the sandbox.
+   */
+  hideDocker?: boolean;
+  /** The agent's `DOCKER_HOST` value; a `unix://` one is hidden too. */
+  dockerHost?: string;
   home?: string;
   tmp?: string;
 }
@@ -151,6 +168,49 @@ export const SECRET_HOME_PATHS: readonly string[] = [
   ".bash_history",
   "Library/Keychains",
 ];
+
+/**
+ * Hidden from a sandboxed MCP server on top of `SECRET_HOME_PATHS`
+ * (owner decision 18.11): npm's own config (`~/.npmrc` holds registry
+ * and publish tokens) and the shell rc files, where people export keys.
+ * A server that installs from a private registry with `npx` needs its
+ * token another way (its own `env`, or `sandbox: false`).
+ */
+export const MCP_SECRET_HOME_PATHS: readonly string[] = [
+  ".npmrc",
+  ".zshrc",
+  ".bashrc",
+  ".bash_profile",
+  ".profile",
+  ".zsh_history",
+  ".bash_history",
+];
+
+/**
+ * Where Docker (and the Docker-compatible runtimes) put the daemon
+ * socket. `~` is the home folder. Hidden from a sandboxed MCP server
+ * unless its config says `sandbox: { allowDocker: true }`.
+ */
+export const DOCKER_SOCKET_PATHS: readonly string[] = [
+  "/var/run/docker.sock",
+  "/run/docker.sock",
+  "~/.docker/run/docker.sock",
+  "~/.docker/desktop/docker.sock",
+  "~/.colima/default/docker.sock",
+  "~/.colima/docker.sock",
+  "~/.orbstack/run/docker.sock",
+  "~/.rd/docker.sock",
+  "~/Library/Containers/com.docker.docker/Data/docker.raw.sock",
+  "~/Library/Containers/com.docker.docker/Data/docker-cli.sock",
+];
+
+/** The socket path of a `unix://` `DOCKER_HOST`, or null. */
+export function dockerHostSocket(dockerHost: string | undefined): string | null {
+  const value = dockerHost?.trim() ?? "";
+  if (!value.startsWith("unix://")) return null;
+  const path = value.slice("unix://".length);
+  return isAbsolute(path) ? path : null;
+}
 
 /**
  * Pure download caches a build writes to outside the project. Without
@@ -222,7 +282,9 @@ export function buildOsSandboxPolicy(
     ...(process.platform === "win32" ? [] : ["/tmp", real("/tmp")]),
     ...CACHE_HOME_PATHS.flatMap((p) => bothSpellings(join(home, p))),
   ]);
-  const secret = SECRET_HOME_PATHS.flatMap((p) => bothSpellings(join(home, p)));
+  const secret = [...SECRET_HOME_PATHS, ...(input.extraDenyRead ?? [])].flatMap((p) =>
+    bothSpellings(join(home, p)),
+  );
   if (input.stateDir !== undefined) {
     secret.push(...bothSpellings(resolve(input.stateDir)));
   }
@@ -243,16 +305,24 @@ export function buildOsSandboxPolicy(
       .map((path) => ({ path, write: false })),
   ];
   const sock = input.sshAuthSock?.trim();
-  const denySockets =
+  const sockets: string[] =
     input.hideSshAgent === true && sock !== undefined && isAbsolute(sock)
       ? bothSpellings(resolve(sock))
       : [];
+  if (input.hideDocker === true) {
+    const named = DOCKER_SOCKET_PATHS.map((p) => (p.startsWith("~/") ? join(home, p.slice(2)) : p));
+    const fromEnv = dockerHostSocket(input.dockerHost);
+    if (fromEnv !== null) named.push(fromEnv);
+    sockets.push(...named.flatMap((p) => bothSpellings(p)));
+  }
+  const denySockets = unique(sockets);
   return {
     writableRoots,
     denyRead,
     reopen,
     network: input.network,
-    ...(input.hideSshAgent === true ? { hideSshAgent: true, denySockets } : {}),
+    ...(input.hideSshAgent === true ? { hideSshAgent: true } : {}),
+    ...(denySockets.length > 0 || input.hideSshAgent === true ? { denySockets } : {}),
   };
 }
 
@@ -312,13 +382,17 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
     const ops = entry.write ? "file-read* file-write*" : "file-read*";
     lines.push(`(allow ${ops} (subpath (param "O${i}")))`);
   });
-  if (policy.hideSshAgent === true) {
+  const sockets = policy.denySockets ?? [];
+  if (policy.hideSshAgent === true || sockets.length > 0) {
     // After the reopen rules, so nothing reopens them. Fixed patterns,
     // no outside text: launchd's per-login agent socket, and the sockets
-    // `ssh-agent` makes under `/tmp` or `$TMPDIR`.
+    // `ssh-agent` makes under `/tmp` or `$TMPDIR`; then the exact socket
+    // paths (the agent's `SSH_AUTH_SOCK`, the Docker sockets).
     const agent = [
-      ...SSH_AGENT_SOCKET_PATTERNS.map((re) => `(regex #"${re}")`),
-      ...(policy.denySockets ?? []).map((_, i) => `(literal (param "S${i}"))`),
+      ...(policy.hideSshAgent === true
+        ? SSH_AGENT_SOCKET_PATTERNS.map((re) => `(regex #"${re}")`)
+        : []),
+      ...sockets.map((_, i) => `(literal (param "S${i}"))`),
     ].join(" ");
     lines.push(`(deny file-read* file-write* ${agent})`);
     lines.push(`(deny network-outbound ${agent})`);
@@ -355,9 +429,10 @@ export function findBwrap(env: NodeJS.ProcessEnv = process.env): string | null {
   return null;
 }
 
+/** A file, socket or other non-folder: bwrap cannot put a tmpfs on it. */
 function isFile(path: string): boolean {
   try {
-    return statSync(path).isFile();
+    return !statSync(path).isDirectory();
   } catch {
     return false;
   }
@@ -388,8 +463,8 @@ function bwrapArgs(
     if (!existsSync(entry.path)) continue;
     out.push(entry.write ? "--bind" : "--ro-bind", entry.path, entry.path);
   }
-  // The ssh-agent socket (`SSH_AUTH_SOCK`) covered with `/dev/null`, so a
-  // connect to it fails; the folder around it stays as it is.
+  // The denied sockets (`SSH_AUTH_SOCK`, Docker) covered with `/dev/null`,
+  // so a connect to them fails; the folder around each stays as it is.
   for (const path of policy.denySockets ?? []) {
     if (existsSync(path)) out.push("--ro-bind", "/dev/null", path);
   }

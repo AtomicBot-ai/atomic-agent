@@ -254,6 +254,16 @@ describe("MCP server sandbox opt-out (ATO-620)", () => {
     expect(thrownError(() => parsedServer({ name: "d", transport: STDIO, sandbox: "no" }))).toBeInstanceOf(
       ConfigValidationError,
     );
+    expect(parsedServer({ name: "e", transport: STDIO, sandbox: { allowDocker: true } }).sandbox).toEqual({
+      allowDocker: true,
+    });
+    expect(parsedServer({ name: "f", transport: STDIO, sandbox: {} }).sandbox).toEqual({});
+    expect(
+      thrownError(() => parsedServer({ name: "g", transport: STDIO, sandbox: { allowDocker: "yes" } })),
+    ).toBeInstanceOf(ConfigValidationError);
+    expect(
+      thrownError(() => parsedServer({ name: "h", transport: STDIO, sandbox: { network: false } })),
+    ).toBeInstanceOf(ConfigValidationError);
   });
 });
 
