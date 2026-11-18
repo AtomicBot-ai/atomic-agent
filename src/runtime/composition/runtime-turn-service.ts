@@ -234,7 +234,7 @@ export function createRuntimeTurnService(
       resolveLlmConfig(getConfig()),
       providerId,
       model,
-      origin === "fusion" ? { localServer: "allow" } : {},
+      origin === "fusion" || origin === "subagent" ? { localServer: "allow" } : {},
     );
     if (refusal !== null) throw new Error(refusal);
   };
@@ -872,8 +872,9 @@ export function createRuntimeTurnService(
     // and also fires the one-time `first_message_sent`.
     // A fusion worker turn is excluded for the same reason: it is the
     // orchestrator fanning out, not a person; the parent session's turn
-    // is the one `message_sent` and the meter already count.
-    if (origin === "scheduler" || origin === "fusion") {
+    // is the one `message_sent` and the meter already count. A subagent
+    // worker turn is the same kind of turn (ATO-1669).
+    if (origin === "scheduler" || origin === "fusion" || origin === "subagent") {
       return turnController.enqueue(submission);
     }
     const startedAt = Date.now();

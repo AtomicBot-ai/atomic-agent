@@ -42,8 +42,8 @@ export interface NextStepSuggesterDeps {
   logger: StructuredLogger;
 }
 
-/** Nobody is watching a scheduled or fusion-worker turn's reply. */
-const UNWATCHED_ORIGINS: ReadonlySet<TurnOrigin> = new Set(["scheduler", "fusion"]);
+/** Nobody is watching a scheduled, fusion-worker or subagent turn's reply. */
+const UNWATCHED_ORIGINS: ReadonlySet<TurnOrigin> = new Set(["scheduler", "fusion", "subagent"]);
 
 /** Re-exported for callers of this recipe; the rule lives in session. */
 export { nextStepSuggestionsEnabled };

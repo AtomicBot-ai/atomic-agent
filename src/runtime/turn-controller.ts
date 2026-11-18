@@ -28,7 +28,13 @@ export type TurnOrigin =
    * parent session — not a person sending a message. Treated like
    * `scheduler` wherever origin gates analytics or the usage meter.
    */
-  | "fusion";
+  | "fusion"
+  /**
+   * A subagent worker turn (ATO-1669), submitted by a parent turn through
+   * the shared worker runner. Also a worker, not a person: treated exactly
+   * like `fusion` wherever origin is checked.
+   */
+  | "subagent";
 
 /**
  * Per-turn event sink. Installed atomically when a submission starts
