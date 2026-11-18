@@ -121,6 +121,8 @@ export function createCapabilitiesHandler(): HttpHandler {
         // POST /api/mcp/elicitation/answer. False when this agent has
         // no broker (a client then never opts in).
         mcpElicitation: ctx.elicitations !== undefined,
+        // ATO-1617: /api/import/facts/* (facts from a ChatGPT or Claude export). Absent on an older agent.
+        importFacts: true,
       },
       tools: runtime.toolRegistry
         .list()
