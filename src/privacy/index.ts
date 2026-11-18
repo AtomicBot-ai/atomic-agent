@@ -15,6 +15,7 @@ export { createStreamUnmasker, partialPlaceholderStart, type StreamUnmasker } fr
 export {
   forgetPrivacyVault,
   isPrivacyShieldEnabled,
+  linkPrivacyVault,
   privacyShieldTotals,
   privacyVaultFor,
   resetPrivacyVaults,
