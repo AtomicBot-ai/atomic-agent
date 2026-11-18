@@ -89,6 +89,9 @@ describe("config shape map (ATO-764)", () => {
       expect(fusion.has(key)).toBe(true);
     }
     expect(fusion.has("futureKey")).toBe(false);
+    // ATO-1667: known under runMode, and a map whose removed entries stay removed.
+    expect(knownConfigKeys("llm.runMode").has("agentProfiles")).toBe(true);
+    expect(configBranchKind("llm.runMode.agentProfiles")).toBe("dictionary");
     expect(knownConfigKeys("llm").has("providers")).toBe(true);
     expect(knownConfigKeys("llm.fallback").has("chain")).toBe(true);
   });
