@@ -180,6 +180,11 @@ contextBridge.exposeInMainWorld("atomic", {
     opts === undefined ? ipcRenderer.invoke("cli:modelsPull", id) : ipcRenderer.invoke("cli:modelsPull", id, opts),
   cancelPull: () => ipcRenderer.invoke("cli:cancelPull"),
   onPull: (cb: (payload: unknown) => void) => on("cli:pull", cb),
+  /** ATO-1503: pause keeps the partial file, resume continues from it (renderer/dl-pause.js). */
+  pausePull: (id?: string) => ipcRenderer.invoke("cli:pausePull", id),
+  resumePull: (id?: string) => ipcRenderer.invoke("cli:resumePull", id),
+  pullPauseState: () => ipcRenderer.invoke("cli:pullPauseState"),
+  onPullPaused: (cb: (payload: unknown) => void) => on("cli:pullPaused", cb),
   modelsSearch: (query: string, provider?: string, limit?: number) =>
     ipcRenderer.invoke("cli:modelsSearch", { query, provider, limit }),
   upsertProvider: (entry: Record<string, unknown>) => ipcRenderer.invoke("cli:upsertProvider", entry),
