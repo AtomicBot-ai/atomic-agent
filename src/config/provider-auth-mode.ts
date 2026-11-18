@@ -17,7 +17,7 @@ export const SUBSCRIPTION_CLI_KIND = "subscription-cli";
 export const SUBSCRIPTION_OAUTH_KIND = "subscription-oauth";
 
 /** Services a `subscription-oauth` entry can sign in to. */
-export const SUBSCRIPTION_OAUTH_SERVICES = ["chatgpt"] as const;
+export const SUBSCRIPTION_OAUTH_SERVICES = ["chatgpt", "copilot"] as const;
 export type SubscriptionOAuthService = (typeof SUBSCRIPTION_OAUTH_SERVICES)[number];
 
 /**
