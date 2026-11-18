@@ -202,9 +202,15 @@ async function savePath(js: Js, check: Check, bin: string, lb: { base: string; s
       first.ok && savedFirst?.apiKey === K.typed && (process.platform === "win32" || (mode & 0o077) === 0) && sentFirst,
       q({ ok: first.ok, error: first.error, inline: savedFirst?.apiKey === K.typed, mode: mode.toString(8), sent: sentFirst }),
     );
+    // ATO-1568: on a loaded machine the log line can trail the save it
+    // records; read it until it is there (or 10 s), then judge once.
+    const wroteOnStdin = () => /^config set -( --expect-sha256 [0-9a-f]{64})?$/m.test(argv());   // ATO-416: the write may carry the hash it was read with
+    for (const deadline = Date.now() + 10_000; !wroteOnStdin() && Date.now() < deadline;) {
+      await new Promise((r) => setTimeout(r, 250));
+    }
     check(
       "T44: the config write reaches the agent on stdin — no key on any `atag` command line",
-      keysOnArgv() === 0 && /^config set -( --expect-sha256 [0-9a-f]{64})?$/m.test(argv()),   // ATO-416: the write may carry the hash it was read with
+      keysOnArgv() === 0 && wroteOnStdin(),
       q({ keysOnArgv: keysOnArgv(), lines: argv().split("\n").filter(Boolean).map((l) => l.slice(0, 40)) }),
     );
 

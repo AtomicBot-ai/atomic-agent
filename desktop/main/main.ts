@@ -10702,9 +10702,22 @@ async function backendSwitchTest(
     // a hand edit does while this window is open. serve stays on the cloud
     // route it booted on; the switch finds nothing to write for the route
     // and must still restart it (main compares the boot route to the file).
+    // ATO-1568: on a loaded machine the failed switch's rollback can land
+    // after the restore above and leave the file on local, so "the file
+    // moves first" had nothing to move (`file moved first: false`). Wait for
+    // the cloud route, and put it back once more if a late write took it.
+    const onCloud = await until(cfgNow, (c) => routeKind(c) !== undefined && routeKind(c) !== "llama-server", 15_000);
+    if (beforeFail && routeKind(onCloud) === "llama-server") {
+      await configSetWhole(beforeFail);
+      await until(cfgNow, (c) => routeKind(c) !== "llama-server", 15_000);
+    }
+    await waitConnected();
     const portCloud = agent?.status.port ?? null;
     const preMoved = await setActiveTextProvider("local-llama");
     const behind = await js<SwitchResult>("window.__switchBackend('local')");
+    // The old serve can still answer "connected" before the restart takes
+    // it down: wait for the new port, then for the new serve to connect.
+    await until(async () => agent?.status.port ?? null, (port) => port !== portCloud, 60_000);
     const stBehind = await waitConnected();
     const afterBehind = await cfgNow();
     check(
