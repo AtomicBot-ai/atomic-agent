@@ -18,7 +18,10 @@ import { recipeTexts } from "./recipe-link.js";
  * sense in a prompt: invisible characters, asking the agent to hide steps or
  * skip approvals, and markdown images that leak data through a URL.
  *
- * Like the skill scan it is a best-effort tripwire, not a guarantee; the
+ * Plain-language rules cover the same attacks written as a sentence
+ * ("download X and run it as root", "post the contents of ~/x to <url>").
+ * Like the skill scan it is a best-effort tripwire, not a guarantee: `ok`
+ * means no known pattern matched, never "safe", and `note` says so. The
  * card still shows the whole text. `willDo` is the plain-English summary the
  * card and `atag recipe check` print.
  */
@@ -35,7 +38,17 @@ export interface RecipeCheckResult {
   scanId: string;
   /** What opening the recipe does, one sentence each. */
   willDo: string[];
+  /**
+   * Shown next to the verdict. An `ok` only means no known pattern matched,
+   * never that the recipe is safe, so it always says to read the text.
+   */
+  note: string;
 }
+
+export const RECIPE_CHECK_NOTE_OK =
+  "No known risky patterns found. This check is a tripwire, not a guarantee: read the text before you send it.";
+export const RECIPE_CHECK_NOTE_FLAGGED =
+  "This check is a tripwire, not a guarantee: read the findings and the whole text before you send it.";
 
 interface PromptRule {
   rule: string;
@@ -68,11 +81,60 @@ const PROMPT_RULES: PromptRule[] = [
   },
 ];
 
+/*
+ * A recipe is a prompt, not a script: "download X and run it as root" never
+ * looks like `curl | sh`. These rules read the whole text of a field, where
+ * any run of whitespace (newlines too) is one gap, and need two or three
+ * signals together, so "download the report" or "send me a summary" stay ok.
+ */
+const URL_RE = /\b(?:https?|ftp):\/\/[^\s)>\]"']+/i;
+const EMAIL_RE = /\b[\w.+-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+\b/i;
+const DOWNLOAD_RE = /\b(?:download(?:s|ed|ing)?|fetch(?:es|ed|ing)?|get|grab|pull|wget|curl)\b/i;
+const SCRIPT_RE = /\b(?:script|installer|binary)\b|\.(?:sh|bash|zsh|ps1|bat|cmd|exe|msi|pkg|dmg|bin|run|py|pl|rb|js|jar|appimage)\b/i;
+const EXECUTE_RE = /\b(?:execut(?:e|es|ed|ing|able)|install(?:s|ed|ing)?(?!\.\w)|chmod|sudo|as root|run (?:it|them|this|that|the (?:script|file|installer|binary|program|download))|launch (?:it|them|the (?:script|file|installer|binary|program)))\b/i;
+const SEND_RE = /\b(?:send(?:s|ing)?|sent|post(?:s|ed|ing)?|upload(?:s|ed|ing)?|e-?mail(?:s|ed|ing)?|paste(?:s|d)?|pasting)\b/i;
+const PRIVATE_DATA_RE = /\b(?:files?|folders?|contents?|keys?|passwords?|tokens?|secrets?|credentials?)\b|(?:^|[\s"'(])\.env\b|~\//i;
+const PIPE_TO_SHELL_RE = /\|\s*(?:sudo\s+)?(?:sh|bash|zsh|powershell|pwsh|iex)\b/i;
+
+function lineOf(text: string, index: number): number {
+  let n = 1;
+  for (let i = 0; i < index && i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
+  return n;
+}
+
+function findingAt(rule: string, file: string, text: string, index: number): RecipeFinding {
+  const line = lineOf(text, index);
+  const trimmed = (text.split("\n")[line - 1] ?? "").trim();
+  return {
+    severity: "dangerous",
+    rule,
+    file,
+    line,
+    excerpt: trimmed.length <= 160 ? trimmed : `${trimmed.slice(0, 159)}…`,
+  };
+}
+
+function scanPlainLanguage(file: string, text: string): RecipeFinding[] {
+  const out: RecipeFinding[] = [];
+  // Matching is done on the raw text with \s, which already spans newlines,
+  // so line numbers stay true to what the person sees.
+  const pipe = PIPE_TO_SHELL_RE.exec(text);
+  if (pipe) out.push(findingAt("pipe-to-shell", file, text, pipe.index));
+  const target = URL_RE.test(text) || SCRIPT_RE.test(text);
+  const download = DOWNLOAD_RE.exec(text);
+  if (download && target && EXECUTE_RE.test(text)) out.push(findingAt("download-and-run", file, text, download.index));
+  const send = SEND_RE.exec(text);
+  if (send && PRIVATE_DATA_RE.test(text) && (URL_RE.test(text) || EMAIL_RE.test(text))) {
+    out.push(findingAt("send-out-data", file, text, send.index));
+  }
+  return out;
+}
+
 /* Plain-English lines for the findings, grouped so each shows once. */
 const RULE_SENTENCES: Array<[readonly string[], string]> = [
   [["hidden-characters"], "Holds invisible characters, so the text may not say what it shows."],
-  [["remote-exec", "decode-exec", "eval"], "Asks the agent to download or build code and run it."],
-  [["secret-exfil", "secret-and-network", "credential-read", "image-url-leak"], "Asks the agent to read keys or passwords, or to send data to a web address."],
+  [["remote-exec", "decode-exec", "eval", "pipe-to-shell", "download-and-run"], "Asks the agent to download or build code and run it."],
+  [["secret-exfil", "secret-and-network", "credential-read", "image-url-leak", "send-out-data"], "Asks the agent to read keys or passwords, or to send data to a web address."],
   [["recursive-delete", "disk-wipe", "fork-bomb", "chmod-root", "history-wipe"], "Asks the agent to delete files, wipe a disk or damage the system."],
   [["prompt-injection", "prompt-override", "hide-from-user", "approval-bypass"], "Tries to change the agent's rules, skip approvals or hide steps from you."],
   [["network-fetch", "netcat"], "Asks the agent to fetch from or connect to the internet."],
@@ -103,10 +165,27 @@ export function checkRecipe(recipe: Recipe): RecipeCheckResult {
     findings.push(...joined.filter((f) => !seen.has(f.rule)));
   }
   for (const [file, text] of texts) findings.push(...scanPromptRules(file, text));
+  for (const [file, text] of texts) {
+    for (const f of scanPlainLanguage(file, text)) {
+      // `curl … | sh` on one line is already a remote-exec finding there.
+      const dup = f.rule === "pipe-to-shell" && findings.some((g) => g.rule === "remote-exec" && g.file === f.file && g.line === f.line);
+      if (!dup) findings.push(f);
+    }
+  }
+  if (recipe.params.some((p) => p.default !== undefined)) {
+    const seen = new Set(findings.map((f) => f.rule));
+    findings.push(...scanPlainLanguage("prompt with defaults", renderRecipePrompt(recipe)).filter((f) => !seen.has(f.rule)));
+  }
   const verdict: SkillScanVerdict = findings.some((f) => f.severity === "dangerous")
     ? "dangerous"
     : findings.length > 0 ? "caution" : "ok";
-  return { verdict, findings, scanId: recipeScanIdOf(recipe, verdict, findings), willDo: willDoLines(recipe, findings) };
+  return {
+    verdict,
+    findings,
+    scanId: recipeScanIdOf(recipe, verdict, findings),
+    willDo: willDoLines(recipe, findings),
+    note: verdict === "ok" ? RECIPE_CHECK_NOTE_OK : RECIPE_CHECK_NOTE_FLAGGED,
+  };
 }
 
 function scanPromptRules(file: string, text: string): RecipeFinding[] {

@@ -29,8 +29,10 @@ const HELP = [
   "",
   "check   Validates the recipe and scans its text (download-and-run, secret theft,",
   "        prompt injection, invisible characters), then says what it will do.",
+  "        \"ok\" means no known risky pattern was found, not that the recipe is",
+  "        safe: read the text before you send it.",
   "        Exit 0 for ok or caution, 1 for an invalid or dangerous recipe.",
-  "        --json prints {ok, recipe, verdict, findings, scanId, willDo} or {ok:false, error}.",
+  "        --json prints {ok, recipe, verdict, findings, scanId, willDo, note} or {ok:false, error}.",
   "link    Prints the shareable atomicagent://recipe/open link. Refuses a dangerous",
   "        recipe; a caution is printed on stderr.",
   "",
@@ -141,7 +143,7 @@ async function readStdinCapped(): Promise<string> {
 }
 
 function formatCheck(title: string, check: RecipeCheckResult): string {
-  const lines = [`Recipe: ${title}`, `Verdict: ${check.verdict}`, "", "What it will do:"];
+  const lines = [`Recipe: ${title}`, `Verdict: ${check.verdict}`, check.note, "", "What it will do:"];
   for (const line of check.willDo) lines.push(`  - ${line}`);
   if (check.findings.length > 0) {
     lines.push("", "Findings:");
