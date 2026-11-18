@@ -330,6 +330,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1152: `/btw`, a side question the agent answers without saving it (main/side-question-ipc.ts). */
   askSideQuestion: (question: string, sessionId?: string) =>
     ipcRenderer.invoke("agent:btw", { question, ...(sessionId ? { sessionId } : {}) }),
+  /** ATO-586: a new incognito chat's id, and closing one (deleted on the agent); main/incognito-chats-ipc.ts. */
+  incognitoOpen: () => ipcRenderer.invoke("incognito:open"),
+  incognitoClose: (id: string) => ipcRenderer.invoke("incognito:close", { id }),
   /** ATO-1040: the chat's goal, and set / pause / resume / clear (main/session-goal-ipc.ts). */
   goalGet: (sessionId: string) => ipcRenderer.invoke("goal:get", { sessionId }),
   goalAction: (sessionId: string, body: { action: string; criteria?: string[]; maxRounds?: number }) =>

@@ -1,0 +1,16 @@
+/* ============================================================
+   ATO-586 — incognito chat (renderer/incognito-chat.js). The toggle above an
+   empty new chat's composer, and the banner while the chat is incognito.
+   Colours come from tokens only.
+   ============================================================ */
+
+.incogbar{display:flex;align-items:center;gap:8px;margin:0 4px;padding:6px 10px;border-radius:12px;min-width:0;
+  font-size:var(--fs-cap);color:var(--ink);background:var(--panel-2);box-shadow:inset 0 0 0 1px var(--bd-2)}
+.incogbar > svg{width:14px;height:14px;flex:none}
+.incog-tx{flex:1;min-width:0}
+.incog-off{flex:none}
+.incogbar.incog-idle{padding:0;background:none;box-shadow:none}
+.incogchip{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px 0 8px;border:0;border-radius:var(--r-pill);
+  background:none;box-shadow:inset 0 0 0 1.5px var(--bd-2);font:inherit;font-size:var(--fs-cap);color:var(--ink-2);cursor:pointer}
+.incogchip:hover{background:var(--panel-2);color:var(--ink)}
+.incogchip svg{width:12px;height:12px;flex:none}

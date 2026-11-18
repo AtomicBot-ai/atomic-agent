@@ -13,6 +13,7 @@ import { LineSplitter, lineLevel } from "./agent-output.js";
 import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
+import { incognitoBodyField } from "./incognito-chats.js";
 import { runMemoryWrite, type MemoryWriteResult } from "./memory-write.js";
 import { projectBodyFields as projectFields } from "./projects-store.js";
 import { reasoningBodyField, type ReasoningLevel } from "./reasoning-level.js";
@@ -2435,6 +2436,8 @@ export class AgentClient extends EventEmitter {
           stream: true,
           messages,
           session_id: chatSessionIdFor(sessionId),
+          // ATO-586: every turn of an incognito chat says so, so an agent restarted under it opens it incognito again.
+          ...incognitoBodyField(sessionId),
           // ATO-731: the folder a NEW session works in; the agent keeps an existing session's own.
           ...(workingDir ? { working_dir: workingDir } : {}),
           ...projectFields(project),
