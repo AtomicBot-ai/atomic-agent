@@ -500,6 +500,11 @@ contextBridge.exposeInMainWorld("atomic", {
   composioSaveKey: (stateDir: string, value: string) => ipcRenderer.invoke("composio:saveKey", { stateDir, value }),
   composioRemoveKey: (stateDir: string) => ipcRenderer.invoke("composio:removeKey", stateDir),
   composioCheck: (stateDir: string) => ipcRenderer.invoke("composio:check", stateDir),
+  /** ATO-1494 (main/composio-accounts-ipc.ts): named accounts per app and the one each app acts through. */
+  composioListAccounts: (stateDir: string) => ipcRenderer.invoke("composio:listAccounts", { stateDir }),
+  composioAddAccount: (input: { toolkit: string; alias: string; connectedAccountId: string; isDefault?: boolean }) => ipcRenderer.invoke("composio:addAccount", input),
+  composioRemoveAccount: (toolkit: string, alias: string) => ipcRenderer.invoke("composio:removeAccount", { toolkit, alias }),
+  composioSetDefault: (toolkit: string, alias: string | null) => ipcRenderer.invoke("composio:setDefault", { toolkit, alias }),
 
   platform: process.platform,
   /** Windows: repaint the overlaid window controls for the page's theme. */
