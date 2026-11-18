@@ -219,6 +219,27 @@ export interface OfflineModeControl {
   egress(): EgressSnapshot;
 }
 
+/**
+ * Live control of Privacy Shield (ATO-1082). `setEnabled` persists
+ * `privacy.shield.enabled` and applies it to the next cloud request.
+ */
+export interface PrivacyShieldControl {
+  isEnabled(): boolean;
+  setEnabled(enabled: boolean): Promise<void>;
+  /**
+   * Distinct values masked: in this process (`masked`, over `sessions`
+   * chats), and in `sessionId`'s chat when one is given (`session`, and
+   * `lastRequest`, how many its latest cloud request carried).
+   */
+  stats(sessionId?: string): PrivacyShieldStats;
+}
+
+export interface PrivacyShieldStats {
+  masked: number;
+  sessions: number;
+  session?: { masked: number; lastRequest: number };
+}
+
 export interface AgentRuntime {
   readonly config: AtomicAgentConfig;
   readonly loop: AgentLoop;
@@ -393,6 +414,12 @@ export interface AgentRuntime {
    * always sets it. See `createOfflineModeControl`.
    */
   readonly offlineMode?: OfflineModeControl;
+  /**
+   * Privacy Shield (ATO-1082). Optional so hand-built runtimes (tests,
+   * embedders) keep compiling; `createAgentRuntime` always sets it. See
+   * `createPrivacyShieldControl`.
+   */
+  readonly privacyShield?: PrivacyShieldControl;
   /**
    * Discord remote-control channel, or `null` when the build never
    * constructed one. Same contract as `telegramChannel`.

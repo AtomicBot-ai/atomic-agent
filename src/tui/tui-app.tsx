@@ -855,6 +855,8 @@ export interface TuiAppCallbacks {
   onAnalyticsSetEnabledRequested?(enabled: boolean): void | Promise<void>;
   /** Privacy tab: toggle offline mode through the agent's kill switch. */
   onOfflineToggleRequested?(): void | Promise<void>;
+  /** Privacy tab: toggle Privacy Shield (masking before cloud models). */
+  onPrivacyShieldToggleRequested?(): void | Promise<void>;
   /** Privacy tab: re-read the persisted `analytics.enabled` snapshot. */
   onPrivacyRefreshRequested?(): void;
   /** Integrations tab: re-read credential presence + live server state. */

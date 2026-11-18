@@ -100,6 +100,7 @@ import {
 } from "./route-webhooks-admin.js";
 import { createCodingModeHandlers } from "./route-coding-mode.js";
 import { createGetOfflineModeHandler, createSetOfflineModeHandler } from "./route-offline-mode.js";
+import { createGetPrivacyShieldHandler, createSetPrivacyShieldHandler } from "./route-privacy-shield.js";
 import { createContextPreviewHandler } from "./route-context-preview.js";
 import { createPlainCompleteHandler } from "./route-complete.js";
 import { createSideQuestionHandler } from "./route-side-question.js";
@@ -369,6 +370,9 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     // ATO-1084: the network kill switch and its outbound counter.
     { method: "GET", path: "/api/offline-mode", handler: createGetOfflineModeHandler() },
     { method: "POST", path: "/api/offline-mode", handler: createSetOfflineModeHandler() },
+    // ATO-1082: Privacy Shield switch and its "masked N" counter.
+    { method: "GET", path: "/api/privacy-shield", handler: createGetPrivacyShieldHandler() },
+    { method: "POST", path: "/api/privacy-shield", handler: createSetPrivacyShieldHandler() },
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
     // ATO-875: one plain model call, no tools, no session (route-complete.ts).
     { method: "POST", path: "/api/complete", handler: createPlainCompleteHandler() },

@@ -16,6 +16,8 @@ export interface PrivacyTabKeyContext {
  *
  *  - `a` — toggle anonymous analytics + error reporting.
  *  - `o` — toggle offline mode, only when the agent has the kill switch.
+ *  - `m` — toggle Privacy Shield (masking before cloud models), only when
+ *    the agent has it.
  *  - `r` — refresh the persisted snapshot.
  */
 export function handlePrivacyTabKey(
@@ -33,6 +35,11 @@ export function handlePrivacyTabKey(
   if (input === "o") {
     if (!state.privacyPanel.offline.supported) return true;
     void callbacks.onOfflineToggleRequested?.();
+    return true;
+  }
+  if (input === "m") {
+    if (!state.privacyPanel.shield.supported) return true;
+    void callbacks.onPrivacyShieldToggleRequested?.();
     return true;
   }
   if (input === "r") {

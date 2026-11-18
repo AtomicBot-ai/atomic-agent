@@ -179,4 +179,40 @@ describe("PrivacyOrchestrator", () => {
     const synced = actions.filter((a) => a.type === "privacy_synced").pop();
     expect((synced?.offline as { enabled: boolean }).enabled).toBe(false);
   });
+
+  it("toggleShield() flips Privacy Shield and re-reads the masked counter (ATO-1082)", async () => {
+    const { actions, bus } = makeBus();
+    let enabled = false;
+    const setEnabled = vi.fn(async (on: boolean) => {
+      enabled = on;
+    });
+    const runtime = {
+      getApprovalLevel: () => 1,
+      approvals: { sessionGrants: () => ({ categories: [], shapes: [] }) },
+      privacyShield: {
+        isEnabled: () => enabled,
+        setEnabled,
+        stats: () => ({ masked: 4, sessions: 1 }),
+      },
+    } as unknown as AgentRuntime;
+    await new PrivacyOrchestrator(runtime, bus).toggleShield();
+    expect(setEnabled).toHaveBeenCalledWith(true);
+    const settled = actions.find((a) => a.type === "privacy_action_settled");
+    expect(settled?.message).toBe("privacy shield on");
+    const synced = actions.filter((a) => a.type === "privacy_synced").pop();
+    expect(synced?.shield).toEqual({ supported: true, enabled: true, masked: 4, sessionMasked: null });
+  });
+
+  it("toggleShield() does nothing to a runtime without the control", async () => {
+    const { actions, bus } = makeBus();
+    const runtime = {
+      getApprovalLevel: () => 1,
+      approvals: { sessionGrants: () => ({ categories: [], shapes: [] }) },
+    } as unknown as AgentRuntime;
+    await new PrivacyOrchestrator(runtime, bus).toggleShield();
+    expect(actions.some((a) => a.type === "privacy_action_started")).toBe(false);
+    const settled = actions.find((a) => a.type === "privacy_action_settled");
+    expect(settled?.error).toContain("not available");
+  });
 });
+
