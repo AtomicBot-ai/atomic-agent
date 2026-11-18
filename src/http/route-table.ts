@@ -102,6 +102,7 @@ import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createRestoreFileHandler } from "./route-fs-restore.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
+import { createAddFileFolderHandler, createFileIndexStatusHandler, createListFileFoldersHandler, createRemoveFileFolderHandler } from "./route-files.js";
 import {
   createDeleteMemoryNoteHandler,
   createDeleteProfileFactHandler,
@@ -334,6 +335,11 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/llm/active", handler: createSetActiveLlmHandler() },
     // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
     { method: "POST", path: "/api/memory/embeddings/reconnect", handler: createReconnectMemoryEmbeddingsHandler() },
+    // ATO-1621: "My files", the folders the agent indexes and its progress (route-files.ts).
+    { method: "GET", path: "/api/files/folders", handler: createListFileFoldersHandler() },
+    { method: "POST", path: "/api/files/folders", handler: createAddFileFolderHandler() },
+    { method: "DELETE", path: "/api/files/folders", handler: createRemoveFileFolderHandler() },
+    { method: "GET", path: "/api/files/status", handler: createFileIndexStatusHandler() },
     // ATO-1124: the person's own list / edit / delete of notes and profile facts (route-memory.ts).
     { method: "GET", path: "/api/memory/notes", handler: createListMemoryNotesHandler() },
     { method: "PATCH", path: "/api/memory/notes/{id}", handler: createEditMemoryNoteHandler() },
