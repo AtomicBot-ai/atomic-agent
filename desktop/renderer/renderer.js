@@ -8097,6 +8097,8 @@ function submit(preparedSkillText, opts) {
   if (typeof fitHoldsSend === 'function' && fitHoldsSend()) { toast(FIT_HOLD_TITLE, FIT_HOLD_TEXT, 'bad'); return; }
   const e = $('#entry');
   const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
+  // ATO-1238: `!command` opens Terminal in the chat's folder with it typed, not run (bang-command.js).
+  if (typeof preparedSkillText !== 'string' && typeof bangCommandOf === 'function' && bangTerminalOk() && bangCommandOf(typed)) { bangOpen(bangCommandOf(typed), typed, workingDir()); S.draft = ''; if (e) { e.value = ''; autosize(e); } S.slash = false; ctxDraftChanged(); render(); return; }
   /* ATO-405: files in the composer ride in the message itself, as the
      `[attachments]` block the channels send (attachments.js). A slash command
      typed with files waiting runs alone; the chips stay for the next message. */
