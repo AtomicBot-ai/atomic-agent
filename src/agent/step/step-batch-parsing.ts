@@ -194,10 +194,10 @@ function readForeignShapes(
 
 /**
  * A call-looking JSON value somewhere in a reply body: an object whose
- * opening keys (no nested object before it, at most `KEY_GAP` chars in)
+ * opening keys (no nested object before it, at most 200 chars in)
  * include a key only a call is named with (`tool`, `action`, `function`,
  * `tool_calls`), or `name` with an argument key (`arguments`, `args`,
- * `parameters`) within `ARGS_GAP` chars after it, quoted with either
+ * `parameters`) within 2,000 chars after it, quoted with either
  * quote. It finds a whole call, a call inside a ```json fence, an OpenAI
  * or llama.cpp-shaped one, and a call cut off after its first key (a
  * `name` object that never closes). Ordinary prose does not match: a
