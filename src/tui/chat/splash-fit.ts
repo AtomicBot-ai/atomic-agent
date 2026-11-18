@@ -104,6 +104,15 @@ export const SPLASH_TIPS: readonly SplashTip[] = [
     short: "pick model",
     command: "/model",
   },
+  // Where the agent runs (ATO-1640): an operator who could not find
+  // Fusion edited the config by hand. One click opens the composer's
+  // own Local / Cloud / Fusion switch.
+  {
+    label: "/runmode",
+    description: "run on Local, Cloud or Fusion",
+    short: "run mode",
+    command: "/runmode",
+  },
   {
     label: "/tasks",
     description: "jump to the Tasks tab (cron + ingress UI)",
