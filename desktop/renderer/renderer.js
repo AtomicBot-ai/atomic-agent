@@ -24590,12 +24590,12 @@ function localTurnGate() {
     ? 'no local model is selected — open Models (/local) to pick and download one'
     : (bswDownloadProgress(modelId) || 'not downloaded — open Models (/local) and press Enter on it to download');
   const subject = modelId === null ? status : 'local model ' + modelId + ' is ' + status;
-  // resolveFallbackChain: the configured chain (or just the active id), with local-llama appended unless appendLocal is false.
+  // resolveFallbackChain: the configured chain (or just the active id), with local-llama appended only when appendLocal is true (agent default off, ATO-1643).
   const ids = new Set(providers.map((p) => p.id));
   const fb = llm.fallback || {};
   const requested = (fb.chain && fb.chain.length) ? fb.chain : [llm.activeTextProvider];
   const chain = [llm.activeTextProvider].concat(requested.filter((id) => ids.has(id) && id !== llm.activeTextProvider));
-  if (fb.appendLocal !== false) { const local = providers.find((p) => p.kind === 'llama-server'); if (local && !chain.includes(local.id)) chain.push(local.id); }
+  if (fb.appendLocal === true) { const local = providers.find((p) => p.kind === 'llama-server'); if (local && !chain.includes(local.id)) chain.push(local.id); }
   const length = chain.filter((id, i) => ids.has(id) && chain.indexOf(id) === i).length;
   if (length > 1) return {kind:'notice', text: subject + ' — running this turn through the fallback chain'};
   return {kind:'block', text: subject};
@@ -27777,7 +27777,7 @@ function llmFallbackView() {
   const llm = llmBlock();
   const providers = llmProviders();
   const fb = llm.fallback || {};
-  const appendLocal = fb.appendLocal === undefined ? true : !!fb.appendLocal;
+  const appendLocal = fb.appendLocal === true; // unset = off, like the agent's DEFAULT_APPEND_LOCAL (ATO-1643)
   const explicitChain = Array.isArray(fb.chain) ? fb.chain.filter((x) => typeof x === 'string') : [];
   const configured = new Set(providers.map((p) => p.id));
   const activeId = llmActiveTextId();
