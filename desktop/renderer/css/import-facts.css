@@ -1,0 +1,50 @@
+/* ============================================================
+   "Here is what I learned about you" (ATO-1629, ATO-1061).
+   import-facts.js draws the sheet into #import-facts and the
+   "Move from ChatGPT" card into Settings › Import and the setup
+   screen's import step. Colours come from tokens only; the sheet
+   reuses overlays.css and the input kit (styles.css).
+   ============================================================ */
+
+/* Over the setup screen (#onboarding, z 40) as well as the settings sheets. */
+/* no-drag: the setup screen is a drag region, which would swallow clicks on this sheet. */
+#import-facts .ifact-wrap{z-index:45;-webkit-app-region:no-drag}
+.ifact-sheet{width:560px}
+.ifact-body{display:grid;gap:12px;padding:0 22px 18px;overflow-y:auto;min-height:0}
+.ifact-body > .tk-help:first-child{margin:0}
+.ifact-file{display:flex;align-items:center;gap:8px;min-width:0}
+.ifact-path{flex:1;min-width:0;height:38px;display:flex;align-items:center;padding:0 15px;border-radius:var(--r-pill);
+  background:var(--well);color:var(--ink);font-size:var(--fs-cap);font-family:var(--font-mono);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+.ifact-model{display:flex;align-items:center;gap:8px;font-size:var(--fs-ui);color:var(--ink)}
+.ifact-model svg{flex:none;width:16px;height:16px;color:var(--ink-2)}
+.ifact-check{display:flex;align-items:flex-start;gap:10px;font-size:var(--fs-cap);line-height:1.45;color:var(--ink);cursor:pointer}
+.ifact-check input{flex:none;margin-top:2px}
+.ifact-prov{margin:0 0 0 26px}
+.ifact-prov select{max-width:280px}
+
+.ifact-progress{margin:0;font-size:var(--fs-ui);color:var(--ink);font-variant-numeric:tabular-nums}
+.ifact-bar{height:6px;border-radius:var(--r-pill);background:var(--well);overflow:hidden}
+.ifact-bar i{display:block;height:100%;background:var(--accent);border-radius:inherit;transition:width .3s ease}
+
+.ifact-listhead{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:var(--fs-cap);color:var(--ink-2)}
+.ifact-list{display:flex;flex-direction:column;gap:2px;max-height:min(46vh,420px);overflow-y:auto;
+  padding:4px;border-radius:var(--r-well);background:var(--well)}
+.ifact-row{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-radius:var(--r-well);cursor:pointer}
+.ifact-row:hover{background:var(--lift)}
+.ifact-row input{flex:none;margin-top:3px}
+.ifact-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ifact-key{font-size:var(--fs-label);color:var(--ink-3);text-transform:none}
+.ifact-val{font-size:var(--fs-ui);color:var(--ink);overflow-wrap:anywhere}
+.ifact-quote{font-size:var(--fs-cap);color:var(--ink-2);font-style:italic;overflow-wrap:anywhere}
+.ifact-empty{margin:0;font-size:var(--fs-ui);color:var(--ink-2)}
+.ifact-result{display:flex;align-items:center;gap:8px;margin:0;font-size:var(--fs-ui);color:var(--ink)}
+.ifact-result svg{flex:none;width:16px;height:16px;color:var(--success)}
+
+/* The "Move from ChatGPT" card. */
+.ifact-entry{display:flex;align-items:center;gap:14px;padding:12px 16px;margin:0 0 12px}
+.ifact-entry--ob{margin:14px 0 0;padding:12px 0 0;border-top:1px solid var(--bd)}
+.ifact-entry-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ifact-entry-t{font-size:var(--fs-ui);font-weight:600;color:var(--ink)}
+.ifact-entry-d{font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
+.ifact-entry .btn{flex:none}

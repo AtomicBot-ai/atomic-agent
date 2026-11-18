@@ -399,6 +399,15 @@ contextBridge.exposeInMainWorld("atomic", {
   overnightPickFolder: (current?: string, purpose?: "project") => ipcRenderer.invoke("overnight:pickFolder", current, purpose),
   overnightStart: (input: { message: string; folder: string; maxCostUsd: number | null; hours: number; notifyTelegram: boolean }) =>
     ipcRenderer.invoke("overnight:start", input),
+  /** ATO-1629 / ATO-1061: facts about the person from a Claude or ChatGPT export (main/import-facts-ipc.ts). */
+  importFactsInfo: () => ipcRenderer.invoke("importFacts:info"),
+  importFactsPick: (source: "claude" | "chatgpt") => ipcRenderer.invoke("importFacts:pick", source),
+  importFactsStart: (input: { source: "claude" | "chatgpt"; path: string; cloud?: { provider: string; consent: boolean } }) =>
+    ipcRenderer.invoke("importFacts:start", input),
+  importFactsJob: (id: string) => ipcRenderer.invoke("importFacts:job", id),
+  importFactsStop: (id: string) => ipcRenderer.invoke("importFacts:stop", id),
+  importFactsForget: (id: string) => ipcRenderer.invoke("importFacts:forget", id),
+  importFactsSave: (id: string, approvedIds: string[]) => ipcRenderer.invoke("importFacts:save", id, approvedIds),
   /** ATO-1091: `atag models fit-test` from Settings › Models (fit-test-ipc.ts). */
   fitTestSupported: () => ipcRenderer.invoke("fitTest:supported"),
   fitTestJudges: () => ipcRenderer.invoke("fitTest:judges"),
