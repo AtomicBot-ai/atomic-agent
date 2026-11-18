@@ -199,6 +199,9 @@ contextBridge.exposeInMainWorld("atomic", {
   // item 4: per-call tool durations from the trace
   traceTools: (stateDir: string, sessionId: string) =>
     ipcRenderer.invoke("cli:traceTools", { stateDir, sessionId }),
+  // ATO-639: the trace as turns → steps → model and tool calls, for Diagnostics' Timeline
+  traceTree: (stateDir: string, sessionId: string) =>
+    ipcRenderer.invoke("cli:traceTree", { stateDir, sessionId }),
   hostRam: () => ipcRenderer.invoke("app:hostRam"),
   // ATO-1186: memory the app itself uses, {bytes} | null (composer status line).
   appMemory: () => ipcRenderer.invoke("app:memory"),
