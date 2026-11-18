@@ -4,6 +4,7 @@ export type {
   BrowserConnectMode,
   GitConfig,
   HttpApprovalMode,
+  UrlDataGuardMode,
   LocalLlmMode,
   LogLevel,
   OnboardingState,

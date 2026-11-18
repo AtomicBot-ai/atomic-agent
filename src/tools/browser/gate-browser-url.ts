@@ -15,6 +15,13 @@ import {
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
 import {
+  checkUrlSend,
+  DEFAULT_URL_DATA_GUARD,
+  noteUrlSendAllowed,
+  urlSendReason,
+} from "../os/web/url-data-guard.js";
+import { maskUrlSecrets } from "../os/web/http-request-preview.js";
+import {
   isOfflineNetwork,
   offlineRefusal,
   type OfflineNetworkError,
@@ -109,8 +116,15 @@ export async function gateBrowserUrl(
     // The user's own Chrome: a new site asks once per session (stricter
     // than `browser_offsite`, which it replaces here).
     await requireUserSite(dangerous, policy, tool, verdict.host, url, ctx);
+    // ATO-1377: a cleared site still asks for an address full of data.
+    // `"strict"`'s once-per-site rule is what `requireUserSite` just did.
+    await requireUrlData(dangerous, policy, tool, url, ctx, "data");
     return null;
   }
+  // ATO-1377: an address that carries data out, or under `"strict"` the
+  // chat's first visit to a site. One question: it stands in for
+  // `browser_offsite` (http_write never goes quiet below it).
+  if (await requireUrlData(dangerous, policy, tool, url, ctx)) return null;
   if (verdict.kind === "offsite") {
     await requireApproval(
       dangerous,
@@ -126,6 +140,41 @@ export async function gateBrowserUrl(
     );
   }
   return null;
+}
+
+/**
+ * Ask as `http_write` when `checkUrlSend` says `url` must ask first
+ * (`url-data-guard.ts`). `modeCap` lowers `"strict"` to `"data"` where
+ * sites are already asked about another way. Returns whether it asked.
+ */
+async function requireUrlData(
+  dangerous: DangerousToolOptions,
+  policy: BrowserDomainPolicy,
+  tool: string,
+  url: string,
+  ctx: Pick<ToolContext, "sessionId" | "signal">,
+  modeCap?: "data",
+): Promise<boolean> {
+  const configured = policy.urlDataGuard ?? DEFAULT_URL_DATA_GUARD;
+  const mode = modeCap !== undefined && configured === "strict" ? modeCap : configured;
+  const check = checkUrlSend(mode, url, ctx.sessionId, policy.urlSendSites);
+  if (check === null) return false;
+  const shown = maskUrlSecrets(url.trim());
+  await requireApproval(
+    dangerous,
+    {
+      sessionId: ctx.sessionId,
+      tool,
+      category: "http_write",
+      reason: urlSendReason(shown, check),
+      preview: shown,
+      affectedResources: [check.host],
+      grantKey: check.origin,
+    },
+    ctx.signal,
+  );
+  noteUrlSendAllowed(check, ctx.sessionId, policy.urlSendSites);
+  return true;
 }
 
 /**

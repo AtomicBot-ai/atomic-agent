@@ -116,6 +116,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `http.hostAllowlist` | `string[] \| null` | `null` |  |
 | `http.maxResponseBytes` | `number` | `1048576` |  |
 | `http.defaultTimeoutMs` | `number` | `30000` |  |
+| `http.urlDataGuard` | `'off' \| 'data' \| 'strict'` | `"data"` | Ask before `os.web.fetch`, a GET `os.http.request` or the browser opens an address that carries data out (ATO-1377). `"data"` (default) asks only when the address carries a lot of data (a long value after `?`, an encoded blob, text with line breaks); `"strict"` also asks once per site per chat; `"off"` never asks. |
 
 ## web
 

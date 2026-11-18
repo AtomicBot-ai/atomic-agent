@@ -5,7 +5,7 @@ export type { ReadScope } from "./agent/agent-types.js";
 export { READ_SCOPES, parseReadScope, parseApprovalLevel, CONVERSATION_MAX_PAIRS_MIN, CONVERSATION_MAX_PAIRS_MAX } from "./agent/agent-parser.js";
 
 import { createHttpDefaults, parseHttpConfig, type RuntimeHttpConfig, type UserHttpConfig } from "./http-config.js";
-export { parseHttpApprovalMode, type HttpApprovalMode } from "./http-config.js";
+export { parseHttpApprovalMode, type HttpApprovalMode, type UrlDataGuardMode } from "./http-config.js";
 
 import {
   createProjectsDefaults, createToolsDefaults, createVisionDefaults,

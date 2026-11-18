@@ -500,6 +500,7 @@ export function loadConfig(): AtomicAgentConfig {
       hostAllowlist: user.http.hostAllowlist,
       maxResponseBytes: user.http.maxResponseBytes,
       defaultTimeoutMs: user.http.defaultTimeoutMs,
+      urlDataGuard: user.http.urlDataGuard,
     },
     web: {
       search: { ...user.web.search },
