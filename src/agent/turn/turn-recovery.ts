@@ -16,7 +16,7 @@ import { composeSizeRejectionNotice, planSizeRejectionRepack } from "./size-reje
 import { MID_REPLY_TIMEOUT_STEP_BUDGET, composeMidReplyTimeoutNotice, planMidReplyTimeoutRetry } from "./mid-reply-timeout-recovery.js";
 import { composeTruncationNotice, planTruncationRetry, truncationRetryMaxTokens, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
 import { PARSE_RECOVERY_BUDGET, composeParseFailureNotice, isRecoverableParseFailure } from "./parse-failure-recovery.js";
-import { EMPTY_COMPLETION_RECOVERY_BUDGET, composeEmptyCompletionNotice, isRecoverableEmptyCompletion, repeatedEmptyCompletionError } from "./empty-completion-recovery.js";
+import { EMPTY_COMPLETION_RECOVERY_BUDGET, composeEmptyCompletionNotice, emptyCompletionRetryDelayMs, isRecoverableEmptyCompletion, repeatedEmptyCompletionError } from "./empty-completion-recovery.js";
 import { FINALIZATION_REQUEST_DEADLINE_MS, type RequestDeadline } from "../request-deadline.js";
 import { getConfig } from "../../config/index.js";
 import type { TurnLoopState } from "./turn-state.js";
@@ -56,7 +56,11 @@ export interface TurnRecoveryContext {
 
 export type TurnRecoveryDecision =
   | { kind: "retry_same" }
-  | { kind: "retry_next" }
+  /**
+   * Run the next step. `delayMs`, when set, is how long the loop waits
+   * first (the empty-answer re-ask, ATO-1676); the wait is abortable.
+   */
+  | { kind: "retry_next"; delayMs?: number }
   | { kind: "stop" }
   | { kind: "wait"; nextRetryMs: number }
   /**
@@ -377,6 +381,7 @@ export function recoverTurnStep(
     turn.emptyRecoveries += 1;
     turn.stepsTaken += 1;
     turn.pendingNotice = composeEmptyCompletionNotice(noticeForThisStep);
+    const delayMs = emptyCompletionRetryDelayMs(turn.emptyRecoveries);
     deps.onEvent?.({
       type: "empty_completion_recovered",
       stepIndex: i,
@@ -388,10 +393,11 @@ export function recoverTurnStep(
       stepIndex: i,
       attempt: turn.emptyRecoveries,
       budget: EMPTY_COMPLETION_RECOVERY_BUDGET,
+      delayMs,
       category,
     });
     runError = null;
-    return { kind: "retry_next" };
+    return { kind: "retry_next", delayMs };
   }
   // The budget is spent and the model returned nothing again. The
   // turn is terminal now, but `detectModelFailure`'s message

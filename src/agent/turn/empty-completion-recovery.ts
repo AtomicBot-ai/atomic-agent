@@ -22,10 +22,12 @@
  * is exactly the point. A wholly empty native-tools completion is
  * overwhelmingly a stop-token or chat-template misfire (the model
  * closed the turn before emitting anything), not a considered decision
- * about the prompt; naming it in the prompt is the one lever we have,
- * and there is no cap to raise the way `truncation-recovery` raises
- * one. If the second attempt is empty too the fault is in the link, not
- * in the wording, and the turn is owed the failure.
+ * about the prompt; naming it in the prompt is one lever, and there is
+ * no cap to raise the way `truncation-recovery` raises one. The other
+ * lever is time: on a cloud link the same silence is often a busy
+ * service, so the loop waits {@link emptyCompletionRetryDelayMs} before
+ * the re-ask (ATO-1676). If the second attempt is empty too the fault
+ * is in the link, not in the wording, and the turn is owed the failure.
  */
 
 import { ModelError } from "../../llm/index.js";
@@ -62,6 +64,37 @@ import { ModelError } from "../../llm/index.js";
  * with no completion of any kind between them.
  */
 export const EMPTY_COMPLETION_RECOVERY_BUDGET = 1;
+
+/** First retry's wait, and the doubling base after it (ATO-1676). */
+export const EMPTY_COMPLETION_RETRY_BASE_DELAY_MS = 500;
+
+/** No single wait is longer than this, whatever the budget becomes. */
+export const EMPTY_COMPLETION_RETRY_MAX_DELAY_MS = 8_000;
+
+/**
+ * How long the loop waits before re-asking after the `attempt`-th empty
+ * completion in a run (1-based), ATO-1676.
+ *
+ * Without it the re-ask went out the moment the empty answer landed. A
+ * wholly empty answer from a cloud link is mostly the service, not the
+ * prompt: an overloaded backend that closes the stream before the first
+ * token, or a service that abandons its own generation with
+ * `finish_reason: "error"` on the first event (left to end as an empty
+ * completion on purpose, `openai-stream-consumer.ts`). A request sent
+ * back in the same instant reaches the same busy backend.
+ *
+ * Copied from the two tools that retry this shape: Gemini CLI waits
+ * 500 ms before its one retry of an empty or invalid stream, and Claude
+ * Code's API retry starts at 500 ms and doubles per attempt. No jitter:
+ * one person's session sends one retry, so there is no herd to spread.
+ */
+export function emptyCompletionRetryDelayMs(attempt: number): number {
+  const exponent = Math.max(0, Math.floor(attempt) - 1);
+  return Math.min(
+    EMPTY_COMPLETION_RETRY_BASE_DELAY_MS * 2 ** exponent,
+    EMPTY_COMPLETION_RETRY_MAX_DELAY_MS,
+  );
+}
 
 /**
  * Is this the wholly-empty native-tools completion described above?

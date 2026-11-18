@@ -130,7 +130,7 @@ describe("turn recovery decisions and shared state", () => {
 
   it("a repeated announced empty still fails on the summary step instead of hiding its diagnosis", async () => {
     const turn = createTurnLoopState();
-    expect(recoverTurnStep(empty(), context(), {}, turn)).toEqual({ kind: "retry_next" });
+    expect(recoverTurnStep(empty(), context(), {}, turn)).toEqual({ kind: "retry_next", delayMs: 500 });
     const error = empty();
     const repeated = recoverTurnStep(error, context({ finalizationStep: true, stepIndex: 1 }), {}, turn);
     expect(repeated.kind).toBe("failure");
@@ -146,7 +146,7 @@ describe("turn recovery decisions and shared state", () => {
     const turn = createTurnLoopState();
     const asked: Array<string | undefined> = [];
     const deps: TurnRecoveryDependencies = { isCloudLink: (id) => { asked.push(id); return true; } };
-    expect(recoverTurnStep(empty(), context(), deps, turn)).toEqual({ kind: "retry_next" });
+    expect(recoverTurnStep(empty(), context(), deps, turn)).toEqual({ kind: "retry_next", delayMs: 500 });
     const repeated = recoverTurnStep(empty(), context({ stepIndex: 1 }), deps, turn);
     if (repeated.kind !== "failure") throw new Error("expected failure");
     expect(repeated.runError).toBeInstanceOf(ModelError);
@@ -157,7 +157,7 @@ describe("turn recovery decisions and shared state", () => {
   it("two empty answers in a row from a local model keep Retry (ATO-1578)", async () => {
     const turn = createTurnLoopState();
     const deps: TurnRecoveryDependencies = { isCloudLink: () => false };
-    expect(recoverTurnStep(empty(), context(), deps, turn)).toEqual({ kind: "retry_next" });
+    expect(recoverTurnStep(empty(), context(), deps, turn)).toEqual({ kind: "retry_next", delayMs: 500 });
     const repeated = recoverTurnStep(empty(), context({ stepIndex: 1 }), deps, turn);
     if (repeated.kind !== "failure") throw new Error("expected failure");
     expect((repeated.runError as ModelError).repeatedOnCloud).toBeUndefined();
