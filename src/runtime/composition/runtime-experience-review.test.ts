@@ -10,7 +10,7 @@ import { skillCuratorPaths } from "../../skills/curator/index.js";
 import { learnedJournalFile, readLearnedChanges } from "../../skills/learning/index.js";
 import type { SkillRecord } from "../../skills/skill-loader.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
-import { createExperienceReviewer, type ExperienceReviewerDeps } from "./runtime-experience-review.js";
+import { createExperienceReviewer, isReviewedOrigin, type ExperienceReviewerDeps } from "./runtime-experience-review.js";
 
 function completion(content: string): CompletionResult {
   return { content, reasoningContent: "", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1 }, cacheHitTokens: 0, slotId: -1, modelId: null };
@@ -74,6 +74,7 @@ describe("createExperienceReviewer", () => {
       isShutdown: () => false,
       logger: new StructuredLogger({ level: "debug", sinks: [] }),
       starterNames: async () => new Set(["pdf"]),
+      outsideContentSources: () => [],
       ...overrides,
     };
     return { deps, llmComplete, refreshSkills, reviewer: createExperienceReviewer(deps) };
@@ -121,6 +122,48 @@ describe("createExperienceReviewer", () => {
     expect(reviewer.maybeReview(session(12), { result: { reason: "reply", stepCount: 12, stopCause: "step_ceiling" }, origin: "tui" })).toBe(false);
     expect(reviewer.maybeReview(session(12), { result: { reason: "failed", stepCount: 12 }, origin: "tui" })).toBe(false);
     expect(llmComplete).not.toHaveBeenCalled();
+  });
+
+  it("skips a turn that read outside content (the approval gate's taint)", async () => {
+    const asked: string[] = [];
+    const { reviewer, llmComplete } = rig(undefined, {
+      outsideContentSources: (sessionId) => {
+        asked.push(sessionId);
+        return ["a web page"];
+      },
+    });
+    expect(reviewer.maybeReview(session(12), { result: reply(12), origin: "tui" })).toBe(false);
+    await reviewer.whenIdle();
+    expect(asked).toEqual(["s-1"]);
+    expect(llmComplete).not.toHaveBeenCalled();
+    expect(existsSync(join(skillsDir, "sync-with-delete"))).toBe(false);
+  });
+
+  it("skips chat channels and plain HTTP callers, reviews the desktop app over HTTP and the sidecar", async () => {
+    for (const origin of ["telegram", "discord", "slack", "signal", "imessage", "matrix", "googlechat", "msteams", "http"] as const) {
+      const { reviewer, llmComplete } = rig();
+      expect(reviewer.maybeReview(session(12), { result: reply(12), origin })).toBe(false);
+      expect(llmComplete).not.toHaveBeenCalled();
+    }
+    const desktop = rig('{"action":"none","reason":"routine"}');
+    expect(desktop.reviewer.maybeReview(session(12), { result: reply(12), origin: "http", answerChannel: "desktop" })).toBe(true);
+    await desktop.reviewer.whenIdle();
+    const sidecar = rig('{"action":"none","reason":"routine"}');
+    expect(sidecar.reviewer.maybeReview(session(12), { result: reply(12), origin: "sidecar" })).toBe(true);
+    await sidecar.reviewer.whenIdle();
+  });
+
+  it("isReviewedOrigin is an allowlist", () => {
+    expect(isReviewedOrigin("cli")).toBe(true);
+    expect(isReviewedOrigin("tui")).toBe(true);
+    expect(isReviewedOrigin("sidecar")).toBe(true);
+    expect(isReviewedOrigin(undefined)).toBe(true);
+    expect(isReviewedOrigin("http")).toBe(false);
+    expect(isReviewedOrigin("http", "telegram")).toBe(false);
+    expect(isReviewedOrigin("http", "desktop")).toBe(true);
+    expect(isReviewedOrigin("telegram", "desktop")).toBe(false);
+    expect(isReviewedOrigin("scheduler")).toBe(false);
+    expect(isReviewedOrigin("fusion")).toBe(false);
   });
 
   it("skips a turn that wrote into the skills folder itself", async () => {

@@ -902,6 +902,8 @@ export async function createAgentRuntime(
     skillRegistry, refreshSkills,
     pending: turnState.pendingSessionNamings,
     isShutdown: () => lifecycle.isShutdown(),
+    // A turn that read outside content teaches nothing (prompt injection).
+    outsideContentSources: (sessionId) => approvals.outsideContentSources(sessionId),
     logger,
   });
   const turnService = createRuntimeTurnService(config, {

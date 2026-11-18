@@ -1,6 +1,7 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
 import type { RunTurnResult } from "../../agent/agent-contract.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
+import type { AnswerChannel } from "../../prompt/answer-style.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import { buildCloudSubcallRequest } from "../../llm/provider/cloud-subcall.js";
 import type { CompletionRequest, ToolCallTransport } from "../../llm/provider/completion-types.js";
@@ -46,12 +47,34 @@ export interface ExperienceReviewerDeps {
   pending: Set<AbortController>;
   isShutdown: () => boolean;
   logger: StructuredLogger;
+  /**
+   * The outside sources the session read in the turn that just ended
+   * (`ApprovalGate.outsideContentSources`, the ATO-618 taint, recorded
+   * whatever `agent.taintReview` says). Non-empty: no review.
+   */
+  outsideContentSources: (sessionId: string) => readonly string[];
   /** Test seam; the release list by default. */
   starterNames?: () => Promise<ReadonlySet<string>>;
 }
 
-/** Turns nobody reviews: a scheduled task, a fusion worker, a hook (OpenClaw skips cron, subagent and hook runs). */
-const UNREVIEWED_ORIGINS: ReadonlySet<TurnOrigin> = new Set(["scheduler", "fusion"]);
+/**
+ * Origins whose turns are reviewed: the owner at the terminal, the
+ * desktop sidecar and editors over ACP. An allowlist, so a new origin is
+ * not reviewed until someone decides it should be. Not reviewed: a
+ * scheduled task, a fusion worker (OpenClaw skips cron, subagent and hook
+ * runs), every chat channel (a group or a forwarded message carries other
+ * people's words) and plain HTTP callers (any program holding the API
+ * key). An HTTP turn from the desktop app (`answerChannel: "desktop"`)
+ * is the owner's chat and is reviewed.
+ */
+const REVIEWED_ORIGINS: ReadonlySet<TurnOrigin> = new Set(["cli", "tui", "sidecar"]);
+
+/** Whether a turn from `origin` may teach a skill; `undefined` is an in-process caller. */
+export function isReviewedOrigin(origin: TurnOrigin | undefined, answerChannel?: AnswerChannel): boolean {
+  if (origin === undefined) return true;
+  if (origin === "http") return answerChannel === "desktop";
+  return REVIEWED_ORIGINS.has(origin);
+}
 
 /** Fallback-chain partition for the call, like `title:` and `next-step:`. */
 export const EXPERIENCE_REVIEW_SESSION_PREFIX = "learn:";
@@ -59,6 +82,8 @@ export const EXPERIENCE_REVIEW_SESSION_PREFIX = "learn:";
 export interface ReviewTurnInfo {
   result: Pick<RunTurnResult, "reason" | "stepCount" | "stopCause">;
   origin: TurnOrigin | undefined;
+  /** The reply's surface; `"desktop"` marks an HTTP turn from the desktop app. */
+  answerChannel?: AnswerChannel;
   /** A `skill eval` run: it must not change skills either. */
   memoryReadOnly?: boolean;
 }
@@ -184,7 +209,7 @@ export function createExperienceReviewer(deps: ExperienceReviewerDeps) {
   const maybeReview = (state: SessionState, info: ReviewTurnInfo): boolean => {
     try {
       if (running || deps.isShutdown()) return false;
-      if (info.origin !== undefined && UNREVIEWED_ORIGINS.has(info.origin)) return false;
+      if (!isReviewedOrigin(info.origin, info.answerChannel)) return false;
       if (info.memoryReadOnly === true || isIncognitoSession(state)) return false;
       if (info.result.reason !== "reply" && info.result.reason !== "finish") return false;
       // A ceiling ended the turn: its reply is a summary of unfinished work,
@@ -198,9 +223,16 @@ export function createExperienceReviewer(deps: ExperienceReviewerDeps) {
         stepCount: info.result.stepCount,
         minSteps,
         experience,
+        // Read now: the taint is cleared when the session's next turn starts.
+        outsideSources: deps.outsideContentSources(state.id),
         turnEditedSkills: experience !== null && editedSkills(experience, state.workingDir, config.paths.globalSkillsDir),
       });
-      if (!verdict.review) return false;
+      if (!verdict.review) {
+        if (verdict.reason === "outside-content") {
+          deps.logger.debug("self-learning: skipped, the turn read outside content", { sessionId: state.id });
+        }
+        return false;
+      }
       running = review(state, verdict.experience)
         .catch((err: unknown) => {
           deps.logger.warn("self-learning review failed", { sessionId: state.id, error: err instanceof Error ? err.message : String(err) });
