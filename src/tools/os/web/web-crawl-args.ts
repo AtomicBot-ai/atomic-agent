@@ -77,9 +77,18 @@ export interface CrawledPage {
   status: number;
   text: string;
   truncated: boolean;
+  /** Set when the page was built by JavaScript and rendered in the agent's browser. */
+  via?: "browser";
 }
 
-export type StopReason = "done" | "page-limit" | "throttled" | "time-budget" | "aborted" | "errors";
+export type StopReason =
+  | "done"
+  | "page-limit"
+  | "throttled"
+  | "time-budget"
+  | "aborted"
+  | "errors"
+  | "start-moved";
 
 export interface CrawlReport {
   start: string;
@@ -91,6 +100,10 @@ export interface CrawlReport {
   errors: { url: string; message: string }[];
   stoppedBecause: StopReason;
   delayMs: number;
+  /** One line each: a start page that moved, a sitemap skipped, JS pages (ATO-970). */
+  notes: string[];
+  /** Pages built by JavaScript that were read without it (no browser render). */
+  jsPages: string[];
 }
 
 const STOP_TEXT: Record<StopReason, string> = {
@@ -100,6 +113,7 @@ const STOP_TEXT: Record<StopReason, string> = {
   "time-budget": "Stopped at the time budget.",
   aborted: "Stopped: the task was cancelled.",
   errors: "Stopped after repeated errors.",
+  "start-moved": "Stopped: the start page redirects where the crawl does not follow.",
 };
 
 /** The header the model reads first: what was read, what was not, and why. */
@@ -116,6 +130,7 @@ export function crawlHeader(r: CrawlReport, maxDepth: number): string {
   if (r.sitemapPages > 0) lines.push(`Sitemap listed ${r.sitemapPages} page(s) in scope.`);
   const stop = STOP_TEXT[r.stoppedBecause];
   if (stop) lines.push(stop);
+  lines.push(...r.notes);
   for (const e of r.errors.slice(0, 5)) lines.push(`- ${e.url}: ${e.message}`);
   return lines.join("\n");
 }

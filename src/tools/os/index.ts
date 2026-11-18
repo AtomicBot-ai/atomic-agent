@@ -334,7 +334,14 @@ export function registerOsTools(
         : { renderPage: options.webFetchRenderPage }),
     }),
   );
-  registry.register(buildOsWebCrawlTool({ config: options.config }));
+  registry.register(
+    buildOsWebCrawlTool({
+      config: options.config,
+      ...(options.webFetchRenderPage === undefined
+        ? {}
+        : { renderPage: options.webFetchRenderPage }),
+    }),
+  );
   registry.register(osClipboardReadTool);
   registry.register(osClipboardWriteTool);
   registry.register(osWindowListTool);
