@@ -31,6 +31,8 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { composioSessionPins, composioSessionStamp, readAccounts } from "./composio-accounts.js";
+
 /** src/composio/resolve-composio-key.ts COMPOSIO_API_KEY_ENV: the name the TUI's Integrations tab writes. */
 export const COMPOSIO_API_KEY_ENV = "COMPOSIO_API_KEY";
 /** src/composio/composio-api.ts COMPOSIO_API_BASE. */
@@ -64,6 +66,8 @@ export interface CheckComposioKeyOptions {
   apiKey: string;
   /** The stable install id connected accounts hang off (`composio.userId`). */
   userId: string;
+  /** Per-app default accounts (composio-accounts.ts composioSessionPins), pinned on the session as the agent pins them. */
+  connectedAccounts?: Readonly<Record<string, readonly string[]>>;
   baseUrl?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
@@ -84,7 +88,10 @@ export async function checkComposioKey(opts: CheckComposioKeyOptions): Promise<C
       method: "POST",
       headers: { [COMPOSIO_API_KEY_HEADER]: opts.apiKey, "Content-Type": "application/json" },
       // The workbench stays off, as in the core: it would route shell work through a third party.
-      body: JSON.stringify({ user_id: opts.userId, workbench: { enable: false } }),
+      body: JSON.stringify({
+        user_id: opts.userId, workbench: { enable: false },
+        ...(opts.connectedAccounts && Object.keys(opts.connectedAccounts).length > 0 ? { connected_accounts: opts.connectedAccounts } : {}),
+      }),
       signal: AbortSignal.timeout(opts.timeoutMs ?? CHECK_TIMEOUT_MS),
     });
   } catch (err) {
@@ -190,13 +197,26 @@ function shadowedBy(env: NodeJS.ProcessEnv): boolean {
 
 /* The install's user id: the saved one, else a new random UUID (never an
    email: ensure-composio-session.ts). Null when the config cannot be read,
-   because minting a second id then would orphan every connected account. */
-async function userIdOf(deps: ComposioDeps): Promise<{ userId: string; minted: boolean } | { error: string }> {
+   because minting a second id then would orphan every connected account.
+   With it, the per-app default accounts (ATO-1494): the check pins them as
+   the agent would, so the session it caches is the one the agent reuses. */
+type InstallIds = { userId: string; minted: boolean; pins: Record<string, string[]> };
+async function userIdOf(deps: ComposioDeps): Promise<InstallIds | { error: string }> {
   const cfg = await deps.readComposio();
   if (!cfg.ok) return { error: `Could not read the settings: ${cfg.error ?? "unknown error"}` };
   const block = cfg.value && typeof cfg.value === "object" ? (cfg.value as Record<string, unknown>) : {};
   const saved = typeof block.userId === "string" ? block.userId.trim() : "";
-  return saved ? { userId: saved, minted: false } : { userId: (deps.mintId ?? randomUUID)(), minted: true };
+  const pins = composioSessionPins(readAccounts(block));
+  return saved ? { userId: saved, minted: false, pins } : { userId: (deps.mintId ?? randomUUID)(), minted: true, pins };
+}
+
+/* The session cache as persist-composio-session.ts writes it: the id, its
+   URL and the stamp of the pins it carries, so ensure-composio-session.ts
+   reuses it only while the defaults are unchanged. */
+function sessionPatch(userId: string, pins: Record<string, string[]>, session: { sessionId: string; mcpUrl: string } | null): Record<string, string | null> {
+  return session
+    ? { userId, sessionId: session.sessionId, mcpUrl: session.mcpUrl, sessionPins: composioSessionStamp(session.sessionId, pins) }
+    : { userId, sessionId: null, mcpUrl: null, sessionPins: null };
 }
 
 /**
@@ -211,16 +231,14 @@ export async function saveComposioKey(deps: ComposioDeps, value: unknown): Promi
   const apiKey = value as string;
   const id = await userIdOf(deps);
   if ("error" in id) return { ok: false, verified: false, error: id.error, shadowed };
-  const verdict = await (deps.check ?? checkComposioKey)({ apiKey, userId: id.userId });
+  const verdict = await (deps.check ?? checkComposioKey)({ apiKey, userId: id.userId, connectedAccounts: id.pins });
   if (!verdict.ok && verdict.rejected) return { ok: false, verified: false, rejected: true, error: verdict.error, shadowed };
   const wrote = await deps.dotenvSet(deps.stateDir, COMPOSIO_API_KEY_ENV, apiKey);
   if (!wrote.ok) return { ok: false, verified: false, error: `Could not save the key: ${wrote.error ?? "unknown error"}`, shadowed };
   /* The session belongs to the key that made it. With COMPOSIO_API_KEY in
      this app's environment the agent loads that key, not this one, so the
      typed key's session is not cached; the agent mints one for its own key. */
-  const persisted = await deps.writeComposio(verdict.ok && !shadowed
-    ? { userId: id.userId, sessionId: verdict.sessionId, mcpUrl: verdict.mcpUrl }
-    : { userId: id.userId, sessionId: null, mcpUrl: null });
+  const persisted = await deps.writeComposio(sessionPatch(id.userId, id.pins, verdict.ok && !shadowed ? verdict : null));
   const warnings: string[] = [];
   if (!verdict.ok) warnings.push(`The key is saved, but it could not be checked. ${verdict.error}`);
   if (!persisted.ok) warnings.push(`The key is saved, but the Composio settings could not be updated: ${persisted.error ?? "unknown error"}`);
@@ -232,7 +250,7 @@ export async function removeComposioKey(deps: ComposioDeps): Promise<ComposioKey
   const shadowed = shadowedBy(deps.env);
   const wrote = await deps.dotenvSet(deps.stateDir, COMPOSIO_API_KEY_ENV, null);
   if (!wrote.ok) return { ok: false, verified: false, error: `Could not remove the key: ${wrote.error ?? "unknown error"}`, shadowed };
-  const persisted = await deps.writeComposio({ sessionId: null, mcpUrl: null });
+  const persisted = await deps.writeComposio({ sessionId: null, mcpUrl: null, sessionPins: null });
   return {
     ok: true, verified: false, shadowed,
     ...(persisted.ok ? {} : { warning: `The key is removed, but the Composio settings could not be updated: ${persisted.error ?? "unknown error"}` }),
@@ -254,9 +272,9 @@ export async function checkSavedComposioKey(deps: ComposioDeps): Promise<Composi
   if (!apiKey) return { ok: false, verified: false, error: "No Composio API key is saved.", shadowed };
   const id = await userIdOf(deps);
   if ("error" in id) return { ok: false, verified: false, error: id.error, shadowed };
-  const verdict = await (deps.check ?? checkComposioKey)({ apiKey, userId: id.userId });
+  const verdict = await (deps.check ?? checkComposioKey)({ apiKey, userId: id.userId, connectedAccounts: id.pins });
   if (!verdict.ok) return { ok: false, verified: false, rejected: verdict.rejected, error: verdict.error, shadowed };
-  const persisted = await deps.writeComposio({ userId: id.userId, sessionId: verdict.sessionId, mcpUrl: verdict.mcpUrl });
+  const persisted = await deps.writeComposio(sessionPatch(id.userId, id.pins, verdict));
   return {
     ok: true, verified: true, shadowed,
     ...(persisted.ok ? {} : { warning: `The key works, but the Composio settings could not be updated: ${persisted.error ?? "unknown error"}` }),

@@ -87,6 +87,17 @@ test('with a key: status chip, the on switch, Replace and Remove, the connect-an
   assert.match(env, /COMPOSIO_API_KEY set in its environment/);
 });
 
+test('a saved key never shows the No key card (on, off, accounts not loaded, restart owed)', () => {
+  const on = C.composioPaneHTML(base, h);
+  assert.doesNotMatch(on, /No key is saved/);
+  const off = C.composioPaneHTML(Object.assign({}, base, {enabled:false, accounts:{}}), h);
+  assert.doesNotMatch(off, /No key is saved/, 'turning Composio off keeps the saved key');
+  assert.doesNotMatch(off, /id="cmp-key"/);
+  const unknown = C.composioPaneHTML(Object.assign({}, base, {hasKey:undefined, restartOwed:true}), h);
+  assert.match(unknown, /data-cmp-status="restart"/);
+  assert.doesNotMatch(unknown, /No key is saved/);
+});
+
 test('saving, errors and the owed restart', () => {
   const saving = C.composioPaneHTML(Object.assign({}, base, {hasKey:false, toolsUp:false, busy:'save'}), h);
   assert.match(saving, /Checking the key with Composio/);

@@ -1498,6 +1498,8 @@ const CMP = {
   message:null, msgGen:0, warning:null, warnGen:0, lastError:null, owedGen:null,
   checkError:null, checkGen:0, // the last failed Check again, for this agent generation only
 };
+/* ATO-1494: the card's account switcher (composio-accounts.js, main/composio-accounts-ipc.ts); a change owes a restart. */
+const CMPA = createComposioAccounts({bridge: () => BR, stateDir: () => cmpStateDir(), repaint: () => composioRepaint(), changed: (text) => cmpSetMessage(text + ' Restart the agent to apply it.', true)});
 /* ATO-328: the Exa key card under a web search call and its Settings field
    (exa-key.js). `has`: EXA_API_KEY is in <stateDir>/.env or this app's
    environment (names only, never the value), null until read. `draft`: what
@@ -31080,12 +31082,12 @@ function composioState() {
     checkError: CMP.checkError && CMP.checkGen === AGENT_GEN ? CMP.checkError : null, mode: CMP.mode, busy: CMP.busy, keyError: CMP.keyError,
     message: CMP.message && CMP.msgGen === AGENT_GEN ? CMP.message : null,
     warning: CMP.warning && CMP.warnGen === AGENT_GEN ? CMP.warning : null,
-    lastError: CMP.lastError, shadowed: CMP.envHas, running: cmpRunning(),
+    lastError: CMP.lastError, shadowed: CMP.envHas, running: cmpRunning(), accounts: CMPA.view(),
   };
 }
 function composioTab() { return composioPaneHTML(composioState(), {esc, ic, logo: logoHTML}); }
 /* A half-typed key is not kept across visits: it lives in memory only while the pane is in use. */
-function composioTabEntered() { CMP.draft = ''; CMP.keyError = null; composioRefresh(); }
+function composioTabEntered() { CMP.draft = ''; CMP.keyError = null; composioRefresh(); CMPA.refresh(); }
 /* The state dir main's key writes are checked against: the running agent's, else the one the first-run read. */
 function cmpStateDir() { return memStateDir() || (FIRSTRUN && FIRSTRUN.stateDir) || null; }
 function composioRepaint() {
@@ -31231,6 +31233,7 @@ function composioAct(what) {
   // Restarting stops every running reply, so it waits for them, as the notice says.
   if (verb === 'restart') { if (cmpRestartOwed() && !cmpRunning()) act('agent:restart'); return; }
   if (verb === 'refresh') { composioRefresh(); return; }
+  if (verb === 'acct') { CMPA.act(String(what).slice(5)); return; }
 }
 /* The Telegram tab's letters where they mean the same thing: e on/off, t replace key,
    r restart, R check. Removing the key is a button only. The key field owns its keys. */
