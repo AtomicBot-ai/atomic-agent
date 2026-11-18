@@ -18,8 +18,9 @@ import { isSecretConfigKey } from "../config/config-paths.js";
  *  - it follows a secret-named flag in `args` (`--api-key xyz`, `--token=xyz`);
  *  - it looks like a known key format anywhere (`sk-…`, `ghp_…`, `xoxb-…`).
  * A URL keeps its address but loses `user:pass@` and secret-named query
- * parameters. Every blanked spot is listed, so the recipient knows what
- * to fill in.
+ * parameters. A provider's `apiKeyCommand` is dropped whole (it is a
+ * program to run, not a value to blank). Every blanked spot is listed, so
+ * the recipient knows what to fill in.
  */
 export interface ShareableConfig {
   config: Record<string, unknown>;
@@ -154,7 +155,16 @@ export function buildShareableConfig(raw: Record<string, unknown>): ShareableCon
   const providers = named(asObject(raw.llm)?.providers, "id");
   if (providers.length > 0) {
     config.llm = {
-      providers: providers.map(({ id, entry }) => r.value(entry, `llm.providers[${id}]`, "", false)),
+      providers: providers.map(({ id, entry }) => {
+        // A key command runs on the recipient's computer, and blanking its
+        // argv items leaves a list the config parser rejects: it is left
+        // out whole and listed, so the recipient sets their own.
+        if (!("apiKeyCommand" in entry)) return r.value(entry, `llm.providers[${id}]`, "", false);
+        const rest = { ...entry };
+        delete rest.apiKeyCommand;
+        r.redacted.push(`llm.providers[${id}].apiKeyCommand`);
+        return r.value(rest, `llm.providers[${id}]`, "", false);
+      }),
     };
   }
   const definitions = asObject(asObject(asObject(raw.agent)?.personas)?.definitions) ?? {};

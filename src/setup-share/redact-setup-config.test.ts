@@ -33,6 +33,16 @@ describe("buildShareableConfig", () => {
     expect(r.redacted).toEqual(expect.arrayContaining(["llm.providers[groq].apiKey", "llm.providers[groq].headers.Authorization"]));
   });
 
+  it("drops a provider's key command whole and lists it", () => {
+    const r = buildShareableConfig({
+      llm: { providers: [{ id: "vertex", kind: "openai-compatible", baseUrl: "https://x.test/v1", apiKeyCommand: ["gcloud", "auth", "print-access-token"] }] },
+    });
+    const p = (r.config.llm as { providers: Array<Record<string, unknown>> }).providers[0]!;
+    expect("apiKeyCommand" in p).toBe(false);
+    expect(p).toEqual({ id: "vertex", kind: "openai-compatible", baseUrl: "https://x.test/v1" });
+    expect(r.redacted).toEqual(["llm.providers[vertex].apiKeyCommand"]);
+  });
+
   it("blanks every MCP env value, header, secret flag argument and URL credential", () => {
     const r = buildShareableConfig({
       mcp: {

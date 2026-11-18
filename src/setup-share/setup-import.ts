@@ -11,6 +11,7 @@ import { readSetupBundle } from "./setup-bundle-read.js";
 import type { SetupManifest } from "./setup-bundle-format.js";
 import {
   disarmStagedMcpServers,
+  disarmStagedProviders,
   importAgentProfiles,
   importPersonas,
   scanStagedBundle,
@@ -29,7 +30,9 @@ import {
  *     profile. A `dangerous` verdict stops the import unless the person
  *     passed `acknowledgeRisk`.
  *  3. Switch every staged MCP server off and drop its approval and trust
- *     settings: it was set up on someone else's computer.
+ *     settings: it was set up on someone else's computer. Drop every
+ *     staged provider's key command and key env var names, so nothing
+ *     runs and no local key is sent to a URL the sender chose.
  *  4. Preview everything. Skills, MCP servers, cloud providers and, when
  *     the bundle has it and stores are given, memory go through the
  *     existing Atomic Agent importer (the staging folder looks like
@@ -59,7 +62,7 @@ export interface ImportSetupResult {
   manifest: SetupManifest;
   scan: ScanOutcome;
   items: SetupItem[];
-  /** Config paths blanked on export; the person fills these in. */
+  /** Config paths blanked on export or dropped on import; the person fills these in. */
   mustFill: string[];
   /** MCP servers that arrive switched off. */
   disabledServers: string[];
@@ -75,6 +78,8 @@ export async function importSetup(input: ImportSetupInput): Promise<ImportSetupR
     const base = { manifest, scan, items: [] as SetupItem[], mustFill: manifest.redacted, disabledServers: [] as string[] };
     if (scan.dangerous && !input.acknowledgeRisk) return { ...base, status: "refused-dangerous" };
     const disabledServers = disarmStagedMcpServers(staging);
+    const droppedKeySources = disarmStagedProviders(staging);
+    const mustFill = [...new Set([...manifest.redacted, ...droppedKeySources])];
 
     const options: AtomicAgentOptionId[] = ["skills", "mcp", "providers"];
     if (manifest.contents.memory && input.openMemoryTargets) {
@@ -95,7 +100,7 @@ export async function importSetup(input: ImportSetupInput): Promise<ImportSetupR
     ];
 
     const preview = await plan(false);
-    const result = { ...base, disabledServers, items: preview };
+    const result = { ...base, disabledServers, mustFill, items: preview };
     if (input.dryRun) return { ...result, status: "dry-run" };
     if (preview.some((i) => i.status === "conflict")) return { ...result, status: "refused-conflict" };
     if (!preview.some((i) => i.status === "migrated")) return { ...result, status: "nothing-to-do" };

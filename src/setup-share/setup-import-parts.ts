@@ -17,7 +17,7 @@ import { stagedPath } from "./setup-bundle-read.js";
 /**
  * ATO-1073: the parts of `setup import` the Atomic Agent importer does
  * not cover (subagent profiles, persona definitions), the security scan,
- * and the safety rewrite of the staged MCP servers. setup-import.ts runs
+ * and the safety rewrite of the staged MCP servers and cloud providers. setup-import.ts runs
  * them in order.
  */
 export type SetupItem = ImportItemResult<string>;
@@ -79,6 +79,38 @@ export function disarmStagedMcpServers(staging: string): string[] {
   });
   writeFileSync(path, JSON.stringify(config, null, 2));
   return names;
+}
+
+/**
+ * Where a provider's key comes from is the recipient's to decide: a
+ * bundle could carry an `apiKeyCommand` that runs on the first request,
+ * or an `apiKeyEnvVar` naming one of this computer's keys next to a
+ * `baseUrl` of the sender's choosing. Both (and `extraApiKeyEnvVars`)
+ * are dropped from every staged provider, fail-closed, and returned as
+ * config paths for the "fill these in" list.
+ */
+const PROVIDER_KEY_SOURCES = ["apiKeyCommand", "apiKeyEnvVar", "extraApiKeyEnvVars"] as const;
+
+export function disarmStagedProviders(staging: string): string[] {
+  const path = join(staging, CONFIG_NAME);
+  if (!existsSync(path)) return [];
+  const config = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  const llm = config.llm as { providers?: unknown } | undefined;
+  if (!llm || !Array.isArray(llm.providers)) return [];
+  const dropped: string[] = [];
+  llm.providers = llm.providers.map((raw: unknown) => {
+    if (!raw || typeof raw !== "object") return raw;
+    const provider: Record<string, unknown> = { ...(raw as Record<string, unknown>) };
+    const id = typeof provider.id === "string" ? provider.id : "?";
+    for (const key of PROVIDER_KEY_SOURCES) {
+      if (!(key in provider)) continue;
+      delete provider[key];
+      dropped.push(`llm.providers[${id}].${key}`);
+    }
+    return provider;
+  });
+  if (dropped.length > 0) writeFileSync(path, JSON.stringify(config, null, 2));
+  return dropped;
 }
 
 /** Plan (and with `execute`, write) `<stateDir>/agents/*.md` from the bundle. */

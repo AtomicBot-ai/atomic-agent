@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { exportSetup } from "./setup-export.js";
-import { makeStateDir, readTar, SECRET } from "./setup-share-test-helpers.js";
+import { makeStateDir, put, readTar, SECRET } from "./setup-share-test-helpers.js";
 
 describe("exportSetup", () => {
   let root: string;
@@ -57,6 +57,24 @@ describe("exportSetup", () => {
       "mcp.servers[remote].transport.headers.Authorization",
       "llm.providers[groq].apiKey",
     ]));
+  });
+
+  it("leaves out a skill file or profile with a key pasted into it", async () => {
+    const key = "sk-" + "a".repeat(30);
+    put(stateDir, "skills/triage/scripts/call.py", `API_KEY = "${key}"\n`);
+    put(stateDir, "agents/leaky.md", `---\nname: leaky\ndescription: x\n---\nUse ${key}.\n`);
+    const out = join(root, "setup.tar.gz");
+    const { manifest } = await exportSetup({ stateDir, outFile: out, starterSkills });
+    const entries = await readTar(out);
+    expect(entries.has("atomic-agent-setup/skills/triage/scripts/call.py")).toBe(false);
+    expect(entries.has("atomic-agent-setup/agents/leaky.md")).toBe(false);
+    expect(entries.has("atomic-agent-setup/skills/triage/scripts/run.sh")).toBe(true);
+    expect([...entries.values()].join("\n")).not.toContain(key);
+    expect(manifest.leftOut).toEqual(expect.arrayContaining([
+      "skills/triage/scripts/call.py (looks like it contains a key)",
+      "agents/leaky.md (looks like it contains a key)",
+    ]));
+    expect(manifest.contents.agents).toEqual(["reviewer"]);
   });
 
   it("adds memory only when asked", async () => {

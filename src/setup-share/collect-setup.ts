@@ -2,7 +2,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { MAX_PROFILE_FILE_BYTES, USER_AGENT_DIR_NAME } from "../agent-profiles/index.js";
-import { buildShareableConfig, type ShareableConfig } from "./redact-setup-config.js";
+import { buildShareableConfig, looksLikeKey, type ShareableConfig } from "./redact-setup-config.js";
 import {
   CONFIG_NAME,
   MAX_FILE_BYTES,
@@ -20,9 +20,10 @@ import {
  * Read from the state dir:
  *  - `config.json`, reduced and redacted (redact-setup-config.ts);
  *  - `skills/<name>/` with a SKILL.md, minus the bundled starter skills,
- *    VCS/install folders, credential-looking files, symlinks and files
- *    over MAX_FILE_BYTES;
- *  - `agents/*.md`, the subagent profiles.
+ *    VCS/install folders, credential-looking files, symlinks, files
+ *    over MAX_FILE_BYTES and text files with a key-shaped value in them;
+ *  - `agents/*.md`, the subagent profiles (also left out when one holds
+ *    a key-shaped value).
  * Scheduled jobs are rows in `tasks.sqlite`, not files, so they are not
  * part of this first version.
  */
@@ -63,6 +64,20 @@ function sortedEntries(dir: string): string[] {
   }
 }
 
+const KEY_IN_FILE = "looks like it contains a key";
+
+/**
+ * Whether a text file carries something key-shaped (`sk-…`, `ghp_…`).
+ * Skill scripts and profiles are copied byte for byte, so a key pasted
+ * into one would otherwise travel with the setup. Binary files (a NUL
+ * byte) are not scanned.
+ */
+function fileHoldsKey(abs: string): boolean {
+  const bytes = readFileSync(abs);
+  if (bytes.includes(0)) return false;
+  return looksLikeKey(bytes.toString("utf8"));
+}
+
 function walkSkill(stateDir: string, rel: string, files: CollectedFile[], leftOut: string[]): void {
   for (const name of sortedEntries(join(stateDir, rel))) {
     const childRel = `${rel}/${name}`;
@@ -88,6 +103,10 @@ function walkSkill(stateDir: string, rel: string, files: CollectedFile[], leftOu
     }
     if (!isAllowedBundlePath(childRel)) {
       leftOut.push(`${childRel} (unusual file name)`);
+      continue;
+    }
+    if (fileHoldsKey(abs)) {
+      leftOut.push(`${childRel} (${KEY_IN_FILE})`);
       continue;
     }
     files.push({ path: childRel, abs, size: st.size });
@@ -121,6 +140,10 @@ export function collectSetup(input: CollectSetupInput): CollectedSetup {
     if (!st?.isFile() || !name.endsWith(".md")) continue;
     if (st.size > MAX_PROFILE_FILE_BYTES || !isAllowedBundlePath(rel)) {
       leftOut.push(`${rel} (too large or unusual name)`);
+      continue;
+    }
+    if (fileHoldsKey(abs)) {
+      leftOut.push(`${rel} (${KEY_IN_FILE})`);
       continue;
     }
     files.push({ path: rel, abs, size: st.size });
