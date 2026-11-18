@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 
 import {
   extractSafeCode,
@@ -555,17 +556,14 @@ describe("scrubError message and the shared secret detector (ATO-1077)", () => {
 });
 
 describe("scrubError upstream detail (ATO-1673)", () => {
-  it("sends the reason, blamed field and code of a provider refusal, never its text", () => {
-    const cause = Object.assign(new Error("openai provider 400: …"), {
+  it("sends the reason, blamed field and code of a Gemini refusal, never its text", () => {
+    // The body exactly as the HTTP client builds it, from Google's array form.
+    const raw =
+      '[{"error":{"code":400,"message":"* GenerateContentRequest.contents[3].parts[0].function_call: Function call is missing a thought_signature in functionCall parts; draft my resignation letter","status":"INVALID_ARGUMENT"}}]';
+    const cause = Object.assign(new Error(`openai provider 400: ${raw.slice(0, 300)}`), {
       name: "OpenAiHttpError",
       status: 400,
-      body: {
-        type: "invalid_request_error",
-        code: "INVALID_ARGUMENT",
-        message:
-          "Function call is missing a thought_signature in functionCall parts.",
-        text: '[{"error":{"message":"* GenerateContentRequest.contents[3].parts[0].function_call: missing thought_signature; draft my resignation letter"}}]',
-      },
+      body: parseProviderErrorBody(raw),
     });
     const wrapper = Object.assign(new Error("humanized"), {
       name: "TransportError",
@@ -573,7 +571,6 @@ describe("scrubError upstream detail (ATO-1673)", () => {
       cause,
     });
     const ev = scrubError(wrapper, { source: "llm_failure", category: "transport" });
-    expect(ev.upstreamErrorType).toBe("invalid_request_error");
     expect(ev.upstreamReason).toBe("missing_thought_signature");
     expect(ev.upstreamErrorParam).toBe(
       "GenerateContentRequest.contents[].parts[].function_call",
@@ -581,6 +578,22 @@ describe("scrubError upstream detail (ATO-1673)", () => {
     expect(ev.upstreamErrorCode).toBe("INVALID_ARGUMENT");
     expect(JSON.stringify(ev)).not.toContain("resignation");
     expect(JSON.stringify(ev)).not.toContain("functionCall parts");
+  });
+
+  it("sends the type, param and code of an OpenAI refusal built by the real parser", () => {
+    const raw =
+      '{"error":{"message":"Invalid \'tools[0].function.parameters.properties.home_address\': bad","type":"invalid_request_error","param":"tools[0].function.parameters.properties.home_address","code":"invalid_value"}}';
+    const cause = Object.assign(new Error(`openai provider 400: ${raw}`), {
+      name: "OpenAiHttpError",
+      status: 400,
+      body: parseProviderErrorBody(raw),
+    });
+    const wrapper = Object.assign(new Error("humanized"), { name: "TransportError", cause });
+    const ev = scrubError(wrapper, { source: "llm_failure" });
+    expect(ev.upstreamErrorType).toBe("invalid_request_error");
+    expect(ev.upstreamErrorParam).toBe("tools[].function.parameters.properties.*");
+    expect(ev.upstreamErrorCode).toBe("invalid_value");
+    expect(JSON.stringify(ev)).not.toContain("home_address");
   });
 
   it("adds no upstream detail to an error without a provider body", () => {

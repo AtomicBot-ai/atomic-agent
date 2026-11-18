@@ -18,12 +18,16 @@
  *  - `upstream_error_param`: the request field the provider blamed, from
  *    OpenAI's `error.param` or a field path at the head of the message
  *    (`messages.3.content.0.text`, `contents[3].parts[0]`). Kept only when
- *    it starts at a known request field, with every index reduced to
- *    `[]` and everything below a schema's `properties` dropped, so neither
- *    a position in the conversation nor a tool's own argument names
- *    travel.
- *  - `upstream_error_code`: `error.code` (`invalid_value`,
- *    `INVALID_ARGUMENT`), the same bounded enum shape as the type.
+ *    it starts at a known request field. Every index becomes `[]`; below
+ *    the root only the request's own structural words are kept, and the
+ *    path is cut to `*` at the first other word and right after any map
+ *    of chosen names (tool arguments, tool results, schema properties
+ *    and definitions). A dotted word inside a file path or ending in a
+ *    file extension is not read as a field. So neither a position in the
+ *    conversation nor a tool's, schema's or user's own names travel.
+ *  - `upstream_error_code`: `error.code` (`invalid_value`), or Google's
+ *    `error.status` (`INVALID_ARGUMENT`) when the code is only a number,
+ *    the same bounded enum shape as the type.
  *
  * The provider's full sentence stays where it already was: in the chat
  * row (`humanizeOpenAiHttpError` quotes it) and the local trace `error`
@@ -41,6 +45,7 @@ export type UpstreamReason =
   | "tool_schema_invalid"
   | "tool_name_invalid"
   | "must_end_with_user"
+  | "trailing_whitespace"
   | "roles_must_alternate"
   | "empty_content"
   | "reasoning_param"
@@ -97,8 +102,12 @@ const REASON_PATTERNS: ReadonlyArray<readonly [UpstreamReason, RegExp]> = [
   ],
   [
     "must_end_with_user",
-    /(?:final|last) (?:message|turn)[^.]{0,40}(?:must|should) (?:be|come from) (?:a |the )?user|must end with a user|does(?: not|n't) support (?:assistant )?(?:message )?prefill|\bprefill|trailing whitespace/i,
+    /(?:final|last) (?:message|turn)[^.]{0,40}(?:must|should) (?:be|come from) (?:a |the )?user|must end with a user|does(?: not|n't) support (?:assistant )?(?:message )?prefill/i,
   ],
+  // Anthropic's "final assistant content cannot end with trailing
+  // whitespace": a prefill that IS accepted, with a space at its end. Its
+  // own word, not the prefill refusal above.
+  ["trailing_whitespace", /trailing whitespace/i],
   [
     "roles_must_alternate",
     /roles? must alternate|alternate between (?:user|"user")|consecutive (?:user|assistant) messages|must start with a user|first message must/i,
@@ -196,8 +205,49 @@ const SAFE_PARAM_RE = /^[A-Za-z_][A-Za-z0-9_.[\]*]{0,95}$/;
 /** `error.code`: bounded enum shape, either case (`INVALID_ARGUMENT`). */
 const SAFE_CODE_RE = /^[A-Za-z][A-Za-z0-9_]{0,47}$/;
 
-/** The links kept below a JSON schema's `properties`: none. */
-const SCHEMA_PROPERTY_LINKS = new Set(["properties", "patternProperties", "definitions"]);
+/**
+ * Links below the root that are the request's own structure, the same
+ * words in every request whoever sends it. Any other link may be a name
+ * the user or a tool chose (`tools.acme_payroll_sync`,
+ * `messages.private_notes`), so the path is cut there to `*`.
+ */
+const STRUCTURAL_LINKS = new Set([
+  "messages", "tools", "contents", "content", "text", "parts", "part",
+  "role", "name", "type", "id", "index",
+  "function", "functions", "function_call", "functionCall",
+  "function_response", "functionResponse", "function_declarations",
+  "functionDeclarations", "parameters", "input_schema", "json_schema",
+  "schema", "strict", "description",
+  "tool_calls", "tool_call_id", "tool_use", "tool_use_id", "tool_result",
+  "tool_choice", "image_url", "url", "source", "media_type", "mime_type",
+  "inline_data", "inlineData", "file_data", "fileData", "data",
+  "cache_control", "reasoning_content", "thought_signature",
+  "thoughtSignature", "extra_content", "google", "refusal", "signature",
+  "system_instruction", "generation_config", "generationConfig",
+  "tool_config", "response_format", "stream_options",
+  "items", "required", "enum", "format", "anyOf", "oneOf", "allOf",
+]);
+
+/**
+ * Links whose children are names chosen by a tool, a schema or the
+ * user: a tool call's arguments, a tool result's keys, a schema's
+ * property and definition maps. The link itself is kept, then `*`.
+ */
+const CUT_AFTER_LINKS = new Set([
+  "args", "arguments", "input", "response",
+  "properties", "patternProperties", "definitions", "$defs",
+  "dependentSchemas", "dependentRequired", "dependencies",
+]);
+
+/** Extensions that make a dotted word a file name, not a field path. */
+const FILE_EXTENSIONS = new Set([
+  "txt", "md", "json", "jsonl", "yaml", "yml", "toml", "csv", "tsv",
+  "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "png", "jpg",
+  "jpeg", "gif", "webp", "svg", "html", "htm", "xml", "log", "js",
+  "mjs", "cjs", "ts", "tsx", "jsx", "py", "rb", "go", "rs", "java",
+  "kt", "swift", "c", "h", "cpp", "sh", "zip", "tar", "gz", "gguf",
+  "bin", "safetensors", "sqlite", "db", "env", "ini", "cfg", "conf",
+]);
 
 const MAX_CAUSE_DEPTH = 5;
 
@@ -234,10 +284,12 @@ function detailOfBody(
   if (reason !== null) out.upstreamReason = reason;
   const param = extractUpstreamParam(text);
   if (param !== undefined) out.upstreamErrorParam = param;
-  const code = body.code;
-  if (typeof code === "string" && SAFE_CODE_RE.test(code)) {
-    out.upstreamErrorCode = code;
-  }
+  // `error.code` when it is a word; Google's is only the HTTP number,
+  // and its `error.status` (`INVALID_ARGUMENT`) is the word.
+  const code = [body.code, body.status].find(
+    (value): value is string => typeof value === "string" && SAFE_CODE_RE.test(value),
+  );
+  if (code !== undefined) out.upstreamErrorCode = code;
   return out;
 }
 
@@ -276,6 +328,7 @@ export function extractUpstreamParam(text: string): string | undefined {
     // A bare root word ("messages", "tools") is a word of prose as often
     // as a field name; only a declared `param` may be one word.
     if (rest.length === 0) continue;
+    if (looksLikeFileName(text, match.index ?? 0, rest)) continue;
     const normalized = normalizeParamPath(`${root}${rest}`);
     if (normalized !== undefined) return normalized;
   }
@@ -283,28 +336,52 @@ export function extractUpstreamParam(text: string): string | undefined {
 }
 
 /**
- * `messages[3].content.0.text` → `messages[].content[].text`; links
- * below `properties` become `*`; the root must be a known request field.
+ * A dotted word that is part of a file path or names a file:
+ * `/Users/n/Documents/contents.txt`, `C:\\notes\\messages.md`,
+ * `~/tools.json`, `./contents.v2`.
+ */
+function looksLikeFileName(text: string, at: number, rest: string): boolean {
+  const before = at > 0 ? text[at - 1]! : "";
+  if (before === "/" || before === "\\" || before === "~" || before === ".") {
+    return true;
+  }
+  const links = rest.split(/[.[\]]/).filter((link) => link.length > 0);
+  const last = links[links.length - 1]?.toLowerCase();
+  return last !== undefined && FILE_EXTENSIONS.has(last);
+}
+
+/**
+ * `messages[3].content.0.text` → `messages[].content[].text`. The root
+ * must be a known request field; below it only structural links are
+ * kept (`STRUCTURAL_LINKS`), a link that opens a map of chosen names
+ * (`CUT_AFTER_LINKS`) is kept and followed by `*`, and any other link,
+ * a named bracket (`properties[foo]`) included, becomes `*` and ends
+ * the path.
  */
 export function normalizeParamPath(raw: string): string | undefined {
   const links = raw
     .trim()
     .replace(/\[(\d+)\]/g, ".$1")
+    .replace(/\[[^\]]*\]/g, ".*")
     .split(".")
     .filter((link) => link.length > 0);
-  if (links.length === 0 || !KNOWN_PARAM_ROOTS.has(links[0]!)) return undefined;
-  let path = "";
-  for (const link of links.slice(0, 10)) {
+  const root = links[0];
+  if (root === undefined || !KNOWN_PARAM_ROOTS.has(root)) return undefined;
+  let path = root;
+  for (const link of links.slice(1, 10)) {
     if (/^\d+$/.test(link)) {
       path += "[]";
       continue;
     }
-    if (!/^[A-Za-z_][A-Za-z0-9_]{0,31}$/.test(link)) return undefined;
-    path += path.length === 0 ? link : `.${link}`;
-    if (SCHEMA_PROPERTY_LINKS.has(link)) {
+    if (CUT_AFTER_LINKS.has(link)) {
+      path += `.${link}.*`;
+      break;
+    }
+    if (!STRUCTURAL_LINKS.has(link)) {
       path += ".*";
       break;
     }
+    path += `.${link}`;
   }
   return SAFE_PARAM_RE.test(path) ? path : undefined;
 }

@@ -100,6 +100,28 @@ describe("parseProviderErrorBody", () => {
   });
 });
 
+describe("parseProviderErrorBody, Google's array form (ATO-1673)", () => {
+  it("reads the first error object of an array body, status included", () => {
+    const body = parseProviderErrorBody(
+      '[{"error":{"code":400,"message":"Function call is missing a thought_signature.","status":"INVALID_ARGUMENT"}}]',
+    );
+    expect(body.message).toBe("Function call is missing a thought_signature.");
+    expect(body.code).toBe("400");
+    expect(body.status).toBe("INVALID_ARGUMENT");
+  });
+
+  it("still reads a bracketed log prefix the old way", () => {
+    const body = parseProviderErrorBody('[ERROR] {"error":{"message":"bad tool"}}');
+    expect(body.message).toBe("bad tool");
+  });
+
+  it("still reads nothing out of an array that holds no object", () => {
+    const body = parseProviderErrorBody('["oops"]');
+    expect(body.message).toBeUndefined();
+    expect(body.text).toBe('["oops"]');
+  });
+});
+
 describe("readProviderErrorReason", () => {
   const read = (
     status: number | null,

@@ -73,6 +73,12 @@ describe("classifyUpstreamReason (ATO-1673)", () => {
       "Unsupported parameter: 'parallel_tool_calls' is not supported with this model.",
       "unsupported_parameter",
     ],
+    [
+      "Anthropic trailing whitespace",
+      "messages: final assistant content cannot end with trailing whitespace",
+      "trailing_whitespace",
+    ],
+    ["a bare prefill mention", "The prefill was ignored.", "other"],
     ["model id", "The model `gpt-9` does not exist or you do not have access to it.", "model_not_found"],
     ["nothing known", "Something odd happened.", "other"],
   ])("%s", (_label, text, expected) => {
@@ -124,6 +130,75 @@ describe("extractUpstreamParam (ATO-1673)", () => {
     expect(extractUpstreamParam("too many messages in the request")).toBeUndefined();
   });
 
+  it.each([
+    ["a tool name", "Invalid value: 'tools.acme_payroll_sync' is not allowed", "tools.*"],
+    [
+      "a dependentSchemas key",
+      "tools[0].function.parameters.dependentSchemas.secret_arg: unsupported",
+      "tools[].function.parameters.dependentSchemas.*",
+    ],
+    [
+      "a $defs-like definitions key",
+      "tools[0].function.parameters.definitions.CustomerRecord: bad ref",
+      "tools[].function.parameters.definitions.*",
+    ],
+    [
+      "a dependentRequired key",
+      "tools[1].function.parameters.dependentRequired.ssn: invalid",
+      "tools[].function.parameters.dependentRequired.*",
+    ],
+    [
+      "a dependencies key",
+      "tools[1].function.parameters.dependencies.salary: invalid",
+      "tools[].function.parameters.dependencies.*",
+    ],
+    [
+      "a patternProperties key",
+      "tools[0].function.parameters.patternProperties.acct_x: invalid",
+      "tools[].function.parameters.patternProperties.*",
+    ],
+    ["a user-named message field", "Unknown field messages.private_notes", "messages.*"],
+    [
+      "a Gemini function_call argument",
+      "* GenerateContentRequest.contents[2].parts[0].function_call.args.patient_name: bad",
+      "GenerateContentRequest.contents[].parts[].function_call.args.*",
+    ],
+    [
+      "a Gemini function_response key",
+      "contents[4].parts[0].function_response.response.diagnosis: invalid",
+      "contents[].parts[].function_response.response.*",
+    ],
+    [
+      "an Anthropic tool_use input key",
+      "messages.1.content.0.input.bank_account: invalid",
+      "messages[].content[].input.*",
+    ],
+    [
+      "an OpenAI tool call arguments key",
+      "messages[3].tool_calls[0].function.arguments.home_address: invalid",
+      "messages[].tool_calls[].function.arguments.*",
+    ],
+  ])("keeps no chosen name below the root: %s", (_label, text, expected) => {
+    const param = extractUpstreamParam(text);
+    expect(param).toBe(expected);
+    for (const secret of [
+      "acme_payroll_sync", "secret_arg", "CustomerRecord", "ssn", "salary",
+      "acct_x", "private_notes", "patient_name", "diagnosis",
+      "bank_account", "home_address",
+    ]) {
+      expect(param).not.toContain(secret);
+    }
+  });
+
+  it.each([
+    ["a POSIX path", "could not read /Users/n/Documents/contents.txt"],
+    ["a Windows path", "could not read C:\\notes\\messages.md"],
+    ["a home path", "see ~/tools.json"],
+    ["a file name in prose", "uploaded file contents.pdf was rejected"],
+  ])("does not read a file name as a field: %s", (_label, text) => {
+    expect(extractUpstreamParam(text)).toBeUndefined();
+  });
+
   it("keeps a declared one-word scalar param", () => {
     expect(extractUpstreamParam('{"error":{"param":"temperature"}}')).toBe("temperature");
   });
@@ -134,8 +209,20 @@ describe("normalizeParamPath", () => {
     expect(normalizeParamPath("draft.my.letter")).toBeUndefined();
   });
 
-  it("refuses a link that is not an identifier", () => {
-    expect(normalizeParamPath("messages[1].content with spaces")).toBeUndefined();
+  it("cuts at a link that is not an identifier", () => {
+    expect(normalizeParamPath("messages[1].content with spaces")).toBe("messages[].*");
+  });
+
+  it("cuts a named bracket to *", () => {
+    expect(
+      normalizeParamPath("tools[0].function_declarations[2].parameters[secret_arg]"),
+    ).toBe("tools[].function_declarations[].parameters.*");
+  });
+
+  it("cuts a declared param at the first chosen name too", () => {
+    expect(normalizeParamPath("tools[0].function.acme_payroll_sync")).toBe(
+      "tools[].function.*",
+    );
   });
 });
 
@@ -159,6 +246,15 @@ describe("extractUpstreamErrorDetail (ATO-1673)", () => {
   it("tags a 402 as out of credit so it can be told from a 400", () => {
     const err = providerFailure(402, { type: "invalid_request_error", text: "" });
     expect(extractUpstreamErrorDetail(err).upstreamReason).toBe("out_of_credit");
+  });
+
+  it("takes Google's error.status as the code when error.code is a number", () => {
+    const err = providerFailure(400, {
+      code: "400",
+      status: "INVALID_ARGUMENT",
+      text: "x",
+    });
+    expect(extractUpstreamErrorDetail(err).upstreamErrorCode).toBe("INVALID_ARGUMENT");
   });
 
   it("drops a freeform code", () => {
