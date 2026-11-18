@@ -11,16 +11,37 @@ import { snapshotSqlite } from "../import/atomic-desktop/index.js";
  * procedures, links, embeddings), taken while the agent may be running.
  *
  * The copy is `<dir>/memory.sqlite`, the same file name a data folder
- * uses, so the restore is the import that already exists and never
- * duplicates: `atomic-agent import atomic-agent --source <dir> --include
- * memory --exclude sessions,skills,mcp,providers --yes`. It merges into
- * the current memory (anything already here is kept), and an older
- * schema is migrated when the copy is opened, as any data folder is.
+ * uses. The restore it points to is the import that already exists:
+ * `atomic-agent import atomic-agent --source <dir> --include memory
+ * --exclude sessions,skills,mcp,providers --yes`. That import brings back
+ * notes and profile facts only, merged into the current memory (anything
+ * already here is kept). Lessons, procedures, votes and note links stay in
+ * the file but are not imported (ATOMIC_DESKTOP_NOT_IMPORTED); the agent
+ * forms them again from the notes. RESTORE.txt and the help say so.
  *
  * Read-only on the live database (sqlite-snapshot.ts). Refuses a folder
  * that already holds a backup, so a second run cannot overwrite one.
  */
 export const MEMORY_BACKUP_FILE = "memory.sqlite";
+
+/** What RESTORE.txt says; exported so the test pins the honest wording. */
+export function restoreNoteFor(dir: string): string {
+  return [
+    "Atomic Agent memory backup.",
+    "",
+    "memory.sqlite here is a full copy of the memory: notes, profile facts with their history,",
+    "lessons, procedures, votes and note links.",
+    "",
+    "To bring back the notes and profile facts (merged into the current memory, nothing already",
+    "there is replaced):",
+    "",
+    `  ${restoreCommandFor(dir)}`,
+    "",
+    "This import does not bring back lessons, procedures, votes or note links. The agent forms",
+    "them again from the notes over time.",
+    "",
+  ].join("\n");
+}
 
 export function defaultBackupDir(stateDir: string, now = new Date()): string {
   const p = (n: number): string => String(n).padStart(2, "0");
@@ -59,14 +80,14 @@ export async function runMemoryBackup(outArg: string | undefined, deps: MemoryBa
     await snapshotSqlite(deps.memoryDbFile, dest);
     writeFileSync(
       join(dir, "RESTORE.txt"),
-      `Atomic Agent memory backup.\n\nTo bring it back (merged into the current memory, nothing already there is replaced):\n\n  ${restoreCommandFor(dir)}\n`,
+      restoreNoteFor(dir),
       "utf8",
     );
   } catch (e) {
     err(`memory backup failed: ${e instanceof Error ? e.message : String(e)}\n`);
     return 1;
   }
-  out(`memory backed up -> ${dest}\nrestore with:\n  ${restoreCommandFor(dir)}\n`);
+  out(`memory backed up -> ${dest}\nrestore notes and profile facts with:\n  ${restoreCommandFor(dir)}\n(lessons, procedures and links are not imported; see RESTORE.txt)\n`);
   return 0;
 }
 

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Database } from "../native/load-better-sqlite3.js";
 import { MemoryStore } from "../memory/memory-store.js";
 import { ProfileStore } from "../memory/profile-store.js";
-import { defaultBackupDir, restoreCommandFor, runMemoryBackup } from "./memory-backup.js";
+import { defaultBackupDir, restoreCommandFor, restoreNoteFor, runMemoryBackup } from "./memory-backup.js";
 
 let dir: string;
 let dbFile: string;
@@ -43,7 +43,11 @@ describe("atomic-agent memory backup (ATO-46)", () => {
     const copyNotes = new MemoryStore({ dbFile: join(out, "memory.sqlite"), maxEntries: 100 });
     expect(copyNotes.hasContent("The person ships on Fridays")).toBe(true);
     copyNotes.close();
-    expect(readFileSync(join(out, "RESTORE.txt"), "utf8")).toContain(restoreCommandFor(out));
+    const note = readFileSync(join(out, "RESTORE.txt"), "utf8");
+    expect(note).toBe(restoreNoteFor(out));
+    expect(note).toContain(restoreCommandFor(out));
+    // The import restores notes and facts only (ATOMIC_DESKTOP_NOT_IMPORTED); the note must not promise more.
+    expect(note).toContain("does not bring back lessons, procedures, votes or note links");
     expect(io.lines.join("")).toContain("--include memory");
   });
 
