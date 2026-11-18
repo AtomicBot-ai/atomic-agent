@@ -2,7 +2,10 @@ import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-contract.j
 import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
 import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { SessionState } from "../../session/session-state.js";
-import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
+import {
+  FUSION_WORKER_DEFAULT_DEPTH,
+  type FusionWorkerMeta,
+} from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
 import type { DelegateTask } from "./delegate-args.js";
 import type { DelegateContract } from "./contract.js";
@@ -739,9 +742,12 @@ async function runOneTask(
   // The worker always runs in this folder (the parent's, in every model
   // mode, #1121); only an isolated or cloud worker inherits a workspace.
   const inheritWorkspace = isolated !== undefined || deps.inheritWorkspace === true;
+  // Fusion fans out only from the operator session, so every worker it
+  // spawns sits one level down (ATO-1666).
   const session = deps.createEphemeralSession({
     parentSessionId: options.parentSessionId,
     taskId: task.id,
+    depth: FUSION_WORKER_DEFAULT_DEPTH,
   }, workingDir, inheritWorkspace);
   // A worker that queued on the parent id would wait behind the
   // orchestrator's own turn — which is the turn calling this — and the
@@ -1612,7 +1618,11 @@ async function runOneTask(
     !stopByPerson.signal.aborted
   ) {
     const replaceSession = deps.createEphemeralSession(
-      { parentSessionId: options.parentSessionId, taskId: task.id },
+      {
+        parentSessionId: options.parentSessionId,
+        taskId: task.id,
+        depth: FUSION_WORKER_DEFAULT_DEPTH,
+      },
       workingDir,
       inheritWorkspace,
     );
