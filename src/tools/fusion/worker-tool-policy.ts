@@ -30,6 +30,9 @@ import { compileToolAllowlist } from "../../agent-profiles/profile-tools.js";
  */
 export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "fusion.delegate",
+  // A subagent starts no subagents (ATO-1670). Hidden here; refused by
+  // the tool itself on the caller's session depth.
+  "subagent.run",
   "finish",
   "tasks.schedule",
   "tasks.cron",

@@ -21,15 +21,18 @@ describe("worker tool policy", () => {
     // a worker must already be unable to fan out again.
     expect(WORKER_EXCLUDED_TOOLS.has("fusion.delegate")).toBe(true);
     expect(isWorkerVisibleTool("fusion.delegate")).toBe(false);
+    expect(isWorkerVisibleTool("subagent.run")).toBe(false);
   });
 
-  it("hides exactly the delegation, session-ending, scheduling, memory-writing and screen tools", () => {
+  it("hides exactly the delegation, subagent, session-ending, scheduling, memory-writing and screen tools", () => {
     expect([...WORKER_EXCLUDED_TOOLS].sort()).toEqual(
       [
         "canvas.render",
         "ask_user",
         "finish",
         "fusion.delegate",
+        // ATO-1670: a worker or subagent never starts subagents.
+        "subagent.run",
         "memory.notes.forget",
         "memory.notes.store",
         "memory.profile.remove",
