@@ -204,6 +204,9 @@ export function agentEnv(): NodeJS.ProcessEnv {
        session exit run from the desktop does not read the desktop as
        "another session still using the model". */
     [SESSION_PARENT_PID_ENV]: String(process.pid),
+    /* ATO-1010/ATO-1135: the chat draws MCP Apps pages (renderer/mcp-app.js),
+       so the agent may advertise the extension and read a tool's ui:// page. */
+    ATOMIC_AGENT_MCP_APPS_UI: "1",
   };
 }
 

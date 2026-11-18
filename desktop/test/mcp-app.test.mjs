@@ -144,3 +144,10 @@ test("renderer.js hooks the tool_result frame; index.html loads mcp-app.js after
   const mod = readFileSync(new URL("../renderer/mcp-app.js", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   assert.doesNotMatch(mod, /srcdoc|createElement|fetch\(|XMLHttpRequest|\.src\s*=|window\.open/);
 });
+
+test("the agent the desktop starts is told it may send MCP Apps pages (ATOMIC_AGENT_MCP_APPS_UI)", () => {
+  // Core #1623 reads this switch (src/mcp/mcp-apps.ts mcpAppsUiFromEnv); without it no page ever arrives.
+  const src = readFileSync(new URL("../main/state-dir.ts", import.meta.url), "utf8");
+  const env = src.slice(src.indexOf("export function agentEnv"), src.indexOf("export function underDesktopState"));
+  assert.match(env, /ATOMIC_AGENT_MCP_APPS_UI: "1"/);
+});
