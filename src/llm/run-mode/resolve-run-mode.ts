@@ -370,8 +370,10 @@ export function resolveRunMode(
         };
 
   // Escalation only ever goes to a provider the operator configured, and
-  // never to the worker leg itself (nothing would be gained). The
+  // never to the worker leg's own model (nothing would be gained). The
   // orchestrator leg is the default: it is the model already paid for.
+  // One provider serving two models (the orchestrator on A, the workers
+  // on B) still escalates, to A (ATO-1561).
   const escalationEntry =
     byId(fusion?.escalationProvider) ?? orchestrator ?? undefined;
   const escalationModel =
@@ -384,8 +386,12 @@ export function resolveRunMode(
         escalationEntry.model ??
         null);
   const escalationTurnModel = turnModelFor(escalationEntry, escalationModel);
+  const escalationIsWorkerLeg =
+    escalationEntry !== undefined &&
+    escalationEntry.id === workerProviderId &&
+    (isLocalKind(escalationEntry) || escalationModel === workerModelLabel);
   const escalation: FusionEscalationTarget | null =
-    escalationEntry === undefined || escalationEntry.id === workerProviderId
+    escalationEntry === undefined || escalationIsWorkerLeg
       ? null
       : {
           providerId: escalationEntry.id,

@@ -56,7 +56,13 @@ export function describeRunMode(
         rm.orchestratorModel ? ` (${rm.orchestratorModel})` : ""
       }, ${rm.workers} worker${rm.workers === 1 ? "" : "s"} on ${rm.workerProviderId}${
         rm.workerModel ? ` (${rm.workerModel})` : ""
-      }${capacity === null ? "" : `; ${capacity}`}`,
+      }${capacity === null ? "" : `; ${capacity}`}${
+        rm.escalation?.auto === true
+          ? `; stuck workers escalate to ${rm.escalation.providerId}${
+              rm.escalation.model ? ` (${rm.escalation.model})` : ""
+            }`
+          : ""
+      }`,
     );
   } else {
     parts.push(

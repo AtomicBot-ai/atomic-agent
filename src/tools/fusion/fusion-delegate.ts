@@ -1069,7 +1069,7 @@ export function buildFusionDelegateTool(
       // A role model's leg (ATO-943): its own provider, label, price and
       // width. A cloud leg takes the cloud cap; a second local server is
       // one at a time, since its slots are nobody's measurement. The
-      // escalation target is dropped where it is this very provider.
+      // escalation target is dropped where it is this very model.
       const rolePricing = new Map(
         [...roleLegs.values()].map((leg) => [
           leg.providerId,
@@ -1127,7 +1127,10 @@ export function buildFusionDelegateTool(
             writeScope,
             signal: runSignal,
             ...guardOptionsFor(leg.providerId, pricing, leg.model, tasks),
-            ...(escalationTarget?.providerId === leg.providerId
+            // Dropped only where the target is this leg's own model: a
+            // second model on the same provider still escalates (ATO-1561).
+            ...(escalationTarget?.providerId === leg.providerId &&
+            (escalationTarget.model ?? escalationTarget.providerId) === leg.model
               ? {}
               : escalationOptions),
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
