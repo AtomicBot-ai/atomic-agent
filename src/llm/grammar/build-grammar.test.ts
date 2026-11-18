@@ -1010,6 +1010,7 @@ describe("the base grammar's vocabulary", () => {
   // Remove a name here when the grammar learns it.
   const NOT_YET_IN_GRAMMAR = new Set([
     "browser.annotate",
+    "browser.scenario",
     "browser.screenshot",
     "browser.site_tools",
     "github.issue.comment",

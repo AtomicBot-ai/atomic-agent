@@ -28,7 +28,7 @@ import { resolveExtraApiKeys } from "../../config/resolve-llm-api-key.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { buildAskUserTool, replyTool } from "../../tools/conversation/index.js";
-import { buildBrowserPageRenderer, buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
+import { browserScenarioDir, buildBrowserPageRenderer, buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
 import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
@@ -167,7 +167,13 @@ export function createRuntimeToolRegistry(
       // ATO-1377: the same switch as os.web.fetch and os.http.request.
       ...(config.http.urlDataGuard !== undefined ? { urlDataGuard: config.http.urlDataGuard } : {}),
     };
-    for (const tool of buildBrowserTools(browserBackend, dangerous, domainPolicy, browserExtract)) {
+    for (const tool of buildBrowserTools(
+      browserBackend,
+      dangerous,
+      domainPolicy,
+      browserExtract,
+      browserScenarioDir(config.paths.stateDir),
+    )) {
       toolRegistry.register(tool);
     }
   }

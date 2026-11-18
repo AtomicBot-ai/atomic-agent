@@ -133,6 +133,7 @@ const GATED_TOOLS = {
     "browser.site_tools",
     "browser.debug",
     "browser.annotate",
+    "browser.scenario",
   ],
   webSearch: ["os.web.search"],
   vision: ["vision.describe"],

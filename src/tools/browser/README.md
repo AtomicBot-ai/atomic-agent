@@ -67,6 +67,20 @@ A page on a blocked host is never captured. A capture is discarded, never saved,
 - Not yet: the browser panel inside the desktop window (`WebContentsView` over CDP), an agent cursor, and a dedicated Take over / Resume button in the desktop app.
 
 
+## Scenarios: record once, replay without the model
+
+`browser.scenario { action, name?, params?, timeoutMs? }` (`scenario.ts`, `scenario-recorder.ts`, `scenario-format.ts`, `scenario-store.ts`, ATO-960). The idea is Stagehand's action cache and browser-use's workflow recordings: a task the model did once is replayed step by step with no model call, each element found the way Playwright codegen writes locators (`getByRole(role, { name })`).
+
+- `start` records this chat's successful `navigate`, `search`, `click`, `type` and `act` calls (the recorder wraps those tools; a chat that is not recording pays nothing). Before each call it reads the target ref's role and name from the page's ARIA snapshot, plus the page URL and snapshot digest. On `run`, a step that acts on a page stops with `origin_changed` when the browser is not on the origin (scheme, host, port) the step was recorded on, so a redirect or a changed site never gets the recorded text; the digest is kept for information only. A call that fails, is refused or is denied is not recorded. `upload` is never recorded (local files stay out of scenarios); stop says so.
+- `stop { name, params? }` saves the steps as `<stateDir>/browser-scenarios/<name>.json` (`{ version: 1, name, createdAt, params, steps }`, names `a-z0-9-_`, at most 200 steps). `params` turns typed text into a placeholder: `{ "query": "running shoes" }` makes each step that typed exactly "running shoes" type `{{query}}` at replay. `cancel` drops the recording.
+- Text typed into a field the approval gate calls `browser_secret` (password, one-time code, card number, or a field that could not be read) is never written. The step names a secret parameter instead (from the field's label, e.g. `password`), and `run` refuses to start until it is supplied.
+- `run { name, params?, timeoutMs? }` replays the steps in order. A step's element is looked up in the current snapshot by role and exact name, then by role and a name equal ignoring case and runs of spaces ("self-healing lite"); it waits up to `timeoutMs` (default 5 s, at most 30 s) for the element to appear. No match or more than one match stops the run with an error naming the step (`target_missing`, `target_ambiguous`), so the model or the user carries on from there. Falling back to the model on a miss is left for later.
+- Every replayed step is a call to the same `browser.navigate` / `search` / `click` / `type` / `act` tool the model uses, so every gate above applies unchanged: `browser_commit` and `browser_secret` prompts (a secret parameter asks every time), blocked and allowed domains, offline mode, the landed-page re-check, the user's own Chrome rules. A denied prompt ends the run like a denied model call; a step that returns an error stops it with that tool's message.
+- `list` shows the saved scenarios (a broken file is listed as unreadable); `delete { name }` removes one.
+- On a schedule: a scheduled task whose message says "Run browser scenario `<name>`" replays it in a background turn (headless by default, see below). Prompts in that turn follow the task's usual approval handling, so a scenario that sends, posts or types a secret still needs a yes.
+- Not yet: recording by hand in the desktop browser panel, and the model fallback on a miss.
+
+
 ## Extracting data
 
 `browser.extract { schema, instruction? }` (`extract.ts`, `extract-request.ts`, ATO-699): structured data out of the active page in one call ("every plan's name and price") instead of a read / scroll chain. The page's full ARIA snapshot (cut to half of the window, 8k–200k chars; 48k when the window is unknown) and the caller's JSON Schema go to one side model call on the step's provider, outside the main slot:
