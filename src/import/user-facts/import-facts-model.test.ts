@@ -69,4 +69,40 @@ describe("bindImportFactsModel (ATO-1617)", () => {
       expect((err as ImportFactsModelError).code).toBe("not_cloud");
     }
   });
+
+  it("local means this computer only: LAN, .internal and remote llama.cpp need the cloud consent", () => {
+    const l = links();
+    const away: ImportFactsProviderEntry[] = [
+      { id: "lan-llama", kind: "llama-server", url: "https://llm.example.com" },
+      { id: "lan-box", kind: "openai-compatible", baseUrl: "http://192.168.1.20:8080/v1" },
+      { id: "gateway", kind: "openai-compatible", baseUrl: "http://gpu.internal/v1" },
+    ];
+    for (const entry of away) {
+      try {
+        bindImportFactsModel({ engine: { kind: "local" }, providers: [entry], activeTextProvider: entry.id, getProvider: l.getProvider });
+        expect.unreachable();
+      } catch (err) {
+        expect((err as ImportFactsModelError).code).toBe("no_local_model");
+      }
+      const bound = bindImportFactsModel({
+        engine: { kind: "cloud", provider: entry.id, cloudConsent: true },
+        providers: [entry],
+        activeTextProvider: entry.id,
+        getProvider: l.getProvider,
+      });
+      expect(bound.local).toBe(false);
+    }
+    expect(l.complete).not.toHaveBeenCalled();
+  });
+
+  it("a llama-server on 127.0.0.1 is local even when its embeddings daemon url is elsewhere", () => {
+    const l = links();
+    const bound = bindImportFactsModel({
+      engine: { kind: "local" },
+      providers: [{ id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080", baseUrl: "http://192.168.1.5:8081" }],
+      activeTextProvider: "local-llama",
+      getProvider: l.getProvider,
+    });
+    expect(bound.local).toBe(true);
+  });
 });
