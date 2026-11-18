@@ -80,7 +80,7 @@ function qeSelectionRowHTML(sel, busy, h) {
   const warn = (sel && (sel.error || sel.hint)) || '';
   return '<div class="tk-setrow">'
     + '<div class="body"><div class="t">Use selected text</div>'
-      + '<div class="d">When the box opens, the text selected in the app in front comes with it, with Rewrite, Translate, Explain and Summarize. Atomic Agent copies it and puts your clipboard back.</div>'
+      + '<div class="d">When the shortcut opens the mini chat, the text selected in the app in front comes with it, with Rewrite, Translate, Explain and Summarize. Atomic Agent copies it and puts your clipboard back.</div>'
       + (warn ? '<div class="tk-help tk-help--warn" role="status">' + h.esc(warn) + '</div>' : '')
     + '</div>'
     + h.setSwitchHTML({on, busy, disabled: !sel || busy, act: 'quickentry:selection',

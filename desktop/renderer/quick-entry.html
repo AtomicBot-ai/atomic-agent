@@ -11,18 +11,10 @@
 </head>
 <body class="qe">
   <form id="qe-form" class="qe-box" autocomplete="off">
-    <div class="qe-row">
-      <input id="qe-text" class="qe-input" type="text" spellcheck="true" maxlength="20000"
-             placeholder="Ask Atomic Agent…" aria-label="Message for a new chat">
-      <span id="qe-hint" class="qe-hint" aria-hidden="true">↩ new chat · esc</span>
-    </div>
-    <!-- ATO-985: the text selected in the app in front, and what to do with it. -->
-    <div id="qe-sel" class="qe-sel" hidden>
-      <blockquote id="qe-sel-text" class="qe-chip" aria-label="Selected text"></blockquote>
-      <div id="qe-actions" class="qe-actions" role="group" aria-label="Use the selected text"></div>
-    </div>
+    <input id="qe-text" class="qe-input" type="text" spellcheck="true" maxlength="20000"
+           placeholder="Ask Atomic Agent…" aria-label="Message for a new chat">
+    <span id="qe-hint" class="qe-hint" aria-hidden="true">↩ new chat · esc</span>
   </form>
-  <script src="quick-entry-selection.js"></script>
   <script src="quick-entry.js"></script>
 </body>
 </html>

@@ -341,7 +341,7 @@ test("ATO-1609: show brings an open window up instead of toggling it away", () =
   assert.ok(at > 0);
   const body = qw.slice(at, qw.indexOf("\n  };", at));
   assert.match(body, /box\.show\(\);\s*box\.focus\(\);\s*return;/);
-  assert.match(body, /open\(\);/);
+  assert.match(body, /if \(!opening\) create\(null\);/, "opens without reading the selection (ATO-985)");
 });
 
 test("ATO-1609: File › New Mini Chat and the tray open the same window", () => {

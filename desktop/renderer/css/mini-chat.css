@@ -19,4 +19,13 @@ body.mini-chat{display:flex;flex-direction:column;height:100%;background:var(--p
 .mc-input{flex:1 1 auto;min-height:36px;max-height:120px;resize:none;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--lift);color:var(--ink);font:inherit;line-height:1.4}
 .mc-input:focus{outline:2px solid var(--brand);outline-offset:0}
 #mc-send.stop{background:var(--critical);color:var(--paper)}
+/* ATO-985: the selection chip, its actions and Translate's language menu, over the message box. */
+.mc-sel{flex:none;display:flex;flex-direction:column;gap:8px;padding:10px 12px 0;border-top:1px solid var(--line-hair)}
+.mc-sel[hidden]{display:none}
+.mc-chip{margin:0;padding:6px 10px;border-left:3px solid var(--line);border-radius:6px;background:var(--lift);color:var(--ink-2);font-size:var(--fs-cap);line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mc-actions,.mc-lang{display:flex;flex-wrap:wrap;gap:6px}
+.mc-lang[hidden]{display:none}
+.mc-act{border:1px solid var(--line);border-radius:999px;background:transparent;color:var(--ink);padding:3px 12px;font:inherit;font-size:var(--fs-cap);line-height:18px;cursor:pointer}
+.mc-act:hover,.mc-act:focus-visible{background:var(--lift);outline:none;border-color:var(--ink-3)}
+.mc-act[aria-expanded="true"],.mc-act.on{border-color:var(--brand);color:var(--ink)}
 @media (prefers-reduced-motion: reduce){.mc-dot{animation:none}}

@@ -50,7 +50,7 @@ export interface QuickEntryWiring {
   /** Shows and focuses the main window, creating it again when it was closed. */
   showMainWindow: () => BrowserWindow | null;
   log: (line: string) => void;
-  /** ATO-985: the text selected in the app in front, read before the box takes the keyboard (selected-text-ipc.ts). */
+  /** ATO-985: the text selected in the app in front, read before the mini chat window takes the keyboard (selected-text-ipc.ts). */
   grabSelection?: () => Promise<string | null>;
 }
 
@@ -145,7 +145,9 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       box.focus();
       return;
     }
-    open();
+    /* ATO-985: no selected text from here. The app in front is this one
+       (the menu) or the taskbar (the tray), not the one the user was in. */
+    if (!opening) create(null);
   };
 
   const shortcut = new QuickEntryShortcut(
