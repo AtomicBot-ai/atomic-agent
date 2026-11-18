@@ -192,6 +192,15 @@ export interface WorkerTaskResult {
   tools: WorkerToolStats;
   usage?: CompletionUsage;
   /**
+   * Output tokens and the time the model spent producing them, summed
+   * over the worker's completions (ATO-1583): the server's own decode
+   * time when it reports one (llama.cpp `timings.predicted_ms`), else
+   * the request's wall time from prompt sent to completion. Tool runs,
+   * checks and queue waits between completions are not in it. Absent
+   * when nothing was measured.
+   */
+  generation?: { tokens: number; ms: number };
+  /**
    * What went wrong, in the failing layer's own words: the thrown turn,
    * the worker loop's last provider/loop error, or the declared-file
    * check. Rendered on the task's head line.
@@ -278,11 +287,17 @@ export class WorkerRunCollector {
   private writes = 0;
   private readonly byTool: Record<string, number> = {};
   private usage: CompletionUsage | undefined;
+  /** Generation time per completion (ATO-1583); see `WorkerTaskResult.generation`. */
+  private genTokens = 0;
+  private genMs = 0;
+  private requestSentAt: number | undefined;
   private lastLoopError: string | undefined;
   private lastWaitReason: string | undefined;
   /** The last few tool results, one line each — what a hand-back reports. */
   private readonly recent: string[] = [];
   private readonly replaced: ReplacedInput[] = [];
+
+  constructor(private readonly now: () => number = Date.now) {}
 
   /** Feed one `AgentLoopEvent` from the worker turn's hook. */
   observe(event: AgentLoopEvent): void {
@@ -347,6 +362,12 @@ export class WorkerRunCollector {
       if (this.recent.length > FINDINGS_KEPT) this.recent.shift();
       return;
     }
+    if (inner.type === "prompt_built") {
+      // The request is about to go out; its completion closes the span.
+      this.requestSentAt = this.now();
+      return;
+    }
+    if (inner.type === "llm_completed") this.noteGeneration(inner.completion);
     if (inner.type === "llm_completed" && inner.completion.usage) {
       const next = inner.completion.usage;
       const prev = this.usage;
@@ -369,6 +390,34 @@ export class WorkerRunCollector {
                   }),
             };
     }
+  }
+
+  /**
+   * One completion's output and the time spent producing it. The
+   * server's decode time when it states one; otherwise the wall time
+   * since the prompt went out, which a cloud provider's response is
+   * all we have of (it includes time to first token). A completion with
+   * no preceding prompt (a parse retry) and no decode time is skipped.
+   */
+  private noteGeneration(completion: {
+    usage?: CompletionUsage;
+    timing?: { predictedMs: number; predictedTokens: number };
+  }): void {
+    const sentAt = this.requestSentAt;
+    this.requestSentAt = undefined;
+    const tokens =
+      completion.usage?.completionTokens ?? completion.timing?.predictedTokens ?? 0;
+    if (!Number.isFinite(tokens) || tokens <= 0) return;
+    const decodeMs = completion.timing?.predictedMs ?? 0;
+    const ms =
+      Number.isFinite(decodeMs) && decodeMs > 0
+        ? decodeMs
+        : sentAt === undefined
+          ? 0
+          : this.now() - sentAt;
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    this.genTokens += tokens;
+    this.genMs += ms;
   }
 
   /**
@@ -455,6 +504,9 @@ export class WorkerRunCollector {
         byTool: { ...this.byTool },
       },
       ...(this.usage ? { usage: this.usage } : {}),
+      ...(this.genTokens > 0 && this.genMs > 0
+        ? { generation: { tokens: this.genTokens, ms: this.genMs } }
+        : {}),
       ...(error === undefined ? {} : { error }),
       ...(hint === undefined ? {} : { hint }),
       ...(notes.length === 0 ? {} : { notes }),
