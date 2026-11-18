@@ -466,6 +466,15 @@ export const MENU: readonly MenuNode[] = [
     slash: { name: "rewind", description: "take the chat back to an earlier message of yours and edit it; files the agent changed stay as they are", rank: 45.5 },
   },
   {
+    // ATO-1054: like Claude Code's `/export <file>`; after /rewind, before /plugins.
+    kind: "action", id: "session.export", label: "Export chat", group: "session",
+    slash: {
+      name: "export",
+      description: "save this chat as a file: `/export` writes Markdown to the current folder · `/export md|docx|pdf|html [path]`",
+      rank: 45.75,
+    },
+  },
+  {
     kind: "action", id: "session.enhance", label: "Enhance prompt", group: "session",
     slash: { name: "enhance", description: "rewrite a prompt into a clearer one in the composer; nothing is sent", rank: 45 },
   },

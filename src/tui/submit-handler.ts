@@ -468,6 +468,7 @@ export function runSlashCommand(
     else callbacks.onSessionNewRequested?.();
   }
   if (result.triggerRewindPicker) callbacks.onRewindPickerRequested?.();
+  if (result.chatExport) callbacks.onChatExportRequested?.(result.chatExport);
   if (result.triggerIncognitoSession === true) callbacks.onIncognitoSessionRequested?.();
   if (result.triggerMemoryDump) callbacks.onMemoryDumpRequested?.();
   if (result.triggerSkillCatalogDump) callbacks.onSkillCatalogRequested?.();
