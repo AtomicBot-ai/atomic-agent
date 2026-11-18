@@ -452,45 +452,9 @@ function folderPaletteWord(sid) {
   return f ? f.name + ' · ' : '';
 }
 
-/* Drag a chat row onto a folder's header (or onto "Chats" to take it out of
-   its folder). A custom type, so the file drop (attachments.js, which looks
-   for Files) never sees it. */
+/* Drag a chat row onto a project (chat-drag.js, ATO-1146). A custom type, so
+   the file drop (attachments.js, which looks for Files) never sees it. */
 const FOLDER_DRAG_TYPE = 'application/x-atomic-chat';
-if (typeof document !== 'undefined') {
-  document.addEventListener('dragstart', (e) => {
-    const row = e.target && e.target.closest ? e.target.closest('#sidebar .sesrow[data-ses]') : null;
-    if (!row || !e.dataTransfer) return;
-    e.dataTransfer.setData(FOLDER_DRAG_TYPE, row.dataset.ses);
-    e.dataTransfer.effectAllowed = 'move';
-  });
-  const target = (e) => {
-    if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes(FOLDER_DRAG_TYPE)) return null;
-    return e.target && e.target.closest ? e.target.closest('#sidebar [data-fdrop]') : null;
-  };
-  document.addEventListener('dragover', (e) => {
-    const t = target(e);
-    if (!t) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    document.querySelectorAll('#sidebar .fdrop-on').forEach((n) => { if (n !== t) n.classList.remove('fdrop-on'); });
-    t.classList.add('fdrop-on');
-  });
-  document.addEventListener('dragleave', (e) => {
-    const t = target(e);
-    if (t && !t.contains(e.relatedTarget)) t.classList.remove('fdrop-on');
-  });
-  document.addEventListener('drop', (e) => {
-    const t = target(e);
-    document.querySelectorAll('#sidebar .fdrop-on').forEach((n) => n.classList.remove('fdrop-on'));
-    if (!t) return;
-    e.preventDefault();
-    const sid = e.dataTransfer.getData(FOLDER_DRAG_TYPE);
-    if (sid) act('fput:' + (t.dataset.fdrop || '') + ':' + sid);
-  });
-  document.addEventListener('dragend', () => {
-    document.querySelectorAll('#sidebar .fdrop-on').forEach((n) => n.classList.remove('fdrop-on'));
-  });
-}
 
 if (typeof module !== 'undefined') {
   module.exports = {FOLDER_SOURCES, FOLDER_SOURCE_LOGOS, folderSourceOf, folderLogoKey, foldersEmpty, foldersCoerce, folderImportSource, folderNameCheck, folderAdd, folderById,
