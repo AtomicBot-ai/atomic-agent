@@ -32,4 +32,4 @@ Checks: `npx vitest run src/atomic-mail` when tests are present; `npm run lint`;
 - At most 5 tasks per poll; the binding is not reachable over `POST /api/webhooks/<name>`.
 - `replyByEmail: true` (default `false`) mails the agent's final answer back to the sender when the task ends. There is no prompt per reply: turning it on is the operator's consent.
 
-Not covered yet: IMAP or Gmail for the operator's own mailbox (needs new dependencies), JMAP push instead of polling.
+The operator's own mailbox over IMAP (Gmail with an app password, push with IDLE, attachments) is the [IMAP trigger](../imap-mail/README.md). Not covered yet: JMAP push instead of polling.

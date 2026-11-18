@@ -17,6 +17,7 @@ import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition
 import { createIncognitoSessions } from "./incognito-sessions.js";
 import { createRuntimeKeepAwake, createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
+import { createRuntimeImapTrigger } from "./composition/runtime-imap-trigger.js";
 import { createRuntimeMailTrigger } from "./composition/runtime-mail-trigger.js";
 import { createOfflineModeControl } from "./composition/runtime-offline-mode.js";
 import { createPrivacyShieldControl } from "./composition/runtime-privacy-shield.js";
@@ -988,9 +989,13 @@ export async function createAgentRuntime(
   const mailTrigger = createRuntimeMailTrigger({
     config, taskRunner, taskStore, sessionStore, createSession, webhookSessionStore, logger,
   });
+  const imapTrigger = createRuntimeImapTrigger({
+    config, taskRunner, createSession, webhookSessionStore, logger,
+  });
+  const sidecars = [mailTrigger, imapTrigger].filter((s): s is NonNullable<typeof s> => s !== null);
   const scheduler = createRuntimeScheduler({
     config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
-    ...(mailTrigger ? { sidecars: [mailTrigger] } : {}),
+    ...(sidecars.length > 0 ? { sidecars } : {}),
   });
   const consolidatorJob = createRuntimeMemoryConsolidator({
     config, notesStore, linkStore, lessonStore, procedureStore, voteStore,
