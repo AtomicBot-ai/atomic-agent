@@ -40,6 +40,8 @@ export interface FakeHostOptions {
   fileSize?: number;
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
+  /** `readHead` answers (Windows/Linux captures read the PNG header), in order; the last one repeats. */
+  pngHeads?: Uint8Array[];
   /** What a probe with `windows: true` reports, verbatim (default none). */
   windows?: Record<string, unknown>[];
 }
@@ -52,6 +54,7 @@ export function fakeHost(options: FakeHostOptions = {}): FakeHost {
   const calls: RecordedCall[] = [];
   const written = new Map<string, string>();
   const sizes = [...(options.pixelSizes ?? [{ width: 2880, height: 1800 }])];
+  const heads = [...(options.pngHeads ?? [])];
   const front: App = options.frontmost === undefined
     ? { name: "TextEdit", bundleId: "com.apple.TextEdit" }
     : options.frontmost;
@@ -94,6 +97,7 @@ export function fakeHost(options: FakeHostOptions = {}): FakeHost {
     platform: options.platform ?? "darwin",
     env: options.env ?? { TERM_PROGRAM: "Apple_Terminal", PATH: "/usr/bin", OPENROUTER_API_KEY: "sk-or-secret" },
     fileSize: async () => options.fileSize ?? 123_456,
+    readHead: async () => (heads.length > 1 ? heads.shift()! : (heads[0] ?? new Uint8Array())),
     ensureDir: async () => undefined,
     writeText: async (path, text) => {
       written.set(path, text);
