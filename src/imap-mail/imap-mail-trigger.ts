@@ -383,7 +383,11 @@ export class ImapMailTrigger {
         note = await saveMailAttachments(parsed.attachments, cfg.imap.attachments, inbox);
       }
       const message = buildMailTaskMessage(cfg.userMessageTemplate, parsed.mail);
-      const startPaused = !isAllowedSender(headerMail.fromEmail, autoStart);
+      // Auto-start needs proof that the receiving server wrote the auth
+      // header: without `imap.authservId` the topmost Authentication-Results
+      // may be the sender's own, so the task waits for the person.
+      const startPaused =
+        !isAllowedSender(headerMail.fromEmail, autoStart) || (!cfg.imap.authservId && !cfg.email.trustFromHeader);
       const task = this.options.createTask({
         binding: name,
         userMessage: note.length > 0 ? buildAttachmentUserMessage(message, note) : message,

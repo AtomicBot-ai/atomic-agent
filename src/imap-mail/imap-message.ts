@@ -32,18 +32,73 @@ export interface ParsedImapMail {
 
 const MAX_DEPTH = 8;
 
-/** `Name <a@b>`, `"Name" <a@b>`, `a@b`, `a@b (Name)` → address and name. */
+/**
+ * Blank out quoted strings and comments in a raw header value, keeping
+ * every other character at its position, so an address can only be
+ * found where RFC 5322 puts it (outside quotes and comments).
+ */
+function maskQuotesAndComments(value: string): string {
+  let out = "";
+  let inQuote = false;
+  let depth = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i]!;
+    if ((inQuote || depth > 0) && ch === "\\") {
+      out += "  ";
+      i += 1;
+      continue;
+    }
+    if (inQuote) {
+      if (ch === '"') inQuote = false;
+      out += " ";
+    } else if (depth > 0) {
+      if (ch === "(") depth += 1;
+      else if (ch === ")") depth -= 1;
+      out += " ";
+    } else if (ch === '"') {
+      inQuote = true;
+      out += " ";
+    } else if (ch === "(") {
+      depth = 1;
+      out += " ";
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/**
+ * `Name <a@b>`, `"Name" <a@b>`, `a@b`, `a@b (Name)` → address and name.
+ *
+ * The address is read from the RAW header with quoted strings and
+ * comments masked, before any encoded words are decoded, so a display
+ * name like `"<me@x.com>" <evil@x.com>` or `=?utf-8?q?=3Cme@x.com=3E?=
+ * <evil@x.com>` yields `evil@x.com`. A From with more than one address
+ * (or an unbalanced one) yields no address, so the mail is refused.
+ */
 export function parseFromHeader(raw: string | undefined): { email: string; name: string } {
-  const value = decodeHeaderWords(raw ?? "").trim();
-  // The first address only: a list in From is the sender's to choose.
-  const angle = /<([^<>\s]+@[^<>\s]+)>/.exec(value);
-  if (angle) {
-    const name = value.slice(0, angle.index).trim().replace(/^"(.*)"$/, "$1").trim();
+  const value = (raw ?? "").trim();
+  const masked = maskQuotesAndComments(value);
+  const none = { email: "", name: "" };
+  if ((masked.match(/@/g) ?? []).length !== 1) return none;
+  const opens = (masked.match(/</g) ?? []).length;
+  const closes = (masked.match(/>/g) ?? []).length;
+  if (opens !== closes || opens > 1) return none;
+  if (opens === 1) {
+    const angle = /<([^<>\s]+@[^<>\s]+)>/.exec(masked);
+    if (!angle) return none;
+    const rest = (masked.slice(0, angle.index) + masked.slice(angle.index + angle[0].length)).trim();
+    if (/[,;:]/.test(rest)) return none;
+    const name = decodeHeaderWords(value.slice(0, angle.index)).trim().replace(/^"(.*)"$/, "$1").trim();
     return { email: angle[1]!.trim().toLowerCase(), name };
   }
-  const bare = /[^\s<>(),;:"]+@[^\s<>(),;:"]+/.exec(value);
+  const bare = /[^\s<>(),;:"]+@[^\s<>(),;:"]+/.exec(masked);
+  if (!bare) return none;
+  const others = (masked.slice(0, bare.index) + masked.slice(bare.index + bare[0].length)).trim();
+  if (others !== "") return none;
   const comment = /\(([^)]*)\)/.exec(value);
-  return { email: bare ? bare[0].toLowerCase() : "", name: comment?.[1]?.trim() ?? "" };
+  return { email: bare[0].toLowerCase(), name: decodeHeaderWords(comment?.[1] ?? "").trim() };
 }
 
 function receivedAt(dateHeader: string | undefined, fallback: Date): string {

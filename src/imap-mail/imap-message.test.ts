@@ -15,6 +15,26 @@ describe("parseFromHeader (ATO-601)", () => {
   ])("%s", (raw, email, name) => {
     expect(parseFromHeader(raw)).toEqual({ email, name });
   });
+
+  it.each([
+    ['"<me@gmail.com>" <attacker@gmail.com>', "attacker@gmail.com"],
+    ["=?utf-8?q?=3Cme@gmail.com=3E?= <attacker@gmail.com>", "attacker@gmail.com"],
+    ["(me@gmail.com) attacker@gmail.com", "attacker@gmail.com"],
+    ['"Me \\" <me@gmail.com>" <attacker@gmail.com>', "attacker@gmail.com"],
+  ])("takes the address outside quotes, comments and encoded words: %s", (raw, email) => {
+    expect(parseFromHeader(raw).email).toBe(email);
+  });
+
+  it.each([
+    "attacker@gmail.com, me@gmail.com",
+    "Me <me@gmail.com>, Evil <attacker@gmail.com>",
+    "<me@gmail.com> <attacker@gmail.com>",
+    "me@gmail.com attacker@gmail.com",
+    "Group: me@gmail.com;",
+    "<me@gmail.com",
+  ])("refuses a From that is not exactly one address: %s", (raw) => {
+    expect(parseFromHeader(raw).email).toBe("");
+  });
 });
 
 describe("parseImapMessage (ATO-601)", () => {

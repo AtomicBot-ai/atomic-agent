@@ -18,6 +18,8 @@ const PASS =
 function rawMail(
   over: {
     from?: string;
+    /** The whole From value, instead of `Boss <from>`. */
+    fromHeader?: string;
     subject?: string;
     auth?: string | null;
     body?: string;
@@ -26,7 +28,7 @@ function rawMail(
 ): string {
   const head = [
     ...(over.auth === null ? [] : [`Authentication-Results: ${over.auth ?? PASS}`]),
-    `From: Boss <${over.from ?? "boss@example.com"}>`,
+    `From: ${over.fromHeader ?? `Boss <${over.from ?? "boss@example.com"}>`}`,
     `Subject: ${over.subject ?? "do the thing"}`,
     "Date: Wed, 18 Nov 2026 09:00:00 +0000",
     "MIME-Version: 1.0",
@@ -227,6 +229,23 @@ describe("ImapMailTrigger (ATO-601)", () => {
     server.deliver(rawMail({ auth: "mx.fastmail.com; dkim=pass header.d=example.com" }));
     await tick();
     expect(created).toHaveLength(1);
+  });
+
+  it("without an authserv-id, never auto-starts, even the owner's own mail", async () => {
+    bindings = { gmail: binding({ imap: { authservId: undefined } }) };
+    await tick();
+    server.deliver(rawMail({ from: "me@example.com", subject: "own, no authserv-id" }));
+    await tick();
+    expect(created.map((c) => c.startPaused)).toEqual([true]);
+  });
+
+  it("does not take the owner's address from a quoted display name", async () => {
+    bindings = { gmail: binding({ email: { allowedSenders: ["@example.com"] } }) };
+    await tick();
+    server.deliver(rawMail({ fromHeader: '"<me@example.com>" <coworker@example.com>', subject: "spoof" }));
+    server.deliver(rawMail({ fromHeader: "coworker@example.com, me@example.com", subject: "two" }));
+    await tick();
+    expect(created.map((c) => [/Subject: (.*)/.exec(c.userMessage)?.[1], c.startPaused])).toEqual([["spoof", true]]);
   });
 
   it("saves allowed attachments and lists their paths; blocked ones are named, not saved", async () => {
