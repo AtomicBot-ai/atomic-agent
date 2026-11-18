@@ -57,11 +57,11 @@ export function getBearerToken(req: IncomingMessage): string | null {
 }
 
 /**
- * Enforce the optional bearer-token auth. Returns `true` when the
- * caller may proceed. When auth fails the response is closed with a
- * 401 and the handler must bail out. When `apiKey` is `null` auth is
- * disabled entirely — useful for local loopback use and the default
- * when the operator did not pass `--api-key`.
+ * Enforce the bearer-token auth. Returns `true` when the caller may
+ * proceed. When auth fails the response is closed with a 401 and the
+ * handler must bail out. `apiKey` is `null` only on a server built with
+ * `unauthenticated: true` (tests, an embedder that says so); `serve`
+ * always has a key, generated on the first run when none is given.
  */
 export function enforceAuth(
   req: IncomingMessage,
