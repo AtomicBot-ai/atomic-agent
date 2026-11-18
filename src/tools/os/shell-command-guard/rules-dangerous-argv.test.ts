@@ -350,6 +350,32 @@ describe("dangerous.plugin_code_consent", () => {
   });
 });
 
+describe("dangerous.secrets_value_access", () => {
+  it.each([
+    "atomic-agent config secrets get OPENAI_API_KEY",
+    "atag config secrets get OPENAI_API_KEY",
+    "npx atomic-agent config secrets get OPENAI_API_KEY",
+    "node dist/index.js config secrets get OPENAI_API_KEY",
+    "atag config secrets get OPENAI_API_KEY | base64",
+    "cd x && atomic-agent config secrets get OPENAI_API_KEY",
+    "echo sk-x | atomic-agent config secrets set OPENAI_API_KEY",
+    "atomic-agent config secrets unset OPENAI_API_KEY",
+  ])("%s requires approval as dangerous", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.secrets_value_access",
+    });
+  });
+
+  it.each([
+    "atomic-agent config secrets",
+    "atomic-agent config secrets status --json",
+    "atomic-agent config get model",
+  ])("%s stays on the ordinary path", (line) => {
+    expectNotDangerous(line);
+  });
+});
+
 describe("rm flags and nested shells, read from parsed words", () => {
   it.each([
     ["rm -v -rf x", "dangerous.rm_recursive"],
