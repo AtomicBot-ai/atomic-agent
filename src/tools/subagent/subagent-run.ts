@@ -170,10 +170,15 @@ function error(
  */
 export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
   const ledger = deps.turnLedger ?? new SubagentTurnLedger();
+  // The turn each session's standing write answer was given in. The
+  // gate's turn grant is keyed by session only and is cleared at turn
+  // start only for a Fusion turn, so outside Fusion this tool drops a
+  // grant from any other turn itself before reading it.
+  const grantTurns = new Map<string, string>();
   return {
     name: SUBAGENT_RUN_TOOL,
     description:
-      "Hand self-contained parts of the work to subagents: each task becomes a fresh worker turn on the current model that sees the user's request and its own instructions, and reports back. A task may name a `profile` (built-in: explore, review, research, all read-only; or one the user defined) for that profile's instructions and tool list. A subagent writes only the paths a task lists in `files`, which asks the user once for the call; without them, make the edit yourself. A subagent cannot start subagents. Args: { tasks: [{ id, instructions, title?, profile?, deliverable?, files? }] }.",
+      "Hand self-contained parts of the work to subagents: each task becomes a fresh worker turn on the current model that sees the user's request and its own instructions, and reports back. A task may name a `profile` (built-in: explore, review, research, all read-only; or one the user defined) for that profile's instructions and tool list. A task that lists `files` lets its subagent write in the directories of those files and in the working directory, after one question to the user for the call; without `files` a subagent cannot write, so make the edit yourself. A subagent cannot start subagents. Args: { tasks: [{ id, instructions, title?, profile?, deliverable?, files? }] }.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       const depth = callerDepth(
@@ -295,6 +300,11 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
             { reason: "agent-state-dir", scope: intoState },
           );
         }
+        const grantTurn = grantTurns.get(ctx.sessionId);
+        if (ctx.turnId === undefined || grantTurn !== ctx.turnId) {
+          deps.approvals.fanoutScopes?.clearTurnGrant(ctx.sessionId);
+          grantTurns.delete(ctx.sessionId);
+        }
         const declinedInScope =
           deps.approvals.hasDeclinedUnder?.(ctx.sessionId, writeScope) ?? false;
         const alreadyApproved =
@@ -321,6 +331,16 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
             );
           }
           deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
+          if (ctx.turnId !== undefined) {
+            grantTurns.delete(ctx.sessionId);
+            grantTurns.set(ctx.sessionId, ctx.turnId);
+            const oldest = grantTurns.keys().next().value;
+            if (grantTurns.size > 256 && oldest !== undefined) {
+              grantTurns.delete(oldest);
+              // Forgetting the turn must not leave its grant readable.
+              deps.approvals.fanoutScopes?.clearTurnGrant(oldest);
+            }
+          }
         } catch (err) {
           if (err instanceof ApprovalDeniedError && (err.byUser || err.declinedEarlier)) {
             return error(err.message, { reason: "writes-denied", deniedByUser: true });

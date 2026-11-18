@@ -519,6 +519,30 @@ describe("subagent.run writes (ATO-1670)", () => {
     }
   });
 
+  it("asks again in the next turn: a yes holds only for the turn it was given in", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "subagent-turns-"));
+    try {
+      const { gate, prompts } = gateApproving();
+      const { deps } = harness({ approvals: gate, approvalRequired: true, workingDir: repo });
+      const tool = buildSubagentRunTool(deps);
+      const call = { tasks: [{ id: "fix", instructions: "Fix a.ts.", files: ["a.ts"] }] };
+      await tool.run(call, ctx({ workingDir: repo, turnId: "t1", stepIndex: 0 }));
+      expect(prompts).toHaveLength(1);
+      // Same turn: the standing yes covers it.
+      await tool.run(call, ctx({ workingDir: repo, turnId: "t1", stepIndex: 2 }));
+      expect(prompts).toHaveLength(1);
+      // Next turn, same files: asked again, though nothing cleared the
+      // gate's turn grant at turn start (only a Fusion turn does).
+      await tool.run(call, ctx({ workingDir: repo, turnId: "t2", stepIndex: 0 }));
+      expect(prompts).toHaveLength(2);
+      // No turn id: never rides a standing yes.
+      await tool.run(call, ctx({ workingDir: repo }));
+      expect(prompts).toHaveLength(3);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the operator-only refusal for steps no declared file can authorise", () => {
     expect(subagentRefusalFor({ category: "shell_dangerous" })).toBe(SUBAGENT_OPERATOR_ONLY_REFUSED);
     expect(subagentRefusalFor({ category: "fs_write_workspace" })).toBeUndefined();
