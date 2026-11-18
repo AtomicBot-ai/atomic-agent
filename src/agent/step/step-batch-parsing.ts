@@ -193,27 +193,26 @@ function readForeignShapes(
 }
 
 /**
- * A call-looking JSON value somewhere in a reply body: an object whose
- * opening keys (no nested object before it, at most 200 chars in)
- * include a key only a call is named with (`tool`, `action`, `function`,
- * `tool_calls`), or `name` with an argument key (`arguments`, `args`,
- * `parameters`) within 2,000 chars after it, quoted with either
- * quote. It finds a whole call, a call inside a ```json fence, an OpenAI
- * or llama.cpp-shaped one, and a call cut off after its first key (a
- * `name` object that never closes). Ordinary prose does not match: a
- * fenced code answer, a `[1]` citation, `{braces}` in a sentence, a JSON
- * example with a bare `name` (a package.json).
+ * A call-looking JSON value somewhere in a reply body: an object with a
+ * key only a call is named with (`tool`, `action`, `function`,
+ * `tool_calls`), or with both `name` and an argument key (`arguments`,
+ * `args`, `parameters`) in any order, keys quoted with either quote. It
+ * finds a whole call, a call inside a ```json fence, an OpenAI or
+ * llama.cpp-shaped one, one whose call key comes after a long field or a
+ * nested object (`{"thought": "...", "tool": ...}`, `{"args": {...},
+ * "tool": ...}`), and a call cut off inside an object that opens with
+ * `name`. Ordinary prose does not match: a fenced code answer, a `[1]`
+ * citation, `{braces}` in a sentence, a quoted `"tool":` outside any
+ * object, a JSON example with a bare `name` (a package.json).
  *
- * Every gap is bounded and only the first and last `SCAN_CHARS` of the
- * text are read, so the cost is linear in the text: it runs on the
- * step's thread, on whatever a model wrote.
+ * It is one pass over the text with a stack of open `{`/`[`, reading
+ * keys only inside an object, and only the first and last `SCAN_CHARS`
+ * of a long text are read, so the cost is linear in the text: it runs
+ * on the step's thread, on whatever a model wrote.
  */
-const CALL_KEY = /\{[^{}]{0,200}?["'](?:tool|action|function|tool_calls)["']\s*:/;
-const NAMED_CALL =
-  /\{[^{}]{0,200}?["']name["']\s*:[\s\S]{0,2000}?["'](?:arguments|args|parameters)["']\s*:/;
-/** A `{"name":` object opening; `callLike` reads it only after the last `}`. */
-const NAMED_OPEN = /\{\s*["']name["']\s*:/;
 const SCAN_CHARS = 16_000;
+const CALL_KEYS = new Set(["tool", "action", "function", "tool_calls"]);
+const ARG_KEYS = new Set(["arguments", "args", "parameters"]);
 
 /** The parts of `text` worth scanning: all of it when short, else its head and tail. */
 function scanWindows(text: string): string[] {
@@ -222,18 +221,85 @@ function scanWindows(text: string): string[] {
     : [text.slice(0, SCAN_CHARS), text.slice(-SCAN_CHARS)];
 }
 
+interface OpenValue {
+  object: boolean;
+  keys: number;
+  name: boolean;
+  args: boolean;
+  nameFirst: boolean;
+}
+
+function isSpace(ch: string): boolean {
+  return ch === " " || ch === "\t" || ch === "\n" || ch === "\r";
+}
+
+/** Index of the next non-space char at or after `from`, or `text.length`. */
+function skipSpace(text: string, from: number): number {
+  let i = from;
+  while (i < text.length && isSpace(text[i]!)) i += 1;
+  return i;
+}
+
+/** End (exclusive) of the string opening at `start`; a raw newline ends it too. */
+function stringEnd(text: string, start: number): number {
+  const quote = text[start];
+  let i = start + 1;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === "\\") i += 2;
+    else if (ch === quote) return i + 1;
+    else if (ch === "\n") return i;
+    else i += 1;
+  }
+  return text.length;
+}
+
+function scanForCall(text: string, endsText: boolean): boolean {
+  const stack: OpenValue[] = [];
+  let prev = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (ch === "{" || ch === "[") {
+      stack.push({ object: ch === "{", keys: 0, name: false, args: false, nameFirst: false });
+    } else if (ch === "}" || ch === "]") {
+      const object = ch === "}";
+      while (stack.length > 0 && stack.pop()!.object !== object) {
+        // drop values a mismatched closer leaves open
+      }
+    } else if (
+      stack.length > 0 &&
+      (ch === '"' || (ch === "'" && (prev === "{" || prev === "," || prev === ":" || prev === "[")))
+    ) {
+      const end = stringEnd(text, i);
+      const top = stack[stack.length - 1]!;
+      if (top.object && text[end - 1] === ch && text[skipSpace(text, end)] === ":") {
+        const key = text.slice(i + 1, end - 1);
+        if (CALL_KEYS.has(key)) return true;
+        if (key === "name") {
+          top.name = true;
+          if (top.keys === 0) top.nameFirst = true;
+        }
+        if (ARG_KEYS.has(key)) top.args = true;
+        if (top.name && top.args) return true;
+        top.keys += 1;
+      }
+      prev = ch;
+      i = end;
+      continue;
+    }
+    if (!isSpace(ch)) prev = ch;
+    i += 1;
+  }
+  // Cut off inside an object that opened with `name`; a head window's
+  // own cut proves nothing.
+  return endsText && stack.some((open) => open.object && open.nameFirst);
+}
+
 export function callLike(text: string): boolean {
   if (!text.includes("{")) return false;
   const windows = scanWindows(text);
-  const hasCallKey = /tool|action|function/.test(text);
-  if (hasCallKey && windows.some((part) => CALL_KEY.test(part))) return true;
-  if (!text.includes("name")) return false;
-  if (/argument|args|parameters/.test(text) && windows.some((part) => NAMED_CALL.test(part))) {
-    return true;
-  }
-  // Cut off inside a `{"name": ...` object: it opens after the last `}`.
-  const afterLastClose = text.slice(text.lastIndexOf("}") + 1).slice(-SCAN_CHARS);
-  return NAMED_OPEN.test(afterLastClose);
+  return windows.some((part, index) => scanForCall(part, index === windows.length - 1));
 }
 
 /**

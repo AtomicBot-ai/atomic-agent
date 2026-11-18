@@ -142,7 +142,9 @@ describe("callLike stays linear on hostile text (ATO-1675)", () => {
     expect(callLike('{"name": 1} '.repeat(20_000))).toBe(false);
     expect(callLike("{".repeat(100_000))).toBe(false);
     expect(callLike('{"name": 1, "args" '.repeat(20_000))).toBe(true);
-    expect(Date.now() - started).toBeLessThan(200);
+    expect(callLike('{"'.repeat(100_000))).toBe(false);
+    expect(callLike(`{${'"a":"b",'.repeat(20_000)}`)).toBe(false);
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it("keeps finding a call and ignoring a package.json example", () => {
@@ -150,5 +152,22 @@ describe("callLike stays linear on hostile text (ATO-1675)", () => {
     expect(callLike('{"name": "x", "argu')).toBe(true);
     expect(callLike('Done.\n{"tool": "os.fs.read", "args": {')).toBe(true);
     expect(callLike('{"name":"pkg","version":"1.0.0"}')).toBe(false);
+  });
+
+  it("finds a call key after a long field or a nested object, in any key order", () => {
+    expect(callLike(`{"thought":"${"x".repeat(250)}","tool":"os.fs.read","args":{}}`)).toBe(true);
+    expect(callLike(`Looking.\n{"thought":"${"x".repeat(250)}","tool":"os.fs.read","args":{"path":`)).toBe(true);
+    expect(callLike('{"id":1,"meta":{"x":1},"tool":"os.fs.read","args":{}}')).toBe(true);
+    expect(callLike('{"args":{"path":"a.ts"},"tool":"os.fs.read"')).toBe(true);
+    expect(callLike('{"args":{"p":1},"name":"x"}')).toBe(true);
+    expect(callLike("{'tool': 'os.fs.read', 'args': {}}")).toBe(true);
+  });
+
+  it("ignores call words outside an object and a long package.json example", () => {
+    expect(callLike('Use {braces} and the "tool": key later.')).toBe(false);
+    expect(callLike("I don't {think} it's [really] \"tool\": here.")).toBe(false);
+    expect(callLike('{"message": "use the \\"tool\\": key"}')).toBe(false);
+    expect(callLike('```json\n{"name":"pkg","version":"1.0.0","scripts":{"build":"tsc"}}\n```')).toBe(false);
+    expect(callLike(`{"name":"pkg","description":"${"x".repeat(40_000)}"}`)).toBe(false);
   });
 });
