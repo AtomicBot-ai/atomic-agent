@@ -223,13 +223,27 @@ export class ProfileStore {
     this.db.pragma("foreign_keys = ON");
     applyMigrations(this.db);
     this.metrics = options.metrics;
+    // ATO-1059: a deleted or evicted fact goes into the change journal
+    // for an undo.
+    this.changeLog = new MemoryChangeLog(this.db);
     this.evictor =
       options.maxEntries !== undefined
-        ? new ProfileEvictor(this.db, options.maxEntries)
+        ? new ProfileEvictor(this.db, options.maxEntries, (row) => {
+            this.changeLog.record({
+              kind: "profile",
+              target: row.key,
+              op: "evict",
+              by: "agent",
+              before: {
+                key: row.key,
+                value: row.value,
+                pinned: false,
+                keywords: parseKeywords(row.keywords),
+              },
+            });
+          })
         : null;
     this.onEvicted = options.onEvicted;
-    // ATO-1059: a deleted fact goes into the change journal for an undo.
-    this.changeLog = new MemoryChangeLog(this.db);
     this.insertStmt = this.db.prepare(
       `INSERT INTO profile_facts
          (key, value, pinned, keywords, valid_from, superseded_by,

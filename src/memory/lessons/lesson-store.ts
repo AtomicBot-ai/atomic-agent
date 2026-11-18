@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import type { AgentMetrics } from "../../tracing/agent-metrics.js";
 
 import { applyMigrations } from "../memory-schema.js";
+import { MemoryChangeLog } from "../evolution/memory-change-log.js";
 
 /**
  * Memory-v2 phase 5. A lesson is a distilled summary produced by the
@@ -177,6 +178,8 @@ export class LessonStore {
   private readonly metrics: AgentMetrics | undefined;
   private readonly maxEntries: number | undefined;
   private readonly clock: () => number;
+  /** ATO-1059: creations and deprecations, for an undo. */
+  private readonly changeLog: MemoryChangeLog;
 
   private readonly insertStmt: Database.Statement;
   private readonly getByIdStmt: Database.Statement;
@@ -197,6 +200,7 @@ export class LessonStore {
     this.metrics = options.metrics;
     this.maxEntries = options.maxEntries;
     this.clock = options.now ?? Date.now;
+    this.changeLog = new MemoryChangeLog(this.db, this.clock());
 
     this.insertStmt = this.db.prepare(
       `INSERT INTO lessons (
@@ -289,15 +293,28 @@ export class LessonStore {
         ? null
         : String(input.workingDir);
     const now = this.clock();
-    const result = this.insertStmt.run({
-      activation,
-      principle,
-      tags: tags.length > 0 ? JSON.stringify(tags) : null,
-      parent_ids: JSON.stringify(parentIds),
-      working_dir: workingDir,
-      now,
-    }) as { lastInsertRowid: number | bigint };
-    const id = Number(result.lastInsertRowid);
+    const id = this.db.transaction((): number => {
+      const result = this.insertStmt.run({
+        activation,
+        principle,
+        tags: tags.length > 0 ? JSON.stringify(tags) : null,
+        parent_ids: JSON.stringify(parentIds),
+        working_dir: workingDir,
+        now,
+      }) as { lastInsertRowid: number | bigint };
+      const newId = Number(result.lastInsertRowid);
+      this.changeLog.record(
+        {
+          kind: "lesson",
+          target: String(newId),
+          op: "create",
+          by: "agent",
+          before: { id: newId, activation, principle, tags, status: "active" },
+        },
+        now,
+      );
+      return newId;
+    })();
     this.metrics?.recordLessonCreated({
       lessonId: id,
       parentCount: parentIds.length,
@@ -434,10 +451,33 @@ export class LessonStore {
   markDeprecated(id: number, reason?: string): boolean {
     const normalised = validateLessonId(id);
     const now = this.clock();
-    const r = this.markDeprecatedStmt.run({
-      id: normalised,
-      now,
-    }) as { changes: number };
+    const r = this.db.transaction((): { changes: number } => {
+      const before = this.getById(normalised);
+      const result = this.markDeprecatedStmt.run({
+        id: normalised,
+        now,
+      }) as { changes: number };
+      if (result.changes > 0 && before !== null) {
+        this.changeLog.record(
+          {
+            kind: "lesson",
+            target: String(normalised),
+            op: "deprecate",
+            by: "agent",
+            before: {
+              id: before.id,
+              activation: before.activation,
+              principle: before.principle,
+              tags: before.tags,
+              status: before.status,
+            },
+            after: reason ?? "unspecified",
+          },
+          now,
+        );
+      }
+      return result;
+    })();
     if (r.changes > 0) {
       this.metrics?.recordLessonDeprecated({
         lessonId: normalised,
@@ -446,6 +486,22 @@ export class LessonStore {
       return true;
     }
     return false;
+  }
+
+  /**
+   * ATO-1059. Undo a deprecation: the lesson is active again. `false`
+   * when it is unknown or already active. Not journaled itself.
+   */
+  reactivate(id: number): boolean {
+    const normalised = validateLessonId(id);
+    const r = this.db
+      .prepare(
+        `UPDATE lessons
+            SET status = 'active', deprecated_at = NULL, updated_at = ?
+          WHERE id = ? AND status = 'deprecated'`,
+      )
+      .run(this.clock(), normalised) as { changes: number };
+    return r.changes > 0;
   }
 
   /** Phase 6 hook. Idempotent counter bump. */
