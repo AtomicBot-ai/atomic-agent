@@ -57,7 +57,7 @@ import {
 } from "./mouse/mouse-tracking.js";
 import { createSelectionPassthrough } from "./mouse/selection-passthrough.js";
 import { isLocalBackendConfigured } from "./local-backend-readiness.js";
-import { makeEscalatingSignalHandler } from "./signal-escalation.js";
+import { makeEscalatingSignalHandler, makeSignalQuit } from "./signal-escalation.js";
 import { restoreTerminalNow } from "./terminal-restore.js";
 import { takeModelSpotlightHint } from "./local-models/model-spotlight-hint.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
@@ -328,8 +328,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // mouse reporting off, alt screen left — and exits hard, instead of
   // Node's default kill that skips `exit` hooks and leaves the shell
   // printing `[<0;64;21M` on every click. See `signal-escalation.ts`.
+  // The graceful quit also unmounts Ink, which is what ends the TUI:
+  // `orchestrator.quit()` alone only stops the work (ATO-1614).
+  const signalQuit = makeSignalQuit({
+    stopWork: () => orchestrator.quit(),
+    announce: () => bus.emit({ type: "quit_requested" }),
+  });
   const onSignal = makeEscalatingSignalHandler({
-    quit: () => orchestrator.quit(),
+    quit: signalQuit.quit,
     restoreTerminal: restoreTerminalNow,
     exit: (code) => process.exit(code),
   });
@@ -1022,6 +1028,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
       kittyKeyboard,
     }),
   );
+  // A SIGTERM that landed while the app was still being set up unmounts
+  // it now; one from here on unmounts it directly (ATO-1614).
+  signalQuit.attach(ink);
 
   orchestrator.start();
   // `--session` / `--send` (set by `atag handoff`): land on the saved
