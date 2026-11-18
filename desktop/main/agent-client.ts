@@ -144,6 +144,12 @@ const KILL_WAIT_MS = 3_000;
  * blocking the main thread. It holds the databases while it is there.
  */
 const LINGER_WAIT_MS = 5_000;
+/** ATO-661: the compact POST's body, `{"instructions": …}` only when the person said what to keep. */
+export function compactBody(instructions?: string): string {
+  const keep = typeof instructions === "string" ? instructions.trim() : "";
+  return keep ? JSON.stringify({ instructions: keep }) : "{}";
+}
+
 /**
  * ATO-259: a manual compaction is answered when the summary is written.
  * The agent caps the whole operation at ten minutes by default
@@ -2089,8 +2095,12 @@ export class AgentClient extends EventEmitter {
    * agent's "busy" (one already running). An agent without the route
    * answers its unknown-route 404 and is reported as unsupported; the
    * route's own 404 is an unknown session.
+   *
+   * ATO-661: `instructions` is what the summary must keep (`/compact <text>`,
+   * core PR #1359). Sent only when there is some; without it the body stays
+   * `{}`, which every agent accepts.
    */
-  async compactSession(sessionId: string): Promise<{
+  async compactSession(sessionId: string, instructions?: string): Promise<{
     ok: boolean; supported: boolean;
     status?: "compacted" | "noop" | "busy" | "failed" | "cancelled";
     tokensBefore?: number; tokensAfter?: number; message?: string; error?: string;
@@ -2100,7 +2110,7 @@ export class AgentClient extends EventEmitter {
       const answer = await postAndWait(
         `${this.base()}/api/sessions/${encodeURIComponent(sessionId)}/compact`,
         this.headers(),
-        "{}",
+        compactBody(instructions),
         signal,
       );
       const res = { status: answer.status, ok: answer.status >= 200 && answer.status < 300 };

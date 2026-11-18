@@ -2023,7 +2023,7 @@ const SLASH = [
   ['onboarding','run first-time setup again from the start — keeps your providers, keys, sessions and memory','',['setup']],
   ['clear','clear chat transcript (keeps session)'],
   // ATO-259: POST /api/sessions/{id}/compact, as the TUI's `/compact`.
-  ['compact','summarize older messages to free up context'],
+  ['compact','summarize older messages to free up context','<what to keep>'],
   ['abort','abort the running turn'],
   // ATO-965: the terminal's and Telegram's /status (status-snapshot.js).
   ['status','what the running turn is doing: now, last result, waiting on you, time'],
@@ -8500,8 +8500,9 @@ function runSlash(parts) {
   if (name === 'feedback') { interviewSlash(rest); return; }   // ATO-1467
   if (name === 'telegram' && rest[0] === 'pair') { act('settings:telegram'); telegramAct('pair'); return; } // ATO-426
   if (name === 'compact') {
-    if (rest.length) { S.log.push({id:nid(), k:'system', text:'usage: /compact'}); render(); return; }
-    compactNow(); return;
+    const keep = compactInstructionsFrom(rest);   // ATO-661: `/compact <what to keep>`
+    if (!keep.ok) { S.log.push({id:nid(), k:'system', text: esc(keep.error)}); render(); return; }
+    compactNow(keep.text); return;
   }
   // ATO-965: a snapshot of the turn running in the chat on screen, as a
   // system row. Read here, at the press: nothing keeps it up to date.
@@ -11334,16 +11335,16 @@ function compactButtonHTML() {
  * summary); the answer replaces it. Nothing is sent as a message and no
  * turn starts.
  */
-async function compactNow() {
+async function compactNow(instructions) {
   const why = compactBlocked();
   if (why) { toast("Can't compact now", why, 'bad'); return; }
   const sid = S.agentSession;
-  const row = {id:nid(), k:'system', note:true, spin:true, compact:true, text: esc(COMPACTING_LINE)};
+  const row = {id:nid(), k:'system', note:true, spin:true, compact:true, text: esc(compactingLineFor(instructions))};
   S.log.push(row);
   COMPACT.manual = sid;
   render();
   let r;
-  try { r = await BR.compactSession(sid); }
+  try { r = await BR.compactSession(sid, instructions || undefined); }
   catch (err) { r = {ok:false, supported:true, error: String((err && err.message) || err)}; }
   COMPACT.manual = null;
   if (r && r.supported === false) COMPACT.supported = false;
