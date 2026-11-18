@@ -130,6 +130,29 @@ describe("incognito sessions in the runtime", () => {
     tasks.close();
   });
 
+  it("deletes a task the dead process was running, prompt and all; one a live process runs is only cancelled", () => {
+    alive.add(10).add(20);
+    save(open(10), "s-dead", true);
+    const tasksDbFile = join(dir, "tasks.sqlite");
+    const deadRunner = new TaskStore({ dbFile: tasksDbFile, ownerProbe: probe(10, alive) });
+    const liveRunner = new TaskStore({ dbFile: tasksDbFile, ownerProbe: probe(20, alive) });
+    const create = (store: TaskStore, text: string): string =>
+      store.create({ sessionId: "s-dead", userMessage: text, origin: "cli", maxAttempts: 1 }).id;
+    const killed = create(deadRunner, "secret for s-dead");
+    expect(deadRunner.markRunning(killed)?.status).toBe("running");
+    const held = create(liveRunner, "held by a live runner");
+    expect(liveRunner.markRunning(held)?.status).toBe("running");
+    deadRunner.close();
+    alive.delete(10);
+
+    expect(
+      sweepOrphanIncognitoSessions(open(30), tracesDir, logger, tasksDbFile, { ownerProbe: probe(30, alive) }),
+    ).toEqual(["s-dead"]);
+    expect(liveRunner.get(killed)).toBeNull();
+    expect(liveRunner.get(held)?.status).toBe("cancelled");
+    liveRunner.close();
+  });
+
   it("keeps a chat whose tasks could not be dropped, for the next start", () => {
     alive.add(10);
     save(open(10), "s-dead", true);

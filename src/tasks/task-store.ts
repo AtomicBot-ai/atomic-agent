@@ -812,6 +812,51 @@ export class TaskStore {
   }
 
   /**
+   * `removeForSession` for the boot sweep of a chat whose process is gone
+   * (ATO-1547): a `running` row whose run is gone too (the same rule as
+   * `recoverInterrupted`: its recorded owner is dead, or with no owner it
+   * is older than `staleAfterMs`) is deleted as well, prompt and all,
+   * since no runner holds it. A running row a live process still holds
+   * is only cancelled, as `removeForSession` does. Boot only, before this
+   * process claims a task. Returns the number of rows deleted.
+   */
+  removeForSessionAtBoot(
+    sessionId: string,
+    options: { staleAfterMs: number; now?: number; isOwnerGone?: (owner: string) => boolean },
+  ): number {
+    const now = options.now ?? Date.now();
+    const probe = this.ownerProbe;
+    const dbIdentity = this.dbIdentity;
+    const isOwnerGone =
+      options.isOwnerGone ??
+      ((owner: string) => isTurnOwnerGone(owner, probe, dbIdentity));
+    const ownerColumn = this.runOwnersUnavailable === null ? "run_owner" : "NULL AS run_owner";
+    const remove = this.db.transaction((): number => {
+      const running = this.db
+        .prepare(
+          `SELECT id, started_at, ${ownerColumn}
+             FROM tasks WHERE session_id = ? AND status = 'running'`,
+        )
+        .all(sessionId) as RunningRow[];
+      let deleted = 0;
+      for (const row of running) {
+        const owner = parseTurnOwner(row.run_owner);
+        const ownsThisRun =
+          owner !== null && row.started_at !== null && owner.at === row.started_at;
+        const gone = ownsThisRun
+          ? isOwnerGone(row.run_owner as string)
+          : row.started_at !== null && row.started_at < now - options.staleAfterMs;
+        if (!gone) continue;
+        deleted += this.db
+          .prepare(`DELETE FROM tasks WHERE id = ? AND status = 'running' AND started_at IS ?`)
+          .run(row.id, row.started_at).changes;
+      }
+      return deleted + this.removeForSession(sessionId, now);
+    });
+    return remove.immediate();
+  }
+
+  /**
    * Put a `running` task back to `pending` because its run was stopped
    * before it could end, rather than ending it: the agent quitting under
    * a scheduled turn, or that turn stopped from its chat. Nothing went
