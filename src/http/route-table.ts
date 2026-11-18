@@ -117,6 +117,7 @@ import {
   createRestoreProfileVersionHandler,
 } from "./route-memory-history.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
+import { createDiscordChannelHandler } from "./route-discord-channel.js";
 import { createMetricsHandler } from "./route-metrics.js";
 import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 
@@ -352,6 +353,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "DELETE", path: "/api/telegram/pairing", handler: telegramPairing.cancel },
     // ATO-758: the channel's state, and another poller of the same bot when that is what holds it off.
     { method: "GET", path: "/api/telegram/channel", handler: createTelegramChannelHandler() },
+    // ATO-516: the Discord channel's live state, for the desktop's Discord tab.
+    { method: "GET", path: "/api/discord/channel", handler: createDiscordChannelHandler() },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
     { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },
