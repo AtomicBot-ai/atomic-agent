@@ -19785,7 +19785,7 @@ function selectorHTML() {
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
         const name = selRowName(r);
         return (r.type === 'action' && i > 0 ? '<div class="tk-sep selsep"></div>' : '')
-          + '<button class="modelrow' + (r.active ? ' on' : '') + (r.type === 'localBusy' ? ' off" aria-disabled="true' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
+          + '<button class="modelrow' + (r.active ? ' on' : '') + (r.type === 'localBusy' || r.disabled ? ' off" aria-disabled="true' : '') + '" data-sel-row="' + i + '" data-id="' + esc(r.id) + '">'
           + selRowLead(r)
           + '<span class="col"><span class="nm">'
           + (model ? selHilite(name, SEL.filter) : esc(name)) + '</span><span class="cap">' + esc(r.detail || '') + '</span>'
