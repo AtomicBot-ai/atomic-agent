@@ -32,7 +32,7 @@ A missing file is no policy. A broken file is ignored with a warning in the log 
 }
 ```
 
-- `action`: `shell` (the command line and each command in it), `edit` (file paths written, moved or trashed), `webfetch` (URLs), `websearch` (the query), `skill` (skill name), `mcp` (`<server>/<tool>`).
+- `action`: `shell` (the command line and each command in it, read like saved deny rules: past `sudo` / `env` / `FOO=1`, inside `bash -c`, `eval` and `find -exec`, and each also with its program reduced to its name, so `/bin/rm -rf x` matches `rm *`; a script piped into a shell, `printf … | sh`, matches every shell `deny` and `ask`), `edit` (file paths written, moved or trashed), `webfetch` (URLs), `websearch` (the query), `skill` (skill name), `mcp` (`<server>/<tool>`).
 - `resource`: glob; `*` is any run of characters including `/`, `?` one character. Default `*`.
 - `effect`: inside one source the last matching rule wins, except that any matching `deny` wins wherever it sits. `allow` only cancels an earlier `ask` of the same source; it never cancels another source's `ask` and never skips a prompt the user's own settings would show.
 - `mcpAllowlist.servers`: globs matched against a server's name, URL or stdio command line. With a list present, a server not on it stays down with the reason as its error. When several sources set a list, a server must be on each one. `warnOnly: true` logs it and lets it connect, for that list only. No list: every server may connect.

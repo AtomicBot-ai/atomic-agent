@@ -54,15 +54,27 @@ const STRICTNESS: Record<PolicyEffect, number> = { allow: 0, ask: 1, deny: 2 };
  * line, a move with two paths), the strictest answer wins: an `allow` in
  * one source never cancels another source's `ask`, so a source the user
  * can write (their own file, `ATOMIC_POLICY_URL`, the cache) can only
- * tighten. Null when no rule matches.
+ * tighten. With `unreadable` (a script piped into a shell) every `deny`
+ * and `ask` of the action matches. Null when no rule matches.
  */
 export function evaluatePolicy(
   policy: EffectivePolicy,
   action: PolicyAction,
   resources: readonly string[],
+  options: { unreadable?: boolean } = {},
 ): PolicyVerdict | null {
   const groups = rulesBySource(policy.rules);
   let best: PolicyVerdict | null = null;
+  // A script no one can read could be the very command a deny or ask
+  // names, so every such rule of the action matches it.
+  if (options.unreadable === true) {
+    for (const rule of policy.rules) {
+      if (rule.action !== action || rule.effect === "allow") continue;
+      const verdict: PolicyVerdict = { effect: rule.effect, rule, resource: resources[0] ?? "" };
+      if (verdict.effect === "deny") return verdict;
+      best ??= verdict;
+    }
+  }
   for (const resource of resources) {
     for (const rules of groups) {
       const verdict = evaluateOne(rules, action, resource);

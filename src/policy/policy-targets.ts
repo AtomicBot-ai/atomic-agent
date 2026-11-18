@@ -3,11 +3,20 @@
  * glob is matched against. Two readers: the approval gate (a request it is
  * about to decide) and the dispatcher (a tool call about to run).
  */
+import { programName } from "../tools/os/shell-command-guard/command-segments.js";
+import { shellRuleSegments, shellRunsUnreadableScript } from "../tools/os/shell/shell-command-argv.js";
+import { coerceShellArgs, needsShellInterpretation } from "../tools/os/shell/shell-interpretation.js";
 import type { PolicyAction } from "./policy-schema.js";
 
 export interface PolicyTarget {
   action: PolicyAction;
   resources: string[];
+  /**
+   * A shell line that feeds a script no one can read to a shell or an
+   * interpreter (`printf 'rm -rf x' | sh`): any shell `deny` or `ask`
+   * rule matches it, as saved deny and ask rules do.
+   */
+  unreadable?: boolean;
 }
 
 /** The request fields the gate passes (a subset of `ApprovalRequest`). */
@@ -16,6 +25,7 @@ export interface PolicyGateRequest {
   category: string;
   commandArgv?: string[];
   commandSegments?: string[][];
+  commandUnreadable?: boolean;
   targetPaths?: string[];
   affectedResources?: string[];
   grantKey?: string;
@@ -45,9 +55,12 @@ export function gateRequestTarget(request: PolicyGateRequest): PolicyTarget | nu
   const mcp = mcpResource(request.tool);
   if (mcp !== null) return { action: "mcp", resources: [mcp] };
   if (SHELL_CATEGORIES.has(request.category) || request.tool === "os.shell.run") {
-    const segments = (request.commandSegments ?? []).map((argv) => argv.join(" "));
-    const whole = request.commandArgv?.join(" ");
-    return { action: "shell", resources: nonEmpty([whole, ...segments]) };
+    const argvs = [...(request.commandArgv ? [request.commandArgv] : []), ...(request.commandSegments ?? [])];
+    return {
+      action: "shell",
+      resources: nonEmpty(argvs.flatMap(argvResources)),
+      ...(request.commandUnreadable === true ? { unreadable: true } : {}),
+    };
   }
   if (EDIT_CATEGORIES.has(request.category)) {
     return { action: "edit", resources: nonEmpty([...(request.targetPaths ?? []), ...(request.affectedResources ?? [])]) };
@@ -66,11 +79,31 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/** A command line and each command in it, split at `&&`, `||`, `;`, `|` and newlines. */
+/**
+ * One command as rule globs see it: its words joined, and again with the
+ * program reduced to its name (`/bin/rm -rf x` is also `rm -rf x`), the
+ * way saved rules compare argv[0].
+ */
+function argvResources(argv: readonly string[]): string[] {
+  const words = argv.filter((w) => w.length > 0);
+  if (words.length === 0) return [];
+  const raw = words.join(" ");
+  const named = [programName(words[0]!), ...words.slice(1)].join(" ");
+  return named === raw ? [raw] : [raw, named];
+}
+
+/**
+ * A command line as policy rules see it: the whole line, then every
+ * command it runs, read the way saved deny and ask rules read it
+ * (`shellRuleSegments`: split at `&&`, `||`, `;`, `|`, `&`, past
+ * wrappers like `sudo` and `env`, inside `bash -c`, `eval` and
+ * `find -exec`), each also with its program reduced to its name.
+ */
 export function shellResources(cmd: string, args: readonly string[] = []): string[] {
-  const line = [cmd, ...args].join(" ").trim();
-  const parts = line.split(/&&|\|\||[;|\n]/).map((p) => p.trim().replace(/\s+/g, " "));
-  return nonEmpty([line.replace(/\s+/g, " "), ...parts]);
+  const line = [cmd, ...args].join(" ").trim().replace(/\s+/g, " ");
+  const useShell = needsShellInterpretation(cmd, args);
+  const segments = shellRuleSegments(cmd, args, useShell);
+  return nonEmpty([line, ...segments.flatMap(argvResources)]);
 }
 
 /** The target of a tool call by its arguments, or null when no policy action covers it. */
@@ -81,8 +114,9 @@ export function toolCallTarget(tool: string, args: unknown): PolicyTarget | null
   if (tool === "os.shell.run") {
     const cmd = str(a.cmd);
     if (cmd === undefined) return null; // wait / kill / jobs run nothing new
-    const rest = Array.isArray(a.args) ? a.args.filter((x): x is string => typeof x === "string") : [];
-    return { action: "shell", resources: shellResources(cmd, rest) };
+    const rest = coerceShellArgs(a.args) ?? [];
+    const unreadable = shellRunsUnreadableScript(cmd, rest, needsShellInterpretation(cmd, rest));
+    return { action: "shell", resources: shellResources(cmd, rest), ...(unreadable ? { unreadable: true } : {}) };
   }
   if (EDIT_TOOLS.has(tool)) {
     const paths = Array.isArray(a.paths) ? a.paths.map(str) : [];

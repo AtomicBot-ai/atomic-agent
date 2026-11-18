@@ -88,6 +88,46 @@ describe("policyCallRefusal (dispatch)", () => {
   });
 });
 
+// ATO-587 review: shell globs used to see only the raw line, so a full
+// path, a nested shell or a script piped into sh walked past `rm *`.
+describe("shell rules see each command the way saved rules do", () => {
+  const policy = policyOf({ rules: [{ action: "shell", resource: "rm *", effect: "deny" }] });
+  const refused = (cmd: string, args: string[] = []) => policyCallRefusal(policy, "os.shell.run", { cmd, args });
+
+  it("reduces a full program path to its name", () => {
+    expect(refused("/bin/rm", ["-rf", "x"])).not.toBeNull();
+    expect(refused("/bin/rm -rf x")).not.toBeNull();
+    expect(policyRuleMatch(policy, { tool: "os.shell.run", category: "shell", commandSegments: [["/bin/rm", "-rf", "x"]] })?.decision)
+      .toBe("deny");
+  });
+
+  it("reads past wrappers and into nested shells on the dispatch path", () => {
+    expect(refused("bash", ["-c", "rm -rf x"])).not.toBeNull();
+    expect(refused("sudo rm -rf x")).not.toBeNull();
+    expect(refused("env FOO=1 rm x")).not.toBeNull();
+    expect(refused("FOO=1 rm x")).not.toBeNull();
+    expect(refused("sleep 1 & rm x")).not.toBeNull();
+    expect(refused("(rm -rf x)")).not.toBeNull();
+  });
+
+  it("treats a script piped into a shell as matching any shell deny or ask", () => {
+    expect(refused("printf 'rm -rf x' | sh")).not.toBeNull();
+    expect(policyRuleMatch(policy, {
+      tool: "os.shell.run", category: "shell", commandSegments: [["printf", "x"], ["sh"]], commandUnreadable: true,
+    })?.decision).toBe("deny");
+    const ask = policyOf({ rules: [{ action: "shell", resource: "npm publish*", effect: "ask" }] });
+    expect(policyRuleMatch(ask, {
+      tool: "os.shell.run", category: "shell", commandSegments: [["curl", "x"], ["sh"]], commandUnreadable: true,
+    })?.decision).toBe("ask");
+  });
+
+  it("leaves other commands alone", () => {
+    expect(refused("ls", ["-la"])).toBeNull();
+    expect(refused("echo rm")).toBeNull();
+    expect(refused("printf 'hi' | cat")).toBeNull();
+  });
+});
+
 describe("skills and MCP servers", () => {
   it("refuses a denied skill name", () => {
     const policy = policyOf({ rules: [{ action: "skill", resource: "publish-*", effect: "deny" }] });

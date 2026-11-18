@@ -16,7 +16,7 @@ import { gateRequestTarget, toolCallTarget, type PolicyGateRequest, type PolicyT
 
 function verdictFor(policy: EffectivePolicy, target: PolicyTarget | null): PolicyVerdict | null {
   if (target === null || policy.rules.length === 0) return null;
-  return evaluatePolicy(policy, target.action, target.resources);
+  return evaluatePolicy(policy, target.action, target.resources, { unreadable: target.unreadable === true });
 }
 
 /**
