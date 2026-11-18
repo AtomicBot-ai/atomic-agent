@@ -26,6 +26,7 @@ export const DOCUMENT_FORMATS = [
   "html",
   "eml",
   "mbox",
+  "msg",
   "plain",
 ] as const;
 
