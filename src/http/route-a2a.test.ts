@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 
+import type { CompletionResult } from "../llm/llama-server-client.js";
+import type { ConversationTurn } from "../session/conversation-turn.js";
+
 import {
   A2A_ERRORS,
   A2A_PROTOCOL_VERSION,
   a2aStateFor,
   buildAgentCard,
   parseSendParams,
+  taskReplyText,
 } from "./route-a2a.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
 
@@ -23,6 +27,19 @@ interface RpcResponse {
     history?: unknown[];
   };
   error?: { code: number; message: string };
+}
+
+function replyWith(text: string): CompletionResult {
+  return {
+    content: JSON.stringify({ tool: "reply", args: { text } }),
+    reasoningContent: "",
+    stop: true,
+    truncated: false,
+    timing: { promptMs: 0, predictedMs: 0, promptTokens: 4, predictedTokens: 2 },
+    cacheHitTokens: 0,
+    slotId: 0,
+    modelId: null,
+  };
 }
 
 function textMessage(text: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
@@ -136,6 +153,61 @@ describe("A2A agent card and JSON-RPC (ATO-693)", () => {
     expect(second.json.result?.contextId).toBe(contextId);
   });
 
+  it("tasks/get answers each task in one context with its own reply, also while a later one runs", async () => {
+    // The second task's model call waits on a gate, so the session tail is
+    // its user turn while tasks/get reads the first task.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    let secondStarted = false;
+    harness = await startTestHarness({
+      apiKey: KEY,
+      a2a: {},
+      llamaComplete: async ({ prompt }) => {
+        if (prompt.includes("beta-question-222")) {
+          secondStarted = true;
+          await gate;
+          return replyWith("reply-beta");
+        }
+        return replyWith("reply-alpha");
+      },
+    });
+    const h = harness;
+    const first = await rpc({ jsonrpc: "2.0", id: 1, method: "message/send", params: { message: textMessage("alpha-question-111") } });
+    const t1 = first.json.result!;
+    await h.runtime.taskRunner.drainPending({ sessionId: t1.contextId });
+    expect(h.runtime.taskStore.get(t1.id)?.status).toBe("completed");
+
+    const second = await rpc({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "message/send",
+      params: { message: textMessage("beta-question-222", { contextId: t1.contextId }) },
+    });
+    const t2 = second.json.result!;
+    expect(t2.contextId).toBe(t1.contextId);
+    const draining = h.runtime.taskRunner.drainPending({ sessionId: t1.contextId });
+    for (let i = 0; i < 200 && !secondStarted; i += 1) await new Promise((r) => setTimeout(r, 10));
+    expect(secondStarted).toBe(true);
+
+    const whileRunning = await rpc({ jsonrpc: "2.0", id: 3, method: "tasks/get", params: { id: t1.id } });
+    expect(whileRunning.json.result?.status.state).toBe("completed");
+    expect(whileRunning.json.result?.artifacts?.[0]?.parts[0]?.text).toBe("reply-alpha");
+
+    release();
+    await draining;
+    for (let i = 0; i < 200 && h.runtime.taskStore.get(t2.id)?.status !== "completed"; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    const got1 = await rpc({ jsonrpc: "2.0", id: 4, method: "tasks/get", params: { id: t1.id } });
+    expect(got1.json.result?.artifacts?.[0]?.parts[0]?.text).toBe("reply-alpha");
+    expect(got1.json.result?.status.message?.parts[0]?.text).toBe("reply-alpha");
+    const got2 = await rpc({ jsonrpc: "2.0", id: 5, method: "tasks/get", params: { id: t2.id } });
+    expect(got2.json.result?.status.state).toBe("completed");
+    expect(got2.json.result?.artifacts?.[0]?.parts[0]?.text).toBe("reply-beta");
+  });
+
   it("never attaches to, or reads tasks of, the person's own chats", async () => {
     harness = await startTestHarness({ apiKey: KEY, a2a: {} });
     const own = harness.runtime.createSession();
@@ -206,6 +278,22 @@ describe("A2A helpers", () => {
     expect(a2aStateFor("cancelled")).toBe("canceled");
     expect(a2aStateFor("failed")).toBe("failed");
     expect(a2aStateFor("blocked")).toBe("failed");
+  });
+
+  it("taskReplyText reads the reply inside the task's own run window", () => {
+    const turns: ConversationTurn[] = [
+      { kind: "user", text: "one", at: 100 },
+      { kind: "assistant_reply", text: "note", progressNote: true, at: 110 },
+      { kind: "assistant_reply", text: "reply one", at: 120 },
+      { kind: "user", text: "two", at: 200 },
+      { kind: "assistant_reply", text: "reply two", at: 220 },
+    ];
+    expect(taskReplyText(turns, { startedAt: 100, completedAt: 130, updatedAt: 130 })).toBe("reply one");
+    expect(taskReplyText(turns, { startedAt: 200, completedAt: 230, updatedAt: 230 })).toBe("reply two");
+    // A later task still running: the earlier task keeps its reply.
+    expect(taskReplyText(turns.slice(0, 4), { startedAt: 100, completedAt: 130, updatedAt: 130 })).toBe("reply one");
+    // Never started: no reply.
+    expect(taskReplyText(turns, { startedAt: null, completedAt: null, updatedAt: 0 })).toBeUndefined();
   });
 
   it("buildAgentCard carries the version it is given", () => {

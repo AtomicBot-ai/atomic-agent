@@ -15,15 +15,21 @@
  *    UnsupportedOperationError for now.
  *
  * Mapping onto our own machinery: an A2A task is a row in the task store
- * (`/api/tasks`), an A2A `contextId` is the session that row runs in. A
- * remote agent only ever sees tasks and sessions A2A itself opened
- * (session `metadata.source === "a2a"`), never the person's own chats.
- * The run goes through the task runner, so budgets, retries and approval
- * prompts on `GET /api/events` behave as they do for any HTTP task.
+ * (`/api/tasks`), an A2A `contextId` is the session that row runs in
+ * (session `metadata.source === "a2a"`). The run goes through the task
+ * runner, so budgets, retries and approval prompts on `GET /api/events`
+ * behave as they do for any HTTP task.
+ *
+ * Access: there is no separate A2A key. A peer calls with the owner's
+ * serve key, which opens every other `/api` route too, and its tasks run
+ * as full agent turns with the owner's tools (memory search included).
+ * A peer therefore has the same access as the owner. The only narrowing
+ * here is that the three A2A methods list and act on A2A-opened tasks
+ * and sessions; a contextId that is not one of those starts a fresh chat.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { previousReplyText } from "../prompt/request-section.js";
+import { isStoppedTurnMarker, type ConversationTurn } from "../session/conversation-turn.js";
 import { TaskValidationError, type TaskRecord, type TaskStatus } from "../tasks/index.js";
 import { getAppVersion } from "../version.js";
 
@@ -473,7 +479,7 @@ function toA2aTask(
   let reply: A2aMessage | null = null;
   if (state === "completed" && record.sessionId) {
     const session = ctx.runtime.sessionStore.load(record.sessionId);
-    const text = session ? previousReplyText(session.turns) : undefined;
+    const text = session ? taskReplyText(session.turns, record) : undefined;
     if (text) {
       reply = agentMessage(record, `${record.id}-reply`, text);
       task.status.message = reply;
@@ -497,6 +503,37 @@ function toA2aTask(
     task.history = historyLength === null ? history : history.slice(-historyLength);
   }
   return task;
+}
+
+/**
+ * The reply of this task's own run: the last final `assistant_reply` the
+ * session got between the run's start and the task's completion. Several
+ * A2A tasks share one session when a peer reuses a contextId, so the
+ * session's tail belongs to whichever task ran last; reading the window
+ * keeps each task's answer its own, also while a later task is running.
+ * Nothing when the run ended without a plain reply (a stopped turn, or a
+ * `finish` tool end).
+ */
+export function taskReplyText(
+  turns: readonly ConversationTurn[],
+  record: Pick<TaskRecord, "startedAt" | "completedAt" | "updatedAt">,
+): string | undefined {
+  if (record.startedAt === null) return undefined;
+  const from = record.startedAt;
+  const to = record.completedAt ?? record.updatedAt;
+  let reply: string | undefined;
+  for (const turn of turns) {
+    if (turn.at < from) continue;
+    if (turn.at > to) continue;
+    if (turn.kind !== "assistant_reply" || turn.progressNote === true) continue;
+    if (isStoppedTurnMarker(turn)) {
+      reply = undefined;
+      continue;
+    }
+    const text = turn.text.trim();
+    if (text.length > 0) reply = text;
+  }
+  return reply;
 }
 
 function agentMessage(record: TaskRecord, messageId: string, text: string): A2aMessage {
