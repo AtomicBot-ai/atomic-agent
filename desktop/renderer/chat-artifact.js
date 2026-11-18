@@ -153,8 +153,15 @@ function chatArtifactSlotHTML(key, opts) {
     ? '<button class="filechip chat-art-file" data-file="' + e(o.path) + '" data-reply="1" title="' + e(o.path) + '">'
       + artIcon('file') + '<span>' + e(String(o.path).split(/[\\/]/).pop() || o.path) + '</span></button>'
     : '';
-  return '<div class="chat-art' + (st.state === 'ok' ? '' : ' loading') + '" data-art="' + e(key) + '">'
-    + '<div class="chat-art-bar">' + artIcon('globe') + '<span class="chat-art-title">' + e(title) + '</span>' + file + '</div>'
+  // ATO-1055: Expand opens this same frame in the canvas beside the chat (canvas-pane.js); while it is there the box is empty.
+  const beside = typeof canvasPaneKey === 'function' && canvasPaneKey() === key;
+  const expand = st.state === 'ok' && typeof canvasPaneKey === 'function'
+    ? '<button class="chat-art-expand" data-artexpand="' + e(key) + '" aria-pressed="' + beside + '" title="'
+      + (beside ? 'Put it back in the reply' : 'Open it larger, beside the chat') + '">' + artIcon(beside ? 'x' : 'expand')
+      + '<span>' + (beside ? 'Close canvas' : 'Expand') + '</span></button>'
+    : '';
+  return '<div class="chat-art' + (st.state === 'ok' ? '' : ' loading') + (beside ? ' on-canvas' : '') + '" data-art="' + e(key) + '">'
+    + '<div class="chat-art-bar">' + artIcon('globe') + '<span class="chat-art-title">' + e(title) + '</span>' + file + expand + '</div>'
     + '<div class="chat-art-box" data-chat-art="' + e(key) + '" data-morph-keep="art:' + e(key) + '"></div>'
     + '</div>';
 }
