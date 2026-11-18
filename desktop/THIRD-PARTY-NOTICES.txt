@@ -35,6 +35,15 @@ The desktop app bundles three typefaces and a set of brand marks:
   bundles its own dependencies (among them d3, dagre-d3-es, cytoscape,
   khroma, lodash-es and DOMPurify), each under its own licence as listed in
   the mermaid package.
+- On Windows, holding Ctrl+Win to dictate into any app uses uiohook-napi
+  1.5.5 (MIT, Copyright (c) 2020 Alexander Drozdov), loaded from
+  node_modules/uiohook-napi, with node-gyp-build 4.8.4 (MIT). Its prebuilt
+  .node files include libuiohook, Copyright (C) 2006-2023 Alexander Barker,
+  under the GNU Lesser General Public License, version 3 or later; source
+  at https://github.com/kwhat/libuiohook and
+  https://github.com/SnosMe/uiohook-napi. The .node file is a separate
+  library the app loads at run time and can be replaced with one built from
+  that source.
 
 ========================================================================
 @modelcontextprotocol/sdk 1.29.0 — MIT

@@ -1,0 +1,15 @@
+/* ATO-1064: the dictation pill (dictate-anywhere.html). */
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body.da { background: var(--lift, var(--paper)); color: var(--ink); font: 400 var(--fs-label)/18px var(--font-ui); -webkit-user-select: none; }
+.da-pill { height: 100%; display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 999px; }
+.da-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: #E5484D; transition: transform 90ms linear; }
+body.da--busy .da-dot { background: var(--ink-3); animation: da-pulse 1s ease-in-out infinite; }
+@keyframes da-pulse { 50% { opacity: .35; } }
+.da-text { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.da-hint { flex: none; color: var(--ink-3); white-space: nowrap; }
+.da-btn { flex: none; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink);
+  padding: 2px 10px; font: inherit; cursor: pointer; }
+.da-btn--x { padding: 2px 8px; }
+.da-btn:hover { background: var(--paper); }
+body.da--busy .da-btn { display: none; }

@@ -6686,6 +6686,7 @@ function settingsPaneEntered(opened) {
   else if (pane === 'diagnostics' && BR && (engfRouteLocal() || selBackend() === 'custom')) llmRefreshStatus(true).then(diagRepaint);
   // ATO-328: General's Exa key row says whether a key is saved; read the names on every entry.
   if (pane === 'general') { exaKeyRefresh(); quickEntryRefresh(); }   // ATO-523: and the quick entry shortcut's state
+  if (pane === 'general') dictateAnywhereRefresh();   // ATO-1064 (dictate-anywhere-settings.js)
 }
 
 function settingsPane() {
@@ -6765,6 +6766,7 @@ function generalPane() {
       + tpNotifyRowHTML()
       // ATO-523: the global hotkey's box and its combo (quick-entry-settings.js).
       + quickEntryRowHTML(QE, {esc, setSwitchHTML})
+      + dictateAnywhereRowHTML(DA, {esc, setSwitchHTML})   // ATO-1064 (dictate-anywhere-settings.js)
       // ATO-464: finished turns fold their steps into one line unless this is on.
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Always show steps</div>'
@@ -7750,6 +7752,7 @@ function act(a) {
   if (a === 'nextstep:toggle') { close(); nextStepSet(!nextStepOn()); return; }
   // ATO-464: Settings › General › Always show steps (turn-summary.js).
   if (a.startsWith('quickentry:')) { quickEntryAct(a.slice('quickentry:'.length)); return; }   // ATO-523 (quick-entry-settings.js)
+  if (a.startsWith('dictate:')) { dictateAnywhereAct(a.slice('dictate:'.length)); return; }   // ATO-1064 (dictate-anywhere-settings.js)
   if (a === 'steps:always') { close(); stepsAlwaysSet(!STEPS.always); render(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
   if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }

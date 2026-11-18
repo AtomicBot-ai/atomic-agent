@@ -19,6 +19,12 @@
  * the compile silent. `-target <arch>-apple-macos26.0` (speechHelperTarget:
  * arm64, or x86_64 on an Intel Mac) matches the SpeechAnalyzer availability
  * floor.
+ *
+ * ATO-1064: the same step compiles native/atomic-fn-key.swift into
+ * out/native/atomic-fn-key, the small watcher that says when Fn is held
+ * down and let go (main/dictate-hold.ts). It needs no macOS 26 API, so its
+ * target is the app's own floor, macOS 14. Same rules: skipped with the
+ * speech helper, and a compile error fails the build.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
@@ -30,6 +36,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = join(here, "..", "native", "atomic-speech.swift");
 const outDir = join(here, "..", "out", "native");
 const out = join(outDir, "atomic-speech");
+const fnKeySrc = join(here, "..", "native", "atomic-fn-key.swift");
+const fnKeyOut = join(outDir, "atomic-fn-key");
 
 const plan = speechHelperPlan({
   platform: process.platform,
@@ -65,4 +73,19 @@ try {
   // swiftc wrote its diagnostics straight to stderr (stdio inherit) above.
   console.error(compileFailureMessage(err));
   process.exit(1);
+}
+
+if (existsSync(fnKeySrc)) {
+  try {
+    execFileSync(
+      "xcrun",
+      ["swiftc", "-O", "-swift-version", "5", "-target", "arm64-apple-macos14.0", fnKeySrc, "-o", fnKeyOut],
+      { stdio: ["ignore", "inherit", "inherit"] },
+    );
+    console.log(`fn key helper → ${fnKeyOut}`);
+  } catch (err) {
+    const first = err instanceof Error ? err.message.split("\n")[0] : String(err);
+    console.error(`fn key helper: swiftc failed (${first}).\nThe compiler output is above. Without this helper, holding Fn to dictate into any app falls back to the key combination.`);
+    process.exit(1);
+  }
 }

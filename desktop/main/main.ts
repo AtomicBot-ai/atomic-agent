@@ -312,6 +312,8 @@ import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import { appWindows, createScreenMarksOverlay } from "./screen-overlay-window.js";
 import { isQuickEntryWindow, wireQuickEntry } from "./quick-entry-window.js";
 import { wireSelectedText } from "./selected-text-ipc.js";
+import { readQuickEntryPref } from "./quick-entry.js";
+import { isDictatePill, wireDictateAnywhere } from "./dictate-anywhere-window.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
@@ -11343,6 +11345,18 @@ void app.whenReady().then(async () => {
   });
   showMiniChat = quickEntry.show;
   app.once("will-quit", () => { showMiniChat = null; quickEntry.dispose(); });
+  /* ATO-1064: a second hotkey dictates into the app in front (dictate-anywhere-window.ts). Off until turned on. */
+  const dictateAnywhere = wireDictateAnywhere({
+    userData: app.getPath("userData"),
+    platform: process.platform,
+    smoke: SMOKE,
+    probe: FIRST_RUN_PROBE,
+    modelsTest: MODELS_TEST,
+    locales: () => readVoicePrefs().locales,
+    quickEntryAccelerator: () => readQuickEntryPref(app.getPath("userData")).accelerator,
+    log: (line) => console.error(line),
+  });
+  app.once("will-quit", () => dictateAnywhere.dispose());
   wireUpdater();
   watchCoreUpdates();
   // ATO-229: the first update check waits for the window (then ~10 s more, updater.ts).
@@ -11420,9 +11434,9 @@ void app.whenReady().then(async () => {
   });
 
   app.on("activate", () => {
-    // ATO-1018: a marks overlay is not a window of the app. ATO-523: nor is the quick-entry box.
+    // ATO-1018: a marks overlay is not a window of the app. ATO-523: nor is the quick-entry box. ATO-1064: nor the dictation pill.
     // ATO-561: nor is a chat in its own window: the Dock click brings the main window back.
-    if (appWindows().filter((w) => !isQuickEntryWindow(w) && !isChatPopout(w)).length === 0) openWindowAgain();
+    if (appWindows().filter((w) => !isQuickEntryWindow(w) && !isChatPopout(w) && !isDictatePill(w)).length === 0) openWindowAgain();
   });
 });
 
