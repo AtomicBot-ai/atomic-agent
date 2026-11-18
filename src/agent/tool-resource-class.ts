@@ -188,6 +188,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.screen.click": "approval_gated",
   "os.screen.type": "approval_gated",
   "os.screen.key": "approval_gated",
+  // ATO-998 / ATO-530: the element list and the background press, same class.
+  "os.screen.elements": "approval_gated",
+  "os.screen.press": "approval_gated",
   // Draws marks through the desktop overlay and asks nothing; serialised
   // like `os.notify`, a small side effect on a shared OS resource.
   "os.screen.point": "memory_write",
@@ -453,6 +456,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.screen.click": ["screen_control"],
     "os.screen.type": ["screen_control"],
     "os.screen.key": ["screen_control"],
+    // Reading a window's controls asks like a window snapshot; pressing one like a click.
+    "os.screen.elements": ["screen_capture"],
+    "os.screen.press": ["screen_control"],
     "skill.run_script": ["script"],
     // A local generation asks nothing; the cloud one is `paid_generation`.
     "image.generate": ["paid_generation"],
