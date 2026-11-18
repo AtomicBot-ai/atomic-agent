@@ -117,3 +117,26 @@ describe("models by role (ATO-943)", () => {
     });
   });
 });
+
+describe("the model a leg's turns ask for (ATO-1560)", () => {
+  it("carries the worker leg's and a role's turn model onto their legs", () => {
+    const withTurns: FusionRoleModels = {
+      ...roles,
+      byRole: {
+        ...roles.byRole,
+        build: { providerId: "lmstudio", model: "qwen-coder", turnModel: "qwen3-coder-30b", local: true },
+      },
+      mixLocalModels: true,
+    };
+    const legs = resolveTaskLegs(
+      [task("w"), task("b", { role: "build" }), task("m", { model: "qwen-coder" }), task("r", { role: "review" })],
+      { ...worker, turnModel: "qwen3.8-27b" },
+      withTurns,
+    );
+    expect(legs.get("w")?.turnModel).toBe("qwen3.8-27b");
+    expect(legs.get("b")?.turnModel).toBe("qwen3-coder-30b");
+    expect(legs.get("m")?.turnModel).toBe("qwen3-coder-30b");
+    // A role without its own turn model asks its provider's configured one.
+    expect(legs.get("r")).not.toHaveProperty("turnModel");
+  });
+});

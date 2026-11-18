@@ -290,6 +290,31 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.loop.runTurn).not.toHaveBeenCalled();
   });
 
+  it("a Fusion turn may ask a local OpenAI-compatible server for its role's model; other origins may not (ATO-1560)", async () => {
+    const local = resolveLlmConfig(fixture.config).providers[0]!;
+    fixture.config.llm = {
+      activeTextProvider: "local-llama",
+      activeEmbeddingProvider: "local-llama-embed",
+      toolTransport: "auto",
+      providers: [
+        local,
+        { id: "lmstudio", kind: "openai-compatible", baseUrl: "http://127.0.0.1:1234/v1", apiKey: "k", defaultChatModel: "default-model" },
+      ],
+    } as never;
+    const registry = fixture.providers.providerRegistry;
+    await registry.mergeProvidersFromConfig(fixture.config, { config: fixture.config, logger: fixture.deps.logger } as never);
+
+    await expect(fixture.service.runTurn(session(), "request", { providerId: "lmstudio", model: "qwen3-coder-30b", origin: "http" }))
+      .rejects.toThrow(/local model, which is shared by all projects/);
+    expect(fixture.loop.runTurn).not.toHaveBeenCalled();
+
+    await fixture.service.runTurn(session(), "request", { providerId: "lmstudio", model: "qwen3-coder-30b", origin: "fusion" });
+    expect(fixture.loop.runTurn.mock.calls[0]?.[1]).toMatchObject({ providerId: "lmstudio", model: "qwen3-coder-30b" });
+    // A llama-server link still serves only the model it loaded.
+    await expect(fixture.service.runTurn(session(), "request", { providerId: "local-llama", model: "other.gguf", origin: "fusion" }))
+      .rejects.toThrow(/local model, which is shared by all projects/);
+  });
+
   it("same-session queued callbacks load state when they acquire the lock", async () => {
     const gate = deferred<void>();
     fixture.loop.runTurn.mockImplementationOnce(async (value, options) => { await gate.promise; return result(value, options); });

@@ -1846,6 +1846,43 @@ describe("fusion.delegate models by role (ATO-943)", () => {
     expect(rows[3]).toMatchObject({ model: "sonnet" });
   });
 
+  it("asks each leg's provider for its turn model on the wire (ATO-1560)", async () => {
+    const asked = new Map<string, string | undefined>();
+    const withTurns: NonNullable<ResolvedRunMode["roles"]> = {
+      ...roles,
+      byRole: {
+        ...roles.byRole,
+        build: { providerId: "or-coder", model: "qwen-coder", turnModel: "qwen/qwen3-coder", local: false },
+      },
+    };
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => fusionMode({ roles: withTurns, workerTurnModel: "qwen3.8-27b" }),
+        workerSupportsSlotAffinity: affine,
+        runTurn: async (session, _msg, options) => {
+          const meta = session.metadata?.fusionWorker as { taskId: string };
+          asked.set(meta.taskId, options.model);
+          return turnResult();
+        },
+      }),
+    ).run(
+      {
+        tasks: [
+          { id: "b", instructions: "build it", role: "build" },
+          { id: "d", instructions: "plain" },
+          { id: "r", instructions: "check", role: "review" },
+        ],
+      },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(Object.fromEntries(asked)).toEqual({
+      b: "qwen/qwen3-coder",
+      d: "qwen3.8-27b",
+      r: undefined,
+    });
+  });
+
   it("refuses a model that is not on the allowed list before any worker starts", async () => {
     const runTurn = vi.fn(async () => turnResult());
     const result = await buildFusionDelegateTool(

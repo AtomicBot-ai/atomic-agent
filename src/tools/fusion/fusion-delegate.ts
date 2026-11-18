@@ -366,7 +366,11 @@ export function buildFusionDelegateTool(
       // before anything starts. A model name outside the allowed list
       // refuses the call; without `roles` every task is on the worker
       // leg, as before.
-      const workerLegRef = { providerId: workerProviderId, model: workerModel };
+      const workerLegRef = {
+        providerId: workerProviderId,
+        model: workerModel,
+        ...(mode.workerTurnModel === undefined ? {} : { turnModel: mode.workerTurnModel }),
+      };
       // Subagent profiles (ATO-566): applied before the legs are picked,
       // since a profile's model can set the task's role.
       let profileReports: AppliedProfileReport[] = [];
@@ -1038,6 +1042,8 @@ export function buildFusionDelegateTool(
             maxWorkers,
             providerId: workerProviderId,
             workerModel,
+            // ATO-1560: the workers run on the model they are shown with.
+            ...(mode.workerTurnModel === undefined ? {} : { turnModel: mode.workerTurnModel }),
             workerMaxSteps: mode.workerMaxSteps,
             workerTimeoutMs: mode.workerTimeoutMs,
             localTokensPerSecond,
@@ -1107,6 +1113,7 @@ export function buildFusionDelegateTool(
             providerId: leg.providerId,
             workerModel:
               onlyRole === "-" ? leg.model : `${leg.model} (${onlyRole})`,
+            ...(leg.turnModel === undefined ? {} : { turnModel: leg.turnModel }),
             workerMaxSteps: mode.workerMaxSteps,
             workerTimeoutMs: mode.workerTimeoutMs,
             localTokensPerSecond: null,

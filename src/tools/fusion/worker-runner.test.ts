@@ -204,6 +204,27 @@ describe("runWorkerTasks", () => {
     expect(plain.calls[0]!.options).not.toHaveProperty("maxOutputTokens");
   });
 
+  it("asks the worker leg for its own model, only when one is set (ATO-1560)", async () => {
+    const { deps, calls } = harness(async () => turnResult());
+    await runWorkerTasks(deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      workerModel: "model-b",
+      turnModel: "model-b",
+      signal: new AbortController().signal,
+    });
+    expect(calls[0]!.options).toMatchObject({ providerId: BASE.providerId, model: "model-b" });
+    const plain = harness(async () => turnResult());
+    await runWorkerTasks(plain.deps, {
+      ...BASE,
+      tasks: tasks(1),
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(plain.calls[0]!.options).not.toHaveProperty("model");
+  });
+
   it("runs on a fresh session id, never the parent's — that would deadlock", async () => {
     const { deps, calls } = harness(async () => turnResult());
     await runWorkerTasks(deps, {

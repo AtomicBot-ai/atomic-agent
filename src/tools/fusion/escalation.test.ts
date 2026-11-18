@@ -115,6 +115,30 @@ describe("advisor escalation of a stuck worker (ATO-942)", () => {
     expect(escalated.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("asks the escalation provider for the target's own model when it has one (ATO-1560)", async () => {
+    const asked: Array<string | undefined> = [];
+    const h = harness(
+      async (_s, options) => {
+        for (let i = 0; i < 6; i += 1) sameStep(options.eventHook, i);
+        await flush();
+        return done();
+      },
+      {
+        escalationComplete: async ({ model }) => {
+          asked.push(model);
+          return { content: "Write a.txt with os.fs.write." };
+        },
+      },
+    );
+    await runWorkerTasks(h.deps, {
+      ...BASE,
+      tasks: TASK,
+      signal: new AbortController().signal,
+      escalation: { target: { ...TARGET, turnModel: "big" }, pricing: PRICING },
+    });
+    expect(asked).toEqual(["big"]);
+  });
+
   it("does nothing automatically when escalation is not turned on", async () => {
     const h = harness(async (_s, options) => {
       for (let i = 0; i < 6; i += 1) sameStep(options.eventHook, i);
