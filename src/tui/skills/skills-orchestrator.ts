@@ -35,7 +35,6 @@ import { toSkillSummaryRows } from "./skills-summary.js";
 import { runLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
 import { takenSkillNames } from "../../skills/learning/learn-targets.js";
 import { skillCuratorPaths } from "../../skills/curator/skill-curator-config.js";
-import { listStarterSkillNames } from "../../skills/seed-starter-skills.js";
 import { createEmptySessionState, type SessionState } from "../../session/session-state.js";
 import { setSkillDisabled as setWorkspaceSkillDisabled, setProjectSkillsEnabled } from "../../config/skill-policy-commands.js";
 import { readUserConfigFileSync } from "../../config/config-file.js";
