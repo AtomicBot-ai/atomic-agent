@@ -14,7 +14,12 @@ import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
  * `https://api.perplexity.ai/router` is Perplexity's Router API, a
  * different root that keeps the convention.
  */
-const CHAT_AT_ROOT_HOSTS: ReadonlySet<string> = new Set(["api.perplexity.ai"]);
+const CHAT_AT_ROOT_HOSTS: ReadonlySet<string> = new Set([
+  "api.perplexity.ai",
+  // GitHub Copilot (ATO-462): `https://api.githubcopilot.com/chat/completions`,
+  // the route every Copilot client (pi, opencode, OpenClaw) calls.
+  "api.githubcopilot.com",
+]);
 
 /**
  * The path prefix of `<root>`'s chat route: `/v1`, or `""` for a root

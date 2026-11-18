@@ -621,7 +621,7 @@ export interface AtomicAgentConfig {
        * The sign-in tokens are kept in `<stateDir>/auth/<service>.json`
        * (owner-only), never in this file.
        */
-      subscriptionOauth?: { service: "chatgpt" };
+      subscriptionOauth?: { service: "chatgpt" | "copilot" };
       userModels?: ReadonlyArray<{
         id: string;
         kind: "chat" | "embedding";

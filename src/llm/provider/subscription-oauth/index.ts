@@ -52,8 +52,10 @@ export {
   type SubscriptionOAuthProviderOptions,
   type ResponsesFetch,
 } from "./subscription-oauth-provider.js";
+export * from "./github-copilot.js";
 export {
   chatgptCredentialStore,
+  copilotCredentialStore,
   createSubscriptionOAuthProvider,
   globalFormFetch,
 } from "./create-subscription-oauth-provider.js";
