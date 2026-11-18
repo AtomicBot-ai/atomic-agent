@@ -4,6 +4,7 @@ import {
   clampRowsForLegacyConhost,
   isLegacyConhost,
   legacyConhostStartupHint,
+  mouseDefaultForHost,
 } from "./legacy-conhost.js";
 
 describe("isLegacyConhost", () => {
@@ -78,12 +79,30 @@ describe("clampRowsForLegacyConhost", () => {
   });
 });
 
+describe("mouseDefaultForHost", () => {
+  it("starts mouse reporting off on the classic Windows console", () => {
+    expect(mouseDefaultForHost(true, { platform: "win32", env: {} })).toBe(false);
+  });
+
+  it("keeps the configured value under Windows Terminal, VS Code and off Windows", () => {
+    expect(mouseDefaultForHost(true, { platform: "win32", env: { WT_SESSION: "a-guid" } })).toBe(true);
+    expect(mouseDefaultForHost(true, { platform: "win32", env: { TERM_PROGRAM: "vscode" } })).toBe(true);
+    expect(mouseDefaultForHost(true, { platform: "darwin", env: {} })).toBe(true);
+    expect(mouseDefaultForHost(false, { platform: "linux", env: {} })).toBe(false);
+  });
+
+  it("follows ATOMIC_AGENT_CONHOST_GUARD=0 back to the configured value", () => {
+    expect(mouseDefaultForHost(true, { platform: "win32", env: { ATOMIC_AGENT_CONHOST_GUARD: "0" } })).toBe(true);
+  });
+});
+
 describe("legacyConhostStartupHint", () => {
   it("recommends Windows Terminal on a legacy conhost", () => {
     const hint = legacyConhostStartupHint({ platform: "win32", env: {} });
     expect(hint).toBe(
       "Tip: this is the classic Windows console. The UI works here, but " +
-        "looks better in Windows Terminal (run `wt`).",
+        "looks better in Windows Terminal (run `wt`). The mouse is off here " +
+        "and works in Windows Terminal; `/mouse on` tries it anyway.",
     );
     expect(hint).not.toContain("ATOMIC_AGENT_CONHOST_GUARD");
     expect(hint).not.toContain("\u2014");

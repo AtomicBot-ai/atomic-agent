@@ -25,7 +25,7 @@ import { registerSession } from "../local-llm/server/session-registry.js";
 import { enterAltScreen } from "./alt-screen.js";
 import { buildInkRenderOptions } from "./ink-render-options.js";
 import { enableSynchronizedOutput } from "./synchronized-output.js";
-import { legacyConhostStartupHint } from "./legacy-conhost.js";
+import { legacyConhostStartupHint, mouseDefaultForHost } from "./legacy-conhost.js";
 import { ChatOrchestrator } from "./chat-orchestrator.js";
 import {
   parseTuiArgs,
@@ -384,7 +384,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // The decoded events reach React through `mouseSource`; the bytes
   // themselves are stripped from the stream Ink reads, because Ink's key
   // parser would otherwise type them into the chat buffer.
-  const mouseEnabled = parsed.mouse ?? config.tui.mouse;
+  // ATO-249: off by default on the classic Windows console, where the
+  // reports do not arrive and the wheel would stop scrolling.
+  const mouseEnabled = parsed.mouse ?? mouseDefaultForHost(config.tui.mouse);
   const mouseSource = makeMouseSource();
   let mouseTracking: MouseTrackingController | null = mouseEnabled
     ? enableMouseTracking({ stdout: process.stdout })
