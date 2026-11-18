@@ -165,3 +165,4 @@ export {
 } from "./outcome-log.js";
 export type { FusionOutcomeRow, OutcomeSize } from "./outcome-log.js";
 export { summarizeOutcomes } from "./outcome-summary.js";
+export { reconcileWorkerLabel, servedModelName } from "./served-model-label.js";

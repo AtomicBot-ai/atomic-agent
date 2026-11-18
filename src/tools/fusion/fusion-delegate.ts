@@ -114,6 +114,7 @@ import {
   type WorkerPricing,
   type WorkerTaskResult,
 } from "./worker-result.js";
+import { reconcileWorkerLabel, SaidOnce } from "./served-model-label.js";
 
 export const FUSION_DELEGATE_TOOL = "fusion.delegate";
 
@@ -127,6 +128,12 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
   slotManager: Pick<SlotManager, "poolSize">;
   /** Live read — the operator can leave fusion mid-turn. */
   resolveRunMode: () => ResolvedRunMode;
+  /**
+   * The model a llama.cpp server that is not this agent's own serves
+   * (`GET /props`, ATO-1562), or null for any other leg and when the
+   * server does not say. Absent (tests, embedders): labels as before.
+   */
+  servedModelOf?: (providerId: string) => Promise<string | null>;
   /** Does the worker leg keep KV-cache affinity per slot? */
   workerSupportsSlotAffinity: (providerId: string) => boolean;
   /** The fallback seam's `prepareLink`: warm the local backend once. */
@@ -305,6 +312,7 @@ export function buildFusionDelegateTool(
     localLegHealth: input.localLegHealth ?? new LocalLegHealth(),
   };
   const turnBudget = deps.turnBudget ?? new FusionTurnBudget();
+  const mismatchesSaid = new SaidOnce();
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
@@ -358,10 +366,31 @@ export function buildFusionDelegateTool(
         turnBudget.addWorkerSpend(ctx.sessionId, resume.carriedSpendUsd);
       }
 
-      // Labels, never guesses: the resolver's pin when it has one, the
-      // provider id when it does not. Both legs are read from the same
-      // live `mode` the fan-out is about to run on.
-      const workerModel = mode.workerModel ?? workerProviderId;
+      // Labels, never guesses: what a foreign llama.cpp server says it
+      // serves (ATO-1562), else the resolver's pin when it has one, else
+      // the provider id. Both legs are read from the same live `mode` the
+      // fan-out is about to run on.
+      const servedModel =
+        deps.servedModelOf === undefined
+          ? null
+          : await deps.servedModelOf(workerProviderId).catch(() => null);
+      const workerLabel = reconcileWorkerLabel(
+        mode.workerModelPinned === true ? mode.workerModel : null,
+        servedModel,
+      );
+      const workerModel = workerLabel.label ?? mode.workerModel ?? workerProviderId;
+      // Said in the fan-out's result once per session and pair, not on
+      // every fan-out; marked said only when a result carries it.
+      const sayModelMismatch = (): string => {
+        if (workerLabel.mismatch === undefined) return "";
+        if (!mismatchesSaid.add(ctx.sessionId, workerLabel.mismatch)) return "";
+        deps.logger.warn("fusion: the worker server serves another model than the one selected", {
+          providerId: workerProviderId,
+          selected: mode.workerModel,
+          served: servedModel,
+        });
+        return `\n\n${workerLabel.mismatch}`;
+      };
       // Models by role and node (ATO-943): where each task runs, decided
       // before anything starts. A model name outside the allowed list
       // refuses the call; without `roles` every task is on the worker
@@ -1740,7 +1769,7 @@ export function buildFusionDelegateTool(
             roleSpendUsd > 0
               ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
               : ""
-          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
+          }${sayModelMismatch()}${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
           details: {
             tasks: results,
             outcome,

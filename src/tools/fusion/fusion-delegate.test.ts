@@ -2260,3 +2260,53 @@ describe("fusion.delegate subagent profiles (ATO-566)", () => {
     expect(result.details).not.toHaveProperty("profiles");
   });
 });
+
+describe("fusion.delegate on a llama.cpp server that is not ours (ATO-1562)", () => {
+  it("labels the workers with the model the server serves and says once that it differs from the pick", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+        resolveRunMode: () => fusionMode({ workerModel: "picked-model", workerModelPinned: true }),
+        servedModelOf: async () => "served-model",
+      }),
+    );
+    const first = await tool.run({ tasks: TASKS }, ctx());
+    const workerEvents = events.filter((e) => e.role === "worker");
+    expect(workerEvents.length).toBeGreaterThan(0);
+    expect(workerEvents.every((e) => e.model === "served-model")).toBe(true);
+    expect(first.summary).toContain(
+      "Selected picked-model, but the server serves served-model. The model is changed on the server side.",
+    );
+    const second = await tool.run({ tasks: TASKS }, ctx());
+    expect(second.summary).not.toContain("Selected picked-model");
+  });
+
+  it("says nothing when nothing was picked, and keeps the pick when the server does not say", async () => {
+    const events: Array<Record<string, unknown>> = [];
+    const quiet = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => events.push({ sessionId, ...event }),
+        resolveRunMode: () => fusionMode({ workerModel: "managed-default" }),
+        servedModelOf: async () => "served-model",
+      }),
+    );
+    const unpinned = await quiet.run({ tasks: TASKS }, ctx());
+    expect(events.filter((e) => e.role === "worker").every((e) => e.model === "served-model")).toBe(true);
+    expect(unpinned.summary).not.toContain("but the server serves");
+
+    const kept: Array<Record<string, unknown>> = [];
+    const silent = buildFusionDelegateTool(
+      deps({
+        emitEvent: (sessionId, event) => kept.push({ sessionId, ...event }),
+        resolveRunMode: () => fusionMode({ workerModel: "picked-model", workerModelPinned: true }),
+        servedModelOf: async () => {
+          throw new Error("unreachable");
+        },
+      }),
+    );
+    const result = await silent.run({ tasks: TASKS }, ctx());
+    expect(kept.filter((e) => e.role === "worker").every((e) => e.model === "picked-model")).toBe(true);
+    expect(result.summary).not.toContain("but the server serves");
+  });
+});

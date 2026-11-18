@@ -61,6 +61,12 @@ export type ResolvedRunMode = {
    */
   workerTurnModel?: string;
   /**
+   * `llm.runMode.fusion.workerModel` was written by the person, so
+   * `workerModel` is their pick rather than a default (ATO-1562: a
+   * foreign llama.cpp server that serves another model says so).
+   */
+  workerModelPinned?: true;
+  /**
    * Default fan-out width for a `fusion.delegate` call that names no
    * `maxWorkers`. Not a ceiling — see `UserLlmFusionConfig.workers`.
    */
@@ -420,6 +426,7 @@ export function resolveRunMode(
     // would be naming a model that runs nothing.
     workerModel: workerModelLabel,
     ...(workerTurnModel === undefined ? {} : { workerTurnModel }),
+    ...(fusion?.workerModel === undefined ? {} : { workerModelPinned: true as const }),
     workers: fusion?.workers ?? DEFAULT_FUSION_WORKERS,
     cloudWorkers: fusion?.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
     ...(fusion?.workerReasoning === undefined
