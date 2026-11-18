@@ -47,6 +47,8 @@ function citeParse(href) {
   if (/^\/[A-Za-z]:[\\/]/.test(path)) path = path.slice(1);
   if (!path || path.length > CITE_PATH_MAX || path.includes('\0') || /(^|[\\/])\.\.([\\/]|$)/.test(path)) return null;
   if (!/^(\/|[A-Za-z]:[\\/])/.test(path) || /[\\/]$/.test(path)) return null;
+  // `file:////host/share/x.pdf` decodes to `//host/...`: a network (UNC) path. Never a citation.
+  if (/^[\\/]{2}/.test(path)) return null;
   const key = m[2].toLowerCase(), raw = m[3];
   const name = citeBase(path);
   if (key === 'page') {
@@ -90,11 +92,15 @@ function citeNote(title, body) {
   if (typeof toast === 'function') toast(title, body || '', 'bad');
 }
 
+/* Open in its app goes through main's reply check (app:openReplyPath), the
+   same one a reply's file chip uses: a file in the home folder, links
+   resolved, never a network path. A citation is model text, so it gets no
+   more trust than any other path a reply names. */
 function citeOpenOutside(path) {
   const br = typeof window !== 'undefined' ? window.atomic : null;
-  if (!br || !br.openPath) return;
-  br.openPath(path).then((r) => {
-    if (r && r.ok === false) citeNote('File not found', /no such|not found|does not exist|ENOENT/i.test(r.error || '') ? path : (r.error || path));
+  if (!br || !br.openReplyPath) return;
+  br.openReplyPath(path).then((r) => {
+    if (r && r.ok === false) citeNote(r.why === 'missing' ? 'File not found' : 'Could not open', r.why === 'missing' ? path : (r.error || path));
   }, () => citeNote('Could not open', path));
 }
 
@@ -126,4 +132,4 @@ if (typeof document !== 'undefined') {
   }, true);
 }
 
-if (typeof module !== 'undefined') module.exports = {citeParse, citeTimeText, citeLabel, citeChipHtml, citeChipFromLink, citeBase};
+if (typeof module !== 'undefined') module.exports = {citeParse, citeTimeText, citeLabel, citeChipHtml, citeChipFromLink, citeBase, citeOpenOutside};

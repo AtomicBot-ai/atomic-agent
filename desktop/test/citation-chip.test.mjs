@@ -44,6 +44,10 @@ test("what is not a citation is left alone", () => {
     "file:///Users/me/a.m4a#t=1:23",
     "https://example.com/a.pdf#page=2",
     "file://server/share/a.pdf#page=2",     // a host other than localhost
+    "file:////evil-host/share/x.pdf#page=1", // a network (UNC) path
+    "file://///evil-host/share/a.pdf#t=3",
+    "file:///%2F%2Fevil-host/share/x.pdf#page=1",
+    "file:///%5C%5Cevil-host%5Cshare%5Cx.pdf#page=1",
     "file:///Users/me/../etc/passwd#page=1",
     "file:///Users/me/%E0%A4%A.pdf#page=1", // broken encoding
     "file:///Users/me/a%00b.pdf#page=1",
@@ -119,4 +123,19 @@ test("wired: loaded before md-render.js, styles linked", () => {
   assert.ok(html.includes('href="css/citation-chip.css"'));
   const css = readFileSync(new URL("../renderer/css/citation-chip.css", import.meta.url), "utf8");
   assert.doesNotMatch(css, /#[0-9a-f]{3,8}\b|rgba?\(/i, "theme tokens only");
+});
+
+test("Open in its app goes through the reply check, never the raw openPath", async () => {
+  const calls = [];
+  globalThis.window = { atomic: {
+    openPath: (p) => { calls.push(["openPath", p]); return Promise.resolve({ ok: true }); },
+    openReplyPath: (p) => { calls.push(["openReplyPath", p]); return Promise.resolve({ ok: true }); },
+  } };
+  try {
+    C.citeOpenOutside("/Users/me/Docs/report.pdf");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(calls, [["openReplyPath", "/Users/me/Docs/report.pdf"]]);
+  } finally {
+    delete globalThis.window;
+  }
 });
