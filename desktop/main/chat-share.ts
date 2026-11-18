@@ -163,26 +163,33 @@ export async function shareChat(deps: ChatShareDeps, id: unknown): Promise<ChatS
   if (next === 1) deps.showInFolder(wire.file);
   if (next !== 2) return { ok: true, path: wire.file };
 
+  /* GitHub draws Markdown as a page and HTML as source: an HTML save uploads a Markdown copy. That copy is
+     written NOW, before the confirm, so the confirm names the exact file and message count that go up, and
+     that same file is uploaded (never one regenerated after the yes, which could hold newer messages). */
+  let up = wire;
+  if (wire.format !== "md") {
+    const md = await deps.runAgent(shareAgentArgs(id, "md"));
+    const mdWire = md.ok ? parseShareWire(md.stdout) : null;
+    if (!mdWire) return { ok: true, path: wire.file, gistError: shareErrorText(md) };
+    up = mdWire;
+  }
+  const mdFile = up.file;
+  const what = up === wire
+    ? `What goes up is the file you saved (${up.messages} messages):\n${mdFile}`
+    : `GitHub shows Markdown as a page, so what goes up is a Markdown copy of the same chat (${up.messages} messages, redacted the same way):\n${mdFile}`;
+
   const sure = await box(deps, {
     type: "warning",
     message: "Upload this chat as a secret GitHub gist?",
     detail: "It goes to the GitHub account the gh command is signed in to. A secret gist is not listed on your profile or in search, "
-      + "but anyone with the link can open it. You can delete it later at gist.github.com. "
-      + "Open the saved file first if you want to read exactly what goes up.",
+      + "but anyone with the link can open it. You can delete it later at gist.github.com.\n\n"
+      + `${what}\n\nOpen that file first if you want to read exactly what goes up.`,
     buttons: ["Cancel", "Upload"],
     defaultId: 0,
     cancelId: 0,
   });
   if (sure !== 1) return { ok: true, path: wire.file };
 
-  // GitHub draws Markdown as a page and HTML as source: an HTML save uploads the Markdown copy.
-  let mdFile = wire.file;
-  if (wire.format !== "md") {
-    const md = await deps.runAgent(shareAgentArgs(id, "md"));
-    const mdWire = md.ok ? parseShareWire(md.stdout) : null;
-    if (!mdWire) return { ok: true, path: wire.file, gistError: shareErrorText(md) };
-    mdFile = mdWire.file;
-  }
   const title = titleFromMarkdown(await (deps.readText ?? ((p) => readFile(p, "utf8")))(mdFile).catch(() => ""));
   const outcome = gistOutcome(await deps.runGh(shareGistArgs(mdFile, title)));
   if ("error" in outcome) return { ok: true, path: wire.file, gistError: outcome.error };

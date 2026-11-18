@@ -80,10 +80,30 @@ test('after both yeses an HTML save uploads a Markdown copy as a SECRET gist and
   assert.deepEqual(h.copied, ['https://gist.github.com/me/abc123']);
 });
 
+test('an HTML save writes the Markdown copy before the confirm, names it there, and uploads exactly that file', async () => {
+  let n = 0;
+  const h = harness({
+    answers: [2, 1, 0],
+    agent: (args) => {
+      n += 1;
+      if (args.includes('--out')) return { ok: true, stdout: wireFor(args), stderr: '' };
+      // Each later run would see a chat that grew and write another file: only the first one may go up.
+      const file = `/state/shared-chats/copy-${n}.md`;
+      return { ok: true, stdout: JSON.stringify({ ok: true, file, sessionId: 's-1', format: 'md', messages: 4 + n, removed: {} }), stderr: '' };
+    },
+  });
+  await shareChat(h.deps, 's-1');
+  assert.equal(h.agent.length, 2, 'no Markdown copy is regenerated after the yes');
+  assert.match(h.boxes[1].detail, /\/state\/shared-chats\/copy-2\.md/);
+  assert.match(h.boxes[1].detail, /6 messages/);
+  assert.equal(h.gh[0][2], '/state/shared-chats/copy-2.md');
+});
+
 test('a Markdown save is uploaded as it is', async () => {
   const h = harness({ answers: [2, 1, 0], pick: { canceled: false, filePath: '/tmp/out/chat.md' } });
   await shareChat(h.deps, 's-1');
   assert.equal(h.agent.length, 1);
+  assert.match(h.boxes[1].detail, /the file you saved \(4 messages\):\n\/tmp\/out\/chat\.md/);
   assert.equal(h.gh[0][2], '/tmp/out/chat.md');
 });
 
