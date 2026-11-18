@@ -9,6 +9,8 @@ import {
   MCP_APP_MIME_TYPE,
   MCP_APPS_EXTENSION_ID,
   mcpAppsClientExtension,
+  mcpAppsUiFromEnv,
+  MCP_APPS_UI_ENV,
   parseToolUiMeta,
   withoutMcpAppPage,
 } from "./mcp-apps.js";
@@ -306,5 +308,14 @@ describe("createMcpToolDefinition with an MCP App", () => {
     expect(readResource).toHaveBeenCalledTimes(1);
     expect(res.status).toBe("ok");
     expect(res.details).not.toHaveProperty("mcpApp");
+  });
+});
+
+describe("mcpAppsUiFromEnv", () => {
+  it("is off unless the host sets ATOMIC_AGENT_MCP_APPS_UI", () => {
+    expect(MCP_APPS_UI_ENV).toBe("ATOMIC_AGENT_MCP_APPS_UI");
+    expect(mcpAppsUiFromEnv({})).toBe(false);
+    for (const on of ["1", "true", "TRUE", " yes ", "on"]) expect(mcpAppsUiFromEnv({ [MCP_APPS_UI_ENV]: on })).toBe(true);
+    for (const off of ["", "0", "false", "no", "off", "2"]) expect(mcpAppsUiFromEnv({ [MCP_APPS_UI_ENV]: off })).toBe(false);
   });
 });

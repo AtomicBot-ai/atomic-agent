@@ -272,3 +272,17 @@ export function withoutMcpAppPage(details: Record<string, unknown>): Record<stri
 export function mcpAppsClientExtension(): Record<string, { mimeTypes: string[] }> {
   return { [MCP_APPS_EXTENSION_ID]: { mimeTypes: [MCP_APP_MIME_TYPE] } };
 }
+
+/**
+ * The env switch a host sets when it renders MCP Apps pages (ATO-1135).
+ * The desktop app sets it for the agent it starts; a terminal session has
+ * nothing to draw a page in, so it stays off there. `1`, `true`, `yes` and
+ * `on` (any case) turn it on; anything else, or unset, leaves it off.
+ */
+export const MCP_APPS_UI_ENV = "ATOMIC_AGENT_MCP_APPS_UI";
+
+/** True when `env` asks for MCP Apps pages (`McpClientDeps.appsUi`). */
+export function mcpAppsUiFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env[MCP_APPS_UI_ENV];
+  return typeof raw === "string" && /^(1|true|yes|on)$/i.test(raw.trim());
+}

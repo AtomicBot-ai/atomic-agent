@@ -54,6 +54,7 @@ import { confineReads } from "../../tools/read-scope/index.js";
 import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpResourceListTool, buildMcpResourceReadTool, buildMcpToolDescriptors, createMcpSamplingHandler, mergeMcpDescriptors, applyMcpToolNameRule, buildMcpToolNameRule } from "../../mcp/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import type { McpServerConfig } from "../../mcp/mcp-types.js";
+import { mcpAppsUiFromEnv } from "../../mcp/mcp-apps.js";
 import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
 import { createPluginMcpLiveStop } from "../../plugins/plugin-mcp-live.js";
 import { listPluginSubagents } from "../../plugins/plugin-subagents.js";
@@ -586,6 +587,10 @@ export async function connectRuntimeMcpCatalog(input: {
       : {}),
     // Browser sign-ins of remote servers live in `<stateDir>/mcp-oauth/`.
     oauthStateDir: config.paths.stateDir,
+    // ATO-1135: a host that renders MCP Apps pages (the desktop app) says so
+    // with ATOMIC_AGENT_MCP_APPS_UI; only then do clients advertise the
+    // extension and read a tool's `ui://` page after a call.
+    ...(mcpAppsUiFromEnv() ? { appsUi: true } : {}),
     ...(options.handlers?.onChannelStatus
       ? {
           onStatus: (status) =>
