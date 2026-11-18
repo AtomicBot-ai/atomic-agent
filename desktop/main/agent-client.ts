@@ -278,6 +278,17 @@ export interface OfflineModeStatus {
   egress: { bytesOut: number; requestsOut: number; requestsBlocked: number; since: string } | null;
 }
 
+/**
+ * ATO-1082: Privacy Shield as `GET/POST /api/privacy-shield` reports it.
+ * `masked` is the distinct values (emails, phones, cards, IBANs, keys) the
+ * agent masked before they went to a cloud model, since it started; null
+ * when the agent sent no readable number.
+ */
+export interface PrivacyShieldStatus {
+  enabled: boolean;
+  masked: number | null;
+}
+
 /** The `error.message` of an agent's JSON error body, else the HTTP status. */
 function errorMessage(text: string, status: number): string {
   try {
@@ -2002,6 +2013,32 @@ export class AgentClient extends EventEmitter {
    * An agent from before the route (ATO-1084) answers "No route for",
    * reported as unsupported so Settings can say so. Never throws.
    */
+  /**
+   * ATO-1082: `GET /api/privacy-shield`, or with `enabled` a `POST` that
+   * switches it (the agent persists `privacy.shield.enabled` and applies it
+   * to the next cloud request). An agent from before the route answers
+   * "No route for", reported as unsupported. Never throws.
+   */
+  async privacyShield(enabled?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: PrivacyShieldStatus } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/privacy-shield`, {
+        method: enabled === undefined ? "GET" : "POST",
+        headers: this.headers(),
+        ...(enabled === undefined ? {} : { body: JSON.stringify({ enabled }) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      const body = JSON.parse(text) as { enabled?: unknown; masked?: unknown };
+      if (typeof body.enabled !== "boolean") return { supported: true, ok: false, error: "the agent sent no Privacy Shield state" };
+      const masked = typeof body.masked === "number" && Number.isFinite(body.masked) && body.masked >= 0 ? Math.floor(body.masked) : null;
+      return { supported: true, ok: true, data: { enabled: body.enabled, masked } };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
   async offlineMode(enabled?: boolean): Promise<{ supported: false } | { supported: true; ok: true; data: OfflineModeStatus } | { supported: true; ok: false; error: string }> {
     try {
       const res = await fetch(`${this.base()}/api/offline-mode`, {

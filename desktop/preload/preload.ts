@@ -99,6 +99,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1087: GET/POST /api/offline-mode — {supported:false} against an agent without the route. */
   offlineMode: () => ipcRenderer.invoke("agent:offlineMode"),
   offlineModeSet: (enabled: boolean) => ipcRenderer.invoke("agent:offlineModeSet", enabled),
+  /** ATO-1082: GET/POST /api/privacy-shield — {supported:false} against an agent without the route. */
+  privacyShield: () => ipcRenderer.invoke("agent:privacyShield"),
+  privacyShieldSet: (enabled: boolean) => ipcRenderer.invoke("agent:privacyShieldSet", enabled),
   /** ATO-445: the agent's webhook routes: list, add (the reply holds the secret once), remove. */
   webhooks: () => ipcRenderer.invoke("agent:webhooks"),
   webhookCreate: (body: unknown) => ipcRenderer.invoke("agent:webhookCreate", body),
