@@ -1170,15 +1170,31 @@ export class SessionStore {
    * was killed or crashed before it could close them. Boot only, before
    * this process opens one of its own (see `orphanIncognitoSessionIds`).
    * Returns the deleted ids so the caller can remove their trace files.
+   *
+   * `beforeDelete` runs for each chat before its row goes (ATO-1547: the
+   * runtime drops the chat's tasks there). When it throws, that chat is
+   * kept for the next start, so a crash or a locked file between the two
+   * never leaves the tasks behind with no chat left to find them by.
    */
-  sweepOrphanIncognito(): string[] {
+  sweepOrphanIncognito(beforeDelete?: (id: string) => void): string[] {
     const ids = orphanIncognitoSessionIds(
       this.db,
       this.turnOwnerProbe,
       this.dbIdentity,
     );
-    for (const id of ids) this.delete(id);
-    return ids;
+    const deleted: string[] = [];
+    for (const id of ids) {
+      if (beforeDelete) {
+        try {
+          beforeDelete(id);
+        } catch {
+          continue;
+        }
+      }
+      this.delete(id);
+      deleted.push(id);
+    }
+    return deleted;
   }
 
   delete(id: string): void {
