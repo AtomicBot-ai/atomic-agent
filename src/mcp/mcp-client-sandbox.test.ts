@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { McpClient } from "./mcp-client.js";
@@ -117,6 +118,91 @@ describe.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-e
       } finally {
         if (saved === undefined) delete process.env.SSH_AUTH_SOCK;
         else process.env.SSH_AUTH_SOCK = saved;
+      }
+    });
+
+    // Review round 2: an argument naming a file in the state dir must not
+    // reopen the state dir around it.
+    it("a file argument in the state dir does not reopen the state dir", async () => {
+      await writeFile(join(state, "config.json"), "{}\n");
+      const client = new McpClient(
+        server({
+          transport: {
+            kind: "stdio",
+            command: process.execPath,
+            args: ["-e", PROBE, state, outside, join(state, "config.json")],
+          },
+        } as Partial<McpServerConfig>),
+        { oauthStateDir: state, sandbox: () => ({ mode: "workspace", network: false }) },
+      );
+      const message = await connectError(client);
+      expect(message).toContain("sbx-report");
+      expect(message).not.toContain('"read":"ok"');
+    });
+
+    // Review round 2: the agent socket is hidden by path, not only by
+    // leaving SSH_AUTH_SOCK out of the environment.
+    const AGENT_PROBE = `const s = require("node:net").connect(process.argv[1]);
+s.on("connect", () => { console.error("agent-report ok"); process.exit(1); });
+s.on("error", (e) => { console.error("agent-report " + e.code); process.exit(1); });`;
+
+    async function listen(path: string): Promise<Server> {
+      const srv = createServer((c) => c.end());
+      await new Promise<void>((done) => srv.listen(path, done));
+      return srv;
+    }
+
+    async function agentReport(sock: string): Promise<string> {
+      const client = new McpClient(
+        {
+          name: "sbx-agent",
+          enabled: true,
+          transport: { kind: "stdio", command: process.execPath, args: ["-e", AGENT_PROBE, sock] },
+        } as McpServerConfig,
+        { oauthStateDir: state, sandbox: () => ({ mode: "workspace", network: true }) },
+      );
+      return connectError(client);
+    }
+
+    it("cannot connect to an ssh-agent socket under /tmp", async () => {
+      const dir = await mkdtemp("/private/tmp/ssh-ato620");
+      const sock = join(dir, "agent.4242");
+      const srv = await listen(sock);
+      try {
+        const message = await agentReport(sock);
+        expect(message).toContain("agent-report");
+        expect(message).not.toContain("agent-report ok");
+      } finally {
+        srv.close();
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("cannot connect to the socket SSH_AUTH_SOCK names", async () => {
+      const sock = join(outside, "agent.sock");
+      const srv = await listen(sock);
+      const saved = process.env.SSH_AUTH_SOCK;
+      process.env.SSH_AUTH_SOCK = sock;
+      try {
+        const message = await agentReport(sock);
+        expect(message).toContain("agent-report");
+        expect(message).not.toContain("agent-report ok");
+      } finally {
+        if (saved === undefined) delete process.env.SSH_AUTH_SOCK;
+        else process.env.SSH_AUTH_SOCK = saved;
+        srv.close();
+      }
+    });
+
+    it("still connects to an unrelated local socket", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "ato620-ok-"));
+      const sock = join(dir, "s.sock");
+      const srv = await listen(sock);
+      try {
+        expect(await agentReport(sock)).toContain("agent-report ok");
+      } finally {
+        srv.close();
+        await rm(dir, { recursive: true, force: true });
       }
     });
 

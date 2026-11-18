@@ -13,6 +13,8 @@
  * - no reads of credential folders and files (`~/.ssh`, `~/.aws`,
  *   `~/.netrc`, ...) or of the agent's own state directory (its `.env`,
  *   config, tokens); a working folder inside one is opened by itself;
+ * - for a process that keeps its network (an MCP server), the
+ *   ssh-agent socket can be hidden too (`hideSshAgent`);
  * - with `network: false`, no outbound IP or local-socket connection
  *   except to loopback IP, no DNS lookups and no URL opening.
  *
@@ -89,6 +91,15 @@ export interface OsSandboxPolicy {
    */
   reopen: readonly OsSandboxReopen[];
   network: boolean;
+  /**
+   * Hide the user's ssh-agent: a process that keeps its network could
+   * otherwise sign with every loaded key without reading `~/.ssh`.
+   * Covers the usual agent socket places (macOS launchd and `ssh-agent`
+   * sockets) and the exact `SSH_AUTH_SOCK` path in `denySockets`.
+   */
+  hideSshAgent?: boolean;
+  /** Socket files that may not be read or connected to. */
+  denySockets?: readonly string[];
 }
 
 export interface OsSandboxPolicyInput {
@@ -106,6 +117,13 @@ export interface OsSandboxPolicyInput {
    * (an MCP server installed under the state directory). Not writable.
    */
   keepReadable?: readonly string[];
+  /**
+   * Hide the ssh-agent socket (see `OsSandboxPolicy.hideSshAgent`).
+   * `sshAuthSock` is the agent's own `SSH_AUTH_SOCK` value, hidden by
+   * its exact path.
+   */
+  hideSshAgent?: boolean;
+  sshAuthSock?: string;
   home?: string;
   tmp?: string;
 }
@@ -211,7 +229,12 @@ export function buildOsSandboxPolicy(
   const denyRead = unique(secret);
   // A working folder (or a server's own folder) inside a denied one is
   // opened again by itself; the denied folder stays denied around it.
-  const keep = unique((input.keepReadable ?? []).map((p) => real(resolve(p))));
+  // A keep-readable path never reopens a denied folder itself, nor
+  // anything inside a credential folder (`~/.ssh`, keychains, ...).
+  const homeSecret = SECRET_HOME_PATHS.flatMap((p) => bothSpellings(join(home, p)));
+  const keep = unique((input.keepReadable ?? []).map((p) => real(resolve(p)))).filter(
+    (p) => !denyRead.includes(p) && !homeSecret.some((dir) => isInside(p, dir)),
+  );
   const insideDenied = (p: string) => denyRead.some((dir) => isInside(p, dir));
   const reopen: OsSandboxReopen[] = [
     ...work.filter(insideDenied).map((path) => ({ path, write: true })),
@@ -219,7 +242,18 @@ export function buildOsSandboxPolicy(
       .filter((p) => insideDenied(p) && !work.includes(p))
       .map((path) => ({ path, write: false })),
   ];
-  return { writableRoots, denyRead, reopen, network: input.network };
+  const sock = input.sshAuthSock?.trim();
+  const denySockets =
+    input.hideSshAgent === true && sock !== undefined && isAbsolute(sock)
+      ? bothSpellings(resolve(sock))
+      : [];
+  return {
+    writableRoots,
+    denyRead,
+    reopen,
+    network: input.network,
+    ...(input.hideSshAgent === true ? { hideSshAgent: true, denySockets } : {}),
+  };
 }
 
 export type OsSandboxWrap =
@@ -244,9 +278,20 @@ const NETWORK_MACH_SERVICES = [
 ];
 
 /**
+ * Where macOS keeps ssh-agent sockets (Seatbelt sees resolved paths, so
+ * `/tmp` and `$TMPDIR` appear under `/private`).
+ */
+const SSH_AGENT_SOCKET_PATTERNS = [
+  "^/private/tmp/com\\.apple\\.launchd\\.[^/]+/",
+  "^/private/tmp/ssh-[^/]+/agent\\.[0-9]+$",
+  "^/private/var/folders/[^/]+/[^/]+/T/ssh-[^/]+/agent\\.[0-9]+$",
+];
+
+/**
  * The Seatbelt profile. Later rules win, so: allow everything, then
  * deny all writes, re-allow the writable roots, deny the secret reads,
- * reopen the folders inside them that must work, and (without network)
+ * reopen the folders inside them that must work, hide the ssh-agent
+ * socket when asked (after the reopen rules), and (without network)
  * deny outbound IP and local-socket traffic, DNS and URL opening, with
  * loopback IP kept. Paths arrive as `(param "...")` values from `-D`,
  * never as text here.
@@ -267,6 +312,17 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
     const ops = entry.write ? "file-read* file-write*" : "file-read*";
     lines.push(`(allow ${ops} (subpath (param "O${i}")))`);
   });
+  if (policy.hideSshAgent === true) {
+    // After the reopen rules, so nothing reopens them. Fixed patterns,
+    // no outside text: launchd's per-login agent socket, and the sockets
+    // `ssh-agent` makes under `/tmp` or `$TMPDIR`.
+    const agent = [
+      ...SSH_AGENT_SOCKET_PATTERNS.map((re) => `(regex #"${re}")`),
+      ...(policy.denySockets ?? []).map((_, i) => `(literal (param "S${i}"))`),
+    ].join(" ");
+    lines.push(`(deny file-read* file-write* ${agent})`);
+    lines.push(`(deny network-outbound ${agent})`);
+  }
   if (!policy.network) {
     lines.push('(deny network-outbound (remote ip "*:*") (remote unix-socket))');
     lines.push('(allow network-outbound (remote ip "localhost:*"))');
@@ -285,6 +341,7 @@ function seatbeltArgs(
   policy.writableRoots.forEach((dir, i) => params.push("-D", `W${i}=${dir}`));
   policy.denyRead.forEach((dir, i) => params.push("-D", `R${i}=${dir}`));
   policy.reopen.forEach((entry, i) => params.push("-D", `O${i}=${entry.path}`));
+  (policy.denySockets ?? []).forEach((path, i) => params.push("-D", `S${i}=${path}`));
   return [...params, "-p", buildSeatbeltProfile(policy), command, ...args];
 }
 
@@ -330,6 +387,11 @@ function bwrapArgs(
   for (const entry of policy.reopen) {
     if (!existsSync(entry.path)) continue;
     out.push(entry.write ? "--bind" : "--ro-bind", entry.path, entry.path);
+  }
+  // The ssh-agent socket (`SSH_AUTH_SOCK`) covered with `/dev/null`, so a
+  // connect to it fails; the folder around it stays as it is.
+  for (const path of policy.denySockets ?? []) {
+    if (existsSync(path)) out.push("--ro-bind", "/dev/null", path);
   }
   if (!policy.network) out.push("--unshare-net");
   out.push("--die-with-parent", "--new-session", "--", command, ...args);

@@ -29,9 +29,7 @@ import {
   type CreateMessageResult,
 } from "@modelcontextprotocol/sdk/types.js";
 
-import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute } from "node:path";
 
 import { resourceClassFor } from "../agent/tool-resource-class.js";
 import {
@@ -49,6 +47,7 @@ import {
 } from "./mcp-stderr-tail.js";
 import type { McpElicitationHandler } from "./mcp-elicitation-handler.js";
 import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
+import { mcpServerKeepReadable } from "./mcp-sandbox-paths.js";
 import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
 import {
   buildOsSandboxPolicy,
@@ -539,20 +538,29 @@ export class McpClient {
     }
     // The server's own code must stay readable when it is installed under
     // a denied folder (a plugin under `<stateDir>/plugins/installed/`):
-    // the folder of an absolute command, and of every absolute argument
-    // that names an existing file (`node /…/server.js`). Each is reopened
-    // by itself, read-only; the state dir around it stays hidden.
-    const codePaths = [command, ...args].filter(
-      (p) => isAbsolute(p) && existsSync(p),
-    );
+    // the command's folder, an absolute file argument by its exact path,
+    // a plugin's own install folder. Never a credential folder or the
+    // rest of the state dir (`mcpServerKeepReadable`).
     const policy = buildOsSandboxPolicy({
       // `cwd` comes from the operator's server config, not the model.
       workspaceRoots: [cwd ?? tmpdir()],
       ...(this.deps.oauthStateDir === undefined
         ? {}
         : { stateDir: this.deps.oauthStateDir }),
-      keepReadable: codePaths.map((p) => dirname(p)),
+      keepReadable: mcpServerKeepReadable({
+        command,
+        args,
+        ...(this.deps.oauthStateDir === undefined
+          ? {}
+          : { stateDir: this.deps.oauthStateDir }),
+      }),
       network: true,
+      // Network stays on, so the ssh-agent socket is hidden by path too,
+      // not only left out of the environment.
+      hideSshAgent: true,
+      ...(process.env.SSH_AUTH_SOCK === undefined
+        ? {}
+        : { sshAuthSock: process.env.SSH_AUTH_SOCK }),
     });
     const wrapped = wrapWithOsSandbox(command, args, policy);
     if (!wrapped.ok) {

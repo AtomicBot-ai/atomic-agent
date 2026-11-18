@@ -104,6 +104,18 @@ describe("buildOsSandboxPolicy", () => {
     ]);
   });
 
+  it("never reopens a denied folder itself or anything in a credential folder", () => {
+    const p = buildOsSandboxPolicy({
+      workspaceRoots: ["/home/op/project"],
+      stateDir: "/home/op/.atomic-agent",
+      keepReadable: ["/home/op/.atomic-agent", "/home/op/.ssh", "/home/op/.ssh/known_hosts"],
+      network: true,
+      home: HOME,
+      tmp: TMP,
+    });
+    expect(p.reopen).toEqual([]);
+  });
+
   it.skipIf(process.platform === "win32")("lists a linked credential folder under its real path too", () => {
     const home = mkdtempSync(join(tmpdir(), "atomic-sbx-home-"));
     try {
@@ -148,6 +160,55 @@ describe("buildSeatbeltProfile", () => {
     const profile = buildSeatbeltProfile(policy(true));
     expect(profile).not.toContain("network-outbound");
     expect(profile).not.toContain("mach-lookup");
+  });
+});
+
+describe("ssh-agent socket (ATO-620)", () => {
+  const agentPolicy = (sshAuthSock?: string) =>
+    buildOsSandboxPolicy({
+      workspaceRoots: ["/home/op/project"],
+      network: true,
+      hideSshAgent: true,
+      ...(sshAuthSock === undefined ? {} : { sshAuthSock }),
+      home: HOME,
+      tmp: TMP,
+    });
+
+  it("denies reading and connecting to the launchd and ssh-agent sockets on macOS", () => {
+    const profile = buildSeatbeltProfile(agentPolicy("/home/op/agent.sock"));
+    expect(profile).toContain('(regex #"^/private/tmp/com\\.apple\\.launchd\\.[^/]+/")');
+    expect(profile).toContain('(literal (param "S0"))');
+    expect(profile).toMatch(/^\(deny network-outbound .*launchd/m);
+    expect(profile).toMatch(/^\(deny file-read\* file-write\* .*launchd/m);
+    // Placed after every reopen rule, so nothing reopens it.
+    const lines = profile.split("\n");
+    const last = Math.max(...lines.map((l, i) => (l.startsWith("(allow file-read*") ? i : -1)));
+    expect(lines.findIndex((l) => l.startsWith("(deny network-outbound") && l.includes("launchd"))).toBeGreaterThan(last);
+    const w = wrapWithOsSandbox("ls", [], agentPolicy("/home/op/agent.sock"), {
+      platform: "darwin",
+      seatbeltAvailable: true,
+    });
+    if (!w.ok) throw new Error(w.reason);
+    expect(w.args).toContain("S0=/home/op/agent.sock");
+  });
+
+  it("covers the SSH_AUTH_SOCK path with /dev/null on Linux", () => {
+    const dir = mkdtempSync(join(tmpdir(), "atomic-sbx-agent-"));
+    try {
+      const sock = join(dir, "agent.1");
+      writeFileSync(sock, "");
+      const w = wrapWithOsSandbox("ls", [], agentPolicy(sock), { platform: "linux", bwrap: "/usr/bin/bwrap" });
+      if (!w.ok) throw new Error(w.reason);
+      const at = w.args.lastIndexOf(sock);
+      expect(w.args[at - 1]).toBe("/dev/null");
+      expect(w.args[at - 2]).toBe("--ro-bind");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves the agent alone unless asked", () => {
+    expect(buildSeatbeltProfile(policy(true))).not.toContain("launchd");
   });
 });
 
