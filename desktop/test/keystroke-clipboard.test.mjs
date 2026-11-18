@@ -54,7 +54,7 @@ test("Windows: a copy is never pressed into a console or terminal, a paste still
   const paste = K.keystrokeCommands("paste", { platform: "win32", env: {} })[0].args.at(-1);
   assert.doesNotMatch(paste, /GetForegroundWindow/, "a paste interrupts nothing, so no guard");
 
-  for (const n of ["cmd", "cmd.exe", "PowerShell", "pwsh", "WindowsTerminal", "conhost", "OpenConsole", "mintty", "alacritty", "wezterm-gui", "wt"]) {
+  for (const n of ["cmd", "cmd.exe", "PowerShell", "pwsh", "WindowsTerminal", "conhost", "OpenConsole", "mintty", "alacritty", "wezterm-gui", "wt", "ConEmu64", "ConEmu", "Hyper", "Tabby", "Warp", "warp.exe"]) {
     assert.equal(K.isWindowsConsoleProcess(n), true, n);
   }
   for (const n of ["Code", "chrome", "notepad", "WINWORD", "", null, undefined]) {
