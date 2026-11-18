@@ -28,7 +28,7 @@ export interface FileSearchDeps {
   fts5Weight: number;
   vectorWeight: number;
   minCosine?: number;
-  /** Most vectors one search scores. */
+  /** Most vector candidates one search keeps (the closest; every stored vector is looked at). */
   scanLimit: number;
 }
 
@@ -57,7 +57,7 @@ export async function searchFileIndex(deps: FileSearchDeps, request: FileSearchR
     return keyword.slice(0, request.topK).map((match, i) => keywordHit(match, keyword.length - i));
   }
   const cosine = new Map<number, number>();
-  for (const candidate of deps.vectors.scan(client.model, request.under, deps.scanLimit, keyword.map((m) => m.chunkId))) {
+  for (const candidate of deps.vectors.scan(client.model, request.under, deps.scanLimit, keyword.map((m) => m.chunkId), queryVector)) {
     if (candidate.vector.length !== queryVector.length) continue;
     cosine.set(candidate.chunkId, cosineSimilarity(queryVector, candidate.vector));
   }

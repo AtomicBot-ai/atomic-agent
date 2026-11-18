@@ -1,5 +1,7 @@
 import type Database from "better-sqlite3";
 
+import { cosineSimilarity } from "../../memory/embeddings/hybrid-recall.js";
+
 import { bufferToFloat32, float32ToBuffer } from "./file-index-schema.js";
 import { likePrefix } from "./file-index-store.js";
 
@@ -11,9 +13,10 @@ export interface ChunkVector {
 /**
  * Chunk embeddings (`chunk_vectors`), per embedding model, so a model
  * switch keeps the old rows until the new model has covered the chunks.
- * Read back whole for a brute-force cosine scan, the same trade-off
- * memory recall makes (`memory/embeddings/hybrid-recall.ts`): no
- * native vector extension to load, and `scanLimit` bounds the cost.
+ * Read back for a brute-force cosine scan, the same trade-off memory
+ * recall makes (`memory/embeddings/hybrid-recall.ts`): no native vector
+ * extension to load. With a query vector every row is streamed and only
+ * the best `scanLimit` are kept, so old chunks are candidates too.
  */
 export class FileVectorStore {
   constructor(private readonly db: Database.Database) {}
@@ -43,26 +46,54 @@ export class FileVectorStore {
   }
 
   /**
-   * The model's vectors, newest chunks first, at most `scanLimit`, plus
-   * those of `alsoIds` (the keyword hits, so each keeps its re-rank),
-   * optionally only for files under `under`.
+   * The model's vectors to score, optionally only for files under `under`,
+   * plus those of `alsoIds` (the keyword hits, so each keeps its re-rank).
+   * With `query`, every row is streamed and the `scanLimit` closest by
+   * cosine are kept (no chunk is out of reach because it is old). Without
+   * it, the newest `scanLimit` (callers that do not score).
    */
-  scan(model: string, under: string | null, scanLimit: number, alsoIds: readonly number[] = []): ChunkVector[] {
+  scan(
+    model: string,
+    under: string | null,
+    scanLimit: number,
+    alsoIds: readonly number[] = [],
+    query?: Float32Array,
+  ): ChunkVector[] {
     const filter = under === null ? "" : `AND f.path LIKE @under ESCAPE '\\'`;
-    const rows = this.db
-      .prepare(
+    const params = { model, ...(under === null ? {} : { under: likePrefix(under) }) };
+    const rows: { chunkId: number; dim: number; vector: Buffer }[] = [];
+    if (query !== undefined) {
+      const stmt = this.db.prepare(
         `SELECT v.chunk_id AS chunkId, v.dim AS dim, v.vector AS vector
            FROM chunk_vectors AS v
            JOIN chunks AS c ON c.id = v.chunk_id
            JOIN files AS f ON f.id = c.file_id
-          WHERE v.model = @model ${filter}
-          ORDER BY v.chunk_id DESC LIMIT @limit`,
-      )
-      .all({ model, limit: scanLimit, ...(under === null ? {} : { under: likePrefix(under) }) }) as {
-      chunkId: number;
-      dim: number;
-      vector: Buffer;
-    }[];
+          WHERE v.model = @model ${filter}`,
+      );
+      let best: { row: { chunkId: number; dim: number; vector: Buffer }; score: number }[] = [];
+      const keep = Math.max(1, scanLimit);
+      for (const row of stmt.iterate(params) as Iterable<{ chunkId: number; dim: number; vector: Buffer }>) {
+        if (row.dim !== query.length) continue;
+        const vector = bufferToFloat32(row.vector, row.dim);
+        if (vector === null) continue;
+        best.push({ row, score: cosineSimilarity(query, vector) });
+        if (best.length >= keep * 2) best = best.sort((a, b) => b.score - a.score).slice(0, keep);
+      }
+      rows.push(...best.sort((a, b) => b.score - a.score).slice(0, keep).map((b) => b.row));
+    } else {
+      rows.push(
+        ...(this.db
+          .prepare(
+            `SELECT v.chunk_id AS chunkId, v.dim AS dim, v.vector AS vector
+               FROM chunk_vectors AS v
+               JOIN chunks AS c ON c.id = v.chunk_id
+               JOIN files AS f ON f.id = c.file_id
+              WHERE v.model = @model ${filter}
+              ORDER BY v.chunk_id DESC LIMIT @limit`,
+          )
+          .all({ ...params, limit: scanLimit }) as { chunkId: number; dim: number; vector: Buffer }[]),
+      );
+    }
     const seen = new Set(rows.map((row) => row.chunkId));
     const extra = alsoIds.filter((id) => !seen.has(id));
     if (extra.length > 0) {
