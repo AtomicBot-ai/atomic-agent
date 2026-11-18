@@ -6422,6 +6422,8 @@ async function offlineModeAct(v) {
   render();
   if (res && res.ok) toast(res.enabled ? 'Offline mode on' : 'Offline mode off', res.enabled ? 'The agent blocks requests to other hosts' : 'The agent can reach the network again');
 }
+// ATO-1082: Settings › Privacy › Privacy Shield; the logic lives in renderer/privacy-shield.js.
+const SHIELD = createPrivacyShield({read: () => BR && BR.privacyShield ? BR.privacyShield() : {supported: false}, set: (on) => BR && BR.privacyShieldSet ? BR.privacyShieldSet(on) : {supported: false}}, {render: () => render(), toast: (t, d) => toast(t, d), shown: () => approvalRulesShown(), gen: () => AGENT_GEN});
 /* ATO-445: Settings › Tasks › Webhooks (renderer/webhooks.js). Read on
    every entry to the pane; an agent without /api/webhooks says to update it. */
 const WHK = createWebhooks({
@@ -6523,6 +6525,7 @@ function settingsPaneEntered(opened) {
   if (settingsPaneId(S.settingsPane) === 'privacy') approvalRulesLoad();
   // ATO-1087: offline mode and its outbound counter, read again on every entry to Privacy.
   if (settingsPaneId(S.settingsPane) === 'privacy') offlineModeLoad();
+  if (settingsPaneId(S.settingsPane) === 'privacy') SHIELD.refresh(); // ATO-1082
   // ATO-445: the webhook routes, read again on every entry to the pane.
   if (settingsPaneId(S.settingsPane) === 'webhooks') webhooksLoad();
   // Item 7 part B: the Skills / Memory / MCP tabs start their own 5 s poll and first load on entry.
@@ -7077,6 +7080,7 @@ function privacyPane() {
     + '<div class="tk-list set-setlist">'
       // ATO-1087: offline mode, drawn only from what the agent reports (offline-mode.js).
       + offlineModeHTML(OFFM.state, {esc})
+      + privacyShieldHTML(SHIELD.state, {esc}) // ATO-1082
       /* B3: `agent.readScope` (agent 0.6.3). The agent reads it through its
          config cache, which a CLI write does not reset in a running
          `atag serve` (checked live: a write with the chat open still asked),
@@ -7402,6 +7406,7 @@ function act(a) {
   if (k === 'ptrust') { projectTrustAct(v || ''); return; }
   if (k === 'arules') { approvalRulesAct(v || ''); return; }
   if (k === 'offline') { offlineModeAct(v || ''); return; }
+  if (k === 'shield') { SHIELD.act(v || ''); return; } // ATO-1082
   if (k === 'whk') { webhooksAct(v || ''); return; }
   // ATO-1156: Continue from Claude Code / Codex (handoff.js). Opening it takes every other overlay
   // and the settings window down first, so Escape and the scrim close the sheet itself.
