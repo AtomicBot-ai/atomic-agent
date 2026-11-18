@@ -553,3 +553,40 @@ describe("scrubError message and the shared secret detector (ATO-1077)", () => {
     }
   });
 });
+
+describe("scrubError upstream detail (ATO-1673)", () => {
+  it("sends the reason, blamed field and code of a provider refusal, never its text", () => {
+    const cause = Object.assign(new Error("openai provider 400: …"), {
+      name: "OpenAiHttpError",
+      status: 400,
+      body: {
+        type: "invalid_request_error",
+        code: "INVALID_ARGUMENT",
+        message:
+          "Function call is missing a thought_signature in functionCall parts.",
+        text: '[{"error":{"message":"* GenerateContentRequest.contents[3].parts[0].function_call: missing thought_signature; draft my resignation letter"}}]',
+      },
+    });
+    const wrapper = Object.assign(new Error("humanized"), {
+      name: "TransportError",
+      status: 400,
+      cause,
+    });
+    const ev = scrubError(wrapper, { source: "llm_failure", category: "transport" });
+    expect(ev.upstreamErrorType).toBe("invalid_request_error");
+    expect(ev.upstreamReason).toBe("missing_thought_signature");
+    expect(ev.upstreamErrorParam).toBe(
+      "GenerateContentRequest.contents[].parts[].function_call",
+    );
+    expect(ev.upstreamErrorCode).toBe("INVALID_ARGUMENT");
+    expect(JSON.stringify(ev)).not.toContain("resignation");
+    expect(JSON.stringify(ev)).not.toContain("functionCall parts");
+  });
+
+  it("adds no upstream detail to an error without a provider body", () => {
+    const ev = scrubError(new TypeError("x is not a function"), { source: "uncaughtException" });
+    expect(ev.upstreamReason).toBeUndefined();
+    expect(ev.upstreamErrorParam).toBeUndefined();
+    expect(ev.upstreamErrorCode).toBeUndefined();
+  });
+});
