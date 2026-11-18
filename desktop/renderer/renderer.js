@@ -3004,7 +3004,8 @@ function emptyChat() {
      Build row named the desktop shell's version, not the agent's (U7). The
      suggestions stay: they are the cheapest way into a first turn. */
   return '<div class="emptychat">' + sharedSetupNoticeHTML() + (typeof updRequiredHTML === 'function' ? updRequiredHTML() : '') + (typeof starterNoticeHTML === 'function' ? starterNoticeHTML() : '') + emptyPlateHTML()
-    + '<div class="ghost">' + EMPTY_STARTERS.map(starterCardHTML).join('') + '</div></div>';
+    + '<div class="ghost">' + EMPTY_STARTERS.map(starterCardHTML).join('') + '</div>'
+    + (typeof ideaCardsHTML === 'function' ? ideaCardsHTML() : '') + '</div>';   // ATO-458 (suggestion-cards.js)
 }
 /* The start screen's four cards, as ChatGPT and Claude lay out their empty
    state (2x2, one row of four on a wide column; chat.css). A card fills the
@@ -7571,6 +7572,7 @@ function act(a) {
   // ATO-1467: Help › Talk to the team, and the sidebar card's three buttons.
   if (a === 'help.feedback') { close(); render(); interviewOpen('menu'); return; }
   if (a === 'interview:card' || a === 'interview:later' || a === 'interview:never') { interviewCardAct(a.slice('interview:'.length)); return; }
+  if (a.startsWith('idea:') && typeof ideaCardsAct === 'function') { ideaCardsAct(a.slice('idea:'.length)); return; }   // ATO-458
   if (k === 'bugrep') { bugRepAct(v || ''); return; }   // ATO-1466 (bug-report.js)
   /* Run mode — every route to it lands here or in fzSlash: the native menu's
      Run › Where it runs…, the Settings › LLM cards and worker count, the
@@ -7619,6 +7621,7 @@ function act(a) {
     FOCUS.entry = true; render(); return;
   }
   if (a === 'session:new') { close();
+                             if (typeof ideaCardsRefresh === 'function') ideaCardsRefresh();   // ATO-458: suggested tasks, asked again on each new chat
                              stashQueue();   // Backlog 26: what was queued in the chat being left waits for it, read before the view goes
                              liveLeave();    // Item 38: and a turn running there keeps its view for when it is opened again
                              S.log = []; S.history = []; S.agentSession = null; S.busy = false;
@@ -18352,6 +18355,7 @@ if (BR) {
   // ATO-1042: the starter model's download and arrival (starter-chat.js).
   if (BR.onStarterModel) BR.onStarterModel((ev) => starterOnEvent(ev));
   if (typeof starterCatchUp === 'function') starterCatchUp();
+  if (typeof ideaCardsRefresh === 'function') ideaCardsRefresh();   // ATO-458: suggested tasks, asked once at start
   BR.onPull((ev) => { if (typeof starterOnPull === 'function') starterOnPull(ev); });
   // ATO-1044: the best model for this computer, after the starter (upgrade-chat.js).
   if (BR.onUpgradeModel) BR.onUpgradeModel((ev) => upgradeOnEvent(ev));

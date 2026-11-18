@@ -50,6 +50,7 @@ import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
+import { wireIdeasIpc } from "./ideas-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
 import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
@@ -3187,6 +3188,8 @@ function wireIpc(client: AgentClient): void {
   wireTerminalOpenIpc();
   // ATO-590: the Tasks tab's Pause / Resume and a task's past runs.
   wireTaskControlsIpc({ client });
+  // ATO-458: suggested tasks on the empty chat screen (ideas-ipc.ts, renderer/suggestion-cards.js).
+  wireIdeasIpc({ client });
   // ATO-1091: Settings › Models › "Find the best model for my tasks" (`atag models fit-test`).
   wireFitTestIpc({
     window: () => win,

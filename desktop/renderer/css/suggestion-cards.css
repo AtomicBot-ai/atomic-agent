@@ -1,0 +1,15 @@
+/* ============================================================
+   ATO-458 — suggested tasks under the start screen's starters
+   (renderer/suggestion-cards.js). Quiet rows, the starters' outline;
+   colours come from tokens only.
+   ============================================================ */
+
+.ideacards{display:flex;flex-direction:column;gap:8px;width:min(560px,100%);margin-top:18px}
+@container (min-width:640px){.ideacards{width:100%}}
+.ideacards-h{font-size:var(--fs-cap);color:var(--ink-3, var(--ink-2));padding:0 2px}
+.ideacard{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"kind title acts" ". desc acts";
+  align-items:center;column-gap:10px;row-gap:2px;padding:10px 12px;border-radius:var(--r-well);box-shadow:inset 0 0 0 1px var(--bd)}
+.ideacard .ic-kind{grid-area:kind;font-size:var(--fs-cap);font-weight:600;color:var(--ink-2)}
+.ideacard .ic-t{grid-area:title;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
+.ideacard .ic-d{grid-area:desc;min-width:0;font-size:var(--fs-cap);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ideacard .ic-acts{grid-area:acts;display:flex;gap:6px}
