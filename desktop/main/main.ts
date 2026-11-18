@@ -50,6 +50,7 @@ import { wireFusionReasoningIpc } from "./fusion-reasoning-ipc.js";
 import { wireLanDiscoveryIpc } from "./lan-discovery-ipc.js";
 import { wireTaskControlsIpc } from "./task-controls-ipc.js";
 import { wireSessionGoalIpc } from "./session-goal-ipc.js";
+import { wireIncognitoChatsIpc } from "./incognito-chats-ipc.js";
 import { wireMiniChatIpc } from "./mini-chat-ipc.js";
 import { wireChatRewindIpc } from "./chat-rewind-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
@@ -3103,6 +3104,7 @@ function wireIpc(client: AgentClient): void {
   wireLanDiscoveryIpc();
   // ATO-1040: the chat's goal (the TUI's /goal), read and controlled through the agent.
   wireSessionGoalIpc(client);
+  wireIncognitoChatsIpc(client);   // ATO-586: incognito chats
   // ATO-1136: HTML artifacts in the chat, sandboxed (artifact-frame-ipc.ts).
   wireArtifactIpc();
   // ATO-1063: the mini chat page (mini-chat-ipc.ts): its frames, and "Open in big window".
