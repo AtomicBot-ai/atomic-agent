@@ -30,6 +30,41 @@ function isWayland(env: Record<string, string | undefined>): boolean {
 }
 
 /**
+ * Windows programs whose window is a console or a terminal. There Ctrl+C with
+ * nothing selected is not a copy but an interrupt: it would stop the build,
+ * server or script running in it. A copy is never pressed into them, so the
+ * quick-entry box simply gets no selection. Lower case, without ".exe".
+ * A paste (Ctrl+V) interrupts nothing, so dictation still types into them.
+ * macOS is left alone: ⌘C in Terminal or iTerm only copies.
+ */
+export const WINDOWS_CONSOLE_PROCESSES: readonly string[] = [
+  "cmd", "powershell", "pwsh", "powershell_ise", "conhost", "openconsole",
+  "windowsterminal", "wt", "mintty", "bash", "wsl", "alacritty", "wezterm", "wezterm-gui",
+];
+
+/** True when the process in front is a console or terminal (see WINDOWS_CONSOLE_PROCESSES). */
+export function isWindowsConsoleProcess(name: unknown): boolean {
+  if (typeof name !== "string") return false;
+  const n = name.trim().toLowerCase().replace(/\.exe$/, "");
+  return WINDOWS_CONSOLE_PROCESSES.includes(n);
+}
+
+/** Exit code of the Windows copy when it skipped a console in front. */
+export const WIN_CONSOLE_SKIP_EXIT = 3;
+
+/**
+ * The PowerShell that runs before the Windows copy: the process of the
+ * window in front, and an exit with WIN_CONSOLE_SKIP_EXIT (no key pressed)
+ * when it is a console. Single quotes only, so it survives the command line.
+ */
+const WIN_CONSOLE_GUARD = [
+  "Add-Type -Namespace AtomicAgent -Name Fg -MemberDefinition '[DllImport(''user32.dll'')] public static extern System.IntPtr GetForegroundWindow(); [DllImport(''user32.dll'')] public static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint pid);';",
+  "$fgPid = [uint32]0; [void][AtomicAgent.Fg]::GetWindowThreadProcessId([AtomicAgent.Fg]::GetForegroundWindow(), [ref]$fgPid);",
+  "$fgName = ''; try { $fgName = (Get-Process -Id $fgPid -ErrorAction Stop).ProcessName.ToLower() } catch {}",
+  `if (@(${WINDOWS_CONSOLE_PROCESSES.map((n) => `'${n}'`).join(",")}) -contains $fgName) { exit ${WIN_CONSOLE_SKIP_EXIT} };`,
+].join(" ");
+
+/**
  * The commands that press ⌘C/⌘V (Ctrl elsewhere) in the app in front, in the
  * order to try them; empty where nothing can. On Linux the tool may not be
  * installed, so the host tries the next one when a file is missing.
@@ -40,11 +75,12 @@ export function keystrokeCommands(kind: KeystrokeKind, o: KeystrokeEnv): Keystro
     return [{ file: "/usr/bin/osascript", args: ["-e", `tell application "System Events" to keystroke "${letter}" using command down`] }];
   }
   if (o.platform === "win32") {
+    const send = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^${letter}')`;
     return [{
       file: "powershell.exe",
       args: [
         "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command",
-        `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^${letter}')`,
+        kind === "copy" ? `${WIN_CONSOLE_GUARD} ${send}` : send,
       ],
     }];
   }
