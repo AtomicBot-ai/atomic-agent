@@ -463,6 +463,9 @@
 .dlc-count{flex:none;min-width:20px;height:18px;padding:0 6px;border-radius:var(--r-badge);background:var(--hover);
   font:600 var(--fs-micro)/18px var(--font-ui);text-align:center;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .dlc-fold svg,.dlc-x svg{width:14px;height:14px}
+/* ATO-1503: Pause / Resume beside the ×; a paused bar stays where it stopped, dimmed. */
+.dlc-pause svg,.dlc-resume svg{width:14px;height:14px}
+.dlc-row.is-paused .dlc-bar > i{opacity:.45}
 .dlc-list{list-style:none;margin:0;padding:2px 8px 8px;display:flex;flex-direction:column;gap:6px;
   overflow-y:auto;min-height:0}
 /* One download: a well inside the card — name and its controls, a 6px bar,
@@ -484,7 +487,7 @@
 .dlc-row.is-ready{background:color-mix(in srgb, var(--success) 8%, var(--well))}
 .dlc-row.is-ready .dlc-line{white-space:normal;overflow-wrap:anywhere}
 .dlc-switch{height:24px;padding:0 11px}
-.dlc-x:focus-visible,.dlc-fold:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.dlc-x:focus-visible,.dlc-fold:focus-visible,.dlc-pause:focus-visible,.dlc-resume:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 /* The setup screen's cloud offer, now a quiet link under the rows. */
 .dlc-cloud{flex:none;align-self:flex-start;margin:0 8px 10px;padding:4px 6px;border-radius:var(--r-pill);
   font:500 var(--fs-cap)/16px var(--font-ui);color:var(--blue);text-align:left;
