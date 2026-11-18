@@ -240,7 +240,12 @@ function skipSpace(text: string, from: number): number {
   return i;
 }
 
-/** End (exclusive) of the string opening at `start`; a raw newline ends it too. */
+/**
+ * End (exclusive) of the string opening at `start`. A double-quoted one
+ * runs to its closing quote even across raw newlines (a model writes
+ * multi-line values without the grammar); a single-quoted one also ends
+ * at a raw newline, so a prose apostrophe cannot swallow what follows.
+ */
 function stringEnd(text: string, start: number): number {
   const quote = text[start];
   let i = start + 1;
@@ -248,7 +253,7 @@ function stringEnd(text: string, start: number): number {
     const ch = text[i]!;
     if (ch === "\\") i += 2;
     else if (ch === quote) return i + 1;
-    else if (ch === "\n") return i;
+    else if (ch === "\n" && quote === "'") return i;
     else i += 1;
   }
   return text.length;

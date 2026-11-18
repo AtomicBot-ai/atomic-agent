@@ -163,6 +163,13 @@ describe("callLike stays linear on hostile text (ATO-1675)", () => {
     expect(callLike("{'tool': 'os.fs.read', 'args': {}}")).toBe(true);
   });
 
+  it("reads past a raw newline inside a double-quoted value", () => {
+    expect(callLike('{"thought":"line1\nline2","tool":"os.fs.read","args":{}}')).toBe(true);
+    const thought = "a step\n".repeat(2_000);
+    expect(callLike(`Plan.\n{"thought":"${thought}","tool":"os.fs.read","args":{"path":`)).toBe(true);
+    expect(callLike("I don't {think} it's\nfine, the \"tool\": is a word here.")).toBe(false);
+  });
+
   it("ignores call words outside an object and a long package.json example", () => {
     expect(callLike('Use {braces} and the "tool": key later.')).toBe(false);
     expect(callLike("I don't {think} it's [really] \"tool\": here.")).toBe(false);
