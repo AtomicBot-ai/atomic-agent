@@ -52,4 +52,38 @@ describe("composioIntegration", () => {
     expect(validate?.("ak_plain_ascii")).toBeUndefined();
     expect(validate?.("ak_“fancy”")).toMatch(/ASCII/);
   });
+
+  it("offers the account edits as typed inputs that are never stored (ATO-1494)", () => {
+    const keys = composioIntegration.fields
+      .filter((f) => f.store === "transient")
+      .map((f) => f.key);
+    expect(keys).toEqual(["addAccount", "defaultAccount", "removeAccount"]);
+    for (const f of composioIntegration.fields.filter((x) => x.store === "transient")) {
+      expect(f.required).toBe(false);
+      expect(f.envVar).toBeUndefined();
+    }
+  });
+
+  it("offers the accounts list only once a key is saved", () => {
+    const action = composioIntegration.actions?.find((a) => a.id === "accounts");
+    expect(action?.key).toBe("a");
+    expect(action?.available?.(ctx([]))).toBe(false);
+    expect(action?.available?.(ctx([KEY]))).toBe(true);
+  });
+
+  it("says which account each app acts through while connected", () => {
+    const status = composioIntegration.status({
+      ...ctx([KEY], { composio: "up" }),
+      config: {
+        composio: {
+          accounts: [
+            { toolkit: "slack", alias: "team", connectedAccountId: "ca_s", isDefault: true },
+            { toolkit: "gmail", alias: "work", connectedAccountId: "ca_w", isDefault: true },
+            { toolkit: "gmail", alias: "home", connectedAccountId: "ca_h", isDefault: false },
+          ],
+        },
+      },
+    });
+    expect(status).toEqual({ level: "connected", detail: "connected · gmail via work, slack via team" });
+  });
 });

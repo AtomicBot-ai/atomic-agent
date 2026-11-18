@@ -1,6 +1,7 @@
 import {
   COMPOSIO_SERVER_NAME,
   clearComposioSession,
+  resolveComposioApiKey,
   resolveComposioServerConfig,
 } from "../../composio/index.js";
 import { AtomicMailService } from "../../atomic-mail/index.js";
@@ -18,6 +19,15 @@ import {
   applyAtomicMailField,
   runAtomicMailAction,
 } from "./integrations-orchestrator-atomic-mail.js";
+import {
+  COMPOSIO_ACCOUNT_FIELDS,
+  applyComposioAccountField,
+  checkComposioAccountToAdd,
+  composioAccountsSummary,
+  composioRemountFailedMessage,
+  isComposioAccountField,
+  uncheckedAccountMessage,
+} from "./integrations-orchestrator-composio.js";
 import {
   EXA_INTEGRATION_ID,
   GITHUB_INTEGRATION_ID,
@@ -269,6 +279,9 @@ export class IntegrationsOrchestrator {
       await channel.start();
       return "Discord channel restarted";
     }
+    if (integrationId === "composio" && actionId === "accounts") {
+      return composioAccountsSummary({ composio: getConfig().composio });
+    }
     if (integrationId === GITHUB_INTEGRATION_ID) {
       if (actionId === "verify") return this.verifyGithub();
       if (actionId === "import") return this.importGithubTokenFromGh();
@@ -377,6 +390,35 @@ export class IntegrationsOrchestrator {
         throw new IntegrationSecretError(`unknown field ${fieldKey}`);
       }
       const cfg = getConfig();
+      if (integrationId === "composio" && isComposioAccountField(field)) {
+        // ATO-1494: an account edit, not a key change. The cached session
+        // stays: its pin stamp no longer matches a changed default, so
+        // the remount creates a pinned session only when one is needed.
+        // An add is checked against Composio first: a pinned id it does
+        // not have would take every Composio tool down with it.
+        const unchecked =
+          field.key === COMPOSIO_ACCOUNT_FIELDS.add && value !== null
+            ? await checkComposioAccountToAdd(value, { composio: cfg.composio })
+            : null;
+        const saved = applyComposioAccountField(
+          field,
+          value,
+          cfg.composio.accounts,
+          cfg.paths.userConfigFile,
+        );
+        const message = unchecked === null ? saved : uncheckedAccountMessage(saved, unchecked);
+        if (value !== null && (await this.applyComposio(true, false)) === "failed") {
+          this.bus.emit({
+            type: "integrations_action_settled",
+            error: composioRemountFailedMessage(message, value),
+          });
+          this.refresh();
+          return;
+        }
+        this.bus.emit({ type: "integrations_action_settled", message });
+        this.refresh();
+        return;
+      }
       if (integrationId === "atomic-mail") {
         // Acts *before* the write: the owner address must not land in
         // config unless the code mail went out — the service writes
@@ -480,20 +522,39 @@ export class IntegrationsOrchestrator {
    *
    * The cached tool-router session is dropped on every key change: a
    * session belongs to the key that created it, so reusing it across a
-   * key swap would silently keep talking to the old account.
+   * key swap would silently keep talking to the old account. An account
+   * edit keeps it (`clearSession: false`): `sessionPins` decides.
+   *
+   * Returns "mounted", "off" (not asked to, disabled, or no key), or
+   * "failed": a key is there but the server did not come back, which the
+   * resolver itself only logs.
    */
-  private async applyComposio(configured: boolean): Promise<void> {
+  private async applyComposio(
+    configured: boolean,
+    clearSession = true,
+  ): Promise<"mounted" | "off" | "failed"> {
     const config = getConfig();
     await this.runtime.mcpManager.removeServerLive(COMPOSIO_SERVER_NAME);
-    clearComposioSession(config.paths.userConfigFile);
+    if (clearSession) clearComposioSession(config.paths.userConfigFile);
+    let outcome: "mounted" | "off" | "failed" = "off";
     if (configured) {
+      const composio = getConfig().composio;
       const server = await resolveComposioServerConfig({
-        composio: getConfig().composio,
+        composio,
         userConfigFile: config.paths.userConfigFile,
       });
-      if (server) await this.runtime.mcpManager.addServerLive(server);
+      if (server) {
+        await this.runtime.mcpManager.addServerLive(server);
+        outcome = "mounted";
+      } else if (
+        composio.enabled &&
+        resolveComposioApiKey({ apiKeyEnv: composio.apiKeyEnv }) !== undefined
+      ) {
+        outcome = "failed";
+      }
     }
     await this.runtime.refreshMcp?.();
+    return outcome;
   }
 }
 
