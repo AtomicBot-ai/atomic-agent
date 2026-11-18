@@ -645,6 +645,18 @@ export class AgentLoop {
               ? { model: options.model }
               : {}),
             turnId: `${state.id}#${turnIndex}@${turnStartedAt}`,
+            // A tool that runs paid turns of its own (subagent.run) adds
+            // their spend here, so the ceiling check before the next step
+            // counts it (ATO-1670). Only with a ceiling set.
+            ...(costCeilingUsd > 0
+              ? {
+                  turnSpend: {
+                    ceilingUsd: costCeilingUsd,
+                    spentUsd: () => turn.spendUsd,
+                    add: (usd: number) => recordCompactionSpend(turn, usd),
+                  },
+                }
+              : {}),
             llmComplete: this.deps.llmComplete,
             ...(this.deps.llmCompleteStream
               ? { llmCompleteStream: this.deps.llmCompleteStream }

@@ -216,6 +216,17 @@ export interface WorkerRunnerCoreOptions {
     general: string;
     reasonFor?: (request: ApprovalRequest) => string | undefined;
   };
+  /**
+   * Asked before each task starts: a reason means the task is not
+   * started and comes back `cancelled` with that reason (the turn's cap,
+   * ATO-947). Absent, every task starts as before. In the core since
+   * ATO-1670: `subagent.run` stops on the agent turn's spend ceiling.
+   */
+  shouldStart?: () => string | undefined;
+  /** Every worker completion's usage, as it lands (live spend, ATO-947). */
+  onWorkerUsage?: (taskId: string, usage: CompletionUsage) => void;
+  /** Each task's row as soon as it is final, before the fan-out returns (ATO-617). */
+  onTaskFinished?: (result: WorkerTaskResult) => void;
 }
 
 /** Fusion's options on top of the core. Each one absent does nothing. */
@@ -240,19 +251,11 @@ export interface FusionWorkerRunnerOptionsExtras {
    */
   contract?: DelegateContract;
   /**
-   * Asked before each task starts: a reason means the task is not
-   * started and comes back `cancelled` with that reason (the turn's cap,
-   * ATO-947). Absent, every task starts as before.
-   */
-  shouldStart?: () => string | undefined;
-  /**
    * Asked only before a task starts, after `shouldStart`: the failure
    * breaker (ATO-1406). Unlike `shouldStart` it never refuses an
    * escalation or cuts a run already going, so running workers finish.
    */
   shouldStartTask?: () => string | undefined;
-  /** Every worker completion's usage, as it lands (live spend, ATO-947). */
-  onWorkerUsage?: (taskId: string, usage: CompletionUsage) => void;
   /**
    * Where a stuck worker may be escalated, and that model's price when
    * known (ATO-942). Absent: no escalation of any kind.
@@ -290,6 +293,4 @@ export interface FusionWorkerRunnerOptionsExtras {
    * per task). The run checkpoint (ATO-617) records side effects from it.
    */
   onWorkerTool?: (taskId: string, tool: string) => void;
-  /** Each task's row as soon as it is final, before the fan-out returns (ATO-617). */
-  onTaskFinished?: (result: WorkerTaskResult) => void;
 }
