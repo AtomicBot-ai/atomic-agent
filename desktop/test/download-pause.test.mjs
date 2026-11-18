@@ -277,3 +277,45 @@ test("index.html loads dl-pause.js before renderer.js, and renderer.js hooks it 
   assert.ok(main.includes("if (pull.ctl) pull.ctl.discard();"), "the person's Cancel deletes the partial");
   assert.ok(main.includes("registerDownloadPauseIpc(ipcMain"));
 });
+
+test("a paused pull does not keep an update waiting; a running one does", async () => {
+  const { start } = fakeRuns();
+  const ctl = P.pausablePull(start, hooks());
+  assert.equal(P.downloadBusyForUpdate(true, ctl.state()), true, "running: the update waits");
+  ctl.pause();
+  assert.equal(P.downloadBusyForUpdate(true, ctl.state()), true, "still stopping");
+  await tick();
+  assert.equal(ctl.state(), "paused");
+  assert.equal(P.downloadBusyForUpdate(true, ctl.state()), false, "paused: nothing runs, the restart may go");
+  assert.equal(P.downloadBusyForUpdate(true, null), true, "another download (projector, engine update) still counts");
+  assert.equal(P.downloadBusyForUpdate(false, null), false);
+  // What the update's quit does to it: ends it and keeps the partial for the next launch.
+  const h = hooks();
+  const other = P.pausablePull(fakeRuns().start, h);
+  other.pause();
+  await tick();
+  other.cancel();
+  assert.equal((await other.done).error, P.DOWNLOAD_CANCELLED);
+  assert.equal(h.removed, 0);
+});
+
+test("another download refused behind a paused one says to Resume or Cancel it", async () => {
+  const { start } = fakeRuns();
+  const ctl = P.pausablePull(start, hooks());
+  assert.equal(P.downloadBusyText(ctl.state()), P.DOWNLOAD_BUSY);
+  assert.equal(P.downloadBusyText(null), P.DOWNLOAD_BUSY);
+  ctl.pause();
+  await tick();
+  const text = P.downloadBusyText(ctl.state());
+  assert.equal(text, P.DOWNLOAD_PAUSED_BUSY);
+  assert.match(text, /paused/);
+  assert.match(text, /Resume/);
+  assert.match(text, /Cancel/);
+});
+
+test("main.ts uses the paused-aware busy checks for the updater and every refusal", () => {
+  const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
+  assert.ok(main.includes("download: downloadBusyForUpdate(downloadRunning() !== null, slotPullState()),"), "the updater skips a paused pull");
+  assert.ok(!main.includes("error: DOWNLOAD_BUSY,"), "no refusal keeps the old fixed text");
+  assert.ok(main.includes("error: downloadBusyError(),"));
+});

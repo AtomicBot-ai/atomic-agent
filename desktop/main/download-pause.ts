@@ -120,6 +120,26 @@ export function pausablePull<R extends { ok: boolean }>(
   };
 }
 
+/** Another download refused while the slot is taken. */
+export const DOWNLOAD_BUSY = "a download is already running";
+/** The same refusal while the slot's pull is paused: the person has to Resume or Cancel it. */
+export const DOWNLOAD_PAUSED_BUSY = "a download is paused: Resume or Cancel it first";
+
+/** The refusal text for another download, given the slot's pull state (null: not a pausable pull). */
+export function downloadBusyText(pullState: PauseState | null): string {
+  return pullState === "paused" ? DOWNLOAD_PAUSED_BUSY : DOWNLOAD_BUSY;
+}
+
+/**
+ * Whether a download keeps the updater waiting (updater.ts agentBusy).
+ * A paused weights pull does not: nothing runs, and the update's quit
+ * (cancel on a paused pull) ends it with the partial kept, so the next
+ * launch resumes it. One download at a time still holds while paused.
+ */
+export function downloadBusyForUpdate(slotTaken: boolean, pullState: PauseState | null): boolean {
+  return slotTaken && pullState !== "paused";
+}
+
 /** What the window is told about the slot's pull (`cli:pullPaused`). */
 export function pauseFrame(id: string | null, state: PauseState | null): {
   id: string | null; pausable: boolean; paused: boolean; pausing: boolean;

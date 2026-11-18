@@ -270,7 +270,7 @@ import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMeta, curatedMetaIds, spotlightIds } from "./model-catalog.js";
 import { catalogPullWantsProjector, weightsOnDisk, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
-import { DOWNLOAD_CANCELLED, pausablePull, pauseFrame, removePartialDownloads, type PausablePull } from "./download-pause.js";
+import { DOWNLOAD_CANCELLED, downloadBusyForUpdate, downloadBusyText, pausablePull, pauseFrame, removePartialDownloads, type PausablePull } from "./download-pause.js";
 import { registerDownloadPauseIpc } from "./download-pause-ipc.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
@@ -585,7 +585,16 @@ function downloadRunning(): { kind: string; id: string; last: Record<string, unk
   // Its own kind: the setup queue's runtime job must not take it for a download it can follow (dlAdopt).
   return settingsUpdate ? { kind: "update", id: "llama.cpp", last: null } : null;
 }
-const DOWNLOAD_BUSY = "a download is already running";
+/* ATO-1503: the state of the weights pull holding the slot, when it is the
+   one running (null otherwise). A paused one still takes the slot, but its
+   refusal says so (Resume or Cancel) and it does not hold up an update. */
+function slotPullState(): ReturnType<PausablePull<CliResult>["state"]> | null {
+  if (hfProjector || pullUpdate || settingsUpdate || !pull?.ctl) return null;
+  return pull.ctl.state();
+}
+function downloadBusyError(): string {
+  return downloadBusyText(slotPullState());
+}
 /* ATO-119: the models main is deleting right now. No download of one starts
    meanwhile (cli:modelsPull, cli:modelsPullEmbedding), so a pull cannot write
    into a folder the removal is taking away. */
@@ -730,7 +739,7 @@ function engineInstallStream(
 ): { ok: true; done: Promise<CliResult> } | { ok: false; error: string; running?: ReturnType<typeof downloadRunning> } {
   const fresh = opts.fresh === true;
   const running = downloadRunning();
-  if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+  if (running) return { ok: false, error: downloadBusyError(), running };
   if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
   const id = "llama.cpp";
   const own = new AbortController();
@@ -1304,7 +1313,7 @@ function wireUpdater(): void {
       const client = agent;
       return agentBusy({
         liveTurns: liveTurnCount(),
-        download: downloadRunning() !== null,
+        download: downloadBusyForUpdate(downloadRunning() !== null, slotPullState()),
         agentState: client ? client.status.state : null,
         agentAlive: client ? client.pid !== null : false,
         health: () => (client ? client.health() : Promise.resolve(undefined)),
@@ -1902,7 +1911,7 @@ function wireIpc(client: AgentClient): void {
     if (REMOVING.has(id)) return { ok: false, error: REMOVING_BUSY };
     const running = downloadRunning();
     // A refusal for the download already running is the window following it (dlAdopt), not a failure.
-    if (running) { if (running.id !== id) A.downloadRefusedBusy(id, trigger); return { ok: false, error: DOWNLOAD_BUSY, running }; }
+    if (running) { if (running.id !== id) A.downloadRefusedBusy(id, trigger); return { ok: false, error: downloadBusyError(), running }; }
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
     const withProjector = mmproj || catalogPullWantsProjector(id);   // ATO-1331: every catalogue pull, whoever asked
@@ -2264,7 +2273,7 @@ function wireIpc(client: AgentClient): void {
       return hfProjector.done;
     }
     const running = downloadRunning();
-    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+    if (running) return { ok: false, error: downloadBusyError(), running };
     /* Backlog 18 review: the slot is taken BEFORE `models status` is read. A
        Cancel pressed during that read found nothing to abort (cli:cancelPull
        answered false), and the projector then came down in full under a row
@@ -3365,7 +3374,7 @@ function wireIpc(client: AgentClient): void {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
     if (REMOVING.has(id)) return { ok: false, error: REMOVING_BUSY };
     const running = downloadRunning();
-    if (running) return { ok: false, error: DOWNLOAD_BUSY, running };
+    if (running) return { ok: false, error: downloadBusyError(), running };
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
     const started = modelsPullEmbedding(id, (line) =>
@@ -3399,7 +3408,7 @@ function wireIpc(client: AgentClient): void {
      its way (updateInTurn); quitting stops it (stopForQuit). */
   ipcMain.handle("cli:modelsUpdate", async () => {
     const running = downloadRunning();
-    if (running) return { ok: false, stdout: "", stderr: "", error: DOWNLOAD_BUSY, running };
+    if (running) return { ok: false, stdout: "", stderr: "", error: downloadBusyError(), running };
     if (smokeOffline) return { ok: false, stdout: "", stderr: "", error: SMOKE_OFFLINE };
     const own = new AbortController();
     settingsUpdate = own;
