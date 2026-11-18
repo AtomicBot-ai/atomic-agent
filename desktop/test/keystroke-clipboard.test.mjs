@@ -42,6 +42,33 @@ test("the key press per platform: osascript, SendKeys, xdotool or wtype", () => 
   assert.deepEqual(K.keystrokeCommands("copy", { platform: "freebsd", env: {} }), []);
 });
 
+test("Windows: a copy is never pressed into a console or terminal, a paste still is", () => {
+  const copy = K.keystrokeCommands("copy", { platform: "win32", env: {} })[0].args.at(-1);
+  assert.match(copy, /GetForegroundWindow/);
+  assert.match(copy, /GetWindowThreadProcessId/);
+  assert.match(copy, new RegExp(`exit ${K.WIN_CONSOLE_SKIP_EXIT}`));
+  for (const name of K.WINDOWS_CONSOLE_PROCESSES) assert.ok(copy.includes(`'${name}'`), `${name} in the guard`);
+  assert.ok(copy.indexOf("GetForegroundWindow") < copy.indexOf("SendWait('^c')"), "the check runs before the key press");
+  assert.ok(!copy.includes('"'), "no double quotes on the PowerShell command line");
+
+  const paste = K.keystrokeCommands("paste", { platform: "win32", env: {} })[0].args.at(-1);
+  assert.doesNotMatch(paste, /GetForegroundWindow/, "a paste interrupts nothing, so no guard");
+
+  for (const n of ["cmd", "cmd.exe", "PowerShell", "pwsh", "WindowsTerminal", "conhost", "OpenConsole", "mintty", "alacritty", "wezterm-gui", "wt"]) {
+    assert.equal(K.isWindowsConsoleProcess(n), true, n);
+  }
+  for (const n of ["Code", "chrome", "notepad", "WINWORD", "", null, undefined]) {
+    assert.equal(K.isWindowsConsoleProcess(n), false, String(n));
+  }
+});
+
+test("a copy the system refused to press (console in front) gives no selection and keeps the clipboard", async () => {
+  const { host, box } = fakeHost("mine");
+  const text = await K.grabSelectionByCopy(host, { press: async () => false, sleep: noSleep });
+  assert.equal(text, null);
+  assert.equal(box.text, "mine");
+});
+
 test("Linux reads the PRIMARY selection straight; other systems do not", () => {
   assert.deepEqual(K.primarySelectionCommands({ platform: "linux", env: { DISPLAY: ":0" } }).map((c) => c.file), ["xclip", "xsel"]);
   assert.deepEqual(K.primarySelectionCommands({ platform: "linux", env: { WAYLAND_DISPLAY: "w" } }).map((c) => c.file), ["wl-paste"]);
