@@ -698,6 +698,15 @@ atag mcp-server --cwd ~/code/project             # working folder for project sk
 
 The other client cannot show Atomic Agent's approval prompt, so with `--allow-exec` a command that would ask is refused and the client is told to ask you. Only your approval level and saved "always allow" rules can let a command run; the hardline shell guard still blocks the worst ones.
 
+While `atag serve` runs, the same read-only tools are also at `http://127.0.0.1:8787/mcp` (MCP Streamable HTTP). With an API key on serve, the client sends it as a bearer token:
+
+```bash
+claude mcp add --transport http atomic-agent http://127.0.0.1:8787/mcp \
+  --header "Authorization: Bearer $ATOMIC_AGENT_API_KEY"   # Claude Code
+```
+
+Requests from a web page on another site (a foreign `Origin`) are refused. The write and shell tools are only on `atag mcp-server`.
+
 </details>
 
 <details>

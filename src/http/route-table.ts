@@ -118,6 +118,7 @@ import {
 } from "./route-memory-history.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 import { createMetricsHandler } from "./route-metrics.js";
+import { createMcpEndpointHandlers, MCP_ENDPOINT_PATH } from "./route-mcp-endpoint.js";
 import type { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 
 export interface RouteTableOptions {
@@ -147,6 +148,8 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
   // Same again: MCP browser sign-ins in progress and their loopback
   // listener belong to this server.
   const mcpOAuth = createMcpOAuthHandlers();
+  // ATO-549: the MCP sessions open on `/mcp` belong to this server too.
+  const mcpEndpoint = createMcpEndpointHandlers();
   return [
     {
       method: "GET",
@@ -165,6 +168,10 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "GET", path: "/panel/app.js", handler: createPanelScriptHandler(), requiresAuth: false },
     // ATO-646: Prometheus scrape target. Authenticated like every /api route.
     { method: "GET", path: "/metrics", handler: createMetricsHandler(options.metricsRegistry) },
+    // ATO-549: the agent as an MCP server over Streamable HTTP (route-mcp-endpoint.ts).
+    { method: "POST", path: MCP_ENDPOINT_PATH, handler: mcpEndpoint.post },
+    { method: "GET", path: MCP_ENDPOINT_PATH, handler: mcpEndpoint.get },
+    { method: "DELETE", path: MCP_ENDPOINT_PATH, handler: mcpEndpoint.delete },
     {
       method: "POST",
       path: "/v1/chat/completions",
