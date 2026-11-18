@@ -18,6 +18,16 @@ import type { ToolRole } from "./tool-roles.js";
 import type { FileReadVersions } from "./os/fs/fs-read-freshness.js";
 import { fileStem, type ToolOutputSpill } from "./tool-output-spill.js";
 
+/** See `ToolContext.turnSpend`. */
+export interface TurnSpendSeam {
+  /** The turn's ceiling in USD, always > 0. */
+  readonly ceilingUsd: number;
+  /** What the turn has spent so far, its own completions included. */
+  spentUsd(): number;
+  /** Add `usd` a tool spent on the turn's behalf. Ignores <= 0 and non-finite. */
+  add(usd: number): void;
+}
+
 export interface ToolContext {
   workspaceSkills?: import("../skills/workspace-skills.js").WorkspaceSkills;
   modelMode?: "local" | "cloud";
@@ -82,6 +92,15 @@ export interface ToolContext {
    * Absent => the caller did not run inside an agent turn.
    */
   turnId?: string;
+  /**
+   * The agent turn's spend ceiling (`agent.task.maxCostUsd` or the turn's
+   * own `taskMaxCostUsd`, `resolveCostCeilingUsd`), handed only when one
+   * is set. A tool that runs paid model turns of its own reads the spend
+   * so far and adds what it spent, so the loop's ceiling check before
+   * the next step sees it (`subagent.run`, ATO-1670). Absent => no
+   * ceiling: nothing to check or add.
+   */
+  turnSpend?: TurnSpendSeam;
   /**
    * What `os.fs.read` last saw of each file this turn, so `os.fs.write`,
    * `os.fs.edit` and `os.fs.patch` can say when their target changed

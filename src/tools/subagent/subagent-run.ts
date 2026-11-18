@@ -15,6 +15,8 @@ import {
   requireApproval,
 } from "../../approval/dangerous-tool.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { costCeilingReached } from "../../agent/turn/turn-spend.js";
+import { estimateUsageCostUsd, formatUsd } from "../../llm/provider/usage-cost.js";
 import type { DelegateTask } from "../fusion/delegate-args.js";
 import {
   allowedModels,
@@ -42,6 +44,7 @@ import type { WorkerRunnerCoreDeps } from "../fusion/worker-runner-core.js";
 import {
   delegateOutcome,
   formatDelegateOutput,
+  type WorkerPricing,
   type WorkerTaskResult,
 } from "../fusion/worker-result.js";
 import { parseSubagentArgs } from "./subagent-args.js";
@@ -79,6 +82,32 @@ export const SUBAGENT_OPERATOR_ONLY_REFUSED =
   "Do not retry it or try another way to do the same thing. In your reply, name the exact " +
   "command or file: running the task again will not help, only the user can run or approve it.";
 
+/**
+ * Why a subagent did not start or was stopped: the agent turn's spend
+ * ceiling (`ToolContext.turnSpend`) is reached, its own spend and its
+ * subagents' together. Rows carry it the way Fusion's carry its turn
+ * cap: `not started: ...` on a task that never ran, and
+ * `stopped by the turn's cap: ...` on one cut short.
+ */
+export function subagentCeilingMessage(spentUsd: number, ceilingUsd: number): string {
+  return `the spend budget for this task is reached: ${formatUsd(spentUsd)} spent of the ${formatUsd(ceilingUsd)} allowed`;
+}
+
+/** The closing line when the ceiling was reached but nothing was cut. */
+export const SUBAGENT_CEILING_REACHED_LINE =
+  "Spend budget for this turn is now reached.";
+
+/** The row note for a cloud subagent with no price under a ceiling. */
+export const SUBAGENT_UNPRICED_NOTE =
+  "not priced, spend ceiling not applied to this subagent";
+
+/**
+ * What the calling turn is told once the spend ceiling stopped its
+ * subagents, in the style of Fusion's `TURN_BUDGET_INSTRUCTION`.
+ */
+export const SUBAGENT_CEILING_INSTRUCTION =
+  "No more subagents will run this turn. Do not do the remaining work yourself either: reply to the person now, in plain words: say that the spend budget stopped the work, what is done, what is not, and that they can raise the budget or say how to continue.";
+
 /** `SessionApprovalPolicy.reasonFor` for a subagent. */
 export function subagentRefusalFor(request: {
   category: Parameters<typeof workerRefusalFor>[0]["category"];
@@ -107,6 +136,20 @@ export interface SubagentRunDeps extends WorkerRunnerCoreDeps {
   approvalRequired: boolean;
   /** The agent's own state directory: a declared file may not be in it. */
   agentStateDir?: string;
+  /**
+   * A leg's price, the resolver `fusion.delegate` is given. Under a spend
+   * ceiling each subagent completion is priced with it and added to the
+   * turn's spend; no price (a local leg) counts as $0, as in Fusion.
+   */
+  resolveWorkerPricing?: (providerId: string, modelId: string) => WorkerPricing | undefined;
+  /**
+   * Whether a provider is a cloud one: configured, not `llama-server`
+   * and not on a local server URL (`isLocalServerUrl`), the rule the
+   * session readout and the inference seam use for "local". Under a
+   * ceiling, only a cloud leg with no price gets `SUBAGENT_UNPRICED_NOTE`.
+   * Absent: no leg is flagged.
+   */
+  isCloudProvider?: (providerId: string) => boolean;
   /** A slot-affine (local) leg runs one subagent at a time. */
   workerSupportsSlotAffinity: (providerId: string) => boolean;
   /**
@@ -208,6 +251,39 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       const parsed = parseSubagentArgs(rawArgs);
       if (!parsed.ok) {
         return error(`${SUBAGENT_RUN_TOOL}: ${parsed.error}`, { field: "tasks" });
+      }
+      // The turn's spend ceiling (ATO-1670), wired as Fusion wires its
+      // turn cap: checked before each subagent starts, every subagent
+      // completion priced and added to the turn's spend, and a ceiling
+      // reached mid-run stops what is running and starts nothing more.
+      // No ceiling set: none of this exists and nothing changes.
+      const ceiling = ctx.turnSpend;
+      const ceilingAbort = new AbortController();
+      let stoppedBy: string | undefined;
+      const ceilingStop = (): string | undefined => {
+        if (ceiling === undefined) return undefined;
+        const spent = ceiling.spentUsd();
+        return costCeilingReached(spent, ceiling.ceilingUsd)
+          ? subagentCeilingMessage(spent, ceiling.ceilingUsd)
+          : undefined;
+      };
+      const stopForCeiling = (stop: string): void => {
+        if (stoppedBy !== undefined) return;
+        stoppedBy = stop;
+        ceilingAbort.abort(new Error(stop));
+      };
+      // Already over the ceiling: refuse before any question or count, as
+      // fusion.delegate refuses at its turn cap.
+      const reached = ceilingStop();
+      if (reached !== undefined) {
+        return error(
+          `${SUBAGENT_RUN_TOOL} did not run: ${reached}. ${SUBAGENT_CEILING_INSTRUCTION}`,
+          {
+            reason: "cost-ceiling",
+            spentUsd: ceiling!.spentUsd(),
+            ceilingUsd: ceiling!.ceilingUsd,
+          },
+        );
       }
       const turnAt = {
         stepIndex: ctx.stepIndex,
@@ -360,6 +436,44 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
         workingDir: ctx.workingDir,
         ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}),
       };
+      // Rows that were final before the ceiling stop fired: those were
+      // not cut by it, whatever their status.
+      const finishedBeforeStop = new Set<string>();
+      // Cloud legs with no price under a ceiling: their spend is not
+      // counted, which their rows say. A local leg is free and silent.
+      const unpricedLegs = new Set<string>();
+      const ceilingOptionsFor = (leg: TaskLeg) => {
+        if (ceiling === undefined) return {};
+        const pricing = deps.resolveWorkerPricing?.(leg.providerId, leg.model);
+        if (pricing === undefined && deps.isCloudProvider?.(leg.providerId) === true) {
+          unpricedLegs.add(`${leg.providerId}\u0000${leg.model}`);
+        }
+        return {
+          onTaskFinished: (row: WorkerTaskResult): void => {
+            if (stoppedBy === undefined) finishedBeforeStop.add(row.id);
+          },
+          shouldStart: (): string | undefined => {
+            const stop = stoppedBy ?? ceilingStop();
+            if (stop === undefined) return undefined;
+            stopForCeiling(stop);
+            return stop;
+          },
+          onWorkerUsage: (
+            _taskId: string,
+            usage: Parameters<typeof estimateUsageCostUsd>[0],
+          ): void => {
+            if (pricing !== undefined) {
+              ceiling.add(estimateUsageCostUsd(usage, pricing));
+            }
+            const stop = ceilingStop();
+            if (stop !== undefined) stopForCeiling(stop);
+          },
+        };
+      };
+      const runSignal =
+        ceiling === undefined
+          ? ctx.signal
+          : AbortSignal.any([ctx.signal, ceilingAbort.signal]);
       const runGroup = async (group: {
         leg: TaskLeg;
         tasks: DelegateTask[];
@@ -394,7 +508,8 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
             ? {}
             : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
           ...(originalRequest === undefined ? {} : { originalRequest }),
-          signal: ctx.signal,
+          signal: runSignal,
+          ...ceilingOptionsFor(group.leg),
           origin: "subagent",
           depth: childDepth,
           ...(writeScope.length === 0 ? {} : { writeScope }),
@@ -435,18 +550,67 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
           ...(notes.length === 0 ? {} : { notes: [...(row.notes ?? []), ...notes] }),
         };
       });
+      // Rows the ceiling cut short say so, as Fusion's rows do for its cap,
+      // so a stopped subagent is not read as the person's doing.
+      // Every row the stop cut, whether the runner reports it cancelled,
+      // failed or timed out; one that finished first, or finished ok, was
+      // not cut.
+      const ceilingReachedAt = stoppedBy as string | undefined;
+      // Whether the ceiling cut or held back any subagent. The spend can
+      // cross it with the last completion of a run that finished: then
+      // nothing was stopped, and the model is not told otherwise.
+      let ceilingCut = false;
+      if (ceilingReachedAt !== undefined && !ctx.signal.aborted) {
+        for (const [i, r] of results.entries()) {
+          if (r.error?.startsWith("not started:")) {
+            ceilingCut = true;
+          } else if (r.status !== "ok" && !finishedBeforeStop.has(r.id)) {
+            ceilingCut = true;
+            results[i] = {
+              ...r,
+              notes: [...(r.notes ?? []), `stopped by the turn's cap: ${ceilingReachedAt}`],
+            };
+          }
+        }
+      }
+      if (unpricedLegs.size > 0) {
+        for (const [i, r] of results.entries()) {
+          const leg = legs.get(r.id)!;
+          if (
+            unpricedLegs.has(`${leg.providerId}\u0000${leg.model}`) &&
+            !r.error?.startsWith("not started:")
+          ) {
+            results[i] = {
+              ...r,
+              notes: [...(r.notes ?? []), SUBAGENT_UNPRICED_NOTE],
+            };
+          }
+        }
+      }
+      const ceilingStopped = ceilingCut ? ceilingReachedAt : undefined;
+      const ceilingNote =
+        ceilingStopped !== undefined
+          ? `\n\nStopped: ${ceilingStopped}. ${SUBAGENT_CEILING_INSTRUCTION}`
+          : ceilingReachedAt !== undefined && !ctx.signal.aborted
+            ? `\n\n${SUBAGENT_CEILING_REACHED_LINE}`
+            : "";
       const outcome = delegateOutcome(results);
       return compressToolResult(
         {
           tool: SUBAGENT_RUN_TOOL,
           status: outcome === "all_failed" ? "error" : "ok",
-          output: formatDelegateOutput(results, deps.outputCharCap),
+          output: formatDelegateOutput(results, deps.outputCharCap) + ceilingNote,
           details: {
             tasks: results,
             outcome,
             depth: childDepth,
             origin: "subagent",
             ...(profileReports.length === 0 ? {} : { profiles: profileReports }),
+            ...(ceilingStopped === undefined
+              ? ceilingReachedAt === undefined
+                ? {}
+                : { ceilingReached: true }
+              : { stoppedBy: "cost-ceiling", stopReason: ceilingStopped }),
           },
         },
         { maxSummaryLength: deps.outputCharCap + 400, maxTailLines: 2000 },

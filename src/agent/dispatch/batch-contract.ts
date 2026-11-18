@@ -111,6 +111,8 @@ export interface BatchExecutionContext {
   model?: string;
   /** The agent turn this batch runs in (`ToolContext.turnId`). */
   turnId?: string;
+  /** The turn's spend ceiling seam (`ToolContext.turnSpend`). */
+  turnSpend?: import("../../tools/tool-registry.js").TurnSpendSeam;
   /**
    * Fired immediately before the registry is invoked for each call.
    * Order: matches the order the executor reaches each call (within a
