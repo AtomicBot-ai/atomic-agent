@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -67,6 +67,57 @@ describe.skipIf(process.platform !== "darwin" || !existsSync("/usr/bin/sandbox-e
       expect(message).not.toContain('"read":"ok"');
       expect(message).not.toContain('"wrote":"ok"');
       expect(existsSync(join(outside, "escaped.txt"))).toBe(false);
+    });
+
+    // Review fix: a server installed under the state dir (a plugin) can
+    // run its own code, but the state dir around it stays hidden.
+    it("a server installed under the state dir runs, but cannot read .env", async () => {
+      const root = join(state, "plugins", "installed", "p");
+      await mkdir(root, { recursive: true });
+      const script = join(root, "server.cjs");
+      // As a file, the probe's arguments shift by one (argv[1] is the script).
+      await writeFile(
+        script,
+        PROBE.replace("process.argv[1]", "process.argv[2]").replace(
+          'process.argv[2] + "/escaped',
+          'process.argv[3] + "/escaped',
+        ),
+      );
+      const client = new McpClient(
+        {
+          name: "sbx-plugin",
+          enabled: true,
+          transport: { kind: "stdio", command: process.execPath, args: [script, state, outside] },
+        } as McpServerConfig,
+        { oauthStateDir: state, sandbox: () => ({ mode: "workspace", network: false }) },
+      );
+      const message = await connectError(client);
+      expect(message).toContain("sbx-report");
+      expect(message).not.toContain('"read":"ok"');
+    });
+
+    it("does not hand the ssh-agent socket to a sandboxed server", async () => {
+      const saved = process.env.SSH_AUTH_SOCK;
+      process.env.SSH_AUTH_SOCK = "/tmp/ato620-agent.sock";
+      try {
+        const client = new McpClient(
+          {
+            name: "sbx-sock",
+            enabled: true,
+            transport: {
+              kind: "stdio",
+              command: process.execPath,
+              args: ["-e", 'console.error("sock-report " + (process.env.SSH_AUTH_SOCK ?? "none")); process.exit(1);'],
+            },
+          } as McpServerConfig,
+          { oauthStateDir: state, sandbox: () => ({ mode: "workspace", network: false }) },
+        );
+        const message = await connectError(client);
+        expect(message).toContain("sock-report none");
+      } finally {
+        if (saved === undefined) delete process.env.SSH_AUTH_SOCK;
+        else process.env.SSH_AUTH_SOCK = saved;
+      }
     });
 
     it("runs unwrapped when the server opts out", async () => {

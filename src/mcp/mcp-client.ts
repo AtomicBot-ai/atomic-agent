@@ -29,6 +29,7 @@ import {
   type CreateMessageResult,
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute } from "node:path";
 
@@ -531,17 +532,26 @@ export class McpClient {
     command: string,
     args: string[],
     cwd: string | undefined,
-  ): { command: string; args: string[] } {
+  ): { command: string; args: string[]; sandboxed: boolean } {
     const settings = (this.deps.sandbox ?? (() => readOsSandboxSettings()))();
     if (settings.mode === "off" || this.config.sandbox === false) {
-      return { command, args };
+      return { command, args, sandboxed: false };
     }
+    // The server's own code must stay readable when it is installed under
+    // a denied folder (a plugin under `<stateDir>/plugins/installed/`):
+    // the folder of an absolute command, and of every absolute argument
+    // that names an existing file (`node /…/server.js`). Each is reopened
+    // by itself, read-only; the state dir around it stays hidden.
+    const codePaths = [command, ...args].filter(
+      (p) => isAbsolute(p) && existsSync(p),
+    );
     const policy = buildOsSandboxPolicy({
-      cwd: cwd ?? tmpdir(),
+      // `cwd` comes from the operator's server config, not the model.
+      workspaceRoots: [cwd ?? tmpdir()],
       ...(this.deps.oauthStateDir === undefined
         ? {}
         : { stateDir: this.deps.oauthStateDir }),
-      keepReadable: isAbsolute(command) ? [dirname(command)] : [],
+      keepReadable: codePaths.map((p) => dirname(p)),
       network: true,
     });
     const wrapped = wrapWithOsSandbox(command, args, policy);
@@ -554,7 +564,7 @@ export class McpClient {
         ),
       );
     }
-    return { command: wrapped.command, args: wrapped.args };
+    return { command: wrapped.command, args: wrapped.args, sandboxed: true };
   }
 
   private buildTransport():
@@ -574,6 +584,14 @@ export class McpClient {
       // commands with an explicit extension are spawned directly.
       const resolved = resolveStdioCommand(t.command, t.args ?? []);
       const spawn = this.sandboxedSpawn(resolved.command, resolved.args, t.cwd);
+      // A sandboxed server keeps its network, so the ssh-agent socket would
+      // let it sign with every loaded key without reading `~/.ssh`. Not
+      // forwarded inside the sandbox; a server that needs it opts out.
+      if (spawn.sandboxed) {
+        for (const name of Object.keys(env)) {
+          if (name.toUpperCase() === "SSH_AUTH_SOCK") delete env[name];
+        }
+      }
       return new StdioClientTransport({
         command: spawn.command,
         args: spawn.args,
