@@ -50,6 +50,12 @@ export interface MemoryEntry {
    * inserts) and for every row migrated from v3.
    */
   lastRecalledAt: number | null;
+  /**
+   * ATO-1124. Set (wall-clock ms) while the person has turned this note
+   * off: it stays listed but is left out of recall, search, the prompt's
+   * index and consolidation. Absent while the note is on.
+   */
+  disabledAt?: number;
 }
 
 export interface MemoryStoreOptions {
@@ -147,6 +153,11 @@ export interface MemoryListOptions {
    */
   excludeArchived?: boolean;
   /**
+   * ATO-1124. Leave out notes the person turned off. `listIndex` always
+   * does; the person's own list (HTTP) shows them, marked.
+   */
+  excludeDisabled?: boolean;
+  /**
    * Only return rows with `updated_at <= updatedBefore` (epoch ms).
    * Applied in SQL before `LIMIT`, so a caller that wants "rows older
    * than X" gets up to `limit` of them instead of the newest `limit`
@@ -237,6 +248,8 @@ interface MemoryRow {
   tags: string | null;
   recall_count: number;
   last_recalled_at: number | null;
+  /** ATO-1124. Selected only where the caller needs it. */
+  disabled_at?: number | null;
 }
 
 /**
@@ -364,7 +377,7 @@ export class MemoryStore {
     this.deleteStmt = this.db.prepare(`DELETE FROM memories WHERE id = ?`);
     this.getStmt = this.db.prepare(
       `SELECT id, content, created_at, updated_at, source, session_id, working_dir, tags,
-              recall_count, last_recalled_at
+              recall_count, last_recalled_at, disabled_at
          FROM memories WHERE id = ?`,
     );
     this.countStmt = this.db.prepare(`SELECT COUNT(*) AS count FROM memories`);
@@ -412,7 +425,7 @@ export class MemoryStore {
       `SELECT m.id, m.content, m.tags, bm25(memories_fts) AS score
          FROM memories_fts
          JOIN memories m ON m.id = memories_fts.rowid
-        WHERE memories_fts MATCH ?
+        WHERE memories_fts MATCH ? AND m.disabled_at IS NULL
         ORDER BY score ASC
         LIMIT 5`,
     );
@@ -685,7 +698,8 @@ export class MemoryStore {
     );
     const scope = opts.scope ?? "all";
     const requiredTags = validateTags(opts.tags);
-    const where: string[] = [`memories_fts MATCH ?`];
+    // ATO-1124: a note the person turned off is never recalled.
+    const where: string[] = [`memories_fts MATCH ?`, `m.disabled_at IS NULL`];
     const params: unknown[] = [ftsQuery];
     if (scope === "project") {
       const dir = validateOptionalString(opts.workingDir, "workingDir");
@@ -734,6 +748,7 @@ export class MemoryStore {
              FROM memories_fts
              JOIN memories m ON m.id = memories_fts.rowid
             WHERE memories_fts MATCH ? AND m.consolidated_into IS NULL
+              AND m.disabled_at IS NULL
             ORDER BY bm25(memories_fts) ASC
             LIMIT ?`,
         )
@@ -911,6 +926,9 @@ export class MemoryStore {
     if (opts.excludeArchived) {
       where.push(`consolidated_into IS NULL`);
     }
+    if (opts.excludeDisabled) {
+      where.push(`disabled_at IS NULL`);
+    }
     for (const tag of opts.excludeTags ?? []) {
       where.push(
         `(tags IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(memories.tags) WHERE json_each.value = ?))`,
@@ -930,7 +948,7 @@ export class MemoryStore {
     const sql = `
       SELECT id, content, created_at, updated_at,
              source, session_id, working_dir, tags,
-             recall_count, last_recalled_at
+             recall_count, last_recalled_at, disabled_at
         FROM memories
         ${whereClause}
        ORDER BY updated_at DESC, id DESC
@@ -951,7 +969,8 @@ export class MemoryStore {
    * same trimming rules with the prompt renderer.
    */
   listIndex(opts: MemoryIndexOptions = {}): MemoryIndexEntry[] {
-    const entries = this.list(opts);
+    // ATO-1124: a turned-off note never reaches the prompt.
+    const entries = this.list({ ...opts, excludeDisabled: true });
     const previewChars = clampPreviewChars(opts.previewChars);
     return entries.map((e) => ({
       id: e.id,
@@ -1019,6 +1038,21 @@ export class MemoryStore {
       )
       .run(now, normalizedId, threshold) as { changes: number };
     return r.changes > 0;
+  }
+
+  /**
+   * ATO-1124. Turn one note off (`disabled: true`) or back on. Off keeps
+   * the note and its vector but leaves it out of recall, search, the
+   * prompt's index and dedup; `updated_at` is left alone. Returns the
+   * note, or `null` when the id is not stored.
+   */
+  setDisabled(id: number, disabled: boolean, now: number = this.now()): MemoryEntry | null {
+    const normalizedId = validateId(id);
+    // Turning off an already-off note keeps the first time.
+    this.db
+      .prepare(`UPDATE memories SET disabled_at = ${disabled ? "COALESCE(disabled_at, ?)" : "NULL"} WHERE id = ?`)
+      .run(...(disabled ? [now] : []), normalizedId);
+    return this.get(normalizedId);
   }
 
   /**
@@ -1383,7 +1417,8 @@ export class MemoryStore {
       .prepare(
         `SELECT id, content, created_at, updated_at, source, session_id, working_dir, tags,
                 recall_count, last_recalled_at
-           FROM memories WHERE id IN (${ids.map(() => "?").join(", ")})`,
+           FROM memories
+          WHERE id IN (${ids.map(() => "?").join(", ")}) AND disabled_at IS NULL`,
       )
       .all(...ids) as MemoryRow[];
     return rows.map(rowToEntry);
@@ -1402,7 +1437,7 @@ export class MemoryStore {
     requiredTags: readonly string[],
     limit: number,
   ): HybridRecallInputEntry[] {
-    const where: string[] = [`memories_fts MATCH ?`];
+    const where: string[] = [`memories_fts MATCH ?`, `m.disabled_at IS NULL`];
     const params: unknown[] = [ftsQuery];
     if (workingDir !== null) {
       where.push(`m.working_dir = ?`);
@@ -1671,6 +1706,7 @@ function rowToEntry(row: MemoryRow): MemoryEntry {
     recallCount: typeof row.recall_count === "number" ? row.recall_count : 0,
     lastRecalledAt:
       typeof row.last_recalled_at === "number" ? row.last_recalled_at : null,
+    ...(typeof row.disabled_at === "number" ? { disabledAt: row.disabled_at } : {}),
   };
 }
 

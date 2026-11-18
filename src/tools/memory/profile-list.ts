@@ -30,7 +30,8 @@ export function buildProfileListTool(
       "List every durable user profile fact (sorted by key) including pinned/keywords metadata. A name marked unconfirmed was never written by the user and is not in `### profile`: do not call the user by it; ask them to confirm it (then memory.profile.set it) or remove it (memory.profile.remove).",
     readonly: true,
     async run() {
-      const facts = options.store.list();
+      // ATO-1124: facts the person turned off are not the agent's to see.
+      const facts = options.store.list().filter((f) => f.disabledAt === undefined);
       const output =
         facts.length === 0
           ? "(empty profile)"
