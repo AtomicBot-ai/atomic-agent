@@ -93,6 +93,17 @@ export function subagentCeilingMessage(spentUsd: number, ceilingUsd: number): st
   return `the spend budget for this task is reached: ${formatUsd(spentUsd)} spent of the ${formatUsd(ceilingUsd)} allowed`;
 }
 
+/** The row note for a cloud subagent with no price under a ceiling. */
+export const SUBAGENT_UNPRICED_NOTE =
+  "not priced, spend ceiling not applied to this subagent";
+
+/**
+ * What the calling turn is told once the spend ceiling stopped its
+ * subagents, in the style of Fusion's `TURN_BUDGET_INSTRUCTION`.
+ */
+export const SUBAGENT_CEILING_INSTRUCTION =
+  "No more subagents will run this turn. Do not do the remaining work yourself either: reply to the person now, in plain words: say that the spend budget stopped the work, what is done, what is not, and that they can raise the budget or say how to continue.";
+
 /** `SessionApprovalPolicy.reasonFor` for a subagent. */
 export function subagentRefusalFor(request: {
   category: Parameters<typeof workerRefusalFor>[0]["category"];
@@ -228,6 +239,39 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       const parsed = parseSubagentArgs(rawArgs);
       if (!parsed.ok) {
         return error(`${SUBAGENT_RUN_TOOL}: ${parsed.error}`, { field: "tasks" });
+      }
+      // The turn's spend ceiling (ATO-1670), wired as Fusion wires its
+      // turn cap: checked before each subagent starts, every subagent
+      // completion priced and added to the turn's spend, and a ceiling
+      // reached mid-run stops what is running and starts nothing more.
+      // No ceiling set: none of this exists and nothing changes.
+      const ceiling = ctx.turnSpend;
+      const ceilingAbort = new AbortController();
+      let stoppedBy: string | undefined;
+      const ceilingStop = (): string | undefined => {
+        if (ceiling === undefined) return undefined;
+        const spent = ceiling.spentUsd();
+        return costCeilingReached(spent, ceiling.ceilingUsd)
+          ? subagentCeilingMessage(spent, ceiling.ceilingUsd)
+          : undefined;
+      };
+      const stopForCeiling = (stop: string): void => {
+        if (stoppedBy !== undefined) return;
+        stoppedBy = stop;
+        ceilingAbort.abort(new Error(stop));
+      };
+      // Already over the ceiling: refuse before any question or count, as
+      // fusion.delegate refuses at its turn cap.
+      const reached = ceilingStop();
+      if (reached !== undefined) {
+        return error(
+          `${SUBAGENT_RUN_TOOL} did not run: ${reached}. ${SUBAGENT_CEILING_INSTRUCTION}`,
+          {
+            reason: "cost-ceiling",
+            spentUsd: ceiling!.spentUsd(),
+            ceilingUsd: ceiling!.ceilingUsd,
+          },
+        );
       }
       const turnAt = {
         stepIndex: ctx.stepIndex,
@@ -380,30 +424,22 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
         workingDir: ctx.workingDir,
         ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}),
       };
-      // The turn's spend ceiling (ATO-1670), wired as Fusion wires its
-      // turn cap: checked before each subagent starts, every subagent
-      // completion priced and added to the turn's spend, and a ceiling
-      // reached mid-run stops what is running and starts nothing more.
-      // No ceiling set: none of this exists and nothing changes.
-      const ceiling = ctx.turnSpend;
-      const ceilingAbort = new AbortController();
-      let stoppedBy: string | undefined;
-      const ceilingStop = (): string | undefined => {
-        if (ceiling === undefined) return undefined;
-        const spent = ceiling.spentUsd();
-        return costCeilingReached(spent, ceiling.ceilingUsd)
-          ? subagentCeilingMessage(spent, ceiling.ceilingUsd)
-          : undefined;
-      };
-      const stopForCeiling = (stop: string): void => {
-        if (stoppedBy !== undefined) return;
-        stoppedBy = stop;
-        ceilingAbort.abort(new Error(stop));
-      };
+      // Rows that were final before the ceiling stop fired: those were
+      // not cut by it, whatever their status.
+      const finishedBeforeStop = new Set<string>();
+      // Cloud legs with no price under a ceiling: their spend is not
+      // counted, which their rows say. A local leg is free and silent.
+      const unpricedLegs = new Set<string>();
       const ceilingOptionsFor = (leg: TaskLeg) => {
         if (ceiling === undefined) return {};
         const pricing = deps.resolveWorkerPricing?.(leg.providerId, leg.model);
+        if (pricing === undefined && !deps.workerSupportsSlotAffinity(leg.providerId)) {
+          unpricedLegs.add(`${leg.providerId}\u0000${leg.model}`);
+        }
         return {
+          onTaskFinished: (row: WorkerTaskResult): void => {
+            if (stoppedBy === undefined) finishedBeforeStop.add(row.id);
+          },
           shouldStart: (): string | undefined => {
             const stop = stoppedBy ?? ceilingStop();
             if (stop === undefined) return undefined;
@@ -504,10 +540,17 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
       });
       // Rows the ceiling cut short say so, as Fusion's rows do for its cap,
       // so a stopped subagent is not read as the person's doing.
+      // Every row the stop cut, whether the runner reports it cancelled,
+      // failed or timed out; one that finished first, or finished ok, was
+      // not cut.
       const ceilingStopped = stoppedBy as string | undefined;
       if (ceilingStopped !== undefined && !ctx.signal.aborted) {
         for (const [i, r] of results.entries()) {
-          if (r.status === "cancelled" && !r.error?.startsWith("not started:")) {
+          if (
+            r.status !== "ok" &&
+            !r.error?.startsWith("not started:") &&
+            !finishedBeforeStop.has(r.id)
+          ) {
             results[i] = {
               ...r,
               notes: [...(r.notes ?? []), `stopped by the turn's cap: ${ceilingStopped}`],
@@ -515,12 +558,30 @@ export function buildSubagentRunTool(deps: SubagentRunDeps): ToolDefinition {
           }
         }
       }
+      if (unpricedLegs.size > 0) {
+        for (const [i, r] of results.entries()) {
+          const leg = legs.get(r.id)!;
+          if (
+            unpricedLegs.has(`${leg.providerId}\u0000${leg.model}`) &&
+            !r.error?.startsWith("not started:")
+          ) {
+            results[i] = {
+              ...r,
+              notes: [...(r.notes ?? []), SUBAGENT_UNPRICED_NOTE],
+            };
+          }
+        }
+      }
+      const ceilingNote =
+        ceilingStopped === undefined
+          ? ""
+          : `\n\nStopped: ${ceilingStopped}. ${SUBAGENT_CEILING_INSTRUCTION}`;
       const outcome = delegateOutcome(results);
       return compressToolResult(
         {
           tool: SUBAGENT_RUN_TOOL,
           status: outcome === "all_failed" ? "error" : "ok",
-          output: formatDelegateOutput(results, deps.outputCharCap),
+          output: formatDelegateOutput(results, deps.outputCharCap) + ceilingNote,
           details: {
             tasks: results,
             outcome,

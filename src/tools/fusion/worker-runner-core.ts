@@ -225,6 +225,8 @@ export interface WorkerRunnerCoreOptions {
   shouldStart?: () => string | undefined;
   /** Every worker completion's usage, as it lands (live spend, ATO-947). */
   onWorkerUsage?: (taskId: string, usage: CompletionUsage) => void;
+  /** Each task's row as soon as it is final, before the fan-out returns (ATO-617). */
+  onTaskFinished?: (result: WorkerTaskResult) => void;
 }
 
 /** Fusion's options on top of the core. Each one absent does nothing. */
@@ -291,6 +293,4 @@ export interface FusionWorkerRunnerOptionsExtras {
    * per task). The run checkpoint (ATO-617) records side effects from it.
    */
   onWorkerTool?: (taskId: string, tool: string) => void;
-  /** Each task's row as soon as it is final, before the fan-out returns (ATO-617). */
-  onTaskFinished?: (result: WorkerTaskResult) => void;
 }

@@ -257,8 +257,12 @@ describe("AgentLoop fusion seams", () => {
       createEmptySessionState({ id: "s-spend", workingDir }),
       turnOptions({ maxSteps: 4, taskMaxCostUsd: 1 }),
     );
-    await loop.runTurn(capped.session, turnOptions({ maxSteps: 4 }));
+    const free = await loop.runTurn(capped.session, turnOptions({ maxSteps: 4 }));
     expect(seen).toEqual([{ ceilingUsd: 1, before: 0, after: 2 }, undefined]);
+    // The spend the tool added is what stopped the turn: its own
+    // completions are unpriced here, so without the seam it would not stop.
+    expect(capped.stopCause).toBe("cost_ceiling");
+    expect(free.stopCause).toBeUndefined();
   });
 
   it("a pinned turn hands its model and one turn id per turn to the tools it calls (ATO-1670)", async () => {
