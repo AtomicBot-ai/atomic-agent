@@ -29,9 +29,10 @@ COPY assets ./assets
 RUN npm run build && npm prune --omit=dev
 
 FROM node:${NODE_VERSION}-bookworm-slim
-# git and ca-certificates for the agent's own tools; tini reaps child processes.
+# git, ripgrep (the grep tool finds `rg` on PATH) and ca-certificates for the
+# agent's own tools; tini reaps child processes.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates git tini \
+ && apt-get install -y --no-install-recommends ca-certificates git ripgrep tini \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/package.json ./package.json

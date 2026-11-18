@@ -30,6 +30,13 @@ describe("self-host template (ATO-595)", () => {
     expect(dockerfile).toContain(`ARG NODE_VERSION=${pinned}`);
   });
 
+  it("ships the tools the agent calls by name: git and ripgrep for the grep tool", () => {
+    // The plain-node image has no vendor/rg beside the binary, so os.fs.grep finds rg on PATH.
+    const runtime = dockerfile.slice(dockerfile.lastIndexOf("\nFROM "));
+    expect(runtime).toMatch(/apt-get install[^\n]*\bripgrep\b/);
+    expect(runtime).toMatch(/apt-get install[^\n]*\bgit\b/);
+  });
+
   it("does not run as root and checks its own health", () => {
     expect(dockerfile).toMatch(/^USER node$/m);
     expect(dockerfile).toContain("HEALTHCHECK");
