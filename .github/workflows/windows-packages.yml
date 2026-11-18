@@ -26,9 +26,11 @@ name: windows-packages
 # AtomicBot-ai/scoop-bucket only); WINGET_TOKEN (classic token with public_repo of the
 # account whose fork of microsoft/winget-pkgs opens the pull requests). A missing secret
 # skips its job with a notice.
+# Paused on published releases since 18.11.2026: Homebrew and npm are the only
+# catalogs for now (ATO-1007). Scoop and winget come back by restoring the
+# `release: published` trigger above `workflow_dispatch` once their accounts and
+# tokens exist; a run by hand still works.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
