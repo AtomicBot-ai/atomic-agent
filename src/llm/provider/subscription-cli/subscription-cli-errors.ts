@@ -4,6 +4,8 @@
  * missing, the CLI is signed out, or the invocation itself failed.
  */
 
+import { exitHint } from "./cli-exit-hint.js";
+
 export class SubscriptionCliNotInstalledError extends Error {
   /**
    * `productName` words it for someone who picked a subscription in a
@@ -262,13 +264,17 @@ export function mapCliFailure(input: CliFailureInput): Error {
   if (looksLikeAuthFailure(combined)) {
     return new SubscriptionCliAuthError(input.binary, input.authHint, detail);
   }
-  // Checked after the auth patterns: a signed-out CLI is what usually
-  // drops the pipe, and "run /login" is the more actionable message.
+  // The hint below reads `detail`, the same text the message carries, so
+  // it agrees with the `cli_reason` the error report reads off the
+  // message (ATO-1679). Checked after the auth patterns: a signed-out
+  // CLI is what usually drops the pipe, and "run /login" is the more
+  // actionable message. An old CLI or a missing git-bash also exits
+  // before reading stdin, so a long prompt lands here too.
   if (input.inputTruncated) {
     return new SubscriptionCliInvocationError(
       `"${input.binary}" stopped reading the prompt before it was fully written (exit ${
         input.exitCode ?? "null"
-      }): ${detail || "no output"}`,
+      }): ${detail || "no output"}${exitHint(input.binary, detail)}`,
       input.exitCode,
       "input_truncated",
     );
@@ -276,7 +282,7 @@ export function mapCliFailure(input: CliFailureInput): Error {
   return new SubscriptionCliInvocationError(
     `"${input.binary}" exited with code ${input.exitCode ?? "null"}: ${
       detail || "no output"
-    }`,
+    }${exitHint(input.binary, detail)}`,
     input.exitCode,
     "exited",
   );

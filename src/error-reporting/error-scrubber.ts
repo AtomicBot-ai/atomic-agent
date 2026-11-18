@@ -125,8 +125,9 @@ export interface ScrubbedErrorEvent {
    */
   llmFailureTags?: Record<string, string>;
   /**
-   * `cli_failure` / `cli_exit_code` of a failed Claude Code or Codex run
-   * (ATO-1446), fixed words and a bounded integer from
+   * `cli_failure` / `cli_exit_code` / `cli_reason` of a failed Claude
+   * Code or Codex run (ATO-1446, ATO-1679), fixed words and a bounded
+   * integer from
    * `extractSubscriptionCliFailureTags`. Context only, like
    * `llmFailureTags`: they stay out of the fingerprint.
    */
