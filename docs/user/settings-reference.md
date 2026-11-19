@@ -122,7 +122,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `web.search.enabled` | `boolean` | `true` |  |
-| `web.search.provider` | `'duckduckgo' \| 'searxng' \| 'exa' \| 'brave'` | `"exa"` | Primary provider. The default `exa` uses its API endpoint when its `apiKeyEnv` resolves to a key, and its free keyless tier otherwise, with `duckduckgo` appended to the chain when it lacks it. The free tier runs out fast; a 429 parks it and the search result asks for a key (ATO-327). Existing configs need no rewrite for that. |
+| `web.search.provider` | `'duckduckgo' \| 'searxng' \| 'context' \| 'exa' \| 'brave'` | `"exa"` | Primary provider. The default `exa` uses its API endpoint when its `apiKeyEnv` resolves to a key, and its free keyless tier otherwise, with `duckduckgo` appended to the chain when it lacks it. The free tier runs out fast; a 429 parks it and the search result asks for a key (ATO-327). Existing configs need no rewrite for that. |
 | `web.search.maxResults` | `number` | `8` |  |
 | `web.search.timeoutMs` | `number` | `15000` |  |
 | `web.search.cacheTtlMinutes` | `number` | `60` | Per-runtime result cache TTL in minutes. `0` disables caching. The cache is the primary defence against provider rate-limiting on repeated queries. |
@@ -180,7 +180,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `browser.headless` | `boolean \| 'auto'` | `"auto"` | The browser runs without a window for every turn (an explicit `true`). |
 | `browser.profile` | `'agent' \| 'temp'` | `"agent"` | `UserConfigFile.browser.profile`: the agent's profile or a throwaway one per chat. Absent: `"agent"`. |
 | `browser.maxTabs` | `number` | `8` | `UserConfigFile.browser.maxTabs`. Absent: 8. |
-| `browser.workerIsolation` | `'tabs' \| 'context'` | `"tabs"` | `UserConfigFile.browser.workerIsolation`. Absent: `"tabs"`. |
+| `browser.workerIsolation` | `'context' \| 'tabs'` | `"tabs"` | `UserConfigFile.browser.workerIsolation`. Absent: `"tabs"`. |
 
 ## sessions
 

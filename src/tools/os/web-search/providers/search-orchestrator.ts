@@ -302,6 +302,8 @@ function isProviderUsable(
   switch (name) {
     case "searxng":
       return Boolean(search.searxng.instanceUrl);
+    case "context":
+      return hasEnvKey(env, "CONTEXT_DEV_API_KEY");
     case "brave": {
       const key = env[search.brave.apiKeyEnv];
       return typeof key === "string" && key.length > 0;

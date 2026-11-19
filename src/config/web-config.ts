@@ -7,7 +7,7 @@ import {
   parseNonEmptyString,
 } from "./config-primitives.js";
 
-export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
+export type WebSearchProviderName = "duckduckgo" | "searxng" | "context" | "exa" | "brave";
 
 /** Main-content extractor `os.web.fetch` runs first on an HTML page. */
 export type WebFetchExtractorName = "readability" | "defuddle";
@@ -250,6 +250,7 @@ export function parseWebSearchProviderName(
   if (
     raw === "duckduckgo" ||
     raw === "searxng" ||
+    raw === "context" ||
     raw === "exa" ||
     raw === "brave"
   ) {
@@ -257,7 +258,7 @@ export function parseWebSearchProviderName(
   }
   throw new ConfigValidationError(
     field,
-    `expected one of duckduckgo|searxng|exa|brave, got ${JSON.stringify(raw)}`,
+    `expected one of duckduckgo|searxng|context|exa|brave, got ${JSON.stringify(raw)}`,
   );
 }
 

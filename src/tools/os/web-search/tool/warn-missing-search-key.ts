@@ -5,7 +5,7 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
  * Startup diagnostic for a primary search provider that cannot run without
  * its API key.
  *
- * That is Brave: it has no keyless tier, so a keyless Brave primary is
+ * That is Brave or Context: it has no keyless tier, so a keyless primary is
  * skipped outright and every search goes to the fallback chain. The
  * operator configured one provider and is silently getting another, which
  * is the failure mode this warning exists to break (#179).
@@ -19,7 +19,7 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
  */
 
 /** Providers that are skipped entirely when their `apiKeyEnv` is unset. */
-const KEY_REQUIRED_PROVIDERS = new Set<WebSearchProviderName>(["brave"]);
+const KEY_REQUIRED_PROVIDERS = new Set<WebSearchProviderName>(["context", "brave"]);
 
 export interface MissingSearchKeyWarning {
   provider: WebSearchProviderName;
@@ -46,7 +46,7 @@ export function checkMissingSearchKey(input: {
   const provider = search.provider;
   if (!KEY_REQUIRED_PROVIDERS.has(provider)) return null;
 
-  const apiKeyEnv = search.brave.apiKeyEnv;
+  const apiKeyEnv = provider === "context" ? "CONTEXT_DEV_API_KEY" : search.brave.apiKeyEnv;
   const key = input.env[apiKeyEnv]?.trim();
   if (typeof key === "string" && key.length > 0) return null;
 

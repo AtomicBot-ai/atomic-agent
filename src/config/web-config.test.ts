@@ -47,7 +47,7 @@ describe("web configuration ownership and compatibility", () => {
       expect(parseWebSearchProviderName(provider, "synthetic.provider")).toBe(provider);
     }
     expect(thrownError(() => parseWebSearchProviderName("EXA", "synthetic.provider")))
-      .toMatchObject({ field: "synthetic.provider", reason: 'expected one of duckduckgo|searxng|exa|brave, got "EXA"' });
+      .toMatchObject({ field: "synthetic.provider", reason: 'expected one of duckduckgo|searxng|context|exa|brave, got "EXA"' });
   });
 
   it("creates fresh mutable nested defaults and retains property order", () => {

@@ -1,5 +1,6 @@
 import type { AtomicAgentConfig } from "../../../../config/index.js";
 import { createBraveProvider } from "./brave-provider.js";
+import { createContextProvider } from "./context-provider.js";
 import { createDuckDuckGoProvider } from "./duckduckgo-provider.js";
 import { createExaProvider } from "./exa-provider.js";
 import { createSearxngProvider } from "./searxng-provider.js";
@@ -31,6 +32,8 @@ export function resolveProviderByName(
       return createDuckDuckGoProvider(deps);
     case "searxng":
       return createSearxngProvider(search.searxng, deps);
+    case "context":
+      return createContextProvider(deps);
     case "exa":
       return createExaProvider(search.exa, deps);
     case "brave":
