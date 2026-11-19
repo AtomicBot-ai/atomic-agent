@@ -112,7 +112,7 @@ export function buildOsWebSearchTool(
       "Search the web through the configured provider and return compact " +
       "title/url/snippet results. Default provider is Exa (its free " +
       "keyless tier, or an environment API key when set), with " +
-      "DuckDuckGo as the fallback; SearXNG is keyless, Brave needs an " +
+      "DuckDuckGo as the fallback; SearXNG is keyless, Context and Brave need an " +
       "environment API key. " +
       "Use os.web.fetch to read a chosen result page.",
     readonly: true,

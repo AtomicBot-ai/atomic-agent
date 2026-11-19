@@ -125,6 +125,7 @@ export function describeUnusable(
   name: string,
   search: AtomicAgentConfig["web"]["search"],
 ): string {
+  if (name === "context") return "no CONTEXT_DEV_API_KEY set";
   if (name === "brave") return `no ${search.brave.apiKeyEnv} set`;
   if (name === "searxng") return "no `web.search.searxng.instanceUrl` set";
   return "not configured";
