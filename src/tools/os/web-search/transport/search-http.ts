@@ -46,6 +46,7 @@ export interface SearchHttpRequest {
   cwd: string;
   signal: AbortSignal;
   maxResponseBytes?: number;
+  maxRedirects?: number;
   runCommand?: typeof defaultRunCommand;
   lookup?: HostLookup;
   /** Overrides the 429 retry schedule; `maxRetries: 0` disables retrying. */
@@ -172,8 +173,8 @@ async function sendOnce(
       REDIRECT_STATUSES.has(response.status) &&
       response.redirectUrl.length > 0
     ) {
-      if (hop >= MAX_REDIRECTS) {
-        throw new Error(`too many redirects (> ${MAX_REDIRECTS})`);
+      if (hop >= (request.maxRedirects ?? MAX_REDIRECTS)) {
+        throw new Error(`too many redirects (> ${request.maxRedirects ?? MAX_REDIRECTS})`);
       }
       currentUrl = parseHttpUrl(response.redirectUrl);
       continue;
