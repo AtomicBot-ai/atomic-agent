@@ -5,6 +5,7 @@ import type { ApprovalBus } from "./approval-bus.js";
 import type { CompletionRegistry } from "./completion-registry.js";
 import type { UndeliveredSteerStore } from "./undelivered-steers.js";
 import type { AuthThrottle } from "./auth-throttle.js";
+import type { McpElicitationBroker } from "../mcp/mcp-elicitation-broker.js";
 import { secretEquals } from "./secret-equal.js";
 
 /**
@@ -31,6 +32,12 @@ export interface HandlerContext {
    * `GET /api/sessions/{id}/steer`.
    */
   undeliveredSteers: UndeliveredSteerStore;
+  /**
+   * ATO-1492: open MCP elicitation questions (a server asking the person
+   * to confirm or fill a small form). Set only by a host that wired the
+   * broker into the runtime as `onMcpElicitation` (serve does).
+   */
+  elicitations?: McpElicitationBroker;
 }
 
 export type HttpHandler = (
@@ -243,6 +250,11 @@ export function beginSse(
     "x-accel-buffering": "no",
     ...extraHeaders,
   });
+  // Send the head now: Node holds it until the first write otherwise, so
+  // a client of a stream with nothing to say yet (no pending approval, no
+  // question) would not see it open until the first heartbeat. Optional:
+  // a test double of the response may not have it.
+  res.flushHeaders?.();
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   if (options.heartbeatMs && options.heartbeatMs > 0) {
