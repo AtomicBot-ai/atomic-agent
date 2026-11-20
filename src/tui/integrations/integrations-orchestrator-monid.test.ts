@@ -50,7 +50,7 @@ function makeHub(
   const startSignIn = vi.fn(
     opts.start ?? (async (): Promise<McpOAuthStartResult> => ({ state: "pending", authUrl: AUTH_URL })),
   );
-  const openUrl = vi.fn(async () => ({ ok: true as const }));
+  const openUrl = vi.fn(async () => ({ ok: true as const, label: "default browser" }));
   const signOut = vi.fn(async (name: string) => {
     createMcpOAuthStore(getConfig().paths.stateDir).clear(name);
   });
