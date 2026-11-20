@@ -29,6 +29,12 @@ export interface AcpCommandDeps {
   stdin?: Readable;
   stdout?: Writable;
   stderr?: Writable;
+  /**
+   * Opens the TUI for `acp --setup`. Injected by the CLI composition root
+   * (src/cli/index.ts): CLI commands do not import src/tui directly
+   * (scripts/check-imports.mjs).
+   */
+  openTui?: (args: string[]) => Promise<number>;
   /** Builds the agent runtime for a folder; `log` goes to stderr. */
   createRuntime?: (log: (message: string) => void) => AcpServerOptions["createRuntime"];
 }
@@ -63,8 +69,11 @@ export async function acpCommand(args: string[], deps: AcpCommandDeps = {}): Pro
     return 0;
   }
   if (args.includes("--setup")) {
-    const { tuiCommand } = await import("../tui/index.js");
-    return tuiCommand(["--onboarding"]);
+    if (!deps.openTui) {
+      stderr.write("atomic-agent acp: setup needs the terminal UI; run: atomic-agent tui --onboarding\n");
+      return 1;
+    }
+    return deps.openTui(["--onboarding"]);
   }
   const unknown = args.find((a) => a !== "--setup");
   if (unknown !== undefined) {
@@ -94,7 +103,9 @@ export async function acpCommand(args: string[], deps: AcpCommandDeps = {}): Pro
   server.attach(connection);
   log(`ready (version ${getAppVersion()})`);
 
-  const stop = (): void => stdin.destroy();
+  const stop = (): void => {
+    stdin.destroy();
+  };
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   try {
