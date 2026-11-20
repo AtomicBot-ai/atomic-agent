@@ -15,7 +15,7 @@ const noConfig = {
   readConfig: (): AtomicAgentConfig => {
     throw new Error("no config in this test");
   },
-  readDaemonPidState: () => "unknown" as const,
+  readDaemonPidState: () => "no_pid" as const,
 };
 
 function cutAtWindow(): ModelError {
