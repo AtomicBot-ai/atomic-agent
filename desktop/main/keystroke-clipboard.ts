@@ -152,13 +152,17 @@ export function primarySelectionCommands(o: KeystrokeEnv): KeystrokeCommand[] {
 
 /* ---------------- the clipboard steps ---------------- */
 
-/** The clipboard, as much of it as the steps need. `S` is what save() keeps. */
+/**
+ * The clipboard, as much of it as the steps need. `S` is what save() keeps.
+ * A call may answer at once or with a promise: Electron's clipboard reads
+ * and writes are async.
+ */
 export interface ClipboardHost<S> {
-  save(): S;
-  restore(saved: S): void;
-  readText(): string;
-  writeText(text: string): void;
-  clear(): void;
+  save(): S | Promise<S>;
+  restore(saved: S): void | Promise<void>;
+  readText(): string | Promise<string>;
+  writeText(text: string): void | Promise<void>;
+  clear(): void | Promise<void>;
 }
 
 export interface KeystrokeDeps {
@@ -198,16 +202,16 @@ export async function grabSelectionByCopy<S>(host: ClipboardHost<S>, deps: Keyst
   const poll = opts.pollMs ?? 30;
   let saved: S;
   try {
-    saved = host.save();
+    saved = await host.save();
   } catch {
     return null;
   }
   try {
-    host.clear();
+    await host.clear();
     if (settle > 0) await deps.sleep(settle);
     if (!(await deps.press("copy"))) return null;
     for (let waited = 0; ; waited += poll) {
-      const text = cleanSelection(host.readText());
+      const text = cleanSelection(await host.readText());
       if (text) return text;
       if (waited >= timeout) return null;
       await deps.sleep(poll);
@@ -215,7 +219,7 @@ export async function grabSelectionByCopy<S>(host: ClipboardHost<S>, deps: Keyst
   } catch {
     return null;
   } finally {
-    try { host.restore(saved); } catch { /* best effort */ }
+    try { await host.restore(saved); } catch { /* best effort */ }
   }
 }
 
@@ -240,8 +244,8 @@ export async function pasteByKeystroke<S>(host: ClipboardHost<S>, deps: Keystrok
   const settle = opts.settleMs ?? 400;
   let saved: S;
   try {
-    saved = host.save();
-    host.writeText(text);
+    saved = await host.save();
+    await host.writeText(text);
   } catch {
     return { pasted: false, reason: "failed" };
   }
@@ -254,8 +258,8 @@ export async function pasteByKeystroke<S>(host: ClipboardHost<S>, deps: Keystrok
   if (!pressed) return { pasted: false, reason: "no-keystroke" };
   await deps.sleep(settle);
   try {
-    if (host.readText() !== text) return { pasted: true, restored: false };
-    host.restore(saved);
+    if ((await host.readText()) !== text) return { pasted: true, restored: false };
+    await host.restore(saved);
     return { pasted: true, restored: true };
   } catch {
     return { pasted: true, restored: false };
