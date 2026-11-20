@@ -123,7 +123,7 @@ const COMMANDS: CommandDescriptor[] = [
   {
     name: "acp",
     summary: "Be the agent in Zed, JetBrains and other Agent Client Protocol editors (stdio)",
-    run: acpCommand,
+    run: (args) => acpCommand(args, { openTui: tuiCommand }),
   },
   {
     name: "trace",
