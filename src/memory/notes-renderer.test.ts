@@ -17,6 +17,8 @@ function mkEntry(overrides: Partial<MemoryEntry>): MemoryEntry {
     sessionId: null,
     workingDir: null,
     tags: [],
+    recallCount: 0,
+    lastRecalledAt: null,
     ...overrides,
   };
 }
