@@ -3142,7 +3142,7 @@ describe("reduceTuiState per-step spend for /why (ATO-34)", () => {
         type: "llm_event",
         event: {
           type: "tool_call_executed",
-          result: { tool: "os.fs.read", status: "ok", summary: `step ${stepIndex}`, truncated: false },
+          result: { tool: "os.fs.read", status: "ok", summary: `step ${stepIndex}`, details: {}, truncated: false },
         },
       },
     },
