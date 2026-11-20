@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -98,7 +98,9 @@ describe("/api/approval-rules (ATO-1141)", () => {
         tool: "os.shell.run",
         category: "shell",
         commandPrefix: ["git", "status"],
-        project: harness.workingDir,
+        // The store keeps the folder's real path (`/private/var/...` for a
+        // macOS temp folder), as "Allow always" does.
+        project: realpathSync(harness.workingDir),
         source: "user",
         note: "mine",
       });
