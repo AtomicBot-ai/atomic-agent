@@ -350,6 +350,9 @@ contextBridge.exposeInMainWorld("atomic", {
   quickEntryGet: () => ipcRenderer.invoke("app:quickEntryGet"),
   quickEntrySet: (patch: { enabled?: boolean; accelerator?: string }) => ipcRenderer.invoke("app:quickEntrySet", patch),
   quickEntryPause: (paused: boolean) => ipcRenderer.invoke("app:quickEntryPause", paused),
+  // ATO-985: Settings › General's "Use selected text" switch, and the mini chat's last Translate language (main/selected-text-ipc.ts).
+  selectedTextGet: () => ipcRenderer.invoke("app:selectedTextGet"),
+  selectedTextSet: (patch: { use?: boolean; translateTo?: string }) => ipcRenderer.invoke("app:selectedTextSet", patch),
   // ATO-1042: the starter model main fetches on a first launch (downloading, ready, failed).
   onStarterModel: (cb: (ev: unknown) => void) => on("app:starterModel", cb),
   starterGet: () => ipcRenderer.invoke("app:starterGet"),

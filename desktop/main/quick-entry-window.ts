@@ -50,6 +50,8 @@ export interface QuickEntryWiring {
   /** Shows and focuses the main window, creating it again when it was closed. */
   showMainWindow: () => BrowserWindow | null;
   log: (line: string) => void;
+  /** ATO-985: the text selected in the app in front, read before the mini chat window takes the keyboard (selected-text-ipc.ts). */
+  grabSelection?: () => Promise<string | null>;
 }
 
 const quickWindows = new WeakSet<BrowserWindow>();
@@ -63,11 +65,15 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   let box: BrowserWindow | null = null;
   let draft = "";
   let pending: string | null = null;
+  let selection: string | null = null;
+  let opening = false;
+  let disposed = false;
   let pref: QuickEntryPref = readQuickEntryPref(w.userData);
 
   const hide = () => {
     const b = box;
     box = null;
+    selection = null;
     if (b && !b.isDestroyed()) b.destroy();
   };
 
@@ -77,6 +83,19 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       hide();
       return;
     }
+    if (opening) return;
+    if (!w.grabSelection) { create(null); return; }
+    /* ATO-985: the copy has to reach the app in front, so it runs before
+       the box exists and takes the keyboard. */
+    opening = true;
+    void w.grabSelection().catch(() => null).then((sel) => {
+      opening = false;
+      if (!disposed) create(sel);
+    });
+  };
+
+  const create = (sel: string | null) => {
+    selection = sel;
     const cursor = screen.getCursorScreenPoint();
     const bounds = quickEntryBounds(cursor, screen.getAllDisplays().map((d) => ({ bounds: d.bounds, workArea: d.workArea })), MINI_CHAT_SIZE);
     const win = new BrowserWindow({
@@ -126,7 +145,9 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
       box.focus();
       return;
     }
-    open();
+    /* ATO-985: no selected text from here. The app in front is this one
+       (the menu) or the taskbar (the tray), not the one the user was in. */
+    if (!opening) create(null);
   };
 
   const shortcut = new QuickEntryShortcut(
@@ -156,7 +177,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
   else if (first.state === "invalid") w.log(`[desktop] quick entry: ${pref.accelerator} cannot be used (${first.error})`);
 
   // The box's own page.
-  ipcMain.handle("app:quickEntryOpened", () => ({ draft, label: acceleratorLabel(pref.accelerator, w.platform) }));
+  ipcMain.handle("app:quickEntryOpened", () => ({ draft, label: acceleratorLabel(pref.accelerator, w.platform), selection }));
   ipcMain.on("app:quickEntryDraft", (_event, text: unknown) => { draft = typeof text === "string" ? text.slice(0, 20_000) : ""; });
   ipcMain.on("app:quickEntryHide", () => hide());
   ipcMain.handle("app:quickEntrySubmit", (_event, raw: unknown) => {
@@ -194,6 +215,7 @@ export function wireQuickEntry(w: QuickEntryWiring): { dispose: () => void; show
 
   return {
     dispose: () => {
+      disposed = true;
       shortcut.dispose();
       hide();
     },

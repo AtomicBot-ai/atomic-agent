@@ -253,10 +253,99 @@ function mcBoot() {
     if (url && /^https?:\/\//i.test(url) && BR.openExternal) BR.openExternal(url);
   });
 
+  /* ATO-985: the text selected in the app in front when the hotkey opened
+     this window: the quoted chip, the actions that set the message, and
+     Translate's language menu (mini-chat-selection.js). It goes with the
+     first message, quoted under it, then the chip goes away. */
+  let selection = null;
+  const putMessage = (text) => {
+    const input = $('mc-input');
+    input.value = text;
+    input.focus();
+    input.setSelectionRange(text.length, text.length);
+    if (BR.quickEntryDraft) BR.quickEntryDraft(text);
+    repaint();
+  };
+  const closeLanguages = () => {
+    $('mc-lang').hidden = true;
+    const t = $('mc-actions').querySelector('[data-act="translate"]');
+    if (t) t.setAttribute('aria-expanded', 'false');
+  };
+  const actionButton = (label) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'mc-act';
+    b.textContent = label;
+    return b;
+  };
+  const showSelection = (sel, saved) => {
+    if (typeof mcSelectionPreview !== 'function' || selection !== null) return;
+    selection = sel;
+    $('mc-sel-text').textContent = mcSelectionPreview(sel);
+    let system = null;
+    try { system = mcLanguageName(navigator.language, new Intl.DisplayNames(['en'], {type: 'language'})); } catch (e) { /* no name: the common list */ }
+    const langs = mcLanguageOptions(system, saved);
+    const row = $('mc-actions'), menu = $('mc-lang');
+    const translate = MC_SELECTION_ACTIONS.find((a) => a.id === 'translate');
+    let lang = mcDefaultLanguage(saved, langs);
+    for (const a of MC_SELECTION_ACTIONS) {
+      const b = actionButton(a.label);
+      b.dataset.act = a.id;
+      if (a === translate) {
+        // Translate asks which language first; the one used last is marked.
+        b.setAttribute('aria-haspopup', 'menu');
+        b.setAttribute('aria-expanded', 'false');
+        b.addEventListener('click', () => {
+          if (!menu.hidden) { closeLanguages(); return; }
+          menu.hidden = false;
+          b.setAttribute('aria-expanded', 'true');
+          const cur = menu.querySelector('.on') || menu.firstElementChild;
+          if (cur) cur.focus();
+        });
+      } else {
+        b.addEventListener('click', () => { closeLanguages(); putMessage(mcSelectionPrompt(a) + ' '); });
+      }
+      row.appendChild(b);
+    }
+    for (const l of langs) {
+      const m = actionButton(l);
+      m.setAttribute('role', 'menuitemradio');
+      m.setAttribute('aria-checked', String(l === lang));
+      if (l === lang) m.classList.add('on');
+      m.addEventListener('click', () => {
+        lang = l;
+        for (const o of menu.children) { o.classList.toggle('on', o === m); o.setAttribute('aria-checked', String(o === m)); }
+        closeLanguages();
+        putMessage(mcSelectionPrompt(translate, l) + ' ');
+        // Remembered for the next Translate (selected-text.json, main/selected-text-ipc.ts).
+        if (BR.selectedTextSet) BR.selectedTextSet({translateTo: l}).catch(() => {});
+      });
+      menu.appendChild(m);
+    }
+    // Esc in the menu closes the menu, not the window.
+    menu.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      closeLanguages();
+      const t = row.querySelector('[data-act="translate"]');
+      if (t) t.focus();
+    });
+    $('mc-sel').hidden = false;
+    $('mc-input').placeholder = 'Ask about the selected text…';
+  };
+  const dropSelection = () => {
+    selection = '';
+    closeLanguages();
+    $('mc-sel').hidden = true;
+    $('mc-input').placeholder = 'Ask Atomic Agent…';
+  };
+
   const submit = () => {
     const input = $('mc-input');
-    const text = input.value;
+    const typed = input.value;
+    const text = selection && typed.trim() && typeof mcComposeWithSelection === 'function' ? mcComposeWithSelection(typed, selection) : typed;
     if (!mcSend(st, text)) return;
+    if (selection) dropSelection();
     input.value = '';
     if (BR.quickEntryDraft) BR.quickEntryDraft('');
     stick = true;
@@ -297,10 +386,17 @@ function mcBoot() {
   $('mc-input').focus();
   if (BR.quickEntryOpened) BR.quickEntryOpened().then((opened) => {
     const input = $('mc-input');
-    if (!opened || typeof opened.draft !== 'string' || !opened.draft || input.value || st.rows.length) return;
-    input.value = opened.draft;
-    input.setSelectionRange(input.value.length, input.value.length);
-    repaint();
+    if (!opened || st.rows.length) return;
+    if (typeof opened.draft === 'string' && opened.draft && !input.value) {
+      input.value = opened.draft;
+      input.setSelectionRange(input.value.length, input.value.length);
+      repaint();
+    }
+    // ATO-985: the selection main read before this window took the keyboard, with the language Translate used last.
+    if (typeof opened.selection === 'string' && opened.selection) {
+      const saved = BR.selectedTextGet ? BR.selectedTextGet().catch(() => null) : Promise.resolve(null);
+      saved.then((info) => { if (!st.rows.length) showSelection(opened.selection, info && info.translateTo); });
+    }
   }, () => {});
 }
 
