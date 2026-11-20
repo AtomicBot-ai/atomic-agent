@@ -29,6 +29,8 @@ import {
   type CreateMessageResult,
 } from "@modelcontextprotocol/sdk/types.js";
 
+import { tmpdir } from "node:os";
+
 import { resourceClassFor } from "../agent/tool-resource-class.js";
 import {
   McpAuthRequiredError,
@@ -45,7 +47,16 @@ import {
 } from "./mcp-stderr-tail.js";
 import type { McpElicitationHandler } from "./mcp-elicitation-handler.js";
 import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
+import { mcpServerKeepReadable } from "./mcp-sandbox-paths.js";
 import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
+import {
+  buildOsSandboxPolicy,
+  formatSandboxUnavailable,
+  MCP_SECRET_HOME_PATHS,
+  readOsSandboxSettings,
+  wrapWithOsSandbox,
+  type OsSandboxSettings,
+} from "../sandbox/os-sandbox.js";
 import { offlineRefusal } from "../llm/offline-network.js";
 import {
   MCP_TOOL_NAME_RE,
@@ -100,6 +111,12 @@ export interface McpClientDeps {
    * Omitted (tests, hosts without a state dir): no provider, as before.
    */
   oauthStateDir?: string;
+  /**
+   * Safe Mode's switch (ATO-620), read at each connect. Omitted ⇒ read
+   * from `ATOMIC_AGENT_SANDBOX`. The state dir hidden from a sandboxed
+   * server is `oauthStateDir` (it is `config.paths.stateDir`).
+   */
+  sandbox?: () => OsSandboxSettings;
 }
 
 /** Defaults — agent identity advertised to servers in `initialize`. */
@@ -503,6 +520,73 @@ export class McpClient {
     return this.client;
   }
 
+  /**
+   * The stdio spawn, wrapped in Safe Mode's OS sandbox when it is on and
+   * the server did not opt out (ATO-620). The server may write only in
+   * its `cwd`, temp and tool caches, and cannot read credential folders
+   * or the agent's state; the folder its command lives in stays
+   * readable. Network stays on: most servers exist to call an API.
+   * No sandbox on this machine ⇒ the server is not started.
+   */
+  private sandboxedSpawn(
+    command: string,
+    args: string[],
+    cwd: string | undefined,
+  ): { command: string; args: string[]; sandboxed: boolean; allowDocker: boolean } {
+    const settings = (this.deps.sandbox ?? (() => readOsSandboxSettings()))();
+    if (settings.mode === "off" || this.config.sandbox === false) {
+      return { command, args, sandboxed: false, allowDocker: true };
+    }
+    const allowDocker =
+      typeof this.config.sandbox === "object" && this.config.sandbox.allowDocker === true;
+    // The server's own code must stay readable when it is installed under
+    // a denied folder (a plugin under `<stateDir>/plugins/installed/`):
+    // the command's folder, an absolute file argument by its exact path,
+    // a plugin's own install folder. Never a credential folder or the
+    // rest of the state dir (`mcpServerKeepReadable`).
+    const policy = buildOsSandboxPolicy({
+      // `cwd` comes from the operator's server config, not the model.
+      workspaceRoots: [cwd ?? tmpdir()],
+      ...(this.deps.oauthStateDir === undefined
+        ? {}
+        : { stateDir: this.deps.oauthStateDir }),
+      keepReadable: mcpServerKeepReadable({
+        command,
+        args,
+        ...(this.deps.oauthStateDir === undefined
+          ? {}
+          : { stateDir: this.deps.oauthStateDir }),
+      }),
+      network: true,
+      // Network stays on, so the ssh-agent socket is hidden by path too,
+      // not only left out of the environment.
+      hideSshAgent: true,
+      ...(process.env.SSH_AUTH_SOCK === undefined
+        ? {}
+        : { sshAuthSock: process.env.SSH_AUTH_SOCK }),
+      // npm's tokens and the shell rc files (where keys get exported) are
+      // hidden from a server too (owner decision 18.11).
+      extraDenyRead: MCP_SECRET_HOME_PATHS,
+      // The Docker daemon socket ends the sandbox (a container can mount
+      // the disk): hidden unless this server says `{ allowDocker: true }`.
+      hideDocker: !allowDocker,
+      ...(process.env.DOCKER_HOST === undefined
+        ? {}
+        : { dockerHost: process.env.DOCKER_HOST }),
+    });
+    const wrapped = wrapWithOsSandbox(command, args, policy);
+    if (!wrapped.ok) {
+      throw new McpConnectError(
+        this.config.name,
+        formatSandboxUnavailable(wrapped.reason).replace(
+          "The command was not run.",
+          "The server was not started; to run only this one outside the sandbox, set its `sandbox` to false.",
+        ),
+      );
+    }
+    return { command: wrapped.command, args: wrapped.args, sandboxed: true, allowDocker };
+  }
+
   private buildTransport():
     StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
     const t = this.config.transport;
@@ -519,9 +603,22 @@ export class McpClient {
       // `cmd.exe /c` so PATHEXT resolution kicks in; absolute paths and
       // commands with an explicit extension are spawned directly.
       const resolved = resolveStdioCommand(t.command, t.args ?? []);
+      const spawn = this.sandboxedSpawn(resolved.command, resolved.args, t.cwd);
+      // A sandboxed server keeps its network, so the ssh-agent socket would
+      // let it sign with every loaded key without reading `~/.ssh`. Not
+      // forwarded inside the sandbox; a server that needs it opts out.
+      // Without `allowDocker` the Docker variables go too: a `tcp://`
+      // `DOCKER_HOST` would reach the daemon over the open network.
+      if (spawn.sandboxed) {
+        for (const name of Object.keys(env)) {
+          const upper = name.toUpperCase();
+          if (upper === "SSH_AUTH_SOCK") delete env[name];
+          else if (!spawn.allowDocker && upper.startsWith("DOCKER_")) delete env[name];
+        }
+      }
       return new StdioClientTransport({
-        command: resolved.command,
-        args: resolved.args,
+        command: spawn.command,
+        args: spawn.args,
         env,
         ...(t.cwd ? { cwd: t.cwd } : {}),
         stderr: "pipe",
@@ -529,7 +626,8 @@ export class McpClient {
     }
     // ATO-1084: a remote server is refused before any connection while
     // offline; one on this machine still connects. A stdio server is a
-    // separate program and is not network-isolated (no OS sandbox).
+    // separate program; with Safe Mode on it runs in the OS sandbox
+    // (`sandboxedSpawn`), which keeps its network on.
     const offline = offlineRefusal(t.url, `MCP server "${this.config.name}"`);
     if (offline) throw new McpConnectError(this.config.name, offline.message);
     // Browser sign-in (OAuth) only for remote servers without a key in
