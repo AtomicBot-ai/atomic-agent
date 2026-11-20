@@ -32,12 +32,18 @@ export interface ParsedImapMail {
 
 const MAX_DEPTH = 8;
 
+/** An RFC 2047 encoded word, `=?charset?B|Q?text?=`. */
+const ENCODED_WORD_RE = /=\?[^?\s]+\?[bBqQ]\?[^?\s]*\?=/g;
+
 /**
- * Blank out quoted strings and comments in a raw header value, keeping
- * every other character at its position, so an address can only be
- * found where RFC 5322 puts it (outside quotes and comments).
+ * Blank out encoded words, quoted strings and comments in a raw header
+ * value, keeping every other character at its position, so an address
+ * can only be found where RFC 5322 puts it (outside quotes and
+ * comments) and never inside a display name that encodes one
+ * (`=?utf-8?q?=3Cme@gmail.com=3E?= <attacker@gmail.com>`).
  */
-function maskQuotesAndComments(value: string): string {
+function maskQuotesAndComments(raw: string): string {
+  const value = raw.replace(ENCODED_WORD_RE, (word) => " ".repeat(word.length));
   let out = "";
   let inQuote = false;
   let depth = 0;

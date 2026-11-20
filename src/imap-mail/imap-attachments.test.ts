@@ -51,7 +51,7 @@ describe("saveMailAttachments (ATO-601)", () => {
   it("saves allowed files under the inbox and reports the rest with a reason", async () => {
     const inbox = createAttachmentInbox({ dir, now: () => new Date(2026, 10, 18, 9, 30, 0) });
     const outcomes = await saveMailAttachments(
-      [file("../../etc/report.pdf", "pdf"), file("tool.exe"), file("big.bin", "x".repeat(20)), file("b.txt", "bb"), file("c.txt", "cc")],
+      [file("../../etc/report.pdf", "pdf"), file("tool.exe"), file("big.txt", "x".repeat(20)), file("b.txt", "bb"), file("c.txt", "cc")],
       { save: true, maxCount: 2, maxBytes: 10, maxTotalBytes: 100 },
       inbox,
     );
