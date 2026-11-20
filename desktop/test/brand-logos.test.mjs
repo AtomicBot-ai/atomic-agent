@@ -86,6 +86,7 @@ test('Claude Code model aliases wear the Claude mark', () => {
   assert.equal(ctx.modelLogoKey('magnumopus-7b'), '');
   assert.equal(ctx.modelLogoKey('magnum-opus-72b'), '');
   assert.equal(ctx.modelLogoKey('Helsinki-NLP/opus-mt-en-de'), '');
-  assert.equal(ctx.modelLogoKey('llama-3.1-8b'), '');
-  assert.match(ctx.modelMark('llama-3.1-8b'), /tk-ico--mark/);
+  // A model with no mark keeps the CPU badge (Llama wears Meta's since ATO-1634).
+  assert.equal(ctx.modelLogoKey('olmo-2-7b'), '');
+  assert.match(ctx.modelMark('olmo-2-7b'), /tk-ico--mark/);
 });
