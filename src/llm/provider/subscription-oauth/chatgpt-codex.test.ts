@@ -120,8 +120,11 @@ describe("startChatgptBrowserLogin", () => {
     const login = await startChatgptBrowserLogin({ fetch: fetchImpl, timeoutMs: 5_000, ports: [0] });
     const url = new URL(login.authorizationUrl);
     const redirect = new URL(url.searchParams.get("redirect_uri") ?? "");
+    // Listen before the callback: the refusal can land while the fetch
+    // below is still in flight, and an unheard rejection fails the run.
+    const refused = expect(login.tokens).rejects.toBeInstanceOf(ChatgptNoAccountError);
     await fetch(`http://127.0.0.1:${redirect.port}/auth/callback?code=c&state=${url.searchParams.get("state")}`);
-    await expect(login.tokens).rejects.toBeInstanceOf(ChatgptNoAccountError);
+    await refused;
   });
 });
 
