@@ -256,6 +256,8 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // inside itself, for minutes. Batching it beside other tools would
   // stack the orchestrator's own fan-out on top of the fan-out.
   "fusion.delegate": "approval_gated",
+  // Same for subagent.run (ATO-1670): several subagent turns in one call.
+  "subagent.run": "approval_gated",
 
   // verify.* — read-only checks. `verify.syntax` spawns nothing that
   // writes (node --check, tsc --noEmit, python compile(), bash -n), so
@@ -477,6 +479,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
  */
 const SOLO_REGARDLESS_OF_APPROVAL: ReadonlySet<string> = new Set([
   "fusion.delegate",
+  // Its turns run inside the call, like a fan-out (ATO-1670); the
+  // per-turn child count also relies on one call per step.
+  "subagent.run",
   "ask_user",
 ]);
 

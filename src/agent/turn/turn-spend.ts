@@ -66,6 +66,8 @@ export function recordStepSpend(
  * Add what a context compaction's summary calls cost (ATO-1322). They
  * are side calls, not step completions, so `recordStepSpend` never sees
  * them; without this a long run that compacts spends past its budget.
+ * The same for a tool's own paid turns (`ToolContext.turnSpend`,
+ * `subagent.run`, ATO-1670).
  */
 export function recordCompactionSpend(
   turn: Pick<TurnLoopState, "spendUsd" | "spendPriced">,

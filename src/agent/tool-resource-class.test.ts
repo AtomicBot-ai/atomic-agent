@@ -123,6 +123,12 @@ describe("gated-call approval categories", () => {
     );
   });
 
+  it("keeps subagent.run solo at every level, like the fan-out (ATO-1670)", () => {
+    expect(resourceClassFor("subagent.run")).toBe("approval_gated");
+    expect(isSoloRegardlessOfApproval("subagent.run")).toBe(true);
+    expect(gatedCallRunsUnattended("subagent.run", { level: 5 })).toBe(false);
+  });
+
   it("treats a gated MCP tool as category `other`", () => {
     setDynamicResourceClassResolver((name) =>
       name.startsWith("mcp.demo.") ? "approval_gated" : null,

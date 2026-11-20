@@ -1,4 +1,5 @@
 import type { AgentLoopEvent } from "../../agent/agent-contract.js";
+import { FUSION_WORKER_DEFAULT_DEPTH } from "../../session/fusion-worker-session.js";
 import type { DelegateTask } from "./delegate-args.js";
 import {
   readWorkerQuestion,
@@ -567,9 +568,13 @@ async function runOneTask(
   // The worker always runs in this folder (the parent's, in every model
   // mode, #1121); only an isolated or cloud worker inherits a workspace.
   const inheritWorkspace = isolated !== undefined || deps.inheritWorkspace === true;
+  // Fusion fans out only from the operator session, so every worker it
+  // spawns sits one level down (ATO-1666); a subagent run passes the
+  // depth it computed from its caller's session (ATO-1670).
   const session = deps.createEphemeralSession({
     parentSessionId: options.parentSessionId,
     taskId: task.id,
+    depth: options.depth ?? FUSION_WORKER_DEFAULT_DEPTH,
   }, workingDir, inheritWorkspace);
   // A worker that queued on the parent id would wait behind the
   // orchestrator's own turn — which is the turn calling this — and the
@@ -778,8 +783,8 @@ async function runOneTask(
     // the orchestrator to re-send it with the path and loop.
     deps.approvals.setSessionPolicy(id, {
       onPrompt: "refuse",
-      reason: FUSION_WORKER_APPROVAL_REFUSED,
-      reasonFor: workerRefusalFor,
+      reason: options.approvalRefusal?.general ?? FUSION_WORKER_APPROVAL_REFUSED,
+      reasonFor: options.approvalRefusal?.reasonFor ?? workerRefusalFor,
       // A throwaway worktree is still the parent's project: its saved
       // rules hold here too.
       ...(isolated !== undefined ? { ruleWorkdir: deps.workingDir } : {}),
@@ -1441,7 +1446,11 @@ async function runOneTask(
     !stopByPerson.signal.aborted
   ) {
     const replaceSession = deps.createEphemeralSession(
-      { parentSessionId: options.parentSessionId, taskId: task.id },
+      {
+        parentSessionId: options.parentSessionId,
+        taskId: task.id,
+        depth: options.depth ?? FUSION_WORKER_DEFAULT_DEPTH,
+      },
       workingDir,
       inheritWorkspace,
     );

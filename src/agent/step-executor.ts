@@ -280,6 +280,9 @@ async function executeStepInner(
     // A pinned step (fusion worker) runs its model-calling tools on the
     // same provider as its completions — `vision.describe` reads this.
     ...(deps.providerId !== undefined ? { providerId: deps.providerId } : {}),
+    ...(deps.providerId !== undefined && deps.model !== undefined ? { model: deps.model } : {}),
+    ...(deps.turnId !== undefined ? { turnId: deps.turnId } : {}),
+    ...(deps.turnSpend !== undefined ? { turnSpend: deps.turnSpend } : {}),
     ...(deps.tracker ? { tracker: deps.tracker } : {}),
     ...(ctx.terminalOnly ? { terminalOnly: true } : {}),
     ...(ctx.toolSet !== undefined ? { toolSet: ctx.toolSet } : {}),

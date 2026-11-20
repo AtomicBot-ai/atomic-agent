@@ -952,6 +952,34 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       [],
     ),
   ],
+  // ── subagent (ATO-1670) ──────────────────────────────────────────────────
+  // Item bounds as on fusion.delegate: they keep the nested task objects
+  // off the strict native path, and `parseSubagentArgs` still refuses an
+  // over-cap call in words. 4 = SUBAGENT_MAX_CHILDREN_PER_CALL.
+  [
+    "subagent.run",
+    obj(
+      {
+        tasks: {
+          type: "array",
+          minItems: 1,
+          maxItems: 4,
+          items: obj(
+            {
+              id: stringSchema,
+              title: stringSchema,
+              instructions: stringSchema,
+              profile: stringSchema,
+              deliverable: stringSchema,
+              files: stringArraySchema,
+            },
+            ["id", "instructions"],
+          ),
+        },
+      },
+      ["tasks"],
+    ),
+  ],
   ["verify.syntax", obj({ files: stringArraySchema }, ["files"])],
   [
     "verify.run",
