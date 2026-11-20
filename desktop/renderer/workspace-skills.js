@@ -110,5 +110,167 @@ function skillEvalHTML(st, esc) {
   else if (o) out += '<div class="tuierr tk-help tk-help--err">' + esc(o.error || 'The test did not finish.') + '</div>';
   return out + '</div>';
 }
+/* ATO-67 (Nadya 18.11): skills the agent learned from a turn that read outside content wait as drafts
+   until the person looks at them. main/skill-drafts-ipc.ts reads `atag skill list --json` (status
+   "pending") and runs `atag skill learned show|approve|discard <id>`; these draw the "Pending review"
+   group above the skill rows, a draft's read-only preview and the Discard confirm. Every string
+   from the agent (the model's reason, the skill name, the SKILL.md, the sources) goes through esc. */
+const SKILL_DRAFT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/; // main/skill-drafts-cli.ts
+function skillDraftKindLabel(kind) { return kind === 'patch' ? 'Update' : 'New skill'; }
+/* A plain skill list never shows a draft as an installed (disabled) skill. */
+function skillRowsWithoutDrafts(rows) {
+  return (rows || []).filter(row => !row || row.status !== 'pending');
+}
+/* The group: the drafts main returned, valid ids only, once each, oldest first as main lists them. null when there are none. */
+function skillDraftsGroup(rows) {
+  const seen = new Set();
+  const list = (rows || []).filter(r => r && typeof r.id === 'string' && SKILL_DRAFT_ID_RE.test(r.id) && !seen.has(r.id) && seen.add(r.id))
+    .map(r => ({id: r.id, name: String(r.name || r.id), kind: r.kind === 'patch' ? 'patch' : 'create', reason: String(r.reason || '')}));
+  return list.length ? {label: 'Pending review', count: list.length, rows: list} : null;
+}
+function skillDraftsListHTML(st, esc) {
+  const group = skillDraftsGroup(st.rows);
+  if (!group) return '';
+  const busy = id => st.busyId === id;
+  return '<div class="tk-list set-sklist set-skdrafts" data-skill-drafts="' + group.count + '">'
+    + '<div class="set-tlfam"><span class="set-tlgn">' + esc(group.label) + '</span> <span class="tk-chip tk-chip--sm tk-chip--amber" aria-label="' + group.count + ' pending">' + group.count + '</span>'
+    + '<span class="set-tlwhat">Learned from outside content. Nothing is saved until you approve it.</span></div>'
+    + (st.error ? '<div class="tuierr tk-help tk-help--err">' + esc(st.error) + '</div>' : '')
+    + group.rows.map(r => '<div class="tk-li set-skdraft" data-skill-draft="' + esc(r.id) + '">'
+      + '<span class="t mono" title="' + esc(r.name) + '">' + esc(r.name) + '</span> '
+      + '<span class="tk-chip tk-chip--sm' + (r.kind === 'patch' ? ' tk-chip--blue' : ' tk-chip--line') + '">' + skillDraftKindLabel(r.kind) + '</span>'
+      + (r.reason ? '<p class="set-cap d">' + esc(r.reason) + '</p>' : '')
+      + '<div class="acts">'
+        + '<button class="btn btn-s sm" data-act="skills:draft:show:' + esc(r.id) + '"' + (busy(r.id) ? ' disabled' : '') + '>Show</button>'
+        + '<button class="btn btn-blue sm" data-act="skills:draft:approve:' + esc(r.id) + '"' + (st.busyId ? ' disabled' : '') + '>Approve</button>'
+        + '<button class="btn btn-danger sm" data-act="skills:draft:discard:' + esc(r.id) + '"' + (st.busyId ? ' disabled' : '') + '>Discard</button>'
+        + (busy(r.id) ? '<span class="tk-spin"></span>' : '')
+      + '</div></div>').join('')
+    + '</div>';
+}
+/* The draft's preview, read-only, where a skill's detail sits: the diff for an update, the draft SKILL.md for a new skill, then its sources. */
+function skillDraftDetailHTML(st, esc) {
+  const open = st.open;
+  if (!open) return '';
+  const back = '<button class="btn btn-g sm set-flush" data-act="skills:draft:close" title="Back to all skills (Esc)">All skills</button>';
+  if (!open.draft) {
+    return '<div class="tk-bar">' + back + '</div>'
+      + (open.error ? '<div class="tuierr tk-help tk-help--err">' + esc(open.error) + '</div>' : '<div class="tk-out set-skmd set-loading"><span class="tk-spin"></span>(loading…)</div>');
+  }
+  const d = open.draft, patch = d.kind === 'patch';
+  const text = patch && d.diff ? d.diff : d.skillMd;
+  const sources = Array.isArray(d.sources) ? d.sources : [];
+  return '<div class="tk-bar">' + back + '<span class="grow"></span>'
+      + '<button class="btn btn-blue sm" data-act="skills:draft:approve:' + esc(d.id) + '"' + (st.busyId ? ' disabled' : '') + '>Approve</button>'
+      + '<button class="btn btn-danger sm" data-act="skills:draft:discard:' + esc(d.id) + '"' + (st.busyId ? ' disabled' : '') + '>Discard</button>'
+    + '</div>'
+    + '<div class="set-titlerow"><h3 class="set-dtitle mono">' + esc(d.skill || open.name || d.id) + '</h3>'
+      + '<span class="tk-chip tk-chip--sm tk-chip--amber">Pending review</span>'
+      + '<span class="tk-chip tk-chip--sm">' + skillDraftKindLabel(d.kind) + '</span></div>'
+    + (d.reason ? '<p class="set-desc">' + esc(d.reason) + '</p>' : '')
+    + '<p class="set-cap">' + (sources.length ? 'Learned from:' : 'No sources were recorded.') + '</p>'
+    + (sources.length ? '<ul class="set-cap set-skdsrc">' + sources.map(s => '<li class="mono">' + esc(s) + '</li>').join('') + '</ul>' : '')
+    + '<p class="set-cap">' + (patch ? (d.diff ? 'Changes to ' : 'The new text of ') + '<span class="mono">' + esc(d.path || 'SKILL.md') + '</span>' : 'The draft SKILL.md') + ' (read-only)</p>'
+    + '<pre class="tk-out set-skmd" data-skill-draft-preview="' + (patch && d.diff ? 'diff' : 'skill') + '">' + esc(text || '') + '</pre>';
+}
+/* Discard is final: the same red confirm as Remove skill. */
+function skillDraftConfirmHTML(st, esc) {
+  const c = st.confirm;
+  if (!c) return '';
+  return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal" role="alertdialog" aria-label="Discard learned skill">'
+    + '<div class="set-mhead"><h4>Discard learned skill</h4></div>'
+    + '<p>Discard the draft <b class="mono">' + esc(c.name) + '</b>? It is deleted and cannot be restored.</p>'
+    + (c.error ? '<div class="tuierr tk-help tk-help--err">' + esc(c.error) + '</div>' : '')
+    + (c.submitting ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">discarding…</span></div>'
+      : '<div class="acts"><button class="btn btn-s sm" data-act="skills:draft:cancel" title="Cancel (N)">Cancel</button>'
+        + '<button class="btn btn-df sm" data-act="skills:draft:discardConfirm" title="Discard (Y)">Discard</button></div>')
+    + '</div></div>';
+}
+/* The state and the four actions. `api()` is window.atomic (or a stand-in), `paint()` repaints the tab,
+   `changed()` re-reads the skill list after an approve (the skill is now installed). */
+function createSkillDraftsController(deps) {
+  const st = {rows: [], at: 0, loading: false, error: null, open: null, confirm: null, busyId: null, seq: 0};
+  const api = () => deps.api() || {};
+  const now = deps.now || (() => Date.now());
+  async function refresh(force) {
+    const br = api();
+    if (!br.skillDrafts || st.loading || (!force && now() - st.at < 15000)) return;
+    st.loading = true;
+    let res = null;
+    try { res = await br.skillDrafts(); } catch (e) { res = null; }
+    st.loading = false; st.at = now();
+    const before = JSON.stringify(st.rows);
+    st.rows = res && res.ok && Array.isArray(res.rows) ? res.rows : [];
+    if (st.open && !st.rows.some(r => r.id === st.open.id)) st.open = null;
+    if (before !== JSON.stringify(st.rows)) deps.paint();
+  }
+  const nameOf = id => { const r = st.rows.find(x => x.id === id); return r ? r.name : id; };
+  async function show(id) {
+    const br = api();
+    if (!br.skillDraftShow || !SKILL_DRAFT_ID_RE.test(id)) return;
+    const seq = ++st.seq;
+    st.open = {id, name: nameOf(id), draft: null, error: null}; deps.paint();
+    let res = null;
+    try { res = await br.skillDraftShow(id); } catch (e) { res = {ok: false, error: String((e && e.message) || e)}; }
+    if (seq !== st.seq || !st.open || st.open.id !== id) return;
+    if (res && res.ok && res.draft) st.open.draft = res.draft;
+    else st.open.error = (res && res.error) || 'The agent did not show this draft.';
+    deps.paint();
+  }
+  async function approve(id) {
+    const br = api();
+    if (!br.skillDraftApprove || st.busyId || !SKILL_DRAFT_ID_RE.test(id)) return;
+    st.busyId = id; st.error = null; deps.paint();
+    let res = null;
+    try { res = await br.skillDraftApprove(id); } catch (e) { res = {ok: false, error: String((e && e.message) || e)}; }
+    st.busyId = null;
+    if (res && res.ok) { if (st.open && st.open.id === id) st.open = null; if (deps.changed) deps.changed(); }
+    else st.error = 'Could not approve ' + nameOf(id) + ': ' + ((res && res.error) || 'no answer');
+    await refresh(true);
+    deps.paint();
+  }
+  function askDiscard(id) {
+    if (!SKILL_DRAFT_ID_RE.test(id) || st.busyId) return;
+    st.confirm = {id, name: nameOf(id), submitting: false, error: null}; deps.paint();
+  }
+  async function discard() {
+    const c = st.confirm, br = api();
+    if (!c || c.submitting || !br.skillDraftDiscard) return;
+    c.submitting = true; st.busyId = c.id; deps.paint();
+    let res = null;
+    try { res = await br.skillDraftDiscard(c.id); } catch (e) { res = {ok: false, error: String((e && e.message) || e)}; }
+    st.busyId = null;
+    if (res && res.ok) { st.confirm = null; if (st.open && st.open.id === c.id) st.open = null; }
+    else { c.submitting = false; c.error = (res && res.error) || 'Could not discard the draft.'; }
+    await refresh(true);
+    deps.paint();
+  }
+  function act(what) {
+    const i = what.indexOf(':'), verb = i < 0 ? what : what.slice(0, i), id = i < 0 ? '' : what.slice(i + 1);
+    if (verb === 'show') return show(id);
+    if (verb === 'approve') return approve(id);
+    if (verb === 'discard') return askDiscard(id);
+    if (verb === 'discardConfirm') return discard();
+    if (verb === 'cancel') { if (st.confirm && !st.confirm.submitting) st.confirm = null; deps.paint(); return; }
+    if (verb === 'close') { st.open = null; st.seq++; deps.paint(); return; }
+  }
+  /* Keys while a confirm or a preview is up: they belong to it, not to the skill rows hidden under it. */
+  function key(e, k) {
+    if (st.confirm) {
+      if (k === 'y' || k === 'Enter') { e.preventDefault(); discard(); }
+      else if (k === 'n' || k === 'Escape') { e.preventDefault(); act('cancel'); }
+      return true;
+    }
+    if (st.open) {
+      if (k === 'Escape') { e.preventDefault(); act('close'); }
+      return true;
+    }
+    return false;
+  }
+  return {state: st, refresh, act, key,
+    listHTML: esc => skillDraftsListHTML(st, esc), detailHTML: esc => skillDraftDetailHTML(st, esc), confirmHTML: esc => skillDraftConfirmHTML(st, esc)};
+}
 if (typeof module !== 'undefined') module.exports = {workspaceSkillCommands, workspaceSkillMessage, createSkillCatalogLoader,
-  skillEvalDuration, skillEvalTokens, skillEvalCost, skillEvalSummary, skillEvalHTML};
+  skillEvalDuration, skillEvalTokens, skillEvalCost, skillEvalSummary, skillEvalHTML,
+  skillDraftKindLabel, skillRowsWithoutDrafts, skillDraftsGroup, skillDraftsListHTML, skillDraftDetailHTML, skillDraftConfirmHTML,
+  createSkillDraftsController};
