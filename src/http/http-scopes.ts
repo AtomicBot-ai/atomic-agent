@@ -55,6 +55,8 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /v1/messages": "chat",
   "POST /v1/messages/count_tokens": "chat",
   "POST /v1/responses": "chat",
+  // ATO-1152: the side question.
+  "POST /api/btw": "chat",
   "POST /api/ag-ui": "chat",
   "POST /api/complete": "chat",
   "POST /api/context-preview": "chat",
@@ -64,6 +66,9 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/config": "admin",
   "PATCH /api/config": "admin",
   "PUT /api/config": "admin",
+  // ATO-1639: names of the saved keys, and saving one.
+  "GET /api/secrets": "admin",
+  "PUT /api/secrets/{name}": "admin",
   "GET /api/skills": "read",
   "GET /api/skills/{name}": "read",
   "POST /api/skills/install": "admin",
@@ -80,8 +85,13 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/coding-mode": "admin",
   "GET /api/offline-mode": "read",
   "POST /api/offline-mode": "admin",
+  "GET /api/privacy-shield": "read",
+  "POST /api/privacy-shield": "admin",
   "POST /api/local-model/recheck": "admin",
   "POST /api/llm/active": "admin",
+  // ATO-1461: the answer is written to llm.fallback.appendLocal.
+  "GET /api/fallback/local-question": "read",
+  "POST /api/fallback/local-question": "admin",
   "POST /api/memory/embeddings/reconnect": "admin",
   // Sessions.
   "GET /api/sessions": "read",
@@ -98,6 +108,8 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/sessions/{id}/next-step": "read",
   "POST /api/sessions/{id}/archived": "chat",
   "POST /api/sessions/{id}/rollback-last-turn": "chat",
+  "GET /api/sessions/{id}/previous-replies": "read",
+  "POST /api/sessions/{id}/restore-previous-reply": "chat",
   "GET /api/sessions/{id}/rewind-points": "read",
   "POST /api/sessions/{id}/rewind/preview": "chat",
   "POST /api/sessions/{id}/rewind": "chat",
@@ -115,7 +127,11 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/approval/resolve": "chat",
   "GET /api/events": "read",
   "POST /api/question/answer": "chat",
+  // ATO-1492: an MCP server's question, answered like ask_user.
+  "GET /api/mcp/elicitation": "read",
+  "POST /api/mcp/elicitation/answer": "chat",
   "GET /api/approval-rules": "read",
+  "POST /api/approval-rules": "admin",
   "DELETE /api/approval-rules/{id}": "admin",
   // Memory: the owner's notes and profile.
   "GET /api/memory/notes": "read",
@@ -128,11 +144,20 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "GET /api/memory/changes": "read",
   "POST /api/memory/changes/{id}/restore": "admin",
   "POST /api/memory/profile/{key}/restore": "admin",
+  // ATO-1617: facts imported from a chat export into memory.
+  "POST /api/import/facts/start": "admin",
+  "GET /api/import/facts/jobs/{id}": "read",
+  "POST /api/import/facts/jobs/{id}/stop": "admin",
+  "POST /api/import/facts/jobs/{id}/save": "admin",
+  "DELETE /api/import/facts/jobs/{id}": "admin",
+  "GET /api/import/facts/receipts": "read",
+  "POST /api/import/facts/receipts/{id}/undo": "admin",
   // Channels.
   "POST /api/telegram/pairing": "admin",
   "GET /api/telegram/pairing": "admin",
   "DELETE /api/telegram/pairing": "admin",
   "GET /api/telegram/channel": "read",
+  "GET /api/discord/channel": "read",
   // Tasks and ideas.
   "POST /api/tasks": "chat",
   "GET /api/tasks": "read",
@@ -153,6 +178,16 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/webhooks/{name}": "chat",
   "POST /api/webhooks": "admin",
   "DELETE /api/webhooks/{name}": "admin",
+  // My files (ATO-1621): the indexed folders.
+  "GET /api/files/folders": "read",
+  "POST /api/files/folders": "admin",
+  "DELETE /api/files/folders": "admin",
+  "GET /api/files/status": "read",
+  // MCP clients over HTTP (ATO-549): read-only tools only (memory recall,
+  // profile and skills), so a read token is enough.
+  "POST /mcp": "read",
+  "GET /mcp": "read",
+  "DELETE /mcp": "read",
 };
 
 /** The scope a route needs; `admin` for one the table does not know. */
