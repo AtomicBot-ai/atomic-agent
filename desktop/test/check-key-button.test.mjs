@@ -19,7 +19,7 @@ function fn(name) {
 
 const NAMES = [
   "providerHost", "providerFailure", "providerReplied", "turnWaited", "turnFailureLine", "offlineTurnLine",
-  "turnKeyRejected", "turnEmptyTwice", "turnFailureAct", "sysRowHTML",
+  "dailyLimitLine", "turnKeyRejected", "turnEmptyTwice", "turnFailureAct", "sysRowHTML",
   "selProviders", "selActiveProviderId", "llmBlock", "llmProviders", "llmProvider", "llmLocalModels",
 ];
 
