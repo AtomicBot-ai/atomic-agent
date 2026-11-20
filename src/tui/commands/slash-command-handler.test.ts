@@ -757,3 +757,14 @@ describe("/enhance", () => {
     expect(dispatchSlashCommand("/vim").forwardAsMessage).toBe(false);
   });
 });
+
+describe("/learn (ATO-67)", () => {
+  it("hands the parsed command to the caller", () => {
+    expect(dispatchSlashCommand("/learn").learnCommand).toEqual({ kind: "list" });
+    expect(dispatchSlashCommand("/learn undo a1b2c3").learnCommand).toEqual({ kind: "undo", id: "a1b2c3" });
+    expect(dispatchSlashCommand("/learn approve a1b2c3").learnCommand).toEqual({ kind: "approve", id: "a1b2c3" });
+    expect(dispatchSlashCommand("/learn discard a1b2c3").learnCommand).toEqual({ kind: "discard", id: "a1b2c3" });
+    expect(dispatchSlashCommand("/learn show a1b2c3").learnCommand).toEqual({ kind: "show", id: "a1b2c3", json: false });
+    expect(dispatchSlashCommand("/learn nonsense").learnCommand?.kind).toBe("error");
+  });
+});

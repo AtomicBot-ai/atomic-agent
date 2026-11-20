@@ -1230,6 +1230,9 @@ export interface UserConfigFile {
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
 // every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp
 // engines receive them. An older file has no field and reads as off.
+// Unversioned, additive: `skills.selfLearning` (`enabled` true,
+// `minSteps` 10, ATO-67). An older file has no block and reads the
+// defaults, so self-learning is on after an upgrade, as in OpenClaw.
 // Unversioned, additive: `skills.eval.judgeProvider` (ATO-1101), the
 // provider id that grades `judge` checks in `skill eval`. An older file
 // has no field; the key stays out of the file until it is set.

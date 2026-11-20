@@ -311,6 +311,8 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | `skills.clawhub.apiBase` | `string` | `"https://clawhub.ai"` |  |
 | `skills.clawhub.browseLimit` | `number` | `100` |  |
 | `skills.clawhub.nonSuspiciousOnly` | `boolean` | `true` |  |
+| `skills.selfLearning.enabled` | `boolean` | `true` | After a long turn, review it in the background and save what was learned as a skill (a new SKILL.md, or a fix to a skill it used). Every change is listed by `/learn` and undone with `/learn undo <id>`. |
+| `skills.selfLearning.minSteps` | `number` | `10` | Model steps a turn needs before it is reviewed for something to learn. |
 
 ## tui
 

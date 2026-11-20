@@ -17,6 +17,7 @@ import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
 import { compactionInstructionsError, normalizeCompactionInstructions } from "../../runtime/compaction-instructions.js";
 import { parsePersonaCommand, type PersonaCommand } from "./persona-command.js";
+import { parseLearnCommand, type LearnCommand } from "../../skills/learning/learn-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -44,6 +45,8 @@ export interface SlashDispatchResult {
   readonly goalCommand?: GoalCommand;
   /** `/persona …` (ATO-54): the submit path writes the config and reports. */
   readonly personaCommand?: PersonaCommand;
+  /** `/learn …` (ATO-67): the skills orchestrator lists or undoes learned skills. */
+  readonly learnCommand?: LearnCommand;
   /**
    * `/enhance <text>`: the draft to rewrite. The buffer is left holding
    * the draft itself, and the caller hands the rewrite back to it.
@@ -441,6 +444,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
     }
     case "persona":
       return pureActions([], { personaCommand: parsePersonaCommand(parsed.args) });
+    case "learn":
+      return pureActions([], { learnCommand: parseLearnCommand(parsed.args) });
     case "enhance":
       // Opt-in and never sends: the draft goes back into the composer
       // right away, and the rewrite replaces it there for review.

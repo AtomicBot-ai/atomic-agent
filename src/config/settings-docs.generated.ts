@@ -224,6 +224,8 @@ export const SETTINGS_DOCS: Readonly<Record<string, SettingDoc>> = {
   "skills.clawhub.apiBase": { type: "string", description: "" },
   "skills.clawhub.browseLimit": { type: "number", description: "" },
   "skills.clawhub.nonSuspiciousOnly": { type: "boolean", description: "" },
+  "skills.selfLearning.enabled": { type: "boolean", description: "After a long turn, review it in the background and save what was learned as a skill (a new SKILL.md, or a fix to a skill it used). Every change is listed by `/learn` and undone with `/learn undo <id>`." },
+  "skills.selfLearning.minSteps": { type: "number", description: "Model steps a turn needs before it is reviewed for something to learn." },
   "tui.theme": { type: "string", description: "" },
   "tui.whileBusySubmit": { type: "'steer' | 'queue'", description: "" },
   "tui.mouse": { type: "boolean", description: "Turns terminal mouse reporting on: clicking panels, list rows, the nav bar and the prompt, plus wheel scrolling. Turning it off restores the terminal's own drag-to-select, which mouse reporting takes over — see `/mouse` and `--no-mouse`. Older files are upgraded with `mouse: true`." },
