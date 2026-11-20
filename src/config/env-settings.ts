@@ -103,6 +103,11 @@ export const ENV_SETTINGS: readonly EnvSetting[] = [
   env("ATOMIC_AGENT_SESSION_TOOLS_ENABLED", ENV_DEFAULTS.SESSION_TOOLS_ENABLED, "Let the agent list, read and message its other sessions (the sessions.* tools)."),
   env("ATOMIC_AGENT_TASKS_KEEP_AWAKE", null, "Keep the computer awake for tasks and turns: off or while-working. Unset or any other value: off."),
 
+  // Next-step suggestions from a separate model (ATO-1097).
+  env("ATOMIC_AGENT_NEXT_STEP_URL", null, "OpenAI-compatible server (a second llama-server, LM Studio, Ollama) that writes the next-step suggestion instead of the chat model, e.g. http://127.0.0.1:8081/v1. Only used while tui.nextStepSuggestions is on. Unset: the chat model writes it."),
+  env("ATOMIC_AGENT_NEXT_STEP_MODEL", null, "Model name sent to ATOMIC_AGENT_NEXT_STEP_URL. Unset: no model name is sent."),
+  env("ATOMIC_AGENT_NEXT_STEP_API_KEY", null, "Bearer key sent to ATOMIC_AGENT_NEXT_STEP_URL. Unset: none."),
+
   // Persona, network and server.
   env("ATOMIC_AGENT_PERSONA", null, "Persona name to use for this process, above every config.json setting."),
   env("ATOMIC_AGENT_OFFLINE", null, "Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process."),
