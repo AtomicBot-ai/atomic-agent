@@ -76,7 +76,8 @@ export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: Runtime
       ...(workspace ? { workspace } : {}),
       session,
       ...(modelMode ? { modelMode } : {}),
-      ...(modelMode?.mode === "cloud" && transport === "native_tools" && deps.resolveToolSchemaTokens
+      // Any model mode: a local native-tools link sends the schemas too (ATO-1678).
+      ...(transport === "native_tools" && deps.resolveToolSchemaTokens
         ? { toolSchemaTokens: deps.resolveToolSchemaTokens(session.id, descriptors) } : {}),
       // Called, not read: main made the descriptors late-bound so a live MCP
       // add/remove is visible without a restart. The preview wants the same

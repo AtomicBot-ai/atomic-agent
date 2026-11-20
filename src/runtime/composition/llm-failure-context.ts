@@ -1,6 +1,6 @@
 import { getConfig, type AtomicAgentConfig } from "../../config/index.js";
 import type { EngineWaitVerdicts } from "../../agent/agent-contract.js";
-import type { LlmFailureContext } from "../../error-reporting/index.js";
+import type { LlmFailureContext, LlmPromptBudget, LlmTruncationCounts } from "../../error-reporting/index.js";
 import { managedPortsOf } from "../../llm/describe-llama-health-failure.js";
 import { readErrnoCode } from "../../llm/errno-code.js";
 import { readFailingLink } from "../../llm/fallback/index.js";
@@ -80,8 +80,14 @@ const defaultDeps: LlmFailureContextDeps = {
 export function describeLlmFailure(
   event: { error: Error; outage?: { waitedMs: number; attempts: number; engineVerdicts?: EngineWaitVerdicts } },
   deps: LlmFailureContextDeps = defaultDeps,
+  /** The failed turn's last built prompt, by part (ATO-1678). */
+  promptBudget?: LlmPromptBudget,
 ): LlmFailureContext {
   const context: LlmFailureContext = {};
+  // Counts only, read before any lookup below can return early.
+  if (promptBudget !== undefined) context.promptBudget = promptBudget;
+  const truncation = readTruncationCounts(event.error);
+  if (truncation !== undefined) context.truncationCounts = truncation;
   if (event.outage) {
     context.outageWaitedMs = event.outage.waitedMs;
     context.outageAttempts = event.outage.attempts;
@@ -180,6 +186,30 @@ function readRequestUrl(error: unknown): string | undefined {
     if (typeof current !== "object" || current === null) return undefined;
     const url = (current as { url?: unknown }).url;
     if (typeof url === "string" && url.length > 0) return url;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * The counts of a truncated reply (`ModelError.truncation`) on the error
+ * or its causes. Only the three numbers are copied, never the message.
+ */
+function readTruncationCounts(error: unknown): LlmTruncationCounts | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_URL_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== "object" || current === null) return undefined;
+    const detail = (current as { truncation?: unknown }).truncation;
+    if (typeof detail === "object" && detail !== null) {
+      const { promptTokens, completionTokens, requestedMaxTokens } = detail as Record<string, unknown>;
+      if (typeof promptTokens === "number" && typeof completionTokens === "number") {
+        return {
+          promptTokens,
+          completionTokens,
+          ...(typeof requestedMaxTokens === "number" ? { requestedMaxTokens } : {}),
+        };
+      }
+    }
     current = (current as { cause?: unknown }).cause;
   }
   return undefined;
