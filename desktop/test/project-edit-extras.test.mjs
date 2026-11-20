@@ -170,7 +170,8 @@ test("main moves the pick when projects:save changes a project's folder, and nam
 
 function load(opts = {}) {
   const ctx = {
-    console, setTimeout: () => 0, localStorage: undefined, document: undefined, window: undefined, navigator: undefined,
+    // URL: project-model.js parses a provider's baseUrl to tell a model on this machine from a cloud one.
+    console, URL, setTimeout: () => 0, localStorage: undefined, document: undefined, window: undefined, navigator: undefined,
     esc: (s) => String(s), ic: (n) => "<" + n + ">", lucideIcon: (n) => "<" + n + ">", chatRow: (r) => "[row " + r.id + "]",
     toasts: [], saved: [], assigned: [], models: [], rendered: 0, opened: [],
   };
