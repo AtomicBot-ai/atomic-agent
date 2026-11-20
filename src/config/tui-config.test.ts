@@ -206,7 +206,7 @@ describe("TUI configuration ownership", () => {
     expect(defaults.verboseSteps).toBe(false);
     expect(parseTuiConfig({}, () => defaults).verboseSteps).toBe(false);
     expect(parseTuiConfig({ verboseSteps: true }, () => defaults).verboseSteps).toBe(true);
-    expect(thrownError(() => parseTuiConfig({ verboseSteps: "yes" }, () => defaults)))
+    expect(thrownError(() => parseTuiConfig({ verboseSteps: "maybe" }, () => defaults)))
       .toBeInstanceOf(ConfigValidationError);
     expect(parseUserConfigFile({ tui: { verboseSteps: true } }).tui.verboseSteps).toBe(true);
     expect(parseUserConfigFile({}).tui.verboseSteps).toBe(false);
