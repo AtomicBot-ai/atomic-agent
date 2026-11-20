@@ -23180,7 +23180,7 @@ function exaKeyTurnHTML(m) {
   const st = exaKeyState('chat');
   st.saved = EXA.savedFor === m.id || st.restartOwed;
   return '<div class="turn tk-step exak-turn" id="exak-' + m.id + '"><div></div><div>'
-    + exaKeyCardHTML(m.keyReq, st, {esc, ic, logo: logoHTML}) + '</div></div>';
+    + exaKeyCardHTML(m.keyReq, st, {esc, ic, logo: typeof logoHTML === 'function' ? logoHTML : null}) + '</div></div>';
 }
 /* Is a key there already? <stateDir>/.env and this app's environment, by name. */
 async function exaKeyRefresh() {
