@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import type { ConversationTurn } from "../../session/conversation-turn.js";
 import { SkillChangeRecorder } from "../curator/skill-change-recorder.js";
 import { skillCuratorPaths } from "../curator/skill-curator-config.js";
@@ -280,7 +280,7 @@ describe("pending drafts (outside content, decided 18.11)", () => {
     expect(await journal()).toEqual([]);
     const [draft] = await listPendingDrafts(root);
     expect(draft).toMatchObject({ kind: "create", name: "sync-with-delete", sources: ["os.web.fetch"], origin: "telegram", sessionId: "s1" });
-    expect(pendingDraftsDir(root).startsWith(skillsDir)).toBe(false);
+    expect(`${pendingDraftsDir(root)}${sep}`.startsWith(`${skillsDir}${sep}`)).toBe(false);
     expect(readFileSync(join(pendingDraftsDir(root), draft!.id, "SKILL.md"), "utf8")).toBe(createContent);
   });
 
