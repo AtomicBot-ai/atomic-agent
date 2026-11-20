@@ -174,7 +174,9 @@ test("main and preload wire the projects IPC and the change event", () => {
     assert.ok(main.includes(`ipcMain.handle("${ch}"`), ch);
   }
   assert.ok(main.includes('send("projects:changed")'));
-  assert.match(main, /client\.chat\(turnId, clean, chatId, proj\.workingDir, instructions, reasoning, turnModel \?\? undefined\)/);
+  // The text sent (@file mentions inline files: `sent`, ATO-1593) and the folder a
+  // worker (ATO-1173) or a chat's own branch (ATO-576) runs in may come first; the project's folder is the fallback.
+  assert.match(main, /client\.chat\(turnId, (?:clean|sent), chatId, (?:workDir \?\? )?(?:inWorktree\?\.dir \?\? )?proj\.workingDir, instructions, reasoning, turnModel \?\? undefined\)/);
   const preload = readFileSync(new URL("../preload/preload.ts", import.meta.url), "utf8");
   for (const name of ["projectsList", "projectsSave", "projectsDelete", "projectsAssign", "onProjectsChanged"]) {
     assert.ok(preload.includes(`${name}:`), name);
