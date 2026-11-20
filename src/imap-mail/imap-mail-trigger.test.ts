@@ -2,12 +2,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
 import { MAIL_TRIGGER_SOURCE } from "../atomic-mail/atomic-mail-trigger-message.js";
 import { MAX_TASKS_PER_POLL } from "../atomic-mail/atomic-mail-trigger.js";
 import type { WebhookConfig } from "../config/index.js";
 import { IMAP_ATTACHMENT_DEFAULTS, type ImapTriggerConfig } from "../config/imap-trigger-config.js";
+import type { LogContext } from "../tracing/structured-logger.js";
 import { FakeImapServer } from "./fake-imap-server-test-helpers.js";
 import { ImapMailTrigger, activeImapBindings, imapAutoStartSenders } from "./imap-mail-trigger.js";
 import { IMAP_TRIGGER_STATE_FILENAME } from "./imap-trigger-state.js";
@@ -100,7 +101,8 @@ describe("ImapMailTrigger (ATO-601)", () => {
   let server: FakeImapServer;
   let bindings: Record<string, WebhookConfig>;
   let created: Array<{ binding: string; userMessage: string; sessionId: string | null; startPaused: boolean }>;
-  let logger: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn>; debug: ReturnType<typeof vi.fn> };
+  type LogFn = Mock<(message: string, context?: LogContext) => void>;
+  let logger: { info: LogFn; warn: LogFn; debug: LogFn };
   let trigger: ImapMailTrigger;
   let t: number;
 
@@ -212,7 +214,7 @@ describe("ImapMailTrigger (ATO-601)", () => {
     server.deliver(rawMail({ auth: "mx.google.com; dmarc=fail header.from=example.com" }));
     await tick();
     expect(created).toHaveLength(0);
-    const reasons = logger.info.mock.calls.filter((c) => c[0] === "mail trigger: message ignored").map((c) => c[1].reason);
+    const reasons = logger.info.mock.calls.filter((c) => c[0] === "mail trigger: message ignored").map((c) => c[1]?.reason);
     expect(reasons[0]).toMatch(/not from mx\.google\.com/);
     expect(reasons[1]).toMatch(/not from mx\.google\.com/);
     expect(reasons[2]).toMatch(/DMARC/);

@@ -104,7 +104,7 @@ describe("parseWebhookMap with source atomic-mail", () => {
 
   it("rejects an unknown source and a schedule on a mail binding", () => {
     expect(() =>
-      parseWebhookMap({ a: { source: "imap", userMessageTemplate: "x" } }, "webhooks"),
+      parseWebhookMap({ a: { source: "pop3", userMessageTemplate: "x" } }, "webhooks"),
     ).toThrow(/http\|atomic-mail/);
     expect(() =>
       parseWebhookMap(
