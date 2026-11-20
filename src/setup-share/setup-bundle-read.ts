@@ -63,6 +63,9 @@ export async function readSetupBundle(archive: string, intoDir: string): Promise
 
   ex.on("entry", (header, stream, next) => {
     const fail = (message: string) => {
+      // `next(err)` destroys the entry stream with the same error; the
+      // read below reports it, so the stream must not throw it again.
+      stream.on("error", () => {});
       stream.resume();
       next(new SetupBundleError(message));
     };
