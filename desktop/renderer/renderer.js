@@ -351,6 +351,7 @@ const CATEGORY_PLAIN = {
   // Categories the agent added since (approval-level.ts APPROVAL_CATEGORY_LABELS).
   http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
   user_question:'ask you a question', session_cross:'read or write in another chat',
+  browser_take_over:'hand you the browser for a step',
 };
 function cleanKeyInput(raw) { return String(raw == null ? '' : raw).replace(KEY_INVISIBLE, '').trim(); }
 /* The TUI's isAsciiOnly (src/llm/provider/openai/ascii-header-guard.ts). */
@@ -4262,6 +4263,7 @@ const APPR_FALLBACK = {
   local_model_restart:'restart the local model', hook_ask:'take a step one of your hooks asked about',
   http_write:'send data in a web request', browser_site_tool:'use a website\u2019s own tool',
   user_question:'ask you a question', session_cross:'read or write in another chat',
+  browser_take_over:'hand you the browser to finish a step',
 };
 /** ATO-473: whether the card offers "Allow in this chat". The agent grants
     the request's command shape (the binary, `git`) for the rest of the chat;
@@ -12632,6 +12634,7 @@ const CATEGORY_LABEL = {
   // Added since (approval-level.ts APPROVAL_CATEGORY_LABELS, verbatim)
   http_write:'HTTP request · sends data', browser_site_tool:'browser · the site\'s own tool',
   user_question:'question for you', session_cross:'another chat · read / send',
+  browser_take_over:'browser · your turn',
 };
 
 /* Calm (S7): why an answer to an approval did not land, in words. The
