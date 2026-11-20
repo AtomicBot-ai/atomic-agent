@@ -202,7 +202,7 @@ describe("device code sign-in", () => {
 
 describe("createChatgptTokenRefresher", () => {
   const memory = (initial: OAuthTokens | null) => {
-    const store = {
+    const store: TokenStore & { current: OAuthTokens | null } = {
       current: initial,
       load: async () => store.current,
       save: async (t: OAuthTokens) => {
@@ -211,7 +211,7 @@ describe("createChatgptTokenRefresher", () => {
       clear: async () => {
         store.current = null;
       },
-    } satisfies TokenStore & { current: OAuthTokens | null };
+    };
     return store;
   };
 
