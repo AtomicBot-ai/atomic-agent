@@ -4036,6 +4036,9 @@ describe("executeStep empty-completion log fields (ATO-1572)", () => {
         }),
         grammar,
         profile: PLAIN_INSTRUCT_PROFILE,
+        toolTransport: "grammar",
+        toolCallAdapter: null,
+        supportsSlotAffinity: false,
         logger,
       },
     );
