@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -432,8 +432,13 @@ describe("subagent.run writes (ATO-1670)", () => {
         approvals: gate,
         approvalRequired: true,
         workingDir: repo,
-        runTurn: async (session) => {
-          writes.push(await writeAs(gate, session.id, repo, join(repo, "src", "a.ts")));
+        runTurn: async (session, userMessage) => {
+          // Each subagent fixes its own declared file (the runner checks
+          // it exists after the task), then tries one outside the scope.
+          const own = join(repo, "src", userMessage.includes("src/c.ts") ? "c.ts" : "a.ts");
+          const verdict = await writeAs(gate, session.id, repo, own);
+          if (verdict === "written") writeFileSync(own, "export const fixed = true;\n");
+          writes.push(verdict);
           writes.push(await writeAs(gate, session.id, repo, join(elsewhere, "b.ts")));
           return {
             session: createEmptySessionState({ id: "s-x", workingDir: repo }),
@@ -675,9 +680,10 @@ describe("subagent.run under the turn's spend ceiling (ATO-1670)", () => {
     expect(c!.error).toBe(
       "not started: the spend budget for this task is reached: $2.00 spent of the $1.50 allowed",
     );
-    // The output closes with the stop line and what to do, as Fusion's does.
+    // The output closes with the stop line and what to do, as Fusion's does
+    // (the summary keeps no blank lines, `compressToolResult`).
     expect(result.summary).toContain(
-      `\n\nStopped: the spend budget for this task is reached: $2.00 spent of the $1.50 allowed. ${SUBAGENT_CEILING_INSTRUCTION}`,
+      `\nStopped: the spend budget for this task is reached: $2.00 spent of the $1.50 allowed. ${SUBAGENT_CEILING_INSTRUCTION}`,
     );
   });
 
