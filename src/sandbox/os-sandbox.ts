@@ -40,7 +40,7 @@
  */
 import { existsSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 export type OsSandboxMode = "off" | "workspace";
 
@@ -358,6 +358,29 @@ const SSH_AGENT_SOCKET_PATTERNS = [
 ];
 
 /**
+ * The folders between a denied folder and a path reopened inside it, the
+ * denied folder included. Resolving the reopened path stats each of them
+ * (Node does, for the script of a server installed under the state dir),
+ * so their metadata is allowed back; listing them and reading anything
+ * else in them stays denied.
+ */
+function reopenAncestors(policy: OsSandboxPolicy): string[] {
+  const out = new Set<string>();
+  for (const { path } of policy.reopen) {
+    for (const denied of policy.denyRead) {
+      if (path === denied || !isInside(path, denied)) continue;
+      let dir = dirname(path);
+      while (isInside(dir, denied)) {
+        out.add(dir);
+        if (dir === denied) break;
+        dir = dirname(dir);
+      }
+    }
+  }
+  return [...out];
+}
+
+/**
  * The Seatbelt profile. Later rules win, so: allow everything, then
  * deny all writes, re-allow the writable roots, deny the secret reads,
  * reopen the folders inside them that must work, hide the ssh-agent
@@ -382,6 +405,11 @@ export function buildSeatbeltProfile(policy: OsSandboxPolicy): string {
     const ops = entry.write ? "file-read* file-write*" : "file-read*";
     lines.push(`(allow ${ops} (subpath (param "O${i}")))`);
   });
+  const ancestors = reopenAncestors(policy);
+  if (ancestors.length > 0) {
+    const literals = ancestors.map((_, i) => `(literal (param "A${i}"))`);
+    lines.push(`(allow file-read-metadata ${literals.join(" ")})`);
+  }
   const sockets = policy.denySockets ?? [];
   if (policy.hideSshAgent === true || sockets.length > 0) {
     // After the reopen rules, so nothing reopens them. Fixed patterns,
@@ -415,6 +443,7 @@ function seatbeltArgs(
   policy.writableRoots.forEach((dir, i) => params.push("-D", `W${i}=${dir}`));
   policy.denyRead.forEach((dir, i) => params.push("-D", `R${i}=${dir}`));
   policy.reopen.forEach((entry, i) => params.push("-D", `O${i}=${entry.path}`));
+  reopenAncestors(policy).forEach((dir, i) => params.push("-D", `A${i}=${dir}`));
   (policy.denySockets ?? []).forEach((path, i) => params.push("-D", `S${i}=${path}`));
   return [...params, "-p", buildSeatbeltProfile(policy), command, ...args];
 }
