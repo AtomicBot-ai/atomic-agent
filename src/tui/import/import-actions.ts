@@ -5,6 +5,7 @@ import type {
   ImportSourceId,
   ImportToggleField,
 } from "./import-panel-state.js";
+import type { ImportFactsAction } from "./import-facts-reducer.js";
 
 /**
  * All reducer actions specific to the Import tab. The orchestrator and
@@ -38,7 +39,9 @@ export type ImportAction =
   /** Preview / execute failed — surface a notice and return to `configure`. */
   | { type: "import_failed"; error: string }
   /** Return to the configure form, keeping the current form buffers. */
-  | { type: "import_reset" };
+  | { type: "import_reset" }
+  /** The facts step (ATO-1627), folded by import-facts-reducer.ts. */
+  | ImportFactsAction;
 
 /** Narrow runtime guard used by the root reducer to dispatch. */
 export function isImportAction(action: {

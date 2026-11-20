@@ -11,6 +11,10 @@ This feature configures imports from other agents and displays preview/execution
 
 [State](import-panel-state.ts), [actions](import-actions.ts), [reducer](import-reducer.ts) and [keys](import-key-bindings.ts) own form/focus and transitions. [Mouse adapter](import-mouse.tsx) focuses clicked rows and dispatches the same actions/callbacks as keyboard input, through the shared mouse registry. Running guards and panel precedence stay intact; the view introduces no independent import executor.
 
+## Facts step (ATO-1627)
+
+The last row of the form opens "Facts about you from a ChatGPT or Claude export" ([state](import-facts-state.ts), [reducer](import-facts-reducer.ts), [keys](import-facts-keys.ts), [view](import-facts-view.tsx)). [ImportFactsRunner](import-facts-runner.ts) runs it in-process through the shared service in `src/import/user-facts` (the desktop uses the same service over HTTP): local model unless the person ticks the cloud row, which names the provider the text goes to; progress "part N of M" with Esc to stop; every candidate ticked with its quote; Enter saves only the ticked ones and writes an undo receipt.
+
 ## Execution and ownership
 
 [ImportOrchestrator](import-orchestrator.ts) routes tab preview/execute through [buildImportRunner](build-importer.ts), resolves options/limit and emits reports/failures. Preview uses execute=false; tab execution honors overwrite. It refreshes task/session projections only after the corresponding executed import. Its onboarding path deliberately writes with overwrite=false and no preview screen; [onboarding import](../onboarding/import-step.ts) remains the owner of that flow's selection.
