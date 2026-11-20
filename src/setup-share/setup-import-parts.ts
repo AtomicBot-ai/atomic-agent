@@ -57,6 +57,14 @@ export function stagedSkillNames(staging: string): string[] {
 }
 
 /**
+ * What a blanked `args` value (the one after `--api-key`) reads as here:
+ * the config parser refuses an empty argument, so an empty one would fail
+ * the whole config write. The server arrives off, and `mustFill` names
+ * the spot, so the person replaces this before turning it on.
+ */
+const MCP_ARG_PLACEHOLDER = "<fill in>";
+
+/**
  * A server someone else set up runs a command on this computer: every
  * imported MCP server arrives switched off, with its own approval and
  * trust settings dropped, so it asks before each call once the person
@@ -75,6 +83,13 @@ export function disarmStagedMcpServers(staging: string): string[] {
     delete server.approval;
     delete server.trust;
     delete server.trustedReadOnlyTools;
+    const transport = server.transport as Record<string, unknown> | undefined;
+    if (transport && Array.isArray(transport.args)) {
+      server.transport = {
+        ...transport,
+        args: transport.args.map((arg: unknown) => (arg === "" ? MCP_ARG_PLACEHOLDER : arg)),
+      };
+    }
     if (typeof server.name === "string") names.push(server.name);
     return server;
   });
