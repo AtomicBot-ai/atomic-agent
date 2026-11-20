@@ -182,7 +182,8 @@ async function bootTui(args: string[] = []): Promise<Booted> {
     ) => {
       props = element.props;
       renderOptions = options;
-      return { waitUntilExit: () => exited, clear: () => {} };
+      // A real Ink app also unmounts; the signal quit calls it (ATO-1614).
+      return { waitUntilExit: () => exited, clear: () => {}, unmount: () => {} };
     },
   );
 
