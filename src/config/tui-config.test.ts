@@ -178,7 +178,7 @@ describe("TUI configuration ownership", () => {
     });
     expect(events).toEqual([
       "raw-theme", "defaults-initial", "raw-busy", "defaults-busy", "raw-mouse",
-      "defaults-busy", "defaults-busy", "defaults-busy", "defaults-busy", "raw-onboarding", "defaults-onboarding", "raw-rail", "raw-notify", "defaults-notify",
+      "defaults-busy", "defaults-busy", "defaults-busy", "defaults-busy", "defaults-busy", "raw-onboarding", "defaults-onboarding", "raw-rail", "raw-notify", "defaults-notify",
     ]);
     expect(parsed.theme).toBe("initial-theme");
     expect(parsed.whileBusySubmit).toBe("queue");
