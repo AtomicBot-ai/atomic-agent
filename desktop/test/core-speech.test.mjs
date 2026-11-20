@@ -79,7 +79,7 @@ test("text is cut into whole sentences under the limit", () => {
 /* A fake Core: answers the audio and engine-build routes, records every call. */
 function fakeCore(over = {}) {
   const calls = [];
-  const state = { active: over.active ?? { tag: "v0.9.3", backend_id: "macos-arm64" }, loaded: over.loaded ?? null, polls: 0 };
+  const state = { active: "active" in over ? over.active : { tag: "v0.9.3", backend_id: "macos-arm64" }, loaded: over.loaded ?? null, polls: 0 };
   const client = {
     instanceId: over.instanceId ?? "core-1",
     async call(path, body, opts = {}) {
