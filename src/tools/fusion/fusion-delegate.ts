@@ -63,6 +63,7 @@ import {
 } from "./task-tree.js";
 import type { FusionRunRecorder, FusionRunStore } from "./run-checkpoint.js";
 import { outcomeRowFor, type FusionOutcomeLog } from "./outcome-log.js";
+import { fanoutPathReport, renderPathLine } from "./critical-path.js";
 import {
   planResume,
   readResumeRequest,
@@ -1236,6 +1237,8 @@ export function buildFusionDelegateTool(
         return expanded;
       };
 
+      // The fan-out's wall clock, for the critical-path line (ATO-1586).
+      const fanoutStartedAt = Date.now();
       let results: WorkerTaskResult[];
       try {
         // A resume starts with what finished before the restart, and with
@@ -1611,6 +1614,20 @@ export function buildFusionDelegateTool(
         maxWorkers,
       );
       const estimateNote = renderEstimateBlock(estimates);
+      // Critical path, total work and idle local slot time (ATO-1586).
+      // Report only; tasks carried over from before a restart did not run
+      // in this fan-out's clock.
+      const carriedIds = new Set(resume?.carried.map((r) => r.id) ?? []);
+      const pathReport = fanoutPathReport({
+        tasks: results.filter((r) => !carriedIds.has(r.id)),
+        dependencies: plan.dependencies,
+        wallMs: Date.now() - fanoutStartedAt,
+        localSlots: Number.isFinite(poolSize)
+          ? Math.min(maxWorkers, poolSize)
+          : null,
+        isLocal: (id) => taskLegs.get(id)?.isWorkerLeg !== false,
+      });
+      const pathNote = renderPathLine(pathReport);
 
       // Where each task ran (ATO-943): the model and role on the row, and
       // a note when it is not the worker leg or not where it asked to be.
@@ -1730,7 +1747,7 @@ export function buildFusionDelegateTool(
             roleSpendUsd > 0
               ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
               : ""
-          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
+          }${pathNote}${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
           details: {
             tasks: results,
             outcome,
@@ -1746,6 +1763,18 @@ export function buildFusionDelegateTool(
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
             ...(roleSpendUsd > 0 ? { roleSpendUsd } : {}),
             ...(estimates.length === 0 ? {} : { estimates }),
+            ...(pathReport.critical.path.length === 0
+              ? {}
+              : {
+                  criticalPath: {
+                    tasks: pathReport.critical.path,
+                    ms: pathReport.critical.ms,
+                    totalWorkMs: pathReport.totalWorkMs,
+                    ...(pathReport.idleLocalSlotMs === null
+                      ? {}
+                      : { idleLocalSlotMs: pathReport.idleLocalSlotMs }),
+                  },
+                }),
             ...(fit.oversized.length === 0
               ? {}
               : { oversizedTasks: fit.oversized }),
