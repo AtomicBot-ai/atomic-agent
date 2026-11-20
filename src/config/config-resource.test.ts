@@ -132,9 +132,11 @@ describe("resource configuration ownership", () => {
       },
       get taps() { events.push("raw.taps"); return []; },
       get clawhub() { events.push("raw.clawhub"); return undefined; },
+      get selfLearning() { events.push("raw.selfLearning"); return undefined; },
     }, () => { events.push("defaults"); return defaults; });
     expect(events).toEqual([
       "raw.budget", "defaults", "raw.disabled", "defaults", "raw.taps", "raw.clawhub", "defaults",
+      "raw.selfLearning", "defaults",
     ]);
     expect(result.disabled).toEqual(["replacement"]);
     expect(result.taps).toEqual([]);
