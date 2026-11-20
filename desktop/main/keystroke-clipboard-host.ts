@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { clipboard, systemPreferences } from "electron";
+import { clipboard, ClipboardItem, systemPreferences } from "electron";
 
 import {
   grabSelectionByCopy,
@@ -20,29 +20,33 @@ import {
  *
  * What is kept and put back is the text, HTML, RTF and image a copy left;
  * anything else on the clipboard (files copied in the Finder, say) is not.
+ * Electron's clipboard is the async one (read() / write(ClipboardItem[])),
+ * so each kept flavour is held as a Blob by its MIME type.
  */
 
-interface Saved {
-  text: string;
-  html: string;
-  rtf: string;
-  image: Electron.NativeImage | null;
-}
+type Saved = Record<string, Blob>;
+
+const kept = (type: string): boolean =>
+  type === "text/plain" || type === "text/html" || type === "text/rtf" || type.startsWith("image/");
 
 export function electronClipboardHost(): ClipboardHost<Saved> {
   return {
-    save: () => {
-      const image = clipboard.readImage();
-      return { text: clipboard.readText(), html: clipboard.readHTML(), rtf: clipboard.readRTF(), image: image.isEmpty() ? null : image };
+    save: async () => {
+      const saved: Saved = {};
+      for (const item of await clipboard.read()) {
+        for (const type of item.types) {
+          if (!kept(type) || saved[type]) continue;
+          try {
+            const blob = await (item.getType(type) as Promise<Blob>);
+            if (blob instanceof Blob) saved[type] = blob;
+          } catch { /* a flavour that cannot be read is not kept */ }
+        }
+      }
+      return saved;
     },
-    restore: (s) => {
-      if (!s.text && !s.html && !s.rtf && !s.image) { clipboard.clear(); return; }
-      clipboard.write({
-        ...(s.text ? { text: s.text } : {}),
-        ...(s.html ? { html: s.html } : {}),
-        ...(s.rtf ? { rtf: s.rtf } : {}),
-        ...(s.image ? { image: s.image } : {}),
-      });
+    restore: async (s) => {
+      if (Object.keys(s).length === 0) { clipboard.clear(); return; }
+      await clipboard.write([new ClipboardItem(s)]);
     },
     readText: () => clipboard.readText(),
     writeText: (text) => clipboard.writeText(text),
@@ -111,7 +115,7 @@ export async function readSelectedText(): Promise<string | null> {
 /** `text` typed into the app in front by a paste. */
 export function pasteIntoFrontApp(text: string): Promise<PasteResult> {
   if (!keystrokesAllowed(false)) {
-    clipboard.writeText(text);
+    void clipboard.writeText(text).catch(() => undefined);
     return Promise.resolve({ pasted: false, reason: "no-keystroke" });
   }
   return pasteByKeystroke(electronClipboardHost(), { press: pressKeys, sleep }, text);
