@@ -104,7 +104,7 @@ reply-pending ::= reply-hard reply-chars | reply-soft reply-pending
 reply-hard ::= [^"\\\x00-\x1f :(\[{=,] | "\\" escape
 reply-soft ::= [ :(\[{=,]
 tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
-tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | sessions-tool | vision-tool | image-tool | audio-tool | fusion-tool | verify-tool | plan-tool | canvas-tool | mcp-native-tool
+tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | sessions-tool | vision-tool | image-tool | audio-tool | fusion-tool | files-tool | verify-tool | plan-tool | canvas-tool | mcp-native-tool
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" | "debug" | "extract" | "act" ) "\""
 os-tool ::= "\"os." ( "fs.read_document" | "fs.docx" | "fs.xlsx" | "fs.trash" | "fs.locate_project" | "fs.code_map" | "code.search" | "code.rewrite" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "fs.write_pptx" | "web.crawl" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" | "screen.point" | "screen.capture" | "screen.click" | "screen.type" | "screen.key" ) "\""
 discovery-tool ::= "\"skill.run_script\""
@@ -135,6 +135,10 @@ verify-tool ::= "\"verify." ( "syntax" | "run" ) "\""
 # The live task plan. The prompt tells the model to keep it for any work of
 # three steps or more, so a local model has to be able to spell the name.
 plan-tool ::= "\"plan.update\""
+# Search over the folders the person chose to index (My files, ATO-1621);
+# asked for in plain words ("find the contract in my files"), so a local
+# model has to be able to spell it.
+files-tool ::= "\"files.search\""
 # A chart or page shown in the chat (ATO-1137); asked for in plain words
 # ("show me a chart of ..."), so a local model has to be able to spell it.
 canvas-tool ::= "\"canvas.render\"" | "\"ask_user\""

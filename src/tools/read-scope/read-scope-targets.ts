@@ -78,6 +78,15 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
         ...(Array.isArray(args.paths) ? args.paths.map(nonEmpty) : []),
       ].filter((path): path is string => path !== undefined),
   ],
+  // A `folder` names where to search; without it the search covers only
+  // the folders the person added in My files themselves (ATO-1621).
+  [
+    "files.search",
+    (args) => {
+      const folder = nonEmpty(args.folder);
+      return folder === undefined ? [] : [folder];
+    },
+  ],
   // The clip is read from disk and sent to the model (ATO-497).
   ["audio.listen", pathArg],
   [

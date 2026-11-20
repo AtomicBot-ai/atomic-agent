@@ -23,6 +23,7 @@ import type { ApprovalLevel } from "../approval/approval-level.js";
 import type { ApprovalHandler } from "../approval/approval-router.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
+import type { FileIndexApi } from "../tools/files/index.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type { ProviderRegistry } from "../llm/provider/index.js";
 import type { ReasoningEffort } from "../llm/provider/completion-types.js";
@@ -743,6 +744,13 @@ export interface AgentRuntime {
    * older hosts need not implement it.
    */
   reconnectMemoryEmbeddings?(): Promise<MemoryEmbeddingReconnect>;
+  /**
+   * The "My files" index (ATO-1621): the folders the person added and
+   * the background indexing of them, behind `/api/files/*` and
+   * `files.search`. Optional so test doubles and older hosts need not
+   * have one; the routes answer 501 without it.
+   */
+  fileIndex?: FileIndexApi;
   /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to

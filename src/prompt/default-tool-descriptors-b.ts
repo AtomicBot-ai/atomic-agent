@@ -172,6 +172,17 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   {
+    name: "files.search",
+    summary:
+      "Search the folders the person added in My files (PDF, Word, slides, sheets, text). Each hit has the file, PDF page, a snippet and a `cite` link: paste `cite` exactly as given after what you took from it.",
+    argsSchema: "{ query: string, folder?: string /* an added folder */, topK?: number /* 1..20 */ }",
+    examples: [
+      '{"query":"notice period termination"}',
+      '{"query":"Q3 revenue","folder":"/Users/me/Reports","topK":5}',
+    ],
+    tier: "rare",
+  },
+  {
     name: "tasks.schedule",
     summary: "Schedule a one-shot task; current session or newSession.",
     argsSchema:

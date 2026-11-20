@@ -215,6 +215,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "Search past chats by their words, then read around a hit.",
     tier: RARE,
   },
+  "files.search": {
+    summary: "Search My files folders; paste each hit's `cite` as is.",
+    tier: RARE,
+  },
   "tasks.schedule": { summary: "Schedule a one-shot task.", tier: RARE },
   "tasks.cron": { summary: "Schedule a recurring task.", tier: RARE },
   "tasks.list": { summary: "List tasks.", tier: RARE },
