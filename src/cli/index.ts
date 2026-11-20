@@ -33,7 +33,7 @@ import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
 import { loginCommand, logoutCommand } from "./login-command.js";
 import { whisperCommand } from "./whisper-command.js";
-import { tuiCommand } from "../tui/index.js";
+import { openUrlInBrowser, tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { applyOfflineModeFromConfigFile } from "./offline-from-config.js";
 import { getAppVersion } from "../version.js";
@@ -202,7 +202,7 @@ const COMMANDS: CommandDescriptor[] = [
   {
     name: "login",
     summary: "Experimental: sign in with a ChatGPT plan without the Codex CLI (login chatgpt [--device] | status)",
-    run: loginCommand,
+    run: (args) => loginCommand(args, { openUrl: openUrlInBrowser }),
   },
   {
     name: "logout",
