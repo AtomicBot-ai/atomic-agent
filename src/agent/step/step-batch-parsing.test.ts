@@ -127,12 +127,16 @@ describe("parseStepBatch on a completion served without the grammar (ATO-1675)",
     expect(parsed.ok).toBe(false);
   });
 
-  it("sends prose with a fenced {name, arguments} call that did not validate to repair", () => {
+  it("reads prose with a fenced {name, arguments} call as that call, never as a reply", () => {
+    // A well-formed call to an unknown tool is the call, as on the
+    // grammar path: the step answers it with the unknown-tool result
+    // (`validateBatch` leaves unregistered names to dispatch).
     const { parsed } = run(
       'Reading.\n```json\n{"name":"os.fs.reed","arguments":{"path":"a.ts"}}\n```',
       { grammarSkipped: true },
     );
-    expect(parsed.ok).toBe(false);
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.batch.calls).toEqual([{ tool: "os.fs.reed", args: { path: "a.ts" } }]);
   });
 });
 
