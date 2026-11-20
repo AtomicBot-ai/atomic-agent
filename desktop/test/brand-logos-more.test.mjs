@@ -33,7 +33,7 @@ const ctx = createContext({ ic: (n) => '<i:' + n + '>', esc: (s) => String(s) })
 runInContext([
   constBlock('LOGO_FILES'), constBlock('PROVIDER_LOGO_KEYS'), constLine('SETTINGS_PANE_LOGOS'),
   fn('modelLogoKey'), fn('providerLogoKey'), fn('logoHTML'), fn('markFallbackHTML'), fn('modelMark'), fn('providerMark'),
-  'this.LOGO_FILES = LOGO_FILES; this.SETTINGS_PANE_LOGOS = SETTINGS_PANE_LOGOS;',
+  'this.LOGO_FILES = LOGO_FILES; this.PROVIDER_LOGO_KEYS = PROVIDER_LOGO_KEYS; this.SETTINGS_PANE_LOGOS = SETTINGS_PANE_LOGOS;',
 ].join('\n'), ctx);
 const H = ctx;
 const img = (html) => (String(html).match(/src="logos\/([^"]+)"/) || [])[1] || '';

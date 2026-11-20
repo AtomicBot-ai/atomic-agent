@@ -112,11 +112,12 @@ test('a Fusion worker\'s feed line and the new-model card wear the model\'s mark
   const c = helpers({ modelBlurb: () => 'A small model', modelSizeWord: () => '5 GB', llmModelName: (m) => m.name });
   runInContext(fn('sysGlyph') + fn('modelSpotlightCardHTML'), c);
   assert.equal(img(c.sysGlyph({ fusion: true, fzModel: 'qwen3-8b' })), 'qwen-color.svg');
-  assert.equal(c.sysGlyph({ fusion: true, fzModel: 'llama-3b' }), '<span class="sys-ic"><i:fusion></span>', 'no mark: the Fusion glyph');
+  // ATO-1634: Llama wears Meta's mark now, so the markless model is OLMo.
+  assert.equal(c.sysGlyph({ fusion: true, fzModel: 'olmo-2-1b' }), '<span class="sys-ic"><i:fusion></span>', 'no mark: the Fusion glyph');
   assert.equal(c.sysGlyph({ fusion: true }), '<span class="sys-ic"><i:fusion></span>');
   assert.match(c.sysGlyph({ fusion: true, fzModel: 'qwen3-8b', sev: 'err' }), /<i:alert>/, 'a failure keeps its red glyph');
   assert.equal(img(c.modelSpotlightCardHTML({ id: 'gemma4-e4b', name: 'Gemma 4 E4B' })), 'google.svg');
-  assert.match(c.modelSpotlightCardHTML({ id: 'llama-3b', name: 'Llama 3B' }), /dlc-ttl"><i:download>/);
+  assert.match(c.modelSpotlightCardHTML({ id: 'olmo-2-1b', name: 'OLMo 2 1B' }), /dlc-ttl"><i:download>/);
   // The live strip draws the same mark beside each worker's line.
   assert.match(source, /'<span class="fzdot"><\/span>' \+ logoHTML\(modelLogoKey\(w\.model\), 'xs', 'cpu'\)/);
   assert.match(source, /fusion:true, fzModel: e\.model \|\| null, text: esc\(fzWorkerLine\(e\)\)/);
