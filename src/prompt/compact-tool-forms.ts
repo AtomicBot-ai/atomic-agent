@@ -116,8 +116,8 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.fs.read_document": {
     summary: "Text from PDF, Office, ODF, RTF, EPUB, HTML or email files. Not for source code: use os.fs.read.",
   },
-  "os.fs.docx": { summary: "Create, append to or find-and-replace in a Word .docx (may require approval).", tier: RARE },
-  "os.fs.xlsx": { summary: "Create, write cells and formulas in, or read an Excel .xlsx (writes may require approval).", tier: RARE },
+  "os.fs.docx": { summary: "Create, append to (lists, tables, pictures) or find-and-replace in a Word .docx, optionally as tracked changes (may require approval).", tier: RARE },
+  "os.fs.xlsx": { summary: "Create, write cells and formulas in, chart, or read an Excel .xlsx (writes may require approval).", tier: RARE },
   "os.fs.archive.list": { summary: "List archive entries.", tier: RARE },
   "os.fs.archive.read_entry": { summary: "Read one archive entry.", tier: RARE },
   "os.fs.archive.extract": { summary: "Extract an archive (may require approval).", tier: RARE },
