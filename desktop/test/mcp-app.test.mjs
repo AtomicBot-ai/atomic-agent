@@ -53,7 +53,8 @@ test("the frame's mcp_app is checked: a ui:// page of an MCP tool's server, or n
   assert.equal(M.mcpAppFromToolResult({ tool: "mcp.weather.forecast", status: "ok", mcpApp: APP }), null);
   // Not an MCP tool, or not ok: nothing.
   assert.equal(M.mcpAppFromToolResult(frame(APP, "canvas.render")), null);
-  assert.equal(M.mcpAppFromToolResult(frame(APP, undefined)), null);
+  // No tool name at all (frame(APP, undefined) would take the default name).
+  assert.equal(M.mcpAppFromToolResult({ status: "ok", mcp_app: APP }), null);
   assert.equal(M.mcpAppFromToolResult({ ...frame(APP), status: "error" }), null);
   assert.equal(M.mcpAppFromToolResult(frame([APP])), null);
   assert.equal(M.mcpAppFromToolResult({}), null);
