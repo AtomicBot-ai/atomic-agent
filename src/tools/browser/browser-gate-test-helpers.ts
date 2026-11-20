@@ -77,10 +77,10 @@ export class GateBackend implements BrowserBackend {
     this.snapshots += 1;
     return { url: this.url, title: "Page", text: "- secret page text [ref=e1]", digest: "d", refs: ["e1"] };
   }
-  async hasRef(): Promise<boolean> {
+  async hasRef(_ref: string): Promise<boolean> {
     return this.refPresent;
   }
-  async describeRef(): Promise<RefDescription | null> {
+  async describeRef(_ref: string): Promise<RefDescription | null> {
     if (this.describeThrows) throw new Error("evaluate timed out");
     return this.element;
   }
