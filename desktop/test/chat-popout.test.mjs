@@ -188,7 +188,7 @@ test("a chat window that lost its chat sends nothing", () => {
 test("the row menu offers Open in new window for a stored chat only", () => {
   assert.ok(!chatMenuItems({}).some((i) => i.verb === "popout"));
   const items = chatMenuItems({ folders: true, exportable: true, windowable: true });
-  assert.deepEqual(items.map((i) => i.verb), ["pin", "unread", "rename", "fpick", "export", "popout", "delask"]);
+  assert.deepEqual(items.map((i) => i.verb), ["pin", "unread", "rename", "fpick", "export", "popout", "houtopen", "share", "recipe:save", "delask"]);
   const it = items.find((i) => i.verb === "popout");
   assert.equal(it.label, "Open in new window");
   assert.ok(!it.danger);

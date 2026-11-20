@@ -144,7 +144,9 @@ test('the IPC channel is agent:shareSession', () => {
 
 test('the row menu has Share chat… for a stored chat only, after Export…', () => {
   const verbs = chatMenuItems({ exportable: true }).map((i) => i.verb);
-  assert.equal(verbs.indexOf('share'), verbs.indexOf('export') + 1);
+  // Hand off… (ATO-1014) sits between them; Share chat… still follows Export… in the stored-chat group.
+  assert.ok(verbs.indexOf('export') >= 0 && verbs.indexOf('share') > verbs.indexOf('export'));
+  assert.ok(verbs.indexOf('share') < verbs.indexOf('delask'));
   assert.ok(!chatMenuItems({}).some((i) => i.verb === 'share'));
 });
 
