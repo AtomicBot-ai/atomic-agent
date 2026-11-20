@@ -1043,6 +1043,19 @@ describe("/why and /verbose (ATO-34)", () => {
     expect(second.find((a) => a.type === "verbose_steps_set")?.on).toBe(false);
     expect(run("/verbose off", off).find((a) => a.type === "verbose_steps_set")?.on).toBe(false);
   });
+
+  it("/verbose asks to persist the choice in tui.verboseSteps", () => {
+    const onVerboseStepsPersistRequested = vi.fn();
+    const push = () => {};
+    const off = createInitialTuiState(fakeSession());
+    runSlashCommand("/verbose", off, push, stubCallbacks({ onVerboseStepsPersistRequested }));
+    expect(onVerboseStepsPersistRequested).toHaveBeenLastCalledWith(true);
+    const on = { ...off, verboseSteps: true };
+    runSlashCommand("/verbose", on, push, stubCallbacks({ onVerboseStepsPersistRequested }));
+    expect(onVerboseStepsPersistRequested).toHaveBeenLastCalledWith(false);
+    runSlashCommand("/verbose on", on, push, stubCallbacks({ onVerboseStepsPersistRequested }));
+    expect(onVerboseStepsPersistRequested).toHaveBeenLastCalledWith(true);
+  });
 });
 
 describe("@ file mentions on submit (ATO-665)", () => {

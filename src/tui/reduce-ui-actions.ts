@@ -569,6 +569,8 @@ export function reduceUiAction(
         // The checklist belongs to the thread on screen too (ATO-486).
         plan: action.plan ?? null,
         sessionUsage: action.sessionUsage ?? null,
+        // Per-step spend belongs to the turn on the thread just left.
+        stepSpend: {},
         messages: [...action.messages],
         // Rebuilt from the session: nothing of it is hidden any more.
         clearedQuestions: 0,
