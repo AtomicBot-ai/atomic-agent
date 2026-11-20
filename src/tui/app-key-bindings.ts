@@ -1,5 +1,6 @@
 import { handleUpdateKey } from "./update/update-key-bindings.js";
 import { handleProjectTrustKey } from "./project-trust/project-trust-key-bindings.js";
+import { handleAppendLocalKey } from "./append-local-question/append-local-question-key-bindings.js";
 import { CODING_MODES, type CodingMode } from "./coding-mode/coding-mode.js";
 import type { IssueReportLevel } from "./issue-report/report-levels.js";
 import type { IssueReportToggle } from "./issue-report/issue-report-state.js";
@@ -119,6 +120,8 @@ export interface AppKeyCallbacks {
   onUpdateConfirmed?(): void;
   /** Optional — the startup folder trust question was answered: `y` trusts, `n` declines (ATO-298). */
   onProjectTrustAnswered?(answer: "trust" | "decline"): void;
+  /** Optional — the startup last-resort fallback question was answered: `y` keeps, `n` turns off (ATO-1461). */
+  onAppendLocalAnswered?(answer: "keep" | "off"): void;
   /**
    * Optional — called when the user presses any key after a self-update
    * settled (`updateStatus === "done"`) to re-exec the freshly-installed
@@ -439,6 +442,11 @@ export function handleAppKey(
   // The folder trust question claims only y / n / Esc, ahead of the
   // update offer: it decides what the very first turn may load.
   if (state.projectTrustPrompt && handleProjectTrustKey(input, key, ctx)) {
+    return true;
+  }
+  // The last-resort fallback question (ATO-1461) waits behind the trust
+  // question and claims only y / k / n / t / Esc the same way.
+  if (!state.projectTrustPrompt && state.appendLocalPrompt && handleAppendLocalKey(input, key, ctx)) {
     return true;
   }
   // The update offer claims only y / n / Esc; anything else (Ctrl+C in

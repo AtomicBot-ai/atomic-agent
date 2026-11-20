@@ -987,6 +987,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           restartRequested = true;
         },
         onProjectTrustAnswered: (answer) => void orchestrator.projectTrust.answer(answer),
+        onAppendLocalAnswered: (answer) => orchestrator.appendLocalQuestion.answer(answer),
         onMouseSupportRequested: setMouseEnabled,
         // A drag that started on dead content (no target claimed the
         // press) — the terminal-agnostic selection trigger. Same
@@ -1038,6 +1039,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // Project skills and AGENTS.md/CLAUDE.md files of the opened folder load
   // only after the operator trusted them (ATO-298); ask once if any are new.
   orchestrator.projectTrust.check();
+  // The old "local model as last resort" switch is still on (ATO-1461):
+  // ask once whether to keep it; the answer is remembered.
+  orchestrator.appendLocalQuestion.check();
 
   // A `.env` that exists but could not be read means stored API keys were
   // silently dropped for this run (#59). The loader already wrote to

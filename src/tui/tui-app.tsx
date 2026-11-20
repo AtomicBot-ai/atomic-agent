@@ -131,6 +131,7 @@ import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./tasks/tasks-cancel-modal.js";
 import { UpdateModal } from "./update/update-modal.js";
 import { ProjectTrustModal } from "./project-trust/project-trust-modal.js";
+import { AppendLocalQuestionModal } from "./append-local-question/append-local-question-modal.js";
 import { UpdateIndicator } from "./update/update-indicator.js";
 import { UpdateRestartPrompt } from "./update/update-restart-prompt.js";
 import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
@@ -913,6 +914,8 @@ export interface TuiAppCallbacks {
   onUpdateConfirmed?(): void;
   /** Startup folder trust question answered (ATO-298). */
   onProjectTrustAnswered?(answer: "trust" | "decline"): void;
+  /** Startup last-resort fallback question answered (ATO-1461). */
+  onAppendLocalAnswered?(answer: "keep" | "off"): void;
   /** Self-update settled: user pressed a key to re-exec the new binary. */
   onUpdateRestart?(): void;
   /**
@@ -1471,6 +1474,8 @@ export function TuiApp({
     state.updateStatus !== "done" &&
     // The folder trust question claims y / n / Esc the same way (ATO-1481).
     state.projectTrustPrompt === null &&
+    // So does the last-resort fallback question (ATO-1461).
+    state.appendLocalPrompt === null &&
     // When the slash-command palette is open the editor must hold focus
     // regardless of the active debug tab so the operator can type the
     // command and drive ↑↓ / tab / enter selection. Panels that open the
@@ -2826,6 +2831,11 @@ export function TuiApp({
                 {state.projectTrustPrompt ? (
                   <Box flexShrink={0}>
                     <ProjectTrustModal prompt={state.projectTrustPrompt} />
+                  </Box>
+                ) : null}
+                {!state.projectTrustPrompt && state.appendLocalPrompt ? (
+                  <Box flexShrink={0}>
+                    <AppendLocalQuestionModal prompt={state.appendLocalPrompt} />
                   </Box>
                 ) : null}
                 {state.updatePrompt ? (

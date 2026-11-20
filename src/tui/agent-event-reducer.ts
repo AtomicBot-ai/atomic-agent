@@ -531,6 +531,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, projectTrustPrompt: action.prompt };
     case "project_trust_closed":
       return { ...state, projectTrustPrompt: null };
+    case "append_local_asked":
+      return { ...state, appendLocalPrompt: action.prompt };
+    case "append_local_closed":
+      return { ...state, appendLocalPrompt: null };
     case "update_started":
       return appendFeed(
         { ...state, updatePrompt: null, updateStatus: "running" },
