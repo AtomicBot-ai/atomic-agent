@@ -4,6 +4,7 @@ import {
   SubscriptionCliAuthError,
   SubscriptionCliNotInstalledError,
 } from "../provider/subscription-cli/subscription-cli-errors.js";
+import { ChatgptSignInRequiredError } from "../provider/subscription-oauth/oauth-errors.js";
 import { classifyFailure } from "./classify-failure.js";
 import {
   failureVerdict,
@@ -145,7 +146,8 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
     chain.some(
       (l) =>
         l instanceof SubscriptionCliNotInstalledError ||
-        l instanceof SubscriptionCliAuthError,
+        l instanceof SubscriptionCliAuthError ||
+        l instanceof ChatgptSignInRequiredError,
     )
   ) {
     return "provider_setup";

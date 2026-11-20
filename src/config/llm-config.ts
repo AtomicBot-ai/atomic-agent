@@ -12,7 +12,12 @@ import {
   parseLlmRunModeConfig,
   type UserLlmRunModeConfig,
 } from "./llm-run-mode-config.js";
-import { SUBSCRIPTION_CLI_KIND } from "./provider-auth-mode.js";
+import {
+  SUBSCRIPTION_CLI_KIND,
+  SUBSCRIPTION_OAUTH_KIND,
+  SUBSCRIPTION_OAUTH_SERVICES,
+  type SubscriptionOAuthService,
+} from "./provider-auth-mode.js";
 
 export type UserLlmToolTransport = "auto" | "grammar" | "native_tools";
 export const LLM_TOOL_TRANSPORTS: readonly UserLlmToolTransport[] = ["auto", "grammar", "native_tools"];
@@ -41,6 +46,15 @@ export type UserSubscriptionCliOptions = {
   streaming?: boolean;
   /** Passed through as the CLI's own spend ceiling where it has one. */
   maxBudgetUsd?: number;
+};
+
+/**
+ * EXPERIMENTAL (ATO-1448): settings for a `subscription-oauth` entry.
+ * Only which service it signs in to; the tokens live in
+ * `<stateDir>/auth/<service>.json`, never here.
+ */
+export type UserSubscriptionOAuthOptions = {
+  service: SubscriptionOAuthService;
 };
 
 export type UserLlmProviderEntry = {
@@ -169,6 +183,8 @@ export type UserLlmProviderEntry = {
   userModels?: ReadonlyArray<UserModelEntry>;
   /** Present only on `subscription-cli` entries. */
   subscriptionCli?: UserSubscriptionCliOptions;
+  /** Only on `subscription-oauth` entries; absent reads as ChatGPT. */
+  subscriptionOauth?: UserSubscriptionOAuthOptions;
 };
 
 /**
@@ -294,6 +310,7 @@ const PROVIDER_KINDS = new Set([
   "aimlapi",
   "gemini",
   SUBSCRIPTION_CLI_KIND,
+  SUBSCRIPTION_OAUTH_KIND,
 ]);
 
 function parseProviderId(raw: unknown, field: string): string {
@@ -512,7 +529,32 @@ export function parseLlmProviderEntry(
       obj.subscriptionCli,
       `${field}.subscriptionCli`,
     ),
+    subscriptionOauth: parseSubscriptionOAuthOptions(
+      obj.subscriptionOauth,
+      `${field}.subscriptionOauth`,
+    ),
   };
+}
+
+function parseSubscriptionOAuthOptions(
+  raw: unknown,
+  field: string,
+): UserSubscriptionOAuthOptions | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const service = (raw as Record<string, unknown>).service;
+  if (
+    typeof service !== "string" ||
+    !(SUBSCRIPTION_OAUTH_SERVICES as readonly string[]).includes(service)
+  ) {
+    throw new ConfigValidationError(
+      `${field}.service`,
+      `expected one of ${SUBSCRIPTION_OAUTH_SERVICES.join(", ")}`,
+    );
+  }
+  return { service: service as SubscriptionOAuthService };
 }
 
 function modelModeField(raw: unknown, field: string, fromFile: boolean): { modelMode?: ModelMode } {

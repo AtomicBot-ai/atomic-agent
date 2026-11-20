@@ -965,7 +965,7 @@ export function registerRuntimeFusionAndReadScope(input: {
               local:
                 entry !== undefined &&
                 (entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url)),
-              plan: entry?.kind === "subscription-cli",
+              plan: entry?.kind === "subscription-cli" || entry?.kind === "subscription-oauth",
             });
           } catch {
             // The readout never takes an escalation down.
