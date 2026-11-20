@@ -200,8 +200,23 @@ export interface McpToolMeta {
    * without re-fetching.
    */
   annotations?: Record<string, unknown>;
+  /**
+   * MCP Apps (ATO-1135): the tool's `_meta.ui` from discovery, parsed by
+   * `parseToolUiMeta` (mcp-apps.ts). `resourceUri` names the `ui://`
+   * page the host fetches after a call; `visibility` says who may call
+   * the tool. Absent for a tool without UI.
+   */
+  ui?: McpToolUiMeta;
   /** Computed resource class — drives batching / approval behaviour. */
   resourceClass: ResourceClass;
+}
+
+/** A tool's MCP Apps metadata (`_meta.ui`), see `McpToolMeta.ui`. */
+export interface McpToolUiMeta {
+  /** The `ui://` resource holding the tool's page. */
+  resourceUri?: string;
+  /** Who may call the tool; absent means `["model", "app"]`. */
+  visibility?: Array<"model" | "app">;
 }
 
 /** Neutral descriptor of a resource exposed by an MCP server. */

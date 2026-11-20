@@ -228,6 +228,24 @@ describe("tool_result over SSE", () => {
     for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("screen_marks");
   });
 
+  it("carries an ok MCP tool's app page as mcp_app, and nothing otherwise (ATO-1135)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const mcpApp = { resourceUri: "ui://weather/view.html", mimeType: "text/html;profile=mcp-app", html: "<p>hi</p>" };
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "mcp.weather.get_forecast", summary: "Sunny", details: { mcpApp } }), 0));
+    hook(executed(result({ tool: "mcp.weather.get_forecast", status: "error", details: { mcpApp } }), 1));
+    hook(executed(result({ tool: "os.fs.write", details: { mcpApp } }), 2));
+    hook(executed(result({ tool: "mcp.weather.get_forecast", details: { mcpApp: { ...mcpApp, resourceUri: "https://x/y" } } }), 3));
+    hook(executed(result({ tool: "mcp.weather.get_forecast", details: { mcpApp: { ...mcpApp, html: "" } } }), 4));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.mcp_app).toEqual(mcpApp);
+    expect(sent[0]!.summary).toBe("Sunny");
+    for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("mcp_app");
+  });
+
   it("carries an ok write/edit's diffstat with its path, and nothing otherwise (ATO-1187)", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));

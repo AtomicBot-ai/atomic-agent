@@ -135,6 +135,7 @@ export const INTERNAL_ENV_NAMES: ReadonlyMap<string, string> = new Map([
   ["ATOMIC_AGENT_GIT_CREDENTIAL", "set only on the git child process to pass the GitHub token"],
   ["ATOMIC_AGENT_SURFACE", "set by the desktop app on the agent it starts"],
   ["ATOMIC_AGENT_DESKTOP_VERSION", "set by the desktop app on the agent it starts"],
+  ["ATOMIC_AGENT_MCP_APPS_UI", "set by the desktop app on the agent it starts, which draws MCP Apps pages"],
   ["ATOMIC_AGENT_INSTALL_CHANNEL", "set by installers for analytics"],
   ["ATOMIC_AGENT_INSTALL_ID_FILE", "the shared analytics install id file, passed through by the desktop app"],
   ["ATOMIC_AGENT_TEAM", "marks team test runs in analytics"],
