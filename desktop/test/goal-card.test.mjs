@@ -220,7 +220,8 @@ test('the window loads the card before renderer.js and draws it under the plan',
   assert.ok(card > 0 && card < actions && actions < html.indexOf('<script src="renderer.js"'));
   assert.ok(html.includes('href="css/goal-card.css"'));
   const r = src('../renderer/renderer.js');
-  assert.match(r, /planBarHTML\(S\.sessionId, \{esc, ic\}\) \+ goalBits \+ q/);
+  // ATO-1152: the /btw card sits between the goal and the queue.
+  assert.match(r, /planBarHTML\(S\.sessionId, \{esc, ic\}\) \+ goalBits\s*\+ \(typeof btwCardHTML === 'function' \? btwCardHTML\(\{esc, ic, md: renderMarkdown\}\) : ''\) \+ q/);
   assert.match(r, /ev\.kind === 'goal_progress'/);
   assert.match(r, /goalRestore\(id, data\.goal, live\)/);
   assert.match(r, /goalTurnEnded\(sid\)/);
