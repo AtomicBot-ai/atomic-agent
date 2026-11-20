@@ -31,8 +31,9 @@ import { dataCommand } from "./data-command.js";
 import { idCommand } from "./id-command.js";
 import { pushCommand } from "./push-command.js";
 import { providersCommand } from "./providers-command.js";
+import { loginCommand, logoutCommand } from "./login-command.js";
 import { whisperCommand } from "./whisper-command.js";
-import { tuiCommand } from "../tui/index.js";
+import { openUrlInBrowser, tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { applyOfflineModeFromConfigFile } from "./offline-from-config.js";
 import { getAppVersion } from "../version.js";
@@ -197,6 +198,16 @@ const COMMANDS: CommandDescriptor[] = [
     name: "providers",
     summary: "Check the Claude Code / Codex subscription CLIs: installed, signed in, version (status)",
     run: providersCommand,
+  },
+  {
+    name: "login",
+    summary: "Experimental: sign in with a ChatGPT plan without the Codex CLI (login chatgpt [--device] | status)",
+    run: (args) => loginCommand(args, { openUrl: openUrlInBrowser }),
+  },
+  {
+    name: "logout",
+    summary: "Experimental: delete the stored ChatGPT sign-in (logout chatgpt)",
+    run: logoutCommand,
   },
   {
     name: "whisper",
