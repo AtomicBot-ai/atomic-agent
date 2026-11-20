@@ -103,8 +103,8 @@ describe("computeSplashFit", () => {
       wordmark: false,
       tagline: false,
       // 12 rows − 3 for the mark − 1 margin − 1 slack leaves seven rows:
-      // every tip, `/theme` included.
-      tipCount: SPLASH_TIPS.length,
+      // every tip but the last, `/theme`, the first one a short window drops.
+      tipCount: SPLASH_TIPS.length - 1,
       labelWidth: 10,
       descriptions: "short",
     });
