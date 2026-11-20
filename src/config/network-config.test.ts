@@ -70,7 +70,7 @@ describe("network.proxy (ATO-87)", () => {
     expect(() => parse({ url: "http://p:8080/path" })).toThrow(/scheme:\/\/host:port/);
     expect(() => parse({ url: 42 })).toThrow(/network\.proxy\.url/);
     expect(() => parse({ noProxy: [1] })).toThrow(/network\.proxy\.noProxy/);
-    expect(() => parse("http://p:1")).toThrow(/network\.proxy must be an object/);
+    expect(() => parse("http://p:1")).toThrow(/network\.proxy: must be an object/);
   });
 
   it("never repeats the password in an error", () => {
