@@ -65,28 +65,29 @@ export function createNetworkDefaults(): NetworkConfig {
  */
 export function parseProxyUrl(raw: unknown, field: string): string {
   if (typeof raw !== "string" || raw.trim().length === 0) {
-    throw new ConfigValidationError(`${field} must be a proxy URL like http://127.0.0.1:8080`);
+    throw new ConfigValidationError(field, "must be a proxy URL like http://127.0.0.1:8080");
   }
   const value = raw.trim();
   let url: URL;
   try {
     url = new URL(value);
   } catch {
-    throw new ConfigValidationError(`${field} is not a URL (expected http://host:port)`);
+    throw new ConfigValidationError(field, "is not a URL (expected http://host:port)");
   }
   if (url.protocol.startsWith("socks")) {
     throw new ConfigValidationError(
-      `${field}: SOCKS proxies are not supported; use the HTTP port of your proxy or VPN client`,
+      field,
+      "SOCKS proxies are not supported; use the HTTP port of your proxy or VPN client",
     );
   }
   if (!PROXY_SCHEMES.includes(url.protocol)) {
-    throw new ConfigValidationError(`${field} must start with http:// or https://`);
+    throw new ConfigValidationError(field, "must start with http:// or https://");
   }
   if (url.hostname.length === 0) {
-    throw new ConfigValidationError(`${field} has no host`);
+    throw new ConfigValidationError(field, "has no host");
   }
   if ((url.pathname !== "/" && url.pathname !== "") || url.search || url.hash) {
-    throw new ConfigValidationError(`${field} must be only scheme://host:port`);
+    throw new ConfigValidationError(field, "must be only scheme://host:port");
   }
   return value;
 }
@@ -94,17 +95,17 @@ export function parseProxyUrl(raw: unknown, field: string): string {
 function parseNoProxy(raw: unknown, field: string): string[] {
   const list = typeof raw === "string" ? raw.split(",") : raw;
   if (!Array.isArray(list)) {
-    throw new ConfigValidationError(`${field} must be a list of host names`);
+    throw new ConfigValidationError(field, "must be a list of host names");
   }
   const out: string[] = [];
   for (const item of list) {
     if (typeof item !== "string") {
-      throw new ConfigValidationError(`${field} must be a list of host names`);
+      throw new ConfigValidationError(field, "must be a list of host names");
     }
     const host = item.trim().toLowerCase();
     if (host.length === 0) continue;
     if (/[\s/;]/.test(host)) {
-      throw new ConfigValidationError(`${field}: "${host}" is not a host name`);
+      throw new ConfigValidationError(field, `"${host}" is not a host name`);
     }
     if (!out.includes(host)) out.push(host);
   }
@@ -119,7 +120,7 @@ export function parseNetworkProxyConfig(
     return { url: defaults.url, noProxy: [...defaults.noProxy] };
   }
   if (typeof raw !== "object" || Array.isArray(raw)) {
-    throw new ConfigValidationError("network.proxy must be an object");
+    throw new ConfigValidationError("network.proxy", "must be an object");
   }
   const obj = raw as Record<string, unknown>;
   const rawUrl = obj.url ?? defaults.url;

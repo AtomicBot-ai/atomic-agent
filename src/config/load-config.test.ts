@@ -56,7 +56,7 @@ describe("loadConfig", () => {
     }
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
-      network: { offline: true },
+      network: { offline: true, proxy: { url: null, noProxy: [] } },
     });
     resetConfigCache();
     expect(loadConfig().network?.offline).toBe(true);
