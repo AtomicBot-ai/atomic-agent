@@ -9,6 +9,12 @@ import {
 import { ENV_DEFAULTS } from "../config/config-schema.js";
 import type { AtomicAgentConfig } from "../config/index.js";
 import {
+  agentProxyFrom,
+  currentAgentProxy,
+  sameAgentProxy,
+  setAgentProxy,
+} from "./agent-proxy.js";
+import {
   offlineNetworkInterceptor,
   setOfflineNetwork,
 } from "./offline-network.js";
@@ -153,6 +159,14 @@ export function installTransportDeadlines(config?: AtomicAgentConfig): {
   // applying the config's switch needs no new pool. Only a config can
   // turn it on here; the bare floor install leaves it as it is.
   if (config?.network?.offline === true) setOfflineNetwork(true);
+  // The user's own proxy (ATO-87): only a config sets or clears it, and a
+  // change rebuilds the pool even when the deadlines stay the same.
+  let proxyChanged = false;
+  if (config !== undefined) {
+    const proxy = agentProxyFrom(config.network?.proxy);
+    proxyChanged = !sameAgentProxy(proxy, currentAgentProxy());
+    setAgentProxy(proxy);
+  }
   const wanted = transportDeadlinesFor(config);
   const next = {
     headersTimeout: Math.max(
@@ -163,6 +177,7 @@ export function installTransportDeadlines(config?: AtomicAgentConfig): {
   };
   if (
     installed !== null &&
+    !proxyChanged &&
     next.headersTimeout === installed.headersTimeout &&
     next.bodyTimeout === installed.bodyTimeout
   ) {
@@ -255,6 +270,18 @@ function buildPool(deadlines: {
   headersTimeout: number;
   bodyTimeout: number;
 }): Dispatcher {
+  const own = currentAgentProxy();
+  if (own !== null) {
+    // `network.proxy` (ATO-87) wins over the environment's proxy. Loopback
+    // is in its no-proxy list, and goes on the direct pool while offline.
+    directPool = new Agent(deadlines);
+    return new EnvHttpProxyAgent({
+      ...deadlines,
+      httpProxy: own.url,
+      httpsProxy: own.url,
+      noProxy: own.noProxy.join(","),
+    }).compose(offlineNetworkInterceptor(directPool));
+  }
   if (!proxyConfigured(process.env)) {
     directPool = null;
     return new Agent(deadlines).compose(offlineNetworkInterceptor());

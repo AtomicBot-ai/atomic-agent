@@ -8,11 +8,17 @@ import type { ToolContext } from "../../tool-registry.js";
 import {
   explainCurlStderr,
   NO_REVOKE_FLAG,
+  pinThroughProxy,
   resetCurlRevocationFlagForTests,
   REVOKE_BEST_EFFORT_FLAG,
   runCurl,
 } from "./run-curl.js";
 import { buildOsWebFetchTool } from "./web-fetch.js";
+import {
+  agentProxyFrom,
+  resetAgentProxyForTests,
+  setAgentProxy,
+} from "../../../llm/agent-proxy.js";
 import { executeGuardedHttpRequest } from "./http-request-fetch.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
 
@@ -68,6 +74,7 @@ function fakeCurl(known: readonly string[]) {
 
 afterEach(() => {
   resetCurlRevocationFlagForTests();
+  resetAgentProxyForTests();
 });
 
 describe("runCurl", () => {
@@ -166,6 +173,74 @@ describe("runCurl", () => {
     const argv = run.mock.calls[0]?.[1] ?? [];
     expect(argv).not.toContain("-k");
     expect(argv).not.toContain("--insecure");
+  });
+});
+
+describe("runCurl with the user's proxy (ATO-87)", () => {
+  const PROXY = "http://user:s3cret@10.0.0.2:3128";
+
+  it("passes the proxy as curl's variables, never in argv", async () => {
+    setAgentProxy(agentProxyFrom({ url: PROXY, noProxy: ["intra.lan"] }));
+    const run = fakeCurl([]);
+    await runCurl(run as unknown as typeof RunCommandType, ARGS, OPTIONS, {
+      platform: "linux",
+      baseEnv: () => ({ PATH: "/usr/bin" }),
+    });
+    const [, argv, options] = run.mock.calls[0]!;
+    expect(argv).toEqual(ARGS);
+    expect(argv.join(" ")).not.toContain("s3cret");
+    const env = (options as { env: NodeJS.ProcessEnv }).env;
+    expect(env.PATH).toBe("/usr/bin");
+    expect(env.https_proxy).toBe(PROXY);
+    expect(env.http_proxy).toBe(PROXY);
+    expect(env.no_proxy).toBe("localhost,127.0.0.1,::1,intra.lan");
+  });
+
+  it("turns the DNS pin into --connect-to, so the proxy goes where the guard looked", async () => {
+    setAgentProxy(agentProxyFrom({ url: PROXY, noProxy: [] }));
+    const run = fakeCurl([]);
+    const pinned = ["-sS", "--resolve", "example.com:443:93.184.215.14,[2606:2800::1]", "--", "https://example.com/"];
+    await runCurl(run as unknown as typeof RunCommandType, pinned, OPTIONS, {
+      platform: "linux",
+      baseEnv: () => ({}),
+    });
+    const [, argv] = run.mock.calls[0]!;
+    expect(argv).toEqual([
+      "-sS",
+      "--connect-to",
+      "example.com:443:93.184.215.14:443",
+      "--",
+      "https://example.com/",
+    ]);
+    expect(argv).not.toContain("--resolve");
+  });
+
+  it("keeps --resolve without a proxy", async () => {
+    const run = fakeCurl([]);
+    const pinned = ["--resolve", "example.com:443:93.184.215.14", "https://example.com/"];
+    await runCurl(run as unknown as typeof RunCommandType, pinned, OPTIONS, { platform: "linux" });
+    expect(run).toHaveBeenCalledWith("curl", pinned, OPTIONS);
+  });
+
+  it("pins an IPv6 address through the proxy", () => {
+    expect(pinThroughProxy(["--resolve", "[::2]:8443:[2001:db8::5]"])).toEqual([
+      "--connect-to",
+      "[::2]:8443:[2001:db8::5]:8443",
+    ]);
+  });
+
+  it("keeps a caller env that already names a proxy (the verify sandbox)", async () => {
+    setAgentProxy(agentProxyFrom({ url: PROXY, noProxy: [] }));
+    const run = fakeCurl([]);
+    const options = { cwd: "/tmp", env: { HTTPS_PROXY: "http://127.0.0.1:9" } };
+    await runCurl(run as unknown as typeof RunCommandType, ARGS, options, { platform: "linux" });
+    expect(run).toHaveBeenCalledWith("curl", ARGS, options);
+  });
+
+  it("changes nothing without a proxy", async () => {
+    const run = fakeCurl([]);
+    await runCurl(run as unknown as typeof RunCommandType, ARGS, OPTIONS, { platform: "linux" });
+    expect(run).toHaveBeenCalledWith("curl", ARGS, OPTIONS);
   });
 });
 

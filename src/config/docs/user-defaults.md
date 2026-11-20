@@ -139,6 +139,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 ## network
 
 - `network.offline` (default `false`): offline mode. Every outbound connection to a host other than this machine (`localhost`, `127.0.0.0/8`, `::1`) is refused; local models keep working. `ATOMIC_AGENT_OFFLINE=1` turns it on for one process. Shell commands and stdio MCP servers are not isolated ([offline mode](../../llm/docs/offline-network.md)).
+- `network.proxy.url` (default `null`, off): your own HTTP(S) proxy, or the local HTTP port of a VPN client (v2ray, Clash, sing-box), for the agent's web traffic: model providers, web search, `os.web.*` and `os.http.request`, remote MCP servers and the browser the agent starts. `http://host:port` or `https://host:port`, with `user:password@` if needed. SOCKS is not supported: use the client's HTTP port. `ATOMIC_AGENT_PROXY` sets it for one process. Not covered: shell commands, your own Chrome when the agent attaches to it, the Telegram bot. Offline mode wins over a proxy.
+- `network.proxy.noProxy` (default `[]`): hosts that go direct (`example.com` also covers its subdomains). This machine always goes direct.
 
 ## sessions
 
