@@ -145,7 +145,8 @@ test("renderer.js hooks: row badge, menu item, sheet, act, turn end, open", () =
 test("main.ts: startTurn takes a worker's folder, and the worker IPC is wired with it", () => {
   const src = read("../main/main.ts");
   assert.match(src, /turnModel: ProjectModelPick \| null = null,\n\s*\/\*\*[^\n]*ATO-1173[^\n]*\*\/\n\s*workDir\?: string,\n\s*\): Promise</);
-  assert.match(src, /void client\.chat\(turnId, clean, chatId, workDir \?\? proj\.workingDir, instructions, reasoning, turnModel \?\? undefined\);/);
+  // `sent` (ATO-1593 @file mentions) and a chat's own branch (ATO-576) may join the same call; the worker's folder still wins.
+  assert.match(src, /void client\.chat\(turnId, (?:clean|sent), chatId, workDir \?\? (?:inWorktree\?\.dir \?\? )?proj\.workingDir, instructions, reasoning, turnModel \?\? undefined\);/);
   assert.match(src, /wireProjectWorkersIpc\(\{[\s\S]{0,200}startTurn, isRemote: \(\) => client\.isRemote,/);
   const pre = read("../preload/preload.ts");
   for (const ch of ["projects:startWorkers", "projects:workers", "projects:workersStarted", "projects:workersChanged"]) assert.ok(pre.includes(`"${ch}"`), ch);
