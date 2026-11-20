@@ -51,7 +51,7 @@ describe("/api/memory history and undo (ATO-1059)", () => {
       changes: Array<{ kind: string; by: string }>;
     };
     expect(onlyProfile.changes).toEqual([expect.objectContaining({ kind: "profile", by: "agent" })]);
-    expect((await fetch(`${harness.baseUrl}/api/memory/changes?kind=lesson`)).status).toBe(400);
+    expect((await fetch(`${harness.baseUrl}/api/memory/changes?kind=bogus`)).status).toBe(400);
     expect((await fetch(`${harness.baseUrl}/api/memory/changes?limit=0`)).status).toBe(400);
     expect((await send("/api/memory/changes/abc/restore", "POST")).status).toBe(400);
     expect((await send("/api/memory/changes/99999/restore", "POST")).status).toBe(404);
