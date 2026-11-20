@@ -14,6 +14,7 @@ import { pluginCommand } from "./plugin-command.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { mcpServerCommand } from "./mcp-server-command.js";
+import { acpCommand } from "./acp-command.js";
 import { traceCommand } from "./trace-command.js";
 import { exportCommand } from "./export-command.js";
 import { taskCommand } from "./task-command.js";
@@ -118,6 +119,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "mcp-server",
     summary: "Serve memory search and skills to Claude Code, Codex, Cursor and other MCP clients (stdio, read-only by default)",
     run: mcpServerCommand,
+  },
+  {
+    name: "acp",
+    summary: "Be the agent in Zed, JetBrains and other Agent Client Protocol editors (stdio)",
+    run: (args) => acpCommand(args, { openTui: tuiCommand }),
   },
   {
     name: "trace",
