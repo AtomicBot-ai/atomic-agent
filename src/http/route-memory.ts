@@ -41,7 +41,7 @@ import {
  * recall, search, the prompt and consolidation until `disabled: false`.
  */
 
-type NoteJson = MemoryEntry & { disabled: boolean; disabledAt: number | null };
+type NoteJson = Omit<MemoryEntry, "disabledAt"> & { disabled: boolean; disabledAt: number | null };
 
 function noteJson(entry: MemoryEntry): NoteJson {
   return { ...entry, disabled: entry.disabledAt !== undefined, disabledAt: entry.disabledAt ?? null };
