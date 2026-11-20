@@ -39,7 +39,7 @@ function viewFor(fallback) {
 test("no llm.fallback block: local is Off and not in the chain", () => {
   const v = viewFor(undefined);
   assert.equal(v.appendLocal, false);
-  assert.deepEqual(v.links.map((l) => l.providerId), ["openrouter"]);
+  assert.deepEqual(Array.from(v.links, (l) => l.providerId), ["openrouter"]);
   assert.ok(v.addableProviderIds.includes("local-llama"));
 });
 
@@ -52,7 +52,7 @@ test("fallback block without appendLocal: still Off", () => {
 test("appendLocal true: On, local appended last", () => {
   const v = viewFor({ appendLocal: true });
   assert.equal(v.appendLocal, true);
-  assert.deepEqual(v.links.map((l) => l.providerId), ["openrouter", "local-llama"]);
+  assert.deepEqual(Array.from(v.links, (l) => l.providerId), ["openrouter", "local-llama"]);
   assert.equal(v.links[1].isAppendedLocal, true);
 });
 
