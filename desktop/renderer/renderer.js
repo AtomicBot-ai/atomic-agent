@@ -3372,7 +3372,7 @@ function resendUser(id) {
   const draft = String((e ? e.value : S.draft) || '').trim();
   // ATO-405: a message with files goes back as its caption, its files as chips.
   const split = attSplitMessage(text);
-  const caption = split ? split.caption.trim() : text;
+  const caption = split ? split.caption.trim() : attPlainText(text).trim();   // ATO-1597: without the @ files block
   // Chips of a message not yet sent are a draft too.
   const own = new Set(split ? split.items.map((i) => i.path) : []);
   if ((draft && draft !== caption) || ATT.items.some((i) => !(i.saved && own.has(i.saved.path)))) {
@@ -3515,7 +3515,7 @@ async function regenerateReply(id, fromFailure) {
   }
   const draft = String((e ? e.value : S.draft) || '').trim();
   const split = attSplitMessage(text);
-  const caption = split ? split.caption.trim() : text;
+  const caption = split ? split.caption.trim() : attPlainText(text).trim();   // ATO-1597: without the @ files block
   const own = new Set(split ? split.items.map((i) => i.path) : []);
   if ((draft && draft !== caption) || ATT.items.some((i) => !(i.saved && own.has(i.saved.path)))) {
     toast('Your draft is in the way', 'send or clear the composer, then retry', 'bad');
@@ -4384,6 +4384,7 @@ function composer() {
        It hangs off `.composerwrap` now, which is the same anchor visually
        (the composer is its last child) and does not clip. */
     + (slashShown() ? slashPopover() : '')
+    + (typeof fmMenuHTML === 'function' ? fmMenuHTML() : '')   // ATO-1596: the @ file list (file-mentions.js)
     // ATO-404: the "+" menu hangs here for the same reason (attachments.js).
     + attMenuHTML()
     + (typeof cmodeMenuHTML === 'function' ? cmodeMenuHTML({esc, ic}) : '')
@@ -8611,6 +8612,7 @@ document.addEventListener('click', (e) => {
   if (fill) { S.draft = fill.dataset.fill; render(); const en = $('#entry'); if (en) { en.focus(); en.setSelectionRange(en.value.length, en.value.length); autosize(en); } return; }
   const pr = t.closest('[data-palrow]'); if (pr) { activatePal(+pr.dataset.palrow); return; }
   const sl = t.closest('[data-slash]'); if (sl) { acceptSlash(sl.dataset.slash); return; }
+  const fmr = t.closest('[data-fm-row]'); if (fmr) { e.preventDefault(); fmAccept(+fmr.dataset.fmRow); return; }   // ATO-1596
   const sn = t.closest('[data-steernow]'); if (sn) { ANX.messageAction('steer'); steerQueuedNow(+sn.dataset.steernow); return; }
   const uq = t.closest('[data-unqueue]'); if (uq) { ANX.messageAction('unqueue'); unqueueMessage(+uq.dataset.unqueue); return; }
   const rv = t.closest('[data-revoke]'); if (rv) { S.grants.splice(+rv.dataset.revoke, 1); render(); toast('Grant revoked'); return; }
@@ -8710,6 +8712,7 @@ document.addEventListener('input', (e) => {
     // (a 150 ms chip-only repaint — a render() here would reset the
     // textarea from S.draft in afterChat() and move the caret).
     ctxDraftChanged();
+    if (typeof fmOnInput === 'function') fmOnInput(e.target);   // ATO-1596: `@word` opens the file list
     const wasSlash = S.slash;
     S.slash = S.draft.startsWith('/');
     if (S.slash) { S.slashCur = 0; refreshSlash(); if (!wasSlash && SK.workingDir) refreshSkillList(); }
@@ -9868,6 +9871,7 @@ document.addEventListener('keydown', (e) => {
     return;
   }
 
+  if (typeof fmKeydown === 'function' && fmKeydown(e)) return;   // ATO-1596: the @ file list owns ↑↓ Tab Enter Esc while open
   // slash completion owns the arrows while open
   /* A line that already carries arguments (`/runmode status`, `/model use x`)
      is a command to RUN, not a name to complete: Enter used to be swallowed

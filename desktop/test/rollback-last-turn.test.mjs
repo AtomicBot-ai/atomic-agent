@@ -134,6 +134,7 @@ function windowWith({ log, answer, busy = false, draft = "", voice = "idle", sid
     $: () => entry,
     toast: (t, s) => calls.toasts.push([t, s]),
     attSplitMessage: () => null,
+    attPlainText: (t) => t,   // ATO-1597: the caption without an @ files block; these questions have none
     attToEditor: (t) => t,
     autosize() {},
     refreshSend() {},
