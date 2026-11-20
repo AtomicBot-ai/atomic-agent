@@ -103,6 +103,12 @@ export interface TaskCreateInput {
    */
   approvalLevel?: number | null;
   /**
+   * Create the row `paused` instead of `pending` (ATO-601): it waits for
+   * the person to start it (resume or "Run now", ATO-590) and is never
+   * picked by the scheduler or an eager drain until then.
+   */
+  startPaused?: boolean;
+  /**
    * Optional explicit id. Used by tests to make assertions; production
    * callers always let the store generate one.
    */
@@ -477,7 +483,7 @@ export class TaskStore {
       session_id: sessionId,
       user_message: userMessage,
       max_steps: maxSteps,
-      status: "pending",
+      status: input.startPaused === true ? "paused" : "pending",
       origin: input.origin,
       attempts: 0,
       max_attempts: maxAttempts,

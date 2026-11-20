@@ -30,6 +30,13 @@ describe("parseEmailTriggerConfig (ATO-601)", () => {
 
   it("accepts an empty allow-list (trigger off)", () => {
     expect(parseEmailTriggerConfig({ allowedSenders: [] }, "f").allowedSenders).toEqual([]);
+    // ATO-601, 18.11: left out = the owner's verified address (resolved at poll time).
+    expect(parseEmailTriggerConfig({ allowedSenders: [] }, "f")).not.toHaveProperty("autoStartSenders");
+    expect(
+      parseEmailTriggerConfig({ allowedSenders: [], autoStartSenders: [" Me@Example.com ", "@corp.io"] }, "f")
+        .autoStartSenders,
+    ).toEqual(["me@example.com", "@corp.io"]);
+    expect(parseEmailTriggerConfig({ allowedSenders: [], autoStartSenders: [] }, "f").autoStartSenders).toEqual([]);
   });
 
   it.each([
@@ -43,6 +50,8 @@ describe("parseEmailTriggerConfig (ATO-601)", () => {
     [{ allowedSenders: [], pollIntervalMs: 45_000.5 }],
     [{ allowedSenders: [], replyByEmail: "yes" }],
     [{ allowedSenders: [], trustFromHeader: "yes" }],
+    [{ allowedSenders: [], autoStartSenders: "me@example.com" }],
+    [{ allowedSenders: [], autoStartSenders: ["not an address"] }],
   ])("rejects %j", (raw) => {
     expect(() => parseEmailTriggerConfig(raw, "f")).toThrow(ConfigValidationError);
   });
