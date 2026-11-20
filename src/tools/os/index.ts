@@ -232,6 +232,7 @@ export function registerOsTools(
       approvalRequired: options.approvalRequired,
       defaultTimeoutMs: options.config.tools.shell.defaultTimeoutMs,
       envPassthrough: options.config.tools.shell.envPassthrough,
+      ...(options.stateDir === undefined ? {} : { stateDir: options.stateDir }),
       ...(options.shellPolicy === undefined
         ? {}
         : { shellPolicy: options.shellPolicy }),
