@@ -233,7 +233,7 @@ describe("AgentLoop fusion seams", () => {
           ctx.turnSpend.add(2);
           seen.push({ ceilingUsd: ctx.turnSpend.ceilingUsd, before, after: ctx.turnSpend.spentUsd() });
         }
-        return { tool: "os.fs.read", status: "ok", summary: "ok" };
+        return { tool: "os.fs.read", status: "ok", summary: "ok", details: {}, truncated: false };
       },
     });
     let call = 0;
@@ -277,7 +277,7 @@ describe("AgentLoop fusion seams", () => {
       readonly: true,
       run: async (_args, ctx) => {
         seen.push({ model: ctx.model, turnId: ctx.turnId });
-        return { tool: "os.fs.read", status: "ok", summary: "ok" };
+        return { tool: "os.fs.read", status: "ok", summary: "ok", details: {}, truncated: false };
       },
     });
     // Reads until `readsWanted` calls have been seen, then a reply.
