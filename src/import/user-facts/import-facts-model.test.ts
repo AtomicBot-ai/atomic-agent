@@ -21,7 +21,7 @@ describe("bindImportFactsModel (ATO-1617)", () => {
     expect(bound).toMatchObject({ providerId: "local-llama", local: true });
     const out = await bound.complete("p", { grammar: "G", signal: new AbortController().signal });
     expect(out).toBe("SET job=designer\n");
-    expect(l.complete.mock.calls[0]![0]).toMatchObject({ prompt: "p", grammar: "G", slotId: -1 });
+    expect((l.complete.mock.calls[0] as unknown[])[0]).toMatchObject({ prompt: "p", grammar: "G", slotId: -1 });
   });
 
   it("local: never picks the active cloud provider; falls back to the first local entry", () => {
