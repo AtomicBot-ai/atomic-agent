@@ -111,6 +111,7 @@ export async function addWorktree(
     path = join(parent, `${name}-${n}`);
   }
   const added = await git(["worktree", "add", "-b", branch, path, baseCommit], repoRoot);
-  if (!ok(added)) return { error: `git worktree add failed: ${(added?.stderr || "").trim().split("\n").at(-1) || "unknown error"}` };
+  // Not `!ok(added)`: the guard would narrow `added` to null here and hide its stderr.
+  if (added === null || added.code !== 0) return { error: `git worktree add failed: ${(added?.stderr || "").trim().split("\n").at(-1) || "unknown error"}` };
   return { repoRoot, path: await realpath(path), branch, baseBranch, baseCommit };
 }
