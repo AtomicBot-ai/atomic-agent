@@ -250,6 +250,11 @@ export function beginSse(
     "x-accel-buffering": "no",
     ...extraHeaders,
   });
+  // Send the head now: Node holds it until the first write otherwise, so
+  // a client of a stream with nothing to say yet (no pending approval, no
+  // question) would not see it open until the first heartbeat. Optional:
+  // a test double of the response may not have it.
+  res.flushHeaders?.();
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | null = null;
   if (options.heartbeatMs && options.heartbeatMs > 0) {
