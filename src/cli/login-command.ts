@@ -1,14 +1,7 @@
-import { createInterface } from "node:readline/promises";
-
 import { getConfig, resolveStateDir } from "../config/index.js";
 import { SUBSCRIPTION_OAUTH_KIND } from "../config/provider-auth-mode.js";
-import {
-  setActiveTextProviderInConfig,
-  setProviderDefaultChatModelInConfig,
-  upsertLlmProvider,
-} from "../config/llm-provider-commands.js";
-import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
-import { isLocalLinkWithoutModel } from "../runtime/local-link-availability.js";
+import { setProviderDefaultChatModelInConfig, upsertLlmProvider } from "../config/llm-provider-commands.js";
+import { offerActivation, type ActivationDeps } from "./login-activation.js";
 import {
   ChatgptNoAccountError,
   codexDefaultModel,
@@ -79,7 +72,7 @@ const BROWSER_TIMEOUT_MS = 10 * 60_000;
 /** The entry `atag login chatgpt` adds when none of this kind exists. */
 export const CHATGPT_PROVIDER_ID = "chatgpt-sub";
 
-export interface LoginCommandDeps {
+export interface LoginCommandDeps extends ActivationDeps {
   write?: (text: string) => void;
   stateDir?: string;
   store?: FileTokenStore;
@@ -96,17 +89,10 @@ export interface LoginCommandDeps {
   ensureProviderEntry?: (model: string) => { id: string; added: boolean };
   /** Codex's current default model for this sign-in (`codexDefaultModel`). */
   defaultModel?: (tokens: OAuthTokens) => Promise<{ model: string; source: "backend" | "fallback" }>;
-  /** Whether the entry is active already, the only provider, or one of several. */
-  activation?: (id: string) => Activation;
-  setActive?: (id: string) => void;
-  /** A y/n question in the terminal; absent when there is no terminal. */
-  ask?: ((question: string) => Promise<string>) | null;
   now?: () => number;
   /** GitHub Copilot sign-in seams (ATO-462). */
   copilot?: CopilotLoginDeps;
 }
-
-export type Activation = "already-active" | "only-provider" | "has-others";
 
 const jsonFetch: JsonFetchLike = (url, init) =>
   globalThis.fetch(url, init) as unknown as ReturnType<JsonFetchLike>;
@@ -133,31 +119,6 @@ function defaultEnsureProviderEntry(model: string): { id: string; added: boolean
     defaultChatModel: model,
   });
   return { id, added: true };
-}
-
-/**
- * Other providers are every entry but this one, except the built-in local
- * model while no model is downloaded for it: a fresh install has that
- * entry, and there is nothing to choose between yet.
- */
-export function defaultActivation(id: string): Activation {
-  const config = getConfig();
-  const llm = resolveLlmConfig(config);
-  if (llm.activeTextProvider === id) return "already-active";
-  const others = llm.providers.filter((p) => p.id !== id && !isLocalLinkWithoutModel(llm, p.id, config));
-  return others.length === 0 ? "only-provider" : "has-others";
-}
-
-function terminalAsk(): ((question: string) => Promise<string>) | null {
-  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) return null;
-  return async (question) => {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    try {
-      return await rl.question(question);
-    } finally {
-      rl.close();
-    }
-  };
 }
 
 /** One sentence per failure, never the server's own text or a token. */
@@ -276,40 +237,6 @@ export async function loginCommand(args: string[], deps: LoginCommandDeps = {}):
     return 1;
   } finally {
     process.off("SIGINT", onSigint);
-  }
-}
-
-export async function offerActivation(
-  id: string,
-  deps: LoginCommandDeps,
-  write: (t: string) => void,
-  serviceName = "ChatGPT",
-): Promise<void> {
-  const state = (deps.activation ?? defaultActivation)(id);
-  if (state === "already-active") return;
-  const setActive = deps.setActive ?? setActiveTextProviderInConfig;
-  const activate = (): void => {
-    try {
-      setActive(id);
-      write(`"${id}" is now the active provider.\n`);
-    } catch {
-      write(`Signed in, but "${id}" could not be made active. Pick it in the Providers panel.\n`);
-    }
-  };
-  if (state === "only-provider") {
-    activate();
-    return;
-  }
-  const ask = deps.ask === undefined ? terminalAsk() : deps.ask;
-  if (ask === null) {
-    write(`To use it, pick "${id}" in the Providers panel.\n`);
-    return;
-  }
-  const answer = await ask(`Use ${serviceName} now? [y/N] `);
-  if (/^y(es)?$/i.test(answer.trim())) {
-    activate();
-  } else {
-    write(`Kept your current provider. To switch later, pick "${id}" in the Providers panel.\n`);
   }
 }
 

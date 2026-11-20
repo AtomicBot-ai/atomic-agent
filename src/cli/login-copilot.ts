@@ -12,7 +12,8 @@ import { OAuthFlowError } from "../llm/provider/subscription-oauth/oauth-errors.
 import type { DeviceAuthorization } from "../llm/provider/subscription-oauth/device-code.js";
 import type { FileTokenStore } from "../llm/provider/subscription-oauth/credential-store.js";
 import type { OAuthTokens } from "../llm/provider/subscription-oauth/oauth-types.js";
-import { offerActivation, type LoginCommandDeps } from "./login-command.js";
+import { offerActivation } from "./login-activation.js";
+import type { LoginCommandDeps } from "./login-command.js";
 
 /**
  * ATO-462 — `atag login copilot` / `atag logout copilot` /
