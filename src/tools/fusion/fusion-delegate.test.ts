@@ -1490,7 +1490,12 @@ describe("fusion.delegate", () => {
         // is pinning.
         ({ durationMs: _ms, queueWaitMs: _q, ...row }) => row,
       );
-      expect(result.summary).toMatchInlineSnapshot(`
+      // The critical-path line (ATO-1586) closes every fan-out; it is
+      // built from those wall-clock readings, so it is checked by shape.
+      const pathLine =
+        /\nCritical path \d+s \(tasks t[12]\), total work \d+s, idle local slot \d+s\.$/;
+      expect(result.summary).toMatch(pathLine);
+      expect(result.summary.replace(pathLine, "")).toMatchInlineSnapshot(`
         "2 tasks: 2 ok
         - [t1] ok — One
         - [t2] ok — Two
@@ -1501,7 +1506,9 @@ describe("fusion.delegate", () => {
         (the worker produced no reply)"
       `);
       expect(result.details).not.toHaveProperty("waves");
-      expect({ ...result.details, tasks: rows }).toMatchInlineSnapshot(`
+      const { criticalPath, ...details } = result.details;
+      expect(criticalPath).toMatchObject({ tasks: [expect.stringMatching(/^t[12]$/)] });
+      expect({ ...details, tasks: rows }).toMatchInlineSnapshot(`
         {
           "maxWorkers": 2,
           "outcome": "all_ok",
