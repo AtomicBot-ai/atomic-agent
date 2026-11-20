@@ -7,6 +7,7 @@ import { EmbeddingUnavailableError, type EmbeddingClient } from "../../memory/em
 import type { Extractor } from "../os/read-document/index.js";
 import { FileIndex, type FileIndexOptions } from "./file-index.js";
 import { FolderRejectedError } from "./file-index-types.js";
+import type { Reranker } from "./file-rerank.js";
 import { isIndexDone, statusFrom } from "./file-indexer.js";
 import { extractFileText } from "./file-text.js";
 import { walkFolder } from "./file-walker.js";
@@ -239,6 +240,68 @@ describe("FileIndex with local embeddings", () => {
     expect(fileIndex.status()).toMatchObject({ indexed: 2 });
     expect(await fileIndex.search({ query: "kitten" })).toEqual([]);
     expect((await fileIndex.search({ query: "truck" })).map((hit) => hit.path)).toEqual([join(docs, "garage.txt")]);
+  });
+});
+
+describe("FileIndex fallbacks (ATO-1052)", () => {
+  beforeEach(() => {
+    rmSync(join(docs, "contract.pdf"));
+    writeFileSync(join(docs, "notes.md"), "My cat sleeps all day on the sofa.");
+    writeFileSync(join(docs, "garage.txt"), "The truck needs new tyres.");
+  });
+
+  it("scans vectors when sqlite-vec is not loaded, or its loader fails", async () => {
+    for (const vectorExtension of [false as const, async () => false, async () => Promise.reject(new Error("dlopen failed"))]) {
+      const fileIndex = open({ embedding: () => fakeEmbedding(), vectorExtension });
+      await fileIndex.addFolder(docs);
+      await fileIndex.idle();
+      expect(await fileIndex.usesSqliteVec()).toBe(false);
+      expect((await fileIndex.search({ query: "kitten" })).map((hit) => hit.path)).toEqual([join(docs, "notes.md")]);
+      await fileIndex.close();
+      index = null;
+      rmSync(join(root, "state"), { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the scan when the loader claims success but vec0 is missing", async () => {
+    const fileIndex = open({ embedding: () => fakeEmbedding(), vectorExtension: async () => true });
+    await fileIndex.addFolder(docs);
+    await fileIndex.idle();
+    expect((await fileIndex.search({ query: "kitten" })).map((hit) => hit.path)).toEqual([join(docs, "notes.md")]);
+    expect(await fileIndex.usesSqliteVec()).toBe(false);
+  });
+
+  it("re-orders hits by the reranker's scores", async () => {
+    writeFileSync(join(docs, "garage.txt"), "The cat sleeps in the truck.");
+    const seen: string[][] = [];
+    const reranker: Reranker = {
+      async rerank(_query, documents) {
+        seen.push([...documents]);
+        return documents.map((text, index) => ({ index, score: text.includes("truck") ? 0.9 : 0.1 }));
+      },
+    };
+    const fileIndex = open({ reranker, vectorExtension: false });
+    await fileIndex.addFolder(docs);
+    await fileIndex.idle();
+    const hits = await fileIndex.search({ query: "cat", topK: 2 });
+    expect(hits.map((hit) => hit.path)).toEqual([join(docs, "garage.txt"), join(docs, "notes.md")]);
+    expect(hits.map((hit) => hit.score)).toEqual([0.9, 0.1]);
+    // Full chunk text goes to the reranker, not the «marked» snippet.
+    expect(seen[0]!.every((text) => !text.includes("«"))).toBe(true);
+  });
+
+  it("keeps the blended order when there is no reranker or it gives up", async () => {
+    writeFileSync(join(docs, "garage.txt"), "The cat sleeps in the truck.");
+    const plain = open({ vectorExtension: false });
+    await plain.addFolder(docs);
+    await plain.idle();
+    const expected = await plain.search({ query: "cat", topK: 2 });
+    await plain.close();
+    rmSync(join(root, "state"), { recursive: true, force: true });
+    const failing = open({ vectorExtension: false, reranker: { rerank: async () => null } });
+    await failing.addFolder(docs);
+    await failing.idle();
+    expect(await failing.search({ query: "cat", topK: 2 })).toEqual(expected);
   });
 });
 
