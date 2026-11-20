@@ -350,6 +350,20 @@ contextBridge.exposeInMainWorld("atomic", {
   quickEntryGet: () => ipcRenderer.invoke("app:quickEntryGet"),
   quickEntrySet: (patch: { enabled?: boolean; accelerator?: string }) => ipcRenderer.invoke("app:quickEntrySet", patch),
   quickEntryPause: (paused: boolean) => ipcRenderer.invoke("app:quickEntryPause", paused),
+  /* ATO-1064: dictation into any app (main/dictate-anywhere-window.ts).
+     The pill's page: what it opened with, the microphone's audio, Done,
+     Esc, a microphone that would not open. Settings › General: the switch,
+     hold key or combo, and the Accessibility pane the hold key needs. */
+  dictateOpened: () => ipcRenderer.invoke("app:dictateOpened"),
+  dictateAudio: (chunk: Uint8Array) => ipcRenderer.send("dictate:audio", chunk),
+  dictateStop: () => ipcRenderer.send("app:dictateStop"),
+  dictateCancel: () => ipcRenderer.send("app:dictateCancel"),
+  dictateMicFailed: (why: string) => ipcRenderer.send("app:dictateMicFailed", why),
+  onDictate: (cb: (payload: unknown) => void) => on("app:dictate", cb),
+  dictateGet: () => ipcRenderer.invoke("app:dictateGet"),
+  dictateSet: (patch: { enabled?: boolean; mode?: "hold" | "toggle"; accelerator?: string }) => ipcRenderer.invoke("app:dictateSet", patch),
+  dictatePause: (paused: boolean) => ipcRenderer.invoke("app:dictatePause", paused),
+  dictateOpenPrivacy: () => ipcRenderer.invoke("app:dictateOpenPrivacy"),
   // ATO-1042: the starter model main fetches on a first launch (downloading, ready, failed).
   onStarterModel: (cb: (ev: unknown) => void) => on("app:starterModel", cb),
   starterGet: () => ipcRenderer.invoke("app:starterGet"),
