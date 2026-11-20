@@ -161,3 +161,4 @@ describe("parseDeckSpec tables and charts", () => {
       parseDeckSpec({ path: "d.pptx", slides: [{ title: "T", image: "a.png", table: [["x"]] }] }),
     ).toThrow(/more than one of image, table and chart/);
   });
+});
