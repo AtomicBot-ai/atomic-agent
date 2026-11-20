@@ -90,6 +90,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "vision",
   "skills",
   "skills.clawhub",
+  "skills.selfLearning",
   "tui",
   "tui.notify",
   "tui.sessionRail",
