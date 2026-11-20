@@ -27,7 +27,6 @@ import {
   type JsonFetchLike,
   type OAuthTokens,
 } from "../llm/provider/subscription-oauth/index.js";
-import { openUrlInBrowser } from "../tui/open-url.js";
 import { copilotLoginStatus, loginCopilot, logoutCopilot, type CopilotLoginDeps } from "./login-copilot.js";
 
 /**
@@ -85,6 +84,11 @@ export interface LoginCommandDeps {
   stateDir?: string;
   store?: FileTokenStore;
   startBrowser?: (signal: AbortSignal) => Promise<BrowserLogin>;
+  /**
+   * Opens the sign-in page in the browser; without it the link is printed.
+   * Injected by the CLI composition root (src/cli/index.ts): CLI commands
+   * do not import src/tui directly (scripts/check-imports.mjs).
+   */
   openUrl?: (url: string) => Promise<{ ok: boolean }>;
   requestDevice?: (signal: AbortSignal) => Promise<ChatgptDeviceCode>;
   completeDevice?: (code: ChatgptDeviceCode, signal: AbortSignal) => Promise<OAuthTokens>;
@@ -247,7 +251,7 @@ export async function loginCommand(args: string[], deps: LoginCommandDeps = {}):
         deps.startBrowser ??
         ((signal) => startChatgptBrowserLogin({ fetch: globalFormFetch, timeoutMs: BROWSER_TIMEOUT_MS, signal }));
       const login = await startBrowser(abort.signal);
-      const opened = openBrowser ? await (deps.openUrl ?? openUrlInBrowser)(login.authorizationUrl) : { ok: false };
+      const opened = openBrowser && deps.openUrl ? await deps.openUrl(login.authorizationUrl) : { ok: false };
       write(
         opened.ok
           ? "Opened the sign-in page in your browser. Waiting... (Ctrl+C to cancel)\n"
