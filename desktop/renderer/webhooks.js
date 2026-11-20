@@ -207,7 +207,7 @@ function createWebhooks(api) {
 }
 
 /* ATO-1633: the brand mark a preset wears (renderer.js LOGO_FILES key), '' for none. */
-const WHK_PRESET_LOGOS = {github: 'github'};
+const WHK_PRESET_LOGOS = {github: 'github', stripe: 'stripe'};   // ATO-1634: Stripe's mark
 
 /** The pane. deps: {esc, ic?, logo?(key, size)}. Inputs carry ids so a repaint keeps focus and caret.
     The header is the shared section header (css/settings.css .set-sechead): the
