@@ -62,6 +62,10 @@ import { machineProfile } from "./studio-local.js";
 import { pickOpenRouterKey } from "./studio-key.js";
 import { removeProviderForgettingMedia } from "./studio-forget-key.js";
 import { isStudioCoreInstalled } from "./studio-core-install.js";
+// ATO-1167: a neural voice on this computer, through Atomic Core's audio module.
+import { AUDIO_CATALOG_URL, CoreSpeech, speechModelsDir } from "./core-speech.js";
+import { ensureStudioCore } from "./studio-core-start.js";
+import { downloadModelFile } from "./studio-download.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
 import { spellcheckEnabled, wireEditContextMenu } from "./edit-context-menu.js";
@@ -125,8 +129,10 @@ import {
   buildCustomModelDef,
   downloadProjector,
   huggingFaceToken,
+  isHuggingFaceUrl,
   isSafeModelFilename,
   resolveHuggingFaceGgufChoices,
+  rewriteHuggingFaceUrl,
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
@@ -446,6 +452,31 @@ const fileTranscriber = new FileTranscriber(appleSpeechEngine({
   probe: () => voice.probe(),
   chosen: () => readVoicePrefs().locales,
 }));
+
+/* ATO-1167: the neural reading voice (main/core-speech.ts). The same Core
+   as Studio; it reads only on a Core with the audio module (0.20.6+). */
+let ttsCoreModel = "";
+const coreSpeech = new CoreSpeech({
+  coreVersion: BUNDLED_CORE_VERSION,
+  client: () => ensureStudioCore(managedDataDirNow(), BUNDLED_CORE_VERSION,
+    app.isPackaged && !SMOKE ? { seed: (dir: string) => seedBundledCore(dir) } : {}),
+  /* Not Core's per-version data folder: a pin bump would orphan the voice. */
+  modelsRoot: () => speechModelsDir(managedDataDirNow()),
+  catalog: async () => {
+    const res = await fetch(AUDIO_CATALOG_URL, { signal: AbortSignal.timeout(15_000), redirect: "follow" });
+    if (!res.ok) throw new Error(`the voice catalog answered ${res.status}`);
+    return res.json() as Promise<unknown>;
+  },
+  download: (target, opts) => downloadModelFile(target, {
+    ...opts,
+    rewrite: rewriteHuggingFaceUrl,
+    headers: (url): Record<string, string> => {
+      const token = isHuggingFaceUrl(url) ? huggingFaceToken() : null;
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    },
+  }),
+  chosen: () => ttsCoreModel,
+});
 
 /* Voice input exists only where the speech helper can run (macOS; see
    platform.ts voiceSupported). Answered synchronously so the preload can
@@ -3789,6 +3820,22 @@ function wireIpc(client: AgentClient): void {
     );
   });
   ipcMain.handle("speech:transcribeCancel", (_event, job: unknown) => fileTranscriber.cancel(job));
+  /* ATO-1167: View › Reading Voice and Speed… can read with a neural voice
+     served by Atomic Core (main/core-speech.ts). The renderer names the
+     model with every call; nothing is downloaded until it asks. */
+  const pickTtsModel = (v: unknown) => { if (typeof v === "string") ttsCoreModel = v.slice(0, 200); };
+  ipcMain.handle("tts:coreStatus", (_event, model: unknown) => { pickTtsModel(model); return coreSpeech.status(); });
+  ipcMain.handle("tts:corePrepare", (_event, model: unknown) => {
+    pickTtsModel(model);
+    return coreSpeech.prepare(ttsCoreModel || undefined, (ev) => send("app:ttsCore", ev));
+  });
+  ipcMain.handle("tts:corePrepareCancel", () => { coreSpeech.cancelPrepare(); return { ok: true }; });
+  ipcMain.handle("tts:coreSpeak", (_event, req: unknown) => {
+    const r = (req ?? {}) as { text?: unknown; model?: unknown };
+    pickTtsModel(r.model);
+    return coreSpeech.speak(r.text);
+  });
+  ipcMain.handle("tts:coreCancel", () => { coreSpeech.cancel(); return { ok: true }; });
 
   client.on("status", (status) => send("agent:status", status));
   /* ATO-767: an agent that exits on its own while running is started again,

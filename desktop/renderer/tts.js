@@ -17,16 +17,26 @@
    the speed. Only voices the system marks as local are offered first: a
    "remote" voice would send the text off this computer. */
 
-const TTS = { speakingId: null, auto: false, seq: 0, rate: 1, voice: { en: '', ru: '' } };
+const TTS = { speakingId: null, auto: false, seq: 0, rate: 1, voice: { en: '', ru: '' },
+  // ATO-1167: 'system' (speechSynthesis) or 'core' (a neural voice through Atomic Core, main/core-speech.ts).
+  engine: 'system', coreModel: '', coreReady: false, audio: null };
 try {
   TTS.auto = localStorage.getItem('atomic.tts.auto') === '1';
+  TTS.engine = localStorage.getItem('atomic.tts.engine') === 'core' ? 'core' : 'system';
+  TTS.coreModel = localStorage.getItem('atomic.tts.coreModel') || '';
   const r = Number(localStorage.getItem('atomic.tts.rate'));
   if (r >= 0.5 && r <= 2) TTS.rate = r;
   TTS.voice.en = localStorage.getItem('atomic.tts.voice.en') || '';
   TTS.voice.ru = localStorage.getItem('atomic.tts.voice.ru') || '';
 } catch (e) { /* private storage: defaults */ }
 
+/** True when the neural voice is picked and Core said it can read (ttsCoreRefresh). */
+function ttsCoreOn() {
+  return TTS.engine === 'core' && TTS.coreReady && typeof BR !== 'undefined' && !!(BR && BR.ttsCoreSpeak);
+}
+
 function ttsAvailable() {
+  if (ttsCoreOn()) return true;
   try {
     return typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance === 'function'
       && window.speechSynthesis.getVoices().length > 0;
@@ -91,7 +101,88 @@ function ttsVoicesFor(lang) {
 function ttsStop() {
   TTS.seq++;   // the utterance being cancelled must not count as read to the end
   try { window.speechSynthesis.cancel(); } catch (e) { /* nothing was speaking */ }
+  // The neural voice: the clip playing, and the piece Core is still making.
+  const coreBusy = !!TTS.audio || (TTS.speakingId !== null && ttsCoreOn());
+  if (TTS.audio) { try { TTS.audio.pause(); } catch (e) { /* already stopped */ } }
+  TTS.audio = null;
+  if (coreBusy && typeof BR !== 'undefined' && BR && BR.ttsCoreCancel) BR.ttsCoreCancel();
   TTS.speakingId = null;
+}
+
+/** The text in pieces the neural voice says in one go (main/core-speech.ts speechPieces, kept in step). */
+function ttsPieces(text, max) {
+  const lim = max || 600;
+  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!clean) return [];
+  const sentences = clean.match(/[^.!?…]+(?:[.!?…]+["»”)]*|$)\s*/g) || [clean];
+  const out = [];
+  let cur = '';
+  const flush = () => { if (cur.trim()) out.push(cur.trim()); cur = ''; };
+  for (const s0 of sentences) {
+    if ((cur + s0).length <= lim) { cur += s0; continue; }
+    flush();
+    let rest = s0;
+    while (rest.length > lim) {
+      const cut = Math.max(rest.lastIndexOf(', ', lim), rest.lastIndexOf(' ', lim));
+      const at = cut > lim / 3 ? cut + 1 : lim;
+      out.push(rest.slice(0, at).trim());
+      rest = rest.slice(at);
+    }
+    cur = rest;
+  }
+  flush();
+  return out;
+}
+
+/** Ask main whether the neural voice can read now; repaints when that changes. */
+async function ttsCoreRefresh() {
+  if (typeof BR === 'undefined' || !BR || !BR.ttsCoreStatus) { TTS.coreReady = false; return null; }
+  let st = null;
+  try { st = await BR.ttsCoreStatus(TTS.coreModel); } catch (e) { st = null; }
+  const was = TTS.coreReady;
+  TTS.coreReady = !!(st && st.ok);
+  if (was !== TTS.coreReady) ttsRepaint();
+  return st;
+}
+
+/** The neural voice: Core makes piece n+1 while piece n plays. Falls back to
+    the system voice once, with a toast, when Core cannot read. */
+function ttsSpeakCore(id, words, onEnd) {
+  const seq = TTS.seq;
+  const pieces = ttsPieces(words);
+  const make = (i) => (i < pieces.length ? BR.ttsCoreSpeak({text: pieces[i], model: TTS.coreModel}).catch(() => ({ok: false, error: 'FAILED'})) : null);
+  const finish = (ok) => {
+    if (seq !== TTS.seq) return;
+    TTS.audio = null;
+    if (TTS.speakingId === id) { TTS.speakingId = null; ttsRepaint(); }
+    if (ok && typeof onEnd === 'function') onEnd();
+  };
+  const play = (i, pending) => {
+    if (seq !== TTS.seq) return;
+    if (!pending) { finish(true); return; }
+    pending.then((res) => {
+      if (seq !== TTS.seq) return;
+      if (!res || !res.ok || !res.audio) {
+        if (res && res.cancelled) return;
+        TTS.coreReady = false;
+        finish(false);
+        toast('The neural voice could not read this', 'Reading with the system voice instead.', 'bad');
+        if (i === 0) ttsSpeak(id, words, onEnd);
+        return;
+      }
+      const next = make(i + 1);
+      const a = new Audio(res.audio);
+      a.playbackRate = TTS.rate;
+      TTS.audio = a;
+      a.onended = () => play(i + 1, next);
+      a.onerror = () => finish(false);
+      a.play().catch(() => finish(false));
+    });
+  };
+  TTS.speakingId = id;
+  ttsRepaint();
+  play(0, make(0));
+  return true;
 }
 
 /** Read `text` aloud. `onEnd` runs once, only when it was read to its end
@@ -101,6 +192,8 @@ function ttsSpeak(id, text, onEnd) {
   const words = ttsPlain(text);
   if (!words) return false;
   ttsStop();
+  if (ttsCoreOn()) return ttsSpeakCore(id, words, onEnd);
+  if (!('speechSynthesis' in window)) return false;
   const seq = TTS.seq;
   const lang = ttsLangOf(words);
   const u = new SpeechSynthesisUtterance(words);
@@ -149,6 +242,17 @@ function ttsSetVoice(lang, name) {
   TTS.voice[lang] = String(name || '');
   try { localStorage.setItem('atomic.tts.voice.' + lang, TTS.voice[lang]); } catch (e) { /* this window only */ }
 }
+/** Settings: which engine reads ('system' | 'core') and the neural model. */
+function ttsSetEngine(engine, model) {
+  TTS.engine = engine === 'core' ? 'core' : 'system';
+  if (typeof model === 'string') TTS.coreModel = model;
+  try {
+    localStorage.setItem('atomic.tts.engine', TTS.engine);
+    localStorage.setItem('atomic.tts.coreModel', TTS.coreModel);
+  } catch (e) { /* this window only */ }
+  ttsStop();
+  return TTS.engine === 'core' ? ttsCoreRefresh() : Promise.resolve(null);
+}
 function ttsSetRate(rate) {
   const r = Math.min(2, Math.max(0.5, Number(rate) || 1));
   TTS.rate = r;
@@ -177,4 +281,6 @@ if (typeof window !== 'undefined' && window.speechSynthesis) {
     });
   } catch (e) { /* older engines */ }
 }
-if (typeof module !== 'undefined') module.exports = { ttsPlain, ttsLangOf, ttsPickVoice };
+// ATO-1167: a neural voice picked earlier is asked for once the window is up.
+if (typeof window !== 'undefined' && TTS.engine === 'core') setTimeout(() => { ttsCoreRefresh(); }, 0);
+if (typeof module !== 'undefined') module.exports = { ttsPlain, ttsLangOf, ttsPickVoice, ttsPieces };
