@@ -62,6 +62,10 @@ export const ROUTE_SCOPES: Readonly<Record<string, HttpScope>> = {
   "POST /api/context-preview": "chat",
   "GET /api/capabilities": "read",
   "GET /api/model-tiers": "read",
+  // ATO-1127: the local model list and status, as `atomic-agent models` prints them.
+  "GET /api/local-models/list": "read",
+  "GET /api/local-models/status": "read",
+  "GET /api/local-models/list-embeddings": "read",
   // Settings.
   "GET /api/config": "admin",
   "PATCH /api/config": "admin",
