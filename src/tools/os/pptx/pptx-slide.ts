@@ -1,4 +1,5 @@
 import { BODY_BOX, GROUP_HEADER, TITLE_BOX } from "./pptx-parts.js";
+import { chartReference } from "../ooxml/ooxml-chart.js";
 import { fitInto, type PptxImageInfo } from "./pptx-image.js";
 import type { PptxSlideSpec } from "./pptx-spec.js";
 import type { PptxPalette } from "./pptx-theme.js";
@@ -22,7 +23,62 @@ export interface PlacedImage {
 const GAP = 304_800;
 
 export function isTitleSlide(slide: PptxSlideSpec): boolean {
-  return slide.bullets.length === 0 && slide.image === undefined;
+  return (
+    slide.bullets.length === 0 &&
+    slide.image === undefined &&
+    slide.table === undefined &&
+    slide.chart === undefined
+  );
+}
+
+/** The built-in "Medium Style 2 - Accent 1", the table style PowerPoint and python-pptx default to. */
+export const TABLE_STYLE_ID = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}";
+const ROW_HEIGHT = 370_840;
+
+function graphicFrame(id: number, name: string, box: Box, graphic: string): string {
+  const r = (n: number) => Math.round(n);
+  return (
+    `<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="${id}" name="${name}"/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>` +
+    `<p:xfrm><a:off x="${r(box.x)}" y="${r(box.y)}"/><a:ext cx="${r(box.cx)}" cy="${r(box.cy)}"/></p:xfrm>` +
+    graphic +
+    "</p:graphicFrame>"
+  );
+}
+
+/**
+ * A native table (`a:tbl`), header row first, in the deck's default
+ * table style, so PowerPoint's table tools work on it. Columns share the
+ * width evenly; rows get a fixed height that PowerPoint grows to fit.
+ */
+function tableShape(rows: readonly string[][], area: Box): string {
+  const cols = rows[0]?.length ?? 1;
+  const colWidth = Math.floor(area.cx / cols);
+  const textSize = rows.length > 12 || cols > 6 ? 1200 : 1600;
+  const grid = Array.from({ length: cols }, () => `<a:gridCol w="${colWidth}"/>`).join("");
+  const body = rows
+    .map((row) => {
+      const cells = row
+        .map((value) => {
+          const paragraph =
+            value.length === 0
+              ? `<a:p><a:endParaRPr lang="en-US" sz="${textSize}"/></a:p>`
+              : `<a:p>${runs(value, ` sz="${textSize}"`)}</a:p>`;
+          return `<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>${paragraph}</a:txBody><a:tcPr/></a:tc>`;
+        })
+        .join("");
+      return `<a:tr h="${ROW_HEIGHT}">${cells}</a:tr>`;
+    })
+    .join("");
+  const box: Box = { ...area, cy: Math.min(area.cy, ROW_HEIGHT * rows.length) };
+  return graphicFrame(
+    6,
+    "Table 5",
+    box,
+    '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">' +
+      `<a:tbl><a:tblPr firstRow="1" bandRow="1"><a:tableStyleId>${TABLE_STYLE_ID}</a:tableStyleId></a:tblPr>` +
+      `<a:tblGrid>${grid}</a:tblGrid>${body}</a:tbl>` +
+      "</a:graphicData></a:graphic>",
+  );
 }
 
 function run(text: string, extra = ""): string {
@@ -106,7 +162,12 @@ function pictureShape(image: PlacedImage, area: Box): string {
   );
 }
 
-function contentSlide(slide: PptxSlideSpec, palette: PptxPalette, image?: PlacedImage): string {
+function contentSlide(
+  slide: PptxSlideSpec,
+  palette: PptxPalette,
+  image?: PlacedImage,
+  chartRelId?: string,
+): string {
   const shapes: string[] = [];
   shapes.push(
     placeholderShape(2, "Title 1", TITLE_PH, TITLE_BOX, `<a:bodyPr anchor="b">${AUTOFIT}</a:bodyPr>`, `<a:p>${runs(slide.title)}</a:p>`),
@@ -118,21 +179,31 @@ function contentSlide(slide: PptxSlideSpec, palette: PptxPalette, image?: Placed
   );
   const hasText = slide.bullets.length > 0 || slide.subtitle !== undefined;
   const half = (BODY_BOX.cx - GAP) / 2;
+  const chart = slide.chart !== undefined && chartRelId !== undefined;
+  const hasVisual = image !== undefined || slide.table !== undefined || chart;
   if (hasText) {
-    const textBox: Box = image ? { ...BODY_BOX, cx: half } : BODY_BOX;
+    const textBox: Box = hasVisual ? { ...BODY_BOX, cx: half } : BODY_BOX;
     shapes.push(
       placeholderShape(3, "Content 2", BODY_PH, textBox, `<a:bodyPr anchor="t">${AUTOFIT}</a:bodyPr>`, bodyParagraphs(slide, palette)),
     );
   }
-  if (image) {
-    const area: Box = hasText ? { ...BODY_BOX, x: BODY_BOX.x + half + GAP, cx: half } : BODY_BOX;
-    shapes.push(pictureShape(image, area));
+  const area: Box = hasText ? { ...BODY_BOX, x: BODY_BOX.x + half + GAP, cx: half } : BODY_BOX;
+  if (image) shapes.push(pictureShape(image, area));
+  else if (slide.table !== undefined) shapes.push(tableShape(slide.table, area));
+  else if (slide.chart !== undefined && chartRelId !== undefined) {
+    shapes.push(graphicFrame(7, "Chart 6", area, chartReference(chartRelId)));
   }
   return shapes.join("");
 }
 
-export function slideXml(slide: PptxSlideSpec, palette: PptxPalette, image?: PlacedImage): string {
-  const body = isTitleSlide(slide) ? titleSlide(slide, palette) : contentSlide(slide, palette, image);
+/** `chartRelId`: the slide's relationship to its chart part, when the slide has a chart. */
+export function slideXml(
+  slide: PptxSlideSpec,
+  palette: PptxPalette,
+  image?: PlacedImage,
+  chartRelId?: string,
+): string {
+  const body = isTitleSlide(slide) ? titleSlide(slide, palette) : contentSlide(slide, palette, image, chartRelId);
   return (
     XML_HEAD +
     `<p:sld ${PML_NS}>` +

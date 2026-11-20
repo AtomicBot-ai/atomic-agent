@@ -3,6 +3,7 @@ import { fitInto, sniffImage } from "./pptx-image.js";
 import {
   MAX_BULLETS_PER_SLIDE,
   MAX_SLIDES,
+  MAX_TABLE_ROWS,
   parseAccentColor,
   parseBullet,
   parseDeckSpec,
@@ -119,5 +120,45 @@ describe("sniffImage", () => {
 describe("fitInto", () => {
   it("keeps the aspect ratio and centres the picture in its box", () => {
     expect(fitInto({ width: 200, height: 100 }, { x: 0, y: 0, cx: 100, cy: 100 })).toEqual({ x: 0, y: 25, cx: 100, cy: 50 });
+  });
+});
+
+describe("parseDeckSpec tables and charts", () => {
+  it("reads a table, padding short rows and writing numbers as text", () => {
+    const spec = parseDeckSpec({ path: "d.pptx", slides: [{ title: "T", table: [["A", "B"], [1, null], [true]] }] });
+    expect(spec.slides[0]!.table).toEqual([["A", "B"], ["1", ""], ["true", ""]]);
+  });
+
+  it("refuses a table that is too big or not a grid", () => {
+    const tall = Array.from({ length: MAX_TABLE_ROWS + 1 }, () => ["x"]);
+    expect(() => parseDeckSpec({ path: "d.pptx", slides: [{ title: "T", table: tall }] })).toThrow(/at most 30 per slide/);
+    expect(() => parseDeckSpec({ path: "d.pptx", slides: [{ title: "T", table: [] }] })).toThrow(/table must be a non-empty array/);
+    expect(() => parseDeckSpec({ path: "d.pptx", slides: [{ title: "T", table: ["a"] }] })).toThrow(/table\[0\] must be an array/);
+    expect(() => parseDeckSpec({ path: "d.pptx", slides: [{ title: "T", table: [[{}]] }] })).toThrow(/must be text or a number/);
+  });
+
+  it("reads a chart and names the slide in its errors", () => {
+    const chart = { type: "bar", categories: ["A"], series: [{ name: "s", values: [1] }] };
+    expect(parseDeckSpec({ path: "d.pptx", slides: [{ title: "T", chart }] }).slides[0]!.chart).toEqual({
+      type: "bar",
+      categories: ["A"],
+      series: [{ name: "s", values: [1] }],
+    });
+    expect(() =>
+      parseDeckSpec({ path: "d.pptx", slides: [{ title: "T" }, { title: "U", chart: { ...chart, type: "donut" } }] }),
+    ).toThrow(/os\.fs\.write_pptx: slides\[1\]\.chart\.type must be one of/);
+  });
+
+  it("treats a null table or chart as absent", () => {
+    expect(parseDeckSpec({ path: "d.pptx", slides: [{ title: "T", table: null, chart: null }] }).slides[0]).toEqual({
+      title: "T",
+      bullets: [],
+    });
+  });
+
+  it("refuses more than one of image, table and chart on a slide", () => {
+    expect(() =>
+      parseDeckSpec({ path: "d.pptx", slides: [{ title: "T", image: "a.png", table: [["x"]] }] }),
+    ).toThrow(/more than one of image, table and chart/);
   });
 });
