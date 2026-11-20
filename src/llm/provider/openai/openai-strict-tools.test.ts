@@ -490,11 +490,14 @@ describe("strict-tool conformance over every registered tool", () => {
     // unable to write a check at all. `parseDelegateArgs` validates the
     // shape at run time, as it always did. `browser.extract` takes the
     // caller's own JSON Schema as `schema`; `browser.site_tools` passes
-    // `arguments` shaped by the site's own declared tool (ATO-521). Each
-    // is the tool's actual payload, so none can be closed.
+    // `arguments` shaped by the site's own declared tool (ATO-521);
+    // `browser.scenario` takes the values a recorded scenario's
+    // placeholders are filled with as `params` (ATO-960). Each is the
+    // tool's actual payload, so none can be closed.
     expect(refused).toEqual([
       "browser__extract",
       "browser__site_tools",
+      "browser__scenario",
       "os__http__request",
       "mcp__prompt__get",
       "verify__run",

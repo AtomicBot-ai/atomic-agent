@@ -186,6 +186,18 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     ),
   ],
   [
+    "browser.scenario",
+    obj(
+      {
+        action: { type: "string", enum: ["start", "stop", "cancel", "run", "list", "delete"] },
+        name: stringSchema,
+        params: { type: "object" },
+        timeoutMs: numberSchema,
+      },
+      ["action"],
+    ),
+  ],
+  [
     "browser.scroll",
     obj(
       {

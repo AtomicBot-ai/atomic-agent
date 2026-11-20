@@ -66,6 +66,10 @@ const FORMS: Record<string, CompactToolForm> = {
     summary: "The user pins comments on page elements: start, then read (selectors, styles, boxes), stop.",
     tier: RARE,
   },
+  "browser.scenario": {
+    summary: "Record browser steps (start, stop with a name), then run them again without the model; list, delete.",
+    tier: RARE,
+  },
   "os.shell.run": {
     summary:
       "Run a shell command in the working directory (may require approval). `cmd` is required and must not be empty. Not for deleting (os.fs.trash) or moving files (os.fs.move). A long command comes back as a job: wait, kill or list jobs.",
