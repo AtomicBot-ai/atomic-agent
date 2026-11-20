@@ -2759,6 +2759,7 @@ function chatRow(s) {
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
+    + (typeof workerBadgeHTML === 'function' ? workerBadgeHTML(s.id) : '')   // ATO-1173: a worker chat's status (project-workers.js)
     /* ATO-165: one "…" control opens the row's menu (Pin / Unpin, Mark as read
        / unread, Delete…) — it replaced the separate pin and mark-as-unread
        controls. A span with role="button", not a <button>: `.sesrow` is
@@ -2834,6 +2835,7 @@ function chatMenuHTML() {
   const stored = SESSIONS.some((x) => x.id === id);
   const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id]),
     renamable: stored, folders: stored, exportable: stored,   // ATO-455: a stand-in has nothing stored to rename; ATO-1034: nor to file; ATO-1054: nor to export
+    workers: typeof pworkersCanSplit === 'function' && pworkersCanSplit(id),   // ATO-1173 (project-workers.js)
     archivable: stored, archived: chatArchivedIds().includes(id)});   // ATO-1150: nor to archive
   const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
   let x = 60, y = 60;
@@ -5490,6 +5492,7 @@ function overlaysHTML() {
   if (S.overlay === 'bugrep') html += bugRepHTML();   // ATO-1466 (bug-report.js)
   if (S.overlay === 'pedit') html += projectEditHTML();   // ATO-1146 (chat-projects.js)
   if (S.overlay === 'pnew') html += projectCreateHTML();   // W2 QA (chat-projects.js)
+  if (S.overlay === 'pworkers') html += pworkersSheetHTML();   // ATO-1173 (project-workers.js)
   if (S.overlay === 'deeplink') html += deeplinkSheetHTML(); else deeplinkWhenClosed();   // ATO-556 (deeplink.js): a waiting link opens once the card is closed
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
@@ -7754,6 +7757,7 @@ function act(a) {
   if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel' || k === 'pedit' || k === 'psave' || k === 'pmore') { close(); projectAct(k, v); return; }
   // W2 QA: the New project sheet's own buttons keep it open.
   if (k === 'pnewpick' || k === 'pnewclear' || k === 'pnewsave') { projectAct(k, v); return; }
+  if (k === 'pworkers' || k === 'pwstart' || k === 'pwfill') { pworkersAct(k, v || ''); return; }   // ATO-1173 (project-workers.js)
   if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }
   if (k === 'frename')   { close(); render(); renameStart(v, 'folder'); return; }
   if (k === 'fdel')      { close(); const f = folderById(FOLDERS.state, v);
@@ -11244,6 +11248,7 @@ function onChatEvent(ev) {
       FIRST_TURNS.delete(ev.turnId);   // item 27: a turn that ended before its stream named a session
       if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
       if (sid && typeof goalTurnEnded === 'function') void goalTurnEnded(sid);  // ATO-1040: a pause / clear asked of its goal has landed
+      if (sid && typeof workerTurnEnded === 'function') workerTurnEnded(sid, ev.kind);  // ATO-1173: a worker chat's badge
       if (ev.kind === 'error' && sid) ATTN.add(sid);
       nextStepTurnEnded(sid, ev.kind);   // ATO-1094: retire the old suggestion; a finished turn asks for a new one
       const endedSince = (LIVE_TURNS.get(ev.turnId) || {}).startedAt || 0;   // B01: closeChatApprovals, read before liveTurnEnded drops it
@@ -21824,6 +21829,7 @@ async function openSession(id) {
   S.history = [];
   markSeen(id);   // item 6: opening a chat is reading it
   rollbackStashBack(id);   // ATO-1300: a question taken back while this chat was not on screen
+  if (typeof pworkersStashBack === 'function') pworkersStashBack(id);   // ATO-1173: worker results owed to this chat
   /* Item 38: not under a turn running on screen again. It runs on the model
      the window is on, and the notice would land below its reply, saying the
      session ran on the model of the turn before it. */
