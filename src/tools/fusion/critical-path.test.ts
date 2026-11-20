@@ -41,7 +41,7 @@ describe("criticalPath", () => {
     // 2 slots × 13m = 26m of slot time, 17m worked.
     expect(report.idleLocalSlotMs).toBe(9 * min);
     expect(renderPathLine(report)).toBe(
-      "\n\nCritical path 12m (tasks a → c → d), total work 17m, idle local slot 9m.",
+      "\n\nCritical path 12m (tasks a → c → d), total work 17m, idle local slot 9m00s.",
     );
   });
 
