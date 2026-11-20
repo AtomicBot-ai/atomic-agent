@@ -102,6 +102,7 @@ import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createRestoreFileHandler } from "./route-fs-restore.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
+import * as importFacts from "./route-import-facts.js";
 import {
   createDeleteMemoryNoteHandler,
   createDeleteProfileFactHandler,
@@ -334,6 +335,14 @@ export function buildRouteTable(options: RouteTableOptions = {}): RouteDefinitio
     { method: "POST", path: "/api/llm/active", handler: createSetActiveLlmHandler() },
     // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
     { method: "POST", path: "/api/memory/embeddings/reconnect", handler: createReconnectMemoryEmbeddingsHandler() },
+    // ATO-1617 / ATO-1629: facts about the person from a chat export, ticked before saving (route-import-facts.ts).
+    { method: "POST", path: "/api/import/facts/start", handler: importFacts.createStartImportFactsHandler() },
+    { method: "GET", path: "/api/import/facts/jobs/{id}", handler: importFacts.createGetImportFactsJobHandler() },
+    { method: "POST", path: "/api/import/facts/jobs/{id}/stop", handler: importFacts.createStopImportFactsJobHandler() },
+    { method: "POST", path: "/api/import/facts/jobs/{id}/save", handler: importFacts.createSaveImportFactsHandler() },
+    { method: "DELETE", path: "/api/import/facts/jobs/{id}", handler: importFacts.createForgetImportFactsJobHandler() },
+    { method: "GET", path: "/api/import/facts/receipts", handler: importFacts.createListImportReceiptsHandler() },
+    { method: "POST", path: "/api/import/facts/receipts/{id}/undo", handler: importFacts.createUndoImportReceiptHandler() },
     // ATO-1124: the person's own list / edit / delete of notes and profile facts (route-memory.ts).
     { method: "GET", path: "/api/memory/notes", handler: createListMemoryNotesHandler() },
     { method: "PATCH", path: "/api/memory/notes/{id}", handler: createEditMemoryNoteHandler() },

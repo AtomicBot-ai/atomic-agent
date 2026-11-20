@@ -116,6 +116,8 @@ export function createCapabilitiesHandler(): HttpHandler {
         // client gets `ask_user` in its turns only when its chat request
         // sends `X-Atomic-Questions: 1` (with `X-Atomic-Extensions`).
         questions: true,
+        // ATO-1617: /api/import/facts/* (facts from a ChatGPT or Claude export). Absent on an older agent.
+        importFacts: true,
       },
       tools: runtime.toolRegistry
         .list()
