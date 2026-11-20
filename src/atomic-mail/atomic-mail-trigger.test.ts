@@ -56,7 +56,7 @@ describe("AtomicMailTrigger (ATO-601)", () => {
   let readiness: AtomicMailReadiness;
   let bindings: Record<string, WebhookConfig>;
   let tasks: Map<string, MailTriggerTask>;
-  let created: Array<{ binding: string; userMessage: string; sessionId: string | null }>;
+  let created: Array<{ binding: string; userMessage: string; sessionId: string | null; startPaused: boolean }>;
   let send: Mock<AtomicMailService["send"]>;
   let listInboxForTrigger: Mock<AtomicMailService["listInboxForTrigger"]>;
   let trigger: AtomicMailTrigger;
