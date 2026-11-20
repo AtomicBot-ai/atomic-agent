@@ -3143,6 +3143,8 @@ describe("reduceTuiState per-step spend for /why (ATO-34)", () => {
         event: {
           type: "tool_call_executed",
           result: { tool: "os.fs.read", status: "ok", summary: `step ${stepIndex}`, details: {}, truncated: false },
+          batchIndex: 0,
+          batchSize: 1,
         },
       },
     },
