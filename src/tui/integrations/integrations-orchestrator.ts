@@ -23,6 +23,9 @@ import {
   GITHUB_INTEGRATION_ID,
   GITHUB_TOKEN_FIELD,
   IntegrationSecretError,
+  MONID_DISCONNECT_ACTION,
+  MONID_INTEGRATION_ID,
+  MONID_SIGNIN_ACTION,
   displayFieldValue,
   exaKeyUnusedReason,
   findIntegration,
@@ -60,6 +63,15 @@ import {
 
 export type { GithubHubDeps } from "./integrations-orchestrator-github.js";
 
+import {
+  readMcpSignedIn,
+  runMonidDisconnect,
+  runMonidSignIn,
+  type MonidHubDeps,
+} from "./integrations-orchestrator-monid.js";
+
+export type { MonidHubDeps } from "./integrations-orchestrator-monid.js";
+
 /**
  * The only TUI module that touches credential storage and the live MCP
  * manager on behalf of the Integrations tab. The reducer and component
@@ -88,6 +100,8 @@ export class IntegrationsOrchestrator {
     private readonly github: GithubHubDeps = {},
     /** The agent's inbox. Constructed lazily so tests can inject one. */
     private readonly atomicMail: AtomicMailService = new AtomicMailService(),
+    /** Monid's browser sign-in, shared with the MCP tab (ATO-1630). */
+    private readonly monid: MonidHubDeps = {},
   ) {}
 
   /** The one registration in flight, so a second `r` joins it instead of making a second inbox. */
@@ -137,6 +151,8 @@ export class IntegrationsOrchestrator {
       channelStates.set("atomic-mail", "verified");
     else if (config.atomicMail.pendingVerification)
       channelStates.set("atomic-mail", "pending");
+    // ATO-1630: which remote servers hold a browser sign-in (Monid's row).
+    const mcpSignedIn = readMcpSignedIn(config.paths.stateDir, config.mcp?.servers);
     // ATO-1088: channels are paused while offline mode is on.
     const offline = this.runtime.offlineMode?.isEnabled() ?? false;
     return listIntegrations().map((descriptor) => {
@@ -151,6 +167,7 @@ export class IntegrationsOrchestrator {
           .filter((f) => f.required)
           .every((f) => present.has(f.key)),
         mcpServerStates,
+        mcpSignedIn,
         channelStates,
         channelErrors,
         verifiedIdentities,
@@ -272,6 +289,12 @@ export class IntegrationsOrchestrator {
     if (integrationId === GITHUB_INTEGRATION_ID) {
       if (actionId === "verify") return this.verifyGithub();
       if (actionId === "import") return this.importGithubTokenFromGh();
+    }
+    if (integrationId === MONID_INTEGRATION_ID && actionId === MONID_SIGNIN_ACTION) {
+      return runMonidSignIn(this.runtime, this.monid);
+    }
+    if (integrationId === MONID_INTEGRATION_ID && actionId === MONID_DISCONNECT_ACTION) {
+      return runMonidDisconnect(this.monid);
     }
     if (integrationId === "atomic-mail") {
       return runAtomicMailAction(this.atomicMail, actionId, this.registration, {
