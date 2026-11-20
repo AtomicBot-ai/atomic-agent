@@ -101,7 +101,7 @@ describe("AnalyticsClient", () => {
         posthog,
       });
       client.capture("message_sent", { surface: null });
-      expect(posthog.capture.mock.calls[0][0].properties.surface).toBe("desktop");
+      expect(posthog.capture.mock.calls[0]![0].properties.surface).toBe("desktop");
     } finally {
       vi.unstubAllEnvs();
     }
