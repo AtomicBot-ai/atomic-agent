@@ -64,7 +64,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `log.level` | `'debug' \| 'info' \| 'warn' \| 'error'` | `"info"` | Lowest severity the runtime's structured log writes: `debug`, `info` (default), `warn` or `error`. |
+| `log.level` | `'debug' \| 'info' \| 'warn' \| 'error'` | `"info"` |  |
 
 ## agent
 
@@ -205,7 +205,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `network.offline` | `boolean` | `false` | Network kill switch (ATO-1084): `{ offline: false }` by default. Additive and unversioned: a file without the block reads the default. |
+| `network.offline` | `boolean` | `false` |  |
 | `network.proxy.url` | `string \| null` | `null` | Your own HTTP(S) proxy for the agent's web traffic (ATO-87), `http://host:port` or `https://host:port`, with `user:password@` if needed; `null` is off. `ATOMIC_AGENT_PROXY` sets it for one process. Env `ATOMIC_AGENT_PROXY` wins when set. |
 | `network.proxy.noProxy` | `string[]` | `[]` | Hosts that bypass `network.proxy.url` (`example.com` also covers its subdomains). This machine always goes direct. |
 
@@ -329,7 +329,7 @@ In the TUI, `/settings <words>` searches the same list. The desktop app shows it
 | --- | --- | --- | --- |
 | `tui.theme` | `string` | `"auto"` | TUI color theme: `auto` (default) detects the terminal background and picks the matching classic theme, or a registered theme name such as `khorne-red`. Set by the `/theme` picker. |
 | `tui.whileBusySubmit` | `'steer' \| 'queue'` | `"steer"` | What Enter does while a turn is running: `steer` (default) folds the message into the running turn at the next step, `queue` runs it as its own turn once the current one ends. |
-| `tui.mouse` | `boolean` | `true` | Turns terminal mouse reporting on: clicking panels, list rows, the nav bar and the prompt, plus wheel scrolling. Turning it off restores the terminal's own drag-to-select, which mouse reporting takes over — see `/mouse` and `--no-mouse`. Older files are upgraded with `mouse: true`. On the classic Windows console (not Windows Terminal) reporting starts off whatever this says, since that console does not deliver the reports; `--mouse` or `/mouse on` turns it on. |
+| `tui.mouse` | `boolean` | `true` | Turns terminal mouse reporting on: clicking panels, list rows, the nav bar and the prompt, plus wheel scrolling. Turning it off restores the terminal's own drag-to-select, which mouse reporting takes over — see `/mouse` and `--no-mouse`. Older files are upgraded with `mouse: true`. |
 | `tui.showSteps` | `boolean` | `false` | Always show steps (ATO-963): keep every finished turn's tool cards and reasoning open in the chat, as before. Off by default: a finished turn folds into one "Used 6 tools · 40s" line. Additive and unversioned, a file without it reads `false`. A display preference only; the agent never reads it. |
 | `tui.nextStepSuggestions` | `boolean` | `false` | Next-step suggestions (ATO-1096, epic ATO-995): after a turn, one short model call proposes what to ask next, shown as grey text in the empty composer that Tab accepts. Off by default: the call costs a model request after every turn, so it is opt-in. Additive and unversioned, a file without it reads `false`. |
 | `tui.vimMode` | `boolean` | `false` | Vim keys in the terminal composer (ATO-662): NORMAL / INSERT modes with the core motions and operators. Off by default; `/vim` flips it. Additive and unversioned, a file without it reads `false`. A display/input preference only; the agent never reads it. |
@@ -454,6 +454,8 @@ Read from the process environment or from `~/.atomic-agent/.env` (a variable alr
 | `ATOMIC_AGENT_LOOP_WANDERING_THRESHOLD` | `6` | env only | Calls with varied arguments to one tool before the model is redirected. |
 | `ATOMIC_AGENT_LOOP_WANDERING_ESCALATION` | `12` | env only | Calls with varied arguments to one tool before the agent is made to reply. |
 | `ATOMIC_AGENT_REPLY_POLISH` | `true` | env only | Clean up the final reply before a chat surface shows it. |
+| `ATOMIC_AGENT_SANDBOX` | `"off"` | env only | Set to workspace to run the agent's shell commands in the OS sandbox: writes only in the working folder, temp and download caches, no reads of credential folders or the state directory. Where no sandbox exists (Windows, Linux without bwrap) commands are refused. Unset or any other value: off. |
+| `ATOMIC_AGENT_SANDBOX_NETWORK` | `"off"` | env only | Set to on to let commands inside the Safe Mode sandbox reach the network; loopback always works. Unset or any other value: no network inside the sandbox. |
 | `ATOMIC_AGENT_BROWSER_ENABLED` | `true` | env only | Register the browser tools. |
 | `ATOMIC_AGENT_BROWSER_CHANNEL` | `"chrome"` | env only | Browser to launch: chrome, msedge or chromium. |
 | `ATOMIC_AGENT_BROWSER_HEADLESS` | `false` | env only | Run the agent's browser without a window. |
@@ -476,6 +478,9 @@ Read from the process environment or from `~/.atomic-agent/.env` (a variable alr
 | `ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_MS` | `300000` | env only | Post a status snapshot of a long run this often, in ms; 0 turns it off. |
 | `ATOMIC_AGENT_SESSION_TOOLS_ENABLED` | `false` | env only | Let the agent list, read and message its other sessions (the sessions.* tools). |
 | `ATOMIC_AGENT_TASKS_KEEP_AWAKE` | unset | env only | Keep the computer awake for tasks and turns: off or while-working. Unset or any other value: off. |
+| `ATOMIC_AGENT_NEXT_STEP_URL` | unset | env only | OpenAI-compatible server (a second llama-server, LM Studio, Ollama) that writes the next-step suggestion instead of the chat model, e.g. http://127.0.0.1:8081/v1. Only used while tui.nextStepSuggestions is on. Unset: the chat model writes it. |
+| `ATOMIC_AGENT_NEXT_STEP_MODEL` | unset | env only | Model name sent to ATOMIC_AGENT_NEXT_STEP_URL. Unset: no model name is sent. |
+| `ATOMIC_AGENT_NEXT_STEP_API_KEY` | unset | env only | Bearer key sent to ATOMIC_AGENT_NEXT_STEP_URL. Unset: none. |
 | `ATOMIC_AGENT_PERSONA` | unset | env only | Persona name to use for this process, above every config.json setting. |
 | `ATOMIC_AGENT_LANG` | unset | env only | Interface language of the terminal UI when `tui.language` is `auto`: en or ru. Unset: taken from LC_ALL, LC_MESSAGES or LANG, else English. |
 | `ATOMIC_AGENT_OFFLINE` | unset | env only | Set to 1 to turn offline mode on for this process, whatever config.json says. It cannot be turned off for a running process. |
