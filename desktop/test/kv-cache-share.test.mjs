@@ -42,7 +42,8 @@ test('the HTML is a quiet figure with the exact counts in its tooltip', () => {
 
 test('wired: loaded before renderer.js, the frame kept on the reply, shown beside tok/s', () => {
   const html = src('../renderer/index.html');
-  assert.ok(html.indexOf('kv-cache-share.js') > 0 && html.indexOf('kv-cache-share.js') < html.indexOf('renderer.js'));
+  const own = html.indexOf('<script src="kv-cache-share.js"');
+  assert.ok(own > 0 && own < html.indexOf('<script src="renderer.js"'));
   const r = src('../renderer/renderer.js');
   assert.match(r, /ev\.kind === 'step_speed'/);
   assert.match(r, /stepCacheOf\(ev\.payload\)/);
