@@ -13,11 +13,12 @@ import { join } from "node:path";
  *
  *  - Telegram wanted here (a token and the channel not disabled): the
  *    live process holding `<stateDir>/telegram.lock` leads. It also takes
- *    `scheduler.lock`, so a process that does not run Telegram defers to
- *    it as well (once it has it: a non-Telegram process that already
- *    held `scheduler.lock` keeps leading too until it exits — the
- *    behaviour before this module, harmless with atomic claiming); a
- *    process that wants Telegram but lost that lock gives
+ *    `scheduler.lock`, over a live holder's pid if need be, so a process
+ *    that does not run Telegram defers to it as well: one that already
+ *    held `scheduler.lock` sees the owner's pid there on its next tick and
+ *    stands by (#1735 — before, both kept leading for as long as both
+ *    lived and both ran the leader-only sidecars such as the mail
+ *    trigger). A process that wants Telegram but lost that lock gives
  *    `scheduler.lock` up and stands by.
  *  - Otherwise, or while nobody holds `telegram.lock` (a reconnect gap —
  *    the channel releases it between attempts): the holder of
@@ -96,6 +97,19 @@ export function createSchedulerLeadership(
     return readHolder(schedulerLock) === self;
   };
 
+  // The Telegram owner outranks whoever holds `scheduler.lock`, so it
+  // writes its own pid over a live holder's. Only a process that runs a
+  // scheduler asks for leadership at all, so the old holder sees this pid
+  // on its next tick and stands by (#1735).
+  const claimSchedulerLock = (): void => {
+    if (holdSchedulerLock()) return;
+    try {
+      writeFileSync(schedulerLock, String(self));
+    } catch {
+      // best-effort: still leads, as before
+    }
+  };
+
   const release = (): void => {
     try {
       // Only the owner removes the file (same rule as TelegramLockfile).
@@ -110,7 +124,7 @@ export function createSchedulerLeadership(
       if (options.telegramWanted()) {
         const holder = liveHolder(telegramLock);
         if (holder === self) {
-          holdSchedulerLock();
+          claimSchedulerLock();
           return true;
         }
         if (holder !== null) {
