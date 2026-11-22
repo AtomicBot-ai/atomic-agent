@@ -7751,7 +7751,7 @@ function act(a) {
                            f.collapsed = !f.collapsed; saveFolders(); render(); nameVisibleSessions(); return; }
   if (k === 'fnew')      { close(); folderCreate(v || null); return; }
   // ATO-1146: projects (chat-projects.js): New project, fold, remove.
-  if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel' || k === 'pedit' || k === 'psave' || k === 'pmore') { close(); projectAct(k, v); return; }
+  if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel' || k === 'pedit' || k === 'psave' || k === 'pmore' || k === 'pchat') { close(); projectAct(k, v); return; }
   // W2 QA: the New project sheet's own buttons keep it open.
   if (k === 'pnewpick' || k === 'pnewclear' || k === 'pnewsave') { projectAct(k, v); return; }
   if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }

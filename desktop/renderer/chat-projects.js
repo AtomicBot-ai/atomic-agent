@@ -383,6 +383,23 @@ if (typeof document !== 'undefined') {
   });
 }
 
+/* ATO-1690: the plus on a project's header opens a new chat in that project,
+   as Claude and ChatGPT do. The same path New project takes: the first turn
+   carries the project's id (projectForNewTurn), so main files the chat there
+   and runs it in the project's folder, or reads a chat folder's instructions.
+   A turn running in the chat on screen keeps running in the background, as
+   with New chat. The project unfolds, so the new chat's row shows in it. */
+function projectNewChat(id) {
+  if (!projectAny(id)) return;
+  act('session:new');
+  PROJECTS.newFor = {id, log: S.log};
+  if (id[0] === 'f') {
+    const f = folderById(FOLDERS.state, id);
+    if (f && f.collapsed) { f.collapsed = false; saveFolders(); }
+  } else if (PROJECTS.collapsed.delete(id)) projectsSaveFolds();
+  render();
+}
+
 /** The act verbs this file owns (renderer.js act() hands them over). */
 function projectAct(k, v) {
   if (k === 'pnew') { projectCreateOpen(v || null); return true; }
@@ -397,6 +414,7 @@ function projectAct(k, v) {
     S.alert = {title: 'Remove project “' + p.name + '”?', msg: p.folder ? 'Its chats stay, under Chats. The folder on disk is not touched.' : 'Its chats stay, under Chats.', ok: 'Remove', act: 'pdel:' + v};
     render(); return true;
   }
+  if (k === 'pchat') { projectNewChat(v); return true; }
   if (k === 'pdel') { projectRemove(v); return true; }
   if (k === 'pedit') { projectEditOpen(v); return true; }
   if (k === 'psave') { projectEditSave(); return true; }
@@ -437,6 +455,7 @@ function projectsSidebarHTML(groups, folders) {
           + '<span class="sb-fic">' + ic('folder') + '</span>'
           + '<span class="sb-fname">' + esc(g.name) + '</span>'
           + (g.rows.length ? '<span class="ct tnum">' + g.rows.length + '</span>' : '')
+          + '<span class="sesmore iconbtn" data-act="pchat:' + esc(g.id) + '" title="New chat in this project" aria-label="New chat in this project" role="button">' + ic('plus') + '</span>'
           + '<span class="sesmore iconbtn" data-act="pedit:' + esc(g.id) + '" title="Edit project" aria-label="Edit project" role="button">' + ic('edit') + '</span>'
           + '<span class="sesmore iconbtn" data-act="pdelask:' + esc(g.id) + '" title="Remove project" aria-label="Remove project" role="button">' + ic('x') + '</span>'
         + '</button>'
