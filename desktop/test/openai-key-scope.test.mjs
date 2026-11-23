@@ -3,7 +3,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { createRequire } from 'node:module';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const require = createRequire(import.meta.url);
+
+// An empty state folder: resolveKeyValue also reads <stateDir>/.env and the keychain
+// cache, and the real ~/.atomic-agent must not decide these answers.
+process.env.ATOMIC_AGENT_STATE_DIR = mkdtempSync(join(tmpdir(), 'ato1703-state-'));
 
 // ATO-1703: the shared OpenAI key only goes to OpenAI itself or this machine,
 // the same rule as the agent's resolve-llm-api-key.ts.
@@ -22,10 +29,10 @@ const compat = (baseUrl) => ({id: 'custom', kind: 'openai-compatible', ...(baseU
 
 test('mayReceiveOpenAiKey: OpenAI, this machine or no address only', () => {
   const { mayReceiveOpenAiKey } = require('../out/main/agent-cli.js');
-  for (const url of [undefined, '', 'https://api.openai.com', 'https://API.openai.com/v1/', 'http://127.0.0.1:8080', 'http://localhost:1234', 'http://box.localhost:1']) {
+  for (const url of [undefined, '', 'https://api.openai.com', 'https://API.openai.com/v1/', 'http://127.0.0.1:8080', 'http://127.0.0.2:8080', 'http://localhost:1234', 'http://[::1]:1']) {
     assert.equal(mayReceiveOpenAiKey(url), true, String(url));
   }
-  for (const url of ['https://llm.example.com', 'https://api.openai.com.evil.example', 'http://api.openai.com', 'https://api.openai.com:8443', 'not a url']) {
+  for (const url of ['https://llm.example.com', 'https://api.openai.com.evil.example', 'https://api.openai.com@evil.example', 'http://api.openai.com', 'https://api.openai.com:8443', 'http://box.localhost:1', 'http://0.0.0.0:8080', 'not a url']) {
     assert.equal(mayReceiveOpenAiKey(url), false, url);
   }
 });
@@ -67,4 +74,24 @@ test('the renderer and the Settings smoke use the same rule', () => {
   const main = readFileSync(new URL('../main/main.ts', import.meta.url), 'utf8');
   const k = main.indexOf('const keyNames = (p: Provider)');
   assert.match(main.slice(k, main.indexOf(': [];', k)), /sharedCompatKeyNames\(p\)/);
+});
+
+test('naming OPENAI_API_KEY as the entry\'s own variable is no way around the rule', () => {
+  const { resolveKeyValue, providerHasKey, providerKeyInvalid } = require('../out/main/agent-cli.js');
+  const names = {present: new Set(['OPENAI_API_KEY']), nonEmpty: new Set(['OPENAI_API_KEY']), badChars: new Set(['OPENAI_API_KEY'])};
+  withEnv({OPENAI_API_KEY: 'sk-real'}, () => {
+    const evil = {...compat('https://evil.example'), apiKeyEnvVar: 'OPENAI_API_KEY'};
+    assert.equal(resolveKeyValue(evil), null);
+    assert.equal(providerHasKey(evil, names), false);
+    assert.equal(providerKeyInvalid(evil, names), false);
+    assert.equal(resolveKeyValue({id: 'or', kind: 'openrouter', apiKeyEnvVar: 'OPENAI_API_KEY'}), null);
+    assert.equal(resolveKeyValue({...compat('https://api.openai.com'), apiKeyEnvVar: 'OPENAI_API_KEY'}), 'sk-real');
+  });
+});
+
+test('an entry\'s own variable is authoritative: no fallback to the shared ones', () => {
+  const { resolveKeyValue } = require('../out/main/agent-cli.js');
+  withEnv({OPENAI_COMPAT_API_KEY: 'compat-key'}, () => {
+    assert.equal(resolveKeyValue({...compat('https://llm.example.com'), apiKeyEnvVar: 'ATO1703_UNSET_KEY'}), null);
+  });
 });

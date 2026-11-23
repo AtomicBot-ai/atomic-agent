@@ -1640,11 +1640,22 @@ export function readsSharedCompatKey(entry: ProviderEntry): boolean {
  */
 export function mayReceiveOpenAiKey(baseUrl: string | undefined): boolean {
   if (baseUrl === undefined || baseUrl.length === 0) return true;
-  if (isLocalProviderUrl(baseUrl)) return true;
-  try {
-    const url = new URL(baseUrl);
-    return url.origin === "https://api.openai.com" || url.hostname.toLowerCase().endsWith(".localhost");
-  } catch { return false; }
+  let url: URL;
+  try { url = new URL(baseUrl); } catch { return false; }
+  if (url.origin === "https://api.openai.com") return true;
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  // Literal loopback only: a *.localhost name can be answered by the network's DNS.
+  const host = url.hostname.toLowerCase();
+  return host === "localhost" || host === "[::1]" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+const OPENAI_KEY_VARIABLES = new Set(["OPENAI_API_KEY", "ATOMIC_AGENT_OPENAI_API_KEY"]);
+
+/** The agent's mayUseKeyVariable: naming an OpenAI variable as the entry's own is no way around the rule. */
+export function mayUseKeyVariable(entry: ProviderEntry, name: string): boolean {
+  if (!OPENAI_KEY_VARIABLES.has(name)) return true;
+  if (entry.baseUrl) return mayReceiveOpenAiKey(entry.baseUrl);
+  return entry.kind === undefined || entry.kind === "openai-compatible" || entry.kind === "qwen-openai-compatible";
 }
 
 /** The shared variables the agent reads a compat entry's key from, in its `??` order. */
@@ -1658,7 +1669,8 @@ export function sharedCompatKeyNames(entry: ProviderEntry): string[] {
 /** The variables the agent reads this entry's key from, in its order (resolve-llm-api-key.ts). */
 function keyVarNames(entry: ProviderEntry): string[] {
   const names: string[] = [];
-  if (entry.apiKeyEnvVar) names.push(entry.apiKeyEnvVar);
+  // The entry's own variable is authoritative, as in the agent: no fallback past it.
+  if (entry.apiKeyEnvVar) return mayUseKeyVariable(entry, entry.apiKeyEnvVar) ? [entry.apiKeyEnvVar] : [];
   if (entry.kind === "openrouter") names.push("OPENROUTER_API_KEY");
   if (entry.kind === "aimlapi") names.push("AIMLAPI_API_KEY");
   if (entry.kind === "gemini") names.push("GEMINI_API_KEY");
@@ -2893,7 +2905,7 @@ export function providerKeyInvalid(entry: ProviderEntry, names: KeyEnvNames = ke
   if (entry.apiKey && entry.apiKey.length > 0) return !apiKeyCharsOk(entry.apiKey);
   if (entry.kind === "subscription-cli") return false;
   let name: string | undefined;
-  if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) name = entry.apiKeyEnvVar;
+  if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) name = mayUseKeyVariable(entry, entry.apiKeyEnvVar) ? entry.apiKeyEnvVar : undefined;
   else if (entry.kind === "openrouter") name = "OPENROUTER_API_KEY";
   else if (entry.kind === "aimlapi") name = "AIMLAPI_API_KEY";
   else if (entry.kind === "gemini") name = "GEMINI_API_KEY";
@@ -2909,7 +2921,9 @@ export const STORED_KEY_INVALID = "its saved API key has a character keys don’
 export function providerHasKey(entry: ProviderEntry, names: KeyEnvNames = keyNamesAvailable()): boolean {
   if (entry.apiKey && entry.apiKey.length > 0) return true;
   if (entry.kind === "subscription-cli" && entry.subscriptionCli?.cli) return true;
-  if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) return names.nonEmpty.has(entry.apiKeyEnvVar);
+  if (entry.apiKeyEnvVar && entry.apiKeyEnvVar.length > 0) {
+    return mayUseKeyVariable(entry, entry.apiKeyEnvVar) && names.nonEmpty.has(entry.apiKeyEnvVar);
+  }
   if (entry.kind === "openrouter") return names.nonEmpty.has("OPENROUTER_API_KEY");
   if (entry.kind === "aimlapi") return names.nonEmpty.has("AIMLAPI_API_KEY");
   if (entry.kind === "gemini") return names.nonEmpty.has("GEMINI_API_KEY");

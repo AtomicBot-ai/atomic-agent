@@ -27597,22 +27597,26 @@ function llmEmbCfg() { return llmLocalModels().embeddings || {}; }
    (ATO-1066, agent-cli.ts readsSharedCompatKey), so they do not count as
    its key either. */
 function llmKeyEnvNames(p) {
-  if (p.apiKeyEnvVar) return [p.apiKeyEnvVar];
+  /* ATO-1703 (agent-cli.ts mayReceiveOpenAiKey): the OpenAI variables only go to
+     OpenAI's own API, literal loopback, or a compat entry with no address. */
+  const openAiOk = (() => {
+    if (!p.baseUrl) return !p.kind || p.kind === 'openai-compatible' || p.kind === 'qwen-openai-compatible';
+    try {
+      const u = new URL(p.baseUrl);
+      if (u.origin === 'https://api.openai.com') return true;
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+      const h = u.hostname.toLowerCase();
+      return h === 'localhost' || h === '[::1]' || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+    } catch (_) { return false; }
+  })();
+  if (p.apiKeyEnvVar) {
+    return (p.apiKeyEnvVar === 'OPENAI_API_KEY' || p.apiKeyEnvVar === 'ATOMIC_AGENT_OPENAI_API_KEY') && !openAiOk ? [] : [p.apiKeyEnvVar];
+  }
   if (p.kind === 'openrouter') return ['OPENROUTER_API_KEY'];
   if (p.kind === 'aimlapi') return ['AIMLAPI_API_KEY'];
   if (p.kind === 'gemini') return ['GEMINI_API_KEY'];
   if (p.kind === 'openai-compatible' || p.kind === 'qwen-openai-compatible') {
     if (typeof lanIsOtherComputerUrl === 'function' && lanIsOtherComputerUrl(p.baseUrl)) return [];
-    /* ATO-1703 (agent-cli.ts mayReceiveOpenAiKey): the OpenAI variables only go to
-       OpenAI's own API, this machine, or an entry with no address. */
-    let openAiOk = !p.baseUrl;
-    if (!openAiOk) {
-      try {
-        const u = new URL(p.baseUrl);
-        const h = u.hostname.toLowerCase();
-        openAiOk = u.origin === 'https://api.openai.com' || h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]' || h === '0.0.0.0' || h.endsWith('.localhost');
-      } catch (_) { openAiOk = false; }
-    }
     return openAiOk ? ['OPENAI_COMPAT_API_KEY', 'OPENAI_API_KEY', 'ATOMIC_AGENT_OPENAI_API_KEY'] : ['OPENAI_COMPAT_API_KEY'];
   }
   return [];
