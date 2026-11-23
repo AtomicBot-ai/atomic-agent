@@ -7,6 +7,7 @@ import {
   verifyStandardWebhook,
   verifyStripeSignature,
   type SignatureFailure,
+  type StandardWebhookHeaders,
 } from "./webhook-signature.js";
 import type { WebhookConfig } from "../config/index.js";
 
@@ -36,9 +37,34 @@ export function checkSharedSecret(
 }
 
 /**
+ * The Standard Webhooks headers of a hit. Svix senders (Resend, Clerk and
+ * others) sign the same way but name the headers `svix-id`,
+ * `svix-timestamp` and `svix-signature` (ATO-1542). One set is read as a
+ * whole, never mixed: the `webhook-*` set when any of its headers is
+ * present, else the `svix-*` set.
+ */
+export function readStandardWebhookHeaders(
+  req: IncomingMessage,
+): StandardWebhookHeaders {
+  const standard = {
+    id: getHeader(req, "webhook-id"),
+    timestamp: getHeader(req, "webhook-timestamp"),
+    signature: getHeader(req, "webhook-signature"),
+  };
+  if (standard.id !== null || standard.timestamp !== null || standard.signature !== null) {
+    return standard;
+  }
+  return {
+    id: getHeader(req, "svix-id"),
+    timestamp: getHeader(req, "svix-timestamp"),
+    signature: getHeader(req, "svix-signature"),
+  };
+}
+
+/**
  * The signed schemes, over the exact body bytes. `messageId` is the
- * Standard Webhooks `webhook-id`, which the route uses to drop repeats;
- * GitHub's delivery id is not used for that, because "Redeliver" in
+ * Standard Webhooks `webhook-id` (or `svix-id`), which the route uses
+ * to drop repeats; GitHub's delivery id is not used for that, because "Redeliver" in
  * GitHub's UI sends the same id again on purpose. The tunnel gateway
  * (ATO-625) dedupes every signed delivery id anyway, from
  * `describeWebhookEvent` (`dedupeDeliveries` in the route).
@@ -59,18 +85,9 @@ export function verifySignedWebhook(
     return check.ok ? { ok: true, messageId: null } : check;
   }
   if (webhook.verify === "standard-webhooks") {
-    const id = getHeader(req, "webhook-id");
-    const check = verifyStandardWebhook(
-      rawBody,
-      {
-        id,
-        timestamp: getHeader(req, "webhook-timestamp"),
-        signature: getHeader(req, "webhook-signature"),
-      },
-      secret,
-      nowMs,
-    );
-    return check.ok ? { ok: true, messageId: id } : check;
+    const headers = readStandardWebhookHeaders(req);
+    const check = verifyStandardWebhook(rawBody, headers, secret, nowMs);
+    return check.ok ? { ok: true, messageId: headers.id } : check;
   }
   if (webhook.verify === "stripe") {
     const check = verifyStripeSignature(
@@ -92,7 +109,7 @@ export interface WebhookEvent {
   event: string;
   /** GitHub payload `action` (`opened`, `closed`, ...), else empty. */
   action: string;
-  /** `X-GitHub-Delivery`, `webhook-id` or the Stripe event `id`, else empty. */
+  /** `X-GitHub-Delivery`, `webhook-id` (or `svix-id`) or the Stripe event `id`, else empty. */
   delivery: string;
 }
 
@@ -116,7 +133,7 @@ export function describeWebhookEvent(
     return {
       event: typeof record.type === "string" ? record.type : "",
       action: "",
-      delivery: getHeader(req, "webhook-id") ?? "",
+      delivery: readStandardWebhookHeaders(req).id ?? "",
     };
   }
   if (webhook.verify === "stripe") {
