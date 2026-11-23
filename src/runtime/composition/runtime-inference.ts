@@ -98,6 +98,7 @@ export async function connectRuntimeProviders(
     const fresh = getConfig();
     return resolveRunMode(resolveLlmConfig(fresh), {
       managedModelId: fresh.localModels.managed.modelId,
+      localServerUrl: fresh.localModels.url,
     });
   };
 
@@ -546,7 +547,10 @@ export function connectRuntimeFallback(
   const orchestratorLinkModel = (providerId: string): string | undefined => {
     const fresh = getConfig();
     return fusionLinkModel(
-      resolveRunMode(resolveLlmConfig(fresh), { managedModelId: fresh.localModels.managed.modelId }),
+      resolveRunMode(resolveLlmConfig(fresh), {
+        managedModelId: fresh.localModels.managed.modelId,
+        localServerUrl: fresh.localModels.url,
+      }),
       providerId,
     );
   };
